@@ -9,7 +9,7 @@
 //! Test hooks: BF_LEVEL_CAMERA=<n> starts at the level's camera n (0 = overview),
 //! BF_VIEW=x,y,z,yaw,pitch starts there (degrees), BF_NO_FOG=1 starts without fog, BF_SCREENSHOT=<file.png> saves a screenshot
 //! once everything has loaded, then quits. BF_PART_DUMP=<hex archetype> prints its parts' geosets
-//! (bounds, normals, winding, UV direction) and exits.
+//! (bounds, normals, winding, UV direction) and exits; with BF_PART_VERTS=1 every vertex, not the first 6.
 
 use std::path::PathBuf;
 
@@ -85,7 +85,7 @@ fn main() {
                     }
                     let (mx, mu) = (g.positions.iter().map(|v| v[0]).sum::<f32>() / g.positions.len() as f32, g.uvs.iter().map(|u| u[0]).sum::<f32>() / g.uvs.len() as f32);
                     let corr: f32 = g.positions.iter().zip(&g.uvs).map(|(v, u)| (v[0] - mx) * (u[0] - mu)).sum();
-                    let front: Vec<String> = g.positions.iter().zip(&g.normals).zip(&g.uvs).take(6).map(|((v, n), u)| format!("p{:.2?} n{:.2?} uv{:.2?}", v, n, u)).collect();
+                    let front: Vec<String> = g.positions.iter().zip(&g.normals).zip(&g.uvs).take(if std::env::var("BF_PART_VERTS").is_ok() { usize::MAX } else { 6 }).map(|((v, n), u)| format!("p{:.2?} n{:.2?} uv{:.2?}", v, n, u)).collect();
                     println!("  u-vs-x {corr:.2}; {}", front.join(" | "));
                     println!("part h_{:08x} at {:.2} rot {:.2} mat h_{:08x}: {} verts, box {:.2}..{:.2}, normal sum {:.1}, winding agree {wind}/{}",
                              p.name, p.offset, p.rotation, g.material, g.positions.len(), lo, hi, n, g.indices.len() / 3);

@@ -725,11 +725,14 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   objects whose boxes overlap much.
 * **Winding.** Object triangles are wound to face along their stored normals, so a mirrored mesh
   isn't culled from the front.
-* **The gate (h_0792d16a).** Its two leaves (h_e783bd32 → mesh h_e01d9aa6, h_fcd25d86 → h_178bc697)
-  are the same panel shifted 0.996 m. By vertex index the positions differ only by that shift
-  and the UVs match; the stored geoset centres differ by the same amount (−0.4965 / +0.4996).
-  Both joints have no rotation. So both leaves show the same face and the same brace direction:
-  the data doesn't mirror the left leaf.
+* **The gate (h_0792d16a) and texture address modes.** Its two leaves (h_e783bd32 → mesh
+  h_e01d9aa6, h_fcd25d86 → h_178bc697) are the same panel shifted 0.996 m, with matching UVs
+  and no joint rotation. The mirroring is in the texture's sampling: each leaf runs its
+  texture u 0..2 across, and the texture entry's `address-u` / `address-v` (h_1c82a17b /
+  h_078bf0c1) is `TAM_MIRROR` (h_18712765), so the second half is the first mirrored and each
+  leaf shows one symmetric brace. The other modes are `TAM_WRAP` (h_e3012d9e, most textures)
+  and `TAM_CLAMP` (h_e041e0b9). Every level and model texture is now sampled by its own modes
+  (`Game::texture_address`); 24 levels use mirroring somewhere.
 * **Invisible or glowing materials.**
   * Power-ups (Brute / Force / Health / Stamina) use a placeholder cube whose material no level
     defines; it isn't drawn.

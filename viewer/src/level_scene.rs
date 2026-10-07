@@ -15,7 +15,7 @@ use bevy::{
     },
 };
 
-use crate::bf::character::{Game, Geoset, H_WRAP_ALPHA};
+use crate::bf::character::{Address, Game, Geoset, H_WRAP_ALPHA};
 use crate::bf::level::Level;
 use crate::bf::weapon::WeaponModel;
 
@@ -400,11 +400,21 @@ pub fn visible(game: &Game, g: &Geoset) -> bool {
 }
 
 fn image(images: &mut Assets<Image>, w: u32, h: u32, px: Vec<u8>) -> Handle<Image> {
+    image_with(images, w, h, px, [Address::Wrap; 2])
+}
+
+/// A texture sampled past its edges as its material says (`Game::texture_address`).
+fn image_with(images: &mut Assets<Image>, w: u32, h: u32, px: Vec<u8>, address: [Address; 2]) -> Handle<Image> {
     let mut img = Image::new(Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, px,
                              TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());
+    let mode = |a: Address| match a {
+        Address::Wrap => ImageAddressMode::Repeat,
+        Address::Clamp => ImageAddressMode::ClampToEdge,
+        Address::Mirror => ImageAddressMode::MirrorRepeat,
+    };
     img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
+        address_mode_u: mode(address[0]),
+        address_mode_v: mode(address[1]),
         ..ImageSamplerDescriptor::linear()
     });
     images.add(img)
@@ -429,9 +439,12 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
         mat.unlit = true;
     }
     if game.material_type(id) == GLOW_SHADER {
-        if let Some((w, h, px)) = game.material_param_texture(id, GLOW_TEXTURE).and_then(|t| game.texture_rgba(t)) {
-            mat.emissive = LinearRgba::WHITE;
-            mat.emissive_texture = Some(image(images, w, h, px));
+        if let Some(t) = game.material_param_texture(id, GLOW_TEXTURE) {
+            let address = game.texture_address(id, t);
+            if let Some((w, h, px)) = game.texture_rgba(t) {
+                mat.emissive = LinearRgba::WHITE;
+                mat.emissive_texture = Some(image_with(images, w, h, px, address));
+            }
         }
     }
     if std::env::var("BF_MAT_LOG").is_ok() {
@@ -444,6 +457,7 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
         eprintln!("material h_{id:08x} type h_{:08x} texture {:x?} alpha {:x?} {:?}", game.material_type(id), tex,
                   game.material_alpha_texture(id), avg);
     }
+    let address = game.material_texture(id).map_or_else(Default::default, |t| game.texture_address(id, t));
     if let Some((w, h, mut px)) = game.material_texture(id).and_then(|t| game.texture_rgba(t)) {
         if cutout && CUTOUT_TYPES.contains(&game.material_type(id)) {
             if let Some((aw, ah, apx)) = game.material_alpha_texture(id).and_then(|a| game.texture_rgba(a)) {
@@ -461,7 +475,7 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
             px.chunks_exact_mut(4).for_each(|p| p[3] = 255);
         }
         mat.base_color = Color::WHITE;
-        mat.base_color_texture = Some(image(images, w, h, px));
+        mat.base_color_texture = Some(image_with(images, w, h, px, address));
         // a self-lit shell with a picture (its h_e01baa40): added to the scene, like the
         // untextured ones
         if game.material_type(id) == GLOW_SHELL {
@@ -496,8 +510,8 @@ fn upright_normals(g: &Geoset) -> Geoset {
 }
 
 /// `flip`: reverse the winding (terrain triangles face the other way from objects'). Otherwise
-/// each triangle is wound to face along its vertices' normals: mirrored meshes (the gate's left
-/// leaf is its right leaf mirrored, same index order) would otherwise be culled from the front.
+/// each triangle is wound to face along its vertices' normals: mirrored meshes (same index order,
+/// mirrored positions) would otherwise be culled from the front.
 fn mesh_of(g: &Geoset, colors: Option<Vec<[f32; 4]>>, lift: f32, flip: bool) -> Mesh {
     let positions: Vec<[f32; 3]> = g.positions.iter().map(|p| [p[0], p[1] + lift, p[2]]).collect();
     let mut indices = g.indices.clone();

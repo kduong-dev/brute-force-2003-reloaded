@@ -14,7 +14,7 @@ use bevy::{
     },
 };
 
-use crate::bf::character::{Character, Game, Geoset};
+use crate::bf::character::{Address, Character, Game, Geoset};
 
 /// Marks the skeleton's root joint entity.
 #[derive(Component)]
@@ -27,12 +27,18 @@ pub struct ModelAssets<'a> {
     pub bindposes: &'a mut Assets<SkinnedMeshInverseBindposes>,
 }
 
-fn image(images: &mut Assets<Image>, px: Vec<u8>, w: u32, h: u32, format: TextureFormat) -> Handle<Image> {
+/// A texture, sampled past its edges as its material says (`Game::texture_address`).
+fn image(images: &mut Assets<Image>, px: Vec<u8>, w: u32, h: u32, format: TextureFormat, address: [Address; 2]) -> Handle<Image> {
     let mut img = Image::new(Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, px,
                              format, RenderAssetUsages::default());
+    let mode = |a: Address| match a {
+        Address::Wrap => ImageAddressMode::Repeat,
+        Address::Clamp => ImageAddressMode::ClampToEdge,
+        Address::Mirror => ImageAddressMode::MirrorRepeat,
+    };
     img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
+        address_mode_u: mode(address[0]),
+        address_mode_v: mode(address[1]),
         ..ImageSamplerDescriptor::linear()
     });
     images.add(img)
@@ -83,11 +89,12 @@ pub fn spawn_model(commands: &mut Commands, game: &mut Game, model: &Character, 
 /// A game material as a StandardMaterial: its colour texture, plus (with `shading`) the
 /// Color-Specular look where the texture's alpha marks the shiny areas.
 pub fn material(game: &mut Game, assets: &mut ModelAssets, material: u32, shading: bool) -> Handle<StandardMaterial> {
+    let address = game.material_texture(material).map_or_else(Default::default, |t| game.texture_address(material, t));
     let rgba = game.material_texture(material).and_then(|t| game.texture_rgba(t));
     // opaque: the skin's alpha is a specular mask, not transparency
     let mut mat = StandardMaterial { base_color: Color::srgb(0.7, 0.7, 0.7), perceptual_roughness: 0.85, ..default() };
     if let Some((w, h, px)) = rgba {
-        let base = image(assets.images, px.clone(), w, h, TextureFormat::Rgba8UnormSrgb);
+        let base = image(assets.images, px.clone(), w, h, TextureFormat::Rgba8UnormSrgb, address);
         mat.base_color = Color::WHITE;
         mat.base_color_texture = Some(base.clone());
         if let Some(spec) = shading.then(|| game.material_specular(material)).flatten() {
@@ -100,7 +107,7 @@ pub fn material(game: &mut Game, assets: &mut ModelAssets, material: u32, shadin
                 let a = p[3] as f32 / 255.0;
                 [0, ((0.92 + (shiny - 0.92) * a) * 255.0) as u8, 0, 255]  // G = roughness, B = metallic
             }).collect();
-            mat.metallic_roughness_texture = Some(image(assets.images, rough, w, h, TextureFormat::Rgba8Unorm));
+            mat.metallic_roughness_texture = Some(image(assets.images, rough, w, h, TextureFormat::Rgba8Unorm, address));
             mat.perceptual_roughness = 1.0;      // multiplies the map
             mat.metallic = 0.0;
             mat.specular_texture = Some(base);

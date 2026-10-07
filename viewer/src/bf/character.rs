@@ -40,6 +40,27 @@ const TERRAIN_HEIGHT: f32 = 1.0 / 16.0;
 const H_WRAP_COUNT: u32 = 0xEDCA_4B16;
 /// A wrapper material's opacity, 0-255 (e.g. 50 for a pickup's glow shell).
 pub const H_WRAP_ALPHA: u32 = 0xE59D_69A0;
+
+/// How a texture is sampled past its edges, per axis: a material's texture entry carries its
+/// `address-u` / `address-v` (`TAM_WRAP`, `TAM_CLAMP` or `TAM_MIRROR`). The gates' leaves run
+/// their texture 0..2 across with TAM_MIRROR: each leaf shows its picture and its mirror image.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Address {
+    #[default]
+    Wrap,
+    Clamp,
+    Mirror,
+}
+
+impl Address {
+    fn of(mode: u32) -> Address {
+        match mode {
+            m if m == h("TAM_CLAMP") => Address::Clamp,
+            m if m == h("TAM_MIRROR") => Address::Mirror,
+            _ => Address::Wrap,
+        }
+    }
+}
 const DT_QUAT: u32 = 0x0667_7BCB;
 const DT_VEC: u32 = 0xF36D_8810;
 const DT_XFORM: u32 = 0x0690_1441;
@@ -98,6 +119,8 @@ pub struct Game {
     material_types: HashMap<u32, u32>,
     /// constants (param -> values) of the material that renders each material
     pub material_constants: HashMap<u32, HashMap<u32, Vec<f32>>>,
+    /// each material's textures' address modes (texture -> [u, v])
+    material_address: HashMap<u32, HashMap<u32, [Address; 2]>>,
     textures: HashMap<u32, (TexInfo, Arc<Vec<u8>>)>,
     pending_texture_archives: Vec<PathBuf>,
     pub channels: HashMap<u32, Channel>,
@@ -252,6 +275,7 @@ impl Game {
             materials: HashMap::new(),
             material_types: HashMap::new(),
             material_constants: HashMap::new(),
+            material_address: HashMap::new(),
             textures: HashMap::new(),
             pending_texture_archives: vec![],
             channels: HashMap::new(),
@@ -390,15 +414,19 @@ impl Game {
         }
         for n in ar.find("materials-", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
-            // (name, type, textures param->texture, constants param->values, wrapper count)
+            // (name, type, textures param->texture, constants param->values, wrapper count,
+            // address modes texture->[u, v])
             type Consts = HashMap<u32, Vec<f32>>;
-            let mut seq: Vec<(u32, u32, HashMap<u32, u32>, Consts, usize)> = vec![];
+            let mut seq: Vec<(u32, u32, HashMap<u32, u32>, Consts, usize, HashMap<u32, [Address; 2]>)> = vec![];
             for m in root.walk().into_iter().filter(|e| e.name == h("Material")) {
                 let mut tex = HashMap::new();
                 let mut consts = HashMap::new();
+                let mut address = HashMap::new();
                 for e in m.walk() {
                     if e.name == h("texture") {
-                        tex.insert(hash_of(e.attr(h("param-id"))), hash_of(e.attr(h("texture-name"))));
+                        let name = hash_of(e.attr(h("texture-name")));
+                        tex.insert(hash_of(e.attr(h("param-id"))), name);
+                        address.insert(name, [h("address-u"), h("address-v")].map(|k| Address::of(hash_of(e.attr(k)))));
                     }
                     if e.name == h("constant") {
                         // vector constants are repeated value attributes
@@ -407,14 +435,15 @@ impl Game {
                     }
                 }
                 let count = consts.get(&H_WRAP_COUNT).and_then(|v| v.first().copied()).unwrap_or(1.0) as usize;
-                seq.push((hash_of(m.attr(h("name"))), hash_of(m.attr(h("Type"))), tex, consts, count));
+                seq.push((hash_of(m.attr(h("name"))), hash_of(m.attr(h("Type"))), tex, consts, count, address));
             }
             for i in 0..seq.len() {
-                let (name, mut ty, mut tex, mut consts, count) = seq[i].clone();
+                let (name, mut ty, mut tex, mut consts, count, mut address) = seq[i].clone();
                 if ty == SKIN_WRAPPER && tex.is_empty() {
                     if let Some(next) = seq[i + 1..].iter().take(count.max(1)).find(|s| !s.2.is_empty()) {
                         ty = next.1;
                         tex = next.2.clone();
+                        address = next.5.clone();
                         // the wrapper's own opacity (0-255) stays with the material
                         let alpha = consts.get(&H_WRAP_ALPHA).cloned();
                         consts = next.3.clone();
@@ -429,6 +458,7 @@ impl Game {
                     self.material_types.insert(name, ty);
                     self.materials.insert(name, tex);
                     self.material_constants.insert(name, consts);
+                    self.material_address.insert(name, address);
                 }
             }
         }
@@ -764,6 +794,11 @@ impl Game {
     }
 
     /// A material's texture for a parameter (e.g. a terrain layer's "alpha" mask).
+    /// How a material samples one of its textures past the texture's edges (see `Address`).
+    pub fn texture_address(&self, material: u32, texture: u32) -> [Address; 2] {
+        self.material_address.get(&material).and_then(|a| a.get(&texture)).copied().unwrap_or_default()
+    }
+
     pub fn material_param_texture(&self, material: u32, param: u32) -> Option<u32> {
         self.materials.get(&material)?.get(&param).copied().filter(|&t| t != 0 && t != h(""))
     }
