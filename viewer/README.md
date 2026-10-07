@@ -140,7 +140,11 @@ yellow blips on the radar (turning with the camera, 40 m range). `BF_NO_SQUAD=1`
 HUD textures found for the panels: the health / energy frame is built from its corner
 `h_0cdf5876` (32 × 16 end cap, mirrored four ways; it holds the step from the raised ends down to
 the middle, whose level its inner column carries along), drawn as glass at 55% over a faint
-tint. The grenade's panel is
+tint. Its two channels are open in texel rows 6–11 and (mirrored) 20–25, columns 5–174; each bar
+fills its channel exactly, and its icon is level with it. The bar fills (`h_e801997b` red,
+`h_e11c7d04` blue, 4 × 8) are coloured in 6 of their 8 rows, matching the channels' 6; only those
+rows are drawn. (Placed by hand, the bars sat over their channels' lines and left gaps at both
+ends; drawn whole, the clear rows put the colour off-centre.) The grenade's panel is
 `h_10891a71` (64 × 32, glossy, cut top-left corner), 9-sliced. Neither is referenced in the
 data; both were found by shape. (The tutorial's `h_17f34cbe` is only a baked picture of the
 whole bar.) Radar health channels are filled as bands (distance from the centre and extent

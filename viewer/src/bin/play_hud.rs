@@ -117,6 +117,33 @@ const PANEL_SLICE: f32 = 10.0;
 const BAR_FRAME_WIDTH: u32 = 180;
 /// its opacity (the capture's frame is glass: the scene shows through it)
 const BAR_FRAME_ALPHA: f32 = 0.55;
+/// where the frame is drawn (screen units), and its height in texels (two corners of 16)
+const BAR_FRAME_AT: (f32, f32) = (64.0, 40.0);
+const BAR_FRAME_SIZE: (f32, f32) = (208.0, 37.0);
+const BAR_FRAME_TEXELS_HIGH: f32 = 32.0;
+/// the frame's two channels, health then stamina: their open interiors in texel rows (upright:
+/// the corner's lines are rows 5 and 12, mirrored below to 19 and 26)
+const BAR_CHANNELS: [(f32, f32); 2] = [(6.0, 12.0), (20.0, 26.0)];
+/// and their open interiors in texel columns (the corner's vertical line is column 4, mirrored
+/// to 175): the bars fill them end to end (inset by hand, they left gaps at both ends)
+const BAR_CHANNEL_COLS: (f32, f32) = (5.0, 175.0);
+/// The bar fills (HEALTH_FILL, ENERGY_FILL: 4 x 8 texels) are coloured in their texel rows
+/// 2-7 only (rows 0-1, as stored, are clear): just those are drawn, filling the channel's 6 open
+/// rows exactly (drawn whole, the clear rows left the colour off-centre in its box)
+const BAR_FILL_RECT: (f32, f32, f32, f32) = (0.0, 2.0, 4.0, 8.0);
+
+/// The bars' left edge and full width on screen (the channels' open columns).
+fn bar_span() -> (f32, f32) {
+    let k = BAR_FRAME_SIZE.0 / BAR_FRAME_WIDTH as f32;
+    (BAR_FRAME_AT.0 + BAR_CHANNEL_COLS.0 * k, (BAR_CHANNEL_COLS.1 - BAR_CHANNEL_COLS.0) * k)
+}
+
+/// The open interior of the frame's channel `i` (0 health, 1 stamina) on screen: top and height.
+fn bar_channel(i: usize) -> (f32, f32) {
+    let (top, bottom) = BAR_CHANNELS[i];
+    let k = BAR_FRAME_SIZE.1 / BAR_FRAME_TEXELS_HIGH;
+    (BAR_FRAME_AT.1 + top * k, (bottom - top) * k)
+}
 
 /// An image the right way up (HUD textures are stored bottom row first).
 fn upright(w: u32, h: u32, px: Vec<u8>) -> Image {
@@ -526,7 +553,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         Some(f) => {
             // see-through glass, as in the capture: a faint blue tint inside, the frame over it
             commands.spawn((ChildOf(screen), at(67.0, 42.0, 202.0, 33.0), BackgroundColor(Color::srgba(0.15, 0.3, 0.7, 0.18))));
-            commands.spawn((ChildOf(screen), at(64.0, 40.0, 208.0, 37.0), ImageNode::new(f).with_color(Color::srgba(1.0, 1.0, 1.0, BAR_FRAME_ALPHA))));
+            commands.spawn((ChildOf(screen), at(BAR_FRAME_AT.0, BAR_FRAME_AT.1, BAR_FRAME_SIZE.0, BAR_FRAME_SIZE.1),
+                            ImageNode::new(f).with_color(Color::srgba(1.0, 1.0, 1.0, BAR_FRAME_ALPHA))));
         }
         None => {
             commands.spawn((ChildOf(screen), BackgroundColor(Color::srgba(0.08, 0.18, 0.45, 0.45)), BorderColor(HUD_BLUE),
@@ -534,10 +562,15 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         }
     }
     let (red, blue, plus) = (tex(HEALTH_FILL), tex(ENERGY_FILL), tex(HEALTH_ICON));
-    commands.spawn((ChildOf(screen), at(73.0, 49.0, 190.0, 5.5), image(&red, Color::WHITE), SquadPart::PlayerHealth));
-    commands.spawn((ChildOf(screen), at(73.0, 61.5, 190.0, 5.5), image(&blue, Color::WHITE)));
-    commands.spawn((ChildOf(screen), at(49.0, 43.0, 13.0, 13.0), image(&plus, Color::WHITE)));
-    commands.spawn((ChildOf(screen), at(50.0, 58.0, 12.0, 16.0), image(&bolt, PALE)));
+    // each bar fills its channel's open interior, its icon level with it
+    let ((health_y, health_h), (stamina_y, stamina_h)) = (bar_channel(0), bar_channel(1));
+    let (bar_x, bar_w) = bar_span();
+    let (x0, y0, x1, y1) = BAR_FILL_RECT;
+    let fill = |h: &Option<Handle<Image>>| ImageNode { rect: Some(Rect::new(x0, y0, x1, y1)), ..image(h, Color::WHITE) };
+    commands.spawn((ChildOf(screen), at(bar_x, health_y, bar_w, health_h), fill(&red), SquadPart::PlayerHealth));
+    commands.spawn((ChildOf(screen), at(bar_x, stamina_y, bar_w, stamina_h), fill(&blue)));
+    commands.spawn((ChildOf(screen), at(49.0, health_y + health_h * 0.5 - 6.5, 13.0, 13.0), image(&plus, Color::WHITE)));
+    commands.spawn((ChildOf(screen), at(50.0, stamina_y + stamina_h * 0.5 - 8.0, 12.0, 16.0), image(&bolt, PALE)));
 
     // ---- weapons, top right ----
     for row in 0..WEAPON_ROWS {
@@ -879,7 +912,7 @@ fn update_squad_hud(
             }
             SquadPart::PlayerHealth => {
                 let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
-                node.width = Val::Percent(190.0 * f / 6.4);
+                node.width = Val::Percent(bar_span().1 * f / 6.4);
             }
             SquadPart::MeterBox | SquadPart::MeterTick | SquadPart::Reticle => show(&mut vis, charging),
             SquadPart::MeterFill => {
