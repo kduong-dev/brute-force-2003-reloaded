@@ -1,0 +1,24 @@
+# Game data and anything extracted from it (bring your own copy)
+/Brute Force/
+/Brute Force DLC/
+/decompiled/
+/todo/
+
+# Third-party tools and projects holding the game's code
+/tools/ghidra_*_PUBLIC/
+/tools/ghidra_projects/
+
+# Build output (and each machine's own build settings)
+target/
+viewer/.cargo/
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

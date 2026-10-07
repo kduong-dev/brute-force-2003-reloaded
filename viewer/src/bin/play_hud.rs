@@ -1,0 +1,911 @@
+//! The in-game HUD, laid out as in Brute Force: health / energy bars top left, the weapon panel
+//! (icon, clip / reserve, a full list for a moment after a switch) top right, radar with the
+//! character's portrait bottom left, grenade box bottom right, and the crosshair above centre.
+//!
+//! Positions are in the game's 640 x 480 screen, measured from an xemu capture, inside a 4:3 area
+//! centred in the window (so it scales with the window like the game). Textures are the game's
+//! own (data/common.tgz), identified by the HUD page of the options screen
+//! (common/game-options-en.xml: radar 132e4ee1 + 17d0ee37, weapon panel e11fb292, portraits) and
+//! the weapon definitions' icon (h_e5ec3f1f); like all the game's textures they are stored
+//! upside down, so they are drawn flipped. Text uses Bevy's font, not the game's bitmap font.
+
+use super::*;
+
+/// radar frame (octagon) and its disc
+const RADAR_FRAME: u32 = 0x132E_4EE1;
+const RADAR_DISC: u32 = 0x17D0_EE37;
+/// weapon panel background (128 x 32)
+const WEAPON_PANEL: u32 = 0xE11F_B292;
+const CROSSHAIR_TEX: u32 = 0x1D2A_68D0;
+const ENERGY_ICON: u32 = 0x1AC4_1530;
+/// the Frag item's own HUD icon (its definition's h_e5ec3f1f; the ribbed grenade in the capture)
+const FRAG_ICON: u32 = 0xFE20_B919;
+/// portraits by character (CHARACTERS order: Brutus, Flint, Hawk, Tex) and the centres of the
+/// faces round the radar: the whole squad, Tex top, Hawk left, Flint right, Brutus bottom (game
+/// screenshot, positions refined by template matching against it; same order as the options
+/// screen's HUD page). The faces are packed into a corner
+/// of their 32 x 32 textures (Flint and Hawk 21 x 27, Brutus 27 x 24, Tex 27 x 30), so each is
+/// cropped to its opaque pixels and drawn 1:1 (a texel per screen unit) centred there.
+const PORTRAITS: [u32; 4] = [0xFDFB_4331, 0xEB2F_DA05, 0x0823_79F7, 0x076B_684B];
+const PORTRAIT_CENTRE: [(f32, f32); 4] = [(122.2, 428.5), (180.5, 368.2), (64.1, 368.5), (122.2, 303.8)];
+/// the small tab beside each portrait: the follow-order arrows, or the speech icon while that
+/// member is speaking
+const TAB_CENTRE: [(f32, f32); 4] = [(144.8, 423.3), (178.8, 345.0), (67.2, 389.3), (100.5, 312.7)];
+const SQUAD_ICON: u32 = 0xE064_867A;
+const PLAYER_ICON: u32 = 0xEEAA_5549;
+const HEALTH_ICON: u32 = 0x1BFA_5678;
+/// bar fills (4 x 8 gradients): health red, energy blue
+const HEALTH_FILL: u32 = 0xE801_997B;
+/// grenade reticle (two brackets) shown while a throw charges
+const GRENADE_RETICLE: u32 = 0x0EF1_1EE8;
+/// radar: centre of the disc, its radius in screen units and the range it shows (m)
+const RADAR_CENTRE: (f32, f32) = (121.5, 369.0);
+const RADAR_RADIUS: f32 = 44.0;
+const RADAR_RANGE: f32 = 40.0;
+const SQUAD_YELLOW: Color = Color::srgb(1.0, 0.88, 0.2);
+/// Squad health bars fill the radar frame's own dark channels on its diagonals (texels of the
+/// frame texture, display rows, darker than HEALTH_DARK). By character (Brutus, Flint, Hawk,
+/// Tex): the channel's quadrant (x right, y down) and the portrait notch it's anchored at (frame
+/// texels), so the bar empties toward the member's portrait: Brutus bottom-left toward the
+/// bottom, Flint bottom-right toward the right, Hawk top-left toward the left, Tex top-right
+/// toward the top.
+const HEALTH_BARS: [((bool, bool), (f32, f32)); 4] = [
+    ((false, true), (63.0, 115.0)),
+    ((true, true), (115.0, 65.0)),
+    ((false, false), (12.0, 63.0)),
+    ((true, false), (65.0, 12.0)),
+];
+const HEALTH_DARK: u32 = 27;
+/// where the radar frame sits (screen units, 128 x 128)
+const RADAR_FRAME_AT: (f32, f32) = (57.5, 305.0);
+const HEALTH_PINK: Color = Color::srgb(0.96, 0.45, 0.42);
+/// the selected member's name: shown during the selection, then at the camera cut it zooms to
+/// 3x and fades out over this long (capture)
+const NAME_ZOOM_TIME: f32 = 0.4;
+/// ... and swells to this many times its size as it fades (exaggerated from the game's ~3x)
+const NAME_ZOOM_TO: f32 = 6.0;
+/// The name is drawn this much larger than the capture's, and pops in: from NAME_POP times its
+/// size down to it over NAME_POP_TIME as the selection starts.
+const NAME_BIG: f32 = 1.6;
+const NAME_POP: f32 = 1.9;
+const NAME_POP_TIME: f32 = 0.15;
+/// the HUD font atlas (stored upright; glyph rows in ASCII order) and the capital letters' rows
+const FONT_ATLAS: u32 = 0xE0AF_CD52;
+const FONT_ROWS: [(usize, &str); 3] = [(1, "<=>?@ABCDEF"), (2, "GHIJKLMNOPQ"), (3, "RSTUVWXYZ[")];
+/// name size: screen units per atlas pixel (capture: "FLINT" 18 units tall, 21 px glyphs),
+/// colour, and centre
+const NAME_SCALE: f32 = 18.0 / 21.0;
+const NAME_ORANGE: Color = Color::srgb(0.93, 0.56, 0.3);
+const NAME_CENTRE_Y: f32 = 238.0;
+const NAME_SLOTS: usize = 8;
+/// the selection arrow: the game's chevron texture (158f87c1, drawn mirrored / turned to point at
+/// the portrait), three of them 5 units apart, 30 units square, the first 28 units short of the
+/// portrait's centre (capture), red, lit one after another
+const CHEVRON: u32 = 0x158F_87C1;
+const CHEVRON_RED: Color = Color::srgb(1.0, 0.33, 0.2);
+/// speech icons: beside each portrait, on the side away from its command tab (by character)
+const BUBBLE_AT: [(f32, f32); 4] = [(96.0, 426.0), (176.0, 383.0), (45.0, 344.0), (136.0, 292.0)];
+const FRIEND_GREEN: Color = Color::srgba(0.3, 1.0, 0.35, 0.95);
+/// a dead member's portrait: their own skull (the character's h_00c51907 icon; Brutus's is the
+/// wide one), dimmed; their command tab and radar health bar go. Fallbacks if the data lacks one:
+const SKULL_HUMAN: u32 = 0x1834_3E47;
+const SKULL_BRUTUS: u32 = 0x19DA_7869;
+const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
+
+/// The scope frame (h_1807ec04, 256 x 128: the top right quarter) and its size on screen: its
+/// rim where the capture shows it (77% of the width, nearly the full height), the quarters
+/// running past the screen's edge.
+const SCOPE_FRAME: u32 = 0x1807_EC04;
+/// The crosshair: 40 units across, centred at (320, 187); in the scope centred and larger.
+const CROSSHAIR_SIZE: f32 = 40.0;
+const CROSSHAIR_Y: f32 = 187.0;
+const SCOPE_CROSSHAIR_SIZE: f32 = 72.0;
+const SCOPE_QUARTER: (f32, f32) = (397.0, 269.0);
+/// the frame's grey (153 155 153, alpha 153) drawn as a darkening, and the same beyond it
+const SCOPE_SHADE: Color = Color::srgb(0.12, 0.13, 0.12);
+const SCOPE_FILL_COLOR: Color = Color::srgba(0.02, 0.02, 0.02, 0.6);
+const SCOPE_FILL: f32 = 400.0;
+
+/// The health / energy frame's top-left corner (common h_0cdf5876, 32 x 16: the notched outer
+/// edge and the bars' inset channel), mirrored into the other three, its last column stretched
+/// between; and the glossy see-through panel under the grenade (h_10891a71, 64 x 32, cut top-left
+/// corner), drawn 9-sliced (corners PANEL_SLICE texels).
+const BAR_FRAME_CORNER: u32 = 0x0CDF_5876;
+const ITEM_PANEL: u32 = 0x1089_1A71;
+const PANEL_SLICE: f32 = 10.0;
+/// the frame's width in texels (its height is two corners: 32), for its 208 x 37 place
+const BAR_FRAME_WIDTH: u32 = 180;
+/// its opacity (the capture's frame is glass: the scene shows through it)
+const BAR_FRAME_ALPHA: f32 = 0.55;
+
+/// An image the right way up (HUD textures are stored bottom row first).
+fn upright(w: u32, h: u32, px: Vec<u8>) -> Image {
+    let row = (w * 4) as usize;
+    let flipped: Vec<u8> = px.chunks_exact(row).rev().flatten().copied().collect();
+    Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+               bevy::render::render_resource::TextureDimension::D2, flipped,
+               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
+}
+
+/// The health / energy frame from its corner and edge (see BAR_FRAME_CORNER).
+fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
+    let (w, h) = (BAR_FRAME_WIDTH.max(2 * cw), 2 * ch);
+    // the pieces, upright
+    let corner = |x: u32, y: u32| -> [u8; 4] {
+        let i = (((ch - 1 - y) * cw + x) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2], px[i + 3]]
+    };
+    // the cap's own blank columns at its inner end give way to the edge
+    let cap = (0..cw).rev().find(|&x| (0..ch).any(|y| corner(x, y)[3] > 0)).map_or(cw, |x| x + 1);
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let cy = if y < ch { y } else { h - 1 - y };
+        for x in 0..w {
+            let cx = if x < cap { Some(x) } else if x >= w - cap { Some(w - 1 - x) } else { None };
+            // the middle continues the cap's inner column: the cap holds the step down from its
+            // raised outer end to the middle's level (the edge-like texture h_eee38815 sits
+            // higher: stretched there, the frame looked inside out)
+            out.extend_from_slice(&corner(cx.unwrap_or(cap - 1), cy));
+        }
+    }
+    Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+               bevy::render::render_resource::TextureDimension::D2, out,
+               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
+}
+
+/// A scope overlay: the frame (false) or Flint's sniper rim (true).
+#[derive(Component)]
+struct ScopeOverlay(bool);
+
+/// Flint's sniper view: clear in the middle, a cyan-teal glow toward the edges (the capture's
+/// look, approximated: the game smears the edges with an effect).
+fn sniper_rim() -> Image {
+    let n = 256u32;
+    let mut px = Vec::with_capacity((n * n * 4) as usize);
+    for y in 0..n {
+        for x in 0..n {
+            let (u, v) = (x as f32 / (n - 1) as f32 * 2.0 - 1.0, y as f32 / (n - 1) as f32 * 2.0 - 1.0);
+            let r = (u * u + v * v).sqrt();
+            let k = ((r - 0.7) / 0.6).clamp(0.0, 1.0);
+            let a = k * k * (3.0 - 2.0 * k) * 0.5;
+            px.extend_from_slice(&[40, 150, 170, (a * 255.0) as u8]);
+        }
+    }
+    Image::new(bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+               bevy::render::render_resource::TextureDimension::D2, px,
+               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
+}
+
+/// Show the scope's overlay while the scope is up: Flint's rim for her, the frame for the others.
+fn update_scope(player: Res<Player>, mut overlays: Query<(&ScopeOverlay, &mut Visibility)>) {
+    let up = player.scope > 0.6;
+    let flint = player.character == STILL_SNIPER;
+    for (o, mut v) in &mut overlays {
+        let want = if up && o.0 == flint { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
+        }
+    }
+}
+
+/// A portrait's own image (to show again after the skull).
+#[derive(Component)]
+struct PortraitArt(Handle<Image>, Rect);
+
+/// Glyph rectangles (atlas pixels) of the capital letters: the atlas cut at empty rows and
+/// columns; rows 1-3 hold `<=>?@ABCDEF`, `GHIJKLMNOPQ`, `RSTUVWXYZ[`.
+fn font_glyphs(w: u32, h: u32, px: &[u8]) -> HashMap<char, Rect> {
+    let solid = |x: u32, y: u32| px[((y * w + x) * 4 + 3) as usize] > 40;
+    let mut bands = vec![];
+    let mut y = 0;
+    while y < h {
+        if (0..w).any(|x| solid(x, y)) {
+            let y0 = y;
+            while y < h && (0..w).any(|x| solid(x, y)) { y += 1; }
+            bands.push((y0, y));
+        }
+        y += 1;
+    }
+    let mut out = HashMap::new();
+    for (row, chars) in FONT_ROWS {
+        let Some(&(y0, y1)) = bands.get(row) else { continue };
+        let mut cols = vec![];
+        let mut x = 0;
+        while x < w {
+            if (y0..y1).any(|y| solid(x, y)) {
+                let x0 = x;
+                while x < w && (y0..y1).any(|y| solid(x, y)) { x += 1; }
+                cols.push((x0, x));
+            }
+            x += 1;
+        }
+        if cols.len() != chars.chars().count() {
+            continue;
+        }
+        for (c, (x0, x1)) in chars.chars().zip(cols) {
+            // tight vertical extent of this glyph
+            let ys: Vec<u32> = (y0..y1).filter(|&y| (x0..x1).any(|x| solid(x, y))).collect();
+            let (ty0, ty1) = (ys[0], ys[ys.len() - 1] + 1);
+            out.insert(c, Rect::new(x0 as f32, ty0 as f32, x1 as f32, ty1 as f32));
+        }
+    }
+    out
+}
+
+/// Generated HUD images: the squad health bars, the selection chevrons, the name font and the
+/// speech icon.
+#[derive(Resource, Default)]
+struct HudGen {
+    /// per character: its health bar image (frame-sized), the channel texels (index, how far
+    /// from the portrait end 0-1) and the fill drawn last
+    bars: [Handle<Image>; 4],
+    bar_texels: [Vec<(usize, f32)>; 4],
+    bar_fill: [f32; 4],
+    /// the game's chevron, white, pointing right / left / up / down
+    chevrons: [Handle<Image>; 4],
+    font: Handle<Image>,
+    glyphs: HashMap<char, Rect>,
+    /// speech icon
+    bubble: Handle<Image>,
+    /// skulls for the dead, by character
+    skulls: [Handle<Image>; 4],
+}
+
+/// The radar frame's four diagonal health channels, by character (see HEALTH_BARS): texel index
+/// (display rows) and its place along the channel from the portrait end (0-1). A channel is the
+/// frame's dark texels in that quadrant (pieces of 15 or more), with the 1-texel highlight lines
+/// between dark texels closed over.
+fn radar_channels(w: usize, h: usize, px: &[u8]) -> [Vec<(usize, f32)>; 4] {
+    // display rows: the texture is stored bottom row first
+    let at = |x: usize, y: usize| &px[((h - 1 - y) * w + x) * 4..((h - 1 - y) * w + x) * 4 + 4];
+    let dark = |x: usize, y: usize| { let p = at(x, y); p[3] > 128 && (p[0] as u32 + p[1] as u32 + p[2] as u32) / 3 <= HEALTH_DARK };
+    let mut mask = vec![false; w * h];
+    let mut seen = vec![false; w * h];
+    for start in 0..w * h {
+        if seen[start] || !dark(start % w, start / w) {
+            continue;
+        }
+        // flood fill one dark piece; keep it if it's big enough
+        let (mut piece, mut stack) = (vec![], vec![start]);
+        seen[start] = true;
+        while let Some(i) = stack.pop() {
+            piece.push(i);
+            let (x, y) = (i % w, i / w);
+            for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                    continue;
+                }
+                let j = ny as usize * w + nx as usize;
+                if !seen[j] && dark(nx as usize, ny as usize) {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+        if piece.len() >= 15 {
+            piece.into_iter().for_each(|i| mask[i] = true);
+        }
+    }
+    // close 1-texel gaps (the channel's inner highlight line): dark on both sides
+    let closed: Vec<bool> = (0..w * h).map(|i| {
+        let (x, y) = (i % w, i / w);
+        let m = |dx: i32, dy: i32| {
+            let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+            nx >= 0 && ny >= 0 && nx < w as i32 && ny < h as i32 && mask[ny as usize * w + nx as usize]
+        };
+        mask[i] || (at(x, y)[3] > 128 && ((m(-1, 0) && m(1, 0)) || (m(0, -1) && m(0, 1))))
+    }).collect();
+    HEALTH_BARS.map(|((right, down), (ax, ay))| {
+        // the channel is a band across its quadrant's diagonal: from the dark texels found, its
+        // distance from the centre (s, the middle 80% of them) and its extent along it (t); every
+        // texel in that band belongs to it, also the lighter ones the darkness test misses (the
+        // channel's highlight lines left gaps: Hawk's and Brutus's bars)
+        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+        let (sx, sy) = (if right { 1.0 } else { -1.0 }, if down { 1.0 } else { -1.0 });
+        let st = |i: usize| {
+            let (x, y) = ((i % w) as f32 + 0.5 - cx, (i / w) as f32 + 0.5 - cy);
+            ((x * sx + y * sy) * std::f32::consts::FRAC_1_SQRT_2, (x * sx - y * sy) * std::f32::consts::FRAC_1_SQRT_2)
+        };
+        let quadrant = |i: usize| ((i % w) * 2 >= w) == right && ((i / w) * 2 >= h) == down;
+        let found: Vec<usize> = (0..w * h).filter(|&i| closed[i] && quadrant(i)).collect();
+        let mut ss: Vec<f32> = found.iter().map(|&i| st(i).0).collect();
+        ss.sort_by(f32::total_cmp);
+        let pick = |q: f32| ss.get(((ss.len() as f32 - 1.0) * q).round() as usize).copied().unwrap_or(0.0);
+        let (s_lo, s_hi) = (pick(0.1), pick(0.9));
+        let (t_lo, t_hi) = found.iter().map(|&i| st(i).1).fold((f32::MAX, f32::MIN), |(a, b), t| (a.min(t), b.max(t)));
+        let texels: Vec<(usize, f32)> = (0..w * h)
+            .filter(|&i| quadrant(i) && (closed[i] || {
+                let (s, t) = st(i);
+                at(i % w, i / w)[3] > 128 && (s_lo..=s_hi).contains(&s) && (t_lo..=t_hi).contains(&t)
+            }))
+            .map(|i| (i, ((i % w) as f32 + 0.5 - ax).hypot((i / w) as f32 + 0.5 - ay))).collect();
+        let (lo, hi) = texels.iter().fold((f32::MAX, f32::MIN), |(lo, hi), t| (lo.min(t.1), hi.max(t.1)));
+        texels.into_iter().map(|(i, d)| (i, ((d - lo) / (hi - lo).max(1.0)).max(1e-3))).collect()
+    })
+}
+
+const ENERGY_FILL: u32 = 0xE11C_7D04;
+
+/// weapon rows: the first at y 43, the next 45 below
+const WEAPON_ROWS: usize = 3;
+const ORANGE: Color = Color::srgb(1.0, 0.62, 0.27);
+const PALE: Color = Color::srgb(0.78, 0.85, 1.0);
+const HUD_BLUE: Color = Color::srgb(0.24, 0.52, 1.0);
+
+#[derive(Component)]
+struct HudFont(f32);
+
+#[derive(Component, Clone, Copy, PartialEq)]
+enum Part {
+    Panel(usize),
+    Icon(usize),
+    Name(usize),
+    Ammo(usize),
+    Tab(usize),
+    Frags,
+    Crosshair,
+}
+
+/// Squad and grenade widgets (see update_squad_hud).
+#[derive(Component, Clone, Copy, PartialEq)]
+enum SquadPart {
+    /// squad member's radar blip (by squad slot)
+    Blip(usize),
+    /// a squad member's health bar in its radar diagonal channel (by character)
+    Health(usize),
+    /// the controlled character's health (top-left red bar)
+    PlayerHealth,
+    /// the selection's three chevrons on the radar
+    Chevron(usize),
+    /// the chosen member's name in the game's font: letter slots
+    NameGlyph(usize),
+    /// speech icon beside a member's portrait while they talk (by character)
+    Bubble(usize),
+    /// portrait (by character): dimmed when dead
+    Portrait(usize),
+    /// that member's name over their head (window space)
+    SelectName,
+    MeterBox,
+    MeterFill,
+    MeterTick,
+    Reticle,
+}
+
+#[derive(Resource, Default)]
+struct HudImages(HashMap<u32, Option<Handle<Image>>>);
+
+pub fn plugin(app: &mut App) {
+    app.init_resource::<HudImages>()
+        .add_systems(OnEnter(AppState::Playing), setup_hud.after(snapshot_entities))
+        .init_resource::<HudGen>()
+        .add_systems(Update, (update_hud_widgets, update_squad_hud, scale_fonts, update_scope).after(update_weapons).run_if(in_state(AppState::Playing)));
+}
+
+/// A game texture as a UI image (cached; None if the texture isn't found).
+fn texture(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, name: u32) -> Option<Handle<Image>> {
+    cache.0.entry(name).or_insert_with(|| {
+        let (w, h, px) = game.texture_rgba(name)?;
+        Some(images.add(Image::new(
+            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            bevy::render::render_resource::TextureDimension::D2, px,
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default())))
+    }).clone()
+}
+
+/// Game textures are stored bottom row first: draw them flipped.
+fn flipped(h: Handle<Image>) -> ImageNode {
+    ImageNode { flip_y: true, ..ImageNode::new(h) }
+}
+
+/// Absolute placement in 640 x 480 screen units.
+fn at(x: f32, y: f32, w: f32, h: f32) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        left: Val::Percent(x / 6.4), top: Val::Percent(y / 4.8),
+        width: Val::Percent(w / 6.4), height: Val::Percent(h / 4.8),
+        ..default()
+    }
+}
+
+/// Text at (x, y) in screen units; `size` is the font height in screen units.
+fn label(text: &str, x: f32, y: f32, size: f32, color: Color) -> impl Bundle {
+    (Text::new(text), TextFont { font_size: size, ..default() }, TextColor(color), HudFont(size),
+     Node { position_type: PositionType::Absolute, left: Val::Percent(x / 6.4), top: Val::Percent(y / 4.8), ..default() })
+}
+
+/// The radar's view cone and the lit circle round the player, white with soft edges (the radar
+/// turns with the camera, so the cone always points up).
+fn radar_cone() -> Image {
+    let n = 128u32;
+    let mut px = Vec::with_capacity((n * n * 4) as usize);
+    let smooth = |e0: f32, e1: f32, x: f32| { let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) };
+    for y in 0..n {
+        for x in 0..n {
+            let (dx, dy) = ((x as f32 + 0.5) / n as f32 * 2.0 - 1.0, (y as f32 + 0.5) / n as f32 * 2.0 - 1.0);
+            let r = (dx * dx + dy * dy).sqrt();
+            let angle = dx.atan2(-dy).abs();
+            let circle = 1.0 - smooth(0.36, 0.40, r);
+            let cone = (1.0 - smooth(0.50, 0.56, angle)) * (1.0 - smooth(0.92, 0.98, r));
+            let a = (circle.max(cone) * 0.18 * 255.0) as u8;
+            px.extend_from_slice(&[255, 255, 255, a]);
+        }
+    }
+    Image::new(bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+               bevy::render::render_resource::TextureDimension::D2, px,
+               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+               bevy::asset::RenderAssetUsages::default())
+}
+
+fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mut cache: ResMut<HudImages>,
+             mut gen: ResMut<HudGen>, mode: Res<Mode>) {
+    if std::env::var("BF_NO_HUD").is_ok() {
+        return;
+    }
+    let cone = images.add(radar_cone());
+    // the chevron texture made white (its brightness kept for the tint) and turned four ways
+    if let Some((w, h, px)) = game.0.texture_rgba(CHEVRON) {
+        let at = |x: u32, y: u32| { let i = ((y * w + x) * 4) as usize; let l = px[i].max(px[i + 1]).max(px[i + 2]); [l, l, l, px[i + 3]] };
+        let n = w.min(h);
+        let make = |f: &dyn Fn(u32, u32) -> (u32, u32)| {
+            let mut out = Vec::with_capacity((n * n * 4) as usize);
+            for y in 0..n { for x in 0..n { let (sx, sy) = f(x, y); out.extend_from_slice(&at(sx, sy)); } }
+            Image::new(bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                       bevy::render::render_resource::TextureDimension::D2, out,
+                       bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                       bevy::asset::RenderAssetUsages::default())
+        };
+        let m = n - 1;
+        // the texture points left: right = mirrored, up / down = turned
+        gen.chevrons = [images.add(make(&|x, y| (m - x, y))), images.add(make(&|x, y| (x, y))),
+                        images.add(make(&|x, y| (y, x))), images.add(make(&|x, y| (m - y, x)))];
+    }
+    gen.bubble = texture(&mut game.0, &mut images, &mut cache, SQUAD_ICON).unwrap_or_default();
+    gen.skulls = [0, 1, 2, 3].map(|c| {
+        let id = game.0.character_icons.get(CHARACTERS[c]).map(|i| i.1).filter(|&i| i != 0)
+            .unwrap_or(if c == 0 { SKULL_BRUTUS } else { SKULL_HUMAN });
+        texture(&mut game.0, &mut images, &mut cache, id).unwrap_or_default()
+    });
+    if let Some((w, h, px)) = game.0.texture_rgba(RADAR_FRAME) {
+        gen.bar_texels = radar_channels(w as usize, h as usize, &px);
+        let n = (w * h) as usize;
+        gen.bars = [0, 1, 2, 3].map(|_| images.add(Image::new(
+            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            bevy::render::render_resource::TextureDimension::D2, [255, 255, 255, 0].repeat(n),
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default())));
+        gen.bar_fill = [-1.0; 4];
+        info!("radar health channels: {:?} texels", gen.bar_texels.iter().map(|t| t.len()).collect::<Vec<_>>());
+    }
+    if let Some((w, h, px)) = game.0.texture_rgba(FONT_ATLAS) {
+        gen.glyphs = font_glyphs(w, h, &px);
+        gen.font = images.add(Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                                         bevy::render::render_resource::TextureDimension::D2, px,
+                                         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                                         bevy::asset::RenderAssetUsages::default()));
+        info!("HUD font: {} capital glyphs", gen.glyphs.len());
+    }
+    let (chevrons, font, bars) = (gen.chevrons.clone(), gen.font.clone(), gen.bars.clone());
+    let game = &mut game.0;
+    let rim = images.add(sniper_rim());
+    let bar_frame = game.texture_rgba(BAR_FRAME_CORNER).map(|(w, h, px)| images.add(bar_frame(w, h, &px)));
+    let item_panel = game.texture_rgba(ITEM_PANEL).map(|(w, h, px)| images.add(upright(w, h, px)));
+    let mut tex = |name: u32| texture(game, &mut images, &mut cache, name);
+    let (frame, disc, panel, cross, bolt, frag) =
+        (tex(RADAR_FRAME), tex(RADAR_DISC), tex(WEAPON_PANEL), tex(CROSSHAIR_TEX), tex(ENERGY_ICON), tex(FRAG_ICON));
+    let image = |h: &Option<Handle<Image>>, color: Color| flipped(h.clone().unwrap_or_default()).with_color(color);
+
+    // full window, with the game's 4:3 screen centred in it
+    let window = commands.spawn(Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0),
+                                       justify_content: JustifyContent::Center, ..default() }).id();
+    let screen = commands.spawn((Node { height: Val::Percent(100.0), aspect_ratio: Some(4.0 / 3.0), ..default() }, ChildOf(window))).id();
+
+    // ---- the scope (under the rest of the HUD): for most, the game's frame h_1807ec04, a
+    // quarter (top right: outer grey, rounded corner, tick marks) mirrored four ways, the
+    // shading outside drawn dark as in the capture; Flint's sniper view has a cyan rim instead
+    // (an effect in the game, not a texture: approximated) ----
+    let quarter = tex(SCOPE_FRAME);
+    let (qw, qh) = SCOPE_QUARTER;
+    for (x, y, fx, fy) in [(320.0, 240.0 - qh, false, false), (320.0 - qw, 240.0 - qh, true, false),
+                           (320.0, 240.0, false, true), (320.0 - qw, 240.0, true, true)] {
+        commands.spawn((ChildOf(screen), at(x, y, qw, qh), ScopeOverlay(false), Visibility::Hidden,
+                        ImageNode { flip_x: fx, flip_y: fy, ..ImageNode::new(quarter.clone().unwrap_or_default()) }.with_color(SCOPE_SHADE)));
+    }
+    // beyond the frame's texture (wide windows): the same shading
+    for (x, w) in [(-SCOPE_FILL, 320.0 - qw + SCOPE_FILL), (320.0 + qw, SCOPE_FILL)] {
+        commands.spawn((ChildOf(screen), at(x, 240.0 - qh, w, 2.0 * qh), ScopeOverlay(false), Visibility::Hidden,
+                        BackgroundColor(SCOPE_FILL_COLOR)));
+    }
+    // (over the whole window, not just the 4:3 screen)
+    commands.spawn((ChildOf(window), Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                    ScopeOverlay(true), Visibility::Hidden, ImageNode::new(rim)));
+
+    // ---- health (red) and energy (blue), top left: in the game's glossy frame ----
+    match bar_frame {
+        Some(f) => {
+            // see-through glass, as in the capture: a faint blue tint inside, the frame over it
+            commands.spawn((ChildOf(screen), at(67.0, 42.0, 202.0, 33.0), BackgroundColor(Color::srgba(0.15, 0.3, 0.7, 0.18))));
+            commands.spawn((ChildOf(screen), at(64.0, 40.0, 208.0, 37.0), ImageNode::new(f).with_color(Color::srgba(1.0, 1.0, 1.0, BAR_FRAME_ALPHA))));
+        }
+        None => {
+            commands.spawn((ChildOf(screen), BackgroundColor(Color::srgba(0.08, 0.18, 0.45, 0.45)), BorderColor(HUD_BLUE),
+                            Node { border: UiRect::all(Val::Px(1.5)), ..at(64.0, 40.0, 208.0, 37.0) }));
+        }
+    }
+    let (red, blue, plus) = (tex(HEALTH_FILL), tex(ENERGY_FILL), tex(HEALTH_ICON));
+    commands.spawn((ChildOf(screen), at(73.0, 49.0, 190.0, 5.5), image(&red, Color::WHITE), SquadPart::PlayerHealth));
+    commands.spawn((ChildOf(screen), at(73.0, 61.5, 190.0, 5.5), image(&blue, Color::WHITE)));
+    commands.spawn((ChildOf(screen), at(49.0, 43.0, 13.0, 13.0), image(&plus, Color::WHITE)));
+    commands.spawn((ChildOf(screen), at(50.0, 58.0, 12.0, 16.0), image(&bolt, PALE)));
+
+    // ---- weapons, top right ----
+    for row in 0..WEAPON_ROWS {
+        let y = 43.0 + 45.0 * row as f32;
+        commands.spawn((ChildOf(screen), at(463.0, y, 128.0, 32.0), image(&panel, Color::WHITE), Part::Panel(row), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), at(463.0, y - 25.0, 128.0, 64.0), flipped(Handle::default()), Part::Icon(row), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), label("", 465.0, y - 3.0, 15.0, ORANGE), Part::Name(row), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), label("", 474.0, y + 14.0, 15.0, ORANGE), Part::Ammo(row), Visibility::Hidden));
+    }
+
+    // ---- radar, bottom left (centre 121, 368): disc, view cone, frame, player, portrait; in
+    // deathmatch there's no squad, and no radar (capture) ----
+    let squad = !mode.deathmatch;
+    if squad {
+        commands.spawn((ChildOf(screen), at(51.0, 298.5, 141.0, 141.0), image(&disc, Color::srgba(1.0, 1.0, 1.0, 0.85))));
+        commands.spawn((ChildOf(screen), at(75.0, 322.5, 93.0, 93.0), ImageNode::new(cone)));
+        commands.spawn((ChildOf(screen), at(57.5, 305.0, 128.0, 128.0), image(&frame, Color::WHITE)));
+        commands.spawn((ChildOf(screen), at(119.5, 367.0, 4.0, 4.0), BackgroundColor(Color::srgb(0.55, 1.0, 0.35)),
+                                  BorderRadius::all(Val::Percent(50.0))));
+        // the frame's four portrait notches are open in its texture; the game fills them dark behind
+        // the faces (texel boxes in the frame texture: top, right, bottom, left)
+        for (x0, y0, x1, y1) in [(50.0, 8.0, 80.0, 17.0), (110.0, 50.0, 119.0, 80.0), (48.0, 110.0, 78.0, 119.0), (8.0, 48.0, 17.0, 78.0)] {
+            commands.spawn((ChildOf(screen), at(57.5 + x0, 305.0 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9))));
+        }
+        for (i, &(cx, cy)) in PORTRAIT_CENTRE.iter().enumerate() {
+            let Some((w, h, px)) = game.texture_rgba(PORTRAITS[i]) else { continue };
+            // opaque bounding box (texture rows as stored)
+            let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+            for (k, p) in px.chunks_exact(4).enumerate() {
+                if p[3] > 40 {
+                    let (x, y) = (k as u32 % w, k as u32 / w);
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+                }
+            }
+            if x1 <= x0 || y1 <= y0 { continue }
+            let handle = texture(game, &mut images, &mut cache, PORTRAITS[i]).unwrap_or_default();
+            let (bw, bh) = ((x1 - x0) as f32, (y1 - y0) as f32);
+            let rect = Rect::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32);
+            commands.spawn((ChildOf(screen), at(cx - bw / 2.0, cy - bh / 2.0, bw, bh),
+                            ImageNode { rect: Some(rect), ..flipped(handle.clone()) }, ZIndex(1),
+                            SquadPart::Portrait(i), PortraitArt(handle, rect)));
+        }
+        for (i, &(cx, cy)) in TAB_CENTRE.iter().enumerate() {
+            commands.spawn((ChildOf(screen), at(cx - 5.0, cy - 5.0, 10.0, 10.0), flipped(Handle::default()), Part::Tab(i)));
+        }
+    }
+
+    // ---- grenades, bottom right: on the game's glossy panel (its cut corner top left) ----
+    match item_panel {
+        Some(p) => {
+            commands.spawn((ChildOf(screen), at(530.0, 376.0, 61.0, 61.0), ImageNode {
+                image_mode: bevy::ui::widget::NodeImageMode::Sliced(TextureSlicer {
+                    border: BorderRect::all(PANEL_SLICE), center_scale_mode: SliceScaleMode::Stretch,
+                    sides_scale_mode: SliceScaleMode::Stretch, max_corner_scale: 1.0 }),
+                ..ImageNode::new(p)
+            }));
+        }
+        None => {
+            commands.spawn((ChildOf(screen), BackgroundColor(Color::srgba(0.10, 0.22, 0.50, 0.40)), BorderColor(HUD_BLUE),
+                            Node { border: UiRect::all(Val::Px(1.0)), ..at(530.0, 376.0, 61.0, 61.0) }));
+        }
+    }
+    commands.spawn((ChildOf(screen), at(535.0, 379.0, 50.0, 50.0), image(&frag, Color::WHITE)));
+    commands.spawn((ChildOf(screen), label("Frag", 545.0, 421.0, 13.0, PALE)));
+    commands.spawn((ChildOf(screen), label("3", 579.0, 398.0, 14.0, PALE), Part::Frags));
+
+    // ---- crosshair, above centre (320, 187) ----
+    // the held weapon's own crosshair (its definition's reticule-prefix texture), 40 units across
+    commands.spawn((ChildOf(screen), at(300.0, 167.0, 40.0, 40.0), image(&cross, Color::srgba(0.2, 0.55, 1.0, 0.95)), Part::Crosshair));
+
+    // ---- grenade throw: bracket reticle and the charge meter right of it (capture: box 354..367 x
+    // 163..221, orange fill from the bottom, dark tick at ~72%) ----
+    let reticle = texture(game, &mut images, &mut cache, GRENADE_RETICLE);
+    commands.spawn((ChildOf(screen), at(302.0, 169.0, 36.0, 36.0), image(&reticle, Color::srgba(0.2, 0.55, 1.0, 0.95)),
+                    SquadPart::Reticle, Visibility::Hidden));
+    commands.spawn((ChildOf(screen), SquadPart::MeterBox, Visibility::Hidden, BorderColor(HUD_BLUE), BackgroundColor(Color::srgba(0.0, 0.05, 0.15, 0.25)),
+                    Node { border: UiRect::all(Val::Px(1.5)), ..at(354.0, 163.0, 13.0, 58.0) }));
+    commands.spawn((ChildOf(screen), SquadPart::MeterFill, Visibility::Hidden, BackgroundColor(Color::srgb(0.85, 0.55, 0.2)),
+                    at(355.5, 219.5, 10.0, 0.0)));
+    commands.spawn((ChildOf(screen), SquadPart::MeterTick, Visibility::Hidden, BackgroundColor(Color::srgb(0.08, 0.12, 0.25)),
+                    at(355.5, 178.5, 10.0, 1.5)));
+
+    // ---- squad: radar blips, selection marker, name over the chosen member ----
+    if !squad {
+        return;
+    }
+    for slot in 0..3 {
+        commands.spawn((ChildOf(screen), SquadPart::Blip(slot), Visibility::Hidden, BackgroundColor(SQUAD_YELLOW),
+                        BorderRadius::all(Val::Percent(50.0)), ZIndex(2), at(0.0, 0.0, 4.0, 4.0)));
+    }
+    // three red chevrons on the radar pointing at the portrait of the member being given control
+    for k in 0..3 {
+        commands.spawn((ChildOf(screen), SquadPart::Chevron(k), Visibility::Hidden, ImageNode::new(chevrons[0].clone()).with_color(CHEVRON_RED),
+                        ZIndex(2 + k as i32), at(0.0, 0.0, 30.0, 30.0)));
+    }
+    // the chosen member's name in the game's font, in the middle of the screen (capture: centred
+    // at 320, 238); a row of letter images, bottom-aligned
+    let name_box = commands.spawn((ChildOf(screen), SquadPart::SelectName, Visibility::Hidden, ZIndex(3),
+                                   Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center,
+                                          column_gap: Val::Px(2.0), ..at(20.0, NAME_CENTRE_Y - 40.0, 600.0, 80.0) })).id();
+    for k in 0..NAME_SLOTS {
+        commands.spawn((ChildOf(name_box), SquadPart::NameGlyph(k), Visibility::Hidden,
+                        ImageNode::new(font.clone()).with_color(NAME_ORANGE), Node::default()));
+    }
+    for (c, &(x, y)) in BUBBLE_AT.iter().enumerate() {
+        commands.spawn((ChildOf(screen), SquadPart::Bubble(c), Visibility::Hidden, flipped(Handle::default()), ZIndex(2), at(x, y, 10.0, 10.0)));
+    }
+    // squad health in the radar frame's diagonal channels (the frame's dark channel is the track)
+    for (c, bar) in bars.into_iter().enumerate() {
+        commands.spawn((ChildOf(screen), SquadPart::Health(c), ZIndex(1), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0),
+                        ImageNode::new(bar).with_color(HEALTH_PINK)));
+    }
+}
+
+/// Weapon rows (the held weapon first; every weapon with names for a moment after a switch),
+/// ammo, red panel on an empty clip, portrait, crosshair.
+fn update_hud_widgets(
+    player: Res<Player>,
+    squad: Res<Squad>,
+    mut game: ResMut<GameData>,
+    mut images: ResMut<Assets<Image>>,
+    mut cache: ResMut<HudImages>,
+    mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut Text>, Option<&mut TextColor>, Option<&mut Node>)>,
+) {
+    let Some(l) = player.loaded.as_ref() else { return };
+    let list = player.hud_list > 0.0;
+    let mut order: Vec<usize> = (0..l.weapons.len()).collect();
+    order.sort_by_key(|&i| i != player.weapon);
+    order.truncate(if list { WEAPON_ROWS } else { 1 });
+
+    for (part, mut vis, img, text, color, node) in &mut parts {
+        let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
+        match *part {
+            Part::Panel(r) | Part::Icon(r) | Part::Name(r) | Part::Ammo(r) => {
+                let Some(&w) = order.get(r) else { show(&mut vis, false); continue };
+                let def = &l.weapons[w].def;
+                let [clip, reserve] = player.ammo.get(w).copied().unwrap_or([0, 0]);
+                let empty = clip == 0;
+                let tint = if w == player.weapon { ORANGE } else { PALE };
+                match *part {
+                    Part::Panel(_) => {
+                        show(&mut vis, true);
+                        if let Some(mut img) = img {
+                            img.color = if empty { Color::srgb(1.0, 0.35, 0.3) } else { Color::WHITE };
+                        }
+                    }
+                    Part::Icon(_) => {
+                        let h = (def.icon != 0).then(|| texture(&mut game.0, &mut images, &mut cache, def.icon)).flatten();
+                        show(&mut vis, h.is_some());
+                        if let (Some(mut img), Some(h)) = (img, h) {
+                            if img.image != h { img.image = h; }
+                        }
+                    }
+                    Part::Name(_) => {
+                        show(&mut vis, list);
+                        if let Some(mut t) = text { if t.0 != def.label { t.0 = def.label.clone(); } }
+                        if let Some(mut c) = color { c.0 = tint; }
+                    }
+                    _ => {
+                        show(&mut vis, true);
+                        let s = format!("{clip} / {reserve}");
+                        if let Some(mut t) = text { if t.0 != s { t.0 = s; } }
+                        if let Some(mut c) = color { c.0 = tint; }
+                    }
+                }
+            }
+            Part::Frags => {
+                let s = player.grenades.max(0).to_string();
+                if let Some(mut t) = text { if t.0 != s { t.0 = s; } }
+            }
+            Part::Tab(i) => {
+                let speaking = if i == player.character % PORTRAITS.len() { player.speaking > 0.0 }
+                    else { squad.0.iter().any(|m| m.character == i && m.speaking > 0.0) };
+                // every tab shows the member's command (follow); speech has its own icon beside the portrait
+                let _ = speaking;
+                let icon = Some(PLAYER_ICON);
+                let h = icon.and_then(|icon| texture(&mut game.0, &mut images, &mut cache, icon));
+                let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.dead);
+                show(&mut vis, h.is_some() && !dead);
+                if let (Some(mut img), Some(h)) = (img, h) {
+                    if img.image != h { img.image = h; }
+                }
+            }
+            Part::Crosshair => {
+                show(&mut vis, !l.weapons.is_empty() && player.charge <= 0.0);
+                // in the scope: in the middle of the screen and larger
+                let s = player.scope;
+                let size = CROSSHAIR_SIZE + (SCOPE_CROSSHAIR_SIZE - CROSSHAIR_SIZE) * s;
+                let (cx, cy) = (320.0, CROSSHAIR_Y + (240.0 - CROSSHAIR_Y) * s);
+                if let Some(mut n) = node {
+                    let want = at(cx - size / 2.0, cy - size / 2.0, size, size);
+                    if n.top != want.top || n.width != want.width {
+                        (n.left, n.top, n.width, n.height) = (want.left, want.top, want.width, want.height);
+                    }
+                }
+                let id = l.weapons.get(player.weapon).map(|w| w.def.reticle).filter(|&r| r != 0).unwrap_or(CROSSHAIR_TEX);
+                if let (Some(mut img), Some(h)) = (img, texture(&mut game.0, &mut images, &mut cache, id)) {
+                    if img.image != h { img.image = h; }
+                    img.color = if player.aim_friend { FRIEND_GREEN } else { Color::srgba(0.2, 0.55, 1.0, 0.95) };
+                }
+            }
+        }
+    }
+}
+
+/// Squad blips on the radar (turning with the camera), the selection marker and the name (centre
+/// of the screen) while control passes to another member, and the grenade meter / reticle while a throw charges.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn update_squad_hud(
+    time: Res<Time>,
+    player: Res<Player>,
+    squad: Res<Squad>,
+    mut gen: ResMut<HudGen>,
+    mut images: ResMut<Assets<Image>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut zoom: Local<(Option<usize>, Option<(usize, f32)>)>,
+    mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>)>,
+) {
+    let dt = frame_dt(&time);
+    let font_k = windows.single().map(|w| w.height() / 480.0).unwrap_or(1.5);
+    let _ = &font_k;
+    // name: pending while selecting; when control passes, zoom it out
+    let (pending, zooming) = &mut *zoom;
+    if let Some((c, _)) = player.select {
+        *pending = Some(c);
+    } else if let Some(c) = pending.take() {
+        if player.character == c {
+            *zooming = Some((c, 0.0));
+        }
+    }
+    if let Some((_, t)) = zooming.as_mut() {
+        *t += dt;
+    }
+    if zooming.is_some_and(|(_, t)| t > NAME_ZOOM_TIME) {
+        *zooming = None;
+    }
+    let health = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c)
+        .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
+    let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
+    let pct = |x: f32, y: f32, n: &mut Node| { n.left = Val::Percent(x / 6.4); n.top = Val::Percent(y / 4.8); };
+    let fwd = Vec3::new(-player.cam_yaw.sin(), 0.0, -player.cam_yaw.cos());
+    let right = Vec3::new(player.cam_yaw.cos(), 0.0, -player.cam_yaw.sin());
+    let charging = player.charge > 0.0;
+    let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c).map(|m| (c, m.position)));
+    let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.dead);
+    for (part, mut vis, mut node, _text, _font, _color, img, art) in &mut parts {
+        match *part {
+            SquadPart::Blip(slot) => {
+                let Some(m) = squad.0.get(slot).filter(|m| !m.dead) else { show(&mut vis, false); continue };
+                let rel = m.position - player.position;
+                let mut v = Vec2::new(rel.dot(right), rel.dot(fwd)) * (RADAR_RADIUS / RADAR_RANGE);
+                if v.length() > RADAR_RADIUS {
+                    v = v.normalize() * RADAR_RADIUS;
+                }
+                show(&mut vis, true);
+                pct(RADAR_CENTRE.0 + v.x - 2.0, RADAR_CENTRE.1 - v.y - 2.0, &mut node);
+            }
+            SquadPart::Chevron(k) => {
+                show(&mut vis, selected.is_some());
+                if let Some((c, _)) = selected {
+                    let (px, py) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
+                    let u = Vec2::new(px - RADAR_CENTRE.0, py - RADAR_CENTRE.1).normalize_or(Vec2::X);
+                    let at = Vec2::new(px, py) - u * (28.0 - 5.0 * k as f32);
+                    pct(at.x - 15.0, at.y - 15.0, &mut node);
+                    let dir = if u.x.abs() > u.y.abs() { if u.x > 0.0 { 0 } else { 1 } } else if u.y < 0.0 { 2 } else { 3 };
+                    // lit one after another toward the portrait, then all dim again
+                    let step = (time.elapsed_secs() * 10.0) as usize % 4;
+                    let lit = k < step;
+                    if let Some(mut img) = img {
+                        if img.image != gen.chevrons[dir] { img.image = gen.chevrons[dir].clone(); }
+                        img.color = if lit { CHEVRON_RED } else { CHEVRON_RED.darker(0.25).with_alpha(0.75) };
+                    }
+                }
+            }
+            SquadPart::SelectName => {
+                show(&mut vis, selected.is_some() || zooming.is_some());
+            }
+            SquadPart::NameGlyph(k) => {
+                let (c, scale, alpha) = match (selected, *zooming) {
+                    (Some((c, _)), _) => {
+                        // popping in: from big down to size, quickly
+                        let e = player.select.map_or(1.0, |(_, left)| ((SELECT_TIME - left) / NAME_POP_TIME).clamp(0.0, 1.0));
+                        (Some(c), NAME_BIG * (1.0 + (NAME_POP - 1.0) * (1.0 - e) * (1.0 - e)), 1.0)
+                    }
+                    (None, Some((c, t))) => {
+                        let z = (t / NAME_ZOOM_TIME).min(1.0);
+                        (Some(c), NAME_BIG * (1.0 + (NAME_ZOOM_TO - 1.0) * z * (2.0 - z)), (1.0 - z) * (1.0 - z))
+                    }
+                    _ => (None, 1.0, 0.0),
+                };
+                let glyph = c.and_then(|c| CHARACTERS[c].to_uppercase().chars().nth(k)).and_then(|ch| gen.glyphs.get(&ch).copied());
+                show(&mut vis, glyph.is_some());
+                // unused slots leave the row entirely (hidden nodes still take up space)
+                let display = if glyph.is_some() { Display::Flex } else { Display::None };
+                if node.display != display { node.display = display; }
+                if let Some(r) = glyph {
+                    let k = NAME_SCALE * scale * font_k;
+                    node.width = Val::Px(r.width() * k);
+                    node.height = Val::Px(r.height() * k);
+                    if let Some(mut img) = img {
+                        img.rect = Some(r);
+                        img.color = NAME_ORANGE.with_alpha(alpha);
+                    }
+                }
+            }
+            SquadPart::Bubble(c) => {
+                let speaking = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.speaking > 0.0);
+                show(&mut vis, speaking);
+                if let Some(mut img) = img {
+                    if img.image != gen.bubble { img.image = gen.bubble.clone(); }
+                }
+            }
+            SquadPart::Portrait(c) => {
+                if let (Some(mut img), Some(art)) = (img, art) {
+                    let (want, rect, color) = if dead(c) {
+                        (gen.skulls[c].clone(), None, SKULL_TINT)
+                    } else {
+                        (art.0.clone(), Some(art.1), Color::WHITE)
+                    };
+                    if img.image != want { img.image = want; }
+                    if img.rect != rect { img.rect = rect; }
+                    img.color = color;
+                }
+            }
+            SquadPart::Health(c) => {
+                let Some(f) = health(c) else { show(&mut vis, false); continue };
+                show(&mut vis, !dead(c) && f > 0.0);
+                // light the channel's texels from the portrait end up to the health fraction
+                if (gen.bar_fill[c] - f).abs() > 1e-3 {
+                    gen.bar_fill[c] = f;
+                    if let Some(image) = images.get_mut(&gen.bars[c]) {
+                        if let Some(data) = image.data.as_mut() {
+                            for &(i, t) in &gen.bar_texels[c] {
+                                data[i * 4 + 3] = if t <= f { 255 } else { 0 };
+                            }
+                        }
+                    }
+                }
+            }
+            SquadPart::PlayerHealth => {
+                let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
+                node.width = Val::Percent(190.0 * f / 6.4);
+            }
+            SquadPart::MeterBox | SquadPart::MeterTick | SquadPart::Reticle => show(&mut vis, charging),
+            SquadPart::MeterFill => {
+                show(&mut vis, charging);
+                let h = 55.0 * player.charge;
+                node.top = Val::Percent((219.5 - h) / 4.8);
+                node.height = Val::Percent(h / 4.8);
+            }
+        }
+    }
+}
+
+/// Font sizes are in screen units (480 lines): scale them with the window height.
+fn scale_fonts(windows: Query<&Window, With<PrimaryWindow>>, mut fonts: Query<(&HudFont, &mut TextFont)>, mut last: Local<f32>,
+               new: Query<(), Added<HudFont>>) {
+    // a new map's HUD: scale its fonts too
+    if !new.is_empty() {
+        *last = 0.0;
+    }
+    let Ok(win) = windows.single() else { return };
+    let k = win.height() / 480.0;
+    if (k - *last).abs() < 1e-3 {
+        return;
+    }
+    *last = k;
+    for (base, mut font) in &mut fonts {
+        font.font_size = base.0 * k;
+    }
+}
