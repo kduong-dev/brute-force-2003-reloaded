@@ -716,7 +716,13 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
 * **Pickups.** They're stored at their spawn height in the level file; they now settle onto the
   floor below.
 * **Compound joints.** A compound object's joints carry a rotation (a w-x-y-z quaternion),
-  applied to the part (the wall sets turn pieces by 90° and 180°).
+  applied to the part (the wall sets turn pieces by 90° and 180°). A part sits at the joint's
+  parent-point + child-point, both in the parent's frame; the rotation turns only the part about
+  its own origin. Bulgar's compound `h_0baf091a` (hangar, bunk rooms: 19 pieces) is the one placed
+  object with non-zero child-points, and only this reading puts every piece inside the building:
+  read as parent-point − rotation × child-point, its roof bays landed outside the hangar and its
+  turned bunks went through the walls (issue #12). `BF_OVERLAP_LOG=1` (bf_level) lists large
+  objects whose boxes overlap much.
 * **Winding.** Object triangles are wound to face along their stored normals, so a mirrored mesh
   isn't culled from the front.
 * **The gate (h_0792d16a).** Its two leaves (h_e783bd32 → mesh h_e01d9aa6, h_fcd25d86 → h_178bc697)

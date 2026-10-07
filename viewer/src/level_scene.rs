@@ -691,6 +691,40 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                               open_sound: sound(SIGNAL_OPEN), close_sound: sound(SIGNAL_CLOSE) });
         }
     }
+    // BF_OVERLAP_LOG: large objects whose boxes overlap much (buildings through each other)
+    if std::env::var("BF_OVERLAP_LOG").is_ok() {
+        let mut boxes: Vec<(u32, u32, Vec3, Vec3)> = vec![];
+        for o in &level.objects {
+            let Some(arch) = o.archetype else { continue };
+            let Ok(m) = WeaponModel::load(game, arch) else { continue };
+            let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
+            for p in &m.parts {
+                for g in &p.geosets {
+                    for v in &g.positions {
+                        let w = o.transform.transform_point3(p.offset + p.rotation * Vec3::from(*v));
+                        (lo, hi) = (lo.min(w), hi.max(w));
+                    }
+                }
+            }
+            let size = hi - lo;
+            if size.x * size.y * size.z > 40.0 {
+                boxes.push((o.kind, arch, lo, hi));
+            }
+        }
+        for (i, a) in boxes.iter().enumerate() {
+            for b in &boxes[i + 1..] {
+                let (lo, hi) = (a.2.max(b.2), a.3.min(b.3));
+                let d = (hi - lo).max(Vec3::ZERO);
+                let both = d.x * d.y * d.z;
+                let vol = |x: &(u32, u32, Vec3, Vec3)| { let s = x.3 - x.2; s.x * s.y * s.z };
+                let share = both / vol(a).min(vol(b));
+                if share > 0.25 {
+                    println!("overlap {:3.0}%: h_{:08x} (arch h_{:08x}, {:.0} m3, centre {:.1}) and h_{:08x} (arch h_{:08x}, {:.0} m3, centre {:.1})",
+                             share * 100.0, a.0, a.1, vol(a), (a.2 + a.3) * 0.5, b.0, b.1, vol(b), (b.2 + b.3) * 0.5);
+                }
+            }
+        }
+    }
     // sky: layers in the mesh's order (sdm_e34: the flat top, the panorama of mountains and
     // clouds, the moon, a cloud swirl), self-lit (shader h_f539fe8c), the see-through ones
     // blended. Transparent meshes are drawn far to near by their origin, so each layer's origin

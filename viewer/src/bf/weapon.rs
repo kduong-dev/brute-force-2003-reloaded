@@ -245,12 +245,17 @@ impl WeaponModel {
                 if let Some(d) = joint.and_then(|j| j.children.first()) {
                     let v = |n: &str| d.child(h(n)).and_then(|e| e.text.as_ref()).map(|t| t.floats())
                         .filter(|f| f.len() >= 3).map(|f| Vec3::new(f[0], f[1], f[2])).unwrap_or(Vec3::ZERO);
-                    // the child's child-point sits on the parent's parent-point, turned by the
-                    // joint's ORIENTATION (w x y z; e.g. a wall set's mirrored gate leaves)
+                    // the part sits at parent-point + child-point, both in the parent's frame (a
+                    // building set lays its pieces out by the child-point: a hangar's roof bays
+                    // 5 m apart, its bunks in pairs), and the joint's ORIENTATION (w x y z; e.g. a
+                    // wall set's mirrored gate leaves) turns the part about its own origin. Read
+                    // as parent-point - ORIENTATION * child-point, Bulgar's compound h_0baf091a
+                    // came out jumbled: roof bays outside the building, bunks through the walls
+                    // (issue #12). Each of its 19 pieces lies inside the building only this way.
                     if let Some(q) = d.child(h("ORIENTATION")).and_then(|e| e.text.as_ref()).map(|t| t.floats()).filter(|q| q.len() >= 4) {
                         rotation = Quat::from_xyzw(q[1], q[2], q[3], q[0]).normalize();
                     }
-                    offset = v("parent-point") - rotation * v("child-point");
+                    offset = v("parent-point") + v("child-point");
                     let axis = v("axis");
                     if axis.length_squared() > 0.5 {
                         if d.attr(h("Type")).and_then(|t| t.as_hash()) == Some(SLIDING_JOINT) {
