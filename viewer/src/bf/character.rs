@@ -706,6 +706,20 @@ impl Game {
 
     /// RGBA8 of a texture; squad skins live in every level archive rather than common, so
     /// missing textures are searched for in level archives (texture files only) on demand.
+    /// Load one level archive's textures now (e.g. the tutorial's, for a HUD picture only it
+    /// holds), instead of waiting for `texture_rgba` to reach it: the pending archives go in name
+    /// order, and the tutorial's is last. Nothing if `name` is already known.
+    pub fn load_textures_for(&mut self, data_dir: &Path, level: &str, name: u32) {
+        if self.textures.contains_key(&name) {
+            return;
+        }
+        let path = data_dir.join(format!("{level}.tgz"));
+        if let Ok(ar) = Archive::open(&path, |n| n.starts_with("textures-")) {
+            let _ = self.load_textures(&ar);
+            self.pending_texture_archives.retain(|p| *p != path);
+        }
+    }
+
     pub fn texture_rgba(&mut self, name: u32) -> Option<(u32, u32, Vec<u8>)> {
         while !self.textures.contains_key(&name) && !self.pending_texture_archives.is_empty() {
             let p = self.pending_texture_archives.remove(0);

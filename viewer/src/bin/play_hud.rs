@@ -154,6 +154,62 @@ fn upright(w: u32, h: u32, px: Vec<u8>) -> Image {
                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
 }
 
+/// The original's health / stamina frame: the tutorial's picture of it (tutorial h_17f34cbe,
+/// 256 x 64, the + and bolt icons, the frame with its corner tabs and divider, both bars baked
+/// in). Cut in three across: the left cap with the icons, a middle that stretches, the right cap.
+/// Its baked bars are painted the empty-bar navy it shows itself (the stamina bar's empty end)
+/// and the live bars drawn over them. Upright texel columns and rows:
+const TUTORIAL_BAR: u32 = 0x17F3_4CBE;
+/// the picture's frame (icons to the right tab) and its pieces: the icons (drawn solid), then the
+/// frame's left cap, middle and right cap (drawn as glass)
+const TB_ROWS: (u32, u32) = (12, 51);
+const TB_ICONS: (u32, u32) = (34, 46);
+const TB_LEFT: (u32, u32) = (46, 75);
+const TB_MIDDLE: (u32, u32) = (75, 185);
+const TB_RIGHT: (u32, u32) = (185, 212);
+/// the bars (health, stamina): rows, and the columns both span
+const TB_BAR_ROWS: [(u32, u32); 2] = [(22, 28), (35, 41)];
+const TB_BAR_COLS: (u32, u32) = (56, 200);
+const TB_EMPTY: [u8; 4] = [0, 20, 107, 255];
+/// where the picture's icons and frame go on the 640 x 480 screen (their top-left, native size: its body
+/// is 38 texels high, the old frame's 37)
+const TB_AT: (f32, f32) = (52.0, 39.0);
+/// The bars' length for a character's maximum health: Tex's 115 gives TB_FULL (the frame's
+/// length to height then matches a capture, 5.4; the picture's own bars are 144 texels).
+const TB_FULL: f32 = 184.0;
+const TB_FULL_HEALTH: f32 = 115.0;
+/// how opaque the frame is drawn (the picture is opaque, baked on the tutorial's screen; the
+/// capture's frame is glass, the sky showing through)
+const TB_ALPHA: f32 = 0.45;
+
+/// The bars' length (screen units) for a maximum health.
+fn bar_length(max_health: f32) -> f32 {
+    TB_FULL * max_health.max(1.0) / TB_FULL_HEALTH
+}
+
+/// The tutorial picture's pieces (icons, left, middle, right), upright, the bars emptied.
+fn tutorial_frame(w: u32, h: u32, px: &[u8]) -> [Image; 4] {
+    let at = |x: u32, y: u32| -> [u8; 4] {
+        let in_bar = TB_BAR_ROWS.iter().any(|&(a, b)| (a..b).contains(&y)) && (TB_BAR_COLS.0..TB_BAR_COLS.1).contains(&x);
+        if in_bar {
+            return TB_EMPTY;
+        }
+        let i = (((h - 1 - y) * w + x) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2], px[i + 3]]
+    };
+    [TB_ICONS, TB_LEFT, TB_MIDDLE, TB_RIGHT].map(|(x0, x1)| {
+        let mut out = vec![];
+        for y in TB_ROWS.0..TB_ROWS.1 {
+            for x in x0..x1 {
+                out.extend_from_slice(&at(x, y));
+            }
+        }
+        Image::new(bevy::render::render_resource::Extent3d { width: x1 - x0, height: TB_ROWS.1 - TB_ROWS.0, depth_or_array_layers: 1 },
+                   bevy::render::render_resource::TextureDimension::D2, out,
+                   bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
+    })
+}
+
 /// The health / energy frame from its corner and edge (see BAR_FRAME_CORNER).
 fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
     let (w, h) = (BAR_FRAME_WIDTH.max(2 * cw), 2 * ch);
@@ -263,6 +319,9 @@ fn font_glyphs(w: u32, h: u32, px: &[u8]) -> HashMap<char, Rect> {
 /// speech icon.
 #[derive(Resource, Default)]
 struct HudGen {
+    /// the health / stamina frame is the original's (TUTORIAL_BAR), its length following the
+    /// character's maximum health
+    tutorial_frame: bool,
     /// per character: its health bar image (frame-sized), the channel texels (index, how far
     /// from the portrait end 0-1) and the fill drawn last
     bars: [Handle<Image>; 4],
@@ -383,6 +442,11 @@ enum SquadPart {
     Health(usize),
     /// the controlled character's health (top-left red bar)
     PlayerHealth,
+    /// the stamina bar, and the frame's stretching middle and its right cap (the tutorial
+    /// picture's frame: they follow the character's maximum health, see `bar_length`)
+    PlayerStamina,
+    FrameMiddle,
+    FrameRight,
     /// the selection's three chevrons on the radar
     Chevron(usize),
     /// the chosen member's name in the game's font: letter slots
@@ -516,6 +580,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let (chevrons, font, bars) = (gen.chevrons.clone(), gen.font.clone(), gen.bars.clone());
     let game = &mut game.0;
     let rim = images.add(sniper_rim());
+    game.load_textures_for(&super::data_dir(), "tutorial", TUTORIAL_BAR);
+    let tutorial = game.texture_rgba(TUTORIAL_BAR).map(|(w, h, px)| tutorial_frame(w, h, &px).map(|i| images.add(i)));
     let bar_frame = game.texture_rgba(BAR_FRAME_CORNER).map(|(w, h, px)| images.add(bar_frame(w, h, &px)));
     let item_panel = game.texture_rgba(ITEM_PANEL).map(|(w, h, px)| images.add(upright(w, h, px)));
     let mut tex = |name: u32| texture(game, &mut images, &mut cache, name);
@@ -549,6 +615,30 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                     ScopeOverlay(true), Visibility::Hidden, ImageNode::new(rim)));
 
     // ---- health (red) and energy (blue), top left: in the game's glossy frame ----
+    let (red, blue, plus) = (tex(HEALTH_FILL), tex(ENERGY_FILL), tex(HEALTH_ICON));
+    let (x0, y0, x1, y1) = BAR_FILL_RECT;
+    let fill = |h: &Option<Handle<Image>>| ImageNode { rect: Some(Rect::new(x0, y0, x1, y1)), ..image(h, Color::WHITE) };
+    gen.tutorial_frame = tutorial.is_some();
+    if let Some([icons, left, middle, right]) = tutorial {
+        // the original's frame (see TUTORIAL_BAR): left cap with the icons, the middle stretched
+        // and the right cap placed for the character (update_squad_hud), the bars over it
+        let glass = Color::srgba(1.0, 1.0, 1.0, TB_ALPHA);
+        let piece = |(a, b): (u32, u32)| (b - a) as f32;
+        let (top, high) = (TB_AT.1, (TB_ROWS.1 - TB_ROWS.0) as f32);
+        let left_x = TB_AT.0 + piece(TB_ICONS);
+        let mid_x = left_x + piece(TB_LEFT);
+        commands.spawn((ChildOf(screen), at(TB_AT.0, top, piece(TB_ICONS), high), ImageNode::new(icons)));
+        commands.spawn((ChildOf(screen), at(left_x, top, piece(TB_LEFT), high), ImageNode::new(left).with_color(glass)));
+        commands.spawn((ChildOf(screen), at(mid_x, top, piece(TB_MIDDLE), high), ImageNode::new(middle).with_color(glass), SquadPart::FrameMiddle));
+        commands.spawn((ChildOf(screen), at(mid_x + piece(TB_MIDDLE), top, piece(TB_RIGHT), high), ImageNode::new(right).with_color(glass),
+                        SquadPart::FrameRight));
+        let bar_x = TB_AT.0 + (TB_BAR_COLS.0 - TB_ICONS.0) as f32;
+        let row = |i: usize| (TB_AT.1 + (TB_BAR_ROWS[i].0 - TB_ROWS.0) as f32, (TB_BAR_ROWS[i].1 - TB_BAR_ROWS[i].0) as f32);
+        let ((hy, hh), (sy, sh)) = (row(0), row(1));
+        let full = piece(TB_BAR_COLS);
+        commands.spawn((ChildOf(screen), at(bar_x, hy, full, hh), fill(&red), SquadPart::PlayerHealth));
+        commands.spawn((ChildOf(screen), at(bar_x, sy, full, sh), fill(&blue), SquadPart::PlayerStamina));
+    } else {
     match bar_frame {
         Some(f) => {
             // see-through glass, as in the capture: a faint blue tint inside, the frame over it
@@ -561,16 +651,15 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                             Node { border: UiRect::all(Val::Px(1.5)), ..at(64.0, 40.0, 208.0, 37.0) }));
         }
     }
-    let (red, blue, plus) = (tex(HEALTH_FILL), tex(ENERGY_FILL), tex(HEALTH_ICON));
+    // (without the tutorial's picture: the frame built from its corner, a fixed length)
     // each bar fills its channel's open interior, its icon level with it
     let ((health_y, health_h), (stamina_y, stamina_h)) = (bar_channel(0), bar_channel(1));
     let (bar_x, bar_w) = bar_span();
-    let (x0, y0, x1, y1) = BAR_FILL_RECT;
-    let fill = |h: &Option<Handle<Image>>| ImageNode { rect: Some(Rect::new(x0, y0, x1, y1)), ..image(h, Color::WHITE) };
     commands.spawn((ChildOf(screen), at(bar_x, health_y, bar_w, health_h), fill(&red), SquadPart::PlayerHealth));
     commands.spawn((ChildOf(screen), at(bar_x, stamina_y, bar_w, stamina_h), fill(&blue)));
     commands.spawn((ChildOf(screen), at(49.0, health_y + health_h * 0.5 - 6.5, 13.0, 13.0), image(&plus, Color::WHITE)));
     commands.spawn((ChildOf(screen), at(50.0, stamina_y + stamina_h * 0.5 - 8.0, 12.0, 16.0), image(&bolt, PALE)));
+    }
 
     // ---- weapons, top right ----
     for row in 0..WEAPON_ROWS {
@@ -912,7 +1001,18 @@ fn update_squad_hud(
             }
             SquadPart::PlayerHealth => {
                 let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
-                node.width = Val::Percent(bar_span().1 * f / 6.4);
+                let full = if gen.tutorial_frame { bar_length(player.max_health) } else { bar_span().1 };
+                node.width = Val::Percent(full * f / 6.4);
+            }
+            SquadPart::PlayerStamina => node.width = Val::Percent(bar_length(player.max_health) / 6.4),
+            SquadPart::FrameMiddle => {
+                // the middle takes up what the bars' length adds to (or takes from) the picture's
+                let extra = bar_length(player.max_health) - (TB_BAR_COLS.1 - TB_BAR_COLS.0) as f32;
+                node.width = Val::Percent(((TB_MIDDLE.1 - TB_MIDDLE.0) as f32 + extra).max(1.0) / 6.4);
+            }
+            SquadPart::FrameRight => {
+                let extra = bar_length(player.max_health) - (TB_BAR_COLS.1 - TB_BAR_COLS.0) as f32;
+                node.left = Val::Percent((TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + extra) / 6.4);
             }
             SquadPart::MeterBox | SquadPart::MeterTick | SquadPart::Reticle => show(&mut vis, charging),
             SquadPart::MeterFill => {

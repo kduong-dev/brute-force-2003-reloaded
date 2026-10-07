@@ -372,6 +372,15 @@ fn main() {
             }
             return;
         }
+        // BF_DUMP_HITPOINTS=1: each character's hitpoints, and exit
+        if std::env::var("BF_DUMP_HITPOINTS").is_ok() {
+            let mut hp: Vec<_> = game.character_hitpoints.iter().collect();
+            hp.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, hp) in hp {
+                println!("{name:12} {hp}");
+            }
+            return;
+        }
         if std::env::var("BF_DUMP_WEAPONS").is_ok() {
             dump_weapons(&game);
             return;

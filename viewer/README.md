@@ -137,6 +137,17 @@ catch up, walking the last bit), look where you look, and
 reload on their own. They never fire just because you do - only at enemies they can see (none in the demo yet). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
 yellow blips on the radar (turning with the camera, 40 m range). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
 
+HUD health / stamina frame: the original's own art, the tutorial's picture of it (`h_17f34cbe`,
+256 × 64, only in tutorial.tgz: loaded for it directly). It's cut in pieces: the + and bolt icons
+(drawn solid), the frame's left cap, a middle that stretches and the right cap (drawn as glass, 45%:
+Bevy blends see-through UI in linear light, so that's what matches a capture's body colour,
+22 46 86, ours 17 51 91). Its baked bars are painted its own empty-bar navy (0 20 107) and the live
+bars drawn over them (rows 22–27 and 35–40, from column 56). The bars' length follows the
+character's maximum health (`combat-target hitpoints`: Tex 115, Brutus 105, Flint 90, Hawk 65;
+`BF_DUMP_HITPOINTS=1` lists them): Tex's 184, which gives the capture's frame proportions (5.4 to
+1), the others in proportion; the frame's middle stretches with them, and a squad switch resizes
+it. Without the tutorial's picture, the frame below is used.
+
 HUD textures found for the panels: the health / energy frame is built from its corner
 `h_0cdf5876` (32 × 16 end cap, mirrored four ways; it holds the step from the raised ends down to
 the middle, whose level its inner column carries along), drawn as glass at 55% over a faint
