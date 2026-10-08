@@ -11,6 +11,8 @@
 //!    taken and used as on a map; the rest are loose objects.
 //!  - Instant kill: the player's shots and grenades kill any squad member they hurt, in one
 //!    hit. On at the start; K turns it on and off.
+//!  - X kills the controlled character outright (for the death camera and the hand-over to
+//!    the next squad member).
 //!  - The controls panel (H) lives here; the main game doesn't show it.
 
 use super::*;
@@ -83,7 +85,7 @@ struct PendingSlot(Option<usize>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<PendingSlot>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))
-        .add_systems(Update, (toggle_instant_kill, take_weapons, spin_rack).chain().after(update_player)
+        .add_systems(Update, (toggle_instant_kill, suicide, take_weapons, spin_rack).chain().after(update_player)
             .run_if(in_state(AppState::Playing).and(resource_exists::<TestMap>)));
 }
 
@@ -165,6 +167,20 @@ fn toggle_instant_kill(keys: Res<ButtonInput<KeyCode>>, mut test: ResMut<TestMap
     }
 }
 
+/// X: the controlled character dies on the spot, as from any other hurt (death cry, ragdoll,
+/// the death camera, the hand-over to the next squad member).
+/// (test hook: BF_TEST_SUICIDE=<s> presses it at that time)
+fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: ResMut<Player>, mut tested: Local<bool>) {
+    let test = std::env::var("BF_TEST_SUICIDE").ok().and_then(|v| v.parse::<f32>().ok())
+        .is_some_and(|at| player.sim_time >= at && !*tested);
+    if (keys.just_pressed(KeyCode::KeyX) || test) && !player.dead {
+        *tested |= test;
+        let (at, back) = (player.position + Vec3::Y * 1.0, Quat::from_rotation_y(player.yaw) * Vec3::Z);
+        let all = player.health;
+        hurt(&mut player, &game.0, all, HURT_CHATTER, back * 2.0 + Vec3::Y, at, -1);
+    }
+}
+
 /// Walking into a rack weapon: it goes into the held weapon's slot, and the character is
 /// respawned carrying it (with it in hand once they're back).
 fn take_weapons(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>, mut pending: ResMut<PendingSlot>,
@@ -177,7 +193,8 @@ fn take_weapons(mut commands: Commands, mut game: ResMut<GameData>, mut player: 
         pending.0 = None;
         return;
     }
-    if pending.0.is_some() || player.dead || player.loaded.is_none() {
+    // walking into it, not standing on it (taking over a squad member who stands on the rack)
+    if pending.0.is_some() || player.dead || player.loaded.is_none() || player.move_input == Vec2::ZERO {
         return;
     }
     let feet = player.position;

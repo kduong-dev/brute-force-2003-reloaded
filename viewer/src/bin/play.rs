@@ -4044,7 +4044,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         "{}   {}   {}{}   {}{}\n\
          WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   E use   M surface   H hide\n\
          click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
-         test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}",
+         test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die",
         CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
         if test.instant_kill { "on" } else { "off" });
     if text.0 != s {

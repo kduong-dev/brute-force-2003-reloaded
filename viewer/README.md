@@ -52,6 +52,9 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     and everything is loose (kicked, thrown by blasts, tumbling).
 * **Instant kill**, on at the start, K toggles it. The player's shots and grenades kill any
   squad member they hurt, in one hit. The player still takes normal damage.
+* **X kills the controlled character** on the spot, as any hurt does: the death cry and
+  ragdoll, then the death camera and the hand-over to the next squad member (or, with nobody
+  left, the camera stays on the body). `BF_TEST_SUICIDE=<s>` presses it at that time.
 * **The controls panel**, which the main game no longer shows: the keys and the debug line
   (character, state, clip, surface, weapon). H hides it.
 
