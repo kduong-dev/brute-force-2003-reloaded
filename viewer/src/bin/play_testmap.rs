@@ -35,10 +35,11 @@ const ITEMS_ROW: usize = 8;
 const ITEMS_STEP: f32 = 1.4;
 const ITEMS_Z: f32 = -12.0;
 /// The levels whose weapons the test map loads (see `load_weapon_data`).
-/// The multiplayer archives (1 s to load) hold 25 hand weapons with models, against the
-/// first mission's 10. Every campaign level adds a few more (A10 Bioreactive, Confed LZR-50,
-/// ...), but each takes about 10 s to read, so they're left out.
-const TEST_LEVELS: [&str; 8] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6", "mp7", "mp8"];
+/// The multiplayer archives hold 24 hand weapons with models, against the first mission's 10.
+/// The campaign adds three: A10 Bioreactive, Confed LZR-50 and Jax-iP, all in m02_a (found by
+/// loading every level with BF_TESTMAP_LOG). Every level together loads in about 6 s and
+/// adds nothing more; these take about 0.2 s.
+const TEST_LEVELS: [&str; 9] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6", "mp7", "mp8", "m02_a"];
 /// How high (m) the pickups are dropped from, and how far (rad) each is tipped either way.
 const DROP_HEIGHT: f32 = 0.3;
 const DROP_TIP: f32 = 0.2;
@@ -102,16 +103,25 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
     let mut models = std::collections::HashSet::new();
     for (key, def) in weapons {
         // hand weapons only (the rest are pickups, props and level objects), one per model
+        let log = std::env::var("BF_TESTMAP_LOG").is_ok();
+        let skip = |why: &str| if log && def.ammo > 0 {
+            println!("skipped h_{key:08x} {:24} arch h_{:08x}: {why}", def.label, def.archetype);
+        };
         if def.ammo <= 0 || !models.insert(def.archetype) {
+            skip("its model is already on the rack");
             continue;
         }
-        let Ok(model) = WeaponModel::load(&game.0, def.archetype) else { continue };
+        let Ok(model) = WeaponModel::load(&game.0, def.archetype) else {
+            skip("no model");
+            continue;
+        };
         let size = model.parts.iter().flat_map(|p| p.geosets.iter().flat_map(|g| g.positions.iter().map(|v| Vec3::from(*v))))
             .fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(v), u.max(v)));
         if (size.1 - size.0).max_element() < 0.1 {
+            skip("under 0.1 m");
             continue;
         }
-        if std::env::var("BF_TESTMAP_LOG").is_ok() {
+        if log {
             let (lo, hi) = model.parts.iter().flat_map(|p| p.geosets.iter().flat_map(move |g| g.positions.iter().map(move |v| p.offset + p.rotation * Vec3::from(*v))))
                 .fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(v), u.max(v)));
             println!("weapon h_{key:08x} {:24} type {:3} ammo {:4} arch h_{:08x} size {:.2}", def.label, def.weapon_type, def.ammo, def.archetype, hi - lo);

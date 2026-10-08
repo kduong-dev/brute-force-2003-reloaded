@@ -36,15 +36,18 @@ Four programs:
 A flat test floor for trying things out, only reachable with the `--test` flag. It opens
 straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`).
 
-* **Every hand weapon on a rack**, floating and turning in front of the start: the 24 weapon
-  definitions with a clip whose model loads (one per model), from the first mission's data
-  plus the multiplayer archives (`mp_common`, `mp1`-`mp8`, read in about 1 s). Walk into one
+* **Every hand weapon on a rack**, floating and turning in front of the start: the 27 weapon
+  definitions with a clip whose model loads (one per model), from the first mission's data,
+  the multiplayer archives (`mp_common`, `mp1`-`mp8`) and m02_a, which holds the three
+  campaign-only ones (A10 Bioreactive, Confed LZR-50, Jax-iP); about 0.7 s. Walk into one
   to take it into the held weapon's slot: the character is respawned carrying it, with a full
   clip, and "Took <name>" shows.
-  * A few campaign-only weapons (A10 Bioreactive, Confed LZR-50, ...) are missing: each
-    campaign level takes about 10 s to read.
+  * Loading every level (about 6 s) adds no others: the rest are the creatures' built-in
+    weapons (no model), Feral Cutter (the same model as another) and the iKhan-GPL (a model
+    under 0.1 m).
   * `BF_TESTMAP_LEVELS=<level>,<level>...` loads a different list.
-  * `BF_TESTMAP_LOG=1` lists every weapon definition with its type, clip and model size.
+  * `BF_TESTMAP_LOG=1` lists every weapon on the rack with its type, clip and model size, and
+    every hand weapon left off it, with why.
 * **One of every pickup type** with a model (one per model) in a grid behind the rack.
   * They're dropped in from 0.3 m, upright as modelled but turned at random and tipped up to
     0.2 rad, so each settles as it would. A crate lands on its base; the Garo fruit (modelled
