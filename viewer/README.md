@@ -145,7 +145,13 @@ Squad movement and deaths follow the game's own data and the captures:
   emitter / appearance numbers in `play_fx.rs` are those nodes' parameters, read as Freelancer's
   ALE ones (Brute Force hashes their names). Each hit also leaves the character's hit decal on
   the ground past them (h_14410af1: the game's white splat textures tinted 128,34,34,220; about
-  1 m across, as in the captures) for 40 s, fading over the last 20. A
+  1 m across, as in the captures) for 40 s, fading over the last 20. Flint bleeds grey: she's
+  taken to be synthetic flesh (world material 24, WMAT_FLESH_SYNTHETIC: an inference from her
+  grey decals, the data doesn't name a character's material), whose debris bundle h_1f7ca034
+  is blood_puff_b, bloodsplat_b and giblet_b - the same nodes in grey and blue-grey, slower
+  and smaller - and whose hit sounds for the heavier ammo are metallic. Her hit decal
+  (h_02d017b7) is tinted 50,50,50. Verified with `BF_CHARACTER=1 BF_TEST_SUICIDE=1 -- --test`
+  captures against Brutus (`BF_CHARACTER=0`): grey mist and splats for her, red for him. A
   hard hit (15+ damage: L-Shot, Bower, a close grenade) can knock a character down: the body
   goes limp (ragdoll, pushed harder at the top so it topples) for 0.7 s, thuds on the ground
   (the surface's landing sound) and gets back up over 0.45 s where it lies - the game uses

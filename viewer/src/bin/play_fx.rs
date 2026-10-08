@@ -38,6 +38,13 @@ const EASE_IN_OUT: u8 = 4;
 
 /// The world material characters are made of (WMAT_FLESH_HUMAN).
 const FLESH: i64 = 21;
+/// Flint's world material: WMAT_FLESH_SYNTHETIC (24 in the XBE's WMAT_ name table, counted from
+/// WMAT_DEFAULT = 0). An inference: the data doesn't name a character's material, but Flint's
+/// decals are grey (h_02d017b7, h_0d7a5245: RGBA 50,50,50) and 24 is the flesh whose debris
+/// (h_1f7ca034: blood_puff_b, bloodsplat_b, giblet_b) is grey.
+const SYNTHETIC: i64 = 24;
+/// The character made of SYNTHETIC.
+const SYNTHETIC_CHARACTER: &str = "flint";
 /// Particle colour / alpha steps (one shared material each).
 const STEPS: usize = 32;
 /// Streaked particles (motion blur) are drawn this many seconds of motion long.
@@ -337,10 +344,102 @@ static DNA_PILL: Effect = Effect {
     },
 };
 
-static EFFECTS: [&Effect; 7] = [&BLOOD_MIST, &BLOOD_DROPS, &GIBLET, &FLESH_SPARKS, &DNA_PILL, &FLESH_CUTTER, &FLESH_LASER];
+/// blood_puff_b (synthetic flesh): blood_mist_b.emt / blood_mist_b.app. Grey, slower and
+/// fewer than blood_mist.
+static BLOOD_MIST_B: Effect = Effect {
+    id: 7,
+    emit: Emit {
+        time: 0.21,
+        rate: &[(0.0135, &[(-0.0088, 49.92), (0.1939, 42.1), (0.2056, 0.0)]),
+                (1.0, &[(-0.0027, 69.7), (0.1491, 67.54), (0.2076, 0.0)])],
+        life: &[(0.0158, 0.546), (0.0802, 0.333), (0.122, 0.503), (0.161, 0.357)],
+        speed: &[(0.0, &[(0.0, 0.2268)])],
+        size: 0.2412,
+        spread_min: &[(0.0, 28.48)],
+        spread_max: &[(0.0, 90.0)],
+        gravity: 0.0,
+    },
+    look: Look {
+        texture: 0xEA18_1967,   // smokecard.tga
+        additive: false,
+        color: &[(0.0115, [0.51, 0.51, 0.51]), (0.684, [0.259, 0.278, 0.31])],
+        alpha: &[(0.0, 0.809), (1.0, 0.0)],
+        size: &[(0.0, &[(0.0, 0.021), (0.0524, 0.3285), (1.0, 1.094)]),
+                (1.0, &[(0.0, 0.0385), (0.0536, 0.3723), (1.0, 1.465)])],
+        size_ease: LINEAR,
+        aspect: 1.0,
+        width: &[(0.0, 1.0)],
+        streak: false,
+        spin: &[(0.0, 0.0)],
+    },
+};
+
+/// bloodsplat_b (synthetic flesh): bloodsplat_b.emt / bloodsplat_b.app /
+/// bloodsplat_s_gravfld_b. Grey-blue droplets, slower and under less gravity than bloodsplat_s.
+static BLOOD_DROPS_B: Effect = Effect {
+    id: 8,
+    emit: Emit {
+        time: 0.2,
+        rate: &[(0.189, &[(0.0005, 258.1), (0.0647, 152.5), (0.1032, 187.1), (0.1513, 0.0)]),
+                (1.0, &[(0.0066, 289.8), (0.0583, 169.5), (0.1434, 199.1), (0.1457, 0.0)])],
+        life: &[(0.00352, 0.984), (0.0462, 0.417)],
+        speed: &[(0.0, &[(-0.00167, 3.21), (0.0744, 3.0), (0.1072, -2.9)]),
+                 (1.0, &[(0.00207, 4.98), (0.0744, 4.92), (0.1124, -5.07)])],
+        size: 0.046,
+        spread_min: &[(0.0, 0.0)],
+        spread_max: &[(0.00737, 0.0), (0.1184, 12.32)],
+        gravity: 1.445,
+    },
+    look: Look {
+        texture: 0x1500_CF27,   // diffuse_big.tga
+        additive: false,
+        color: &[(0.0172, [0.722, 0.745, 0.788]), (0.322, [0.239, 0.255, 0.306])],
+        alpha: &[(0.0, 0.0), (0.0641, 0.606), (1.0, 0.0)],
+        size: &[(0.0, &[(0.0, 0.156), (0.0727, 0.0673), (1.0, 0.0)])],
+        size_ease: LINEAR,
+        aspect: 1.0,
+        width: &[(0.0, 1.0)],
+        streak: true,
+        spin: &[(0.0, 0.0)],
+    },
+};
+
+/// giblet_b (synthetic flesh): giblet_b.emt / giblet_b.app. Dark blue-grey spatters, twice
+/// giblet's emitter size.
+static GIBLET_B: Effect = Effect {
+    id: 9,
+    emit: Emit {
+        time: 0.22,
+        rate: &[(0.0, &[(0.0199, 5.91), (0.2021, 5.95), (0.2021, 0.0)]),
+                (1.0, &[(0.0075, 23.63), (0.1897, 22.78), (0.2221, 0.0)])],
+        life: &[(0.00299, 0.224), (0.0962, 0.105)],
+        speed: &[(0.0, &[(0.0059, 1.32), (0.0942, 1.3), (0.173, -1.25), (0.261, -1.39)])],
+        size: 0.2166,
+        spread_min: &[(0.0, 0.0)],
+        spread_max: &[(0.0, 10.57)],
+        gravity: 0.0,
+    },
+    look: Look {
+        texture: 0xFBD5_61C9,   // blood.tga
+        additive: false,
+        color: &[(0.0, [0.314, 0.341, 0.404])],
+        alpha: &[(0.0, 0.678), (1.0, 0.0)],
+        size: &[(0.0, &[(0.0002, 0.133), (1.0, 0.953)])],
+        size_ease: LINEAR,
+        aspect: 1.0,
+        width: &[(0.0, 1.0)],
+        streak: false,
+        spin: &[(0.009, -0.0009)],
+    },
+};
+
+static EFFECTS: [&Effect; 10] = [&BLOOD_MIST, &BLOOD_DROPS, &GIBLET, &FLESH_SPARKS, &DNA_PILL, &FLESH_CUTTER, &FLESH_LASER,
+                                 &BLOOD_MIST_B, &BLOOD_DROPS_B, &GIBLET_B];
 
 /// The debris bundle every flesh hit gets (h_f304f9fb).
 static BLOOD: [&Effect; 3] = [&BLOOD_DROPS, &GIBLET, &BLOOD_MIST];
+/// Synthetic flesh's debris bundle (h_1f7ca034).
+static BLOOD_B: [&Effect; 3] = [&BLOOD_DROPS_B, &GIBLET_B, &BLOOD_MIST_B];
 
 /// A flesh material's hit effect for an ammo type: the squad's three (ballistic, cutter, laser)
 /// and their lights.
@@ -408,6 +507,8 @@ struct FxAssets {
     steps: Vec<Vec<Handle<StandardMaterial>>>,
     decal_textures: HashMap<u32, Handle<Image>>,
     flesh: Option<Surface>,
+    /// SYNTHETIC's entry: Flint's hit sounds and effects
+    synthetic: Option<Surface>,
 }
 
 #[derive(Resource)]
@@ -485,6 +586,7 @@ fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResM
     let decal_ids: Vec<u32> = game.0.character_decals.values().flat_map(|&(a, b)| [a, b])
         .flat_map(|name| game.0.decals.get(&name).map(|d| d.textures.clone()).unwrap_or_default()).collect();
     let flesh = game.0.surfaces.iter().find(|s| s.id == FLESH).cloned();
+    let synthetic = game.0.surfaces.iter().find(|s| s.id == SYNTHETIC).cloned();
     let mut tex = |id: u32, linear: bool| game.0.texture_rgba(id).map(|(w, h, px)| images.add(rgba(w, h, px, linear)));
     let mut steps = vec![];
     for fx in EFFECTS {
@@ -519,7 +621,7 @@ fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResM
     commands.insert_resource(FxAssets {
         quad: meshes.add(Rectangle::new(1.0, 1.0)),
         floor: meshes.add(Plane3d::default().mesh().size(1.0, 1.0)),
-        steps, decal_textures, flesh,
+        steps, decal_textures, flesh, synthetic,
     });
     commands.insert_resource(FxState { rng: 0x9E37_79B9, particles: 0, lights: 0, decals: Default::default() });
 }
@@ -577,6 +679,12 @@ fn spawn_fx(
     let dt = frame_dt(&time);
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         let (hit_decal, pool_decal) = game.0.character_decals.get(CHARACTERS[u.character]).copied().unwrap_or((0, 0));
+        // what they're made of: its hit sounds and effects, and its debris (grey for Flint)
+        let (surface, blood) = if CHARACTERS[u.character] == SYNTHETIC_CHARACTER {
+            (fx.synthetic.as_ref(), &BLOOD_B)
+        } else {
+            (fx.flesh.as_ref(), &BLOOD)
+        };
         for (at, dir, ammo) in std::mem::take(&mut u.blood) {
             // the effect's axis: the hit's normal (back toward the shooter)
             let back = -Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::Z);
@@ -584,10 +692,10 @@ fn spawn_fx(
             // the middle
             let at = at + back * if ammo >= 0 { -SKIN_IN } else { SKIN_OUT };
             let sp = state.random();
-            for e in BLOOD {
+            for e in blood {
                 spawn_emitter(&mut commands, &mut state, e, at, back, sp);
             }
-            let (effect, light) = hit_effect(fx.flesh.as_ref(), ammo);
+            let (effect, light) = hit_effect(surface, ammo);
             if let Some(e) = effect {
                 spawn_emitter(&mut commands, &mut state, e, at, back, sp);
             }
@@ -597,7 +705,7 @@ fn spawn_fx(
                     spawn_light(&mut commands, g, at + back * 0.3);
                 }
             }
-            if let Some(sounds) = fx.flesh.as_ref().and_then(|s| s.hit_sounds.get(&ammo)) {
+            if let Some(sounds) = surface.and_then(|s| s.hit_sounds.get(&ammo)) {
                 let sounds: Vec<u32> = sounds.iter().copied().filter(|&id| game.0.sounds.has(id)).collect();
                 if !sounds.is_empty() {
                     let k = u.random(sounds.len());
@@ -619,7 +727,7 @@ fn spawn_fx(
         if u.dead_for == 0.0 {
             let at = u.position + Vec3::Y * (GROUND + DEATH_SPRAY_UP);
             let sp = state.random();
-            for e in BLOOD {
+            for e in blood {
                 spawn_emitter(&mut commands, &mut state, e, at, Vec3::Y, sp);
             }
             if let Some(def) = game.0.decals.get(&hit_decal) {
