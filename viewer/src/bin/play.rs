@@ -934,6 +934,10 @@ const RAGDOLL_SETTLE: u32 = 20;
 const ROLL_SIDE: f32 = 0.6;
 const ROLL_PUSH: f32 = 2.0;
 const ROLL_TRIES: u8 = 3;
+/// A shot into a body on the ground: the push at the bone it hits (m/s) and how far round that
+/// bone others are pushed too, less with distance (m). The demo's choice.
+const SHOT_SHOVE: f32 = 3.0;
+const SHOT_SHOVE_REACH: f32 = 0.6;
 const RAGDOLL_BEND_STIFFNESS: f32 = 0.25;
 const RAGDOLL_WAIST_STIFFNESS: f32 = 0.35;
 const RAGDOLL_KNEE_FOLD: f32 = 0.5;
@@ -2604,6 +2608,21 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         u.hurt_quiet -= dt;
     }
+    // shots hitting a body on the ground push it (anyone's: the dead, and the knocked down)
+    let shots: Vec<(Vec3, Vec3, f32)> = std::iter::once(&*player).chain(squad.0.iter())
+        .flat_map(|u| u.shots.iter().map(|s| (s.origin, s.dir, s.dist))).collect();
+    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
+        let body = match (u.ragdoll.as_mut(), u.knock.as_mut()) {
+            (Some(r), _) => r,
+            (None, Some(k)) => &mut k.ragdoll,
+            _ => continue,
+        };
+        for &(origin, dir, dist) in &shots {
+            if body.shove(origin, dir, dist) && std::env::var("BF_RAGDOLL_LOG").is_ok() {
+                println!("shot {}'s body", CHARACTERS[u.character]);
+            }
+        }
+    }
     // bodies: the dead fall limp; the knocked down go limp, then get back up
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         u.knock_cooldown -= dt;
@@ -2645,8 +2664,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                         let along = (r.pos[c] - r.pos[a]).normalize_or_zero();
                         Some(hinge_offset(&r.pos, a, b, c).dot((n - along * n.dot(along)).normalize_or_zero()))
                     }).fold(f32::MAX, f32::min);
-                    println!("ragdoll {} t {:.1}: {} pairs, closest {:.3} m, lowest bone {:.3} m above its floor, {} hinges, worst bend {:.3} m (negative: wrong way)",
-                             CHARACTERS[u.character], u.dead_for, r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
+                    println!("ragdoll {} t {:.1}: pelvis at {:.2}, {} pairs, closest {:.3} m, lowest bone {:.3} m above its floor, {} hinges, worst bend {:.3} m (negative: wrong way)",
+                             CHARACTERS[u.character], u.dead_for, r.origin + turn * r.pos[0], r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
                 }
                 apply_pose(&l, &local, &mut transforms);
                 body_thud(u.position, u.yaw, u.height + u.lift_now, r, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
@@ -3236,6 +3255,35 @@ impl Ragdoll {
 
     /// Place its frame in the world (the body's root: position + height, turned by yaw), so
     /// its bones meet the level's floors and walls.
+    /// A shot (world line from `origin` along `dir`, ending at `dist`) through the body: the
+    /// first bone it passes within its thickness (`flesh`) of is brought up to SHOT_SHOVE m/s
+    /// along the shot, and bones near it less (falling off to nothing at SHOT_SHOVE_REACH m). It wakes the
+    /// body (it settles again, and can roll off its side again). Whether it hit.
+    fn shove(&mut self, origin: Vec3, dir: Vec3, dist: f32) -> bool {
+        let back = Quat::from_rotation_y(self.yaw).inverse();
+        let (o, d) = (back * (origin - self.origin), back * dir);
+        let hit = self.pos.iter().enumerate().filter_map(|(i, p)| {
+            let t = (*p - o).dot(d);
+            let miss = (o + d * t).distance(*p);
+            (t > 0.0 && t < dist + 0.2 && miss < self.flesh[i] + 0.05).then_some((t, i))
+        }).min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((_, at)) = hit else { return false };
+        let centre = self.pos[at];
+        for (p, q) in self.pos.iter().zip(self.prev.iter_mut()) {
+            let k = 1.0 - p.distance(centre) / SHOT_SHOVE_REACH;
+            // up to that speed along the shot, not on top of it: a burst jolts the body, it
+            // doesn't drive it across the ground
+            let going = (*p - *q).dot(d) / RAGDOLL_STEP;
+            let add = (SHOT_SHOVE * k - going).max(0.0);
+            if add > 0.0 {
+                *q -= d * add * RAGDOLL_STEP;
+            }
+        }
+        self.still = 0;
+        self.rolls = 0;
+        true
+    }
+
     fn placed(mut self, origin: Vec3, yaw: f32) -> Self {
         self.origin = origin;
         self.yaw = yaw;
