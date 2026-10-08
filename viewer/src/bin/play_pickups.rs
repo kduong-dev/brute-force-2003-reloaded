@@ -32,7 +32,8 @@
 //! fruit 40; a medkit what the carried item's says. The placed Medkit (h_f5123ace, 60) gives,
 //! by its pickup-archetype, the inventory Medkit h_192d5337 (80): so using one heals 80. (What
 //! the placed one's own 60 is for isn't known.) Taking one plays its pickup-sound; it comes back
-//! after RESPAWN s (the game's respawn time isn't found). Only the player picks up for now.
+//! after RESPAWN s (the game's respawn time isn't found). Squad members running over one take it
+//! too: a medkit into the squad's shared inventory (the player's), a fruit for their own health.
 
 use super::*;
 use bf_viewer::bf::hash::h;
@@ -393,8 +394,9 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
-                mut status: ResMut<UsePanel>, mut feed: ResMut<PickupFeed>, mut vis: Query<&mut Visibility>) {
+                mut squad: ResMut<Squad>, mut status: ResMut<UsePanel>, mut feed: ResMut<PickupFeed>, mut vis: Query<&mut Visibility>) {
     let dt = frame_dt(&time);
     for line in &mut feed.0 {
         line.2 -= dt;
@@ -405,7 +407,10 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
     if item_count(&player, ITEMS[player.item]) <= 0 {
         step_item(&mut player, 1);
     }
-    let feet = player.position + Vec3::Y * GROUND;
+    // who's near enough: the player first, then any squad member running over it (their
+    // medkits go in the squad's shared inventory, the player's; a fruit heals whoever eats it)
+    let feet: Vec<Option<Vec3>> = std::iter::once(&*player).chain(squad.0.iter())
+        .map(|u| (!u.dead).then(|| u.position + Vec3::Y * GROUND)).collect();
     for p in &mut pickups.list {
         if p.gone > 0.0 {
             p.gone -= dt;
@@ -414,13 +419,25 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             }
             continue;
         }
-        let near = !player.dead && Vec2::new(p.at.x - feet.x, p.at.z - feet.z).length() < REACH && (p.at.y - feet.y).abs() < REACH_UP;
-        if !near {
+        let near = |f: &Option<Vec3>| f.is_some_and(|f| Vec2::new(p.at.x - f.x, p.at.z - f.z).length() < REACH && (p.at.y - f.y).abs() < REACH_UP);
+        let Some(who) = feet.iter().position(near) else {
             p.told = false;
             continue;
-        }
+        };
         let Some(item) = game.0.items.get(&p.kind) else { continue };
         let taken = match item.function {
+            // a fruit, eaten by a squad member: their own health
+            FRUIT if who > 0 => {
+                let m = &mut squad.0[who - 1];
+                let hurt = m.health < m.max_health;
+                if hurt {
+                    m.health = (m.health + item.health).min(m.max_health);
+                }
+                hurt
+            }
+            // a medkit: into the shared inventory, whoever runs over it; full, only the player
+            // is told
+            MEDKIT if who > 0 && player.medkits >= item.stack_limit => false,
             MEDKIT if player.medkits < item.stack_limit => {
                 // a first medkit: the item box shows it, NEW
                 if player.medkits == 0 {
@@ -459,7 +476,8 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
                 player.sound_queue.push((item.sound, 1.0));
             }
             if std::env::var("BF_PICKUP_LOG").is_ok() {
-                println!("took {} at {:.1}: health {:.0}/{:.0}, medkits {}", item.label, p.at, player.health, player.max_health, player.medkits);
+                let by = if who == 0 { player.character } else { squad.0[who - 1].character };
+                println!("{} took {} at {:.1}: health {:.0}/{:.0}, medkits {}", CHARACTERS[by], item.label, p.at, player.health, player.max_health, player.medkits);
             }
         }
     }

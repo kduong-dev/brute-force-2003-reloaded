@@ -927,6 +927,13 @@ const RAGDOLL_SELF_HOPS: usize = 3;
 const RAGDOLL_DAMPING: f32 = 0.985;
 const RAGDOLL_FRICTION: f32 = 0.6;
 const RAGDOLL_SETTLE: u32 = 20;
+/// A body come to rest on its side (its chest's left-right axis more than ROLL_SIDE upright) is
+/// rolled on: its upper shoulder pushed ROLL_PUSH m/s toward its back (or front, if it leans
+/// that way), up to ROLL_TRIES times. The demo's choice: bodies don't stay balanced on a
+/// shoulder.
+const ROLL_SIDE: f32 = 0.6;
+const ROLL_PUSH: f32 = 2.0;
+const ROLL_TRIES: u8 = 3;
 const RAGDOLL_BEND_STIFFNESS: f32 = 0.25;
 const RAGDOLL_WAIST_STIFFNESS: f32 = 0.35;
 const RAGDOLL_KNEE_FOLD: f32 = 0.5;
@@ -3104,6 +3111,8 @@ struct Ragdoll {
     pairs: Vec<(usize, usize)>,
     /// per bone: how thick the body is round it (see `flesh`): it's kept that far off the floor
     flesh: Vec<f32>,
+    /// times it has been rolled off its side (see ROLL_TRIES)
+    rolls: u8,
 }
 
 impl Ragdoll {
@@ -3222,7 +3231,7 @@ impl Ragdoll {
         }
         let rest_offset = (0..n).map(|i| model.parent[i].filter(|&p| p < n).map_or(pos[i], |p| rest_rot[p].inverse() * (pos[i] - pos[p]))).collect();
         let flesh = flesh(model, world, &pos, &aim);
-        Ragdoll { pos, prev, rest_rot, rest_offset, aim, links, ranges, frames, hinge_sides, still: 0, floor, origin: Vec3::ZERO, yaw: 0.0, pairs, flesh }
+        Ragdoll { pos, prev, rest_rot, rest_offset, aim, links, ranges, frames, hinge_sides, still: 0, floor, origin: Vec3::ZERO, yaw: 0.0, pairs, flesh, rolls: 0 }
     }
 
     /// Place its frame in the world (the body's root: position + height, turned by yaw), so
@@ -3244,6 +3253,24 @@ impl Ragdoll {
     }
 
     fn substep(&mut self) {
+        // come to rest on its side (propped on a shoulder and a hip): it rolls on, onto its back or
+        // front, whichever way it leans, as a body would
+        if self.still > RAGDOLL_SETTLE && self.rolls < ROLL_TRIES {
+            if let Some([l, r, lo, hi]) = self.frames[1] {
+                if let Some((right, _, forward)) = torso_axes(&self.pos, [l, r, lo, hi]) {
+                    if right.y.abs() > ROLL_SIDE {
+                        let top = if self.pos[r].y > self.pos[l].y { r } else { l };
+                        let flat = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
+                        let way = if forward.y >= 0.0 { -flat } else { flat };
+                        for (b, k) in [(top, 1.0), (hi, 0.6), (lo, 0.3)] {
+                            self.prev[b] -= way * ROLL_PUSH * k * RAGDOLL_STEP;
+                        }
+                        self.rolls += 1;
+                        self.still = 0;
+                    }
+                }
+            }
+        }
         // at rest: nothing moves (a settled body doesn't twitch)
         if self.still > RAGDOLL_SETTLE {
             return;
@@ -4216,9 +4243,13 @@ fn update_weapons(
         let Some(mut l) = p.loaded.take() else { continue };
         // the dead let go of the gun in their hand: it falls from where it is, thrown a little
         // by what killed them, and tumbles like any loose object (see pickups::Thrown)
+        // (and the one on their back: it would prop the body up, and the ragdoll can't feel it)
         if p.dead && !l.weapon_dropped {
             l.weapon_dropped = true;
-            if let (true, Some(w)) = (p.holding, l.weapons.get(p.weapon)) {
+            for w in &l.weapons {
+                if visibility.get(w.entity).is_ok_and(|v| *v == Visibility::Hidden) {
+                    continue;
+                }
                 if let Ok(g) = globals.get(w.entity) {
                     let push = p.death_push * DROP_PUSH + Vec3::Y * DROP_HOP;
                     let spin = Vec3::new(p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0) * 0.1;
@@ -4231,9 +4262,9 @@ fn update_weapons(
                 if let Ok(mut light) = lights.get_mut(w.light) {
                     light.intensity = 0.0;
                 }
-                // (no longer held: nothing places it in the hand again)
-                p.holding = false;
             }
+            // (no longer held: nothing places them on the body again)
+            p.holding = false;
         }
         weapon_fx(&mut commands, p, &l, &fx, &mut transforms, &mut visibility, &mut lights, dt);
         p.loaded = Some(l);
