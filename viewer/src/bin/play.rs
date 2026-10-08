@@ -378,7 +378,8 @@ fn main() {
                         Some(c) => {
                             let a = &model.anims[c];
                             let ev: Vec<String> = game.events(a.event_channel).iter().map(|(t, e)| format!("{t:.2}:{e:08x}")).collect();
-                            println!("{name:7} {n:24} clip {c:3} {:.2}s bones {:3} events [{}]", a.duration, a.targets.len(), ev.join(" "));
+                            let root = locomotion::root_delta(&model, &game, c, 0.0, a.duration - 1e-3);
+                            println!("{name:7} {n:24} clip {c:3} {:.2}s bones {:3} root {:.2} events [{}]", a.duration, a.targets.len(), root, ev.join(" "));
                         }
                         None => println!("{name:7} {n:24} -"),
                     }
@@ -705,6 +706,32 @@ enum Gait {
     Sprint,
     WalkBack,
     RunBack,
+    /// aiming, stepping sideways with the body to the crosshair: left or right, the forward or
+    /// the back diagonal (the motion scripts' f_side_walk / b_side_walk)
+    Side { left: bool, back: bool },
+}
+
+/// Aiming and moving: a side step when the way the character moves is off the crosshair's
+/// heading by SIDE_FROM to BACK_FROM radians (`rel`: positive is to the left), the forward
+/// diagonal up to SIDE_BACK_FROM, the back one past it, if the set has that clip. Within
+/// SIDE_FROM it walks or runs forward, past BACK_FROM it backpedals, as before.
+fn side_step(rel: f32, set: &[Option<usize>; 4], armed: bool) -> Option<Gait> {
+    let a = rel.abs();
+    if !armed || !(SIDE_FROM..BACK_FROM).contains(&a) {
+        return None;
+    }
+    let (left, back) = (rel > 0.0, a > SIDE_BACK_FROM);
+    set[side_index(left, back)].map(|_| Gait::Side { left, back })
+}
+
+/// See `side_step` (radians: 30, 100 and 150 degrees).
+const SIDE_FROM: f32 = 0.52;
+const SIDE_BACK_FROM: f32 = 1.75;
+const BACK_FROM: f32 = 2.62;
+
+/// A side step's clip in a set of four (forward left, forward right, back left, back right).
+fn side_index(left: bool, back: bool) -> usize {
+    (back as usize) * 2 + (!left as usize)
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
@@ -759,6 +786,10 @@ struct SlotClips {
     /// crouch walk forward / back (the motion scripts' cr_walk, cr_back_walk)
     cr_walk: Option<usize>,
     cr_back_walk: Option<usize>,
+    /// side steps while aiming, standing (rp_) and crouched (cr_): forward left, forward right,
+    /// back left, back right (`side_index`)
+    rp_side: [Option<usize>; 4],
+    cr_side: [Option<usize>; 4],
     dive: Option<usize>,
 }
 
@@ -1937,6 +1968,8 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
             crouch2stand: n("crouch2stand"),
             cr_walk: n("cr_walk"),
             cr_back_walk: n("cr_back_walk"),
+            rp_side: ["rp_f_side_walk_l", "rp_f_side_walk_r", "rp_b_side_walk_l", "rp_b_side_walk_r"].map(n),
+            cr_side: ["cr_f_side_walk_l", "cr_f_side_walk_r", "cr_b_side_walk_l", "cr_b_side_walk_r"].map(n),
             dive: n("dive"),
         }
     };
@@ -2035,7 +2068,8 @@ fn foot_ranges(model: &Character, game: &Game, clips: &Clips, feet: [usize; 2]) 
     let sets = clips.slots.iter().flat_map(|s| [&s.carry, &s.rp]);
     for c in [lo.walk, lo.run, lo.sprint, lo.walk_back, lo.run_back, lo.dodge_left, lo.dodge_right].into_iter()
         .chain(sets.flat_map(|l| [l.walk, l.run, l.sprint, l.walk_back, l.run_back]))
-        .chain(clips.slots.iter().flat_map(|s| [s.cr_walk, s.cr_back_walk])).flatten() {
+        .chain(clips.slots.iter().flat_map(|s| [s.cr_walk, s.cr_back_walk]))
+        .chain(clips.slots.iter().flat_map(|s| s.rp_side.into_iter().chain(s.cr_side))).flatten() {
         let d = model.anims[c].duration;
         let mut r = [(f32::MAX, f32::MIN); 2];
         for k in 0..24 {
@@ -2280,7 +2314,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let lift = sole_lift(&model, game, clips.loco.idle);
     let mut crouch_lift = HashMap::new();
     for set in &clips.slots {
-        for (clip, looping) in [(set.stand2crouch, false), (set.crouch2stand, false), (set.crouch_idle, true), (set.cr_walk, true), (set.cr_back_walk, true)] {
+        let sides = set.cr_side.map(|c| (c, true));
+        for (clip, looping) in [(set.stand2crouch, false), (set.crouch2stand, false), (set.crouch_idle, true), (set.cr_walk, true), (set.cr_back_walk, true)].into_iter().chain(sides) {
             if let Some(c) = clip {
                 crouch_lift.entry(c).or_insert_with(|| clip_lift(&model, game, c, looping));
             }
@@ -2443,6 +2478,13 @@ fn autopilot(player: &mut Player) -> bool {
             player.cam_yaw = 0.0;
         }
         player.move_input = if player.sim_time > 1.0 && to.length() > 0.8 && !stay { Vec2::new(0.0, 1.0) } else { Vec2::ZERO };
+        // BF_TEST_STRAFE=<x>[,<y>]: move that way instead (camera-relative: -1,0 left, 1,0
+        // right, 1,-1 back right), from 1 s on; the camera keeps facing the goal
+        if let Some(v) = std::env::var("BF_TEST_STRAFE").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()) {
+            if player.sim_time > 1.0 && !v.is_empty() {
+                player.move_input = Vec2::new(v[0], v.get(1).copied().unwrap_or(0.0)).normalize_or_zero();
+            }
+        }
         // BF_TEST_FIRE=1: aim and fire (after a second); =2 with the second weapon
         if let Ok(w) = std::env::var("BF_TEST_FIRE") {
             player.aim = player.sim_time > 0.8;
@@ -3780,6 +3822,14 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
                 let goal = stand_aim_yaw(p, aim_yaw - off);
                 turn_to(&mut p.yaw, goal, TURN_RATE);
                 Gait::Idle
+            } else if let Some(side) = side_step(wrap_angle(dir_yaw - aim_yaw), if matches!(p.action, Action::Crouched) { &stance.cr_side } else { &stance.rp_side }, armed) {
+                // stepping sideways: the side-walk clips twist the upper body about a quarter
+                // turn off the root, whose motion runs straight along it (forward steps forward,
+                // back steps back, as far as the walks). So the character turns until the gun is
+                // on the crosshair (its measured yaw, as standing), and walks where the clip takes
+                // it: across the aim, a little forward or back
+                turn_to(&mut p.yaw, aim_yaw - off, TURN_RATE);
+                side
             } else if wrap_angle(dir_yaw - aim_yaw).abs() > 2.0 {
                 turn_to(&mut p.yaw, wrap_angle(dir_yaw + std::f32::consts::PI), TURN_RATE);
                 if p.sprint { Gait::RunBack } else { Gait::WalkBack }
@@ -3802,11 +3852,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         if upper_aim && !armed {
             twist_goal = wrap_angle(aim_yaw - p.yaw).clamp(-1.75, 1.75);
         }
-        // crouched there's only the crouch walk, forward or back
+        // crouched there's only the crouch walk: forward, back or sideways
         if matches!(p.action, Action::Crouched) {
             p.gait = match p.gait {
                 Gait::Idle => Gait::Idle,
                 Gait::WalkBack | Gait::RunBack => Gait::WalkBack,
+                Gait::Side { left, back } => Gait::Side { left, back },
                 _ => Gait::Walk,
             };
         }
@@ -3833,6 +3884,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         Gait::Sprint => lo.sprint.or(lo.run),
         Gait::WalkBack => lo.walk_back.or(lo.run_back),
         Gait::RunBack => lo.run_back.or(lo.walk_back),
+        Gait::Side { left, back } => set.rp_side[side_index(left, back)].or(lo.walk),
     }.or(lo.idle);
     let (action_clip, once) = match p.action {
         Action::None => (if sliding { c.slide } else { None }, false),
@@ -3845,6 +3897,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         Action::Crouched => (match p.gait {
             Gait::Walk => stance.cr_walk,
             Gait::WalkBack => stance.cr_back_walk.or(stance.cr_walk),
+            Gait::Side { left, back } => stance.cr_side[side_index(left, back)].or(stance.cr_walk),
             _ => None,
         }.or(stance.crouch_idle), false),
         Action::Rising => (stance.crouch2stand, true),
@@ -4070,7 +4123,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
     // ---- footsteps: a foot coming down to its planted height ----
     p.step_mute -= dt;
     let walking = !p.action.airborne() && p.step_mute <= 0.0 && !matches!(p.action, Action::JumpLand | Action::JumpCrouch) && (p.gait != Gait::Idle || matches!(p.action, Action::Dodge { .. }));
-    let volume = match p.gait { Gait::Walk | Gait::WalkBack => 0.35, Gait::Sprint => 0.85, _ => 0.6 };
+    let volume = match p.gait { Gait::Walk | Gait::WalkBack | Gait::Side { .. } => 0.35, Gait::Sprint => 0.85, _ => 0.6 };
     let steps = surface.footsteps.get(&l.footstep_type).cloned().unwrap_or_default();
     for f in 0..2 {
         // planted level and swing height of the current clip blend (idle stance otherwise)
@@ -4248,6 +4301,8 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         Action::None => match player.gait {
             Gait::Idle => "idle", Gait::Walk => "walk", Gait::Run => "run", Gait::Sprint => "sprint",
             Gait::WalkBack => "walk back", Gait::RunBack => "backpedal",
+            Gait::Side { left: true, back: false } => "step left", Gait::Side { left: false, back: false } => "step right",
+            Gait::Side { left: true, back: true } => "step back left", Gait::Side { left: false, back: true } => "step back right",
         },
         Action::Dodge { left: true } => "dodge left",
         Action::Dodge { left: false } => "dodge right",
@@ -4256,7 +4311,11 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         Action::JumpFall => "jump: fall",
         Action::JumpLand => "jump: land",
         Action::Crouching => "kneel",
-        Action::Crouched => if player.gait == Gait::Idle { "kneeling" } else { "crouch walk" },
+        Action::Crouched => match player.gait {
+            Gait::Idle => "kneeling",
+            Gait::Side { .. } => "crouch side step",
+            _ => "crouch walk",
+        },
         Action::Rising => "stand up",
         Action::Dive => "dive",
     };
