@@ -2,6 +2,8 @@
 //! locomotion animations, root motion and sounds (read straight from Brute Force/data/*.tgz).
 //!
 //!   cargo run --bin bf_play
+//!   cargo run --bin bf_play -- --test    the test map (every weapon and pickup, instant kill,
+//!                                        the controls panel; see play_testmap.rs)
 //!
 //! Keyboard / mouse (no gamepad for now)
 //!   WASD        move (camera-relative)
@@ -20,7 +22,6 @@
 //!   Tab         next item; hold: the item list (wheel picks)
 //!   E (hold)    use (a gate's wall panel)
 //!   M           next ground surface (footstep / landing sounds)
-//!   H           controls / debug text
 //!   Backspace   back to the map menu (in the same window)
 //!   1-4         Brutus / Flint / Hawk / Tex
 //!
@@ -318,8 +319,9 @@ fn end_play(mut commands: Commands, before: Option<Res<Before>>, all: Query<(Ent
 fn main() {
     // the menu first: the window opens at once and the game data is read behind its loading
     // screen (AppState::Boot); a map straight away (BF_MAP, test hooks): read here first
-    let menu_first = menu::wanted();
-    let map = std::env::var("BF_MAP").unwrap_or_else(|_| "sdm_e34".into());
+    let test_map = testmap::requested();
+    let menu_first = !test_map && menu::wanted();
+    let map = if test_map { "flat".into() } else { std::env::var("BF_MAP").unwrap_or_else(|_| "sdm_e34".into()) };
     let mut loaded = None;
     if !menu_first {
         let mut game = load_game().unwrap_or_else(|e| {
@@ -327,6 +329,9 @@ fn main() {
             std::process::exit(1)
         });
         let level = load_map(&mut game, &map);
+        if test_map {
+            testmap::load_weapon_data(&mut game);
+        }
         let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % CHARACTERS.len();
         // BF_DUMP_MUSIC=<file.wav>  write the map's music track and exit
         if let Ok(out) = std::env::var("BF_DUMP_MUSIC") {
@@ -416,12 +421,15 @@ fn main() {
         menu::install(app.world_mut(), data);
         // straight into the map (BF_MAP or a test hook)
         app.insert_state(AppState::Playing);
+        if test_map {
+            app.insert_resource(testmap::TestMap { instant_kill: true });
+        }
         let mut commands = app.world_mut().commands();
         begin_play(&mut commands, l);
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
@@ -446,6 +454,8 @@ mod pickups;
 mod text;
 #[path = "play_deathcam.rs"]
 mod deathcam;
+#[path = "play_testmap.rs"]
+mod testmap;
 #[path = "play_menu.rs"]
 mod menu;
 use bf_viewer::arena as world;
@@ -2398,7 +2408,7 @@ fn wrap_angle(a: f32) -> f32 {
 }
 
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-                 mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>) {
+                 mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>) {
     let dt = frame_dt(&time);
     // the squad's heading: the leader's facing, smoothed (formation places turn with it)
     let h = heading.get_or_insert(player.yaw);
@@ -2473,7 +2483,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // mostly grunts, now and then "I'm hit" or a word about friendly fire
         let tag = match m.random(6) { 0 => FRIENDLY_FIRE_CHATTER, 1 => HIT_CHATTER, _ => HURT_CHATTER };
         let at = m.position + h.local;
-        hurt(m, &game.0, h.amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+        // the test map's instant kill: one hit is enough
+        let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { m.health.max(h.amount) } else { h.amount };
+        hurt(m, &game.0, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
         // shot by the player: sidestep one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
         if !m.dead && m.knock_request.is_none() && m.random(3) == 0 {
             m.dodge_request = Some(m.random(2) == 0);
@@ -3955,8 +3967,13 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&m
     }
 }
 
-fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text, With<Hud>>) {
+fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text, With<Hud>>, test: Option<Res<testmap::TestMap>>) {
     let Ok(mut text) = hud.single_mut() else { return };
+    // the controls panel is the test map's (cargo run --bin bf_play -- --test)
+    let Some(test) = test else {
+        text.0.clear();
+        return;
+    };
     if std::env::var("BF_NO_HUD").is_ok() {
         text.0.clear();
         return;
@@ -3991,8 +4008,10 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
          WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   E use   M surface   H hide\n\
-         click: mouse look, Esc release   Backspace map menu   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade",
-        CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon);
+         click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
+         test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}",
+        CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
+        if test.instant_kill { "on" } else { "off" });
     if text.0 != s {
         text.0 = s;
     }

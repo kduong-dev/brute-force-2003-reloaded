@@ -5,7 +5,7 @@ Four programs:
 | Binary | What | Run |
 |---|---|---|
 | `bf_viewer` (default) | character / animation viewer, reads the **original game files** (`../Brute Force/data/*.tgz`) | `cargo run` |
-| `bf_play` | **playable demo**: run around as Brutus, Flint, Hawk or Tex with the game's own locomotion | `cargo run --bin bf_play` |
+| `bf_play` | **playable demo**: run around as Brutus, Flint, Hawk or Tex with the game's own locomotion | `cargo run --bin bf_play` (the test map: `cargo run --bin bf_play -- --test`) |
 | `bf_level` | level viewer: terrain, placed objects, sky and fog of a level (default Battle of Bulgar) | `cargo run --bin bf_level -- [level]` |
 | `glb_viewer` | viewer for the exported `../decompiled/characters/*.glb` | `cargo run --bin glb_viewer` |
 
@@ -29,7 +29,28 @@ Four programs:
 | G | use the item in the item box. A grenade: hold to charge (orange meter right of the crosshair, which turns to the bracket reticle; full in 0.7 s), let go to throw - the charge sets how far. Charging starts with the Frag's event sound (e43166d1, heard as the gauge appears in the capture). The stance's throw clip (`Sc_w1/w2_throw_grenade`): in the hand from its reach event, released at its release event with the Frag's whoosh (10318b29, matched to the capture). It bounces (silently); the 1.5 s fuse starts when it lands (~2.5 s from the throw, as captured). Blast: explosion sound, white flash, light, the game's fireball flipbook (wide), brown smoke clouds for ~2.4 s, a scorch mark for 20 s, and the screen tinted red when close. 3 grenades |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | Tab | the item box (the game's B button): tap for the next item carried (Frag, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
-| H | show / hide the controls and debug text |
+
+### Test map (`cargo run --bin bf_play -- --test`)
+
+A flat test floor for trying things out, only reachable with the `--test` flag. It opens
+straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`).
+
+* **Every hand weapon on a rack**, floating and turning in front of the start: the 24 weapon
+  definitions with a clip whose model loads (one per model), from the first mission's data
+  plus the multiplayer archives (`mp_common`, `mp1`-`mp8`, read in about 1 s). Walk into one
+  to take it into the held weapon's slot: the character is respawned carrying it, with a full
+  clip, and "Took <name>" shows.
+  * A few campaign-only weapons (A10 Bioreactive, Confed LZR-50, ...) are missing: each
+    campaign level takes about 10 s to read.
+  * `BF_TESTMAP_LEVELS=<level>,<level>...` loads a different list.
+  * `BF_TESTMAP_LOG=1` lists every weapon definition with its type, clip and model size.
+* **One of every pickup type** with a model (one per model) in a grid behind the rack. These
+  are inventory-objects as on a map, so medkits and fruit work as in "Health pickups", and
+  everything is loose (kicked, thrown by blasts).
+* **Instant kill**, on at the start, K toggles it. The player's shots and grenades kill any
+  squad member they hurt, in one hit. The player still takes normal damage.
+* **The controls panel**, which the main game no longer shows: the keys and the debug line
+  (character, state, clip, surface, weapon). H hides it.
 
 Squad movement and deaths follow the game's own data and the captures:
 

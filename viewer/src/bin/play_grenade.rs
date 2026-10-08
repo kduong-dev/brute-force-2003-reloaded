@@ -227,6 +227,7 @@ fn fly_grenades(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
     mut blasts: ResMut<super::pickups::Blasts>,
+    test: Option<Res<super::testmap::TestMap>>,
 ) {
     let dt = frame_dt(&time);
     let Some(l) = player.loaded.take() else { return };
@@ -246,12 +247,16 @@ fn fly_grenades(
                 blasts.0.push((at, kit.blast_radius));
                 // the blast hurts everyone in range (Damage max at the centre, nothing at the
                 // radius); the hurt say a pain grunt
-                for u in std::iter::once(&mut *p).chain(squad.0.iter_mut()) {
+                // (the test map's instant kill: the squad dies to any blast that reaches them)
+                let instant = test.as_ref().is_some_and(|t| t.instant_kill);
+                let (leader, rest) = (std::iter::once((&mut *p, false)), squad.0.iter_mut().map(|u| (u, instant)));
+                for (u, kill) in leader.chain(rest) {
                     let d = u.position.distance(at);
                     if d < kit.blast_radius {
                         let k = 1.0 - d / kit.blast_radius;
                         let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
-                        hurt(u, &game.0, kit.damage * k, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
+                        let damage = if kill { u.health.max(kit.damage * k) } else { kit.damage * k };
+                        hurt(u, &game.0, damage, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
                     }
                 }
                 continue;
