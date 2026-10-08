@@ -517,11 +517,24 @@ enum SquadPart {
 #[derive(Resource, Default)]
 struct HudImages(HashMap<u32, Option<Handle<Image>>>);
 
+/// The selected member's name label: the member being selected and how long their name has
+/// shown, then, after the cut, the member and how far into the zoom-out it is. A resource, reset
+/// with each level, so a label doesn't carry into the next one.
+#[derive(Resource, Default)]
+struct NameLabel {
+    pending: Option<(usize, f32)>,
+    zooming: Option<(usize, f32)>,
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
-        .add_systems(OnEnter(AppState::Playing), setup_hud.after(snapshot_entities))
+        .init_resource::<NameLabel>()
+        .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities),
+            (|mut commands: Commands| commands.insert_resource(NameLabel::default())).after(setup)))
         .init_resource::<HudGen>()
-        .add_systems(Update, (update_hud_widgets, update_squad_hud, update_scope).after(update_weapons).run_if(in_state(AppState::Playing)));
+        // (after the death camera: its label and reticle show the frame it decides them)
+        .add_systems(Update, (update_hud_widgets, update_squad_hud, update_scope).after(update_weapons).after(deathcam::death_cam)
+            .run_if(in_state(AppState::Playing)));
 }
 
 /// A game texture as a UI image (cached; None if the texture isn't found).
@@ -1046,7 +1059,8 @@ fn update_hud_widgets(
                 }
             }
             Part::Crosshair => {
-                show(&mut vis, !l.weapons.is_empty() && player.charge <= 0.0);
+                // (none once dead: the reference recording's reticle goes on the death frame)
+                show(&mut vis, !l.weapons.is_empty() && player.charge <= 0.0 && !player.dead);
                 // in the scope: in the middle of the screen and larger
                 let s = player.scope;
                 let size = CROSSHAIR_SIZE + (SCOPE_CROSSHAIR_SIZE - CROSSHAIR_SIZE) * s;
@@ -1077,17 +1091,22 @@ fn update_squad_hud(
     mut gen: ResMut<HudGen>,
     mut images: ResMut<Assets<Image>>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut zoom: Local<(Option<usize>, Option<(usize, f32)>)>,
+    mut label: ResMut<NameLabel>,
     mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>)>,
 ) {
     let dt = frame_dt(&time);
     let font_k = windows.single().map(|w| w.height() / 480.0).unwrap_or(1.5);
     let _ = &font_k;
-    // name: pending while selecting; when control passes, zoom it out
-    let (pending, zooming) = &mut *zoom;
+    // name: pending while selecting (with how long it has shown: the pop counts from its start);
+    // when control passes, zoom it out. Over the death camera (the player dead) it doesn't pop:
+    // the reference recording's "HAWK" is at its final size from its first frame (f1910 and
+    // f1911 are the same)
+    let NameLabel { pending, zooming } = &mut *label;
     if let Some((c, _)) = player.select {
-        *pending = Some(c);
-    } else if let Some(c) = pending.take() {
+        let start = if player.dead { NAME_POP_TIME } else { 0.0 };
+        let shown = pending.filter(|(p, _)| *p == c).map_or(start, |(_, s)| s) + dt;
+        *pending = Some((c, shown));
+    } else if let Some((c, _)) = pending.take() {
         if player.character == c {
             *zooming = Some((c, 0.0));
         }
@@ -1143,7 +1162,7 @@ fn update_squad_hud(
                 let (c, scale, alpha) = match (selected, *zooming) {
                     (Some((c, _)), _) => {
                         // popping in: from big down to size, quickly
-                        let e = player.select.map_or(1.0, |(_, left)| ((SELECT_TIME - left) / NAME_POP_TIME).clamp(0.0, 1.0));
+                        let e = pending.map_or(1.0, |(_, shown)| (shown / NAME_POP_TIME).clamp(0.0, 1.0));
                         (Some(c), NAME_BIG * (1.0 + (NAME_POP - 1.0) * (1.0 - e) * (1.0 - e)), 1.0)
                     }
                     (None, Some((c, t))) => {

@@ -157,6 +157,9 @@ pub struct Game {
     /// character name -> the scope's two sounds beside it (h_00dd1fe0, h_02c94d34: ~0.3 s each,
     /// taken as going into the scope and coming out; Flint has her own pair)
     pub character_scope_sounds: HashMap<String, (u32, u32)>,
+    /// character name -> its camera offsets per mode (`<h_0d41e5f1>`: offset-walk .. offset-dead,
+    /// offset-snipe; see `CameraOffsets`)
+    pub character_camera: HashMap<String, CameraOffsets>,
     /// character name -> HUD icons: portrait (h_f9d94425) and the skull shown when dead (h_00c51907)
     pub character_icons: HashMap<String, (u32, u32)>,
     /// character name -> blood decals: per hit (h_fb4bfc68) and the pool where the body lies
@@ -221,6 +224,32 @@ pub struct Flipbook {
 /// The objecttypes list of liquid types, and the placed liquids' element (levels-*.xmb).
 const H_LIQUIDS: u32 = 0xFA2F_5452;
 pub const H_LIQUID_OBJECT: u32 = 0x0436_6A6A;
+
+/// A character type's camera block (objecttypes `<h_0d41e5f1>`): one offset per camera mode,
+/// each a 3-float list stored as a child element. The objecttypes field parser `FUN_0018fa80`
+/// copies the seven into the character type as 12-byte vectors from +0x1b0, in this order:
+/// walk 0x1b0, run 0x1bc, dash 0x1c8, ready 0x1d4, `h_e42d50a5` 0x1e0, dead 0x1ec, snipe 0x1f8.
+/// The squad's walk .. `h_e42d50a5` differ per character (Brutus `3.4 7 0`, Flint `3.2 1 0`),
+/// dead is `3.5 5 0` for all four and snipe `0.001 0 0`. What the three numbers mean isn't in
+/// the data; the death camera reads `dead` as (height, distance back, unused).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CameraOffsets {
+    pub walk: [f32; 3],
+    pub run: [f32; 3],
+    pub dash: [f32; 3],
+    pub ready: [f32; 3],
+    /// h_e42d50a5: the fifth mode (name not recovered; the same as walk for the squad)
+    pub h_e42d50a5: [f32; 3],
+    /// offset-dead (hash f13fb0c4): the death camera's framing of the body
+    pub dead: [f32; 3],
+    pub snipe: [f32; 3],
+}
+
+/// The camera block of a character type, and the element names of two of its offsets
+/// (`offset-dead` is hash f13fb0c4; `h_e42d50a5` has no recovered name).
+const H_CAMERA_BLOCK: u32 = 0x0D41_E5F1;
+const H_OFFSET_DEAD: u32 = 0xF13F_B0C4;
+const H_OFFSET_5: u32 = 0xE42D_50A5;
 
 /// An inventory item type (objecttypes `<inventory>` entries: `<h_e275fb80 class-type=2
 /// function-type=..>` around `<base mesh-name><base name=T>`). `function` is the game's IFSET_
@@ -324,6 +353,7 @@ impl Game {
             squad_leash: HashMap::new(),
             character_snipe_sound: HashMap::new(),
             character_scope_sounds: HashMap::new(),
+            character_camera: HashMap::new(),
             character_icons: HashMap::new(),
             character_decals: HashMap::new(),
             decals: HashMap::new(),
@@ -652,6 +682,15 @@ impl Game {
                     if let Some(l) = e.walk().into_iter().find(|x| x.name == h("limit-weapon")) {
                         let class = |k: &str| l.attr(h(k)).and_then(|v| v.ints().first().copied()).unwrap_or(-1);
                         self.character_weapon_classes.insert(name.clone(), [class("one"), class("two")]);
+                    }
+                    if let Some(c) = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK) {
+                        let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
+                            .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);
+                        self.character_camera.insert(name.clone(), CameraOffsets {
+                            walk: v(h("offset-walk")), run: v(h("offset-run")), dash: v(h("offset-dash")),
+                            ready: v(h("offset-ready")), h_e42d50a5: v(H_OFFSET_5), dead: v(H_OFFSET_DEAD),
+                            snipe: v(h("offset-snipe")),
+                        });
                     }
                     self.characters.push((name, mesh));
                 }

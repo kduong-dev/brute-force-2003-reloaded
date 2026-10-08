@@ -214,7 +214,13 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     commands.insert_resource(MapLevel(level));
     commands.insert_resource(Mode { deathmatch });
     commands.insert_resource(SoundCache::default());
+    commands.insert_resource(TestDied::default());
 }
+
+/// Whether BF_TEST_DIE has killed the player yet on this level (once per level: the member who
+/// takes over lives on).
+#[derive(Resource, Default)]
+struct TestDied(bool);
 
 /// The player at the map's start point (BF_START=<n> picks another), with the test hooks'
 /// starting camera and place.
@@ -415,7 +421,7 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, fx::plugin, pickups::plugin, text::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
@@ -438,6 +444,8 @@ mod fx;
 mod pickups;
 #[path = "play_text.rs"]
 mod text;
+#[path = "play_deathcam.rs"]
+mod deathcam;
 #[path = "play_menu.rs"]
 mod menu;
 use bf_viewer::arena as world;
@@ -915,8 +923,6 @@ const GET_UP_TIME: f32 = 0.45;
 pub const DIVE_RADIUS: f32 = 6.0;
 /// characters' height for shots (m above the ground)
 const BODY_HEIGHT: f32 = 1.9;
-/// after the player dies, control passes to the next living member after this long
-const DEATH_HANDOVER: f32 = 1.5;
 const QUOTE_DELAY: f32 = 0.05;
 /// characters' collision radius (m)
 const BODY_RADIUS: f32 = 0.4;
@@ -1449,7 +1455,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32)
 /// Hand control to another squad member: their name shows over them for SELECT_TIME (as in the
 /// game), then they become the player and the camera cuts behind them; the previous character
 /// joins the squad AI.
-fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>) {
+fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut test_died: ResMut<TestDied>) {
     let dt = frame_dt(&time);
     // voice lines due (whoever says them; the HUD shows their speech icon while they talk)
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
@@ -1490,18 +1496,16 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             }
         }
     }
-    // test hook: BF_TEST_DIE=1 - the player drops dead at 1 s, shoved sideways
-    if std::env::var("BF_TEST_DIE").is_ok() && player.sim_time > 1.0 && !player.dead {
+    // test hook: BF_TEST_DIE=<s> - the player drops dead at that time (BF_TEST_DIE=1: at 1 s),
+    // shoved sideways. Once: the member who takes over lives on.
+    let die_at = std::env::var("BF_TEST_DIE").ok().map(|v| v.parse::<f32>().unwrap_or(1.0));
+    if die_at.is_some_and(|at| player.sim_time > at) && !player.dead && !test_died.0 {
+        test_died.0 = true;
         let (at, side) = (player.position + Vec3::Y, Vec3::new(player.yaw.cos(), 0.0, -player.yaw.sin()));
         let all = player.health;
         hurt(&mut player, &game.0, all, HURT_CHATTER, side * 5.0 + Vec3::Y * 2.0, at, -1);
     }
-    // dead: after a moment, control passes to the next living member
-    if player.dead && player.select.is_none() {
-        if let Some(c) = squad.0.iter().find(|m| !m.dead).map(|m| m.character) {
-            player.select = Some((c, SELECT_TIME + DEATH_HANDOVER));
-        }
-    }
+    // dead: the death camera (play_deathcam) picks the next living member near its end
     let Some((c, left)) = player.select else { return };
     let Some(i) = squad.0.iter().position(|m| m.character == c && m.loaded.is_some() && !m.dead) else {
         player.select = None;
@@ -1520,11 +1524,25 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     player.sound_queue.push((SQUAD_SWITCH_SOUND, 0.8));
     squad.0[i].select = None;
     player.select = None;
-    player.cam_yaw = player.yaw;
     player.cam_pitch = pitch;
     player.cam_distance = distance;
     player.cam_target = player.position + Vec3::new(0.0, 0.35 + player.height * 0.5, 0.0);
+    // the cut lands behind them, clear of walls (the reference recording's cut to Hawk: from
+    // straight behind, the whole body in view)
+    player.cam_yaw = clear_follow_yaw(player.cam_target, player.yaw, pitch, distance);
     player.shoulder = 0.0;
+    // the squad AI's aim, fire, walking and idling don't carry over: the cut is to the plain
+    // follow camera (not pulled in over the shoulder), and they stand where they face instead
+    // of walking on, turning to the old leader's heading (face_yaw) or kneeling on (the demo's
+    // choice: the recording's Hawk stands at the cut, but whether a kneeling member stands up is
+    // a guess)
+    player.move_input = Vec2::ZERO;
+    player.aim = false;
+    player.fire = false;
+    player.aim_hold = 0.0;
+    player.face_yaw = None;
+    player.crouch_wanted = false;
+    player.idle_cautious = false;
     player.show_help = help;
     player.weapon_dirty = true;
     player.hud_list = 0.0;
@@ -1627,6 +1645,43 @@ fn camera_pose(p: &Player, view_yaw: f32) -> (Vec3, Vec3) {
     let eye = head + fwd * reach;
     let ahead = eye + fwd * 10.0;
     (pos.lerp(eye, p.scope), target.lerp(ahead, p.scope))
+}
+
+/// Headings tried either side of straight behind when the cut to a squad member finds a wall
+/// there: this step, up to half a turn (the demo's choice; the game's own placement isn't
+/// recorded near walls).
+const HANDOVER_YAW_STEP: f32 = 10.0 * std::f32::consts::PI / 180.0;
+/// The follow camera keeps this far in front of a wall (its clamp in `follow_camera`).
+const FOLLOW_WALL_MARGIN: f32 = 0.3;
+
+/// The follow camera's heading for a cut to a character facing `facing`, its view on `target`:
+/// straight behind them if nothing is in the way back to the camera at `distance`; otherwise
+/// the nearest heading either side that is clear (the follow camera's clamp would otherwise
+/// pull it into the body); with none clear, the one with the most room.
+fn clear_follow_yaw(target: Vec3, facing: f32, pitch: f32, distance: f32) -> f32 {
+    let Some(a) = world::arena() else { return facing };
+    let need = distance + FOLLOW_WALL_MARGIN;
+    let room = |yaw: f32| {
+        let back = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0) * Vec3::Z;
+        a.ray(target, back, need).unwrap_or(f32::MAX)
+    };
+    let mut best = (facing, room(facing));
+    if best.1 >= need {
+        return facing;
+    }
+    for k in 1..=18 {
+        for side in [1.0, -1.0] {
+            let yaw = wrap_angle(facing + side * k as f32 * HANDOVER_YAW_STEP);
+            let r = room(yaw);
+            if r >= need {
+                return yaw;
+            }
+            if r > best.1 {
+                best = (yaw, r);
+            }
+        }
+    }
+    best.0
 }
 
 /// The vertical field of view at a zoom.
@@ -2139,9 +2194,11 @@ fn read_input(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut player: ResMut<Player>,
 ) {
-    // 1-4: hand control to that squad member (after their name shows, see squad_control)
+    // 1-4: hand control to that squad member (after their name shows, see squad_control); not
+    // while dead: the death camera hands over when it ends (whether the game lets you cut it
+    // short isn't recorded: a guess)
     for (i, k) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].iter().enumerate() {
-        if keys.just_pressed(*k) && i != player.character {
+        if keys.just_pressed(*k) && i != player.character && !player.dead {
             player.select = Some((i, SELECT_TIME));
         }
     }
