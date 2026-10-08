@@ -5,8 +5,8 @@
 //!    model), from the first mission's and the multiplayer levels' data, floats on a rack in
 //!    front of the start, turning slowly. Walking into one puts it in the held weapon's slot
 //!    (the character is respawned with it: full ammo, the weapon in hand).
-//!  - One of every pickup type with a model (`Game::items`, one per model) lies in a grid
-//!    behind the rack, a
+//!  - One of every pickup type with a model (`Game::items`, one per model) is dropped in a
+//!    grid behind the rack, upright but tipped a little, settling as it would, a
 //!    level's inventory-object as far as play_pickups.rs is concerned: medkits and fruit are
 //!    taken and used as on a map; the rest are loose objects.
 //!  - Instant kill: the player's shots and grenades kill any squad member they hurt, in one
@@ -37,6 +37,9 @@ const ITEMS_Z: f32 = -12.0;
 /// first mission's 10. Every campaign level adds a few more (A10 Bioreactive, Confed LZR-50,
 /// ...), but each takes about 10 s to read, so they're left out.
 const TEST_LEVELS: [&str; 8] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6", "mp7", "mp8"];
+/// How high (m) the pickups are dropped from, and how far (rad) each is tipped either way.
+const DROP_HEIGHT: f32 = 0.3;
+const DROP_TIP: f32 = 0.2;
 /// How long a test-map message shows (s).
 const MESSAGE_TIME: f32 = 2.0;
 
@@ -136,8 +139,14 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
         let Ok(model) = WeaponModel::load(&game.0, arch) else { continue };
         let (row, col) = (placed / ITEMS_ROW, placed % ITEMS_ROW);
         let x = (col as f32 - (ITEMS_ROW as f32 - 1.0) / 2.0) * ITEMS_STEP;
-        let at = Vec3::new(x, GROUND, ITEMS_Z - row as f32 * ITEMS_STEP);
-        let root = commands.spawn((Transform::from_translation(at), Visibility::default(), Placed { tag: h("inventory-object"), kind: *kind },
+        // dropped from a little height, upright as modelled but turned and tipped a little, so
+        // it settles as it would: a crate on its base, the Garo fruit (modelled on its point)
+        // and the cards (on their edge) over onto their sides
+        let at = Vec3::new(x, GROUND + DROP_HEIGHT, ITEMS_Z - row as f32 * ITEMS_STEP);
+        let seed = |k: f32| ((placed as f32 + 1.0) * k).sin().fract().abs() * 2.0 - 1.0;
+        let turn = Quat::from_euler(EulerRot::YXZ, seed(12.9898) * std::f32::consts::PI, seed(78.233) * DROP_TIP, seed(37.719) * DROP_TIP);
+        let root = commands.spawn((Transform::from_translation(at).with_rotation(turn), Visibility::default(),
+                                   Placed { tag: h("inventory-object"), kind: *kind }, super::pickups::DropIn,
                                    Name::new("test pickup"))).id();
         for part in &model.parts {
             let pe = commands.spawn((Transform::from_translation(part.offset).with_rotation(part.rotation), Visibility::Inherited, ChildOf(root))).id();
@@ -196,3 +205,4 @@ fn spin_rack(time: Res<Time>, mut rack: Query<&mut Transform, With<RackWeapon>>)
         t.rotation = turn * t.rotation;
     }
 }
+

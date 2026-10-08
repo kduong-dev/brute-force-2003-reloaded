@@ -75,20 +75,17 @@ const GROUP_GAP: f32 = 0.3;
 const GROUP_TWIST: f32 = 0.2;
 /// A medkit's footprint (m, across and deep) if its mesh can't be measured.
 const MEDKIT_FOOTPRINT: Vec2 = Vec2::new(0.5, 0.3);
-/// The used medkit let go: its push (m/s, forward of the character and up), gravity, bounce,
-/// how many stay on the ground at once.
+/// The used medkit let go: its push (m/s, forward of the character and up), gravity (for every
+/// loose body), its size if its model can't be measured (m), how many stay on the ground at once.
 const DROP_FORWARD: f32 = 0.8;
 const DROP_UP: f32 = 0.6;
 const DROP_GRAVITY: f32 = 9.8;
 const DROP_RADIUS: f32 = 0.06;
-const DROP_BOUNCE: f32 = 0.3;
-const DROP_FRICTION: f32 = 0.55;
 const DROPS_KEPT: usize = 12;
 /// Loose pickups: how near (m, across) a character's feet must come to kick one, and how high
 /// above or below; the kick (the character's speed carried, a push away, a hop up, m/s); a
 /// blast's reach (its radius times this) and throw (m/s at its middle); how far apart (m)
-/// the steepest they lie tilted (rad); slower than this (m/s) a bounce
-/// settles. A kick sends it out ahead faster than the character and off to the side it was
+/// loose ones push to; the steepest they lie tilted (rad). A kick sends it out ahead faster than the character and off to the side it was
 /// on (KICK_SIDE: how much the side it's off the character's line counts).
 const KICK_REACH: f32 = 0.45;
 const KICK_UP_REACH: f32 = 0.8;
@@ -102,11 +99,28 @@ const BLAST_REACH: f32 = 1.5;
 const BLAST_THROW: f32 = 9.0;
 const BODY_APART: f32 = 0.28;
 const MAX_TILT: f32 = 0.45;
-const SETTLE: f32 = 0.35;
-/// Landing faster than this (m/s, down) bounces; slower it's sliding on the ground, slowed by
-/// SLIDE_FRICTION (m/s per s).
+/// The tumble (see `rigid_step`): a corner landing faster than BOUNCE_SPEED (m/s) bounces back
+/// at RIGID_BOUNCE of it; friction at a corner is at most RIGID_FRICTION of its bounce; on the
+/// ground the turning slows by RIGID_ROLL_DRAG per second; RIGID_STEPS sub-steps per 1/15 s.
+/// Slower than RIGID_STILL m/s and RIGID_STILL_SPIN rad/s on the ground for RIGID_QUIET s, it's
+/// at rest. A kick rolls it KICK_ROLL rad/s per m/s it's sent. All the demo's choices.
 const BOUNCE_SPEED: f32 = 1.0;
-const SLIDE_FRICTION: f32 = 5.0;
+const RIGID_BOUNCE: f32 = 0.3;
+const RIGID_FRICTION: f32 = 0.6;
+const RIGID_ROLL_DRAG: f32 = 1.5;
+const RIGID_STEPS: usize = 8;
+const RIGID_STILL: f32 = 0.12;
+const RIGID_STILL_SPIN: f32 = 0.6;
+const RIGID_QUIET: f32 = 0.25;
+const KICK_ROLL: f32 = 2.5;
+/// Balanced, not resting (see `balanced`): the touching points within CONTACT_GAP (m) of the
+/// lowest, their narrower spread under TIP_WIDTH (m); the push over (rad/s).
+const CONTACT_GAP: f32 = 0.01;
+const TIP_WIDTH: f32 = 0.02;
+const TOPPLE_PUSH: f32 = 1.5;
+/// How fast a body that has stopped turns into its lying pose (per second, exponential: most
+/// of the way in about 0.25 s), so it doesn't snap flat on the frame it stops.
+const SETTLE_TURN: f32 = 12.0;
 /// The used medkit's cross: its texture's blue (the cross) turned red; the case keeps its colour.
 /// How long a pickup message shows (s), a pickup's line stays, and an item stays NEW.
 const MESSAGE_TIME: f32 = 2.0;
@@ -141,6 +155,8 @@ struct UsedMedkit {
     held: Option<Entity>,
     /// the ones let go, oldest first
     dropped: Vec<Entity>,
+    /// its bounding box corners (for its tumble when let go)
+    corners: Option<Vec<Vec3>>,
 }
 
 /// A medkit group's glow: where it is, faced to the camera each frame.
@@ -157,7 +173,30 @@ struct Body {
     moving: bool,
     /// seconds until it can be kicked again
     kicked: f32,
+    /// the pose it's settling into after coming to rest (eased to, see SETTLE_TURN)
+    rest: Option<Quat>,
+    /// the outermost points of its meshes (in its own frame, see `local_points`): it touches
+    /// the ground with these, whichever way up it is; without them, `lift` is how high its
+    /// origin sits
+    corners: Option<Vec<Vec3>>,
+    /// how long it has been all but still on the ground (s): at RIGID_QUIET it comes to rest
+    quiet: f32,
 }
+
+impl Body {
+    /// How high its origin sits above the ground turned `rotation`: its lowest corner's depth.
+    fn contact(&self, rotation: Quat) -> f32 {
+        match &self.corners {
+            Some(c) => -c.iter().map(|v| (rotation * *v).y).fold(f32::MAX, f32::min),
+            None => self.lift,
+        }
+    }
+}
+
+/// A placed pickup that starts falling where it is, in the pose it's given, rather than lying
+/// seated on the ground (the test map drops its pickups so they land on a face).
+#[derive(Component)]
+pub struct DropIn;
 
 /// Grenade blasts this frame (where, radius), for the loose pickups (play_grenade.rs adds them).
 #[derive(Resource, Default)]
@@ -184,7 +223,7 @@ pub fn plugin(app: &mut App) {
 /// spots' glow, and the used medkit's model.
 #[allow(clippy::too_many_arguments)]
 fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
-                mut used: ResMut<UsedMedkit>, mut placed: Query<(Entity, &Placed, &mut Transform)>,
+                mut used: ResMut<UsedMedkit>, mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>)>,
                 children: Query<&Children>, parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>,
                 mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
                 mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
@@ -197,13 +236,15 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
         player.health = hp.min(player.max_health);
     }
     pickups.list = placed.iter()
-        .filter(|(_, p, _)| p.tag == h("inventory-object") && !game.0.idle_effects.contains_key(&p.kind)
+        .filter(|(_, p, _, _)| p.tag == h("inventory-object") && !game.0.idle_effects.contains_key(&p.kind)
             && game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT))
-        .map(|(entity, p, t)| Pickup { entity, kind: p.kind, at: t.translation, gone: 0.0, told: false })
+        .map(|(entity, p, t, _)| Pickup { entity, kind: p.kind, at: t.translation, gone: 0.0, told: false })
         .collect();
     // one glow over each group of medkits (it stays when they're taken: it marks where they are)
     let kits: Vec<usize> = (0..pickups.list.len())
-        .filter(|&i| game.0.items.get(&pickups.list[i].kind).is_some_and(|t| t.function == MEDKIT)).collect();
+        .filter(|&i| game.0.items.get(&pickups.list[i].kind).is_some_and(|t| t.function == MEDKIT))
+        // (dropped in ones fall where they will)
+        .filter(|&i| !placed.get(pickups.list[i].entity).is_ok_and(|p| p.3)).collect();
     let spots: Vec<Vec3> = kits.iter().map(|&i| pickups.list[i].at).collect();
     let mut group = (0..spots.len()).collect::<Vec<_>>();
     fn root(g: &mut [usize], mut i: usize) -> usize {
@@ -239,7 +280,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
         // stable order: by where the level put them
         list.sort_by(|&a, &b| spots[a].z.total_cmp(&spots[b].z).then(spots[a].x.total_cmp(&spots[b].x)));
         let c = middles[&r].0 / middles[&r].1;
-        let Ok((_, _, first)) = placed.get(pickups.list[kits[list[0]]].entity) else { continue };
+        let Ok((_, _, first, _)) = placed.get(pickups.list[kits[list[0]]].entity) else { continue };
         let (turn, scale) = (first.rotation, first.scale);
         let size = footprint(pickups.list[kits[list[0]]].entity, &children, &parts, &meshes, scale).unwrap_or(MEDKIT_FOOTPRINT);
         let (yaw, _, _) = turn.to_euler(EulerRot::YXZ);
@@ -258,7 +299,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
             let (x, z) = (c.x + off.x, c.z + off.z);
             let y = pickup.at.y - floor_y(pickup.at.x, pickup.at.z, pickup.at.y + 0.5) + floor_y(x, z, pickup.at.y + 0.5);
             pickup.at = Vec3::new(x, y, z);
-            if let Ok((_, _, mut t)) = placed.get_mut(pickup.entity) {
+            if let Ok((_, _, mut t, _)) = placed.get_mut(pickup.entity) {
                 t.translation = pickup.at;
                 // a fixed twist per medkit, from where the level put it
                 let seed = (spots[i].x * 12.9898 + spots[i].z * 78.233).sin() * 43758.547;
@@ -278,14 +319,23 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
                         bevy::pbr::NotShadowCaster, Name::new("medkit glow")));
     }
     // every pickup on the ground is loose, lying tilted to the ground under it
-    for (e, p, mut t) in &mut placed {
+    for (e, p, mut t, drop_in) in &mut placed {
         if p.tag != h("inventory-object") || game.0.idle_effects.contains_key(&p.kind) {
             continue;
         }
         let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5);
-        let (yaw, _, _) = t.rotation.to_euler(EulerRot::YXZ);
-        t.rotation = lie(t.translation, yaw);
-        commands.entity(e).insert(Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: (t.translation.y - ground).max(0.0), moving: false, kicked: 0.0 });
+        let mut body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: (t.translation.y - ground).max(0.0), moving: drop_in, kicked: 0.0,
+                              rest: None, corners: local_points(e, &children, &parts, &meshes, t.scale), quiet: 0.0 };
+        if drop_in {
+            // falling from where it is, as it's turned
+            body.lift = 0.0;
+        } else {
+            let (yaw, _, _) = t.rotation.to_euler(EulerRot::YXZ);
+            t.rotation = lie(t.translation, yaw);
+            // sitting on its lowest point, not on its origin (a model's origin can be its middle)
+            t.translation.y = ground + body.contact(t.rotation);
+        }
+        commands.entity(e).insert(body);
     }
     if std::env::var("BF_PICKUP_LOG").is_ok() {
         for p in &pickups.list {
@@ -318,6 +368,11 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
                         }
                         assets.materials.add(m)
                     }).unwrap_or(mat);
+                    if let Some(b) = assets.meshes.get(&mesh).and_then(|m| m.compute_aabb()) {
+                        let (lo, hi) = (Vec3::from(b.min()) + part.offset, Vec3::from(b.max()) + part.offset);
+                        let (l, u) = used.corners.as_ref().map_or((lo, hi), |c| c.iter().fold((lo, hi), |(l, u), v| (l.min(*v), u.max(*v))));
+                        used.corners = Some(box_corners(l, u).to_vec());
+                    }
                     used.parts.push((mesh, red, part.offset));
                 }
             }
@@ -440,7 +495,7 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
     let k = player.random(1000) as f32 / 1000.0;
     let e = spawn_model(&mut commands, &used, Transform::from_translation(hand), None);
     commands.entity(e).insert(Body { velocity: forward * DROP_FORWARD + Vec3::Y * DROP_UP, spin: Vec3::new(4.0 + 3.0 * k, 2.0 * k, 3.0 - 2.0 * k),
-                                     lift: DROP_RADIUS, moving: true, kicked: 0.0 });
+                                     lift: DROP_RADIUS, moving: true, kicked: 0.0, rest: None, corners: used.corners.clone(), quiet: 0.0 });
     used.dropped.push(e);
     if used.dropped.len() > DROPS_KEPT {
         let old = used.dropped.remove(0);
@@ -452,22 +507,21 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
     }
 }
 
-/// A placed object's footprint (m, along its own x and z), from its meshes' bounds.
-fn footprint(entity: Entity, children: &Query<&Children>, parts: &Query<(&Transform, Option<&Mesh3d>), Without<Placed>>,
-             meshes: &Assets<Mesh>, scale: Vec3) -> Option<Vec2> {
-    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+/// A placed object's outermost points in its own frame (with its `scale`): of all its meshes'
+/// vertices, the furthest out along each of 26 directions (toward a box's faces, edges and
+/// corners), about its convex hull. Unlike its bounding box this has its real shape at the
+/// bottom: a fruit's pointed end touches the ground at one point and topples, a crate's flat
+/// base stays put.
+fn local_points(entity: Entity, children: &Query<&Children>, parts: &Query<(&Transform, Option<&Mesh3d>), Without<Placed>>,
+                meshes: &Assets<Mesh>, scale: Vec3) -> Option<Vec<Vec3>> {
+    let mut all = vec![];
     let mut stack = vec![(entity, Transform::from_scale(scale))];
     while let Some((e, at)) = stack.pop() {
         if let Ok((t, mesh)) = parts.get(e) {
             let at = at * *t;
-            if let Some(b) = mesh.and_then(|m| meshes.get(&m.0)).and_then(|m| m.compute_aabb()) {
-                let (mn, mx) = (Vec3::from(b.min()), Vec3::from(b.max()));
-                for corner in [mn, mx, Vec3::new(mn.x, mn.y, mx.z), Vec3::new(mx.x, mx.y, mn.z),
-                               Vec3::new(mn.x, mx.y, mn.z), Vec3::new(mx.x, mn.y, mx.z), Vec3::new(mn.x, mx.y, mx.z), Vec3::new(mx.x, mn.y, mn.z)] {
-                    let p = at.transform_point(corner);
-                    lo = lo.min(p);
-                    hi = hi.max(p);
-                }
+            if let Some(bevy::render::mesh::VertexAttributeValues::Float32x3(v)) =
+                mesh.and_then(|m| meshes.get(&m.0)).and_then(|m| m.attribute(Mesh::ATTRIBUTE_POSITION)) {
+                all.extend(v.iter().map(|p| at.transform_point(Vec3::from(*p))));
             }
             if let Ok(kids) = children.get(e) {
                 stack.extend(kids.iter().map(|k| (k, at)));
@@ -476,7 +530,39 @@ fn footprint(entity: Entity, children: &Query<&Children>, parts: &Query<(&Transf
             stack.extend(kids.iter().map(|k| (k, at)));
         }
     }
-    (lo.x <= hi.x).then(|| Vec2::new(hi.x - lo.x, hi.z - lo.z))
+    if all.is_empty() {
+        return None;
+    }
+    let mut points: Vec<Vec3> = vec![];
+    for x in -1..=1 {
+        for y in -1..=1 {
+            for z in -1..=1 {
+                let d = Vec3::new(x as f32, y as f32, z as f32);
+                if d == Vec3::ZERO {
+                    continue;
+                }
+                let p = all.iter().copied().max_by(|a, b| a.dot(d).total_cmp(&b.dot(d))).unwrap_or_default();
+                if !points.iter().any(|q| q.distance(p) < 1e-4) {
+                    points.push(p);
+                }
+            }
+        }
+    }
+    Some(points)
+}
+
+/// The eight corners of the box `lo`..`hi`.
+fn box_corners(lo: Vec3, hi: Vec3) -> [Vec3; 8] {
+    [lo, hi, Vec3::new(lo.x, lo.y, hi.z), Vec3::new(hi.x, hi.y, lo.z),
+     Vec3::new(lo.x, hi.y, lo.z), Vec3::new(hi.x, lo.y, hi.z), Vec3::new(lo.x, hi.y, hi.z), Vec3::new(hi.x, lo.y, lo.z)]
+}
+
+/// A placed object's footprint (m, along its own x and z), from its meshes' bounds.
+fn footprint(entity: Entity, children: &Query<&Children>, parts: &Query<(&Transform, Option<&Mesh3d>), Without<Placed>>,
+             meshes: &Assets<Mesh>, scale: Vec3) -> Option<Vec2> {
+    let c = local_points(entity, children, parts, meshes, scale)?;
+    let (lo, hi) = c.iter().fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(*v), u.max(*v)));
+    Some(Vec2::new(hi.x - lo.x, hi.z - lo.z))
 }
 
 /// A soft round halo: white, alpha falling from the middle to nothing at the edge.
@@ -552,19 +638,141 @@ fn hold_medkit(mut commands: Commands, player: Res<Player>, mut used: ResMut<Use
     }
 }
 
-/// The rest pose for something lying at `at` turned `yaw`: tilted to the ground under it (at
-/// most MAX_TILT).
-fn lie(at: Vec3, yaw: f32) -> Quat {
+/// The ground's up under `at`: its slope, or straight up where it's steeper than MAX_TILT (a
+/// step or a wall edge, not a slope).
+fn ground_up(at: Vec3) -> Vec3 {
     let e = 0.15;
     let top = at.y + 0.5;
     let dx = floor_y(at.x + e, at.z, top) - floor_y(at.x - e, at.z, top);
     let dz = floor_y(at.x, at.z + e, top) - floor_y(at.x, at.z - e, top);
-    let mut n = Vec3::new(-dx / (2.0 * e), 1.0, -dz / (2.0 * e)).normalize();
-    if n.angle_between(Vec3::Y) > MAX_TILT {
-        // a step or a wall edge under it, not a slope
-        n = Vec3::Y;
+    let n = Vec3::new(-dx / (2.0 * e), 1.0, -dz / (2.0 * e)).normalize();
+    if n.angle_between(Vec3::Y) > MAX_TILT { Vec3::Y } else { n }
+}
+
+/// The rest pose for something placed at `at` turned `yaw`: upright, tilted to the ground
+/// under it.
+fn lie(at: Vec3, yaw: f32) -> Quat {
+    Quat::from_rotation_arc(Vec3::Y, ground_up(at)) * Quat::from_rotation_y(yaw)
+}
+
+/// The rest pose for something that has tumbled to a stop at `at` turned `now`: on whichever
+/// face is nearest the ground (its local axis pointing most nearly up), turned the least way
+/// that sits that face on the ground. Its heading and the side it landed on are kept, so it
+/// settles by a few degrees instead of being stood back upright.
+fn settle(at: Vec3, now: Quat) -> Quat {
+    let up = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z].into_iter()
+        .map(|a| now * a).max_by(|a, b| a.y.total_cmp(&b.y)).unwrap_or(Vec3::Y);
+    (Quat::from_rotation_arc(up, ground_up(at)) * now).normalize()
+}
+
+/// Whether a still body is only balanced, not resting: the points it touches the ground with (its
+/// outer points within CONTACT_GAP of the lowest) are one point or one line (their narrower
+/// spread under TIP_WIDTH m), like the Garo fruit on its point or a card on its edge. Then
+/// the way it leans (across, from those points toward its middle), to fall over that way.
+fn balanced(b: &Body, tr: &Transform) -> Option<Vec3> {
+    let points = b.corners.as_ref()?;
+    let (lo, hi) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(*v), u.max(*v)));
+    let middle = tr.transform_point((lo + hi) * 0.5);
+    let world: Vec<Vec3> = points.iter().map(|p| tr.transform_point(*p)).collect();
+    let height = |p: &Vec3| p.y - floor_y(p.x, p.z, p.y + 0.5);
+    let low = world.iter().map(height).fold(f32::MAX, f32::min);
+    let touching: Vec<Vec2> = world.iter().filter(|p| height(p) < low + CONTACT_GAP).map(|p| p.xz()).collect();
+    let n = touching.len() as f32;
+    let centre = touching.iter().sum::<Vec2>() / n;
+    // the spread of the touching points: their covariance's narrower axis
+    let (mut xx, mut xz, mut zz) = (0.0, 0.0, 0.0);
+    for p in &touching {
+        let d = *p - centre;
+        xx += d.x * d.x / n;
+        xz += d.x * d.y / n;
+        zz += d.y * d.y / n;
     }
-    Quat::from_rotation_arc(Vec3::Y, n) * Quat::from_rotation_y(yaw)
+    let (sum, diff) = (xx + zz, ((xx - zz) * (xx - zz) * 0.25 + xz * xz).sqrt());
+    let narrow = (sum * 0.5 - diff).max(0.0).sqrt();
+    if narrow >= TIP_WIDTH {
+        return None;
+    }
+    // the narrow axis (across the edge), and which way along it the middle is
+    let across = if xz.abs() > 1e-6 { Vec2::new(sum * 0.5 - diff - zz, xz).normalize_or(Vec2::X) }
+                 else if xx < zz { Vec2::X } else { Vec2::Y };
+    let lean = middle.xz() - centre;
+    let way = if lean.length() > 1e-3 { lean.normalize() } else { across * if across.dot(lean) < 0.0 { -1.0 } else { 1.0 } };
+    Some(Vec3::new(way.x, 0.0, way.y))
+}
+
+/// One frame of a loose body as a rigid box (its meshes' bounding box, mass 1): gravity, then
+/// each corner that has gone into the ground gets an impulse at that corner, a bounce along the
+/// ground's up (only from a real landing, RIGID_BOUNCE) and friction across it (up to
+/// RIGID_FRICTION of the bounce). Because the push lands on a corner, not the middle, it turns
+/// the box too: a box sliding on one edge tips over and rolls, one landing on a corner flips. In
+/// RIGID_STEPS sub-steps a frame, so it holds together at 15 fps. Returns whether it's touching
+/// the ground.
+fn rigid_step(b: &mut Body, tr: &mut Transform, dt: f32) -> bool {
+    let corners = b.corners.clone().unwrap_or_else(|| {
+        let r = b.lift.max(0.05);
+        box_corners(Vec3::splat(-r), Vec3::splat(r)).to_vec()
+    });
+    let (lo, hi) = corners.iter().fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(*v), u.max(*v)));
+    let centre = (lo + hi) * 0.5;
+    let half = ((hi - lo) * 0.5).max(Vec3::splat(0.02));
+    // a box's inverse inertia (mass 1) along its own axes
+    let inv_inertia = Vec3::new(3.0 / (half.y * half.y + half.z * half.z), 3.0 / (half.x * half.x + half.z * half.z),
+                                3.0 / (half.x * half.x + half.y * half.y));
+    let mut rot = tr.rotation;
+    let mut com = tr.translation + rot * centre;
+    let up = ground_up(com);
+    let steps = ((dt * RIGID_STEPS as f32 * 15.0).ceil() as usize).clamp(1, 4 * RIGID_STEPS);
+    let h = dt / steps as f32;
+    let mut touching = false;
+    for _ in 0..steps {
+        b.velocity.y -= DROP_GRAVITY * h;
+        com += b.velocity * h;
+        if b.spin.length_squared() > 1e-10 {
+            rot = (Quat::from_scaled_axis(b.spin * h) * rot).normalize();
+        }
+        let inv_i = |x: Vec3| rot * (inv_inertia * (rot.inverse() * x));
+        let mut deepest = 0.0f32;
+        for c in &corners {
+            let r = rot * (*c - centre);
+            let p = com + r;
+            let depth = floor_y(p.x, p.z, p.y + 0.5) - p.y;
+            if depth <= 0.0 {
+                continue;
+            }
+            touching = true;
+            deepest = deepest.max(depth);
+            let vp = b.velocity + b.spin.cross(r);
+            let vn = vp.dot(up);
+            if vn >= 0.0 {
+                continue;
+            }
+            // the bounce at this corner
+            let k = 1.0 + inv_i(r.cross(up)).cross(r).dot(up);
+            let bounce = if vn < -BOUNCE_SPEED { RIGID_BOUNCE } else { 0.0 };
+            let jn = -(1.0 + bounce) * vn / k;
+            b.velocity += up * jn;
+            b.spin += inv_i(r.cross(up * jn));
+            // friction across the ground at this corner
+            let vp = b.velocity + b.spin.cross(r);
+            let across = vp - up * vp.dot(up);
+            let speed = across.length();
+            if speed > 1e-4 {
+                let t = across / speed;
+                let kt = 1.0 + inv_i(r.cross(t)).cross(r).dot(t);
+                let jt = (speed / kt).min(RIGID_FRICTION * jn);
+                b.velocity -= t * jt;
+                b.spin -= inv_i(r.cross(t * jt));
+            }
+        }
+        // out of the ground
+        com += up * deepest;
+        if deepest > 0.0 {
+            b.spin *= (1.0 - RIGID_ROLL_DRAG * h).max(0.0);
+        }
+    }
+    tr.rotation = rot;
+    tr.translation = com - rot * centre;
+    touching
 }
 
 /// Loose pickups: kicked by the characters walking into them, thrown by blasts, then gravity,
@@ -609,8 +817,13 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
             let push = ahead * KICK_AWAY + side * off * KICK_SIDE;
             b.velocity = v * KICK_CARRY + Vec3::new(push.x, 0.0, push.y) + Vec3::Y * KICK_HOP * (0.6 + 0.4 * j);
             b.kicked = KICK_AGAIN;
-            b.spin = Vec3::new(3.0 + 4.0 * j, 6.0 * (j - 0.5), 4.0 - 3.0 * j) * (0.5 + v.length() / 8.0);
+            // rolling the way it's sent (a ball rolling along v turns about up x v), a little
+            // askew and turning, per body
+            let along = Vec3::new(b.velocity.x, 0.0, b.velocity.z);
+            b.spin = Vec3::Y.cross(along) * KICK_ROLL + Vec3::new(2.0 * (j - 0.5), 4.0 * (j - 0.5), 2.0 * (0.5 - j));
             b.moving = true;
+            b.rest = None;
+            b.quiet = 0.0;
             if std::env::var("BF_PICKUP_LOG").is_ok() {
                 println!("kicked {e} at {at:.2} by character {i} going {:.1} m/s: {:.2}", v.length(), b.velocity);
             }
@@ -621,50 +834,44 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
                 let k = 1.0 - d / (r * BLAST_REACH);
                 let away = Vec3::new(at.x - c.x, 0.0, at.z - c.z).normalize_or(Vec3::X);
                 b.velocity += (away * 0.8 + Vec3::Y) * BLAST_THROW * k;
-                b.spin += Vec3::new(12.0 * j, 8.0, 10.0 * (1.0 - j)) * k;
-                b.moving = true;
+                b.spin += Vec3::Y.cross(away) * BLAST_THROW * KICK_ROLL * k + Vec3::new(6.0 * j, 4.0, 5.0 * (1.0 - j)) * k;
+                    b.moving = true;
+                b.rest = None;
+                b.quiet = 0.0;
             }
         }
         if !b.moving {
-            continue;
-        }
-        b.velocity.y -= DROP_GRAVITY * dt;
-        let mut pos = at + b.velocity * dt;
-        let floor = floor_y(pos.x, pos.z, at.y + 0.3) + b.lift;
-        if pos.y < floor {
-            pos.y = floor;
-            if b.velocity.y < -BOUNCE_SPEED {
-                // a landing: bounce, losing some of its way
-                b.velocity.y = -b.velocity.y * DROP_BOUNCE;
-                b.velocity.x *= DROP_FRICTION;
-                b.velocity.z *= DROP_FRICTION;
-                b.spin *= DROP_FRICTION;
-            } else {
-                // on the ground: sliding, slowed by friction, tumbling less
-                b.velocity.y = b.velocity.y.max(0.0);
-                let across = Vec2::new(b.velocity.x, b.velocity.z);
-                let slower = (across.length() - SLIDE_FRICTION * dt).max(0.0);
-                let across = across.normalize_or_zero() * slower;
-                b.velocity.x = across.x;
-                b.velocity.z = across.y;
-                b.spin *= (1.0 - 6.0 * dt).max(0.0);
-                if slower < SETTLE {
-                    // at rest: lying where it landed, tilted to the ground
-                    b.velocity = Vec3::ZERO;
-                    b.spin = Vec3::ZERO;
-                    b.moving = false;
-                    let (yaw, _, _) = tr.rotation.to_euler(EulerRot::YXZ);
-                    tr.rotation = lie(pos, yaw);
-                    if std::env::var("BF_PICKUP_LOG").is_ok() {
-                        println!("{e} came to rest at {pos:.2}; the player at {:.2}", feet[0]);
-                    }
+            // coming to rest: turning into its lying pose, not snapping to it
+            if let Some(rest) = b.rest {
+                tr.rotation = tr.rotation.slerp(rest, (1.0 - (-SETTLE_TURN * dt).exp()).min(1.0));
+                // (still on the ground as it turns)
+                tr.translation.y = floor_y(at.x, at.z, at.y + 0.3) + b.contact(tr.rotation);
+                if tr.rotation.angle_between(rest) < 0.01 {
+                    tr.rotation = rest;
+                    b.rest = None;
                 }
             }
+            continue;
         }
-        tr.translation = pos;
-        let spin = b.spin * dt;
-        if b.moving && spin.length_squared() > 1e-8 {
-            tr.rotation = Quat::from_scaled_axis(spin) * tr.rotation;
+        let touching = rigid_step(&mut b, &mut tr, dt);
+        b.quiet = if touching && b.velocity.length() < RIGID_STILL && b.spin.length() < RIGID_STILL_SPIN { b.quiet + dt } else { 0.0 };
+        // balanced on a point or an edge isn't resting: it falls the way it leans
+        if b.quiet >= RIGID_QUIET {
+            if let Some(lean) = balanced(&b, &tr) {
+                b.spin += Vec3::Y.cross(lean) * TOPPLE_PUSH;
+                b.quiet = 0.0;
+            }
+        }
+        if b.quiet >= RIGID_QUIET {
+            // at rest: lying on the face it came to, sat flush on the ground
+            b.velocity = Vec3::ZERO;
+            b.spin = Vec3::ZERO;
+            b.moving = false;
+            b.quiet = 0.0;
+            b.rest = Some(settle(tr.translation, tr.rotation));
+            if std::env::var("BF_PICKUP_LOG").is_ok() {
+                println!("{e} came to rest at {:.2} at t {:.2}; the player at {:.2}", tr.translation, player.sim_time, feet[0]);
+            }
         }
     }
     // the moving ones push off the others (not into them)

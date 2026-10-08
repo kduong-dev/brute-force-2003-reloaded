@@ -44,9 +44,12 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     campaign level takes about 10 s to read.
   * `BF_TESTMAP_LEVELS=<level>,<level>...` loads a different list.
   * `BF_TESTMAP_LOG=1` lists every weapon definition with its type, clip and model size.
-* **One of every pickup type** with a model (one per model) in a grid behind the rack. These
-  are inventory-objects as on a map, so medkits and fruit work as in "Health pickups", and
-  everything is loose (kicked, thrown by blasts).
+* **One of every pickup type** with a model (one per model) in a grid behind the rack.
+  * They're dropped in from 0.3 m, upright as modelled but turned at random and tipped up to
+    0.2 rad, so each settles as it would. A crate lands on its base; the Garo fruit (modelled
+    on its point) and the cards (on their edges) fall over onto their sides.
+  * They're inventory-objects as on a map, so medkits and fruit work as in "Health pickups",
+    and everything is loose (kicked, thrown by blasts, tumbling).
 * **Instant kill**, on at the start, K toggles it. The player's shots and grenades kill any
   squad member they hurt, in one hit. The player still takes normal damage.
 * **The controls panel**, which the main game no longer shows: the keys and the debug line
@@ -63,6 +66,13 @@ Squad movement and deaths follow the game's own data and the captures:
   down (EVT_SHOT_BLOCKED_BY_FRIEND), sidestep now and then when you shoot them
   (EVT_DAMAGED_BY_PC -> GOAL_DODGE) and dive away from a grenade that lands near them
   (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip).
+* **Standing on the floor.** The floor is 1.05 m (`GROUND`) under each character's pelvis, but
+  the four aren't the same height. So each is raised or lowered by how far the lowest
+  skinned vertex of their idle pose is from it (`sole_lift`, up to 0.3 m either way):
+  * Tex: raised 0.17 m (his soles went through the floor);
+  * Brutus: lowered 0.07 m (floated);
+  * Flint: about right (0.01 m);
+  * Hawk: lowered 0.15 m (floated).
 * **Scopes.** With a weapon that zooms, right mouse toggles its scope (click in, click out;
   other weapons still aim while it's held). Flint steps in twice: in, closer (the weapon's zoom
   doubled: the L-Shot-50's 5x, then 10x), out. The doubling is a choice; the data has one zoom
@@ -780,13 +790,30 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     with the untextured glow material h_031724e6 (shader h_f539fe8c, glow 0.10 0.34 0.83,
     wrapper opacity 50). Flat untextured glows like it are drawn at full strength (the
     opacity is for the see-through glass shells round other pickups), as in the png.
-  * Pickups are loose (every inventory-object without an idle effect, and the used medkits):
-    at rest each lies tilted to the ground under it (up to ~25 degrees; steeper is a step, so
-    it lies flat). A character walking into one kicks it out ahead, faster than they're going
-    and off to the side it was on, with a hop and a tumble (once per 0.6 s, so it isn't
-    pushed along); a grenade blast within 1.5x its radius throws it. It bounces on landings
-    over 1 m/s and slides otherwise (5 m/s per s of friction) until it settles, and moving
-    ones push off the others. The medkit glows stay where the group was placed.
+  * Pickups are loose: every inventory-object without an idle effect, and the used medkits.
+    * **At the start** each sits in the level's pose, tilted to the ground under it (up to
+      ~25 degrees; steeper is a step, so it lies flat). It rests on its lowest point, not its
+      origin: a model's origin can be its middle.
+    * **Kicks and blasts.** A character walking into one kicks it out ahead, faster than
+      they're going and off to the side it was on, with a hop, rolling the way it's sent
+      (once per 0.6 s, so it isn't pushed along). A grenade blast within 1.5x its radius
+      throws it.
+    * **Tumbling** (`rigid_step`). It moves as a rigid body:
+      * its mass is spread like its bounding box;
+      * it touches the ground with its model's outermost points, about 26: the furthest
+        vertex toward each of a box's faces, edges and corners;
+      * each point that goes into the ground gets an impulse there: a bounce (0.3, from
+        landings over 1 m/s) and friction (up to 0.6 of the bounce).
+
+      Because the push lands on a point, not the middle, it turns the object too: it tips
+      over edges, flips off corners and rolls to a stop. It takes 8 sub-steps per 1/15 s.
+    * **Coming to rest.** Still for 0.25 s on the ground, it's at rest, unless it's only
+      balanced on a point or an edge: the touching points' narrower spread is under 2 cm,
+      like the Garo fruit on its point. Then it's pushed over the way it leans. At rest it
+      eases flush onto the face it stopped on over about 0.25 s, keeping its heading,
+      instead of snapping upright.
+    * Moving ones push off the others. The medkit glows stay where the group was placed.
+    * The bounce, friction, drag and thresholds are the demo's choices, not the game's.
   * The medkit sound is h_1538baad, the Sound whose file is h_15331992 (named "92193315":
     those bytes as stored in sounds-<level>.xmb), the same in all 54 levels' banks, 1.5 s.
     30% of the time the character also says a line of their "healed" chatter (line_tag

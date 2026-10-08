@@ -1051,6 +1051,9 @@ struct Loaded {
     arm_chain: Vec<usize>,
     /// left / right lowest foot bones and their planted (resting) heights
     feet: [usize; 2],
+    /// how far the model is raised so its soles stand on the floor: the floor is GROUND under
+    /// the root, the idle pose's lowest skinned vertex is this much lower (see `sole_lift`)
+    lift: f32,
     foot_rest: [f32; 2],
     /// per locomotion clip: lowest and highest height of each foot over the clip
     foot_range: HashMap<usize, [(f32, f32); 2]>,
@@ -1942,6 +1945,36 @@ fn find_feet(model: &Character, game: &Game, idle: Option<usize>) -> ([usize; 2]
     (feet, [pose[feet[0]].w_axis.y, pose[feet[1]].w_axis.y])
 }
 
+/// How far to raise a character so the soles of its idle pose stand on the floor (GROUND under
+/// the root): GROUND minus its lowest skinned vertex in that pose (each vertex skinned by its
+/// joints' idle world matrices and inverse binds, as the GPU does). GROUND is one height for
+/// everyone; Tex's idle soles are about 0.14 m lower, so his feet went through the floor.
+/// Limited to MAX_SOLE_LIFT either way, in case a model's lowest vertex isn't a sole.
+fn sole_lift(model: &Character, game: &Game, idle: Option<usize>) -> f32 {
+    let world = model.world(&match idle {
+        Some(i) => model.pose(game, i, 0.0, None, 0.0),
+        None => model.bind_local(),
+    });
+    let skin: Vec<Mat4> = world.iter().zip(&model.inverse_bind).map(|(w, ib)| *w * *ib).collect();
+    let mut lowest = f32::MAX;
+    for g in &model.geosets {
+        for (k, v) in g.positions.iter().enumerate() {
+            let (j, w) = (g.joints.get(k), g.weights.get(k));
+            let at = match (j, w) {
+                (Some(j), Some(w)) => (0..4).filter(|&n| w[n] > 0.0)
+                    .filter_map(|n| skin.get(j[n] as usize).map(|m| m.transform_point3(Vec3::from(*v)) * w[n]))
+                    .sum::<Vec3>(),
+                _ => Vec3::from(*v),
+            };
+            lowest = lowest.min(at.y);
+        }
+    }
+    if lowest == f32::MAX { 0.0 } else { (GROUND - lowest).clamp(-MAX_SOLE_LIFT, MAX_SOLE_LIFT) }
+}
+
+/// The most `sole_lift` moves a character (m).
+const MAX_SOLE_LIFT: f32 = 0.3;
+
 /// Each foot's height range over the locomotion clips. A run is carried higher than the idle
 /// stance (the toes never come back down to it), so contact is judged per clip.
 fn foot_ranges(model: &Character, game: &Game, clips: &Clips, feet: [usize; 2]) -> HashMap<usize, [(f32, f32); 2]> {
@@ -2191,7 +2224,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             info!("{name} switch to weapon {}: clip {} ({:.2}s), drop {:.2}s, grab {:.2}s", to + 1, s.clip, s.duration, s.drop, s.grab);
         }
     }
-    p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, foot_rest, foot_range, footstep_type, jump_sound,
+    let lift = sole_lift(&model, game, clips.loco.idle);
+    info!("{name}: soles {lift:.3} m below the floor, raised by that");
+    p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   weapons, switch_clips, reload_clips, use_clips, throw_clips, throw_hand, grenade });
 }
 
@@ -2676,8 +2711,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
     }
     for u in &units {
-        if let Some(tr) = u.loaded.as_ref().and_then(|l| transforms.get_mut(l.root).ok()).as_mut() {
-            tr.translation = u.position + Vec3::Y * u.height;
+        if let Some((tr, lift)) = u.loaded.as_ref().and_then(|l| transforms.get_mut(l.root).ok().map(|t| (t, l.lift))).as_mut() {
+            tr.translation = u.position + Vec3::Y * (u.height + *lift);
         }
     }
 }
@@ -3750,7 +3785,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         }
     }
     if let Ok(mut tr) = transforms.get_mut(l.root) {
-        tr.translation = p.position + Vec3::Y * p.height;
+        tr.translation = p.position + Vec3::Y * (p.height + l.lift);
         tr.rotation = facing;
     }
     for (e, (q, t)) in l.joints.iter().zip(&pose) {
