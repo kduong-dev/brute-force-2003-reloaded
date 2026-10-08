@@ -1054,6 +1054,8 @@ struct Loaded {
     /// how far the model is raised so its soles stand on the floor: the floor is GROUND under
     /// the root, the idle pose's lowest skinned vertex is this much lower (see `sole_lift`)
     lift: f32,
+    /// the weapon in hand has been let go (dead: see `update_weapons`)
+    weapon_dropped: bool,
     foot_rest: [f32; 2],
     /// per locomotion clip: lowest and highest height of each foot over the clip
     foot_range: HashMap<usize, [(f32, f32); 2]>,
@@ -2226,7 +2228,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     }
     let lift = sole_lift(&model, game, clips.loco.idle);
     info!("{name}: soles {lift:.3} m below the floor, raised by that");
-    p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, foot_rest, foot_range, footstep_type, jump_sound,
+    p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, foot_rest, foot_range, footstep_type, jump_sound,
                                   weapons, switch_clips, reload_clips, use_clips, throw_clips, throw_hand, grenade });
 }
 
@@ -2364,7 +2366,8 @@ fn autopilot(player: &mut Player) -> bool {
     if let Some(g) = test_goto() {
         let to = Vec2::new(g[2] - player.position.x, g[3] - player.position.z);
         player.cam_yaw = (-to.x).atan2(-to.y);
-        player.cam_pitch = -0.2;
+        // (BF_CAMERA_PITCH: another pitch, e.g. to fire down at something)
+        player.cam_pitch = std::env::var("BF_CAMERA_PITCH").ok().and_then(|v| v.parse().ok()).unwrap_or(-0.2);
         player.aim = std::env::var("BF_TEST_AIM").is_ok();
         // a goal on the start itself: stand there (and look down -z)
         let stay = g[0] == g[2] && g[1] == g[3];
@@ -2541,7 +2544,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if let (Some(push), false) = (u.knock_request.take(), u.dead) {
             if !u.last_world.is_empty() {
                 let push = Quat::from_rotation_y(-u.yaw) * (push + u.last_velocity);
-                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height, push).placed(u.position + Vec3::Y * u.height, u.yaw);
+                // (the model stands raised by its sole lift: the ragdoll starts where it's drawn)
+                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - l.lift, push).placed(u.position + Vec3::Y * (u.height + l.lift), u.yaw);
                 u.knock = Some(Knock { ragdoll, time: 0.0, lying: None });
                 u.thud = false;
                 u.action = Action::None;
@@ -2557,7 +2561,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 // the knocked down die where they lie
                 u.ragdoll = Some(match u.knock.take() {
                     Some(k) => k.ragdoll,
-                    None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height, push).placed(u.position + Vec3::Y * u.height, u.yaw),
+                    None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - l.lift, push).placed(u.position + Vec3::Y * (u.height + l.lift), u.yaw),
                 });
             }
             if let Some(r) = u.ragdoll.as_mut() {
@@ -2577,14 +2581,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                              CHARACTERS[u.character], u.dead_for, r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
                 }
                 apply_pose(&l, &local, &mut transforms);
-                body_thud(u.position, u.yaw, u.height, r, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
+                body_thud(u.position, u.yaw, u.height + l.lift, r, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
             }
         } else if let Some(mut k) = u.knock.take() {
             k.time += dt;
             if k.time < KNOCK_DOWN_TIME {
                 let local = k.ragdoll.step(&l.model, dt);
                 apply_pose(&l, &local, &mut transforms);
-                body_thud(u.position, u.yaw, u.height, &k.ragdoll, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
+                body_thud(u.position, u.yaw, u.height + l.lift, &k.ragdoll, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
                 u.knock = Some(k);
             } else {
                 // getting up: stand where the body lies, blend the lying pose into the animation
@@ -2960,6 +2964,51 @@ struct Knock {
     lying: Option<Vec<(Quat, Vec3)>>,
 }
 
+/// How thick the body is round each bone, so the ragdoll keeps its skin, not just its bones, out
+/// of the floor (bones held 5 cm up let a thigh or the chest sink 10 cm into it). For each
+/// bone: of the skin vertices it moves most (skinned in the starting pose), the distance from
+/// the bone's line (to the child it points at) that FLESH_SHARE of them are within, between
+/// FLESH_MIN and FLESH_MAX. Bones that move no skin get FLESH_MIN.
+fn flesh(model: &Character, world: &[Mat4], pos: &[Vec3], aim: &[Option<(usize, Vec3)>]) -> Vec<f32> {
+    let n = pos.len();
+    let skin: Vec<Mat4> = world.iter().zip(&model.inverse_bind).map(|(w, ib)| *w * *ib).collect();
+    let mut near: Vec<Vec<f32>> = vec![vec![]; n];
+    for g in &model.geosets {
+        for (k, v) in g.positions.iter().enumerate() {
+            let (Some(j), Some(w)) = (g.joints.get(k), g.weights.get(k)) else { continue };
+            let at = (0..4).filter(|&i| w[i] > 0.0)
+                .filter_map(|i| skin.get(j[i] as usize).map(|m| m.transform_point3(Vec3::from(*v)) * w[i])).sum::<Vec3>();
+            let main = (0..4).max_by(|&a, &b| w[a].total_cmp(&w[b])).map(|i| j[i] as usize).unwrap_or(0);
+            if main >= n {
+                continue;
+            }
+            // distance from the bone's line: its point to the child it points at
+            let a = pos[main];
+            let d = match aim[main] {
+                Some((c, _)) if c < n => {
+                    let ab = pos[c] - a;
+                    let t = ((at - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+                    at.distance(a + ab * t)
+                }
+                _ => at.distance(a),
+            };
+            near[main].push(d);
+        }
+    }
+    near.into_iter().map(|mut d| {
+        if d.is_empty() {
+            return FLESH_MIN;
+        }
+        d.sort_by(f32::total_cmp);
+        d[((d.len() - 1) as f32 * FLESH_SHARE) as usize].clamp(FLESH_MIN, FLESH_MAX)
+    }).collect()
+}
+
+/// See `flesh`: the share of a bone's skin within its thickness, and the least and most.
+const FLESH_SHARE: f32 = 0.8;
+const FLESH_MIN: f32 = 0.04;
+const FLESH_MAX: f32 = 0.2;
+
 /// A limp body: every bone is a point mass (verlet) held to its parent at its bone length (and
 /// loosely to its grandparent, so limbs keep some shape), falling under gravity onto the ground.
 /// Bones turn with their link to their farthest child. Simulated in the character's model space.
@@ -2992,6 +3041,8 @@ struct Ragdoll {
     /// the limb bones that collide with each other (RAGDOLL_SELF_RADIUS spheres): pairs that
     /// aren't within RAGDOLL_SELF_HOPS of each other in the skeleton and didn't start touching
     pairs: Vec<(usize, usize)>,
+    /// per bone: how thick the body is round it (see `flesh`): it's kept that far off the floor
+    flesh: Vec<f32>,
 }
 
 impl Ragdoll {
@@ -3109,7 +3160,8 @@ impl Ragdoll {
             }
         }
         let rest_offset = (0..n).map(|i| model.parent[i].filter(|&p| p < n).map_or(pos[i], |p| rest_rot[p].inverse() * (pos[i] - pos[p]))).collect();
-        Ragdoll { pos, prev, rest_rot, rest_offset, aim, links, ranges, frames, hinge_sides, still: 0, floor, origin: Vec3::ZERO, yaw: 0.0, pairs }
+        let flesh = flesh(model, world, &pos, &aim);
+        Ragdoll { pos, prev, rest_rot, rest_offset, aim, links, ranges, frames, hinge_sides, still: 0, floor, origin: Vec3::ZERO, yaw: 0.0, pairs, flesh }
     }
 
     /// Place its frame in the world (the body's root: position + height, turned by yaw), so
@@ -3198,9 +3250,9 @@ impl Ragdoll {
                     self.pos[b] -= c;
                 }
             }
-            for ((p, q), &floor) in self.pos.iter_mut().zip(self.prev.iter_mut()).zip(&floors) {
-                if p.y < floor + 0.05 {
-                    p.y = floor + 0.05;
+            for (((p, q), &floor), &flesh) in self.pos.iter_mut().zip(self.prev.iter_mut()).zip(&floors).zip(&self.flesh) {
+                if p.y < floor + flesh {
+                    p.y = floor + flesh;
                     // ground friction: lose most of the sliding
                     q.x += (p.x - q.x) * RAGDOLL_FRICTION;
                     q.z += (p.z - q.z) * RAGDOLL_FRICTION;
@@ -4063,14 +4115,41 @@ fn update_weapons(
     mut transforms: Query<&mut Transform, Without<Tracer>>,
     mut visibility: Query<&mut Visibility>,
     mut lights: Query<&mut PointLight>,
+    globals: Query<&GlobalTransform>,
 ) {
     let dt = frame_dt(&time);
     for p in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        let Some(l) = p.loaded.take() else { continue };
+        let Some(mut l) = p.loaded.take() else { continue };
+        // the dead let go of the gun in their hand: it falls from where it is, thrown a little
+        // by what killed them, and tumbles like any loose object (see pickups::Thrown)
+        if p.dead && !l.weapon_dropped {
+            l.weapon_dropped = true;
+            if let (true, Some(w)) = (p.holding, l.weapons.get(p.weapon)) {
+                if let Ok(g) = globals.get(w.entity) {
+                    let push = p.death_push * DROP_PUSH + Vec3::Y * DROP_HOP;
+                    let spin = Vec3::new(p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0) * 0.1;
+                    commands.entity(w.entity).remove::<ChildOf>()
+                        .insert((g.compute_transform(), pickups::Thrown { velocity: push, spin }));
+                }
+                if let Ok(mut v) = visibility.get_mut(w.flash) {
+                    *v = Visibility::Hidden;
+                }
+                if let Ok(mut light) = lights.get_mut(w.light) {
+                    light.intensity = 0.0;
+                }
+                // (no longer held: nothing places it in the hand again)
+                p.holding = false;
+            }
+        }
         weapon_fx(&mut commands, p, &l, &fx, &mut transforms, &mut visibility, &mut lights, dt);
         p.loaded = Some(l);
     }
 }
+
+/// A dead character's dropped gun: how much of what killed them it's thrown with, and its hop
+/// (m/s). The demo's choice.
+const DROP_PUSH: f32 = 0.5;
+const DROP_HOP: f32 = 1.5;
 
 /// One unit's weapons: placement, recoil, spin, flash, and tracers for its new shots.
 #[allow(clippy::too_many_arguments)]

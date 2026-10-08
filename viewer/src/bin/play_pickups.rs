@@ -113,6 +113,11 @@ const RIGID_STILL: f32 = 0.12;
 const RIGID_STILL_SPIN: f32 = 0.6;
 const RIGID_QUIET: f32 = 0.25;
 const KICK_ROLL: f32 = 2.5;
+/// A shot through a loose body: the push along the shot and the hop (m/s), and the turn per m of
+/// how far off its middle it's hit (rad/s). The demo's choices.
+const SHOT_PUSH: f32 = 2.5;
+const SHOT_HOP: f32 = 1.0;
+const SHOT_SPIN: f32 = 60.0;
 /// Balanced, not resting (see `balanced`): the touching points within CONTACT_GAP (m) of the
 /// lowest, their narrower spread under TIP_WIDTH (m); the push over (rad/s).
 const CONTACT_GAP: f32 = 0.01;
@@ -193,6 +198,14 @@ impl Body {
     }
 }
 
+/// Something let go to fall and tumble as a loose body from where it is, e.g. a dead
+/// character's gun (play.rs): its starting motion. Made a `Body` once its meshes are measured.
+#[derive(Component)]
+pub struct Thrown {
+    pub velocity: Vec3,
+    pub spin: Vec3,
+}
+
 /// A placed pickup that starts falling where it is, in the pose it's given, rather than lying
 /// seated on the ground (the test map drops its pickups so they land on a face).
 #[derive(Component)]
@@ -214,7 +227,7 @@ pub fn plugin(app: &mut App) {
             commands.insert_resource(UsedMedkit::default());
             commands.insert_resource(Blasts::default());
         }).after(setup))
-        .add_systems(Update, (find_pickups, physics, take_pickups, use_medkit, medkit_used, hold_medkit, face_glows).chain()
+        .add_systems(Update, (find_pickups, throw, physics, take_pickups, use_medkit, medkit_used, hold_medkit, face_glows).chain()
             .after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
@@ -507,6 +520,17 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
     }
 }
 
+/// Thrown things become loose bodies, measured by their meshes.
+fn throw(mut commands: Commands, thrown: Query<(Entity, &Thrown, &Transform)>, children: Query<&Children>,
+         parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>, meshes: Res<Assets<Mesh>>) {
+    for (e, t, tr) in &thrown {
+        commands.entity(e).remove::<Thrown>().insert(Body {
+            velocity: t.velocity, spin: t.spin, lift: DROP_RADIUS, moving: true, kicked: KICK_AGAIN, rest: None,
+            corners: local_points(e, &children, &parts, &meshes, tr.scale), quiet: 0.0,
+        });
+    }
+}
+
 /// A placed object's outermost points in its own frame (with its `scale`): of all its meshes'
 /// vertices, the furthest out along each of 26 directions (toward a box's faces, edges and
 /// corners), about its convex hull. Unlike its bounding box this has its real shape at the
@@ -515,7 +539,9 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
 fn local_points(entity: Entity, children: &Query<&Children>, parts: &Query<(&Transform, Option<&Mesh3d>), Without<Placed>>,
                 meshes: &Assets<Mesh>, scale: Vec3) -> Option<Vec<Vec3>> {
     let mut all = vec![];
-    let mut stack = vec![(entity, Transform::from_scale(scale))];
+    // (its children, in its frame: the root's own transform is where it is, not its shape)
+    let mut stack: Vec<(Entity, Transform)> = children.get(entity)
+        .map(|k| k.iter().map(|c| (c, Transform::from_scale(scale))).collect()).unwrap_or_default();
     while let Some((e, at)) = stack.pop() {
         if let Ok((t, mesh)) = parts.get(e) {
             let at = at * *t;
@@ -792,6 +818,26 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
         .map(|(i, f)| last.get(i).filter(|_| last.len() == feet.len()).map_or(Vec3::ZERO, |l| (*f - *l) / dt)).collect();
     *last = feet.clone();
     let blasts = std::mem::take(&mut blasts.0);
+    // this frame's shots (anyone's): each knocks the first loose body on its line
+    let shots: Vec<(Vec3, Vec3, f32)> = std::iter::once(&*player).chain(squad.0.iter())
+        .flat_map(|u| u.shots.iter().map(|s| (s.origin, s.dir, s.dist))).collect();
+    let mut struck: HashMap<Entity, (Vec3, Vec3)> = HashMap::new();
+    for &(origin, dir, dist) in &shots {
+        let hit = bodies.iter().filter(|(_, _, _, v)| **v != Visibility::Hidden).filter_map(|(e, b, t, _)| {
+            let (lo, hi) = b.corners.as_ref()?.iter().fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(*v), u.max(*v)));
+            let (centre, radius) = (t.transform_point((lo + hi) * 0.5), ((hi - lo) * 0.5).length().max(0.05));
+            // where the line passes closest to its middle, if within its size and the shot's reach
+            let along = (centre - origin).dot(dir);
+            let miss = (origin + dir * along).distance(centre);
+            (along > 0.0 && along < dist + radius && miss < radius).then(|| (along, e, origin + dir * (along - (radius * radius - miss * miss).sqrt()), centre))
+        }).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, e, at, centre)) = hit {
+            if std::env::var("BF_PICKUP_LOG").is_ok() {
+                println!("shot struck {e} at {at:.2}");
+            }
+            struck.insert(e, (dir, at - centre));
+        }
+    }
     for (e, mut b, mut tr, vis) in &mut bodies {
         if *vis == Visibility::Hidden {
             continue;
@@ -827,6 +873,14 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
             if std::env::var("BF_PICKUP_LOG").is_ok() {
                 println!("kicked {e} at {at:.2} by character {i} going {:.1} m/s: {:.2}", v.length(), b.velocity);
             }
+        }
+        // shot: knocked along the shot, and turned by where it was hit
+        if let Some(&(dir, off)) = struck.get(&e) {
+            b.velocity += dir * SHOT_PUSH + Vec3::Y * SHOT_HOP;
+            b.spin += off.cross(dir) * SHOT_SPIN;
+            b.moving = true;
+            b.rest = None;
+            b.quiet = 0.0;
         }
         for &(c, r) in &blasts {
             let d = at.distance(c);

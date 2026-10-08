@@ -237,7 +237,7 @@ off to nothing at its radius) and the hurt give a pain grunt (chatter e856009f).
 fire: your shots hit squadmates in the way (the weapon's damage; they say "I'm hit" or "Careful!"
 / "Stop shooting at me!"), and the crosshair turns green while it is on one. At 0 health a
 character dies: death cry (chatter ef32191d), the body goes limp as a ragdoll (verlet point
-masses on the skeleton, pushed by the hit or blast; its limb bones are 0.09 m spheres that don't pass through each other, and every bone lies on the level's own floors and is kept out of its walls - `BF_RAGDOLL_LOG=1` prints the closest limb pair and the lowest bone; the pose takes only the bones' turns from the simulation and keeps their rest offsets, so limbs don't stretch or twist; the torso moves as two solid pieces (hips; chest with shoulders), stiffly joined at the waist, with the head held to the chest; knees and elbows (found by their Bip01 names) bend but don't fold past about 120 degrees or straighten past straight, and only one way: each joint keeps to its side of the line from the upper bone to the end, in the torso's own frame (hips for knees, chest for elbows), the side it was bent at death; a nearly straight limb uses knees forward, elbows back (forward from the toes); bodies keep 98.5% of their speed per substep, lose 60% of their sliding on the ground, and rest once still; `BF_TEST_DIE=<s>` drops the player dead at that time, once; `BF_TEST_DIE=1` at 1 s), the portrait greys out and the blip leaves
+masses on the skeleton, pushed by the hit or blast; its limb bones are 0.09 m spheres that don't pass through each other, and every bone lies on the level's own floors, kept as far above them as the body is thick round it (`flesh`: of the skin each bone moves most, the distance from the bone's line that 80% of it is within, 0.04-0.2 m; a flat 5 cm let a thigh or the chest sink into the floor), and is kept out of its walls - `BF_RAGDOLL_LOG=1` prints the closest limb pair and the lowest bone; the pose takes only the bones' turns from the simulation and keeps their rest offsets, so limbs don't stretch or twist; the ragdoll starts where the body is drawn, sole lift included (see "Standing on the floor"); the torso moves as two solid pieces (hips; chest with shoulders), stiffly joined at the waist, with the head held to the chest; knees and elbows (found by their Bip01 names) bend but don't fold past about 120 degrees or straighten past straight, and only one way: each joint keeps to its side of the line from the upper bone to the end, in the torso's own frame (hips for knees, chest for elbows), the side it was bent at death; a nearly straight limb uses knees forward, elbows back (forward from the toes); bodies keep 98.5% of their speed per substep, lose 60% of their sliding on the ground, and rest once still; `BF_TEST_DIE=<s>` drops the player dead at that time, once; `BF_TEST_DIE=1` at 1 s). The gun in their hand drops: it falls from the hand, thrown by half of what killed them plus a 1.5 m/s hop, and tumbles as a loose object (see "Pickups are loose"); the other stays on their back. Then the portrait greys out and the blip leaves
 the radar; if you die, the death camera circles your body and control passes to the next
 living member after 4 s (see **Death camera** below; `BF_TEST_KILL=<character>` makes the
 player shoot that member). The inventory is shared: the
@@ -345,7 +345,8 @@ and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `B
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
 hardpoints, fire sounds) and exits; `BF_SHOT_LOG=1` prints each shot's barrel and shot
 directions. Camera hooks: `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` / `BF_CAMERA_DISTANCE` set the
-start, `BF_VIEW_YAW` turns only the rendered view (aim unchanged), `BF_START_WEAPON=1` starts with
+start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
+something), `BF_VIEW_YAW` turns only the rendered view (aim unchanged), `BF_START_WEAPON=1` starts with
 the second weapon. Captures wait 60 frames for shaders to compile before the clock starts.
 
 `bf_viewer` decodes everything itself (ports of the Python tools in the repo root):
@@ -801,6 +802,9 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
       they're going and off to the side it was on, with a hop, rolling the way it's sent
       (once per 0.6 s, so it isn't pushed along). A grenade blast within 1.5x its radius
       throws it.
+    * **Shots.** Anyone's shot whose line passes through one (its bounding sphere, before
+      the shot's end) knocks the first it meets: 2.5 m/s along the shot, a 1 m/s hop, and a
+      turn from how far off its middle it was hit.
     * **Tumbling** (`rigid_step`). It moves as a rigid body:
       * its mass is spread like its bounding box;
       * it touches the ground with its model's outermost points, about 26: the furthest
