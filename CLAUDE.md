@@ -84,6 +84,34 @@ filing those, or files them with the `triage` label for the user to accept or cl
 5. The lead summarises the result for the user. On their yes: merge to `main`, push, and the
    commit's `Closes #N` closes the ticket.
 
+**The board.** Tickets are tracked on the project "Brute Force Reloaded Project" (#4,
+owner `kduong-dev`). Its statuses are Backlog → Ready → In progress → In review → Done. The
+lead moves a ticket's card:
+- to **In progress** when a developer starts it, or when the review sends it back;
+- to **In review** when the reviewer, tester and reference agents start on it.
+
+Closing the issue moves the card to **Done** by itself: the board's "Item closed" workflow.
+
+```sh
+# the ticket's item id on the board
+ITEM=$(gh project item-list 4 --owner kduong-dev --limit 500 --format json \
+  -q '.items[] | select(.content.number==<N>) | .id')
+# set its status (option ids below)
+gh project item-edit --project-id PVT_kwHOAje2rc4Bl_qf --id "$ITEM" \
+  --field-id PVTSSF_lAHOAje2rc4Bl_qfzhkqXQ0 --single-select-option-id <option>
+```
+
+| Status | Option id |
+|---|---|
+| Backlog | `f75ad846` |
+| Ready | `61e4505c` |
+| In progress | `47fc9ee4` |
+| In review | `df73e18b` |
+| Done | `98236657` |
+
+New issues are added to the board automatically. The `gh` login needs the `project` scope
+(`gh auth refresh -s project`).
+
 Run at most two agents that build at once: each build takes minutes and uses a lot of CPU.
 Relay what agents report faithfully, including what failed or wasn't tested.
 
