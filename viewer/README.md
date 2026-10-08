@@ -26,7 +26,9 @@ Four programs:
 | wheel | zoom |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk) |
 | R | reload: the stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); automatic on an empty clip. The clip reads 0 (panel red) until the clip's magazine-in event |
-| G (hold) | grenade: hold to charge (orange meter right of the crosshair, which turns to the bracket reticle; full in 0.7 s), let go to throw - the charge sets how far. Charging starts with the Frag's event sound (e43166d1, heard as the gauge appears in the capture). The stance's throw clip (`Sc_w1/w2_throw_grenade`): in the hand from its reach event, released at its release event with the Frag's whoosh (10318b29, matched to the capture). It bounces (silently); the 1.5 s fuse starts when it lands (~2.5 s from the throw, as captured). Blast: explosion sound, white flash, light, the game's fireball flipbook (wide), brown smoke clouds for ~2.4 s, a scorch mark for 20 s, and the screen tinted red when close. 3 grenades |
+| G | use the item in the item box. A grenade: hold to charge (orange meter right of the crosshair, which turns to the bracket reticle; full in 0.7 s), let go to throw - the charge sets how far. Charging starts with the Frag's event sound (e43166d1, heard as the gauge appears in the capture). The stance's throw clip (`Sc_w1/w2_throw_grenade`): in the hand from its reach event, released at its release event with the Frag's whoosh (10318b29, matched to the capture). It bounces (silently); the 1.5 s fuse starts when it lands (~2.5 s from the throw, as captured). Blast: explosion sound, white flash, light, the game's fireball flipbook (wide), brown smoke clouds for ~2.4 s, a scorch mark for 20 s, and the screen tinted red when close. 3 grenades |
+| E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
+| Tab | the item box (the game's B button): tap for the next item carried (Frag, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
 | H | show / hide the controls and debug text |
 
 Squad movement and deaths follow the game's own data and the captures:
@@ -607,9 +609,9 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Not solid: grass, wires and other undrawn or cut-out parts have no collision surface, so
     they don't block.
   * Fallback: a level without collision data uses the drawn triangles instead.
-* **Doors and gates.** Their leaves sit on sliding joints (joint type h_fd8f670c). They open
+* **Doors and gates.** Their leaves sit on sliding joints (joint type h_fd8f670c). Doors open
   when anyone is within 5 m, close again afterwards (the opening played backwards), and stop
-  blocking while open.
+  blocking while open. Gates with wall panels open from those instead (below).
   * Motion: the level's animations-<level>.xmb has an archetype-set named after each door's
     archetype, with one target per leaf (by part name) on a float channel: metres along the
     joint's axis per frame at 24 fps. Doors take 1.21 s (upper leaf 1.89 m, lower 1.70 m); the
@@ -618,6 +620,97 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     (h_1edc357e, metal_door_1a; the gate's h_e1b1f167, an 8.6 s grind) and signal 49 as it
     closes (h_f25b1597). These waves are streamed (resource-type 1) from the language wave bank
     `ml-sounds/en/<level>-en.tgz` at the offsets in the level's sound bank.
+  * The gate's two leaves have a clip each in its set (h_10d3fde3 and h_0a48ec76, 4.96 s, one
+    target each); each leaf takes its channel from whichever clip names its part.
+* **Gates and their wall panels.** A gate with wall panels opens only from them:
+  * The panels are `world-button-object`s (h_16f22d4b, type h_ee4c83c9, `reticule-action` 1)
+    sending signal 14 (h_eaf8a35b).
+  * A `router-trigger` lists the panels among its objects (h_0b6b92ba) and passes their signal
+    on (h_e91cf6a8) to the gate's `anim-trigger`s. Those animate the gate object (their own
+    h_0b6b92ba) with one clip per leaf on signal 14, once only (h_f136d22d 1, where the
+    proximity doors' signal 50 / 42 entries say 2147483647), and send on to the gate's sound
+    trigger. So a used gate opens and stays open. On sdm_e34: panels h_14643319 / h_1d63038f ->
+    router h_1c61561d -> anim-triggers h_f993d7ef / h_e8ad85ec -> gate h_14690535.
+    `Level::button_opens` follows that chain.
+  * Using one (capture todo/gate button.mp4): from in front of its button (hardpoint
+    h_10f81d34, facing the model's +z), within 2.5 m and looking within ~45° of it, hold E for
+    0.5 s. Reach, angle and hold time are guesses; the capture shows no progress bar and no
+    gate message. While it's usable, "Hold E to activate panel." shows under the health bar.
+    That's the game's "Hold " + its X-button icon + "to activate %s." with "panel", and the
+    key here in place of the icon. The blue target ring (the four-notch reticle texture
+    h_1d2a68d0, tinted) sits on the button.
+  * The button glows green: material h_f87dca06 is shader type h_1df292a1 (851 materials), a
+    lit shader whose glow texture h_e01baa40 is tinted by its constant of the same name
+    (0.276 0.914 0.220 here) and added as light.
+  * `BF_DOOR_LOG=1` lists the panels, what each opens, and the gates with panels.
+    `BF_TEST_USE=<s>` presses use at that time.
+* **HUD text** (`play_text.rs`) is drawn in the game's own body font, atlas h_e4e4d2f4 (as the
+  menu draws it), its glyphs 1 atlas pixel apart over a black outline and shadow, as in the
+  captures. Colours sampled from them: messages and prompts pale blue (186 210 249), ammo and
+  NEW orange (254 165 104), an item that can't be used red. Capitals are ~11.5 units (14 for the ammo).
+* **Health pickups** (`play_pickups.rs`). Placed `inventory-object`s whose item type (objecttypes
+  `<inventory>`, `Game::items`) has function-type 5 or 19. Function-type is the game's IFSET_
+  enum, named in default.xbe's table at 0x3be3cc: 5 IFSET_GENERIC_HEALING, 14 IFSET_AMMO_BOX,
+  16 IFSET_MINIGUN, 19 IFSET_POWERUP_MEDKIT, 20-23 the power-ups.
+  * Medkit (h_f5123ace): taken by walking over it (within 1 m) into the squad's shared
+    inventory, up to its stack-limit of 25, with its pickup-sound. When full, "<name> cannot
+    pick up Medkit." shows and it stays.
+  * The item box (capture todo/medkits.mp4) shows one item at a time, Frag or Medkit: its name
+    at the bottom and the count top right, over its HUD icon (Frag fe20b919, Medkit f647bbef). Both are pale
+    blue while the item can be used and red while it can't (a medkit at full health; later an
+    item the character can't use, such as Brutus and OrgSen). A
+    newly taken kind is selected and marked NEW (orange) for 3 s. Tab steps to the next item
+    carried; held, the item list opens around the box (todo/medic + intenvory use case.mp4):
+    the next items leftward along the bottom, the previous ones up the right edge, two each,
+    stepping round as the wheel picks. G uses the selected item. There's no separate medkit
+    shortcut. An item that can't be used now shows a grey icon and red text.
+  * Each group of medkits (within 3.5 m of one another, on the same level) has one soft green
+    glow over its middle, all the time, marking where medkits are (todo/medkits glow.png). It
+    faces the camera and is drawn a little toward it so the ground doesn't cut it off; a light
+    lit the characters standing there green. The group's medkits are laid out in an even grid
+    round its middle (rows of ceil(sqrt(n)), a short last row centred), each turned like the
+    first give or take up to ~11 degrees (fixed per medkit), spaced by the medkit's measured
+    footprint plus 30% so none overlap (the png's four in
+    two rows; the levels place them up to ~3 m apart). No ring: the blue ring is for gate panels only. The
+    effect-objects levels place beside pickups (type h_117c1805, ALE powerup_spawn) aren't
+    shown.
+  * Using a medkit (G) plays the stance's use_item overlay (Sc_w1_/Sc_w2_use_item, ~1 s; events
+    1a6b4920 reach, 0a6e8f79 in hand, 19f8311b used). The used medkit (the carried type's model,
+    h_192d5337's archetype) with its cross turned red (its texture's blue texels, and its
+    cross glow red), is in the throwing hand from 0a6e8f79. At 19f8311b it heals and plays the
+    medkit sound, and the medkit falls from the hand, bounces and stays on the ground (the
+    last 12 do).
+  * The medkit's cross glows: the model's second piece is a flat quad over the painted cross
+    with the untextured glow material h_031724e6 (shader h_f539fe8c, glow 0.10 0.34 0.83,
+    wrapper opacity 50). Flat untextured glows like it are drawn at full strength (the
+    opacity is for the see-through glass shells round other pickups), as in the png.
+  * Pickups are loose (every inventory-object without an idle effect, and the used medkits):
+    at rest each lies tilted to the ground under it (up to ~25 degrees; steeper is a step, so
+    it lies flat). A character walking into one kicks it out ahead, faster than they're going
+    and off to the side it was on, with a hop and a tumble (once per 0.6 s, so it isn't
+    pushed along); a grenade blast within 1.5x its radius throws it. It bounces on landings
+    over 1 m/s and slides otherwise (5 m/s per s of friction) until it settles, and moving
+    ones push off the others. The medkit glows stay where the group was placed.
+  * The medkit sound is h_1538baad, the Sound whose file is h_15331992 (named "92193315":
+    those bytes as stored in sounds-<level>.xmb), the same in all 54 levels' banks, 1.5 s.
+    30% of the time the character also says a line of their "healed" chatter (line_tag
+    12c35d69, whose block's h_ea21ae4b is 30), with the sound. In todo/medic + intenvory use
+    case.mp4 Tex says e707f108 at his use and Brutus nothing at his. `BF_TEST_HEALED=1` always
+    says the line.
+  * Each pickup adds a line below the middle of the screen, "2x Medkit", counted up while more
+    of the same are taken and gone after 3 s. Status messages ("No need to heal") show just
+    above them. They stay put on the screen (the capture has them by the character).
+  * What a medkit heals: an item's h_0a811e94 is the health it restores and h_11884f2e the
+    stamina (STAMINA POWER has 0 / 50 where HEALTH POWER has 50 / 0), not a respawn time. The
+    placed Medkit (60) gives, by its pickup-archetype, the inventory Medkit h_192d5337 (80):
+    using one heals 80. What the placed one's own 60 is for isn't known.
+  * Healing Garo Fruit (h_e711067e, function 19): eaten when walked over, +40, left alone at
+    full health. HEALTH / STAMINA POWER are also function 19, but they're power-ups with idle
+    effects and aren't taken yet.
+  * A taken pickup comes back after 30 s (a guess; the respawn time isn't found). Only the
+    player picks up.
+  * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
+    `BF_TEST_HEALTH=<hp>` starts hurt. `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds the item list open.
 * **Movement constants from default.xbe** (see `decompiled/xbe/ghidra/README.md`, "Player
   movement"):
   * Gravity is 18 m/s² and the jump takes off at 5.8 m/s. In the air, horizontal speed keeps

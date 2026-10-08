@@ -251,13 +251,42 @@ pub const CUTOUT_TYPES: [u32; 2] = [0x02DC_A948, 0x1C5F_7AAB];
 /// its materials have one.
 const GLOW_SHADER: u32 = 0x0E76_58E4;
 const GLOW_TEXTURE: u32 = 0xE01B_AA40;
+/// Lit shader with a tinted glow (h_1df292a1, 851 materials): colour texture, glow texture
+/// h_e01baa40 tinted by its constant of the same name, added as light. The gate panels' green
+/// button (h_f87dca06: glow 0.276 0.914 0.220) is one.
+const TINTED_GLOW_SHADER: u32 = 0x1DF2_92A1;
 /// Untextured glow material (pickups' glass shells): a colour constant and the wrapper's opacity.
-const GLOW_SHELL: u32 = 0xF539_FE8C;
+pub const GLOW_SHELL: u32 = 0xF539_FE8C;
+/// A flat untextured glow (the medkit's cross, h_031724e6: a 12-vertex quad on the case's top,
+/// wrapper opacity 50) isn't a see-through shell: it's drawn at full strength, as in
+/// todo/medkits glow.png where the crosses are bright blue. Flat: thinner than this (m).
+const GLOW_DECAL_FLAT: f32 = 0.005;
+/// (the full-strength variant of a glow material, in the material cache)
+const GLOW_DECAL_KEY: u32 = 0x61D0_DECA;
+
+/// Whether `g` is a flat untextured glow (see GLOW_DECAL_FLAT).
+pub fn is_glow_decal(game: &Game, g: &Geoset) -> bool {
+    if game.material_texture(g.material).is_some() || game.material_type(g.material) != GLOW_SHELL || g.positions.is_empty() {
+        return false;
+    }
+    let (lo, hi) = g.positions.iter().fold((Vec3::MAX, Vec3::MIN), |(l, h), p| (l.min(Vec3::from(*p)), h.max(Vec3::from(*p))));
+    (hi - lo).min_element() < GLOW_DECAL_FLAT
+}
+
+/// A placed level object's root entity: its element (inventory-object, game-object, ...) and
+/// object type.
+#[derive(Component, Clone, Copy)]
+pub struct Placed {
+    pub tag: u32,
+    pub kind: u32,
+}
 
 /// A door or gate, in level object order (the same order as `Arena::doors`): its sliding
 /// leaves, how long it takes to open (its archetype's animation: 1.21 s for doors, 4.96 s for
 /// the gate) and the sounds the level plays beside it as it opens and closes.
 pub struct Door {
+    /// the object's name (what the level's triggers call it)
+    pub name: u32,
     pub centre: Vec3,
     pub leaves: Vec<Leaf>,
     pub duration: f32,
@@ -438,11 +467,17 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
         mat.alpha_mode = AlphaMode::Add;
         mat.unlit = true;
     }
-    if game.material_type(id) == GLOW_SHADER {
+    let kind = game.material_type(id);
+    if kind == GLOW_SHADER || kind == TINTED_GLOW_SHADER {
         if let Some(t) = game.material_param_texture(id, GLOW_TEXTURE) {
             let address = game.texture_address(id, t);
+            let tint = match kind {
+                TINTED_GLOW_SHADER => game.material_constant(id, GLOW_TEXTURE).filter(|c| c.len() >= 3)
+                    .map_or(LinearRgba::WHITE, |c| Color::srgb(c[0], c[1], c[2]).into()),
+                _ => LinearRgba::WHITE,
+            };
             if let Some((w, h, px)) = game.texture_rgba(t) {
-                mat.emissive = LinearRgba::WHITE;
+                mat.emissive = tint;
                 mat.emissive_texture = Some(image_with(images, w, h, px, address));
             }
         }
@@ -454,8 +489,8 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
             let s = px.chunks_exact(4).fold([0f32; 4], |a, p| [a[0] + p[0] as f32, a[1] + p[1] as f32, a[2] + p[2] as f32, a[3] + p[3] as f32]);
             (w, h, s.map(|v| (v / n) as u8))
         });
-        eprintln!("material h_{id:08x} type h_{:08x} texture {:x?} alpha {:x?} {:?}", game.material_type(id), tex,
-                  game.material_alpha_texture(id), avg);
+        eprintln!("material h_{id:08x} type h_{:08x} texture {:x?} alpha {:x?} {:?} glow {:?} wrap alpha {:?}", game.material_type(id), tex,
+                  game.material_alpha_texture(id), avg, game.material_constant(id, GLOW_TEXTURE), game.material_constant(id, H_WRAP_ALPHA));
     }
     let address = game.material_texture(id).map_or_else(Default::default, |t| game.texture_address(id, t));
     if let Some((w, h, mut px)) = game.material_texture(id).and_then(|t| game.texture_rgba(t)) {
@@ -643,6 +678,20 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                                 }
                             };
                         }
+                        if is_glow_decal(game, g) {
+                            let key = g.material ^ GLOW_DECAL_KEY;
+                            mat = match cache.get(&key) {
+                                Some(m) => m.clone(),
+                                None => {
+                                    let mut m = materials.get(&mat).cloned().unwrap_or_default();
+                                    m.base.base_color.set_alpha(1.0);
+                                    m.base.depth_bias = 1.0;
+                                    let m = materials.add(m);
+                                    cache.insert(key, m.clone());
+                                    m
+                                }
+                            };
+                        }
                         let mesh = if grass { mesh_of(&upright_normals(g), None, 0.0, false) } else { mesh_of(g, None, 0.0, false) };
                         parts.push((meshes.add(mesh), mat, Transform::from_translation(p.offset).with_rotation(p.rotation), slide, p.name, g.material));
                     }
@@ -664,7 +713,8 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 }
             }
         }
-        let e = commands.spawn((Transform::from_matrix(o.transform), Visibility::default(), Name::new(format!("h_{:08x}", o.kind)))).id();
+        let e = commands.spawn((Transform::from_matrix(o.transform), Visibility::default(), Name::new(format!("h_{:08x}", o.kind)),
+                                Placed { tag: o.tag, kind: o.kind })).id();
         // the archetype's animation (archetype-set of the same name) moves the leaves: a
         // channel per part
         // a liquid's surface moves (see `LiquidMaterial`)
@@ -675,7 +725,8 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         let lift = liquid_kind.map_or(0.0, |_| liquid_lift(game, arch));
         let surfaces: Vec<_> = models[&arch].iter()
             .map(|p| liquid_kind.and_then(|k| liquid_material(game, images, liquids, &mut liquid_cache, p.5, k, level.background))).collect();
-        let clip = game.anim_sets.get(&arch).and_then(|a| a.first());
+        // (the gate's set has a clip per leaf: h_10d3fde3 moves one, h_0a48ec76 the other)
+        let clips = game.anim_sets.get(&arch).map(|a| a.as_slice()).unwrap_or_default();
         let mut leaves = vec![];
         for ((mesh, mat, at, slide, name, _), surface) in models[&arch].iter().zip(surfaces) {
             // the scenery casts no shadow: the game lights it per vertex by the level's lights
@@ -689,7 +740,7 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 None => { commands.entity(part).insert(MeshMaterial3d(mat.clone())); }
             }
             if let Some((axis, travel)) = slide {
-                let channel = clip.and_then(|c| c.targets.iter().find(|t| t.0 == *name)).and_then(|t| game.channel_floats(t.1));
+                let channel = clips.iter().find_map(|c| c.targets.iter().find(|t| t.0 == *name)).and_then(|t| game.channel_floats(t.1));
                 let (interval, curve) = channel.unwrap_or((1.0, vec![]));
                 leaves.push(Leaf { entity: part, axis: *axis, closed: *at, travel: *travel, curve, interval });
             }
@@ -701,8 +752,8 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             if std::env::var("BF_DOOR_LOG").is_ok() {
                 println!("door {} type h_{:08x} arch h_{arch:08x} at {:.1} leaves {}", doors.len(), o.kind, centre, leaves.len());
             }
-            doors.push(Door { centre, leaves, duration: clip.map_or(DOOR_TIME, |c| c.duration),
-                              open_sound: sound(SIGNAL_OPEN), close_sound: sound(SIGNAL_CLOSE) });
+            let duration = clips.iter().map(|c| c.duration).reduce(f32::max).unwrap_or(DOOR_TIME);
+            doors.push(Door { name: o.name, centre, leaves, duration, open_sound: sound(SIGNAL_OPEN), close_sound: sound(SIGNAL_CLOSE) });
         }
     }
     // BF_OVERLAP_LOG: large objects whose boxes overlap much (buildings through each other)

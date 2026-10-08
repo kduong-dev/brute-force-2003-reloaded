@@ -19,10 +19,18 @@
 //!              invisible blockers (blocker h_051ac63e + transform), see bf::collision
 //!  sounds      sound-trigger: a sound id (sound-object) played on a signal (h_031cd9f5 > base
 //!              signal: 31 beside each door when it opens, 49 when it closes) at its position
+//!  buttons     world-button-object (h_16f22d4b, reticule-action 1): a wall panel that sends
+//!              its signal (h_eaf8a35b, 14 on every one) when used
+//!  triggers    anim-trigger / router-trigger: the signals they act on (h_031cd9f5 > base or
+//!              > anim > base: signal, h_f136d22d = how many times, 2147483647 = always; an
+//!              anim's animation-archetype is the clip it plays), the triggers they pass signals
+//!              on to (h_e91cf6a8 objects) and their objects (h_0b6b92ba: a router's are the
+//!              buttons it listens to, an anim-trigger's the object it animates). A gate's
+//!              panels reach its anim-triggers through a router (see `Level::button_opens`).
 
 use bevy::math::{Mat4, Vec3};
 
-use super::bxml::Element;
+use super::bxml::{Element, Value};
 use super::character::{Game, Geoset, H_PHYSICS_NAME};
 use super::hash::h;
 use super::weapon;
@@ -48,6 +56,8 @@ const H_LIGHTS_TERRAIN: u32 = 0xE02A_BA1C;
 pub struct Placement {
     /// the element's name hash (game-object, start-point, ...)
     pub tag: u32,
+    /// the object's own name (what triggers refer to it by)
+    pub name: u32,
     /// object type name
     pub kind: u32,
     /// its mesh archetype, if it has one
@@ -76,6 +86,28 @@ pub struct LevelLamp {
     pub falloff: i64,
     /// lights the terrain too
     pub terrain: bool,
+}
+
+/// A wall panel (world-button-object): its name, placement and the signal it sends when used.
+pub struct Button {
+    pub name: u32,
+    /// its object type (h_ee4c83c9 for the gate panels)
+    pub kind: u32,
+    pub transform: Mat4,
+    pub signal: i64,
+}
+
+/// An anim-trigger or router-trigger (see the module notes).
+pub struct Trigger {
+    /// anim-trigger or router-trigger
+    pub tag: u32,
+    pub name: u32,
+    /// (signal, animation clip (anim-triggers), times it acts: 2147483647 = always)
+    pub on: Vec<(i64, Option<u32>, i64)>,
+    /// triggers it passes signals on to
+    pub to: Vec<u32>,
+    /// its objects (a router's buttons, an anim-trigger's animated object)
+    pub objects: Vec<u32>,
 }
 
 pub struct Level {
@@ -107,6 +139,8 @@ pub struct Level {
     /// the terrain's baked light (Terrain > blocks h_e2d79bad): blocks per side, cell size (m)
     /// and per block 16 x 16 cell values 0-255 (sunlit ~250, shadowed ~25)
     pub terrain_light: Option<(usize, f32, Vec<Vec<u8>>)>,
+    pub buttons: Vec<Button>,
+    pub triggers: Vec<Trigger>,
 }
 
 fn floats(e: Option<&Element>) -> Vec<f32> {
@@ -116,6 +150,23 @@ fn floats(e: Option<&Element>) -> Vec<f32> {
 fn hash(e: &Element, name: u32) -> u32 {
     e.attr(name).and_then(|v| v.as_hash()).unwrap_or(0)
 }
+
+/// A trigger's object list (<h_e91cf6a8 objects="h_.. h_..">): the names in it (stored as one
+/// List value or as the attribute repeated, one per name).
+fn object_list(e: &Element, list: u32) -> Vec<u32> {
+    let Some(l) = e.child(list) else { return vec![] };
+    l.attrs.iter().filter(|(k, _)| *k == h("objects")).flat_map(|(_, v)| match v {
+        Value::List(v) => v.iter().filter_map(|x| x.as_hash()).collect(),
+        v => v.as_hash().into_iter().collect::<Vec<_>>(),
+    }).filter(|&x| x != 0 && x != h("")).collect()
+}
+
+const H_WORLD_BUTTON: u32 = 0x16F2_2D4B;
+const H_BUTTON_SIGNAL: u32 = 0xEAF8_A35B;
+const H_SIGNALS: u32 = 0x031C_D9F5;
+const H_SIGNAL_COUNT: u32 = 0xF136_D22D;
+const H_SENDS_TO: u32 = 0xE91C_F6A8;
+const H_TRIGGER_OBJECTS: u32 = 0x0B6B_92BA;
 
 /// A level <transform>: the 3 x 3 rotation row by row (columns are the object's axes: the
 /// level's cameras come out level and looking down -z), then the position.
@@ -196,7 +247,7 @@ impl Level {
             }
             let Some(m) = transform(&t) else { continue };
             let kind = hash(e, H_TYPE);
-            objects.push(Placement { tag: e.name, kind, archetype: game.object_meshes.get(&kind).copied(), transform: m });
+            objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m });
         }
         // sky
         let sky_el = all.iter().find(|e| e.name == h("sky"));
@@ -275,7 +326,47 @@ impl Level {
             Some((c, ..)) if sky.is_empty() && terrain.is_empty() && all.iter().any(|e| e.name == h("Terrain")) => c,
             _ => background,
         };
+        let buttons = all.iter().filter(|e| e.name == H_WORLD_BUTTON && e.attr(h("reticule-action")).and_then(|v| v.as_i64()) == Some(1))
+            .filter_map(|e| Some(Button {
+                name: hash(e, h("name")),
+                kind: hash(e, H_TYPE),
+                transform: transform(&floats(e.child(h("transform"))))?,
+                signal: e.attr(H_BUTTON_SIGNAL).and_then(|v| v.as_i64())?,
+            })).collect();
+        let triggers = all.iter().filter(|e| e.name == h("anim-trigger") || e.name == h("router-trigger")).map(|e| {
+            let mut on = vec![];
+            for s in e.child(H_SIGNALS).map(|s| s.children.as_slice()).unwrap_or_default() {
+                // <base signal> or <anim animation-archetype><base signal></anim>
+                let (base, clip) = if s.name == h("anim") { (s.child(h("base")), Some(hash(s, h("animation-archetype")))) } else { (Some(s), None) };
+                let Some(b) = base else { continue };
+                let Some(signal) = b.attr(h("signal")).and_then(|v| v.as_i64()) else { continue };
+                on.push((signal, clip, b.attr(H_SIGNAL_COUNT).and_then(|v| v.as_i64()).unwrap_or(i64::from(i32::MAX))));
+            }
+            Trigger { tag: e.name, name: hash(e, h("name")), on, to: object_list(e, H_SENDS_TO), objects: object_list(e, H_TRIGGER_OBJECTS) }
+        }).collect();
         Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, sounds, terrain_collision, blockers, lights, lamps, terrain_ambient,
-                   terrain_half, terrain_light })
+                   terrain_half, terrain_light, buttons, triggers })
+    }
+
+    /// What using a button does to the level's animated objects: (object name, clip, times)
+    /// for each anim-trigger its signal reaches (the routers listening to the button, and on
+    /// through the triggers they send to).
+    pub fn button_opens(&self, button: &Button) -> Vec<(u32, u32, i64)> {
+        let mut todo: Vec<&Trigger> = self.triggers.iter().filter(|t| t.tag == h("router-trigger") && t.objects.contains(&button.name)).collect();
+        let mut seen = vec![];
+        let mut out = vec![];
+        while let Some(t) = todo.pop() {
+            if seen.contains(&t.name) {
+                continue;
+            }
+            seen.push(t.name);
+            for &(signal, clip, times) in &t.on {
+                if let (true, Some(clip)) = (signal == button.signal, clip) {
+                    out.extend(t.objects.iter().map(|&o| (o, clip, times)));
+                }
+            }
+            todo.extend(self.triggers.iter().filter(|n| t.to.contains(&n.name)));
+        }
+        out
     }
 }

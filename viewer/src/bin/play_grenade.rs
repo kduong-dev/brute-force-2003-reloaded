@@ -226,6 +226,7 @@ fn fly_grenades(
     mut tint: ResMut<ScreenTint>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
+    mut blasts: ResMut<super::pickups::Blasts>,
 ) {
     let dt = frame_dt(&time);
     let Some(l) = player.loaded.take() else { return };
@@ -242,6 +243,7 @@ fn fly_grenades(
                 p.sound_queue.push((kit.explosion_sound, (1.0 - near / 60.0).clamp(0.3, 1.0)));
                 tint.0 = tint.0.max(0.6 * (1.0 - near / (kit.blast_radius * 1.4)).clamp(0.0, 1.0));
                 blast(&mut commands, &mut materials, kit, at, p.random(1000) as f32 / 1000.0);
+                blasts.0.push((at, kit.blast_radius));
                 // the blast hurts everyone in range (Damage max at the centre, nothing at the
                 // radius); the hurt say a pain grunt
                 for u in std::iter::once(&mut *p).chain(squad.0.iter_mut()) {

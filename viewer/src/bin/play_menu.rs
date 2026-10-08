@@ -1121,24 +1121,24 @@ fn paragraph(text: &str) -> String {
 }
 
 /// The game's font: glyphs cut from its atlas (white, alpha-shaped), set on a baseline.
-struct AtlasFont {
-    image: Handle<Image>,
+pub(crate) struct AtlasFont {
+    pub(crate) image: Handle<Image>,
     glyphs: HashMap<char, Glyph>,
     /// atlas pixels: capital height, rise above and drop below the baseline
-    cap: f32,
-    rise: f32,
-    drop: f32,
+    pub(crate) cap: f32,
+    pub(crate) rise: f32,
+    pub(crate) drop: f32,
 }
 
 #[derive(Clone, Copy)]
-struct Glyph {
-    rect: Rect,
+pub(crate) struct Glyph {
+    pub(crate) rect: Rect,
     /// the baseline (atlas y)
-    base: f32,
+    pub(crate) base: f32,
 }
 
 impl AtlasFont {
-    fn new(image: Handle<Image>, glyphs: HashMap<char, Glyph>) -> AtlasFont {
+    pub(crate) fn new(image: Handle<Image>, glyphs: HashMap<char, Glyph>) -> AtlasFont {
         let cap = glyphs.get(&'A').map_or(20.0, |g| g.rect.height());
         let rise = glyphs.values().map(|g| g.base - g.rect.min.y).fold(cap, f32::max);
         let drop = glyphs.values().map(|g| g.rect.max.y - g.base).fold(0.0, f32::max);
@@ -1205,7 +1205,7 @@ impl AtlasFont {
     /// A font whose glyphs run from `!` on in reading order across the rows (the body fonts),
     /// the atlas's first size only (rows until a wide gap); each row's baseline is where most
     /// of its glyphs end.
-    fn sequential(w: u32, h: u32, px: &[u8]) -> HashMap<char, Glyph> {
+    pub(crate) fn sequential(w: u32, h: u32, px: &[u8]) -> HashMap<char, Glyph> {
         let solid = |x: u32, y: u32| px[((y * w + x) * 4 + 3) as usize] > 40;
         let mut bands: Vec<(u32, u32)> = vec![];
         let mut y = 0;
@@ -1261,7 +1261,7 @@ impl AtlasFont {
         self.text(commands, &lines.join("\n"), cap, look, false, node)
     }
 
-    fn glyph(&self, c: char) -> Option<Glyph> {
+    pub(crate) fn glyph(&self, c: char) -> Option<Glyph> {
         self.glyphs.get(&c).or_else(|| self.glyphs.get(&c.to_ascii_uppercase())).copied()
     }
 

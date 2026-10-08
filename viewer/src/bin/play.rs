@@ -16,7 +16,9 @@
 //!   Left mouse  fire (hold)
 //!   Q           switch weapon
 //!   R           reload
-//!   G           throw a grenade
+//!   G           use the item in the item box (grenade: hold to charge, release to throw)
+//!   Tab         next item; hold: the item list (wheel picks)
+//!   E (hold)    use (a gate's wall panel)
 //!   M           next ground surface (footstep / landing sounds)
 //!   H           controls / debug text
 //!   Backspace   back to the map menu (in the same window)
@@ -413,7 +415,8 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, fx::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, fx::plugin, pickups::plugin, text::plugin, bf_viewer::ale_fx::plugin))
+        .init_resource::<UsePanel>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
         .add_systems(Update, (spawn_player, read_input, squad_control, doors, update_player, play_sounds, follow_camera, update_weapons,
@@ -431,6 +434,10 @@ mod hud;
 mod grenade;
 #[path = "play_fx.rs"]
 mod fx;
+#[path = "play_pickups.rs"]
+mod pickups;
+#[path = "play_text.rs"]
+mod text;
 #[path = "play_menu.rs"]
 mod menu;
 use bf_viewer::arena as world;
@@ -439,14 +446,48 @@ use bf_viewer::arena as world;
 #[derive(Resource)]
 struct MapLevel(Option<Level>);
 
-/// The map's doors, how far into its opening animation each is (s) and whether it's opening.
+/// The map's doors.
 #[derive(Resource)]
-struct Doors(Vec<(bf_viewer::level_scene::Door, f32, bool)>);
+struct Doors(Vec<DoorState>);
+
+struct DoorState {
+    door: bf_viewer::level_scene::Door,
+    /// how far into its opening animation it is (s), and whether it's opening
+    t: f32,
+    opening: bool,
+    /// the wall panels that open it (world buttons whose signal reaches its anim-triggers):
+    /// each one's button and the way it faces (world); such a door opens only from them
+    panels: Vec<(Vec3, Vec3)>,
+    /// opened from a panel: its anim-triggers act once (h_f136d22d 1), so it stays open
+    latched: bool,
+}
+
+/// The use key (E) and what it would act on now (see `doors`), and the status message shown at
+/// the character (text, seconds left).
+#[derive(Resource, Default)]
+pub struct UsePanel {
+    /// the prompt's object ("panel": the game's "Hold [X] to activate %s."), while one's usable
+    pub prompt: Option<&'static str>,
+    /// where the blue target ring goes (the panel's button, world)
+    pub target: Option<Vec3>,
+    /// how long use has been held on it (s)
+    pub held: f32,
+    pub message: Option<(String, f32)>,
+}
 
 /// Doors open for anyone within DOOR_RANGE m (their animation: leaves slide along their joint's
 /// axis) and close again (the animation backwards); open doors stop blocking. The level's sound
 /// triggers beside them play as they start opening or closing, heard up to DOOR_HEARD m.
+/// Gates with wall panels (sdm_e34's big gate) open only when a panel is used: the player's feet
+/// within USE_REACH m of its button, looking within USE_ANGLE of it (the panels' reticule-action
+/// 1: the reticle on them), holding use for HOLD_TIME s (the game's prompt says "Hold"). The
+/// capture shows no progress bar and no gate message. Reach, angle and hold time are guesses.
 const DOOR_RANGE: f32 = 5.0;
+const USE_REACH: f32 = 2.5;
+const USE_ANGLE: f32 = 0.8;
+const HOLD_TIME: f32 = 0.5;
+/// The gate panels' button: hardpoint h_10f81d34 of their archetype (the green glow quad).
+const PANEL_BUTTON: u32 = 0x10F8_1D34;
 /// Music volume (linear) under the game's sounds.
 const MUSIC_VOLUME: f32 = 0.5;
 /// A level's ambience bed, under its music (of the music's volume).
@@ -454,13 +495,42 @@ const AMBIENCE_VOLUME: f32 = 0.8;
 const DOOR_HEARD: f32 = 15.0;
 
 fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: Option<ResMut<Doors>>,
-         mut transforms: Query<&mut Transform>) {
+         mut use_panel: ResMut<UsePanel>, mut transforms: Query<&mut Transform>) {
     let Some(mut doors) = doors else { return };
     let dt = frame_dt(&time);
+    // a panel's button in reach and in view (of a gate that isn't open yet)
+    let look = Vec2::new(-player.cam_yaw.sin(), -player.cam_yaw.cos());
+    let feet = player.position + Vec3::Y * GROUND;
+    // (from in front of it: the button faces out of the wall)
+    let usable = |&(p, facing): &(Vec3, Vec3)| {
+        let to = Vec2::new(p.x - feet.x, p.z - feet.z);
+        !player.dead && to.length() < USE_REACH && (-0.5..2.5).contains(&(p.y - feet.y)) && to.normalize_or_zero().dot(look) > USE_ANGLE.cos()
+            && (feet - p).dot(facing) > 0.0
+    };
+    let target = doors.0.iter().enumerate().filter(|(_, d)| !d.latched)
+        .find_map(|(i, d)| d.panels.iter().find(|p| usable(p)).map(|p| (i, p.0)));
+    use_panel.prompt = target.map(|_| "panel");
+    use_panel.target = target.map(|t| t.1);
+    if let Some((_, left)) = &mut use_panel.message {
+        *left -= dt;
+        if *left <= 0.0 {
+            use_panel.message = None;
+        }
+    }
+    use_panel.held = if target.is_some() && player.use_held { use_panel.held + dt } else { 0.0 };
+    if let (Some((i, _)), true) = (target, use_panel.held >= HOLD_TIME) {
+        doors.0[i].latched = true;
+        use_panel.held = 0.0;
+    }
     let mut sounds = vec![];
-    for (i, (door, t, opening)) in doors.0.iter_mut().enumerate() {
-        let near = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| !u.dead)
-            .any(|u| Vec2::new(u.position.x - door.centre.x, u.position.z - door.centre.z).length() < DOOR_RANGE);
+    for (i, d) in doors.0.iter_mut().enumerate() {
+        let DoorState { door, t, opening, .. } = d;
+        let near = if d.panels.is_empty() {
+            std::iter::once(&*player).chain(squad.0.iter()).filter(|u| !u.dead)
+                .any(|u| Vec2::new(u.position.x - door.centre.x, u.position.z - door.centre.z).length() < DOOR_RANGE)
+        } else {
+            d.latched
+        };
         if near != *opening {
             *opening = near;
             if let Some(id) = if near { door.open_sound } else { door.close_sound } {
@@ -477,6 +547,11 @@ fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: 
                 if let Ok(mut tr) = transforms.get_mut(leaf.entity) {
                     tr.translation = leaf.closed.translation + leaf.axis * leaf.slide(*t, door.duration);
                 }
+            }
+            // BF_DOOR_LOG: a panel gate's leaves, each second of its opening
+            if !d.panels.is_empty() && (was == 0.0 || *t == door.duration || t.floor() != was.floor()) && std::env::var("BF_DOOR_LOG").is_ok() {
+                println!("gate h_{:08x} t {:.2}/{:.2} leaves slid {:?} m", door.name, *t, door.duration,
+                         door.leaves.iter().map(|l| (l.slide(*t, door.duration) * 100.0).round() / 100.0).collect::<Vec<_>>());
             }
         }
         if let Some(a) = world::arena() {
@@ -702,10 +777,56 @@ impl OverlayClip {
 }
 
 /// reload clip event: magazine in
+/// use_item clip events: the item in the hand, and used (the medkit's heal, then let go).
+const EV_ITEM_IN_HAND: u32 = 0x0A6E_8F79;
+const EV_ITEM_USED: u32 = 0x19F8_311B;
 const EV_MAG_IN: u32 = 0x1B2E_C99E;
 /// throw clip events: hand reaches the grenade (also in reloads), grenade leaves the hand
 const EV_REACH: u32 = 0x1A6B_4920;
 const EV_RELEASE: u32 = 0x1186_6F3A;
+/// The inventory items, in the item box's order.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Item {
+    Frag,
+    Medkit,
+}
+pub const ITEMS: [Item; 2] = [Item::Frag, Item::Medkit];
+/// Tab held this long (s) opens the item list instead of stepping.
+const ITEM_LIST_HOLD: f32 = 0.3;
+
+/// How many of an item the squad carries.
+fn item_count(p: &Player, item: Item) -> i64 {
+    match item {
+        Item::Frag => p.grenades,
+        Item::Medkit => p.medkits,
+    }
+}
+
+/// Whether the controlled character can use the item now (the item box shows it red when not:
+/// a medkit at full health; an item their character can't use, e.g. Brutus and OrgSen, once
+/// those items are in).
+fn item_usable(p: &Player, item: Item) -> bool {
+    !p.dead && item_count(p, item) > 0 && match item {
+        Item::Frag => true,
+        Item::Medkit => p.health < p.max_health,
+    }
+}
+
+/// Select the next (or previous) item carried.
+fn step_item(p: &mut Player, step: i32) {
+    let n = ITEMS.len() as i32;
+    for k in 1..=n {
+        let i = (p.item as i32 + step * k).rem_euclid(n) as usize;
+        if item_count(p, ITEMS[i]) > 0 {
+            if i != p.item {
+                p.item = i;
+                p.item_new = 0.0;
+            }
+            return;
+        }
+    }
+}
+
 /// grenades carried at the start (the capture's HUD shows 3)
 const START_GRENADES: i64 = 3;
 /// The highest ledge a character steps onto; a bigger drop is a fall.
@@ -924,6 +1045,8 @@ struct Loaded {
     switch_clips: [Option<SwitchClip>; 2],
     /// reload and grenade-throw clips by stance slot (Sc_w1_ / Sc_w2_)
     reload_clips: [Option<OverlayClip>; 2],
+    /// the stance's use_item overlay (Sc_w1_/Sc_w2_use_item: a medkit used)
+    use_clips: [Option<OverlayClip>; 2],
     throw_clips: [Option<OverlayClip>; 2],
     /// the throwing hand: bone and the grip point in its frame
     throw_hand: Option<(usize, Vec3)>,
@@ -999,6 +1122,25 @@ struct Player {
     /// reload in progress: (weapon, seconds left, clip it fills to)
     reloading: Option<Reload>,
     grenades: i64,
+    /// medkits carried (shared by the squad, like the grenades; see play_pickups.rs)
+    medkits: i64,
+    /// the inventory item in the item box (ITEMS index), how long it's been NEW (s left),
+    /// whether the item list is open (Tab held), how long Tab's been down, and the use key
+    /// (G) pressed for a non-grenade item
+    item: usize,
+    item_new: f32,
+    item_list: bool,
+    tab_down: f32,
+    item_use: bool,
+    /// a medkit being used: time into the use_item clip; `item_in_hand` while the clip has it
+    /// (its 0a6e8f79 event to its 19f8311b), `item_used` set the frame it's used (heal, sound,
+    /// drop: see play_pickups.rs)
+    using: Option<f32>,
+    item_in_hand: bool,
+    item_used: bool,
+    /// the inventory item they are (what using one heals)
+    medkit_kind: u32,
+    test_medkit_used: bool,
     /// throw button held: charging (the HUD meter shows `charge`)
     throw_held: bool,
     charge: f32,
@@ -1078,6 +1220,8 @@ struct Player {
     ai_burst: bool,
     ai_phase: f32,
     reload_pressed: bool,
+    /// the use key (E: a gate's wall panel), held
+    use_held: bool,
     /// a reload asked for while busy (switching, already reloading) starts when it can
     reload_wanted: bool,
     /// seconds the HUD keeps the full weapon list open (after a switch)
@@ -1154,7 +1298,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: START_GRENADES, throw_held: false, charge: 0.0, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: START_GRENADES, medkits: 0, item: 0, item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, pending_shot: false,
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
@@ -1368,10 +1512,10 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         return;
     }
     let (pitch, distance, help) = (player.cam_pitch, player.cam_distance, player.show_help);
-    // the squad shares one inventory: the grenades go with control
-    let grenades = player.grenades;
+    // the squad shares one inventory: the grenades and medkits go with control
+    let inventory = (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new);
     std::mem::swap(&mut *player, &mut squad.0[i]);
-    player.grenades = grenades;
+    (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new) = inventory;
     // the switch sound, at the cut (a capture: the same sound at every hand-over)
     player.sound_queue.push((SQUAD_SWITCH_SOUND, 0.8));
     squad.0[i].select = None;
@@ -1577,7 +1721,29 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             println!("door at {:.1}: {:.2} s, leaves slide {:?} m, sounds {:x?} / {:x?}", d.centre, d.duration,
                      d.leaves.iter().map(|l| l.slide(d.duration, d.duration)).collect::<Vec<_>>(), d.open_sound, d.close_sound);
         }
-        commands.insert_resource(Doors(doors.into_iter().map(|d| (d, 0.0, false)).collect()));
+        // the gates' wall panels: a button whose signal reaches the door's anim-triggers
+        // (where each one's button is: its archetype's PANEL_BUTTON hardpoint, else 1.4 m up)
+        let opens: Vec<((Vec3, Vec3), Vec<(u32, u32, i64)>)> = level.buttons.iter().map(|b| {
+            let button = game.0.object_meshes.get(&b.kind).and_then(|&a| bf_viewer::bf::weapon::WeaponModel::load(&game.0, a).ok())
+                .and_then(|m| m.hardpoints.get(&PANEL_BUTTON).map(|h| h.point)).unwrap_or(Vec3::Y * 1.4);
+            // (its front: the button quad's normal, the model's +z)
+            let facing = b.transform.transform_vector3(Vec3::Z).normalize_or_zero();
+            ((b.transform.transform_point3(button), facing), level.button_opens(b))
+        }).collect();
+        let doors: Vec<DoorState> = doors.into_iter().map(|door| {
+            let panels = opens.iter().filter(|(_, o)| o.iter().any(|x| x.0 == door.name)).map(|(at, _)| *at).collect();
+            DoorState { door, t: 0.0, opening: false, panels, latched: false }
+        }).collect();
+        if std::env::var("BF_DOOR_LOG").is_ok() {
+            for (b, (at, o)) in level.buttons.iter().zip(&opens) {
+                println!("panel h_{:08x} button at {:.1} facing {:.2} signal {}: opens {:x?}", b.name, at.0, at.1, b.signal, o);
+            }
+            for d in doors.iter().filter(|d| !d.panels.is_empty()) {
+                println!("gate h_{:08x} at {:.1}: {} panels, {} leaves", d.door.name, d.door.centre, d.panels.len(), d.door.leaves.len());
+            }
+        }
+        commands.insert_resource(Doors(doors));
+        commands.insert_resource(UsePanel::default());
         // the power-ups' icons (their idle effects)
         let n = if std::env::var("BF_NO_IDLE_FX").is_ok() { 0 } else {
             bf_viewer::ale_fx::spawn_idle_effects(&mut commands, &mut game.0, level, &mut ale, &mut images, &mut materials)
@@ -1932,6 +2098,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.ammo = weapons.iter().map(|w| { let c = w.def.ammo.max(1); [c, c * 10] }).collect();
     let switch_clips = [switch_clip(&model, game, &weapons, 0), switch_clip(&model, game, &weapons, 1)];
     let reload_clips = ["Sc_w1_reload", "Sc_w2_reload"].map(|n| overlay_clip(&model, game, n, feet));
+    let use_clips = ["Sc_w1_use_item", "Sc_w2_use_item"].map(|n| overlay_clip(&model, game, n, feet));
     let throw_clips = ["Sc_w1_throw_grenade", "Sc_w2_throw_grenade"].map(|n| overlay_clip(&model, game, n, feet));
     // the throwing hand: whichever hand moves further between reaching for the grenade and letting go
     let throw_hand = throw_clips[0].as_ref().and_then(|c| {
@@ -1960,7 +2127,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
         }
     }
     p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, foot_rest, foot_range, footstep_type, jump_sound,
-                                  weapons, switch_clips, reload_clips, throw_clips, throw_hand, grenade });
+                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, throw_hand, grenade });
 }
 
 fn read_input(
@@ -1968,6 +2135,7 @@ fn read_input(
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
+    time: Res<Time>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut player: ResMut<Player>,
 ) {
@@ -1978,6 +2146,13 @@ fn read_input(
         }
     }
     player.next_surface = keys.just_pressed(KeyCode::KeyM);
+    // test hook: BF_TEST_USE=<s> holds use (E) for a second from that time
+    player.use_held = std::env::var("BF_TEST_USE").ok().and_then(|v| v.parse::<f32>().ok())
+        .is_some_and(|at| player.sim_time >= at && player.sim_time - at < 1.0);
+    // test hook: BF_TEST_ITEM_LIST=1 holds the item list open
+    if std::env::var("BF_TEST_ITEM_LIST").is_ok() {
+        player.item_list = true;
+    }
     if autopilot(&mut player) {
         return;
     }
@@ -2030,7 +2205,28 @@ fn read_input(
     let fire = was_captured && mouse.pressed(MouseButton::Left);
     let switch = keys.just_pressed(KeyCode::KeyQ);
     let reload = keys.just_pressed(KeyCode::KeyR);
-    let throw = keys.pressed(KeyCode::KeyG);
+    let use_key = keys.pressed(KeyCode::KeyE) || player.use_held;
+    // the item box (the game's B button): Tab tapped steps to the next item carried; held, it
+    // opens the item list, where the wheel picks one. G uses the item: a grenade is held to
+    // charge and thrown on release, a medkit is used at once.
+    let tab = keys.pressed(KeyCode::Tab);
+    if tab {
+        player.tab_down = if player.tab_down < 0.0 { 0.0 } else { player.tab_down + frame_dt(&time) };
+        player.item_list = player.tab_down >= ITEM_LIST_HOLD;
+        if player.item_list && scroll.delta.y != 0.0 {
+            let step = if scroll.delta.y < 0.0 { 1 } else { -1 };
+            step_item(&mut player, step);
+        }
+    } else {
+        if (0.0..ITEM_LIST_HOLD).contains(&player.tab_down) {
+            step_item(&mut player, 1);
+        }
+        player.tab_down = -1.0;
+        player.item_list = false;
+    }
+    let grenade = ITEMS[player.item] == Item::Frag;
+    let throw = grenade && keys.pressed(KeyCode::KeyG);
+    player.item_use = !grenade && keys.just_pressed(KeyCode::KeyG);
     if keys.just_pressed(KeyCode::KeyH) {
         player.show_help = !player.show_help;
     }
@@ -2049,10 +2245,11 @@ fn read_input(
     player.fire = fire;
     player.switch_pressed = switch;
     player.reload_pressed = reload;
+    player.use_held = use_key;
     player.throw_held = throw;
     player.cam_yaw -= look.x;
     player.cam_pitch = (player.cam_pitch - look.y).clamp(-1.2, 0.5);
-    if scroll.delta.y != 0.0 {
+    if scroll.delta.y != 0.0 && !player.item_list {
         player.cam_distance = (player.cam_distance * (1.0 - scroll.delta.y * 0.1)).clamp(1.5, 12.0);
     }
 }
@@ -3094,7 +3291,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
 
     // ---- weapons: switch and fire ----
     let armed = !l.weapons.is_empty();
-    if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() {
+    if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none() {
         let to = (p.weapon + 1) % l.weapons.len();
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
         p.switch_sound_in = SWITCH_SOUND_GAP;
@@ -3147,7 +3344,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
     p.reload_wanted |= p.reload_pressed;
     let clip = p.ammo.get(p.weapon).map_or(0, |a| a[0]);
     let clip_size = l.weapons.get(p.weapon).map_or(0, |w| w.def.ammo.max(1));
-    if armed && p.reloading.is_none() && p.switching.is_none() && p.throwing.is_none() && (clip == 0 || p.reload_wanted) {
+    if armed && p.reloading.is_none() && p.switching.is_none() && p.throwing.is_none() && p.using.is_none() && (clip == 0 || p.reload_wanted) {
         p.reload_wanted = false;
         let w = p.weapon;
         let a = &mut p.ammo[w];
@@ -3177,10 +3374,29 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
             p.reloading = Some(r);
         }
     }
+    // ---- a medkit: the stance's use_item clip; in the hand from its 0a6e8f79 event, used (and
+    // dropped) at its 19f8311b event
+    p.item_used = false;
+    if let Some(t0) = p.using.take() {
+        let t = t0 + dt;
+        let clip = l.use_clips[stance_of(l, p.weapon)].as_ref();
+        let duration = clip.map_or(1.0, |c| c.duration);
+        let grab = clip.and_then(|c| c.event(EV_ITEM_IN_HAND)).unwrap_or(duration * 0.2);
+        let used = clip.and_then(|c| c.event(EV_ITEM_USED)).unwrap_or(duration * 0.8);
+        p.item_in_hand = t >= grab && t < used;
+        if t0 < used && t >= used {
+            p.item_used = true;
+        }
+        if t < duration && !p.dead {
+            p.using = Some(t);
+        } else {
+            p.item_in_hand = false;
+        }
+    }
     // ---- grenade: the stance's throw clip; the grenade is in the hand from the reach event and
     // leaves it at the release event
     let can_throw = p.grenades > 0 && l.grenade.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
-        && p.reloading.is_none() && p.switching.is_none() && matches!(p.action, Action::None) && !p.on_all_fours;
+        && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && matches!(p.action, Action::None) && !p.on_all_fours;
     // hold to charge (the HUD meter), let go to throw: the charge sets how far it goes
     if p.throw_held && can_throw {
         if p.charge == 0.0 {
@@ -3382,6 +3598,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
             apply_overlay(&mut pose, &l.model, game, c, r.time, standing, p.face_time);
         }
     }
+    if let Some(t) = p.using {
+        if let Some(c) = &l.use_clips[stance_of(l, p.weapon)] {
+            apply_overlay(&mut pose, &l.model, game, c, t, standing, p.face_time);
+        }
+    }
     if let Some(t) = &p.throwing {
         if let Some(c) = &l.throw_clips[t.slot] {
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, p.face_time);
@@ -3397,7 +3618,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
     // aim the gun itself: yaw and pitch from the barrel in the animated pose to what the crosshair
     // is on, turned over the spine bones that carry the trigger arm
     let held = l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|h| (w, h)));
-    let want_aim = if upper_aim && armed && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() { 1.0 } else { 0.0 };
+    let want_aim = if upper_aim && armed && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none() { 1.0 } else { 0.0 };
     p.aim_weight += (want_aim - p.aim_weight) * (1.0 - (-10.0 * dt).exp());
     match held {
         Some((w, (hb, r, t))) if p.aim_weight > 0.01 && !l.arm_chain.is_empty() => {
@@ -3712,7 +3933,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         w.def.label, player.weapon + 1, l.weapons.len()))).unwrap_or_default();
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
-         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G grenade   M surface   H hide\n\
+         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   E use   M surface   H hide\n\
          click: mouse look, Esc release   Backspace map menu   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade",
         CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon);
     if text.0 != s {

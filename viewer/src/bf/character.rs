@@ -168,6 +168,8 @@ pub struct Game {
     pub object_meshes: HashMap<u32, u32>,
     /// liquid types (objecttypes `<h_fa2f5452>`): type name -> its settings
     pub liquids: HashMap<u32, LiquidType>,
+    /// inventory item types (objecttypes `<inventory>`): type name -> its settings
+    pub items: HashMap<u32, ItemType>,
     /// the loaded levels' level files (levels-<name>.xmb: terrain, placed objects, sky, fog)
     pub levels: Vec<Element>,
     /// the game's level list (common campaign-bf.xmb), in its order
@@ -219,6 +221,34 @@ pub struct Flipbook {
 /// The objecttypes list of liquid types, and the placed liquids' element (levels-*.xmb).
 const H_LIQUIDS: u32 = 0xFA2F_5452;
 pub const H_LIQUID_OBJECT: u32 = 0x0436_6A6A;
+
+/// An inventory item type (objecttypes `<inventory>` entries: `<h_e275fb80 class-type=2
+/// function-type=..>` around `<base mesh-name><base name=T>`). `function` is the game's IFSET_
+/// enum (default.xbe name table at 0x3be3cc): 5 IFSET_GENERIC_HEALING (the Medkit: carried,
+/// used later), 14 IFSET_AMMO_BOX, 19 IFSET_POWERUP_MEDKIT (Healing Garo Fruit: taken at once),
+/// 20-23 the power-ups. `health` (h_0a811e94) and `stamina` (h_11884f2e) are what it restores:
+/// Medkit 60, Healing Garo Fruit 40, HEALTH POWER 50 health, STAMINA POWER 50 stamina (and 0
+/// health: so not a respawn time, as first guessed). `kind` (h_e5f51266) tells the type-19
+/// items apart: fruit 1, medkit 2, health power 3, stamina power 4.
+#[derive(Clone, Debug, Default)]
+pub struct ItemType {
+    pub function: i64,
+    pub stack_limit: i64,
+    pub amount: i64,
+    pub health: f32,
+    pub stamina: f32,
+    pub kind: i64,
+    /// the item it puts in the inventory when picked up (pickup-archetype), 0: itself. The
+    /// placed Medkit h_f5123ace (60) gives h_192d5337, a Medkit of 80: what's carried and used.
+    pub gives: u32,
+    pub sound: u32,
+    /// the sound of using it (h_153f90c9 on its <base>: the Medkit's h_eb368082; the fruit's is
+    /// its pickup sound), 0 if none
+    pub use_sound: u32,
+    pub label: String,
+    /// its HUD icon (h_e5ec3f1f), 0 if none
+    pub icon: u32,
+}
 
 /// A liquid type: a pool's surface is its object's collision plane, which characters sink
 /// through. The game reads, besides these, five factors (h_049350bb .. h_e12e7b9d: 0.1 1 0.4
@@ -299,6 +329,7 @@ impl Game {
             decals: HashMap::new(),
             object_meshes: HashMap::new(),
             liquids: HashMap::new(),
+            items: HashMap::new(),
             levels: vec![],
             flipbooks: HashMap::new(),
             campaign: vec![],
@@ -514,6 +545,27 @@ impl Game {
                     if name != 0 {
                         self.object_meshes.entry(name).or_insert(mesh);
                     }
+                }
+            }
+            // inventory items: <inventory><h_e275fb80 function-type=.. ..><base mesh-name><base name=T/>
+            for t in root.children_named(h("inventory")).flat_map(|l| l.children.iter()) {
+                let name = hash_of(t.child(h("base")).and_then(|b| b.child(h("base"))).and_then(|b| b.attr(h("name"))));
+                let int = |k: &str| t.attr(h(k)).and_then(|v| v.ints().first().copied()).unwrap_or(0);
+                let id = |k: u32| hash_of(t.attr(k)).ne(&h("")).then(|| hash_of(t.attr(k))).unwrap_or(0);
+                if name != 0 {
+                    self.items.entry(name).or_insert(ItemType {
+                        function: int("function-type"),
+                        stack_limit: int("stack-limit"),
+                        amount: int("pickup-amount"),
+                        health: t.attr(0x0A81_1E94).and_then(|v| v.as_f32()).unwrap_or(0.0),
+                        stamina: t.attr(0x1188_4F2E).and_then(|v| v.as_f32()).unwrap_or(0.0),
+                        kind: int_of(t, 0xE5F5_1266),
+                        gives: id(h("pickup-archetype")),
+                        sound: id(h("pickup-sound")),
+                        use_sound: t.child(h("base")).map(|b| hash_of(b.attr(0x153F_90C9))).filter(|&x| x != 0 && x != h("")).unwrap_or(0),
+                        label: self.strings.get(&hash_of(t.attr(h("stringtable-name")))).cloned().unwrap_or_default(),
+                        icon: id(0xE5EC_3F1F),
+                    });
                 }
             }
             // liquid types: <h_fa2f5452><.. liquid-type=K h_06f6a40d=D..><base ..><base name=T/>

@@ -10,6 +10,7 @@
 //! upside down, so they are drawn flipped. Text uses Bevy's font, not the game's bitmap font.
 
 use super::*;
+use super::text::{game_text, Align, GameText, AMMO_ORANGE, ITEM_RED, MESSAGE_BLUE};
 
 /// radar frame (octagon) and its disc
 const RADAR_FRAME: u32 = 0x132E_4EE1;
@@ -20,6 +21,27 @@ const CROSSHAIR_TEX: u32 = 0x1D2A_68D0;
 const ENERGY_ICON: u32 = 0x1AC4_1530;
 /// the Frag item's own HUD icon (its definition's h_e5ec3f1f; the ribbed grenade in the capture)
 const FRAG_ICON: u32 = 0xFE20_B919;
+/// the Medkit's HUD icon (its item type's h_e5ec3f1f), if the carried type has none
+const MEDKIT_ICON: u32 = 0xF647_BBEF;
+/// The item box (top left, units) and the step between the item list's slots (capture: the
+/// slots 52 px apart at 480 px across, 69 units; a box is 61).
+const ITEM_BOX: (f32, f32) = (530.0, 376.0);
+const SLOT_STEP: f32 = 67.0;
+
+/// The target ring: its size (units) and tint (capture: blue, ~63 units across at the panel).
+const RING_SIZE: f32 = 60.0;
+const RING_BLUE: Color = Color::srgba(0.16, 0.42, 1.0, 0.95);
+/// Pickup lines shown at once, and where they go: fixed on the screen, centred under the
+/// character's usual place, the status message above them (the capture's spacing: lines 29
+/// and 45 under the message).
+const FEED_LINES: usize = 4;
+const MESSAGE_Y: f32 = 290.0;
+const FEED_FIRST: f32 = 29.0;
+const FEED_STEP: f32 = 16.5;
+/// Strings: "Hold ", "to activate %s.", "NEW".
+const S_HOLD: u32 = 0x1CC5_1F04;
+const S_TO_ACTIVATE: u32 = 0xF9D2_9692;
+const S_NEW: u32 = 0x0BA4_1874;
 /// portraits by character (CHARACTERS order: Brutus, Flint, Hawk, Tex) and the centres of the
 /// faces round the radar: the whole squad, Tex top, Hawk left, Flint right, Brutus bottom (game
 /// screenshot, positions refined by template matching against it; same order as the options
@@ -415,12 +437,8 @@ const ENERGY_FILL: u32 = 0xE11C_7D04;
 
 /// weapon rows: the first at y 43, the next 45 below
 const WEAPON_ROWS: usize = 3;
-const ORANGE: Color = Color::srgb(1.0, 0.62, 0.27);
 const PALE: Color = Color::srgb(0.78, 0.85, 1.0);
 const HUD_BLUE: Color = Color::srgb(0.24, 0.52, 1.0);
-
-#[derive(Component)]
-struct HudFont(f32);
 
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Part {
@@ -429,8 +447,41 @@ enum Part {
     Name(usize),
     Ammo(usize),
     Tab(usize),
-    Frags,
     Crosshair,
+    /// "Hold E to activate panel." while a gate's wall panel is in reach and in view
+    UsePrompt,
+    /// the item box (bottom right, while anything's carried): its panel, the grenade's icon, the
+    /// item's name, how many, and NEW for a newly taken kind; the item list above it (Tab held)
+    ItemBox,
+    ItemIcon,
+    ItemName,
+    ItemCount,
+    ItemNew,
+    /// the item list around the box while Tab is held (todo/medic + intenvory use case.mp4):
+    /// slots 0, 1 the next items leftward along the bottom, 2, 3 the previous ones up the
+    /// right edge; each its icon, name and count
+    Slot(usize, SlotPart),
+    /// the status message at the character ("No need to heal", "Tex cannot pick up Medkit.")
+    /// and the pickup lines under it
+    Message,
+    Feed(usize),
+    /// the blue target ring on a usable panel's button
+    Ring,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SlotPart {
+    Icon,
+    Name,
+    Count,
+}
+
+/// Where item list slot `k` sits (its box's top left, units).
+fn slot_at(k: usize) -> (f32, f32) {
+    match k {
+        0 | 1 => (ITEM_BOX.0 - SLOT_STEP * (k + 1) as f32, ITEM_BOX.1),
+        _ => (ITEM_BOX.0, ITEM_BOX.1 - SLOT_STEP * (k - 1) as f32),
+    }
 }
 
 /// Squad and grenade widgets (see update_squad_hud).
@@ -470,7 +521,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
         .add_systems(OnEnter(AppState::Playing), setup_hud.after(snapshot_entities))
         .init_resource::<HudGen>()
-        .add_systems(Update, (update_hud_widgets, update_squad_hud, scale_fonts, update_scope).after(update_weapons).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (update_hud_widgets, update_squad_hud, update_scope).after(update_weapons).run_if(in_state(AppState::Playing)));
 }
 
 /// A game texture as a UI image (cached; None if the texture isn't found).
@@ -485,9 +536,31 @@ fn texture(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, n
     }).clone()
 }
 
+/// A game texture in grey (its luminance; cached under the name's complement): an item icon
+/// while the item can't be used (capture: the medkit's at full health).
+fn texture_grey(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, name: u32) -> Option<Handle<Image>> {
+    cache.0.entry(!name).or_insert_with(|| {
+        let (w, h, mut px) = game.texture_rgba(name)?;
+        for p in px.chunks_exact_mut(4) {
+            let l = (0.3 * p[0] as f32 + 0.59 * p[1] as f32 + 0.11 * p[2] as f32) as u8;
+            (p[0], p[1], p[2]) = (l, l, l);
+        }
+        Some(images.add(Image::new(
+            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            bevy::render::render_resource::TextureDimension::D2, px,
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default())))
+    }).clone()
+}
+
 /// Game textures are stored bottom row first: draw them flipped.
 fn flipped(h: Handle<Image>) -> ImageNode {
     ImageNode { flip_y: true, ..ImageNode::new(h) }
+}
+
+/// Absolute placement in 640 x 480 screen units (as `at`, for moving nodes).
+fn at_box(x: f32, y: f32, w: f32, h: f32) -> Node {
+    at(x, y, w, h)
 }
 
 /// Absolute placement in 640 x 480 screen units.
@@ -500,11 +573,6 @@ fn at(x: f32, y: f32, w: f32, h: f32) -> Node {
     }
 }
 
-/// Text at (x, y) in screen units; `size` is the font height in screen units.
-fn label(text: &str, x: f32, y: f32, size: f32, color: Color) -> impl Bundle {
-    (Text::new(text), TextFont { font_size: size, ..default() }, TextColor(color), HudFont(size),
-     Node { position_type: PositionType::Absolute, left: Val::Percent(x / 6.4), top: Val::Percent(y / 4.8), ..default() })
-}
 
 /// The radar's view cone and the lit circle round the player, white with soft edges (the radar
 /// turns with the camera, so the cone always points up).
@@ -666,8 +734,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         let y = 43.0 + 45.0 * row as f32;
         commands.spawn((ChildOf(screen), at(463.0, y, 128.0, 32.0), image(&panel, Color::WHITE), Part::Panel(row), Visibility::Hidden));
         commands.spawn((ChildOf(screen), at(463.0, y - 25.0, 128.0, 64.0), flipped(Handle::default()), Part::Icon(row), Visibility::Hidden));
-        commands.spawn((ChildOf(screen), label("", 465.0, y - 3.0, 15.0, ORANGE), Part::Name(row), Visibility::Hidden));
-        commands.spawn((ChildOf(screen), label("", 474.0, y + 14.0, 15.0, ORANGE), Part::Ammo(row), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), game_text("", 466.0, y - 1.0, 11.0, AMMO_ORANGE, Align::Left), Part::Name(row), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), game_text("", 475.0, y + 9.0, 14.0, AMMO_ORANGE, Align::Left), Part::Ammo(row), Visibility::Hidden));
     }
 
     // ---- radar, bottom left (centre 121, 368): disc, view cone, frame, player, portrait; in
@@ -707,10 +775,14 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         }
     }
 
-    // ---- grenades, bottom right: on the game's glossy panel (its cut corner top left) ----
-    match item_panel {
+    // ---- the item box, bottom right: one item at a time (the game's B button steps through
+    // them), on the game's glossy panel (its cut corner top left). The captures: a grenade with
+    // its icon; a medkit as its name in red at the bottom, the count top right, NEW (orange)
+    // over the name when newly taken ----
+    let item_box = commands.spawn((ChildOf(screen), at(530.0, 376.0, 61.0, 61.0), Part::ItemBox, Visibility::Hidden)).id();
+    match item_panel.clone() {
         Some(p) => {
-            commands.spawn((ChildOf(screen), at(530.0, 376.0, 61.0, 61.0), ImageNode {
+            commands.spawn((ChildOf(item_box), Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, ImageNode {
                 image_mode: bevy::ui::widget::NodeImageMode::Sliced(TextureSlicer {
                     border: BorderRect::all(PANEL_SLICE), center_scale_mode: SliceScaleMode::Stretch,
                     sides_scale_mode: SliceScaleMode::Stretch, max_corner_scale: 1.0 }),
@@ -718,13 +790,34 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
             }));
         }
         None => {
-            commands.spawn((ChildOf(screen), BackgroundColor(Color::srgba(0.10, 0.22, 0.50, 0.40)), BorderColor(HUD_BLUE),
-                            Node { border: UiRect::all(Val::Px(1.0)), ..at(530.0, 376.0, 61.0, 61.0) }));
+            commands.spawn((ChildOf(item_box), BackgroundColor(Color::srgba(0.10, 0.22, 0.50, 0.40)), BorderColor(HUD_BLUE),
+                            Node { border: UiRect::all(Val::Px(1.0)), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }));
         }
     }
-    commands.spawn((ChildOf(screen), at(535.0, 379.0, 50.0, 50.0), image(&frag, Color::WHITE)));
-    commands.spawn((ChildOf(screen), label("Frag", 545.0, 421.0, 13.0, PALE)));
-    commands.spawn((ChildOf(screen), label("3", 579.0, 398.0, 14.0, PALE), Part::Frags));
+    commands.spawn((ChildOf(screen), at(535.0, 379.0, 50.0, 50.0), image(&frag, Color::WHITE), Part::ItemIcon, Visibility::Hidden));
+    commands.spawn((ChildOf(screen), game_text("", 561.0, 417.0, 12.0, ITEM_RED, Align::Centre), Part::ItemName, Visibility::Hidden));
+    commands.spawn((ChildOf(screen), game_text("", 588.0, 378.0, 12.0, ITEM_RED, Align::Right), Part::ItemCount, Visibility::Hidden));
+    commands.spawn((ChildOf(screen), game_text("", 545.0, 401.0, 12.0, AMMO_ORANGE, Align::Left), Part::ItemNew, Visibility::Hidden));
+    for k in 0..4 {
+        let (x, y) = slot_at(k);
+        commands.spawn((ChildOf(screen), at(x + 5.0, y + 3.0, 50.0, 50.0), image(&frag, Color::WHITE), Part::Slot(k, SlotPart::Icon), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), game_text("", x + 31.0, y + 41.0, 12.0, MESSAGE_BLUE, Align::Centre), Part::Slot(k, SlotPart::Name), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), game_text("", x + 58.0, y + 2.0, 12.0, MESSAGE_BLUE, Align::Right), Part::Slot(k, SlotPart::Count), Visibility::Hidden));
+    }
+
+    // ---- a gate's wall panel in reach: "Hold E to activate panel." under the health bar (the
+    // game's "Hold " + its button icon + "to activate %s."; here the key), and the blue
+    // target ring (the reticle texture h_1d2a68d0) on the panel's button ----
+    commands.spawn((ChildOf(screen), game_text("", 52.0, 68.0, 11.5, MESSAGE_BLUE, Align::Left), Part::UsePrompt, Visibility::Hidden));
+    let ring = texture(game, &mut images, &mut cache, CROSSHAIR_TEX);
+    commands.spawn((ChildOf(screen), at(0.0, 0.0, RING_SIZE, RING_SIZE), image(&ring, RING_BLUE), Part::Ring, Visibility::Hidden));
+
+    // ---- below the middle of the screen: the status message, the pickup lines under it ----
+    commands.spawn((ChildOf(screen), game_text("", 320.0, MESSAGE_Y, 11.5, MESSAGE_BLUE, Align::Centre), Part::Message, Visibility::Hidden));
+    for i in 0..FEED_LINES {
+        commands.spawn((ChildOf(screen), game_text("", 320.0, MESSAGE_Y + FEED_FIRST + FEED_STEP * i as f32, 11.5, MESSAGE_BLUE, Align::Centre),
+                        Part::Feed(i), Visibility::Hidden));
+    }
 
     // ---- crosshair, above centre (320, 187) ----
     // the held weapon's own crosshair (its definition's reticule-prefix texture), 40 units across
@@ -779,26 +872,70 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
 fn update_hud_widgets(
     player: Res<Player>,
     squad: Res<Squad>,
+    use_panel: Res<super::UsePanel>,
+    feed: Res<super::pickups::PickupFeed>,
     mut game: ResMut<GameData>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<HudImages>,
-    mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut Text>, Option<&mut TextColor>, Option<&mut Node>)>,
+    camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut GameText>, Option<&mut Node>)>,
 ) {
     let Some(l) = player.loaded.as_ref() else { return };
     let list = player.hud_list > 0.0;
     let mut order: Vec<usize> = (0..l.weapons.len()).collect();
     order.sort_by_key(|&i| i != player.weapon);
     order.truncate(if list { WEAPON_ROWS } else { 1 });
+    // a world point on the HUD's 640 x 480 screen (4:3, centred in the window)
+    let on_screen = |p: Vec3| -> Option<Vec2> {
+        let (cam, at) = camera.single().ok()?;
+        let win = windows.single().ok()?;
+        let px = cam.world_to_viewport(at, p).ok()?;
+        let unit = win.height() / 480.0;
+        Some(Vec2::new((px.x - (win.width() - 640.0 * unit) / 2.0) / unit, px.y / unit))
+    };
+    // the item box: what's carried, the selected one
+    let carried: Vec<usize> = (0..ITEMS.len()).filter(|&i| super::item_count(&player, ITEMS[i]) > 0).collect();
+    let item = ITEMS[player.item];
+    let count = super::item_count(&player, item);
+    let names: Vec<String> = ITEMS.iter().map(|&i| match i {
+        Item::Frag => "Frag".to_string(),
+        Item::Medkit => game.0.items.get(&player.medkit_kind).map(|t| t.label.clone()).filter(|s| !s.is_empty()).unwrap_or("Medkit".into()),
+    }).collect();
+    // pale while it can be used, red while it can't (capture: a medkit at full health)
+    let usable = super::item_usable(&player, item);
+    let item_color = if usable { MESSAGE_BLUE } else { ITEM_RED };
+    // the item list's slots: the next carried items, then the previous ones
+    let here = carried.iter().position(|&i| i == player.item).unwrap_or(0);
+    let n = carried.len();
+    let slot_item = |k: usize| -> Option<usize> {
+        let (step, need): (isize, usize) = match k { 0 => (1, 2), 1 => (2, 3), 2 => (-1, 4), _ => (-2, 5) };
+        (player.item_list && n >= need).then(|| carried[(here as isize + step).rem_euclid(n as isize) as usize])
+    };
+    let icon_of = |game: &GameData, i: Item| match i {
+        Item::Frag => FRAG_ICON,
+        Item::Medkit => game.0.items.get(&player.medkit_kind).map_or(MEDKIT_ICON, |t| if t.icon != 0 { t.icon } else { MEDKIT_ICON }),
+    };
+    let new_word = game.0.strings.get(&S_NEW).cloned().unwrap_or("NEW".into());
+    let hold = game.0.strings.get(&S_HOLD).cloned().unwrap_or("Hold ".into());
+    let to_activate = game.0.strings.get(&S_TO_ACTIVATE).cloned().unwrap_or("to activate %s.".into());
+    let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| format!("{n}x {name}")).collect();
 
-    for (part, mut vis, img, text, color, node) in &mut parts {
+    for (part, mut vis, img, text, node) in &mut parts {
         let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
+        let set = |t: Option<Mut<GameText>>, s: &str, color: Option<Color>| {
+            if let Some(mut t) = t {
+                if t.text != s { t.text = s.to_string(); }
+                if let Some(c) = color { if t.color != c { t.color = c; } }
+            }
+        };
         match *part {
             Part::Panel(r) | Part::Icon(r) | Part::Name(r) | Part::Ammo(r) => {
                 let Some(&w) = order.get(r) else { show(&mut vis, false); continue };
                 let def = &l.weapons[w].def;
                 let [clip, reserve] = player.ammo.get(w).copied().unwrap_or([0, 0]);
                 let empty = clip == 0;
-                let tint = if w == player.weapon { ORANGE } else { PALE };
+                let tint = if w == player.weapon { AMMO_ORANGE } else { MESSAGE_BLUE };
                 match *part {
                     Part::Panel(_) => {
                         show(&mut vis, true);
@@ -815,20 +952,13 @@ fn update_hud_widgets(
                     }
                     Part::Name(_) => {
                         show(&mut vis, list);
-                        if let Some(mut t) = text { if t.0 != def.label { t.0 = def.label.clone(); } }
-                        if let Some(mut c) = color { c.0 = tint; }
+                        set(text, &def.label, Some(tint));
                     }
                     _ => {
                         show(&mut vis, true);
-                        let s = format!("{clip} / {reserve}");
-                        if let Some(mut t) = text { if t.0 != s { t.0 = s; } }
-                        if let Some(mut c) = color { c.0 = tint; }
+                        set(text, &format!("{clip} / {reserve}"), Some(tint));
                     }
                 }
-            }
-            Part::Frags => {
-                let s = player.grenades.max(0).to_string();
-                if let Some(mut t) = text { if t.0 != s { t.0 = s; } }
             }
             Part::Tab(i) => {
                 let speaking = if i == player.character % PORTRAITS.len() { player.speaking > 0.0 }
@@ -841,6 +971,78 @@ fn update_hud_widgets(
                 show(&mut vis, h.is_some() && !dead);
                 if let (Some(mut img), Some(h)) = (img, h) {
                     if img.image != h { img.image = h; }
+                }
+            }
+            Part::ItemBox => show(&mut vis, !carried.is_empty()),
+            Part::ItemIcon => {
+                // the item's HUD icon: the Frag's, the carried Medkit's own (h_e5ec3f1f)
+                let icon = match item {
+                    Item::Frag => FRAG_ICON,
+                    Item::Medkit => game.0.items.get(&player.medkit_kind).map_or(MEDKIT_ICON, |t| if t.icon != 0 { t.icon } else { MEDKIT_ICON }),
+                };
+                let h = (count > 0).then(|| if usable { texture(&mut game.0, &mut images, &mut cache, icon) }
+                                            else { texture_grey(&mut game.0, &mut images, &mut cache, icon) }).flatten();
+                show(&mut vis, h.is_some());
+                if let (Some(mut img), Some(h)) = (img, h) {
+                    if img.image != h { img.image = h; }
+                }
+            }
+            Part::ItemName => {
+                show(&mut vis, count > 0);
+                set(text, &names[player.item], Some(item_color));
+            }
+            Part::ItemCount => {
+                show(&mut vis, count > 0);
+                set(text, &count.to_string(), Some(item_color));
+            }
+            Part::ItemNew => {
+                show(&mut vis, count > 0 && player.item_new > 0.0);
+                set(text, &new_word, None);
+            }
+            Part::Slot(k, sub) => {
+                let Some(i) = slot_item(k) else { show(&mut vis, false); continue };
+                show(&mut vis, true);
+                let ok = super::item_usable(&player, ITEMS[i]);
+                match sub {
+                    SlotPart::Icon => {
+                        let id = icon_of(&game, ITEMS[i]);
+                        let h = if ok { texture(&mut game.0, &mut images, &mut cache, id) } else { texture_grey(&mut game.0, &mut images, &mut cache, id) };
+                        if let (Some(mut img), Some(h)) = (img, h) {
+                            if img.image != h { img.image = h; }
+                        }
+                    }
+                    SlotPart::Name => set(text, &names[i], Some(if ok { MESSAGE_BLUE } else { ITEM_RED })),
+                    SlotPart::Count => set(text, &super::item_count(&player, ITEMS[i]).to_string(), Some(if ok { MESSAGE_BLUE } else { ITEM_RED })),
+                }
+            }
+            Part::UsePrompt => {
+                show(&mut vis, use_panel.prompt.is_some() && player.scope < 0.5);
+                if let Some(what) = use_panel.prompt {
+                    set(text, &format!("{hold}E {}", to_activate.replace("%s", what)), None);
+                }
+            }
+            Part::Ring => {
+                // a usable gate panel's button only
+                let at = use_panel.target.filter(|_| player.scope < 0.5).and_then(on_screen);
+                show(&mut vis, at.is_some());
+                if let (Some(c), Some(mut n)) = (at, node) {
+                    let want = at_box(c.x - RING_SIZE / 2.0, c.y - RING_SIZE / 2.0, RING_SIZE, RING_SIZE);
+                    if n.left != want.left || n.top != want.top || n.width != want.width {
+                        (n.left, n.top, n.width, n.height) = (want.left, want.top, want.width, want.height);
+                    }
+                }
+            }
+            Part::Message => {
+                show(&mut vis, use_panel.message.is_some());
+                if let (Some((m, _)), Some(mut t)) = (&use_panel.message, text) {
+                    if t.text != *m { t.text = m.clone(); }
+                }
+            }
+            Part::Feed(k) => {
+                let line = feed_shown.get(k);
+                show(&mut vis, line.is_some());
+                if let (Some(line), Some(mut t)) = (line, text) {
+                    if t.text != *line { t.text = line.clone(); }
                 }
             }
             Part::Crosshair => {
@@ -1025,20 +1227,3 @@ fn update_squad_hud(
     }
 }
 
-/// Font sizes are in screen units (480 lines): scale them with the window height.
-fn scale_fonts(windows: Query<&Window, With<PrimaryWindow>>, mut fonts: Query<(&HudFont, &mut TextFont)>, mut last: Local<f32>,
-               new: Query<(), Added<HudFont>>) {
-    // a new map's HUD: scale its fonts too
-    if !new.is_empty() {
-        *last = 0.0;
-    }
-    let Ok(win) = windows.single() else { return };
-    let k = win.height() / 480.0;
-    if (k - *last).abs() < 1e-3 {
-        return;
-    }
-    *last = k;
-    for (base, mut font) in &mut fonts {
-        font.font_size = base.0 * k;
-    }
-}
