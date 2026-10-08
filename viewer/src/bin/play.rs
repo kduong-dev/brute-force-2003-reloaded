@@ -11,6 +11,7 @@
 //!   Ctrl        walk
 //!   Space       jump
 //!   C           dodge roll / sidestep
+//!   Z           crouch / stand (kneel standing still, crouch walk on the move)
 //!   Right mouse aim: upper body turns to the camera direction, legs keep running;
 //!               backpedal when moving away
 //!   Mouse       look (click to capture, Esc to release)
@@ -755,6 +756,9 @@ struct SlotClips {
     stand2crouch: Option<usize>,
     crouch_idle: Option<usize>,
     crouch2stand: Option<usize>,
+    /// crouch walk forward / back (the motion scripts' cr_walk, cr_back_walk)
+    cr_walk: Option<usize>,
+    cr_back_walk: Option<usize>,
     dive: Option<usize>,
 }
 
@@ -1056,6 +1060,9 @@ struct Loaded {
     lift: f32,
     /// the weapon in hand has been let go (dead: see `update_weapons`)
     weapon_dropped: bool,
+    /// the crouch clips' own lift (see `clip_lift`): a kneel's lowest point isn't the standing
+    /// soles', so `lift` would leave it floating or sunk
+    crouch_lift: HashMap<usize, Vec<f32>>,
     foot_rest: [f32; 2],
     /// per locomotion clip: lowest and highest height of each foot over the clip
     foot_range: HashMap<usize, [(f32, f32); 2]>,
@@ -1248,6 +1255,9 @@ struct Player {
     /// seconds the HUD keeps the full weapon list open (after a switch)
     hud_list: f32,
     show_help: bool,
+    /// how far the model is raised this frame: its stance's lift (`Loaded::lift`), or the
+    /// crouch clips' own, by their weights (see `clip_lift`)
+    lift_now: f32,
     /// seconds until the switch's closing sound (SWITCH_SOUNDS[1]); negative when none is due
     switch_sound_in: f32,
     cooldown: f32,
@@ -1319,7 +1329,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: START_GRENADES, medkits: 0, item: 0, item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: START_GRENADES, medkits: 0, item: 0, item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, pending_shot: false,
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
@@ -1914,6 +1924,8 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
             stand2crouch: n("stand2crouch"),
             crouch_idle: n("rp_crouch_idle").or(n("crouch_idle")),
             crouch2stand: n("crouch2stand"),
+            cr_walk: n("cr_walk"),
+            cr_back_walk: n("cr_back_walk"),
             dive: n("dive"),
         }
     };
@@ -1957,6 +1969,33 @@ fn sole_lift(model: &Character, game: &Game, idle: Option<usize>) -> f32 {
         Some(i) => model.pose(game, i, 0.0, None, 0.0),
         None => model.bind_local(),
     });
+    let lowest = lowest_vertex(model, &world);
+    if lowest == f32::MAX { 0.0 } else { (GROUND - lowest).clamp(-MAX_SOLE_LIFT, MAX_SOLE_LIFT) }
+}
+
+/// A clip's lift through its length, like `sole_lift` (GROUND minus the pose's lowest skinned
+/// vertex), at LIFT_SAMPLES even times. A loop gets one value, the most (its lowest point over
+/// the cycle on the floor: a walk always has a foot down, a kneel its knee). Without these, a
+/// kneel was lifted by the standing soles' amount: Hawk and Flint knelt in the air.
+fn clip_lift(model: &Character, game: &Game, clip: usize, looping: bool) -> Vec<f32> {
+    let d = model.anims[clip].duration.max(1e-3);
+    let lifts: Vec<f32> = (0..LIFT_SAMPLES).map(|k| {
+        let mut pose = model.pose(game, clip, d * k as f32 / (LIFT_SAMPLES - 1) as f32, None, 0.0);
+        pose[0].1.x = 0.0;
+        pose[0].1.z = 0.0;
+        let lowest = lowest_vertex(model, &model.world(&pose));
+        if lowest == f32::MAX { 0.0 } else { (GROUND - lowest).clamp(-MAX_CLIP_LIFT, MAX_CLIP_LIFT) }
+    }).collect();
+    if looping { vec![lifts.iter().copied().fold(f32::MIN, f32::max)] } else { lifts }
+}
+
+/// `clip_lift`'s samples, and the most a clip's lift may move a character (m): a kneel drops the
+/// body further than a standing correction.
+const LIFT_SAMPLES: usize = 16;
+const MAX_CLIP_LIFT: f32 = 0.6;
+
+/// The lowest skinned vertex (model space) in a pose given as world matrices, f32::MAX if none.
+fn lowest_vertex(model: &Character, world: &[Mat4]) -> f32 {
     let skin: Vec<Mat4> = world.iter().zip(&model.inverse_bind).map(|(w, ib)| *w * *ib).collect();
     let mut lowest = f32::MAX;
     for g in &model.geosets {
@@ -1971,7 +2010,7 @@ fn sole_lift(model: &Character, game: &Game, idle: Option<usize>) -> f32 {
             lowest = lowest.min(at.y);
         }
     }
-    if lowest == f32::MAX { 0.0 } else { (GROUND - lowest).clamp(-MAX_SOLE_LIFT, MAX_SOLE_LIFT) }
+    lowest
 }
 
 /// The most `sole_lift` moves a character (m).
@@ -1984,7 +2023,8 @@ fn foot_ranges(model: &Character, game: &Game, clips: &Clips, feet: [usize; 2]) 
     let mut out = HashMap::new();
     let sets = clips.slots.iter().flat_map(|s| [&s.carry, &s.rp]);
     for c in [lo.walk, lo.run, lo.sprint, lo.walk_back, lo.run_back, lo.dodge_left, lo.dodge_right].into_iter()
-        .chain(sets.flat_map(|l| [l.walk, l.run, l.sprint, l.walk_back, l.run_back])).flatten() {
+        .chain(sets.flat_map(|l| [l.walk, l.run, l.sprint, l.walk_back, l.run_back]))
+        .chain(clips.slots.iter().flat_map(|s| [s.cr_walk, s.cr_back_walk])).flatten() {
         let d = model.anims[c].duration;
         let mut r = [(f32::MAX, f32::MIN); 2];
         for k in 0..24 {
@@ -2227,8 +2267,17 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
         }
     }
     let lift = sole_lift(&model, game, clips.loco.idle);
+    let mut crouch_lift = HashMap::new();
+    for set in &clips.slots {
+        for (clip, looping) in [(set.stand2crouch, false), (set.crouch2stand, false), (set.crouch_idle, true), (set.cr_walk, true), (set.cr_back_walk, true)] {
+            if let Some(c) = clip {
+                crouch_lift.entry(c).or_insert_with(|| clip_lift(&model, game, c, looping));
+            }
+        }
+    }
+    p.lift_now = lift;
     info!("{name}: soles {lift:.3} m below the floor, raised by that");
-    p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, foot_rest, foot_range, footstep_type, jump_sound,
+    p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   weapons, switch_clips, reload_clips, use_clips, throw_clips, throw_hand, grenade });
 }
 
@@ -2334,6 +2383,14 @@ fn read_input(
     if keys.just_pressed(KeyCode::KeyH) {
         player.show_help = !player.show_help;
     }
+    // Z: crouch (kneel standing, crouch walk on the move) or stand; jumping, dodging or
+    // sprinting stands up
+    if keys.just_pressed(KeyCode::KeyZ) {
+        player.crouch_wanted = !player.crouch_wanted;
+    }
+    if jump || dodge || sprint {
+        player.crouch_wanted = false;
+    }
     player.move_input = if mv.length() > 1.0 { mv.normalize() } else { mv };
     player.sprint = sprint;
     player.walk = walk;
@@ -2382,6 +2439,10 @@ fn autopilot(player: &mut Player) -> bool {
             player.switch_pressed = w == "2" && (0.3..0.4).contains(&player.sim_time);
         }
         player.sprint = false;
+        // BF_TEST_CROUCH=<s>: crouch from that time on
+        if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
+            player.crouch_wanted = player.sim_time >= at;
+        }
         return true;
     }
     if std::env::var("BF_AUTOPILOT").is_err() {
@@ -2545,7 +2606,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if !u.last_world.is_empty() {
                 let push = Quat::from_rotation_y(-u.yaw) * (push + u.last_velocity);
                 // (the model stands raised by its sole lift: the ragdoll starts where it's drawn)
-                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - l.lift, push).placed(u.position + Vec3::Y * (u.height + l.lift), u.yaw);
+                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw);
                 u.knock = Some(Knock { ragdoll, time: 0.0, lying: None });
                 u.thud = false;
                 u.action = Action::None;
@@ -2561,7 +2622,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 // the knocked down die where they lie
                 u.ragdoll = Some(match u.knock.take() {
                     Some(k) => k.ragdoll,
-                    None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - l.lift, push).placed(u.position + Vec3::Y * (u.height + l.lift), u.yaw),
+                    None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw),
                 });
             }
             if let Some(r) = u.ragdoll.as_mut() {
@@ -2581,14 +2642,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                              CHARACTERS[u.character], u.dead_for, r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
                 }
                 apply_pose(&l, &local, &mut transforms);
-                body_thud(u.position, u.yaw, u.height + l.lift, r, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
+                body_thud(u.position, u.yaw, u.height + u.lift_now, r, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
             }
         } else if let Some(mut k) = u.knock.take() {
             k.time += dt;
             if k.time < KNOCK_DOWN_TIME {
                 let local = k.ragdoll.step(&l.model, dt);
                 apply_pose(&l, &local, &mut transforms);
-                body_thud(u.position, u.yaw, u.height + l.lift, &k.ragdoll, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
+                body_thud(u.position, u.yaw, u.height + u.lift_now, &k.ragdoll, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
                 u.knock = Some(k);
             } else {
                 // getting up: stand where the body lies, blend the lying pose into the animation
@@ -2715,8 +2776,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
     }
     for u in &units {
-        if let Some((tr, lift)) = u.loaded.as_ref().and_then(|l| transforms.get_mut(l.root).ok().map(|t| (t, l.lift))).as_mut() {
-            tr.translation = u.position + Vec3::Y * (u.height + *lift);
+        if let Some(tr) = u.loaded.as_ref().and_then(|l| transforms.get_mut(l.root).ok()).as_mut() {
+            tr.translation = u.position + Vec3::Y * (u.height + u.lift_now);
         }
     }
 }
@@ -3395,7 +3456,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         Action::JumpLaunch if p.action_left <= 0.0 => p.action = Action::JumpFall,
         Action::Dodge { .. } | Action::JumpLand | Action::Rising | Action::Dive if p.action_left <= FADE => p.action = Action::None,
         Action::Crouching if p.action_left <= FADE => p.action = Action::Crouched,
-        Action::Crouched if !p.crouch_wanted || moving || p.jump_buffer > 0.0 || p.dodge_pressed => {
+        // (moving, it crouch-walks where the stance has one, else stands)
+        Action::Crouched if !p.crouch_wanted || (moving && stance.cr_walk.is_none()) || p.jump_buffer > 0.0 || p.dodge_pressed => {
             p.action = Action::Rising;
             p.action_left = dur(stance.crouch2stand);
             if stance.crouch2stand.is_none() {
@@ -3431,6 +3493,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
                     start_launch(p);
                 }
             }
+        } else if p.crouch_wanted && moving && stance.cr_walk.is_some() && stance.crouch_idle.is_some() {
+            // crouching on the move: straight into the crouch walk
+            p.action = Action::Crouched;
         } else if p.crouch_wanted && !moving && stance.stand2crouch.is_some() && stance.crouch_idle.is_some() {
             p.action = Action::Crouching;
             p.action_left = dur(stance.stand2crouch);
@@ -3630,7 +3695,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         let down = p.slide_yaw;
         turn_to(&mut p.yaw, down, TURN_RATE);
         p.gait = Gait::Idle;
-    } else if matches!(p.action, Action::None) {
+    } else if matches!(p.action, Action::None) || (matches!(p.action, Action::Crouched) && stance.cr_walk.is_some()) {
         p.gait = if p.aim {
             if !moving {
                 let goal = stand_aim_yaw(p, aim_yaw - off);
@@ -3657,6 +3722,14 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         };
         if upper_aim && !armed {
             twist_goal = wrap_angle(aim_yaw - p.yaw).clamp(-1.75, 1.75);
+        }
+        // crouched there's only the crouch walk, forward or back
+        if matches!(p.action, Action::Crouched) {
+            p.gait = match p.gait {
+                Gait::Idle => Gait::Idle,
+                Gait::WalkBack | Gait::RunBack => Gait::WalkBack,
+                _ => Gait::Walk,
+            };
         }
         p.on_all_fours = p.gait == Gait::Sprint;
     } else if p.action.airborne() && moving {
@@ -3690,7 +3763,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         Action::JumpFall => (if four { c.leg4_fall } else { c.jump_fall }, false),
         Action::JumpLand => (if four { c.leg4_land } else { c.jump_land }, true),
         Action::Crouching => (stance.stand2crouch, true),
-        Action::Crouched => (stance.crouch_idle, false),
+        Action::Crouched => (match p.gait {
+            Gait::Walk => stance.cr_walk,
+            Gait::WalkBack => stance.cr_back_walk.or(stance.cr_walk),
+            _ => None,
+        }.or(stance.crouch_idle), false),
         Action::Rising => (stance.crouch2stand, true),
         Action::Dive => (stance.dive, true),
     };
@@ -3732,6 +3809,23 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         poses.push((pose, layer.weight));
     }
     let mut pose = locomotion::blend(&poses);
+    // the lift for what's playing: the crouch clips' own, the stance's otherwise
+    let (mut lift, mut weight) = (0.0, 0.0);
+    for layer in &p.layers {
+        let here = match l.crouch_lift.get(&layer.clip) {
+            Some(t) if t.len() > 1 => {
+                let d = l.model.anims[layer.clip].duration.max(1e-3);
+                let x = (layer.time / d).clamp(0.0, 1.0) * (t.len() - 1) as f32;
+                let (i, f) = (x.floor() as usize, x.fract());
+                t[i] + (t[(i + 1).min(t.len() - 1)] - t[i]) * f
+            }
+            Some(t) => t[0],
+            None => l.lift,
+        };
+        lift += here * layer.weight;
+        weight += layer.weight;
+    }
+    p.lift_now = if weight > 0.0 { lift / weight } else { l.lift };
     // weapon switch: the overlay clip on its bones (upper body), faded in and out over 0.2 s
     if let Some(sw) = &p.switching {
         if let Some(clip) = &l.switch_clips[sw.to] {
@@ -3837,7 +3931,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         }
     }
     if let Ok(mut tr) = transforms.get_mut(l.root) {
-        tr.translation = p.position + Vec3::Y * (p.height + l.lift);
+        tr.translation = p.position + Vec3::Y * (p.height + p.lift_now);
         tr.rotation = facing;
     }
     for (e, (q, t)) in l.joints.iter().zip(&pose) {
@@ -4083,7 +4177,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         Action::JumpFall => "jump: fall",
         Action::JumpLand => "jump: land",
         Action::Crouching => "kneel",
-        Action::Crouched => "kneeling",
+        Action::Crouched => if player.gait == Gait::Idle { "kneeling" } else { "crouch walk" },
         Action::Rising => "stand up",
         Action::Dive => "dive",
     };
@@ -4094,7 +4188,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         w.def.label, player.weapon + 1, l.weapons.len()))).unwrap_or_default();
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
-         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   E use   M surface   H hide\n\
+         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   E use   M surface   H hide\n\
          click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
          test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die",
         CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,

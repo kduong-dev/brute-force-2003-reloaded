@@ -21,6 +21,7 @@ Four programs:
 | Q | switch between the character's two weapons (animated: stow one, draw the other; plays the game's hard-coded switch sounds ff820fda / e1e97460, 0.65 s apart) |
 | Space | jump: standing jumps crouch first, running jumps launch straight away and carry the run's momentum (Brutus uses his four-legged jump when sprinting on all fours) |
 | C | dodge roll / sidestep to the left or right of the movement |
+| Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` |
 | M | cycle the ground surface (changes footstep / landing / slide sounds) |
 | click, then mouse | look around (Esc releases the mouse) |
 | wheel | zoom |
@@ -76,6 +77,13 @@ Squad movement and deaths follow the game's own data and the captures:
   * Brutus: lowered 0.07 m (floated);
   * Flint: about right (0.01 m);
   * Hawk: lowered 0.15 m (floated).
+
+  That's for standing. A kneel's lowest point (the knee) isn't the standing soles', so each
+  crouch clip has its own lift (`clip_lift`): `stand2crouch` and `crouch2stand` through their
+  length (16 samples), and `rp_crouch_idle` and the crouch walks as the most over their cycle.
+  The model is lifted by the weighted mix of what's playing, so a kneel or a crouch walk
+  stands on the floor too. With the standing lift alone, Hawk and Flint knelt in the air. This
+  covers the squad's kneels as well.
 * **Scopes.** With a weapon that zooms, right mouse toggles its scope (click in, click out;
   other weapons still aim while it's held). Flint steps in twice: in, closer (the weapon's zoom
   doubled: the L-Shot-50's 5x, then 10x), out. The doubling is a choice; the data has one zoom
