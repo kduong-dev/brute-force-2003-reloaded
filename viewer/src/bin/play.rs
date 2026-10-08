@@ -2618,8 +2618,12 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             _ => continue,
         };
         for &(origin, dir, dist) in &shots {
-            if body.shove(origin, dir, dist) && std::env::var("BF_RAGDOLL_LOG").is_ok() {
-                println!("shot {}'s body", CHARACTERS[u.character]);
+            if let Some(at) = body.shove(origin, dir, dist) {
+                // it bleeds where it's hit, as the living do (a bullet's hit: ammo type 1)
+                u.blood.push((at, dir, 1));
+                if std::env::var("BF_RAGDOLL_LOG").is_ok() {
+                    println!("shot {}'s body at {at:.2}", CHARACTERS[u.character]);
+                }
             }
         }
     }
@@ -3258,8 +3262,8 @@ impl Ragdoll {
     /// A shot (world line from `origin` along `dir`, ending at `dist`) through the body: the
     /// first bone it passes within its thickness (`flesh`) of is brought up to SHOT_SHOVE m/s
     /// along the shot, and bones near it less (falling off to nothing at SHOT_SHOVE_REACH m). It wakes the
-    /// body (it settles again, and can roll off its side again). Whether it hit.
-    fn shove(&mut self, origin: Vec3, dir: Vec3, dist: f32) -> bool {
+    /// body (it settles again, and can roll off its side again). Where it hit (world), if it did.
+    fn shove(&mut self, origin: Vec3, dir: Vec3, dist: f32) -> Option<Vec3> {
         let back = Quat::from_rotation_y(self.yaw).inverse();
         let (o, d) = (back * (origin - self.origin), back * dir);
         let hit = self.pos.iter().enumerate().filter_map(|(i, p)| {
@@ -3267,7 +3271,7 @@ impl Ragdoll {
             let miss = (o + d * t).distance(*p);
             (t > 0.0 && t < dist + 0.2 && miss < self.flesh[i] + 0.05).then_some((t, i))
         }).min_by(|a, b| a.0.total_cmp(&b.0));
-        let Some((_, at)) = hit else { return false };
+        let (along, at) = hit?;
         let centre = self.pos[at];
         for (p, q) in self.pos.iter().zip(self.prev.iter_mut()) {
             let k = 1.0 - p.distance(centre) / SHOT_SHOVE_REACH;
@@ -3281,7 +3285,7 @@ impl Ragdoll {
         }
         self.still = 0;
         self.rolls = 0;
-        true
+        Some(origin + dir * along)
     }
 
     fn placed(mut self, origin: Vec3, yaw: f32) -> Self {

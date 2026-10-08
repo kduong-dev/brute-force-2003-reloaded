@@ -58,6 +58,12 @@ const DNA_SIDE: f32 = 0.9;
 const DNA_HEIGHT: f32 = 0.55;
 /// The pool goes under the body this long after death (it has stopped sliding by then).
 const POOL_DELAY: f32 = 2.0;
+/// A death splashes blood round where the body falls: the hit's blood effects sprayed up from
+/// DEATH_SPRAY_UP m, and DEATH_SPLATS of the character's hit splats on the ground within
+/// DEATH_SPLAT_REACH m. The demo's choice: the game's own death blood isn't known.
+const DEATH_SPRAY_UP: f32 = 0.9;
+const DEATH_SPLATS: usize = 5;
+const DEATH_SPLAT_REACH: f32 = 1.4;
 /// A light's lumens per unit of (alpha x size x colour) of its live particles (tuned to the
 /// capture's brightening around the DNA).
 const LIGHT_LUMENS: f32 = 30_000.0;
@@ -607,6 +613,22 @@ fn spawn_fx(
         if !u.dead {
             u.dead_for = 0.0;
             continue;
+        }
+        // the moment they die: blood splashed round where they fall, a spray and splats on the
+        // ground (DEATH_SPLATS, within DEATH_SPLAT_REACH m)
+        if u.dead_for == 0.0 {
+            let at = u.position + Vec3::Y * (GROUND + DEATH_SPRAY_UP);
+            let sp = state.random();
+            for e in BLOOD {
+                spawn_emitter(&mut commands, &mut state, e, at, Vec3::Y, sp);
+            }
+            if let Some(def) = game.0.decals.get(&hit_decal) {
+                for _ in 0..DEATH_SPLATS {
+                    let (a, r) = (state.random() * std::f32::consts::TAU, DEATH_SPLAT_REACH * state.random().sqrt());
+                    let spot = Vec3::new(u.position.x + r * a.cos(), u.position.y + GROUND, u.position.z + r * a.sin());
+                    spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, spot, DECAL_SCALE);
+                }
+            }
         }
         u.dead_for += dt;
         // the DNA, beside where they fell
