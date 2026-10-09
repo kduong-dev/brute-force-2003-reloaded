@@ -9,7 +9,9 @@ repo's source files. Read `CLAUDE.md` first.
 
 ## Your setup
 
-- **xemu:** `D:\Emulators\Xbox\Xemu\xemu.exe` (0.8.136, QEMU 10.2 underneath). The game disc is
+- **xemu:** `D:\Emulators\Xbox\Xemu\xemu-previous.exe`, the previous build. The current
+  `xemu.exe` (0.8.136) has a regression, so don't use it unless the user says it's fixed. Note
+  the version you ran in each take's notes. The game disc is
   `D:\Emulators\Xbox\ISO\Brute Force.iso`.
 - **Your own working folder:** `D:\Emulators\Xbox\agent\`. Keep everything of yours there:
   - your copy of the settings, `xemu.toml`, started from the user's
