@@ -30,11 +30,11 @@
 //! moment (see `TINT_LOW`).
 //!
 //! The Gas's damage over time is play_gas.rs's (its blast is handed over there, see
-//! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs). Not done yet (each
-//! type's own ticket): the
-//! Sonic's ring that carries the damage out, the Light's 30 s burn (its light effect runs as
-//! the data has it), the Roller's seeking and the Sentry's trigger (it lies there until its
-//! 9999 s timer or BF_TEST_DETONATE).
+//! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs). The Light does no
+//! damage: its canister stays where it lies while phosphor_grenade and light_phosphor burn
+//! (30 s, see `stays`). Not done yet (each type's own ticket): the
+//! Sonic's ring that carries the damage out, the Roller's seeking and the Sentry's trigger (it
+//! lies there until its 9999 s timer or BF_TEST_DETONATE).
 
 use super::*;
 use bf_viewer::bf::character::EffectType;
@@ -418,6 +418,7 @@ fn fly_grenades(
                                                                ResMut<super::energy::BoltRequests>),
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
+    mut trails: Query<(&ChildOf, &mut bf_viewer::ale_fx::AleEffect)>,
 ) {
     let dt = frame_dt(&time);
     let p = &mut *player;
@@ -490,12 +491,22 @@ fn fly_grenades(
         }
         if g.landed && g.fuse <= 0.0 {
             let at = tr.translation;
-            commands.entity(e).despawn();
-            blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
-            // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light); one
-            // whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose recording shows
-            // no damage at once) leaves its poison cloud instead (play_gas.rs)
+            let burn = blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
+            // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light), whose
+            // canister stays where it lies while its effects burn (see `stays`); one whose damage
+            // is dealt over time (h_04ea9251 > 0: the Gas, whose recording shows no damage at
+            // once) leaves its poison cloud instead (play_gas.rs)
             let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
+            if stays(kit) {
+                commands.entity(e).remove::<Grenade>().insert(AleExpire(burn));
+                for (parent, mut fx) in &mut trails {
+                    if parent.parent() == e {
+                        fx.active = false;
+                    }
+                }
+                continue;
+            }
+            commands.entity(e).despawn();
             if max <= 0.0 || radius <= 0.0 {
                 continue;
             }
@@ -606,17 +617,29 @@ fn fly_grenades(
     }
 }
 
+/// Whether a grenade's canister stays where it lies after it goes off, until its effects have
+/// burnt out: one whose explosion does no damage (the Light, Damage 0-0: the recording's flares
+/// lie under their beams, lg 1062-1085). The data has no flag for it (the Light's definition
+/// differs from the Frag's only in names, its item kind h_e5f51266 and its hitpoints); the
+/// other types' recordings show nothing left after the blast. An inference.
+fn stays(kit: &GrenadeKit) -> bool {
+    kit.blast.damage <= 0.0
+}
+
 /// A blast at `at`: the explosion's effect type (its ALE effects and light effect, run once on
 /// the ground below, and its sounds, after their delay) and the bullet's impact sound; its
-/// decal on the ground.
+/// decal on the ground. Returns how long its effects run (s; the Light's phosphor_grenade: its
+/// 30 s emitters and their last particles' 2 s).
 #[allow(clippy::too_many_arguments)]
 fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
-         materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedBlastParts) {
+         materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedBlastParts) -> f32 {
     let ground = Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z);
+    let mut burn: f32 = 0.0;
     if let Some(ale) = ale {
         for &effect in kit.blast_fx.effects.iter().chain([&kit.blast_fx.light]).filter(|&&e| e != 0) {
             if let Some(fx) = ale.load_recorded(game, images, materials, effect) {
                 let life = fx.duration();
+                burn = burn.max(life);
                 let seed = (ground.x * 977.0 + ground.z * 131.0) as u32;
                 commands.spawn((Transform::from_translation(ground), Visibility::default(),
                                 bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life)));
@@ -638,9 +661,10 @@ fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::a
         delayed.1.push((DECAL_DELAY, kit.blast.decal, ground));
     }
     if std::env::var("BF_GRENADE_LOG").is_ok() {
-        println!("t {:.2}: {} blast at {ground:.2}, {} effects + light {:08x}, sounds {:x?} + {:08x}, decal {:08x}", p.sim_time, kit.def.label,
-                 kit.blast_fx.effects.len(), kit.blast_fx.light, kit.blast_fx.sounds, kit.blast.impact_sound, kit.blast.decal);
+        println!("t {:.2}: {} blast at {ground:.2}, {} effects + light {:08x}, sounds {:x?} + {:08x}, decal {:08x}, effects run {burn:.1} s", p.sim_time,
+                 kit.def.label, kit.blast_fx.effects.len(), kit.blast_fx.light, kit.blast_fx.sounds, kit.blast.impact_sound, kit.blast.decal);
     }
+    burn
 }
 
 /// sRGB stored value -> linear light.

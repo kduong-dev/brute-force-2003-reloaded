@@ -144,6 +144,15 @@ const AIR_FIELDS: [&str; 3] = ["gas-grenade.fld#1.fld", "gas-grenade2.fld#1.fld"
 /// 6.5 x 4 m cloud of billboards all centred in Tex, who stood out in front of it; at 30 it's
 /// ~6.5 x 5 m and veils him as the recording does; at 15, ~9 x 6 m; at 8, ~13 m. An inference.
 const APPROACH_FPS: f32 = 30.0;
+/// An upright streak: a camera-facing appearance (not perp, not motion-blurred) whose width
+/// factor (WIDTH) stays under this part of its height factor (ASPECT) all its life, with a
+/// constant Rotate. It is drawn with no random roll - upright on the screen, turned only by its
+/// Rotate - and rides its appearance transform's offset over its life (`Pair::rise`). The one
+/// grenade appearance it picks out is phosphor_grenade_init_spike.app (width 0.05 -> 0.30 of a
+/// size that peaks at 5.9 m): the Light recording's tall thin vertical beam (lg 0413-0487,
+/// 1181-1289), where the random roll drew a fan of rays. The threshold is the demo's (the data
+/// has no flag for it); only for the grenades' effects (`Compiled::recorded`).
+const UPRIGHT_WIDTH: f32 = 0.5;
 /// Materials per appearance: its colour and alpha at this many points of a particle's life.
 const STEPS: usize = 12;
 /// Particles alive at once, over all effects.
@@ -169,6 +178,14 @@ pub struct Pair {
     attached: bool,
     /// turned along their motion
     streak: bool,
+    /// an upright streak (see UPRIGHT_WIDTH): no random roll, and it rises by its appearance
+    /// transform's offset over its age in seconds, up to this time (the offset's last key: the
+    /// spike's 0 -> 2.26 m up over 0.92 s). The offset read over the particle's age rather than
+    /// the effect's time is an inference: over the effect's time (repeating every 0.92 s) the
+    /// whole beam would rise and drop back once every 0.92 s, while the recording's beam top
+    /// flickers by ~25% about every 0.3 s with no slow cycle (lg 1181-1289, scratchpad
+    /// light/top.py)
+    rise: Option<f32>,
     /// a beam appearance: the ribbon's material (vertex colours carry colour x alpha)
     beam: Option<Handle<StandardMaterial>>,
     /// a "light_" effect's pair: its particles are point lights
@@ -417,7 +434,7 @@ impl AleAssets {
                     .and_then(|n| self.load_as(game, images, materials, h(n), recorded));
                 if let Some(child) = child {
                     pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                      frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![] });
+                                      frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None });
                 }
                 continue;
             }
@@ -442,7 +459,7 @@ impl AleAssets {
                 let material = mats[0].clone();
                 let fps = book.map_or(0.0, |b| b.fps);
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![mats], fps,
-                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields: vec![] });
+                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields: vec![], rise: None });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
@@ -450,7 +467,7 @@ impl AleAssets {
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![] });
+                                  frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![], rise: None });
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
@@ -486,8 +503,9 @@ impl AleAssets {
             // AIR_FIELDS; the grenades' effects only)
             let fields = e.pairs.iter().filter(|p| recorded && p.0 == ap).filter_map(|p| node(game, p.1))
                 .filter(|n| n.class == CLASS_AIR_FIELD && AIR_FIELDS.contains(&n.name.as_str())).collect();
+            let rise = (recorded && !app.flag(PERP) && !streak && upright(&app)).then(|| offset_end(&app));
             pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
-                              beam: None, light: false, fields, child: None });
+                              beam: None, light: false, fields, child: None, rise });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded })
     }
@@ -536,6 +554,32 @@ fn missing_emitter(app: &Node) -> Node {
         (LIFESPAN, Value::Float(life)),
         (LIFE, Value::Curve(Curve(vec![(0.0, life, 0, vec![])]))),
     ]) }
+}
+
+/// Every key value of a float animation (all its sparam items).
+fn float_keys(app: &Node, p: u32) -> Vec<f32> {
+    match app.params.get(&p) {
+        Some(crate::bf::ale::Value::Floats(items)) => items.iter().flat_map(|(_, _, keys)| keys.iter().map(|k| k.1)).collect(),
+        _ => vec![],
+    }
+}
+
+/// An upright streak (see UPRIGHT_WIDTH): its width factor under UPRIGHT_WIDTH of its smallest
+/// height factor all its life, and a constant Rotate.
+fn upright(app: &Node) -> bool {
+    let (width, height, rotate) = (float_keys(app, WIDTH), float_keys(app, ASPECT), float_keys(app, ROTATE));
+    let tall = height.iter().copied().fold(f32::MAX, f32::min).min(1.0);
+    !width.is_empty() && width.iter().all(|&w| w < UPRIGHT_WIDTH * tall) && rotate.windows(2).all(|r| r[0] == r[1])
+}
+
+/// When an appearance transform's offset stops (the last key of its three translation curves,
+/// s); read no later, so the curves' repeat flag doesn't take it back to the start.
+fn offset_end(app: &Node) -> f32 {
+    match app.params.get(&TRANSFORM) {
+        Some(crate::bf::ale::Value::Transform(c)) => c.iter().take(3).flat_map(|c| c.0.iter().filter_map(|i| i.3.last().map(|k| k.0)))
+            .fold(0.0, f32::max),
+        _ => 0.0,
+    }
 }
 
 fn euler(deg: [f32; 3]) -> Quat {
@@ -654,7 +698,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 // (stun_grenade_master's 7.49 s particles carry 0.8 s bolts): it would carry an
                 // effect with nothing left to draw
                 let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
-                let roll = if pair.perp { 0.0 } else { fx.random() * std::f32::consts::TAU };
+                let roll = if pair.perp || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
                 let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
                 // a perp quad from a sphere emitter that throws its particles out: facing out
                 // along its direction from the middle (see PERP_RADIAL_SPEED)
@@ -746,6 +790,12 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
                 p.turn = Quat::IDENTITY;
             }
             None => tr.translation += p.vel * dt,
+        }
+        // an upright streak rises by its appearance's offset over its age (see `Pair::rise`; in
+        // the world's frame: the blasts are placed upright)
+        if let Some(end) = pair.rise {
+            let at = |t: f32| Vec3::from(app.transform(TRANSFORM, t.clamp(0.0, end * 0.9999))[0]);
+            tr.translation += at(p.age) - at(p.age - dt);
         }
         let moving = turn * p.vel;
         // a light's: reach = size, strength = colour x alpha x size
