@@ -203,6 +203,9 @@ struct Scenery {
     test_hits: usize,
     /// grenade blasts on their way (from `ObjectBlasts`, from the frame after they went off)
     blasts: Vec<ObjectBlast>,
+    /// this frame's blasts that reached the scenery and areas at work: (where, how far), for
+    /// `set_off_mines`
+    reach: Vec<(Vec3, f32)>,
 }
 
 /// A loose piece of a broken object: seconds left, and its own scale (it shrinks away at the end).
@@ -221,7 +224,7 @@ pub fn plugin(app: &mut App) {
         }).after(setup))
         // (after the grenades: a blast's damage reaches the scenery on the frame the
         // characters take it)
-        .add_systems(Update, (find_scenery, hit_scenery, break_scenery, area_damage, debris_life).chain()
+        .add_systems(Update, (find_scenery, hit_scenery, break_scenery, area_damage, set_off_mines, debris_life).chain()
             .after(super::grenade::GrenadeSystems).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
@@ -378,6 +381,7 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
     });
     s.blasts.append(&mut blasts.0);
     for (at, radius, max, kind, label) in landed {
+        s.reach.push((at, radius));
         for i in 0..s.list.len() {
             let o = s.list[i].centre;
             let d = o.distance(at);
@@ -577,6 +581,7 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             continue;
         }
         let value = a.damage.amount * inside * DAMAGE_SCALE;
+        s.reach.push((a.at, a.damage.range));
         // the characters in range (FUN_0021ade0 measures each target's place to the effect's,
         // with no ray test: the weapons' blast areas test one, FUN_00224a90, not these)
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
@@ -647,6 +652,22 @@ fn falloff(damage: &AreaDamage, value: f32, d: f32) -> f32 {
         1 => value * k,
         2 => k * k * value * value,
         _ => value,
+    }
+}
+
+/// Sentries that are down (play_sentry.rs' mines) inside a grenade blast that reached the
+/// scenery this frame, or inside a damage area at work, go off (their fuse set to 0: the next
+/// frame's `fly_grenades` sets them off). The demo's: one blast setting off another, as it sets
+/// off barrels; the game's handling of a Sentry in a blast isn't traced (no take shows one).
+fn set_off_mines(mut scenery: ResMut<Scenery>, player: Res<Player>, mut mines: Query<(Entity, &mut super::grenade::Grenade, &Transform), With<super::sentry::Mine>>) {
+    let reach = std::mem::take(&mut scenery.reach);
+    for (e, mut g, tr) in &mut mines {
+        if g.fuse > 0.0 && reach.iter().any(|(at, r)| tr.translation.distance(*at) < *r) {
+            g.fuse = 0.0;
+            if std::env::var("BF_SCENERY_LOG").is_ok() {
+                println!("t {:.2}: a blast sets off the Sentry {e}", player.sim_time);
+            }
+        }
     }
 }
 

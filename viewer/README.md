@@ -1617,6 +1617,10 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     * The breakable objects in range take it too, times their factor: the rack (Type 10, x10)
       sets off the barrels 4.4 m and 5.3 m from it on its first tick (take13, campaign e34). The
       barrel's (Type 3, x0) does nothing to barrels or crates.
+    * A Sentry that's down goes off inside a damage area at work, or inside a grenade blast
+      that reaches the scenery. This is the demo's choice; no take shows a Sentry in a blast.
+    * A breakable object in front of a Sentry shields it from shots: the shot's length comes
+      from the arena, which holds the intact object's collision.
     * `h_ed582b3c` is the push the damage message carries, scaled by ((1 - w) x 0.4 + 0.6).
       w is world +0xc58, a load measure FUN_000d9090 recomputes every second (0 in
       multiplayer). It scales pushes, not damage.
