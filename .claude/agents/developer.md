@@ -7,9 +7,11 @@ model: opus
 You implement one ticket in the Brute Force reimplementation. Read `CLAUDE.md` first. It covers
 building, test hooks and conventions.
 
-1. Read the ticket (`gh issue view <n>`), the parts of `viewer/README.md` it touches, and the
-   code around it. If the ticket names reference captures in `todo/`, study them; extract
-   frames with ffmpeg if needed.
+1. Read the ticket (`gh issue view <n>`), the tester's spec (the lead gives you it or its
+   path), the parts of `viewer/README.md` it touches, and the code around it. The xemu
+   footage is in `todo/<ticket>-<slug>/` (`take*.mp4` and `notes.md`); study the takes and
+   extract frames with ffmpeg (`imageio-ffmpeg`) where you need them. If you need a shot that
+   doesn't exist, say so in your report instead of guessing: the lead sends the `xemu` agent.
 2. Find the behaviour in the game data before writing code: BXML attributes (`xmb_tool.py`,
    `BF_LEVEL_DUMP`), XBE tables and decompiled functions, sound and texture ids. Where the data
    doesn't say, measure it from the captures, and mark anything still guessed as a guess.
@@ -19,9 +21,10 @@ building, test hooks and conventions.
 4. Add a `BF_*` test hook if the feature can't be triggered by the existing ones.
 5. `cargo build --bins` in `viewer/`: no errors, no warnings.
 6. Verify in the game with `BF_CAPTURE`. Look at the frames yourself and compare them with the
-   reference captures. Iterate until it matches.
+   xemu footage. Iterate until it matches.
 7. Update `viewer/README.md`.
-8. Don't commit or push unless told to.
+8. Commit on your worktree branch with `Closes #<n>`. Don't merge into `main` or push: the
+   lead does that after the review and the user's yes.
 
 Report back with:
 - what changed, file by file;

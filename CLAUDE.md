@@ -50,14 +50,21 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=x,z,x2,z2[,height] BF_CAPTURE=<dir> BF_CAPTURE_FRAME
 ## Team workflow
 
 The agent roles are in `.claude/agents/`:
-- `developer`: implements a ticket;
-- `reviewer`: reviews the diff, read-only;
-- `tester`: plays it with hooks and captures, read-only;
-- `reference`: compares against the user's xemu recordings, read-only.
+- `xemu`: plays the original game in xemu and records footage for a ticket, as many takes as
+  it needs, into `todo/<ticket>-<slug>/` with a `notes.md`. It may stage shots in a modified
+  copy of the game (on D:, never the originals). It runs xemu with its own settings and hard
+  disk image, and may run while the user is at the PC.
+- `tester`: owns "what the real game does". Before a ticket it measures the footage into a
+  spec (or writes a shot list for `xemu`); after, it compares the demo with the footage and
+  checks for regressions. Read-only.
+- `developer`: implements a ticket in its own worktree, from the spec, the footage and the
+  game data.
+- `reviewer`: reviews the code (a branch, a pull request or a diff), read-only.
 
-Agents can't start other agents, so **the main session leads**, and **the user is the
-product owner**: they set priorities, record in xemu, judge what looks right, and give the
-final yes to commit, push and close tickets.
+Agents can't start other agents, so **the main session is the project manager and team
+lead**: it writes tickets, starts the agents, relays findings, moves the board, and merges.
+**The user is the product owner**: they set priorities, judge what looks right, and give the
+final yes to merge, push and close tickets.
 
 **Tickets.** The user decides what becomes a ticket. The lead writes it with
 `gh issue create`, after checking the game data so the ticket has leads, using the sections of
@@ -73,22 +80,26 @@ their ticket under "found, not in scope" in their report. The lead asks the user
 filing those, or files them with the `triage` label for the user to accept or close.
 
 **Order for a ticket:**
-1. `reference` writes the spec from the recordings. If they don't cover it, it writes a shot
-   list for the user; wait for the recordings.
-2. `developer` implements it in its own worktree (`isolation: "worktree"`, with
-   `CARGO_TARGET_DIR` and `BF_DATA_DIR` set as above).
-3. `reviewer` and `tester` run in parallel on the result. `reference` compares the demo with
-   the recordings.
-4. Send the findings back to the same developer (SendMessage) until the reviewer approves and
-   the tester and reference agents pass it.
-5. The lead summarises the result for the user. On their yes: merge to `main`, push, and the
-   commit's `Closes #N` closes the ticket.
+1. **Footage.** If `todo/<ticket>-*/` doesn't cover the ticket, `xemu` records it, from the
+   ticket and the tester's shot list if there is one.
+2. **Spec.** `tester` measures the footage into a spec. If something is still missing, its
+   shot list goes back to `xemu` (step 1).
+3. **Build.** `developer` implements it in its own worktree (`isolation: "worktree"`, with
+   `CARGO_TARGET_DIR` and `BF_DATA_DIR` set as above), given the spec and the footage folder.
+4. **Check.** `reviewer` and `tester` run in parallel on the result: the code, and the demo
+   against the footage.
+5. Send the findings back to the same developer (SendMessage) until the reviewer approves and
+   the tester passes it.
+6. The lead summarises the result for the user. On their yes: merge to `main`, push, and the
+   commit's `Closes #N` closes the ticket. Then delete the ticket's build folder
+   (`CARGO_TARGET_DIR`), its worktree and branch, and the agents' captures for it: each ticket
+   leaves about 12 GB of build output and several GB of frames. Keep `todo/` footage.
 
 **The board.** Tickets are tracked on the project "Brute Force Reloaded Project" (#4,
 owner `kduong-dev`). Its statuses are Backlog → Ready → In progress → In review → Done. The
 lead moves a ticket's card:
 - to **In progress** when a developer starts it, or when the review sends it back;
-- to **In review** when the reviewer, tester and reference agents start on it.
+- to **In review** when the reviewer and tester start on it.
 
 Closing the issue moves the card to **Done** by itself: the board's "Item closed" workflow.
 
@@ -112,7 +123,8 @@ gh project item-edit --project-id PVT_kwHOAje2rc4Bl_qf --id "$ITEM" \
 New issues are added to the board automatically. The `gh` login needs the `project` scope
 (`gh auth refresh -s project`).
 
-Run at most two agents that build at once: each build takes minutes and uses a lot of CPU.
+Run at most two heavy agents at once: a build takes minutes and a lot of CPU, and an `xemu`
+session uses the GPU and the screen. Run at most one `xemu` agent at a time.
 Relay what agents report faithfully, including what failed or wasn't tested.
 
 ## Conventions
