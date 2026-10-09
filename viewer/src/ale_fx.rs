@@ -79,6 +79,15 @@ const TEXTURE: u32 = 0xF736_F94E;
 const BLEND: u32 = 0x1DAE_A8C0;
 const BLEND_ADD: (u32, u32) = (5, 2);
 
+/// Perp quads lie flat in the emitter's frame, i.e. face along the emitter's axis - the
+/// direction a cone emitter throws them (the Sonic's ring, the laser hits' rings, a bolt's
+/// cross-section). A sphere emitter throws them every way: from one moving out at this speed
+/// (m/s) or more, a perp quad faces out along its own direction, so the Frag's exp-fire-add
+/// (0.48 m/s, radius 1 -> 3.3 m) is a round shell as in the recording (frag/a 0700-0730),
+/// not a stack of flat discs seen edge-on. The power-ups' icons (sphere emitters at 0.02-0.16
+/// m/s, verified flat) keep the emitter's frame. The threshold is the demo's: the data has no
+/// flag for it.
+const PERP_RADIAL_SPEED: f32 = 0.3;
 /// Materials per appearance: its colour and alpha at this many points of a particle's life.
 const STEPS: usize = 12;
 /// Particles alive at once, over all effects.
@@ -337,18 +346,20 @@ fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, assets: Option<Res<AleAssets>>,
         mut count: ResMut<Count>, mut seq: ResMut<Seq>, mut meshes: ResMut<Assets<Mesh>>,
-        mut effects: Query<(Entity, &mut AleEffect, &GlobalTransform)>) {
+        mut effects: Query<(Entity, &mut AleEffect, &GlobalTransform, &Transform, Has<ChildOf>)>) {
     let Some(assets) = assets else { return };
     let dt = clock(&time, fixed);
-    for (fx_entity, mut fx, at) in &mut effects {
+    for (fx_entity, mut fx, at, local, parented) in &mut effects {
         let owner = fx_entity;
         // a new effect's world placement is known from its second frame (transforms propagate
-        // after this runs)
-        if !fx.placed {
+        // after this runs); one without a parent is where its own transform says at once (a
+        // blast starts on the frame it goes off)
+        if !fx.placed && parented {
             fx.placed = true;
             continue;
         }
-        let place = at.compute_transform();
+        let place = if fx.placed { at.compute_transform() } else { *local };
+        fx.placed = true;
         if !fx.active {
             fx.started = false;
             continue;
@@ -417,7 +428,12 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 };
                 let life = em.curve(LIFE, sp, t).unwrap_or(1.0).max(0.02);
                 let roll = if pair.perp { 0.0 } else { fx.random() * std::f32::consts::TAU };
-                let lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                // a perp quad from a sphere emitter that throws its particles out: facing out
+                // along its direction from the middle (see PERP_RADIAL_SPEED)
+                if pair.perp && em.class == CLASS_SPHERE && speed >= PERP_RADIAL_SPEED {
+                    lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
+                }
                 count.0 += 1;
                 // attached: kept in the effect's frame (offset and turn without the effect's own)
                 let (owner, local, vel, lie) = if pair.attached {

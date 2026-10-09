@@ -21,14 +21,16 @@
 //! count drops at once (one game frame after the button in the recordings), the stance's throw
 //! clip takes the grenade in hand at its reach event (its trail and hiss start then: ~0.33 s
 //! after the button) and lets go at its release event. It bounces silently and goes off when its
-//! fuse ends. Place-on-ground types (Roller, Sentry) are set down at the feet at the press (no
-//! meter, the count drops at the press); the Roller rolls off straight ahead.
+//! fuse ends. Place-on-ground types (Roller, Sentry) are set down at the feet with the stance's
+//! place_hi clip (no meter, the count drops at the press); the Roller rolls off straight ahead.
 //!
 //! The blast plays the effect type's ALE effects and light (ale_fx.rs) and sound and the impact
-//! sound, leaves the decal, throws loose pickups, and hurts everyone in its radius. Hurt by it,
-//! the player's 3D view goes red for a moment (see `TINT_LOW`).
+//! sound, leaves the decal, and hurts everyone in its radius (and throws loose pickups) unless
+//! it does no damage or deals it over time. Hurt by it, the player's 3D view goes red for a
+//! moment (see `TINT_LOW`).
 //!
-//! Not done yet (each type's own ticket): the Gas's damage over time, the Energy's bolts, the
+//! Not done yet (each type's own ticket): the Gas's damage over time (it does none yet: its
+//! instant damage is skipped, see `fly_grenades`), the Energy's bolts, the
 //! Sonic's ring that carries the damage out, the Light's 30 s burn (its light effect runs as
 //! the data has it), the Roller's seeking and the Sentry's trigger (it lies there until its
 //! 9999 s timer or BF_TEST_DETONATE).
@@ -36,16 +38,21 @@
 use super::*;
 use bf_viewer::bf::character::EffectType;
 
-/// throw speed range (m/s) over the charge, and extra upward angle over the crosshair (radians):
-/// the demo's own (flights in the recordings are short; button-up to blast 2.28-2.38 s)
-const MIN_THROW: f32 = 5.0;
-const MAX_THROW: f32 = 15.0;
-const THROW_LOB: f32 = 0.3;
+/// throw speed range (m/s) over the charge, and extra upward angle over the crosshair (radians).
+/// Fitted to the Frag recording, not from the data: the grenade leaves the hand 0.60-0.63 s
+/// after the button and goes off 1.65-1.78 s after that, so with the 1.5 s fuse from the first
+/// contact it's down 0.15-0.28 s after it leaves the hand, about 5 m ahead where the camera
+/// looks down (frag/a 588-602): a fast throw along the crosshair, hardly lobbed.
+const MIN_THROW: f32 = 12.0;
+const MAX_THROW: f32 = 20.0;
+const THROW_LOB: f32 = 0.05;
 const GRENADE_GRAVITY: f32 = 9.8;
 const GRENADE_RADIUS: f32 = 0.06;
-/// bounce: vertical restitution, horizontal speed kept per bounce (the demo's)
+/// bounce: vertical restitution, horizontal speed kept per bounce (the demo's; the friction
+/// fitted so a fast throw comes to rest near where it lands, as the recording's does: its trail
+/// puffs from about where it came down, frag/a 600-690)
 const RESTITUTION: f32 = 0.35;
-const GROUND_FRICTION: f32 = 0.6;
+const GROUND_FRICTION: f32 = 0.3;
 /// h_1ee2f4ed: IOU_PLACE_ON_GROUND (Roller, Sentry; the XBE's IOU_ enum)
 const USE_PLACE: i64 = 2;
 /// function-type IFSET_ROLLING_BOMB (the Roller: rolls off once set down)
@@ -53,6 +60,13 @@ const ROLLING_BOMB: i64 = 13;
 /// The Roller's speed once down (m/s; 4.4-5.0 measured, straight ahead along the thrower's
 /// facing, no target in the recording).
 const ROLL_SPEED: f32 = 4.7;
+/// While it rolls, the Roller's object sound (h_19dbc65d) plays again every ROLL_SOUND_EVERY s
+/// (the recording: a loop every ~0.97 s), heard fully within ROLL_SOUND_NEAR m and fading to
+/// nothing at ROLL_SOUND_FAR m (the sound's own `<Sound falloff=5 h_fd40e332=25>` in
+/// sounds-mp1.xml, read as full-volume and silent distances).
+const ROLL_SOUND_EVERY: f32 = 0.97;
+const ROLL_SOUND_NEAR: f32 = 5.0;
+const ROLL_SOUND_FAR: f32 = 25.0;
 /// The thrower's own damage from their blast: SELF_DAMAGE x a roll of the explosion's Damage
 /// min..max, at any distance within the radius. Measured, not the game's formula (unknown): the
 /// Frag recording's six blasts each took 12.5-13.3 HP of Tex's 115 (~11%) near or far, with no
@@ -63,10 +77,20 @@ const SELF_DAMAGE: f32 = 0.2;
 /// over TINT_TIME s (8 game frames), as strong near or far.
 const TINT_LOW: f32 = 0.2;
 const TINT_TIME: f32 = 0.27;
+/// A blast's decal is drawn at the data's size (the Frag's scorch h_ff1b711e: 3 x 3 m; the
+/// recording's scorch looks ~3-4.5 m across, a low-confidence measurement), not doubled as the
+/// blood decals are (play_fx.rs DECAL_SCALE, fitted to blood).
+const GRENADE_DECAL_SCALE: f32 = 1.0;
+/// The decal is laid this long after the blast, once the fireball has gone (the recording's
+/// bright part is gone by 0.63 s, and the scorch is first seen under the smoke). The demo's
+/// choice: laid at once, the dark decal showed through the added fireball as a hard dark disc.
+const DECAL_DELAY: f32 = 0.7;
 /// How far in front of the camera the tint quad sits (m; inside the near plane's 0.1 is cut).
 const TINT_DEPTH: f32 = 0.15;
 /// The tint's levels (materials) over TINT_TIME.
 const TINT_STEPS: usize = 16;
+/// The stored value the tint's factor is exact for (see `tint_factor`).
+const TINT_GREY: f32 = 0.4;
 /// Blast sounds are this loud at the blast, falling to BLAST_QUIET at BLAST_HEARD m (the demo's).
 const BLAST_HEARD: f32 = 60.0;
 const BLAST_QUIET: f32 = 0.3;
@@ -168,8 +192,12 @@ struct Grenade {
     spin: Vec3,
     /// the character who threw it (its blast hurts them by SELF_DAMAGE)
     thrower: usize,
-    /// a Roller: rolls this way (flat, unit) along the ground once it's down
+    /// a Roller: rolls this way (flat, unit) along the ground once it's down; its rolling sound
+    /// is due again in this many seconds
     rolling: Option<Vec3>,
+    roll_sound: f32,
+    /// when it left the hand (sim time; BF_GRENADE_LOG prints the flight to the first contact)
+    launched: f32,
 }
 
 /// The red damage tint: seconds since the player was hurt by a blast (TINT_TIME or more: none).
@@ -184,9 +212,10 @@ struct TintQuad(Vec<Handle<StandardMaterial>>);
 #[derive(Resource, Default)]
 struct Held(Option<(Entity, usize)>);
 
-/// Blast sounds waiting for their effect type's delay: (seconds left, sound id, volume).
+/// Blast sounds waiting for their effect type's delay: (seconds left, sound id, volume); and
+/// blast decals waiting for the fireball to clear: (seconds left, decal, where).
 #[derive(Resource, Default)]
-struct DelayedSounds(Vec<(f32, u32, f32)>);
+struct DelayedSounds(Vec<(f32, u32, f32)>, Vec<(f32, u32, Vec3)>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Held>()
@@ -202,9 +231,12 @@ pub fn plugin(app: &mut App) {
 fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
              mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
-             ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut held: ResMut<Held>, mut tint: ResMut<ScreenTint>) {
+             ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut held: ResMut<Held>, mut tint: ResMut<ScreenTint>,
+             mut delayed: ResMut<DelayedSounds>) {
     held.0 = None;
     tint.0 = TINT_TIME;
+    delayed.0.clear();
+    delayed.1.clear();
     let usable = |d: &WeaponDef| d.projectile != 0 && d.icon != 0 && !d.label.is_empty() && !d.label.starts_with("h_");
     let mut defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
     let mut rest: Vec<WeaponDef> = game.0.weapons.values().filter(|d| usable(d) && !SQUAD_GRENADES.contains(&d.name)).cloned().collect();
@@ -296,11 +328,6 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
                 let e = kit.spawn_model(&mut commands, Transform::from_translation(t.pos), None);
                 if !test {
                     trail(&mut commands, &mut player, kit, e, ale.as_deref_mut());
-                    // the object's own sound when it has no trail (the Roller's rolling
-                    // h_19dbc65d), once
-                    if kit.placed() && kit.trail_fx.sounds.is_empty() && kit.def.object_sound != 0 {
-                        player.sound_queue.push((kit.def.object_sound, 0.8));
-                    }
                 }
                 e
             }
@@ -308,7 +335,8 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
         let rolling = (kit.def.function_type == ROLLING_BOMB && !t.landed).then(|| Quat::from_rotation_y(player.yaw) * Vec3::NEG_Z);
         let spin = if kit.placed() { Vec3::ZERO } else { t.velocity.cross(Vec3::Y).normalize_or(Vec3::X) * -12.0 };
         let fuse = if t.landed { 0.0 } else { kit.def.fuse.max(0.0) };
-        commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, spin, thrower: player.character, rolling });
+        commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, spin, thrower: player.character, rolling,
+                                            roll_sound: 0.0, launched: player.sim_time });
     }
 }
 
@@ -376,6 +404,13 @@ fn fly_grenades(
         }
         *left > 0.0
     });
+    delayed.1.retain_mut(|(left, decal, at)| {
+        *left -= dt;
+        if *left <= 0.0 {
+            decals.0.push((*decal, *at, GRENADE_DECAL_SCALE));
+        }
+        *left > 0.0
+    });
     let Some(kits) = kits else { return };
     // test hook: BF_TEST_DETONATE=<s> sets off every grenade out at that time (the Sentry has no
     // trigger yet)
@@ -394,15 +429,19 @@ fn fly_grenades(
         if g.landed && g.fuse <= 0.0 {
             let at = tr.translation;
             commands.entity(e).despawn();
-            blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed, &mut decals);
-            blasts.0.push((at, kit.blast.blast_radius.max(1.0)));
+            blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
             // the blast hurts everyone in range: Damage max at the centre, nothing at the radius;
             // the thrower takes SELF_DAMAGE of a roll of min..max anywhere inside it (the test
-            // map's instant kill: the squad dies to any blast that reaches them)
+            // map's instant kill: the squad dies to any blast that reaches them). None from a
+            // blast without damage (the Light), nor yet from one whose damage is dealt over
+            // time (h_04ea9251 > 0: the Gas, whose recording shows no damage at once - its
+            // damage over time is #76's)
             let (radius, max, min) = (kit.blast.blast_radius, kit.blast.damage, kit.blast.damage_min.min(kit.blast.damage));
-            if max <= 0.0 || radius <= 0.0 {
+            if max <= 0.0 || radius <= 0.0 || kit.blast.damage_time > 0.0 {
                 continue;
             }
+            // loose pickups are thrown by blasts that hurt
+            blasts.0.push((at, radius));
             let instant = test.as_ref().is_some_and(|t| t.instant_kill);
             let roll = p.random(1000) as f32 / 1000.0;
             let (leader, rest) = (std::iter::once((&mut *p, false, true)), squad.0.iter_mut().map(|u| (u, instant, false)));
@@ -433,9 +472,16 @@ fn fly_grenades(
             pos.y = floor;
             hit = true;
             if !g.landed {
-                // squadmates close by dive away (EVT_GRENADE_NEAR -> GOAL_DIVE)
-                for m in squad.0.iter_mut().filter(|m| !m.dead && m.position.distance(pos) < DIVE_RADIUS) {
-                    m.dive_from = Some(pos);
+                if std::env::var("BF_GRENADE_LOG").is_ok() {
+                    println!("t {:.2}: {} down {:.2} s after leaving the hand, {:.1} m from the thrower", p.sim_time, kit.def.label,
+                             p.sim_time - g.launched, Vec2::new(pos.x - p.position.x, pos.z - p.position.z).length());
+                }
+                // squadmates close by dive away from a thrown one (EVT_GRENADE_NEAR ->
+                // GOAL_DIVE); not from one set down (a Roller, a Sentry)
+                if !kit.placed() {
+                    for m in squad.0.iter_mut().filter(|m| !m.dead && m.position.distance(pos) < DIVE_RADIUS) {
+                        m.dive_from = Some(pos);
+                    }
                 }
             }
             g.landed = true;
@@ -445,6 +491,16 @@ fn fly_grenades(
                 let v = if flat.length() > 0.5 { flat.normalize() * ROLL_SPEED } else { Vec2::new(dir.x, dir.z) * ROLL_SPEED };
                 g.velocity = Vec3::new(v.x, 0.0, v.y);
                 g.spin = g.velocity.cross(Vec3::Y).normalize_or(Vec3::X) * -(ROLL_SPEED / GRENADE_RADIUS).min(40.0);
+                // its rolling sound, again and again while it rolls, fading with distance
+                g.roll_sound -= dt;
+                if g.roll_sound <= 0.0 && kit.def.object_sound != 0 {
+                    g.roll_sound = ROLL_SOUND_EVERY;
+                    let d = pos.distance(p.position);
+                    let volume = 0.8 * (1.0 - (d - ROLL_SOUND_NEAR) / (ROLL_SOUND_FAR - ROLL_SOUND_NEAR)).clamp(0.0, 1.0);
+                    if volume > 0.0 {
+                        p.sound_queue.push((kit.def.object_sound, volume));
+                    }
+                }
             } else if g.velocity.y < 0.0 {
                 g.velocity.y = -g.velocity.y * RESTITUTION;
                 g.velocity.x *= GROUND_FRICTION;
@@ -506,8 +562,7 @@ fn fly_grenades(
 /// decal on the ground.
 #[allow(clippy::too_many_arguments)]
 fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
-         materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedSounds,
-         decals: &mut super::fx::DecalRequests) {
+         materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedSounds) {
     let ground = Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z);
     if let Some(ale) = ale {
         for &effect in kit.blast_fx.effects.iter().chain([&kit.blast_fx.light]).filter(|&&e| e != 0) {
@@ -526,12 +581,24 @@ fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::a
         p.sound_queue.push((kit.blast.impact_sound, volume));
     }
     if kit.blast.decal != 0 {
-        decals.0.push((kit.blast.decal, ground));
+        delayed.1.push((DECAL_DELAY, kit.blast.decal, ground));
     }
     if std::env::var("BF_GRENADE_LOG").is_ok() {
         println!("t {:.2}: {} blast at {ground:.2}, {} effects + light {:08x}, sounds {:x?} + {:08x}, decal {:08x}", p.sim_time, kit.def.label,
                  kit.blast_fx.effects.len(), kit.blast_fx.light, kit.blast_fx.sounds, kit.blast.impact_sound, kit.blast.decal);
     }
+}
+
+/// sRGB stored value -> linear light.
+fn srgb_to_linear(v: f32) -> f32 {
+    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+}
+
+/// The linear-light factor that scales a picture's stored (sRGB) values by `s`: exact for a
+/// stored value of TINT_GREY (the captures' ground is ~0.35-0.45), close round it. (The picture
+/// is blended in linear light; the console scaled the stored values.)
+fn tint_factor(s: f32) -> f32 {
+    srgb_to_linear(TINT_GREY * s) / srgb_to_linear(TINT_GREY)
 }
 
 /// The red damage tint: a quad just in front of the camera, multiplied into the 3D picture (the
@@ -549,8 +616,8 @@ fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, m
     let Ok((quad, mut mat)) = quads.single_mut() else {
         if let Ok(cam) = camera.single() {
             let steps = (0..=TINT_STEPS).map(|i| {
-                let s = TINT_LOW + (1.0 - TINT_LOW) * i as f32 / TINT_STEPS as f32;
-                materials.add(StandardMaterial { base_color: Color::srgb(1.0, s, s), unlit: true, fog_enabled: false,
+                let s = tint_factor(TINT_LOW + (1.0 - TINT_LOW) * i as f32 / TINT_STEPS as f32);
+                materials.add(StandardMaterial { base_color: Color::linear_rgb(1.0, s, s), unlit: true, fog_enabled: false,
                                                  alpha_mode: AlphaMode::Multiply, cull_mode: None, ..default() })
             }).collect::<Vec<_>>();
             commands.spawn((Mesh3d(meshes.add(Rectangle::new(4.0, 4.0))), MeshMaterial3d(steps[0].clone()), TintQuad(steps),

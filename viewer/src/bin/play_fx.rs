@@ -565,10 +565,11 @@ struct GlowLight {
     acc: f32,
 }
 
-/// Ground decals other modules ask for this frame: (decal definition name, where). A grenade's
-/// blast leaves its bullet's decal (the Frag's scorch h_ff1b711e) this way.
+/// Ground decals other modules ask for this frame: (decal definition name, where, scale on the
+/// data's width / height). A grenade's blast leaves its bullet's decal (the Frag's scorch
+/// h_ff1b711e) this way.
 #[derive(Resource, Default)]
-pub struct DecalRequests(pub Vec<(u32, Vec3)>);
+pub struct DecalRequests(pub Vec<(u32, Vec3, f32)>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<DecalRequests>()
@@ -577,13 +578,13 @@ pub fn plugin(app: &mut App) {
             .run_if(in_state(AppState::Playing)));
 }
 
-/// The decals asked for (`DecalRequests`), their textures loaded the first time; sized as the
-/// blood decals are (DECAL_SCALE: the data's width / height read as half sizes).
+/// The decals asked for (`DecalRequests`), their textures loaded the first time, at the scale
+/// asked for.
 fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Option<ResMut<FxAssets>>, mut state: ResMut<FxState>,
                     mut requests: ResMut<DecalRequests>, mut images: ResMut<Assets<Image>>,
                     mut materials: ResMut<Assets<StandardMaterial>>) {
     let Some(mut fx) = fx else { return };
-    for (name, at) in std::mem::take(&mut requests.0) {
+    for (name, at, scale) in std::mem::take(&mut requests.0) {
         let Some(def) = game.0.decals.get(&name).cloned() else { continue };
         if std::env::var("BF_GRENADE_LOG").is_ok() {
             println!("decal h_{name:08x} at {at:.2}: {def:?}, textures loaded {:?}",
@@ -596,7 +597,7 @@ fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Opti
                 }
             }
         }
-        spawn_decal(&mut commands, &mut state, &fx, &mut materials, &def, at, DECAL_SCALE);
+        spawn_decal(&mut commands, &mut state, &fx, &mut materials, &def, at, scale);
     }
 }
 

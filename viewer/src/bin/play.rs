@@ -22,7 +22,7 @@
 //!   G           use the item in the item box (grenade: hold to charge, release to throw;
 //!               Roller / Sentry: set down at the press)
 //!   T           next grenade type carried
-//!   Tab        next item; hold: the item list (wheel picks)
+//!   Tab         next item; hold: the item list (wheel picks)
 //!   E (hold)    use (a gate's wall panel)
 //!   M           next ground surface (footstep / landing sounds)
 //!   Backspace   back to the map menu (in the same window)
@@ -840,8 +840,8 @@ const EV_MAG_IN: u32 = 0x1B2E_C99E;
 const EV_REACH: u32 = 0x1A6B_4920;
 const EV_RELEASE: u32 = 0x1186_6F3A;
 /// place_hi clip (Sc_w1/w2_place_hi: a placed grenade set down underhand) events: the hand
-/// reaches it (EV_REACH, 0.30-0.47 s: the recordings' "in hand 0.38-0.47 s") and lets it go
-/// (19f8311b, the use_item clip's "used" event, 0.50-0.60 s); it drops from the hand to the
+/// reaches it (EV_REACH, 0.23-0.47 s over the squad's clips: the recordings' "in hand
+/// 0.38-0.47 s") and lets it go (19f8311b, the use_item clip's "used" event, 0.50-0.60 s); it drops from the hand to the
 /// ground (the recordings: on the ground ~0.8 s (Sentry) / ~1.05 s (Roller) after the press)
 const EV_PLACED: u32 = EV_ITEM_USED;
 /// An inventory item: a grenade type (an index into `grenade::GrenadeKits`, the same as into
@@ -1446,6 +1446,24 @@ impl Player {
         }
     }
 
+    /// A grenade throw (or set-down) cut short - knocked down, or control handed over - before
+    /// the grenade left the hand: it goes back into the inventory (the count dropped at the
+    /// button), and nothing is left to launch.
+    fn cancel_throw(&mut self) {
+        let mut back = self.throwing.take().filter(|t| !t.released).map(|t| t.kind);
+        back = back.or(self.pending_release.take().map(|(_, k, _)| k));
+        if let Some(n) = back.and_then(|k| self.grenades.get_mut(k)) {
+            *n += 1;
+            if std::env::var("BF_GRENADE_LOG").is_ok() {
+                println!("t {:.2}: throw cut short, grenade back ({n} now)", self.sim_time);
+            }
+        }
+        self.pending_release = None;
+        self.thrown.clear();
+        self.charge = 0.0;
+        self.meter_after = (0.0, 0.0);
+    }
+
     fn random(&mut self, n: usize) -> usize {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 17;
@@ -1639,7 +1657,9 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         return;
     }
     let (pitch, distance, help) = (player.cam_pitch, player.cam_distance, player.show_help);
-    // the squad shares one inventory: the grenades and medkits go with control
+    // the squad shares one inventory: the grenades and medkits go with control (a throw under
+    // way is called off, its grenade back in the inventory)
+    player.cancel_throw();
     let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.item, player.item_new);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new) = inventory;
@@ -2480,8 +2500,9 @@ fn read_input(
         player.tab_down = -1.0;
         player.item_list = false;
     }
-    // T: the next grenade type carried (the demo's key)
-    if keys.just_pressed(KeyCode::KeyT) {
+    // T: the next grenade type carried (the demo's key), not while a throw charges or is under
+    // way (it would turn the charge into another type's)
+    if keys.just_pressed(KeyCode::KeyT) && player.charge <= 0.0 && player.throwing.is_none() {
         step_grenade(&mut player);
     }
     let grenade = matches!(player.item, Item::Grenade(_));
@@ -2564,10 +2585,14 @@ fn autopilot(player: &mut Player) -> bool {
             let t = player.sim_time;
             player.throw_held = v.chunks(2).any(|c| (c[0]..c[0] + c.get(1).copied().unwrap_or(CHARGE_TIME)).contains(&t));
         }
-        // BF_TEST_NEXT_GRENADE=<s>[,<s>...]: press the grenade-type key (T) at those times
+        // BF_TEST_NEXT_GRENADE=<s>[,<s>...]: press the grenade-type key (T) once at each time
         if let Ok(v) = std::env::var("BF_TEST_NEXT_GRENADE") {
-            let (t, was) = (player.sim_time, player.sim_time - capture_step());
-            if v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).any(|s| was < s && t >= s) {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static PRESSED: AtomicUsize = AtomicUsize::new(0);
+            let times: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect();
+            let done = PRESSED.load(Ordering::Relaxed);
+            if times.get(done).is_some_and(|&s| player.sim_time >= s) && player.charge <= 0.0 && player.throwing.is_none() {
+                PRESSED.store(done + 1, Ordering::Relaxed);
                 step_grenade(player);
             }
         }
@@ -2661,6 +2686,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
         let Some(l) = m.loaded.take() else { continue };
         step_player(m, &l, &game.0, kits, dt, &mut transforms);
+        // (only the player's grenades are launched)
+        m.thrown.clear();
         m.loaded = Some(l);
     }
     // friendly fire: the player's shots this frame stop at the first teammate in their way
@@ -2762,8 +2789,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 u.action = Action::None;
                 u.crouch_wanted = false;
                 u.switching = None;
-                u.throwing = None;
-                u.charge = 0.0;
+                u.cancel_throw();
             }
         }
         if u.dead {
