@@ -27,10 +27,12 @@ const FRAG_ICON: u32 = 0xFE20_B919;
 /// line's top is ~3 units above the digit's: the reference agent measured the digit at
 /// y 410-421 in the recording, 406-418 with the line at 403), and hidden while only one is carried (Light, Sentry recordings).
 const ITEM_COUNT_Y: f32 = 378.0;
-/// The item box's icon (left, top, size, units): the Frag recording's icon spans x 553-568,
+/// A grenade's icon in the item box (left, top, size, units): the Frag recording's icon spans x 553-568,
 /// y 384-425; drawn 50 units square at (535, 379) it spanned x 554-566, y 385-418, so it's
 /// drawn 1.25x larger, its middle on the recording's.
 const ITEM_ICON: (f32, f32, f32) = (529.3, 376.4, 62.5);
+/// The medkit's icon (left, top, size, units), fitted to the medkit captures (todo/medkits.mp4).
+const MEDKIT_ICON_AT: (f32, f32, f32) = (535.0, 379.0, 50.0);
 const GRENADE_COUNT_Y: f32 = 407.0;
 /// The item's name (the line's top): the medkit captures', and a grenade's a little lower (the
 /// Frag and Light recordings: its capitals' tops at 423-425).
@@ -1038,6 +1040,14 @@ fn update_hud_widgets(
                 show(&mut vis, h.is_some());
                 if let (Some(mut img), Some(h)) = (img, h) {
                     if img.image != h { img.image = h; }
+                }
+                // a grenade's icon as in the Frag recording, the medkit's as in its captures
+                let (x, y, size) = if grenade { ITEM_ICON } else { MEDKIT_ICON_AT };
+                if let Some(mut n) = node {
+                    let want = at(x, y, size, size);
+                    if n.left != want.left || n.width != want.width {
+                        (n.left, n.top, n.width, n.height) = (want.left, want.top, want.width, want.height);
+                    }
                 }
             }
             Part::ItemName => {

@@ -2431,6 +2431,19 @@ fn read_input(
     if std::env::var("BF_TEST_ITEM_LIST").is_ok() {
         player.item_list = true;
     }
+    // test hook: BF_TEST_SELECT=<character>[,<s>] picks that member at 1 s (or s): control
+    // passes SELECT_TIME later. Also under BF_TEST_GOTO's autopilot
+    if let Some(v) = std::env::var("BF_TEST_SELECT").ok() {
+        let mut it = v.split(',').map(|x| x.trim());
+        let c = it.next().and_then(|x| x.parse::<usize>().ok());
+        let at = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(1.0);
+        if let Some(c) = c {
+            if player.sim_time > at && player.select.is_none() && c != player.character && !player.test_selected {
+                player.select = Some((c, SELECT_TIME));
+                player.test_selected = true;
+            }
+        }
+    }
     if autopilot(&mut player) {
         return;
     }
@@ -2470,13 +2483,6 @@ fn read_input(
         player.scope_level = l;
     }
     let aim = if zoomable { player.scope_level > 0 } else { mouse.pressed(MouseButton::Right) };
-    // test hook: BF_TEST_SELECT=<character> hands control over at 1 s
-    if let Some(c) = std::env::var("BF_TEST_SELECT").ok().and_then(|v| v.parse::<usize>().ok()) {
-        if player.sim_time > 1.0 && player.select.is_none() && c != player.character && !player.test_selected {
-            player.select = Some((c, SELECT_TIME));
-            player.test_selected = true;
-        }
-    }
     let jump = keys.just_pressed(KeyCode::Space);
     let dodge = keys.just_pressed(KeyCode::KeyC);
     // the click that captures the mouse doesn't fire

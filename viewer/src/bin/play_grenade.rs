@@ -264,7 +264,7 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
     if let Some(mut ale) = ale {
         for k in &kits {
             for &e in k.blast_fx.effects.iter().chain(&k.trail_fx.effects).chain([&k.blast_fx.light]).filter(|&&e| e != 0) {
-                if let Some(fx) = ale.load(&mut game.0, &mut images, &mut materials, e) {
+                if let Some(fx) = ale.load_recorded(&mut game.0, &mut images, &mut materials, e) {
                     bf_viewer::ale_fx::warm_up(&mut commands, &ale, &fx);
                 }
             }
@@ -381,7 +381,7 @@ fn hold_grenade(mut commands: Commands, mut player: ResMut<Player>, kits: Option
 fn trail(commands: &mut Commands, player: &mut Player, kit: &GrenadeKit, e: Entity, ale: Option<&mut bf_viewer::ale_fx::AleAssets>) {
     if let Some(ale) = ale {
         for (i, &effect) in kit.trail_fx.effects.iter().enumerate() {
-            if let Some(fx) = ale.cached(effect) {
+            if let Some(fx) = ale.cached_recorded(effect) {
                 commands.spawn((Transform::default(), Visibility::default(),
                                 bf_viewer::ale_fx::AleEffect::new(fx, 0.0, 0x7A11_0000 ^ e.index() ^ i as u32), ChildOf(e)));
             }
@@ -594,7 +594,12 @@ fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::a
     let ground = Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z);
     if let Some(ale) = ale {
         for &effect in kit.blast_fx.effects.iter().chain([&kit.blast_fx.light]).filter(|&&e| e != 0) {
-            spawn_once(commands, game, ale, images, materials, effect, Transform::from_translation(ground));
+            if let Some(fx) = ale.load_recorded(game, images, materials, effect) {
+                let life = fx.duration();
+                let seed = (ground.x * 977.0 + ground.z * 131.0) as u32;
+                commands.spawn((Transform::from_translation(ground), Visibility::default(),
+                                bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life)));
+            }
         }
     }
     let volume = (1.0 - at.distance(p.position) / BLAST_HEARD).clamp(BLAST_QUIET, 1.0);

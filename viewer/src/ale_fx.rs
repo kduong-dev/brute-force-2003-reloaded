@@ -46,9 +46,11 @@ use crate::bf::hash::h;
 const LIFESPAN: u32 = 0xF27F_DE7D;
 const TRANSFORM: u32 = 0xE13A_59A1;
 const INITIAL: u32 = 0x0F9A_9D52;
-/// A burst at the start (a curve over the emitter's time, read at 0): exp-lrg-flash's 4.1 with
-/// no rate and no initial count. An inference: the flash nodes are the ones that set it, and
-/// the recording's first flash frame is a wide haze, not one flare.
+/// For an emitter with no rate and no initial count, read at its start as a burst:
+/// exp-lrg-flash's 4.1 (the recording's first flash frame is a wide haze, not one flare). Only
+/// for the grenades' effects (`Compiled::recorded`): elsewhere it's a curve over the emitter's
+/// time on ~40 emitters (laser hit rings, tracers ...), more likely an emit count; those keep
+/// one particle.
 const BURST: u32 = 0xE722_1F95;
 const RATE: u32 = 0x023C_350C;
 const LIFE: u32 = 0x0A63_5880;
@@ -86,8 +88,9 @@ const BLEND: u32 = 0x1DAE_A8C0;
 /// 1) runs the flipbook over the particle's life; a constant above 0 (the muzzle flashes'
 /// 0.60, exp-lrg-fire's 0.70) holds that one frame; a constant 0 (the shield icon's arcb)
 /// leaves the texture playing at its own rate. An inference (Freelancer's TexFrame reads the
-/// same way): before it, every flipbook played at 30 fps and wrapped, which restarted
-/// exp-lrg-add's bright first frames half a second into the Frag's blast.
+/// same way), applied to the grenades' effects only (`Compiled::recorded`): played at 30 fps
+/// and wrapped, exp-lrg-add went back to its bright first frames half a second into the Frag's
+/// blast, which the recording doesn't show. Other effects keep the 30 fps loop.
 const TEX_FRAME: u32 = 0x1865_7E4A;
 const BLEND_ADD: (u32, u32) = (5, 2);
 
@@ -98,7 +101,7 @@ const BLEND_ADD: (u32, u32) = (5, 2);
 /// (0.48 m/s, radius 1 -> 3.3 m) is a round shell as in the recording (frag/a 0700-0730),
 /// not a stack of flat discs seen edge-on. The power-ups' icons (sphere emitters at 0.02-0.16
 /// m/s, verified flat) keep the emitter's frame. The threshold is the demo's: the data has no
-/// flag for it.
+/// flag for it. Only for the grenades' effects (`Compiled::recorded`).
 const PERP_RADIAL_SPEED: f32 = 0.3;
 /// Materials per appearance: its colour and alpha at this many points of a particle's life.
 const STEPS: usize = 12;
@@ -162,6 +165,11 @@ impl FrameMode {
 pub struct Compiled {
     pub name: String,
     pairs: Vec<Pair>,
+    /// Compiled with the rules checked against the Frag recording only (the grenades' blast and
+    /// trail effects): the flipbook frame curve (TEX_FRAME), the opening burst (BURST) and
+    /// outward-facing perp quads (PERP_RADIAL_SPEED). Every other effect plays as before them;
+    /// they may hold for those too, once checked against their own captures.
+    pub recorded: bool,
 }
 
 impl Compiled {
@@ -185,7 +193,8 @@ impl Compiled {
 #[derive(Resource)]
 pub struct AleAssets {
     quad: Handle<Mesh>,
-    effects: HashMap<u32, Option<Arc<Compiled>>>,
+    /// by (name hash, `recorded`)
+    effects: HashMap<(u32, bool), Option<Arc<Compiled>>>,
     textures: HashMap<(u32, bool), Option<Handle<Image>>>,
 }
 
@@ -296,25 +305,42 @@ impl AleAssets {
 
     /// An effect compiled already (`load`).
     pub fn cached(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&effect).cloned().flatten()
+        self.effects.get(&(effect, false)).cloned().flatten()
+    }
+
+    /// An effect compiled already with the recorded rules (`load_recorded`).
+    pub fn cached_recorded(&mut self, effect: u32) -> Option<Arc<Compiled>> {
+        self.effects.get(&(effect, true)).cloned().flatten()
     }
 
     /// Compile an effect of the library by name hash (cached); None if the library lacks it.
     pub fn load(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                 effect: u32) -> Option<Arc<Compiled>> {
-        if let Some(c) = self.effects.get(&effect) {
+        self.load_as(game, images, materials, effect, false)
+    }
+
+    /// `load`, with the rules checked against the Frag recording only (see `Compiled::recorded`):
+    /// for the grenades' blast and trail effects.
+    pub fn load_recorded(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
+                         effect: u32) -> Option<Arc<Compiled>> {
+        self.load_as(game, images, materials, effect, true)
+    }
+
+    fn load_as(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
+               effect: u32, recorded: bool) -> Option<Arc<Compiled>> {
+        if let Some(c) = self.effects.get(&(effect, recorded)) {
             return c.clone();
         }
-        let compiled = self.compile(game, images, materials, effect).map(Arc::new);
+        let compiled = self.compile(game, images, materials, effect, recorded).map(Arc::new);
         if compiled.is_none() {
             warn!("ALE effect h_{effect:08x}: not in the library, or nothing it draws is supported");
         }
-        self.effects.insert(effect, compiled.clone());
+        self.effects.insert((effect, recorded), compiled.clone());
         compiled
     }
 
     fn compile(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
-               effect: u32) -> Option<Compiled> {
+               effect: u32, recorded: bool) -> Option<Compiled> {
         let e = game.effects.effects.get(&effect)?.clone();
         let node = |game: &Game, i: u32| e.refs.iter().find(|r| r.3 == i).and_then(|r| game.effects.nodes.get(&r.1)).cloned();
         let mut pairs = vec![];
@@ -367,11 +393,11 @@ impl AleAssets {
                 })).collect()
             }).collect();
             let streak = app.flag(MOTION_BLUR);
-            let frame = FrameMode::of(&app);
+            let frame = if recorded { FrameMode::of(&app) } else { FrameMode::Play };
             pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false });
         }
-        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs })
+        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded })
     }
 
     fn texture(&mut self, game: &mut Game, images: &mut Assets<Image>, id: u32, linear: bool) -> Option<Handle<Image>> {
@@ -461,7 +487,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
             let initial = em.int(INITIAL).unwrap_or(0).max(0) as usize;
             // no rate and no initial count: its burst when it starts (exp-lrg-flash's 4), else
             // one particle (a gun's tracer)
-            let burst = em.curve(BURST, sp, 0.0).unwrap_or(0.0).round().max(1.0) as usize;
+            let burst = if compiled.recorded { em.curve(BURST, sp, 0.0).unwrap_or(0.0).round().max(1.0) as usize } else { 1 };
             let mut n = if fresh { if initial == 0 && rate == 0.0 { burst } else { initial } } else { 0 };
             fx.acc[i] += rate * dt;
             n += fx.acc[i] as usize;
@@ -514,7 +540,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
                 // a perp quad from a sphere emitter that throws its particles out: facing out
                 // along its direction from the middle (see PERP_RADIAL_SPEED)
-                if pair.perp && em.class == CLASS_SPHERE && speed >= PERP_RADIAL_SPEED {
+                if compiled.recorded && pair.perp && em.class == CLASS_SPHERE && speed >= PERP_RADIAL_SPEED {
                     lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
                 }
                 count.0 += 1;

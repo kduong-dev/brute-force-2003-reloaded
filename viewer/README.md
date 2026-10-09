@@ -132,7 +132,11 @@ decal, and a throw called off.
   blends in stored (sRGB) values, Bevy in linear light, so its alpha a is drawn as
   1 - (1 - a)^2.2 (the scorch's middle at ~0.25 of the ground, the recording's 0.2-0.3; at the
   plain alpha it was 0.47). Blasts that hurt throw loose pickups (not the Light's).
-  * ALE details the blast showed up (`src/ale_fx.rs`):
+  * ALE details the blast showed up (`src/ale_fx.rs`). These three rules (and the outward
+    perp quads below) are checked against the Frag recording only, so they apply only to the
+    grenades' blast and trail effects (`AleAssets::load_recorded`, `Compiled::recorded`);
+    every other effect (guns, hits, muzzle flashes, level fires, icons) plays as before them,
+    until checked against its own captures:
     * An animated texture's frame comes from the appearance's 18657e4a over the particle's
       life: a ramp plays the flipbook over the life (exp-lrg-add's Exp5 0.61 -> 1.0: from the
       orange frames to the smoke), a constant above 0 holds that frame (exp-lrg-fire 0.70, the
@@ -151,8 +155,8 @@ decal, and a throw called off.
     emitter's frame (the Sonic's ring and the laser hits' rings show that), which drew it as a
     stack of flat discs seen nearly edge-on: a wide flat streak. From a sphere emitter whose
     particles move out at 0.3 m/s or more, a perp quad now faces out along its own direction,
-    and the fireball is round from its first frame, as in the recording. The power-ups' icons
-    (sphere emitters at 0.02-0.16 m/s) are unchanged. The 0.3 m/s threshold is the demo's.
+    and the fireball is round from its first frame, as in the recording. Grenade effects only;
+    the 0.3 m/s threshold is the demo's.
 * **Damage**: everyone within the radius takes Damage max, falling to nothing at the radius;
   the thrower takes 0.2 x a roll of Damage min..max anywhere inside it. That rule is the
   demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
@@ -164,13 +168,16 @@ decal, and a throw called off.
   frames after the flash, Frag 693 -> 699, Sonic 229-231 -> 235). Hurt by it, the 3D
   picture's green and blue follow the recording's factors per game frame: 0.20, 0.29, 0.39,
   0.51, 0.61, 0.69, 0.78, 0.92, 1 (the reference agent's measurement), red and the HUD
-  untouched, as strong near or far. A quad in front of the camera, multiplied into the
+  untouched, as strong near or far. (A 15 fps capture samples every second game frame: 0.20,
+  0.39, 0.61, 0.78, 1 - measured on unlit ground 0.19-0.24, 0.40-0.43, 0.60-0.62, 0.81-0.82,
+  1.) A quad in front of the camera, multiplied into the
   picture; the picture blends in linear light, so each factor is the linear one that scales
   a stored value of 0.4 (the ground's ~0.35-0.45) by it.
 * **HUD**: the item box shows the selected type's icon (62.5 units square at (529.3, 376.4):
   the recording's icon spans x 553-568, y 384-425; at 50 units it came out 0.8x), label and
   count (count at the right middle, the digit at y ~410-421 as recorded; hidden while only one
-  is carried, as in the Light and Sentry recordings). The meter's fill is drawn as (226, 148,
+  is carried, as in the Light and Sentry recordings). The medkit keeps its own icon size and
+  place (50 units at (535, 379), fitted to the medkit captures). The meter's fill is drawn as (226, 148,
   54) at 0.65: what the console's stored-value blend of (255, 160, 53) at 0.65 gives over the
   recording's ground (63, 63, 55), since the UI blends in linear light. The charge sound is
   queued on the frame the meter first shows (`BF_SOUND_LOG` and the capture agree). When the selected type runs out, the first type still carried is
@@ -219,6 +226,9 @@ recordings at 60 fps):
   and ring then the godray shafts, its dark decal after.
 * Light (`BF_TEST_GRENADE_TYPE=light`): blue spikes, still burning 8.9 s after; no damage, no
   tint, no decal.
+* Hand-over during a throw (`BF_TEST_THROW=1.5,0.07 BF_TEST_SELECT=1,1.1`): the count drops to
+  9 at the button, control passes at 1.73 s before the grenade leaves the hand, `BF_GRENADE_LOG`
+  prints "throw cut short, grenade back (10 now)", the box shows 10 again and nothing is thrown.
 * Sentry (`BF_TEST_GRENADE_TYPE=Sentry`, ten presses 1 s apart): the box counts 10, 9 ... with
   no digit at 1, then shows Frag 10; `BF_TEST_NEXT_GRENADE=12.5,13` steps to Energy, then Gas.
 * Roller (`BF_TEST_GRENADE_TYPE=Roller BF_TEST_DETONATE=6 BF_SOUND_LOG=1`): down 0.97 s after
@@ -286,7 +296,7 @@ Squad movement and deaths follow the game's own data and the captures:
   0.18 s), found in a capture at all five hand-overs. It replaced the weapon-switch pair used
   before. The name is drawn 1.6x the capture's size, pops in from nearly double that, and at
   the cut swells to 6x while it fades over 0.4 s; the game's swell is about 3x, exaggerated
-  here as asked. `BF_TEST_SELECT=<character>` hands control over after 1 s.
+  here as asked. `BF_TEST_SELECT=<character>[,<s>]` picks that member at 1 s (or s; control passes 0.6 s later), also together with `BF_TEST_GOTO`.
 * **The squad's AI table.** Squadmates follow you as wingmen. Their personality
   (`common/ai/personality.xmb`; each character's own `personality-wingman` is empty and
   inherits `h_ea20a17d`) maps events to goals, with priorities and weights. Its events and goals
