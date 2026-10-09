@@ -287,7 +287,7 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>,
 /// The Sentries still standing once this frame's grenades have gone off (down, fuse not run
 /// out: not set off by their check, a shot, BF_TEST_DETONATE or another blast), whose bounding
 /// spheres the next frame's shots are tested against (`MineTargets`).
-fn publish_targets(kits: Option<Res<GrenadeKits>>, mut targets: ResMut<MineTargets>, mines: Query<(Entity, &Grenade, &Transform)>) {
+pub(super) fn publish_targets(kits: Option<Res<GrenadeKits>>, mut targets: ResMut<MineTargets>, mines: Query<(Entity, &Grenade, &Transform)>) {
     let Some(kits) = kits else { return };
     targets.targets = mines.iter().filter(|(_, g, _)| g.landed && g.fuse > 0.0)
         .filter_map(|(e, g, tr)| kits.0.get(g.kind).filter(|k| k.def.function_type == PROXIMITY_EXPLOSIVE)

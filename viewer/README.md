@@ -301,7 +301,7 @@ What each type does so far, and doesn't:
 | Light (#77) | timer 1.5; phosphor_grenade (a tall thin blue beam of upright streaks, the glow and sparks at its base) + light_phosphor (a blue-white point light, reach 18.8-24.3 m) burning 30 s as the data has them (the spike's rate drops to 0 at 29.45 s); ignition h_1080aaf1 and f5260e35 after 0.2 s; no damage, no decal, no tint, pickups left alone; the canister stays where it lies, its trail stopped, until the effects have run (31.1 s) | the end of the burn isn't recorded (the recording shows >= 15.1 s); the beam is paler and less solid than recorded and the base's white core smaller (see **Light grenade**); the sparks fly too far (no gravity field, #101); the light's strength not measured against the recording |
 | Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7; the damage comes with the ring, the thrower's falls off by 5 m, nobody is knocked down (see **Sonic grenade**) | the "Tech Upgrade"; the godrays (broad columns, not two narrow shafts), the ring (a wall, not a flat band), the decal's look |
 | Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s with its rolling sound, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking |
-| Sentry (#80) | set down (place_hi), lies there; goes off for a hostile within 3 m with no friend within 3 m, or when shot (see **Sentry**); exp-mine + light_explosion, h_145f09e5 | disarming an enemy's mine; the AI keeping clear of it; one blast setting off another; LEDs; the thrower's damage beyond the radius (below) |
+| Sentry (#80) | set down (place_hi), lies there; goes off for a hostile within 3 m with no friend within 3 m, or when shot (see **Sentry**), or by a blast that takes its 1 hp (see **Interactive scenery**); exp-mine + light_explosion, h_145f09e5 | disarming an enemy's mine; the AI keeping clear of it; LEDs; the thrower's damage beyond the radius (below) |
 
 Not done for any: ALE fields other than the Gas cloud's and the trail's rise (exp-lrg-air,
 the gravity and turbulence fields: #101); decals don't
@@ -1617,8 +1617,10 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     * The breakable objects in range take it too, times their factor: the rack (Type 10, x10)
       sets off the barrels 4.4 m and 5.3 m from it on its first tick (take13, campaign e34). The
       barrel's (Type 3, x0) does nothing to barrels or crates.
-    * A Sentry that's down goes off inside a damage area at work, or inside a grenade blast
-      that reaches the scenery. This is the demo's choice; no take shows a Sentry in a blast.
+    * A Sentry that's down goes off inside a grenade blast landing, on any map, or inside a
+      damage area at work, if its own combat-target takes that damage-type (h_e5f1f063: 1 hp;
+      Type 3 / 4 x0, so not in the barrel's cloud). This is the demo's choice; no take shows a
+      Sentry in a blast.
     * A breakable object in front of a Sentry shields it from shots: the shot's length comes
       from the arena, which holds the intact object's collision.
     * `h_ed582b3c` is the push the damage message carries, scaled by ((1 - w) x 0.4 + 0.6).
