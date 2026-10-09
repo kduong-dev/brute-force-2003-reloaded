@@ -19,8 +19,10 @@
 //!   Left mouse  fire (hold)
 //!   Q           switch weapon
 //!   R           reload
-//!   G           use the item in the item box (grenade: hold to charge, release to throw)
-//!   Tab         next item; hold: the item list (wheel picks)
+//!   G           use the item in the item box (grenade: hold to charge, release to throw;
+//!               Roller / Sentry: set down at the press)
+//!   T           next grenade type carried
+//!   Tab        next item; hold: the item list (wheel picks)
 //!   E (hold)    use (a gate's wall panel)
 //!   M           next ground surface (footstep / landing sounds)
 //!   Backspace   back to the map menu (in the same window)
@@ -837,20 +839,30 @@ const EV_MAG_IN: u32 = 0x1B2E_C99E;
 /// throw clip events: hand reaches the grenade (also in reloads), grenade leaves the hand
 const EV_REACH: u32 = 0x1A6B_4920;
 const EV_RELEASE: u32 = 0x1186_6F3A;
-/// The inventory items, in the item box's order.
+/// place_hi clip (Sc_w1/w2_place_hi: a placed grenade set down underhand) events: the hand
+/// reaches it (EV_REACH, 0.30-0.47 s: the recordings' "in hand 0.38-0.47 s") and lets it go
+/// (19f8311b, the use_item clip's "used" event, 0.50-0.60 s); it drops from the hand to the
+/// ground (the recordings: on the ground ~0.8 s (Sentry) / ~1.05 s (Roller) after the press)
+const EV_PLACED: u32 = EV_ITEM_USED;
+/// An inventory item: a grenade type (an index into `grenade::GrenadeKits`, the same as into
+/// `Player::grenades`) or the medkit.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Item {
-    Frag,
+    Grenade(usize),
     Medkit,
 }
-pub const ITEMS: [Item; 2] = [Item::Frag, Item::Medkit];
 /// Tab held this long (s) opens the item list instead of stepping.
 const ITEM_LIST_HOLD: f32 = 0.3;
+
+/// The inventory items, in the item box's order: every grenade type, then the medkit.
+fn items(p: &Player) -> Vec<Item> {
+    (0..p.grenades.len()).map(Item::Grenade).chain([Item::Medkit]).collect()
+}
 
 /// How many of an item the squad carries.
 fn item_count(p: &Player, item: Item) -> i64 {
     match item {
-        Item::Frag => p.grenades,
+        Item::Grenade(k) => p.grenades.get(k).copied().unwrap_or(0),
         Item::Medkit => p.medkits,
     }
 }
@@ -860,17 +872,19 @@ fn item_count(p: &Player, item: Item) -> i64 {
 /// those items are in).
 fn item_usable(p: &Player, item: Item) -> bool {
     !p.dead && item_count(p, item) > 0 && match item {
-        Item::Frag => true,
+        Item::Grenade(_) => true,
         Item::Medkit => p.health < p.max_health,
     }
 }
 
 /// Select the next (or previous) item carried.
 fn step_item(p: &mut Player, step: i32) {
-    let n = ITEMS.len() as i32;
+    let list = items(p);
+    let n = list.len() as i32;
+    let here = list.iter().position(|&i| i == p.item).unwrap_or(0) as i32;
     for k in 1..=n {
-        let i = (p.item as i32 + step * k).rem_euclid(n) as usize;
-        if item_count(p, ITEMS[i]) > 0 {
+        let i = list[(here + step * k).rem_euclid(n) as usize];
+        if item_count(p, i) > 0 {
             if i != p.item {
                 p.item = i;
                 p.item_new = 0.0;
@@ -880,8 +894,34 @@ fn step_item(p: &mut Player, step: i32) {
     }
 }
 
-/// grenades carried at the start (the capture's HUD shows 3)
-const START_GRENADES: i64 = 3;
+/// Select the next grenade type carried (the demo's grenade key, T: the game's button for it
+/// isn't in the recordings). From another item, the first type carried.
+fn step_grenade(p: &mut Player) {
+    let n = p.grenades.len();
+    let here = match p.item { Item::Grenade(k) => k, _ => n.saturating_sub(1) };
+    for k in 1..=n {
+        let i = (here + k) % n;
+        if p.grenades[i] > 0 {
+            if Item::Grenade(i) != p.item {
+                p.item = Item::Grenade(i);
+                p.item_new = 0.0;
+            }
+            return;
+        }
+    }
+}
+
+/// The selected item ran out: the first grenade type carried if it was a grenade (the Sentry
+/// recording: the last Sentry set down, the box shows Frag 10; the Frag is the first type),
+/// else the next item carried.
+fn item_ran_out(p: &mut Player) {
+    if let (Item::Grenade(_), Some(k)) = (p.item, p.grenades.iter().position(|&n| n > 0)) {
+        p.item = Item::Grenade(k);
+        p.item_new = 0.0;
+    } else {
+        step_item(p, 1);
+    }
+}
 /// The highest ledge a character steps onto; a bigger drop is a fall.
 const STEP_UP: f32 = 0.5;
 /// Sliding, as the game does it (default.xbe FUN_0012c020 / FUN_0012bc60, see
@@ -918,8 +958,12 @@ const LIQUID_TICK: f32 = 0.4;
 const FALL_HURT: (f32, f32, f32) = (5.0, 30.0, 100.0);
 /// Effect type of the dust kicked up sliding (objecttypes <effect>: slide_puff).
 const SLIDE_EFFECT: u32 = 0x0151_3B0F;
-/// seconds to charge a throw fully (the meter fills in ~0.7 s in the capture)
-const CHARGE_TIME: f32 = 0.7;
+/// seconds to charge a throw fully (the recordings: a linear fill, full in 0.60 s, then held)
+const CHARGE_TIME: f32 = 0.6;
+/// After the button is let go the meter holds its level METER_HOLD s, then fades over
+/// METER_FADE s (the recordings: ~0.5 s and ~0.1 s).
+pub const METER_HOLD: f32 = 0.5;
+pub const METER_FADE: f32 = 0.1;
 /// seconds the chosen member's name shows before control passes to them
 const SELECT_TIME: f32 = 0.6;
 /// chatter line set the character you hand over from says as they drop back into the squad
@@ -1019,7 +1063,7 @@ struct Reload {
     filled: bool,
 }
 
-/// A grenade throw in progress.
+/// A grenade throw in progress (or a placed one being set down).
 struct Throw {
     /// charge when let go (0..1): how hard it is thrown
     power: f32,
@@ -1027,6 +1071,10 @@ struct Throw {
     slot: usize,
     grabbed: bool,
     released: bool,
+    /// the grenade type (a `grenade::GrenadeKits` index)
+    kind: usize,
+    /// set down at the feet (IOU_PLACE_ON_GROUND): the stance's place_hi clip, not the throw
+    place: bool,
 }
 
 /// Weapon-switch sounds, hard-coded in default.xbe (0xcbfda): the first when a switch starts, the
@@ -1118,9 +1166,10 @@ struct Loaded {
     /// the stance's use_item overlay (Sc_w1_/Sc_w2_use_item: a medkit used)
     use_clips: [Option<OverlayClip>; 2],
     throw_clips: [Option<OverlayClip>; 2],
+    /// the stance's place_hi overlay (Sc_w1/w2_place_hi: a Roller or Sentry set down)
+    place_clips: [Option<OverlayClip>; 2],
     /// the throwing hand: bone and the grip point in its frame
     throw_hand: Option<(usize, Vec3)>,
-    grenade: Option<grenade::GrenadeKit>,
 }
 
 /// A shot for the effects system: from the muzzle along `dir`, `dist` metres to a hit (or range).
@@ -1191,13 +1240,15 @@ struct Player {
     ammo: Vec<[i64; 2]>,
     /// reload in progress: (weapon, seconds left, clip it fills to)
     reloading: Option<Reload>,
-    grenades: i64,
+    /// grenades carried, by type (`grenade::GrenadeKits` order; filled by play_grenade.rs's
+    /// stock_inventory once the kits are loaded)
+    grenades: Vec<i64>,
     /// medkits carried (shared by the squad, like the grenades; see play_pickups.rs)
     medkits: i64,
-    /// the inventory item in the item box (ITEMS index), how long it's been NEW (s left),
+    /// the inventory item in the item box, how long it's been NEW (s left),
     /// whether the item list is open (Tab held), how long Tab's been down, and the use key
     /// (G) pressed for a non-grenade item
-    item: usize,
+    item: Item,
     item_new: f32,
     item_list: bool,
     tab_down: f32,
@@ -1214,11 +1265,16 @@ struct Player {
     /// throw button held: charging (the HUD meter shows `charge`)
     throw_held: bool,
     charge: f32,
+    /// the meter after the button is let go: its level and how long it still shows (s)
+    meter_after: (f32, f32),
+    /// a place-on-ground type was set down on this press (wait for the button to come up)
+    place_latch: bool,
     throwing: Option<Throw>,
-    /// set at a throw's release; the grenade leaves the hand once the pose is known
-    pending_release: Option<f32>,
-    /// released grenades to spawn: position, direction, carried velocity
-    thrown: Vec<(Vec3, Vec3)>,
+    /// set at a throw's release: (power, type, placed); the grenade leaves the hand once the
+    /// pose is known
+    pending_release: Option<(f32, usize, bool)>,
+    /// released grenades to spawn (play_grenade.rs)
+    thrown: Vec<grenade::Thrown>,
     /// control is passing to this squad member (character index) in this many seconds
     select: Option<(usize, f32)>,
     /// a voice line to say in this many seconds
@@ -1371,7 +1427,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: START_GRENADES, medkits: 0, item: 0, item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, pending_shot: false,
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
@@ -1584,7 +1640,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     let (pitch, distance, help) = (player.cam_pitch, player.cam_distance, player.show_help);
     // the squad shares one inventory: the grenades and medkits go with control
-    let inventory = (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new);
+    let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.item, player.item_new);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new) = inventory;
     // the switch sound, at the cut (a capture: the same sound at every hand-over)
@@ -2285,6 +2341,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let reload_clips = ["Sc_w1_reload", "Sc_w2_reload"].map(|n| overlay_clip(&model, game, n, feet));
     let use_clips = ["Sc_w1_use_item", "Sc_w2_use_item"].map(|n| overlay_clip(&model, game, n, feet));
     let throw_clips = ["Sc_w1_throw_grenade", "Sc_w2_throw_grenade"].map(|n| overlay_clip(&model, game, n, feet));
+    let place_clips = ["Sc_w1_place_hi", "Sc_w2_place_hi"].map(|n| overlay_clip(&model, game, n, feet));
     // the throwing hand: whichever hand moves further between reaching for the grenade and letting go
     let throw_hand = throw_clips[0].as_ref().and_then(|c| {
         let at = |t: f32| model.world(&model.pose(game, c.clip, t, model.default_face, 0.0));
@@ -2294,12 +2351,12 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             .map(|&(bone, hp)| (a[bone].transform_point3(hp.point).distance(b[bone].transform_point3(hp.point)), bone, hp.point))
             .max_by(|x, y| x.0.total_cmp(&y.0)).map(|(_, bone, point)| (bone, point))
     });
-    let grenade = grenade::GrenadeKit::load(game, assets);
     info!("{name} reload {:?} / throw {:?} clips, throwing hand {:?}",
           reload_clips.iter().map(|c| c.as_ref().map(|c| c.duration)).collect::<Vec<_>>(),
           throw_clips.iter().map(|c| c.as_ref().map(|c| c.duration)).collect::<Vec<_>>(), throw_hand.map(|h| h.0));
     p.throwing = None;
-    p.grenades = START_GRENADES;
+    // (play_grenade.rs's stock_inventory fills it again: a respawn starts with the start stock)
+    p.grenades.clear();
     p.max_health = game.character_hitpoints.get(name).copied().unwrap_or(100.0);
     p.health = p.max_health;
     p.leash = game.squad_leash.get(name).copied().unwrap_or(15.0);
@@ -2324,7 +2381,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.lift_now = lift;
     info!("{name}: soles {lift:.3} m below the floor, raised by that");
     p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, throw_hand, grenade });
+                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand });
 }
 
 fn read_input(
@@ -2423,7 +2480,11 @@ fn read_input(
         player.tab_down = -1.0;
         player.item_list = false;
     }
-    let grenade = ITEMS[player.item] == Item::Frag;
+    // T: the next grenade type carried (the demo's key)
+    if keys.just_pressed(KeyCode::KeyT) {
+        step_grenade(&mut player);
+    }
+    let grenade = matches!(player.item, Item::Grenade(_));
     let throw = grenade && keys.pressed(KeyCode::KeyG);
     player.item_use = !grenade && keys.just_pressed(KeyCode::KeyG);
     if keys.just_pressed(KeyCode::KeyH) {
@@ -2496,6 +2557,20 @@ fn autopilot(player: &mut Player) -> bool {
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
             player.crouch_wanted = player.sim_time >= at;
         }
+        // BF_TEST_THROW=<s>[,<hold s>][,<s>,<hold s>...]: hold the grenade button from s for hold
+        // s (default 0.6: a full charge), as many times as given
+        if let Ok(v) = std::env::var("BF_TEST_THROW") {
+            let v: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            let t = player.sim_time;
+            player.throw_held = v.chunks(2).any(|c| (c[0]..c[0] + c.get(1).copied().unwrap_or(CHARGE_TIME)).contains(&t));
+        }
+        // BF_TEST_NEXT_GRENADE=<s>[,<s>...]: press the grenade-type key (T) at those times
+        if let Ok(v) = std::env::var("BF_TEST_NEXT_GRENADE") {
+            let (t, was) = (player.sim_time, player.sim_time - capture_step());
+            if v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).any(|s| was < s && t >= s) {
+                step_grenade(player);
+            }
+        }
         return true;
     }
     if std::env::var("BF_AUTOPILOT").is_err() {
@@ -2559,9 +2634,12 @@ fn wrap_angle(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-                 mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>) {
+                 mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>,
+                 kits: Option<Res<grenade::GrenadeKits>>) {
     let dt = frame_dt(&time);
+    let kits: &[grenade::GrenadeKit] = kits.as_ref().map_or(&[], |k| &k.0);
     // the squad's heading: the leader's facing, smoothed (formation places turn with it)
     let h = heading.get_or_insert(player.yaw);
     *h = wrap_angle(*h + wrap_angle(player.yaw - *h) * (1.0 - (-1.5 * dt).exp()));
@@ -2569,7 +2647,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // take the loaded character out so the step can borrow it and mutate the player freely
     if !player.dead && !knocked_down(&player) {
         if let Some(l) = player.loaded.take() {
-            step_player(&mut player, &l, &game.0, dt, &mut transforms);
+            step_player(&mut player, &l, &game.0, kits, dt, &mut transforms);
             player.loaded = Some(l);
         }
     }
@@ -2582,7 +2660,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             squad_ai(m, &player, slot, heading, dt);
         }
         let Some(l) = m.loaded.take() else { continue };
-        step_player(m, &l, &game.0, dt, &mut transforms);
+        step_player(m, &l, &game.0, kits, dt, &mut transforms);
         m.loaded = Some(l);
     }
     // friendly fire: the player's shots this frame stop at the first teammate in their way
@@ -2738,7 +2816,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 let w = ((k.time - KNOCK_DOWN_TIME) / GET_UP_TIME).clamp(0.0, 1.0);
                 let w = w * w * (3.0 - 2.0 * w);
                 let still = std::mem::replace(&mut u.move_input, Vec2::ZERO);
-                step_player(u, &l, &game.0, dt, &mut transforms);
+                step_player(u, &l, &game.0, &[], dt, &mut transforms);
                 u.move_input = still;
                 if let Some(lying) = &k.lying {
                     for (e, (q0, t0)) in l.joints.iter().zip(lying) {
@@ -3538,7 +3616,7 @@ fn collide(units: &mut [&mut Player], player_first: bool) {
     }
 }
 
-fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mut Query<&mut Transform>) {
+fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, transforms: &mut Query<&mut Transform>) {
     p.sim_time += dt;
     if p.next_surface && !game.surfaces.is_empty() {
         p.surface = (p.surface + 1) % game.surfaces.len();
@@ -3735,37 +3813,61 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
             p.item_in_hand = false;
         }
     }
-    // ---- grenade: the stance's throw clip; the grenade is in the hand from the reach event and
-    // leaves it at the release event
-    let can_throw = p.grenades > 0 && l.grenade.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
+    // ---- grenade: the selected type (play_grenade.rs). Thrown: the stance's throw clip; the
+    // grenade is in the hand from the reach event and leaves it at the release event. Placed
+    // (Roller, Sentry): set down at the feet at the press, no meter
+    let kind = match p.item { Item::Grenade(k) if p.grenades.get(k).is_some_and(|&n| n > 0) => kits.get(k).map(|kit| (k, kit)), _ => None };
+    let can_throw = kind.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
         && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && matches!(p.action, Action::None) && !p.on_all_fours;
-    // hold to charge (the HUD meter), let go to throw: the charge sets how far it goes
-    if p.throw_held && can_throw {
+    p.meter_after.1 = (p.meter_after.1 - dt).max(0.0);
+    if !p.throw_held {
+        p.place_latch = false;
+    }
+    if let (Some((k, kit)), true) = (kind, kind.is_some_and(|(_, kit)| kit.placed())) {
+        // the press sets it down: the count drops then, with the item's event sound
+        let slot = stance_of(l, p.weapon);
+        if p.throw_held && can_throw && !p.place_latch && l.place_clips[slot].is_some() {
+            p.place_latch = true;
+            p.grenades[k] -= 1;
+            if kit.def.arm_sound != 0 {
+                p.sound_queue.push((kit.def.arm_sound, 0.8));
+            }
+            p.throwing = Some(Throw { power: 0.0, time: 0.0, slot, grabbed: false, released: false, kind: k, place: true });
+        }
+        p.charge = 0.0;
+    } else if p.throw_held && can_throw {
+        // hold to charge (the HUD meter), let go to throw: the charge sets how far it goes
         if p.charge == 0.0 {
-            // the Frag's event sound starts the gauge (capture: heard as the meter appears)
-            if let Some(s) = l.grenade.as_ref().map(|k| k.def.arm_sound).filter(|&s| s != 0) {
+            // the item's event sound starts the gauge (capture: heard as the meter appears)
+            if let Some(s) = kind.map(|(_, kit)| kit.def.arm_sound).filter(|&s| s != 0) {
                 p.sound_queue.push((s, 0.8));
             }
         }
         p.charge = (p.charge + dt / CHARGE_TIME).min(1.0);
     } else if p.charge > 0.0 {
         let slot = stance_of(l, p.weapon);
-        if can_throw && l.throw_clips[slot].is_some() {
-            p.throwing = Some(Throw { power: p.charge.max(0.1), time: 0.0, slot, grabbed: false, released: false });
+        if let (true, true, Some((k, _))) = (can_throw, l.throw_clips[slot].is_some(), kind) {
+            p.throwing = Some(Throw { power: p.charge.max(0.1), time: 0.0, slot, grabbed: false, released: false, kind: k,
+                                      place: false });
             p.aim_hold = 0.0;
+            // the count drops at the button (one game frame after it in the recordings), the
+            // meter holds its level a moment
+            p.grenades[k] -= 1;
+            p.meter_after = (p.charge, METER_HOLD + METER_FADE);
         }
         p.charge = 0.0;
     }
     if let Some(mut t) = p.throwing.take() {
         t.time += dt;
-        let c = l.throw_clips[t.slot].as_ref().unwrap();
-        t.grabbed |= t.time >= c.event(EV_REACH).unwrap_or(c.duration * 0.2);
-        if !t.released && t.time >= c.event(EV_RELEASE).unwrap_or(c.duration * 0.55) {
+        let (clip, let_go) = if t.place { (&l.place_clips[t.slot], EV_PLACED) } else { (&l.throw_clips[t.slot], EV_RELEASE) };
+        let (reach, release, duration) = clip.as_ref()
+            .map_or((0.0, 0.0, 0.0), |c| (c.event(EV_REACH).unwrap_or(c.duration * 0.2), c.event(let_go).unwrap_or(c.duration * 0.55), c.duration));
+        t.grabbed |= t.time >= reach;
+        if !t.released && t.time >= release {
             t.released = true;
-            p.grenades -= 1;
-            p.pending_release = Some(t.power);
+            p.pending_release = Some((t.power, t.kind, t.place));
         }
-        if t.time < c.duration {
+        if t.time < duration {
             p.throwing = Some(t);
         }
     }
@@ -3986,7 +4088,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
         }
     }
     if let Some(t) = &p.throwing {
-        if let Some(c) = &l.throw_clips[t.slot] {
+        if let Some(c) = if t.place { &l.place_clips[t.slot] } else { &l.throw_clips[t.slot] } {
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, p.face_time);
         }
     }
@@ -4077,13 +4179,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, dt: f32, transforms: &mu
     p.last_world.clone_from(&world);
 
     // ---- grenade release: from the throwing hand, toward the crosshair with a lob ----
-    if let Some(power) = p.pending_release.take() {
+    if let Some((power, kind, placed)) = p.pending_release.take() {
         if let Some((bone, point)) = l.throw_hand {
             let root = Transform::from_translation(p.position + Vec3::Y * p.height).with_rotation(facing).compute_matrix();
             let pos = (root * world[bone]).transform_point3(point);
             let (_, ray) = aim_ray(p);
             let carry = Vec3::new(p.last_velocity.x, 0.0, p.last_velocity.z);
-            p.thrown.push((pos, grenade::throw_velocity(ray, power) + carry));
+            // a placed one is let go from the hand and drops at the feet
+            let velocity = if placed { carry } else { grenade::throw_velocity(ray, power) + carry };
+            p.thrown.push(grenade::Thrown { pos, velocity, kind, landed: false });
         }
     }
 
@@ -4326,7 +4430,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         w.def.label, player.weapon + 1, l.weapons.len()))).unwrap_or_default();
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
-         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   E use   M surface   H hide\n\
+         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   T grenade type   E use   M surface   H hide\n\
          click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
          test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die",
         CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,

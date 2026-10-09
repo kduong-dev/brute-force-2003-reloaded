@@ -9,6 +9,8 @@
 //!    grid behind the rack, upright but tipped a little, settling as it would, a
 //!    level's inventory-object as far as play_pickups.rs is concerned: medkits and fruit are
 //!    taken and used as on a map; the rest are loose objects.
+//!  - The squad carries a full stack (stack-limit) of every grenade type the levels define
+//!    (play_grenade.rs: Frag, Energy, Gas, Light, Sonic, Roller, Sentry); T steps through them.
 //!  - Instant kill: the player's shots and grenades kill any squad member they hurt, in one
 //!    hit. On at the start; K turns it on and off.
 //!  - X kills the controlled character outright (for the death camera and the hand-over to
@@ -38,8 +40,10 @@ const ITEMS_Z: f32 = -12.0;
 /// The multiplayer archives hold 24 hand weapons with models, against the first mission's 10.
 /// The campaign adds three: A10 Bioreactive, Confed LZR-50 and Jax-iP, all in m02_a (found by
 /// loading every level with BF_TESTMAP_LOG). Every level together loads in about 6 s and
-/// adds nothing more; these take about 0.2 s.
-const TEST_LEVELS: [&str; 9] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6", "mp7", "mp8", "m02_a"];
+/// adds nothing more; these take about 0.2 s. m09_a adds the Light grenade (h_fd1a966d is only
+/// in m09_a/b/c/x; m09_a is the smallest): with the multiplayer levels (Sentry, Roller, Gas,
+/// Energy, Sonic, Frag) every squad grenade type is defined.
+const TEST_LEVELS: [&str; 10] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6", "mp7", "mp8", "m02_a", "m09_a"];
 /// How high (m) the pickups are dropped from, and how far (rad) each is tipped either way.
 const DROP_HEIGHT: f32 = 0.3;
 const DROP_TIP: f32 = 0.2;

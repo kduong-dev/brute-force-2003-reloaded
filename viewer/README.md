@@ -27,9 +27,10 @@ Four programs:
 | wheel | zoom |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload: the stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); automatic on an empty clip. The clip reads 0 (panel red) until the clip's magazine-in event |
-| G | use the item in the item box. A grenade: hold to charge (orange meter right of the crosshair, which turns to the bracket reticle; full in 0.7 s), let go to throw - the charge sets how far. Charging starts with the Frag's event sound (e43166d1, heard as the gauge appears in the capture). The stance's throw clip (`Sc_w1/w2_throw_grenade`): in the hand from its reach event, released at its release event with the Frag's whoosh (10318b29, matched to the capture). It bounces (silently); the 1.5 s fuse starts when it lands (~2.5 s from the throw, as captured). Blast: explosion sound, white flash, light, the game's fireball flipbook (wide), brown smoke clouds for ~2.4 s, a scorch mark for 20 s, and the screen tinted red when close. 3 grenades |
+| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the bracket reticle, full in 0.6 s), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
-| Tab | the item box (the game's B button): tap for the next item carried (Frag, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
+| T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
+| Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
 
 ### Test map (`cargo run --bin bf_play -- --test`)
 
@@ -54,6 +55,9 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     on its point) and the cards (on their edges) fall over onto their sides.
   * They're inventory-objects as on a map, so medkits and fruit work as in "Health pickups",
     and everything is loose (kicked, thrown by blasts, tumbling).
+* **Every grenade type**, a full stack (stack-limit, 10) of each: Frag, Energy, Gas, Light,
+  Sonic, Roller, Sentry, and the Molotov (e01's: a labelled grenade with an icon). m09_a is
+  loaded for the Light (only in m09_a/b/c/x). T steps through them. See **Grenades**.
 * **Instant kill**, on at the start, K toggles it. The player's shots and grenades kill any
   squad member they hurt, in one hit. The player still takes normal damage.
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
@@ -61,6 +65,115 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   left, the camera stays on the body). `BF_TEST_SUICIDE=<s>` presses it at that time.
 * **The controls panel**, which the main game no longer shows: the keys and the debug line
   (character, state, clip, surface, weapon). H hides it.
+
+### Grenades (`src/bin/play_grenade.rs`)
+
+Every grenade type comes from the loaded levels' `inventory-grenade` definitions (read into
+`WeaponDef`, `src/bf/weapon.rs`); nothing per type is hard-coded except which definitions the
+squad carries when several share a label (the Sentry has three, the Roller two: the ones the
+recordings show, `SQUAD_GRENADES`) and the order T steps through them. Any other labelled
+grenade with a HUD icon (the Molotov, from e01) is added after them. Per type:
+
+| Field | Where | Frag |
+|---|---|---|
+| fuse | `timer`, counted from the first ground contact; 0 goes off on the first contact, no bounce | 1.5 s |
+| explosion | h_053c429f -> a weapon: `<Damage max min damage-type radius>` | h_15889e57: 58.5-65, type 10, 8 m |
+| blast effect | explosion bullet h_ec23d593 -> effect type: ALE effects, light effect, sounds (`EffectType`, `src/bf/character.rs`) | h_1fe9ae17: exp-lrg-dirt, -fire#1, -fire, -flash, -shrap, exp-fire-add; light_explosion; 145f09e5 |
+| impact sound | bullet h_e5618348 | fb4b3604 |
+| decal | bullet h_06a27365 -> `<decal>` | h_ff1b711e: ff534b01, RGBA 10 10 10 200, 3 x 3 |
+| trail | h_18b6ab72's first slot -> effect type | h_10a5508f: grenade_trail + 10318b29 (the hiss) |
+| HUD icon, label | h_e5ec3f1f, stringtable-name | fe20b919, "Frag" |
+| use | h_1ee2f4ed: 3 IOU_THROW_TO_USE, 2 IOU_PLACE_ON_GROUND; function-type 8 / 13 (Sentry / Roller) | thrown |
+| event sound | `<event state=7 h_fa04e025>` | e43166d1 (the meter appears) |
+
+`BF_GRENADE_LOG=1` prints each type's fields at load (`grenade <label> ...`), each blast and
+its decal.
+
+* **Throwing** (thrown types): hold G to charge. The meter (the recordings, every grenade): a
+  blue outlined bar at x 354.0-367.7, y 162.0-221.7 beside the reticle brackets, its fill
+  x 355.3-365.7 growing linearly from y 218.7 to 164.3 in 0.6 s, sRGB 255 160 53 at 0.65, a
+  dark divider at y 179; let go, it holds its level 0.5 s and goes (the recordings' 0.1 s
+  fade is drawn as a cut halfway through it). The count drops at the button (the recordings:
+  one game frame after it). The stance's throw clip takes the grenade in hand at its reach
+  event - its trail (grenade_trail's smoke, riding on it) and the trail effect type's sound
+  (the Frag's hiss, ~0.33 s after the button in the recordings) start then - and lets go at
+  its release event (0.60 s after the button for Tex). Throw speeds and the lob are the
+  demo's. It bounces silently; the trail keeps puffing where it lies until the blast.
+* **Placing** (Roller, Sentry): the press drops the count and plays the event sound; the
+  stance's `Sc_w1/w2_place_hi` clip takes it in hand at its reach event (0.30-0.47 s: the
+  recordings' "in hand 0.38-0.47 s") and lets go at its 19f8311b event (0.50-0.60 s); it drops
+  from the hand at the feet. The Roller then rolls straight ahead at 4.7 m/s (4.4-5.0
+  measured) with its object sound (h_19dbc65d, once, not looped); the fuse (25 s; the
+  Sentry's 9999 s) runs from when it's down.
+* **The blast**, on the ground below where it went off: the effect type's ALE effects and its
+  light effect run once (`src/ale_fx.rs`; a "light_" effect is a point light: reach = its
+  size, strength = colour x alpha x size, the DNA light's tuning), its sounds (h_f724cb8c read
+  as a delay: the Light's 0.2 s) and the impact sound; the decal (life 60 s, fading over the
+  last 2 s: h_199870ec and h_fe4e1d82 read as life and fade, an inference; drawn at twice the
+  data's size like the blood decals, and laid along the ground's slope under its middle), and
+  loose pickups thrown.
+* **Damage**: everyone within the radius takes Damage max, falling to nothing at the radius;
+  the thrower takes 0.2 x a roll of Damage min..max anywhere inside it. That rule is the
+  demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
+  each, ~11%, no falloff); the game's formula isn't known. Damage types (the combat-targets'
+  per-type factors) aren't applied yet.
+* **Red tint**: the frame the player is hurt by a blast, the 3D picture's green and blue go to
+  0.2 of their stored values, back to 1 linearly over 0.27 s (8 game frames), red and the HUD
+  untouched, as strong near or far (the Frag recording, all six blasts). A quad in front of
+  the camera, multiplied into the picture.
+* **HUD**: the item box shows the selected type's icon, label and count (count at the right
+  middle, top of the digit at ~411; hidden while only one is carried, as in the Light and
+  Sentry recordings). When the selected type runs out, the first type still carried is
+  selected (the Sentry recording: the last Sentry set down, the box shows Frag 10).
+
+What each type does so far, and doesn't:
+
+| Type | Does | Not yet |
+|---|---|---|
+| Frag (#75) | everything above | the "Tech Upgrade Frag Grenade!" upgrade |
+| Energy (#74) | timer 1.75, stun_grenade_master + stun_hit_s, f875b6c6, decal h_f4d65518, damage 39-97.5 / 9 m | the bolts crawling out and striking bodies; knock-down per the recording |
+| Gas (#76) | timer 1, gas-grenade's olive cloud, 1b35643e, damage at once | damage over time (h_04ea9251 5.5 s, read but unused); Flint's x0.05 (damage types); one of its ALE effects (h_19d5e391) isn't in the library |
+| Light (#77) | phosphor_grenade + light_phosphor, ignition h_1080aaf1 and f5260e35 after 0.2 s, no damage, no decal, no tint | checking the 30 s burn and the light's strength against the recording |
+| Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7 | the damage arriving with the ring (it's dealt at once) |
+| Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking; its rolling sound looping |
+| Sentry (#80) | set down (place_hi), lies there; exp-mine + light_explosion, h_145f09e5 | its trigger (9999 s timer: `BF_TEST_DETONATE` sets it off); arming, LEDs, disarming |
+
+Not done for any: ALE fields (grenade_trail_rise's upward drift, exp-lrg-air); decals don't
+follow uneven ground (a plane along the slope under the middle: a big scorch on a bumpy
+hillside is partly buried); the sounds' play-length and distance falloff beyond a volume.
+
+Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
+* `BF_TEST_GRENADE_TYPE=<label>` (any case, e.g. `Sonic`) selects that type at the start,
+  giving a stack of it if none is carried.
+* `BF_TEST_THROW=<s>[,<hold s>][,<s>,<hold s>...]` holds G from s for hold s (default 0.6: a
+  full charge), as many times as given (a placed type: one per press).
+* `BF_TEST_NEXT_GRENADE=<s>[,<s>...]` presses T at those times.
+* `BF_TEST_DETONATE=<s>` sets off every grenade out at that time.
+* `BF_TEST_EXPLOSION=1` sets off the selected type 6 m ahead every 1.5 s.
+
+Verified (captures at 15 fps in the scratchpad; the reference frames are the user's xemu
+recordings at 60 fps):
+* Frag, test map (`--test BF_TEST_GOTO=0,4,0,4 BF_TEST_THROW=1.5,0.08 BF_VIEW_YAW=0.35`):
+  button-up at 1.58 s, blast at t 4.40 s (frame 66: 2.8 s after the button; the recording's
+  2.28-2.38 s - the demo's throws fly longer); white flash frames 67-69; fireball 70-78 (0.27-0.8 s); brown
+  smoke 80-90, gone by ~94 (1.9 s); the scorch stays. Tex 7 m away takes 12.6 of 115; the
+  floor's green and blue at 0.25 / 0.38 / 0.57 / 0.77 / 0.96 of normal over frames 65-69, red
+  unchanged, HUD unchanged. The recording (frag/a 0694-0790): flash 0-0.1 s, fireball peak
+  ~0.37 s, bright gone by 0.63 s, smoke to ~1.6 s.
+* Frag on sdm_e34 (`BF_MAP=sdm_e34 BF_TEST_GOTO=15.3,37,15.3,37 BF_TEST_THROW=1.5,0.06
+  BF_CAMERA_PITCH=-0.45 BF_VIEW_YAW=0.5`): flash frames 68-72, fireball 74-80, smoke 82-90,
+  gone by 100 - the same shape as the recording; the flat added exp-fire-add disc gives the
+  fireball the hard flat lower edge the recording has (frames 0703-0712).
+* Sonic, test map (`BF_TEST_GRENADE_TYPE=Sonic`): goes off at first contact (1.35 s after the
+  button-up), red tint, the dome and ring then the godray shafts (frames 44-58), its dark
+  decal after.
+* Light (`BF_TEST_GRENADE_TYPE=light`): blue spikes from frame 67, still burning at frame 199
+  (8.9 s after); no damage, no tint, no decal.
+* Sentry (`BF_TEST_GRENADE_TYPE=Sentry`, ten presses 1 s apart): the box counts 10, 9 ... with
+  no digit at 1, then shows Frag 10; `BF_TEST_NEXT_GRENADE=12.5,13` steps to Energy, then Gas.
+* Roller (`BF_TEST_GRENADE_TYPE=Roller BF_TEST_DETONATE=5`): set down beside Tex, rolls off
+  ahead; the blast is the Frag's effects.
+* Gas and Energy: olive cloud; stun bolts' green godrays and knock-downs.
 
 Squad movement and deaths follow the game's own data and the captures:
 
@@ -253,7 +366,7 @@ combat-target hitpoints: Tex 115, Brutus 105, Flint 90, Hawk 65) shown on the ra
 edges. Each bar fills that diagonal's dark channel in the radar frame texture (the frame's own
 texels darker than 27/255), starting by the member's portrait, and drains toward it as in the
 game. For whoever you control, health also shows in the top-left bar. Grenade blasts hurt everyone in range (the explosion's Damage max, falling
-off to nothing at its radius) and the hurt give a pain grunt (chatter e856009f). Friendly
+off to nothing at its radius; the thrower takes a flat share, see **Grenades**) and the hurt give a pain grunt (chatter e856009f). Friendly
 fire: your shots hit squadmates in the way (the weapon's damage; they say "I'm hit" or "Careful!"
 / "Stop shooting at me!"), and the crosshair turns green while it is on one. At 0 health a
 character dies: death cry (chatter ef32191d), the body goes limp as a ragdoll (verlet point
@@ -359,7 +472,7 @@ being played. Surface sounds live in level archives: `BF_LEVEL=<name>` (default 
 level; `mp1`'s bank is merged in too, since a mission only carries its own squad's footsteps.
 
 Test hooks: `BF_AUTOPILOT=1` plays a scripted run (idle, run, turn, sprint, aimed walk,
-backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing on the run); `BF_TEST_EXPLOSION=1` detonates a grenade 6 m ahead every 1.5 s; `BF_ANIM_PROBE=<script>,...` prints each character's clips by script name (duration, root motion over a cycle, events); `BF_DUMP_TEXTURE=<file>:<hex id>` writes a decoded texture (raw RGBA after a u32 width and height). `BF_AUTOPILOT_SPIN=<rad/s>` makes it look down and turn the camera during the standing fire; with `BF_CAPTURE=<dir>` it saves every frame at a
+backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing on the run); `BF_TEST_EXPLOSION=1` sets off the selected grenade type 6 m ahead every 1.5 s; with `BF_TEST_GOTO`, `BF_TEST_THROW=<s>[,<hold s>,...]` holds the grenade button (G) at those times (see **Grenades** for the rest of its hooks); `BF_ANIM_PROBE=<script>,...` prints each character's clips by script name (duration, root motion over a cycle, events); `BF_DUMP_TEXTURE=<file>:<hex id>` writes a decoded texture (raw RGBA after a u32 width and height). `BF_AUTOPILOT_SPIN=<rad/s>` makes it look down and turn the camera during the standing fire; with `BF_CAPTURE=<dir>` it saves every frame at a
 fixed 15 fps. `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
 and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `BF_DUMP_SOUNDS=<dir>` writes the character's jump and surface sounds as WAV files
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
@@ -789,13 +902,16 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     alone when it's full, without the message), a Garo fruit for their own health (left alone
     at full health). `BF_TEST_TARGET=1` with a `BF_TEST_GOTO` start 8 m behind one stands the
     first squad member on it.
-  * The item box (capture todo/medkits.mp4) shows one item at a time, Frag or Medkit: its name
-    at the bottom and the count top right, over its HUD icon (Frag fe20b919, Medkit f647bbef). Both are pale
+  * The item box (capture todo/medkits.mp4) shows one item at a time, a grenade type or the
+    Medkit: its name at the bottom and the count top right, over its HUD icon (the grenade
+    type's or Medkit's own h_e5ec3f1f: Frag fe20b919, Medkit f647bbef). A grenade's count sits
+    at the right middle and is hidden while only one is carried (see **Grenades**). Both are pale
     blue while the item can be used and red while it can't (a medkit at full health; later an
     item the character can't use, such as Brutus and OrgSen). A
     newly taken kind is selected and marked NEW (orange) for 3 s. Tab steps to the next item
     carried; held, the item list opens around the box (todo/medic + intenvory use case.mp4):
-    the next items leftward along the bottom, the previous ones up the right edge, two each,
+    the other items leftward along the bottom (two), the other grenade types carried up the
+    right edge (five), as the Frag and Sentry recordings' inventory overview stacks them,
     stepping round as the wheel picks. G uses the selected item. There's no separate medkit
     shortcut. An item that can't be used now shows a grey icon and red text.
   * Each group of medkits (within 3.5 m of one another, on the same level) has one soft green

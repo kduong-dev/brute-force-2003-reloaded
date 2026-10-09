@@ -187,6 +187,8 @@ pub struct Game {
     /// effect types (objecttypes `<effect>`): type name -> the ALE effects it plays (name hashes,
     /// keys of `effects`)
     pub effect_types: HashMap<u32, Vec<u32>>,
+    /// effect types again, with their light effect and sounds (see `EffectType`)
+    pub effect_type_defs: HashMap<u32, EffectType>,
     /// object type -> the effect type it shows while idle (`<events><event state="1"
     /// h_ed0c9fac=..>`: the power-ups' spinning icons)
     pub idle_effects: HashMap<u32, u32>,
@@ -306,6 +308,27 @@ pub const LIQUID_SPLASH: usize = 1;
 pub const LIQUID_BIG_SPLASH: usize = 2;
 pub const LIQUID_WADE: usize = 3;
 
+/// An effect type (objecttypes `<effect>`, object-type 17): what plays where it's started.
+///
+///   <h_e275fb80 ..><base name=T/>
+///     <alchemy-effects><effect effect-name=E ../> x 8</alchemy-effects>
+///     <light-effect effect-name=L ../>
+///     <sounds><Sound sound-id=S h_f724cb8c=.. play-length=.. enable-looping=../></sounds>
+///
+/// The light effect is an ALE effect too (light_explosion, light_phosphor: a "light_" effect
+/// lights the scene rather than drawing sprites). The Frag's explosion h_1fe9ae17: six ALE
+/// effects (exp-lrg-*, exp-fire-add), light_explosion and the blast 145f09e5 (play-length 2).
+#[derive(Clone, Debug, Default)]
+pub struct EffectType {
+    /// ALE effects (name hashes, keys of `Game::effects`)
+    pub effects: Vec<u32>,
+    /// the light effect (an ALE effect name hash), 0 if none
+    pub light: u32,
+    /// sounds: (sound id, h_f724cb8c, play-length s, enable-looping). h_f724cb8c is read as a
+    /// delay in seconds (an inference: 0 on most, 0.2 on the Light grenade's ignition)
+    pub sounds: Vec<(u32, f32, f32, bool)>,
+}
+
 /// A ground decal (objecttypes `<decal>`): one of its textures at random (white shapes), tinted
 /// `color` (RGBA 0-1), `width` x `height` m, turned at random within +-`rotation` degrees; it stays
 /// `life` s, fading out over the last `fade` s. (life / fade / rotation are inferred from the
@@ -366,6 +389,7 @@ impl Game {
             physics: HashMap::new(),
             effects: ale::Library::default(),
             effect_types: HashMap::new(),
+            effect_type_defs: HashMap::new(),
             idle_effects: HashMap::new(),
         };
         g.load_archive(&common)?;
@@ -619,7 +643,19 @@ impl Game {
                 let list: Vec<u32> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
                     .map(|e| hash_of(e.attr(h("effect-name")))).filter(|&x| x != 0 && x != h("")).collect()).unwrap_or_default();
                 if name != 0 && !list.is_empty() {
-                    self.effect_types.entry(name).or_insert(list);
+                    self.effect_types.entry(name).or_insert(list.clone());
+                }
+                if name != 0 {
+                    let light = hash_of(t.child(h("light-effect")).and_then(|l| l.attr(h("effect-name"))));
+                    let sounds = t.child(h("sounds")).map(|s| s.children_named(h("Sound")).filter_map(|e| {
+                        let id = hash_of(e.attr(h("sound-id")));
+                        let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
+                        let looping = e.attr(h("enable-looping")).and_then(|v| v.as_i64()).unwrap_or(0) != 0;
+                        (id != 0 && id != h("")).then_some((id, f(0xF724_CB8C), f(h("play-length")), looping))
+                    }).collect()).unwrap_or_default();
+                    self.effect_type_defs.entry(name).or_insert(EffectType {
+                        effects: list, light: if light == h("") { 0 } else { light }, sounds,
+                    });
                 }
             }
             // idle effects: a type's <events><event state="1" h_ed0c9fac=EFFECT_TYPE/>

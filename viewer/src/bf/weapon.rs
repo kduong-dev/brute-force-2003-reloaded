@@ -46,6 +46,21 @@ const H_PROJECTILE: u32 = 0x053C_429F;
 const H_EVENT_SOUND: u32 = 0xFA04_E025;
 /// bullet: impact sound (a grenade projectile's explosion)
 const H_IMPACT_SOUND: u32 = 0xE561_8348;
+/// bullet: the effect type it plays where it goes off (an explosion's flash, fireball, light and
+/// sound: objecttypes `<effect>`, object-type 17)
+const H_BULLET_EFFECT: u32 = 0xEC23_D593;
+/// bullet: the ground decal it leaves (objecttypes `<decal>`; the Frag's scorch h_ff1b711e)
+const H_BULLET_DECAL: u32 = 0x06A2_7365;
+/// item base: how it is used (the XBE's IOU_ enum: 2 IOU_PLACE_ON_GROUND (Roller, Sentry),
+/// 3 IOU_THROW_TO_USE (Frag and the other thrown grenades))
+const H_USE_TYPE: u32 = 0x1EE2_F4ED;
+/// object base: the effects attached to the object (8 slots of `<h_081398d6 effect-name
+/// hardpoint-name>`); a grenade's first is its trail (the Frag's h_10a5508f: grenade_trail and
+/// the hiss 10318b29)
+const H_ATTACHED_EFFECTS: u32 = 0x18B6_AB72;
+/// Damage: h_04ea9251, seconds the damage is dealt over (the Gas's 5.5; 0 for the rest - an
+/// inference from the Gas recording's ~5.7 s of steady damage)
+const H_DAMAGE_TIME: u32 = 0x04EA_9251;
 const H_PARTS: u32 = 0xE487_418A;
 const H_MESHES: u32 = 0xEA78_3362;
 const H_JOINT: u32 = 0x151A_CE78;
@@ -124,6 +139,25 @@ pub struct WeaponDef {
     /// effect types: the shot in flight (bullet effect-name) and where it lands (h_08d28037)
     pub flight_effect: u32,
     pub hit_effect: u32,
+    /// Damage damage-type (the combat-targets' per-type factors: the Frag's 10, the Gas's 4)
+    pub damage_type: i64,
+    /// Damage h_04ea9251: seconds the damage is spread over (see H_DAMAGE_TIME)
+    pub damage_time: f32,
+    /// bullet h_ec23d593: effect type played where the bullet goes off (0 if none)
+    pub blast_effect: u32,
+    /// bullet h_06a27365: ground decal it leaves (0 if none)
+    pub decal: u32,
+    /// items: function-type (the XBE's IFSET_ enum: 0 none (thrown grenades), 8
+    /// IFSET_PROXIMITY_EXPLOSIVE (Sentry), 13 IFSET_ROLLING_BOMB (Roller))
+    pub function_type: i64,
+    /// items: group-type (2 IG_GRENADE, 3 IG_EXPLOSIVE; 0 for the enemies' grenades)
+    pub group_type: i64,
+    /// items: h_1ee2f4ed, how it's used (see H_USE_TYPE)
+    pub use_type: i64,
+    /// items: how many fit in the inventory (stack-limit: 10 for the squad's grenades)
+    pub stack_limit: i64,
+    /// the effect type attached to the object (h_18b6ab72's first slot; 0 if none)
+    pub attached_effect: u32,
 }
 
 /// Hash values of an attribute stored either as a list or as repeated attributes.
@@ -175,6 +209,17 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             ammo_type: w.attr(h("ammo-type")).and_then(|v| v.as_i64()).unwrap_or(1),
             flight_effect: bullet.and_then(|b| b.attr(h("effect-name"))).and_then(|v| v.as_hash()).filter(|&x| x != h("")).unwrap_or(0),
             hit_effect: bullet.and_then(|b| b.attr(H_HIT_EFFECT)).and_then(|v| v.as_hash()).filter(|&x| x != h("")).unwrap_or(0),
+            damage_type: all.iter().find(|e| e.name == h("Damage")).and_then(|e| e.attr(h("damage-type"))).and_then(|v| v.ints().first().copied()).unwrap_or(0),
+            damage_time: f32_of(all.iter().find(|e| e.name == h("Damage")), H_DAMAGE_TIME, 0.0),
+            blast_effect: bullet.and_then(|b| b.attr(H_BULLET_EFFECT)).and_then(|v| v.as_hash()).filter(|&x| x != h("")).unwrap_or(0),
+            decal: bullet.and_then(|b| b.attr(H_BULLET_DECAL)).and_then(|v| v.as_hash()).filter(|&x| x != h("")).unwrap_or(0),
+            function_type: find(h("function-type")).and_then(|v| v.ints().first().copied()).unwrap_or(0),
+            group_type: find(h("group-type")).and_then(|v| v.ints().first().copied()).unwrap_or(0),
+            use_type: find(H_USE_TYPE).and_then(|v| v.ints().first().copied()).unwrap_or(0),
+            stack_limit: find(h("stack-limit")).and_then(|v| v.ints().first().copied()).unwrap_or(0),
+            attached_effect: all.iter().find(|e| e.name == H_ATTACHED_EFFECTS)
+                .and_then(|a| a.children.first()).and_then(|e| e.attr(h("effect-name"))).and_then(|v| v.as_hash())
+                .filter(|&x| x != h("")).unwrap_or(0),
         });
     }
     out

@@ -565,10 +565,39 @@ struct GlowLight {
     acc: f32,
 }
 
+/// Ground decals other modules ask for this frame: (decal definition name, where). A grenade's
+/// blast leaves its bullet's decal (the Frag's scorch h_ff1b711e) this way.
+#[derive(Resource, Default)]
+pub struct DecalRequests(pub Vec<(u32, Vec3)>);
+
 pub fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(AppState::Playing), setup_fx.after(snapshot_entities))
-        .add_systems(Update, (spawn_fx, emit, animate_fx).chain().after(update_player).before(play_sounds)
+    app.init_resource::<DecalRequests>()
+        .add_systems(OnEnter(AppState::Playing), setup_fx.after(snapshot_entities))
+        .add_systems(Update, (spawn_fx, requested_decals, emit, animate_fx).chain().after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
+}
+
+/// The decals asked for (`DecalRequests`), their textures loaded the first time; sized as the
+/// blood decals are (DECAL_SCALE: the data's width / height read as half sizes).
+fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Option<ResMut<FxAssets>>, mut state: ResMut<FxState>,
+                    mut requests: ResMut<DecalRequests>, mut images: ResMut<Assets<Image>>,
+                    mut materials: ResMut<Assets<StandardMaterial>>) {
+    let Some(mut fx) = fx else { return };
+    for (name, at) in std::mem::take(&mut requests.0) {
+        let Some(def) = game.0.decals.get(&name).cloned() else { continue };
+        if std::env::var("BF_GRENADE_LOG").is_ok() {
+            println!("decal h_{name:08x} at {at:.2}: {def:?}, textures loaded {:?}",
+                     def.textures.iter().map(|t| fx.decal_textures.contains_key(t) || game.0.texture_rgba(*t).is_some()).collect::<Vec<_>>());
+        }
+        for &id in &def.textures {
+            if !fx.decal_textures.contains_key(&id) {
+                if let Some((w, h, px)) = game.0.texture_rgba(id) {
+                    fx.decal_textures.insert(id, images.add(rgba(w, h, px, false)));
+                }
+            }
+        }
+        spawn_decal(&mut commands, &mut state, &fx, &mut materials, &def, at, DECAL_SCALE);
+    }
 }
 
 /// `linear`: the texels as they are (for sprites added to the picture, see `setup_fx`).
@@ -651,8 +680,13 @@ fn spawn_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, mate
     });
     let turn = (state.random() * 2.0 - 1.0) * def.rotation.to_radians();
     let y = floor_y(at.x, at.z, at.y + 0.5) + 0.01 + 0.004 * state.random();
+    // laid along the ground's slope under its middle (a big scorch on a hillside would otherwise
+    // sink into the slope)
+    let normal = world::arena().and_then(|a| a.floor_at(at.x, at.z, at.y + 0.5)).map(|f| f.1)
+        .filter(|n| n.y > 0.5).unwrap_or(Vec3::Y);
     let e = commands.spawn((Mesh3d(fx.floor.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
-                            Transform::from_translation(Vec3::new(at.x, y, at.z)).with_rotation(Quat::from_rotation_y(turn))
+                            Transform::from_translation(Vec3::new(at.x, y, at.z))
+                                .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal.normalize()) * Quat::from_rotation_y(turn))
                                 .with_scale(Vec3::new(def.width * scale, 1.0, def.height * scale)),
                             Decal { age: 0.0, def: def.clone(), material })).id();
     state.decals.push_back(e);

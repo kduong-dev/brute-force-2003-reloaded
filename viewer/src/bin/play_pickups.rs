@@ -403,9 +403,10 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
     }
     feed.0.retain(|l| l.2 > 0.0);
     player.item_new = (player.item_new - dt).max(0.0);
-    // the selected item ran out (the last grenade thrown): the next one carried
-    if item_count(&player, ITEMS[player.item]) <= 0 {
-        step_item(&mut player, 1);
+    // the selected item ran out (the last grenade thrown): another grenade type carried, else
+    // the next item carried
+    if item_count(&player, player.item) <= 0 {
+        item_ran_out(&mut player);
     }
     // who's near enough: the player first, then any squad member running over it (their
     // medkits go in the squad's shared inventory, the player's; a fruit heals whoever eats it)
@@ -441,7 +442,7 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             MEDKIT if player.medkits < item.stack_limit => {
                 // a first medkit: the item box shows it, NEW
                 if player.medkits == 0 {
-                    player.item = ITEMS.iter().position(|&i| i == Item::Medkit).unwrap_or(0);
+                    player.item = Item::Medkit;
                     player.item_new = NEW_TIME;
                 }
                 player.medkits = (player.medkits + item.amount.max(1)).min(item.stack_limit);
@@ -489,7 +490,7 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>) {
     // test hook: BF_TEST_MEDKIT=<s> uses one at that time
     let test = std::env::var("BF_TEST_MEDKIT").ok().and_then(|v| v.parse::<f32>().ok())
         .is_some_and(|at| player.sim_time >= at && player.sim_time - at < 0.1 && !player.test_medkit_used);
-    let selected = ITEMS[player.item] == Item::Medkit;
+    let selected = player.item == Item::Medkit;
     if !((player.item_use && selected) || test) || player.dead || player.using.is_some() {
         return;
     }

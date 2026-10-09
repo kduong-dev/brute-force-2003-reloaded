@@ -21,6 +21,11 @@
 //! they were born, facing the camera; its own colour h_048767e8, alpha h_04fc9016 and width
 //! h_fba203b8 over a particle's life, texture h_1ba23359, blend h_1506eb6c): the cutter's
 //! trail, the sniper's beam.
+//!
+//! A "light_" effect (an effect type's light-effect: light_explosion, light_phosphor ...) lights
+//! the scene instead of drawing: each of its particles is a point light whose reach is the
+//! appearance's size (m) and whose strength is its colour x alpha x size, as the hand-made DNA
+//! light in play_fx.rs reads light_powerup_pill.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -78,6 +83,11 @@ const BLEND_ADD: (u32, u32) = (5, 2);
 const STEPS: usize = 12;
 /// Particles alive at once, over all effects.
 const MAX_PARTICLES: usize = 3000;
+/// A light particle's lumens per unit of colour x alpha x size: the tuning play_fx.rs uses for
+/// the DNA's light_powerup_pill (fitted to the capture's brightening round the DNA).
+pub const LIGHT_LUMENS: f32 = 30_000.0;
+/// Point lights' strength under the console look (see level_scene::POINT_LIGHT_SCALE).
+const LIGHT_SCALE: f32 = crate::level_scene::POINT_LIGHT_SCALE;
 
 /// One emitter and the appearance its particles take.
 pub struct Pair {
@@ -94,6 +104,8 @@ pub struct Pair {
     streak: bool,
     /// a beam appearance: the ribbon's material (vertex colours carry colour x alpha)
     beam: Option<Handle<StandardMaterial>>,
+    /// a "light_" effect's pair: its particles are point lights
+    light: bool,
 }
 
 /// An effect ready to run.
@@ -232,10 +244,15 @@ impl AleAssets {
                     fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
                 });
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  beam: Some(material) });
+                                  beam: Some(material), light: false });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
+                continue;
+            }
+            if e.name.to_ascii_lowercase().starts_with("light_") {
+                pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
+                                  beam: None, light: true });
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
@@ -267,7 +284,7 @@ impl AleAssets {
             }).collect();
             let streak = app.flag(MOTION_BLUR);
             pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps),
-                              beam: None });
+                              beam: None, light: false });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs })
     }
@@ -416,6 +433,9 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 if pair.beam.is_some() {
                     // drawn by the ribbon, not as a quad
                     commands.spawn((at, particle));
+                } else if pair.light {
+                    commands.spawn((at.with_scale(Vec3::ONE), particle,
+                                    PointLight { intensity: 0.0, range: 0.5, shadows_enabled: false, ..default() }));
                 } else {
                     commands.spawn((Mesh3d(assets.quad.clone()), MeshMaterial3d(pair.steps[0][0].clone()), NotShadowCaster, at, particle));
                 }
@@ -429,10 +449,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
 #[allow(clippy::type_complexity)]
 fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, mut count: ResMut<Count>,
            camera: Query<&GlobalTransform, With<Camera3d>>, owners: Query<&GlobalTransform, (With<AleEffect>, Without<AleParticle>)>,
-           mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>)>) {
+           mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>, Option<&mut PointLight>)>) {
     let dt = clock(&time, fixed);
     let facing = camera.iter().next().map(|c| c.compute_transform().rotation).unwrap_or_default();
-    for (e, mut p, mut tr, mat) in &mut particles {
+    for (e, mut p, mut tr, mat, light) in &mut particles {
         p.age += dt;
         if p.age >= p.life {
             commands.entity(e).despawn();
@@ -464,6 +484,19 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             None => tr.translation += p.vel * dt,
         }
         let moving = turn * p.vel;
+        // a light's: reach = size, strength = colour x alpha x size
+        if let Some(mut light) = light {
+            let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0);
+            let a = app.floats(ALPHA, p.sp, k).unwrap_or(1.0).clamp(0.0, 1.0);
+            let c = Vec3::from(app.color(COLOR, p.sp, k).unwrap_or([1.0; 3]));
+            let peak = c.max_element();
+            light.intensity = LIGHT_LUMENS * a * size * peak * LIGHT_SCALE;
+            light.range = size.max(0.1);
+            if peak > 1e-4 {
+                light.color = Color::srgb(c.x / peak, c.y / peak, c.z / peak);
+            }
+            continue;
+        }
         let Some(mut mat) = mat else { continue };           // a beam's: the ribbon draws it
         let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0);
         let width = (size * app.floats(WIDTH, p.sp, k).unwrap_or(1.0)).max(0.001);
