@@ -400,6 +400,7 @@ impl Arena {
     }
 
 
+
     /// `ray`, with the breakable object it meets first (its index, see `breakable`), if the
     /// nearest thing on the ray is one.
     pub fn ray_breakable(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {

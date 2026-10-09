@@ -12,16 +12,20 @@
 //!  - shots (anyone's): the weapon's Damage min..max at random, when the shot gets there (a
 //!    bolt flies at its speed), on the object's own collision (`Arena::ray_breakable`);
 //!  - grenade blasts: the explosion's Damage max, falling to nothing at its radius, as the
-//!    characters take it (play_grenade.rs hands them over, `ObjectBlasts`);
+//!    characters take a Frag's, on the same frame (play_grenade.rs hands them over,
+//!    `ObjectBlasts`). Every damaging type is dealt so, the Energy and the Sonic too, whose
+//!    characters' damage comes with their bolts and ring instead: a simplification;
 //!  - the damage areas of other broken objects' effects (chain reactions, see below).
 //!
 //! Breaking (FUN_00157260 on message 0x4e, then the countdown FUN_0015af20 each frame): the
 //! debris list is queued and a countdown starts at its longest h_1b6a0ede; each frame it drops
-//! by the frame's time and every entry whose h_1b6a0ede is at least what's left is spawned
-//! (FUN_0015ac90); once it's down to 0 the object goes (FUN_0015ae30). So the longest delay
-//! comes first: the missile rack's effect (0.2) at once, its pieces and stand (0) 0.2 s later,
-//! the take's light and fireball before the model goes (take13: 0.067 s apart; the first
-//! capture: ~0.17 s). Its collision and level blocker go at once (a blast from where it stood
+//! by the frame's time and the first queued entry whose h_1b6a0ede is at least what's left is
+//! spawned (FUN_0015ac90; one a frame); on a frame with nothing left to spawn and the countdown
+//! at 0 the object goes (FUN_0015ae30). So the longest delay comes first: the missile rack's
+//! effect (0.2) at once, its pieces and stand (0) from 0.2 s on, a frame apart, then the model
+//! goes; the take's light and fireball come before the model goes (take13: 0.067 s apart; the
+//! first capture: ~0.17 s). A barrel: its pieces on the first frame, its effect on the next, the
+//! model gone on the third. Its collision and level blocker go at once (a blast from where it stood
 //! sees past it), what it leaves behind blocks from then on (`Arena::set_broken`).
 //! What each entry spawns, by its type's object-type:
 //!  - 0, a compound (archetype-type 9): its parts fly apart as loose tumbling bodies
@@ -31,16 +35,23 @@
 //!    sounds, and its `<Damage>` areas.
 //!
 //! Damage areas (an effect's `<Damage amount Type duration range falloff>`): from AREA_DELAY
-//! after the effect, for `duration` s, everyone within `range` of where the object stood (3D,
-//! to their middle CENTRE_UP above the feet; no line of sight, see `area_damage`) loses amount x dt x
-//! their factor a frame: amount x duration in all (the barrel's 80 x 0.5 = 40 HP, the rack's 200 x
+//! after the effect, for `duration` s, everyone within `range` of the object's centre (3D,
+//! to their point CENTRE_UP above the feet) loses amount x dt x their factor a frame, with no
+//! line-of-sight test: amount x duration in all (the barrel's 80 x 0.5 = 40 HP, the rack's 200 x
 //! 0.5 = 100). Breakable objects in range take it too, times their own factor: the rack's
 //! explosion (Type 10, x10) sets off barrels 4-5 m away at once, the barrel's (Type 3, x0) does
-//! nothing to barrels or crates. The game's area tick (FUN_00225220, gather FUN_00224a90,
-//! dispatch FUN_00224770) deals it per frame times dt when the area is "over time" (flag 0x10;
-//! that h_ed582b3c = 2 sets it is a guess that fits the takes); the falloff curve
-//! (FUN_00223780: DFALL_HALF_LIFE on the rack) showed no effect on the takes' HP, by distance
-//! or over time, so the damage is flat. Hurt by one, the player's view goes red (ScreenTint)
+//! nothing to barrels or crates. This is the effect object's own damage code, FUN_0021ade0: per
+//! frame, for each `<Damage>` record (the effect type's +0xe4 vector, 0x1c a record) while
+//! h_f724cb8c < the effect's age <= h_f724cb8c + duration, every target near the effect (a grid
+//! query of `range`) whose factor for the Type is above 0 and whose hitpoints are above 0, within
+//! `range` of the effect's place (3D, to the target's place), takes amount x dt, x (1 - d /
+//! range) for falloff 1, (1 - d / range)^2 x (amount x dt)^2 for 2, in full for 0 and 3 (the
+//! rack's HALF_LIFE: the takes' flat damage at 4 and 7 m agrees; see `falloff`). It sends no
+//! ray: no line of sight (the weapons' damage areas, FUN_00224a90, test one). h_ed582b3c is
+//! the push its message carries, scaled by ((1 - w) x 0.4 + 0.6), w the world's load measure at
+//! +0xc58 (recomputed every second from counts of active characters and such, FUN_000d9090,
+//! and 0 in multiplayer): a push, not the damage, so the campaign's ~0.58 of the
+//! damage (see DAMAGE_SCALE) isn't this. Hurt by one, the player's view goes red (ScreenTint)
 //! as for a grenade.
 
 use super::*;
@@ -52,14 +63,15 @@ use bf_viewer::level_scene::Placed;
 /// loss is ~0.1 s after the object's hitpoints reach 0, for the barrel (takes 01-04: 2.04 ->
 /// 2.13-2.14 s) and the rack alike (take07). Measured; the same as a grenade's DAMAGE_DELAY.
 const AREA_DELAY: f32 = 0.1;
-/// A character's middle, the point a damage area measures to (m above the feet): the barrel's
-/// range of 3 m reached Tex 2.7 m away along the ground and not 2.9 m (takes 04 / 05), so from
-/// the barrel's origin on the ground to a point 0.8-1.3 m up. The middle of that.
-const CENTRE_UP: f32 = 1.0;
+/// A character's point that a damage area measures to (m above the feet): the barrel's range of
+/// 3 m from its centre (0.435 m up) reached Tex 2.7 m away along the ground and not 2.9 m (takes
+/// 04 / 05), so a point 1.2-1.74 m up. The middle of that: a fit.
+const CENTRE_UP: f32 = 1.45;
 /// The campaign's squad took ~0.58 of a blast (campaign e34, takes 01-09) where sdm_e34 took
-/// the whole (take29: 39.4 of 40). The destroy code (FUN_00157260) scales a blast value by
-/// ((1 - w) x 0.4 + 0.6), w a world setting at +0xc58 (1 -> 0.6, 0 -> 1): likely the source
-/// (not traced to the characters' damage). The demo's maps are the squad deathmatch ones: 1.
+/// the whole (take29: 39.4 of 40). Not traced: the ((1 - w) x 0.4 + 0.6) in FUN_00157260 and
+/// FUN_0021ade0 scales the push (h_ed582b3c), not the damage (see the module notes); the
+/// characters' own take-damage runs a per-target modifier first (FUN_002232d0's
+/// combat-target[6]), not followed. The demo's maps are the squad deathmatch ones: 1.
 const DAMAGE_SCALE: f32 = 1.0;
 /// How long a broken object's loose pieces stay (s), and the last part of that over which they
 /// shrink away. A guess: the takes lose them out of frame (crate panels leave it 0.4-0.6 s
@@ -69,9 +81,10 @@ const DEBRIS_LIFE: f32 = 1.2;
 const DEBRIS_SHRINK: f32 = 0.13;
 /// A broken object's pieces fly off (m/s): out from where it was hit (DEBRIS_OUT), along the
 /// hit (DEBRIS_ALONG) and up (DEBRIS_UP), each up to DEBRIS_JITTER more or less, tumbling at up
-/// to DEBRIS_SPIN rad/s. An explosive one's (with a damage area) are thrown out harder by
-/// DEBRIS_BLAST x (1.2 - d / range)^2, the push the area tick gives loose bodies (FUN_00224a90:
-/// (1.2 - d / range)^2 x damage x 1.5). Fitted to take25 (the crate's panels go 2-3 m to the
+/// to DEBRIS_SPIN rad/s. An explosive one's (with a damage area) are thrown out from its centre
+/// instead by DEBRIS_BLAST x (1.2 - d / range)^2, the push the area tick gives loose bodies
+/// (FUN_00224a90: (1.2 - d / range)^2 x damage x 1.5), and up by DEBRIS_BLAST_UP: take26's
+/// barrel pieces go low and fast. Fitted to take25 (the crate's panels go 2-3 m to the
 /// side and ~1 m up, out of frame by 0.5 s) and take26 (the barrel's pieces low and fast, out of
 /// frame by 0.45 s); not the game's numbers (the push on the pieces is the hit's direction x
 /// its damage, FUN_00156e50, on bodies of unknown mass).
@@ -80,7 +93,8 @@ const DEBRIS_ALONG: f32 = 4.0;
 const DEBRIS_UP: f32 = 3.0;
 const DEBRIS_JITTER: f32 = 0.35;
 const DEBRIS_SPIN: f32 = 9.0;
-const DEBRIS_BLAST: f32 = 3.0;
+const DEBRIS_BLAST: f32 = 6.0;
+const DEBRIS_BLAST_UP: f32 = 1.0;
 /// Test hook BF_TEST_HIT's hit: 50 ballistic (damage-type 1), what the takes' gdb call gave the
 /// objects through the game's own take-damage (notes.md: `!hit <object> 50 1`).
 const TEST_HIT_DAMAGE: f32 = 50.0;
@@ -127,6 +141,12 @@ struct Breakable {
     name: u32,
     kind: u32,
     place: Transform,
+    /// where the game has it: its origin moved to its archetype's centre (`Game::
+    /// archetype_centre`, the physics body's; the barrel's 0.435 m up). Its effects are spawned
+    /// and its damage areas measured from here, and other blasts measured to it. An inference:
+    /// at the origin, on the ground, the barrel's burst (exp-radio-flash and spray) was half
+    /// buried and showed late and faint, where take26's is full on its first frame
+    centre: Vec3,
     /// its drawn model (the placed root)
     entity: Option<Entity>,
     hp: f32,
@@ -181,6 +201,8 @@ struct Scenery {
     ready: bool,
     /// BF_TEST_HIT's hits done so far
     test_hits: usize,
+    /// grenade blasts on their way (from `ObjectBlasts`, from the frame after they went off)
+    blasts: Vec<ObjectBlast>,
 }
 
 /// A loose piece of a broken object: seconds left, and its own scale (it shrinks away at the end).
@@ -239,8 +261,9 @@ fn find_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: 
                      if entity.is_none() { ", no model" } else { "" });
         }
         debug_assert_eq!(b, list.len());
-        list.push(Breakable { name: o.name, kind: o.kind, place, entity, hp: t.hitpoints, state: State::Intact,
-                              push: Push { at: place.translation, dir: Vec3::ZERO }, explosive });
+        let centre = place.transform_point(game.0.object_meshes.get(&o.kind).and_then(|&a| game.0.archetype_centre(a)).unwrap_or(Vec3::ZERO));
+        list.push(Breakable { name: o.name, kind: o.kind, place, centre, entity, hp: t.hitpoints, state: State::Intact,
+                              push: Push { at: centre, dir: Vec3::ZERO }, explosive });
         // what it breaks into, made ready
         for d in &t.debris {
             let Some(k) = game.0.object_types.get(&d.kind).map(|k| k.object_type) else { continue };
@@ -342,18 +365,21 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
         damage(s, &game.0, b, amount, kind, push, now);
     }
     // grenade blasts: Damage max at the blast, nothing at the radius (as the characters take
-    // it), to the object's origin
+    // it), to the object's origin. Their countdown starts on the frame after the blast, as the
+    // characters' does (play_grenade.rs counts its pending damage down before new blasts), so
+    // both land on the same frame
     let mut landed = vec![];
-    blasts.0.retain_mut(|b| {
+    s.blasts.retain_mut(|b| {
         b.left -= dt;
         if b.left <= 0.0 {
             landed.push((b.at, b.radius, b.damage, b.damage_type, b.label.clone()));
         }
         b.left > 0.0
     });
+    s.blasts.append(&mut blasts.0);
     for (at, radius, max, kind, label) in landed {
         for i in 0..s.list.len() {
-            let o = s.list[i].place.translation;
+            let o = s.list[i].centre;
             let d = o.distance(at);
             if d >= radius || !matches!(s.list[i].state, State::Intact) {
                 continue;
@@ -399,8 +425,8 @@ fn damage(s: &mut Scenery, game: &Game, i: usize, amount: f32, damage_type: i64,
     }
 }
 
-/// Breaking objects: the countdown, spawning each debris entry when it's due (the longest delay
-/// first), and the object gone once it's done (see the module notes). Effect sounds whose delay
+/// Breaking objects: the countdown, spawning a debris entry a frame when it's due (the longest
+/// delay first), and the object gone once it's done (see the module notes). Effect sounds whose delay
 /// is up play.
 #[allow(clippy::too_many_arguments)]
 fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut<Player>, mut game: ResMut<GameData>,
@@ -422,10 +448,11 @@ fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Sc
         let State::Breaking { countdown, queue } = &mut s.list[i].state else { continue };
         *countdown -= dt;
         let left = *countdown;
-        let (due, rest): (Vec<Debris>, Vec<Debris>) = queue.drain(..).partition(|d| d.delay >= left);
-        *queue = rest;
-        let done = queue.is_empty() && left <= 0.0;
-        let (place, push, explosive, name) = (s.list[i].place, s.list[i].push, s.list[i].explosive, s.list[i].name);
+        // the first entry due spawns (one a frame, FUN_0015af20); none due and the countdown
+        // run out: the object goes
+        let due: Vec<Debris> = queue.iter().position(|d| d.delay >= left).map(|k| queue.remove(k)).into_iter().collect();
+        let done = due.is_empty() && left <= 0.0;
+        let (place, centre, push, explosive, name) = (s.list[i].place, s.list[i].centre, s.list[i].push, s.list[i].explosive, s.list[i].name);
         for d in due {
             let kind = game.0.object_types.get(&d.kind).map_or(-1, |k| k.object_type);
             if log {
@@ -438,20 +465,20 @@ fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Sc
                         for (k, &e) in fx.effects.iter().chain([&fx.light]).filter(|&&e| e != 0).enumerate() {
                             if let Some(c) = ale.load_recorded(&mut game.0, &mut images, &mut materials, e) {
                                 let life = c.duration();
-                                let seed = (place.translation.x * 977.0 + place.translation.z * 131.0) as u32 ^ k as u32;
-                                commands.spawn((place.with_scale(Vec3::ONE), Visibility::default(),
+                                let seed = (centre.x * 977.0 + centre.z * 131.0) as u32 ^ k as u32;
+                                commands.spawn((place.with_scale(Vec3::ONE).with_translation(centre), Visibility::default(),
                                                 bf_viewer::ale_fx::AleEffect::once(c, 0.0, seed), AleExpire(life)));
                             }
                         }
                     }
                     for &(id, delay, _, _) in &fx.sounds {
-                        s.sounds.push((delay, id, place.translation));
+                        s.sounds.push((delay, id, centre));
                     }
                     for dmg in &fx.damage {
-                        s.areas.push(Area { source: i, effect: d.kind, at: place.translation, damage: *dmg, wait: AREA_DELAY + dmg.delay, age: 0.0,
+                        s.areas.push(Area { source: i, effect: d.kind, at: centre, damage: *dmg, wait: AREA_DELAY + dmg.delay, age: 0.0,
                                             victims: vec![] });
                         // loose bodies about (pickups, earlier debris) are thrown by it
-                        loose.0.push((place.translation, dmg.range));
+                        loose.0.push((centre, dmg.range));
                     }
                 }
                 OBJECT_COMPOUND => {
@@ -466,16 +493,20 @@ fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Sc
                         };
                         let jitter = |n: u32| 1.0 + DEBRIS_JITTER * (2.0 * r(n) - 1.0);
                         // out from where it was hit (an explosive one: from between that and
-                        // its origin, FUN_00157260), along the hit, and up
-                        let from = if explosive { (place.translation + push.at) * 0.5 } else { push.at };
+                        // its centre, FUN_00157260), along the hit, and up; an explosive one's
+                        // thrown out from its centre instead, low (the barrel's) or up (the
+                        // rack's missiles, above it), by (1.2 - d / range)^2
+                        let from = if explosive { (centre + push.at) * 0.5 } else { push.at };
                         let out = Vec3::new(middle.x - from.x, 0.0, middle.z - from.z).normalize_or(Vec3::new(r(1) - 0.5, 0.0, r(2) - 0.5).normalize_or(Vec3::X));
                         let along = Vec3::new(push.dir.x, 0.0, push.dir.z);
-                        let mut velocity = out * DEBRIS_OUT * jitter(3) + along * DEBRIS_ALONG * jitter(4) + Vec3::Y * DEBRIS_UP * jitter(5);
-                        if explosive {
-                            let d = middle.distance(place.translation);
+                        let velocity = if explosive {
+                            let d = middle.distance(centre);
                             let k = (1.2 - d / range).max(0.0);
-                            velocity += (out + Vec3::Y * 0.5).normalize() * DEBRIS_BLAST * k * k;
-                        }
+                            let blast = (middle - centre).normalize_or(out);
+                            out * DEBRIS_OUT * jitter(3) + blast * DEBRIS_BLAST * k * k * jitter(4) + Vec3::Y * DEBRIS_BLAST_UP * jitter(5)
+                        } else {
+                            out * DEBRIS_OUT * jitter(3) + along * DEBRIS_ALONG * jitter(4) + Vec3::Y * DEBRIS_UP * jitter(5)
+                        };
                         let spin = Vec3::new(r(6) - 0.5, r(7) - 0.5, r(8) - 0.5) * 2.0 * DEBRIS_SPIN;
                         let e = commands.spawn((at, Visibility::default(), Name::new(format!("debris h_{:08x}", d.kind)),
                                                 super::pickups::Thrown { velocity, spin }, DebrisPiece { left: DEBRIS_LIFE, scale: at.scale })).id();
@@ -546,11 +577,8 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             continue;
         }
         let value = a.damage.amount * inside * DAMAGE_SCALE;
-        // the characters in range. No line of sight: the gather (FUN_00224a90) ray-tests from
-        // the area's centre only when the area isn't "over time" (flag 0x10) or the target lacks
-        // a flag (+0x70 bit 0), as far as the decompiled branch reads; and take29's Tex, standing
-        // under the structure beside the barrel on sdm_e34, took the whole 39.4 HP where a ray
-        // from the barrel meets that structure 0.4 m out
+        // the characters in range (FUN_0021ade0 measures each target's place to the effect's,
+        // with no ray test: the weapons' blast areas test one, FUN_00224a90, not these)
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if u.dead {
                 continue;
@@ -560,7 +588,7 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             if d >= a.damage.range {
                 continue;
             }
-            let amount = value * game.0.damage_factor(CHARACTERS[u.character], a.damage.damage_type);
+            let amount = falloff(&a.damage, value, d) * game.0.damage_factor(CHARACTERS[u.character], a.damage.damage_type);
             if amount <= 0.0 {
                 continue;
             }
@@ -585,9 +613,9 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
         }
         // the breakable objects in range (to their origin)
         for (i, b) in s.list.iter().enumerate() {
-            let d = b.place.translation.distance(a.at);
+            let d = b.centre.distance(a.at);
             if i != a.source && d < a.damage.range && matches!(b.state, State::Intact) {
-                hits.push((i, value, a.damage.damage_type, Push { at: a.at, dir: (b.place.translation - a.at).normalize_or(Vec3::Y) }));
+                hits.push((i, falloff(&a.damage, value, d), a.damage.damage_type, Push { at: a.at, dir: (b.centre - a.at).normalize_or(Vec3::Y) }));
             }
         }
     }
@@ -606,6 +634,20 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
         }
         !over
     });
+}
+
+/// An area's damage this frame (`value`: amount x the frame's part of its time) at `d` m by its
+/// falloff, as FUN_0021ade0 deals it: 1 (DFALL_LINEAR) x (1 - d / range); 2 (DFALL_EXPONENTIAL)
+/// (1 - d / range)^2 x value^2 (squared value and all, as the code has it); the others, 0
+/// (NONE) and 3 (HALF_LIFE: the rack's), in full. The takes' flat rack damage at 4 and 7 m
+/// agrees.
+fn falloff(damage: &AreaDamage, value: f32, d: f32) -> f32 {
+    let k = 1.0 - d / damage.range.max(1e-3);
+    match damage.falloff {
+        1 => value * k,
+        2 => k * k * value * value,
+        _ => value,
+    }
 }
 
 /// Loose pieces of broken objects shrink away and go at the end of their DEBRIS_LIFE.

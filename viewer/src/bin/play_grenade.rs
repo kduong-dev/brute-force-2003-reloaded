@@ -537,7 +537,8 @@ fn fly_grenades(
                 continue;
             }
             // loose pickups are thrown by blasts that hurt, and breakable scenery takes their
-            // damage (play_scenery.rs), when the characters do
+            // damage DAMAGE_DELAY later (play_scenery.rs; the Energy's and the Sonic's too, as a
+            // plain blast: a simplification)
             blasts.0.push((at, radius));
             objects.0.push(super::scenery::ObjectBlast { left: DAMAGE_DELAY, at, radius, damage: max, damage_type: kit.blast.damage_type,
                                                         label: kit.def.label.clone() });

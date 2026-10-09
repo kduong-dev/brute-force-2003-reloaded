@@ -90,6 +90,8 @@ const H_DEBRIS_MAIN: u32 = 0x1C1E_17FE;
 const H_DEBRIS_DELAY: u32 = 0x1B6A_0EDE;
 const H_DEBRIS_LIFE: u32 = 0xF2E4_E1A3;
 const H_EFFECT_DAMAGE: u32 = 0xFB0A_5F1D;
+/// An archetype's centre point (`<h_e99750a9>x y z</h_e99750a9>`), see `Game::archetype_centre`.
+const H_ARCHETYPE_CENTRE: u32 = 0xE997_50A9;
 /// Collision: the objects file's surface table, its entries (name, h_e9e44859 = offset in the
 /// .ipn) and the attribute an archetype / terrain block / blocker names its surface with.
 const H_PHYSICS_FILE: u32 = 0x104D_B1CD;
@@ -958,6 +960,20 @@ impl Game {
     /// (h_197caf14) isn't empty. 467 game types have one; most of them 40 hp.
     pub fn breakable(&self, kind: u32) -> Option<&ObjectType> {
         self.object_types.get(&kind).filter(|t| t.object_type == OBJECT_GAME && !t.debris.is_empty())
+    }
+
+    /// An archetype's `<h_e99750a9>` point (its own frame), or for a compound without one its
+    /// first part's (the missile rack h_fbdcd828: its root part h_e3860cda's -0.18 1.16 0). Read
+    /// as the physics body's centre, where the game places the object: the radiation barrel's
+    /// (0 0.435 0) sits in its middle. Not every archetype has one.
+    pub fn archetype_centre(&self, archetype: u32) -> Option<Vec3> {
+        let (a, _) = self.archetype(archetype)?;
+        let read = |e: &Element| e.child(H_ARCHETYPE_CENTRE).and_then(|c| c.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
+            .map(|f| Vec3::new(f[0], f[1], f[2]));
+        read(a).or_else(|| {
+            let first = a.child(0xE487_418A)?.children_named(h("PART")).next()?.attr(h("archetype-name"))?.as_hash()?;
+            read(self.archetype(first)?.0)
+        })
     }
 
     /// A collision surface's triangles (corners in its owner's frame, material), see
