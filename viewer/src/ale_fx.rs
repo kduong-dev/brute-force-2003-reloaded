@@ -53,8 +53,29 @@ const INITIAL: u32 = 0x0F9A_9D52;
 /// one particle. (It is Freelancer's Emitter_EmitCount: its hash is the game's hash of that
 /// name. Keyed over the emitter's time on smoke-grenade-flsh - 9 keys of 10.6-13.7 over
 /// 0.09-0.98 s - where the Gas recording's flash flickers for ~1 s; the demo's is the one
-/// burst. How the keys emit isn't settled: exp-lrg-flash and sonic_grenade are keyed too.)
+/// burst. How the keys emit isn't settled: exp-lrg-flash is keyed too; sonic_grenade's are
+/// read as a rate after its burst, EMIT_COUNT_RATE.)
 const BURST: u32 = 0xE722_1F95;
+/// Emitters whose emit count (BURST) runs over their life as well, as particles per second, on
+/// top of the opening burst: the Sonic's sonic_grenade.emt (no rate, no initial count, emit
+/// count keyed 27.6 -> 38.3 over 0.007-0.297 s, lifespan 0.35 s: 28 particles at once, then
+/// ~11 more). Checked against the Sonic recording (sonic/hi 449-481): its dome is whole and
+/// smooth from the first frames, so it starts with many particles (with one particle it was a
+/// few flat sheets); its spread opens from 28-74 to 90 degrees by 0.25 s and the recording's
+/// flat ring shows from ~0.27 s, so particles keep coming after the start (with the burst
+/// alone there is no ring). Read per 30 fps game frame instead (~300 particles), the dome was a
+/// solid white blob. An inference, for this emitter only: the Frag's exp-lrg-flash and the
+/// Gas's smoke-grenade-flsh keep the one burst they were checked with.
+///
+/// Its air field sonic_grenade_air.fld (a wind of 0.004 m/s, so a drag: Approach 0.80 falling
+/// to 0.15 by 0.43 s) stays off. Applied 6 times a second (a fit to the reference agent's early
+/// half-widths) it held the particles in a ball: 18-26% of the dome's pixels fully white
+/// (recorded 0-2%) and the ring 5.3 m out at +0.6 s where the recording's is past 6.3-9.5 m.
+/// Off, the dome is a see-through shell with a bright rim (0-8% white, sdm_e34 captures
+/// scratchpad s81/N0), seen from above a ring with a dark middle, and it spreads faster - wider
+/// than recorded over its first ~0.2 s, where the quads' own size (0 -> 5.5 m over a quarter of
+/// their life) sets the width.
+const EMIT_COUNT_RATE: [&str; 1] = ["sonic_grenade.emt"];
 const RATE: u32 = 0x023C_350C;
 const LIFE: u32 = 0x0A63_5880;
 const SPEED: u32 = 0x0AB1_80C5;
@@ -106,15 +127,22 @@ const SPAWN_EFFECT: u32 = 0x0EC7_A290;
 /// h_ed10c55f (stun_grenade_init.app) and h_f48dc74d (stun_grenade_init#1.app).
 const STAND_IN_EMITTERS: [u32; 2] = [0xED10_C55F, 0xF48D_C74D];
 
-/// Perp quads lie flat in the emitter's frame, i.e. face along the emitter's axis - the
-/// direction a cone emitter throws them (the Sonic's ring, the laser hits' rings, a bolt's
-/// cross-section). A sphere emitter throws them every way: from one moving out at this speed
-/// (m/s) or more, a perp quad faces out along its own direction, so the Frag's exp-fire-add
-/// (0.48 m/s, radius 1 -> 3.3 m) is a round shell as in the recording (frag/a 0700-0730),
-/// not a stack of flat discs seen edge-on. The power-ups' icons (sphere emitters at 0.02-0.16
-/// m/s, verified flat) keep the emitter's frame. The threshold is the demo's: the data has no
-/// flag for it. Only for the grenades' effects (`Compiled::recorded`).
+/// Perp quads lie flat in the emitter's frame, i.e. face along the emitter's axis (the laser
+/// hits' rings, a bolt's cross-section). From a sphere emitter throwing its particles out at
+/// this speed (m/s) or more (and a cone emitter in PERP_OUT_CONES), a perp quad faces out along
+/// its own direction instead: the Frag's exp-fire-add (0.48 m/s, radius 1 -> 3.3 m) is a round
+/// shell as in the recording (frag/a 0700-0730), not a stack of flat discs seen edge-on. The
+/// power-ups' icons (sphere emitters at 0.02-0.16 m/s, verified flat) keep the emitter's
+/// frame. The threshold is the demo's: the data has no flag for it. Only for the grenades'
+/// effects (`Compiled::recorded`).
 const PERP_RADIAL_SPEED: f32 = 0.3;
+/// Cone emitters whose perp quads face out along their direction too (see PERP_RADIAL_SPEED):
+/// the Sonic's sonic_grenade.emt (10-17 m/s, spread 28-74 opening to 90 degrees by 0.25 s). So
+/// it's a dome with a bright rim, as recorded (sonic/hi 451-465), then a low wall round the
+/// ground as its spread reaches 90 (the recording's ring from ~0.27 s); lying flat it was a
+/// flat streak. Only this one, checked against the Sonic recording: the Energy's stun_hit_s
+/// has a perp cone too and stays as it was checked.
+const PERP_OUT_CONES: [&str; 1] = ["sonic_grenade.emt"];
 /// Air fields, linked to an appearance by the effect's pair list (appearance -> field, as
 /// Freelancer's ALE links them; FxAirField, AirField_Magnitude and AirField_Approach are the
 /// game's hashes of Freelancer's names). One pulls its particles' velocity toward a wind of
@@ -122,9 +150,10 @@ const PERP_RADIAL_SPEED: f32 = 0.3;
 /// time), Approach of the way once each 1/APPROACH_FPS s.
 ///
 /// Run only for the fields in AIR_FIELDS, the ones checked against a recording; every other
-/// field (the Sonic's sonic_grenade_air.fld, the Frag's exp-lrg-air, the gravity fields
-/// FxGravityField h_e644c021 of the shrapnels and exp-lrg-dirt, turbulence fields
-/// FxTurbulenceField h_0b72ea10) is left off until checked against its own capture (#101).
+/// field (the Frag's exp-lrg-air, the gravity fields FxGravityField h_e644c021 of the
+/// shrapnels and exp-lrg-dirt, turbulence fields FxTurbulenceField h_0b72ea10) is left off
+/// until checked against its own capture (#101); the Sonic's sonic_grenade_air.fld was checked
+/// and left off (see EMIT_COUNT_RATE).
 /// Not done: a field node's own life (h_f27fde7d: gas-grenade.fld's 12 s) is ignored, the field
 /// runs as long as its particles do; the wind is in the world's frame (the blasts are placed
 /// upright, and a trail's spinning grenade would spin it), while an attached particle's
@@ -163,9 +192,18 @@ const UPRIGHT_WIDTH: f32 = 0.5;
 /// starburst of rays fanning up from the flare at ignition and the sparks round its base after
 /// (lg 0397-0411, 1073-1085, 1200), which lying flat drew as short horizontal lines. The Frag's,
 /// Gas's, Sonic's and Sentry's perp appearances are born square or squat (aspect 0.04-1.01) and
-/// keep lying flat. The threshold is the demo's; only for the grenades' effects
+/// stay perp quads (the Sonic's facing out, PERP_OUT_CONES). The threshold is the demo's; only for the grenades' effects
 /// (`Compiled::recorded`).
 const SPARK_ASPECT: f32 = 1.5;
+/// Camera-facing quads that stand vertical - turned about the world's vertical to face the
+/// camera, from their first frame (no random roll) - instead of turning along their motion
+/// once stretched: the Sonic's sonic_grenade_flash.app (godray.tga, aspect 0.5 -> 15.8: shafts up to ~17 m tall, thrown out
+/// at 54-83 degrees from the vertical). Along their motion they lay nearly flat, a white glare
+/// across the ground; the recording's shafts stand up from the blast (sonic/hi 469-497). The
+/// recording's lean out by up to ~30 degrees and there are 2-4 at a time, where this draws the
+/// data's ~45 a second straight up: a partial match. Only this appearance, checked against the
+/// Sonic recording (the Energy's stun_hit_s godrays are left as they were).
+const VERTICAL_STREAKS: [&str; 1] = ["sonic_grenade_flash.app"];
 /// Materials per appearance: its colour and alpha at this many points of a particle's life.
 const STEPS: usize = 12;
 /// Particles alive at once, over all effects.
@@ -205,6 +243,8 @@ pub struct Pair {
     light: bool,
     /// the fields its appearance is linked to (see CLASS_AIR_FIELD)
     fields: Vec<Node>,
+    /// stretched quads drawn vertical (VERTICAL_STREAKS)
+    vertical: bool,
     /// an effect appearance's pair (CLASS_SPAWNER): the effect each particle carries
     child: Option<Arc<Compiled>>,
 }
@@ -447,7 +487,7 @@ impl AleAssets {
                     .and_then(|n| self.load_as(game, images, materials, h(n), recorded));
                 if let Some(child) = child {
                     pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                      frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None });
+                                      frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None, vertical: false });
                 }
                 continue;
             }
@@ -472,7 +512,7 @@ impl AleAssets {
                 let material = mats[0].clone();
                 let fps = book.map_or(0.0, |b| b.fps);
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![mats], fps,
-                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields: vec![], rise: None });
+                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields: vec![], rise: None, vertical: false });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
@@ -480,7 +520,7 @@ impl AleAssets {
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![], rise: None });
+                                  frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![], rise: None, vertical: false });
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
@@ -521,8 +561,9 @@ impl AleAssets {
             let spark = recorded && app.flag(PERP) && emitter.class == CLASS_CONE
                 && emitter.curve(SPEED, 0.0, 0.0).unwrap_or(0.0) >= PERP_RADIAL_SPEED && app.floats(ASPECT, 0.0, 0.0).unwrap_or(1.0) > SPARK_ASPECT;
             let (perp, streak) = if spark { (false, true) } else { (app.flag(PERP), streak) };
+            let vertical = recorded && VERTICAL_STREAKS.contains(&app.name.as_str());
             pairs.push(Pair { perp, attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
-                              beam: None, light: false, fields, child: None, rise });
+                              beam: None, light: false, fields, child: None, rise, vertical });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded })
     }
@@ -676,12 +717,17 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
             // a finite emitter starts over while the effect stays on
             let t = fx.t % lifespan;
             let sp = fx.sp;
-            let rate = em.curve(RATE, sp, t).unwrap_or(0.0).max(0.0);
+            let mut rate = em.curve(RATE, sp, t).unwrap_or(0.0).max(0.0);
             let initial = em.int(INITIAL).unwrap_or(0).max(0) as usize;
             // no rate and no initial count: its burst when it starts (exp-lrg-flash's 4), else
-            // one particle (a gun's tracer)
+            // one particle (a gun's tracer); an EMIT_COUNT_RATE emitter goes on emitting its emit
+            // count per second after the burst
             let burst = if compiled.recorded { em.curve(BURST, sp, 0.0).unwrap_or(0.0).round().max(1.0) as usize } else { 1 };
-            let mut n = if fresh { if initial == 0 && rate == 0.0 { burst } else { initial } } else { 0 };
+            let over_time = compiled.recorded && initial == 0 && rate == 0.0 && EMIT_COUNT_RATE.contains(&em.name.as_str());
+            if over_time {
+                rate = em.curve(BURST, sp, t).unwrap_or(0.0).max(0.0);
+            }
+            let mut n = if fresh { if over_time || (initial == 0 && rate == 0.0) { burst } else { initial } } else { 0 };
             let carried = fx.acc[i];
             fx.acc[i] += rate * dt;
             n += fx.acc[i] as usize;
@@ -741,9 +787,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
                 let roll = if pair.perp || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
                 let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-                // a perp quad from a sphere emitter that throws its particles out: facing out
-                // along its direction from the middle (see PERP_RADIAL_SPEED)
-                if compiled.recorded && pair.perp && em.class == CLASS_SPHERE && speed >= PERP_RADIAL_SPEED {
+                // a perp quad from a sphere emitter (or a PERP_OUT_CONES cone) that throws its particles
+                // out: facing out along its direction from the middle (see PERP_RADIAL_SPEED)
+                if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
+                    && speed >= PERP_RADIAL_SPEED {
                     lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
                 }
                 count.0 += 1;
@@ -875,6 +922,11 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         let aspect = app.floats(ASPECT, p.sp, k).unwrap_or(1.0);
         tr.rotation = if pair.perp {
             turn * p.frame * spin
+        } else if pair.vertical && !pair.streak {
+            // standing up, turned about the vertical to face the camera (VERTICAL_STREAKS)
+            let d = facing * Vec3::Z;
+            let flat = Vec3::new(d.x, 0.0, d.z).normalize_or(Vec3::Z);
+            Quat::from_rotation_y(flat.x.atan2(flat.z))
         } else if (pair.streak || aspect > 1.5) && moving.length_squared() > 1.0 {
             // stretched along the motion as seen from the camera
             let v = facing.inverse() * moving;

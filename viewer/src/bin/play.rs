@@ -434,7 +434,7 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
@@ -455,6 +455,8 @@ mod grenade;
 mod gas;
 #[path = "play_energy.rs"]
 mod energy;
+#[path = "play_sonic.rs"]
+mod sonic;
 #[path = "play_fx.rs"]
 mod fx;
 #[path = "play_pickups.rs"]

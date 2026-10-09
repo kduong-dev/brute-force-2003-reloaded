@@ -30,11 +30,11 @@
 //! moment (see `TINT_LOW`).
 //!
 //! The Gas's damage over time is play_gas.rs's (its blast is handed over there, see
-//! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs). The Light does no
-//! damage: its canister stays where it lies while phosphor_grenade and light_phosphor burn
-//! (30 s, see `stays`). Not done yet (each type's own ticket): the
-//! Sonic's ring that carries the damage out, the Roller's seeking and the Sentry's trigger (it
-//! lies there until its 9999 s timer or BF_TEST_DETONATE).
+//! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs), the Sonic's with its
+//! ring (play_sonic.rs). The Light does no damage: its canister stays where it lies while
+//! phosphor_grenade and light_phosphor burn (30 s, see `stays`). Not done yet (each type's own
+//! ticket): the Roller's seeking and the Sentry's trigger (it lies there until its 9999 s timer
+//! or BF_TEST_DETONATE).
 
 use super::*;
 use bf_viewer::bf::character::EffectType;
@@ -256,7 +256,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
-        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, super::energy::strike, tint).chain().in_set(GrenadeSystems)
+        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, super::energy::strike, super::sonic::ring, tint).chain().in_set(GrenadeSystems)
             .after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
@@ -421,9 +421,9 @@ fn fly_grenades(
     mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
     (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
-    (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>, ResMut<DelayedBlastParts>,
-                                                               ResMut<ScreenTint>, ResMut<super::gas::GasClouds>,
-                                                               ResMut<super::energy::BoltRequests>),
+    (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts, mut rings): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>,
+                                                               ResMut<DelayedBlastParts>, ResMut<ScreenTint>, ResMut<super::gas::GasClouds>,
+                                                               ResMut<super::energy::BoltRequests>, ResMut<super::sonic::RingRequests>),
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
     mut trails: Query<(&ChildOf, &mut bf_viewer::ale_fx::AleEffect)>,
@@ -471,27 +471,14 @@ fn fly_grenades(
     });
     for (kind, at, thrower) in due {
         let Some(kit) = kits.0.get(kind) else { continue };
-        let (radius, max, min) = (kit.blast.blast_radius, kit.blast.damage, kit.blast.damage_min.min(kit.blast.damage));
+        let (max, min) = (kit.blast.damage, kit.blast.damage_min.min(kit.blast.damage));
         let roll = p.random(1000) as f32 / 1000.0;
-        let (leader, rest) = (std::iter::once((&mut *p, false, true)), squad.0.iter_mut().map(|u| (u, instant, false)));
-        for (u, kill, controlled) in leader.chain(rest) {
-            let d = u.position.distance(at);
-            if d >= radius || u.dead {
-                continue;
-            }
-            let k = 1.0 - d / radius;
-            let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
-            // (times the character's factor for the explosion's damage-type)
-            let damage = game.0.damage_factor(CHARACTERS[u.character], kit.blast.damage_type)
-                * if u.character == thrower { SELF_DAMAGE * (min + (max - min) * roll) } else { max * k };
-            let damage = if kill && u.character != thrower { u.health.max(damage) } else { damage };
-            hurt(u, &game.0, damage, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
-            if controlled {
-                tint.0 = 0.0;
-            }
-            if std::env::var("BF_COMBAT_LOG").is_ok() {
-                println!("{} blast at {d:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}", kit.def.label, CHARACTERS[u.character], u.health, u.max_health);
-            }
+        let own = SELF_DAMAGE * (min + (max - min) * roll);
+        if hurt_by_blast(p, &game.0, kit, at, own, thrower, false).is_some() {
+            tint.0 = 0.0;
+        }
+        for u in squad.0.iter_mut() {
+            hurt_by_blast(u, &game.0, kit, at, own, thrower, instant);
         }
     }
     // test hook: BF_TEST_DETONATE=<s> sets off every grenade out at that time (the Sentry has no
@@ -538,6 +525,11 @@ fn fly_grenades(
             // the Energy's damage comes with its bolts (play_energy.rs)
             if super::energy::releases_bolts(kit) {
                 bolts.0.push((g.kind, Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z), g.thrower));
+                continue;
+            }
+            // the Sonic's comes with its ring (play_sonic.rs)
+            if super::sonic::carries_damage(kit) {
+                rings.0.push((g.kind, at, g.thrower));
                 continue;
             }
             delayed.2.push(PendingDamage { left: DAMAGE_DELAY, kind: g.kind, at, thrower: g.thrower });
@@ -643,6 +635,31 @@ fn fly_grenades(
 /// other types' recordings show nothing left after the blast. An inference.
 fn stays(kit: &GrenadeKit) -> bool {
     kit.blast.damage <= 0.0
+}
+
+/// One character hurt by a blast of `kit` at `at`, if they're alive and within its radius:
+/// Damage max falling to nothing at the radius, the thrower `own` anywhere inside it (the
+/// test map's instant kill, `kill`, kills anyone else), times the character's factor for the
+/// explosion's damage-type; thrown back and up by as much. Returns the damage dealt (None if
+/// none: out of reach, dead, or no damage).
+pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: Vec3, own: f32, thrower: usize, kill: bool) -> Option<f32> {
+    let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
+    let d = u.position.distance(at);
+    if d >= radius || u.dead {
+        return None;
+    }
+    let k = 1.0 - d / radius;
+    let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
+    let damage = game.damage_factor(CHARACTERS[u.character], kit.blast.damage_type) * if u.character == thrower { own } else { max * k };
+    let damage = if kill && u.character != thrower { u.health.max(damage) } else { damage };
+    if damage <= 0.0 {
+        return None;
+    }
+    hurt(u, game, damage, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
+    if std::env::var("BF_COMBAT_LOG").is_ok() {
+        println!("{} blast at {d:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}", kit.def.label, CHARACTERS[u.character], u.health, u.max_health);
+    }
+    Some(damage)
 }
 
 /// A blast at `at`: the explosion's effect type (its ALE effects and light effect, run once on

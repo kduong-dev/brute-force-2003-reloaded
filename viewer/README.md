@@ -168,11 +168,12 @@ decal, and a throw called off.
   * Beam ribbons are never frustum-culled (any effect): their mesh is rebuilt every frame, and
     the bounds taken from its first few points culled the Energy's bolts as they spread.
   * The Frag's exp-fire-add is a sphere emitter of "perp" quads. Perp quads lie flat in the
-    emitter's frame (the Sonic's ring and the laser hits' rings show that), which drew it as a
+    emitter's frame (the laser hits' rings show that), which drew it as a
     stack of flat discs seen nearly edge-on: a wide flat streak. From a sphere emitter whose
     particles move out at 0.3 m/s or more, a perp quad now faces out along its own direction,
     and the fireball is round from its first frame, as in the recording. Grenade effects only;
-    the 0.3 m/s threshold is the demo's.
+    the 0.3 m/s threshold is the demo's. The Sonic's cone emitter sonic_grenade.emt does the
+    same (by name, see **Sonic grenade**).
   * Added for the Light's phosphor_grenade (grenade effects only): an upright streak - a
     camera-facing appearance (not perp, not motion-blurred) whose width factor (04b5fc1b)
     stays under half its height factor (0db2cc8d) all its life, with a constant Rotate - has
@@ -193,8 +194,8 @@ decal, and a throw called off.
     49 degrees of up) is the only grenade appearance it picks out: the recording's starburst
     of rays fanning up from the flare at ignition and the sparks round its base after (lg
     0397-0411, 1073-1085, 1200), which lying flat drew as short horizontal lines. The other
-    grenades' perp appearances are born square or squat (aspect 0.04-1.01) and keep lying
-    flat. Their gravity field stays off (#101), so the sparks fly farther than recorded (up to
+    grenades' perp appearances are born square or squat (aspect 0.04-1.01) and stay perp
+    quads. Their gravity field stays off (#101), so the sparks fly farther than recorded (up to
     ~5 m, faint by then, where the recording's stay within ~1-2 m).
   * Also for the Light: a steady light - a "light_" effect whose emitter has a constant rate
     at which its particles overlap two deep or more - lights each particle up over its first
@@ -212,7 +213,8 @@ decal, and a throw called off.
   each, ~11%, no falloff); the game's formula isn't known. No damage from a blast without any
   (the Light); one whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose recording
   shows none at once) leaves a poison cloud instead (see **The Gas's cloud** below). The
-  Energy's damage comes with its bolts instead (see **Energy grenade**).
+  Energy's damage comes with its bolts instead (see **Energy grenade**), the Sonic's with its
+  ring (see **Sonic grenade**).
 * **Damage types.** Each character's combat-target lists factors per damage-type
   (`<h_142be76f><h_1d403525 Type h_04653d86>`, read into `Game::character_damage_factors`;
   the shield's own list is empty): Flint takes type 4 (the Gas) x0.05 and type 6 (the Energy)
@@ -261,8 +263,9 @@ decal, and a throw called off.
     swinging round over time; gas-grenade2.fld: 0.26 m/s up). `src/ale_fx.rs` now runs air
     fields, but only those checked against a recording (`AIR_FIELDS`): these two, and
     grenade_trail_rise (0.8 m/s up: the grenades' trail now rises the right way, thinner and
-    more vertical than the recordings' - a partial match). Every other field - the Sonic's
-    sonic_grenade_air.fld, the Frag's exp-lrg-air, every gravity field (exp-lrg-shrap,
+    more vertical than the recordings' - a partial match). The Sonic's sonic_grenade_air.fld
+    was checked against its recording and stays off (see **Sonic grenade**). Every other field -
+    the Frag's exp-lrg-air, every gravity field (exp-lrg-shrap,
     exp-lrg-dirt, phosphor_grenade-shrap, smoke_grenade-shrap) and turbulence field - stays off
     until checked against its own capture (#101). An appearance's fields are the effect's pairs
     appearance -> field (as Freelancer links them; FxAirField, AirField_Magnitude and
@@ -296,7 +299,7 @@ What each type does so far, and doesn't:
 | Energy (#74) | timer 1.75, stun_grenade_master + stun_hit_s, f875b6c6, decal h_f4d65518; its bolts crawl out and carry the damage (39-97.5, 9 m) to every body in reach, throwing down the living and throwing corpses (see **Energy grenade**) | the stunned_fx 30 s arc; the per-liquid effects h_0cbcb8f2; the "Tech Upgrade" |
 | Gas (#76) | timer 1, gas-grenade's olive cloud (with its air fields), 1b35643e, the poison: 17.7 HP/s within 3 m for 5.5 s, Flint x0.05 | the "Tech Upgrade" (the ticket's); the cloud's fade (lingers ~1-2 s, see above); the flash's ~1 s flicker (smoke-grenade-flsh's keyed emit count: one burst here); the shared HUD's damage feedback (white bar with a dark-red trailing segment, the direction chevron) |
 | Light (#77) | timer 1.5; phosphor_grenade (a tall thin blue beam of upright streaks, the glow and sparks at its base) + light_phosphor (a blue-white point light, reach 18.8-24.3 m) burning 30 s as the data has them (the spike's rate drops to 0 at 29.45 s); ignition h_1080aaf1 and f5260e35 after 0.2 s; no damage, no decal, no tint, pickups left alone; the canister stays where it lies, its trail stopped, until the effects have run (31.1 s) | the end of the burn isn't recorded (the recording shows >= 15.1 s); the beam is paler and less solid than recorded and the base's white core smaller (see **Light grenade**); the sparks fly too far (no gravity field, #101); the light's strength not measured against the recording |
-| Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7 | the damage arriving with the ring (it's dealt at once) |
+| Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7; the damage comes with the ring, the thrower's falls off by 5 m, nobody is knocked down (see **Sonic grenade**) | the "Tech Upgrade"; the godrays (broad columns, not two narrow shafts), the ring (a wall, not a flat band), the decal's look |
 | Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s with its rolling sound, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking |
 | Sentry (#80) | set down (place_hi), lies there; exp-mine + light_explosion, h_145f09e5 | its trigger (9999 s timer: `BF_TEST_DETONATE` sets it off); arming, LEDs, disarming |
 
@@ -364,6 +367,88 @@ Not matching:
   ticket.
 * The white core at the base is smaller than the recording's (about a character's shoulder
   width there), likely the same blend rule: it's the glow's overlapping flares.
+
+#### Sonic grenade (`src/bin/play_sonic.rs`)
+
+"Triggers a powerful sonic blast upon impact." Timer 0: off at its first contact, no bounce;
+the explosion h_faced66c (Damage 39-71.5, damage-type 7 = DTYPE_SONIC, radius 10); the effect
+type h_0c18f6cc: grenade_sonic (sonic_grenade: the dome and ring; sonic_grenade_flash: godray
+shafts) with light_sonic_grenade and the sound f36fb063 at the first blast frame; decal
+h_fb24bcb7; its trail grenade_trail with f6dbdb17. Measured from the recording
+(todo/Sonic Grenade.mp4, the reference and tester agents' frames; the second blast at frame
+449, camera still): a glowing dome growing from +0.03 s, flattening into a ground ring at
+~0.25-0.3 s, godray shafts +0.27-0.85 s, the glow gone by ~1 s; hits at +0.17 s (~2 m),
++0.23 s and +0.47 s; no camera shake.
+
+* **The damage comes with the ring** (an inference from those times): every living body within
+  the 10 m when it goes off is hurt once, d / 11.68 m/s after it (sonic_grenade.emt's speed at
+  its first key), no sooner than the other blasts' 0.1 s: +0.17 s at 2 m, +0.43 s at 5 m,
+  +0.86 s at 10 m (on the first frame at or after that time). A body out of the radius by then
+  is missed. Damage max falling to nothing at the radius (the other blasts' rule), times the
+  damage-type factor.
+* **The thrower** takes 0.653 x Damage max x (1 - d / 5 m): 28 HP at 2 m, nothing from 5 m.
+  Fitted to the recording's two throws, not the game's formula: Tex lost ~28 HP at ~2 m (T1,
+  below the data's minimum of 39) and nothing at ~5 m (T2: his health frame flashed red, the
+  bar didn't move, no tint; with ~9.5 HP left a flat share would have killed him). A thrower at
+  1, 3 and 4 m (a new shot) would settle the shape. The red tint comes only with a hit that
+  hurts the player.
+* **Nobody is knocked down by it** (the recording's Tex and an enemy ~1 m away stayed up; a
+  hit of 15 HP or more floors a body two times in three otherwise). The ring's hit holds the
+  body's knock-down cooldown for the call, so a knock-down already pending from another hit
+  that frame is kept and the log doesn't claim one.
+* **The dome** (`src/ale_fx.rs`, Sonic only, by node name):
+  * sonic_grenade.emt has no rate and no initial count; its emit count (e7221f95, keyed
+    27.6 -> 38.3 over 0.007-0.297 s) is read as the opening burst (28 particles, the rule
+    the Frag's flash uses) and then as particles per second for its 0.35 s life (~11 more,
+    `EMIT_COUNT_RATE`). With the burst alone the spread never got to open into the ring; with
+    one particle at the start (and the rate) the first frames were a few flat sheets where the
+    recording's dome is whole; per 30 fps frame (~300) it was a solid white blob.
+  * Its perp quads face out along their direction (`PERP_OUT_CONES`, as the Frag's sphere
+    emitter): a see-through dome with a brighter rim while its spread is 28-74 degrees, then,
+    as it opens to 90 by 0.25 s, a ring of quads standing round the blast (from above, a ring
+    with a dark middle). Lying flat in the emitter's frame (before), it was a flat streak.
+    Tried and not kept: the quads lying along the cone's surface (a funnel flattening into a
+    disc) - from above a filled disc, not a ring.
+  * Its air field sonic_grenade_air.fld (a drag: a wind of 0.004 m/s, Approach 0.80 -> 0.15
+    by 0.43 s) stays off. Applied 6 times a second (the first version's fit to the early
+    half-widths) it held the particles in a ball: 18-26% of the dome's brightened pixels fully
+    white (the recording 0-2%), and the ring only 5.3 m out at +0.6 s where the recording's is
+    past 6.3-9.5 m. Off: 8% white on the first frame, 0-2% after (sdm_e34, `s81/sat.py`), and
+    it spreads faster. The early dome is still wider than recorded (1.4-2x at +0.07-0.2 s, the
+    tester's measure with the field; wider without it): the quads' own size, 0 -> 5.5 m over a
+    quarter of their life, sets that width.
+  * sonic_grenade_flash.app's godrays (godray.tga, aspect 0.5 -> 15.8) stand vertical from
+    their first frame, turned about the vertical to the camera (`VERTICAL_STREAKS`); along
+    their motion (54-83 degrees out) they lay nearly flat as a white glare over the ground.
+    The Energy's stun_hit_s godrays are unchanged.
+* `BF_GRENADE_LOG` prints, per body in reach, when the ring will reach it and when it hits;
+  `BF_COMBAT_LOG` the damage.
+
+Verified (15 fps; scratchpad `s81/`):
+* Test map, `--test BF_TEST_GRENADE_TYPE=Sonic BF_TEST_GOTO=0,4,0,4 BF_TEST_THROW=1.5,0.4
+  BF_TEST_INSTANT_KILL=0 BF_TEST_TARGET=1 BF_CAMERA_PITCH=-0.3 BF_CAMERA_DISTANCE=6
+  BF_VIEW_YAW=0.9 BF_GRENADE_LOG=1 BF_COMBAT_LOG=1` (`W1`): blast at t 2.80; due times
+  Brutus +0.28, Tex +0.43, Hawk +0.46, Flint +0.51 s, hit on the next 15 fps frames (+0.33,
+  +0.47, +0.47, +0.53 s; the first version hit a frame early); Brutus 40.6 HP at 4.3 m, Tex
+  (the thrower) 0.1 at 5.0 m, Hawk 18.5, Flint 3.4; nobody floored, no "knocked down" lines.
+  With `BF_TEST_THROW=1.5,0.15` (`W2`): Tex 7.8 HP at 4.2 m.
+* sdm_e34 (`BF_MAP=sdm_e34 BF_TEST_GOTO=-44.4,15.5,-44.4,16.3`, the same throw and camera),
+  side by side with the recording's frames 449-509 at matching times (`side_fina/b.png`): a
+  see-through dome with a brighter rim from the first frame (the recording's shape; bigger),
+  then the ring and the vertical shafts to ~+0.8 s, the decal from +0.8 s. Tex (the thrower,
+  4.9 m) takes 1.1 HP and the tint (the recording: nothing at ~5 m). The 0.4-0.67 s pale
+  white-blue on Tex the tester saw (the field version) is gone; the light effect is main's.
+  **Doesn't match**: the demo is whiter and brighter overall than the recording's dark blue
+  (the shared additive rule, #104); the shafts are several broad pale columns where the
+  recording has two narrow ones, one upright and one leaning ~15 degrees out (the data's
+  ~45 a second, 1.1-3.5 m wide quads); the ring is a soft wall of quads, not a thin flat
+  band; the decal is hard concentric rings, ~3.8 m, seen from +0.8 s, where the recording's is
+  a soft oval of ~2.2-3.3 m (an earlier measure said ~2.5x Tex's height) first seen at ~+1 s -
+  left at the Frag's half-size reading and delay.
+* Frag, Energy and Gas, pixel-diffed against main's build (the Frag command in **Verified**
+  above, with each type): Frag 9.3k pixels over 75 frames (main against itself 7.7k), Gas 5.5k
+  (5.6k), Energy 18.6k (8.7k) - small scattered differences in the Energy's random bolts; the
+  frames look the same.
 
 #### Energy grenade (`src/bin/play_energy.rs`)
 
@@ -443,8 +528,7 @@ recordings at 60 fps):
   blast is farther from the camera, so smaller on screen; the recording's smoke spreads wider
   and darker. Four captures (three run at once) give the same bright-pixel counts frame for
   frame.
-* Sonic, test map (`BF_TEST_GRENADE_TYPE=Sonic`): goes off at first contact, red tint, the dome
-  and ring then the godray shafts, its dark decal after.
+* Sonic: see **Sonic grenade**.
 * Light (`BF_TEST_GRENADE_TYPE=light`): see **Light grenade** above.
 * Hand-over during a throw (`BF_TEST_THROW=1.5,0.07 BF_TEST_SELECT=1,1.1`): the count drops to
   9 at the button, control passes at 1.73 s before the grenade leaves the hand, `BF_GRENADE_LOG`
@@ -474,7 +558,7 @@ recordings at 60 fps):
   `BF_TEST_GRENADE_TYPE=Sonic`), pixel-diffed against main's build frame for frame: the only
   differences are the trail's puffs (around the hand and along the flight, and the Frag's
   rising trail column lit by its blast); the Sonic's dome and ring and the Frag's blast are
-  identical.
+  identical (before #81, which changed the Sonic's).
 * Energy: see **Energy grenade**.
 
 Squad movement and deaths follow the game's own data and the captures:
