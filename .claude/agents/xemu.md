@@ -14,11 +14,14 @@ repo's source files. Read `CLAUDE.md` first.
   the version you ran in each take's notes. The game disc is
   `D:\Emulators\Xbox\ISO\Brute Force.iso`.
 - **Your own working folder:** `D:\Emulators\Xbox\agent\`. Keep everything of yours there:
-  - your copy of the settings, `xemu.toml`, started from the user's
-    (`%APPDATA%\xemu\xemu\xemu.toml`) with **the keyboard on port 1**, and `hdd_path` pointing
-    at your copy of the hard disk image (`xbox_hdd.qcow2`);
+  - your copy of the settings, started from the user's (`%APPDATA%\xemu\xemu\xemu.toml`) with
+    **the virtual pad on port 1** (see Playing), and `hdd_path` pointing at your copy of the
+    hard disk image (`xbox_hdd.qcow2`). xemu rewrites its settings file on exit, so keep a
+    master copy and copy it into place at each launch, as the playbook describes;
   - your snapshots, scripts and modified builds.
   Start xemu with `-config_path D:\Emulators\Xbox\agent\xemu.toml`.
+- **Only one xemu session runs at a time.** Before connecting to a gdb stub or monitor port,
+  make sure it's your own session.
 - **Never** change the user's xemu settings, hard disk image, BIOS files or ISOs, and never
   write into `D:\Emulators\Xbox\Xemu` or `D:\Emulators\Xbox\ISO`.
 
