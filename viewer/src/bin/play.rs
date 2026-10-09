@@ -434,7 +434,7 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
@@ -457,6 +457,8 @@ mod gas;
 mod energy;
 #[path = "play_sonic.rs"]
 mod sonic;
+#[path = "play_sentry.rs"]
+mod sentry;
 #[path = "play_fx.rs"]
 mod fx;
 #[path = "play_pickups.rs"]
@@ -1426,6 +1428,12 @@ struct Player {
     /// LIQUID_TOUCH)
     burn: f32,
     burn_in: f32,
+    /// the side the character is on: 0 the squad (everyone in the demo); BF_TEST_HOSTILE puts a
+    /// squadmate on another (play_sentry.rs: the squad's mines go off for them)
+    team: u8,
+    /// held where a test hook puts it, without the squad AI (play_sentry.rs's BF_TEST_HOSTILE
+    /// and BF_TEST_MINE_FRIEND)
+    test_hold: bool,
 }
 
 impl Player {
@@ -1441,7 +1449,7 @@ impl Player {
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
             shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), was_scoped: false, scope_level: 0, test_selected: false, sway: Vec2::ZERO,
-            wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0,
+            wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false,
         }
     }
 
@@ -2693,8 +2701,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if m.dead || knocked_down(m) {
             continue;
         }
-        // (BF_TEST_TARGET's squadmate stands still in the line of fire)
-        if slot != 0 || std::env::var("BF_TEST_TARGET").is_err() {
+        // (BF_TEST_TARGET's squadmate stands still in the line of fire; play_sentry.rs's test
+        // hooks hold theirs where they put them)
+        if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             squad_ai(m, &player, slot, heading, dt);
         }
         let Some(l) = m.loaded.take() else { continue };

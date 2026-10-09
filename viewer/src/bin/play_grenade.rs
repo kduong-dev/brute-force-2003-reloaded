@@ -33,8 +33,8 @@
 //! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs), the Sonic's with its
 //! ring (play_sonic.rs). The Light does no damage: its canister stays where it lies while
 //! phosphor_grenade and light_phosphor burn (30 s, see `stays`). Not done yet (each type's own
-//! ticket): the Roller's seeking and the Sentry's trigger (it lies there until its 9999 s timer
-//! or BF_TEST_DETONATE).
+//! ticket): the Roller's seeking. The Sentry's trigger (a hostile within 3 m, no friend near;
+//! or a shot) is play_sentry.rs's: it sets the fuse of a mine that's due to 0.
 
 use super::*;
 use bf_viewer::bf::character::EffectType;
@@ -133,6 +133,9 @@ pub struct GrenadeKit {
     pub blast_fx: EffectType,
     pub trail_fx: EffectType,
     parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>, Vec3)>,
+    /// the model's bounding sphere (centre in the model's frame, radius; m), from its meshes'
+    /// vertices: what a shot has to pass through to strike it (play_sentry.rs)
+    pub bounds: (Vec3, f32),
 }
 
 impl GrenadeKit {
@@ -153,11 +156,21 @@ impl GrenadeKit {
             let mat = assets.materials.add(StandardMaterial { base_color: Color::srgb(0.35, 0.3, 0.2), ..default() });
             parts.push((assets.meshes.add(Sphere::new(GRENADE_RADIUS).mesh().ico(2).unwrap()), mat, Vec3::ZERO));
         }
-        info!("grenade {} (h_{:08x}): timer {}, use {}, function {}, explosion h_{:08x} {}-{} type {} radius {}, effect h_{:08x} {:x?} light {:08x} sounds {:x?}, impact {:08x}, decal {:08x}, trail h_{:08x} {:x?} {:x?}, icon {:08x}, {} parts",
+        let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
+        for (mesh, _, offset) in &parts {
+            if let Some(bevy::render::mesh::VertexAttributeValues::Float32x3(v)) = assets.meshes.get(mesh).and_then(|m| m.attribute(Mesh::ATTRIBUTE_POSITION)) {
+                for p in v {
+                    lo = lo.min(Vec3::from(*p) + *offset);
+                    hi = hi.max(Vec3::from(*p) + *offset);
+                }
+            }
+        }
+        let bounds = if lo.x <= hi.x { ((lo + hi) * 0.5, ((hi - lo) * 0.5).length().max(GRENADE_RADIUS)) } else { (Vec3::ZERO, GRENADE_RADIUS) };
+        info!("grenade {} (h_{:08x}): timer {}, use {}, function {}, explosion h_{:08x} {}-{} type {} radius {}, effect h_{:08x} {:x?} light {:08x} sounds {:x?}, impact {:08x}, decal {:08x}, trail h_{:08x} {:x?} {:x?}, icon {:08x}, {} parts, bounds {:.2} - {:.2}",
               def.label, def.name, def.fuse, def.use_type, def.function_type, def.projectile, blast.damage_min, blast.damage, blast.damage_type,
               blast.blast_radius, blast.blast_effect, blast_fx.effects, blast_fx.light, blast_fx.sounds, blast.impact_sound, blast.decal,
-              def.attached_effect, trail_fx.effects, trail_fx.sounds, def.icon, parts.len());
-        GrenadeKit { def, blast, blast_fx, trail_fx, parts }
+              def.attached_effect, trail_fx.effects, trail_fx.sounds, def.icon, parts.len(), lo, hi);
+        GrenadeKit { def, blast, blast_fx, trail_fx, parts, bounds }
     }
 
     /// Goes off on the first contact (timer 0: the Sonic).
@@ -194,16 +207,18 @@ impl GrenadeKits {
     }
 }
 
+/// A grenade out of the hand, until it goes off. (play_sentry.rs reads a mine's type, whether
+/// it's down and who set it down, and sets its fuse to 0 to set it off.)
 #[derive(Component)]
-struct Grenade {
-    kind: usize,
+pub(super) struct Grenade {
+    pub(super) kind: usize,
     velocity: Vec3,
-    fuse: f32,
+    pub(super) fuse: f32,
     /// the fuse runs once the grenade has come down
-    landed: bool,
+    pub(super) landed: bool,
     spin: Vec3,
     /// the character who threw it (its blast hurts them by SELF_DAMAGE)
-    thrower: usize,
+    pub(super) thrower: usize,
     /// a Roller: rolls this way (flat, unit) along the ground once it's down; its rolling sound
     /// is due again in this many seconds
     rolling: Option<Vec3>,
@@ -256,7 +271,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
-        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, super::energy::strike, super::sonic::ring, tint).chain().in_set(GrenadeSystems)
+        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, super::sentry::trip, fly_grenades, super::energy::strike, super::sonic::ring, tint).chain().in_set(GrenadeSystems)
             .after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
@@ -481,8 +496,8 @@ fn fly_grenades(
             hurt_by_blast(u, &game.0, kit, at, own, thrower, instant);
         }
     }
-    // test hook: BF_TEST_DETONATE=<s> sets off every grenade out at that time (the Sentry has no
-    // trigger yet)
+    // test hook: BF_TEST_DETONATE=<s> sets off every grenade out at that time (a Sentry with
+    // nobody hostile about, a Roller before its fuse)
     let detonate = std::env::var("BF_TEST_DETONATE").ok().and_then(|v| v.parse::<f32>().ok())
         .is_some_and(|at| p.sim_time >= at && !*detonated);
     *detonated |= detonate;

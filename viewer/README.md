@@ -301,13 +301,79 @@ What each type does so far, and doesn't:
 | Light (#77) | timer 1.5; phosphor_grenade (a tall thin blue beam of upright streaks, the glow and sparks at its base) + light_phosphor (a blue-white point light, reach 18.8-24.3 m) burning 30 s as the data has them (the spike's rate drops to 0 at 29.45 s); ignition h_1080aaf1 and f5260e35 after 0.2 s; no damage, no decal, no tint, pickups left alone; the canister stays where it lies, its trail stopped, until the effects have run (31.1 s) | the end of the burn isn't recorded (the recording shows >= 15.1 s); the beam is paler and less solid than recorded and the base's white core smaller (see **Light grenade**); the sparks fly too far (no gravity field, #101); the light's strength not measured against the recording |
 | Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7; the damage comes with the ring, the thrower's falls off by 5 m, nobody is knocked down (see **Sonic grenade**) | the "Tech Upgrade"; the godrays (broad columns, not two narrow shafts), the ring (a wall, not a flat band), the decal's look |
 | Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s with its rolling sound, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking |
-| Sentry (#80) | set down (place_hi), lies there; exp-mine + light_explosion, h_145f09e5 | its trigger (9999 s timer: `BF_TEST_DETONATE` sets it off); arming, LEDs, disarming |
+| Sentry (#80) | set down (place_hi), lies there; goes off for a hostile within 3 m with no friend within 3 m, or when shot (see **Sentry**); exp-mine + light_explosion, h_145f09e5 | disarming an enemy's mine; the AI keeping clear of it; one blast setting off another; LEDs; the thrower's damage beyond the radius (below) |
 
 Not done for any: ALE fields other than the Gas cloud's and the trail's rise (exp-lrg-air,
 the gravity and turbulence fields: #101); decals don't
 follow uneven ground (a plane along the slope under the middle: a big scorch on a bumpy
 hillside is partly buried); the sounds' play-length; distance falloff for blast sounds beyond
 a volume.
+
+#### Sentry (`src/bin/play_sentry.rs`)
+
+The proximity mine (h_e5f1f063, function-type 8 IFSET_PROXIMITY_EXPLOSIVE): set down as the
+Roller is, its `timer` 9999 s never runs out; what sets it off is the item set's handlers in
+default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them):
+* Once it's down (on-placed 0x147570; there is no arming delay in the code), it checks every
+  0.05-0.15 s (0x147620: a timer passing 0.15 s, restarted at a random 0-0.1 s); the first
+  check comes 0.15 s after it's down. A check that says so sets it off at once.
+* The check (0x146e00) goes through every living character. A friend - on the thrower's team,
+  or the thrower - within the radius ends it: no blast this time. Anyone else within it is a
+  target. It goes off with a target and no friend within the radius. The radius is the item's
+  h_0a811e94 (3 on every Sentry; read into `WeaponDef::proximity_radius`), a 3D sphere round
+  the mine (0x146cb0).
+* A character's point for it is 0.9 m above the feet: a fit to the recording's enemy brought
+  up a slope (set it off with its feet 2.51 m across and 0.63 m above the mine, not at
+  2.61 / 0.67; the 3 m sphere puts the point 0.81-1.01 m up). On flat ground that's 2.88 m
+  across. The mine's point is its model's middle (the model is 0.14 m tall).
+* Characters whose type handles mines and that know of this one count only standing on it:
+  within 0.3 m across and 1.5 m up or down (0x147430). Which characters have the flag isn't
+  read yet (only the test hook's `wise` hostile has it).
+* It has 1 hitpoint: a shot (anyone's) whose line passes through its model's bounding sphere
+  stops there and sets it off when it arrives.
+* The demo has no enemies: the squad is one team, so the squad's mines never go off for the
+  squad (as recorded: Tex walking or running over his own, standing beside it, Flint stepping
+  onto it at 0.16 m). Only a test hook's hostile, or a shot, sets one off. Nobody can pick one
+  back up.
+
+Its blast is the shared one (h_01f142eb: 62.5-88.5, type 10, radius 4; effect type h_0b69c2f2:
+exp-mine + light_explosion, 145f09e5; decal h_f5ccedb0). On sdm_e34 the squad's Sentry is still
+h_e5f1f063 (e34 defines it as well as h_f73de83d, whose explosion is the Energy's h_f7d6b42e:
+the squad carries h_e5f1f063 wherever it's defined, `SQUAD_GRENADES`). Not matched: the
+recording's Tex took 16.5 and 14.8 HP from blasts 6.0 m away, outside the data's 4 m radius;
+the demo's thrower is hurt only within the radius (0.2 x 62.5-88.5 = 12.5-17.7 HP), so at 6 m
+he takes nothing. How the game's blast code uses the radius for the thrower isn't found yet
+(the explosion is queued by 0x149520; where it's dealt wasn't traced).
+
+`BF_SENTRY_LOG=1` prints each check with a target within radius + 1.5 m (3D and across
+distances to the nearest target and friend, and the result), each shot that strikes a mine and
+each mine set off. Test hooks (with `BF_TEST_GOTO`):
+* `BF_TEST_HOSTILE=<character>[,<from m>,<to m>,<m/s>][,wise]`: that squadmate (brutus, flint,
+  hawk, tex or 0-3) is on another team and stands still out of the squad AI. Once the first
+  Sentry is down it's put `from` m (5) beyond it, on the far side from the thrower, waits 1 s,
+  then is stepped in toward it at `m/s` (0.25) down to `to` m (0) across; held where it was
+  when the mine goes. `wise`: it handles mines and knows this one.
+* `BF_TEST_MINE_FRIEND=<character>,<m>[,<s>]`: that squadmate is held `m` m beside the first
+  mine for `s` s after it's down (default for good), then let go to the squad AI.
+* `BF_TEST_SHOOT_MINE=<s>`: `s` s after the first mine is down the player turns the crosshair
+  onto it and fires from the hip.
+
+Verified (test map, `--test BF_TEST_INSTANT_KILL=0 BF_TEST_GRENADE_TYPE=Sentry
+BF_SENTRY_LOG=1 BF_COMBAT_LOG=1`, Tex backing away from it with `BF_TEST_GOTO=20,20,20,10
+BF_TEST_STRAFE=0,-1 BF_TEST_THROW=1.05,0.1` unless said):
+* Trigger distance (`BF_TEST_HOSTILE=flint,4,0,0.5`): stays at 3.05 m (2.93 across), goes off
+  at the next check, 2.99 m (2.87 across), with Tex 5.3 m away; Flint, 3.0 m from the blast,
+  takes 22 HP and is knocked down. The blast frames show exp-mine's fireball as before.
+* A friend near (`BF_TEST_HOSTILE=flint,4,2,1 BF_TEST_MINE_FRIEND=hawk,2,6`): Flint stands at
+  2.0 m from +3.2 s, the mine stays while Hawk is at 2.2 m (and at 2.95 m as he walks off),
+  and goes off at the first check with Hawk 4.19 m away.
+* The thrower near (`BF_TEST_GOTO=20,20,20,20 BF_TEST_THROW=1.5,0.1
+  BF_TEST_HOSTILE=flint,4,0.5,1`): Tex at 0.58 m across, Flint walks in to 0.5 m and stands
+  there 4 s: it never goes off.
+* `wise` (`BF_TEST_HOSTILE=flint,2,0,0.5,wise`): stays at 0.47 m across, goes off at 0.20 m.
+* Shot (`BF_TEST_SHOOT_MINE=0.7`): struck 2.3 m out, goes off the same frame; Tex 3.1 m from it
+  takes 15.7 HP. From 10 m (`BF_TEST_SHOOT_MINE=2.2`, a laser bolt): goes off 0.07 s after the
+  shot; Tex takes nothing (outside the radius, where the recording's Tex took ~15, above).
 
 #### Light grenade
 
@@ -529,7 +595,8 @@ Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
   full charge), as many times as given (a placed type: one per press). At 15 fps a hold under
   one step (0.067 s) can fall between steps.
 * `BF_TEST_NEXT_GRENADE=<s>[,<s>...]` presses T once at each time.
-* `BF_TEST_DETONATE=<s>` sets off every grenade out at that time.
+* `BF_TEST_DETONATE=<s>` sets off every grenade out at that time. (The Sentry's own hooks:
+  see **Sentry**.)
 * `BF_TEST_EXPLOSION=1` sets off the selected type 6 m ahead every 1.5 s.
 * `BF_TEST_DROP=<s>[,<s>...]` sets off the selected type at the controlled character's feet at
   each time (to stand in a Gas cloud). `BF_GRENADE_LOG` prints each cloud, when it's over and,

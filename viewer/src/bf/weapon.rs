@@ -54,6 +54,10 @@ const H_BULLET_DECAL: u32 = 0x06A2_7365;
 /// item base: how it is used (the XBE's IOU_ enum: 2 IOU_PLACE_ON_GROUND (Roller, Sentry),
 /// 3 IOU_THROW_TO_USE (Frag and the other thrown grenades))
 const H_USE_TYPE: u32 = 0x1EE2_F4ED;
+/// item: a proximity mine's trigger radius (m, an int: 3 on every Sentry definition in every
+/// level). default.xbe's range test 0x146cb0 loads it from the item type (+0x178) and squares
+/// it against the 3D distance to each character.
+const H_PROXIMITY_RADIUS: u32 = 0x0A81_1E94;
 /// object base: the effects attached to the object (8 slots of `<h_081398d6 effect-name
 /// hardpoint-name>`); a grenade's first is its trail (the Frag's h_10a5508f: grenade_trail and
 /// the hiss 10318b29)
@@ -158,6 +162,8 @@ pub struct WeaponDef {
     pub stack_limit: i64,
     /// the effect type attached to the object (h_18b6ab72's first slot; 0 if none)
     pub attached_effect: u32,
+    /// items: a proximity mine's trigger radius (H_PROXIMITY_RADIUS; 0 if none)
+    pub proximity_radius: f32,
 }
 
 /// Hash values of an attribute stored either as a list or as repeated attributes.
@@ -220,6 +226,7 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             attached_effect: all.iter().find(|e| e.name == H_ATTACHED_EFFECTS)
                 .and_then(|a| a.children.first()).and_then(|e| e.attr(h("effect-name"))).and_then(|v| v.as_hash())
                 .filter(|&x| x != h("")).unwrap_or(0),
+            proximity_radius: find(H_PROXIMITY_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0),
         });
     }
     out
