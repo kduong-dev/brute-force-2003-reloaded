@@ -221,6 +221,14 @@ pub struct ScreenTint(pub f32);
 #[derive(Component)]
 struct TintQuad(Vec<Handle<StandardMaterial>>);
 
+/// A canister left where it went off while its effects burn (see `stays`): seconds left, and its
+/// type's label for BF_GRENADE_LOG ("canister gone").
+#[derive(Component)]
+struct Spent {
+    left: f32,
+    label: String,
+}
+
 /// A grenade in the hand between the throw clip's reach and release events, and its type.
 #[derive(Resource, Default)]
 struct Held(Option<(Entity, usize)>);
@@ -419,9 +427,20 @@ fn fly_grenades(
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
     mut trails: Query<(&ChildOf, &mut bf_viewer::ale_fx::AleEffect)>,
+    mut spent: Query<(Entity, &mut Spent)>,
 ) {
     let dt = frame_dt(&time);
     let p = &mut *player;
+    // canisters left burning (see `stays`) go once their effects have run
+    for (e, mut s) in &mut spent {
+        s.left -= dt;
+        if s.left <= 0.0 {
+            commands.entity(e).despawn();
+            if std::env::var("BF_GRENADE_LOG").is_ok() {
+                println!("t {:.2}: {} canister gone", p.sim_time, s.label);
+            }
+        }
+    }
     // blast sounds and decals whose delay is up
     delayed.0.retain_mut(|(left, id, volume)| {
         *left -= dt;
@@ -498,7 +517,7 @@ fn fly_grenades(
             // once) leaves its poison cloud instead (play_gas.rs)
             let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
             if stays(kit) {
-                commands.entity(e).remove::<Grenade>().insert(AleExpire(burn));
+                commands.entity(e).remove::<Grenade>().insert(Spent { left: burn, label: kit.def.label.clone() });
                 for (parent, mut fx) in &mut trails {
                     if parent.parent() == e {
                         fx.active = false;

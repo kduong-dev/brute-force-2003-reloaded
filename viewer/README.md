@@ -183,7 +183,29 @@ decal, and a throw called off.
     where the random roll drew a fan of long rays. The offset is read over the particle's age,
     not the effect's time (an inference: over the effect's time, repeating every 0.92 s, the
     whole beam would rise and drop back each 0.92 s; the recording's beam top flickers by ~25%
-    about every 0.3 s with no slower cycle). The 0.5 threshold is the demo's.
+    about every 0.3 s with no slower cycle). The 0.5 threshold is the demo's. Roll 0 is upright
+    on the screen, not in the world: under a steep camera pitch the streaks lie back with the
+    view.
+  * Also for the Light: a spark - a perp appearance born longer than 1.5 times its width
+    (ASPECT at birth) on a cone emitter throwing its particles out at 0.3 m/s or more - is drawn
+    as a camera-facing streak along its motion, not lying flat (`SPARK_ASPECT`).
+    phosphor_grenade-shrap.rect.app (spark.tga, aspect 2.2 -> 0.25, ~100/s at 4-6 m/s within
+    49 degrees of up) is the only grenade appearance it picks out: the recording's starburst
+    of rays fanning up from the flare at ignition and the sparks round its base after (lg
+    0397-0411, 1073-1085, 1200), which lying flat drew as short horizontal lines. The other
+    grenades' perp appearances are born square or squat (aspect 0.04-1.01) and keep lying
+    flat. Their gravity field stays off (#101), so the sparks fly farther than recorded (up to
+    ~5 m, faint by then, where the recording's stay within ~1-2 m).
+  * Also for the Light: a steady light - a "light_" effect whose emitter has a constant rate
+    at which its particles overlap two deep or more - lights each particle up over its first
+    1/rate s and down over its last, scaled by rate x life / (rate x life - 1), and starts each
+    particle at the moment within the frame its rate says it's due (`steady_rate`): the evenly
+    spaced particles' sum is then constant, at the plain particles' mean. Only light_phosphor
+    is one (5.99/s, 0.514 s: ~3 at once). As plain particles, the number lit stepped between 3
+    and 4 and the ground light pulsed by 3-11% about three times a second (also on main: the
+    tester's measurement), where the recording's is steady within 1/255. The Frag's and the
+    Sentry's light_explosion (one particle) and the Sonic's light_sonic_grenade (a keyed rate)
+    are lit as before. How the console summed its lights isn't known.
 * **Damage**: everyone within the radius takes Damage max, falling to nothing at the radius;
   the thrower takes 0.2 x a roll of Damage min..max anywhere inside it. That rule is the
   demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
@@ -273,7 +295,7 @@ What each type does so far, and doesn't:
 | Frag (#75) | everything above | the "Tech Upgrade Frag Grenade!" upgrade |
 | Energy (#74) | timer 1.75, stun_grenade_master + stun_hit_s, f875b6c6, decal h_f4d65518; its bolts crawl out and carry the damage (39-97.5, 9 m) to every body in reach, throwing down the living and throwing corpses (see **Energy grenade**) | the stunned_fx 30 s arc; the per-liquid effects h_0cbcb8f2; the "Tech Upgrade" |
 | Gas (#76) | timer 1, gas-grenade's olive cloud (with its air fields), 1b35643e, the poison: 17.7 HP/s within 3 m for 5.5 s, Flint x0.05 | the "Tech Upgrade" (the ticket's); the cloud's fade (lingers ~1-2 s, see above); the flash's ~1 s flicker (smoke-grenade-flsh's keyed emit count: one burst here); the shared HUD's damage feedback (white bar with a dark-red trailing segment, the direction chevron) |
-| Light (#77) | timer 1.5; phosphor_grenade (a tall thin blue beam of upright streaks, the glow and sparks at its base) + light_phosphor (a blue-white point light, reach 18.8-24.3 m) burning 30 s as the data has them (the spike's rate drops to 0 at 29.45 s); ignition h_1080aaf1 and f5260e35 after 0.2 s; no damage, no decal, no tint, pickups left alone; the canister stays where it lies, its trail stopped, until the effects have run (31.1 s) | the end of the burn isn't recorded (the recording shows >= 15.1 s); the beam is paler than recorded (see **Light grenade**); the light's strength not measured against the recording |
+| Light (#77) | timer 1.5; phosphor_grenade (a tall thin blue beam of upright streaks, the glow and sparks at its base) + light_phosphor (a blue-white point light, reach 18.8-24.3 m) burning 30 s as the data has them (the spike's rate drops to 0 at 29.45 s); ignition h_1080aaf1 and f5260e35 after 0.2 s; no damage, no decal, no tint, pickups left alone; the canister stays where it lies, its trail stopped, until the effects have run (31.1 s) | the end of the burn isn't recorded (the recording shows >= 15.1 s); the beam is paler and less solid than recorded and the base's white core smaller (see **Light grenade**); the sparks fly too far (no gravity field, #101); the light's strength not measured against the recording |
 | Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7 | the damage arriving with the ring (it's dealt at once) |
 | Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s with its rolling sound, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking |
 | Sentry (#80) | set down (place_hi), lies there; exp-mine + light_explosion, h_145f09e5 | its trigger (9999 s timer: `BF_TEST_DETONATE` sets it off); arming, LEDs, disarming |
@@ -293,39 +315,55 @@ h_1080aaf1 at once and f5260e35 0.2 s later.
 * phosphor_grenade: init_spike (3 at once, then ~30/s until 28.8 s, none from 29.45 s; each
   streak lives 0.6-1.3 s, white turning blue, 0.2 m growing to 5.9 m tall at 58% of its life
   and 0.3 m wide, rising 2.26 m) makes the tall thin blue beam, drawn as upright streaks (see
-  the ALE rules above); init_glow (small-flare, 60/s) the white glow and the short rays round
-  the base, which keep the random roll as the recording's starburst shows; shrap the blue
-  sparks.
+  the ALE rules above); init_glow (small-flare.tga - a lens flare with rays - at 60/s for
+  0.068 s of every 0.103 s, ~40/s all through the burn, each 0.545 s, white turning blue,
+  alpha <= 0.4, thrown up at 1.5-3.7 m/s) the white glow round the base, keeping the random
+  roll; shrap (~100/s all through the burn) the rays fanning up at ignition and the sparks
+  after, drawn as sparks (see the ALE rules above).
 * light_phosphor: a point light (~6/s, each 0.51 s), (0.655, 0.725, 0.847) -> (0.333, 0.620,
-  0.776), reach 18.8 -> 24.3 m: steady, lighting the ground and the characters round it.
+  0.776), reach 18.8 -> 24.3 m, lighting the ground and the characters round it; steady (see
+  the steady light above).
 * The canister stays where it lies, its trail smoke stopped, until the effects have run (31.1 s:
   the 30 s emitters and their last particles), then goes (`play_grenade.rs` `stays`: a grenade
   whose explosion does no damage; the recording's flares lie under their beams, and the data
-  has no flag for it - an inference).
+  has no flag for it - an inference). `BF_GRENADE_LOG` prints "canister gone" when it goes.
 
 Verified (captures in the scratchpad's light/):
 * Test map, close (`--test BF_TEST_GOTO=0,4,0,4 BF_TEST_THROW=1.5,0.1 BF_CAMERA_PITCH=-0.35
   BF_CAMERA_DISTANCE=4 BF_VIEW_YAW=0.3 BF_TEST_GRENADE_TYPE=Light BF_GRENADE_LOG=1`): down
-  2.40 s, ignition 3.93 s ("effects run 31.1 s"); a tall thin beam of a few upright blue
-  streaks from +0.27 s, the white glow at the base, Tex's arm and the floor lit blue-white,
-  the canister lying in the glow. Side by side with the recording's ignitions (lg f393,
-  f1070) at matching times: the beam's height against a character and its flicker match;
-  the recording's also shows two or three parallel streaks at times (f1130). Before, the
-  same capture showed a squat glow with long rays fanned in every direction.
-* Test map, the whole burn at 5 fps (`BF_CAPTURE_FPS=5`, same hooks, throw 0.3): the beam
-  still full at +29.4 s, two faint streaks at +29.6 s, gone by +30.2 s along with the light.
-* m09_a (`BF_MAP=m09_a BF_TEST_GOTO=52,-26,52,-26 BF_TEST_THROW=3,0.3`; the level has no
-  start points, so the test start is needed): the beam stands against the rocks; the demo's
-  m09_a is lit much brighter than the recording's, so the flare's light is far less striking
-  than in the dark recording.
-* Frag and Energy, the same capture on main's build and this one: the frames differ no more
-  than two runs of one build do.
+  2.40 s, ignition 3.93 s ("effects run 31.1 s"); a starburst of rays fanning up on the
+  first frames, then a tall thin beam of upright blue streaks from +0.27 s with a white core
+  and sparks at its base, Tex's arm and the floor lit blue-white, the canister lying in the
+  glow. Side by side with the recording's third ignition (lg f1070, by time since it): the
+  starburst at +0.07-0.27 s, the beam's height against a character and its flicker match; the
+  recording's also shows two or three parallel streaks at times (f1130). Before, the same
+  capture showed a squat glow with long rays fanned in every direction, and no starburst.
+* The ground light: the mean of a patch of floor near the flare over 30 frames (+0.8 to +2.7
+  s) varied by 2.7% before, dipping one frame in five; now by 0.6%, with no dip.
+* Test map, the whole burn at 5 fps (`BF_CAPTURE_FPS=5`, throw hold 0.2: at 5 fps a 0.1 s hold
+  falls between steps): blast at t 4.20, the beam and light gone by +30.2 s; "t 35.40: Light
+  canister gone" (+31.2 s, the 31.1 s rounded up to a 0.2 s step), and the canister is in the
+  frames up to t 35.2 and gone at t 35.4. A capture's frame n shows the time (n + 1) / fps (the
+  blast logged at t 4.20 is first seen in frame 20 at 5 fps), so frame numbers read as n / fps
+  come out one step early.
+* m09_a (`BF_MAP=m09_a BF_TEST_GOTO=28,-118,28,-118 BF_VIEW_YAW=0.3 BF_TEST_THROW=3,0.3`; the
+  level has no start points, so the test start is needed): the flare lands ~12 m off in a pool
+  and the beam stands against the dark rock. The demo's m09_a is lit much brighter than the
+  recording's, so the flare's light is far less striking than in the dark recording.
+* Frag and Sonic, the same capture on main's build and this one: the frames differ no more
+  than two runs of one build do (Energy likewise at the first change; the later rules pick out
+  none of its appearances).
 
-Not matching: the beam is paler and whiter than the recording's saturated blue (its middle
-measured (97,145,174) on black against the recording's (48,107,176) to (93,196,255)): the
-demo adds sprites taking their colour as linear light (play_fx.rs: right on a mid-grey
-picture), the console added stored values, which keeps a dark blue saturated on a dark
-picture. A rendering rule for every added sprite, left as it is here.
+Not matching:
+* The beam is paler and whiter than the recording's saturated blue (its middle measured
+  (97,145,174) on black against the recording's (48,107,176) to (93,196,255)), and looks less
+  solid: the recording's is one dense column, white at the bottom. The demo adds sprites taking
+  their colour as linear light (play_fx.rs: right on a mid-grey picture); the console added
+  stored values, where a few overlapping dark-blue streaks already reach a solid bright blue,
+  and more of them white. That rule is shared by every added sprite and is left to its own
+  ticket.
+* The white core at the base is smaller than the recording's (about a character's shoulder
+  width there), likely the same blend rule: it's the glow's overlapping flares.
 
 #### Energy grenade (`src/bin/play_energy.rs`)
 
@@ -407,7 +445,7 @@ recordings at 60 fps):
   frame.
 * Sonic, test map (`BF_TEST_GRENADE_TYPE=Sonic`): goes off at first contact, red tint, the dome
   and ring then the godray shafts, its dark decal after.
-* Light (`BF_TEST_GRENADE_TYPE=light`): see **Light grenade** below.
+* Light (`BF_TEST_GRENADE_TYPE=light`): see **Light grenade** above.
 * Hand-over during a throw (`BF_TEST_THROW=1.5,0.07 BF_TEST_SELECT=1,1.1`): the count drops to
   9 at the button, control passes at 1.73 s before the grenade leaves the hand, `BF_GRENADE_LOG`
   prints "throw cut short, grenade back (10 now)", the box shows 10 again and nothing is thrown.

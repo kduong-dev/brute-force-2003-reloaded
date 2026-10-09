@@ -145,14 +145,27 @@ const AIR_FIELDS: [&str; 3] = ["gas-grenade.fld#1.fld", "gas-grenade2.fld#1.fld"
 /// ~6.5 x 5 m and veils him as the recording does; at 15, ~9 x 6 m; at 8, ~13 m. An inference.
 const APPROACH_FPS: f32 = 30.0;
 /// An upright streak: a camera-facing appearance (not perp, not motion-blurred) whose width
-/// factor (WIDTH) stays under this part of its height factor (ASPECT) all its life, with a
-/// constant Rotate. It is drawn with no random roll - upright on the screen, turned only by its
-/// Rotate - and rides its appearance transform's offset over its life (`Pair::rise`). The one
+/// factor (WIDTH) stays under this part of its smallest height factor (ASPECT, counted as 1.0 at
+/// most) all its life, with a constant Rotate. It is drawn with no random roll - roll 0 is
+/// upright on the screen, not in the world: it faces the camera, so under a steep camera pitch
+/// it lies back with the view - turned only by its Rotate, and rides its appearance
+/// transform's offset over its life (`Pair::rise`). The one
 /// grenade appearance it picks out is phosphor_grenade_init_spike.app (width 0.05 -> 0.30 of a
 /// size that peaks at 5.9 m): the Light recording's tall thin vertical beam (lg 0413-0487,
 /// 1181-1289), where the random roll drew a fan of rays. The threshold is the demo's (the data
 /// has no flag for it); only for the grenades' effects (`Compiled::recorded`).
 const UPRIGHT_WIDTH: f32 = 0.5;
+/// A spark: a perp appearance born longer than this (ASPECT at birth) on a cone emitter that
+/// throws its particles out at PERP_RADIAL_SPEED or more. It is drawn as a camera-facing streak
+/// along its motion (as a motion-blurred one is), not as a quad lying flat in the emitter's
+/// frame. The one grenade appearance it picks out is phosphor_grenade-shrap.rect.app (spark.tga,
+/// aspect 2.2 -> 0.25, ~100/s at 4-6 m/s within 49 degrees of up): the Light recording's
+/// starburst of rays fanning up from the flare at ignition and the sparks round its base after
+/// (lg 0397-0411, 1073-1085, 1200), which lying flat drew as short horizontal lines. The Frag's,
+/// Gas's, Sonic's and Sentry's perp appearances are born square or squat (aspect 0.04-1.01) and
+/// keep lying flat. The threshold is the demo's; only for the grenades' effects
+/// (`Compiled::recorded`).
+const SPARK_ASPECT: f32 = 1.5;
 /// Materials per appearance: its colour and alpha at this many points of a particle's life.
 const STEPS: usize = 12;
 /// Particles alive at once, over all effects.
@@ -183,8 +196,8 @@ pub struct Pair {
     /// spike's 0 -> 2.26 m up over 0.92 s). The offset read over the particle's age rather than
     /// the effect's time is an inference: over the effect's time (repeating every 0.92 s) the
     /// whole beam would rise and drop back once every 0.92 s, while the recording's beam top
-    /// flickers by ~25% about every 0.3 s with no slow cycle (lg 1181-1289, scratchpad
-    /// light/top.py)
+    /// flickers by ~25% about every 0.3 s with no slow cycle (the Light recording, frames
+    /// 1181-1289: the second flare's beam top under a still camera)
     rise: Option<f32>,
     /// a beam appearance: the ribbon's material (vertex colours carry colour x alpha)
     beam: Option<Handle<StandardMaterial>>,
@@ -504,7 +517,11 @@ impl AleAssets {
             let fields = e.pairs.iter().filter(|p| recorded && p.0 == ap).filter_map(|p| node(game, p.1))
                 .filter(|n| n.class == CLASS_AIR_FIELD && AIR_FIELDS.contains(&n.name.as_str())).collect();
             let rise = (recorded && !app.flag(PERP) && !streak && upright(&app)).then(|| offset_end(&app));
-            pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
+            // a spark (see SPARK_ASPECT): drawn as a streak along its motion, not a perp quad
+            let spark = recorded && app.flag(PERP) && emitter.class == CLASS_CONE
+                && emitter.curve(SPEED, 0.0, 0.0).unwrap_or(0.0) >= PERP_RADIAL_SPEED && app.floats(ASPECT, 0.0, 0.0).unwrap_or(1.0) > SPARK_ASPECT;
+            let (perp, streak) = if spark { (false, true) } else { (app.flag(PERP), streak) };
+            pairs.push(Pair { perp, attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false, fields, child: None, rise });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded })
@@ -565,7 +582,7 @@ fn float_keys(app: &Node, p: u32) -> Vec<f32> {
 }
 
 /// An upright streak (see UPRIGHT_WIDTH): its width factor under UPRIGHT_WIDTH of its smallest
-/// height factor all its life, and a constant Rotate.
+/// height factor, that capped at 1.0, all its life, and a constant Rotate.
 fn upright(app: &Node) -> bool {
     let (width, height, rotate) = (float_keys(app, WIDTH), float_keys(app, ASPECT), float_keys(app, ROTATE));
     let tall = height.iter().copied().fold(f32::MAX, f32::min).min(1.0);
@@ -580,6 +597,29 @@ fn offset_end(app: &Node) -> f32 {
             .fold(0.0, f32::max),
         _ => 0.0,
     }
+}
+
+/// A steady light: a "light_" effect's pair (grenade effects only, `Compiled::recorded`) whose
+/// emitter has a constant rate (no keys) at which its particles overlap two deep or more: its
+/// rate (/s). Each particle's light then rises over its first 1/rate s and falls over its last,
+/// scaled by rate x life / (rate x life - 1), so the evenly spaced particles' sum stays constant
+/// at the mean of the plain particles'. The one it picks out is light_phosphor (5.99/s, 0.514 s:
+/// ~3 at once): as plain particles, the number lit stepped between 3 and 4 and the Light's ground
+/// light pulsed by 3-11% about three times a second, where the recording's is steady within
+/// 1/255 (the tester's measurement). The Frag's and the Sentry's light_explosion (one particle)
+/// and the Sonic's light_sonic_grenade (a keyed rate) aren't steady and are lit as before. How
+/// the console summed its lights isn't known: this keeps the data's mean.
+fn steady_rate(fx: &Compiled, pair: &Pair) -> Option<f32> {
+    if !fx.recorded || !pair.light {
+        return None;
+    }
+    let constant = match pair.emitter.params.get(&RATE) {
+        Some(crate::bf::ale::Value::Curve(c)) => c.0.len() == 1 && c.0[0].3.is_empty(),
+        _ => false,
+    };
+    let rate = pair.emitter.curve(RATE, 0.0, 0.0).unwrap_or(0.0);
+    let life = pair.emitter.curve(LIFE, 0.0, 0.0).unwrap_or(0.0);
+    (constant && rate > 0.0 && rate * life >= 2.0).then_some(rate)
 }
 
 fn euler(deg: [f32; 3]) -> Quat {
@@ -642,6 +682,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
             // one particle (a gun's tracer)
             let burst = if compiled.recorded { em.curve(BURST, sp, 0.0).unwrap_or(0.0).round().max(1.0) as usize } else { 1 };
             let mut n = if fresh { if initial == 0 && rate == 0.0 { burst } else { initial } } else { 0 };
+            let carried = fx.acc[i];
             fx.acc[i] += rate * dt;
             n += fx.acc[i] as usize;
             fx.acc[i] = fx.acc[i].fract();
@@ -714,7 +755,13 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     (None, Vec3::ZERO, frame * dir * speed, lie)
                 };
                 seq.0 += 1;
-                let particle = AleParticle { fx: compiled.clone(), pair: i, age: 0.0, life, vel, sp, born: fx.t, roll, step: 0, frame: lie, owner, local,
+                // a steady light's particles start at the moment within the frame the rate says
+                // they're due, so they come at even spacing (see `steady_rate`)
+                let age = match steady_rate(&compiled, pair) {
+                    Some(rate) => -((j + 1) as f32 - carried) / rate,
+                    None => 0.0,
+                };
+                let particle = AleParticle { fx: compiled.clone(), pair: i, age, life, vel, sp, born: fx.t, roll, step: 0, frame: lie, owner, local,
                                              turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0 };
                 let at = Transform::from_translation(origin + frame * local).with_scale(Vec3::splat(0.001));
                 if let Some(child) = &pair.child {
@@ -804,7 +851,16 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             let a = app.floats(ALPHA, p.sp, k).unwrap_or(1.0).clamp(0.0, 1.0);
             let c = Vec3::from(app.color(COLOR, p.sp, k).unwrap_or([1.0; 3]));
             let peak = c.max_element();
-            light.intensity = LIGHT_LUMENS * a * size * peak * LIGHT_SCALE;
+            // a steady light's particles fade in and out over one spacing (see `steady_rate`)
+            let steady = match steady_rate(&fx, pair) {
+                Some(rate) => {
+                    let gap = 1.0 / rate;
+                    let ramp = (p.age.max(0.0) / gap).min((p.life - p.age) / gap).clamp(0.0, 1.0);
+                    ramp * rate * p.life / (rate * p.life - 1.0)
+                }
+                None => 1.0,
+            };
+            light.intensity = LIGHT_LUMENS * a * size * peak * LIGHT_SCALE * steady;
             light.range = size.max(0.1);
             if peak > 1e-4 {
                 light.color = Color::srgb(c.x / peak, c.y / peak, c.z / peak);
