@@ -37,6 +37,12 @@ const RING_FIRST: f32 = 0.1;
 /// would settle the shape (a new shot).
 const SELF_PEAK: f32 = 0.653;
 const SELF_REACH: f32 = 5.0;
+/// The least damage (HP) that brings the player's red tint: smaller hits hurt without it. The
+/// recording's T2 (Tex ~5 m out, his bar unmoved) had no tint, where the falloff above still
+/// gives a few tenths of an HP at 5.0 m (the distance is from the pelvis, 1 m up). The demo's
+/// choice, a guess: the tint isn't scaled with the damage because only the Frag's ~12.5 HP
+/// tint was measured.
+const TINT_MIN: f32 = 1.0;
 
 /// Sonic blasts this frame: (grenade type, where, the thrower's character), from
 /// play_grenade.rs's `fly_grenades`.
@@ -84,8 +90,9 @@ fn self_damage(kit: &super::grenade::GrenadeKit, d: f32) -> f32 {
 
 /// New Sonic blasts schedule a hit on every living body within the radius, for when the ring
 /// gets to it; due hits hurt (`hurt_by_blast`, the thrower by `self_damage`), with the red tint
-/// for the player if it hurt them. A body that has left the radius by then is missed. Nobody is
-/// knocked down by the ring: the recording's Tex took 28 HP at ~2 m and an enemy ~1 m away
+/// for the player if it hurt them by TINT_MIN or more. A body that has left the radius by then
+/// is missed. Nobody is knocked down by the ring: the recording's Tex took 28 HP at ~2 m and
+/// an enemy ~1 m away
 /// lurched back, and both stayed up (a hit this hard floors a body two times in three
 /// otherwise, play.rs's KNOCKDOWN_DAMAGE). A knock-down already pending from another hit that
 /// frame is kept.
@@ -133,7 +140,7 @@ pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMu
             u.knock_cooldown = cooldown.max(1.0);
             let hurt = super::grenade::hurt_by_blast(u, &game.0, kit, hit.at, own, hit.thrower, kill);
             u.knock_cooldown = cooldown;
-            if hurt.is_some() && controlled {
+            if hurt.is_some_and(|d| d >= TINT_MIN) && controlled {
                 tint.0 = 0.0;
             }
         }

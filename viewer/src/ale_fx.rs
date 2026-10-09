@@ -192,13 +192,14 @@ const UPRIGHT_WIDTH: f32 = 0.5;
 /// starburst of rays fanning up from the flare at ignition and the sparks round its base after
 /// (lg 0397-0411, 1073-1085, 1200), which lying flat drew as short horizontal lines. The Frag's,
 /// Gas's, Sonic's and Sentry's perp appearances are born square or squat (aspect 0.04-1.01) and
-/// stay perp quads (the Sonic's facing out, PERP_OUT_CONES). The threshold is the demo's; only for the grenades' effects
-/// (`Compiled::recorded`).
+/// stay perp quads (the Sonic's facing out, PERP_OUT_CONES). The threshold is the demo's; only
+/// for the grenades' effects (`Compiled::recorded`).
 const SPARK_ASPECT: f32 = 1.5;
 /// Camera-facing quads that stand vertical - turned about the world's vertical to face the
 /// camera, from their first frame (no random roll) - instead of turning along their motion
-/// once stretched: the Sonic's sonic_grenade_flash.app (godray.tga, aspect 0.5 -> 15.8: shafts up to ~17 m tall, thrown out
-/// at 54-83 degrees from the vertical). Along their motion they lay nearly flat, a white glare
+/// once stretched: the Sonic's sonic_grenade_flash.app (godray.tga, aspect 0.5 -> 15.8: shafts
+/// up to ~17 m tall, thrown out at 54-83 degrees from the vertical). Along their motion they
+/// lay nearly flat, a white glare
 /// across the ground; the recording's shafts stand up from the blast (sonic/hi 469-497). The
 /// recording's lean out by up to ~30 degrees and there are 2-4 at a time, where this draws the
 /// data's ~45 a second straight up: a partial match. Only this appearance, checked against the

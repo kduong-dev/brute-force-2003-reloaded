@@ -390,8 +390,10 @@ h_fb24bcb7; its trail grenade_trail with f6dbdb17. Measured from the recording
   Fitted to the recording's two throws, not the game's formula: Tex lost ~28 HP at ~2 m (T1,
   below the data's minimum of 39) and nothing at ~5 m (T2: his health frame flashed red, the
   bar didn't move, no tint; with ~9.5 HP left a flat share would have killed him). A thrower at
-  1, 3 and 4 m (a new shot) would settle the shape. The red tint comes only with a hit that
-  hurts the player.
+  1, 3 and 4 m (a new shot) would settle the shape. The red tint comes only with a hit of
+  1 HP or more on the player (`TINT_MIN`, a guess: the falloff still gives a few tenths of an
+  HP at 5.0 m, measured from the pelvis, where T2 had no tint); it isn't scaled with the
+  damage, since only the Frag's ~12.5 HP tint was measured.
 * **Nobody is knocked down by it** (the recording's Tex and an enemy ~1 m away stayed up; a
   hit of 15 HP or more floors a body two times in three otherwise). The ring's hit holds the
   body's knock-down cooldown for the call, so a knock-down already pending from another hit
@@ -431,12 +433,14 @@ Verified (15 fps; scratchpad `s81/`):
   Brutus +0.28, Tex +0.43, Hawk +0.46, Flint +0.51 s, hit on the next 15 fps frames (+0.33,
   +0.47, +0.47, +0.53 s; the first version hit a frame early); Brutus 40.6 HP at 4.3 m, Tex
   (the thrower) 0.1 at 5.0 m, Hawk 18.5, Flint 3.4; nobody floored, no "knocked down" lines.
-  With `BF_TEST_THROW=1.5,0.15` (`W2`): Tex 7.8 HP at 4.2 m.
+  With `BF_TEST_THROW=1.5,0.15` (`W2`): Tex 7.8 HP at 4.2 m. After `TINT_MIN` (`W4`): the
+  same hits, and Tex's 0.1 HP comes with no tint.
 * sdm_e34 (`BF_MAP=sdm_e34 BF_TEST_GOTO=-44.4,15.5,-44.4,16.3`, the same throw and camera),
   side by side with the recording's frames 449-509 at matching times (`side_fina/b.png`): a
   see-through dome with a brighter rim from the first frame (the recording's shape; bigger),
   then the ring and the vertical shafts to ~+0.8 s, the decal from +0.8 s. Tex (the thrower,
-  4.9 m) takes 1.1 HP and the tint (the recording: nothing at ~5 m). The 0.4-0.67 s pale
+  4.9 m) takes 1.1 HP and the tint (the recording: nothing at ~5 m; a thrower 0.1 m farther
+  gets no tint, `TINT_MIN`). The 0.4-0.67 s pale
   white-blue on Tex the tester saw (the field version) is gone; the light effect is main's.
   **Doesn't match**: the demo is whiter and brighter overall than the recording's dark blue
   (the shared additive rule, #104); the shafts are several broad pale columns where the
@@ -445,6 +449,21 @@ Verified (15 fps; scratchpad `s81/`):
   band; the decal is hard concentric rings, ~3.8 m, seen from +0.8 s, where the recording's is
   a soft oval of ~2.2-3.3 m (an earlier measure said ~2.5x Tex's height) first seen at ~+1 s -
   left at the Frag's half-size reading and delay.
+* **The look and the additive blend (#104).** The dome too wide early, its saturation, the
+  characters inside it turning pale grey-blue and the broad godray columns all come mostly
+  from how added sprites are summed. The demo adds each sprite's colour as linear light: over
+  a dark ground a sprite's faint soft edge (a stored 0.02) shows as a stored ~0.15, so the
+  5.5 m quads' and the godray texture's wide faint margins show where the console's would
+  vanish. A test (not kept) turned each Sonic sprite's colour x alpha x texel into linear
+  light first, as a stored value (exact for one sprite over black): on sdm_e34 the added
+  colour came to 0.53-0.62 : 0.75-0.79 : 1 (the recording's 0.53 : 0.77 : 1; linear: 0.70-0.77
+  : 0.85-0.91), no white pixels, the godrays narrow and Tex unlit - but far too faint, because
+  overlapping sprites then sum in linear light (N sprites give N^0.45 x one, where the console
+  gives N x one): a thin pale dome, the ring and shafts nearly gone (scratchpad
+  `s81/side_dka/b.png`: recording, linear, stored per sprite, over the darker floor at
+  -78.4,0.6). Matching the console needs the added sprites summed in stored values (e.g. drawn
+  to their own buffer and added as stored values), a renderer change for every added sprite:
+  left to #104. Until then the Sonic stays on the shared linear rule.
 * Frag, Energy and Gas, pixel-diffed against main's build (the Frag command in **Verified**
   above, with each type): Frag 9.3k pixels over 75 frames (main against itself 7.7k), Gas 5.5k
   (5.6k), Energy 18.6k (8.7k) - small scattered differences in the Energy's random bolts; the
