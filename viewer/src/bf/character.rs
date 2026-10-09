@@ -77,6 +77,11 @@ const NEUTRAL_FACE: u32 = 0xEFF8_AC8D;
 /// Face clips shorter than this are held poses (the neutral face is two keys, 0.03 s).
 const STATIC_FACE: f32 = 0.1;
 
+/// combat-target's damage-type factor list (h_142be76f; the shield holds an empty one of its own)
+/// and an entry's factor (`<h_1d403525 Type=4 h_04653d86=0.05>`: Flint's for the Gas, common
+/// objecttypes). Names unknown, read from the layout.
+const H_DAMAGE_FACTORS: u32 = 0x142B_E76F;
+const H_DAMAGE_FACTOR: u32 = 0x0465_3D86;
 /// Collision: the objects file's surface table, its entries (name, h_e9e44859 = offset in the
 /// .ipn) and the attribute an archetype / terrain block / blocker names its surface with.
 const H_PHYSICS_FILE: u32 = 0x104D_B1CD;
@@ -131,6 +136,11 @@ pub struct Game {
     pub character_audio: HashMap<String, (i64, u32)>,
     /// character name -> hitpoints (combat-target)
     pub character_hitpoints: HashMap<String, f32>,
+    /// character name -> damage-type factors: (damage-type, factor) from its combat-target's
+    /// own h_142be76f list (`<h_1d403525 Type h_04653d86>`; not the shield's list). Common
+    /// objecttypes: Flint takes type 4 (the Gas) x0.05 and type 6 (the Energy) x2; Brutus, Hawk
+    /// and Tex list none (x1)
+    pub character_damage_factors: HashMap<String, Vec<(i64, f32)>>,
     pub sounds: SoundBank,
     /// world materials (surface sound sets) of the loaded level
     pub surfaces: Vec<Surface>,
@@ -365,6 +375,7 @@ impl Game {
             characters: vec![],
             character_audio: HashMap::new(),
             character_hitpoints: HashMap::new(),
+            character_damage_factors: HashMap::new(),
             sounds: SoundBank::default(),
             surfaces: vec![],
             strings: HashMap::new(),
@@ -703,6 +714,13 @@ impl Game {
                         .and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))) {
                         self.character_hitpoints.insert(name.clone(), hp);
                     }
+                    if let Some(c) = e.walk().into_iter().find(|x| x.name == h("combat-target")) {
+                        let factors = c.child(H_DAMAGE_FACTORS).map(|l| l.children.iter().filter_map(|f| {
+                            let num = |k: u32| f.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+                            Some((num(h("Type"))? as i64, num(H_DAMAGE_FACTOR)?))
+                        }).collect()).unwrap_or_default();
+                        self.character_damage_factors.insert(name.clone(), factors);
+                    }
                     let icon = |k: u32| e.attr(k).and_then(|v| v.as_hash()).unwrap_or(0);
                     self.character_icons.insert(name.clone(), (icon(0xF9D9_4425), icon(0x00C5_1907)));
                     let decal = |k: u32| weapon::hashes(e, k).into_iter().find(|&x| x != h("")).unwrap_or(0);
@@ -809,6 +827,12 @@ impl Game {
 
     /// A collision surface's triangles (corners in its owner's frame, material), see
     /// `bf::collision`. Empty if the loaded levels lack it.
+    /// The factor character `name` takes damage of `damage_type` by (its combat-target's list,
+    /// see `character_damage_factors`; 1 when it lists none for the type).
+    pub fn damage_factor(&self, name: &str, damage_type: i64) -> f32 {
+        self.character_damage_factors.get(name).and_then(|l| l.iter().find(|f| f.0 == damage_type)).map_or(1.0, |f| f.1)
+    }
+
     pub fn collision(&self, name: u32) -> Vec<([Vec3; 3], u8)> {
         self.physics.get(&name).map(|(d, off)| super::collision::surface(d, *off)).unwrap_or_default()
     }

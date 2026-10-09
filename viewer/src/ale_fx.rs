@@ -50,7 +50,10 @@ const INITIAL: u32 = 0x0F9A_9D52;
 /// exp-lrg-flash's 4.1 (the recording's first flash frame is a wide haze, not one flare). Only
 /// for the grenades' effects (`Compiled::recorded`): elsewhere it's a curve over the emitter's
 /// time on ~40 emitters (laser hit rings, tracers ...), more likely an emit count; those keep
-/// one particle.
+/// one particle. (It is Freelancer's Emitter_EmitCount: its hash is the game's hash of that
+/// name. Keyed over the emitter's time on smoke-grenade-flsh - 9 keys of 10.6-13.7 over
+/// 0.09-0.98 s - where the Gas recording's flash flickers for ~1 s; the demo's is the one
+/// burst. How the keys emit isn't settled: exp-lrg-flash and sonic_grenade are keyed too.)
 const BURST: u32 = 0xE722_1F95;
 const RATE: u32 = 0x023C_350C;
 const LIFE: u32 = 0x0A63_5880;
@@ -103,6 +106,27 @@ const BLEND_ADD: (u32, u32) = (5, 2);
 /// m/s, verified flat) keep the emitter's frame. The threshold is the demo's: the data has no
 /// flag for it. Only for the grenades' effects (`Compiled::recorded`).
 const PERP_RADIAL_SPEED: f32 = 0.3;
+/// Fields, linked to an appearance by the effect's pair list (appearance -> field, as
+/// Freelancer's ALE links them; the class and parameter hashes are the game's hashes of
+/// Freelancer's names). An air field (FxAirField: AirField_Magnitude, AirField_Approach) pulls
+/// its particles' velocity toward a wind of Magnitude m/s along the field's +y (turned by its
+/// transform's rotation over the effect's time), Approach of the way each APPROACH_FPS-th of a
+/// second; a gravity field (FxGravityField: GravityField_Gravity) speeds them down at Gravity
+/// m/s^2. Only for the grenades' effects (`Compiled::recorded`): the gas-grenade cloud
+/// (gas-grenade.fld, gas-grenade2.fld), grenade_trail_rise, the shrapnels' gravity. The
+/// turbulence field (FxTurbulenceField) isn't read.
+const CLASS_AIR_FIELD: u32 = 0xE625_323F;
+const AIR_MAGNITUDE: u32 = 0xE5E3_524C;
+const AIR_APPROACH: u32 = 0x1042_3CEB;
+const CLASS_GRAVITY_FIELD: u32 = 0xE644_C021;
+const GRAVITY: u32 = 0xE02B_8BD4;
+/// How often an air field's Approach is applied (per second): once per 30 fps game frame. Not
+/// in the data: fitted to the Gas recording, whose cloud is ~6 m wide and ~4 m tall and swallows
+/// Tex although gas-grenade_Cone.emt#1.emt throws its puffs out at 4-6.5 m/s for 2.3-4.4 s.
+/// Captured from 12 m (scratchpad gas76/fps*): at 60 every puff stopped within ~0.3 m, a
+/// 6.5 x 4 m cloud of billboards all centred in Tex, who stood out in front of it; at 30 it's
+/// ~6.5 x 5 m and veils him as the recording does; at 15, ~9 x 6 m; at 8, ~13 m. An inference.
+const APPROACH_FPS: f32 = 30.0;
 /// Materials per appearance: its colour and alpha at this many points of a particle's life.
 const STEPS: usize = 12;
 /// Particles alive at once, over all effects.
@@ -132,6 +156,8 @@ pub struct Pair {
     beam: Option<Handle<StandardMaterial>>,
     /// a "light_" effect's pair: its particles are point lights
     light: bool,
+    /// the fields its appearance is linked to (see CLASS_AIR_FIELD)
+    fields: Vec<Node>,
 }
 
 /// How a pair's flipbook frame is picked (see TEX_FRAME).
@@ -232,6 +258,8 @@ struct AleParticle {
     life: f32,
     vel: Vec3,
     sp: f32,
+    /// the effect's time when it was born (fields' curves run on the effect's time)
+    born: f32,
     roll: f32,
     step: usize,
     /// perp quads: the plane they lie in (the effect's and the emitter's turn, then the
@@ -354,7 +382,7 @@ impl AleAssets {
                     fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
                 });
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  frame: FrameMode::Play, beam: Some(material), light: false });
+                                  frame: FrameMode::Play, beam: Some(material), light: false, fields: vec![] });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
@@ -362,7 +390,7 @@ impl AleAssets {
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  frame: FrameMode::Play, beam: None, light: true });
+                                  frame: FrameMode::Play, beam: None, light: true, fields: vec![] });
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
@@ -394,8 +422,13 @@ impl AleAssets {
             }).collect();
             let streak = app.flag(MOTION_BLUR);
             let frame = if recorded { FrameMode::of(&app) } else { FrameMode::Play };
+            // the fields linked to this appearance (pairs appearance -> field)
+            let fields = if recorded {
+                e.pairs.iter().filter(|p| p.0 == ap).filter_map(|p| node(game, p.1))
+                    .filter(|n| n.class == CLASS_AIR_FIELD || n.class == CLASS_GRAVITY_FIELD).collect()
+            } else { vec![] };
             pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
-                              beam: None, light: false });
+                              beam: None, light: false, fields });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded })
     }
@@ -552,7 +585,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     (None, Vec3::ZERO, frame * dir * speed, lie)
                 };
                 seq.0 += 1;
-                let particle = AleParticle { fx: compiled.clone(), pair: i, age: 0.0, life, vel, sp, roll, step: 0, frame: lie, owner, local,
+                let particle = AleParticle { fx: compiled.clone(), pair: i, age: 0.0, life, vel, sp, born: fx.t, roll, step: 0, frame: lie, owner, local,
                                              turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0 };
                 let at = Transform::from_translation(origin + frame * local).with_scale(Vec3::splat(0.001));
                 if pair.beam.is_some() {
@@ -588,6 +621,20 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         let fx = p.fx.clone();
         let pair = &fx.pairs[p.pair];
         let app = &pair.app;
+        // its fields: toward an air field's wind, down at a gravity field's rate (in the world's
+        // frame: the blasts are placed upright, and a trail's spinning grenade would spin it)
+        for field in &pair.fields {
+            let t = p.born + p.age;
+            if field.class == CLASS_AIR_FIELD {
+                let wind = euler(field.transform(TRANSFORM, t)[1]) * Vec3::Y * field.curve(AIR_MAGNITUDE, p.sp, t).unwrap_or(0.0);
+                let approach = field.curve(AIR_APPROACH, p.sp, t).unwrap_or(0.0).clamp(0.0, 1.0);
+                let k = 1.0 - (1.0 - approach).powf(dt * APPROACH_FPS);
+                let v = p.vel;
+                p.vel = v + (wind - v) * k;
+            } else {
+                p.vel.y -= field.curve(GRAVITY, p.sp, t).unwrap_or(0.0) * dt;
+            }
+        }
         // attached particles ride on their effect (left where they are if it's gone)
         let mut turn = Quat::IDENTITY;
         match p.owner.map(|o| owners.get(o)) {

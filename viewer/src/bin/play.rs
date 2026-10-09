@@ -389,12 +389,12 @@ fn main() {
             }
             return;
         }
-        // BF_DUMP_HITPOINTS=1: each character's hitpoints, and exit
+        // BF_DUMP_HITPOINTS=1: each character's hitpoints and damage-type factors, and exit
         if std::env::var("BF_DUMP_HITPOINTS").is_ok() {
             let mut hp: Vec<_> = game.character_hitpoints.iter().collect();
             hp.sort_by(|a, b| a.0.cmp(b.0));
             for (name, hp) in hp {
-                println!("{name:12} {hp}");
+                println!("{name:12} {hp}  damage-type factors {:?}", game.character_damage_factors.get(name).cloned().unwrap_or_default());
             }
             return;
         }
@@ -433,7 +433,7 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
@@ -450,6 +450,8 @@ fn main() {
 mod hud;
 #[path = "play_grenade.rs"]
 mod grenade;
+#[path = "play_gas.rs"]
+mod gas;
 #[path = "play_fx.rs"]
 mod fx;
 #[path = "play_pickups.rs"]
@@ -2701,6 +2703,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let held = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon));
     let damage = held.map_or((8.0, 10.0), |w| if w.def.damage > 0.0 { (w.def.damage_min.min(w.def.damage), w.def.damage) } else { (8.0, 10.0) });
     let ammo = held.map_or(1, |w| w.def.ammo_type);
+    // its Damage damage-type, for the target's factor (Game::damage_factor)
+    let damage_type = held.map_or(0, |w| w.def.damage_type);
     let mut shots = std::mem::take(&mut player.shots);
     for shot in shots.iter_mut() {
         let hit = squad.0.iter().enumerate().filter(|(_, m)| !m.dead)
@@ -2712,7 +2716,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // it lands when the shot gets there (a bolt flies at its weapon's speed)
             let (lo, hi) = damage;
             let m = &mut squad.0[i];
-            let amount = lo + (hi - lo) * m.random(1000) as f32 / 1000.0;
+            let amount = (lo + (hi - lo) * m.random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[m.character], damage_type);
             let local = shot.origin + shot.dir * t - m.position;
             player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, amount, dir: shot.dir, local, ammo });
         }

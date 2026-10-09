@@ -29,8 +29,8 @@
 //! it does no damage or deals it over time. Hurt by it, the player's 3D view goes red for a
 //! moment (see `TINT_LOW`).
 //!
-//! Not done yet (each type's own ticket): the Gas's damage over time (it does none yet: its
-//! instant damage is skipped, see `fly_grenades`), the Energy's bolts, the
+//! The Gas's damage over time is play_gas.rs's (its blast is handed over there, see
+//! `fly_grenades`). Not done yet (each type's own ticket): the Energy's bolts, the
 //! Sonic's ring that carries the damage out, the Light's 30 s burn (its light effect runs as
 //! the data has it), the Roller's seeking and the Sentry's trigger (it lies there until its
 //! 9999 s timer or BF_TEST_DETONATE).
@@ -405,7 +405,8 @@ fn fly_grenades(
     mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
     (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
-    (mut blasts, mut decals, mut delayed, mut tint): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>, ResMut<DelayedBlastParts>, ResMut<ScreenTint>),
+    (mut blasts, mut decals, mut delayed, mut tint, mut gas): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>, ResMut<DelayedBlastParts>,
+                                                               ResMut<ScreenTint>, ResMut<super::gas::GasClouds>),
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
 ) {
@@ -451,8 +452,10 @@ fn fly_grenades(
             }
             let k = 1.0 - d / radius;
             let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
-            let damage = if u.character == thrower { SELF_DAMAGE * (min + (max - min) * roll) }
-                else if kill { u.health.max(max * k) } else { max * k };
+            // (times the character's factor for the explosion's damage-type)
+            let damage = game.0.damage_factor(CHARACTERS[u.character], kit.blast.damage_type)
+                * if u.character == thrower { SELF_DAMAGE * (min + (max - min) * roll) } else { max * k };
+            let damage = if kill && u.character != thrower { u.health.max(damage) } else { damage };
             hurt(u, &game.0, damage, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
             if controlled {
                 tint.0 = 0.0;
@@ -480,11 +483,15 @@ fn fly_grenades(
             let at = tr.translation;
             commands.entity(e).despawn();
             blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
-            // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light), nor
-            // yet from one whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose
-            // recording shows no damage at once - its damage over time is #76's)
+            // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light); one
+            // whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose recording shows
+            // no damage at once) leaves its poison cloud instead (play_gas.rs)
             let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
-            if max <= 0.0 || radius <= 0.0 || kit.blast.damage_time > 0.0 {
+            if max <= 0.0 || radius <= 0.0 {
+                continue;
+            }
+            if kit.blast.damage_time > 0.0 {
+                gas.release(g.kind, at, g.thrower, p.sim_time);
                 continue;
             }
             // loose pickups are thrown by blasts that hurt
