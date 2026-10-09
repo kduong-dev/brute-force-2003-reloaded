@@ -60,7 +60,8 @@ const SELF_BOLT: f32 = 0.34;
 const THROW_BACK: f32 = 3.0;
 const THROW_UP: f32 = 4.0;
 /// A corpse struck: shoved along a line from below it, this far through (m) (the ragdoll's
-/// `shove`, which brings the bones it passes up to SHOT_SHOVE m/s along the line).
+/// `shove`, which brings the bones it passes up to SHOT_SHOVE m/s along the line). The demo's
+/// choice: any length that starts the line outside the body does.
 const CORPSE_SHOVE_FROM: f32 = 1.0;
 
 /// Blasts that release bolts this frame: (grenade type, where, the thrower's character), from
@@ -205,14 +206,23 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
         }
         let k = 1.0 - b.dist / radius;
         let damage = if u.character == b.thrower { SELF_BOLT * max } else if instant && !leader { u.health.max(max * k) } else { max * k };
+        // the thrower stays up (Brutus did in the recording): `hurt`'s own chance of a
+        // knock-down is held off for them by its knock-down cooldown, put back after
+        let thrower = u.character == b.thrower;
+        let cooldown = u.knock_cooldown;
+        if thrower {
+            u.knock_cooldown = cooldown.max(1.0);
+        }
         hurt(u, &game.0, damage, HURT_CHATTER, throw, body_place(u) + Vec3::Y, -1);
+        u.knock_cooldown = if thrower { cooldown } else { u.knock_cooldown };
         if leader {
             tint.0 = 0.0;
         }
-        // a squadmate who lives is thrown down; the thrower stays up (Brutus did in the
-        // recording), whatever `hurt`'s own chance of a knock-down
-        let knocked = !u.dead && u.character != b.thrower && u.knock.is_none() && !u.action.airborne();
-        u.knock_request = if knocked { Some(throw) } else if u.character == b.thrower { None } else { u.knock_request };
+        // a squadmate who lives is thrown down
+        let knocked = !u.dead && !thrower && u.knock.is_none() && !u.action.airborne();
+        if knocked {
+            u.knock_request = Some(throw);
+        }
         if std::env::var("BF_COMBAT_LOG").is_ok() {
             println!("{} bolt at {:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}{}", kit.def.label, b.dist, CHARACTERS[u.character], u.health, u.max_health,
                      if knocked { ", thrown down" } else if u.knock.is_some() { ", down already" } else if u.action.airborne() { ", in the air" } else { "" });

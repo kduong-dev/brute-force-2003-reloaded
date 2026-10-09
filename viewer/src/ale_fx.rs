@@ -102,6 +102,9 @@ const BLEND_ADD: (u32, u32) = (5, 2);
 /// (`Compiled::recorded`); the library has other effect appearances, unchecked.
 const CLASS_SPAWNER: u32 = 0x0EC7_7EA0;
 const SPAWN_EFFECT: u32 = 0x0EC7_A290;
+/// The missing emitters given a stand-in (`missing_emitter`): stun_grenade_master's
+/// h_ed10c55f (stun_grenade_init.app) and h_f48dc74d (stun_grenade_init#1.app).
+const STAND_IN_EMITTERS: [u32; 2] = [0xED10_C55F, 0xF48D_C74D];
 
 /// Perp quads lie flat in the emitter's frame, i.e. face along the emitter's axis - the
 /// direction a cone emitter throws them (the Sonic's ring, the laser hits' rings, a bolt's
@@ -397,12 +400,13 @@ impl AleAssets {
                effect: u32, recorded: bool) -> Option<Compiled> {
         let e = game.effects.effects.get(&effect)?.clone();
         let node = |game: &Game, i: u32| e.refs.iter().find(|r| r.3 == i).and_then(|r| game.effects.nodes.get(&r.1)).cloned();
+        let node_name = |i: u32| e.refs.iter().find(|r| r.3 == i).map_or(0, |r| r.1);
         let mut pairs = vec![];
         for &(em, ap) in &e.pairs {
             let Some(app) = node(game, ap) else { continue };
             let emitter = match node(game, em) {
                 Some(n) => n,
-                None if recorded => missing_emitter(&app),
+                None if recorded && STAND_IN_EMITTERS.contains(&node_name(em)) => missing_emitter(&app),
                 None => continue,
             };
             if app.class == CLASS_SPAWNER {
@@ -521,7 +525,10 @@ impl AleEffect {
 /// and h_f48dc74d, the emitters of stun_grenade_init.app and stun_grenade_init#1.app): one
 /// particle at the effect's middle when it starts, living the appearance's own lifespan
 /// (0.6 s, 0.45 s). A guess: the recording's cyan flash and ground wash, at the middle,
-/// strongest at +0.17-0.28 s and gone by ~0.45 s, fit it. Grenade effects only.
+/// strongest at +0.17-0.28 s and gone by ~0.45 s, fit it. Only those two (STAND_IN_EMITTERS):
+/// other grenade effects miss emitters too (exp-lrg-dirt's h_f6c66e90 in the Frag's and the
+/// Roller's blast, exp-mine-dirt's h_ecb22a58 in the Sentry's), and drew nothing before; a
+/// stand-in there would add a layer the Frag recording wasn't checked with.
 fn missing_emitter(app: &Node) -> Node {
     use crate::bf::ale::{Curve, Value};
     let life = app.float(LIFESPAN).unwrap_or(1.0);
@@ -643,6 +650,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     }
                 };
                 let life = em.curve(LIFE, sp, t).unwrap_or(1.0).max(0.02);
+                // a particle carrying an effect lives no longer than that effect runs once
+                // (stun_grenade_master's 7.49 s particles carry 0.8 s bolts): it would carry an
+                // effect with nothing left to draw
+                let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
                 let roll = if pair.perp { 0.0 } else { fx.random() * std::f32::consts::TAU };
                 let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
                 // a perp quad from a sphere emitter that throws its particles out: facing out

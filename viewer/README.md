@@ -154,10 +154,13 @@ decal, and a throw called off.
   * Added for the Energy's stun_grenade_master (grenade effects only):
     * An effect appearance (class h_0ec77ea0) makes each particle of its emitter carry the
       effect named by its h_0ec7a290 ("stun_grenade": a bolt), turned to face the way the
-      particle moves along the ground (an inference).
-    * A pair whose emitter isn't in the node library (stun_grenade_init's h_ed10c55f,
-      stun_grenade_init#1's h_f48dc74d) gets a stand-in: one particle at the middle, living the
-      appearance's own lifespan (a guess, fitting the recording's flash and wash).
+      particle moves along the ground (an inference). The particle lives no longer than its
+      effect runs once (0.8 s, not the master's 7.49 s).
+    * Those two of its pairs whose emitter isn't in the node library (stun_grenade_init's
+      h_ed10c55f, stun_grenade_init#1's h_f48dc74d) get a stand-in: one particle at the middle,
+      living the appearance's own lifespan (a guess, fitting the recording's flash and wash).
+      Only those two, by name: exp-lrg-dirt (the Frag's, the Roller's) and exp-mine-dirt (the
+      Sentry's) miss their emitters too and still draw nothing.
     * A beam whose texture is an animated one ("ARCb": a 4 x 4 sheet of arcs, 30 fps) steps
       through its frames over the ribbon's life.
     * An effect entity's scale scales its emitters' offsets (a bolt's reach is fitted to the
@@ -295,7 +298,9 @@ EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
   the 0.2 s sweep for a body within ~6 m, later out to ~1 s at 9 m.
 * **A strike**: the thrower takes 0.34 x Damage max (33 HP: Brutus at 0 m lost 31.5% of his
   105 HP in one step at +0.2 s, the one measurement; the Frag's 0.2 x the roll would be
-  7.8-19.5 here) and stays standing, as Brutus did; anyone else takes Damage max falling to
+  7.8-19.5 here) at any distance within the 9 m: it doesn't fall off, so a thrower 8.5 m out
+  still takes 33 while a squadmate beside them takes ~5 (only the 0 m case was measured). The
+  thrower stays standing, as Brutus did; anyone else takes Damage max falling to
   nothing at the radius (the other grenades' rule; instant kill on the test map) and, if alive
   and not in the air, is thrown down back and up (3 m/s back, 4 m/s up: the demo's amounts;
   the recording's squadmate went up and back at +0.6 s, was down ~1 s and got up). A corpse
