@@ -96,6 +96,12 @@ const BLEND: u32 = 0x1DAE_A8C0;
 /// blast, which the recording doesn't show. Other effects keep the 30 fps loop.
 const TEX_FRAME: u32 = 0x1865_7E4A;
 const BLEND_ADD: (u32, u32) = (5, 2);
+/// The effect appearance (class h_0ec77ea0): each particle of its emitter carries an effect of
+/// its own, named by h_0ec7a290 (stun_grenade_master's node "stun_grenade_master" -> the
+/// effect "stun_grenade": the Energy grenade's bolts). Only for the grenades' effects
+/// (`Compiled::recorded`); the library has other effect appearances, unchecked.
+const CLASS_SPAWNER: u32 = 0x0EC7_7EA0;
+const SPAWN_EFFECT: u32 = 0x0EC7_A290;
 
 /// Perp quads lie flat in the emitter's frame, i.e. face along the emitter's axis - the
 /// direction a cone emitter throws them (the Sonic's ring, the laser hits' rings, a bolt's
@@ -166,6 +172,8 @@ pub struct Pair {
     light: bool,
     /// the fields its appearance is linked to (see CLASS_AIR_FIELD)
     fields: Vec<Node>,
+    /// an effect appearance's pair (CLASS_SPAWNER): the effect each particle carries
+    child: Option<Arc<Compiled>>,
 }
 
 /// How a pair's flipbook frame is picked (see TEX_FRAME).
@@ -209,7 +217,15 @@ pub struct Compiled {
 impl Compiled {
     /// The materials its particles draw with (the first of each pair's), for `warm_up`.
     pub fn materials(&self) -> Vec<Handle<StandardMaterial>> {
-        self.pairs.iter().filter_map(|p| p.beam.clone().or_else(|| p.steps.first().and_then(|s| s.first()).cloned())).collect()
+        self.pairs.iter().flat_map(|p| {
+            let own = p.beam.clone().or_else(|| p.steps.first().and_then(|s| s.first()).cloned());
+            own.into_iter().chain(p.child.iter().flat_map(|c| c.materials()))
+        }).collect()
+    }
+
+    /// The effects its particles carry (its effect appearances' effects, CLASS_SPAWNER).
+    pub fn children(&self) -> Vec<Arc<Compiled>> {
+        self.pairs.iter().filter_map(|p| p.child.clone()).collect()
     }
 
     /// How long a one-shot run of the effect lasts: its longest emitter plus its longest-lived
@@ -367,6 +383,8 @@ impl AleAssets {
         if let Some(c) = self.effects.get(&(effect, recorded)) {
             return c.clone();
         }
+        // (an effect that carries itself, through its effect appearances, carries nothing)
+        self.effects.insert((effect, recorded), None);
         let compiled = self.compile(game, images, materials, effect, recorded).map(Arc::new);
         if compiled.is_none() {
             warn!("ALE effect h_{effect:08x}: not in the library, or nothing it draws is supported");
@@ -381,16 +399,46 @@ impl AleAssets {
         let node = |game: &Game, i: u32| e.refs.iter().find(|r| r.3 == i).and_then(|r| game.effects.nodes.get(&r.1)).cloned();
         let mut pairs = vec![];
         for &(em, ap) in &e.pairs {
-            let (Some(emitter), Some(app)) = (node(game, em), node(game, ap)) else { continue };
+            let Some(app) = node(game, ap) else { continue };
+            let emitter = match node(game, em) {
+                Some(n) => n,
+                None if recorded => missing_emitter(&app),
+                None => continue,
+            };
+            if app.class == CLASS_SPAWNER {
+                if !recorded {
+                    continue;
+                }
+                let child = app.string(SPAWN_EFFECT).filter(|n| !n.is_empty())
+                    .and_then(|n| self.load_as(game, images, materials, h(n), recorded));
+                if let Some(child) = child {
+                    pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
+                                      frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![] });
+                }
+                continue;
+            }
             if app.class == CLASS_BEAM {
                 let additive = app.pair(BEAM_BLEND).unwrap_or(BLEND_ADD) == BLEND_ADD;
-                let texture = app.string(BEAM_TEXTURE).and_then(|n| self.texture(game, images, h(n), additive));
-                let material = materials.add(StandardMaterial {
-                    base_color: Color::WHITE, base_color_texture: texture, unlit: true, double_sided: true, cull_mode: None,
+                let name = app.string(BEAM_TEXTURE).map(h).unwrap_or(0);
+                // an animated texture (the Energy's bolts: "ARCb", a 4 x 4 sheet of arcs running
+                // down its cells at 30 fps): one material per frame, the ribbon stepping through
+                // them over its life (`beams`). Grenade effects only; elsewhere a beam's
+                // flipbook name finds no texture, as before
+                let book = if recorded { game.flipbooks.get(&name).cloned().filter(|b| !b.frames.is_empty()) } else { None };
+                let texture = self.texture(game, images, book.as_ref().map_or(name, |b| b.texture), additive);
+                let frames: Vec<Affine2> = match &book {
+                    Some(b) => b.frames.iter()
+                        .map(|&[u0, v0, u1, v1]| Affine2::from_scale_angle_translation(Vec2::new(u1 - u0, v1 - v0), 0.0, Vec2::new(u0, v0))).collect(),
+                    None => vec![Affine2::IDENTITY],
+                };
+                let mats: Vec<Handle<StandardMaterial>> = frames.into_iter().map(|uv| materials.add(StandardMaterial {
+                    base_color: Color::WHITE, base_color_texture: texture.clone(), uv_transform: uv, unlit: true, double_sided: true, cull_mode: None,
                     fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
-                });
-                pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  frame: FrameMode::Play, beam: Some(material), light: false, fields: vec![] });
+                })).collect();
+                let material = mats[0].clone();
+                let fps = book.map_or(0.0, |b| b.fps);
+                pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![mats], fps,
+                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields: vec![] });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
@@ -398,7 +446,7 @@ impl AleAssets {
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  frame: FrameMode::Play, beam: None, light: true, fields: vec![] });
+                                  frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![] });
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
@@ -435,7 +483,7 @@ impl AleAssets {
             let fields = e.pairs.iter().filter(|p| recorded && p.0 == ap).filter_map(|p| node(game, p.1))
                 .filter(|n| n.class == CLASS_AIR_FIELD && AIR_FIELDS.contains(&n.name.as_str())).collect();
             pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
-                              beam: None, light: false, fields });
+                              beam: None, light: false, fields, child: None });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded })
     }
@@ -467,6 +515,20 @@ impl AleEffect {
         self.rng ^= self.rng << 5;
         (self.rng >> 8) as f32 / (1u32 << 24) as f32
     }
+}
+
+/// A stand-in for an emitter the node library doesn't have (stun_grenade_master's h_ed10c55f
+/// and h_f48dc74d, the emitters of stun_grenade_init.app and stun_grenade_init#1.app): one
+/// particle at the effect's middle when it starts, living the appearance's own lifespan
+/// (0.6 s, 0.45 s). A guess: the recording's cyan flash and ground wash, at the middle,
+/// strongest at +0.17-0.28 s and gone by ~0.45 s, fit it. Grenade effects only.
+fn missing_emitter(app: &Node) -> Node {
+    use crate::bf::ale::{Curve, Value};
+    let life = app.float(LIFESPAN).unwrap_or(1.0);
+    Node { class: 0, name: format!("{} (its emitter is missing)", app.name), params: HashMap::from([
+        (LIFESPAN, Value::Float(life)),
+        (LIFE, Value::Curve(Curve(vec![(0.0, life, 0, vec![])]))),
+    ]) }
 }
 
 fn euler(deg: [f32; 3]) -> Quat {
@@ -536,8 +598,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
             // a beam pair's ribbon, made with its first particles
             if let (true, Some(material), None) = (n > 0, &pair.beam, fx.strips[i]) {
                 let mesh = meshes.add(Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default()));
+                // (never culled: its bounds would be those of its first few points, its mesh
+                // being rebuilt in the world every frame)
                 fx.strips[i] = Some(commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
-                    Transform::default(), Visibility::default(),
+                    bevy::render::view::NoFrustumCulling, Transform::default(), Visibility::default(),
                     BeamStrip { source: owner, pair: i, fx: compiled.clone(), mesh, age: 0.0 })).id());
             }
             if n > 0 && std::env::var("BF_ALE_LOG").is_ok() {
@@ -554,7 +618,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 let (at, rot) = (from.lerp(place.translation, f), from_turn.slerp(place.rotation, f));
                 let [offset, turn, _] = em.transform(TRANSFORM, tj);
                 let frame = rot * euler(turn);
-                let origin = at + rot * Vec3::from(offset);
+                // (a grenade effect's offsets are scaled by its entity's scale: play_energy.rs
+                // fits a bolt's reach to the body it strikes so)
+                let offset = if compiled.recorded { Vec3::from(offset) * place.scale } else { Vec3::from(offset) };
+                let origin = at + rot * offset;
                 let speed = em.curve(SPEED, sp, t).unwrap_or(0.0);
                 let c = |p: u32| em.curve(p, sp, t).unwrap_or(0.0);
                 let (local, dir) = match em.class {
@@ -595,7 +662,19 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 let particle = AleParticle { fx: compiled.clone(), pair: i, age: 0.0, life, vel, sp, born: fx.t, roll, step: 0, frame: lie, owner, local,
                                              turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0 };
                 let at = Transform::from_translation(origin + frame * local).with_scale(Vec3::splat(0.001));
-                if pair.beam.is_some() {
+                if let Some(child) = &pair.child {
+                    // an effect appearance: the particle carries its effect, turned to face
+                    // (+z) the way the particle goes along the ground and kept upright. The turn
+                    // is an inference: the Energy recording's bolts run out every way from the
+                    // middle, and the bolt's own reach runs along its +z (stun_grenade.emt's
+                    // offset sweeps 0 -> 5.8 m along z)
+                    let going = particle.vel;
+                    let flat = Vec3::new(going.x, 0.0, going.z).normalize_or(Vec3::Z);
+                    let carrier = commands.spawn((Transform::from_translation(at.translation).with_rotation(Quat::from_rotation_arc(Vec3::Z, flat)),
+                                                  Visibility::default(), particle)).id();
+                    let seed = fx.rng ^ (seq.0 as u32).wrapping_mul(0x9E37_79B9);
+                    commands.spawn((Transform::default(), Visibility::default(), AleEffect::once(child.clone(), sp, seed), ChildOf(carrier)));
+                } else if pair.beam.is_some() {
                     // drawn by the ribbon, not as a quad
                     commands.spawn((at, particle));
                 } else if pair.light {
@@ -706,7 +785,7 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
 /// age. A ribbon goes when its particles have.
 fn beams(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, mut meshes: ResMut<Assets<Mesh>>,
          camera: Query<&GlobalTransform, With<Camera3d>>, particles: Query<(&AleParticle, &Transform)>,
-         effects: Query<(), With<AleEffect>>, mut strips: Query<(Entity, &mut BeamStrip)>) {
+         effects: Query<(), With<AleEffect>>, mut strips: Query<(Entity, &mut BeamStrip, &mut MeshMaterial3d<StandardMaterial>)>) {
     let dt = clock(&time, fixed);
     let eye = camera.iter().next().map(|c| c.translation()).unwrap_or_default();
     let mut points: HashMap<(Entity, usize), Vec<(u64, Vec3, f32, f32)>> = HashMap::new();
@@ -715,8 +794,16 @@ fn beams(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, 
             points.entry((p.source, p.pair)).or_default().push((p.seq, tr.translation, p.age / p.life, p.sp));
         }
     }
-    for (e, mut strip) in &mut strips {
+    for (e, mut strip, mut material) in &mut strips {
         strip.age += dt;
+        // an animated beam texture steps through its frames at its own rate
+        let pair = &strip.fx.pairs[strip.pair];
+        if let Some(frames) = pair.steps.first().filter(|f| f.len() > 1) {
+            let m = &frames[(strip.age * pair.fps) as usize % frames.len()];
+            if material.0 != *m {
+                material.0 = m.clone();
+            }
+        }
         let mut pts = points.remove(&(strip.source, strip.pair)).unwrap_or_default();
         // the ribbon goes when its effect has and its particles have died
         if pts.is_empty() && strip.age > 0.2 && effects.get(strip.source).is_err() {

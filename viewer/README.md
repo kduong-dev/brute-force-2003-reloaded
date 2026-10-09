@@ -58,7 +58,7 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 * **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Energy,
   Gas, Light, Sonic, Roller, Sentry. m09_a is
   loaded for the Light (only in m09_a/b/c/x). T steps through them. See **Grenades**.
-* **Instant kill**, on at the start (`BF_TEST_INSTANT_KILL=0`: off), K toggles it. The player's shots and grenades kill any
+* **Instant kill**, on at the start (`BF_TEST_INSTANT_KILL=0`: off), K toggles it (`BF_TEST_TOGGLE_KILL=<s>[,<s>...]` presses it at those times). The player's shots and grenades kill any
   squad member they hurt, in one hit. The player still takes normal damage.
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
   ragdoll, then the death camera and the hand-over to the next squad member (or, with nobody
@@ -151,6 +151,19 @@ decal, and a throw called off.
       of five captures run beside two other instances, the flash and the add layer were
       missing for the blast's first half second: the likely cause, a pipeline still being
       built. Not reproduced since (four captures, three at once, alike).
+  * Added for the Energy's stun_grenade_master (grenade effects only):
+    * An effect appearance (class h_0ec77ea0) makes each particle of its emitter carry the
+      effect named by its h_0ec7a290 ("stun_grenade": a bolt), turned to face the way the
+      particle moves along the ground (an inference).
+    * A pair whose emitter isn't in the node library (stun_grenade_init's h_ed10c55f,
+      stun_grenade_init#1's h_f48dc74d) gets a stand-in: one particle at the middle, living the
+      appearance's own lifespan (a guess, fitting the recording's flash and wash).
+    * A beam whose texture is an animated one ("ARCb": a 4 x 4 sheet of arcs, 30 fps) steps
+      through its frames over the ribbon's life.
+    * An effect entity's scale scales its emitters' offsets (a bolt's reach is fitted to the
+      body it strikes so).
+  * Beam ribbons are never frustum-culled (any effect): their mesh is rebuilt every frame, and
+    the bounds taken from its first few points culled the Energy's bolts as they spread.
   * The Frag's exp-fire-add is a sphere emitter of "perp" quads. Perp quads lie flat in the
     emitter's frame (the Sonic's ring and the laser hits' rings show that), which drew it as a
     stack of flat discs seen nearly edge-on: a wide flat streak. From a sphere emitter whose
@@ -162,7 +175,8 @@ decal, and a throw called off.
   demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
   each, ~11%, no falloff); the game's formula isn't known. No damage from a blast without any
   (the Light); one whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose recording
-  shows none at once) leaves a poison cloud instead (see **The Gas's cloud** below).
+  shows none at once) leaves a poison cloud instead (see **The Gas's cloud** below). The
+  Energy's damage comes with its bolts instead (see **Energy grenade**).
 * **Damage types.** Each character's combat-target lists factors per damage-type
   (`<h_142be76f><h_1d403525 Type h_04653d86>`, read into `Game::character_damage_factors`;
   the shield's own list is empty): Flint takes type 4 (the Gas) x0.05 and type 6 (the Energy)
@@ -243,7 +257,7 @@ What each type does so far, and doesn't:
 | Type | Does | Not yet |
 |---|---|---|
 | Frag (#75) | everything above | the "Tech Upgrade Frag Grenade!" upgrade |
-| Energy (#74) | timer 1.75, stun_grenade_master + stun_hit_s, f875b6c6, decal h_f4d65518, damage 39-97.5 / 9 m at once | the bolts crawling out and striking bodies; knock-down per the recording |
+| Energy (#74) | timer 1.75, stun_grenade_master + stun_hit_s, f875b6c6, decal h_f4d65518; its bolts crawl out and carry the damage (39-97.5, 9 m) to every body in reach, throwing down the living and throwing corpses (see **Energy grenade**) | the stunned_fx 30 s arc; the per-liquid effects h_0cbcb8f2; the "Tech Upgrade" |
 | Gas (#76) | timer 1, gas-grenade's olive cloud (with its air fields), 1b35643e, the poison: 17.7 HP/s within 3 m for 5.5 s, Flint x0.05 | the "Tech Upgrade" (the ticket's); the cloud's fade (lingers ~1-2 s, see above); the flash's ~1 s flicker (smoke-grenade-flsh's keyed emit count: one burst here); the shared HUD's damage feedback (white bar with a dark-red trailing segment, the direction chevron) |
 | Light (#77) | phosphor_grenade + light_phosphor, ignition h_1080aaf1 and f5260e35 after 0.2 s, no damage, no decal, no tint, pickups left alone | checking the 30 s burn and the light's strength against the recording |
 | Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7 | the damage arriving with the ring (it's dealt at once) |
@@ -255,6 +269,56 @@ the gravity and turbulence fields: #101); decals don't
 follow uneven ground (a plane along the slope under the middle: a big scorch on a bumpy
 hillside is partly buried); the sounds' play-length; distance falloff for blast sounds beyond
 a volume.
+
+#### Energy grenade (`src/bin/play_energy.rs`)
+
+"Releases a maelstrom of charged electrical bolts upon detonation." Its blast is the others'
+(fuse 1.75 s from landing; effect type h_e1f6c1e6: stun_grenade_master + stun_hit_s, sound
+f875b6c6, no light; decal h_f4d65518), but its damage comes with its bolts, not 0.1 s after.
+Damage-type 6 is DTYPE_PARTICLE (the XBE's damage-type table at 0x3bd9d0: 0 NORMAL, 1
+BALLISTIC, 2 BLADED, 3 BIOREACTIVE, 4 GAS, 5 FLAME, 6 PARTICLE, 7 SONIC, 8 LASER, 9 PSYCHIC, 10
+EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
+
+* **The bolts, as the data has them**: stun_grenade_master's emitter throws ~6-7 particles in
+  its first 0.33 s at 3.84 m/s, each carrying a "stun_grenade" effect: a ribbon (ARCb,
+  blue-white, ~0.59 m wide) through ~26 particles laid over 0.3 s by an emitter whose offset
+  sweeps 5.8 m out along its z in 0.2 s, jittering sideways and climbing, each drifting 1.6 m/s
+  for 0.49 s. So a bolt is a jagged strand reaching ~6 m out from a head crawling out at
+  3.84 m/s, gone ~0.8 s after it starts (3.84 m/s x 0.8 s + 5.8 m is about the 9 m radius).
+  The recording: 3-8 strands crawling out from +0.1-0.18 s to +0.77-0.83 s.
+* **Bolts to bodies** (an inference: whether the game's bolts seek bodies or are random bolts
+  joined to bodies near them, the recording doesn't settle): every body within the 9 m radius,
+  living or dead, the thrower too, draws a bolt of its own from the blast toward it, from
+  +0.13 s (Hawk, at the grenade, died at +0.13 s). Its head crawls out at 3.84 m/s and stops
+  where the bolt's reach (5.8 m, scaled down to the distance for a nearer body) ends on the
+  body; it strikes when its reach gets to the body's side (0.4 m short of its middle), within
+  the 0.2 s sweep for a body within ~6 m, later out to ~1 s at 9 m.
+* **A strike**: the thrower takes 0.34 x Damage max (33 HP: Brutus at 0 m lost 31.5% of his
+  105 HP in one step at +0.2 s, the one measurement; the Frag's 0.2 x the roll would be
+  7.8-19.5 here) and stays standing, as Brutus did; anyone else takes Damage max falling to
+  nothing at the radius (the other grenades' rule; instant kill on the test map) and, if alive
+  and not in the air, is thrown down back and up (3 m/s back, 4 m/s up: the demo's amounts;
+  the recording's squadmate went up and back at +0.6 s, was down ~1 s and got up). A corpse
+  (or a body already down) is thrown up and out with the ragdoll's shot shove, brought up to
+  3 m/s along a line up through its pelvis (the recording threw a corpse into the air; the
+  shove's 3 m/s lifts it only ~0.1-0.4 m). The player's red tint comes with their strike.
+* `BF_GRENADE_LOG` prints each bolt (to whom, how far, alive or dead), each strike (how long
+  after the blast) and whether a corpse's shove hit; `BF_COMBAT_LOG` the damage and whether
+  they were thrown down.
+
+Verified (test map, 15 fps; scratchpad `en74/`):
+`--test BF_TEST_GRENADE_TYPE=Energy BF_TEST_GOTO=0,10,0,10 BF_TEST_TARGET=1
+BF_TEST_THROW=1.5,0.6,5.5,0.6 BF_TEST_TOGGLE_KILL=5.0 BF_CAMERA_PITCH=-0.45
+BF_CAMERA_DISTANCE=8 BF_GRENADE_LOG=1 BF_COMBAT_LOG=1`: the first blast kills Brutus (instant
+kill) and floors Hawk; instant kill off, the second (t 8.67) strikes Flint (2.3 m, 73 HP, thrown
+up and back, down ~1 s, back up) and Hawk (2.7 m, killed) at +0.33 s and Brutus's corpse (6.9 m,
+"body thrown") at +0.33 s. Side by side with the recording's fourth blast (frame 1772, every
+4th frame to +0.87 s): the cyan wash at +0.07-0.2 s, the bolts from ~+0.27 s, strongest
++0.33-0.6 s, gone by ~0.8 s as recorded; strands end on the struck bodies. Differences: the
+godray shafts show from ~+0.07 s to ~+0.33 s, the recording's from +0.27 s to +0.47 s; the
+wash is whiter and the strands thinner and crisper than the recording's (its halo is wider);
+some of the master effect's random bolts climb a few metres into the air (its emitter tumbles
+them; the recording has a few such).
 
 Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
 * `BF_TEST_GRENADE_TYPE=<label>` (any case, e.g. `Sonic`) selects that type at the start,
@@ -314,7 +378,7 @@ recordings at 60 fps):
   differences are the trail's puffs (around the hand and along the flight, and the Frag's
   rising trail column lit by its blast); the Sonic's dome and ring and the Frag's blast are
   identical.
-* Energy: stun bolts' green godrays and knock-downs.
+* Energy: see **Energy grenade**.
 
 Squad movement and deaths follow the game's own data and the captures:
 

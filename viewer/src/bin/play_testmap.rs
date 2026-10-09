@@ -174,8 +174,16 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
 }
 
 /// K: instant kill on or off.
-fn toggle_instant_kill(keys: Res<ButtonInput<KeyCode>>, mut test: ResMut<TestMap>, mut status: ResMut<UsePanel>) {
-    if keys.just_pressed(KeyCode::KeyK) {
+/// (test hook: BF_TEST_TOGGLE_KILL=<s>[,<s>...] presses it at those times: e.g. a squadmate
+/// killed by BF_TEST_KILL, then instant kill off, for a grenade that hurts the living and throws
+/// the dead)
+fn toggle_instant_kill(keys: Res<ButtonInput<KeyCode>>, mut test: ResMut<TestMap>, mut status: ResMut<UsePanel>, player: Res<Player>,
+                       mut pressed: Local<usize>) {
+    let times: Vec<f32> = std::env::var("BF_TEST_TOGGLE_KILL").ok()
+        .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+    let hook = times.get(*pressed).is_some_and(|&at| player.sim_time >= at);
+    *pressed += hook as usize;
+    if keys.just_pressed(KeyCode::KeyK) || hook {
         test.instant_kill = !test.instant_kill;
         status.message = Some((format!("Instant kill {}", if test.instant_kill { "on" } else { "off" }), MESSAGE_TIME));
     }

@@ -30,7 +30,8 @@
 //! moment (see `TINT_LOW`).
 //!
 //! The Gas's damage over time is play_gas.rs's (its blast is handed over there, see
-//! `fly_grenades`). Not done yet (each type's own ticket): the Energy's bolts, the
+//! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs). Not done yet (each
+//! type's own ticket): the
 //! Sonic's ring that carries the damage out, the Light's 30 s burn (its light effect runs as
 //! the data has it), the Roller's seeking and the Sentry's trigger (it lies there until its
 //! 9999 s timer or BF_TEST_DETONATE).
@@ -212,8 +213,9 @@ struct Grenade {
 }
 
 /// The red damage tint: seconds since the player was hurt by a blast (TINT_TIME or more: none).
+/// (play_energy.rs sets it when a bolt strikes the player.)
 #[derive(Resource)]
-struct ScreenTint(f32);
+pub struct ScreenTint(pub f32);
 
 /// The tint's quad in front of the camera (multiplied into the 3D picture).
 #[derive(Component)]
@@ -246,7 +248,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
-        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, tint).chain().in_set(GrenadeSystems)
+        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, super::energy::strike, tint).chain().in_set(GrenadeSystems)
             .after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
@@ -411,8 +413,9 @@ fn fly_grenades(
     mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
     (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
-    (mut blasts, mut decals, mut delayed, mut tint, mut gas): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>, ResMut<DelayedBlastParts>,
-                                                               ResMut<ScreenTint>, ResMut<super::gas::GasClouds>),
+    (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>, ResMut<DelayedBlastParts>,
+                                                               ResMut<ScreenTint>, ResMut<super::gas::GasClouds>,
+                                                               ResMut<super::energy::BoltRequests>),
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
 ) {
@@ -502,6 +505,11 @@ fn fly_grenades(
             }
             // loose pickups are thrown by blasts that hurt
             blasts.0.push((at, radius));
+            // the Energy's damage comes with its bolts (play_energy.rs)
+            if super::energy::releases_bolts(kit) {
+                bolts.0.push((g.kind, Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z), g.thrower));
+                continue;
+            }
             delayed.2.push(PendingDamage { left: DAMAGE_DELAY, kind: g.kind, at, thrower: g.thrower });
             continue;
         }
