@@ -35,6 +35,7 @@ it.
     crouch, use...);
   - routes to useful spots, and where the enemies, pickups and items are;
   - each snapshot: its name, level, place and what it's good for;
+  - confirmed memory addresses, pointer chains and field offsets (the trainer);
   - what went wrong and how you got round it.
 - Keep it short and current: fix or remove what turns out wrong, rather than appending.
 
@@ -62,10 +63,35 @@ it.
   replay as often as you need. Cover the edge cases the ticket or the tester's shot list
   names: distances, full and low health, other characters, squadmates and enemies in frame.
 
+## Staging a shot: memory edits first
+
+xemu is QEMU underneath, so you can change the running game without rebuilding it:
+- `-gdb tcp::1234` (or `-s`) opens a gdb-remote connection to the guest CPU. Speak the gdb
+  remote protocol from Python (`m`/`M` packets to read and write memory). Pause with Ctrl-C
+  (0x03), write, then continue, so nothing changes mid-frame.
+- `-monitor` / `-qmp` pause and resume, read memory (`xp`), and `savevm`/`loadvm` snapshots;
+  `-loadvm <name>` starts from one.
+
+Use them to place characters and enemies (an enemy at exactly 10 m), set health, give items
+and grenades, freeze the AI or a timer, then record. Load a snapshot, apply the edits, record:
+the same setup every take.
+
+**Finding addresses:**
+- The XBE loads at a fixed base, so globals are at fixed addresses. Find them in the
+  decompiled game (`decompiled/xbe/`, the Ghidra project in `tools/`), e.g. the pointer to the
+  controlled character.
+- Follow pointers from there to runtime objects: position, health, inventory, AI state.
+- Confirm each address by reading it while the value changes on screen before you write it.
+- Keep every confirmed address, pointer chain and field offset in your playbook, so the trainer
+  grows from session to session.
+
+Each take with edits says so in `notes.md`, with what was changed. A bad write only crashes your
+own session; reload the snapshot.
+
 ## Modified builds
 
-When a shot can't be staged in the real levels (an enemy at an exact distance, a flat test
-area, every item in one place), you may build a modified copy of the game:
+When memory edits can't stage a shot (what a level loads: geometry, which enemies or objects
+exist, new assets), you may build a modified copy of the game:
 - copy the ISO's files (or the level archives) into `D:\Emulators\Xbox\agent\mods\<name>\`
   and change only the copy: level placements (BXML, see `xmb_tool.py` and the README),
   imported assets, a test level made from an existing one;
