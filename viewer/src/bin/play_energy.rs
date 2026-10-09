@@ -121,7 +121,8 @@ fn body_place(u: &Player) -> Vec3 {
 
 /// New blasts draw a bolt to every body in their radius; bolts crawl out, and strike: the
 /// damage (the thrower SELF_BOLT of Damage max, the others Damage max falling to nothing at the
-/// radius, as play_grenade.rs's blasts), the red tint for the player, a knock-down for a living
+/// radius, as play_grenade.rs's blasts; both times the character's factor for damage-type 6,
+/// `Game::damage_factor`: Flint's x2), the red tint for the player, a knock-down for a living
 /// squadmate, a shove into the air for a corpse.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut game: ResMut<GameData>,
@@ -205,7 +206,10 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             shove_up(&mut k.ragdoll, throw);
         }
         let k = 1.0 - b.dist / radius;
-        let damage = if u.character == b.thrower { SELF_BOLT * max } else if instant && !leader { u.health.max(max * k) } else { max * k };
+        // (times the character's factor for the explosion's damage-type, 6: Flint's x2)
+        let damage = game.0.damage_factor(CHARACTERS[u.character], kit.blast.damage_type)
+            * if u.character == b.thrower { SELF_BOLT * max } else { max * k };
+        let damage = if instant && !leader && u.character != b.thrower { u.health.max(damage) } else { damage };
         // the thrower stays up (Brutus did in the recording): `hurt`'s own chance of a
         // knock-down is held off for them by its knock-down cooldown, put back after
         let thrower = u.character == b.thrower;

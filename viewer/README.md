@@ -300,7 +300,8 @@ EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
   105 HP in one step at +0.2 s, the one measurement; the Frag's 0.2 x the roll would be
   7.8-19.5 here) at any distance within the 9 m: it doesn't fall off, so a thrower 8.5 m out
   still takes 33 while a squadmate beside them takes ~5 (only the 0 m case was measured). The
-  thrower stays standing, as Brutus did; anyone else takes Damage max falling to
+  thrower stays standing, as Brutus did. Either is multiplied by the character's factor for
+  damage-type 6 (**Damage types** above: Flint x2, the others 1); anyone else takes Damage max falling to
   nothing at the radius (the other grenades' rule; instant kill on the test map) and, if alive
   and not in the air, is thrown down back and up (3 m/s back, 4 m/s up: the demo's amounts;
   the recording's squadmate went up and back at +0.6 s, was down ~1 s and got up). A corpse
