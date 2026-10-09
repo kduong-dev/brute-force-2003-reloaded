@@ -1313,3 +1313,57 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Untextured glow materials (type h_f539fe8c, e.g. the medkits' shell) are drawn as their
     glow colour at the wrapper material's opacity.
 * **Hits.** Shots, grenades, decals, the DNA and the follow camera use the same collision.
+
+## The original game in xemu: trainer, takes, debug features (issue #103)
+
+Reference footage of the original game is recorded in xemu by the `xemu` agent. Its tools live
+outside the repo, in `D:\Emulators\Xbox\agent\scripts\` (playbook: `D:\Emulators\Xbox\agent\README.md`);
+what they rely on in `default.xbe` is summarised here. "Static" means read from the decompiled
+code only; "live" means confirmed in xemu through the gdb stub.
+
+* **`trainer.py`** reads and writes the running game's memory through QEMU's gdb stub (the VM is
+  paused for each command). Addresses are the XBE's link addresses (base 0x10000):
+  * `[0x469948]` is the game session. Player slot *n* (1-8) is `[session + 0x22c + 4n]`, its
+    controlled character `[player + 0xc4]` (FUN_0008b880, FUN_00102000). Input devices are at
+    `session + 0x250 + 4 * port`, and a device's virtual-button states are floats at
+    `device + 0x30 + 4 * VB` (FUN_00133070). Static.
+  * `[0x469980]` is the object manager: a vector of containers (+8 / +0xc), each with a
+    `std::map` from the object's name hash (the `name=` of `levels-<level>.xml`) to the object
+    at container + 0x10c (FUN_00160da0). Static.
+  * Characters (vtable 0x39ddd8, constructor FUN_00110d30): +0x8 the level object, +0x48 the
+    combat target (max health +0x50, health +0x54: FUN_002232d0 subtracts damage, FUN_0010f830
+    clamps), +0x6c the scene transform, +0x70 placement flags, +0xbc team (0-3, 4 none),
+    +0x1f0 movement mode, +0x2e8 inventory, +0x434 yaw (FUN_001156b0), +0x458 position (its
+    setter FUN_001154b0 also writes +0x464), +0x470 velocity. Writing +0x458 and +0x464
+    teleports (live, the playbook's `chars.py`).
+  * Inventory (FUN_0014bfa0): category 0 is one item at +0xbc; categories 1-9 are vectors of
+    item pointers at +0xc + 0x10 * category; the selection (category, index) is at +0x1c0,
+    (10, -1) for none (FUN_0014da70 steps it). Static.
+* **`h_17a554bf`** (placement attribute) is bit 4 of the object's +0x70 flags (parser
+  FUN_00156390). The only code that reads it (getter 0x10f8e0, vtable slot +0x124) is
+  FUN_000da8f0, which gives the object a `follow_cam_%X` camera, and FUN_000db3e0, which
+  deletes that camera with the object. It marks the characters a player can take control of,
+  not "active at start". Static; see #102.
+* **Enemies come from spawn-triggers.** e40 has 16 `character-object`s but 102 `spawn-trigger`s.
+  A spawn-trigger (vtable 0x395838, parser FUN_00209250) clones its template object
+  (`<h_0884288c objects=...>`, +0xcc) when it gets `TRIG_ACT_OPERATE` (1): FUN_00209ac0 spawns
+  at once (FUN_002099e0) if it is armed (+0xe4 bit 3), or after its delay `h_eab6952f` (+0xe0)
+  through the timer at +0xec. A spawn disarms it; `TRIG_ACT_SPAWN_RESET` (36) re-arms it when
+  `h_0f95f576` (+0xe4 bit 2) is set. The character it spawned is kept at +0xc4. So the
+  character placements an enemy seems to stand on are templates, and enemies appear when
+  triggers fire. Static.
+* **The debug features are not in the retail game.**
+  * `common/debug-config-xbox.xmb` is never loaded: FUN_001e8160 stores its name in the
+    `std::string` at 0x400438, and the only other code touching that string is its static
+    destructor (0x311070). None of its own attribute hashes (`debug-interface`'s
+    `h_ffd5618b` … `h_f0489848`, `enable-console`, `debug-interface`, `readout`, the root's
+    attributes) occurs anywhere in default.xbe.
+  * The `VB_DEBUG_*` names (43-60) exist only in the enum's name table (0x3bf398, parser
+    FUN_00186c10, used to read `vb=` in bindings). The pad mapper (FUN_001e7b30) sets
+    `device + 0x30 + 4 * VB` for whatever a button is bound to, but no reader of the debug
+    slots was found; `bindings.py` rebinds a pad button in RAM to test that in xemu.
+    `TRIG_SIG_DEBUG_MENU` (19) likewise exists only in the trigger-signal name table.
+* **`take.py`** runs one staged take from a JSON spec: load a snapshot, apply trainer edits,
+  record picture and sound with `record.py` while a timed pad sequence plays, and append the
+  take's `notes.md` entry (snapshot, edits, each input's time from the first video frame, xemu
+  version, A/V offset).
