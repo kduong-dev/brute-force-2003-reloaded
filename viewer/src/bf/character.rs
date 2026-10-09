@@ -82,6 +82,14 @@ const STATIC_FACE: f32 = 0.1;
 /// objecttypes). Names unknown, read from the layout.
 const H_DAMAGE_FACTORS: u32 = 0x142B_E76F;
 const H_DAMAGE_FACTOR: u32 = 0x0465_3D86;
+/// An object type's debris list and its entries' attributes (see `Debris`), and an effect
+/// type's damage list (`<h_fb0a5f1d><Damage>`, see `AreaDamage`). Names unknown.
+const H_DEBRIS_LIST: u32 = 0x197C_AF14;
+const H_DEBRIS: u32 = 0x19C8_DF19;
+const H_DEBRIS_MAIN: u32 = 0x1C1E_17FE;
+const H_DEBRIS_DELAY: u32 = 0x1B6A_0EDE;
+const H_DEBRIS_LIFE: u32 = 0xF2E4_E1A3;
+const H_EFFECT_DAMAGE: u32 = 0xFB0A_5F1D;
 /// Collision: the objects file's surface table, its entries (name, h_e9e44859 = offset in the
 /// .ipn) and the attribute an archetype / terrain block / blocker names its surface with.
 const H_PHYSICS_FILE: u32 = 0x104D_B1CD;
@@ -202,6 +210,83 @@ pub struct Game {
     /// object type -> the effect type it shows while idle (`<events><event state="1"
     /// h_ed0c9fac=..>`: the power-ups' spinning icons)
     pub idle_effects: HashMap<u32, u32>,
+    /// object types (objecttypes `<h_e275fb80><base name object-type ..>`): type name -> its
+    /// object-type, combat target and what it breaks into (see `ObjectType`)
+    pub object_types: HashMap<u32, ObjectType>,
+}
+
+/// An object type's `<base object-type>`: 0 a compound of loose pieces (archetype-type 9, the
+/// debris that flies apart), 2 a game object (scenery, archetype-type 7), 17 an effect object
+/// (archetype-type 6: effects, a light, sounds and `<Damage>` areas).
+pub const OBJECT_COMPOUND: i64 = 0;
+pub const OBJECT_GAME: i64 = 2;
+pub const OBJECT_EFFECT: i64 = 17;
+
+/// An object type (objecttypes `<h_e275fb80>` entries), as far as breaking it goes:
+///
+///   <h_e275fb80 mesh-name ..><base name=T object-type=2 archetype-type=7/>
+///     <combat-target hitpoints=H><h_142be76f><h_1d403525 Type=K h_04653d86=F/>..</h_142be76f>
+///     <h_197caf14><h_19c8df19 archetype-name=D h_1c1e17fe=main h_1b6a0ede=delay h_f2e4e1a3=life/>..
+///
+/// A game object whose h_197caf14 list isn't empty breaks when its hitpoints run out: the game's
+/// take-damage (FUN_002232d0, the combat-target's vtable slot 0) takes value x factor[Type] off
+/// them and at 0 sends message 0x4e; the object (FUN_00157260) queues its debris list then.
+#[derive(Clone, Debug, Default)]
+pub struct ObjectType {
+    /// `<base object-type>` (OBJECT_COMPOUND, OBJECT_GAME, OBJECT_EFFECT, ...)
+    pub object_type: i64,
+    /// combat-target hitpoints (40 on most; the radiation barrel and the missile rack 1, the
+    /// supply crate 25)
+    pub hitpoints: f32,
+    /// the combat-target's own h_142be76f list: (damage-type, factor), x1 for types it doesn't
+    /// list (the record at type +0x60 + Type x 4 that FUN_002232d0 multiplies by)
+    pub factors: Vec<(i64, f32)>,
+    /// h_197caf14: what it breaks into, in the list's order
+    pub debris: Vec<Debris>,
+}
+
+impl ObjectType {
+    /// The factor it takes damage of `damage_type` by (1 if its list doesn't name the type).
+    pub fn factor(&self, damage_type: i64) -> f32 {
+        self.factors.iter().find(|f| f.0 == damage_type).map_or(1.0, |f| f.1)
+    }
+}
+
+/// One entry of an object type's debris list (`<h_19c8df19>`; its parser FUN_00187fc0 fills a
+/// 16-byte record: +0 archetype-name, +4 h_1c1e17fe, +8 h_1b6a0ede, +0xc h_f2e4e1a3).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Debris {
+    /// the object type it spawns (archetype-name): a compound of pieces, a game object that
+    /// stays (the missile rack's stand) or an effect object
+    pub kind: u32,
+    /// h_1c1e17fe: the first entry has it (true on the compound of pieces). The spawn
+    /// (FUN_0015ac90) hands this one the hit's push (the object's +0xe8..+0x100)
+    pub main: bool,
+    /// h_1b6a0ede (s): read by the debris countdown FUN_0015af20 (see play_scenery.rs: an entry
+    /// spawns once the countdown from the list's longest delay is down to its own delay, so the
+    /// longest comes first)
+    pub delay: f32,
+    /// h_f2e4e1a3: 9999 on every entry (a lifetime, not seen used)
+    pub life: f32,
+}
+
+/// An effect object's `<h_fb0a5f1d><Damage ..>` (the parser FUN_00191170 fills a 0x1c-byte
+/// record: +0 amount, +4 Type, +8 h_ed582b3c, +0xc h_f724cb8c, +0x10 duration, +0x14 range,
+/// +0x18 falloff). The radiation barrel's h_1aee9c6b: amount 80, Type 3, duration 0.5, range 3,
+/// falloff 0; the missile rack's h_e7d56d93: 200, Type 10, 0.5, 8, falloff 3.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AreaDamage {
+    pub amount: f32,
+    /// the DTYPE_ enum (default.xbe 0x3bd9d0): 1 BALLISTIC .. 3 BIOREACTIVE, 10 EXPLOSION
+    pub damage_type: i64,
+    /// h_ed582b3c (2 on the barrel and rack, 4 on others; meaning not traced)
+    pub mode: i64,
+    /// h_f724cb8c (0 on every one; read as a delay, as on the effects' sounds)
+    pub delay: f32,
+    pub duration: f32,
+    pub range: f32,
+    /// the DFALL_ enum (default.xbe 0x3bda70): 0 NONE, 1 LINEAR, 2 EXPONENTIAL, 3 HALF_LIFE
+    pub falloff: i64,
 }
 
 /// A level of the game's list (campaign-bf.xmb): its archive (data/<file>.tgz), name and
@@ -337,6 +422,9 @@ pub struct EffectType {
     /// sounds: (sound id, h_f724cb8c, play-length s, enable-looping). h_f724cb8c is read as a
     /// delay in seconds (an inference: 0 on most, 0.2 on the Light grenade's ignition)
     pub sounds: Vec<(u32, f32, f32, bool)>,
+    /// `<h_fb0a5f1d><Damage ..>`: the damage areas it sets up where it's started (the
+    /// exploding scenery's effects, see `AreaDamage`); empty on most
+    pub damage: Vec<AreaDamage>,
 }
 
 /// A ground decal (objecttypes `<decal>`): one of its textures at random (white shapes), tinted
@@ -402,6 +490,7 @@ impl Game {
             effect_types: HashMap::new(),
             effect_type_defs: HashMap::new(),
             idle_effects: HashMap::new(),
+            object_types: HashMap::new(),
         };
         g.load_archive(&common)?;
         let mut others: Vec<PathBuf> = std::fs::read_dir(data_dir)
@@ -664,10 +753,44 @@ impl Game {
                         let looping = e.attr(h("enable-looping")).and_then(|v| v.as_i64()).unwrap_or(0) != 0;
                         (id != 0 && id != h("")).then_some((id, f(0xF724_CB8C), f(h("play-length")), looping))
                     }).collect()).unwrap_or_default();
+                    let damage = t.child(H_EFFECT_DAMAGE).map(|d| d.children_named(h("Damage")).map(|e| {
+                        let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
+                        let i = |k: u32| e.attr(k).and_then(|v| v.as_i64()).unwrap_or(0);
+                        AreaDamage { amount: f(h("amount")), damage_type: i(h("Type")), mode: i(0xED58_2B3C), delay: f(0xF724_CB8C),
+                                     duration: f(h("duration")), range: f(h("range")), falloff: i(h("falloff")) }
+                    }).collect()).unwrap_or_default();
                     self.effect_type_defs.entry(name).or_insert(EffectType {
-                        effects: list, light: if light == h("") { 0 } else { light }, sounds,
+                        effects: list, light: if light == h("") { 0 } else { light }, sounds, damage,
                     });
                 }
+            }
+            // object types: <h_e275fb80><base name=T object-type=K/><combat-target ..>
+            // <h_197caf14 debris list> (see `ObjectType`)
+            for t in root.walk() {
+                let Some(b) = t.child(h("base")).filter(|b| b.attr(h("object-type")).is_some()) else { continue };
+                let name = hash_of(b.attr(h("name")));
+                if name == 0 || name == h("") || self.object_types.contains_key(&name) {
+                    continue;
+                }
+                let num = |e: &Element, k: u32| e.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+                let combat = t.child(h("combat-target"));
+                let factors = combat.and_then(|c| c.child(H_DAMAGE_FACTORS)).map(|l| l.children.iter()
+                    .filter_map(|f| Some((num(f, h("Type"))? as i64, num(f, H_DAMAGE_FACTOR)?))).collect()).unwrap_or_default();
+                let debris = t.child(H_DEBRIS_LIST).map(|l| l.children_named(H_DEBRIS).filter_map(|d| {
+                    let kind = hash_of(d.attr(h("archetype-name")));
+                    (kind != 0 && kind != h("")).then(|| Debris {
+                        kind,
+                        main: d.attr(H_DEBRIS_MAIN).and_then(|v| v.as_i64()).unwrap_or(0) != 0,
+                        delay: num(d, H_DEBRIS_DELAY).unwrap_or(0.0),
+                        life: num(d, H_DEBRIS_LIFE).unwrap_or(0.0),
+                    })
+                }).collect()).unwrap_or_default();
+                self.object_types.insert(name, ObjectType {
+                    object_type: b.attr(h("object-type")).and_then(|v| v.as_i64()).unwrap_or(-1),
+                    hitpoints: combat.and_then(|c| num(c, h("hitpoints"))).unwrap_or(0.0),
+                    factors,
+                    debris,
+                });
             }
             // idle effects: a type's <events><event state="1" h_ed0c9fac=EFFECT_TYPE/>
             for e in root.walk().into_iter().filter(|e| e.child(h("events")).is_some()) {
@@ -829,6 +952,12 @@ impl Game {
     /// see `character_damage_factors`; 1 when it lists none for the type).
     pub fn damage_factor(&self, name: &str, damage_type: i64) -> f32 {
         self.character_damage_factors.get(name).and_then(|l| l.iter().find(|f| f.0 == damage_type)).map_or(1.0, |f| f.1)
+    }
+
+    /// The type of a placed object that breaks: a game object (object-type 2) whose debris list
+    /// (h_197caf14) isn't empty. 467 game types have one; most of them 40 hp.
+    pub fn breakable(&self, kind: u32) -> Option<&ObjectType> {
+        self.object_types.get(&kind).filter(|t| t.object_type == OBJECT_GAME && !t.debris.is_empty())
     }
 
     /// A collision surface's triangles (corners in its owner's frame, material), see

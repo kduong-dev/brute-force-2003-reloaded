@@ -434,7 +434,7 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
@@ -471,6 +471,8 @@ mod deathcam;
 mod testmap;
 #[path = "play_menu.rs"]
 mod menu;
+#[path = "play_scenery.rs"]
+mod scenery;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1204,6 +1206,10 @@ struct Shot {
     /// the weapon's effect types: in flight, and where the shot lands (0: none)
     flight: u32,
     hit_fx: u32,
+    /// the weapon's Damage min..max and damage-type (play_scenery.rs: what it takes off an
+    /// object it hits)
+    damage: [f32; 2],
+    damage_type: i64,
 }
 
 #[derive(Resource)]
@@ -4283,7 +4289,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 // others' bolts fly at the bullet's speed
                 let speed = if w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
                 p.shots.push(Shot { origin, dir, dist: hit.unwrap_or(range), hit: hit.is_some(), speed,
-                                    flight: w.def.flight_effect, hit_fx: w.def.hit_effect });
+                                    flight: w.def.flight_effect, hit_fx: w.def.hit_effect,
+                                    damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type });
                 if std::env::var("BF_SHOT_LOG").is_ok() {
                     println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.2} origin {:.2} dist {:.1}",
                              p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),

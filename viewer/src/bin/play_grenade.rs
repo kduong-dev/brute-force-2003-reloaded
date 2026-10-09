@@ -83,7 +83,7 @@ const TINT_TIME: f32 = 0.27;
 /// A blast's damage (and with it the tint) lands this long after it goes off: the recordings'
 /// tint starts 3 game frames after the flash (Frag 693 -> 699, Sonic 229-231 -> 235). Measured;
 /// the game's reason (the blast's spread, a damage tick) isn't known.
-const DAMAGE_DELAY: f32 = 0.1;
+pub(super) const DAMAGE_DELAY: f32 = 0.1;
 /// A blast's decal is drawn with its width / height read as half sizes, as the blood decals'
 /// are (play_fx.rs DECAL_SCALE, fitted to the blood captures): the Frag's scorch h_ff1b711e
 /// (3 x 3) is a 6 m quad, whose soft texture is half dark over ~3.7 m - the recording's scorch
@@ -101,8 +101,8 @@ const TINT_STEPS: usize = 16;
 /// The stored value the tint's factor is exact for (see `tint_factor`).
 const TINT_GREY: f32 = 0.4;
 /// Blast sounds are this loud at the blast, falling to BLAST_QUIET at BLAST_HEARD m (the demo's).
-const BLAST_HEARD: f32 = 60.0;
-const BLAST_QUIET: f32 = 0.3;
+pub(super) const BLAST_HEARD: f32 = 60.0;
+pub(super) const BLAST_QUIET: f32 = 0.3;
 /// The squad's grenade definitions, in the order the demo's grenade key (T) steps through them:
 /// Frag (#75), Energy (#74), Gas (#76), Light (#77), Sonic (#81), Roller (#79), Sentry (#80).
 /// Some labels have several definitions (the Sentry three, the Roller two): these are the ones
@@ -436,9 +436,10 @@ fn fly_grenades(
     mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
     (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
-    (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts, mut rings): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>,
+    (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts, mut rings, mut objects): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>,
                                                                ResMut<DelayedBlastParts>, ResMut<ScreenTint>, ResMut<super::gas::GasClouds>,
-                                                               ResMut<super::energy::BoltRequests>, ResMut<super::sonic::RingRequests>),
+                                                               ResMut<super::energy::BoltRequests>, ResMut<super::sonic::RingRequests>,
+                                                               ResMut<super::scenery::ObjectBlasts>),
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
     mut trails: Query<(&ChildOf, &mut bf_viewer::ale_fx::AleEffect)>,
@@ -535,8 +536,11 @@ fn fly_grenades(
                 gas.release(g.kind, at, g.thrower, p.sim_time);
                 continue;
             }
-            // loose pickups are thrown by blasts that hurt
+            // loose pickups are thrown by blasts that hurt, and breakable scenery takes their
+            // damage (play_scenery.rs), when the characters do
             blasts.0.push((at, radius));
+            objects.0.push(super::scenery::ObjectBlast { left: DAMAGE_DELAY, at, radius, damage: max, damage_type: kit.blast.damage_type,
+                                                        label: kit.def.label.clone() });
             // the Energy's damage comes with its bolts (play_energy.rs)
             if super::energy::releases_bolts(kit) {
                 bolts.0.push((g.kind, Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z), g.thrower));

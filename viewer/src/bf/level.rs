@@ -125,9 +125,11 @@ pub struct Level {
     /// sound triggers: (sound id, signal, position)
     pub sounds: Vec<(u32, i64, Vec3)>,
     /// collision: the terrain blocks' surfaces (world frame) and the invisible blockers
-    /// (<blocker h_051ac63e=surface><transform>)
+    /// (<blocker h_051ac63e=surface object-instance=owner><transform>): surface, placement and
+    /// the placed object it belongs to (its name; 0 for none). A breakable object's blocker goes
+    /// with it (sdm_e34's missile rack h_128f3de2: blocker h_e1a3f88e, physics-id 4)
     pub terrain_collision: Vec<u32>,
-    pub blockers: Vec<(u32, Mat4)>,
+    pub blockers: Vec<(u32, Mat4, u32)>,
     /// directional lights and the terrain's ambient (`ambient` is the objects')
     pub lights: Vec<LevelLight>,
     /// point lights (light-object h_ea460e64)
@@ -282,8 +284,8 @@ impl Level {
         let terrain_collision = all.iter().filter(|e| e.name == h("blocks")).map(|e| surface(e))
             .filter(|&n| n != 0 && n != h("")).collect();
         let blockers = all.iter().filter(|e| e.name == h("blocker"))
-            .filter_map(|e| Some((surface(e), transform(&floats(e.child(h("transform"))))?)))
-            .filter(|(n, _)| *n != 0 && *n != h("")).collect();
+            .filter_map(|e| Some((surface(e), transform(&floats(e.child(h("transform"))))?, hash(e, h("object-instance")))))
+            .filter(|(n, _, _)| *n != 0 && *n != h("")).collect();
         let lights = all.iter().filter(|e| e.name == h("light-object")).filter_map(|e| {
             let kind = hash(e, H_TYPE);
             let key = kind == H_KEY_LIGHT;

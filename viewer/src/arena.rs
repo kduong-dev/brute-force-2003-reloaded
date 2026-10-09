@@ -11,6 +11,11 @@
 //!
 //! Pickups (weapon / inventory objects and items) are placed at their spawn height in the level
 //! file (the game lets them fall); `settle_pickups` drops them onto the surface below.
+//!
+//! Breakable objects (game objects with a debris list, `Game::breakable`) are numbered in level
+//! object order: their own triangles and their level blocker (`<blocker object-instance>`) block
+//! until they're broken (`set_broken`), and the game objects they leave behind (the missile
+//! rack's stand) are put in from the start, blocking only once they're broken.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +26,7 @@ const LIQUID_STEP: f32 = 0.25;
 
 use bevy::math::{Mat4, Vec2, Vec3};
 
-use crate::bf::character::{Game, LiquidType, H_LIQUID_OBJECT};
+use crate::bf::character::{Game, LiquidType, H_LIQUID_OBJECT, OBJECT_GAME};
 use crate::bf::collision::MATERIAL_SLIDE;
 use crate::bf::hash::h;
 use crate::bf::level::Level;
@@ -47,6 +52,9 @@ struct Tri {
     door: Option<u32>,
     /// a liquid's surface (index into `liquids`): not solid
     liquid: Option<u32>,
+    /// a breakable object's (its index, see `breakable`) and whether it blocks once broken (what
+    /// it leaves behind) or until then (the object itself)
+    piece: Option<(u32, bool)>,
 }
 
 pub struct Arena {
@@ -58,6 +66,10 @@ pub struct Arena {
     doors: Vec<AtomicBool>,
     /// the placed liquids' types
     liquids: Vec<LiquidType>,
+    /// breakable objects, in level object order: broken or not
+    broken: Vec<AtomicBool>,
+    /// level object index -> its breakable index
+    breakable_of: HashMap<usize, u32>,
 }
 
 /// The current map's arena. A new map installs its own (bf_play loads maps one after another
@@ -102,7 +114,20 @@ fn closest_on_tri(p: Vec3, t: &[Vec3; 3]) -> Vec3 {
 
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
-        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![] };
+        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
+                            breakable_of: HashMap::new() };
+        // breakable objects, numbered in level object order (and by name, for their blockers)
+        let mut by_name: HashMap<u32, u32> = HashMap::new();
+        for (i, o) in level.objects.iter().enumerate() {
+            if o.archetype.is_some() && !is_pickup(o.tag) && game.breakable(o.kind).is_some() {
+                let b = a.broken.len() as u32;
+                a.broken.push(AtomicBool::new(false));
+                a.breakable_of.insert(i, b);
+                if o.name != 0 {
+                    by_name.insert(o.name, b);
+                }
+            }
+        }
         // the game's collision: terrain blocks (world frame) and invisible blockers
         let physics = !level.terrain_collision.is_empty();
         for &s in &level.terrain_collision {
@@ -110,9 +135,14 @@ impl Arena {
                 a.add(t, true, None, m);
             }
         }
-        for (s, at) in &level.blockers {
+        for (s, at, owner) in &level.blockers {
+            let first = a.tris.len();
             for (t, m) in game.collision(*s) {
                 a.add(t.map(|v| at.transform_point3(v)), false, None, m);
+            }
+            let piece = by_name.get(owner).map(|&b| (b, false));
+            for t in &mut a.tris[first..] {
+                t.piece = piece;
             }
         }
         if !physics {
@@ -123,7 +153,7 @@ impl Arena {
             }
         }
         let mut solid: HashMap<u32, Vec<([Vec3; 3], bool, u8)>> = HashMap::new();
-        for o in &level.objects {
+        for (i, o) in level.objects.iter().enumerate() {
             if o.tag == h("start-point") {
                 let p = o.transform.w_axis.truncate();
                 let f = o.transform.z_axis.truncate();
@@ -149,8 +179,26 @@ impl Arena {
                 let w = t.map(|v| o.transform.transform_point3(v));
                 a.add(w, false, door.filter(|_| *leaf), *m);
             }
+            let piece = a.breakable_of.get(&i).copied();
             for t in &mut a.tris[first..] {
                 t.liquid = liquid;
+                t.piece = piece.map(|b| (b, false));
+            }
+            // what a breakable one leaves behind (its debris list's game objects: the missile
+            // rack's stand), blocking once it's broken
+            if let Some(b) = piece {
+                let remains: Vec<u32> = game.breakable(o.kind).map(|t| t.debris.iter().map(|d| d.kind)
+                    .filter(|k| game.object_types.get(k).is_some_and(|t| t.object_type == OBJECT_GAME)).collect()).unwrap_or_default();
+                for arch in remains.into_iter().filter_map(|k| game.object_meshes.get(&k).copied()) {
+                    let first = a.tris.len();
+                    let tris = if physics { physics_tris(game, arch) } else { model_tris(game, arch) };
+                    for (t, _, m) in tris {
+                        a.add(t.map(|v| o.transform.transform_point3(v)), false, None, m);
+                    }
+                    for t in &mut a.tris[first..] {
+                        t.piece = Some((b, true));
+                    }
+                }
             }
             if liquid.is_some() && std::env::var("BF_LIQUID_LOG").is_ok() {
                 let ys = a.tris[first..].iter().flat_map(|t| t.v.map(|v| v.y));
@@ -171,7 +219,7 @@ impl Arena {
         let n = n.normalize();
         let n = if n.y < 0.0 { -n } else { n };
         let i = self.tris.len() as u32;
-        self.tris.push(Tri { v, n, terrain, material, door, liquid: None });
+        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None });
         let (lo, hi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
         let (c0, c1) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
         for x in c0.0..=c1.0 {
@@ -204,9 +252,24 @@ impl Arena {
         }
     }
 
-    /// A triangle that blocks now (not an open door's leaf).
+    /// A triangle that blocks now (not an open door's leaf, nor a broken object's, nor the
+    /// remains of one not broken yet).
     fn solid(&self, t: &Tri) -> bool {
         t.liquid.is_none() && t.door.is_none_or(|d| !self.doors[d as usize].load(Ordering::Relaxed))
+            && t.piece.is_none_or(|(b, after)| self.broken[b as usize].load(Ordering::Relaxed) == after)
+    }
+
+    /// The breakable index of level object `object` (its place in `Level::objects`), if it breaks.
+    pub fn breakable(&self, object: usize) -> Option<usize> {
+        self.breakable_of.get(&object).map(|&b| b as usize)
+    }
+
+    /// Break breakable `b` (or mend it): its own triangles and blocker stop blocking, what it
+    /// leaves behind starts.
+    pub fn set_broken(&self, b: usize, broken: bool) {
+        if let Some(x) = self.broken.get(b) {
+            x.store(broken, Ordering::Relaxed);
+        }
     }
 
     /// The liquid at (x, z) whose surface is above `feet`: its surface height and type.
@@ -333,8 +396,20 @@ impl Arena {
 
     /// Distance along a ray to the terrain or an object, if within `max`.
     pub fn ray(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+        self.ray_tri(origin, dir, max).map(|(t, _)| t)
+    }
+
+
+    /// `ray`, with the breakable object it meets first (its index, see `breakable`), if the
+    /// nearest thing on the ray is one.
+    pub fn ray_breakable(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
+        self.ray_tri(origin, dir, max).map(|(t, i)| (t, self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize)))
+    }
+
+    /// `ray`, with the triangle hit.
+    fn ray_tri(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, usize)> {
         let mut best = max;
-        let mut hit = false;
+        let mut hit = None;
         let mut seen = HashSet::new();
         let flat = Vec2::new(dir.x, dir.z).length();
         let step = if flat > 1e-4 { (CELL * 0.5 / flat).min(max) } else { max };
@@ -369,7 +444,7 @@ impl Arena {
                 let d = e2.dot(qv) / det;
                 if d > 1e-3 && d < best {
                     best = d;
-                    hit = true;
+                    hit = Some(i as usize);
                 }
             }
             if t >= best || t >= max {
@@ -377,7 +452,7 @@ impl Arena {
             }
             t = (t + step).min(max);
         }
-        hit.then_some(best)
+        hit.map(|i| (best, i))
     }
 
     /// Drop the level's pickups onto the floor below them (their mesh's bottom on it).

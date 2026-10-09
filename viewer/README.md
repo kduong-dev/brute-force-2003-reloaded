@@ -1550,6 +1550,78 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     * `BF_CAPTURE_FPS=<n>` sets the capture's fixed step (default 15).
     * `bf_level` with `BF_FX_TEST=<effect name>` (and `BF_FX_MOVE=<m/s>`) runs one effect in
       front of the view.
+* **Interactive scenery** (`src/bin/play_scenery.rs`, issue #85). Placed game objects whose
+  type has a debris list (objecttypes `h_197caf14`, 467 types; `Game::breakable`) break when
+  their hitpoints run out. On sdm_e34 that's 38 objects: 23 radiation barrels (h_e04e5a0e, 1 hp),
+  6 supply crates (h_09a6856d, 25 hp), the missile rack (h_fbdcd828, 1 hp) and 8 others. Footage:
+  `todo/85-interactive-scenery/` (29 xemu takes with 20 Hz HP logs) and
+  `todo/interactive scenery objects.mp4`.
+  * **Data** (`ObjectType`, `Debris`, `AreaDamage` in `src/bf/character.rs`): the type's
+    `combat-target` hitpoints and its own `h_142be76f` damage-type factors (these three: Type 7
+    x5, 10 x10, 2 x0.25, 3 / 4 / 9 x0); the debris entries `<h_19c8df19 archetype-name
+    h_1c1e17fe h_1b6a0ede h_f2e4e1a3>` (parser FUN_00187fc0: type, main, delay, life); an effect
+    type's `<h_fb0a5f1d><Damage amount Type h_ed582b3c h_f724cb8c duration range falloff>`
+    (FUN_00191170). The level's `<blocker object-instance>` names the object a blocker belongs to.
+  * **Damage** (FUN_002232d0): value x the type's factor for its damage-type. Anyone's shot that
+    stops on an intact object's collision (`Arena::ray_breakable`) deals its weapon's Damage
+    min..max when it gets there (`Shot::damage`). Grenade blasts deal Damage max falling to
+    nothing at the radius, measured to the object's origin, when the characters take theirs
+    (play_grenade.rs pushes an `ObjectBlast`). The Gas cloud doesn't (Type 4: x0 on these).
+  * **Breaking** (FUN_00157260 on message 0x4e, then the countdown FUN_0015af20): a countdown
+    starts at the list's longest `h_1b6a0ede`. Each frame, every entry whose delay is at least
+    what's left spawns, and at 0 the object goes. So the longest delay comes first: the rack's
+    effect (0.2) at once, its pieces and stand 0.2 s later. That matches the takes' order (light
+    and fireball while the missiles are still drawn, then the model goes; take13 has 0.067 s
+    between them, the first capture ~0.17 s). The object's collision and blocker stop blocking at
+    once. What it leaves behind blocks from then on (`Arena::set_broken`; its triangles are in
+    the arena from the start, switched off). By the entry type's object-type:
+    * 0, a compound: each part flies off as a loose tumbling body (play_pickups.rs' rigid body):
+      out from the hit, along it and up. An explosive object's parts are thrown harder by
+      (1.2 - d / range)^2, the shape of the area tick's push (FUN_00224a90). The speeds are fitted
+      to take25 / take26. The parts shrink away after 1.2 s. That time is a guess: the takes lose
+      them out of frame, and the first capture has them gone after ~0.8 s;
+    * 2, a game object: stays where the object stood (the rack's stand h_f77cc3a0);
+    * 17, an effect object: its ALE effects and light effect at the object, its sounds (barrel
+      14295eb1, rack 14d0b600, crate fa344138), and its damage areas. Loose pickups and debris
+      near it are thrown (`pickups::Blasts`).
+  * **Damage areas**: starting 0.1 s after the effect (the takes' first HP loss) for `duration`
+    seconds, everyone within `range` of the object's origin, measured in 3D to a point 1 m above
+    the feet, loses amount x dt x their factor each frame, flat. That's amount x duration in all:
+    the barrel's 80 x 0.5 = 40 HP (take29 on sdm_e34: 39.4), the rack's 200 x 0.5 = 100.
+    * The 1 m point fits the range edge: the barrel reached Tex at 2.7 m along the ground but not
+      at 2.9 m.
+    * No falloff: the rack's DFALL_HALF_LIFE (FUN_00223780) showed nothing on the takes' HP, by
+      distance or over time.
+    * No line of sight test: take29's Tex, under the structure beside the barrel, took all of it.
+      The code's ray test (FUN_00224a90) looks skipped for over-time areas, but that reading is
+      uncertain.
+    * The player hurt by an area gets the red tint.
+    * The breakable objects in range take it too, times their factor: the rack (Type 10, x10)
+      sets off the barrels 4.4 m and 5.3 m from it on its first tick (take13, campaign e34). The
+      barrel's (Type 3, x0) does nothing to barrels or crates.
+    * The campaign's squad took ~0.58 of a blast. The destroy code scales a blast value by
+      ((1 - w) x 0.4 + 0.6), w a world setting at +0xc58. That is likely the cause, but it
+      isn't traced to the characters' damage. The demo uses 1, as on the squad deathmatch maps.
+  * **Not done**:
+    * intact objects aren't pushed (the takes: they never move, they break);
+    * the objects' `h_f2990a77` light lists aren't removed (empty on every sdm_e34 object);
+    * no score popup ("+1200") and no objective signals;
+    * no damage markers on the HUD (the HUD has none yet).
+  * **Test hooks**:
+    * `BF_TEST_HIT=<s>[,<s>...]` hits the intact breakable object nearest the controlled character
+      (or `BF_TEST_HIT_NEAR=<x>,<z>`) with 50 ballistic at those times, as the takes' gdb call
+      did;
+    * `BF_SCENERY_LOG=1` lists the breakable objects and logs each hit, break, spawn and area;
+    * `BF_COMBAT_LOG=1` prints each area tick's damage.
+  * **Verified**:
+    * take29's spot (`BF_MAP=sdm_e34 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6 BF_TEST_HIT=2.0`): Tex
+      loses 40.0 HP from +0.07 to +0.53 s (take29: 39.4, +0.10 to +0.64 s).
+    * The rack from 7.1 m: 100 HP. The fireball and light come first, the model swaps to its
+      flying pieces and stand 0.2 s later, and smoke follows.
+    * Campaign e34 (`BF_MAP=e34`): the rack sets off both barrels on its first tick.
+    * A Frag 2.3 / 2.4 m from a barrel and a crate breaks both.
+    * Tex's laser (Type 8) breaks a crate in 5 shots (takes 16 / 22: 5-6).
+
 * **Look.** The game lights each surface `texture × (ambient + key·N·L + fill·N·L)` with the
   level's own light colours, in gamma space, with no tone mapping. The demo does the same
   (`level_scene::spawn_lighting` and `console_look`):
