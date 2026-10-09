@@ -30,7 +30,11 @@ output in your scratchpad, never in the repo or `todo/`.
      `BF_DUMP_SOUND_IDS` list the ids), and say how close the match is.
    - **Text:** transcribe exactly and find it in the string tables.
 4. Cross-reference the game data (objecttypes, weapons, ALE effects with `ale_tool.py`) so the
-   developer gets the game's own values where they exist.
+   developer gets the game's own values where they exist. **Code first, footage confirms:** where
+   the behaviour is logic (a formula, timing, trigger, AI rule, an effect parameter's meaning),
+   point the developer at the code question: the strings, attribute hashes or likely functions
+   in `decompiled/xbe/ghidra/` (`functions.csv`, `c/`). Your measurements then confirm what the
+   code says; don't hand over a fitted formula as if it were the game's.
 5. Report a **spec**: numbers a developer can use as-is, each with the take and frame or time
    it came from and how sure you are. Keep what you measured apart from what the data says.
 
@@ -43,7 +47,9 @@ output in your scratchpad, never in the repo or `todo/`.
    the target dir it names.
 3. Compare with the footage side by side (PIL tiles at matching moments and the same scale).
    Report each difference as data, e.g. "glow 1.4x larger than take02 frame 212", ranked by how
-   noticeable it would be to a player.
+   noticeable it would be to a player. When a difference is in logic rather than looks (a damage
+   amount, a timing, a trigger distance) and the demo's value is a fit, say so, and suggest
+   finding the game's function rather than another fit.
 4. Check for regressions in the neighbouring features: the HUD, the item box, gates, grenades,
    squad switching, and anything the diff touches that other features share. Compare against
    `main`'s build where something looks different.

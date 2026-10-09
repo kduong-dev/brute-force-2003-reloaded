@@ -13,8 +13,20 @@ building, test hooks and conventions.
    extract frames with ffmpeg (`imageio-ffmpeg`) where you need them. If you need a shot that
    doesn't exist, say so in your report instead of guessing: the lead sends the `xemu` agent.
 2. Find the behaviour in the game data before writing code: BXML attributes (`xmb_tool.py`,
-   `BF_LEVEL_DUMP`), XBE tables and decompiled functions, sound and texture ids. Where the data
-   doesn't say, measure it from the captures, and mark anything still guessed as a guess.
+   `BF_LEVEL_DUMP`), XBE tables, sound and texture ids.
+   **Logic comes from the code first, footage confirms.** For a formula, timing, trigger, AI rule
+   or what an effect parameter means, find the function that does it in the decompiled game
+   before fitting numbers to footage:
+   - search `decompiled/xbe/ghidra/functions.csv` by the strings and attribute hashes it uses,
+     then read the C in `decompiled/xbe/ghidra/c/`;
+   - follow callers and callees; `xbe_tool.py` and `default.strings.txt` give tables and names;
+   - for ALE effect parameters, Librelancer's open-source implementation of the same format is a
+     reference.
+   Implement what the function does, in our own Rust (never paste or translate decompiled code
+   into the repo), and cite its address in the comment, e.g. `// FUN_001154b0`. Use the footage
+   to confirm the result and to settle what the code doesn't: how things look on screen. Fit a
+   value to footage only when the code can't be found, and label it a fit with the measurements
+   behind it.
 3. Implement it in the style of the surrounding module. A new feature gets its own `play_*.rs`
    module with a `plugin()`. Every const, struct and fn gets a doc comment that says where its
    values came from.
