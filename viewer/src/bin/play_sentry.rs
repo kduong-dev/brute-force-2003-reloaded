@@ -118,7 +118,8 @@ pub(super) struct TestRig {
 pub fn plugin(app: &mut App) {
     app.init_resource::<MineTargets>().init_resource::<TestRig>()
         .add_systems(OnEnter(AppState::Playing), reset)
-        .add_systems(Update, test_rig.after(squad_control).before(update_player).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, test_rig.after(squad_control).before(update_player).run_if(in_state(AppState::Playing)))
+        .add_systems(Update, publish_targets.after(super::grenade::GrenadeSystems).run_if(in_state(AppState::Playing)));
     // (`trip` runs in play_grenade.rs's chain, right before the grenades' fuses)
 }
 
@@ -213,9 +214,9 @@ fn check(at: Vec3, radius: f32, thrower: usize, team: u8, units: &[&Player], wis
 
 /// The Sentries that are down: each runs its check every 0.05-0.15 s and goes off when it says
 /// so, or when a shot that struck it (play.rs's `update_player`, see `MineTargets`) gets there
-/// (the fuse set to 0: play_grenade.rs's `fly_grenades` sets it off this frame). Their bounding
-/// spheres are handed to the next frame's shots. BF_SENTRY_LOG=1 prints each check with a
-/// target about, and what set one off.
+/// (the fuse set to 0: play_grenade.rs's `fly_grenades` sets it off this frame). Those still
+/// standing are handed to the next frame's shots by `publish_targets`. BF_SENTRY_LOG=1 prints
+/// each check with a target about, and what set one off.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>, squad: Res<Squad>,
                    kits: Option<Res<GrenadeKits>>, mut targets: ResMut<MineTargets>, rig: Res<TestRig>,
@@ -240,7 +241,6 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>,
     };
     let hostile_wise = rig.hostile.filter(|h| h.4).map(|h| h.0);
     let units: Vec<&Player> = std::iter::once(&*player).chain(squad.0.iter()).collect();
-    let mut spheres = vec![];
     for (e, mut g, tr, mine) in &mut mines {
         if !is_mine(&g) {
             continue;
@@ -252,8 +252,6 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>,
             }
             continue;
         }
-        let (centre, r) = kits.0[g.kind].bounds;
-        spheres.push((e, tr.transform_point(centre), r));
         // placed: the owner's team kept with it (0x147570 writes it at +0x1c0)
         let Some(mut m) = mine else {
             let team = units.iter().find(|u| u.character == g.thrower).map_or(0, |u| u.team);
@@ -284,7 +282,17 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>,
             g.fuse = 0.0;
         }
     }
-    targets.targets = spheres;
+}
+
+/// The Sentries still standing once this frame's grenades have gone off (down, fuse not run
+/// out: not set off by their check, a shot, BF_TEST_DETONATE or another blast), whose bounding
+/// spheres the next frame's shots are tested against (`MineTargets`).
+fn publish_targets(kits: Option<Res<GrenadeKits>>, mut targets: ResMut<MineTargets>, mines: Query<(Entity, &Grenade, &Transform)>) {
+    let Some(kits) = kits else { return };
+    targets.targets = mines.iter().filter(|(_, g, _)| g.landed && g.fuse > 0.0)
+        .filter_map(|(e, g, tr)| kits.0.get(g.kind).filter(|k| k.def.function_type == PROXIMITY_EXPLOSIVE)
+            .map(|k| (e, tr.transform_point(k.bounds.0), k.bounds.1)))
+        .collect();
 }
 
 /// The test hooks (see `reset`): the hostile and the friend held where they're put round the
