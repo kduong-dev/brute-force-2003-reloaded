@@ -20,8 +20,11 @@ repo's source files. Read `CLAUDE.md` first.
     master copy and copy it into place at each launch, as the playbook describes;
   - your snapshots, scripts and modified builds.
   Start xemu with `-config_path D:\Emulators\Xbox\agent\xemu.toml`.
-- **Only one xemu session runs at a time.** Before connecting to a gdb stub or monitor port,
-  make sure it's your own session.
+- **Other xemu sessions may run beside yours** (another agent testing tools, for example).
+  Each one has its own folder, hard disk copy, ports and pad. Yours are
+  `D:\Emulators\Xbox\agent\`, monitor 4444, gdb 1234, a virtual X360 pad bound by its GUID only,
+  and the left half of `DISPLAY1` (X −2560 to −1280, 1280×720). Never connect to another
+  session's ports or touch its folder.
 - **Never** change the user's xemu settings, hard disk image, BIOS files or ISOs, and never
   write into `D:\Emulators\Xbox\Xemu` or `D:\Emulators\Xbox\ISO`.
 

@@ -125,7 +125,10 @@ New issues are added to the board automatically. The `gh` login needs the `proje
 (`gh auth refresh -s project`).
 
 Run at most two heavy agents at once: a build takes minutes and a lot of CPU, and an `xemu`
-session uses the GPU and the screen. Run at most one `xemu` agent at a time.
+session uses the GPU and the screen. Two xemu sessions may run side by side, each with its own
+folder and hard disk copy, ports, virtual pad (the `xemu` agent: `D:\Emulators\Xbox\agent\`,
+4444/1234, an X360 pad, the left half of the left monitor; a second one: `agent-dev\`,
+4445/1235, a DualShock 4 pad, the right half).
 Relay what agents report faithfully, including what failed or wasn't tested.
 
 ## Conventions
