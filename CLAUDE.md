@@ -53,7 +53,8 @@ The agent roles are in `.claude/agents/`:
 - `xemu`: plays the original game in xemu and records footage for a ticket, as many takes as
   it needs, into `todo/<ticket>-<slug>/` with a `notes.md`. It may stage shots in a modified
   copy of the game (on D:, never the originals). It runs xemu with its own settings and hard
-  disk image, and may run while the user is at the PC.
+  disk image, plays through a virtual controller (never the keyboard or mouse) with the
+  window on the left monitor, and may run while the user is at the PC.
 - `tester`: owns "what the real game does". Before a ticket it measures the footage into a
   spec (or writes a shot list for `xemu`); after, it compares the demo with the footage and
   checks for regressions. Read-only.

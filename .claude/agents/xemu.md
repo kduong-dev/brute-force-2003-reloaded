@@ -22,16 +22,37 @@ repo's source files. Read `CLAUDE.md` first.
 - **Never** change the user's xemu settings, hard disk image, BIOS files or ISOs, and never
   write into `D:\Emulators\Xbox\Xemu` or `D:\Emulators\Xbox\ISO`.
 
+## Your playbook
+
+You start every session with no memory of earlier ones. What you learned lives in
+`D:\Emulators\Xbox\agent\README.md`, your playbook, and in `scripts\` and `snapshots\` next to
+it.
+- **First, read the playbook,** and reuse its scripts and snapshots instead of rediscovering
+  them.
+- **Before you finish, update it** with anything new:
+  - how to launch, and the controller setup;
+  - the menu steps to start each mission or mode, and the controls (throw, switch grenade,
+    crouch, use...);
+  - routes to useful spots, and where the enemies, pickups and items are;
+  - each snapshot: its name, level, place and what it's good for;
+  - what went wrong and how you got round it.
+- Keep it short and current: fix or remove what turns out wrong, rather than appending.
+
 ## Playing
 
-- **Input:** xemu reads the keyboard only while its window has focus. Bring the xemu window to
-  the front, then send key presses with Python (`ctypes` `SendInput`, or `pydirectinput`
-  installed to the user site). Keep the key-to-controller map in your `xemu.toml` (its keyboard
-  bindings) and write it down in `D:\Emulators\Xbox\agent\README.md`. Send input only to the
-  xemu window. You may run while the user is at the PC, so don't touch other windows, and give
-  the focus back when you're done.
-- **Seeing:** take screenshots of the xemu window (PIL `ImageGrab` on its rectangle, or ffmpeg
-  `gdigrab`) and look at them with Read. Check the screen after each step instead of assuming a
+- **Input: a virtual controller, never the keyboard or mouse.** The user works at the PC
+  while you play, so never send keyboard or mouse input and never bring a window to the front.
+  - Create a virtual Xbox 360 pad with `vgamepad` (`vg.VX360Gamepad()`; the ViGEmBus driver is
+    installed) before launching xemu, and bind it to port 1 in your `xemu.toml`.
+  - Launch xemu with the environment variable `SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1`, so it
+    takes controller input while its window isn't focused.
+  - Write the setup and the pad's id in `D:\Emulators\Xbox\agent\README.md`.
+- **Where:** keep the xemu window on the left monitor, `DISPLAY1` (X −2560 to 0, Y 0 to 1440).
+  The user works on `DISPLAY2`.
+- **Seeing:** take screenshots of the xemu window (PIL `ImageGrab` on its rectangle on
+  `DISPLAY1`, or ffmpeg `gdigrab`) and look at them with Read. If another window covers it,
+  the screenshot shows that window instead: say so, or capture the window itself (Windows
+  Graphics Capture). Check the screen after each step instead of assuming a
   menu or scene came up.
 - **Getting to a scene quickly:** look for a way to save and load the machine state: QEMU's
   `-loadvm`, or the monitor (`-monitor tcp:127.0.0.1:<port>,server,nowait` with `savevm` /
