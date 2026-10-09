@@ -2683,7 +2683,7 @@ fn wrap_angle(a: f32) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                  mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>,
-                 kits: Option<Res<grenade::GrenadeKits>>) {
+                 kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>) {
     let dt = frame_dt(&time);
     let kits: &[grenade::GrenadeKit] = kits.as_ref().map_or(&[], |k| &k.0);
     // the squad's heading: the leader's facing, smoothed (formation places turn with it)
@@ -2719,8 +2719,25 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let ammo = held.map_or(1, |w| w.def.ammo_type);
     // its Damage damage-type, for the target's factor (Game::damage_factor)
     let damage_type = held.map_or(0, |w| w.def.damage_type);
+    let now = player.sim_time;
+    // the squadmates' shots stop at a Sentry on their line (play_sentry.rs: 1 hitpoint)
+    for m in squad.0.iter_mut() {
+        for shot in m.shots.iter_mut() {
+            if let Some((e, t)) = mines.first_on(shot.origin, shot.dir, shot.dist) {
+                shot.dist = t;
+                shot.hit = true;
+                mines.strike(e, t, shot.speed, now);
+            }
+        }
+    }
     let mut shots = std::mem::take(&mut player.shots);
     for shot in shots.iter_mut() {
+        // a Sentry on the line stops the shot, unless a teammate is in the way before it
+        let mine = mines.first_on(shot.origin, shot.dir, shot.dist);
+        if let Some((_, t)) = mine {
+            shot.dist = t;
+            shot.hit = true;
+        }
         let hit = squad.0.iter().enumerate().filter(|(_, m)| !m.dead)
             .filter_map(|(i, m)| ray_body(shot.origin, shot.dir, m, shot.dist).map(|t| (i, t)))
             .min_by(|a, b| a.1.total_cmp(&b.1));
@@ -2733,6 +2750,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let amount = (lo + (hi - lo) * m.random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[m.character], damage_type);
             let local = shot.origin + shot.dir * t - m.position;
             player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, amount, dir: shot.dir, local, ammo });
+        } else if let Some((e, t)) = mine {
+            mines.strike(e, t, shot.speed, now);
         }
         // shot at: the others it passes close to may sidestep (see SHOT_AT_RADIUS)
         for (j, m) in squad.0.iter_mut().enumerate() {

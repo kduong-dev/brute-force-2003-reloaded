@@ -317,9 +317,11 @@ default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them)
 * Once it's down (on-placed 0x147570; there is no arming delay in the code), it checks every
   0.05-0.15 s (0x147620: a timer passing 0.15 s, restarted at a random 0-0.1 s); the first
   check comes 0.15 s after it's down. A check that says so sets it off at once.
-* The check (0x146e00) goes through every living character. A friend - on the thrower's team,
-  or the thrower - within the radius ends it: no blast this time. Anyone else within it is a
-  target. It goes off with a target and no friend within the radius. The radius is the item's
+* The check (0x146e00) goes through every living character. A friend - on the mine's team
+  (its owner's when it was set down, kept at +0x1c0 by 0x147570), or the thrower - within the
+  radius ends it: no blast this time. Anyone else within it is a target: characters on other
+  teams always, and on the mine's own team only for a team the team table (0x3ffd80) makes
+  hostile to itself (its diagonal: team 7 only). It goes off with a target and no friend within the radius. The radius is the item's
   h_0a811e94 (3 on every Sentry; read into `WeaponDef::proximity_radius`), a 3D sphere round
   the mine (0x146cb0).
 * A character's point for it is 0.9 m above the feet: a fit to the recording's enemy brought
@@ -330,7 +332,12 @@ default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them)
   within 0.3 m across and 1.5 m up or down (0x147430). Which characters have the flag isn't
   read yet (only the test hook's `wise` hostile has it).
 * It has 1 hitpoint: a shot (anyone's) whose line passes through its model's bounding sphere
-  stops there and sets it off when it arrives.
+  stops there and sets it off when it arrives. The shots are tested against the mines as they're
+  made (play.rs's `update_player`, before friendly fire): the first thing on the line takes the
+  shot - a teammate in front of the mine is hit and the mine isn't; a teammate behind it isn't
+  hit. Bodies on the ground don't stop shots in the demo (they're shoved and the shot goes on),
+  so a mine behind one is still struck, and bodies beyond the mine aren't shoved. The loose
+  pickups (play_pickups.rs, after `update_player`) see the shortened shots.
 * The demo has no enemies: the squad is one team, so the squad's mines never go off for the
   squad (as recorded: Tex walking or running over his own, standing beside it, Flint stepping
   onto it at 0.16 m). Only a test hook's hostile, or a shot, sets one off. Nobody can pick one
@@ -342,8 +349,17 @@ h_e5f1f063 (e34 defines it as well as h_f73de83d, whose explosion is the Energy'
 the squad carries h_e5f1f063 wherever it's defined, `SQUAD_GRENADES`). Not matched: the
 recording's Tex took 16.5 and 14.8 HP from blasts 6.0 m away, outside the data's 4 m radius;
 the demo's thrower is hurt only within the radius (0.2 x 62.5-88.5 = 12.5-17.7 HP), so at 6 m
-he takes nothing. How the game's blast code uses the radius for the thrower isn't found yet
-(the explosion is queued by 0x149520; where it's dealt wasn't traced).
+he takes nothing. Traced so far, not implemented (it would change every grenade's blast, its
+own ticket): the explosion queued by 0x149520 is a blast object the world ticks
+(FUN_00225220). FUN_00225440 moves it on by its speed (+0x1c) x dt each tick, and FUN_00224a90
+gathers the bodies inside its radius (+0x24) round where it is then. FUN_00224770 deals each
+one its damage: +0x20, tapered by its age over its life (+0x28 / +0x30, FUN_00225060 ->
+FUN_00223780, when flag 0x40 is set), not by the distance. FUN_0022c4d0 adds a second taper
+for some targets (+0x1fc / +0x200). So a blast that travels or lasts can reach bodies outside
+its radius from where it started, which may be how Tex was hurt at 6 m. Which data attributes
+fill +0x1c, +0x20 and +0x28 / +0x30, and what FUN_00223780's curve is, isn't read yet; the
+demo keeps its shared rule (Damage max falling to nothing at the radius; the thrower 0.2 x a
+roll of min..max inside it).
 
 `BF_SENTRY_LOG=1` prints each check with a target within radius + 1.5 m (3D and across
 distances to the nearest target and friend, and the result), each shot that strikes a mine and
@@ -353,8 +369,9 @@ each mine set off. Test hooks (with `BF_TEST_GOTO`):
   Sentry is down it's put `from` m (5) beyond it, on the far side from the thrower, waits 1 s,
   then is stepped in toward it at `m/s` (0.25) down to `to` m (0) across; held where it was
   when the mine goes. `wise`: it handles mines and knows this one.
-* `BF_TEST_MINE_FRIEND=<character>,<m>[,<s>]`: that squadmate is held `m` m beside the first
-  mine for `s` s after it's down (default for good), then let go to the squad AI.
+* `BF_TEST_MINE_FRIEND=<character>,<m>[,<s>]`: once the first mine is down, that squadmate
+  is held `m` m beside it for `s` s (default for good), then let go to the squad AI; until
+  then it follows the squad as usual.
 * `BF_TEST_SHOOT_MINE=<s>`: `s` s after the first mine is down the player turns the crosshair
   onto it and fires from the hip.
 
@@ -365,12 +382,23 @@ BF_TEST_STRAFE=0,-1 BF_TEST_THROW=1.05,0.1` unless said):
   at the next check, 2.99 m (2.87 across), with Tex 5.3 m away; Flint, 3.0 m from the blast,
   takes 22 HP and is knocked down. The blast frames show exp-mine's fireball as before.
 * A friend near (`BF_TEST_HOSTILE=flint,4,2,1 BF_TEST_MINE_FRIEND=hawk,2,6`): Flint stands at
-  2.0 m from +3.2 s, the mine stays while Hawk is at 2.2 m (and at 2.95 m as he walks off),
-  and goes off at the first check with Hawk 4.19 m away.
+  2.0 m from +3.2 s, the mine stays while Hawk is at 2.2 m, and goes off at the first check
+  with Hawk past 3 m as he walks off (3.02 m; an earlier run, 2.95 m: stays, 4.19 m: goes off).
+* A teammate behind the mine on the shot's line (`BF_TEST_SHOOT_MINE=1.5
+  BF_TEST_HOSTILE=hawk,4,4,0`: Hawk held 4 m beyond it): the shot strikes the mine 6.5 m out
+  and Hawk isn't hit. (A teammate in front of a mine wasn't staged.)
 * The thrower near (`BF_TEST_GOTO=20,20,20,20 BF_TEST_THROW=1.5,0.1
   BF_TEST_HOSTILE=flint,4,0.5,1`): Tex at 0.58 m across, Flint walks in to 0.5 m and stands
   there 4 s: it never goes off.
 * `wise` (`BF_TEST_HOSTILE=flint,2,0,0.5,wise`): stays at 0.47 m across, goes off at 0.20 m.
+* Not matched or untested:
+  * The blast's first ~0.2 s is grey-white in the demo where take10's is orange from the start
+    (the shared exp-mine rendering, `src/ale_fx.rs`).
+  * A mine set down on the move slides ~0.46 m after it lands (the placed grenade keeps the
+    hand's speed; no footage of placing on the move; untested against the game).
+  * Placing isn't possible crouched (`BF_TEST_CROUCH` with `BF_TEST_THROW` places nothing): the
+    shared `can_throw` (the crouch is an action), unchanged from main; whether the game lets
+    one place crouched isn't recorded.
 * Shot (`BF_TEST_SHOOT_MINE=0.7`): struck 2.3 m out, goes off the same frame; Tex 3.1 m from it
   takes 15.7 HP. From 10 m (`BF_TEST_SHOOT_MINE=2.2`, a laser bolt): goes off 0.07 s after the
   shot; Tex takes nothing (outside the radius, where the recording's Tex took ~15, above).

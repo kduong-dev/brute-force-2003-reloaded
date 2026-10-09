@@ -9,8 +9,9 @@
 //!    (no arming timer in the code);
 //!  - per frame 0x147620, once placed: a check every 0.05-0.15 s (`CHECK_EVERY`), and if the
 //!    check says so it goes off at once (vfunc +0x15c);
-//!  - the check 0x146e00 goes through every living character: a friend - on the thrower's team
-//!    (the team table at 0x3ffd80: a team is its own friend) or the thrower - within the radius
+//!  - the check 0x146e00 goes through every living character: a friend - on the mine's team
+//!    (unless the team table at 0x3ffd80 makes that team hostile to itself: team 7) or the
+//!    thrower - within the radius
 //!    stops it there (no blast this check); anyone else within it is a target. It goes off when
 //!    there's a target and no friend within the radius. The radius is the item's h_0a811e94
 //!    (3 m, every Sentry), the test 0x146cb0 a 3D sphere round the mine's node.
@@ -56,16 +57,46 @@ const RIG_TO: f32 = 0.0;
 const RIG_SPEED: f32 = 0.25;
 const RIG_WAIT: f32 = 1.0;
 
-/// A Sentry that's down (placed): its check timer (+0x1d0).
-#[derive(Component, Default)]
+/// A Sentry that's down (placed): its check timer (+0x1d0) and its owner's team when it was
+/// set down (+0x1c0, written by 0x147570).
+#[derive(Component)]
 pub(super) struct Mine {
     check: f32,
+    team: u8,
 }
 
-/// Shots on their way to a mine: the mine, and seconds until the shot gets there (it goes off
-/// then: 1 hitpoint).
+/// The Sentries that are down, for the shots (1 hitpoint): each one's entity and bounding
+/// sphere (world centre, radius), as of the last `trip`; and the shots on their way to one -
+/// the mine, and seconds until the shot gets there (it goes off then). play.rs's
+/// `update_player` tests each shot against them as it's made, before the teammates in its way
+/// (the first on the line takes it); the bodies on the ground don't stop shots (they're shoved
+/// and the shot goes on), so a mine behind one is still struck.
 #[derive(Resource, Default)]
-pub(super) struct Struck(Vec<(Entity, f32)>);
+pub(super) struct MineTargets {
+    targets: Vec<(Entity, Vec3, f32)>,
+    struck: Vec<(Entity, f32)>,
+}
+
+impl MineTargets {
+    /// The nearest mine on a shot's line (from `origin` along `dir`) before `dist`, and how far
+    /// along it the shot meets its sphere.
+    pub(super) fn first_on(&self, origin: Vec3, dir: Vec3, dist: f32) -> Option<(Entity, f32)> {
+        self.targets.iter().filter_map(|&(e, c, r)| {
+            let along = (c - origin).dot(dir);
+            let miss = (origin + dir * along).distance(c);
+            (along > 0.0 && miss < r && along - r < dist).then(|| (e, (along - (r * r - miss * miss).sqrt()).max(0.0)))
+        }).min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// A shot meets mine `e` `t` m out, flying at `speed` m/s: it goes off when the shot gets
+    /// there. (`now`, the sim time, for BF_SENTRY_LOG.)
+    pub(super) fn strike(&mut self, e: Entity, t: f32, speed: f32, now: f32) {
+        self.struck.push((e, t / speed.max(1.0)));
+        if std::env::var("BF_SENTRY_LOG").is_ok() {
+            println!("t {now:.2}: a shot strikes the mine {e} {t:.1} m out");
+        }
+    }
+}
 
 /// The test hooks' set-up (read when a map starts) and the first mine they're staged round.
 #[derive(Resource, Default)]
@@ -85,7 +116,7 @@ pub(super) struct TestRig {
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Struck>().init_resource::<TestRig>()
+    app.init_resource::<MineTargets>().init_resource::<TestRig>()
         .add_systems(OnEnter(AppState::Playing), reset)
         .add_systems(Update, test_rig.after(squad_control).before(update_player).run_if(in_state(AppState::Playing)));
     // (`trip` runs in play_grenade.rs's chain, right before the grenades' fuses)
@@ -106,13 +137,14 @@ fn character(s: &str) -> Option<usize> {
 ///    thrower, waits RIG_WAIT s, then is stepped in toward the mine at <m/s> (0.25) until <to>
 ///    m (0) across; held where it was once the mine goes. `wise`: it handles mines and knows
 ///    this one (counts only standing on it).
-///  - BF_TEST_MINE_FRIEND=<character>,<m>[,<s>]: that squadmate is held <m> m beside the first
-///    mine (square to the thrower's line) for <s> s after it's down (default: for good), then
-///    let go to the squad AI.
+///  - BF_TEST_MINE_FRIEND=<character>,<m>[,<s>]: once the first mine is down, that squadmate
+///    is held <m> m beside it (square to the thrower's line) for <s> s (default: for good), then
+///    let go to the squad AI; until the mine is down it follows the squad as usual.
 ///  - BF_TEST_SHOOT_MINE=<s>: <s> s after the first mine is down, the player (under
 ///    BF_TEST_GOTO's autopilot) aims at it and fires until it's gone.
-fn reset(mut struck: ResMut<Struck>, mut rig: ResMut<TestRig>) {
-    struck.0.clear();
+fn reset(mut targets: ResMut<MineTargets>, mut rig: ResMut<TestRig>) {
+    targets.targets.clear();
+    targets.struck.clear();
     let list = |k: &str| std::env::var(k).ok().map(|v| v.split(',').map(|x| x.trim().to_string()).collect::<Vec<_>>());
     let num = |v: &[String], i: usize, d: f32| v.get(i).and_then(|x| x.parse::<f32>().ok()).unwrap_or(d);
     *rig = TestRig {
@@ -140,18 +172,23 @@ fn body_point(u: &Player) -> Vec3 {
     u.position + Vec3::Y * (u.height + GROUND + BODY_CENTRE)
 }
 
-/// Whether `u` is a friend of a mine set down by `thrower` (on `team`): on its team or the
-/// thrower (0x146e00, the team table at 0x3ffd80).
+/// The team the game's team table (0x3ffd80, 10 x 10 bytes) makes hostile to itself: its
+/// diagonal is 0 but for team 7. (Characters on different teams are always hostile to each
+/// other in the check: the table is only looked up for the same team.) The demo's teams (0 the
+/// squad, 1 BF_TEST_HOSTILE's) aren't the game's numbers; none is 7.
+const SELF_HOSTILE_TEAM: u8 = 7;
+
+/// Whether `u` is a friend of a mine set down by `thrower` on team `team`: the same team (and
+/// not one hostile to itself) or the thrower (0x146e00).
 fn friend(u: &Player, thrower: usize, team: u8) -> bool {
-    u.team == team || u.character == thrower
+    (u.team == team && team != SELF_HOSTILE_TEAM) || u.character == thrower
 }
 
 /// The game's check (0x146e00) for a mine at `at` with trigger `radius`, set down by character
-/// `thrower`: true if any character not on the thrower's team is within the radius and nobody
-/// on it (nor the thrower) is - the first friend found within it ends the check. `wise`
-/// characters count only standing on it (WISE_REACH).
-fn check(at: Vec3, radius: f32, thrower: usize, units: &[&Player], wise: impl Fn(&Player) -> bool) -> bool {
-    let team = units.iter().find(|u| u.character == thrower).map_or(0, |u| u.team);
+/// `thrower` on team `team`: true if any character not its friend is within the radius and no
+/// friend is - the first friend found within it ends the check. `wise` characters count only
+/// standing on it (WISE_REACH).
+fn check(at: Vec3, radius: f32, thrower: usize, team: u8, units: &[&Player], wise: impl Fn(&Player) -> bool) -> bool {
     let mut found = false;
     for u in units.iter().filter(|u| !u.dead) {
         let p = body_point(u);
@@ -174,41 +211,22 @@ fn check(at: Vec3, radius: f32, thrower: usize, units: &[&Player], wise: impl Fn
     found
 }
 
-/// The Sentries that are down: a shot that strikes one sets it off when it gets there (1
-/// hitpoint; it stops the shot); each runs its check every 0.05-0.15 s and goes off when it
-/// says so (the fuse set to 0: play_grenade.rs's `fly_grenades` sets it off this frame).
-/// BF_SENTRY_LOG=1 prints each check with a target about, and what set one off.
+/// The Sentries that are down: each runs its check every 0.05-0.15 s and goes off when it says
+/// so, or when a shot that struck it (play.rs's `update_player`, see `MineTargets`) gets there
+/// (the fuse set to 0: play_grenade.rs's `fly_grenades` sets it off this frame). Their bounding
+/// spheres are handed to the next frame's shots. BF_SENTRY_LOG=1 prints each check with a
+/// target about, and what set one off.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn trip(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
-                   kits: Option<Res<GrenadeKits>>, mut struck: ResMut<Struck>, rig: Res<TestRig>,
+pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>, squad: Res<Squad>,
+                   kits: Option<Res<GrenadeKits>>, mut targets: ResMut<MineTargets>, rig: Res<TestRig>,
                    mut mines: Query<(Entity, &mut Grenade, &Transform, Option<&mut Mine>)>, mut rng: Local<u32>) {
     let Some(kits) = kits else { return };
     let dt = frame_dt(&time);
     let log = std::env::var("BF_SENTRY_LOG").is_ok();
     let is_mine = |g: &Grenade| g.landed && kits.0.get(g.kind).is_some_and(|k| k.def.function_type == PROXIMITY_EXPLOSIVE);
-    // this frame's shots (anyone's): the nearest mine on each one's line, before where it lands
     let now = player.sim_time;
-    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        for s in u.shots.iter_mut() {
-            let hit = mines.iter().filter(|(_, g, _, _)| is_mine(g)).filter_map(|(e, g, tr, _)| {
-                let (centre, r) = kits.0[g.kind].bounds;
-                let c = tr.transform_point(centre);
-                let along = (c - s.origin).dot(s.dir);
-                let miss = (s.origin + s.dir * along).distance(c);
-                (along > 0.0 && miss < r && along - r < s.dist).then(|| (e, (along - (r * r - miss * miss).sqrt()).max(0.0)))
-            }).min_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((e, t)) = hit {
-                s.dist = t;
-                s.hit = true;
-                struck.0.push((e, t / s.speed.max(1.0)));
-                if log {
-                    println!("t {now:.2}: a shot strikes the mine {e} {t:.1} m out");
-                }
-            }
-        }
-    }
     let mut due = vec![];
-    struck.0.retain_mut(|(e, left)| {
+    targets.struck.retain_mut(|(e, left)| {
         *left -= dt;
         if *left <= 0.0 {
             due.push(*e);
@@ -222,6 +240,7 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, mut player: ResMut<P
     };
     let hostile_wise = rig.hostile.filter(|h| h.4).map(|h| h.0);
     let units: Vec<&Player> = std::iter::once(&*player).chain(squad.0.iter()).collect();
+    let mut spheres = vec![];
     for (e, mut g, tr, mine) in &mut mines {
         if !is_mine(&g) {
             continue;
@@ -233,8 +252,12 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, mut player: ResMut<P
             }
             continue;
         }
+        let (centre, r) = kits.0[g.kind].bounds;
+        spheres.push((e, tr.transform_point(centre), r));
+        // placed: the owner's team kept with it (0x147570 writes it at +0x1c0)
         let Some(mut m) = mine else {
-            commands.entity(e).insert(Mine::default());
+            let team = units.iter().find(|u| u.character == g.thrower).map_or(0, |u| u.team);
+            commands.entity(e).insert(Mine { check: 0.0, team });
             continue;
         };
         m.check += dt;
@@ -245,11 +268,10 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, mut player: ResMut<P
         let def = &kits.0[g.kind].def;
         let radius = if def.proximity_radius > 0.0 { def.proximity_radius } else { DEFAULT_RADIUS };
         let at = tr.translation;
-        let go = check(at, radius, g.thrower, &units, |u| hostile_wise == Some(u.character) && u.team != 0);
+        let go = check(at, radius, g.thrower, m.team, &units, |u| hostile_wise == Some(u.character) && u.team != 0);
         if log {
             // the nearest target and friend (3D to the body point, and across)
-            let team = units.iter().find(|u| u.character == g.thrower).map_or(0, |u| u.team);
-            let nearest = |friends: bool| units.iter().filter(|u| !u.dead && friend(u, g.thrower, team) == friends)
+            let nearest = |friends: bool| units.iter().filter(|u| !u.dead && friend(u, g.thrower, m.team) == friends)
                 .map(|u| (body_point(u).distance(at), Vec2::new(u.position.x - at.x, u.position.z - at.z).length()))
                 .min_by(|a, b| a.0.total_cmp(&b.0));
             if let Some((d, across)) = nearest(false).filter(|t| t.0 < radius + 1.5) {
@@ -262,6 +284,7 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, mut player: ResMut<P
             g.fuse = 0.0;
         }
     }
+    targets.targets = spheres;
 }
 
 /// The test hooks (see `reset`): the hostile and the friend held where they're put round the
@@ -311,7 +334,7 @@ fn test_rig(mut player: ResMut<Player>, mut squad: ResMut<Squad>, kits: Option<R
                 Some((at + dir * d, -dir))
             })
         } else if let Some((_, dist, until)) = friend.filter(|f| f.0 == m.character) {
-            m.test_hold = first.is_none_or(|(_, _, _, down)| now - down < until);
+            m.test_hold = first.is_some_and(|(_, _, _, down)| now - down < until);
             first.filter(|_| m.test_hold).map(|(_, at, dir, _)| {
                 let side = Vec3::new(-dir.z, 0.0, dir.x);
                 (at + side * dist, -side)
