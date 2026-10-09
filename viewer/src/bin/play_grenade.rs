@@ -215,11 +215,11 @@ struct Held(Option<(Entity, usize)>);
 /// Blast sounds waiting for their effect type's delay: (seconds left, sound id, volume); and
 /// blast decals waiting for the fireball to clear: (seconds left, decal, where).
 #[derive(Resource, Default)]
-struct DelayedSounds(Vec<(f32, u32, f32)>, Vec<(f32, u32, Vec3)>);
+struct DelayedBlastParts(Vec<(f32, u32, f32)>, Vec<(f32, u32, Vec3)>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Held>()
-        .init_resource::<DelayedSounds>()
+        .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
         .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, tint).chain().after(update_player).before(play_sounds)
@@ -232,7 +232,7 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
              mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
              ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut held: ResMut<Held>, mut tint: ResMut<ScreenTint>,
-             mut delayed: ResMut<DelayedSounds>) {
+             mut delayed: ResMut<DelayedBlastParts>) {
     held.0 = None;
     tint.0 = TINT_TIME;
     delayed.0.clear();
@@ -390,13 +390,13 @@ fn fly_grenades(
     mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
     (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
-    (mut blasts, mut decals, mut delayed, mut tint): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>, ResMut<DelayedSounds>, ResMut<ScreenTint>),
+    (mut blasts, mut decals, mut delayed, mut tint): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>, ResMut<DelayedBlastParts>, ResMut<ScreenTint>),
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
 ) {
     let dt = frame_dt(&time);
     let p = &mut *player;
-    // blast sounds whose delay is up
+    // blast sounds and decals whose delay is up
     delayed.0.retain_mut(|(left, id, volume)| {
         *left -= dt;
         if *left <= 0.0 {
@@ -562,7 +562,7 @@ fn fly_grenades(
 /// decal on the ground.
 #[allow(clippy::too_many_arguments)]
 fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
-         materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedSounds) {
+         materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedBlastParts) {
     let ground = Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z);
     if let Some(ale) = ale {
         for &effect in kit.blast_fx.effects.iter().chain([&kit.blast_fx.light]).filter(|&&e| e != 0) {

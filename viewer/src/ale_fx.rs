@@ -346,19 +346,24 @@ fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, assets: Option<Res<AleAssets>>,
         mut count: ResMut<Count>, mut seq: ResMut<Seq>, mut meshes: ResMut<Assets<Mesh>>,
-        mut effects: Query<(Entity, &mut AleEffect, &GlobalTransform, &Transform, Has<ChildOf>)>) {
+        mut effects: Query<(Entity, &mut AleEffect, &mut GlobalTransform, &Transform, Has<ChildOf>)>) {
     let Some(assets) = assets else { return };
     let dt = clock(&time, fixed);
-    for (fx_entity, mut fx, at, local, parented) in &mut effects {
+    for (fx_entity, mut fx, mut at, local, parented) in &mut effects {
         let owner = fx_entity;
         // a new effect's world placement is known from its second frame (transforms propagate
         // after this runs); one without a parent is where its own transform says at once (a
-        // blast starts on the frame it goes off)
+        // blast starts on the frame it goes off), and its global transform is set from it now so
+        // its attached particles and beam ribbons (placed from it in `animate`) aren't drawn at
+        // the origin for that frame
         if !fx.placed && parented {
             fx.placed = true;
             continue;
         }
-        let place = if fx.placed { at.compute_transform() } else { *local };
+        if !fx.placed {
+            *at = GlobalTransform::from(*local);
+        }
+        let place = at.compute_transform();
         fx.placed = true;
         if !fx.active {
             fx.started = false;

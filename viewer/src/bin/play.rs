@@ -1275,6 +1275,8 @@ struct Player {
     pending_release: Option<(f32, usize, bool)>,
     /// released grenades to spawn (play_grenade.rs)
     thrown: Vec<grenade::Thrown>,
+    /// BF_TEST_NEXT_GRENADE: how many of its presses are done (per map, with the player)
+    test_next_grenade: usize,
     /// control is passing to this squad member (character index) in this many seconds
     select: Option<(usize, f32)>,
     /// a voice line to say in this many seconds
@@ -1427,7 +1429,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, pending_shot: false,
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
@@ -1448,7 +1450,7 @@ impl Player {
 
     /// A grenade throw (or set-down) cut short - knocked down, or control handed over - before
     /// the grenade left the hand: it goes back into the inventory (the count dropped at the
-    /// button), and nothing is left to launch.
+    /// button).
     fn cancel_throw(&mut self) {
         let mut back = self.throwing.take().filter(|t| !t.released).map(|t| t.kind);
         back = back.or(self.pending_release.take().map(|(_, k, _)| k));
@@ -1458,8 +1460,8 @@ impl Player {
                 println!("t {:.2}: throw cut short, grenade back ({n} now)", self.sim_time);
             }
         }
+        // (`thrown` is kept: a grenade already released this frame still flies)
         self.pending_release = None;
-        self.thrown.clear();
         self.charge = 0.0;
         self.meter_after = (0.0, 0.0);
     }
@@ -2587,12 +2589,10 @@ fn autopilot(player: &mut Player) -> bool {
         }
         // BF_TEST_NEXT_GRENADE=<s>[,<s>...]: press the grenade-type key (T) once at each time
         if let Ok(v) = std::env::var("BF_TEST_NEXT_GRENADE") {
-            use std::sync::atomic::{AtomicUsize, Ordering};
-            static PRESSED: AtomicUsize = AtomicUsize::new(0);
             let times: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect();
-            let done = PRESSED.load(Ordering::Relaxed);
+            let done = player.test_next_grenade;
             if times.get(done).is_some_and(|&s| player.sim_time >= s) && player.charge <= 0.0 && player.throwing.is_none() {
-                PRESSED.store(done + 1, Ordering::Relaxed);
+                player.test_next_grenade += 1;
                 step_grenade(player);
             }
         }
