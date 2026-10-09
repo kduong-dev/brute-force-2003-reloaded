@@ -41,11 +41,11 @@ use bf_viewer::bf::character::EffectType;
 /// throw speed range (m/s) over the charge, and extra upward angle over the crosshair (radians).
 /// Fitted to the Frag recording, not from the data: the grenade leaves the hand 0.60-0.63 s
 /// after the button and goes off 1.65-1.78 s after that, so with the 1.5 s fuse from the first
-/// contact it's down 0.15-0.28 s after it leaves the hand, about 5 m ahead where the camera
-/// looks down (frag/a 588-602): a fast throw along the crosshair, hardly lobbed.
+/// contact it's down 0.13-0.28 s after it leaves the hand, a few metres ahead where the camera
+/// looks down (frag/a 588-602): a fast throw, aimed below the crosshair (a negative lob).
 const MIN_THROW: f32 = 12.0;
 const MAX_THROW: f32 = 20.0;
-const THROW_LOB: f32 = 0.05;
+const THROW_LOB: f32 = -0.25;
 const GRENADE_GRAVITY: f32 = 9.8;
 const GRENADE_RADIUS: f32 = 0.06;
 /// bounce: vertical restitution, horizontal speed kept per bounce (the demo's; the friction
@@ -73,14 +73,22 @@ const ROLL_SOUND_FAR: f32 = 25.0;
 /// falloff; 58.5-65 x 0.2 fits.
 const SELF_DAMAGE: f32 = 0.2;
 /// The red damage tint, hurt by a blast (the Frag recording, all six blasts): the 3D picture's
-/// green and blue are multiplied by TINT_LOW (red kept, the HUD untouched), back to 1 linearly
-/// over TINT_TIME s (8 game frames), as strong near or far.
+/// green and blue are multiplied by TINT_CURVE's factors, one per game frame (1/30 s; the
+/// reference agent's measurement of the recording), red kept, the HUD untouched, as strong
+/// near or far; TINT_LOW is the deepest, TINT_TIME how long until it's gone.
+const TINT_CURVE: [f32; 9] = [0.20, 0.29, 0.39, 0.51, 0.61, 0.69, 0.78, 0.92, 1.0];
 const TINT_LOW: f32 = 0.2;
 const TINT_TIME: f32 = 0.27;
-/// A blast's decal is drawn at the data's size (the Frag's scorch h_ff1b711e: 3 x 3 m; the
-/// recording's scorch looks ~3-4.5 m across, a low-confidence measurement), not doubled as the
-/// blood decals are (play_fx.rs DECAL_SCALE, fitted to blood).
-const GRENADE_DECAL_SCALE: f32 = 1.0;
+/// A blast's damage (and with it the tint) lands this long after it goes off: the recordings'
+/// tint starts 3 game frames after the flash (Frag 693 -> 699, Sonic 229-231 -> 235). Measured;
+/// the game's reason (the blast's spread, a damage tick) isn't known.
+const DAMAGE_DELAY: f32 = 0.1;
+/// A blast's decal is drawn with its width / height read as half sizes, as the blood decals'
+/// are (play_fx.rs DECAL_SCALE, fitted to the blood captures): the Frag's scorch h_ff1b711e
+/// (3 x 3) is a 6 m quad, whose soft texture is half dark over ~3.7 m - the recording's scorch
+/// is half dark over ~4.1 m (the reference agent's measurement). At the data's size it came out
+/// ~1.9 m.
+const GRENADE_DECAL_SCALE: f32 = 2.0;
 /// The decal is laid this long after the blast, once the fireball has gone (the recording's
 /// bright part is gone by 0.63 s, and the scorch is first seen under the smoke). The demo's
 /// choice: laid at once, the dark decal showed through the added fireball as a hard dark disc.
@@ -97,17 +105,20 @@ const BLAST_QUIET: f32 = 0.3;
 /// The squad's grenade definitions, in the order the demo's grenade key (T) steps through them:
 /// Frag (#75), Energy (#74), Gas (#76), Light (#77), Sonic (#81), Roller (#79), Sentry (#80).
 /// Some labels have several definitions (the Sentry three, the Roller two): these are the ones
-/// the recordings show. Any other labelled grenade with an icon follows, one per label.
+/// the recordings show. The squad carries only these: the other labelled grenade with an icon,
+/// the Molotov (e01's h_f42e0faa), is the mutants' weapon (#78); its definition is read like
+/// any other (`Game::weapons`) for an AI thrower to use.
 const SQUAD_GRENADES: [u32; 7] = [0x060F_95F7, 0x0CC3_C2C8, 0xE8C6_7904, 0xFD1A_966D, 0xEC0B_F28F, 0xFBA7_C475, 0xE5F1_F063];
 /// The Frag (the main game's starting grenades).
 const FRAG: u32 = 0x060F_95F7;
 /// grenades carried at the start of the main game (the capture's HUD shows 3 Frags)
 const START_GRENADES: i64 = 3;
 
-/// Throw velocity for a charge of `power` (0..1) toward the crosshair ray.
+/// Throw velocity for a charge of `power` (0..1) toward the crosshair ray, lowered by
+/// THROW_LOB, aimed between 0.8 rad down and 1.2 rad up.
 pub fn throw_velocity(ray: Vec3, power: f32) -> Vec3 {
     let flat = Vec3::new(ray.x, 0.0, ray.z).normalize_or(Vec3::NEG_Z);
-    let pitch = (ray.y.clamp(-1.0, 1.0).asin() + THROW_LOB).clamp(-0.3, 1.2);
+    let pitch = (ray.y.clamp(-1.0, 1.0).asin() + THROW_LOB).clamp(-0.8, 1.2);
     (flat * pitch.cos() + Vec3::Y * pitch.sin()) * (MIN_THROW + (MAX_THROW - MIN_THROW) * power.clamp(0.0, 1.0))
 }
 
@@ -215,7 +226,15 @@ struct Held(Option<(Entity, usize)>);
 /// Blast sounds waiting for their effect type's delay: (seconds left, sound id, volume); and
 /// blast decals waiting for the fireball to clear: (seconds left, decal, where).
 #[derive(Resource, Default)]
-struct DelayedBlastParts(Vec<(f32, u32, f32)>, Vec<(f32, u32, Vec3)>);
+struct DelayedBlastParts(Vec<(f32, u32, f32)>, Vec<(f32, u32, Vec3)>, Vec<PendingDamage>);
+
+/// A blast's damage waiting DAMAGE_DELAY: the grenade type, where it went off, who threw it.
+struct PendingDamage {
+    left: f32,
+    kind: usize,
+    at: Vec3,
+    thrower: usize,
+}
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Held>()
@@ -226,8 +245,8 @@ pub fn plugin(app: &mut App) {
             .run_if(in_state(AppState::Playing)));
 }
 
-/// The squad's grenade types from the loaded definitions (any `Game::weapons` entry with an
-/// explosion, a label and a HUD icon: the enemies' have neither), their ALE effects compiled.
+/// The squad's grenade types (SQUAD_GRENADES, those the loaded levels define), their ALE
+/// effects compiled and their materials' render pipelines built ahead (`ale_fx::warm_up`).
 fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
              mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
@@ -237,21 +256,17 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
     tint.0 = TINT_TIME;
     delayed.0.clear();
     delayed.1.clear();
+    delayed.2.clear();
     let usable = |d: &WeaponDef| d.projectile != 0 && d.icon != 0 && !d.label.is_empty() && !d.label.starts_with("h_");
-    let mut defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
-    let mut rest: Vec<WeaponDef> = game.0.weapons.values().filter(|d| usable(d) && !SQUAD_GRENADES.contains(&d.name)).cloned().collect();
-    rest.sort_by_key(|d| d.name);
-    for d in rest {
-        if !defs.iter().any(|x| x.label == d.label) {
-            defs.push(d);
-        }
-    }
+    let defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
     let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
     let kits: Vec<GrenadeKit> = defs.into_iter().map(|d| GrenadeKit::load(&mut game.0, &mut assets, d)).collect();
     if let Some(mut ale) = ale {
         for k in &kits {
             for &e in k.blast_fx.effects.iter().chain(&k.trail_fx.effects).chain([&k.blast_fx.light]).filter(|&&e| e != 0) {
-                ale.load(&mut game.0, &mut images, &mut materials, e);
+                if let Some(fx) = ale.load(&mut game.0, &mut images, &mut materials, e) {
+                    bf_viewer::ale_fx::warm_up(&mut commands, &ale, &fx);
+                }
             }
         }
     }
@@ -412,6 +427,41 @@ fn fly_grenades(
         *left > 0.0
     });
     let Some(kits) = kits else { return };
+    // blasts' damage whose delay is up: everyone in range is hurt. Damage max at the centre,
+    // nothing at the radius; the thrower takes SELF_DAMAGE of a roll of min..max anywhere inside
+    // it (the test map's instant kill: the squad dies to any blast that reaches them)
+    let instant = test.as_ref().is_some_and(|t| t.instant_kill);
+    let mut due = vec![];
+    delayed.2.retain_mut(|d| {
+        d.left -= dt;
+        if d.left <= 0.0 {
+            due.push((d.kind, d.at, d.thrower));
+        }
+        d.left > 0.0
+    });
+    for (kind, at, thrower) in due {
+        let Some(kit) = kits.0.get(kind) else { continue };
+        let (radius, max, min) = (kit.blast.blast_radius, kit.blast.damage, kit.blast.damage_min.min(kit.blast.damage));
+        let roll = p.random(1000) as f32 / 1000.0;
+        let (leader, rest) = (std::iter::once((&mut *p, false, true)), squad.0.iter_mut().map(|u| (u, instant, false)));
+        for (u, kill, controlled) in leader.chain(rest) {
+            let d = u.position.distance(at);
+            if d >= radius || u.dead {
+                continue;
+            }
+            let k = 1.0 - d / radius;
+            let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
+            let damage = if u.character == thrower { SELF_DAMAGE * (min + (max - min) * roll) }
+                else if kill { u.health.max(max * k) } else { max * k };
+            hurt(u, &game.0, damage, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
+            if controlled {
+                tint.0 = 0.0;
+            }
+            if std::env::var("BF_COMBAT_LOG").is_ok() {
+                println!("{} blast at {d:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}", kit.def.label, CHARACTERS[u.character], u.health, u.max_health);
+            }
+        }
+    }
     // test hook: BF_TEST_DETONATE=<s> sets off every grenade out at that time (the Sentry has no
     // trigger yet)
     let detonate = std::env::var("BF_TEST_DETONATE").ok().and_then(|v| v.parse::<f32>().ok())
@@ -430,38 +480,16 @@ fn fly_grenades(
             let at = tr.translation;
             commands.entity(e).despawn();
             blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
-            // the blast hurts everyone in range: Damage max at the centre, nothing at the radius;
-            // the thrower takes SELF_DAMAGE of a roll of min..max anywhere inside it (the test
-            // map's instant kill: the squad dies to any blast that reaches them). None from a
-            // blast without damage (the Light), nor yet from one whose damage is dealt over
-            // time (h_04ea9251 > 0: the Gas, whose recording shows no damage at once - its
-            // damage over time is #76's)
-            let (radius, max, min) = (kit.blast.blast_radius, kit.blast.damage, kit.blast.damage_min.min(kit.blast.damage));
+            // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light), nor
+            // yet from one whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose
+            // recording shows no damage at once - its damage over time is #76's)
+            let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
             if max <= 0.0 || radius <= 0.0 || kit.blast.damage_time > 0.0 {
                 continue;
             }
             // loose pickups are thrown by blasts that hurt
             blasts.0.push((at, radius));
-            let instant = test.as_ref().is_some_and(|t| t.instant_kill);
-            let roll = p.random(1000) as f32 / 1000.0;
-            let (leader, rest) = (std::iter::once((&mut *p, false, true)), squad.0.iter_mut().map(|u| (u, instant, false)));
-            for (u, kill, controlled) in leader.chain(rest) {
-                let d = u.position.distance(at);
-                if d >= radius || u.dead {
-                    continue;
-                }
-                let k = 1.0 - d / radius;
-                let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
-                let damage = if u.character == g.thrower { SELF_DAMAGE * (min + (max - min) * roll) }
-                    else if kill { u.health.max(max * k) } else { max * k };
-                hurt(u, &game.0, damage, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
-                if controlled {
-                    tint.0 = 0.0;
-                }
-                if std::env::var("BF_COMBAT_LOG").is_ok() {
-                    println!("{} blast at {d:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}", kit.def.label, CHARACTERS[u.character], u.health, u.max_health);
-                }
-            }
+            delayed.2.push(PendingDamage { left: DAMAGE_DELAY, kind: g.kind, at, thrower: g.thrower });
             continue;
         }
         g.velocity.y -= GRENADE_GRAVITY * dt;
@@ -611,7 +639,11 @@ fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, m
         mut materials: ResMut<Assets<StandardMaterial>>,
         mut quads: Query<(&TintQuad, &mut MeshMaterial3d<StandardMaterial>)>,
         camera: Query<Entity, With<MainCamera>>) {
-    let k = (tint.0 / TINT_TIME).min(1.0);
+    // the recording's factor at this time (linear between its game frames)
+    let f = tint.0 * 30.0;
+    let i = (f as usize).min(TINT_CURVE.len() - 1);
+    let s = TINT_CURVE[i] + (TINT_CURVE[(i + 1).min(TINT_CURVE.len() - 1)] - TINT_CURVE[i]) * f.fract().min(1.0);
+    let k = ((s - TINT_LOW) / (1.0 - TINT_LOW)).clamp(0.0, 1.0);
     tint.0 += frame_dt(&time);
     let Ok((quad, mut mat)) = quads.single_mut() else {
         if let Ok(cam) = camera.single() {
@@ -625,7 +657,7 @@ fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, m
         }
         return;
     };
-    let step = &quad.0[((k * TINT_STEPS as f32) as usize).min(TINT_STEPS)];
+    let step = &quad.0[((k * TINT_STEPS as f32).round() as usize).min(TINT_STEPS)];
     if mat.0 != *step {
         mat.0 = step.clone();
     }

@@ -24,9 +24,14 @@ const ENERGY_ICON: u32 = 0x1AC4_1530;
 const FRAG_ICON: u32 = 0xFE20_B919;
 /// The item box's count: top right (the medkit captures), or for a grenade at the right
 /// middle (the Frag and Light recordings: the digit's right edge at 588, its top at 410-412; the
-/// line's top is ~8 units above the digit's), and hidden while only one is carried (Light, Sentry recordings).
+/// line's top is ~3 units above the digit's: the reference agent measured the digit at
+/// y 410-421 in the recording, 406-418 with the line at 403), and hidden while only one is carried (Light, Sentry recordings).
 const ITEM_COUNT_Y: f32 = 378.0;
-const GRENADE_COUNT_Y: f32 = 403.0;
+/// The item box's icon (left, top, size, units): the Frag recording's icon spans x 553-568,
+/// y 384-425; drawn 50 units square at (535, 379) it spanned x 554-566, y 385-418, so it's
+/// drawn 1.25x larger, its middle on the recording's.
+const ITEM_ICON: (f32, f32, f32) = (529.3, 376.4, 62.5);
+const GRENADE_COUNT_Y: f32 = 407.0;
 /// The item's name (the line's top): the medkit captures', and a grenade's a little lower (the
 /// Frag and Light recordings: its capitals' tops at 423-425).
 const ITEM_NAME_Y: f32 = 417.0;
@@ -83,7 +88,11 @@ const METER_BOX: (f32, f32, f32, f32) = (354.0, 162.0, 367.7, 221.7);
 /// (left, right, top when full, bottom)
 const METER_FILL: (f32, f32, f32, f32) = (355.3, 365.7, 164.3, 218.7);
 const METER_TICK_Y: f32 = 178.5;
-const METER_ORANGE: Color = Color::srgba(1.0, 160.0 / 255.0, 53.0 / 255.0, 0.65);
+/// The fill: sRGB (255, 160, 53) at 0.65, blended by the console in stored values (over the
+/// recording's grey ground (63, 63, 55) it gives (188, 126, 54)). The UI blends in linear light,
+/// so it's drawn as the colour that gives the same result over that ground: (226, 148, 54) at
+/// 0.65 (fitted over that one ground colour; lighter or darker ground comes out a little off).
+const METER_ORANGE: Color = Color::srgba(226.0 / 255.0, 148.0 / 255.0, 54.0 / 255.0, 0.65);
 /// radar: centre of the disc, its radius in screen units and the range it shows (m)
 const RADAR_CENTRE: (f32, f32) = (121.5, 369.0);
 const RADAR_RADIUS: f32 = 44.0;
@@ -832,7 +841,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                             Node { border: UiRect::all(Val::Px(1.0)), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }));
         }
     }
-    commands.spawn((ChildOf(screen), at(535.0, 379.0, 50.0, 50.0), image(&frag, Color::WHITE), Part::ItemIcon, Visibility::Hidden));
+    commands.spawn((ChildOf(screen), at(ITEM_ICON.0, ITEM_ICON.1, ITEM_ICON.2, ITEM_ICON.2), image(&frag, Color::WHITE), Part::ItemIcon, Visibility::Hidden));
     commands.spawn((ChildOf(screen), game_text("", 561.0, ITEM_NAME_Y, 12.0, ITEM_RED, Align::Centre), Part::ItemName, Visibility::Hidden));
     commands.spawn((ChildOf(screen), game_text("", 588.0, ITEM_COUNT_Y, 12.0, ITEM_RED, Align::Right), Part::ItemCount, Visibility::Hidden));
     commands.spawn((ChildOf(screen), game_text("", 545.0, 401.0, 12.0, AMMO_ORANGE, Align::Left), Part::ItemNew, Visibility::Hidden));

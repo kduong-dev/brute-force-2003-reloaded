@@ -46,6 +46,10 @@ use crate::bf::hash::h;
 const LIFESPAN: u32 = 0xF27F_DE7D;
 const TRANSFORM: u32 = 0xE13A_59A1;
 const INITIAL: u32 = 0x0F9A_9D52;
+/// A burst at the start (a curve over the emitter's time, read at 0): exp-lrg-flash's 4.1 with
+/// no rate and no initial count. An inference: the flash nodes are the ones that set it, and
+/// the recording's first flash frame is a wide haze, not one flare.
+const BURST: u32 = 0xE722_1F95;
 const RATE: u32 = 0x023C_350C;
 const LIFE: u32 = 0x0A63_5880;
 const SPEED: u32 = 0x0AB1_80C5;
@@ -77,6 +81,14 @@ const ROTATE: u32 = 0xF24D_7541;
 const PERP: u32 = 0x0D64_5074;
 const TEXTURE: u32 = 0xF736_F94E;
 const BLEND: u32 = 0x1DAE_A8C0;
+/// An animated texture's frame over a particle's life (0-1 of its frames). Read from the data's
+/// values: a ramp (Exp5 on exp-lrg-add 0.61 -> 1.0, the fire puffs 0.21 -> 0.98, campfires 0 ->
+/// 1) runs the flipbook over the particle's life; a constant above 0 (the muzzle flashes'
+/// 0.60, exp-lrg-fire's 0.70) holds that one frame; a constant 0 (the shield icon's arcb)
+/// leaves the texture playing at its own rate. An inference (Freelancer's TexFrame reads the
+/// same way): before it, every flipbook played at 30 fps and wrapped, which restarted
+/// exp-lrg-add's bright first frames half a second into the Frag's blast.
+const TEX_FRAME: u32 = 0x1865_7E4A;
 const BLEND_ADD: (u32, u32) = (5, 2);
 
 /// Perp quads lie flat in the emitter's frame, i.e. face along the emitter's axis - the
@@ -106,6 +118,8 @@ pub struct Pair {
     steps: Vec<Vec<Handle<StandardMaterial>>>,
     /// an animated texture's frames per second
     fps: f32,
+    /// how the flipbook's frame is picked (see TEX_FRAME)
+    frame: FrameMode,
     perp: bool,
     /// particles stay in the emitter's frame (move with it)
     attached: bool,
@@ -117,6 +131,33 @@ pub struct Pair {
     light: bool,
 }
 
+/// How a pair's flipbook frame is picked (see TEX_FRAME).
+#[derive(Clone, Copy, PartialEq)]
+enum FrameMode {
+    /// at the texture's own rate, round and round
+    Play,
+    /// this part of the frames (0-1), all its life
+    Hold(f32),
+    /// along the appearance's TEX_FRAME curve over the particle's life
+    Life,
+}
+
+impl FrameMode {
+    fn of(app: &Node) -> Self {
+        match app.params.get(&TEX_FRAME) {
+            Some(crate::bf::ale::Value::Floats(items)) => match items.first() {
+                Some((_, _, keys)) if keys.len() > 1 => FrameMode::Life,
+                Some((_, _, keys)) => match keys.first() {
+                    Some(&(_, v)) if v > 0.0 => FrameMode::Hold(v),
+                    _ => FrameMode::Play,
+                },
+                None => FrameMode::Play,
+            },
+            _ => FrameMode::Play,
+        }
+    }
+}
+
 /// An effect ready to run.
 pub struct Compiled {
     pub name: String,
@@ -124,6 +165,11 @@ pub struct Compiled {
 }
 
 impl Compiled {
+    /// The materials its particles draw with (the first of each pair's), for `warm_up`.
+    pub fn materials(&self) -> Vec<Handle<StandardMaterial>> {
+        self.pairs.iter().filter_map(|p| p.beam.clone().or_else(|| p.steps.first().and_then(|s| s.first()).cloned())).collect()
+    }
+
     /// How long a one-shot run of the effect lasts: its longest emitter plus its longest-lived
     /// particles (finite emitters only; a few seconds otherwise).
     pub fn duration(&self) -> f32 {
@@ -211,7 +257,36 @@ struct Count(usize);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Count>().init_resource::<Seq>()
-        .add_systems(PostUpdate, (emit, animate, beams).chain().before(TransformSystem::TransformPropagate));
+        .add_systems(PostUpdate, (emit, animate, beams).chain().before(TransformSystem::TransformPropagate))
+        .add_systems(Update, end_warm_up);
+}
+
+/// A quad drawn (out of sight) for its material's render pipeline to be built before an effect
+/// first needs it; gone after this many frames.
+#[derive(Component)]
+struct WarmUp(u32);
+/// Frames the warm-up quads stay (the captures' 60 warm-up frames, and some).
+const WARM_UP_FRAMES: u32 = 90;
+
+/// Draw each of an effect's materials once, far below the ground and never culled, so their
+/// render pipelines are built while the map loads. Bevy builds a pipeline the first time
+/// something needs it, on other threads, and draws nothing with it until it's ready: a blast's
+/// first additive layers could go missing for its first half second when the machine was
+/// busy (the reference agent's run beside two other instances).
+pub fn warm_up(commands: &mut Commands, assets: &AleAssets, fx: &Compiled) {
+    for m in fx.materials() {
+        commands.spawn((Mesh3d(assets.quad.clone()), MeshMaterial3d(m), NotShadowCaster, bevy::render::view::NoFrustumCulling,
+                        Transform::from_xyz(0.0, -500.0, 0.0).with_scale(Vec3::splat(0.01)), Visibility::default(), WarmUp(WARM_UP_FRAMES)));
+    }
+}
+
+fn end_warm_up(mut commands: Commands, mut quads: Query<(Entity, &mut WarmUp)>) {
+    for (e, mut w) in &mut quads {
+        w.0 = w.0.saturating_sub(1);
+        if w.0 == 0 {
+            commands.entity(e).despawn();
+        }
+    }
 }
 
 impl AleAssets {
@@ -253,7 +328,7 @@ impl AleAssets {
                     fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
                 });
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  beam: Some(material), light: false });
+                                  frame: FrameMode::Play, beam: Some(material), light: false });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
@@ -261,7 +336,7 @@ impl AleAssets {
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
                 pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
-                                  beam: None, light: true });
+                                  frame: FrameMode::Play, beam: None, light: true });
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
@@ -292,7 +367,8 @@ impl AleAssets {
                 })).collect()
             }).collect();
             let streak = app.flag(MOTION_BLUR);
-            pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps),
+            let frame = FrameMode::of(&app);
+            pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs })
@@ -383,8 +459,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
             let sp = fx.sp;
             let rate = em.curve(RATE, sp, t).unwrap_or(0.0).max(0.0);
             let initial = em.int(INITIAL).unwrap_or(0).max(0) as usize;
-            // no rate and no initial count: one particle when it starts (a gun's tracer)
-            let mut n = if fresh { if initial == 0 && rate == 0.0 { 1 } else { initial } } else { 0 };
+            // no rate and no initial count: its burst when it starts (exp-lrg-flash's 4), else
+            // one particle (a gun's tracer)
+            let burst = em.curve(BURST, sp, 0.0).unwrap_or(0.0).round().max(1.0) as usize;
+            let mut n = if fresh { if initial == 0 && rate == 0.0 { burst } else { initial } } else { 0 };
             fx.acc[i] += rate * dt;
             n += fx.acc[i] as usize;
             fx.acc[i] = fx.acc[i].fract();
@@ -536,7 +614,11 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         tr.scale = Vec3::new(width, height, 1.0);
         let step = ((k * STEPS as f32) as usize).min(STEPS - 1);
         let frames = pair.steps[step].len();
-        let frame = (p.age * pair.fps) as usize % frames;
+        let frame = match pair.frame {
+            FrameMode::Play => (p.age * pair.fps) as usize % frames,
+            FrameMode::Hold(v) => ((v * frames as f32) as usize).min(frames - 1),
+            FrameMode::Life => ((app.floats(TEX_FRAME, p.sp, k).unwrap_or(0.0).clamp(0.0, 1.0) * frames as f32) as usize).min(frames - 1),
+        };
         if step * 1000 + frame != p.step {
             p.step = step * 1000 + frame;
             mat.0 = pair.steps[step][frame].clone();

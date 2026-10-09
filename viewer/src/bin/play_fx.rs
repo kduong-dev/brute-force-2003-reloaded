@@ -579,7 +579,7 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The decals asked for (`DecalRequests`), their textures loaded the first time, at the scale
-/// asked for.
+/// asked for, darkening as the console's blend does (see `spawn_decal_alpha`).
 fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Option<ResMut<FxAssets>>, mut state: ResMut<FxState>,
                     mut requests: ResMut<DecalRequests>, mut images: ResMut<Assets<Image>>,
                     mut materials: ResMut<Assets<StandardMaterial>>) {
@@ -597,7 +597,7 @@ fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Opti
                 }
             }
         }
-        spawn_decal(&mut commands, &mut state, &fx, &mut materials, &def, at, scale);
+        spawn_decal_alpha(&mut commands, &mut state, &fx, &mut materials, &def, at, scale, true);
     }
 }
 
@@ -670,11 +670,24 @@ fn spawn_emitter(commands: &mut Commands, state: &mut FxState, fx: &'static Effe
 #[allow(clippy::too_many_arguments)]
 fn spawn_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>,
                def: &DecalDef, at: Vec3, scale: f32) {
+    spawn_decal_alpha(commands, state, fx, materials, def, at, scale, false);
+}
+
+/// `spawn_decal`; `console`: the alpha made to darken as the console's blend does. The Xbox
+/// blends a decal into the picture's stored (sRGB) values; Bevy blends in linear light, so a
+/// dark decal at alpha a leaves (1 - a)^(1/2.2) of the ground's stored value, not 1 - a. Alpha
+/// 1 - (1 - a)^2.2 gives the console's result in the decal's middle. (The Frag's scorch, RGBA
+/// 10 10 10 200: 0.47 of the ground in the middle at the data's alpha, the recording's ~0.2-0.3;
+/// the blood decals were fitted to captures with the plain alpha and keep it.)
+#[allow(clippy::too_many_arguments)]
+fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>,
+                     def: &DecalDef, at: Vec3, scale: f32, console: bool) {
     if def.textures.is_empty() {
         return;
     }
     let texture = def.textures[(state.random() * def.textures.len() as f32) as usize % def.textures.len()];
     let [r, g, b, a] = def.color;
+    let a = if console { 1.0 - (1.0 - a).powf(2.2) } else { a };
     let material = materials.add(StandardMaterial {
         base_color: Color::srgba(r, g, b, a), base_color_texture: fx.decal_textures.get(&texture).cloned(),
         alpha_mode: AlphaMode::Blend, perceptual_roughness: 1.0, reflectance: 0.0, depth_bias: 40.0, ..default()

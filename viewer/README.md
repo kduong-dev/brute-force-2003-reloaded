@@ -55,10 +55,8 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     on its point) and the cards (on their edges) fall over onto their sides.
   * They're inventory-objects as on a map, so medkits and fruit work as in "Health pickups",
     and everything is loose (kicked, thrown by blasts, tumbling).
-* **Every grenade type**, a full stack of each (its stack-limit: 10 for the squad's, 25 for
-  the Molotov): Frag, Energy, Gas, Light, Sonic, Roller, Sentry, and the Molotov (e01's: the
-  data rule takes it as a labelled grenade with an icon; whether the squad carries it is
-  pending). m09_a is
+* **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Energy,
+  Gas, Light, Sonic, Roller, Sentry. m09_a is
   loaded for the Light (only in m09_a/b/c/x). T steps through them. See **Grenades**.
 * **Instant kill**, on at the start, K toggles it. The player's shots and grenades kill any
   squad member they hurt, in one hit. The player still takes normal damage.
@@ -73,10 +71,10 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 Every grenade type comes from the loaded levels' `inventory-grenade` definitions (read into
 `WeaponDef`, `src/bf/weapon.rs`); nothing per type is hard-coded except which definitions the
 squad carries when several share a label (the Sentry has three, the Roller two: the ones the
-recordings show, `SQUAD_GRENADES`) and the order T steps through them. Any other labelled
-grenade with a HUD icon is added after them: that brings in the Molotov (e01's h_f42e0faa,
-stack 25). It's there because the data rule takes it; whether the squad can carry it is still
-to be decided. Per type:
+recordings show, `SQUAD_GRENADES`) and the order T steps through them. The squad carries only
+those seven. The Molotov (e01's h_f42e0faa, a labelled grenade with an icon) is the mutants'
+weapon (#78), not the squad's: its definition is read like the others' for an AI thrower to
+use. Per type:
 
 | Field | Where | Frag |
 |---|---|---|
@@ -102,11 +100,12 @@ decal, and a throw called off.
   one game frame after it). The stance's throw clip takes the grenade in hand at its reach
   event - its trail (grenade_trail's smoke, riding on it) and the trail effect type's sound
   (the Frag's hiss, ~0.33 s after the button in the recordings) start then - and lets go at
-  its release event (0.60 s after the button for Tex, as recorded). It flies along the
-  crosshair at 12-20 m/s over the charge, lobbed 0.05 rad, and keeps 0.3 of its speed along the
-  ground per bounce: values fitted to the Frag recording (leaves the hand 0.60-0.63 s after the
-  button, goes off 1.65-1.78 s later, so down 0.15-0.28 s after leaving the hand, about 5 m
-  ahead with the camera looking down, and resting near there), not from the data. Bounces are
+  its release event (0.60 s after the button for Tex, as recorded). It flies at 12-20 m/s over
+  the charge, aimed 0.25 rad below the crosshair (at most 0.8 rad down), and keeps 0.3 of its
+  speed along the ground per bounce: values fitted to the Frag recording (leaves the hand
+  0.60-0.63 s after the button, goes off 1.65-1.78 s later, so down 0.13-0.28 s after leaving
+  the hand, a few metres ahead with the camera looking down, and resting near there), not
+  from the data. Bounces are
   silent; the trail keeps puffing where it lies until the blast.
 * **Placing** (Roller, Sentry): the press drops the count and plays the event sound; the
   stance's `Sc_w1/w2_place_hi` clip takes it in hand at its reach event (0.23-0.47 s over the
@@ -125,11 +124,29 @@ decal, and a throw called off.
   on the frame it's spawned; a "light_" effect is a point light: reach = its size, strength =
   colour x alpha x size, the DNA light's tuning), its sounds (h_f724cb8c read as a delay: the
   Light's 0.2 s) and the impact sound. The decal is laid 0.7 s later, once the fireball has
-  gone (laid at once, it showed as a hard dark disc through the added fireball), at the data's
-  size (the Frag's 3 x 3 m; the recording's scorch looks ~3-4.5 m, a low-confidence
-  measurement), lasting 60 s and fading over the last 2 s (h_199870ec / h_fe4e1d82 read as life
-  and fade, an inference), laid along the ground's slope under its middle. Blasts that hurt
-  throw loose pickups (not the Light's).
+  gone (laid at once, it showed as a hard dark disc through the added fireball), its
+  width / height read as half sizes as the blood decals' are (the Frag's 3 x 3 is a 6 m quad,
+  half dark over ~3.7 m; the recording's scorch is half dark over ~4.1 m), lasting 60 s and
+  fading over the last 2 s (h_199870ec / h_fe4e1d82 read as life and fade, an inference), laid
+  along the ground's slope under its middle. It darkens as the console's blend does: the Xbox
+  blends in stored (sRGB) values, Bevy in linear light, so its alpha a is drawn as
+  1 - (1 - a)^2.2 (the scorch's middle at ~0.25 of the ground, the recording's 0.2-0.3; at the
+  plain alpha it was 0.47). Blasts that hurt throw loose pickups (not the Light's).
+  * ALE details the blast showed up (`src/ale_fx.rs`):
+    * An animated texture's frame comes from the appearance's 18657e4a over the particle's
+      life: a ramp plays the flipbook over the life (exp-lrg-add's Exp5 0.61 -> 1.0: from the
+      orange frames to the smoke), a constant above 0 holds that frame (exp-lrg-fire 0.70, the
+      muzzle flashes 0.60), 0 plays it at its own rate (the shield icon). An inference;
+      before, every flipbook played at 30 fps and wrapped, so exp-lrg-add went back to its
+      bright first frames at 0.53 s: a second white flash the recording doesn't have.
+    * An emitter with no rate and no initial count starts with its e7221f95 (read at 0) as a
+      burst: exp-lrg-flash's 4 flares, the recording's wide white haze on the first frame
+      (an inference; one particle otherwise, a gun's tracer).
+    * Each effect's materials are drawn once out of sight while the map loads
+      (`ale_fx::warm_up`), so their render pipelines are built before the first blast. In one
+      of five captures run beside two other instances, the flash and the add layer were
+      missing for the blast's first half second: the likely cause, a pipeline still being
+      built. Not reproduced since (four captures, three at once, alike).
   * The Frag's exp-fire-add is a sphere emitter of "perp" quads. Perp quads lie flat in the
     emitter's frame (the Sonic's ring and the laser hits' rings show that), which drew it as a
     stack of flat discs seen nearly edge-on: a wide flat streak. From a sphere emitter whose
@@ -143,14 +160,20 @@ decal, and a throw called off.
   (the Light), nor yet from one whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose
   recording shows none at once). Damage types (the combat-targets' per-type factors) aren't
   applied yet.
-* **Red tint**: the frame the player is hurt by a blast, the 3D picture's green and blue go to
-  0.2 of their stored values, back to 1 linearly over 0.27 s (8 game frames), red and the HUD
-  untouched, as strong near or far (the Frag recording, all six blasts). A quad in front of
-  the camera, multiplied into the picture; the picture blends in linear light, so the factor
-  is the linear one that scales a stored value of 0.4 (the ground's ~0.35-0.45) by 0.2.
-* **HUD**: the item box shows the selected type's icon, label and count (count at the right
-  middle, top of the digit at ~411; hidden while only one is carried, as in the Light and
-  Sentry recordings). When the selected type runs out, the first type still carried is
+* **Damage and red tint land 0.1 s after the blast** (the recordings: the tint starts 3 game
+  frames after the flash, Frag 693 -> 699, Sonic 229-231 -> 235). Hurt by it, the 3D
+  picture's green and blue follow the recording's factors per game frame: 0.20, 0.29, 0.39,
+  0.51, 0.61, 0.69, 0.78, 0.92, 1 (the reference agent's measurement), red and the HUD
+  untouched, as strong near or far. A quad in front of the camera, multiplied into the
+  picture; the picture blends in linear light, so each factor is the linear one that scales
+  a stored value of 0.4 (the ground's ~0.35-0.45) by it.
+* **HUD**: the item box shows the selected type's icon (62.5 units square at (529.3, 376.4):
+  the recording's icon spans x 553-568, y 384-425; at 50 units it came out 0.8x), label and
+  count (count at the right middle, the digit at y ~410-421 as recorded; hidden while only one
+  is carried, as in the Light and Sentry recordings). The meter's fill is drawn as (226, 148,
+  54) at 0.65: what the console's stored-value blend of (255, 160, 53) at 0.65 gives over the
+  recording's ground (63, 63, 55), since the UI blends in linear light. The charge sound is
+  queued on the frame the meter first shows (`BF_SOUND_LOG` and the capture agree). When the selected type runs out, the first type still carried is
   selected (the Sentry recording: the last Sentry set down, the box shows Frag 10).
 
 What each type does so far, and doesn't:
@@ -183,14 +206,15 @@ Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
 Verified (captures at 15 fps in the scratchpad; the reference frames are the user's xemu
 recordings at 60 fps):
 * Frag, test map (`--test BF_TEST_GOTO=0,4,0,4 BF_TEST_THROW=1.5,0.3 BF_CAMERA_PITCH=-0.5
-  BF_CAMERA_DISTANCE=9 BF_VIEW_YAW=0.2`): button-up 1.8 s, leaves the hand 2.40 s, down 0.27 s
-  later 5.7 m ahead, blast 4.20 s: 2.40 s after the button (recorded 2.28-2.38), 1.80 s after
-  leaving the hand (recorded 1.65-1.78). Side by side with frag/a at matching times (t = 0 ..
-  1.6 s): a round flash and fireball from the blast frame, bright until ~0.5 s, brown smoke to
-  ~1.3 s, the scorch after. The recording's smoke spreads wider than the demo's.
-* Tint (`BF_TEST_THROW=1.5,0.07`, same camera): Tex 7.9 m away takes 12.6 of 115; on the blast
-  frame (60) the picture's green and blue are 0.19-0.25 of before, then ~0.37, 0.55, 0.77,
-  0.96 over the next frames; red unchanged.
+  BF_CAMERA_DISTANCE=9 BF_VIEW_YAW=0.2`): button-up 1.8 s, leaves the hand 2.40 s, down 0.13 s
+  later 3.2 m ahead, blast 4.07 s: 2.27 s after the button (recorded 2.28-2.38), 1.67 s after
+  leaving the hand (recorded 1.65-1.78). Side by side with frag/a from its flash (frame 693) at
+  matching times, 0-1 s: a white haze on the blast frame; the red tint two capture frames later
+  (the recording's 701), as Tex 6.6 m away takes 12.6 of 115; the fireball turns orange at
+  ~0.4-0.5 s and brown after, with no second white flash; a dark 6 m scorch after. The demo's
+  blast is farther from the camera, so smaller on screen; the recording's smoke spreads wider
+  and darker. Four captures (three run at once) give the same bright-pixel counts frame for
+  frame.
 * Sonic, test map (`BF_TEST_GRENADE_TYPE=Sonic`): goes off at first contact, red tint, the dome
   and ring then the godray shafts, its dark decal after.
 * Light (`BF_TEST_GRENADE_TYPE=light`): blue spikes, still burning 8.9 s after; no damage, no
