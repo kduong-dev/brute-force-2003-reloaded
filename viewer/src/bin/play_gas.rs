@@ -30,19 +30,18 @@ use super::grenade::{GrenadeKits, Thrown};
 /// The poison starts this long after the blast: the second cloud's drain starts 5 frames of the
 /// 60 fps recording after the blast's first frame (844 -> 849). Measured.
 const GAS_DELAY: f32 = 5.0 / 60.0;
-/// How far above the floor a grenade dropped by BF_TEST_DROP lies (play_grenade.rs's grenade
-/// radius).
-const DROP_LIFT: f32 = 0.06;
-
-/// A poison cloud: the grenade type, where and when (sim time) it went off, who threw it, its
-/// age when last poisoned (s), and per character it has reached: (character, first and last
-/// time poisoned, HP taken) for BF_GRENADE_LOG.
+/// A poison cloud: the grenade type, where it went off (and the controlled character's sim time
+/// then, for BF_GRENADE_LOG), who threw it, its age (s; advanced by the frame's time, not by a
+/// character's sim time, which stops while they're dead or down and changes at a hand-over),
+/// whether it went off this frame, and per character it has reached: (character, its age when
+/// first and last poisoning them, HP taken) for BF_GRENADE_LOG.
 pub struct GasCloud {
     kind: usize,
     at: Vec3,
     born: f32,
     thrower: usize,
     age: f32,
+    fresh: bool,
     victims: Vec<(usize, f32, f32, f32)>,
 }
 
@@ -51,17 +50,20 @@ pub struct GasCloud {
 pub struct GasClouds(Vec<GasCloud>);
 
 impl GasClouds {
-    /// A blast of grenade type `kind` at `at` at sim time `now`, by character `thrower`, whose
-    /// damage is dealt over time (its Damage h_04ea9251 > 0): its cloud poisons from then on.
+    /// A blast of grenade type `kind` at `at` (at sim time `now`, for the log), by character
+    /// `thrower`, whose damage is dealt over time (its Damage h_04ea9251 > 0): its cloud poisons
+    /// from then on.
     pub fn release(&mut self, kind: usize, at: Vec3, thrower: usize, now: f32) {
-        self.0.push(GasCloud { kind, at, born: now, thrower, age: 0.0, victims: vec![] });
+        self.0.push(GasCloud { kind, at, born: now, thrower, age: 0.0, fresh: true, victims: vec![] });
     }
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<GasClouds>()
         .add_systems(OnEnter(AppState::Playing), |mut clouds: ResMut<GasClouds>| clouds.0.clear())
-        .add_systems(Update, (test_drop, poison).chain().after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
+        // (after the frame's blasts: a cloud starts ageing the frame after it went off)
+        .add_systems(Update, (test_drop, poison).chain().after(super::grenade::GrenadeSystems).before(play_sounds)
+            .run_if(in_state(AppState::Playing)));
 }
 
 /// Test hook: BF_TEST_DROP=<s>[,<s>...] sets off the selected grenade type at the controlled
@@ -74,7 +76,7 @@ fn test_drop(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, mut don
     if *done < times.len() && player.sim_time >= times[*done] && kind < kits.0.len() {
         *done += 1;
         let (x, z) = (player.position.x, player.position.z);
-        let pos = Vec3::new(x, floor_y(x, z, player.position.y + GROUND + 1.0) + DROP_LIFT, z);
+        let pos = Vec3::new(x, floor_y(x, z, player.position.y + GROUND + 1.0) + super::grenade::GRENADE_RADIUS, z);
         player.thrown.push(Thrown { pos, velocity: Vec3::ZERO, kind, landed: true });
     }
 }
@@ -83,24 +85,26 @@ fn test_drop(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, mut don
 /// loses Damage max / h_04ea9251 HP a second, times their factor for its damage-type, from
 /// GAS_DELAY after the blast for h_04ea9251 seconds; then the cloud stops hurting. The test
 /// map's instant kill kills a squadmate it reaches (the player's grenades do there).
-fn poison(mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, kits: Option<Res<GrenadeKits>>,
+fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, kits: Option<Res<GrenadeKits>>,
           mut clouds: ResMut<GasClouds>, test: Option<Res<super::testmap::TestMap>>) {
     let Some(kits) = kits else { return };
+    let dt = frame_dt(&time);
     let instant = test.as_ref().is_some_and(|t| t.instant_kill);
     let log = std::env::var("BF_GRENADE_LOG").is_ok();
-    let now = player.sim_time;
     clouds.0.retain_mut(|c| {
         let Some(kit) = kits.0.get(c.kind) else { return false };
         let (radius, span) = (kit.blast.blast_radius, kit.blast.damage_time);
         let rate = kit.blast.damage / span.max(1e-3);
-        // the part of the time since the last frame inside the poisoning window (the cloud's age
-        // from its blast's sim time: this may run before or after the frame's blasts)
-        let (from, to) = (c.age, (now - c.born).max(c.age));
+        // the part of this frame inside the poisoning window (a cloud from this frame's blast
+        // starts ageing next frame)
+        let (from, to) = (c.age, if c.fresh { c.age } else { c.age + dt });
         c.age = to;
-        if from == 0.0 && to > 0.0 && log {
+        if c.fresh && log {
             println!("t {:.2}: {} cloud at {:.2}: {rate:.1} HP/s within {radius} m, from +{GAS_DELAY:.2} s for {span} s (damage-type {})",
                      c.born, kit.def.label, c.at, kit.blast.damage_type);
         }
+        c.fresh = false;
+        let now = c.age;
         let inside = (to.min(GAS_DELAY + span) - from.max(GAS_DELAY)).max(0.0);
         if inside > 0.0 {
             let leader = std::iter::once((&mut *player, false));
@@ -126,10 +130,10 @@ fn poison(mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameDa
         }
         let over = c.age >= GAS_DELAY + span;
         if over && log {
-            println!("t {now:.2}: {} cloud over, {:.2} s after its blast", kit.def.label, c.age);
+            println!("t {:.2}: {} cloud over, {:.2} s after its blast", player.sim_time, kit.def.label, c.age);
             for &(who, first, last, total) in &c.victims {
                 let u = std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == who);
-                println!("  {} poisoned from t {first:.2} to {last:.2}: {total:.1} HP ({:.1} HP/s), health {:.1} / {:.0}", CHARACTERS[who],
+                println!("  {} poisoned from +{first:.2} to +{last:.2} s: {total:.1} HP ({:.1} HP/s), health {:.1} / {:.0}", CHARACTERS[who],
                          total / (last - first).max(1e-3), u.map_or(0.0, |u| u.health), u.map_or(0.0, |u| u.max_health));
             }
         }

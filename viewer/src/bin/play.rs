@@ -426,7 +426,8 @@ fn main() {
         // straight into the map (BF_MAP or a test hook)
         app.insert_state(AppState::Playing);
         if test_map {
-            app.insert_resource(testmap::TestMap { instant_kill: true });
+            // (test hook: BF_TEST_INSTANT_KILL=0 starts with it off, as K turns it)
+            app.insert_resource(testmap::TestMap { instant_kill: std::env::var("BF_TEST_INSTANT_KILL").map_or(true, |v| v != "0") });
         }
         let mut commands = app.world_mut().commands();
         begin_play(&mut commands, l);

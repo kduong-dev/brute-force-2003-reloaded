@@ -47,7 +47,7 @@ const MIN_THROW: f32 = 12.0;
 const MAX_THROW: f32 = 20.0;
 const THROW_LOB: f32 = -0.25;
 const GRENADE_GRAVITY: f32 = 9.8;
-const GRENADE_RADIUS: f32 = 0.06;
+pub(super) const GRENADE_RADIUS: f32 = 0.06;
 /// bounce: vertical restitution, horizontal speed kept per bounce (the demo's; the friction
 /// fitted so a fast throw comes to rest near where it lands, as the recording's does: its trail
 /// puffs from about where it came down, frag/a 600-690)
@@ -236,12 +236,18 @@ struct PendingDamage {
     thrower: usize,
 }
 
+/// The grenades' frame systems (throws, flight, blasts, tint): play_gas.rs's poison runs after
+/// them, so a cloud starts on the frame after its blast.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GrenadeSystems;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Held>()
         .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
-        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, tint).chain().after(update_player).before(play_sounds)
+        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, fly_grenades, tint).chain().in_set(GrenadeSystems)
+            .after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
 

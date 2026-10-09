@@ -58,7 +58,7 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 * **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Energy,
   Gas, Light, Sonic, Roller, Sentry. m09_a is
   loaded for the Light (only in m09_a/b/c/x). T steps through them. See **Grenades**.
-* **Instant kill**, on at the start, K toggles it. The player's shots and grenades kill any
+* **Instant kill**, on at the start (`BF_TEST_INSTANT_KILL=0`: off), K toggles it. The player's shots and grenades kill any
   squad member they hurt, in one hit. The player still takes normal damage.
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
   ragdoll, then the death camera and the hand-over to the next squad member (or, with nobody
@@ -202,21 +202,38 @@ decal, and a throw called off.
   (5.58 s after it: 0.2 s shorter than recorded). The thrower is poisoned like anyone (it was
   Tex's own cloud). No blood, red tint or hurt chatter (the recording's picture only goes
   olive); one it kills dies as from any hurt. Squadmates don't leave or avoid it (not
-  recorded). On the test map, instant kill kills a squadmate it reaches.
+  recorded). On the test map, instant kill kills a squadmate it reaches. A cloud keeps its own
+  clock (the frame's time), so it poisons on at the same rate through a death camera and a
+  hand-over.
   * The cloud's emitter (the effect's h_1c14fe91) is gas-grenade_Cone.emt#1.emt: the case-kept
     hash of its name, which the library already keys nodes by. Its puffs leave at 4-6.5 m/s
     and are held back by the effect's two air fields (gas-grenade.fld: a wind of about +-1 m/s
-    swinging round over time; gas-grenade2.fld: 0.26 m/s up). ALE fields now run on the
-    grenades' effects (`src/ale_fx.rs`): an appearance's fields are the effect's pairs
-    appearance -> field (as Freelancer links them; FxAirField and FxGravityField are the game's
-    hashes of Freelancer's class and parameter names). An air field pulls a particle's velocity
-    toward Magnitude m/s along its +y (turned by its transform over the effect's time), by
-    Approach once per 30 fps game frame - the rate fitted to the recording's cloud (from 12 m:
-    per 1/60 s every puff stopped within 0.3 m and Tex stood out in front of the cloud; per
-    1/30 s it's ~6.5 m wide and ~5 m tall and veils him, the recording's ~6 x 4 m; per 1/15 s,
-    ~9 x 6 m). A gravity field pulls them down at Gravity m/s^2. So the Frag's trail now rises
-    (grenade_trail_rise, 0.8 m/s) and its sparks fall (exp-lrg-shrap_Gravity, 15 m/s^2).
-    Turbulence fields aren't read.
+    swinging round over time; gas-grenade2.fld: 0.26 m/s up). `src/ale_fx.rs` now runs air
+    fields, but only those checked against a recording (`AIR_FIELDS`): these two, and
+    grenade_trail_rise (0.8 m/s up: the grenades' trail now rises the right way, thinner and
+    more vertical than the recordings' - a partial match). Every other field - the Sonic's
+    sonic_grenade_air.fld, the Frag's exp-lrg-air, every gravity field (exp-lrg-shrap,
+    exp-lrg-dirt, phosphor_grenade-shrap, smoke_grenade-shrap) and turbulence field - stays off
+    until checked against its own capture (#101). An appearance's fields are the effect's pairs
+    appearance -> field (as Freelancer links them; FxAirField, AirField_Magnitude and
+    AirField_Approach are the game's hashes of Freelancer's names). An air field pulls a
+    particle's velocity toward Magnitude m/s along its +y (turned by its transform over the
+    effect's time), by Approach once per 30 fps game frame - the rate fitted to the recording's
+    cloud (from 12 m: per 1/60 s every puff stopped within 0.3 m and Tex stood out in front of
+    the cloud; per 1/30 s it's ~6.5 m wide and ~5 m tall and veils him, the recording's ~6 x 4
+    m; per 1/15 s, ~9 x 6 m). Not done: a field node's own life (h_f27fde7d; gas-grenade.fld's
+    12 s) is ignored; the wind is in the world's frame while an attached particle's velocity is
+    in its effect's (no attached particle has an allowed field yet).
+  * The cloud lingers: still dense at +7 s where the recording's first cloud is thin by +6 s
+    and gone by +7 s (scratchpad gas76/fade3.png, test76/side_tm177.png). From the data, its
+    emitter runs to 4.26 s and its puffs live 2.3-4.4 s (h_0a635880's repeating keys), their
+    alpha falling from 0.98 at 39% of their life: summed over the puffs, the alpha is 36% of its
+    peak at +6 s and 10% at +7 s (scratchpad gas_density.py) - about the recorded timing - but
+    the puffs overlap so much that the remainder still looks thick. Not brought closer: a slower
+    approach (per 1/15 s) spreads the cloud wider without thinning it sooner, and reading the
+    life as the curve's constant 2 s (gone by 6.3 s) would change the rule every grenade effect
+    uses. The recording's camera also leaves the cloud at ~5.8 s with Tex, so its fade from
+    inside isn't recorded.
   * h_19d5e391 is gas_grenade#1, an effect with no nodes (hence the load's warning), and
     smoke_grenade-shrap's appearance names no texture (the other warning): its sparks are
     drawn untextured.
@@ -227,13 +244,14 @@ What each type does so far, and doesn't:
 |---|---|---|
 | Frag (#75) | everything above | the "Tech Upgrade Frag Grenade!" upgrade |
 | Energy (#74) | timer 1.75, stun_grenade_master + stun_hit_s, f875b6c6, decal h_f4d65518, damage 39-97.5 / 9 m at once | the bolts crawling out and striking bodies; knock-down per the recording |
-| Gas (#76) | timer 1, gas-grenade's olive cloud (with its air fields), 1b35643e, the poison: 17.7 HP/s within 3 m for 5.5 s, Flint x0.05 | the flash's ~1 s flicker (smoke-grenade-flsh's keyed emit count: one burst here); the shared HUD's damage feedback (white bar with a dark-red trailing segment, the direction chevron) |
+| Gas (#76) | timer 1, gas-grenade's olive cloud (with its air fields), 1b35643e, the poison: 17.7 HP/s within 3 m for 5.5 s, Flint x0.05 | the "Tech Upgrade" (the ticket's); the cloud's fade (lingers ~1-2 s, see above); the flash's ~1 s flicker (smoke-grenade-flsh's keyed emit count: one burst here); the shared HUD's damage feedback (white bar with a dark-red trailing segment, the direction chevron) |
 | Light (#77) | phosphor_grenade + light_phosphor, ignition h_1080aaf1 and f5260e35 after 0.2 s, no damage, no decal, no tint, pickups left alone | checking the 30 s burn and the light's strength against the recording |
 | Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7 | the damage arriving with the ring (it's dealt at once) |
 | Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s with its rolling sound, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking |
 | Sentry (#80) | set down (place_hi), lies there; exp-mine + light_explosion, h_145f09e5 | its trigger (9999 s timer: `BF_TEST_DETONATE` sets it off); arming, LEDs, disarming |
 
-Not done for any: ALE turbulence fields, exp-lrg-air; decals don't
+Not done for any: ALE fields other than the Gas cloud's and the trail's rise (exp-lrg-air,
+the gravity and turbulence fields: #101); decals don't
 follow uneven ground (a plane along the slope under the middle: a big scorch on a bumpy
 hillside is partly buried); the sounds' play-length; distance falloff for blast sounds beyond
 a volume.
@@ -276,9 +294,9 @@ recordings at 60 fps):
   the press, rolls off ahead; h_19dbc65d at 2.47, 3.47, 4.47, 5.47 s, quieter as it goes
   (0.80 to 0.42); the blast is the Frag's effects.
 * Gas, test map, standing in the cloud (`--test BF_TEST_GOTO=0,4,0,3.5 BF_CAMERA_PITCH=-0.15
-  BF_TEST_GRENADE_TYPE=Gas BF_TEST_DROP=2 BF_GRENADE_LOG=1`): blast at 2.00 s, Tex poisoned from
-  2.13 to 7.60 s (the first 15 fps step past +0.083 s; over 5.60 s after the blast), 97.5 HP at
-  17.8 HP/s, health 115 -> 17.5. As Flint (`BF_TEST_SELECT=1,0.5 BF_TEST_DROP=3`): 0.9 HP/s
+  BF_TEST_GRENADE_TYPE=Gas BF_TEST_DROP=2 BF_GRENADE_LOG=1`): blast at 2.07 s, Tex poisoned from
+  +0.13 to +5.60 s (the first 15 fps step past +0.083 s), 97.5 HP at 17.8 HP/s, health 115 ->
+  17.5. As Flint (`BF_TEST_SELECT=1,0.5 BF_TEST_DROP=3`): 0.9 HP/s
   (x0.05). Side by side with the recording's second cloud (gas f844 on, by time since the
   blast): the cloud thickens by 1-1.5 s and from 1.5 s veils Tex and the ground olive as
   recorded; the recording's is darker and browner (over a darker map) and its big white
@@ -286,8 +304,16 @@ recordings at 60 fps):
   6.5-7 s (the data's puffs live 2.3-4.4 s from an emitter running 4.3 s); the recording's
   first cloud is half gone by ~6 s (low confidence: Tex walks out of it then). From 12 m the
   cloud is ~6.5 m wide and ~5 m tall (recorded ~6 x 4 m, low confidence).
-* Frag with the fields (the Frag command above): flash, red tint, fireball, smoke and scorch as
-  before; the trail is too small at that distance to see its rise.
+* Death in the cloud with a squadmate in it (`--test BF_TEST_TARGET=1 BF_TEST_INSTANT_KILL=0
+  BF_TEST_GOTO=0,4,0,-3 BF_TEST_HEALTH=40 BF_TEST_GRENADE_TYPE=Gas BF_TEST_DROP=4
+  BF_GRENADE_LOG=1`): Tex dies at +2.40 s (41.1 HP at 18.1 HP/s); Brutus, standing in it, is
+  poisoned from +0.13 to +5.60 s, 97.5 HP at 17.8 HP/s, through the death camera and the
+  hand-over (the whole 5.5 s at the rate: no gap, no catch-up).
+* Frag and Sonic with the field allow-list (the Frag command above, and with
+  `BF_TEST_GRENADE_TYPE=Sonic`), pixel-diffed against main's build frame for frame: the only
+  differences are the trail's puffs (around the hand and along the flight, and the Frag's
+  rising trail column lit by its blast); the Sonic's dome and ring and the Frag's blast are
+  identical.
 * Energy: stun bolts' green godrays and knock-downs.
 
 Squad movement and deaths follow the game's own data and the captures:

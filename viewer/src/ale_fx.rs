@@ -106,20 +106,28 @@ const BLEND_ADD: (u32, u32) = (5, 2);
 /// m/s, verified flat) keep the emitter's frame. The threshold is the demo's: the data has no
 /// flag for it. Only for the grenades' effects (`Compiled::recorded`).
 const PERP_RADIAL_SPEED: f32 = 0.3;
-/// Fields, linked to an appearance by the effect's pair list (appearance -> field, as
-/// Freelancer's ALE links them; the class and parameter hashes are the game's hashes of
-/// Freelancer's names). An air field (FxAirField: AirField_Magnitude, AirField_Approach) pulls
-/// its particles' velocity toward a wind of Magnitude m/s along the field's +y (turned by its
-/// transform's rotation over the effect's time), Approach of the way each APPROACH_FPS-th of a
-/// second; a gravity field (FxGravityField: GravityField_Gravity) speeds them down at Gravity
-/// m/s^2. Only for the grenades' effects (`Compiled::recorded`): the gas-grenade cloud
-/// (gas-grenade.fld, gas-grenade2.fld), grenade_trail_rise, the shrapnels' gravity. The
-/// turbulence field (FxTurbulenceField) isn't read.
+/// Air fields, linked to an appearance by the effect's pair list (appearance -> field, as
+/// Freelancer's ALE links them; FxAirField, AirField_Magnitude and AirField_Approach are the
+/// game's hashes of Freelancer's names). One pulls its particles' velocity toward a wind of
+/// Magnitude m/s along the field's +y (turned by its transform's rotation over the effect's
+/// time), Approach of the way once each 1/APPROACH_FPS s.
+///
+/// Run only for the fields in AIR_FIELDS, the ones checked against a recording; every other
+/// field (the Sonic's sonic_grenade_air.fld, the Frag's exp-lrg-air, the gravity fields
+/// FxGravityField h_e644c021 of the shrapnels and exp-lrg-dirt, turbulence fields
+/// FxTurbulenceField h_0b72ea10) is left off until checked against its own capture (#101).
+/// Not done: a field node's own life (h_f27fde7d: gas-grenade.fld's 12 s) is ignored, the field
+/// runs as long as its particles do; the wind is in the world's frame (the blasts are placed
+/// upright, and a trail's spinning grenade would spin it), while an attached particle's
+/// velocity is in its effect's frame - no attached particle has an allowed field yet.
 const CLASS_AIR_FIELD: u32 = 0xE625_323F;
 const AIR_MAGNITUDE: u32 = 0xE5E3_524C;
 const AIR_APPROACH: u32 = 0x1042_3CEB;
-const CLASS_GRAVITY_FIELD: u32 = 0xE644_C021;
-const GRAVITY: u32 = 0xE02B_8BD4;
+/// The air fields that run (node names): the Gas cloud's two (gas-grenade.fld: a wind of about
+/// +-1 m/s swinging round; gas-grenade2.fld: 0.26 m/s up; checked against the Gas recording)
+/// and grenade_trail_rise (0.8 m/s up: the tester saw the trail rise the right way, thinner and
+/// more vertical than the recordings' - left on, a partial match).
+const AIR_FIELDS: [&str; 3] = ["gas-grenade.fld#1.fld", "gas-grenade2.fld#1.fld", "grenade_trail_rise"];
 /// How often an air field's Approach is applied (per second): once per 30 fps game frame. Not
 /// in the data: fitted to the Gas recording, whose cloud is ~6 m wide and ~4 m tall and swallows
 /// Tex although gas-grenade_Cone.emt#1.emt throws its puffs out at 4-6.5 m/s for 2.3-4.4 s.
@@ -422,11 +430,10 @@ impl AleAssets {
             }).collect();
             let streak = app.flag(MOTION_BLUR);
             let frame = if recorded { FrameMode::of(&app) } else { FrameMode::Play };
-            // the fields linked to this appearance (pairs appearance -> field)
-            let fields = if recorded {
-                e.pairs.iter().filter(|p| p.0 == ap).filter_map(|p| node(game, p.1))
-                    .filter(|n| n.class == CLASS_AIR_FIELD || n.class == CLASS_GRAVITY_FIELD).collect()
-            } else { vec![] };
+            // the air fields linked to this appearance (pairs appearance -> field) that run (see
+            // AIR_FIELDS; the grenades' effects only)
+            let fields = e.pairs.iter().filter(|p| recorded && p.0 == ap).filter_map(|p| node(game, p.1))
+                .filter(|n| n.class == CLASS_AIR_FIELD && AIR_FIELDS.contains(&n.name.as_str())).collect();
             pairs.push(Pair { perp: app.flag(PERP), attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false, fields });
         }
@@ -621,19 +628,14 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         let fx = p.fx.clone();
         let pair = &fx.pairs[p.pair];
         let app = &pair.app;
-        // its fields: toward an air field's wind, down at a gravity field's rate (in the world's
-        // frame: the blasts are placed upright, and a trail's spinning grenade would spin it)
+        // its air fields: toward each one's wind (in the world's frame, see CLASS_AIR_FIELD)
         for field in &pair.fields {
             let t = p.born + p.age;
-            if field.class == CLASS_AIR_FIELD {
-                let wind = euler(field.transform(TRANSFORM, t)[1]) * Vec3::Y * field.curve(AIR_MAGNITUDE, p.sp, t).unwrap_or(0.0);
-                let approach = field.curve(AIR_APPROACH, p.sp, t).unwrap_or(0.0).clamp(0.0, 1.0);
-                let k = 1.0 - (1.0 - approach).powf(dt * APPROACH_FPS);
-                let v = p.vel;
-                p.vel = v + (wind - v) * k;
-            } else {
-                p.vel.y -= field.curve(GRAVITY, p.sp, t).unwrap_or(0.0) * dt;
-            }
+            let wind = euler(field.transform(TRANSFORM, t)[1]) * Vec3::Y * field.curve(AIR_MAGNITUDE, p.sp, t).unwrap_or(0.0);
+            let approach = field.curve(AIR_APPROACH, p.sp, t).unwrap_or(0.0).clamp(0.0, 1.0);
+            let k = 1.0 - (1.0 - approach).powf(dt * APPROACH_FPS);
+            let v = p.vel;
+            p.vel = v + (wind - v) * k;
         }
         // attached particles ride on their effect (left where they are if it's gone)
         let mut turn = Quat::IDENTITY;

@@ -825,14 +825,14 @@ impl Game {
         }).collect()
     }
 
-    /// A collision surface's triangles (corners in its owner's frame, material), see
-    /// `bf::collision`. Empty if the loaded levels lack it.
     /// The factor character `name` takes damage of `damage_type` by (its combat-target's list,
     /// see `character_damage_factors`; 1 when it lists none for the type).
     pub fn damage_factor(&self, name: &str, damage_type: i64) -> f32 {
         self.character_damage_factors.get(name).and_then(|l| l.iter().find(|f| f.0 == damage_type)).map_or(1.0, |f| f.1)
     }
 
+    /// A collision surface's triangles (corners in its owner's frame, material), see
+    /// `bf::collision`. Empty if the loaded levels lack it.
     pub fn collision(&self, name: u32) -> Vec<([Vec3; 3], u8)> {
         self.physics.get(&name).map(|(d, off)| super::collision::surface(d, *off)).unwrap_or_default()
     }
