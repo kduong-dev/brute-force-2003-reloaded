@@ -1326,7 +1326,8 @@ means checked in xemu 0.8.122 through QEMU's gdb stub (e40 and m09_a, Brutus, 20
   (constructor FUN_00110d30) and sit in contiguous memory (virtual = 0x80000000 + physical):
   * the controlled character is found through the player controller object (vtable 0x39db74,
     per-frame update FUN_001332a0; +0x10 the character, +0x20 the pad port), by scanning RAM.
-    The squad is the list at `[0x469ab0] + 0x1348` (entry + 0xe0 = character). Live.
+    The squad is the `std::list` whose head is `[[0x469ab0] + 0x1348]`: each node's +8 is an
+    entry (vtable 0x39f878) and the entry's +0xe0 is the character (FUN_001351c0). Live.
   * health +0x54 and max health +0x50 (the combat target at +0x48; FUN_002232d0 subtracts
     damage, FUN_0010f830 clamps). Live: Brutus 105, Flint 90, Hawk 65, Tex 115.
   * position +0x458 (feet) and +0x464, velocity +0x470, yaw +0x434 in radians (bearing
@@ -1350,15 +1351,17 @@ means checked in xemu 0.8.122 through QEMU's gdb stub (e40 and m09_a, Brutus, 20
   deletes that camera with the object. It marks the characters a player can take control of,
   not "active at start". Static; see #102.
 * **Enemies and the squad come from spawn-triggers** (vtable 0x395838, parser FUN_00209250,
-  actions FUN_00209ac0, spawn FUN_002099e0). A trigger clones its template object (+0xcc, the
-  `<h_0884288c objects=...>`) at its spawn point (+0xb4) when it gets `TRIG_ACT_OPERATE` (1)
-  while armed (+0xe4 bit 3), at once or after its delay `h_eab6952f` (+0xe0); the copy is kept
-  at +0xc4; `TRIG_ACT_SPAWN_RESET` (36) re-arms it when `h_0f95f576` (+0xe4 bit 2) is set.
-  Live, e40: the enemy `character-object`s of the level file exist at the start as inert
-  templates; the four squad members were spawned by triggers at their start points (e.g.
-  Brutus's at (−14.0, 37.1, 160.7), 0.3 m from where he stands), which is where #102's squad
-  start comes from. The trainer fires a trigger by moving its spawn point and setting the armed
-  and pending bits with an almost spent timer.
+  actions FUN_00209ac0, spawn FUN_002099e0). Static, from the code: a trigger clones its
+  template object (+0xcc, the `<h_0884288c objects=...>`) at its spawn point (+0xb4) when it
+  gets `TRIG_ACT_OPERATE` (1) while armed (+0xe4 bit 3), at once or after its delay
+  `h_eab6952f` (+0xe0); the copy is kept at +0xc4; `TRIG_ACT_SPAWN_RESET` (36) re-arms it when
+  `h_0f95f576` (+0xe4 bit 2) is set. Live, e40: the enemy `character-object`s of the level
+  file exist at the start as inert templates; the four squad members are the copies of
+  triggers at their start points (Brutus's trigger is at (−14.0, 37.1, 160.7): 0.3 m from him
+  horizontally but 10.9 m above where he stands, y 26.2; presumably he drops to the ground, not observed),
+  which is where #102's squad start comes from. Live too: firing a trigger by moving its spawn
+  point and setting the armed and pending bits with an almost spent timer spawns its template
+  there (the trainer's `spawn`).
 * **The debug features are not in the retail game.**
   * `common/debug-config-xbox.xmb` is never loaded: FUN_001e8160 stores its name in the
     `std::string` at 0x400438, and the only other code touching that string is its static
