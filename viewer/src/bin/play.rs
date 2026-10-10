@@ -2771,9 +2771,10 @@ fn autopilot(player: &mut Player) -> bool {
                 player.move_input = Vec2::new(v[0], v.get(1).copied().unwrap_or(0.0)).normalize_or_zero();
             }
         }
-        // BF_TEST_FIRE=1: aim and fire (after a second); =2 with the second weapon
+        // BF_TEST_FIRE=1: aim and fire (after a second); =2 with the second weapon; =hip fires
+        // without aiming (no scope on a gun that zooms)
         if let Ok(w) = std::env::var("BF_TEST_FIRE") {
-            player.aim = player.sim_time > 0.8;
+            player.aim = player.sim_time > 0.8 && w != "hip";
             player.fire = player.sim_time > 1.0;
             player.switch_pressed = w == "2" && (0.3..0.4).contains(&player.sim_time);
         }

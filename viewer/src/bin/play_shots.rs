@@ -69,6 +69,13 @@ const SHELL_SPEED: f32 = 2.0;
 const SHELL_SPEED_MORE: f32 = 1.0;
 const SHELL_JITTER: f32 = 0.5;
 const SHELL_ROLL: f32 = 15.0;
+/// In the holder's own scope the muzzle effect is drawn this far (m) from the eye, out along the
+/// barrel. The demo's rule: drawn at the muzzle, a few tenths of a metre from the scoped eye and
+/// magnified, its sparks covered half the view in streaks. The game's scope shows it as a
+/// modest orange ball right of the crosshair (63/take01, 28.6 s); no code was found that moves
+/// or hides it for the scope (the scope-in at 0x1223da and FUN_001249b0 only set +0x7a8, the
+/// sway and the zoom sounds).
+const SCOPE_FLASH_REACH: f32 = 3.0;
 /// How long a casing stays (s), how it falls (m/s^2) and bounces. Guesses: the casing is a
 /// pooled physics object (FUN_002291d0) whose life and material aren't traced.
 const SHELL_LIFE: f32 = 2.0;
@@ -367,20 +374,36 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
            mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
            mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
     let Some(mut ale) = ale else { return };
-    for p in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
+    for (k, p) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
         let (flashes, shells) = (std::mem::take(&mut p.fire_state.flashes), std::mem::take(&mut p.fire_state.shells));
         if flashes == 0 && shells == 0 {
             continue;
         }
+        // the controlled character's eye, when the view is its scope (see SCOPE_FLASH_REACH)
+        let eye = (k == 0 && p.scope > 0.5).then(|| camera_pose(p, 0.0).0);
         let Some(w) = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon)) else { continue };
         let d = &w.def.shots;
         // the muzzle effect, once a frame however many shots (the Bower's pellets are one)
         if flashes > 0 && d.muzzle_effect != 0 {
             let at = Transform::from_translation(w.muzzle.point).with_rotation(Quat::from_rotation_arc(Vec3::Y, w.fire_dir));
+            // in the holder's own scope: out along the barrel to SCOPE_FLASH_REACH from the eye,
+            // in the world (the demo's rule)
+            let scoped = eye.zip(globals.get(w.entity).ok()).map(|(eye, g)| {
+                let (muzzle, dir) = (g.transform_point(w.muzzle.point), (g.rotation() * w.fire_dir).normalize_or(Vec3::NEG_Z));
+                // the point on the barrel's line SCOPE_FLASH_REACH from the eye, past the muzzle
+                let to = muzzle - eye;
+                let (b, c) = (to.dot(dir), to.length_squared() - SCOPE_FLASH_REACH * SCOPE_FLASH_REACH);
+                let t = if c >= 0.0 { 0.0 } else { -b + (b * b - c).max(0.0).sqrt() };
+                Transform::from_translation(muzzle + dir * t).with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
+            });
             for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, d.muzzle_effect) {
                 let life = fx.duration();
                 let seed = p.fire_state.next_seed();
-                commands.spawn((at, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life), ChildOf(w.entity)));
+                let effect = (Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life));
+                match scoped {
+                    Some(place) => commands.spawn((place, effect)),
+                    None => commands.spawn((at, effect, ChildOf(w.entity))),
+                };
             }
         }
         let (Some(port), Ok(g)) = (w.shell, globals.get(w.entity)) else { continue };

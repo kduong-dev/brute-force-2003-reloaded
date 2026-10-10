@@ -301,7 +301,13 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   (a guess).
 * **Muzzle effects**. The weapon's h_fd88830d effect plays at its muzzle hardpoint once a frame
   in which it fired (the MK's orange flash and grey smoke); it replaces the plain flash quad on
-  guns that have one. The point light stays (the demo's).
+  guns that have one. The point light stays (the demo's). In the controlled character's own
+  scope it's drawn out along the barrel 3 m from the eye instead (`SCOPE_FLASH_REACH`, the
+  demo's rule): at the muzzle, a few tenths of a metre from the scoped eye and magnified, its
+  sparks covered half the view. The game's scope shows a modest orange ball right of the
+  crosshair (63/take01, 28.6 s); the scope-in code (0x1223da, FUN_001249b0) doesn't move or
+  hide it, and nothing else that does was found. At 3 m it is about that size and place; its
+  look is still the demo's ALE streaks (a star), not the game's soft ball.
 * **Tracers** (FUN_002317e0). An instant ray carries its flight effect only when its counter is
   0, which then restarts at h_eeb9e75a: the MK every 3rd shot, the Minigun every 4th, the rest
   every shot. The tracer is now turned along the shot (ALE emitters fire along their +y): it
@@ -315,7 +321,8 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
 Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"`, `0c3db625`)
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
 map's data has it (the test map has every hand weapon); `BF_SHOT_LOG=1` now also prints each
-pellet (its frame, spread, walk, tracer) and the gun's accuracy.
+pellet (its frame, spread, walk, tracer) and the gun's accuracy; `BF_TEST_FIRE=hip` fires
+without aiming (no scope on a gun that zooms).
 
 Verified on the test map (`-- --test`, `BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12
 BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
