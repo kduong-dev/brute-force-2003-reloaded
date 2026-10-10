@@ -272,8 +272,8 @@ default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them)
   pickups (play_pickups.rs, after `update_player`) see the shortened shots.
 * The demo has no enemies: the squad is one team, so the squad's mines never go off for the
   squad (as recorded: Tex walking or running over his own, standing beside it, Flint stepping
-  onto it at 0.16 m). Only a test hook's hostile, or a shot, sets one off. Nobody can pick one
-  back up.
+  onto it at 0.16 m). Only a test hook's hostile, the test map's enemy NPCs
+  ([testtools.md](testtools.md)), or a shot, sets one off. Nobody can pick one back up.
 
 Its blast is the shared one (h_01f142eb: 62.5-88.5, type 10, radius 4; effect type h_0b69c2f2:
 exp-mine + light_explosion, 145f09e5; decal h_f5ccedb0). On sdm_e34 the squad's Sentry is still

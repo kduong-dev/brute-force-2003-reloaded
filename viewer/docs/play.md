@@ -29,7 +29,8 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 * **Every hand weapon on a rack**, floating and turning in front of the start: the 27 weapon
   definitions with a clip whose model loads (one per model), from the first mission's data,
   the multiplayer archives (`mp_common`, `mp1`-`mp8`) and m02_a, which holds the three
-  campaign-only ones (A10 Bioreactive, Confed LZR-50, Jax-iP); about 0.7 s. Walk into one
+  campaign-only ones (A10 Bioreactive, Confed LZR-50, Jax-iP); about 0.7 s. (m09_a adds the
+  Light grenade and sdm_e34 the missile rack for the object tool: about 1 s in all.) Walk into one
   to take it into the held weapon's slot: the character is respawned carrying it, with a full
   clip, and "Took <name>" shows.
   * Loading every level (about 6 s) adds no others: the rest are the creatures' built-in
@@ -52,8 +53,14 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
   ragdoll, then the death camera and the hand-over to the next squad member (or, with nobody
   left, the camera stays on the body). `BF_TEST_SUICIDE=<s>` presses it at that time.
-* **The controls panel**, which the main game no longer shows: the keys and the debug line
-  (character, state, clip, surface, weapon). H hides it.
+* **The controls panel**, which the main game no longer shows: the keys (the tools' too) and
+  the debug line (character, state, clip, surface, weapon), top left under the health bars. It
+  starts hidden, with a small "H: help" at the bottom; H shows and hides it.
+  `BF_TEST_HELP=<s>[;<s>...]` presses H then.
+* The status message ("Took <weapon>", "Instant kill off", the tools' messages) goes after its
+  2 s here too: it was counted down only on maps with doors, so on the flat floor it stayed.
+* **Developer tools**: a free camera with a teleport (F), an NPC spawner (N) and an object
+  spawner (O). See [testtools.md](testtools.md).
 
 ## Health, HUD, locomotion, weapons and sounds
 
@@ -74,7 +81,7 @@ grenades go with control. Every portrait's tab shows the follow-order arrows; a 
 appears beside the portrait while that member talks. The one you control is the player; the other
 three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
 catch up, walking the last bit), look where you look, and
-reload on their own. They never fire just because you do - only at enemies they can see (none in the demo yet). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
+reload on their own. They never fire just because you do - only at enemies they can see (none in the main game yet; the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
 yellow blips on the radar (turning with the camera, 40 m range). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
 
 HUD health / stamina frame: the original's own art, the tutorial's picture of it (`h_17f34cbe`,

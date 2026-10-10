@@ -1,6 +1,7 @@
 # Interactive scenery
 
-* **Interactive scenery** (`src/bin/play_scenery.rs`, issue #85). Placed game objects whose
+* **Interactive scenery** (`src/bin/play_scenery.rs`, issue #85; the test map's object tool
+  puts them down too, see [testtools.md](testtools.md)). Placed game objects whose
   type has a debris list (objecttypes `h_197caf14`, 467 types; `Game::breakable`) break when
   their hitpoints run out. On sdm_e34 that's 38 objects: 23 radiation barrels (h_e04e5a0e, 1 hp),
   6 supply crates (h_09a6856d, 25 hp), the missile rack (h_fbdcd828, 1 hp) and 8 others. Footage:
