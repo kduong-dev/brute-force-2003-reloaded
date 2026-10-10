@@ -282,16 +282,19 @@ the squad carries h_e5f1f063 wherever it's defined, `SQUAD_GRENADES`). Not match
 recording's Tex took 16.5 and 14.8 HP from blasts 6.0 m away, outside the data's 4 m radius;
 the demo's thrower is hurt only within the radius (0.2 x 62.5-88.5 = 12.5-17.7 HP), so at 6 m
 he takes nothing. Traced so far, not implemented (it would change every grenade's blast, its
-own ticket): the explosion queued by 0x149520 is a blast object the world ticks
-(FUN_00225220). FUN_00225440 moves it on by its speed (+0x1c) x dt each tick, and FUN_00224a90
-gathers the bodies inside its radius (+0x24) round where it is then. FUN_00224770 deals each
-one its damage: +0x20, tapered by its age over its life (+0x28 / +0x30, FUN_00225060 ->
-FUN_00223780, when flag 0x40 is set), not by the distance. FUN_0022c4d0 adds a second taper
-for some targets (+0x1fc / +0x200). So a blast that travels or lasts can reach bodies outside
-its radius from where it started, which may be how Tex was hurt at 6 m. Which data attributes
-fill +0x1c, +0x20 and +0x28 / +0x30, and what FUN_00223780's curve is, isn't read yet; the
-demo keeps its shared rule (Damage max falling to nothing at the radius; the thrower 0.2 x a
-roll of min..max inside it).
+own ticket; each function is in [code-map.md](code-map.md)): 0x149520 queues the explosion on
+the world, whose update (FUN_000d9a20) makes it a blast object (FUN_0022bfc0) at the grenade:
+damage +0x20 a roll of min..max, radius +0x24, life +0x28 / +0x30 the Damage's h_04ea9251 (0
+here: it deals once), a delay of 0.05-0.25 s (+0x2c), and no speed: it doesn't move. The blast
+pool's tick (FUN_00225220) waits out the delay; FUN_00224a90 gathers the bodies within the
+radius of that fixed point (characters need a clear ray to it); FUN_00224770 deals each one
+through the explosion weapon's damage handler, where FUN_0022c4d0 applies the Damage's
+distance rule: h_011cb154 false (the Sentry's) half the roll anywhere inside the radius; true,
+the whole roll within half the radius, then (1 - 2 (d / r - 0.5))^2 of it to the edge. The age
+taper (FUN_00225060 -> FUN_00223780) needs flag 0x40, which a grenade's blast doesn't set, and
+FUN_00225440 flies the bullet-type 0 projectiles that share the pool, not blasts. So the code
+read doesn't explain Tex's hits at 6 m. The demo keeps its shared rule (Damage max falling to
+nothing at the radius; the thrower 0.2 x a roll of min..max inside it).
 
 `BF_SENTRY_LOG=1` prints each check with a target within radius + 1.5 m (3D and across
 distances to the nearest target and friend, and the result), each shot that strikes a mine and
