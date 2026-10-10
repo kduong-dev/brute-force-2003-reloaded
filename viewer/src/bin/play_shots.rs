@@ -96,8 +96,8 @@ const SHELL_GRAVITY: f32 = 9.81;
 const SHELL_BOUNCE: f32 = 0.3;
 
 /// The game's random numbers (FUN_00233b90: x * 0x19660d + 0x3c6ef35f, the top 23 bits as a
-/// float in [0, 1)).
-fn random(seed: &mut u32) -> f32 {
+/// float in [0, 1)). (play_missile.rs draws its own from it too.)
+pub(super) fn random(seed: &mut u32) -> f32 {
     *seed = seed.wrapping_mul(0x0019_660D).wrapping_add(0x3C6E_F35F);
     f32::from_bits((*seed >> 9) | 0x3F80_0000) - 1.0
 }
@@ -446,9 +446,16 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
         });
         let Some(w) = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon)) else { continue };
         let d = &w.def.shots;
-        // the muzzle effect, once a frame however many shots (the Bower's pellets are one)
+        // the muzzle effect, once a frame however many shots (the Bower's pellets are one), in
+        // the muzzle hardpoint's own frame: FUN_00232060 attaches the effect object at the
+        // hardpoint (vtable +0xdc). Every gun's muzzle hardpoint has the barrel along its -z
+        // (unturned, or half a turn about y on the models built facing +z) and the flash
+        // emitters are turned -90 degrees about x to fire along it (sminigun_muzzle.emt: the
+        // MK's); the Therm Sweeper's back-blast dust (mtrail-dust:
+        // jetdust_Cube.emt#1.emt, 4.3 m along +z and 2 m down) lands behind the launcher, where
+        // turned +y along the barrel it hung 4.3 m above the holder
         if flashes > 0 && d.muzzle_effect != 0 {
-            let at = Transform::from_translation(w.muzzle.point).with_rotation(Quat::from_rotation_arc(Vec3::Y, w.fire_dir));
+            let at = Transform::from_translation(w.muzzle.point).with_rotation(w.muzzle.rot);
             // in the holder's own scope: SCOPE_FLASH_REACH from the eye toward the muzzle,
             // in the world (the demo's rule)
             let scoped = eye.map(|(eye, fwd, half)| {

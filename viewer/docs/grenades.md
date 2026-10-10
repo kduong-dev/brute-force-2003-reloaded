@@ -105,7 +105,12 @@ decal, and a throw called off.
     particles move out at 0.3 m/s or more, a perp quad now faces out along its own direction,
     and the fireball is round from its first frame, as in the recording. Grenade effects only;
     the 0.3 m/s threshold is the demo's. The Sonic's cone emitter sonic_grenade.emt does the
-    same (by name, see **Sonic grenade**).
+    same (by name, see **Sonic grenade**). The Therm Sweeper's missile blast (#73, play.md's
+    **Missiles**) has its own by name: exp-rocket-add.app's and exp-rocket-shrap.rect.app's
+    quads lie across the effect's z, facing the shooter (`PERP_FACING_Z`). The flag read as perp
+    (0d645074) is the game's GeneralApp_AngleFadeOut; the facing is GeneralApp_FacingType
+    (e3542300), 3 on these and on the Frag's exp-lrg-add.app: how the game turns a facing 3 quad
+    (its vertex shader) isn't read.
   * Added for the Light's phosphor_grenade (grenade effects only): an upright streak - a
     camera-facing appearance (not perp, not motion-blurred) whose width factor (04b5fc1b)
     stays under half its height factor (0db2cc8d) all its life, with a constant Rotate - has

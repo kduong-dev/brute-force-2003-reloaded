@@ -531,10 +531,12 @@ struct GlowLight {
 }
 
 /// Ground decals other modules ask for this frame: (decal definition name, where, scale on the
-/// data's width / height). A grenade's blast leaves its bullet's decal (the Frag's scorch
-/// h_ff1b711e) this way.
+/// data's width / height, the surface it lies on). A grenade's blast leaves its bullet's decal
+/// (the Frag's scorch h_ff1b711e) this way, on the ground under it (None: laid along the
+/// ground's slope under `at`); a missile's on the wall or ground it struck (Some(the surface's
+/// normal): laid at `at` facing along it, play_missile.rs).
 #[derive(Resource, Default)]
-pub struct DecalRequests(pub Vec<(u32, Vec3, f32)>);
+pub struct DecalRequests(pub Vec<(u32, Vec3, f32, Option<Vec3>)>);
 
 /// Bullet holes and scorches other modules ask for this frame (play_shots.rs): (the bullet's
 /// h_06a27365 decal, where the shot met the surface, the surface's normal facing the shooter).
@@ -563,10 +565,10 @@ fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Opti
                     mut requests: ResMut<DecalRequests>, mut images: ResMut<Assets<Image>>,
                     mut materials: ResMut<Assets<StandardMaterial>>) {
     let Some(mut fx) = fx else { return };
-    for (name, at, scale) in std::mem::take(&mut requests.0) {
+    for (name, at, scale, surface) in std::mem::take(&mut requests.0) {
         let Some(def) = game.0.decals.get(&name).cloned() else { continue };
-        if std::env::var("BF_GRENADE_LOG").is_ok() {
-            println!("decal h_{name:08x} at {at:.2}: {def:?}, textures loaded {:?}",
+        if std::env::var("BF_GRENADE_LOG").is_ok() || std::env::var("BF_MISSILE_LOG").is_ok() {
+            println!("decal h_{name:08x} at {at:.2} on {surface:?}: {def:?}, textures loaded {:?}",
                      def.textures.iter().map(|t| fx.decal_textures.contains_key(t) || game.0.texture_rgba(*t).is_some()).collect::<Vec<_>>());
         }
         for &id in &def.textures {
@@ -576,7 +578,7 @@ fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Opti
                 }
             }
         }
-        spawn_decal_alpha(&mut commands, &mut state, &fx, &mut materials, &def, at, scale, true);
+        spawn_decal_alpha(&mut commands, &mut state, &fx, &mut materials, &def, at, scale, true, surface);
     }
 }
 
@@ -689,7 +691,7 @@ fn spawn_emitter(commands: &mut Commands, state: &mut FxState, fx: &'static Effe
 #[allow(clippy::too_many_arguments)]
 fn spawn_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>,
                def: &DecalDef, at: Vec3, scale: f32) {
-    spawn_decal_alpha(commands, state, fx, materials, def, at, scale, false);
+    spawn_decal_alpha(commands, state, fx, materials, def, at, scale, false, None);
 }
 
 /// `spawn_decal`; `console`: the alpha made to darken as the console's blend does. The Xbox
@@ -697,10 +699,11 @@ fn spawn_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, mate
 /// dark decal at alpha a leaves (1 - a)^(1/2.2) of the ground's stored value, not 1 - a. Alpha
 /// 1 - (1 - a)^2.2 gives the console's result in the decal's middle. (The Frag's scorch, RGBA
 /// 10 10 10 200: 0.47 of the ground in the middle at the data's alpha, the recording's ~0.2-0.3;
-/// the blood decals were fitted to captures with the plain alpha and keep it.)
+/// the blood decals were fitted to captures with the plain alpha and keep it.) `surface`: laid
+/// at `at` facing along that normal (a wall a missile struck) instead of on the ground under it.
 #[allow(clippy::too_many_arguments)]
 fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>,
-                     def: &DecalDef, at: Vec3, scale: f32, console: bool) {
+                     def: &DecalDef, at: Vec3, scale: f32, console: bool, surface: Option<Vec3>) {
     if def.textures.is_empty() {
         return;
     }
@@ -712,14 +715,21 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
         alpha_mode: AlphaMode::Blend, perceptual_roughness: 1.0, reflectance: 0.0, depth_bias: 40.0, ..default()
     });
     let turn = (state.random() * 2.0 - 1.0) * def.rotation.to_radians();
-    let y = floor_y(at.x, at.z, at.y + 0.5) + 0.01 + 0.004 * state.random();
-    // laid along the ground's slope under its middle (a big scorch on a hillside would otherwise
-    // sink into the slope)
-    let normal = world::arena().and_then(|a| a.floor_at(at.x, at.z, at.y + 0.5)).map(|f| f.1)
-        .filter(|n| n.y > 0.5).unwrap_or(Vec3::Y);
+    let lift = 0.01 + 0.004 * state.random();
+    let (place, normal) = match surface {
+        Some(n) => (at + n.normalize_or(Vec3::Y) * lift, n.normalize_or(Vec3::Y)),
+        None => {
+            let y = floor_y(at.x, at.z, at.y + 0.5) + lift;
+            // laid along the ground's slope under its middle (a big scorch on a hillside would
+            // otherwise sink into the slope)
+            let normal = world::arena().and_then(|a| a.floor_at(at.x, at.z, at.y + 0.5)).map(|f| f.1)
+                .filter(|n| n.y > 0.5).unwrap_or(Vec3::Y);
+            (Vec3::new(at.x, y, at.z), normal.normalize())
+        }
+    };
     let e = commands.spawn((Mesh3d(fx.floor.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
-                            Transform::from_translation(Vec3::new(at.x, y, at.z))
-                                .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal.normalize()) * Quat::from_rotation_y(turn))
+                            Transform::from_translation(place)
+                                .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(turn))
                                 .with_scale(Vec3::new(def.width * scale, 1.0, def.height * scale)),
                             Decal { age: 0.0, def: def.clone(), material })).id();
     state.decals.push_back(e);

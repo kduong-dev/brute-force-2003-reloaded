@@ -449,6 +449,7 @@ fn main() {
     let playing = in_state(AppState::Playing);
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
         .add_plugins(shots::plugin)
+        .add_plugins(missile::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -498,6 +499,8 @@ mod scenery;
 mod ammo;
 #[path = "play_shots.rs"]
 mod shots;
+#[path = "play_missile.rs"]
+mod missile;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1432,6 +1435,9 @@ struct Player {
     spin: f32,
     spin_angle: f32,
     shots: Vec<Shot>,
+    /// this frame's shots of a mesh-projectile gun (bullet-type 2 steered at a steady speed: the
+    /// Therm Sweeper), launched as missiles by play_missile.rs instead of flying as `shots`
+    launches: Vec<missile::Launch>,
     /// the player's shots still flying toward squad members
     pending_hits: Vec<PendingHit>,
     shots_fired: u32,
@@ -1501,7 +1507,7 @@ impl Player {
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
             weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
-            spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
+            spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
             shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), was_scoped: false, scope_level: 0, test_selected: false, sway: Vec2::ZERO,
@@ -4525,7 +4531,19 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 // the others' instant hits; the rest fly at the bullet's speed
                 let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
                 let accuracy = p.fire_state.accuracy(p.weapon);
+                // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper) is
+                // a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50, play_missile.rs): it
+                // leaves the muzzle along the shot with the aim point and the shooter's line
+                let missile = missile::flies(&w.def);
+                let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
                 for (pellet, dir) in p.fire_state.directions(dir, w.def.shots.burst_spread) {
+                    if missile {
+                        p.launches.push(missile::Launch { weapon: w.def.name, origin, dir, aim: target, look });
+                        if std::env::var("BF_SHOT_LOG").is_ok() {
+                            println!("t={:.2} missile launch: origin {:.2} dir {dir:.3} aim {target:.2} {pellet:?} accuracy {accuracy:?}", p.sim_time, origin - p.position);
+                        }
+                        continue;
+                    }
                     let hit = shots::hit_normal(origin, dir, range);
                     p.shots.push(Shot { origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
                                         flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,

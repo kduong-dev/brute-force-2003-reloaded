@@ -107,8 +107,9 @@ const TEST_HIT_TYPE: i64 = 1;
 /// where the shot ended (m).
 const SHOT_SLACK: f32 = 0.05;
 
-/// A grenade blast for the scenery (play_grenade.rs adds them when it goes off): it lands after
-/// `left` s, with its Damage max at `at` falling to nothing at `radius`, of `damage_type`.
+/// A blast for the scenery (play_grenade.rs adds a grenade's when it goes off, play_missile.rs a
+/// missile's): it lands after `left` s, with its Damage max at `at` falling to nothing at
+/// `radius` (or `damage` flat, `flat`), of `damage_type`.
 pub struct ObjectBlast {
     pub left: f32,
     pub at: Vec3,
@@ -117,6 +118,9 @@ pub struct ObjectBlast {
     pub damage_type: i64,
     /// the grenade's label (BF_SCENERY_LOG)
     pub label: String,
+    /// `damage` anywhere inside the radius, without the falloff: a missile's blast object, whose
+    /// share is flat (play_missile.rs, FUN_0022c4d0 with Damage h_011cb154 false)
+    pub flat: bool,
 }
 
 /// Grenade blasts on their way to the scenery.
@@ -425,13 +429,13 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
     s.blasts.retain_mut(|b| {
         b.left -= dt;
         if b.left <= 0.0 {
-            landed.push((b.at, b.radius, b.damage, b.damage_type, b.label.clone()));
+            landed.push((b.at, b.radius, b.damage, b.damage_type, b.label.clone(), b.flat));
         }
         b.left > 0.0
     });
     s.blasts.append(&mut blasts.0);
     // (on every map: they reach the Sentries too, `set_off_mines`)
-    for &(at, radius, _, kind, _) in &landed {
+    for &(at, radius, _, kind, _, _) in &landed {
         s.reach.push((at, radius, kind));
     }
     if !s.ready || s.list.is_empty() {
@@ -502,7 +506,7 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
         damage(s, &game.0, b, amount, kind, push, now);
     }
     // ... to the objects' centres
-    for (at, radius, max, kind, label) in landed {
+    for (at, radius, max, kind, label, flat) in landed {
         for i in 0..s.list.len() {
             let o = s.list[i].centre;
             let d = o.distance(at);
@@ -513,7 +517,9 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 println!("t {now:.2}: {label} blast {d:.1} m from breakable {i} (h_{:08x})", s.list[i].name);
             }
             let dir = (o - at).normalize_or(Vec3::Y);
-            damage(s, &game.0, i, max * (1.0 - d / radius), kind, Push { at, dir }, now);
+            // (a missile's blast object deals its share flat, play_missile.rs)
+            let amount = if flat { max } else { max * (1.0 - d / radius) };
+            damage(s, &game.0, i, amount, kind, Push { at, dir }, now);
         }
     }
 }

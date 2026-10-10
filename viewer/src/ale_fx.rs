@@ -143,6 +143,24 @@ const PERP_RADIAL_SPEED: f32 = 0.3;
 /// flat streak. Only this one, checked against the Sonic recording: the Energy's stun_hit_s
 /// has a perp cone too and stays as it was checked.
 const PERP_OUT_CONES: [&str; 1] = ["sonic_grenade.emt"];
+/// Perp appearances whose quads lie across the effect's z axis (facing along it) rather than flat
+/// across its y: the Therm Sweeper's explosion (exp-rocket-add.app, the white-hot Exp5 quads
+/// growing to 13.6 m; exp-rocket-shrap.rect.app, its sparks). Its effect is turned by the game's
+/// FUN_0001d0c0 frame of the missile's way (FUN_0022cbe0: z back along it, y up for a level
+/// shot), and the takes' fireball is upright rectangles facing the shooter, straight vertical and
+/// horizontal edges (todo/73-therm-sweeper take04 f226-238, take03 f218-228), where lying flat
+/// across y they were long horizontal streaks edge-on to the camera, and facing out from the
+/// middle a fan of streaks. An inference for these two only, checked against those takes.
+///
+/// From default.xbe's own appearance class (h_111035aa, the "GeneralApp_" parameters: names at
+/// 0x403a58-0x403bc0, their table from 0x403904): PERP (0d645074) is GeneralApp_AngleFadeOut (bit 1 of
+/// the appearance's +0x40, setter 0x2a09f0), and the facing is GeneralApp_FacingType (e3542300,
+/// +0x44): 1 on the camera-facing fire, flash, dirt and trail apps, 3 on these two and on the
+/// Frag's exp-lrg-add.app; the converter for Freelancer's perp appearances (0x2b26d0) gives them
+/// AngleFadeOut and facing 0 (their transform) or 2 (their velocity). How the vertex shader turns
+/// a facing 3 quad isn't read; the game's hit effects are turned like this explosion, and the
+/// demo's lie across y with +y turned back along the shot gives the same picture there.
+const PERP_FACING_Z: [&str; 2] = ["exp-rocket-add.app", "exp-rocket-shrap.rect.app"];
 /// Air fields, linked to an appearance by the effect's pair list (appearance -> field, as
 /// Freelancer's ALE links them; FxAirField, AirField_Magnitude and AirField_Approach are the
 /// game's hashes of Freelancer's names). One pulls its particles' velocity toward a wind of
@@ -791,10 +809,14 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
                 let roll = if pair.perp || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
                 let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-                // a perp quad from a sphere emitter (or a PERP_OUT_CONES cone) that throws its particles
-                // out: facing out along its direction from the middle (see PERP_RADIAL_SPEED)
-                if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
+                if compiled.recorded && pair.perp && PERP_FACING_Z.contains(&pair.app.name.as_str()) {
+                    // across the effect's z (see PERP_FACING_Z): the quad's own +z along it
+                    lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]);
+                } else if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
                     && speed >= PERP_RADIAL_SPEED {
+                    // a perp quad from a sphere emitter (or a PERP_OUT_CONES cone) that throws its
+                    // particles out: facing out along its direction from the middle (see
+                    // PERP_RADIAL_SPEED)
                     lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
                 }
                 if fx.hide_flat && pair.perp && (lie * Vec3::Z).dot(rot * Vec3::Y).abs() < 0.5 {

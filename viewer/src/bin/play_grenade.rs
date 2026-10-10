@@ -89,11 +89,11 @@ pub(super) const DAMAGE_DELAY: f32 = 0.1;
 /// (3 x 3) is a 6 m quad, whose soft texture is half dark over ~3.7 m - the recording's scorch
 /// is half dark over ~4.1 m (the reference agent's measurement). At the data's size it came out
 /// ~1.9 m.
-const GRENADE_DECAL_SCALE: f32 = 2.0;
+pub(super) const GRENADE_DECAL_SCALE: f32 = 2.0;
 /// The decal is laid this long after the blast, once the fireball has gone (the recording's
 /// bright part is gone by 0.63 s, and the scorch is first seen under the smoke). The demo's
 /// choice: laid at once, the dark decal showed through the added fireball as a hard dark disc.
-const DECAL_DELAY: f32 = 0.7;
+pub(super) const DECAL_DELAY: f32 = 0.7;
 /// How far in front of the camera the tint quad sits (m; inside the near plane's 0.1 is cut).
 const TINT_DEPTH: f32 = 0.15;
 /// The tint's levels (materials) over TINT_TIME.
@@ -468,7 +468,7 @@ fn fly_grenades(
     delayed.1.retain_mut(|(left, decal, at)| {
         *left -= dt;
         if *left <= 0.0 {
-            decals.0.push((*decal, *at, GRENADE_DECAL_SCALE));
+            decals.0.push((*decal, *at, GRENADE_DECAL_SCALE, None));
         }
         *left > 0.0
     });
@@ -541,7 +541,7 @@ fn fly_grenades(
             // plain blast: a simplification)
             blasts.0.push((at, radius));
             objects.0.push(super::scenery::ObjectBlast { left: DAMAGE_DELAY, at, radius, damage: max, damage_type: kit.blast.damage_type,
-                                                        label: kit.def.label.clone() });
+                                                        label: kit.def.label.clone(), flat: false });
             // the Energy's damage comes with its bolts (play_energy.rs)
             if super::energy::releases_bolts(kit) {
                 bolts.0.push((g.kind, Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z), g.thrower));
