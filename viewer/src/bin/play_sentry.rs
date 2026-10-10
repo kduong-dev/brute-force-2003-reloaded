@@ -20,7 +20,7 @@
 //!  - it has 1 hitpoint: a shot that strikes it sets it off.
 //!
 //! The demo has no enemies: the squad is one team, so its mines only go off for a test hook's
-//! hostile (BF_TEST_HOSTILE) or a shot. Measured (todo/80-sentry-mine, the tester's spec): never
+//! hostile (BF_TEST_HOSTILE), the test map's enemy NPCs (play_testtools.rs) or a shot. Measured (todo/80-sentry-mine, the tester's spec): never
 //! set off by Tex (the thrower) walking or running over it or standing beside it, nor by Flint
 //! stepping onto it (0.16 m); an enemy brought up a slope set it off at 2.51 m across / 0.63 m
 //! above the mine's feet, not at 2.61 / 0.67; gone <= 0.1 s after; a shot sets it off.
@@ -180,9 +180,10 @@ fn body_point(u: &Player) -> Vec3 {
 const SELF_HOSTILE_TEAM: u8 = 7;
 
 /// Whether `u` is a friend of a mine set down by `thrower` on team `team`: the same team (and
-/// not one hostile to itself) or the thrower (0x146e00).
+/// not one hostile to itself) or the thrower (0x146e00). (Only the squad throws: a test map
+/// NPC of the thrower's character isn't them.)
 fn friend(u: &Player, thrower: usize, team: u8) -> bool {
-    (u.team == team && team != SELF_HOSTILE_TEAM) || u.character == thrower
+    (u.team == team && team != SELF_HOSTILE_TEAM) || (u.character == thrower && u.in_squad())
 }
 
 /// The game's check (0x146e00) for a mine at `at` with trigger `radius`, set down by character

@@ -15,7 +15,10 @@
 //!    hit. On at the start; K turns it on and off.
 //!  - X kills the controlled character outright (for the death camera and the hand-over to
 //!    the next squad member).
-//!  - The controls panel (H) lives here; the main game doesn't show it.
+//!  - The controls panel (H) lives here; the main game doesn't show it. It starts hidden, with
+//!    an "H: help" hint.
+//!  - The developer tools (play_testtools.rs): a free camera with a teleport, an NPC spawner
+//!    and an object spawner.
 
 use super::*;
 use bf_viewer::bf::hash::h;
@@ -79,35 +82,38 @@ pub fn load_weapon_data(game: &mut bf_viewer::bf::character::Game) {
     println!("test map: weapon data from {list} in {:.1} s: {hand} hand weapons", t.elapsed().as_secs_f32());
 }
 
-/// A weapon on the rack: its definition (a `Game::weapons` key).
+/// A weapon on the rack, or one the object tool laid on the ground (`Lying`): its definition
+/// (a `Game::weapons` key).
 #[derive(Component)]
-struct RackWeapon(u32);
+pub(super) struct RackWeapon(pub(super) u32);
+
+/// A weapon laid on the ground by the object tool (play_testtools.rs): it doesn't turn, and it's
+/// gone once taken.
+#[derive(Component)]
+pub(super) struct Lying;
 
 /// A weapon taken from the rack: the slot to put in hand once the character is respawned.
 #[derive(Resource, Default)]
 struct PendingSlot(Option<usize>);
 
 pub fn plugin(app: &mut App) {
+    super::testtools::plugin(app);
     app.init_resource::<PendingSlot>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (toggle_instant_kill, suicide, take_weapons, spin_rack).chain().after(update_player)
             .run_if(in_state(AppState::Playing).and(resource_exists::<TestMap>)));
 }
 
-/// The rack of every weapon and the row of every pickup.
-fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>,
-                  mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
-                  mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
-    player.show_help = true;
-    let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
-    // every weapon whose model loads, by name
-    let mut weapons: Vec<(u32, WeaponDef)> = game.0.weapons.iter().map(|(&k, d)| (k, d.clone())).collect();
+/// Every hand weapon the test map has, by label: each `Game::weapons` definition with a clip
+/// (the rest are pickups, props and level objects) whose model loads and is at least 0.1 m,
+/// one per model, with its model. The rack's list, and the object tool's (play_testtools.rs).
+/// `log`: print each, and each hand weapon left out with why (BF_TESTMAP_LOG).
+pub(super) fn hand_weapons(game: &bf_viewer::bf::character::Game, log: bool) -> Vec<(u32, WeaponDef, WeaponModel)> {
+    let mut weapons: Vec<(u32, WeaponDef)> = game.weapons.iter().map(|(&k, d)| (k, d.clone())).collect();
     weapons.sort_by(|a, b| a.1.label.cmp(&b.1.label).then(a.0.cmp(&b.0)));
-    let mut n = 0;
+    let mut out = vec![];
     let mut models = std::collections::HashSet::new();
     for (key, def) in weapons {
-        // hand weapons only (the rest are pickups, props and level objects), one per model
-        let log = std::env::var("BF_TESTMAP_LOG").is_ok();
         let skip = |why: &str| if log && def.ammo > 0 {
             println!("skipped h_{key:08x} {:24} arch h_{:08x}: {why}", def.label, def.archetype);
         };
@@ -115,7 +121,7 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
             skip("its model is already on the rack");
             continue;
         }
-        let Ok(model) = WeaponModel::load(&game.0, def.archetype) else {
+        let Ok(model) = WeaponModel::load(game, def.archetype) else {
             skip("no model");
             continue;
         };
@@ -130,6 +136,36 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
                 .fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(v), u.max(v)));
             println!("weapon h_{key:08x} {:24} type {:3} ammo {:4} arch h_{:08x} size {:.2}", def.label, def.weapon_type, def.ammo, def.archetype, hi - lo);
         }
+        out.push((key, def, model));
+    }
+    out
+}
+
+/// Every pickup type the test map has, by label: each `Game::items` type with a model, one per
+/// model: (item type, label, its model). The grid's list, and the object tool's.
+pub(super) fn pickup_types(game: &bf_viewer::bf::character::Game) -> Vec<(u32, String, WeaponModel)> {
+    let mut items: Vec<(u32, String)> = game.items.iter().filter(|(k, _)| game.object_meshes.contains_key(k))
+        .map(|(&k, i)| (k, i.label.clone())).collect();
+    items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    let mut models = std::collections::HashSet::new();
+    items.into_iter().filter_map(|(kind, label)| {
+        let arch = *game.object_meshes.get(&kind)?;
+        if !models.insert(arch) {
+            return None;
+        }
+        Some((kind, label, WeaponModel::load(game, arch).ok()?))
+    }).collect()
+}
+
+/// The rack of every weapon and the row of every pickup. The controls panel starts hidden (H).
+fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>,
+                  mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
+                  mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
+    player.show_help = false;
+    let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
+    // every weapon whose model loads, by name
+    let mut n = 0;
+    for (key, def, model) in hand_weapons(&game.0, std::env::var("BF_TESTMAP_LOG").is_ok()) {
         let (row, col) = (n / RACK_ROW, n % RACK_ROW);
         let x = (col as f32 - (RACK_ROW as f32 - 1.0) / 2.0) * RACK_STEP;
         let at = Vec3::new(x, GROUND + RACK_UP, RACK_Z - row as f32 * RACK_STEP);
@@ -142,17 +178,8 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
         n += 1;
     }
     // one of every pickup type with a model
-    let mut items: Vec<(u32, String)> = game.0.items.iter().filter(|(k, _)| game.0.object_meshes.contains_key(k))
-        .map(|(&k, i)| (k, i.label.clone())).collect();
-    items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
     let mut placed = 0;
-    let mut models = std::collections::HashSet::new();
-    for (kind, _) in &items {
-        let Some(&arch) = game.0.object_meshes.get(kind) else { continue };
-        if !models.insert(arch) {
-            continue;
-        }
-        let Ok(model) = WeaponModel::load(&game.0, arch) else { continue };
+    for (kind, _, model) in pickup_types(&game.0) {
         let (row, col) = (placed / ITEMS_ROW, placed % ITEMS_ROW);
         let x = (col as f32 - (ITEMS_ROW as f32 - 1.0) / 2.0) * ITEMS_STEP;
         // dropped from a little height, upright as modelled but turned and tipped a little, so
@@ -162,7 +189,7 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
         let seed = |k: f32| ((placed as f32 + 1.0) * k).sin().fract().abs() * 2.0 - 1.0;
         let turn = Quat::from_euler(EulerRot::YXZ, seed(12.9898) * std::f32::consts::PI, seed(78.233) * DROP_TIP, seed(37.719) * DROP_TIP);
         let root = commands.spawn((Transform::from_translation(at).with_rotation(turn), Visibility::default(),
-                                   Placed { tag: h("inventory-object"), kind: *kind }, super::pickups::DropIn,
+                                   Placed { tag: h("inventory-object"), kind }, super::pickups::DropIn,
                                    Name::new("test pickup"))).id();
         for part in &model.parts {
             let pe = commands.spawn((Transform::from_translation(part.offset).with_rotation(part.rotation), Visibility::Inherited, ChildOf(root))).id();
@@ -206,7 +233,7 @@ fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: Res
 /// Walking into a rack weapon: it goes into the held weapon's slot, and the character is
 /// respawned carrying it (with it in hand once they're back).
 fn take_weapons(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>, mut pending: ResMut<PendingSlot>,
-                mut status: ResMut<UsePanel>, rack: Query<(&RackWeapon, &GlobalTransform)>) {
+                mut status: ResMut<UsePanel>, rack: Query<(Entity, &RackWeapon, &GlobalTransform, Has<Lying>)>) {
     // back from a respawn: the new weapon in hand
     if let (Some(slot), Some(l)) = (pending.0, player.loaded.as_ref()) {
         let slot = slot.min(l.weapons.len().saturating_sub(1));
@@ -220,8 +247,8 @@ fn take_weapons(mut commands: Commands, mut game: ResMut<GameData>, mut player: 
         return;
     }
     let feet = player.position;
-    let Some((key, _)) = rack.iter().map(|(w, t)| (w.0, t.translation()))
-        .find(|(_, at)| Vec2::new(at.x - feet.x, at.z - feet.z).length() < TAKE_REACH) else { return };
+    let Some((key, _, entity, lying)) = rack.iter().map(|(e, w, t, lying)| (w.0, t.translation(), e, lying))
+        .find(|(_, at, _, _)| Vec2::new(at.x - feet.x, at.z - feet.z).length() < TAKE_REACH) else { return };
     let name = CHARACTERS[player.character];
     let slot = player.weapon;
     let list = game.0.character_weapons.entry(name.to_string()).or_default();
@@ -231,6 +258,10 @@ fn take_weapons(mut commands: Commands, mut game: ResMut<GameData>, mut player: 
     if slot < list.len() { list[slot] = key } else { list.push(key) }
     let label = game.0.weapons.get(&key).map(|d| d.label.clone()).unwrap_or_default();
     status.message = Some((format!("Took {label}"), MESSAGE_TIME));
+    // (one laid on the ground is gone; the rack's stay)
+    if lying {
+        commands.entity(entity).despawn();
+    }
     if let Some(old) = player.loaded.take() {
         commands.entity(old.root).despawn();
     }
@@ -238,7 +269,7 @@ fn take_weapons(mut commands: Commands, mut game: ResMut<GameData>, mut player: 
 }
 
 /// The rack's weapons turn slowly.
-fn spin_rack(time: Res<Time>, mut rack: Query<&mut Transform, With<RackWeapon>>) {
+fn spin_rack(time: Res<Time>, mut rack: Query<&mut Transform, (With<RackWeapon>, Without<Lying>)>) {
     let turn = Quat::from_rotation_y(RACK_SPIN * frame_dt(&time));
     for mut t in &mut rack {
         t.rotation = turn * t.rotation;

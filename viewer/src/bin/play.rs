@@ -436,6 +436,7 @@ fn main() {
     let playing = in_state(AppState::Playing);
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
+        .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
         .add_systems(Update, (spawn_player, read_input, squad_control, doors, update_player, play_sounds, follow_camera, update_weapons,
@@ -469,6 +470,8 @@ mod text;
 mod deathcam;
 #[path = "play_testmap.rs"]
 mod testmap;
+#[path = "play_testtools.rs"]
+mod testtools;
 #[path = "play_menu.rs"]
 mod menu;
 #[path = "play_scenery.rs"]
@@ -529,8 +532,15 @@ const DOOR_HEARD: f32 = 15.0;
 
 fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: Option<ResMut<Doors>>,
          mut use_panel: ResMut<UsePanel>, mut transforms: Query<&mut Transform>) {
-    let Some(mut doors) = doors else { return };
     let dt = frame_dt(&time);
+    // (the status message runs out on any map: the flat test floor has no doors)
+    if let Some((_, left)) = &mut use_panel.message {
+        *left -= dt;
+        if *left <= 0.0 {
+            use_panel.message = None;
+        }
+    }
+    let Some(mut doors) = doors else { return };
     // a panel's button in reach and in view (of a gate that isn't open yet)
     let look = Vec2::new(-player.cam_yaw.sin(), -player.cam_yaw.cos());
     let feet = player.position + Vec3::Y * GROUND;
@@ -544,12 +554,6 @@ fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: 
         .find_map(|(i, d)| d.panels.iter().find(|p| usable(p)).map(|p| (i, p.0)));
     use_panel.prompt = target.map(|_| "panel");
     use_panel.target = target.map(|t| t.1);
-    if let Some((_, left)) = &mut use_panel.message {
-        *left -= dt;
-        if *left <= 0.0 {
-            use_panel.message = None;
-        }
-    }
     use_panel.held = if target.is_some() && player.use_held { use_panel.held + dt } else { 0.0 };
     if let (Some((i, _)), true) = (target, use_panel.held >= HOLD_TIME) {
         doors.0[i].latched = true;
@@ -1434,12 +1438,19 @@ struct Player {
     /// LIQUID_TOUCH)
     burn: f32,
     burn_in: f32,
-    /// the side the character is on: 0 the squad (everyone in the demo); BF_TEST_HOSTILE puts a
-    /// squadmate on another (play_sentry.rs: the squad's mines go off for them)
+    /// the side the character is on: 0 the squad (everyone in the main game); BF_TEST_HOSTILE puts
+    /// a squadmate on another (play_sentry.rs: the squad's mines go off for them), and the test
+    /// map's enemy NPCs are on ENEMY_TEAM (play_testtools.rs: the squad AI fires at them)
     team: u8,
     /// held where a test hook puts it, without the squad AI (play_sentry.rs's BF_TEST_HOSTILE
     /// and BF_TEST_MINE_FRIEND)
     test_hold: bool,
+    /// a character spawned by the test map's NPC tool (play_testtools.rs): not one of the squad
+    /// (no formation, can't be taken control of), run by `testtools::npc_ai`
+    npc: Option<testtools::Npc>,
+    /// the AI's target point (a hostile's chest, see `ai_fire`): the gun is turned onto it and
+    /// shots go to it, instead of to what the camera's crosshair is on. None for the player.
+    ai_target: Option<Vec3>,
 }
 
 impl Player {
@@ -1455,7 +1466,7 @@ impl Player {
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
             shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), was_scoped: false, scope_level: 0, test_selected: false, sway: Vec2::ZERO,
-            wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false,
+            wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
         }
     }
 
@@ -1487,6 +1498,12 @@ impl Player {
         self.meter_after = (0.0, 0.0);
     }
 
+    /// One of the squad (Brutus, Flint, Hawk, Tex as the game has them), not a test map NPC: the
+    /// one control can pass to, shown on the HUD's portraits.
+    fn in_squad(&self) -> bool {
+        self.npc.is_none()
+    }
+
     fn random(&mut self, n: usize) -> usize {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 17;
@@ -1507,9 +1524,9 @@ impl Player {
 struct Squad(Vec<Player>);
 
 /// Squad AI: keep to a formation place round the leader (run / sprint to catch up, walk the
-/// last bit) and look where the leader looks. They shoot only at enemies they can see (none
-/// yet). Reloads happen by themselves (empty clip).
-fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32) {
+/// last bit) and look where the leader looks. They shoot only at an enemy they can see
+/// (`target`, from `hostile_in_sight`). Reloads happen by themselves (empty clip).
+fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>) {
     let f = FORMATION[slot % FORMATION.len()];
     let mut goal = leader.position + Quat::from_rotation_y(heading) * Vec3::new(f.x, 0.0, f.y);
     // out of the leader's line of fire: a place in the lane moves to its side, and anyone
@@ -1586,34 +1603,80 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32)
         m.cam_yaw = leader.cam_yaw + sweep;
         m.face_yaw = Some(heading + sweep);
     }
-    // squadmates only aim and shoot at an enemy they can see - never just because the player
-    // fires (the demo has no enemies yet, so they hold fire). When engaged, each picks a random
-    // moment to open up, then fires in bursts and pauses of its own length.
-    let enemy_in_sight = false;
-    m.aim = enemy_in_sight || cautious;
-    if enemy_in_sight {
-        if m.ai_delay > 0.0 {
-            m.ai_delay -= dt;
-            m.fire = false;
-        } else {
-            m.ai_phase -= dt;
-            if m.ai_phase <= 0.0 {
-                m.ai_burst = !m.ai_burst;
-                let r = m.random(1000) as f32 / 1000.0;
-                m.ai_phase = if m.ai_burst { 0.4 + 0.9 * r } else { 0.25 + 0.7 * r };
-            }
-            m.fire = m.ai_burst;
-        }
-    } else {
-        m.fire = false;
-        m.ai_burst = false;
-        m.ai_phase = 0.0;
-        m.ai_delay = 0.2 + 0.6 * (m.random(1000) as f32 / 1000.0);
-    }
+    // squadmates only aim and shoot at an enemy they can see (`hostile_in_sight`) - never just
+    // because the player fires. The main game has no enemies yet, so they hold fire; the test
+    // map's enemy NPCs (play_testtools.rs) are the only targets.
+    m.aim = target.is_some() || cautious;
+    ai_fire(m, target, dt);
     m.switch_pressed = false;
     m.reload_pressed = false;
     m.throw_held = false;
     m.next_surface = false;
+}
+
+/// An AI character's fire at `target` (a hostile's chest, from `hostile_in_sight`): it faces it
+/// and the gun is turned onto it (`ai_target`); it picks a random moment to open up, then fires
+/// in bursts and pauses of its own length. Without a target it holds fire. (The squad AI's
+/// existing burst timing; the aim is exact: the demo's choice, no spread is read.)
+fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
+    m.ai_target = target;
+    let Some(t) = target else {
+        m.fire = false;
+        m.ai_burst = false;
+        m.ai_phase = 0.0;
+        m.ai_delay = 0.2 + 0.6 * (m.random(1000) as f32 / 1000.0);
+        return;
+    };
+    // its "camera" looks at the target (the upper body and the feet turn to it)
+    let to = t - (m.position + Vec3::Y * (GROUND + m.height + AI_EYE));
+    m.cam_yaw = (-to.x).atan2(-to.z);
+    m.cam_pitch = (to.y / to.length().max(1e-3)).clamp(-1.0, 1.0).asin().clamp(-1.2, 0.5);
+    m.cam_target = m.position + Vec3::new(0.0, 0.35 + m.height * 0.5, 0.0);
+    m.face_yaw = Some(m.cam_yaw);
+    if m.ai_delay > 0.0 {
+        m.ai_delay -= dt;
+        m.fire = false;
+    } else {
+        m.ai_phase -= dt;
+        if m.ai_phase <= 0.0 {
+            m.ai_burst = !m.ai_burst;
+            let r = m.random(1000) as f32 / 1000.0;
+            m.ai_phase = if m.ai_burst { 0.4 + 0.9 * r } else { 0.25 + 0.7 * r };
+        }
+        m.fire = m.ai_burst;
+    }
+}
+
+/// Where an AI character looks from (m above the feet) and where it aims on a target (its
+/// chest: m above the feet). The demo's choices, inside BODY_HEIGHT's standing cylinder.
+const AI_EYE: f32 = 1.6;
+const AI_AIM_HEIGHT: f32 = 1.1;
+/// How far (m) an AI character engages a hostile without a weapon range to go by (the shots'
+/// own floor, `step_player`'s `range.max(20)`).
+const AI_MIN_RANGE: f32 = 20.0;
+
+/// Who each character can be seen as, for `hostile_in_sight`: team, chest point, and whether
+/// they're a target for the AI at all: alive, on their feet, not held by a test hook, and not a
+/// test map dummy (play_testtools.rs: a dummy is the player's target; one set to fight is
+/// everyone's).
+fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<(u8, Vec3, bool)> {
+    units.map(|u| (u.team, u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
+                   !u.dead && !knocked_down(u) && !u.test_hold && u.npc.is_none_or(|n| n.fight))).collect()
+}
+
+/// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) can see:
+/// on another team, within its held weapon's range (at least AI_MIN_RANGE), nothing of the
+/// world (or the test floor's pillars) between its eyes and their chest. They see all round
+/// (the demo's choice). Never anyone in the main game: everyone is on team 0; BF_TEST_HOSTILE's
+/// held squadmate isn't a target either.
+fn hostile_in_sight(m: &Player, me: usize, sight: &[(u8, Vec3, bool)]) -> Option<Vec3> {
+    let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+    sight.iter().enumerate()
+        .filter(|&(i, &(team, _, target))| i != me && target && team != m.team)
+        .map(|(_, &(_, at, _))| (at, eye.distance(at)))
+        .filter(|&(at, d)| d < range && ray_hit(eye, (at - eye) / d.max(1e-3), d - 0.3).is_none())
+        .min_by(|a, b| a.1.total_cmp(&b.1)).map(|(at, _)| at)
 }
 
 /// Hand control to another squad member: their name shows over them for SELECT_TIME (as in the
@@ -1635,13 +1698,17 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // a squadmate answers a death ("Brutus is down!"): a living member who isn't talking
     let mut answers = vec![];
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
+        // (not for a test map NPC, nor by one)
+        if !u.in_squad() {
+            u.death_response = None;
+        }
         if let Some((left, tag)) = u.death_response {
             u.death_response = if left - dt > 0.0 { Some((left - dt, tag)) } else { answers.push((u.character, tag)); None };
         }
     }
     for (dead, tag) in answers {
         let mut alive: Vec<&mut Player> = std::iter::once(&mut *player).chain(squad.0.iter_mut())
-            .filter(|u| !u.dead && u.character != dead && u.speaking <= 0.0 && u.quote_in.is_none()).collect();
+            .filter(|u| !u.dead && u.in_squad() && u.character != dead && u.speaking <= 0.0 && u.quote_in.is_none()).collect();
         if !alive.is_empty() {
             let n = alive.len();
             let k = alive[0].random(n);
@@ -1650,7 +1717,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     // test hook: BF_TEST_KILL=<character> - from 1 s, turn to that squad member and keep firing
     if let Some(c) = std::env::var("BF_TEST_KILL").ok().and_then(|v| v.parse::<usize>().ok()) {
-        if let Some(m) = squad.0.iter().find(|m| m.character == c) {
+        if let Some(m) = squad.0.iter().find(|m| m.character == c && m.in_squad()) {
             if player.sim_time > 1.0 && !player.dead {
                 let d = m.position - player.position;
                 player.cam_yaw = (-d.x).atan2(-d.z);
@@ -1671,7 +1738,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     // dead: the death camera (play_deathcam) picks the next living member near its end
     let Some((c, left)) = player.select else { return };
-    let Some(i) = squad.0.iter().position(|m| m.character == c && m.loaded.is_some() && !m.dead) else {
+    let Some(i) = squad.0.iter().position(|m| m.character == c && m.in_squad() && m.loaded.is_some() && !m.dead) else {
         player.select = None;
         return;
     };
@@ -2686,10 +2753,24 @@ fn wrap_angle(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
+/// A character's shots' damage, by the held weapon: its Damage min..max per shot, its ammo
+/// type (for the hit's effects) and its Damage damage-type (for the target's factor,
+/// Game::damage_factor); 8-10 of ammo type 1 unarmed.
+fn shot_damage(p: &Player) -> ((f32, f32), i64, i64) {
+    let held = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon));
+    let damage = held.map_or((8.0, 10.0), |w| if w.def.damage > 0.0 { (w.def.damage_min.min(w.def.damage), w.def.damage) } else { (8.0, 10.0) });
+    (damage, held.map_or(1, |w| w.def.ammo_type), held.map_or(0, |w| w.def.damage_type))
+}
+
+/// The AI's shots on their way to a body (see `update_player`): `member` is the unit hit, 0 the
+/// player, then the squad's order (the test map's NPC tool clears them when it removes one).
+#[derive(Resource, Default)]
+struct AiHits(Vec<PendingHit>);
+
 #[allow(clippy::too_many_arguments)]
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                  mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>,
-                 kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>) {
+                 kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>, mut ai_hits: ResMut<AiHits>) {
     let dt = frame_dt(&time);
     let kits: &[grenade::GrenadeKit] = kits.as_ref().map_or(&[], |k| &k.0);
     // the squad's heading: the leader's facing, smoothed (formation places turn with it)
@@ -2703,14 +2784,19 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             player.loaded = Some(l);
         }
     }
+    // who can see whom (the squad AI and the test map's NPCs fire only at a hostile in sight)
+    let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
     for (slot, m) in squad.0.iter_mut().enumerate() {
         if m.dead || knocked_down(m) {
             continue;
         }
+        let target = hostile_in_sight(m, slot + 1, &sight);
         // (BF_TEST_TARGET's squadmate stands still in the line of fire; play_sentry.rs's test
-        // hooks hold theirs where they put them)
-        if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
-            squad_ai(m, &player, slot, heading, dt);
+        // hooks hold theirs where they put them; the test map's NPCs have their own)
+        if m.npc.is_some() {
+            testtools::npc_ai(m, target, dt);
+        } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
+            squad_ai(m, &player, slot, heading, dt, target);
         }
         let Some(l) = m.loaded.take() else { continue };
         step_player(m, &l, &game.0, kits, dt, &mut transforms);
@@ -2719,12 +2805,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         m.loaded = Some(l);
     }
     // friendly fire: the player's shots this frame stop at the first teammate in their way
-    // the weapon's Damage min..max per shot
-    let held = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon));
-    let damage = held.map_or((8.0, 10.0), |w| if w.def.damage > 0.0 { (w.def.damage_min.min(w.def.damage), w.def.damage) } else { (8.0, 10.0) });
-    let ammo = held.map_or(1, |w| w.def.ammo_type);
-    // its Damage damage-type, for the target's factor (Game::damage_factor)
-    let damage_type = held.map_or(0, |w| w.def.damage_type);
+    let (damage, ammo, damage_type) = shot_damage(&player);
     let now = player.sim_time;
     // the squadmates' shots stop at a Sentry on their line (play_sentry.rs: 1 hitpoint)
     for m in squad.0.iter_mut() {
@@ -2775,6 +2856,48 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
     }
     player.shots = shots;
+    // the AI's shots (the squad's and the test map's NPCs', only ever fired at a hostile in
+    // sight: none in the main game) stop at the first body on their line but the shooter's own,
+    // anyone's - a teammate in the way takes it - and land when the shot gets there
+    for k in 0..squad.0.len() {
+        if squad.0[k].shots.is_empty() {
+            continue;
+        }
+        let ((lo, hi), ammo, damage_type) = shot_damage(&squad.0[k]);
+        let mut shots = std::mem::take(&mut squad.0[k].shots);
+        for shot in shots.iter_mut() {
+            let hit = std::iter::once(&*player).chain(squad.0.iter()).enumerate().filter(|&(i, u)| i != k + 1 && !u.dead)
+                .filter_map(|(i, u)| ray_body(shot.origin, shot.dir, u, shot.dist).map(|t| (i, t, u.character, u.position)))
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((i, t, character, at)) = hit {
+                shot.dist = t;
+                shot.hit = false;
+                let amount = (lo + (hi - lo) * squad.0[k].random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[character], damage_type);
+                let local = shot.origin + shot.dir * t - at;
+                if std::env::var("BF_COMBAT_LOG").is_ok() {
+                    let name = |u: &Player| format!("{}{}", CHARACTERS[u.character], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
+                    let target = if i == 0 { name(&player) } else { name(&squad.0[i - 1]) };
+                    println!("{} shoots {target} ({t:.1} m)", name(&squad.0[k]));
+                }
+                ai_hits.0.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, amount, dir: shot.dir, local, ammo });
+            }
+        }
+        squad.0[k].shots = shots;
+    }
+    let mut due = vec![];
+    ai_hits.0.retain_mut(|h| {
+        h.delay -= dt;
+        if h.delay <= 0.0 {
+            due.push(*h);
+        }
+        h.delay > 0.0
+    });
+    for h in due {
+        let u = if h.member == 0 { Some(&mut *player) } else { squad.0.get_mut(h.member - 1) };
+        let Some(u) = u else { continue };
+        let at = u.position + h.local;
+        hurt(u, &game.0, h.amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+    }
     // shots arriving: the hit lands on the member (blood where the shot meets them)
     let mut due = vec![];
     player.pending_hits.retain_mut(|h| {
@@ -2800,7 +2923,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // is the crosshair on a teammate (before the ground or a pillar)?
     let (cam, ray) = aim_ray(&player);
     let wall = ray_hit(cam, ray, 150.0).unwrap_or(150.0);
-    player.aim_friend = !player.dead && squad.0.iter().any(|m| !m.dead && ray_body(cam, ray, m, wall).is_some());
+    player.aim_friend = !player.dead && squad.0.iter().any(|m| !m.dead && m.team == player.team && ray_body(cam, ray, m, wall).is_some());
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         u.hurt_quiet -= dt;
     }
@@ -3189,7 +3312,8 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     u.blood.push((at, push.normalize_or(Vec3::Y), ammo));
     u.health = (u.health - amount).max(0.0);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
-        println!("hit {} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", CHARACTERS[u.character], u.health, u.knock_cooldown);
+        println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", CHARACTERS[u.character],
+                 u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)), u.health, u.knock_cooldown);
     }
     if u.health <= 0.0 {
         u.dead = true;
@@ -4182,7 +4306,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     match held {
         Some((w, (hb, r, t))) if p.aim_weight > 0.01 && !l.arm_chain.is_empty() => {
             let (cam, ray) = aim_ray(p);
-            let mut hit = cam + ray * ray_hit(cam, ray, 150.0).unwrap_or(80.0);
+            // (the AI aims at its target itself, see `ai_fire`)
+            let mut hit = p.ai_target.unwrap_or_else(|| cam + ray * ray_hit(cam, ray, 150.0).unwrap_or(80.0));
             let heading = Vec3::new(-p.cam_yaw.sin(), 0.0, -p.cam_yaw.cos());
             let reach = (hit - p.position).dot(heading);
             if reach < MIN_AIM_REACH {
@@ -4279,7 +4404,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 let scoped = p.scope > 0.5;
                 let origin = if scoped { cam + ray * 0.3 } else { hand.transform_point3(r * w.muzzle.point + t) };
                 let range = w.def.range.max(20.0);
-                let target = cam + ray * ray_hit(cam, ray, range + 10.0).unwrap_or(range);
+                let target = p.ai_target.unwrap_or_else(|| cam + ray * ray_hit(cam, ray, range + 10.0).unwrap_or(range));
                 let mut dir = if scoped { ray } else { (target - origin).normalize_or_zero() };
                 if dir.dot(ray) < 0.3 || dir == Vec3::ZERO {
                     dir = if upper_aim { ray } else { barrel };
@@ -4472,8 +4597,8 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         return;
     }
     if !player.show_help {
-        if text.0 != "H  controls" {
-            text.0 = "H  controls".into();
+        if text.0 != "H: help" {
+            text.0 = "H: help".into();
         }
         return;
     }
@@ -4508,9 +4633,10 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text
         "{}   {}   {}{}   {}{}\n\
          WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   T grenade type   E use   M surface   H hide\n\
          click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
-         test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die",
+         test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die\n\
+         {}",
         CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
-        if test.instant_kill { "on" } else { "off" });
+        if test.instant_kill { "on" } else { "off" }, testtools::HELP);
     if text.0 != s {
         text.0 = s;
     }

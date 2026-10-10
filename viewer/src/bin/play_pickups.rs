@@ -212,6 +212,12 @@ pub struct Thrown {
 #[derive(Component)]
 pub struct DropIn;
 
+/// A pickup placed after the map has started (the test map's object tool, play_testtools.rs),
+/// at its spot turned its way: once its meshes are there (`late_pickups`) it's seated on the
+/// ground and joins the level's pickups, as `find_pickups` does for the level's own.
+#[derive(Component)]
+pub struct LatePickup;
+
 /// Grenade blasts this frame (where, radius), for the loose pickups (play_grenade.rs adds them).
 #[derive(Resource, Default)]
 pub struct Blasts(pub Vec<(Vec3, f32)>);
@@ -228,7 +234,7 @@ pub fn plugin(app: &mut App) {
             commands.insert_resource(UsedMedkit::default());
             commands.insert_resource(Blasts::default());
         }).after(setup))
-        .add_systems(Update, (find_pickups, throw, physics, take_pickups, use_medkit, medkit_used, hold_medkit, face_glows).chain()
+        .add_systems(Update, (find_pickups, late_pickups, throw, physics, take_pickups, use_medkit, medkit_used, hold_medkit, face_glows).chain()
             .after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
@@ -975,6 +981,32 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
     for p in &mut pickups.list {
         if let Ok((_, _, t, _)) = bodies.get(p.entity) {
             p.at = t.translation;
+        }
+    }
+}
+
+/// The pickups placed since the map started (`LatePickup`), once the level's are in: each lies
+/// tilted to the ground under it, seated on its lowest point, loose (`Body`); medkits and fruit
+/// can be taken (no glow: the glows mark the level's medkit spots).
+fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut<Pickups>,
+                mut placed: Query<(Entity, &Placed, &mut Transform), With<LatePickup>>,
+                children: Query<&Children>, parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>, meshes: Res<Assets<Mesh>>) {
+    if !pickups.ready {
+        return;
+    }
+    for (e, p, mut t) in &mut placed {
+        commands.entity(e).remove::<LatePickup>();
+        let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5);
+        let body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: 0.0, moving: false, kicked: 0.0,
+                          rest: None, corners: local_points(e, &children, &parts, &meshes, t.scale), quiet: 0.0 };
+        let (yaw, _, _) = t.rotation.to_euler(EulerRot::YXZ);
+        t.rotation = lie(t.translation, yaw);
+        t.translation.y = ground + body.contact(t.rotation);
+        if !game.0.idle_effects.contains_key(&p.kind) {
+            commands.entity(e).insert(body);
+        }
+        if game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT) && !game.0.idle_effects.contains_key(&p.kind) {
+            pickups.list.push(Pickup { entity: e, kind: p.kind, at: t.translation, gone: 0.0, told: false });
         }
     }
 }

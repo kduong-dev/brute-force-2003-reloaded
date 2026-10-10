@@ -118,7 +118,7 @@ fn body(p: &Player) -> (Vec3, Vec3) {
 /// The next living squad member control passes to (the same choice as before: the first in the
 /// squad's order).
 fn next_member(squad: &Squad) -> Option<usize> {
-    squad.0.iter().find(|m| !m.dead && m.loaded.is_some()).map(|m| m.character)
+    squad.0.iter().find(|m| !m.dead && m.in_squad() && m.loaded.is_some()).map(|m| m.character)
 }
 
 /// Run the death camera: start it the frame the controlled character dies (if someone is left

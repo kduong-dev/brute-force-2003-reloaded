@@ -1020,12 +1020,12 @@ fn update_hud_widgets(
             }
             Part::Tab(i) => {
                 let speaking = if i == player.character % PORTRAITS.len() { player.speaking > 0.0 }
-                    else { squad.0.iter().any(|m| m.character == i && m.speaking > 0.0) };
+                    else { squad.0.iter().any(|m| m.character == i && m.in_squad() && m.speaking > 0.0) };
                 // every tab shows the member's command (follow); speech has its own icon beside the portrait
                 let _ = speaking;
                 let icon = Some(PLAYER_ICON);
                 let h = icon.and_then(|icon| texture(&mut game.0, &mut images, &mut cache, icon));
-                let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.dead);
+                let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad() && u.dead);
                 show(&mut vis, h.is_some() && !dead);
                 if let (Some(mut img), Some(h)) = (img, h) {
                     if img.image != h { img.image = h; }
@@ -1184,7 +1184,7 @@ fn update_squad_hud(
     if zooming.is_some_and(|(_, t)| t > NAME_ZOOM_TIME) {
         *zooming = None;
     }
-    let health = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c)
+    let health = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad())
         .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
     let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
     let pct = |x: f32, y: f32, n: &mut Node| { n.left = Val::Percent(x / 6.4); n.top = Val::Percent(y / 4.8); };
@@ -1197,8 +1197,8 @@ fn update_squad_hud(
     // (the fade is drawn as a cut halfway through it: two to three frames)
     let meter = charging || left > super::METER_FADE * 0.5;
     let level = if charging { player.charge } else { after };
-    let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c).map(|m| (c, m.position)));
-    let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.dead);
+    let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c && m.in_squad()).map(|m| (c, m.position)));
+    let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
     for (part, mut vis, mut node, _text, _font, _color, img, art) in &mut parts {
         match *part {
             SquadPart::Blip(slot) => {
@@ -1260,7 +1260,7 @@ fn update_squad_hud(
                 }
             }
             SquadPart::Bubble(c) => {
-                let speaking = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.speaking > 0.0);
+                let speaking = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.speaking > 0.0);
                 show(&mut vis, speaking);
                 if let Some(mut img) = img {
                     if img.image != gen.bubble { img.image = gen.bubble.clone(); }
