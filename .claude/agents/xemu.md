@@ -19,7 +19,9 @@ repo's source files. Read `CLAUDE.md` first.
     hard disk image (`xbox_hdd.qcow2`). xemu rewrites its settings file on exit, so keep a
     master copy and copy it into place at each launch, as the playbook describes;
   - your snapshots, scripts and modified builds.
-  Start xemu with `-config_path D:\Emulators\Xbox\agent\xemu.toml`.
+  Start xemu with `-config_path D:mulatorsXboxgentmu.toml`, then raise its process to
+  above-normal priority (`(Get-Process -Id <pid>).PriorityClass = "AboveNormal"`), so builds
+  running alongside don't make the game stutter.
 - **Other xemu sessions may run beside yours** (another agent testing tools, for example).
   Each one has its own folder, hard disk copy, ports and pad. Yours are
   `D:\Emulators\Xbox\agent\`, monitor 4444, gdb 1234, a virtual X360 pad bound by its GUID only,

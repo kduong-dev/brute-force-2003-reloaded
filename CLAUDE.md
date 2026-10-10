@@ -26,10 +26,8 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
   set `BF_DATA_DIR="C:/Users/Kevin/projects/github/XBE Mod/Brute Force/data"`.
 - `cd viewer && cargo build --bins` must finish with **no errors and no warnings**.
 - A full build takes minutes. Agents that share a target dir queue on its lock.
-- **Builds and demo runs go at below-normal priority**, so xemu (which needs steady CPU to run the
-  game at full speed) and the user's own work come first. From Git Bash, wrap the command; the
-  environment variables carry through:
-  `cmd //c "start /b /wait /belownormal cargo build --bins"` (the same for `cargo run ...`).
+- **xemu runs at above-normal priority**, so builds and demo runs don't make the game stutter
+  (which spoils footage): the `xemu` agent raises its own xemu process when it starts it.
 - **While an xemu session is recording, run at most one build** at a time; queue the others.
 
 ## Verifying in the game (required for any visible change)

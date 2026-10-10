@@ -14,22 +14,11 @@
     ],
     "Notification": [
       {
+        "matcher": "permission_prompt",
         "hooks": [
           {
             "type": "command",
             "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/notify.ps1\" -Kind \"Needs you\"",
-            "timeout": 20,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/notify.ps1\" -Kind \"Agent finished\"",
             "timeout": 20,
             "async": true
           }

@@ -28,7 +28,7 @@ Check, in order:
    nothing it didn't ask for?
 4. **Conventions**: doc comments match the surrounding density and voice; the area's `viewer/docs/` page is
    updated; test hooks are documented.
-5. **Build**: `cargo build --bins` in `viewer/`, run at below-normal priority (CLAUDE.md), has no errors and no warnings. Use the target
+5. **Build**: `cargo build --bins` in `viewer/` has no errors and no warnings. Use the target
    dir from `CLAUDE.md`.
 
 Report findings ranked most severe first. Give each one:
