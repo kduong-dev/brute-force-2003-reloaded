@@ -7,6 +7,10 @@
 //! vertices, UVs 0..1 on each face) in material h_f5e6f5c5, a wrapper round h_f8fdcbd7: the
 //! self-lit shader h_f539fe8c with the circuit-trace texture h_1e02a5ef (64 x 64 DXT3, two
 //! thirds of it alpha 0), tinted by its h_e01baa40 colour (0.36 1 0.67) at its `alpha` (0.7).
+//! Its pixel program (pixel shader 0, defined at 0x3ddf80 in default.xbe, set by FUN_0008fd20
+//! through FUN_000a4d00) has one combiner stage, texture x constant c0 for both colour and alpha,
+//! c0 being the h_e01baa40 colour with `alpha` as its fourth component, and a final combiner
+//! that fogs the colour.
 //! How the game draws that shader (FUN_0008fd20, the self-lit shader's render-state setup):
 //! h_0f5ae13f 2 is not the additive mode (1 is: ONE / ONE); with h_17aba73c set (or `alpha` not
 //! 1) and h_1a08f318 0 it blends SRCALPHA / INVSRCALPHA with z-writes off; h_18954f8d 1 turns
@@ -18,8 +22,23 @@
 //! 33.1 s, beside Brutus) it's a solid see-through green cube that turns with the view, its far
 //! faces visible through it, not spinning or bobbing. Walking into it takes it: it goes, its
 //! sound plays and the pickup lines say "Memory Chip Recovered!" (the footage also shows
-//! "+ 2000" by the radar: the score isn't kept by the demo). A soft brightening round it in
-//! front of lit walls in that footage has no source found in the data and is left out.
+//! "+ 2000" by the radar: the score isn't kept by the demo).
+//!
+//! Two constants aren't used. `time-scale` (h_01590d7a, 0.4) is mapped to +0x58 by FUN_0008fa50,
+//! but none of the shader's own functions read it; scaling the scroll's time step wouldn't move
+//! where it stops anyway. The wrapper's h_e59d69a0 (60) goes to the render state at +0x294 of
+//! the state cache through FUN_0009e960, which flags the material when it isn't 255; which
+//! state that is isn't established (alpha-test reference is a guess: as one, with the
+//! footage's distant chip filled, it can't be cutting at 60/255), so it's left out.
+//!
+//! Not matched: the footage's chip is fuller and brighter than this material can draw. Far off
+//! (Friendly Fire 2, 33.8 s) its inside is green +58 over the background, with red and blue up
+//! too; up close in front of a lit wall (DNA + Weapon Pickups, 12.4-12.6 s) it's whitish cyan,
+//! red 165 over 60, with a soft halo. The pixel program can't raise red past the background
+//! (texture red 45 x 0.36), and the texture's own five mip levels (box averages, alpha about
+//! 0.16-0.2 at every level, like the chain built here) don't fill it, so that light comes from
+//! something outside this material: not found (in the DNA footage the Light grenades' beams are
+//! nearby; at 9.4 s a soldier walking through the chip is lit the same whitish cyan).
 //!
 //! The ALE effect the demo drew before (h_ee11d51f powerup_pill + light_powerup_pill) is the DNA
 //! canister's (mesh h_e3e4caad, "Alien Technology Acquired!"), not this.
@@ -131,12 +150,19 @@ fn load_chip(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
             let offset = Vec2::new(c(H_SCROLL_U, 0, 0.0) * time, c(H_SCROLL_V, 0, 0.0) * time);
             let additive = c(H_BLEND_MODE, 0, 0.0) == 1.0;
             let material = materials.add(StandardMaterial {
+                // the pixel program's one combiner stage: colour = texture x c0, alpha = texture
+                // alpha x c0 alpha, where c0 is the shader's h_e01baa40 colour (at +0x70) with
+                // its `alpha` (+0x7c) as the fourth component (FUN_0008fa50 maps the names to
+                // those offsets; FUN_000a4d80 packs the four into the constant). Nothing else
+                // goes in: no vertex colour, no lighting, no second texture.
                 base_color: Color::srgba(c(H_GLOW, 0, 1.0), c(H_GLOW, 1, 1.0), c(H_GLOW, 2, 1.0), c(bf_viewer::bf::hash::h("alpha"), 0, 1.0)),
                 base_color_texture: texture,
                 uv_transform: Affine2::from_translation(offset),
                 unlit: true,
-                // (self-lit: unfogged, as the levels' self-lit materials are, level_scene.rs)
-                fog_enabled: false,
+                // fogged: the shader's pixel program (pixel shader 0, its definition at 0x3ddf80, set
+                // by FUN_000a4d00 from FUN_0008fd20) ends in a final combiner that mixes the colour
+                // toward the fog colour by the fog factor
+                fog_enabled: true,
                 // drawn after the terrain's blended texture layers (the same pass, sorted by their
                 // chunk's middle plus their own bias, level_scene.rs): without z-writes the chip
                 // was painted over by them on sdm_e34 and all but vanished
@@ -160,8 +186,10 @@ fn load_chip(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
 /// A repeating sRGB texture with its mip levels, each a 2 x 2 box average of the one above.
 /// Without them the 64 x 64 traces, a pixel or two wide, break up into scattered lines once the
 /// chip is a few metres off; the console samples mip levels, and the footage's distant chip
-/// (todo/Friendly Fire 2 + Death Cam.mp4, 33.3 s) is an even soft green. (Whether the game's
-/// file carries its own levels isn't read: the format reader decodes the top level only.)
+/// (todo/Friendly Fire 2 + Death Cam.mp4, 33.3 s) is an even soft green. The file carries five
+/// levels of its own (textures-*.xmb: 64 x 64 down to 4 x 4, 5456 bytes); exported, they're box
+/// averages too (mean alpha 39, 49, 52, 43, 40 of 255 against this chain's about 39 at each), but
+/// the format reader decodes the top level only, so the chain is rebuilt here.
 fn mipmapped(w: u32, h: u32, px: Vec<u8>) -> Image {
     let mut data = px.clone();
     let (mut level, mut lw, mut lh, mut levels) = (px, w, h, 1);

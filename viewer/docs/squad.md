@@ -120,16 +120,36 @@ Squad movement and deaths follow the game's own data and the captures:
   in the footage). The player walking into it (within 1 m across, 1.5 m up or down) takes it:
   it goes, h_ee2c16da plays and the pickup lines show "Memory Chip Recovered!" (no count). The
   footage's "+ 2000" by the radar is the score, which the demo doesn't keep; nor does it
-  reclone the squadmate. The soft brightening round the chip in front of lit walls in
-  `todo/DNA + Weapon Pickups.mp4` has no source found in the data and is left out. The green
+  reclone the squadmate. The green
   sprites and blue light the demo drew before were effect h_ee11d51f (powerup_pill +
   light_powerup_pill), which belongs to the DNA canister pickup (mesh h_e3e4caad, "Alien
   Technology Acquired!"), not to a death. (`BF_PICKUP_LOG=1` prints the chip's material, where
   each is dropped and when it's taken.)
-  * Drawn as Bevy's alpha blend, unfogged (as the levels' self-lit materials), with a
-    box-filtered mip chain made for its texture (the format reader decodes the top level only;
-    without mips the one-texel traces break up a few metres off, where the footage shows an even
-    soft green). It sorts 1000 m nearer among see-through things than it is: the terrain's
+  * Its pixel program (pixel shader 0, defined at 0x3ddf80 in default.xbe, set from
+    FUN_0008fd20 through FUN_000a4d00) is one combiner stage, texture x constant c0 for colour and
+    alpha alike, c0 being the h_e01baa40 colour with `alpha` as its fourth component
+    (FUN_0008fa50 maps the names to +0x70 / +0x7c; FUN_000a4d80 packs them), then a final
+    combiner that fogs the colour. No vertex colour, lighting or second texture. So it's drawn
+    as Bevy's alpha blend of that, fogged, with a box-filtered mip chain made for its texture:
+    the file's own five levels (64 down to 4) are box averages too (mean alpha 39, 49, 52, 43,
+    40 of 255), but the format reader decodes the top level only. Without mips the one-texel
+    traces break up a few metres off.
+  * Not used: `time-scale` (h_01590d7a, 0.4) is mapped to +0x58, but none of the shader's own
+    functions read it (and it couldn't move where the scroll stops). The wrapper's h_e59d69a0
+    (60) goes to render state +0x294 of the state cache (FUN_0009e960, flagging the material
+    when it isn't 255); which state that is isn't established. An alpha-test reference is a
+    guess, and as one it can't be cutting at 60/255, since the footage's distant chip is filled.
+  * **Not matched: the footage's fill.** Far off (Friendly Fire 2, 33.8 s) the chip's inside is
+    green +58 over the background, red and blue up too; the demo's is green +30 to +48 at 6-15 m
+    on sdm_e34, red and blue a little down. Up close in front of a lit wall (DNA + Weapon
+    Pickups, 12.4-12.6 s) the footage's is whitish cyan, red 165 over 60, with a soft halo.
+    The pixel program can't raise red above the background (texture red 45 x 0.36) and the
+    texture's mips don't fill it, so that light comes from something outside the chip's
+    material: not found. In the DNA footage the Light grenades' beams are close by, and at
+    9.4 s a soldier walking through the chip is lit the same whitish cyan. A guess, not drawn.
+  * Where it lies: at the moment of the take the footage's chip shows above Hawk's head and the
+    demo's at Tex's hip. That may be the slope, not the height; not fitted.
+  * It sorts 1000 m nearer among see-through things than it is: the terrain's
     blended texture layers are drawn in the same pass, sorted by their chunk's middle, and
     painted over it on sdm_e34 (it all but vanished: a 7/255 difference). Known limit: it now
     sorts after every other blended thing (gas clouds, blood mist, liquids, see-through
