@@ -1264,9 +1264,9 @@ struct Player {
     /// under way (the game's weapon +0x1f8 and +0x1e8). The reserve itself is the squad's, per
     /// ammo-type (play_ammo.rs's `Reserve`).
     ammo: Vec<[i64; 2]>,
-    /// per weapon: seconds toward the next recharged round (the game's weapon +0x220; see
+    /// per weapon: its recharge state (the game's weapon +0x220 timer and +0x218 cooldown; see
     /// play_ammo.rs's `recharge`)
-    regen: Vec<f32>,
+    regen: Vec<ammo::Charge>,
     /// reload in progress: (weapon, seconds left, clip it fills to)
     reloading: Option<Reload>,
     /// grenades carried, by type (`grenade::GrenadeKits` order; filled by play_grenade.rs's
@@ -2503,7 +2503,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.reloading = None;
     // a full clip each (the reserve is the squad's: play_ammo.rs)
     p.ammo = weapons.iter().map(|w| [w.def.ammo.max(1), 0]).collect();
-    p.regen = vec![0.0; weapons.len()];
+    p.regen = vec![ammo::Charge::default(); weapons.len()];
     let switch_clips = [switch_clip(&model, game, &weapons, 0), switch_clip(&model, game, &weapons, 1)];
     let reload_clips = ["Sc_w1_reload", "Sc_w2_reload"].map(|n| overlay_clip(&model, game, n, feet));
     let use_clips = ["Sc_w1_use_item", "Sc_w2_use_item"].map(|n| overlay_clip(&model, game, n, feet));

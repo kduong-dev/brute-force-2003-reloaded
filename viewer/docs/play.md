@@ -185,16 +185,23 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
     test map's NPCs reload from a bottomless reserve of their own.
 * **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show
   "N Regen" (string `h_e246de1d`) and never reload. Their clip gains a round every ammo-regen
-  seconds while it isn't full and the gun's cooldown is out, held or stowed (FUN_0022ebc0), so the
-  first round comes back cooldown + ammo-regen after the last shot (LZR-23: 1.65 s; the takes
-  1.6-1.7 s). This rule was pulled in from the LZR batch so an emptied LZR doesn't stay empty.
+  seconds while it isn't full and the gun's own cooldown is out, held or stowed (FUN_0022ebc0),
+  so the first round comes back cooldown + ammo-regen after the last shot (LZR-23: 1.65 s; the
+  takes 1.6-1.7 s). Each gun keeps its own cooldown for this (the game's weapon +0x218), set to
+  1 / rate by a shot, a dry click, and the start of a weapon switch on the gun put away
+  (FUN_0011e130 starts the slot change, then FUN_0022dc00 on the held weapon). So a switch away
+  delays the next round and the switch back doesn't, as in the takes (LZR-50 20.996 → 23.202 s
+  with Y at 21.83; LZR-23 21.512 → 23.419 with Y at 21.7). The demo's own 0.1 s after a switch
+  and 0.2 s gun raise don't touch it. This rule came in ahead of the LZR batch so an emptied
+  LZR refills.
 * **Automatic reload**, as in the game, which has no reload button: on an empty clip the reload
   starts when the fire cooldown runs out with the trigger held (FUN_0022f2a0 → FUN_002327f0 →
   the character's FUN_00120d40), or when the trigger is let go (measured: Brutus's Bower tapped
   dry reloads 0.13 s after its last shot, not at its 1 s cooldown; the game's L-Shot 0.07 s after
   the release). The rounds leave the reserve at once (the takes: the reserve drops at the start),
   the clip reads 0 on the red panel until the reload clip's magazine-in event (Brutus 0.93 s,
-  Tex 1.1-1.2 s; the takes 1.0-1.3 s). A reload drops out of the scope (FUN_00120d40 calls
+  Tex 1.1-1.2 s; the takes 1.0-1.3 s). Not while knocked down (lying limp): it starts as they
+  begin to get up. A reload drops out of the scope (FUN_00120d40 calls
   FUN_001249b0 first; medium confidence that its flag is the scope).
   * **R reloads early: the demo's own key** (the product owner's choice), from a partial clip,
     once the character isn't busy.
@@ -209,8 +216,9 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
   letters at y 90-104 like the take's (`todo/49` take02 19 s). It goes with a switch away and is
   back after the switch back. Not for a recharging gun (it posts message 0x53, which shows
   nothing).
-* **The weapon's name after a pickup**: the held gun's name over its count for 2.7 s, its icon
-  hidden meanwhile (the take: "Bower 20" from 7.0 s, fading 9.55-9.85 s). The names (also in
+* **The weapon's name after a pickup**: the held gun's name over its count for 2.55 s, then
+  fading out over 0.3 s; its icon is faint under it meanwhile (20%, judged by eye) and comes back
+  as the name fades (the take: "Bower 20" from 7.0 s, fading 9.55-9.85 s). The names (also in
   the list after a switch) are the take's size: letters 13.8 units tall from y 43.
 * **The crosshair** is the held weapon's 64 × 64 texture drawn 1:1, centred at (320, 192), the
   same standing, firing and moving; in the scope it moves to (320, 240) at the same size. It's
@@ -234,11 +242,16 @@ Checked on the test map (`BF_TEST_GOTO=0,0,0,0`, `BF_CAPTURE`), measured against
 Also checked: the Minigun's reserve 600 → 520 when its reload starts as the cooldown runs out
 (held trigger, `BF_TEST_CLIP=3`), the clip full ~1.1 s later; the Bower's 80 → 68 at the
 release; the hint from the first dry click; f740ecdd and 16bbf95c found in sdm_e34's banks
-(`BF_SOUND_LOG`); the LZR-23 recharging held and stowed; R at 26.5 s of `BF_AUTOPILOT`.
+(`BF_SOUND_LOG`); the LZR-23 recharging held and stowed, its first round 1.7 s after the switch
+away and no gap on the switch back (`BF_TEST_SWITCH=1.5,4.0`: rounds every 1.27 s through it);
+a knocked-down Brutus's Bower reload held until he gets up (`BF_TEST_KNOCK`); R reloading the
+Minigun at 27.40 s of `BF_MAP=sdm_e34 BF_AUTOPILOT=1 BF_START_WEAPON=1` (26 rounds).
 
 Test hooks: `BF_TEST_RESERVE=<n>` starts every ammo-type's reserve at n; `BF_TEST_CLIP=<n>`
 starts the player's clips at n; `BF_TEST_TRIGGER=<from>-<to>[,...]` holds the trigger over those
-windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the weapon switch then;
+windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the weapon switch once
+at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_KNOCK=<s>` knocks
+the player down then, once;
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot, recharged round and the hint.
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound

@@ -138,7 +138,8 @@ fn spawn_glyphs(commands: &mut Commands, f: &AtlasFont, parent: Entity, text: &s
                                    width: Val::Px(w), height: Val::Px(h), ..default() },
                             ChildOf(cell)));
         };
-        let edge = Color::srgba(0.0, 0.0, 0.0, 0.85);
+        // (the outline fades with the text: a weapon name fading out on the HUD)
+        let edge = Color::srgba(0.0, 0.0, 0.0, 0.85 * color.alpha());
         layer(SHADOW, SHADOW, edge);
         for (dx, dy) in [(-STROKE, 0.0), (STROKE, 0.0), (0.0, -STROKE), (0.0, STROKE)] {
             layer(dx, dy, edge);

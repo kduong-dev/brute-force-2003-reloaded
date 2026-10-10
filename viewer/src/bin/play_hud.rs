@@ -493,6 +493,9 @@ const WEAPON_ROWS: usize = 3;
 const WEAPON_NAME_X: f32 = 465.0;
 const WEAPON_NAME_UP: f32 = 5.7;
 const WEAPON_NAME_CAP: f32 = 14.7;
+/// How opaque the weapon's icon is under its name after a pickup (todo/49 take04 7.0-9.5 s: a
+/// faint outline; the level is judged by eye, a guess).
+const ICON_UNDER_NAME: f32 = 0.2;
 const PALE: Color = Color::srgb(0.78, 0.85, 1.0);
 const HUD_BLUE: Color = Color::srgb(0.24, 0.52, 1.0);
 
@@ -1014,6 +1017,9 @@ fn update_hud_widgets(
     let switch_to = game.0.strings.get(&S_SWITCH_TO).cloned().unwrap_or("switch to %s.".into());
     // after a pickup: the held weapon's name over its count, its icon hidden meanwhile
     let name_shown = held_name.0 > 0.0;
+    // its fade at the end (1: full), and the icon faint under it meanwhile, coming back as it
+    // fades
+    let name_alpha = (held_name.0 / super::ammo::NAME_FADE).min(1.0);
     let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| if *n > 0 { format!("{n}x {name}") } else { name.clone() }).collect();
 
     for (part, mut vis, img, mut text, node) in &mut parts {
@@ -1040,13 +1046,17 @@ fn update_hud_widgets(
                     }
                     Part::Icon(r) => {
                         let h = (def.icon != 0).then(|| texture(&mut game.0, &mut images, &mut cache, def.icon)).flatten();
-                        show(&mut vis, h.is_some() && !(r == 0 && name_shown && !list));
+                        show(&mut vis, h.is_some());
+                        let faint = if r == 0 && name_shown && !list { ICON_UNDER_NAME + (1.0 - ICON_UNDER_NAME) * (1.0 - name_alpha) } else { 1.0 };
                         if let (Some(mut img), Some(h)) = (img, h) {
                             if img.image != h { img.image = h; }
+                            let c = Color::srgba(1.0, 1.0, 1.0, faint);
+                            if img.color != c { img.color = c; }
                         }
                     }
                     Part::Name(r) => {
                         show(&mut vis, list || (r == 0 && name_shown));
+                        let tint = if list { tint } else { tint.with_alpha(name_alpha) };
                         set(text, &def.label, Some(tint));
                     }
                     _ => {

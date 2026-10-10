@@ -50,7 +50,8 @@ Squad movement and deaths follow the game's own data and the captures:
 
   The others' aim wanders while scoped: a slow drift of up to about 0.7° that moves the view
   and the shots together. In the scope everyone can still move, but only at a walk. The
-  crosshair moves to the middle of the screen and grows from 40 to 72 units. The eye stays
+  crosshair moves to the middle of the screen at the same size, 64 units (see play.md, **Ammo,
+  reload and the crosshair**). The eye stays
   0.25 m off whatever is in front (by the collision), so a close wall can't be looked through.
 
   Going in and out plays the character's two scope sounds. They're stored beside its
