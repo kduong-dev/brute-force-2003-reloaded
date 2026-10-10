@@ -26,6 +26,8 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
   set `BF_DATA_DIR="C:/Users/Kevin/projects/github/XBE Mod/Brute Force/data"`.
 - `cd viewer && cargo build --bins` must finish with **no errors and no warnings**.
 - A full build takes minutes. Agents that share a target dir queue on its lock.
+- Builds go through sccache (machine-wide `~/.cargo/config.toml`, cache on `D:\sccache`), so a
+  new worktree's build reuses the compiled dependencies. Leave it on.
 - **xemu runs at above-normal priority**, so builds and demo runs don't make the game stutter
   (which spoils footage): the `xemu` agent raises its own xemu process when it starts it.
 - **While an xemu session is recording, run at most one build** at a time; queue the others.
@@ -53,14 +55,18 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=x,z,x2,z2[,height] BF_CAPTURE=<dir> BF_CAPTURE_FRAME
 ## Team workflow
 
 The agent roles are in `.claude/agents/`:
+- `analyst`: reads the game data and default.xbe. It writes a ticket's leads (and the shot
+  list when footage is needed) into `todo/<ticket>-<slug>/`, answers the code questions the
+  others can't settle, drafts tickets for what they found out of scope, and keeps
+  `viewer/docs/code-map.md`. It doesn't build or run the demo.
 - `xemu`: plays the original game in xemu and records footage for a ticket, as many takes as
   it needs, into `todo/<ticket>-<slug>/` with a `notes.md`. It may stage shots in a modified
   copy of the game (on D:, never the originals). It runs xemu with its own settings and hard
   disk image, plays through a virtual controller (never the keyboard or mouse) with the
   window on the left monitor, and may run while the user is at the PC.
 - `tester`: owns "what the real game does". Before a ticket it measures the footage into a
-  spec (or writes a shot list for `xemu`); after, it compares the demo with the footage and
-  checks for regressions. Read-only.
+  spec, `todo/<ticket>-<slug>/spec.md` (or writes a shot list for `xemu`); after, it compares
+  the demo with the footage and checks for regressions. Read-only on the source.
 - `developer`: implements a ticket in its own worktree, from the spec, the footage and the
   game data.
 - `reviewer`: reviews the code (a branch, a pull request or a diff), read-only.
@@ -71,8 +77,8 @@ lead**: it writes tickets, starts the agents, relays findings, moves the board, 
 final yes to merge, push and close tickets.
 
 **Tickets.** The user decides what becomes a ticket. The lead writes it with
-`gh issue create`, after checking the game data so the ticket has leads, using the sections of
-`.github/ISSUE_TEMPLATE/feature.md`:
+`gh issue create`, after checking the game data (or having the `analyst` do it) so the ticket
+has leads, using the sections of `.github/ISSUE_TEMPLATE/feature.md`:
 - what the real game does;
 - leads in the game files;
 - acceptance;
@@ -81,20 +87,23 @@ final yes to merge, push and close tickets.
 Label it from the existing set (`fidelity`, `gameplay`, `rendering`, `audio`, `combat`, ...).
 Epics get `epic` and sub-issues. Other agents never file tickets: they list problems outside
 their ticket under "found, not in scope" in their report. The lead asks the user before
-filing those, or files them with the `triage` label for the user to accept or close.
+filing those, or files them with the `triage` label for the user to accept or close; the
+`analyst` can draft them first (duplicates checked, leads gathered) in `todo/drafts/`.
 
 **Order for a ticket:**
-1. **Footage.** If `todo/<ticket>-*/` doesn't cover the ticket, `xemu` records it, from the
-   ticket and the tester's shot list if there is one.
-2. **Spec.** `tester` measures the footage into a spec. If something is still missing, its
-   shot list goes back to `xemu` (step 1).
-3. **Build.** `developer` implements it in its own worktree (`isolation: "worktree"`, with
+1. **Leads.** If the ticket needs research the lead hasn't done, `analyst` writes
+   `todo/<ticket>-<slug>/leads.md`, and the shot list if footage is needed.
+2. **Footage.** If `todo/<ticket>-*/` doesn't cover the ticket, `xemu` records it, from the
+   ticket and the shot list if there is one.
+3. **Spec.** `tester` measures the footage into `spec.md`. If something is still missing, its
+   shot list goes back to `xemu` (step 2); its code questions go to `analyst`.
+4. **Build.** `developer` implements it in its own worktree (`isolation: "worktree"`, with
    `CARGO_TARGET_DIR` and `BF_DATA_DIR` set as above), given the spec and the footage folder.
-4. **Check.** `reviewer` and `tester` run in parallel on the result: the code, and the demo
+5. **Check.** `reviewer` and `tester` run in parallel on the result: the code, and the demo
    against the footage.
-5. Send the findings back to the same developer (SendMessage) until the reviewer approves and
-   the tester passes it.
-6. The lead summarises the result for the user. On their yes: merge to `main`, push, and the
+6. Send the findings back to the same developer (SendMessage) until the reviewer approves and
+   the tester passes it. A code question nobody can settle goes to `analyst` meanwhile.
+7. The lead summarises the result for the user. On their yes: merge to `main`, push, and the
    commit's `Closes #N` closes the ticket. Then delete the ticket's build folder
    (`CARGO_TARGET_DIR`), its worktree and branch, and the agents' captures for it: each ticket
    leaves about 12 GB of build output and several GB of frames. Keep `todo/` footage.
@@ -128,16 +137,29 @@ New issues are added to the board automatically. The `gh` login needs the `proje
 (`gh auth refresh -s project`).
 
 Run at most two heavy agents at once: a build takes minutes and a lot of CPU, and an `xemu`
-session uses the GPU and the screen. Two xemu sessions may run side by side, each with its own
-folder and hard disk copy, ports, virtual pad (the `xemu` agent: `D:\Emulators\Xbox\agent\`,
-4444/1234, an X360 pad, the left half of the left monitor; a second one: `agent-dev\`,
-4445/1235, a DualShock 4 pad, the right half).
+session uses the GPU and the screen. Heavy means a developer, a tester checking a build, or
+`xemu`; the `analyst`, the `reviewer` and a tester writing a spec are light and run beside
+them. Two xemu sessions may run side by side, each with its own folder and hard disk copy,
+ports, virtual pad (the `xemu` agent: `D:\Emulators\Xbox\agent\`, 4444/1234, an X360 pad, the
+left half of the left monitor; a second one: `agent-dev\`, 4445/1235, a DualShock 4 pad, the
+right half).
+
+**Effort.** Each role's default effort is in its frontmatter: `analyst`, `reviewer` and
+`developer` max (depth there saves review rounds and wrong leads); `tester` xhigh; `xemu` high
+(long sessions holding the GPU and screen, where a faster turn frees the slot sooner). The lead
+may start a `developer` at high for a small fix (one module, no new mechanics), and `xemu` at
+max for shots that need new memory research or tricky staging. Otherwise it leaves the
+default.
+
 Relay what agents report faithfully, including what failed or wasn't tested.
 
 ## Conventions
 
 - **Faithful to the game.** Values come from the game data (BXML attributes, XBE tables,
   textures, sounds) or are measured from captures. A guess is called a guess in its comment.
+- **The code map.** `viewer/docs/code-map.md` indexes the default.xbe functions the project
+  relies on (address, what it does, how sure, where it's used). Check it before tracing a
+  function, and add a row for each one a change cites.
 - Names are 32-bit hashes, written `h_xxxxxxxx` (`bf_viewer::bf::hash::h("name")` for known
   strings). Hashes taken from file names in sound banks are stored byte-reversed.
 - **Comments**: a doc comment on every const, struct and fn, saying what it is and *where the
