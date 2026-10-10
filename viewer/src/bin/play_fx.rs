@@ -12,8 +12,9 @@
 //!  - the memory chip a dead squadmate drops (what this module used to draw as "the DNA", with
 //!    the DNA canister's powerup_pill effect) is a mesh pickup now: play_dna.rs.
 //!
-//! The game draws an ALE appearance's particles as quads with the whole texture on them
-//! (FUN_002a1a50, with its shape list at 0x402a4c), not as point sprites; so do these.
+//! The game draws an ALE appearance's particles as quads with the whole texture on them, not as
+//! point sprites (medium confidence: read from FUN_002a1a50, which indexes a table at
+//! DAT_00443658 + n * 0x48); so do these.
 //!
 //! The parameters read as Freelancer's ALE ones (Brute Force hashes their names): an emitter
 //! emits `rate` particles/s over its own time, each living `life` s, leaving at `speed` m/s at an

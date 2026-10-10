@@ -44,7 +44,10 @@ const H_BLEND_MODE: u32 = 0x0F5A_E13F;
 const H_NO_CULL: u32 = 0x1895_4F8D;
 /// How much nearer (m) the chip sorts among see-through things than it is: past the terrain's
 /// blended layers (whose chunk middles can be nearer the camera than the chip). The demo's
-/// choice.
+/// choice. Bevy also hands `depth_bias` to the pipeline as a constant depth bias; at this value
+/// that moves the chip's depth by about 1e-4 of itself, so it doesn't show through walls. The
+/// cost: it sorts after every other blended thing (gas clouds, blood mist, liquids, see-through
+/// materials), so one of those between it and the camera doesn't veil it.
 const CHIP_SORT_BIAS: f32 = 1000.0;
 /// The chip appears this long after a death (s), this far from where they fell (m) and its
 /// middle this high over the ground (m). The demo's choice, kept from the old DNA (fitted then
@@ -68,12 +71,17 @@ struct ChipModel {
     sound: u32,
 }
 
+/// Whether BF_TEST_CHIP's chip has been dropped on this map (reset as each map starts).
+#[derive(Resource, Default)]
+struct TestChipDropped(bool);
+
 /// A memory chip lying beside a body.
 #[derive(Component)]
 struct Chip;
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(AppState::Playing), load_chip.after(setup))
+    app.init_resource::<TestChipDropped>()
+        .add_systems(OnEnter(AppState::Playing), (load_chip.after(setup), |mut d: ResMut<TestChipDropped>| d.0 = false))
         .add_systems(Update, (drop_chips, take_chips).chain().after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
@@ -115,7 +123,10 @@ fn load_chip(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
                 .with_inserted_indices(bevy::render::mesh::Indices::U32(g.indices.clone()));
             // the texture as it is (its alpha is the trace mask), repeating, with mip levels
             let texture = game.0.material_texture(id).and_then(|t| game.0.texture_rgba(t)).map(|(w, h, px)| images.add(mipmapped(w, h, px)));
-            // the scroll's resting offset: rate x how long it scrolls (FUN_0008fca0)
+            // the scroll's resting offset: rate x how long it scrolls (FUN_0008fca0). Without
+            // h_08c2d2ee the game's time left is FLT_MAX (FUN_0008fb90 sets +0x54), so such a
+            // material would scroll for good; the chip's has it (0.12 s), and a material without
+            // one isn't drawn by this module, so it's held still here (0).
             let time = c(H_SCROLL_TIME, 0, 0.0);
             let offset = Vec2::new(c(H_SCROLL_U, 0, 0.0) * time, c(H_SCROLL_V, 0, 0.0) * time);
             let additive = c(H_BLEND_MODE, 0, 0.0) == 1.0;
@@ -185,12 +196,12 @@ fn mipmapped(w: u32, h: u32, px: Vec<u8>) -> Image {
 /// on the floor there below 2 m over the player's middle), to look at it and walk into it (with
 /// BF_TEST_GOTO) without a death.
 fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
-              mut test_dropped: Local<bool>) {
+              mut test_dropped: ResMut<TestChipDropped>) {
     let Some(chip) = chip else { return };
     let test = std::env::var("BF_TEST_CHIP").ok()
         .map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()).filter(|v| v.len() >= 2);
-    if let Some(t) = test.filter(|t| !*test_dropped && player.sim_time >= t.get(2).copied().unwrap_or(0.5)) {
-        *test_dropped = true;
+    if let Some(t) = test.filter(|t| !test_dropped.0 && player.sim_time >= t.get(2).copied().unwrap_or(0.5)) {
+        test_dropped.0 = true;
         let at = Vec3::new(t[0], floor_y(t[0], t[1], player.position.y + 2.0) + CHIP_HEIGHT, t[1]);
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {

@@ -131,7 +131,10 @@ Squad movement and deaths follow the game's own data and the captures:
     without mips the one-texel traces break up a few metres off, where the footage shows an even
     soft green). It sorts 1000 m nearer among see-through things than it is: the terrain's
     blended texture layers are drawn in the same pass, sorted by their chunk's middle, and
-    painted over it on sdm_e34 (it all but vanished: a 7/255 difference).
+    painted over it on sdm_e34 (it all but vanished: a 7/255 difference). Known limit: it now
+    sorts after every other blended thing (gas clouds, blood mist, liquids, see-through
+    materials), so it shows crisp over a cloud between it and the camera. (The same value is
+    also the pipeline's depth bias, about 1e-4 of the depth: it doesn't draw through walls.)
   * `BF_TEST_CHIP=<x>,<z>[,<s>]` drops a chip at (x, z) at that time (default 0.5 s), on the
     floor below 2 m over the player's middle, without a death.
   * Verified: a squadmate killed on the test map (`cargo run --bin bf_play -- --test` with
