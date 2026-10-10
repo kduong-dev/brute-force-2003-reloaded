@@ -281,16 +281,19 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   demo's 0.2 s, which the takes' 0.19-0.24 s press-to-shot fits); after a shot it stays up 4 s
   (`READY_HOLD`: FUN_00123f60 keeps +0x7dc at 4 or more, medium confidence), so the takes' taps
   2.2 s apart fire at once (0.07-0.11 s). Checked: 80 ms Bower taps at 2, 4 and 6 s fire at
-  +0.20, +0.13 and +0.13 s (15 fps capture steps).
+  +0.20, +0.13 and +0.13 s (15 fps capture steps); at `BF_CAPTURE_FPS=60`, +0.20 and +0.03 s.
+  (`BF_TEST_FIRE` presses on the first frame past 1.0 s: 1.067 at 15 fps, so its first shot logs
+  at 1.27.)
 * **The burst counter** is cleared by a reload starting (FUN_0022daf0), a dry click
   (FUN_002327f0) and a switch (FUN_0022dc00), as in the game.
 * **Bursts and pellets**. A trigger cycle is h_e4076713 shots, h_e6c60892 s apart. At 0 s apart
   (the Bower 20's 6) they all go in the same frame for one round and one report, and each after
   the first is turned from the one before by up to h_e704fd69 degrees of yaw and of pitch
   (FUN_0022e1d0: the pellets walk away from the first; medium confidence on the walk).
-  When the clip runs dry inside a burst, FUN_0022f0e0 ends the cycle (cooldown 1 / rate) and
-  FUN_0022fe00 has no burst left to excuse a round: the Bower's **last shell of a clip is one
-  pellet**, and the reload starts 1 s later (the takes: Bower +1.0 s).
+  The round is taken on the cycle's last shot: FUN_0022fe00 excuses every shot while the
+  counter is running, and only once FUN_0022f0e0 has cleared it (the 6th) does the clip drop.
+  So the clip stays put through a burst and every shell is 6 pellets, the last of a clip too;
+  the reload then starts 1 s later (the takes: Bower +1.0 s).
   bullet-type 4 is an instant ray whatever the bullet's speed (FUN_0022f1d0): the Bower's and
   the MK's 80 m/s aren't used.
 * **Accuracy** (weapon+0x1dc). The accuracy block h_fb327295 {min, max, scoped cap,
@@ -316,12 +319,14 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
 * **Muzzle effects**. The weapon's h_fd88830d effect plays at its muzzle hardpoint once a frame
   in which it fired (the MK's orange flash and grey smoke); it replaces the plain flash quad on
   guns that have one. The point light stays (the demo's). In the controlled character's own
-  scope it's drawn out along the barrel 3 m from the eye instead (`SCOPE_FLASH_REACH`, the
-  demo's rule): at the muzzle, a few tenths of a metre from the scoped eye and magnified, its
-  sparks covered half the view. The game's scope shows a modest orange ball right of the
-  crosshair (63/take01, 28.6 s); the scope-in code (0x1223da, FUN_001249b0) doesn't move or
-  hide it, and nothing else that does was found. At 3 m it is about that size and place; its
-  look is still the demo's ALE streaks (a star), not the game's soft ball.
+  scope it's drawn 3 m from the eye, ~60 units right of and ~15 below the crosshair, where the
+  take shows it (`SCOPE_FLASH_REACH`, `SCOPE_FLASH_AT`: the demo's rule, measured from 63/take01
+  at 28.77-28.85 s), and the demo's point light is off: at the muzzle, a few tenths of a metre
+  from the scoped eye and magnified, its sparks covered half the view. The scope-in code
+  (0x1223da, FUN_001249b0) doesn't move or hide it, and nothing else that does was found. The
+  game's is a soft orange ball ~110 x 150 units, gone in ~0.1 s; ours is the ALE effects'
+  sharp star, larger, with flat flash quads lying level (one below the star): that's the ALE
+  rendering's (#104), not faked here.
 * **Tracers** (FUN_002317e0). An instant ray carries its flight effect only when its counter is
   0, which then restarts at h_eeb9e75a: the MK every 3rd shot, the Minigun every 4th, the rest
   every shot. The tracer is now turned along the shot (ALE emitters fire along their +y): it
@@ -352,7 +357,7 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   (`BF_CAMERA_DISTANCE=2.5 BF_VIEW_YAW=1.3`).
 * Casings land to Tex's right on the floor; the muzzle smoke and flash at the Minigun's barrel.
 * With `play_ammo.rs` (#114): the Minigun reloads after its 80 rounds and fires on; the Bower
-  with `BF_TEST_CLIP=2` fires a 6-pellet shell, a 1-pellet shell, reloads 1.0 s later (reserve
+  with `BF_TEST_CLIP=2` fires two 6-pellet shells, reloads 1.0 s later (reserve
   80 -> 68) and fires full shells again; with `BF_TEST_RESERVE=0` it clicks dry about once a
   second instead.
 * The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel the same as

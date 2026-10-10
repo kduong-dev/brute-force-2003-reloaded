@@ -216,7 +216,9 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
     let carried = if def.ammo_regen > 0.0 { 0 } else if npc { size } else { reserve.get(def.ammo_type) };
     // FUN_002327f0 runs when the cooldown is out with the trigger held; FUN_00121170's action 4
     // at the release (the measured reload starts)
-    let empty_cycle = clip == 0 && (!u.fire || u.cooldown <= 0.0);
+    // (the empty cycle itself runs in the fire loop's game frames, play_shots.rs)
+    let empty = u.fire_state.take_empty();
+    let empty_cycle = clip == 0 && (!u.fire || empty);
     if !busy && carried > 0 && clip < size && (empty_cycle || u.reload_wanted) {
         // FUN_0022daf0: the rounds leave the reserve now (the HUD's reserve drops at the start);
         // the clip shows 0 until the magazine-in event
@@ -232,14 +234,13 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
             println!("t={:.2} {} reloads {}: {took} rounds, reserve type {} now {}", u.sim_time, CHARACTERS[u.character % CHARACTERS.len()],
                      def.label, def.ammo_type, reserve.get(def.ammo_type));
         }
-    } else if u.fire && clip == 0 && u.cooldown <= 0.0 && carried == 0 && ready(u) {
+    } else if u.fire && clip == 0 && empty && carried == 0 && ready(u) {
         // dry fire: the empty-fire sound, the cooldown set as for a shot (FUN_002327f0)
         if def.empty_sound != 0 {
             u.sound_queue.push((def.empty_sound, DRY_VOLUME));
         }
-        // (the scoped rate in the scope, and the burst cleared: play_shots.rs)
-        u.cooldown = shots::period(def, u.scope > 0.5);
-        u.fire_state.reset_burst();
+        // (the cooldown is already set, 1 / rate or the scoped rate, and the burst cleared:
+        // the fire loop's empty cycle, play_shots.rs)
         if let Some(c) = u.regen.get_mut(w) {
             c.cooldown = u.cooldown;
         }

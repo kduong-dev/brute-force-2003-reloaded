@@ -1858,10 +1858,13 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     player.show_help = help;
     player.weapon_dirty = true;
     player.hud_list = 0.0;
+    player.fire_state.drop_pull();
     for m in squad.0.iter_mut() {
         m.move_input = Vec2::ZERO;
         m.aim = false;
         m.fire = false;
+        // (a tap still owed its shot doesn't go on firing for the one handed over from)
+        m.fire_state.drop_pull();
     }
     // the character handed over from drops back with a follow line (unless they're dead)
     let left_behind = &mut squad.0[i];
@@ -2550,6 +2553,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.holding = true;
     p.switching = None;
     p.reloading = None;
+    // new weapon objects: their accuracy, tracer counters, burst and casings start afresh
+    // (play_shots.rs), as a new gun's do
+    p.fire_state = Default::default();
     // a full clip each (the reserve is the squad's: play_ammo.rs)
     p.ammo = weapons.iter().map(|w| [w.def.ammo.max(1), 0]).collect();
     p.regen = vec![ammo::Charge::default(); weapons.len()];
@@ -4169,8 +4175,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
     p.aim_hold -= dt;
-    let can_fire = armed && p.reloading.is_none() && p.throwing.is_none() && p.ammo.get(p.weapon).is_some_and(|a| a[0] > 0)
+    let gun_up = armed && p.reloading.is_none() && p.throwing.is_none()
         && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours;
+    let can_fire = gun_up && p.ammo.get(p.weapon).is_some_and(|a| a[0] > 0);
     // (a tap is held until its first shot, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire, can_fire);
     if pulled {
@@ -4182,7 +4189,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // the fire loop in 30 Hz game frames (play_shots.rs): the cooldown, bursts and pellets,
     // accuracy; each round fired takes one from the clip and plays one report
     if let Some(def) = l.weapons.get(p.weapon).map(|w| &w.def) {
-        let trigger = shots::Trigger { held: pulled, clip: p.ammo.get(p.weapon).map_or(0, |a| a[0]),
+        let trigger = shots::Trigger { held: pulled, dry: p.fire && gun_up && p.using.is_none(), clip: p.ammo.get(p.weapon).map_or(0, |a| a[0]),
                                        scoped: p.scope > 0.5, crouched: p.crouch_wanted };
         let seed = p.character as u32 * 7919 + p.npc.map_or(0, |n| n.id as u32 * 104_729);
         let (weapon, mut cooldown) = (p.weapon, p.cooldown);
@@ -4523,7 +4530,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                     p.shots.push(Shot { origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
                                         flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
                                         damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type,
-                                        decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff, range });
+                                        decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff,
+                                        // (the falloff runs over the bullet's own range, FUN_00230040)
+                                        range: w.def.range });
                     if std::env::var("BF_SHOT_LOG").is_ok() {
                         println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?}",
                                  p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),
@@ -4861,7 +4870,9 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             f.rotation = f.rotation * Quat::from_rotation_z(1.3);      // vary the flash shape
         }
         if let Ok(mut light) = lights.get_mut(w.light) {
-            light.intensity = if flash_on { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
+            // (off in the holder's scope: from the hidden gun under the eye it lit a hard-edged
+            // disc on the ground; the demo's rule)
+            light.intensity = if flash_on && p.scope <= 0.5 { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
         }
     }
     for s in p.shots.drain(..) {

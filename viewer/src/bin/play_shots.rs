@@ -13,9 +13,10 @@
 //!    +0x7a8 is set (the scope; medium confidence) the rate is h_019c314a (MK 6/s).
 //!  - **Bursts and pellets**: each shot counts weapon+0x28c; below the burst count the next
 //!    cooldown is the burst-delay instead (FUN_0022f0e0). With a delay of 0 the loop goes on in
-//!    the same frame and the shots after the first take no round (FUN_0022fe00): the Bower's 6
-//!    pellets a shell. Each of those is turned by a uniform random yaw and pitch within the
-//!    burst-spread (FUN_0022e1d0), in place, so the pellets walk away from the first.
+//!    the same frame and only the last takes a round (FUN_0022fe00): the Bower's 6
+//!    pellets a shell for one round. Each after the first is turned by a uniform random yaw and
+//!    pitch within the burst-spread (FUN_0022e1d0), in place, so the pellets walk away from the
+//!    first.
 //!  - **Accuracy** (the object at weapon+0x1d0: current +0xc = weapon+0x1dc, cap +0x10): the cap
 //!    is the data's max, or its scoped cap while the holder's +0x7a8 is set (FUN_001241b0 ->
 //!    FUN_00222ac0); each trigger cycle takes recoil-per-shot off (FUN_00222c10; halved, and the
@@ -50,7 +51,10 @@ pub const TICK: f32 = 1.0 / 30.0;
 /// goes on that frame or the next, about half the time each. The takes measured just that:
 /// Minigun 0.086 s (2.5 frames: 0.083), Foley 0.352 (10.5: 0.350), LZR-50 0.284 (8.5: 0.283),
 /// Jax-iC 0.52 (15.5: 0.517), while the MK's 3.75 frames is always 4 (0.142 measured, 0.133).
-/// A model of the frame clock's jitter, small enough not to move any period that isn't a tie.
+/// This is the demo's model of the frame clock's jitter, not anything in the code: small enough
+/// not to move any period that isn't a tie. The takes ran in xemu at 27-29 fps, whose uneven
+/// frames may be all there is to it; on hardware at a steady 30 fps the Minigun may well fire at
+/// 15/s.
 const TICK_JITTER: f32 = 1e-4;
 /// The game's degrees-to-radians factor in FUN_002229b0 and FUN_0022e1d0 (0x3a52e0).
 const DEG: f32 = 0.017444;
@@ -72,10 +76,17 @@ const SHELL_ROLL: f32 = 15.0;
 /// In the holder's own scope the muzzle effect is drawn this far (m) from the eye, out along the
 /// barrel. The demo's rule: drawn at the muzzle, a few tenths of a metre from the scoped eye and
 /// magnified, its sparks covered half the view in streaks. The game's scope shows it as a
-/// modest orange ball right of the crosshair (63/take01, 28.6 s); no code was found that moves
+/// soft orange ball ~110 x 150 units, centred ~60 units right of the crosshair, gone in ~0.1 s
+/// (63/take01, 28.77-28.85 s): so it keeps the muzzle's direction from the eye, only further
+/// out. Its star look is the ALE streak rendering's (#104), not the game's ball. No code was
+/// found that moves
 /// or hides it for the scope (the scope-in at 0x1223da and FUN_001249b0 only set +0x7a8, the
 /// sway and the zoom sounds).
 const SCOPE_FLASH_REACH: f32 = 3.0;
+/// Where the scoped flash shows: its centre this many 640 x 480 units right of and below the
+/// crosshair (63/take01, 28.77-28.85 s: ~60 right, ~15 below). Measured, and the demo's rule:
+/// the demo's hidden gun sits further off the eye than the game's.
+const SCOPE_FLASH_AT: [f32; 2] = [60.0, 15.0];
 /// How long a casing stays (s), how it falls (m/s^2) and bounces. Guesses: the casing is a
 /// pooled physics object (FUN_002291d0) whose life and material aren't traced.
 const SHELL_LIFE: f32 = 2.0;
@@ -127,6 +138,8 @@ pub struct FireState {
     /// muzzle effects and casings owed to the effects (`shot_fx`)
     pub flashes: u32,
     pub shells: u32,
+    /// empty trigger cycles since play_ammo.rs last took them (FUN_002327f0)
+    empty: u32,
     seed: u32,
     /// a trigger pull still owed its first shot (see `pull`), and the trigger last frame
     latched: bool,
@@ -152,12 +165,16 @@ pub fn period(def: &WeaponDef, scoped: bool) -> f32 {
 
 /// What the trigger and the holder are doing this frame.
 pub struct Trigger {
+    /// the trigger for the fire loop (`pull`: held, or a tap still owed its shot)
     pub held: bool,
+    /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case)
+    pub dry: bool,
     /// rounds in the clip
     pub clip: i64,
     /// the holder's +0x7a8 (the scope)
     pub scoped: bool,
-    /// the holder's +0x1f8 == 6 (crouched)
+    /// the holder's +0x1f8 == 6: read as crouched (that state, with 7, takes the character's
+    /// crouch-height at 0x14dd50 / 0x1098f0; a reading, not a name)
     pub crouched: bool,
 }
 
@@ -197,6 +214,18 @@ impl FireState {
         (held || self.latched) && can_fire
     }
 
+    /// Whether the fire loop ran an empty cycle since the last call (play_ammo.rs: the reload
+    /// or the dry click it leads to, FUN_002327f0 -> FUN_00120d40).
+    pub fn take_empty(&mut self) -> bool {
+        std::mem::take(&mut self.empty) > 0
+    }
+
+    /// Forget a pull still owed its shot (control passing to another character).
+    pub fn drop_pull(&mut self) {
+        self.latched = false;
+        self.was_held = false;
+    }
+
     /// Whether the gun is still up from a recent shot (`READY_HOLD`): no raise before the next.
     pub fn raised(&self) -> bool {
         self.ready > 0.0
@@ -233,29 +262,23 @@ impl FireState {
             let mut a = self.weapon(weapon).accuracy.unwrap_or(cap).max(min).min(cap);
             // FUN_0022e4c0: the aim's turn this frame, from the accuracy before the shots
             let spread = spread_at(a);
-            // FUN_0022f2a0
-            // the clip ran dry inside a zero-delay burst (the Bower's last shell): FUN_0022f0e0
-            // ends the cycle (the clip is 0: burst counter cleared, cooldown 1 / rate) and
-            // FUN_0022fe00 finds no burst left to excuse a round, so the last shell is one pellet
-            while t.held && *cooldown <= 0.0 {
-                if t.clip - rounds <= 0 {
-                    if self.burst > 0 {
-                        self.burst = 0;
-                        *cooldown = cycle;
-                    }
-                    break;
-                }
+            // FUN_0022f2a0: an empty clip ends the loop (FUN_002327f0, play_ammo.rs). The clip
+            // drops only after a shot for which FUN_0022fe00 returns 0: in a zero-delay burst
+            // that's the last shot, once FUN_0022f0e0 has cleared the counter, so the clip stays
+            // put through the burst and every shell is its full pellets, the last one included
+            while t.held && *cooldown <= 0.0 && t.clip - rounds > 0 {
+                // turned from the shot before: a zero-delay burst's shots after the first
                 let walk = self.burst > 0 && d.burst_delay == 0.0;
-                // FUN_0022f0e0
+                // FUN_0022f0e0 (the clip it tests hasn't dropped yet this cycle)
                 self.burst += 1;
-                if self.burst < d.burst_count {
+                if self.burst < d.burst_count && t.clip - rounds > 0 {
                     *cooldown = d.burst_delay;
                 } else {
                     *cooldown = cycle;
                     self.burst = 0;
                 }
-                // FUN_0022fe00: a zero-delay burst's later shots take no round
-                if !walk {
+                // FUN_0022fe00: no round for a zero-delay burst's shots before its last
+                if self.burst == 0 || d.burst_delay != 0.0 {
                     rounds += 1;
                 }
                 self.latched = false;
@@ -286,6 +309,15 @@ impl FireState {
                 if *cooldown > 0.0 {
                     break;
                 }
+            }
+            // FUN_002327f0: the trigger down on an empty clip once the cooldown is out sets the
+            // cooldown as a shot does (1 / rate, scoped rate in the scope) and clears the burst;
+            // the character then reloads or clicks (play_ammo.rs). In game frames, so dry clicks
+            // keep the fire loop's rhythm
+            if (t.dry || t.held) && *cooldown <= 0.0 && t.clip - rounds <= 0 {
+                *cooldown = cycle;
+                self.burst = 0;
+                self.empty += 1;
             }
             // FUN_0022eee0: a casing for each whole one owed
             let w = self.weapon(weapon);
@@ -406,21 +438,26 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
             continue;
         }
         // the controlled character's eye, when the view is its scope (see SCOPE_FLASH_REACH)
-        let eye = (k == 0 && p.scope > 0.5).then(|| camera_pose(p, 0.0).0);
+        let eye = (k == 0 && p.scope > 0.5).then(|| {
+            let (eye, look) = camera_pose(p, 0.0);
+            (eye, (look - eye).normalize_or(Vec3::NEG_Z), (fov_at(p.zoom) * 0.5).tan())
+        });
         let Some(w) = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon)) else { continue };
         let d = &w.def.shots;
         // the muzzle effect, once a frame however many shots (the Bower's pellets are one)
         if flashes > 0 && d.muzzle_effect != 0 {
             let at = Transform::from_translation(w.muzzle.point).with_rotation(Quat::from_rotation_arc(Vec3::Y, w.fire_dir));
-            // in the holder's own scope: out along the barrel to SCOPE_FLASH_REACH from the eye,
+            // in the holder's own scope: SCOPE_FLASH_REACH from the eye toward the muzzle,
             // in the world (the demo's rule)
-            let scoped = eye.zip(globals.get(w.entity).ok()).map(|(eye, g)| {
-                let (muzzle, dir) = (g.transform_point(w.muzzle.point), (g.rotation() * w.fire_dir).normalize_or(Vec3::NEG_Z));
-                // the point on the barrel's line SCOPE_FLASH_REACH from the eye, past the muzzle
-                let to = muzzle - eye;
-                let (b, c) = (to.dot(dir), to.length_squared() - SCOPE_FLASH_REACH * SCOPE_FLASH_REACH);
-                let t = if c >= 0.0 { 0.0 } else { -b + (b * b - c).max(0.0).sqrt() };
-                Transform::from_translation(muzzle + dir * t).with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
+            let scoped = eye.zip(globals.get(w.entity).ok()).map(|((eye, fwd, half), g)| {
+                let dir = (g.rotation() * w.fire_dir).normalize_or(fwd);
+                // where the take shows it in the scope: SCOPE_FLASH_AT units right of and below
+                // the crosshair (on the 640 x 480 picture, at whatever the zoom), the gun's side
+                let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
+                let up = right.cross(fwd);
+                let [x, y] = SCOPE_FLASH_AT.map(|u| u / 240.0 * half);
+                let toward = (fwd + right * x - up * y).normalize();
+                Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
             });
             for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, d.muzzle_effect) {
                 let life = fx.duration();
