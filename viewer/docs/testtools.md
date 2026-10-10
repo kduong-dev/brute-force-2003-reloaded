@@ -75,8 +75,9 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   levels-*.xmb) on a thread when the session starts. A pick loads that level's data on a thread
   (`Game::load`, its archive, `Level::load_sky`), makes its layers as a level's own are made
   (`level_scene::sky_layers`, the same layers, order and blending) and keeps them for the
-  session (a second pick is at once). It replaces the map's sky (`SkyLayer` entities) and the
-  clear colour becomes its `<background-color>`; "none" puts the map's own clear colour back
+  session (a second pick is at once). While one loads, other sky picks are ignored ("Still
+  loading the sky of ..."): each load reads the game data anew. It replaces the map's sky
+  (`SkyLayer` entities) and the clear colour becomes its `<background-color>`; "none" puts the map's own clear colour back
   (the flat floor's is black). The camera's far plane goes out to 5000 m, a level's, so the flat
   floor's (Bevy's 1000 m) reaches the layers.
 * **Music**: the list is every level of the game's list whose `data/sounds/<level>.xwb` has
@@ -85,6 +86,7 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   thread, then mixes it as `setup` mixes a level's (play.rs `music_mix`: the music, the first
   ambience bed under it at 80%, all beds if it has no music), looping at the music volume. The
   map's own music is stopped first (`LevelMusic`). `BF_MUTE` loads and logs but plays nothing.
+  As with skies, picks while a bank loads are ignored.
 * **Level switch**: `AppState::Switching` between the maps. Leaving runs `end_play` (every
   entity the map spawned, its sounds and its collision go, as on Backspace), a loading screen
   shows while the level loads on a thread as the front end loads one, plus the test map's
@@ -94,8 +96,11 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   lists and the skies made ready. Two leaks this found are fixed: switching to the flat floor
   kept the last level's `Doors` and `UsePanel` (its gate panels' use prompt), and a weapon
   taken just before a switch was put in the next map's hand (`PendingSlot`). The deathmatch
-  arenas are played alone, as the front end plays them. A zone that doesn't load puts up the
-  test map instead, saying so.
+  arenas are played alone, as the front end plays them (by the game's level list, also with
+  `--test BF_MAP=<arena>`). A zone with no level file puts up the test map, saying so; one whose
+  load fails (an error, or its thread stops without a result, e.g. a panic) is noted and the map
+  the switch came from loads instead, then the test map; only if that fails too does the program
+  stop. `BF_TEST_LEVEL_FAIL=<level>` makes that level's load panic, to try it.
 * Not done: moving NPCs, removing placed objects, saving a layout, enemy species (#110).
 
 ## Test hooks
@@ -119,10 +124,21 @@ help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H.
 | `BF_TEST_SKY=<s>,<level\|none\|map>` | that level's sky (its archive's name, e.g. `sdm_e10`, else the first whose title contains it), none, or the map's own |
 | `BF_TEST_MUSIC=<s>,<level\|off\|map\|next\|prev>` | that level's music bank, off, the map's own, or the next / previous bank of the list (Right / Left) |
 | `BF_TEST_LEVEL=<s>,<level>[;<s>,<level>...]` | switch to that level (`flat` or `test`: the test map). One entry per map in turn, each on its own map's clock: the first on the first map, the second on the map it switched to, and so on |
+| `BF_TEST_LEVEL_FAIL=<level>` | loading that level for a switch panics on its thread (the fall back to the map it came from) |
 
-Every hook but `BF_TEST_LEVEL` acts on one map of the session only (a switch would otherwise
-replay them on each map): the first, or the n-th with `BF_TEST_ON_MAP=<n>`. `--test` with
-`BF_MAP=<level>` starts the session on that level.
+The hooks of this page (`BF_TEST_HELP` too) but `BF_TEST_LEVEL` act on one map of the
+session only (a switch would otherwise replay them on each map): the first, or the n-th with
+`BF_TEST_ON_MAP=<n>`. `BF_TEST_LEVEL` has an entry per map. The other test hooks (play.md and
+the other pages) don't follow `BF_TEST_ON_MAP`; each keeps its own behaviour across a switch:
+* on every map, on its clock: those read as a map starts or each frame, e.g. `BF_TEST_GOTO`,
+  `BF_CAMERA_*`, `BF_TEST_HEALTH`, `BF_TEST_KILL` (it fires at the squad member
+  on whichever map); `BF_TEST_DIE` once per map (`TestDied` is reset with each one);
+* once per process, latched in a system's `Local` the first time: `BF_TEST_DROP` (gas),
+  `BF_TEST_DETONATE` (grenades), `BF_TEST_TOGGLE_KILL`, `BF_TEST_SUICIDE`, and (by #114's review;
+  not on this branch) its test clip hook; on a later map they don't fire again.
+
+`--test` with `BF_MAP=<level>` starts the session on that level (a deathmatch arena alone, as
+the switch plays one: by the game's level list).
 `BF_TOOLS_LOG=1` also prints what each map starts with and what's left when it ends (see
 "Verified").
 
@@ -243,8 +259,19 @@ looked at:
   free camera, a medkit dropped from the air (it fell on Tex, who took it), a missile rack
   hanging, an enemy Hawk dummy under the crosshair, e40's sky, music; then on mp1 the
   deathmatch arena alone ("squad 0"), with its own 7 sky layers.
+* Missions, one per act (`BF_TEST_LEVEL="2.5,tutorial;2,e05;2,m05_c;2,m09_b;2,m14_d;2,sdm_e10;2,flat"`
+  with `BF_TEST_LEVEL_FAIL=sdm_e10`): tutorial (71 breakables), e05 (56), m05_c, m09_b (360) and
+  m14_d each load and play (at 0, 0: views from inside or under the scenery). sdm_e10's load
+  panicked as asked: "sdm_e10 didn't load: back to m14_d", m14_d came back with the note "sdm_e10
+  didn't load (the loading thread stopped): m14_d instead" on screen (frames 208-224), and the
+  next entry took it to the test map. Each "left ..." line: "0 of its own"; the screenshots on
+  their way are left to finish (all 260 frames saved). Picks during a load: "sky pick ignored:
+  still loading the sky of sdm_e34", the same for music.
+* `--test BF_MAP=mp1`: "squad 0", alone as through L.
 * Capturing across a switch panicked once: `end_play` despawned a screenshot the renderer was
-  still finishing. It's left alone now.
+  still finishing. It's left alone now, with its observer (the save to disk: without it the
+  last frame before a switch wasn't saved).
 * Not tested: the keys and the mouse (Y, U, L, Left / Right, Shift + the wheel, the clicks):
-  the hooks drive the same code. A zone that doesn't load (none found; the fallback to the
-  test map is untested). Missions other than m01_a.
+  the hooks drive the same code. A real load failure (none found: the fallback was driven by
+  BF_TEST_LEVEL_FAIL), the second step of the fallback (the test map when the map it came from
+  fails too). Mission zones other than the six above.

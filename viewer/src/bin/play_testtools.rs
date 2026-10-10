@@ -86,20 +86,27 @@ const GRENADE_REACH_UP: f32 = 1.5;
 const LIST_LINES: usize = 9;
 /// How long a tool's message shows (s): the test map's.
 const MESSAGE_TIME: f32 = 2.0;
-/// The free camera's air placement (the demo's choices): how far along the crosshair (m) an
-/// object goes at first, a notch of Shift + the wheel's step, the nearest and furthest, and how
-/// far short of a surface the ray meets first it stops.
+/// How far along the crosshair (m) the free camera puts an object in the air at first (the
+/// demo's choice).
 const AIR_DISTANCE: f32 = 4.0;
+/// How far (m) a notch of Shift + the wheel moves it along the crosshair (the demo's).
 const AIR_STEP: f32 = 0.5;
+/// The nearest and furthest (m) it goes along the crosshair (the demo's).
 const AIR_RANGE: (f32, f32) = (1.0, 40.0);
+/// How far short (m) of what the crosshair's ray meets first it stops, so it isn't put inside a
+/// wall or the floor (the demo's).
 const AIR_CLEAR: f32 = 0.3;
 /// An object whose lowest point would be less than this (m) above the ground is put on it.
 const AIR_MIN_HEIGHT: f32 = 0.05;
-/// The preview's marks (the demo's): an object that drops has a line down to where it lands
-/// and a ring there; one that hangs where put (scenery) a ring round its foot. Ring radius (m).
+/// The preview's mark for an object that drops (the demo's): a cyan line down to where it lands
+/// and a ring there.
 const DROP_MARK: Color = Color::srgb(0.3, 0.85, 1.0);
+/// The preview's mark for one that hangs where it's put (scenery; the demo's): a yellow ring
+/// round its foot.
 const HANG_MARK: Color = Color::srgb(1.0, 0.8, 0.25);
+/// The marks' ring radius (m, the demo's).
 const MARK_RING: f32 = 0.35;
+
 
 /// A character the NPC tool spawned (`Player::npc`): its number (1, 2, ... in the order
 /// spawned; the hooks' `<n>`), whether it fights, and the way it was put facing.
@@ -696,7 +703,6 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
         }
     }
     if keys.just_pressed(KeyCode::Delete) && matches!(tools.panel, Panel::None | Panel::Npcs) {
-
         acts.push(Hook::Remove(if shift { Pick::All } else { Pick::Aim }));
     }
     for hook in &script.now {
@@ -1075,7 +1081,6 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
             println!("t {:.2}: placed {} ({:?}) at {:.2} {how} turned {:.0} deg", player.sim_time, list.0[i].label, list.0[i].kind, at.at(), yaw.to_degrees());
         }
     }
-
     // the see-through copy: the picked entry, at the crosshair
     let want = (open && n > 0).then_some(tools.object);
     if tools.ghost.map(|g| g.1) != want {

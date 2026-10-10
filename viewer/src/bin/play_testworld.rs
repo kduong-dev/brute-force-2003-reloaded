@@ -40,7 +40,7 @@ const MESSAGE_TIME: f32 = 2.0;
 /// demo's): once its scenery and pickups are listed.
 const AUDIT_AT: f32 = 0.5;
 /// How much of a music bank's file is read to list its tracks (bytes): its header, entry table
-/// and names come first (in data/sounds the names end by byte 868 at most, tutorial.xwb's 6).
+/// and names come first (in data/sounds the names end by byte 868 at most: m09_b.xwb's, 9 entries).
 const XWB_HEAD: u64 = 16 * 1024;
 /// How far the camera sees (m) under another level's sky: as far as on a level (setup's
 /// 5000). The flat floor's camera has Bevy's 1000, short of sdm_e34's sky (3.2 km across).
@@ -100,12 +100,15 @@ struct World {
     audited: bool,
 }
 
-/// The level switch asked for, and (once it's loading) the thread's result; where from.
+/// The level switch asked for, and (once it's loading) the thread's result; where from; and the
+/// levels that failed to load on the way (the fall back: the map it came from, then the test
+/// map), with why.
 #[derive(Resource)]
 struct Switch {
     to: Entry,
     from: String,
     rx: Option<Mutex<Receiver<LevelLoad>>>,
+    failed: Vec<String>,
 }
 
 /// A note for the next map's first frame (a level that didn't load).
@@ -130,6 +133,13 @@ pub fn plugin(app: &mut App) {
         .add_systems(OnExit(AppState::Switching), end_switch);
 }
 
+/// Whether `zone` is a deathmatch arena by the game's level list (campaign-bf.xmb Type
+/// LEVEL_DEATHMATCH): the front end plays those alone, and so does a test session, whether it
+/// starts on one (`--test` with BF_MAP, play.rs `main`) or switches to one.
+pub fn arena(game: &Game, zone: &str) -> bool {
+    game.campaign.iter().any(|l| l.kind == LEVEL_DEATHMATCH && (l.file == zone || l.zones.iter().any(|z| z == zone)))
+}
+
 /// The game's level list as the level menu shows it: the test map, then the squad deathmatch
 /// maps, the deathmatch arenas and the missions (each zone), each group in the game's order.
 fn level_list(game: &Game) -> Vec<Entry> {
@@ -143,7 +153,7 @@ fn level_list(game: &Game) -> Vec<Entry> {
                     continue;
                 }
                 let title = s(l.name).map(|t| t.trim().to_string()).unwrap_or_else(|| z.clone());
-                out.push(Entry { zone: z.clone(), title, group, deathmatch: l.kind == LEVEL_DEATHMATCH });
+                out.push(Entry { zone: z.clone(), title, group, deathmatch: arena(game, z) });
             }
         }
     }
@@ -315,7 +325,15 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         }
     }
     let log = std::env::var("BF_TOOLS_LOG").is_ok();
-    // a sky: none, or a level's (made ready already, or loaded on a thread)
+    // a sky: none, or a level's (made ready already, or loaded on a thread). While one loads,
+    // other picks are ignored (each load reads the game data anew: they'd pile up)
+    if let (Some(_), Some((z, _))) = (&sky, &world.sky_loading) {
+        status.message = Some((format!("Still loading the sky of {z}"), MESSAGE_TIME));
+        if log {
+            println!("test tools: sky pick ignored: still loading the sky of {z}");
+        }
+        sky = None;
+    }
     if let Some(p) = sky {
         let zone = match p {
             Pick::None => None,
@@ -365,6 +383,13 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         }
     }
     // music: off, or a level's bank (decoded and mixed on a thread)
+    if let (Some(_), Some((z, _))) = (&bank, &world.music_loading) {
+        status.message = Some((format!("Still loading the music of {z}"), MESSAGE_TIME));
+        if log {
+            println!("test tools: music pick ignored: still loading the music of {z}");
+        }
+        bank = None;
+    }
     if let Some(p) = bank {
         let zone = match p {
             Pick::None => None,
@@ -408,7 +433,7 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
             println!("test tools: switching from {} to {} ({})", current.0, to.zone, to.title);
         }
         tools.panel = Panel::None;
-        commands.insert_resource(Switch { to, from: current.0.clone(), rx: None });
+        commands.insert_resource(Switch { to, from: current.0.clone(), rx: None, failed: vec![] });
         next.set(AppState::Switching);
     }
 }
@@ -422,7 +447,18 @@ fn show_sky(commands: &mut Commands, layers: &SkyLayers, background: [f32; 3], s
     clear.0 = Color::srgb(background[0], background[1], background[2]);
 }
 
+/// A thread's result, if it's in: its own, or an error if the thread ended without one (it
+/// panicked), so nothing waits on it for ever.
+fn poll<T>(rx: &Mutex<Receiver<Result<T, String>>>) -> Option<Result<T, String>> {
+    match rx.lock().ok()?.try_recv() {
+        Ok(x) => Some(x),
+        Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("the loading thread stopped".into())),
+    }
+}
+
 /// A sky or a music bank loaded: the sky made ready (kept for the session) and put up, the
+
 /// camera seeing as far as SKY_FAR; the music in place of what played.
 #[allow(clippy::too_many_arguments)]
 fn finish_loads(mut commands: Commands, mut world: ResMut<World>, mut lists: ResMut<Lists>, mut status: ResMut<UsePanel>,
@@ -431,7 +467,7 @@ fn finish_loads(mut commands: Commands, mut world: ResMut<World>, mut lists: Res
                 mut sources: ResMut<Assets<AudioSource>>, mut clear: ResMut<ClearColor>, skies: Query<Entity, With<SkyLayer>>,
                 music: Query<Entity, With<super::LevelMusic>>, mut cam: Query<&mut Projection, With<MainCamera>>) {
     let log = std::env::var("BF_TOOLS_LOG").is_ok();
-    let got = world.sky_loading.as_ref().and_then(|(z, r)| r.lock().ok().and_then(|r| r.try_recv().ok()).map(|x| (z.clone(), x)));
+    let got = world.sky_loading.as_ref().and_then(|(z, r)| poll(r).map(|x| (z.clone(), x)));
     if let Some((z, load)) = got {
         world.sky_loading = None;
         match load {
@@ -463,7 +499,7 @@ fn finish_loads(mut commands: Commands, mut world: ResMut<World>, mut lists: Res
             }
         }
     }
-    let got = world.music_loading.as_ref().and_then(|(z, r)| r.lock().ok().and_then(|r| r.try_recv().ok()).map(|x| (z.clone(), x)));
+    let got = world.music_loading.as_ref().and_then(|(z, r)| poll(r).map(|x| (z.clone(), x)));
     if let Some((z, load)) = got {
         world.music_loading = None;
         match load {
@@ -593,7 +629,13 @@ fn world_text(tools: Res<Tools>, world: Res<World>, lists: Res<Lists>, current: 
 /// Loads a level for the switch (on a thread), as the front end does, with the test map's
 /// weapon data on top (testmap::load_weapon_data). One that doesn't load (no level file): the
 /// test map instead, and a note saying so.
+///
+/// Test hook: BF_TEST_LEVEL_FAIL=<level> makes loading that level panic on its thread (for the
+/// fall back in `finish_switch`).
 fn load_level(to: &str, deathmatch: bool) -> LevelLoad {
+    if std::env::var("BF_TEST_LEVEL_FAIL").is_ok_and(|z| z == to) {
+        panic!("BF_TEST_LEVEL_FAIL: {to}");
+    }
     let mut game = super::load_game()?;
     let level = super::load_map(&mut game, to);
     if to != "flat" && level.is_none() {
@@ -607,16 +649,22 @@ fn load_level(to: &str, deathmatch: bool) -> LevelLoad {
 }
 
 /// The switch begins (the map is gone: `end_play`): what's left is logged (BF_TOOLS_LOG: only
-/// what was there before the map, nothing of its own), a loading screen goes up and the next
-/// level loads on a thread.
-fn start_switch(mut commands: Commands, mut switch: ResMut<Switch>, before: Option<Res<Before>>, all: Query<Entity, Without<bevy::render::view::screenshot::Screenshot>>,
+/// what was there before the map, nothing of its own; screenshots on their way and their
+/// observers aside, which go once saved), a loading screen goes up and the next level loads on
+/// a thread.
+#[allow(clippy::type_complexity)]
+fn start_switch(mut commands: Commands, mut switch: ResMut<Switch>, before: Option<Res<Before>>,
+                all: Query<(Entity, Has<bevy::render::view::screenshot::Screenshot>, Has<bevy::ecs::observer::Observer>)>,
                 players: Query<(), With<AudioPlayer>>) {
     if std::env::var("BF_TOOLS_LOG").is_ok() {
         let kept = before.as_ref().map_or(0, |b| b.0.len());
-        let left = all.iter().filter(|e| !before.as_ref().is_some_and(|b| b.0.contains(e))).count();
-        println!("test tools: left {}: {} entities remain ({kept} from before it, {left} of its own), {} sounds",
+        let new = |e: &Entity| !before.as_ref().is_some_and(|b| b.0.contains(e));
+        let left = all.iter().filter(|(e, shot, obs)| new(e) && !shot && !obs).count();
+        let shots = all.iter().filter(|(e, shot, obs)| new(e) && (*shot || *obs)).count();
+        println!("test tools: left {}: {} entities remain ({kept} from before it, {left} of its own, {shots} screenshots on their way), {} sounds",
                  switch.from, all.iter().count(), players.iter().count());
     }
+
     commands.spawn((Camera2d, SwitchPart));
     commands.spawn((
         SwitchPart,
@@ -625,35 +673,59 @@ fn start_switch(mut commands: Commands, mut switch: ResMut<Switch>, before: Opti
         TextColor(Color::srgba(1.0, 1.0, 1.0, 0.9)),
         Node { position_type: PositionType::Absolute, left: Val::Percent(40.0), top: Val::Percent(48.0), ..default() },
     ));
-    let (tx, rx) = std::sync::mpsc::channel();
-    let (to, deathmatch) = (switch.to.zone.clone(), switch.to.deathmatch);
-    std::thread::spawn(move || {
-        let _ = tx.send(load_level(&to, deathmatch));
-    });
-    switch.rx = Some(Mutex::new(rx));
+    switch.rx = Some(load_thread(&switch.to));
 }
 
-/// The next level has loaded: play it (`begin_play`, as the front end does).
-fn finish_switch(mut commands: Commands, switch: Res<Switch>, mut next: ResMut<NextState<AppState>>, mut notice: ResMut<Notice>,
-                 mut exit: EventWriter<AppExit>) {
-    let got = switch.rx.as_ref().and_then(|r| r.lock().ok().and_then(|r| r.try_recv().ok()));
-    let Some(got) = got else { return };
-    commands.remove_resource::<Switch>();
+/// Loads `to` on a thread (`load_level`).
+fn load_thread(to: &Entry) -> Mutex<Receiver<LevelLoad>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (zone, deathmatch) = (to.zone.clone(), to.deathmatch);
+    std::thread::spawn(move || {
+        let _ = tx.send(load_level(&zone, deathmatch));
+    });
+    Mutex::new(rx)
+}
+
+/// The next level has loaded: play it (`begin_play`, as the front end does). One that failed (an
+/// error, or its thread stopped without a result: a panic) is noted and the map it came from is
+/// loaded instead, else the test map; only if that fails too does the program stop.
+fn finish_switch(mut commands: Commands, mut switch: ResMut<Switch>, lists: Res<Lists>, mut next: ResMut<NextState<AppState>>,
+                 mut notice: ResMut<Notice>, mut exit: EventWriter<AppExit>, mut text: Query<&mut Text, With<SwitchPart>>) {
+    let Some(got) = switch.rx.as_ref().and_then(poll) else { return };
     match got {
         Ok((map, note)) => {
             if std::env::var("BF_TOOLS_LOG").is_ok() {
                 println!("test tools: {} loaded{}", map.map, note.as_ref().map_or(String::new(), |n| format!(" ({n})")));
             }
-            notice.0 = note;
+            let failed = (!switch.failed.is_empty()).then(|| format!("{}: {} instead", switch.failed.join("; "), map.map));
+            notice.0 = failed.or(note);
+            commands.remove_resource::<Switch>();
             begin_play(&mut commands, map);
             next.set(AppState::Playing);
         }
         Err(e) => {
             eprintln!("test tools: couldn't load {}: {e}", switch.to.zone);
-            exit.write(AppExit::error());
+            let failed = switch.to.zone.clone();
+            switch.failed.push(format!("{failed} didn't load ({e})"));
+            // the map it came from, then the test map, each tried once
+            let tried = |z: &str| switch.failed.iter().any(|f| f.starts_with(&format!("{z} ")));
+            let back = [switch.from.clone(), "flat".to_string()].into_iter().find(|z| !tried(z));
+            let Some(entry) = back.and_then(|z| lists.levels.iter().find(|e| e.zone == z).cloned()) else {
+                exit.write(AppExit::error());
+                return;
+            };
+            if std::env::var("BF_TOOLS_LOG").is_ok() {
+                println!("test tools: {failed} didn't load: back to {}", entry.zone);
+            }
+            for mut t in &mut text {
+                t.0 = format!("{failed} didn't load. Loading {} ({})...", entry.title, entry.zone);
+            }
+            switch.rx = Some(load_thread(&entry));
+            switch.to = entry;
         }
     }
 }
+
 
 /// The loading screen goes.
 fn end_switch(mut commands: Commands, parts: Query<Entity, With<SwitchPart>>) {

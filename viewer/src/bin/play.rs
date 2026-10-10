@@ -304,11 +304,14 @@ fn snapshot_entities(mut commands: Commands, all: Query<Entity>) {
 }
 
 /// Leaving a map: remove everything it spawned (its roots; children go with them), and its
-/// collision. A screenshot on its way (BF_CAPTURE) is left to finish: the renderer marks it
-/// done a frame later, and panicked when it was gone (the test tools' level switch, #116).
+/// collision. A screenshot on its way (BF_CAPTURE) is left to finish, with its observer (the
+/// save to disk): the renderer marks it done a frame later, and panicked when it was gone, and
+/// without the observer the last frame before the test tools' level switch wasn't saved (#116).
+/// The screenshot and its observer go by themselves once it's saved.
 #[allow(clippy::type_complexity)]
 fn end_play(mut commands: Commands, before: Option<Res<Before>>,
-            all: Query<(Entity, Option<&ChildOf>), (Without<Window>, Without<bevy::render::view::screenshot::Screenshot>)>,
+            all: Query<(Entity, Option<&ChildOf>), (Without<Window>, Without<bevy::render::view::screenshot::Screenshot>,
+                                                    Without<bevy::ecs::observer::Observer>)>,
             mut cursor: Query<&mut Window, With<PrimaryWindow>>) {
     let before = before.map(|b| b.0.clone()).unwrap_or_default();
     for (e, parent) in &all {
@@ -413,7 +416,10 @@ fn main() {
             dump_sounds(&mut game, start, &dir);
             return;
         }
-        let deathmatch = std::env::var("BF_NO_SQUAD").is_ok() || std::env::var("BF_DEATHMATCH").is_ok();
+        // (a test session plays a deathmatch arena alone, as its level switch does: by the
+        // game's level list, play_testworld.rs `arena`)
+        let deathmatch = std::env::var("BF_NO_SQUAD").is_ok() || std::env::var("BF_DEATHMATCH").is_ok()
+            || (test_map && testworld::arena(&game, &map));
         loaded = Some(LoadedMap { game, level, deathmatch, map: map.clone() });
     }
     let mut app = App::new();
