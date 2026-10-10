@@ -1,6 +1,8 @@
 //! The test map's developer tools (#111): demo tooling for trying features out, not part of the
-//! game (no footage behind it; the keys, speeds and layout are the demo's choices). Only on the
-//! test map (`cargo run --bin bf_play -- --test`). None of the game's controls use these keys.
+//! game (no footage behind it; the keys, speeds and layout are the demo's choices). Only in a
+//! test session (`cargo run --bin bf_play -- --test`), on the test map or any level it switched
+//! to (play_testworld.rs: the sky, music and level menus, Y, U, L). None of the game's controls
+//! use these keys.
 //!
 //!  - F: a free camera. The mouse looks (once captured), WASD flies along the view, Space up,
 //!    Ctrl down, Shift four times faster; the character stands still meanwhile. Left click
@@ -26,7 +28,9 @@
 //!    each grenade type and the breakable scenery. Up / Down picks (Page Up / Down jumps a
 //!    group); a see-through copy follows the crosshair on the ground; the wheel turns it 15
 //!    degrees a notch; a click (or Enter) puts one there, and the menu stays open for more. O or
-//!    Esc closes it.
+//!    Esc closes it. In the free camera the copy hangs in the air on the crosshair's ray
+//!    (AIR_DISTANCE, Shift + the wheel), a line down to where it will land: a loose one placed
+//!    there drops (play_pickups.rs's physics), scenery hangs where it's put (#116).
 //!    - A pickup is a level's inventory-object, as the test map's grid (play_pickups.rs:
 //!      `LatePickup`): medkits and fruit can be taken, everything is loose.
 //!    - A weapon lies on its side; walking into it takes it, as from the rack (play_testmap.rs),
@@ -51,7 +55,8 @@ use bf_viewer::level_scene::Placed;
 
 /// The tools' line in the controls panel (H).
 pub const HELP: &str = "tools:   F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
-                        N spawn NPC   O place object   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)";
+                        N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
+                        Y sky   U music (Left / Right: previous / next)   L switch level";
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
 pub const ENEMY_TEAM: u8 = 1;
@@ -81,6 +86,20 @@ const GRENADE_REACH_UP: f32 = 1.5;
 const LIST_LINES: usize = 9;
 /// How long a tool's message shows (s): the test map's.
 const MESSAGE_TIME: f32 = 2.0;
+/// The free camera's air placement (the demo's choices): how far along the crosshair (m) an
+/// object goes at first, a notch of Shift + the wheel's step, the nearest and furthest, and how
+/// far short of a surface the ray meets first it stops.
+const AIR_DISTANCE: f32 = 4.0;
+const AIR_STEP: f32 = 0.5;
+const AIR_RANGE: (f32, f32) = (1.0, 40.0);
+const AIR_CLEAR: f32 = 0.3;
+/// An object whose lowest point would be less than this (m) above the ground is put on it.
+const AIR_MIN_HEIGHT: f32 = 0.05;
+/// The preview's marks (the demo's): an object that drops has a line down to where it lands
+/// and a ring there; one that hangs where put (scenery) a ring round its foot. Ring radius (m).
+const DROP_MARK: Color = Color::srgb(0.3, 0.85, 1.0);
+const HANG_MARK: Color = Color::srgb(1.0, 0.8, 0.25);
+const MARK_RING: f32 = 0.35;
 
 /// A character the NPC tool spawned (`Player::npc`): its number (1, 2, ... in the order
 /// spawned; the hooks' `<n>`), whether it fights, and the way it was put facing.
@@ -93,7 +112,7 @@ pub struct Npc {
 
 /// The free camera: where it is and where it looks (yaw about +Y, 0 down -z; pitch up).
 #[derive(Clone, Copy)]
-struct FreeCam {
+pub(super) struct FreeCam {
     pos: Vec3,
     yaw: f32,
     pitch: f32,
@@ -112,32 +131,35 @@ impl FreeCam {
     }
 }
 
-/// Which menu is open.
+/// Which menu is open (Sky, Music, Levels: play_testworld.rs).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-enum Panel {
+pub(super) enum Panel {
     #[default]
     None,
     Npcs,
     Objects,
+    Sky,
+    Music,
+    Levels,
 }
 
 /// The player's camera and crouch, and whether the mouse was captured, before `read_input`
 /// (the free camera keeps the character's camera as it was; the menus keep the wheel's zoom;
 /// the click that captures the mouse doesn't place or spawn).
 #[derive(Clone, Copy, Default)]
-struct Before {
+pub(super) struct Before {
     yaw: f32,
     pitch: f32,
     distance: f32,
     crouch: bool,
-    captured: bool,
+    pub(super) captured: bool,
 }
 
-/// The tools' state.
+/// The tools' state (a map's: `reset` as each map starts).
 #[derive(Resource, Default)]
-struct Tools {
+pub(super) struct Tools {
     freecam: Option<FreeCam>,
-    panel: Panel,
+    pub(super) panel: Panel,
     /// the NPC menu: the type picked (an index into `npc_types`), the team and behaviour of the
     /// next one
     npc_type: usize,
@@ -150,7 +172,10 @@ struct Tools {
     yaw: f32,
     /// the see-through copy and the entry it shows
     ghost: Option<(Entity, usize)>,
-    before: Before,
+    /// how far along the crosshair (m) the free camera puts an object in the air (AIR_DISTANCE
+    /// at first; Shift + the wheel)
+    air: f32,
+    pub(super) before: Before,
     /// BF_TEST_FLY: until when (sim time), the move (right, up, forward), fast
     fly: Option<(f32, Vec3, bool)>,
 }
@@ -187,7 +212,7 @@ struct Entry {
 /// The object menu's entries, in groups: pickups, weapons, grenades, scenery (built once the
 /// grenade types are loaded).
 #[derive(Resource, Default)]
-struct Catalogue(Vec<Entry>);
+pub(super) struct Catalogue(Vec<Entry>);
 
 /// A grenade put on the ground by the object tool: its type (a `GrenadeKits` index).
 #[derive(Component)]
@@ -199,19 +224,19 @@ struct Ghost;
 
 /// The tools' panel (right of the middle of the screen, clear of the HUD's radar and panels).
 #[derive(Component)]
-struct ToolPanel;
+pub(super) struct ToolPanel;
 
 /// Which NPC a hook (or key) acts on: the n-th spawned, the one under the crosshair, or all.
 #[derive(Clone, Copy, Debug)]
-enum Pick {
+pub(super) enum Pick {
     Nth(u32),
     Aim,
     All,
 }
 
-/// A test hook's action (see `Script`).
+/// A test hook's action (see `Script`; Sky to Level: play_testworld.rs).
 #[derive(Clone, Debug)]
-enum Hook {
+pub(super) enum Hook {
     Help,
     Freecam(Option<FreeCam>),
     FreecamOff,
@@ -224,7 +249,18 @@ enum Hook {
     Fight(Pick),
     Remove(Pick),
     Placer { object: String, yaw: f32 },
-    Place { object: Option<String>, at: Option<(Vec2, f32)> },
+    /// `at`: x, z, yaw and a height above the ground (in the air, to drop)
+    Place { object: Option<String>, at: Option<(Vec2, f32, f32)> },
+    /// the free camera's air distance (m)
+    Air(f32),
+    SkyMenu,
+    MusicMenu,
+    LevelMenu,
+    /// a sky by level (`none`, `map`), a music bank by level (`off`, `map`, `next`, `prev`),
+    /// a level to switch to
+    Sky(String),
+    Music(String),
+    Level(String),
 }
 
 impl std::fmt::Debug for FreeCam {
@@ -251,20 +287,40 @@ impl std::fmt::Debug for FreeCam {
 ///    every one.
 ///  - BF_TEST_PLACER=<s>,<object>[,<yaw>]: O with that object picked (by its label, any case;
 ///    else the first whose label contains it), turned that way: its copy follows the crosshair.
-///  - BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>]]: a click with the object menu open (the
-///    picked object at the crosshair); or that object put at x, z turned that way.
+///  - BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]: a click with the object menu open
+///    (the picked object at the crosshair: in the air in the free camera); or that object put at
+///    x, z turned that way, `height` m above the ground (in the air: it drops, scenery hangs).
+///  - BF_TEST_AIR=<s>,<m>: the free camera's air distance (Shift + the wheel).
+///  - BF_TEST_SKY_MENU / BF_TEST_MUSIC_MENU / BF_TEST_LEVEL_MENU=<s>: Y / U / L (the menu opens).
+///  - BF_TEST_SKY=<s>,<level|none|map>: that level's sky (by its archive's name, e.g. sdm_e10),
+///    none, or the map's own.
+///  - BF_TEST_MUSIC=<s>,<level|off|map|next|prev>: that level's music bank, none, the map's
+///    own, or the next / previous bank of the list (the music menu's Right / Left).
+///  - BF_TEST_LEVEL=<s>,<level>[;<s>,<level>...]: switch to that level (`flat` or `test`: the
+///    test map). Each entry is for one map in turn: the first is due on the first map, the second
+///    on the map it went to, and so on, each on its own map's clock.
 ///
-/// BF_TOOLS_LOG=1 prints each step as it's due, and what it did (a teleport's place, an NPC
-/// spawned, switched or removed, an object placed).
+/// Every hook but BF_TEST_LEVEL acts on one map of the session only (a switch would otherwise
+/// replay them on each map): the first, or the n-th with BF_TEST_ON_MAP=<n> (the tools on a map
+/// a switch went to). BF_TOOLS_LOG=1 prints each step as it's due, and what it did (a
+/// teleport's place, an NPC spawned, switched or removed, an object placed, a sky or music
+/// bank, a switch and what each map starts and ends with).
 #[derive(Resource, Default)]
-struct Script {
+pub(super) struct Script {
     steps: Vec<(f32, Hook)>,
     next: usize,
-    now: Vec<Hook>,
+    pub(super) now: Vec<Hook>,
+}
+
+/// The test session (from `--test` to the window closing, across level switches): how many
+/// maps have started, the first 1.
+#[derive(Resource, Default)]
+pub(super) struct Session {
+    pub(super) maps: usize,
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Tools>().init_resource::<Catalogue>().init_resource::<Script>()
+    app.init_resource::<Tools>().init_resource::<Catalogue>().init_resource::<Script>().init_resource::<Session>()
         .add_systems(OnEnter(AppState::Playing), (reset, spawn_panel).after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (run_script, before_input).chain().before(read_input).run_if(active))
         .add_systems(Update, (gate_input, camera_tool, npc_tool, object_tool).chain().after(read_input).before(squad_control).run_if(active))
@@ -273,20 +329,22 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The tools run on the test map, while it's played.
-fn active(state: Res<State<AppState>>, test: Option<Res<TestMap>>) -> bool {
+pub(super) fn active(state: Res<State<AppState>>, test: Option<Res<TestMap>>) -> bool {
     *state.get() == AppState::Playing && test.is_some()
 }
 
 use super::testmap::TestMap;
 
 /// A new map: the tools closed, nothing spawned, the object list to be built again, the hooks
-/// read.
-fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<AiHits>, mut list: ResMut<Catalogue>) {
-    *tools = Tools { npc_team: ENEMY_TEAM, ..default() };
+/// read (all of them on the session's first map, else only its BF_TEST_LEVEL entry).
+fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<AiHits>, mut list: ResMut<Catalogue>,
+         mut session: ResMut<Session>) {
+    *tools = Tools { npc_team: ENEMY_TEAM, air: AIR_DISTANCE, ..default() };
     // (built again once this map's grenade types are in: its entries index them)
     list.0.clear();
     hits.0.clear();
-    *script = Script { steps: read_hooks(), next: 0, now: vec![] };
+    session.maps += 1;
+    *script = Script { steps: read_hooks(session.maps), next: 0, now: vec![] };
     if !script.steps.is_empty() {
         println!("test tools: {} hook steps: {:?}", script.steps.len(), script.steps);
     }
@@ -307,8 +365,8 @@ fn pick(s: &str) -> Option<Pick> {
     }
 }
 
-/// The hooks' steps (see `Script`), by time.
-fn read_hooks() -> Vec<(f32, Hook)> {
+/// The hooks' steps (see `Script`) for the session's `map`-th map (the first is 1), by time.
+fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     let mut out = vec![];
     let entries = |k: &str| -> Vec<Vec<String>> {
         std::env::var(k).ok().map(|v| v.split(';').map(|e| e.split(',').map(|x| x.trim().to_string()).collect::<Vec<_>>())
@@ -316,6 +374,14 @@ fn read_hooks() -> Vec<(f32, Hook)> {
     };
     let num = |e: &[String], i: usize| e.get(i).and_then(|x| x.parse::<f32>().ok());
     let mut add = |at: Option<f32>, hook: Option<Hook>| if let (Some(at), Some(hook)) = (at, hook) { out.push((at, hook)) };
+    // (the map's own switch; the rest are one map's: the first, or BF_TEST_ON_MAP's)
+    if let Some(e) = entries("BF_TEST_LEVEL").get(map.wrapping_sub(1)) {
+        add(num(e, 0), e.get(1).map(|l| Hook::Level(l.clone())));
+    }
+    if map != std::env::var("BF_TEST_ON_MAP").ok().and_then(|v| v.parse().ok()).unwrap_or(1) {
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        return out;
+    }
     for e in entries("BF_TEST_HELP") {
         for t in &e {
             add(t.parse().ok(), Some(Hook::Help));
@@ -359,8 +425,22 @@ fn read_hooks() -> Vec<(f32, Hook)> {
         add(num(&e, 0), e.get(1).map(|o| Hook::Placer { object: o.clone(), yaw: num(&e, 2).unwrap_or(0.0).to_radians() }));
     }
     for e in entries("BF_TEST_PLACE") {
-        let at = num(&e, 2).zip(num(&e, 3)).map(|(x, z)| (Vec2::new(x, z), num(&e, 4).unwrap_or(0.0).to_radians()));
+        let at = num(&e, 2).zip(num(&e, 3)).map(|(x, z)| (Vec2::new(x, z), num(&e, 4).unwrap_or(0.0).to_radians(), num(&e, 5).unwrap_or(0.0)));
         add(num(&e, 0), Some(Hook::Place { object: e.get(1).cloned(), at }));
+    }
+    for e in entries("BF_TEST_AIR") {
+        add(num(&e, 0), num(&e, 1).map(Hook::Air));
+    }
+    for (k, hook) in [("BF_TEST_SKY_MENU", Hook::SkyMenu), ("BF_TEST_MUSIC_MENU", Hook::MusicMenu), ("BF_TEST_LEVEL_MENU", Hook::LevelMenu)] {
+        for e in entries(k) {
+            add(num(&e, 0), Some(hook.clone()));
+        }
+    }
+    for e in entries("BF_TEST_SKY") {
+        add(num(&e, 0), e.get(1).map(|l| Hook::Sky(l.clone())));
+    }
+    for e in entries("BF_TEST_MUSIC") {
+        add(num(&e, 0), e.get(1).map(|l| Hook::Music(l.clone())));
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
@@ -615,7 +695,8 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
             acts.push(Hook::Fight(Pick::Aim));
         }
     }
-    if keys.just_pressed(KeyCode::Delete) {
+    if keys.just_pressed(KeyCode::Delete) && matches!(tools.panel, Panel::None | Panel::Npcs) {
+
         acts.push(Hook::Remove(if shift { Pick::All } else { Pick::Aim }));
     }
     for hook in &script.now {
@@ -800,6 +881,19 @@ fn spawn_parts(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsset
         }
         for (mesh, mat) in bf_viewer::scene::static_meshes(game, &part.geosets, assets, true) {
             let see_through = assets.materials.get(&mat).cloned().map(|mut m| {
+                // an opaque surface's texture alpha is no coverage (a shine or glow mask: the
+                // medkit's is about 0, so its copy didn't show at all): its colours only
+                if m.alpha_mode == AlphaMode::Opaque {
+                    let solid = m.base_color_texture.as_ref().and_then(|t| assets.images.get(t)).cloned().and_then(|mut img| {
+                        use bevy::render::render_resource::TextureFormat;
+                        let four = matches!(img.texture_descriptor.format, TextureFormat::Rgba8UnormSrgb | TextureFormat::Rgba8Unorm);
+                        img.data.as_mut().filter(|_| four)?.chunks_exact_mut(4).for_each(|p| p[3] = 255);
+                        Some(assets.images.add(img))
+                    });
+                    if solid.is_some() {
+                        m.base_color_texture = solid;
+                    }
+                }
                 m.base_color = m.base_color.with_alpha(GHOST_ALPHA);
                 m.alpha_mode = AlphaMode::Blend;
                 m.emissive = GHOST_GLOW;
@@ -815,19 +909,70 @@ fn placed_at(e: &Entry, at: Vec3, yaw: f32) -> Transform {
     Transform::from_translation(at + Vec3::Y * e.lift).with_rotation(Quat::from_rotation_y(yaw) * e.rest)
 }
 
-/// Puts entry `i` on the ground at `at` turned `yaw` (see the module's notes for each kind).
-fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, list: &[Entry], i: usize, at: Vec3, yaw: f32) {
+/// Where an object goes: on the ground at a point, or (the free camera) in the air with its
+/// lowest point at `at`, the ground under it at `below`.
+#[derive(Clone, Copy, Debug)]
+enum Spot {
+    Ground(Vec3),
+    Air { at: Vec3, below: Vec3 },
+}
+
+impl Spot {
+    /// Where the object's lowest point goes.
+    fn at(self) -> Vec3 {
+        match self {
+            Spot::Ground(p) | Spot::Air { at: p, .. } => p,
+        }
+    }
+}
+
+/// Whether entry kind `k` drops when put in the air (the loose ones: pickups, weapons and
+/// grenades fall under play_pickups.rs's loose-body physics); breakable scenery hangs where it's
+/// put, as a level's scenery never moves (the ticket's choice, #116).
+fn drops(k: Kind) -> bool {
+    !matches!(k, Kind::Breakable(_))
+}
+
+/// Where the crosshair puts an object. Following the character: on the ground under it. In the
+/// free camera: in the air, `air` m along its ray (short of what the ray meets first, by
+/// AIR_CLEAR), unless that's on (or under) the ground there.
+fn spot_at(origin: Vec3, dir: Vec3, freecam: bool, air: f32) -> Option<Spot> {
+    if !freecam {
+        return ground_point(origin, dir).map(Spot::Ground);
+    }
+    let wall = ray_hit(origin, dir, PICK_RANGE).unwrap_or(PICK_RANGE);
+    let t = air.min(wall - AIR_CLEAR).max(0.0);
+    let at = origin + dir * t;
+    let below = Vec3::new(at.x, floor_y(at.x, at.z, at.y + AIR_MIN_HEIGHT), at.z);
+    Some(if at.y - below.y < AIR_MIN_HEIGHT { Spot::Ground(below) } else { Spot::Air { at, below } })
+}
+
+/// Puts entry `i` at `spot` turned `yaw` (see the module's notes for each kind). In the air, a
+/// loose one drops from there (`DropIn`, or `Thrown` from rest: play_pickups.rs's physics) and
+/// scenery hangs.
+fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, list: &[Entry], i: usize, spot: Spot, yaw: f32) {
     let e = &list[i];
-    let root = commands.spawn((placed_at(e, at, yaw), Visibility::default(), Name::new(format!("placed {}", e.label)))).id();
+    let root = commands.spawn((placed_at(e, spot.at(), yaw), Visibility::default(), Name::new(format!("placed {}", e.label)))).id();
+    let air = matches!(spot, Spot::Air { .. });
+    let fall = || super::pickups::Thrown { velocity: Vec3::ZERO, spin: Vec3::ZERO };
     match e.kind {
         Kind::Pickup(kind) => {
             commands.entity(root).insert((Placed { tag: h("inventory-object"), kind }, super::pickups::LatePickup));
+            if air {
+                commands.entity(root).insert(super::pickups::DropIn);
+            }
         }
         Kind::Weapon(key) => {
             commands.entity(root).insert((super::testmap::RackWeapon(key), super::testmap::Lying));
+            if air {
+                commands.entity(root).insert(fall());
+            }
         }
         Kind::Grenade(k) => {
             commands.entity(root).insert(GroundGrenade(k));
+            if air {
+                commands.entity(root).insert(fall());
+            }
         }
         Kind::Breakable(kind) => {
             commands.entity(root).insert(super::scenery::LateBreakable(kind));
@@ -842,7 +987,7 @@ fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, lis
 fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
                scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, player: Res<Player>, mut game: ResMut<GameData>,
                kits: Option<Res<grenade::GrenadeKits>>, mut list: ResMut<Catalogue>, script: Res<Script>, mut status: ResMut<UsePanel>,
-               mut ghosts: Query<(&mut Transform, &mut Visibility), With<Ghost>>,
+               (mut ghosts, mut gizmos): (Query<(&mut Transform, &mut Visibility), With<Ghost>>, Gizmos),
                mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
                mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>) {
     if list.0.is_empty() {
@@ -857,9 +1002,10 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         tools.panel = if tools.panel == Panel::Objects { Panel::None } else { Panel::Objects };
     }
     let mut click = false;
-    let mut direct: Vec<(usize, Vec3, f32)> = vec![];
+    let mut direct: Vec<(usize, Spot, f32)> = vec![];
     for hook in &script.now {
         match hook {
+            Hook::Air(m) => tools.air = m.clamp(AIR_RANGE.0, AIR_RANGE.1),
             Hook::Placer { object, yaw } => match find_entry(&list.0, object) {
                 Some(i) => {
                     tools.panel = Panel::Objects;
@@ -870,7 +1016,11 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
             },
             Hook::Place { object: None, .. } => click = true,
             Hook::Place { object: Some(o), at } => match (find_entry(&list.0, o), at) {
-                (Some(i), Some((p, yaw))) => direct.push((i, Vec3::new(p.x, floor_y(p.x, p.y, player.position.y + GROUND + 50.0), p.y), *yaw)),
+                (Some(i), Some((p, yaw, up))) => {
+                    let below = Vec3::new(p.x, floor_y(p.x, p.y, player.position.y + GROUND + 50.0), p.y);
+                    let spot = if *up > AIR_MIN_HEIGHT { Spot::Air { at: below + Vec3::Y * *up, below } } else { Spot::Ground(below) };
+                    direct.push((i, spot, *yaw));
+                }
                 (Some(i), None) => {
                     tools.object = i;
                     click = true;
@@ -896,13 +1046,18 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
             let g = list.0[prev].group;
             tools.object = (0..=prev).rev().find(|&i| list.0[i].group != g).map_or(0, |i| i + 1);
         }
-        if scroll.delta.y != 0.0 {
+        // the wheel turns it; with Shift, in the free camera, it moves it along the crosshair
+        let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+        let wheel = if scroll.delta.y != 0.0 { scroll.delta.y } else { scroll.delta.x };
+        if wheel != 0.0 && shift && tools.freecam.is_some() {
+            tools.air = (tools.air + AIR_STEP * wheel.signum()).clamp(AIR_RANGE.0, AIR_RANGE.1);
+        } else if scroll.delta.y != 0.0 {
             tools.yaw = wrap_angle(tools.yaw + TURN_STEP * scroll.delta.y.signum());
         }
         click |= keys.just_pressed(KeyCode::Enter) || (mouse.just_pressed(MouseButton::Left) && tools.before.captured);
     }
     let (origin, dir) = crosshair(&player, &tools);
-    let spot = ground_point(origin, dir);
+    let spot = spot_at(origin, dir, tools.freecam.is_some(), tools.air);
     if click && n > 0 {
         match spot {
             Some(at) => direct.push((tools.object, at, tools.yaw)),
@@ -913,9 +1068,14 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         place(&mut commands, &mut game.0, &mut assets, &list.0, i, at, yaw);
         status.message = Some((format!("Placed {}", list.0[i].label), MESSAGE_TIME));
         if log {
-            println!("t {:.2}: placed {} ({:?}) at {at:.2} turned {:.0} deg", player.sim_time, list.0[i].label, list.0[i].kind, yaw.to_degrees());
+            let how = match at {
+                Spot::Ground(_) => "on the ground".to_string(),
+                Spot::Air { at, below } => format!("{:.2} m up ({})", at.y - below.y, if drops(list.0[i].kind) { "drops" } else { "hangs" }),
+            };
+            println!("t {:.2}: placed {} ({:?}) at {:.2} {how} turned {:.0} deg", player.sim_time, list.0[i].label, list.0[i].kind, at.at(), yaw.to_degrees());
         }
     }
+
     // the see-through copy: the picked entry, at the crosshair
     let want = (open && n > 0).then_some(tools.object);
     if tools.ghost.map(|g| g.1) != want {
@@ -932,10 +1092,21 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         if let Ok((mut t, mut v)) = ghosts.get_mut(e) {
             match spot {
                 Some(at) => {
-                    *t = placed_at(&list.0[i], at, tools.yaw);
+                    *t = placed_at(&list.0[i], at.at(), tools.yaw);
                     *v = Visibility::Inherited;
                 }
                 None => *v = Visibility::Hidden,
+            }
+        }
+        // in the air: where it will land (a line down, a ring), or a ring at its foot where it
+        // will hang
+        let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        if let Some(Spot::Air { at, below }) = spot {
+            if drops(list.0[i].kind) {
+                gizmos.line(at, below, DROP_MARK);
+                gizmos.circle(Isometry3d::new(below + Vec3::Y * 0.02, flat), MARK_RING, DROP_MARK);
+            } else {
+                gizmos.circle(Isometry3d::new(at, flat), MARK_RING, HANG_MARK);
             }
         }
     }
@@ -1021,8 +1192,9 @@ fn spawn_panel(mut commands: Commands) {
     ));
 }
 
-/// What the panel shows: the free camera's keys, or the open menu.
-fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, game: Res<GameData>, squad: Res<Squad>,
+/// What the panel shows: the free camera's keys, or the open menu (the sky, music and level
+/// menus' text from play_testworld.rs).
+pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, game: Res<GameData>, squad: Res<Squad>, world: Res<super::testworld::WorldText>,
               mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
     let Ok((mut text, mut node)) = panel.single_mut() else { return };
     let mut s = String::new();
@@ -1063,7 +1235,18 @@ fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, game: Res<GameData>, squa
                 }
                 s += &format!("{} {}\n", if i == tools.object { ">" } else { " " }, e.label);
             }
-            s += &format!("Up / Down pick   Page Up / Down group   wheel turn ({:.0} deg)\nclick / Enter: place at the crosshair", tools.yaw.to_degrees());
+            s += &format!("Up / Down pick   Page Up / Down group   wheel turn ({:.0} deg)\n", tools.yaw.to_degrees());
+            s += &if tools.freecam.is_some() {
+                format!("click / Enter: place IN THE AIR, {:.1} m along the crosshair\n(Shift + wheel); loose ones drop, scenery hangs", tools.air)
+            } else {
+                "click / Enter: place on the ground at the crosshair".to_string()
+            };
+        }
+        Panel::Sky | Panel::Music | Panel::Levels => {
+            if !s.is_empty() {
+                s += "\n";
+            }
+            s += &world.0;
         }
         Panel::None => {}
     }

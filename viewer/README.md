@@ -20,7 +20,7 @@ and how it was checked):
 | [docs/grenades.md](docs/grenades.md) | grenades: throwing and placing, blasts and damage, Gas, Sentry, Light, Sonic, Energy |
 | [docs/pickups.md](docs/pickups.md) | health pickups and the item box |
 | [docs/scenery.md](docs/scenery.md) | interactive scenery: barrels, racks and crates that break, explode and chain |
-| [docs/testtools.md](docs/testtools.md) | the test map's developer tools: free camera and teleport, NPCs (friend / enemy, dummy / fight), placing objects |
+| [docs/testtools.md](docs/testtools.md) | the test map's developer tools: free camera and teleport, NPCs (friend / enemy, dummy / fight), placing objects (on the ground or in the air), skies, music, switching levels |
 | [docs/menu.md](docs/menu.md) | the front end: title, menus, mission select, movies |
 | [docs/levels.md](docs/levels.md) | `bf_level` and how levels are drawn: terrain, materials, liquids, lights, sky, each map's quirks |
 | [docs/character-viewer.md](docs/character-viewer.md) | `bf_viewer`: the format readers, its keys and shading notes |

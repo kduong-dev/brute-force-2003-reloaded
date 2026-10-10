@@ -161,6 +161,7 @@ const H_STRINGID: u32 = h("stringid");
 const H_WSTRING: u32 = h("wstring");
 const H_INDEXSTR: u32 = 0xF548_750A;
 
+#[derive(Clone)]
 pub struct SNode {
     pub kind: u16,
     pub name: Option<Vec<u32>>,
@@ -190,7 +191,8 @@ pub enum Codec {
     List(Box<Codec>),
 }
 
-#[derive(Default)]
+/// (Clone: a thread that reads level archives on its own takes a copy, play_testworld.rs)
+#[derive(Default, Clone)]
 pub struct SchemaSet {
     nodes: Vec<SNode>,
     globals: HashMap<(u32, u32), usize>,

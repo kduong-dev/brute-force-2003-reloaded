@@ -59,8 +59,11 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   `BF_TEST_HELP=<s>[;<s>...]` presses H then.
 * The status message ("Took <weapon>", "Instant kill off", the tools' messages) goes after its
   2 s here too: it was counted down only on maps with doors, so on the flat floor it stayed.
-* **Developer tools**: a free camera with a teleport (F), an NPC spawner (N) and an object
-  spawner (O). See [testtools.md](testtools.md).
+* **Developer tools**: a free camera with a teleport (F), an NPC spawner (N), an object
+  spawner (O, in the air from the free camera), a sky picker (Y), a music picker (U) and a level
+  switch (L), which takes the test session to any level and back. On a level the rack and the
+  pickup grid aren't there; the rest of this list is. `--test` with `BF_MAP=<level>` starts on
+  that level. See [testtools.md](testtools.md).
 
 ## Health, HUD, locomotion, weapons and sounds
 

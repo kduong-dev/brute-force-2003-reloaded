@@ -128,6 +128,27 @@ pub struct SoundBank {
 /// Type "ambient".
 pub const MUSIC_TYPE: u32 = 0xF92F_B2B9;
 
+/// The entry names of an XACT wave bank from its start alone (`head`: as much of the file as
+/// holds its header, metadata and names; see `xwb_entries`), without its wave data. Empty for
+/// a stub bank (splash_screen.xwb, mp2.xwb: 76 bytes, no entries) or one without names.
+pub fn xwb_names(head: &[u8]) -> Vec<String> {
+    let u32_at = |o: usize| head.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+    if head.get(..4) != Some(b"WBND".as_slice()) {
+        return vec![];
+    }
+    let seg = |i: usize| u32_at(8 + i * 4).unwrap_or(0);
+    let bank = seg(0);
+    let (Some(count), Some(name_size)) = (u32_at(bank + 4), u32_at(bank + 28)) else { return vec![] };
+    let (names, names_len) = (seg(4), seg(5));
+    if names_len == 0 || name_size == 0 {
+        return vec![];
+    }
+    (0..count).filter_map(|i| {
+        let raw = head.get(names + i * name_size..names + (i + 1) * name_size)?;
+        Some(String::from_utf8_lossy(&raw[..raw.iter().position(|&b| b == 0).unwrap_or(raw.len())]).into_owned())
+    }).collect()
+}
+
 /// Entries of an XACT wave bank (WBND v2/v3, port of xwb_tool.WaveBank.parse): name, packed
 /// MINIWAVEFORMAT (tag = fmt & 3: 0 PCM, 1 Xbox ADPCM; channels = fmt >> 2 & 7; rate = fmt >> 5
 /// & 0x3ffffff) and the data's byte range.

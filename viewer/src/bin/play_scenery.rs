@@ -205,7 +205,7 @@ struct PieceModel {
 
 /// The map's breakable objects and what's going on with them.
 #[derive(Resource, Default)]
-struct Scenery {
+pub(super) struct Scenery {
     list: Vec<Breakable>,
     hits: Vec<PendingHit>,
     areas: Vec<Area>,
@@ -359,6 +359,13 @@ fn late_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: 
 /// list index, placement and box. The flat floor's `ray_hit` (play.rs) stops at them as it does
 /// at the pillars, so shots and the crosshair meet them as a map's collision would.
 static PLACED_BOXES: std::sync::Mutex<Vec<(usize, Transform, (Vec3, Vec3))>> = std::sync::Mutex::new(Vec::new());
+
+/// How many placed breakables' boxes are in `PLACED_BOXES`, and how many breakable objects the
+/// map has (its own and the placed): for the test tools' log of what each map starts with
+/// (play_testworld.rs: nothing carried over from the map before).
+pub(super) fn counts(scenery: &Scenery) -> (usize, usize) {
+    (PLACED_BOXES.lock().unwrap().len(), scenery.list.len())
+}
 
 /// How far along a ray (from `origin` along unit `dir`) it meets a placed breakable's box
 /// (`PLACED_BOXES`) within `max`, if it does.

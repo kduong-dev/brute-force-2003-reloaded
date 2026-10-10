@@ -790,13 +790,35 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             }
         }
     }
-    // sky: layers in the mesh's order (sdm_e34: the flat top, the panorama of mountains and
-    // clouds, the moon, a cloud swirl), self-lit (shader h_f539fe8c), the see-through ones
-    // blended. Transparent meshes are drawn far to near by their origin, so each layer's origin
-    // sits higher above the sky's than the next one's: they draw in order from the ground.
-    let layers = level.sky.len() as f32;
-    for (i, g) in level.sky.iter().enumerate() {
-        let mat = material(game, images, materials, &lamps, &mut cache, g.material ^ 0x5A5A_5A5A, true, false);
+    let layers = make_sky(game, &level.sky, level.sky_at, meshes, materials, images, &lamps, &mut cache);
+    spawn_sky(commands, &layers);
+    doors
+}
+
+/// A sky's layers made ready to draw (`sky_layers`): each one's mesh, material and place.
+pub type SkyLayers = Vec<(Handle<Mesh>, Handle<LevelMaterial>, Vec3)>;
+
+/// A level's sky (`Level::sky_of`: its layers and where they sit) made ready to draw on any map,
+/// e.g. another level's sky over the test map (play_testworld.rs); `game` holds that level's
+/// meshes and textures. Self-lit, so no lamps.
+pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
+                  buffers: &mut Assets<ShaderStorageBuffer>, images: &mut Assets<Image>) -> SkyLayers {
+    let none = vec![0u8; 32];
+    let lamps = Lamps { lamps: buffers.add(ShaderStorageBuffer::new(&none, RenderAssetUsages::default())) };
+    make_sky(game, sky, at, meshes, materials, images, &lamps, &mut HashMap::new())
+}
+
+/// The sky's layers in the mesh's order (sdm_e34: the flat top, the panorama of mountains and
+/// clouds, the moon, a cloud swirl), self-lit (shader h_f539fe8c), the see-through ones blended.
+/// Transparent meshes are drawn far to near by their origin, so each layer's origin sits higher
+/// above the sky's than the next one's: they draw in order from the ground.
+#[allow(clippy::too_many_arguments)]
+fn make_sky(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
+            images: &mut Assets<Image>, lamps: &Lamps, cache: &mut HashMap<u32, Handle<LevelMaterial>>) -> SkyLayers {
+    let layers = sky.len() as f32;
+    let mut out = vec![];
+    for (i, g) in sky.iter().enumerate() {
+        let mat = material(game, images, materials, lamps, cache, g.material ^ 0x5A5A_5A5A, true, false);
         let lift = Vec3::Y * SKY_LAYER_STEP * (layers - i as f32);
         if let Some(m) = materials.get_mut(&mat).map(|m| &mut m.base) {
             m.double_sided = true;
@@ -814,8 +836,13 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 *p = (Vec3::from(*p) - lift).to_array();
             }
         }
-        commands.spawn((Mesh3d(meshes.add(layer)), MeshMaterial3d(mat), NotShadowCaster,
-                        Transform::from_translation(level.sky_at + lift), SkyLayer(level.sky_at + lift)));
+        out.push((meshes.add(layer), mat, at + lift));
     }
-    doors
+    out
+}
+
+/// Spawns a sky's layers (`SkyLayers`), each following the camera (`SkyLayer`).
+pub fn spawn_sky(commands: &mut Commands, layers: &SkyLayers) -> Vec<Entity> {
+    layers.iter().map(|(mesh, mat, at)| commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), NotShadowCaster,
+                                                         Transform::from_translation(*at), SkyLayer(*at))).id()).collect()
 }

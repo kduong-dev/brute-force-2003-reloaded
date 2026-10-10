@@ -296,6 +296,9 @@ pub struct AreaDamage {
 #[derive(Clone, Debug)]
 pub struct CampaignLevel {
     pub file: String,
+    /// every archive of the level, in its order (its `<zone file-name>`s, lower case; a
+    /// mission's parts, e.g. M01_a and M01_b; `file` is the first)
+    pub zones: Vec<String>,
     pub name: u32,
     pub description: u32,
     pub preview: u32,
@@ -557,6 +560,7 @@ impl Game {
                 let id = |e: Option<&Element>, k: u32| e.and_then(|e| e.attr(k)).and_then(|v| v.as_hash()).unwrap_or(0);
                 self.campaign.push(CampaignLevel {
                     file: file.to_lowercase(),
+                    zones: l.children_named(h("zone")).filter_map(|z| z.attr(h("file-name")).and_then(|v| v.as_str())).map(|f| f.to_lowercase()).collect(),
                     name: id(head, 0x07F2_F670),
                     description: id(l.child(h("dm-data")), h("description")),
                     preview: id(head, h("texture-name")),
@@ -1006,6 +1010,29 @@ impl Game {
     pub fn load_extra_sounds(&mut self, data_dir: &Path, level: &str) -> Result<(), String> {
         let ar = Archive::open(&data_dir.join(format!("{level}.tgz")), |n| n.starts_with("sounds-"))?;
         self.load_sounds(&ar)
+    }
+
+    /// A level's sound bank alone, read with `schemas` (a copy of `Game::schemas`: for a thread
+    /// that has no `Game`): its sounds and their Types, e.g. to tell a music bank's track from its
+    /// ambience bed (`SoundBank::sound_type`).
+    pub fn sound_bank_of(schemas: &SchemaSet, data_dir: &Path, level: &str) -> Result<SoundBank, String> {
+        let ar = Archive::open(&data_dir.join(format!("{level}.tgz")), |n| n.starts_with("sounds-"))?;
+        let mut bank = SoundBank::default();
+        for n in ar.find("sounds-", ".xmb") {
+            let Some(d) = ar.get(&n) else { continue };
+            let root = bxml::parse(d, schemas).map_err(|e| format!("{n}: {e}"))?;
+            bank.add(&root, Arc::new(ar.get(&n.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec()));
+        }
+        Ok(bank)
+    }
+
+    /// A level's level file (levels-<level>.xmb) alone, read with `schemas` (see
+    /// `sound_bank_of`); the rest of its archive isn't unpacked. None if it has none.
+    pub fn level_file_of(schemas: &SchemaSet, data_dir: &Path, level: &str) -> Result<Option<Element>, String> {
+        let ar = Archive::open_until(&data_dir.join(format!("{level}.tgz")), |n| n.starts_with("levels-") && n.ends_with(".xmb"), 1)?;
+        let Some(n) = ar.find("levels-", ".xmb").into_iter().next() else { return Ok(None) };
+        let Some(d) = ar.get(&n) else { return Ok(None) };
+        bxml::parse(d, schemas).map(Some).map_err(|e| format!("{n}: {e}"))
     }
 
     fn load_textures(&mut self, ar: &Archive) -> Result<(), String> {

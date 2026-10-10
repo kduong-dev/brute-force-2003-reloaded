@@ -199,6 +199,39 @@ impl Level {
         map.get(((cz % 16) * 16 + cx % 16) as usize).map(|&v| v as f32 / 255.0)
     }
 
+    /// A level's sky from its level file's elements (`all`): the `<sky><object mesh-name>`
+    /// layers, where they sit (its `<position>`) and the `<background-color>`. No layers without
+    /// a sky mesh (sdm_m07).
+    pub fn sky_of(game: &Game, all: &[&Element]) -> (Vec<Geoset>, Vec3, [f32; 3]) {
+        let sky_el = all.iter().find(|e| e.name == h("sky"));
+        let sky_obj = sky_el.and_then(|s| s.child(h("object")));
+        // a mesh or an archetype (sdm_e34's is an archetype 3.2 km across)
+        let sky = match sky_obj.map(|o| hash(o, h("mesh-name"))) {
+            Some(m) if m != 0 => weapon::mesh_geosets(game, m).ok().filter(|g| !g.is_empty())
+                .or_else(|| weapon::WeaponModel::load(game, m).ok().map(|w| w.parts.into_iter().flat_map(|p| p.geosets).collect()))
+                .unwrap_or_default(),
+            _ => vec![],
+        };
+        let p = floats(sky_obj.and_then(|o| o.child(h("position"))));
+        let sky_at = if p.len() >= 3 { Vec3::new(p[0], p[1], p[2]) } else { Vec3::ZERO };
+        let bg = floats(sky_el.and_then(|s| s.child(h("background-color"))));
+        let background = if bg.len() >= 3 { [bg[0], bg[1], bg[2]] } else { [0.5, 0.6, 0.7] };
+        (sky, sky_at, background)
+    }
+
+    /// The sky of the level loaded last (`Game::load_level`), alone (see `sky_of`).
+    pub fn load_sky(game: &Game) -> Result<(Vec<Geoset>, Vec3, [f32; 3]), String> {
+        let root = game.levels.last().ok_or("no level file loaded")?;
+        Ok(Self::sky_of(game, &root.walk()))
+    }
+
+    /// The sky mesh a level file names (its `<sky><object mesh-name>`; 0: none), to list the
+    /// levels that have a sky without loading them. 51 of the 54 level files name one; sdm_m07,
+    /// m07_c and splash_screen have no `<object>` in their `<sky>`.
+    pub fn sky_mesh(root: &Element) -> u32 {
+        root.walk().into_iter().find(|e| e.name == h("sky")).and_then(|s| s.child(h("object"))).map_or(0, |o| hash(o, h("mesh-name")))
+    }
+
     /// The level loaded last (`Game::load_level`).
     pub fn load(game: &Game) -> Result<Self, String> {
         let root = game.levels.last().ok_or("no level file loaded")?;
@@ -251,20 +284,7 @@ impl Level {
             let kind = hash(e, H_TYPE);
             objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m });
         }
-        // sky
-        let sky_el = all.iter().find(|e| e.name == h("sky"));
-        let sky_obj = sky_el.and_then(|s| s.child(h("object")));
-        // a mesh or an archetype (sdm_e34's is an archetype 3.2 km across)
-        let sky = match sky_obj.map(|o| hash(o, h("mesh-name"))) {
-            Some(m) if m != 0 => weapon::mesh_geosets(game, m).ok().filter(|g| !g.is_empty())
-                .or_else(|| weapon::WeaponModel::load(game, m).ok().map(|w| w.parts.into_iter().flat_map(|p| p.geosets).collect()))
-                .unwrap_or_default(),
-            _ => vec![],
-        };
-        let p = floats(sky_obj.and_then(|o| o.child(h("position"))));
-        let sky_at = if p.len() >= 3 { Vec3::new(p[0], p[1], p[2]) } else { Vec3::ZERO };
-        let bg = floats(sky_el.and_then(|s| s.child(h("background-color"))));
-        let background = if bg.len() >= 3 { [bg[0], bg[1], bg[2]] } else { [0.5, 0.6, 0.7] };
+        let (sky, sky_at, background) = Self::sky_of(game, &all);
         // fog and ambient
         let fog = all.iter().find(|e| e.name == H_FOG).and_then(|f| {
             let c = floats(f.child(h("color")));

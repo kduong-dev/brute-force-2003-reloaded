@@ -105,6 +105,9 @@ pub enum AppState {
     Menu,
     Loading,
     Playing,
+    /// the test tools' level switch (play_testworld.rs): between one map and the next, the next
+    /// one loading on a thread (no menu)
+    Switching,
 }
 
 /// The game mode being played: deathmatch is alone, without the squad's radar.
@@ -301,8 +304,11 @@ fn snapshot_entities(mut commands: Commands, all: Query<Entity>) {
 }
 
 /// Leaving a map: remove everything it spawned (its roots; children go with them), and its
-/// collision.
-fn end_play(mut commands: Commands, before: Option<Res<Before>>, all: Query<(Entity, Option<&ChildOf>), Without<Window>>,
+/// collision. A screenshot on its way (BF_CAPTURE) is left to finish: the renderer marks it
+/// done a frame later, and panicked when it was gone (the test tools' level switch, #116).
+#[allow(clippy::type_complexity)]
+fn end_play(mut commands: Commands, before: Option<Res<Before>>,
+            all: Query<(Entity, Option<&ChildOf>), (Without<Window>, Without<bevy::render::view::screenshot::Screenshot>)>,
             mut cursor: Query<&mut Window, With<PrimaryWindow>>) {
     let before = before.map(|b| b.0.clone()).unwrap_or_default();
     for (e, parent) in &all {
@@ -324,7 +330,8 @@ fn main() {
     // screen (AppState::Boot); a map straight away (BF_MAP, test hooks): read here first
     let test_map = testmap::requested();
     let menu_first = !test_map && menu::wanted();
-    let map = if test_map { "flat".into() } else { std::env::var("BF_MAP").unwrap_or_else(|_| "sdm_e34".into()) };
+    // (--test with BF_MAP: the test tools on that map, play_testworld.rs)
+    let map = std::env::var("BF_MAP").unwrap_or_else(|_| if test_map { "flat".into() } else { "sdm_e34".into() });
     let mut loaded = None;
     if !menu_first {
         let mut game = load_game().unwrap_or_else(|e| {
@@ -474,6 +481,8 @@ mod deathcam;
 mod testmap;
 #[path = "play_testtools.rs"]
 mod testtools;
+#[path = "play_testworld.rs"]
+mod testworld;
 #[path = "play_menu.rs"]
 mod menu;
 #[path = "play_scenery.rs"]
@@ -2046,6 +2055,37 @@ fn test_floor(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mu
     }
 }
 
+/// A level's music or ambience bed playing (`setup`, or the test tools' music picker,
+/// play_testworld.rs, which stops these to play another bank).
+#[derive(Component)]
+pub struct LevelMusic;
+
+/// A level's music bank (`Game::load_music`) as the game mixes it, by the sounds' Types in
+/// `sounds` (the level's sound bank): (track, WAV, "music" or "ambience", its share of the music
+/// volume). A bank holds its music and its ambience bed (sdm_e13: amb_singe_02, then
+/// tmp_full-on1a-f): the first of each, the bed under the music at AMBIENCE_VOLUME (names the
+/// sound bank doesn't define: an "amb" prefix is ambience). A bank without music (sdm_m07's)
+/// plays all its beds, ambiencehellish-2ch its score.
+pub fn music_mix(tracks: Vec<(String, Vec<u8>)>, sounds: &bf_viewer::bf::audio::SoundBank) -> Vec<(String, Vec<u8>, &'static str, f32)> {
+    let ambient = |n: &str| match sounds.sound_type(bf_viewer::bf::hash::h(n)) {
+        Some(t) => t != bf_viewer::bf::audio::MUSIC_TYPE,
+        None => n.to_ascii_lowercase().starts_with("amb"),
+    };
+    let (beds, music): (Vec<_>, Vec<_>) = tracks.into_iter().partition(|(n, _)| ambient(n));
+    let bed_count = if music.is_empty() { beds.len() } else { 1 };
+    music.into_iter().take(1).map(|(n, w)| (n, w, "music", 1.0))
+        .chain(beds.into_iter().take(bed_count).map(|(n, w)| (n, w, "ambience", AMBIENCE_VOLUME))).collect()
+}
+
+/// Plays a level's track (`music_mix`) looping, at `k` of the music volume (BF_MUSIC_VOLUME,
+/// default MUSIC_VOLUME).
+pub fn spawn_music(commands: &mut Commands, sources: &mut Assets<AudioSource>, wav: Vec<u8>, label: &'static str, k: f32) -> Entity {
+    let volume = std::env::var("BF_MUSIC_VOLUME").ok().and_then(|v| v.parse().ok()).unwrap_or(MUSIC_VOLUME);
+    let source = sources.add(AudioSource { bytes: Arc::from(wav.into_boxed_slice()) });
+    commands.spawn((AudioPlayer::new(source), PlaybackSettings { volume: Volume::Linear(volume * k), ..PlaybackSettings::LOOP },
+                    Name::new(label), LevelMusic)).id()
+}
+
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
          mut images: ResMut<Assets<Image>>, mut game: ResMut<GameData>, map: Res<MapLevel>,
          mut sources: ResMut<Assets<AudioSource>>, mode: Res<Mode>, current: Res<CurrentMap>,
@@ -2105,6 +2145,9 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         bf_viewer::level_scene::spawn_lighting(&mut commands, level);
     } else {
         test_floor(&mut commands, &mut meshes, &mut materials, &mut images);
+        // (no doors: none of a level played before, after the test tools' level switch)
+        commands.remove_resource::<Doors>();
+        commands.insert_resource(UsePanel::default());
     }
     commands.insert_resource(ale);
     // the level's music, looping (BF_MUTE / BF_NO_MUSIC: none; BF_MUSIC_VOLUME, default 0.5);
@@ -2113,23 +2156,9 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         let name = current.0.clone();
         match Game::load_music(&data_dir(), &name) {
             Ok(tracks) => {
-                let volume = std::env::var("BF_MUSIC_VOLUME").ok().and_then(|v| v.parse().ok()).unwrap_or(MUSIC_VOLUME);
-                // a level's bank holds its music and its ambience bed (sdm_e13: amb_singe_02, then
-                // tmp_full-on1a-f): the first of each, by the sounds' Types (names the banks don't
-                // define: an "amb" prefix is ambience); the bed plays under the music
-                let ambient = |n: &str| match game.0.sounds.sound_type(bf_viewer::bf::hash::h(n)) {
-                    Some(t) => t != bf_viewer::bf::audio::MUSIC_TYPE,
-                    None => n.to_ascii_lowercase().starts_with("amb"),
-                };
-                // (a bank without music, sdm_m07's: all its beds, ambiencehellish-2ch its score)
-                let (beds, music): (Vec<_>, Vec<_>) = tracks.into_iter().partition(|(n, _)| ambient(n));
-                let bed_count = if music.is_empty() { beds.len() } else { 1 };
-                for ((track, wav), (label, k)) in music.into_iter().take(1).map(|t| (t, ("music", 1.0)))
-                    .chain(beds.into_iter().take(bed_count).map(|t| (t, ("ambience", AMBIENCE_VOLUME)))) {
+                for (track, wav, label, k) in music_mix(tracks, &game.0.sounds) {
                     println!("{label}: {track}");
-                    let source = sources.add(AudioSource { bytes: Arc::from(wav.into_boxed_slice()) });
-                    commands.spawn((AudioPlayer::new(source), PlaybackSettings { volume: Volume::Linear(volume * k), ..PlaybackSettings::LOOP },
-                                    Name::new(label)));
+                    spawn_music(&mut commands, &mut sources, wav, label, k);
                 }
             }
             Err(e) => eprintln!("no music for {name}: {e}"),

@@ -19,7 +19,9 @@
 //!  - The controls panel (H) lives here; the main game doesn't show it. It starts hidden, with
 //!    an "H: help" hint.
 //!  - The developer tools (play_testtools.rs): a free camera with a teleport, an NPC spawner
-//!    and an object spawner.
+//!    and an object spawner; and (play_testworld.rs) a sky and a music picker and a level
+//!    switch. On a level the switch went to (or `--test` with BF_MAP) everything here but the
+//!    rack and the grid holds: the tools, instant kill, X, the grenade stacks, the help panel.
 
 use super::*;
 use bf_viewer::bf::hash::h;
@@ -101,6 +103,7 @@ struct PendingSlot(Option<usize>);
 
 pub fn plugin(app: &mut App) {
     super::testtools::plugin(app);
+    super::testworld::plugin(app);
     app.init_resource::<PendingSlot>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (toggle_instant_kill, suicide, take_weapons, spin_rack).chain().after(update_player)
@@ -160,11 +163,18 @@ pub(super) fn pickup_types(game: &bf_viewer::bf::character::Game) -> Vec<(u32, S
     }).collect()
 }
 
-/// The rack of every weapon and the row of every pickup. The controls panel starts hidden (H).
-fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>,
+/// The rack of every weapon and the row of every pickup, on the flat floor only (the test tools
+/// can switch to a level, play_testworld.rs). The controls panel starts hidden (H).
+#[allow(clippy::too_many_arguments)]
+fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>, current: Res<CurrentMap>, mut pending: ResMut<PendingSlot>,
                   mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
                   mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
     player.show_help = false;
+    // (a weapon taken just before a level switch isn't put in the next map's hand)
+    pending.0 = None;
+    if current.0 != "flat" {
+        return;
+    }
     let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
     // every weapon whose model loads, by name
     let mut n = 0;

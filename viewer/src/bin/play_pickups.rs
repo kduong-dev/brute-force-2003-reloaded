@@ -988,22 +988,25 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
 }
 
 /// The pickups placed since the map started (`LatePickup`), once the level's are in: each lies
-/// tilted to the ground under it, seated on its lowest point, loose (`Body`); medkits and fruit
-/// can be taken (no glow: the glows mark the level's medkit spots).
+/// tilted to the ground under it, seated on its lowest point, loose (`Body`); one with `DropIn`
+/// (put in the air) falls from where it is instead, as it's turned. Medkits and fruit can be
+/// taken (no glow: the glows mark the level's medkit spots).
 fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut<Pickups>,
-                mut placed: Query<(Entity, &Placed, &mut Transform), With<LatePickup>>,
+                mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>), With<LatePickup>>,
                 children: Query<&Children>, parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>, meshes: Res<Assets<Mesh>>) {
     if !pickups.ready {
         return;
     }
-    for (e, p, mut t) in &mut placed {
+    for (e, p, mut t, drop_in) in &mut placed {
         commands.entity(e).remove::<LatePickup>();
         let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5);
-        let body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: 0.0, moving: false, kicked: 0.0,
+        let body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: 0.0, moving: drop_in, kicked: 0.0,
                           rest: None, corners: local_points(e, &children, &parts, &meshes, t.scale), quiet: 0.0 };
-        let (yaw, _, _) = t.rotation.to_euler(EulerRot::YXZ);
-        t.rotation = lie(t.translation, yaw);
-        t.translation.y = ground + body.contact(t.rotation);
+        if !drop_in {
+            let (yaw, _, _) = t.rotation.to_euler(EulerRot::YXZ);
+            t.rotation = lie(t.translation, yaw);
+            t.translation.y = ground + body.contact(t.rotation);
+        }
         if !game.0.idle_effects.contains_key(&p.kind) {
             commands.entity(e).insert(body);
         }

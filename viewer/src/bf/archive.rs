@@ -11,6 +11,12 @@ pub struct Archive {
 impl Archive {
     /// Read every member whose base name passes `keep`.
     pub fn open(path: &Path, keep: impl Fn(&str) -> bool) -> Result<Self, String> {
+        Self::open_until(path, keep, usize::MAX)
+    }
+
+    /// Read the members whose base name passes `keep`, stopping once `count` are read (the rest
+    /// of the gzip stream isn't unpacked: a level's one levels-*.xmb, without its models).
+    pub fn open_until(path: &Path, keep: impl Fn(&str) -> bool, count: usize) -> Result<Self, String> {
         let f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(std::io::BufReader::new(f)));
         let mut files = HashMap::new();
@@ -27,6 +33,9 @@ impl Archive {
             let mut buf = Vec::with_capacity(entry.size() as usize);
             entry.read_to_end(&mut buf).map_err(|e| e.to_string())?;
             files.insert(base, buf);
+            if files.len() >= count {
+                break;
+            }
         }
         Ok(Self { files })
     }
