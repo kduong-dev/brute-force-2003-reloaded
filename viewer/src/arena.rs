@@ -19,7 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 /// How finely a shot's path is looked along for a liquid's surface (m).
 const LIQUID_STEP: f32 = 0.25;
@@ -73,11 +73,13 @@ pub struct Arena {
 }
 
 /// The current map's arena. A new map installs its own (bf_play loads maps one after another
-/// in one window); an old one is leaked, a few MB a map.
-static ARENA: RwLock<Option<&'static Arena>> = RwLock::new(None);
+/// in one window), and the old one is freed once nothing holds it (it was leaked, several MB a
+/// map: the test tools' level switch made that add up, #116).
+static ARENA: RwLock<Option<Arc<Arena>>> = RwLock::new(None);
 
-pub fn arena() -> Option<&'static Arena> {
-    *ARENA.read().unwrap_or_else(|e| e.into_inner())
+/// The current map's arena, if it has one (a handle: hold it no longer than the frame).
+pub fn arena() -> Option<Arc<Arena>> {
+    ARENA.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 fn cell(x: f32, z: f32) -> (i32, i32) {
@@ -230,9 +232,9 @@ impl Arena {
     }
 
     /// Build the level's arena and make it the shared one (replacing the last map's).
-    pub fn install(game: &Game, level: &Level) -> &'static Arena {
-        let a: &'static Arena = Box::leak(Box::new(Arena::new(game, level)));
-        *ARENA.write().unwrap_or_else(|e| e.into_inner()) = Some(a);
+    pub fn install(game: &Game, level: &Level) -> Arc<Arena> {
+        let a = Arc::new(Arena::new(game, level));
+        *ARENA.write().unwrap_or_else(|e| e.into_inner()) = Some(a.clone());
         a
     }
 

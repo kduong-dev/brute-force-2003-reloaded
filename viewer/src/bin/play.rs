@@ -3183,7 +3183,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     }
                     u.fall_from = g;
                 }
-                slide(u, a, g, n, material, dt);
+                slide(u, &a, g, n, material, dt);
             }
             // in a liquid: wading is harmless; going under a harmful one (lava, toxic) kills
             let feet = u.position.y + GROUND + u.height.max(0.0);
@@ -3753,7 +3753,7 @@ impl Ragdoll {
         let arena = world::arena();
         let floors: Vec<f32> = self.pos.iter().map(|&p| {
             let w = self.origin + turn * p;
-            arena.and_then(|a| a.floor_below(w.x, w.z, w.y + RAGDOLL_STEP_UP)).map_or(self.floor, |f| f.0 - self.origin.y)
+            arena.as_ref().and_then(|a| a.floor_below(w.x, w.z, w.y + RAGDOLL_STEP_UP)).map_or(self.floor, |f| f.0 - self.origin.y)
         }).collect();
         for _ in 0..10 {
             // hinges bend one way: a joint on the wrong side of its limb's line goes back to it
@@ -3816,7 +3816,7 @@ impl Ragdoll {
         let moving = self.pos.iter().zip(&self.prev).any(|(p, q)| p.distance_squared(*q) > 1e-6);
         self.still = if moving { 0 } else { self.still + 1 };
         // walls: each bone kept out of them (a small circle at its height)
-        if let Some(a) = arena {
+        if let Some(a) = arena.as_deref() {
             for (p, q) in self.pos.iter_mut().zip(self.prev.iter_mut()) {
                 let w = self.origin + turn * *p;
                 let out = a.push_out(Vec2::new(w.x, w.z), RAGDOLL_SELF_RADIUS, w.y - 0.05, w.y + 0.05, 0.0);

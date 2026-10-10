@@ -263,11 +263,33 @@ looked at:
   with `BF_TEST_LEVEL_FAIL=sdm_e10`): tutorial (71 breakables), e05 (56), m05_c, m09_b (360) and
   m14_d each load and play (at 0, 0: views from inside or under the scenery). sdm_e10's load
   panicked as asked: "sdm_e10 didn't load: back to m14_d", m14_d came back with the note "sdm_e10
-  didn't load (the loading thread stopped): m14_d instead" on screen (frames 208-224), and the
+  didn't load (the loading thread stopped): m14_d instead" on screen (frames 208-224; now without the reason, see below), and the
   next entry took it to the test map. Each "left ..." line: "0 of its own"; the screenshots on
   their way are left to finish (all 260 frames saved). Picks during a load: "sky pick ignored:
   still loading the sky of sdm_e34", the same for music.
 * `--test BF_MAP=mp1`: "squad 0", alone as through L.
+* A red frame at each switch: the damage tint's quad (play_grenade.rs `tint`), made anew for
+  each map's camera, started at its deepest red for a frame. It starts at the tint of the moment
+  (none) now: 0 red frames in 660 over 20 switches (a frame counted red when its mean red is
+  over 1.6 times its green and blue), where the earlier run had them on the switches' first
+  frames. The first two frames of a level can still show its clear colour alone, before its
+  meshes are on the GPU.
+* Memory over 20 switches (sdm_e34 and the flat floor in turn,
+  `BF_TEST_LEVEL="2,sdm_e34;2,flat;..."`, `BF_TOOLS_LOG` prints the asset counts and the
+  process's working set at each map's start and between maps): the asset counts are the same on
+  every visit (the flat floor: meshes 150, images 359 (28 MB), materials 1681, sounds 8; sdm_e34:
+  meshes 558, images 486 (45 MB), materials 2823, level materials 142, one lamp buffer; no
+  clips or graphs), so nothing of Bevy's assets is kept. What grew was each level's collision
+  (`arena::Arena`), leaked on purpose ("a few MB a map"): it's freed now (an `Arc`, dropped when
+  the next map's replaces it). The working set settles instead of climbing: the flat floor
+  918, 987, 995, 999, 1027, 1040, 1076, 1083, 1081, 1079 MB on visits 1-21, sdm_e34 985 ...
+  1066, 1075, 1079, 1081, 1089, 1085 MB (private bytes 1262-1367, flat over the last eight
+  visits). The first visits' rise is the allocator and the renderer's caches filling once.
+* A bank picked before the level list is in (`BF_TEST_MUSIC="0.6,sdm_e10;4,next"`, the list in
+  at 1.5 s): next plays sdm_e13, the bank after sdm_e10 (it went to the list's first before):
+  the picked level is kept and looked up in the list when it's needed.
+* The note for a level that didn't load is short ("sdm_e10 didn't load: flat instead", the
+  reason in the log), clear of the radar.
 * Capturing across a switch panicked once: `end_play` despawned a screenshot the renderer was
   still finishing. It's left alone now, with its observer (the save to disk: without it the
   last frame before a switch wasn't saved).

@@ -94,8 +94,10 @@ struct World {
     own_clear: Option<Color>,
     sky_loading: Option<(String, Mutex<Receiver<SkyLoad>>)>,
     music_loading: Option<(String, Mutex<Receiver<MusicLoad>>)>,
-    /// the bank playing (an index into `Lists::banks`), for next / previous
-    bank: Option<usize>,
+    /// the level whose bank is playing (picked, or the map's own picked again; none: off or the map's
+    /// own from the start), for next / previous: its place in `Lists::banks` is looked up then, so a
+    /// pick made before the list was in counts too
+    bank: Option<String>,
     /// whether the map's start has been logged (BF_TOOLS_LOG)
     audited: bool,
 }
@@ -122,6 +124,75 @@ pub(super) struct WorldText(pub(super) String);
 /// The level switch's loading screen.
 #[derive(Component)]
 struct SwitchPart;
+
+/// How many assets of each kind there are, for BF_TOOLS_LOG's account of a switch (what a map
+/// loaded should be gone once it's left, but for the skies kept on purpose).
+#[derive(bevy::ecs::system::SystemParam)]
+struct AssetCounts<'w> {
+    meshes: Res<'w, Assets<Mesh>>,
+    images: Res<'w, Assets<Image>>,
+    materials: Res<'w, Assets<StandardMaterial>>,
+    level_materials: Res<'w, Assets<bf_viewer::level_scene::LevelMaterial>>,
+    sounds: Res<'w, Assets<AudioSource>>,
+    clips: Res<'w, Assets<AnimationClip>>,
+    buffers: Res<'w, Assets<bevy::render::storage::ShaderStorageBuffer>>,
+    bindposes: Res<'w, Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    liquids: Res<'w, Assets<bf_viewer::level_scene::LiquidMaterial>>,
+    graphs: Res<'w, Assets<AnimationGraph>>,
+}
+
+/// The process's working set and private bytes (MB), for BF_TOOLS_LOG's account of a switch
+/// (kernel32's K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX); none off Windows.
+#[cfg(windows)]
+fn process_mb() -> Option<(f32, f32)> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        cb: u32,
+        page_faults: u32,
+        peak_working_set: usize,
+        working_set: usize,
+        quota_peak_paged: usize,
+        quota_paged: usize,
+        quota_peak_non_paged: usize,
+        quota_non_paged: usize,
+        pagefile: usize,
+        peak_pagefile: usize,
+        private: usize,
+    }
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32GetProcessMemoryInfo(process: isize, counters: *mut Counters, cb: u32) -> i32;
+    }
+    let mut c = Counters { cb: std::mem::size_of::<Counters>() as u32, ..Default::default() };
+    // SAFETY: a pseudo handle for this process, and a counters struct of the size given
+    let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) } != 0;
+    ok.then(|| (c.working_set as f32 / 1048576.0, c.private as f32 / 1048576.0))
+}
+
+/// See the Windows one: nothing to say elsewhere.
+#[cfg(not(windows))]
+fn process_mb() -> Option<(f32, f32)> {
+    None
+}
+
+impl AssetCounts<'_> {
+    /// "meshes 123, images 45 (67 MB), ..., process 900 MB (private 1100 MB)"
+    fn line(&self) -> String {
+        let process = process_mb().map_or(String::new(), |(ws, private)| format!("; process {ws:.0} MB (private {private:.0} MB)"));
+        self.counts() + &process
+    }
+
+    /// The counts alone.
+    fn counts(&self) -> String {
+        let image_mb = self.images.iter().map(|(_, i)| i.data.as_ref().map_or(0, |d| d.len())).sum::<usize>() as f32 / 1048576.0;
+        let mesh_mb = self.meshes.iter().map(|(_, m)| m.count_vertices() * 48).sum::<usize>() as f32 / 1048576.0;
+        let sound_mb = self.sounds.iter().map(|(_, s)| s.bytes.len()).sum::<usize>() as f32 / 1048576.0;
+        format!("meshes {} (~{mesh_mb:.0} MB), images {} ({image_mb:.0} MB), materials {}, level materials {}, sounds {} ({sound_mb:.0} MB), clips {}, buffers {}, bindposes {}, liquids {}, graphs {}",
+                self.meshes.len(), self.images.len(), self.materials.len(), self.level_materials.len(), self.sounds.len(), self.clips.len(),
+                self.buffers.len(), self.bindposes.len(), self.liquids.len(), self.graphs.len())
+    }
+}
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Lists>().init_resource::<World>().init_resource::<WorldText>().init_resource::<Notice>()
@@ -315,7 +386,8 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
             // (from the bank playing: one picked, else the map's own, else the list's ends)
             let n = lists.banks.len() as i32;
             let own = lists.banks.iter().position(|b| lists.levels[b.0].zone == current.0);
-            let k = match world.bank.or(own.filter(|_| world.music != "off")) {
+            let picked = world.bank.as_deref().and_then(|z| lists.banks.iter().position(|b| lists.levels[b.0].zone == z));
+            let k = match picked.or(own.filter(|_| world.music != "off")) {
                 Some(k) => (k as i32 + step_bank).rem_euclid(n),
                 None if step_bank > 0 => 0,
                 None => n - 1,
@@ -397,7 +469,7 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
             Pick::Level(i) => Some(lists.levels[i].zone.clone()),
         };
         world.music_loading = None;
-        world.bank = zone.as_ref().and_then(|z| lists.banks.iter().position(|b| &lists.levels[b.0].zone == z));
+        world.bank = zone.clone();
         match zone {
             None => {
                 for e in &music {
@@ -534,7 +606,8 @@ fn finish_loads(mut commands: Commands, mut world: ResMut<World>, mut lists: Res
 #[allow(clippy::too_many_arguments)]
 fn audit(mut world: ResMut<World>, mut notice: ResMut<Notice>, mut status: ResMut<UsePanel>, session: Res<Session>, current: Res<CurrentMap>,
          before: Option<Res<Before>>, all: Query<Entity>, players: Query<(), With<AudioPlayer>>, music: Query<(), With<super::LevelMusic>>,
-         skies: Query<(), With<SkyLayer>>, squad: Res<Squad>, scenery: Res<super::scenery::Scenery>, player: Res<Player>) {
+         skies: Query<(), With<SkyLayer>>, squad: Res<Squad>, scenery: Res<super::scenery::Scenery>, player: Res<Player>,
+         assets: AssetCounts) {
     // (half a second in: the map's breakables and pickups are listed by then)
     if world.audited || player.loaded.is_none() || player.sim_time < AUDIT_AT {
         return;
@@ -551,6 +624,8 @@ fn audit(mut world: ResMut<World>, mut notice: ResMut<Notice>, mut status: ResMu
     println!("test tools: map {} ({}): {} entities ({kept} from before it), {} sounds ({} music), {} sky layers, squad {} ({} NPCs), {boxes} placed boxes, {breakables} breakables",
              session.maps, current.0, all.iter().count(), players.iter().count(), music.iter().count(), skies.iter().count(),
              squad.0.len(), squad.0.iter().filter(|m| m.npc.is_some()).count());
+    println!("test tools: map {} assets: {}", session.maps, assets.line());
+
 }
 
 /// The open world menu's text (see `WorldText`).
@@ -690,12 +765,13 @@ fn load_thread(to: &Entry) -> Mutex<Receiver<LevelLoad>> {
 /// error, or its thread stopped without a result: a panic) is noted and the map it came from is
 /// loaded instead, else the test map; only if that fails too does the program stop.
 fn finish_switch(mut commands: Commands, mut switch: ResMut<Switch>, lists: Res<Lists>, mut next: ResMut<NextState<AppState>>,
-                 mut notice: ResMut<Notice>, mut exit: EventWriter<AppExit>, mut text: Query<&mut Text, With<SwitchPart>>) {
+                 mut notice: ResMut<Notice>, mut exit: EventWriter<AppExit>, mut text: Query<&mut Text, With<SwitchPart>>, assets: AssetCounts) {
     let Some(got) = switch.rx.as_ref().and_then(poll) else { return };
     match got {
         Ok((map, note)) => {
             if std::env::var("BF_TOOLS_LOG").is_ok() {
                 println!("test tools: {} loaded{}", map.map, note.as_ref().map_or(String::new(), |n| format!(" ({n})")));
+                println!("test tools: between the maps, assets: {}", assets.line());
             }
             let failed = (!switch.failed.is_empty()).then(|| format!("{}: {} instead", switch.failed.join("; "), map.map));
             notice.0 = failed.or(note);
@@ -706,7 +782,8 @@ fn finish_switch(mut commands: Commands, mut switch: ResMut<Switch>, lists: Res<
         Err(e) => {
             eprintln!("test tools: couldn't load {}: {e}", switch.to.zone);
             let failed = switch.to.zone.clone();
-            switch.failed.push(format!("{failed} didn't load ({e})"));
+            // (the reason is in the log above: on screen the note stays short, clear of the radar)
+            switch.failed.push(format!("{failed} didn't load"));
             // the map it came from, then the test map, each tried once
             let tried = |z: &str| switch.failed.iter().any(|f| f.starts_with(&format!("{z} ")));
             let back = [switch.from.clone(), "flat".to_string()].into_iter().find(|z| !tried(z));

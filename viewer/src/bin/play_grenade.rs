@@ -754,6 +754,8 @@ fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, m
     let s = TINT_CURVE[i] + (TINT_CURVE[(i + 1).min(TINT_CURVE.len() - 1)] - TINT_CURVE[i]) * f.fract().min(1.0);
     let k = ((s - TINT_LOW) / (1.0 - TINT_LOW)).clamp(0.0, 1.0);
     tint.0 += frame_dt(&time);
+    // (the level now: a quad made for a new camera, e.g. a new map, starts at it, not the deepest)
+    let now = ((k * TINT_STEPS as f32).round() as usize).min(TINT_STEPS);
     let Ok((quad, mut mat)) = quads.single_mut() else {
         if let Ok(cam) = camera.single() {
             let steps = (0..=TINT_STEPS).map(|i| {
@@ -761,12 +763,12 @@ fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, m
                 materials.add(StandardMaterial { base_color: Color::linear_rgb(1.0, s, s), unlit: true, fog_enabled: false,
                                                  alpha_mode: AlphaMode::Multiply, cull_mode: None, ..default() })
             }).collect::<Vec<_>>();
-            commands.spawn((Mesh3d(meshes.add(Rectangle::new(4.0, 4.0))), MeshMaterial3d(steps[0].clone()), TintQuad(steps),
+            commands.spawn((Mesh3d(meshes.add(Rectangle::new(4.0, 4.0))), MeshMaterial3d(steps[now].clone()), TintQuad(steps),
                             NotShadowCaster, Transform::from_xyz(0.0, 0.0, -TINT_DEPTH), Visibility::Inherited, ChildOf(cam)));
         }
         return;
     };
-    let step = &quad.0[((k * TINT_STEPS as f32).round() as usize).min(TINT_STEPS)];
+    let step = &quad.0[now];
     if mat.0 != *step {
         mat.0 = step.clone();
     }
