@@ -22,7 +22,8 @@
 //! 33.1 s, beside Brutus) it's a solid see-through green cube that turns with the view, its far
 //! faces visible through it, not spinning or bobbing. Walking into it takes it: it goes, its
 //! sound plays and the pickup lines say "Memory Chip Recovered!" (the footage also shows
-//! "+ 2000" by the radar: the score isn't kept by the demo).
+//! "+ 2000" by the radar: the score isn't kept by the demo). Where it drops, when, and who takes
+//! it from how far are measured in todo/43-memory-chip (see CHIP_AHEAD, CHIP_HEIGHT, REACH).
 //!
 //! Two constants aren't used. `time-scale` (h_01590d7a, 0.4) is mapped to +0x58 by FUN_0008fa50,
 //! but none of the shader's own functions read it; scaling the scroll's time step wouldn't move
@@ -31,7 +32,10 @@
 //! state that is isn't established (alpha-test reference is a guess: as one, with the
 //! footage's distant chip filled, it can't be cutting at 60/255), so it's left out.
 //!
-//! Not matched: the footage's chip is fuller and brighter than this material can draw. Far off
+//! Not matched: the footage's chip is fuller and brighter than this material can draw. In
+//! todo/43-memory-chip it's a filled box with a darker circuit pattern, (19, 79, 28) over dark
+//! sand (10, 8, 6) and (177, 253, 172) with a pale halo over lit rock (75, 70, 58): above the
+//! background in every channel, which no SRCALPHA / INVSRCALPHA blend of this colour can be. Far off
 //! (Friendly Fire 2, 33.8 s) its inside is green +58 over the background, with red and blue up
 //! too; up close in front of a lit wall (DNA + Weapon Pickups, 12.4-12.6 s) it's whitish cyan,
 //! red 165 over 60, with a soft halo. The pixel program can't raise red past the background
@@ -68,18 +72,27 @@ const H_NO_CULL: u32 = 0x1895_4F8D;
 /// cost: it sorts after every other blended thing (gas clouds, blood mist, liquids, see-through
 /// materials), so one of those between it and the camera doesn't veil it.
 const CHIP_SORT_BIAS: f32 = 1000.0;
-/// The chip appears this long after a death (s), this far from where they fell (m) and its
-/// middle this high over the ground (m). The demo's choice, kept from the old DNA (fitted then
-/// to todo/DNA + Weapon Pickups.mp4); the game's own placement isn't found. The mesh's root part
-/// is a dummy triangle 1 m under the cube, which may be a ground anchor (a guess, not used).
-const CHIP_DELAY: f32 = 0.2;
-const CHIP_SIDE: f32 = 0.9;
-const CHIP_HEIGHT: f32 = 0.55;
-/// How near (m) the player's feet must come to take it: across, and up or down (the medkits'
-/// reach in play_pickups.rs; the game's isn't known). Only the player takes it: the demo's choice
-/// (the squad AI would otherwise pick it up as it walks past the body).
-const REACH: f32 = 1.0;
-const REACH_UP: f32 = 1.5;
+/// Where the chip appears, on the death's own frame (todo/43-memory-chip take02: the chip's first
+/// frame #163 is the body's first reaction; the chip object exists on the death's game frame):
+/// CHIP_AHEAD m in front of the dead character's position along its facing (take01 and take02,
+/// read from the game's memory: 0.50 m both times), its middle at the character's CHIP_HEIGHT
+/// over its feet, and it stays there (it doesn't follow the falling body). Measured, not found in
+/// the code: the drop's spawn code wasn't traced (its <h_0f77963d inventory-drop> is read at
+/// 0x156666 of the character type's parser).
+const CHIP_AHEAD: f32 = 0.5;
+/// The chip's middle over the dead character's feet (m), by CHARACTERS index (brutus, flint,
+/// hawk, tex). Tex 1.098 (take01 standing, take02 kneeling: the same) and Hawk 0.925 (0.92-0.93,
+/// two deaths) are read from the game's memory. Brutus and Flint weren't measured: theirs are
+/// the depth of their bind pose's lowest vertex under the model's origin (1.016, 1.064), which
+/// is Hawk's measured value within 2 mm (0.927) but not Tex's (1.204): a guess. What sets it per
+/// character isn't found (not the clips' root-height, not an objecttypes value).
+const CHIP_HEIGHT: [f32; 4] = [1.016, 1.064, 0.925, 1.098];
+/// Any living squad member takes it whose feet come within this distance (m, 3D) of its middle:
+/// sqrt(3). Measured (take03 and staging: Hawk stepped 1 cm at a time from three directions was
+/// taken at 1.34 m across every time, 1.732 m in 3D with the chip 1.098 m up; Brutus walking at
+/// 1.71-1.73 m). Whether the game tests 3D or across only isn't settled (on flat ground they
+/// agree); the test wasn't found in the code.
+const REACH: f32 = 1.732_050_8;
 
 /// The chip's model: each geoset's mesh, the material made from the data, and its part's
 /// offset; and the item (its message and sound).
@@ -219,7 +232,7 @@ fn mipmapped(w: u32, h: u32, px: Vec<u8>) -> Image {
     img
 }
 
-/// A chip beside each squad member CHIP_DELAY s after they die (`dna_done`: once per death).
+/// A chip in front of each squad member on the frame they die (`dna_done`: once per death).
 /// Test hook: BF_TEST_CHIP=<x>,<z>[,<s>] also drops one at (x, z) at that time (default 0.5 s;
 /// on the floor there below 2 m over the player's middle), to look at it and walk into it (with
 /// BF_TEST_GOTO) without a death.
@@ -230,23 +243,25 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         .map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()).filter(|v| v.len() >= 2);
     if let Some(t) = test.filter(|t| !test_dropped.0 && player.sim_time >= t.get(2).copied().unwrap_or(0.5)) {
         test_dropped.0 = true;
-        let at = Vec3::new(t[0], floor_y(t[0], t[1], player.position.y + 2.0) + CHIP_HEIGHT, t[1]);
+        let at = Vec3::new(t[0], floor_y(t[0], t[1], player.position.y + 2.0) + CHIP_HEIGHT[player.character % 4], t[1]);
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {
             println!("BF_TEST_CHIP: a memory chip at {at:.2}, t {:.2}", player.sim_time);
         }
     }
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        if !u.dead || u.dna_done || u.dead_for < CHIP_DELAY {
+        if !u.dead || u.dna_done {
             continue;
         }
         u.dna_done = true;
-        let a = u.random(3600) as f32 / 3600.0 * std::f32::consts::TAU;
-        let (x, z) = (u.position.x + CHIP_SIDE * a.cos(), u.position.z + CHIP_SIDE * a.sin());
-        let at = Vec3::new(x, floor_y(x, z, u.position.y + GROUND + 1.0) + CHIP_HEIGHT, z);
+        // where they stood as they died, along the way they faced (forward is -z turned by yaw)
+        let ahead = Vec3::new(-u.yaw.sin(), 0.0, -u.yaw.cos()) * CHIP_AHEAD;
+        let feet = floor_y(u.position.x, u.position.z, u.position.y + GROUND + 1.0);
+        let at = Vec3::new(u.position.x + ahead.x, feet + CHIP_HEIGHT[u.character % 4], u.position.z + ahead.z);
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {
-            println!("{} dropped a memory chip at {at:.2}", CHARACTERS[u.character]);
+            println!("{} dropped a memory chip at {at:.2} (t {:.2}): body at {:.2}, feet {feet:.2}, yaw {:.2}",
+                     CHARACTERS[u.character], u.sim_time, u.position, u.yaw);
         }
     }
 }
@@ -260,20 +275,17 @@ fn spawn_chip(commands: &mut Commands, chip: &ChipModel, at: Vec3) {
     }
 }
 
-/// The player walking into a chip takes it: it goes, its pickup sound plays and the pickup lines
-/// show the item's message.
-fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: ResMut<Player>,
+/// A living squad member (the player or any other) whose feet come within REACH of a chip takes
+/// it: it goes on that frame, its pickup sound plays and the pickup lines show the item's
+/// message (take03: the chip's last frame #476, the message and "+ 2000" on #477).
+fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: ResMut<Player>, squad: Res<Squad>,
               mut feed: ResMut<super::pickups::PickupFeed>, chips: Query<(Entity, &Transform), With<Chip>>) {
     let Some(chip) = chip else { return };
-    if player.dead {
-        return;
-    }
-    let feet = player.position + Vec3::Y * GROUND;
+    let feet: Vec<(usize, Vec3)> = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| !u.dead)
+        .map(|u| (u.character, u.position + Vec3::Y * GROUND)).collect();
     for (e, t) in &chips {
         let at = t.translation;
-        if Vec2::new(at.x - feet.x, at.z - feet.z).length() >= REACH || (at.y - feet.y).abs() >= REACH_UP {
-            continue;
-        }
+        let Some(&(who, f)) = feet.iter().find(|(_, f)| f.distance(at) < REACH) else { continue };
         commands.entity(e).despawn();
         if chip.sound != 0 {
             player.sound_queue.push((chip.sound, 1.0));
@@ -281,7 +293,8 @@ fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         // a line of its own, without a count (n 0, see play_hud.rs)
         feed.0.push((chip.message.clone(), 0, super::pickups::FEED_TIME));
         if std::env::var("BF_PICKUP_LOG").is_ok() {
-            println!("took a memory chip at {at:.2}: {:?}", chip.message);
+            println!("{} took a memory chip at {at:.2} (t {:.2}) from {:.2} m across, {:.2} m 3D: {:?}", CHARACTERS[who], player.sim_time,
+                     Vec2::new(at.x - f.x, at.z - f.z).length(), f.distance(at), chip.message);
         }
     }
 }

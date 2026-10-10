@@ -114,13 +114,23 @@ Squad movement and deaths follow the game's own data and the captures:
   h_e01baa40 colour 0.36 1 0.67 at alpha 0.7, blended SRCALPHA / INVSRCALPHA without z-writes
   and unculled (the shader's render-state setup, FUN_0008fd20; h_0f5ae13f 1 would be additive,
   the chip has 2), so the far faces show through the near ones. Its scroll (FUN_0008fca0)
-  only runs for h_08c2d2ee = 0.12 s, so the texture sits at a fixed offset (0.446, 0.102). It
-  appears 0.2 s after the death, 0.9 m from the body, its middle 0.55 m over the ground (the
-  demo's choice, kept from the old effect; the game's isn't found), and doesn't spin or bob (as
-  in the footage). The player walking into it (within 1 m across, 1.5 m up or down) takes it:
-  it goes, h_ee2c16da plays and the pickup lines show "Memory Chip Recovered!" (no count). The
-  footage's "+ 2000" by the radar is the score, which the demo doesn't keep; nor does it
-  reclone the squadmate. The green
+  only runs for h_08c2d2ee = 0.12 s, so the texture sits at a fixed offset (0.446, 0.102).
+  * **Drop** (measured from the game's memory and frames in `todo/43-memory-chip/`; the spawn
+    code wasn't traced): on the frame the squadmate dies (take02: the chip's first frame is the
+    body's first reaction, full size, no build-up), 0.50 m in front of where they stood along
+    their facing, its middle over their feet by Tex 1.098 m (standing and kneeling alike) and
+    Hawk 0.925 m. Brutus and Flint weren't measured: theirs (1.016, 1.064) are their bind
+    pose's lowest vertex under the model's origin, which is Hawk's within 2 mm but not Tex's
+    (1.204), so a guess. It stays there (it doesn't follow the falling body), doesn't spin, bob
+    or fall.
+  * **Pickup:** any living squad member (the player or an AI one) whose feet come within
+    sqrt(3) m (3D) of its middle takes it (take03 and staging: 1.34 m across with the chip
+    1.098 m up, every time from three directions; whether the game tests 3D or across only
+    isn't settled, and the test wasn't found in the code). It goes on that frame, h_ee2c16da
+    plays and the pickup lines show "Memory Chip Recovered!" (no count). The footage's green
+    "+ 2000" by the radar on the same frame is the score, which the demo doesn't keep; nor does
+    it reclone the squadmate.
+  * The green
   sprites and blue light the demo drew before were effect h_ee11d51f (powerup_pill +
   light_powerup_pill), which belongs to the DNA canister pickup (mesh h_e3e4caad, "Alien
   Technology Acquired!"), not to a death. (`BF_PICKUP_LOG=1` prints the chip's material, where
@@ -139,7 +149,18 @@ Squad movement and deaths follow the game's own data and the captures:
     (60) goes to render state +0x294 of the state cache (FUN_0009e960, flagging the material
     when it isn't 255); which state that is isn't established. An alpha-test reference is a
     guess, and as one it can't be cutting at 60/255, since the footage's distant chip is filled.
-  * **Not matched: the footage's fill.** Far off (Friendly Fire 2, 33.8 s) the chip's inside is
+  * **Not matched: the footage's fill.** In `todo/43-memory-chip/` it's a filled translucent
+    green box with a darker circuit pattern, not a lattice: over dark sand (take02, background
+    about 10, 8, 6) its middle is 19, 79, 28; over lit grey rock (take05 at 16 s, background
+    about 75, 70, 58) 177, 253, 172 with a soft pale halo past its edges. A Light grenade
+    burning 2.5 m away changes it by under 10% (take08 / take09). The second is above the
+    background in every channel, red by 100, which no SRCALPHA / INVSRCALPHA blend of this
+    material's colour (red at most 16) can do, and the fill between the traces needs alpha the
+    texture doesn't have there (alpha 0 in two thirds of it at the top level). So what the code
+    reads (FUN_0008fd20's blend states, pixel shader 0) and what xemu draws disagree; the demo
+    draws what the code reads. Not explained: whether the state-cache slots are read right, or
+    something else draws over it.
+  * Earlier footage: far off (Friendly Fire 2, 33.8 s) the chip's inside is
     green +58 over the background, red and blue up too; the demo's is green +30 to +48 at 6-15 m
     on sdm_e34, red and blue a little down. Up close in front of a lit wall (DNA + Weapon
     Pickups, 12.4-12.6 s) the footage's is whitish cyan, red 165 over 60, with a soft halo.
@@ -147,8 +168,6 @@ Squad movement and deaths follow the game's own data and the captures:
     texture's mips don't fill it, so that light comes from something outside the chip's
     material: not found. In the DNA footage the Light grenades' beams are close by, and at
     9.4 s a soldier walking through the chip is lit the same whitish cyan. A guess, not drawn.
-  * Where it lies: at the moment of the take the footage's chip shows above Hawk's head and the
-    demo's at Tex's hip. That may be the slope, not the height; not fitted.
   * It sorts 1000 m nearer among see-through things than it is: the terrain's
     blended texture layers are drawn in the same pass, sorted by their chunk's middle, and
     painted over it on sdm_e34 (it all but vanished: a 7/255 difference). Known limit: it now
@@ -157,9 +176,12 @@ Squad movement and deaths follow the game's own data and the captures:
     also the pipeline's depth bias, about 1e-4 of the depth: it doesn't draw through walls.)
   * `BF_TEST_CHIP=<x>,<z>[,<s>]` drops a chip at (x, z) at that time (default 0.5 s), on the
     floor below 2 m over the player's middle, without a death.
-  * Verified: a squadmate killed on the test map (`cargo run --bin bf_play -- --test` with
-    `BF_TEST_GOTO=0,0,0,0 BF_TEST_KILL=0`: Brutus's chip 0.9 m beside him, a see-through
-    circuit-trace cube, its far faces through the near ones); on sdm_e34 standing
+  * Verified: Brutus killing Tex on the test map (`cargo run --bin bf_play -- --test` with
+    `BF_CHARACTER=0 BF_TEST_GOTO=0,0,0,0 BF_TEST_KILL=3 BF_VIEW_YAW=0.7`): the chip appears on
+    the frame Tex is first knocked back (none the frame before, as take02 #162 / #163), 0.50 m
+    ahead of where he stood and 1.098 m over his feet, stays as he falls, and Hawk's AI walks
+    into it and takes it 1.72 m away (3D), "Memory Chip Recovered!" on that frame; on sdm_e34
+    standing
     (`BF_TEST_GOTO=-44.4,15.5,-44.4,15.5 BF_TEST_CHIP=-43.2,13.0,0.5`, with `BF_VIEW_YAW=0` and
     `0.6`: one face square-on, then two faces and an edge, as the footage's camera pass at
     2.5-6.5 s) and running through one (`BF_TEST_GOTO=-44.4,15.5,-44.4,35
