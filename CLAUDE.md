@@ -136,6 +136,19 @@ gh project item-edit --project-id PVT_kwHOAje2rc4Bl_qf --id "$ITEM" \
 New issues are added to the board automatically. The `gh` login needs the `project` scope
 (`gh auth refresh -s project`).
 
+When the lead files a ticket it also sets two board fields (set them with `item-edit` as above,
+`--single-select-option-id` for Size, `--number` for Estimate):
+- **Size** (field `PVTSSF_lAHOAje2rc4Bl_qfzhkqXs8`): XS `6c6483d2` a small change, one quick
+  build and check; S `f784b110` one module, no new footage; M `7515a9f1` one full round (spec,
+  build, review); L `817d0097` needs footage and several review rounds; XL `db339eb2` too big
+  for one ticket, so split it (epics are XL).
+- **Estimate** (field `PVTF_lAHOAje2rc4Bl_qfzhkqXtA`): the hours it holds a heavy slot (builds,
+  xemu): XS 1, S 2, M 4, L 8, XL 16. Epics get none; their sub-issues carry the hours.
+
+**Priority** (field `PVTSSF_lAHOAje2rc4Bl_qfzhkqXs4`: P0 `79628723`, P1 `0a877460`, P2
+`da944a9c`) is the user's call: the lead proposes one, and the user sets or changes it. Take
+work from Ready in priority order.
+
 Run at most two heavy agents at once: a build takes minutes and a lot of CPU, and an `xemu`
 session uses the GPU and the screen. Heavy means a developer, a tester checking a build, or
 `xemu`; the `analyst`, the `reviewer` and a tester writing a spec are light and run beside
