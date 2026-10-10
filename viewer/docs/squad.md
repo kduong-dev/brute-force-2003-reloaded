@@ -116,7 +116,8 @@ Squad movement and deaths follow the game's own data and the captures:
   the chip has 2), so the far faces show through the near ones. Its scroll (FUN_0008fca0)
   only runs for h_08c2d2ee = 0.12 s, so the texture sits at a fixed offset (0.446, 0.102).
   * **Drop** (measured from the game's memory and frames in `todo/43-memory-chip/`; the spawn
-    code wasn't traced): on the frame the squadmate dies (take02: the chip's first frame is the
+    code wasn't traced): on the frame the squadmate dies (one frame later in the demo when a
+    grenade or gas kills them: those systems aren't ordered before the drop) (take02: the chip's first frame is the
     body's first reaction, full size, no build-up), 0.50 m in front of where they stood along
     their facing, its middle over their feet by Tex 1.098 m (standing and kneeling alike) and
     Hawk 0.925 m. Brutus and Flint weren't measured: theirs (1.016, 1.064) are their bind

@@ -232,7 +232,9 @@ fn mipmapped(w: u32, h: u32, px: Vec<u8>) -> Image {
     img
 }
 
-/// A chip in front of each squad member on the frame they die (`dna_done`: once per death).
+/// A chip in front of each squad member as they die (`dna_done`: once per death). On the death's
+/// frame for shots (`update_player`, which this runs after); a grenade's or gas's kill (their
+/// systems call `hurt` and aren't ordered before this) shows it a frame later.
 /// Test hook: BF_TEST_CHIP=<x>,<z>[,<s>] also drops one at (x, z) at that time (default 0.5 s;
 /// on the floor there below 2 m over the player's middle), to look at it and walk into it (with
 /// BF_TEST_GOTO) without a death.
@@ -250,7 +252,8 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         }
     }
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        if !u.dead || u.dna_done {
+        // (a test map NPC drops none: it isn't one of the squad)
+        if !u.dead || u.dna_done || !u.in_squad() {
             continue;
         }
         u.dna_done = true;
@@ -278,17 +281,21 @@ fn spawn_chip(commands: &mut Commands, chip: &ChipModel, at: Vec3) {
 /// A living squad member (the player or any other) whose feet come within REACH of a chip takes
 /// it: it goes on that frame, its pickup sound plays and the pickup lines show the item's
 /// message (take03: the chip's last frame #476, the message and "+ 2000" on #477).
-fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: ResMut<Player>, squad: Res<Squad>,
+fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
               mut feed: ResMut<super::pickups::PickupFeed>, chips: Query<(Entity, &Transform), With<Chip>>) {
     let Some(chip) = chip else { return };
-    let feet: Vec<(usize, Vec3)> = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| !u.dead)
-        .map(|u| (u.character, u.position + Vec3::Y * GROUND)).collect();
+    // (index 0 the player, then the squad; test map NPCs never take one)
+    let feet: Vec<(usize, usize, Vec3)> = std::iter::once(&*player).chain(squad.0.iter()).enumerate()
+        .filter(|(_, u)| !u.dead && u.in_squad())
+        .map(|(i, u)| (i, u.character, u.position + Vec3::Y * GROUND)).collect();
     for (e, t) in &chips {
         let at = t.translation;
-        let Some(&(who, f)) = feet.iter().find(|(_, f)| f.distance(at) < REACH) else { continue };
+        let Some(&(i, who, f)) = feet.iter().find(|(_, _, f)| f.distance(at) < REACH) else { continue };
         commands.entity(e).despawn();
+        // the sound is the taker's: play_sounds makes a squadmate's quieter with distance
         if chip.sound != 0 {
-            player.sound_queue.push((chip.sound, 1.0));
+            let queue = if i == 0 { &mut player.sound_queue } else { &mut squad.0[i - 1].sound_queue };
+            queue.push((chip.sound, 1.0));
         }
         // a line of its own, without a count (n 0, see play_hud.rs)
         feed.0.push((chip.message.clone(), 0, super::pickups::FEED_TIME));
