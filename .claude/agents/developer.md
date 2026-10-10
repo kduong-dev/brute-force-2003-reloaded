@@ -31,7 +31,7 @@ building, test hooks and conventions.
    module with a `plugin()`. Every const, struct and fn gets a doc comment that says where its
    values came from.
 4. Add a `BF_*` test hook if the feature can't be triggered by the existing ones.
-5. `cargo build --bins` in `viewer/`: no errors, no warnings.
+5. `cargo build --bins` in `viewer/`, at below-normal priority (CLAUDE.md, "Building and running"): no errors, no warnings.
 6. Verify in the game with `BF_CAPTURE`. Look at the frames yourself and compare them with the
    xemu footage. Iterate until it matches.
 7. Update the area's page in `viewer/docs/` (index in `viewer/README.md`).

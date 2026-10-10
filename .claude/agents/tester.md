@@ -44,7 +44,8 @@ output in your scratchpad, never in the repo or `todo/`.
    health, empty inventory, squad switch, death, other levels).
 2. For each, compose a run with the test hooks (`BF_TEST_GOTO`, `BF_TEST_*`), the logs
    (`BF_*_LOG`) and `BF_CAPTURE` / `BF_CAPTURE_FRAMES`. Build in the worktree you're given, with
-   the target dir it names.
+   the target dir it names. Builds and runs go at below-normal priority (CLAUDE.md, "Building and
+   running").
 3. Compare with the footage side by side (PIL tiles at matching moments and the same scale).
    Report each difference as data, e.g. "glow 1.4x larger than take02 frame 212", ranked by how
    noticeable it would be to a player. When a difference is in logic rather than looks (a damage
