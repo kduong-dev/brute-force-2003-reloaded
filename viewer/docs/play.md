@@ -282,8 +282,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   (`READY_HOLD`: FUN_00123f60 keeps +0x7dc at 4 or more, medium confidence), so the takes' taps
   2.2 s apart fire at once (0.07-0.11 s). Checked: 80 ms Bower taps at 2, 4 and 6 s fire at
   +0.20, +0.13 and +0.13 s (15 fps capture steps); at `BF_CAPTURE_FPS=60`, +0.20 and +0.03 s.
-  (`BF_TEST_FIRE` presses on the first frame past 1.0 s: 1.067 at 15 fps, so its first shot logs
-  at 1.27.)
+  The shot comes 0.20-0.23 s after the frame that sees the press; at 15 fps a
+  `BF_TEST_TRIGGER` window starting on a frame's time (e.g. 3.0 s) can be seen only on the next
+  step (3.067 s), so that tap's shot logs at +0.30 from the window's start.
 * **The burst counter** is cleared by a reload starting (FUN_0022daf0), a dry click
   (FUN_002327f0) and a switch (FUN_0022dc00), as in the game.
 * **Bursts and pellets**. A trigger cycle is h_e4076713 shots, h_e6c60892 s apart. At 0 s apart
@@ -304,8 +305,18 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   FUN_0022e4c0, once a frame before the fire loop, turns each muzzle's aim about the three world
   axes by uniform random angles within +-S degrees (FUN_002229b0), with
   S = (100 - clamp(A - 1, 0, 100)) x 0.03 (FUN_000c4e10; the -1 is the holder's script bonus,
-  unset). So the MK's first shot spreads +-0.33 degrees and its 14th on in held fire +-2.3; the
-  Minigun's +-1.2 to +-1.8 over a clip; the Bower's aim +-0.5 before its pellets' walk.
+  unset: the squad's `accuracy-bonus` h_072837bb flag h_ec5337fb is false in the levels; some
+  enemies have 75 or 90). So the MK's first shot spreads +-0.33 degrees and its 14th on in held
+  fire +-2.3; the Minigun's +-1.2 to +-1.8 over a clip; the Bower's aim +-0.5 before its
+  pellets' walk.
+  * Against the takes: the clusters measured in screen units, read with a 45 degree vertical
+    field of view, came out 1.5-2x tighter than this. The data's two player cameras
+    (objecttypes-common `<camera> fov="90"`; a debug dump labels a camera's field "fovh", so
+    horizontal) give ~74 degrees vertical at 4:3, and under that the MK, Minigun and Foley match
+    the takes within about 10%: the likely explanation, pending xemu's read of the game's FOV.
+  * The Bower is still ~2x too wide horizontally at 74 degrees (its vertical matches). Open
+    question: the pellet walk (FUN_0022e1d0, read as each pellet turned from the one before);
+    xemu's Bower pellet shot is queued.
 * **Damage falloff** (FUN_00230040 -> FUN_00223780). An instant hit's damage is scaled by the
   Damage's h_fb124e6c mode at x = 1 - distance / range: 1 x, 2 x^2, 3 full to half range then
   2x, else none. Only the Bower has one (2): 0.60 at 9 m of its 40 m range. It's applied to the
@@ -319,14 +330,19 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
 * **Muzzle effects**. The weapon's h_fd88830d effect plays at its muzzle hardpoint once a frame
   in which it fired (the MK's orange flash and grey smoke); it replaces the plain flash quad on
   guns that have one. The point light stays (the demo's). In the controlled character's own
-  scope it's drawn 3 m from the eye, ~60 units right of and ~15 below the crosshair, where the
-  take shows it (`SCOPE_FLASH_REACH`, `SCOPE_FLASH_AT`: the demo's rule, measured from 63/take01
-  at 28.77-28.85 s), and the demo's point light is off: at the muzzle, a few tenths of a metre
-  from the scoped eye and magnified, its sparks covered half the view. The scope-in code
-  (0x1223da, FUN_001249b0) doesn't move or hide it, and nothing else that does was found. The
-  game's is a soft orange ball ~110 x 150 units, gone in ~0.1 s; ours is the ALE effects'
-  sharp star, larger, with flat flash quads lying level (one below the star): that's the ALE
-  rendering's (#104), not faked here.
+  scope it's drawn 3.8 m from the eye with its axis along the line of sight, where the take
+  shows it, and the demo's point light is off (`SCOPE_FLASH_REACH`, `SCOPE_FLASH_AT`; the demo's
+  rule): at the muzzle, a few tenths of a metre from the scoped eye and magnified, its sparks
+  covered half the view. The scope-in code (0x1223da, FUN_001249b0) doesn't move or hide it,
+  and nothing else that does was found.
+  * The take (63/take01 at 28.77-28.85 s, the bright pixels that changed, 640 x 480 units): a
+    soft orange ball, centroid 95-104 right of the crosshair and level, 124 x 144, its left edge
+    (x 344) clear of the crosshair (303-336), gone in ~0.1 s.
+  * Ours (frames 21 and 24 of `BF_TEST_WEAPON=MK-ASLT BF_TEST_FIRE=1`): centroid (98-102,
+    -3..+4), 145-155 x 78-97, left edge 22-29 right of the crosshair's middle, clear of it.
+  * In the scope the effect leaves out its flat flash quads (perp quads lying along its axis,
+    `AleEffect::hide_flat`, the demo's rule): seen from the eye they lay as bright ellipses
+    under the star. The star itself is the ALE rendering's (#104), not the game's soft ball.
 * **Tracers** (FUN_002317e0). An instant ray carries its flight effect only when its counter is
   0, which then restarts at h_eeb9e75a: the MK every 3rd shot, the Minigun every 4th, the rest
   every shot. The tracer is now turned along the shot (ALE emitters fire along their +y): it

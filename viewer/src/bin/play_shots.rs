@@ -73,20 +73,22 @@ const SHELL_SPEED: f32 = 2.0;
 const SHELL_SPEED_MORE: f32 = 1.0;
 const SHELL_JITTER: f32 = 0.5;
 const SHELL_ROLL: f32 = 15.0;
-/// In the holder's own scope the muzzle effect is drawn this far (m) from the eye, out along the
-/// barrel. The demo's rule: drawn at the muzzle, a few tenths of a metre from the scoped eye and
-/// magnified, its sparks covered half the view in streaks. The game's scope shows it as a
-/// soft orange ball ~110 x 150 units, centred ~60 units right of the crosshair, gone in ~0.1 s
-/// (63/take01, 28.77-28.85 s): so it keeps the muzzle's direction from the eye, only further
-/// out. Its star look is the ALE streak rendering's (#104), not the game's ball. No code was
-/// found that moves
-/// or hides it for the scope (the scope-in at 0x1223da and FUN_001249b0 only set +0x7a8, the
-/// sway and the zoom sounds).
-const SCOPE_FLASH_REACH: f32 = 3.0;
+/// In the holder's own scope the muzzle effect is drawn this far (m) from the eye, at
+/// SCOPE_FLASH_AT, its axis along the line of sight. The demo's rule: drawn at the muzzle, a few
+/// tenths of a metre from the scoped eye and magnified, its sparks covered half the view in
+/// streaks. No code was found that moves or hides it for the scope (the scope-in at 0x1223da and
+/// FUN_001249b0 only set +0x7a8, the sway and the zoom sounds). The distance sets its size: the
+/// game's is 124 x 144 units (see SCOPE_FLASH_AT); at 3 m ours measured 153 x 190, so 3.8 m.
+/// Its star look is the ALE rendering's (#104), not the game's soft ball.
+const SCOPE_FLASH_REACH: f32 = 3.8;
 /// Where the scoped flash shows: its centre this many 640 x 480 units right of and below the
-/// crosshair (63/take01, 28.77-28.85 s: ~60 right, ~15 below). Measured, and the demo's rule:
-/// the demo's hidden gun sits further off the eye than the game's.
-const SCOPE_FLASH_AT: [f32; 2] = [60.0, 15.0];
+/// crosshair. Measured on 63/take01 at 28.77-28.85 s (the bright pixels that changed): centroid
+/// (412-424, 231-249), extent x 344..468, y 163..307 (124 x 144 units), clear of the crosshair
+/// (x 303-336): 95-104 right, level. The demo's rule: the demo's hidden gun sits further off the
+/// eye than the game's. Set to [100, 0], ours measured centroid (107-110, -15..-21), 143-155 x
+/// 97-115 (its emitters sit off the effect's middle), so the aim point is moved to land it on
+/// the game's: centroid ~(100, 0).
+const SCOPE_FLASH_AT: [f32; 2] = [92.0, 18.0];
 /// How long a casing stays (s), how it falls (m/s^2) and bounces. Guesses: the casing is a
 /// pooled physics object (FUN_002291d0) whose life and material aren't traced.
 const SHELL_LIFE: f32 = 2.0;
@@ -449,20 +451,27 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
             let at = Transform::from_translation(w.muzzle.point).with_rotation(Quat::from_rotation_arc(Vec3::Y, w.fire_dir));
             // in the holder's own scope: SCOPE_FLASH_REACH from the eye toward the muzzle,
             // in the world (the demo's rule)
-            let scoped = eye.zip(globals.get(w.entity).ok()).map(|((eye, fwd, half), g)| {
-                let dir = (g.rotation() * w.fire_dir).normalize_or(fwd);
+            let scoped = eye.map(|(eye, fwd, half)| {
                 // where the take shows it in the scope: SCOPE_FLASH_AT units right of and below
                 // the crosshair (on the 640 x 480 picture, at whatever the zoom), the gun's side
                 let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
                 let up = right.cross(fwd);
                 let [x, y] = SCOPE_FLASH_AT.map(|u| u / 240.0 * half);
                 let toward = (fwd + right * x - up * y).normalize();
-                Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).with_rotation(Quat::from_rotation_arc(Vec3::Y, dir))
+                // its axis along the line of sight, as the game's barrel nearly is from the scope:
+                // the effect's flat flash quads, which lie along the barrel, then stay edge-on
+                // (along the real barrel, seen from above, they were bright ellipses under it)
+                Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).with_rotation(Quat::from_rotation_arc(Vec3::Y, toward))
             });
             for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, d.muzzle_effect) {
                 let life = fx.duration();
                 let seed = p.fire_state.next_seed();
-                let effect = (Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life));
+                // (in the scope, without its flat flash quads: seen from the eye they lay as
+                // bright ellipses or lines under the star, which the take doesn't show; the
+                // demo's rule)
+                let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed);
+                run.hide_flat = scoped.is_some();
+                let effect = (Visibility::default(), run, AleExpire(life));
                 match scoped {
                     Some(place) => commands.spawn((place, effect)),
                     None => commands.spawn((at, effect, ChildOf(w.entity))),

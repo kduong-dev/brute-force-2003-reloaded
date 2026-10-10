@@ -346,6 +346,9 @@ pub struct AleEffect {
     acc: Vec<f32>,
     started: bool,
     rng: u32,
+    /// leave out perp quads lying along the effect's axis (not facing along it): a muzzle
+    /// flash seen down its own axis from the holder's scope (play_shots.rs; the demo's rule)
+    pub hide_flat: bool,
 }
 
 #[derive(Component)]
@@ -582,7 +585,7 @@ impl AleAssets {
 impl AleEffect {
     pub fn new(fx: Arc<Compiled>, sp: f32, seed: u32) -> Self {
         let n = fx.pairs.len();
-        AleEffect { fx, active: true, sp, once: false, placed: false, prev: None, strips: vec![None; n], t: 0.0, acc: vec![0.0; n], started: false, rng: seed | 1 }
+        AleEffect { fx, active: true, sp, once: false, placed: false, prev: None, strips: vec![None; n], t: 0.0, acc: vec![0.0; n], started: false, rng: seed | 1, hide_flat: false }
     }
 
     /// Run the effect once (a hit, a shot's tracer): each emitter for its lifespan.
@@ -793,6 +796,9 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
                     && speed >= PERP_RADIAL_SPEED {
                     lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
+                }
+                if fx.hide_flat && pair.perp && (lie * Vec3::Z).dot(rot * Vec3::Y).abs() < 0.5 {
+                    continue;
                 }
                 count.0 += 1;
                 // attached: kept in the effect's frame (offset and turn without the effect's own)
