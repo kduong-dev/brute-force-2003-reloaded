@@ -272,11 +272,25 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   2.5 frames, ~12/s; Foley 0.352 = 10.5; LZR-50 0.284 = 8.5). The demo models that wobble as
   +-0.01% on each 30 Hz frame (`TICK_JITTER`), which moves no other period. In
   the scope the rate is h_019c314a (the MK's 6/s; medium confidence that the holder's +0x7a8 is
-  the scope). The demo's 0.2 s raise before the first shot from idle is unchanged.
+  the scope); a dry click (`play_ammo.rs`) and the Charge's shot cooldown use the same
+  `shots::period` (FUN_002327f0, FUN_0022dc00).
+* **Taps and the raise.** A press is a request that outlives the button: the holder's +0x260 bit
+  8 sets the weapon's fire bits each frame (0x122614-0x122655) until an animation event clears
+  it (0x0f8408d5, FUN_00117660; which clip isn't placed), so the demo holds a press until its
+  first shot (`FireState::pull`): an 80 ms tap fires. From idle the gun is raised first (the
+  demo's 0.2 s, which the takes' 0.19-0.24 s press-to-shot fits); after a shot it stays up 4 s
+  (`READY_HOLD`: FUN_00123f60 keeps +0x7dc at 4 or more, medium confidence), so the takes' taps
+  2.2 s apart fire at once (0.07-0.11 s). Checked: 80 ms Bower taps at 2, 4 and 6 s fire at
+  +0.20, +0.13 and +0.13 s (15 fps capture steps).
+* **The burst counter** is cleared by a reload starting (FUN_0022daf0), a dry click
+  (FUN_002327f0) and a switch (FUN_0022dc00), as in the game.
 * **Bursts and pellets**. A trigger cycle is h_e4076713 shots, h_e6c60892 s apart. At 0 s apart
   (the Bower 20's 6) they all go in the same frame for one round and one report, and each after
   the first is turned from the one before by up to h_e704fd69 degrees of yaw and of pitch
   (FUN_0022e1d0: the pellets walk away from the first; medium confidence on the walk).
+  When the clip runs dry inside a burst, FUN_0022f0e0 ends the cycle (cooldown 1 / rate) and
+  FUN_0022fe00 has no burst left to excuse a round: the Bower's **last shell of a clip is one
+  pellet**, and the reload starts 1 s later (the takes: Bower +1.0 s).
   bullet-type 4 is an instant ray whatever the bullet's speed (FUN_0022f1d0): the Bower's and
   the MK's 80 m/s aren't used.
 * **Accuracy** (weapon+0x1dc). The accuracy block h_fb327295 {min, max, scoped cap,
@@ -337,6 +351,10 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   muzzle effect (white flash, orange ball, smoke) along the barrel in a side view
   (`BF_CAMERA_DISTANCE=2.5 BF_VIEW_YAW=1.3`).
 * Casings land to Tex's right on the floor; the muzzle smoke and flash at the Minigun's barrel.
+* With `play_ammo.rs` (#114): the Minigun reloads after its 80 rounds and fires on; the Bower
+  with `BF_TEST_CLIP=2` fires a 6-pellet shell, a 1-pellet shell, reloads 1.0 s later (reserve
+  80 -> 68) and fires full shells again; with `BF_TEST_RESERVE=0` it clicks dry about once a
+  second instead.
 * The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel the same as
   before until the autopilot's first shot.
 

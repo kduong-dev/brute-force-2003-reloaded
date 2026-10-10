@@ -131,7 +131,16 @@ pub struct FireState {
     /// a trigger pull still owed its first shot (see `pull`), and the trigger last frame
     latched: bool,
     was_held: bool,
+    /// seconds the gun stays up after a shot (see `READY_HOLD`)
+    ready: f32,
 }
+
+/// After a shot the holder stays in its ready pose this long (s): FUN_00123f60 keeps the
+/// character's +0x7dc at 4 (0x3c05fc) or more while it's running, and FUN_00123ea0 counts it.
+/// Read as the time the gun stays raised (medium confidence): within it a pull fires without the
+/// raise, as the takes' taps 2.2 s apart fire 0.07-0.11 s after the press, against 0.19-0.24 s
+/// from idle.
+const READY_HOLD: f32 = 4.0;
 
 /// The cooldown a trigger cycle, a dry click or a switch sets: 1 / rate, or 1 / the scoped rate
 /// h_019c314a while the holder's +0x7a8 is set (FUN_0022f0e0, FUN_002327f0, FUN_0022dc00 all
@@ -188,6 +197,11 @@ impl FireState {
         (held || self.latched) && can_fire
     }
 
+    /// Whether the gun is still up from a recent shot (`READY_HOLD`): no raise before the next.
+    pub fn raised(&self) -> bool {
+        self.ready > 0.0
+    }
+
     /// The current accuracy of weapon `i` (for logs and tests).
     pub fn accuracy(&self, i: usize) -> Option<f32> {
         self.weapons.get(i).and_then(|w| w.accuracy)
@@ -205,6 +219,7 @@ impl FireState {
         let cap = if t.scoped { scoped_cap } else { max };
         let cycle = period(def, t.scoped);
         let mut rounds = 0;
+        self.ready -= dt;
         self.clock += dt;
         while self.clock >= TICK {
             self.clock -= TICK;
@@ -219,7 +234,17 @@ impl FireState {
             // FUN_0022e4c0: the aim's turn this frame, from the accuracy before the shots
             let spread = spread_at(a);
             // FUN_0022f2a0
-            while t.held && *cooldown <= 0.0 && t.clip - rounds > 0 {
+            // the clip ran dry inside a zero-delay burst (the Bower's last shell): FUN_0022f0e0
+            // ends the cycle (the clip is 0: burst counter cleared, cooldown 1 / rate) and
+            // FUN_0022fe00 finds no burst left to excuse a round, so the last shell is one pellet
+            while t.held && *cooldown <= 0.0 {
+                if t.clip - rounds <= 0 {
+                    if self.burst > 0 {
+                        self.burst = 0;
+                        *cooldown = cycle;
+                    }
+                    break;
+                }
                 let walk = self.burst > 0 && d.burst_delay == 0.0;
                 // FUN_0022f0e0
                 self.burst += 1;
@@ -234,6 +259,7 @@ impl FireState {
                     rounds += 1;
                 }
                 self.latched = false;
+                self.ready = READY_HOLD;
                 // FUN_002317e0: instant rays carry the flight effect every (N+1)th shot
                 let tracer = if d.bullet_type == 4 {
                     let w = self.weapon(weapon);

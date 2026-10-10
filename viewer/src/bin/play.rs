@@ -4174,7 +4174,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // (a tap is held until its first shot, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire, can_fire);
     if pulled {
-        if p.aim_hold <= 0.0 && !p.aim {
+        if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
             p.cooldown = p.cooldown.max(0.2);             // raise the gun before the first shot
         }
         p.aim_hold = 0.7;
