@@ -469,7 +469,8 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                     continue;
                 }
                 let [lo, hi] = if shot.damage[1] > 0.0 { shot.damage } else { [8.0, 10.0] };
-                let amount = lo + (hi - lo) * u.random(1000) as f32 / 1000.0;
+                // (the gun's falloff over its range, play_shots.rs)
+                let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * shot.falloff_at(t);
                 let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
                 s.hits.push(PendingHit { delay: t / shot.speed.max(1.0), target: b, amount, damage_type: shot.damage_type, push });
             }
@@ -484,7 +485,7 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 .filter(|&(_, t)| t <= shot.dist + SHOT_SLACK).min_by(|a, b| a.1.total_cmp(&b.1));
             let Some((b, t)) = first else { continue };
             let [lo, hi] = if shot.damage[1] > 0.0 { shot.damage } else { [8.0, 10.0] };
-            let amount = lo + (hi - lo) * u.random(1000) as f32 / 1000.0;
+            let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * shot.falloff_at(t);
             let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
             s.hits.push(PendingHit { delay: t / shot.speed.max(1.0), target: b, amount, damage_type: shot.damage_type, push });
         }

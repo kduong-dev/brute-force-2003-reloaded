@@ -108,12 +108,15 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   | LZR-23 laser | 150 m/s | laser_bolt_s + laser_bolt_rifle_s, a glowing bolt | laserhit_s, laserhitb_* |
   | Laser pistol | 100 m/s | laser_bolt_s | laser hits |
   | Brutus's cutter | 120 m/s | cuttertrail_ribbon, a bluish ribbon trailing the shot, and cutter_flare | — |
-  | Minigun, ballistic guns | instant | `tracer`, one particle shot from the muzzle at 113.6 m/s | sminigun_hit |
+  | Minigun, ballistic guns (bullet-type 4) | instant | `tracer`, one particle shot from the muzzle at 113.6 m/s along the shot, on every (h_eeb9e75a + 1)th shot (MK every 3rd, Minigun every 4th) | sminigun_hit |
   | L-Shot | instant | tracer_snipe, a white beam drawn 200 m down the line in 0.38 s, smoke, rings | sminigun_hit |
 
   * Bolts carry their effect with them: the emitters are flagged "attached" (h_e2999ffd), so
     their particles move with the shot.
   * Hit effects play on world hits; hits on bodies bleed instead (play_fx).
+  * World hits also leave the bullet's h_06a27365 hole or scorch on the collision triangle they
+    meet, and each gun has its own muzzle effect and casings; the fire timing, pellets and
+    accuracy spread are in [play.md](play.md), "Shots".
   * A shot's damage (friendly fire) lands when it reaches the body: distance / speed later.
   * Beam appearances (class h_1f55f13e) are ribbons through their emitter's live particles in
     birth order, facing the camera. They have their own colour, alpha and width parameters, and

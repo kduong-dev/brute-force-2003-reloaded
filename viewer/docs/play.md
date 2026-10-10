@@ -257,6 +257,82 @@ at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_KNO
 the player down then, once;
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot, recharged round and the hint.
 
+### Shots: fire timing, pellets, accuracy, holes, muzzle effects, tracers, casings (#115)
+
+`src/bin/play_shots.rs` follows default.xbe's weapon class (0x22b000-0x233000); the attributes it
+reads are `weapon::ShotData` (each with its data offset and the function that reads it).
+
+* **Fire timing** (FUN_0022f2a0, FUN_0022f0e0, FUN_0022ec90). The fire loop runs in 30 Hz game
+  frames. A shot *sets* the cooldown to 1 / rate (the rest of the frame is dropped), it counts
+  down a frame at a time, and the trigger fires again once it's <= 0. So an interval is the
+  rate's period rounded up to whole frames: MK-ASLT 8/s -> 4 frames, 7.5/s (the takes: 7.0-7.4,
+  the emulator ran at 27-29 fps). Most periods are a whole number of frames (Minigun 2, Foley 10,
+  LZR-50 8, Jax-iC 15): the cooldown lands on 0 and the frame time's wobble decides between
+  that frame and the next, about half each, which the takes show (Minigun 0.086 s a round =
+  2.5 frames, ~12/s; Foley 0.352 = 10.5; LZR-50 0.284 = 8.5). The demo models that wobble as
+  +-0.01% on each 30 Hz frame (`TICK_JITTER`), which moves no other period. In
+  the scope the rate is h_019c314a (the MK's 6/s; medium confidence that the holder's +0x7a8 is
+  the scope). The demo's 0.2 s raise before the first shot from idle is unchanged.
+* **Bursts and pellets**. A trigger cycle is h_e4076713 shots, h_e6c60892 s apart. At 0 s apart
+  (the Bower 20's 6) they all go in the same frame for one round and one report, and each after
+  the first is turned from the one before by up to h_e704fd69 degrees of yaw and of pitch
+  (FUN_0022e1d0: the pellets walk away from the first; medium confidence on the walk).
+  bullet-type 4 is an instant ray whatever the bullet's speed (FUN_0022f1d0): the Bower's and
+  the MK's 80 m/s aren't used.
+* **Accuracy** (weapon+0x1dc). The accuracy block h_fb327295 {min, max, scoped cap,
+  per shot, per second}: the current accuracy A is held in [min, cap] (cap: max, or the scoped
+  cap in the scope), each trigger cycle takes "per shot" off, and each frame the cooldown is out
+  it regains "per second" x dt (crouched: half the loss, a floor of min + 15, twice the gain;
+  FUN_00222ac0 / 00222c10 / 00222b30). **Where it's used** (found for this ticket):
+  FUN_0022e4c0, once a frame before the fire loop, turns each muzzle's aim about the three world
+  axes by uniform random angles within +-S degrees (FUN_002229b0), with
+  S = (100 - clamp(A - 1, 0, 100)) x 0.03 (FUN_000c4e10; the -1 is the holder's script bonus,
+  unset). So the MK's first shot spreads +-0.33 degrees and its 14th on in held fire +-2.3; the
+  Minigun's +-1.2 to +-1.8 over a clip; the Bower's aim +-0.5 before its pellets' walk.
+* **Damage falloff** (FUN_00230040 -> FUN_00223780). An instant hit's damage is scaled by the
+  Damage's h_fb124e6c mode at x = 1 - distance / range: 1 x, 2 x^2, 3 full to half range then
+  2x, else none. Only the Bower has one (2): 0.60 at 9 m of its 40 m range. It's applied to the
+  squad's, the NPCs' and breakable scenery's hits. (The rest of the take's ~1.3x on the
+  trooper isn't found yet: see the ticket's report.)
+* **Holes** (`play_fx.rs`, `HoleRequests`). Every gun shot that meets the world leaves its
+  bullet's h_06a27365 decal (0.3 x 0.3 m holes and scorches, read as full sizes; 25 s, fading
+  over the last 5) laid on the surface it met: the map's collision triangle
+  (`Arena::ray_normal`) or, on the flat test floor, the ground or a pillar's side. Up to 160 stay
+  (a guess).
+* **Muzzle effects**. The weapon's h_fd88830d effect plays at its muzzle hardpoint once a frame
+  in which it fired (the MK's orange flash and grey smoke); it replaces the plain flash quad on
+  guns that have one. The point light stays (the demo's).
+* **Tracers** (FUN_002317e0). An instant ray carries its flight effect only when its counter is
+  0, which then restarts at h_eeb9e75a: the MK every 3rd shot, the Minigun every 4th, the rest
+  every shot. The tracer is now turned along the shot (ALE emitters fire along their +y): it
+  flew straight up before, the thin vertical line over the Minigun.
+* **Casings** (FUN_0022eee0 -> FUN_00231b10). Each trigger cycle owes h_fdc93b33 casings; each
+  whole one throws the h_19b21bf5 object (the casing h_16415157's model) from the h_ea1abbbe
+  hardpoint, 5 cm back along its z, at 2-3 m/s along its z turned a quarter turn about the
+  vertical, plus up to 0.5 m/s on each other axis. MK, Minigun, L-Shot and Foley; the Bower has
+  the hardpoint but no casing object. Their 2 s life, gravity and bounce are guesses.
+
+Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"`, `0c3db625`)
+puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
+map's data has it (the test map has every hand weapon); `BF_SHOT_LOG=1` now also prints each
+pellet (its frame, spread, walk, tracer) and the gun's accuracy.
+
+Verified on the test map (`-- --test`, `BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12
+BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
+* Minigun (`BF_START_WEAPON=1`): 2-3 frames a round, 12.3/s over 66 rounds; a tracer on every
+  4th; accuracy 59 -> 10 over the clip. Seen from 13 m (`BF_TEST_FREECAM=4.4,1.5,-0.2,-4.7,..`)
+  its holes span ~+-10 units up and down, the spec's cluster (+-10).
+* MK-ASLT (`BF_TEST_WEAPON=MK-ASLT`): 4 frames, 7.5/s; a tracer on every 3rd; scoped 5-6
+  frames (5.6/s). The game's MK holes after the take (63_zoom) spread ~+-26 x +-18 units, about
+  the +-2.3 degrees the code reaches in held fire.
+* Bower 20 (`BF_CHARACTER=0 BF_START_WEAPON=1`): one round and one report per shell, 6 pellets
+  walking up to ~15 degrees from the first; holes on the pillar and on sdm_e34's walls; its
+  muzzle effect (white flash, orange ball, smoke) along the barrel in a side view
+  (`BF_CAMERA_DISTANCE=2.5 BF_VIEW_YAW=1.3`).
+* Casings land to Tex's right on the floor; the muzzle smoke and flash at the Minigun's barrel.
+* The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel the same as
+  before until the autopilot's first shot.
+
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's
 archetype names its jump grunt and footstep type (Tex 1, Flint 2, Brutus 3, Hawk 4), and

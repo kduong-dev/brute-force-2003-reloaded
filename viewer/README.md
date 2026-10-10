@@ -14,7 +14,7 @@ and how it was checked):
 
 | Page | What |
 |---|---|
-| [docs/play.md](docs/play.md) | `bf_play`: keys, the test map, health and HUD, locomotion, weapons, ammo, reload and the crosshair, sounds, the general test hooks |
+| [docs/play.md](docs/play.md) | `bf_play`: keys, the test map, health and HUD, locomotion, weapons and shots (fire timing, pellets, accuracy, holes, tracers, casings), ammo, reload and the crosshair, sounds, the general test hooks |
 | [docs/maps.md](docs/maps.md) | playing on a level: spawning, collision, doors and gates, HUD text, movement, music, shots, look, power-ups |
 | [docs/squad.md](docs/squad.md) | the squad: follow AI, standing on the floor, scopes, hand-over, hits, deaths, the death camera |
 | [docs/grenades.md](docs/grenades.md) | grenades: throwing and placing, blasts and damage, Gas, Sentry, Light, Sonic, Energy |

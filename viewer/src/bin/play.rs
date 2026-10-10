@@ -448,6 +448,7 @@ fn main() {
     }
     let playing = in_state(AppState::Playing);
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
+        .add_plugins(shots::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -495,6 +496,8 @@ mod menu;
 mod scenery;
 #[path = "play_ammo.rs"]
 mod ammo;
+#[path = "play_shots.rs"]
+mod shots;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -841,6 +844,8 @@ struct HeldWeapon {
     light: Entity,
     flash: Entity,
     muzzle: Hardpoint,
+    /// the shell-eject hardpoint (ShotData::shell_hardpoint), if the model has it
+    shell: Option<Hardpoint>,
     /// fire direction in the weapon's frame
     fire_dir: Vec3,
     /// placement under a joint (bone, rotation, translation): in hand / stowed for its slot
@@ -1234,6 +1239,13 @@ struct Shot {
     /// object it hits)
     damage: [f32; 2],
     damage_type: i64,
+    /// the bullet's hole or scorch (h_06a27365; 0 none) and the normal of the surface the shot
+    /// meets (play_shots.rs)
+    decal: u32,
+    normal: Vec3,
+    /// the Damage's falloff mode (h_fb124e6c) over the bullet's range (`Shot::falloff_at`)
+    falloff: i64,
+    range: f32,
 }
 
 #[derive(Resource)]
@@ -1423,7 +1435,8 @@ struct Player {
     /// the player's shots still flying toward squad members
     pending_hits: Vec<PendingHit>,
     shots_fired: u32,
-    pending_shot: bool,
+    /// the fire loop: game frames, bursts, accuracy, tracers, casings (play_shots.rs)
+    fire_state: shots::FireState,
     // sound
     surface: usize,
     foot_prev: [f32; 2],
@@ -1488,7 +1501,7 @@ impl Player {
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
             weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
-            spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, pending_shot: false,
+            spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
             shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), was_scoped: false, scope_level: 0, test_selected: false, sway: Vec2::ZERO,
@@ -2522,6 +2535,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             in_hand,
             stowed: weapon::STOW.get(slot).and_then(|k| model.hardpoints.get(k)).zip(wm.hardpoints.get(&weapon::HOLSTER))
                 .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) }),
+            shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
             def, entity, spinners, light, flash, muzzle, fire_dir,
         });
     }
@@ -2928,7 +2942,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // it lands when the shot gets there (a bolt flies at its weapon's speed)
             let (lo, hi) = damage;
             let m = &mut squad.0[i];
-            let amount = (lo + (hi - lo) * m.random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[m.character], damage_type);
+            // (falloff over the range: play_shots.rs)
+            let amount = (lo + (hi - lo) * m.random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[m.character], damage_type)
+                * shot.falloff_at(t);
             let local = shot.origin + shot.dir * t - m.position;
             player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, amount, dir: shot.dir, local, ammo });
         } else if let Some((e, t)) = mine {
@@ -2966,7 +2982,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if let Some((i, t, character, at)) = hit {
                 shot.dist = t;
                 shot.hit = false;
-                let amount = (lo + (hi - lo) * squad.0[k].random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[character], damage_type);
+                let amount = (lo + (hi - lo) * squad.0[k].random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[character], damage_type)
+                    * shot.falloff_at(t);
                 let local = shot.origin + shot.dir * t - at;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {
                     let name = |u: &Player| format!("{}{}", CHARACTERS[u.character], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
@@ -4006,6 +4023,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let armed = !l.weapons.is_empty();
     if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none() {
         let to = (p.weapon + 1) % l.weapons.len();
+        p.fire_state.reset_burst();                         // FUN_0022dc00
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
         p.switch_sound_in = SWITCH_SOUND_GAP;
         p.hud_list = HUD_LIST_TIME;
@@ -4149,30 +4167,35 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.throwing = Some(t);
         }
     }
-    p.cooldown -= dt;
     p.aim_hold -= dt;
     let can_fire = armed && p.reloading.is_none() && p.throwing.is_none() && p.ammo.get(p.weapon).is_some_and(|a| a[0] > 0)
         && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours;
-    if p.fire && can_fire {
+    // (a tap is held until its first shot, play_shots.rs `pull`)
+    let pulled = p.fire_state.pull(p.fire, can_fire);
+    if pulled {
         if p.aim_hold <= 0.0 && !p.aim {
             p.cooldown = p.cooldown.max(0.2);             // raise the gun before the first shot
         }
         p.aim_hold = 0.7;
-        if p.cooldown <= 0.0 {
-            let def = &l.weapons[p.weapon].def;
-            p.cooldown = (p.cooldown + 1.0 / def.rate.max(0.2)).max(0.02);
-            let (sounds, rate) = (def.fire_sounds.clone(), def.rate);
-            // one sound per shot (each fire sound is a single report); fast guns overlap several
+    }
+    // the fire loop in 30 Hz game frames (play_shots.rs): the cooldown, bursts and pellets,
+    // accuracy; each round fired takes one from the clip and plays one report
+    if let Some(def) = l.weapons.get(p.weapon).map(|w| &w.def) {
+        let trigger = shots::Trigger { held: pulled, clip: p.ammo.get(p.weapon).map_or(0, |a| a[0]),
+                                       scoped: p.scope > 0.5, crouched: p.crouch_wanted };
+        let seed = p.character as u32 * 7919 + p.npc.map_or(0, |n| n.id as u32 * 104_729);
+        let (weapon, mut cooldown) = (p.weapon, p.cooldown);
+        let rounds = p.fire_state.run(&mut cooldown, weapon, def, trigger, seed, dt);
+        p.cooldown = cooldown;
+        for _ in 0..rounds {
+            // one sound per round (each fire sound is a single report); fast guns overlap several
             // (the minigun's ~0.4 s sounds at 15/s), so they play a little quieter
-            p.queue_any(&sounds, if rate >= 8.0 { 0.55 } else { 0.8 });
+            p.queue_any(&def.fire_sounds, if def.rate >= 8.0 { 0.55 } else { 0.8 });
             p.shots_fired += 1;
-            p.ammo[p.weapon][0] -= 1;
-            p.pending_shot = true;
+            p.ammo[weapon][0] -= 1;
             p.recoil = 1.0;
             p.flash = 0.05;
         }
-    } else {
-        p.cooldown = p.cooldown.max(0.0);
     }
 
     // ---- sliding down steep ground: the slide clip, facing downhill ----
@@ -4470,8 +4493,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
 
-    // ---- shot: from the muzzle to whatever the crosshair is on ----
-    if std::mem::take(&mut p.pending_shot) {
+    // ---- shots: from the muzzle to whatever the crosshair is on, turned by the accuracy and a
+    // burst's spread (play_shots.rs) ----
+    if !p.fire_state.pellets.is_empty() {
         if let Some(w) = l.weapons.get(p.weapon) {
             if let Some((hb, r, t)) = w.in_hand {
                 let root = Transform::from_translation(p.position + Vec3::Y * p.height).with_rotation(facing).compute_matrix();
@@ -4488,20 +4512,27 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 if dir.dot(ray) < 0.3 || dir == Vec3::ZERO {
                     dir = if upper_aim { ray } else { barrel };
                 }
-                let hit = ray_hit(origin, dir, range);
-                // speed 1 marks instant-hit guns (their tracer effect flies on its own); the
-                // others' bolts fly at the bullet's speed
-                let speed = if w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
-                p.shots.push(Shot { origin, dir, dist: hit.unwrap_or(range), hit: hit.is_some(), speed,
-                                    flight: w.def.flight_effect, hit_fx: w.def.hit_effect,
-                                    damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type });
-                if std::env::var("BF_SHOT_LOG").is_ok() {
-                    println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.2} origin {:.2} dist {:.1}",
-                             p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),
-                             barrel, ray, dir, origin - p.position, hit.unwrap_or(range));
+                // bullet-type 4 is an instant ray whatever its speed (FUN_0022f1d0: the Bower's and
+                // MK's 80 m/s aren't used; their tracer effect flies on its own); speed 1 marks
+                // the others' instant hits; the rest fly at the bullet's speed
+                let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
+                let accuracy = p.fire_state.accuracy(p.weapon);
+                for (pellet, dir) in p.fire_state.directions(dir, w.def.shots.burst_spread) {
+                    let hit = shots::hit_normal(origin, dir, range);
+                    p.shots.push(Shot { origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
+                                        flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
+                                        damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type,
+                                        decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff, range });
+                    if std::env::var("BF_SHOT_LOG").is_ok() {
+                        println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?}",
+                                 p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),
+                                 barrel, ray, dir, origin - p.position, hit.map_or(range, |h| h.0));
+                    }
                 }
             }
         }
+        // (nothing to fire them from: dropped)
+        p.fire_state.pellets.clear();
     }
 
     // ---- footsteps: a foot coming down to its planted height ----
@@ -4819,7 +4850,9 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
                 *tr = Transform::from_translation(*offset).with_rotation(Quat::from_axis_angle(*axis, p.spin_angle));
             }
         }
-        let on = flash_on;
+        // (the data's muzzle effect replaces the plain flash where there is one, play_shots.rs;
+        // the light stays)
+        let on = flash_on && w.def.shots.muzzle_effect == 0;
         if let Ok(mut v) = visibility.get_mut(w.flash) {
             *v = if on { Visibility::Inherited } else { Visibility::Hidden };
         }
@@ -4827,12 +4860,12 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             f.rotation = f.rotation * Quat::from_rotation_z(1.3);      // vary the flash shape
         }
         if let Ok(mut light) = lights.get_mut(w.light) {
-            light.intensity = if on { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
+            light.intensity = if flash_on { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
         }
     }
     for s in p.shots.drain(..) {
         // the weapon's own effects (see `projectiles`), else a plain streak
-        if s.flight != 0 || s.hit_fx != 0 {
+        if s.flight != 0 || s.hit_fx != 0 || s.decal != 0 {
             commands.spawn((Transform::from_translation(s.origin).looking_to(s.dir, Vec3::Y), Visibility::default(),
                             Projectile { shot: s, travelled: 0.0, started: false, wait: 2 }));
             continue;
@@ -4876,7 +4909,8 @@ fn effects_of(game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &
 #[allow(clippy::too_many_arguments)]
 fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameData>, ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
                mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<StandardMaterial>>,
-               mut shots: Query<(Entity, &mut Projectile, &mut Transform)>, mut expiring: Query<(Entity, &mut AleExpire)>) {
+               mut shots: Query<(Entity, &mut Projectile, &mut Transform)>, mut expiring: Query<(Entity, &mut AleExpire)>,
+               mut holes: ResMut<fx::HoleRequests>) {
     let dt = frame_dt(&time);
     for (e, mut x) in &mut expiring {
         x.0 -= dt;
@@ -4893,9 +4927,12 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             let seed = (s.origin.x * 977.0 + s.origin.z * 131.0) as u32;
             for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight) {
                 if instant {
-                    // the tracer: fired once from the muzzle, flying on its own
+                    // the tracer: fired once from the muzzle, flying on its own along the
+                    // emitter's +y (ale_fx.rs; turned along the shot's -z it flew straight up, the
+                    // thin vertical line over the Minigun)
                     let life = fx.duration();
-                    commands.spawn((*tr, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life)));
+                    let along = Transform::from_translation(s.origin).with_rotation(Quat::from_rotation_arc(Vec3::Y, s.dir));
+                    commands.spawn((along, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life)));
                 } else {
                     // the bolt rides on the shot
                     commands.spawn((Transform::default(), Visibility::default(), bf_viewer::ale_fx::AleEffect::new(fx, 0.0, seed), ChildOf(e)));
@@ -4924,6 +4961,10 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             }
         }
         if hit {
+            // the bullet's hole or scorch where it met the world (play_fx.rs)
+            if s.decal != 0 {
+                holes.0.push((s.decal, at, s.normal));
+            }
             for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, hit_fx) {
                 let life = fx.duration();
                 commands.spawn((Transform::from_translation(at - dir * 0.05).with_rotation(Quat::from_rotation_arc(Vec3::Y, -dir)),

@@ -222,6 +222,7 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
         // the clip shows 0 until the magazine-in event
         let took = if npc { size - clip } else { reserve.take(def.ammo_type, size - clip) };
         u.ammo[w] = [0, took];
+        u.fire_state.reset_burst();                         // FUN_0022daf0
         u.reloading = Some(Reload { weapon: w, time: 0.0, fill: clip + took, filled: false });
         u.aim_hold = u.aim_hold.min(0.3);
         // FUN_00120d40 calls FUN_001249b0 (out of the scope, with its sound) first when the
@@ -236,7 +237,9 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
         if def.empty_sound != 0 {
             u.sound_queue.push((def.empty_sound, DRY_VOLUME));
         }
-        u.cooldown = 1.0 / def.rate.max(0.2);
+        // (the scoped rate in the scope, and the burst cleared: play_shots.rs)
+        u.cooldown = shots::period(def, u.scope > 0.5);
+        u.fire_state.reset_burst();
         if let Some(c) = u.regen.get_mut(w) {
             c.cooldown = u.cooldown;
         }
@@ -279,7 +282,8 @@ fn recharge(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         let Some(l) = u.loaded.as_ref() else { continue };
         let n = l.weapons.len();
-        let guns: Vec<(f32, i64, f32)> = l.weapons.iter().map(|w| (w.def.ammo_regen, w.def.ammo.max(1), 1.0 / w.def.rate.max(0.2))).collect();
+        let scoped = u.scope > 0.5;
+        let guns: Vec<(f32, i64, f32)> = l.weapons.iter().map(|w| (w.def.ammo_regen, w.def.ammo.max(1), shots::period(&w.def, scoped))).collect();
         u.regen.resize(n, Charge::default());
         let switching = u.switching.is_some();
         for (k, (every, size, period)) in guns.into_iter().enumerate() {

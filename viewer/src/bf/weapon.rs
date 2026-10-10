@@ -177,6 +177,78 @@ pub struct WeaponDef {
     pub attached_effect: u32,
     /// items: a proximity mine's trigger radius (H_PROXIMITY_RADIUS; 0 if none)
     pub proximity_radius: f32,
+    /// what the fire loop reads besides the above: bursts, accuracy, tracers, muzzle and shell
+    /// effects, damage falloff (see `ShotData`)
+    pub shots: ShotData,
+}
+
+/// The `<weapon>` attributes the shot code reads (play_shots.rs), with where the loader at
+/// 0x193b70 stores them in the weapon data (data+X, the record a weapon object points at from
+/// +0x228) and the function that uses them. Names not in the game's string table are the
+/// tester's guesses from their use.
+#[derive(Clone, Debug, Default)]
+pub struct ShotData {
+    /// h_019c314a (data+0xd0): shots per second while the holder's +0x7a8 is set (the scope,
+    /// medium confidence): FUN_0022f0e0 / FUN_0022dc00 through vtable +0x15c (0x22da30)
+    pub scoped_rate: f32,
+    /// h_e60e2074 (data+0xd4): the muzzle effect's own rate parameter (FUN_00232060)
+    pub effect_rate: f32,
+    /// h_e6c60892 (data+0xd8): seconds between the shots of a burst (FUN_0022f0e0)
+    pub burst_delay: f32,
+    /// h_e4076713 (data+0xdc, int): shots per trigger cycle (FUN_0022f0e0). Bower 6, others 1
+    pub burst_count: i64,
+    /// h_e704fd69 (data+0x130): degrees each shot after a zero-delay burst's first is turned
+    /// by, in yaw and in pitch (FUN_0022e1d0)
+    pub burst_spread: f32,
+    /// h_fd88830d (data+0x12c): muzzle effect type, one per muzzle hardpoint (FUN_00232060),
+    /// set off on each shot (FUN_0022f170). 0 if none
+    pub muzzle_effect: u32,
+    /// h_ea1abbbe (data+0x150 list): shell-eject hardpoint on the weapon model (0 if none)
+    pub shell_hardpoint: u32,
+    /// h_19b21bf5 (data+0x160): the object type thrown out of it (h_16415157, a casing); 0 if
+    /// none (FUN_00231b10 throws nothing then: the Bower has a hardpoint and no casing)
+    pub shell_object: u32,
+    /// h_fdc93b33 (data+0x164): casings per trigger cycle, added to weapon+0x208 (FUN_0022f2a0)
+    pub shell_rate: f32,
+    /// h_fb327295 (data+0x4..0x14, loader 0x18a1d0, read as ints): {min, max, h_01af2634 the
+    /// cap while scoped, h_10b6f49b lost per shot, h_19707b5c regained per second}
+    /// (FUN_00222ac0 / 00222b30 / 00222c10)
+    pub accuracy: [f32; 5],
+    /// Damage h_fb124e6c (data+0x34, the Damage record's +0x1c; loader 0x18a427): falloff mode
+    /// over the range, FUN_00223780 (1 linear, 2 squared, 3 full to half range then linear,
+    /// else none). Bower 2, every other gun 0
+    pub falloff: i64,
+    /// bullet bullet-type (bullet+8): the switch in FUN_0022f1d0. 4 is an instant ray
+    /// (FUN_002317e0), whatever the bullet's speed says
+    pub bullet_type: i64,
+    /// bullet h_eeb9e75a (data+0xa4): shots without the flight effect between two with it
+    /// (FUN_002317e0's counter at weapon+0x290). MK 2, Minigun 3, others 0
+    pub tracer_gap: i64,
+}
+
+/// `ShotData` of a `<weapon>` element and its `<bullet>`.
+fn shot_data(w: &Element, bullet: Option<&&Element>) -> ShotData {
+    let all = w.walk();
+    let num = |e: Option<&Element>, a: u32| e.and_then(|e| e.attr(a)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+    let hash = |a: u32| w.attr(a).and_then(|v| v.as_hash()).filter(|&x| x != h(""));
+    let accuracy = all.iter().find(|e| e.name == 0xFB32_7295).copied();
+    let damage = all.iter().find(|e| e.name == h("Damage")).copied();
+    let rate = num(Some(w), 0xE93A_46D6).unwrap_or(2.0);
+    ShotData {
+        scoped_rate: num(Some(w), 0x019C_314A).unwrap_or(rate),
+        effect_rate: num(Some(w), 0xE60E_2074).unwrap_or(rate),
+        burst_delay: num(Some(w), 0xE6C6_0892).unwrap_or(0.0),
+        burst_count: num(Some(w), 0xE407_6713).map_or(1, |v| v as i64).max(1),
+        burst_spread: num(Some(w), 0xE704_FD69).unwrap_or(0.0),
+        muzzle_effect: hash(0xFD88_830D).unwrap_or(0),
+        shell_hardpoint: hash(0xEA1A_BBBE).unwrap_or(0),
+        shell_object: hash(0x19B2_1BF5).unwrap_or(0),
+        shell_rate: num(Some(w), 0xFDC9_3B33).unwrap_or(1.0),
+        accuracy: [h("min"), h("max"), 0x01AF_2634, 0x10B6_F49B, 0x1970_7B5C].map(|a| num(accuracy, a).unwrap_or(0.0)),
+        falloff: damage.and_then(|d| d.attr(0xFB12_4E6C)).and_then(|v| v.as_i64().or(v.ints().first().copied())).unwrap_or(0),
+        bullet_type: bullet.and_then(|b| b.attr(h("bullet-type"))).and_then(|v| v.as_i64().or(v.ints().first().copied())).unwrap_or(0),
+        tracer_gap: num(bullet.copied(), 0xEEB9_E75A).map_or(0, |v| v as i64),
+    }
 }
 
 /// Hash values of an attribute stored either as a list or as repeated attributes.
@@ -242,6 +314,7 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
                 .and_then(|a| a.children.first()).and_then(|e| e.attr(h("effect-name"))).and_then(|v| v.as_hash())
                 .filter(|&x| x != h("")).unwrap_or(0),
             proximity_radius: find(H_PROXIMITY_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0),
+            shots: shot_data(w, bullet),
         });
     }
     out

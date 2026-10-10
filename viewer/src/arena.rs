@@ -401,6 +401,16 @@ impl Arena {
         self.ray_tri(origin, dir, max).map(|(t, _)| t)
     }
 
+    /// `ray`, with the hit triangle's normal turned to face back along the ray (where a bullet
+    /// hole lies, play_shots.rs).
+    pub fn ray_normal(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
+        self.ray_tri(origin, dir, max).map(|(t, i)| {
+            let v = &self.tris[i].v;
+            let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or(Vec3::Y);
+            (t, if n.dot(dir) > 0.0 { -n } else { n })
+        })
+    }
+
 
 
     /// `ray`, with the breakable object it meets first (its index, see `breakable`), if the

@@ -481,6 +481,8 @@ struct FxState {
     /// hit lights alive
     lights: usize,
     decals: std::collections::VecDeque<Entity>,
+    /// the bullet holes alive, oldest first (see `MAX_HOLES`)
+    holes: std::collections::VecDeque<Entity>,
 }
 
 impl FxState {
@@ -534,10 +536,24 @@ struct GlowLight {
 #[derive(Resource, Default)]
 pub struct DecalRequests(pub Vec<(u32, Vec3, f32)>);
 
+/// Bullet holes and scorches other modules ask for this frame (play_shots.rs): (the bullet's
+/// h_06a27365 decal, where the shot met the surface, the surface's normal facing the shooter).
+#[derive(Resource, Default)]
+pub struct HoleRequests(pub Vec<(u32, Vec3, Vec3)>);
+
+/// How many bullet holes stay at once; the oldest goes first. A guess: the game's own limit
+/// isn't known (a Minigun clip is 80 rounds; the holes' data life is 25 s).
+const MAX_HOLES: usize = 160;
+/// A bullet hole's width / height read as full sizes (h_1c8c53ea, h_0e8a266c ... 0.3 x 0.3 m):
+/// three MK holes at 10 m make a ~6-unit mark in 63/take01 at 9.3 s, about what a 0.3 m quad
+/// with the hole textures' alpha gives. The blood decals read theirs as half sizes.
+const HOLE_SCALE: f32 = 1.0;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<DecalRequests>()
+        .init_resource::<HoleRequests>()
         .add_systems(OnEnter(AppState::Playing), setup_fx.after(snapshot_entities))
-        .add_systems(Update, (spawn_fx, requested_decals, emit, animate_fx).chain().after(update_player).before(play_sounds)
+        .add_systems(Update, (spawn_fx, requested_decals, requested_holes, emit, animate_fx).chain().after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
 
@@ -561,6 +577,46 @@ fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Opti
             }
         }
         spawn_decal_alpha(&mut commands, &mut state, &fx, &mut materials, &def, at, scale, true);
+    }
+}
+
+/// The bullet holes asked for (`HoleRequests`): the decal laid on the surface the shot met,
+/// turned at random within its data rotation, fading over its data life as the ground decals
+/// do, darkening as the console's blend does (see `spawn_decal_alpha`).
+fn requested_holes(mut commands: Commands, mut game: ResMut<GameData>, fx: Option<ResMut<FxAssets>>, mut state: ResMut<FxState>,
+                   mut requests: ResMut<HoleRequests>, mut images: ResMut<Assets<Image>>,
+                   mut materials: ResMut<Assets<StandardMaterial>>) {
+    let Some(mut fx) = fx else { return };
+    for (name, at, normal) in std::mem::take(&mut requests.0) {
+        let Some(def) = game.0.decals.get(&name).cloned() else { continue };
+        if def.textures.is_empty() {
+            continue;
+        }
+        let texture = def.textures[(state.random() * def.textures.len() as f32) as usize % def.textures.len()];
+        if !fx.decal_textures.contains_key(&texture) {
+            if let Some((w, h, px)) = game.0.texture_rgba(texture) {
+                fx.decal_textures.insert(texture, images.add(rgba(w, h, px, false)));
+            }
+        }
+        let [r, g, b, a] = def.color;
+        let a = 1.0 - (1.0 - a).powf(2.2);
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgba(r, g, b, a), base_color_texture: fx.decal_textures.get(&texture).cloned(),
+            alpha_mode: AlphaMode::Blend, perceptual_roughness: 1.0, reflectance: 0.0, depth_bias: 40.0, ..default()
+        });
+        let turn = (state.random() * 2.0 - 1.0) * def.rotation.to_radians();
+        let normal = normal.normalize_or(Vec3::Y);
+        let e = commands.spawn((Mesh3d(fx.floor.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
+                                Transform::from_translation(at + normal * (0.01 + 0.004 * state.random()))
+                                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(turn))
+                                    .with_scale(Vec3::new(def.width * HOLE_SCALE, 1.0, def.height * HOLE_SCALE)),
+                                Decal { age: 0.0, def: def.clone(), material })).id();
+        state.holes.push_back(e);
+        while state.holes.len() > MAX_HOLES {
+            if let Some(old) = state.holes.pop_front() {
+                commands.entity(old).despawn();
+            }
+        }
     }
 }
 
@@ -616,7 +672,7 @@ fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResM
         floor: meshes.add(Plane3d::default().mesh().size(1.0, 1.0)),
         steps, decal_textures, flesh, synthetic,
     });
-    commands.insert_resource(FxState { rng: 0x9E37_79B9, particles: 0, lights: 0, decals: Default::default() });
+    commands.insert_resource(FxState { rng: 0x9E37_79B9, particles: 0, lights: 0, decals: Default::default(), holes: Default::default() });
 }
 
 fn spawn_light(commands: &mut Commands, def: &'static Glow, at: Vec3) {
@@ -853,6 +909,7 @@ fn animate_fx(
         if left <= 0.0 {
             commands.entity(e).despawn();
             state.decals.retain(|&x| x != e);
+            state.holes.retain(|&x| x != e);
             continue;
         }
         if left < d.def.fade {
