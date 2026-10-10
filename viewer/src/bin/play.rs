@@ -1831,7 +1831,8 @@ fn pillars() -> impl Iterator<Item = Vec3> {
         .map(|(i, j)| Vec3::new(i as f32 * 9.0, GROUND + 1.5, j as f32 * 9.0))
 }
 
-/// Distance along a ray to the ground or a pillar, if within `max`.
+/// Distance along a ray to the ground, a pillar or a breakable object the test map's tools put
+/// down (flat floor), or the map's collision, if within `max`.
 fn ray_hit(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
     if let Some(a) = world::arena() {
         return a.ray(origin, dir, max);
@@ -1853,6 +1854,10 @@ fn ray_hit(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
         if ok && t0 <= t1 && t0 > 0.0 && best.is_none_or(|b| t0 < b) {
             best = Some(t0);
         }
+    }
+    // (the breakable objects the test map's tools put down: play_scenery.rs)
+    if let Some(t) = scenery::ray_placed(origin, dir, max).filter(|&t| best.is_none_or(|b| t < b)) {
+        best = Some(t);
     }
     best.filter(|t| *t <= max)
 }

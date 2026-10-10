@@ -53,6 +53,10 @@
 //! and 0 in multiplayer): a push, not the damage, so the campaign's ~0.58 of the
 //! damage (see DAMAGE_SCALE) isn't this. Hurt by one, the player's view goes red (ScreenTint)
 //! as for a grenade.
+//!
+//! The test map's object tool (play_testtools.rs) puts these down on the flat floor too
+//! (`LateBreakable`): they join the list after the map's, and with no arena their model's box
+//! stands in for their collision (`ray_placed`, which play.rs's `ray_hit` stops at).
 
 use super::*;
 use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET};
@@ -154,7 +158,18 @@ struct Breakable {
     push: Push,
     /// it explodes (an effect in its debris list has a damage area)
     explosive: bool,
+    /// its model's box (its own frame) for shots, when it has no collision in the arena: one
+    /// put down by the test map's object tool (`LateBreakable`). None: the arena's, at the same
+    /// index (`Arena::ray_breakable`, `Arena::set_broken`).
+    bounds: Option<(Vec3, Vec3)>,
 }
+
+/// A breakable object put down after the map started (the test map's object tool,
+/// play_testtools.rs), its type (a `Game::breakable` key): `late_scenery` adds it to the list
+/// with its placed Transform. It has no collision (the flat test floor has no arena): shots
+/// meet its model's box instead, characters walk through it and what it leaves behind.
+#[derive(Component)]
+pub struct LateBreakable(pub u32);
 
 /// A damage area at work (see the module notes).
 struct Area {
@@ -220,12 +235,13 @@ pub fn plugin(app: &mut App) {
         .init_resource::<ObjectBlasts>()
         .add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| {
             commands.insert_resource(Scenery::default());
+            PLACED_BOXES.lock().unwrap().clear();
             commands.insert_resource(ObjectBlasts::default());
         }).after(setup))
         // (after the grenades: a blast's damage reaches the scenery on the frame the
         // characters take it)
         // (the mines set off before they're handed to the next frame's shots)
-        .add_systems(Update, (find_scenery, hit_scenery, break_scenery, area_damage, set_off_mines, debris_life).chain()
+        .add_systems(Update, (find_scenery, late_scenery, hit_scenery, break_scenery, area_damage, set_off_mines, debris_life).chain()
             .after(super::grenade::GrenadeSystems).before(super::sentry::publish_targets).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
@@ -267,31 +283,110 @@ fn find_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: 
         debug_assert_eq!(b, list.len());
         let centre = place.transform_point(game.0.object_meshes.get(&o.kind).and_then(|&a| game.0.archetype_centre(a)).unwrap_or(Vec3::ZERO));
         list.push(Breakable { name: o.name, kind: o.kind, place, centre, entity, hp: t.hitpoints, state: State::Intact,
-                              push: Push { at: centre, dir: Vec3::ZERO }, explosive });
-        // what it breaks into, made ready
-        for d in &t.debris {
-            let Some(k) = game.0.object_types.get(&d.kind).map(|k| k.object_type) else { continue };
-            if k == OBJECT_EFFECT {
-                if let Some(ale) = ale.as_deref_mut() {
-                    let fx = game.0.effect_type_defs.get(&d.kind).cloned().unwrap_or_default();
-                    for &e in fx.effects.iter().chain([&fx.light]).filter(|&&e| e != 0) {
-                        if ale.cached_recorded(e).is_none() {
-                            if let Some(c) = ale.load_recorded(&mut game.0, &mut images, &mut materials, e) {
-                                bf_viewer::ale_fx::warm_up(&mut commands, ale, &c);
-                            }
-                        }
-                    }
-                }
-            } else if !scenery.models.contains_key(&d.kind) {
-                let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
-                let model = debris_model(&mut game.0, &mut assets, d.kind);
-                scenery.models.insert(d.kind, model);
-            }
-        }
+                              push: Push { at: centre, dir: Vec3::ZERO }, explosive, bounds: None });
+        let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
+        prepare_debris(&mut commands, &mut scenery, &mut game.0, &mut assets, ale.as_deref_mut(), &t.debris);
     }
     println!("{} breakable objects", list.len());
     scenery.list = list;
     scenery.ready = true;
+}
+
+/// What a breakable object breaks into, made ready: its effects compiled (their render pipelines
+/// built ahead) and its pieces' and remains' models.
+fn prepare_debris(commands: &mut Commands, scenery: &mut Scenery, game: &mut Game, assets: &mut ModelAssets,
+                  ale: Option<&mut bf_viewer::ale_fx::AleAssets>, debris: &[Debris]) {
+    let mut ale = ale;
+    for d in debris {
+        let Some(k) = game.object_types.get(&d.kind).map(|k| k.object_type) else { continue };
+        if k == OBJECT_EFFECT {
+            if let Some(ale) = ale.as_deref_mut() {
+                let fx = game.effect_type_defs.get(&d.kind).cloned().unwrap_or_default();
+                for &e in fx.effects.iter().chain([&fx.light]).filter(|&&e| e != 0) {
+                    if ale.cached_recorded(e).is_none() {
+                        if let Some(c) = ale.load_recorded(game, assets.images, assets.materials, e) {
+                            bf_viewer::ale_fx::warm_up(commands, ale, &c);
+                        }
+                    }
+                }
+            }
+        } else if !scenery.models.contains_key(&d.kind) {
+            let model = debris_model(game, assets, d.kind);
+            scenery.models.insert(d.kind, model);
+        }
+    }
+}
+
+/// Breakable objects put down since the map started (`LateBreakable`), once the map's are in:
+/// each joins the list as a level's would (its hitpoints, centre, debris made ready), with its
+/// model's box for shots.
+#[allow(clippy::too_many_arguments)]
+fn late_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: ResMut<GameData>,
+                placed: Query<(Entity, &LateBreakable, &Transform)>, mut meshes: ResMut<Assets<Mesh>>,
+                mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
+                mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>, mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>) {
+    if !scenery.ready {
+        return;
+    }
+    for (e, late, &place) in &placed {
+        commands.entity(e).remove::<LateBreakable>();
+        let kind = late.0;
+        let Some(t) = game.0.breakable(kind).cloned() else {
+            println!("h_{kind:08x} doesn't break");
+            continue;
+        };
+        let arch = game.0.object_meshes.get(&kind).copied();
+        let centre = place.transform_point(arch.and_then(|a| game.0.archetype_centre(a)).unwrap_or(Vec3::ZERO));
+        let bounds = arch.and_then(|a| WeaponModel::load(&game.0, a).ok()).map(|m| m.parts.iter()
+            .flat_map(|p| p.geosets.iter().flat_map(move |g| g.positions.iter().map(move |v| p.offset + p.rotation * Vec3::from(*v))))
+            .fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(v), u.max(v)))).filter(|(l, u)| l.x <= u.x);
+        let explosive = t.debris.iter().any(|d| game.0.object_types.get(&d.kind).is_some_and(|k| k.object_type == OBJECT_EFFECT)
+            && game.0.effect_type_defs.get(&d.kind).is_some_and(|e| !e.damage.is_empty()));
+        if std::env::var("BF_SCENERY_LOG").is_ok() {
+            println!("breakable {} (placed): type h_{kind:08x} at {:.2}, {} hp, box {:.2?}", scenery.list.len(), place.translation, t.hitpoints, bounds);
+        }
+        if let Some(bx) = bounds {
+            PLACED_BOXES.lock().unwrap().push((scenery.list.len(), place, bx));
+        }
+        scenery.list.push(Breakable { name: kind, kind, place, centre, entity: Some(e), hp: t.hitpoints, state: State::Intact,
+                                      push: Push { at: centre, dir: Vec3::ZERO }, explosive, bounds });
+        let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
+        prepare_debris(&mut commands, &mut scenery, &mut game.0, &mut assets, ale.as_deref_mut(), &t.debris);
+    }
+}
+
+/// The boxes of the intact breakable objects put down without collision (`LateBreakable`): their
+/// list index, placement and box. The flat floor's `ray_hit` (play.rs) stops at them as it does
+/// at the pillars, so shots and the crosshair meet them as a map's collision would.
+static PLACED_BOXES: std::sync::Mutex<Vec<(usize, Transform, (Vec3, Vec3))>> = std::sync::Mutex::new(Vec::new());
+
+/// How far along a ray (from `origin` along unit `dir`) it meets a placed breakable's box
+/// (`PLACED_BOXES`) within `max`, if it does.
+pub(super) fn ray_placed(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+    PLACED_BOXES.lock().unwrap().iter().filter_map(|(_, place, bx)| ray_box(place, *bx, origin, dir))
+        .filter(|&t| t > 0.0 && t <= max).min_by(|a, b| a.total_cmp(b))
+}
+
+/// How far along a ray (from `origin` along unit `dir`) it enters a box (`lo`..`hi` in the frame
+/// `place`), if it does.
+fn ray_box(place: &Transform, (lo, hi): (Vec3, Vec3), origin: Vec3, dir: Vec3) -> Option<f32> {
+    let inv = place.compute_affine().inverse();
+    let (o, d) = (inv.transform_point3(origin), inv.transform_vector3(dir));
+    let (mut t0, mut t1) = (0.0f32, f32::MAX);
+    for k in 0..3 {
+        if d[k].abs() < 1e-8 {
+            if o[k] < lo[k] || o[k] > hi[k] {
+                return None;
+            }
+        } else {
+            let (a, b) = ((lo[k] - o[k]) / d[k], (hi[k] - o[k]) / d[k]);
+            t0 = t0.max(a.min(b));
+            t1 = t1.min(a.max(b));
+        }
+    }
+    // (the local ray's length per world metre is |d|: the same t, as the transform has no scale
+    // but the object's own; a scaled one's t is in its units, close enough for a hit test)
+    (t0 <= t1).then_some(t0)
 }
 
 /// A debris type's model: each part's placement, middle and meshes.
@@ -373,6 +468,20 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             }
         }
     }
+    // ... or on the box of one put down without collision (`LateBreakable`)
+    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
+        let shots: Vec<Shot> = u.shots.clone();
+        for shot in shots {
+            let first = s.list.iter().enumerate().filter(|(_, b)| matches!(b.state, State::Intact))
+                .filter_map(|(i, b)| b.bounds.and_then(|bx| ray_box(&b.place, bx, shot.origin, shot.dir)).map(|t| (i, t)))
+                .filter(|&(_, t)| t <= shot.dist + SHOT_SLACK).min_by(|a, b| a.1.total_cmp(&b.1));
+            let Some((b, t)) = first else { continue };
+            let [lo, hi] = if shot.damage[1] > 0.0 { shot.damage } else { [8.0, 10.0] };
+            let amount = lo + (hi - lo) * u.random(1000) as f32 / 1000.0;
+            let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
+            s.hits.push(PendingHit { delay: t / shot.speed.max(1.0), target: b, amount, damage_type: shot.damage_type, push });
+        }
+    }
     let mut due = vec![];
     s.hits.retain_mut(|h| {
         h.delay -= dt;
@@ -425,9 +534,11 @@ fn damage(s: &mut Scenery, game: &Game, i: usize, amount: f32, damage_type: i64,
     let countdown = queue.iter().map(|d| d.delay).fold(0.0, f32::max);
     b.state = State::Breaking { countdown, queue };
     b.push = push;
-    if let Some(a) = world::arena() {
+    // (one put down by the test map's tools has no collision to drop)
+    if let (Some(a), None) = (world::arena(), b.bounds) {
         a.set_broken(i, true);
     }
+    PLACED_BOXES.lock().unwrap().retain(|p| p.0 != i);
     if std::env::var("BF_SCENERY_LOG").is_ok() {
         println!("t {now:.2}: breakable {i} (h_{:08x}) breaks; debris over {countdown:.2} s", b.name);
     }

@@ -45,8 +45,10 @@ const ITEMS_Z: f32 = -12.0;
 /// loading every level with BF_TESTMAP_LOG). Every level together loads in about 6 s and
 /// adds nothing more; these take about 0.2 s. m09_a adds the Light grenade (h_fd1a966d is only
 /// in m09_a/b/c/x; m09_a is the smallest): with the multiplayer levels (Sentry, Roller, Gas,
-/// Energy, Sonic, Frag) every squad grenade type is defined.
-const TEST_LEVELS: [&str; 10] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6", "mp7", "mp8", "m02_a", "m09_a"];
+/// Energy, Sonic, Frag) every squad grenade type is defined. sdm_e34 adds the missile rack
+/// (h_fbdcd828) for the object tool's breakable scenery (play_testtools.rs; the barrel and the
+/// crate are in the others too): about 0.2 s more, the rack and the pickups unchanged.
+const TEST_LEVELS: [&str; 11] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6", "mp7", "mp8", "m02_a", "m09_a", "sdm_e34"];
 /// How high (m) the pickups are dropped from, and how far (rad) each is tipped either way.
 const DROP_HEIGHT: f32 = 0.3;
 const DROP_TIP: f32 = 0.2;

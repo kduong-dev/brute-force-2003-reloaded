@@ -20,18 +20,21 @@
 //!      squadmate's shots stop at the first body in their way, as the player's do.
 //!    - Outside the menu J switches the team of the NPC under the crosshair, B its behaviour,
 //!      Delete removes it; Shift+Delete removes every NPC.
-//!  - O: the object menu, a list of every pickup type, every hand weapon (the rack's list) and
-//!    each grenade type. Up / Down picks (Page Up / Down jumps a group); a see-through copy follows
-//!    the crosshair on the ground; the wheel turns it 15 degrees a notch; a click (or Enter) puts
-//!    one there, and the menu stays open for more. O or Esc closes it.
+//!  - O: the object menu, a list of every pickup type, every hand weapon (the rack's list),
+//!    each grenade type and the breakable scenery. Up / Down picks (Page Up / Down jumps a
+//!    group); a see-through copy follows the crosshair on the ground; the wheel turns it 15
+//!    degrees a notch; a click (or Enter) puts one there, and the menu stays open for more. O or
+//!    Esc closes it.
 //!    - A pickup is a level's inventory-object, as the test map's grid (play_pickups.rs:
 //!      `LatePickup`): medkits and fruit can be taken, everything is loose.
 //!    - A weapon lies on its side; walking into it takes it, as from the rack (play_testmap.rs),
 //!      and it's gone.
 //!    - A grenade lies as modelled; walking over it adds one of its type, up to its stack-limit
 //!      (the test map starts with a full stack, so only once some are used).
-//!    - Breakable scenery (radiation barrel, missile rack, supply crate) is still to come with
-//!      #85 (play_scenery.rs, `Game::breakable`): see `Kind`.
+//!    - Breakable scenery (BREAKABLES: the radiation barrel, the missile rack, the supply crate)
+//!      joins play_scenery.rs's list as a map's does (`LateBreakable`): shots, blasts and other
+//!      objects' damage areas break it, it explodes and chains. With no collision on the flat
+//!      floor, shots meet its model's box and characters walk through it.
 //!
 //! Not done: enemy species (#110: the menu lists them from the data but can't spawn them yet),
 //! moving NPCs, removing placed objects, saving a layout.
@@ -160,10 +163,13 @@ enum Kind {
     Weapon(u32),
     /// a grenade type (a `GrenadeKits` index)
     Grenade(usize),
-    // #85: the breakable scenery (radiation barrel, missile rack, supply crate) goes here once
-    // play_scenery.rs merges - `Breakable(<its Game::breakable key>)`, placed by spawning the
-    // object as play_scenery.rs does for a level's, so it breaks, explodes and chains as there.
+    /// breakable scenery (a `Game::breakable` key, see BREAKABLES)
+    Breakable(u32),
 }
+
+/// The breakable scenery the object menu has: sdm_e34's three kinds (play_scenery.rs' notes),
+/// by object type, with the names the demo gives them.
+const BREAKABLES: [(&str, u32); 3] = [("Radiation barrel", 0xE04E_5A0E), ("Missile rack", 0xFBDC_D828), ("Supply crate", 0x09A6_856D)];
 
 /// One entry of the object menu: its name, its group's name, what it places, its model, the
 /// pose it's put in (`rest`, before its turn) and how far its origin sits above the ground in
@@ -177,8 +183,8 @@ struct Entry {
     lift: f32,
 }
 
-/// The object menu's entries, in groups: pickups, weapons, grenades (built once the grenade
-/// types are loaded).
+/// The object menu's entries, in groups: pickups, weapons, grenades, scenery (built once the
+/// grenade types are loaded).
 #[derive(Resource, Default)]
 struct Catalogue(Vec<Entry>);
 
@@ -747,12 +753,19 @@ fn catalogue(game: &Game, kits: &grenade::GrenadeKits) -> Vec<Entry> {
         let Ok(model) = WeaponModel::load(game, k.def.archetype) else { continue };
         out.push(Entry { label: k.def.label.clone(), group: "grenades", kind: Kind::Grenade(i), lift: lift(&model, Quat::IDENTITY), rest: Quat::IDENTITY, model });
     }
-    // #85: the breakables group goes here
+    for (label, kind) in BREAKABLES {
+        let model = game.breakable(kind).and(game.object_meshes.get(&kind)).and_then(|&a| WeaponModel::load(game, a).ok());
+        match model {
+            Some(model) => out.push(Entry { label: label.into(), group: "scenery", kind: Kind::Breakable(kind), lift: lift(&model, Quat::IDENTITY),
+                                            rest: Quat::IDENTITY, model }),
+            None => println!("test tools: no {label} (h_{kind:08x}) in the loaded data"),
+        }
+    }
     // (two of a name - the placed and the carried Medkit, two Bio Ammo - by their hash too)
     let labels: Vec<String> = out.iter().map(|e| e.label.clone()).collect();
     for e in out.iter_mut() {
         if labels.iter().filter(|l| **l == e.label).count() > 1 {
-            let key = match e.kind { Kind::Pickup(k) | Kind::Weapon(k) => k, Kind::Grenade(k) => k as u32 };
+            let key = match e.kind { Kind::Pickup(k) | Kind::Weapon(k) | Kind::Breakable(k) => k, Kind::Grenade(k) => k as u32 };
             e.label = format!("{} h_{key:08x}", e.label);
         }
         if !e.lift.is_finite() || e.lift.abs() > 5.0 {
@@ -808,6 +821,9 @@ fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, lis
         }
         Kind::Grenade(k) => {
             commands.entity(root).insert(GroundGrenade(k));
+        }
+        Kind::Breakable(kind) => {
+            commands.entity(root).insert(super::scenery::LateBreakable(kind));
         }
     }
     spawn_parts(commands, game, assets, e, root, false);
