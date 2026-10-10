@@ -54,7 +54,7 @@ decal, and a throw called off.
 * **The blast**, on the ground below where it went off: the effect type's ALE effects and its
   light effect run once from that frame (`src/ale_fx.rs`; an effect without a parent now starts
   on the frame it's spawned; a "light_" effect is a point light: reach = its size, strength =
-  colour x alpha x size, the DNA light's tuning), its sounds (h_f724cb8c read as a delay: the
+  colour x alpha x size, the tuning once fitted to the old DNA effect's light), its sounds (h_f724cb8c read as a delay: the
   Light's 0.2 s) and the impact sound. The decal is laid 0.7 s later, once the fireball has
   gone (laid at once, it showed as a hard dark disc through the added fireball), its
   width / height read as half sizes as the blood decals' are (the Frag's 3 x 3 is a 6 m quad,

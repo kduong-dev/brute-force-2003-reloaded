@@ -9,12 +9,11 @@
 //!  - decals: each character names two ground decals: one per hit (h_14410af1: 0.5 x 0.25 m,
 //!    RGBA 128,34,34,220) and one under the body (h_16d327fd: 1 x 1 m, 148,44,44,220): white
 //!    splat textures tinted by that colour (objecttypes `<decal>`, see `DecalDef`).
-//!  - DNA: beside a fallen squadmate, effect h_ee11d51f = powerup_pill (green small-flare.tga
-//!    sprites growing out of a small cube emitter, added to the picture) + light_powerup_pill, a
-//!    "light_" node: those drive a point light rather than sprites (the light is what brightens
-//!    the ground around it in the capture). The capture shows the sprites as a soft square (the
-//!    "green block"): the data's texture is the round flare, so the square is the emulator's way
-//!    of drawing them (the explosion sprites in the captures are boxy too).
+//!  - the memory chip a dead squadmate drops (what this module used to draw as "the DNA", with
+//!    the DNA canister's powerup_pill effect) is a mesh pickup now: play_dna.rs.
+//!
+//! The game draws an ALE appearance's particles as quads with the whole texture on them
+//! (FUN_002a1a50, with its shape list at 0x402a4c), not as point sprites; so do these.
 //!
 //! The parameters read as Freelancer's ALE ones (Brute Force hashes their names): an emitter
 //! emits `rate` particles/s over its own time, each living `life` s, leaving at `speed` m/s at an
@@ -58,11 +57,6 @@ const SPLAT_PAST: (f32, f32) = (1.0, 2.5);
 /// How far inside the hit cylinder (radius 0.4 m) a body's skin is, and how far out of its middle.
 const SKIN_IN: f32 = 0.25;
 const SKIN_OUT: f32 = 0.15;
-/// The DNA appears this long after a death, this far beside where they fell and this high
-/// (capture).
-const DNA_DELAY: f32 = 0.2;
-const DNA_SIDE: f32 = 0.9;
-const DNA_HEIGHT: f32 = 0.55;
 /// The pool goes under the body this long after death (it has stopped sliding by then).
 const POOL_DELAY: f32 = 2.0;
 /// A death splashes blood round where the body falls: the hit's blood effects sprayed up from
@@ -72,7 +66,8 @@ const DEATH_SPRAY_UP: f32 = 0.9;
 const DEATH_SPLATS: usize = 5;
 const DEATH_SPLAT_REACH: f32 = 1.4;
 /// A light's lumens per unit of (alpha x size x colour) of its live particles (tuned to the
-/// capture's brightening around the DNA).
+/// capture's brightening around the old DNA effect's light_powerup_pill, which is gone; the hit
+/// lights keep it).
 const LIGHT_LUMENS: f32 = 30_000.0;
 const MAX_LIGHTS: usize = 16;
 
@@ -125,12 +120,6 @@ struct Glow {
     alpha: f32,
     size: Keys,
 }
-
-/// light_powerup_pill (the DNA's): blue, reaching 0.4 -> 2 -> 0.4 m over each particle's life
-static DNA_LIGHT: Glow = Glow {
-    rate: 1.492, life: 2.424, color: &[(0.0, [0.227, 0.475, 0.773])], alpha: 0.583,
-    size: &[(0.00322, 0.408), (0.463, 2.0), (0.994, 0.405)],
-};
 
 /// light_hit_cutter: a pale blue flash
 static CUTTER_LIGHT: Glow = Glow {
@@ -263,7 +252,7 @@ static FLESH_SPARKS: Effect = Effect {
 /// wmat_fleshit_cutter (ammo type 7, Brutus's): fleshit_cutter.emt / .app / .fld: long thin
 /// streaks
 static FLESH_CUTTER: Effect = Effect {
-    id: 5,
+    id: 4,
     emit: Emit {
         time: 0.2,
         rate: &[(0.0, &[(0.00665, 594.0), (0.069, 0.0)])],
@@ -291,7 +280,7 @@ static FLESH_CUTTER: Effect = Effect {
 /// wmat_fleshit_laser (ammo type 11, Tex's): fleshit_laser.emt (a cone opening up to 90
 /// degrees) / .app / _gravfld: flickering embers
 static FLESH_LASER: Effect = Effect {
-    id: 6,
+    id: 5,
     emit: Emit {
         time: 0.2,
         rate: &[(0.0, &[(0.00238, 130.0), (0.155, 129.0), (0.164, 0.0)]),
@@ -317,37 +306,10 @@ static FLESH_LASER: Effect = Effect {
     },
 };
 
-/// powerup_pill (DNA): powerup_Cube_pill.emt (runs until removed) / powerup_pill.app
-static DNA_PILL: Effect = Effect {
-    id: 4,
-    emit: Emit {
-        time: f32::INFINITY,
-        rate: &[(0.0, &[(0.0, 7.356)])],
-        life: &[(0.0, 1.479)],
-        speed: &[(0.0, &[(0.0, 0.03713)])],
-        size: 0.0893,
-        spread_min: &[(0.0, 6.72)],
-        spread_max: &[(0.0, 28.21)],
-        gravity: 0.0,
-    },
-    look: Look {
-        texture: 0x1E87_F03A,   // small-flare.tga
-        additive: true,
-        color: &[(0.0, [0.224, 0.525, 0.243])],
-        alpha: &[(0.0, 0.0), (0.626, 0.467), (1.0, 0.00619)],
-        size: &[(0.0, &[(0.0, 0.101), (1.0, 1.57)])],
-        size_ease: EASE_IN,
-        aspect: 1.0,
-        width: &[(0.0, 1.0)],
-        streak: false,
-        spin: &[(0.0, 0.0)],
-    },
-};
-
 /// blood_puff_b (synthetic flesh): blood_mist_b.emt / blood_mist_b.app. Grey, slower and
 /// fewer than blood_mist.
 static BLOOD_MIST_B: Effect = Effect {
-    id: 7,
+    id: 6,
     emit: Emit {
         time: 0.21,
         rate: &[(0.0135, &[(-0.0088, 49.92), (0.1939, 42.1), (0.2056, 0.0)]),
@@ -377,7 +339,7 @@ static BLOOD_MIST_B: Effect = Effect {
 /// bloodsplat_b (synthetic flesh): bloodsplat_b.emt / bloodsplat_b.app /
 /// bloodsplat_s_gravfld_b. Grey-blue droplets, slower and under less gravity than bloodsplat_s.
 static BLOOD_DROPS_B: Effect = Effect {
-    id: 8,
+    id: 7,
     emit: Emit {
         time: 0.2,
         rate: &[(0.189, &[(0.0005, 258.1), (0.0647, 152.5), (0.1032, 187.1), (0.1513, 0.0)]),
@@ -407,7 +369,7 @@ static BLOOD_DROPS_B: Effect = Effect {
 /// giblet_b (synthetic flesh): giblet_b.emt / giblet_b.app. Dark blue-grey spatters, twice
 /// giblet's emitter size.
 static GIBLET_B: Effect = Effect {
-    id: 9,
+    id: 8,
     emit: Emit {
         time: 0.22,
         rate: &[(0.0, &[(0.0199, 5.91), (0.2021, 5.95), (0.2021, 0.0)]),
@@ -433,7 +395,7 @@ static GIBLET_B: Effect = Effect {
     },
 };
 
-static EFFECTS: [&Effect; 10] = [&BLOOD_MIST, &BLOOD_DROPS, &GIBLET, &FLESH_SPARKS, &DNA_PILL, &FLESH_CUTTER, &FLESH_LASER,
+static EFFECTS: [&Effect; 9] = [&BLOOD_MIST, &BLOOD_DROPS, &GIBLET, &FLESH_SPARKS, &FLESH_CUTTER, &FLESH_LASER,
                                  &BLOOD_MIST_B, &BLOOD_DROPS_B, &GIBLET_B];
 
 /// The debris bundle every flesh hit gets (h_f304f9fb).
@@ -711,7 +673,7 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
     }
 }
 
-/// New hits (blood, sparks, the hit sound, a decal) and, for the dead, the DNA and the pool.
+/// New hits (blood, sparks, the hit sound, a decal) and, for the dead, the pool.
 #[allow(clippy::too_many_arguments)]
 fn spawn_fx(
     mut commands: Commands,
@@ -787,15 +749,7 @@ fn spawn_fx(
             }
         }
         u.dead_for += dt;
-        // the DNA, beside where they fell
-        if !u.dna_done && u.dead_for >= DNA_DELAY {
-            u.dna_done = true;
-            let a = state.random() * std::f32::consts::TAU;
-            let (x, z) = (u.position.x + DNA_SIDE * a.cos(), u.position.z + DNA_SIDE * a.sin());
-            let pos = Vec3::new(x, floor_y(x, z, u.position.y + GROUND + 1.0) + DNA_HEIGHT, z);
-            spawn_emitter(&mut commands, &mut state, &DNA_PILL, pos, Vec3::Y, 0.0);
-            spawn_light(&mut commands, &DNA_LIGHT, pos);
-        }
+        // (the memory chip beside them: play_dna.rs, from dead_for)
         // the pool under the body, once it's down and still
         if !u.pool_done && u.thud && u.dead_for >= POOL_DELAY {
             if let (Some(body), Some(def)) = (u.body_at, game.0.decals.get(&pool_decal)) {
@@ -847,7 +801,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fx: Option<Res<FxAssets>>, mut 
 }
 
 /// Particles move, grow, change colour and face the camera; decals fade at the end of their
-/// time; the DNA light follows its particles.
+/// time; a light effect's light follows its particles.
 #[allow(clippy::too_many_arguments)]
 fn animate_fx(
     mut commands: Commands,

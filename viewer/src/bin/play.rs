@@ -434,7 +434,7 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -462,6 +462,8 @@ mod sonic;
 mod sentry;
 #[path = "play_fx.rs"]
 mod fx;
+#[path = "play_dna.rs"]
+mod dna;
 #[path = "play_pickups.rs"]
 mod pickups;
 #[path = "play_text.rs"]
@@ -1340,7 +1342,8 @@ struct Player {
     /// the body has hit the ground (thud played) / where it lies
     thud: bool,
     body_at: Option<Vec3>,
-    /// seconds since death; the DNA and the blood pool under the body are out
+    /// seconds since death; the memory chip (play_dna.rs) and the blood pool under the body are
+    /// out
     dead_for: f32,
     dna_done: bool,
     /// where they stood last frame (x, z)

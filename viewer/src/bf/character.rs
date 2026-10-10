@@ -376,6 +376,9 @@ pub struct ItemType {
     pub label: String,
     /// its HUD icon (h_e5ec3f1f), 0 if none
     pub icon: u32,
+    /// the string shown when it's picked up (h_1dd3a49d on its <base>: the memory chip's
+    /// h_091ce603 "Memory Chip Recovered!"), 0 if none
+    pub message: u32,
 }
 
 /// A liquid type: a pool's surface is its object's collision plane, which characters sink
@@ -721,6 +724,7 @@ impl Game {
                         use_sound: t.child(h("base")).map(|b| hash_of(b.attr(0x153F_90C9))).filter(|&x| x != 0 && x != h("")).unwrap_or(0),
                         label: self.strings.get(&hash_of(t.attr(h("stringtable-name")))).cloned().unwrap_or_default(),
                         icon: id(0xE5EC_3F1F),
+                        message: t.child(h("base")).map(|b| hash_of(b.attr(0x1DD3_A49D))).filter(|&x| x != 0 && x != h("")).unwrap_or(0),
                     });
                 }
             }

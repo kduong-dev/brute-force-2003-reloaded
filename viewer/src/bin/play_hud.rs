@@ -977,7 +977,7 @@ fn update_hud_widgets(
     let new_word = game.0.strings.get(&S_NEW).cloned().unwrap_or("NEW".into());
     let hold = game.0.strings.get(&S_HOLD).cloned().unwrap_or("Hold ".into());
     let to_activate = game.0.strings.get(&S_TO_ACTIVATE).cloned().unwrap_or("to activate %s.".into());
-    let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| format!("{n}x {name}")).collect();
+    let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| if *n > 0 { format!("{n}x {name}") } else { name.clone() }).collect();
 
     for (part, mut vis, img, mut text, node) in &mut parts {
         let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };

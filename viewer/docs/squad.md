@@ -101,15 +101,46 @@ Squad movement and deaths follow the game's own data and the captures:
   limp body that stays on a blood pool (the character's other decal, h_16d327fd), blood
   splashed round where they fall (the hit's blood effects sprayed up, and five of their hit
   splats on the ground within 1.4 m: the demo's choice, the game's own death blood isn't
-  known; Flint's decals are dark grey, 50,50,50, in the data: she's a synthetic), the DNA
-  beside where they fell, and - half the time, as the data says - a surviving squadmate's
-  answer from the dead member's response tag ("Brutus is down!", "They've taken out Hawk.").
-  The DNA is effect h_ee11d51f, the one on the game's DNA canister pickups: powerup_pill (green
-  small-flare.tga sprites, added to the picture) and light_powerup_pill, a blue point light
-  ("light_" effects are lights). The captures show it as a soft green square: the data's
-  texture is the round flare, so the square is how the emulator draws those sprites (its
-  explosion sprites are boxy too). On the radar the portrait becomes the member's own skull (the
-  characters' h_00c51907 icon) and the member's tab and health bar go.
+  known; Flint's decals are dark grey, 50,50,50, in the data: she's a synthetic), their memory
+  chip beside where they fell (below), and - half the time, as the data says - a surviving
+  squadmate's answer from the dead member's response tag ("Brutus is down!", "They've taken out
+  Hawk."). On the radar the portrait becomes the member's own skull (the characters'
+  h_00c51907 icon) and the member's tab and health bar go.
+* **Memory chip** (`play_dna.rs`, #43; what the demo called "the DNA"). Each squad
+  character-object's `<h_0f77963d inventory-drop>` is item h_f50f94f9 (function-type 18,
+  h_0a811e94 2000, message h_1dd3a49d -> h_091ce603 "Memory Chip Recovered!", pickup-sound
+  h_ee2c16da). Its mesh h_10960346 is a 0.375 m cube, UVs 0..1 on each face, in the self-lit
+  shader h_f539fe8c: the circuit-trace texture h_1e02a5ef (two thirds alpha 0) times its
+  h_e01baa40 colour 0.36 1 0.67 at alpha 0.7, blended SRCALPHA / INVSRCALPHA without z-writes
+  and unculled (the shader's render-state setup, FUN_0008fd20; h_0f5ae13f 1 would be additive,
+  the chip has 2), so the far faces show through the near ones. Its scroll (FUN_0008fca0)
+  only runs for h_08c2d2ee = 0.12 s, so the texture sits at a fixed offset (0.446, 0.102). It
+  appears 0.2 s after the death, 0.9 m from the body, its middle 0.55 m over the ground (the
+  demo's choice, kept from the old effect; the game's isn't found), and doesn't spin or bob (as
+  in the footage). The player walking into it (within 1 m across, 1.5 m up or down) takes it:
+  it goes, h_ee2c16da plays and the pickup lines show "Memory Chip Recovered!" (no count). The
+  footage's "+ 2000" by the radar is the score, which the demo doesn't keep; nor does it
+  reclone the squadmate. The soft brightening round the chip in front of lit walls in
+  `todo/DNA + Weapon Pickups.mp4` has no source found in the data and is left out. The green
+  sprites and blue light the demo drew before were effect h_ee11d51f (powerup_pill +
+  light_powerup_pill), which belongs to the DNA canister pickup (mesh h_e3e4caad, "Alien
+  Technology Acquired!"), not to a death. (`BF_PICKUP_LOG=1` prints the chip's material, where
+  each is dropped and when it's taken.)
+  * Drawn as Bevy's alpha blend, unfogged (as the levels' self-lit materials), with a
+    box-filtered mip chain made for its texture (the format reader decodes the top level only;
+    without mips the one-texel traces break up a few metres off, where the footage shows an even
+    soft green). It sorts 1000 m nearer among see-through things than it is: the terrain's
+    blended texture layers are drawn in the same pass, sorted by their chunk's middle, and
+    painted over it on sdm_e34 (it all but vanished: a 7/255 difference).
+  * `BF_TEST_CHIP=<x>,<z>[,<s>]` drops a chip at (x, z) at that time (default 0.5 s), on the
+    floor below 2 m over the player's middle, without a death.
+  * Verified: a squadmate killed on the test map (`cargo run --bin bf_play -- --test` with
+    `BF_TEST_GOTO=0,0,0,0 BF_TEST_KILL=0`: Brutus's chip 0.9 m beside him, a see-through
+    circuit-trace cube, its far faces through the near ones); on sdm_e34 standing
+    (`BF_TEST_GOTO=-44.4,15.5,-44.4,15.5 BF_TEST_CHIP=-43.2,13.0,0.5`, with `BF_VIEW_YAW=0` and
+    `0.6`: one face square-on, then two faces and an edge, as the footage's camera pass at
+    2.5-6.5 s) and running through one (`BF_TEST_GOTO=-44.4,15.5,-44.4,35
+    BF_TEST_CHIP=-43.8,22,0.3`: it goes, h_ee2c16da plays, "Memory Chip Recovered!" shows).
 * **Death camera** (`play_deathcam.rs`, from the reference recording `Friendly Fire 2 + Death
   Cam.mp4`, 28.3-32.4 s). On the frame the character you control dies, the view cuts (no
   blend) to a camera on the body and the reticle goes. The camera uses the character type's

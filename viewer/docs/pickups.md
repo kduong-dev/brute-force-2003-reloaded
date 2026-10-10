@@ -90,3 +90,4 @@
     player picks up.
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
     `BF_TEST_HEALTH=<hp>` starts hurt. `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds the item list open.
+    `BF_TEST_CHIP=<x>,<z>[,<s>]` drops a memory chip there (see "Memory chip" in squad.md).

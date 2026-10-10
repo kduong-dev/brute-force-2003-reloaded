@@ -130,10 +130,11 @@ const SETTLE_TURN: f32 = 12.0;
 /// The used medkit's cross: its texture's blue (the cross) turned red; the case keeps its colour.
 /// How long a pickup message shows (s), a pickup's line stays, and an item stays NEW.
 const MESSAGE_TIME: f32 = 2.0;
-const FEED_TIME: f32 = 3.0;
+pub const FEED_TIME: f32 = 3.0;
 const NEW_TIME: f32 = 3.0;
 
-/// The pickup lines under the character: (item name, how many taken, seconds left).
+/// The pickup lines under the character: (item name, how many taken, seconds left). A count of 0
+/// is a line of its own without one (the memory chip's message, play_dna.rs).
 #[derive(Resource, Default)]
 pub struct PickupFeed(pub Vec<(String, i64, f32)>);
 

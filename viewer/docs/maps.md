@@ -182,4 +182,4 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     defines; it isn't drawn.
   * Untextured glow materials (type h_f539fe8c, e.g. the medkits' shell) are drawn as their
     glow colour at the wrapper material's opacity.
-* **Hits.** Shots, grenades, decals, the DNA and the follow camera use the same collision.
+* **Hits.** Shots, grenades, decals, the memory chip and the follow camera use the same collision.
