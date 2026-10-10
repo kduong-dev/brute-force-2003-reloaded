@@ -415,9 +415,10 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
         item_ran_out(&mut player);
     }
     // who's near enough: the player first, then any squad member running over it (their
-    // medkits go in the squad's shared inventory, the player's; a fruit heals whoever eats it)
+    // medkits go in the squad's shared inventory, the player's; a fruit heals whoever eats it;
+    // the test map's NPCs take nothing)
     let feet: Vec<Option<Vec3>> = std::iter::once(&*player).chain(squad.0.iter())
-        .map(|u| (!u.dead).then(|| u.position + Vec3::Y * GROUND)).collect();
+        .map(|u| (!u.dead && u.in_squad()).then(|| u.position + Vec3::Y * GROUND)).collect();
     for p in &mut pickups.list {
         if p.gone > 0.0 {
             p.gone -= dt;

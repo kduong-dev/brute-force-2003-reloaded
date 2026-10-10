@@ -1504,6 +1504,16 @@ impl Player {
         self.npc.is_none()
     }
 
+    /// Who this is, for effects that reach a character later (Energy bolts, Sonic rings): a
+    /// squad member by character (control passing between them swaps their places), a test map
+    /// NPC by its number (several can share a squad character).
+    fn who(&self) -> Who {
+        match self.npc {
+            Some(n) => Who::Npc(n.id),
+            None => Who::Squad(self.character),
+        }
+    }
+
     fn random(&mut self, n: usize) -> usize {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 17;
@@ -1522,6 +1532,33 @@ impl Player {
 /// The squad members not under control: AI that follows in formation and fights alongside.
 #[derive(Resource, Default)]
 struct Squad(Vec<Player>);
+
+/// A character's identity (`Player::who`): a squad member's character, or a test map NPC's
+/// number.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Who {
+    Squad(usize),
+    Npc(u32),
+}
+
+impl Who {
+    /// A number for seeding an effect: the character, or 100 + the NPC's number.
+    fn seed(self) -> u32 {
+        match self {
+            Who::Squad(c) => c as u32,
+            Who::Npc(n) => 100 + n,
+        }
+    }
+}
+
+/// The character `who` is: the controlled one or one of `squad`, and whether it's the
+/// controlled one.
+fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Option<(&'a mut Player, bool)> {
+    if player.who() == who {
+        return Some((player, true));
+    }
+    squad.0.iter_mut().find(|m| m.who() == who).map(|m| (m, false))
+}
 
 /// Squad AI: keep to a formation place round the leader (run / sprint to catch up, walk the
 /// last bit) and look where the leader looks. They shoot only at an enemy they can see
@@ -1774,6 +1811,9 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     player.fire = false;
     player.aim_hold = 0.0;
     player.face_yaw = None;
+    // (nor the target it was firing at: the gun and the body would stay on it)
+    player.ai_target = None;
+    player.ai_burst = false;
     player.crouch_wanted = false;
     player.idle_cautious = false;
     player.show_help = help;
@@ -2516,6 +2556,8 @@ fn read_input(
             player.select = Some((i, SELECT_TIME));
         }
     }
+    // (the AI's target is the AI's: whoever is controlled aims at the crosshair)
+    player.ai_target = None;
     player.next_surface = keys.just_pressed(KeyCode::KeyM);
     // test hook: BF_TEST_USE=<s> holds use (E) for a second from that time
     player.use_held = std::env::var("BF_TEST_USE").ok().and_then(|v| v.parse::<f32>().ok())
@@ -4590,8 +4632,19 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&m
     }
 }
 
-fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<&mut Text, With<Hud>>, test: Option<Res<testmap::TestMap>>) {
-    let Ok(mut text) = hud.single_mut() else { return };
+fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Text, &mut Node, &mut TextLayout), With<Hud>>, test: Option<Res<testmap::TestMap>>) {
+    let Ok((mut text, mut node, mut layout)) = hud.single_mut() else { return };
+    // the "H: help" hint, bottom centre between the radar and the item box; the panel, top left
+    // under the health bars, clear of the radar, the item box and the tools' panel (right)
+    let (top, bottom, left, right, width, justify) = if player.show_help {
+        (Val::Percent(17.0), Val::Auto, Val::Percent(1.5), Val::Auto, Val::Percent(48.0), JustifyText::Left)
+    } else {
+        (Val::Auto, Val::Px(6.0), Val::Px(0.0), Val::Px(0.0), Val::Auto, JustifyText::Center)
+    };
+    if node.top != top || node.bottom != bottom {
+        (node.top, node.bottom, node.left, node.right, node.max_width) = (top, bottom, left, right, width);
+        layout.justify = justify;
+    }
     // the controls panel is the test map's (cargo run --bin bf_play -- --test)
     let Some(test) = test else {
         text.0.clear();

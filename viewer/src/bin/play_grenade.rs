@@ -568,9 +568,10 @@ fn fly_grenades(
                              p.sim_time - g.launched, Vec2::new(pos.x - p.position.x, pos.z - p.position.z).length());
                 }
                 // squadmates close by dive away from a thrown one (EVT_GRENADE_NEAR ->
-                // GOAL_DIVE); not from one set down (a Roller, a Sentry)
+                // GOAL_DIVE); not from one set down (a Roller, a Sentry). The test map's NPCs set
+                // to fight dive too; its dummies stand where they were put
                 if !kit.placed() {
-                    for m in squad.0.iter_mut().filter(|m| !m.dead && m.position.distance(pos) < DIVE_RADIUS) {
+                    for m in squad.0.iter_mut().filter(|m| !m.dead && m.npc.is_none_or(|n| n.fight) && m.position.distance(pos) < DIVE_RADIUS) {
                         m.dive_from = Some(pos);
                     }
                 }
@@ -670,8 +671,10 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
     }
     let k = 1.0 - d / radius;
     let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
-    let damage = game.damage_factor(CHARACTERS[u.character], kit.blast.damage_type) * if u.character == thrower { own } else { max * k };
-    let damage = if kill && u.character != thrower { u.health.max(damage) } else { damage };
+    // (the thrower is the squad's: a test map NPC of their character isn't them)
+    let own_blast = u.who() == Who::Squad(thrower);
+    let damage = game.damage_factor(CHARACTERS[u.character], kit.blast.damage_type) * if own_blast { own } else { max * k };
+    let damage = if kill && !own_blast { u.health.max(damage) } else { damage };
     if damage <= 0.0 {
         return None;
     }

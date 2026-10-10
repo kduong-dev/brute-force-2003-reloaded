@@ -113,7 +113,8 @@ fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
                     continue;
                 }
                 let factor = game.0.damage_factor(CHARACTERS[u.character], kit.blast.damage_type);
-                let amount = if kill && u.character != c.thrower { u.health } else { rate * inside * factor };
+                // (the thrower is the squad's: a test map NPC of their character isn't them)
+                let amount = if kill && u.who() != Who::Squad(c.thrower) { u.health } else { rate * inside * factor };
                 if amount >= u.health {
                     // its last breath: dies as from any hurt
                     hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y, u.position, -1);

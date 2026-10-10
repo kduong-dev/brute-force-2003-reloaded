@@ -49,13 +49,13 @@ const TINT_MIN: f32 = 1.0;
 #[derive(Resource, Default)]
 pub struct RingRequests(pub Vec<(usize, Vec3, usize)>);
 
-/// A body the ring will reach: the blast (its type, where, who threw it), the body's character
-/// (CHARACTERS index), when (s after the blast) and the time since the blast.
+/// A body the ring will reach: the blast (its type, where, who threw it), the body
+/// (`Player::who`), when (s after the blast) and the time since the blast.
 struct RingHit {
     kind: usize,
     at: Vec3,
     thrower: usize,
-    target: usize,
+    target: Who,
     due: f32,
     age: f32,
 }
@@ -118,7 +118,7 @@ pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMu
             if log {
                 println!("t {:.2}: {} ring reaches {} ({d:.1} m) at +{due:.2} s", player.sim_time, kit.def.label, CHARACTERS[u.character]);
             }
-            hits.0.push(RingHit { kind, at, thrower, target: u.character, due, age: 0.0 });
+            hits.0.push(RingHit { kind, at, thrower, target: u.who(), due, age: 0.0 });
         }
     }
     let instant = test.as_ref().is_some_and(|t| t.instant_kill);
@@ -128,9 +128,7 @@ pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMu
             return true;
         }
         let Some(kit) = kits.0.get(hit.kind) else { return false };
-        let controlled = p.character == hit.target;
-        let u = if controlled { Some(&mut *p) } else { squad.0.iter_mut().find(|u| u.character == hit.target) };
-        if let Some(u) = u {
+        if let Some((u, controlled)) = unit_mut(p, &mut squad, hit.target) {
             let own = self_damage(kit, u.position.distance(hit.at));
             // (the test map's instant kill: anyone but the player)
             let kill = instant && !controlled;
@@ -145,7 +143,7 @@ pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMu
             }
         }
         if log {
-            println!("t {:.2}: {} ring hits {} at +{:.2} s", p.sim_time, kit.def.label, CHARACTERS[hit.target], hit.age);
+            println!("t {:.2}: {} ring hits {:?} at +{:.2} s", p.sim_time, kit.def.label, hit.target, hit.age);
         }
         false
     });

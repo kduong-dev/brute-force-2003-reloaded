@@ -75,8 +75,8 @@ pub struct BoltRequests(pub Vec<(usize, Vec3, usize)>);
 pub(super) struct Bolt {
     kind: usize,
     thrower: usize,
-    /// the struck body's character (CHARACTERS index)
-    target: usize,
+    /// the struck body (`Player::who`)
+    target: Who,
     from: Vec3,
     dir: Vec3,
     dist: f32,
@@ -145,7 +145,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
                 continue;
             }
             let dir = flat.normalize_or(Vec3::Z);
-            bolts.0.push(Bolt { kind, thrower, target: u.character, from: at, dir, dist, scale: (dist / BOLT_REACH).clamp(BOLT_MIN_SCALE, 1.0),
+            bolts.0.push(Bolt { kind, thrower, target: u.who(), from: at, dir, dist, scale: (dist / BOLT_REACH).clamp(BOLT_MIN_SCALE, 1.0),
                                 age: 0.0, entity: None, struck: false, blast_time: player.sim_time });
             if log {
                 println!("t {:.2}: {} bolt to {} ({}) {dist:.1} m away", player.sim_time, kit.def.label, CHARACTERS[u.character],
@@ -170,7 +170,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             .with_rotation(Quat::from_rotation_arc(Vec3::Z, b.dir)).with_scale(Vec3::new(1.0, 1.0, b.scale));
         match b.entity {
             None => if let Some(fx) = &bolt_fx {
-                let seed = (b.from.x * 311.0 + b.from.z * 97.0) as u32 ^ (b.target as u32).wrapping_mul(0x85EB_CA6B);
+                let seed = (b.from.x * 311.0 + b.from.z * 97.0) as u32 ^ b.target.seed().wrapping_mul(0x85EB_CA6B);
                 b.entity = Some(commands.spawn((place, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx.clone(), 0.0, seed),
                                                 AleExpire(BOLT_LIFE), Name::new("energy bolt"))).id());
             },
@@ -186,9 +186,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
         b.struck = true;
         let Some(kit) = kits.0.get(b.kind) else { continue };
         let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
-        let leader = p.character == b.target;
-        let u = if leader { Some(&mut *p) } else { squad.0.iter_mut().find(|m| m.character == b.target) };
-        let Some(u) = u else { continue };
+        let Some((u, leader)) = unit_mut(p, &mut squad, b.target) else { continue };
         let throw = b.dir * THROW_BACK + Vec3::Y * THROW_UP;
         if log {
             println!("t {:.2}: {} bolt strikes {} {:.2} s after the blast, {:.1} m out", p_time(b), kit.def.label, CHARACTERS[u.character], b.age, b.dist);
@@ -208,11 +206,12 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
         let k = 1.0 - b.dist / radius;
         // (times the character's factor for the explosion's damage-type, 6: Flint's x2)
         let damage = game.0.damage_factor(CHARACTERS[u.character], kit.blast.damage_type)
-            * if u.character == b.thrower { SELF_BOLT * max } else { max * k };
-        let damage = if instant && !leader && u.character != b.thrower { u.health.max(damage) } else { damage };
+            * if u.who() == Who::Squad(b.thrower) { SELF_BOLT * max } else { max * k };
+        let damage = if instant && !leader && u.who() != Who::Squad(b.thrower) { u.health.max(damage) } else { damage };
         // the thrower stays up (Brutus did in the recording): `hurt`'s own chance of a
         // knock-down is held off for them by its knock-down cooldown, put back after
-        let thrower = u.character == b.thrower;
+        // (the thrower is the squad's: a test map NPC of their character isn't them)
+        let thrower = u.who() == Who::Squad(b.thrower);
         let cooldown = u.knock_cooldown;
         if thrower {
             u.knock_cooldown = cooldown.max(1.0);

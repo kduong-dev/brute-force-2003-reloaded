@@ -14,10 +14,12 @@
 //!    in the formation, can't be taken control of and don't show on the HUD's portraits.
 //!    - Teams: the friend side is the squad's (team 0), the enemy side ENEMY_TEAM. An enemy sets
 //!      off the squad's Sentries (play_sentry.rs) and the crosshair isn't green on one.
-//!    - A dummy stands still where it was put, a target for the player (the AI doesn't fire at
-//!      it). One set to fight stays put but aims and fires at any hostile in sight with the
-//!      squad AI's fire (`ai_fire`), and the squad AI fires back (`hostile_in_sight`): a
-//!      squadmate's shots stop at the first body in their way, as the player's do.
+//!    - A dummy stands still where it was put (it doesn't dive from grenades), a target for the
+//!      player only: the AI never fires at it (the product owner's choice: the squad shoots only
+//!      enemies set to fight). One set to fight stays put (but dives from a grenade, as the
+//!      squad does) and aims and fires at any hostile in sight with the squad AI's fire
+//!      (`ai_fire`), and the squad AI fires back (`hostile_in_sight`): a squadmate's shots stop
+//!      at the first body in their way, as the player's do. NPCs take no pickups.
 //!    - Outside the menu J switches the team of the NPC under the crosshair, B its behaviour,
 //!      Delete removes it; Shift+Delete removes every NPC.
 //!  - O: the object menu, a list of every pickup type, every hand weapon (the rack's list),
@@ -39,18 +41,17 @@
 //! Not done: enemy species (#110: the menu lists them from the data but can't spawn them yet),
 //! moving NPCs, removing placed objects, saving a layout.
 //!
-//! Known limits: grenades, Energy bolts and Sonic rings tell characters apart by their character
-//! (play_grenade.rs's thrower, play_energy.rs / play_sonic.rs's targets), so an NPC of the
-//! thrower's character takes the thrower's reduced blast, and a bolt or ring meant for an NPC
-//! can land on the squadmate of the same character instead.
+//! NPCs share the squad's characters, so what reaches a body later tells them apart by
+//! `Player::who` (play_energy.rs's bolts, play_sonic.rs's rings), and a blast's thrower share
+//! (play_grenade.rs, play_gas.rs) is the squad thrower's only.
 
 use super::*;
 use bf_viewer::bf::hash::h;
 use bf_viewer::level_scene::Placed;
 
 /// The tools' line in the controls panel (H).
-pub const HELP: &str = "tools: F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)   \
-                        N spawn NPC   O place object   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete all)";
+pub const HELP: &str = "tools:   F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
+                        N spawn NPC   O place object   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)";
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
 pub const ENEMY_TEAM: u8 = 1;
@@ -77,7 +78,7 @@ const GHOST_GLOW: LinearRgba = LinearRgba::rgb(0.05, 0.15, 0.2);
 const GRENADE_REACH: f32 = 1.0;
 const GRENADE_REACH_UP: f32 = 1.5;
 /// How many lines of the object list show at once.
-const LIST_LINES: usize = 12;
+const LIST_LINES: usize = 9;
 /// How long a tool's message shows (s): the test map's.
 const MESSAGE_TIME: f32 = 2.0;
 
@@ -252,6 +253,9 @@ impl std::fmt::Debug for FreeCam {
 ///    else the first whose label contains it), turned that way: its copy follows the crosshair.
 ///  - BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>]]: a click with the object menu open (the
 ///    picked object at the crosshair); or that object put at x, z turned that way.
+///
+/// BF_TOOLS_LOG=1 prints each step as it's due, and what it did (a teleport's place, an NPC
+/// spawned, switched or removed, an object placed).
 #[derive(Resource, Default)]
 struct Script {
     steps: Vec<(f32, Hook)>,
@@ -275,9 +279,12 @@ fn active(state: Res<State<AppState>>, test: Option<Res<TestMap>>) -> bool {
 
 use super::testmap::TestMap;
 
-/// A new map: the tools closed, nothing spawned, the hooks read.
-fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<AiHits>) {
+/// A new map: the tools closed, nothing spawned, the object list to be built again, the hooks
+/// read.
+fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<AiHits>, mut list: ResMut<Catalogue>) {
     *tools = Tools { npc_team: ENEMY_TEAM, ..default() };
+    // (built again once this map's grenade types are in: its entries index them)
+    list.0.clear();
     hits.0.clear();
     *script = Script { steps: read_hooks(), next: 0, now: vec![] };
     if !script.steps.is_empty() {
@@ -1006,10 +1013,10 @@ fn spawn_panel(mut commands: Commands) {
     commands.spawn((
         ToolPanel,
         Text::new(""),
-        TextFont { font_size: 15.0, ..default() },
+        TextFont { font_size: 13.0, ..default() },
         TextColor(Color::srgba(1.0, 1.0, 1.0, 0.92)),
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-        Node { position_type: PositionType::Absolute, right: Val::Px(12.0), top: Val::Percent(20.0), padding: UiRect::all(Val::Px(8.0)),
+        Node { position_type: PositionType::Absolute, right: Val::Px(12.0), top: Val::Percent(18.0), padding: UiRect::all(Val::Px(8.0)),
                max_width: Val::Percent(36.0), display: Display::None, ..default() },
     ));
 }
