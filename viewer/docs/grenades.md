@@ -142,11 +142,12 @@ decal, and a throw called off.
 * **Damage**: everyone within the radius takes Damage max, falling to nothing at the radius;
   the thrower takes 0.2 x a roll of Damage min..max anywhere inside it. That rule is the
   demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
-  each, ~11%, no falloff); the game's formula isn't known. No damage from a blast without any
-  (the Light); one whose damage is dealt over time (h_04ea9251 > 0: the Gas, whose recording
-  shows none at once) leaves a poison cloud instead (see **The Gas's cloud** below). The
-  Energy's damage comes with its bolts instead (see **Energy grenade**), the Sonic's with its
-  ring (see **Sonic grenade**).
+  each, ~11%, no falloff). The game's rule is read from the code (see **Sentry**,
+  FUN_0022c4d0) but not implemented, and it doesn't explain the recordings. No damage from a
+  blast without any (the Light); one whose damage is dealt over time (h_04ea9251 > 0: the Gas,
+  whose recording shows none at once) leaves a poison cloud instead (see **The Gas's cloud**
+  below). The Energy's damage comes with its bolts instead (see **Energy grenade**), the
+  Sonic's with its ring (see **Sonic grenade**).
 * **Damage types.** Each character's combat-target lists factors per damage-type
   (`<h_142be76f><h_1d403525 Type h_04653d86>`, read into `Game::character_damage_factors`;
   the shield's own list is empty): Flint takes type 4 (the Gas) x0.05 and type 6 (the Energy)
@@ -284,15 +285,16 @@ the demo's thrower is hurt only within the radius (0.2 x 62.5-88.5 = 12.5-17.7 H
 he takes nothing. Traced so far, not implemented (it would change every grenade's blast, its
 own ticket; each function is in [code-map.md](code-map.md)): 0x149520 queues the explosion on
 the world, whose update (FUN_000d9a20) makes it a blast object (FUN_0022bfc0) at the grenade:
-damage +0x20 a roll of min..max, radius +0x24, life +0x28 / +0x30 the Damage's h_04ea9251 (0
-here: it deals once), a delay of 0.05-0.25 s (+0x2c), and no speed: it doesn't move. The blast
+damage +0x20 a roll of min..max (times the queued factor, 1), radius +0x24, life +0x28 /
++0x30 the Damage's h_04ea9251 (0 here: it deals once), a delay of 0.05-0.25 s (+0x2c), and no
+speed: it doesn't move. The world turns one queued explosion into a blast per update. The blast
 pool's tick (FUN_00225220) waits out the delay; FUN_00224a90 gathers the bodies within the
 radius of that fixed point (characters need a clear ray to it); FUN_00224770 deals each one
 through the explosion weapon's damage handler, where FUN_0022c4d0 applies the Damage's
 distance rule: h_011cb154 false (the Sentry's) half the roll anywhere inside the radius; true,
 the whole roll within half the radius, then (1 - 2 (d / r - 0.5))^2 of it to the edge. The age
-taper (FUN_00225060 -> FUN_00223780) needs flag 0x40, which a grenade's blast doesn't set, and
-FUN_00225440 flies the bullet-type 0 projectiles that share the pool, not blasts. So the code
+taper (FUN_00225060 -> FUN_00223780) needs flag 0x40, which nothing sets, and FUN_00225440
+flies the bullet-type 0 projectiles that share the pool, not blasts. So the code
 read doesn't explain Tex's hits at 6 m. The demo keeps its shared rule (Damage max falling to
 nothing at the radius; the thrower 0.2 x a roll of min..max inside it).
 
