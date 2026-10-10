@@ -8,7 +8,7 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
 
 | Path | What |
 |---|---|
-| `viewer/` | Rust + Bevy 0.16 crate: `bf_play` (the demo), `bf_level`, `bf_viewer`, `glb_viewer`. `viewer/README.md` is the reference for how everything works |
+| `viewer/` | Rust + Bevy 0.16 crate: `bf_play` (the demo), `bf_level`, `bf_viewer`, `glb_viewer`. `viewer/README.md` indexes `viewer/docs/`, the reference for how everything works (one page per area) |
 | `viewer/src/bf/` | format readers: BXML (`bxml.rs`), levels, characters, textures, sounds |
 | `viewer/src/bin/play*.rs` | the demo, one module per feature (`play_hud`, `play_pickups`, `play_grenade`, `play_text`, ...) |
 | `xmb_tool.py`, `xbe_tool.py`, `xwb_tool.py`, `tex_tool.py`, `ale_tool.py` | format tools: BXML decoder, XBE, music banks, textures, ALE effects |
@@ -29,7 +29,7 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
 
 ## Verifying in the game (required for any visible change)
 
-The demo has environment-variable test hooks; the full list is in `viewer/README.md`. The ones
+The demo has environment-variable test hooks; each is listed on its area's page in `viewer/docs/`. The ones
 used most:
 
 ```sh
@@ -140,9 +140,9 @@ Relay what agents report faithfully, including what failed or wasn't tested.
 - **Comments**: a doc comment on every const, struct and fn, saying what it is and *where the
   value came from* (an attribute hash, a capture, an event id). Match the density and voice of
   the surrounding code: plain sentences, no marketing.
-- New test hooks are `BF_*` environment variables, documented in their comment and in the
-  README.
-- **Every change updates `viewer/README.md`**: controls, the feature's section, and how it was
+- New test hooks are `BF_*` environment variables, documented in their comment and on the
+  area's `viewer/docs/` page.
+- **Every change updates its area's page in `viewer/docs/`** (and the index in `viewer/README.md` for a new page): controls, the feature's section, and how it was
   verified.
 - Commits go on `main` (or a branch to be merged into it) with a short imperative subject and a
   body that explains why. End it with `Closes #N` for each ticket it finishes. Commit or push

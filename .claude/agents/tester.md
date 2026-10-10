@@ -14,7 +14,7 @@ output in your scratchpad, never in the repo or `todo/`.
 
 ## Before a ticket: the spec
 
-1. Read the ticket (`gh issue view <n>`), the README section it touches, and the footage notes.
+1. Read the ticket (`gh issue view <n>`), the `viewer/docs/` page it touches, and the footage notes.
 2. If the footage doesn't cover something the ticket needs, write a **shot list** for the
    `xemu` agent: numbered, concrete takes with the level or setup, the action, the edge cases,
    and what must be in frame. Stop there and hand it back; don't guess what the game does.
@@ -40,7 +40,7 @@ output in your scratchpad, never in the repo or `todo/`.
 
 ## After a ticket: does the demo match?
 
-1. From the ticket and the README, list the behaviours to check, including edge cases (full
+1. From the ticket and its `viewer/docs/` page, list the behaviours to check, including edge cases (full
    health, empty inventory, squad switch, death, other levels).
 2. For each, compose a run with the test hooks (`BF_TEST_GOTO`, `BF_TEST_*`), the logs
    (`BF_*_LOG`) and `BF_CAPTURE` / `BF_CAPTURE_FRAMES`. Build in the worktree you're given, with

@@ -336,7 +336,7 @@ pub fn gather(game: &mut Game, data_dir: &Path) -> MenuData {
     }
     let frames = movie_frames("menuBack");
     if frames.is_empty() {
-        eprintln!("menu: no background movie frames in ../decompiled/movies/menuBack (see the README)");
+        eprintln!("menu: no background movie frames in ../decompiled/movies/menuBack (see docs/menu.md)");
     }
     MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, waves, music, frames }
 }
@@ -420,7 +420,7 @@ fn decompiled(sub: &str) -> Option<std::path::PathBuf> {
     [here.join("../decompiled"), "decompiled".into(), "../decompiled".into()].into_iter().map(|d| d.join(sub)).find(|d| d.exists())
 }
 
-/// A movie's frames (decompiled/movies/<name>/*.jpg), if they've been made (see the README).
+/// A movie's frames (decompiled/movies/<name>/*.jpg), if they've been made (see docs/menu.md).
 fn movie_frames(name: &str) -> Vec<Vec<u8>> {
     movie_files(name).iter().filter_map(|f| std::fs::read(f).ok()).collect()
 }
@@ -666,7 +666,7 @@ struct Opening(std::collections::VecDeque<Clip>);
 /// The boot screen (a capture: before the game data is read, the game shows a dim "B" emblem
 /// with "Loading" over it at the screen's bottom left, the emblem fading out as the loading ends;
 /// it isn't in the data files or the XBE's images, so decompiled/boot holds it as captured, 1:1
-/// with the 640 x 480 screen: see the README): where, how big, how long the fade.
+/// with the 640 x 480 screen: see docs/menu.md): where, how big, how long the fade.
 const BOOT_AT: Vec2 = Vec2::new(44.0, 364.0);
 const BOOT_SIZE: Vec2 = Vec2::new(72.0, 88.0);
 const BOOT_FADE: f32 = 0.15;
@@ -677,7 +677,7 @@ const BOOT_PULSE: f32 = 2.0;
 /// the emblem's grey at its brightest (57 / 255)
 const BOOT_EMBLEM_GREY: f32 = 0.224;
 const BOOT_PULSE_KEYS: [(f32, f32); 7] = [(0.0, 0.29), (0.33, 0.12), (0.5, 0.36), (0.8, 1.0), (1.7, 1.0), (1.97, 0.30), (2.0, 0.29)];
-/// The opening movies, in order (data/movies/*.bik, converted: see the README), and their rate.
+/// The opening movies, in order (data/movies/*.bik, converted: see docs/menu.md), and their rate.
 /// Each is skipped on its own (any key, click or button), as in a capture.
 const OPENING: [&str; 3] = ["MGS_Logo_Final", "DA_Logo_Final1", "Intro_Montage"];
 const OPENING_FPS: f32 = 30.0;
@@ -714,7 +714,7 @@ fn start_boot(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                        width: Val::Px(BOOT_SIZE.x), height: Val::Px(BOOT_SIZE.y), ..default() };
     match png("loading_emblem") {
         Some(e) => { commands.spawn((ImageNode::new(images.add(e)), place.clone(), BootEmblem, ChildOf(boot))); }
-        None => eprintln!("menu: no boot screen in ../decompiled/boot (see the README)"),
+        None => eprintln!("menu: no boot screen in ../decompiled/boot (see docs/menu.md)"),
     }
     if let Some(t) = png("loading_text") {
         commands.spawn((ImageNode::new(images.add(t)), place, ChildOf(boot)));
@@ -728,7 +728,7 @@ fn start_boot(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                 OPENING.iter().filter_map(|&name| {
                     let frames = movie_frames(name);
                     if frames.is_empty() {
-                        eprintln!("menu: no frames in ../decompiled/movies/{name} (see the README)");
+                        eprintln!("menu: no frames in ../decompiled/movies/{name} (see docs/menu.md)");
                         return None;
                     }
                     Some(Clip { frames: Frames::Held(frames), audio: decompiled(&format!("movies/{name}/audio.wav")).and_then(|p| std::fs::read(p).ok()) })
@@ -828,7 +828,7 @@ fn end_intro(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res
 }
 
 /// The main menu's CREDITS (its words' string) and the movie it plays (data/movies/credits.bik,
-/// converted: see the README).
+/// converted: see docs/menu.md).
 const S_CREDITS: u32 = 0xE94A_3EF6;
 const CREDITS: &str = "credits";
 
@@ -874,7 +874,7 @@ fn finish_credits(mut commands: Commands, asked: Option<Res<CreditsAsked>>, part
             next_movie(&mut commands, &mut opening, &mut images, &mut sources, &ui);
         }
         // (none: the menu opens again straight away)
-        None => eprintln!("menu: no frames in ../decompiled/movies/{CREDITS} (see the README)"),
+        None => eprintln!("menu: no frames in ../decompiled/movies/{CREDITS} (see docs/menu.md)"),
     }
     commands.insert_resource(ui);
     next.set(super::AppState::Intro);

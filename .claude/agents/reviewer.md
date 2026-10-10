@@ -26,7 +26,7 @@ Check, in order:
    sound id), check it with the tools or `BF_*` logs.
 3. **The ticket**: does it do everything the ticket and its reference captures ask, and
    nothing it didn't ask for?
-4. **Conventions**: doc comments match the surrounding density and voice; the README is
+4. **Conventions**: doc comments match the surrounding density and voice; the area's `viewer/docs/` page is
    updated; test hooks are documented.
 5. **Build**: `cargo build --bins` in `viewer/` has no errors and no warnings. Use the target
    dir from `CLAUDE.md`.

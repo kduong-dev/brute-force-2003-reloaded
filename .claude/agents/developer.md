@@ -8,7 +8,7 @@ You implement one ticket in the Brute Force reimplementation. Read `CLAUDE.md` f
 building, test hooks and conventions.
 
 1. Read the ticket (`gh issue view <n>`), the tester's spec (the lead gives you it or its
-   path), the parts of `viewer/README.md` it touches, and the code around it. The xemu
+   path), the `viewer/docs/` pages it touches, and the code around it. The xemu
    footage is in `todo/<ticket>-<slug>/` (`take*.mp4` and `notes.md`); study the takes and
    extract frames with ffmpeg (`imageio-ffmpeg`) where you need them. If you need a shot that
    doesn't exist, say so in your report instead of guessing: the lead sends the `xemu` agent.
@@ -34,7 +34,7 @@ building, test hooks and conventions.
 5. `cargo build --bins` in `viewer/`: no errors, no warnings.
 6. Verify in the game with `BF_CAPTURE`. Look at the frames yourself and compare them with the
    xemu footage. Iterate until it matches.
-7. Update `viewer/README.md`.
+7. Update the area's page in `viewer/docs/` (index in `viewer/README.md`).
 8. Commit on your worktree branch with `Closes #<n>`. Don't merge into `main` or push: the
    lead does that after the review and the user's yes.
 
