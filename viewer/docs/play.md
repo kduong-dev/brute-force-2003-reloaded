@@ -15,7 +15,7 @@
 | click, then mouse | look around (Esc releases the mouse) |
 | wheel | zoom |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
-| R | reload: the stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); automatic on an empty clip. The clip reads 0 (panel red) until the clip's magazine-in event |
+| R | reload early: **the demo's own key** (the game has no reload button; it reloads by itself on an empty clip, see **Ammo, reload and the crosshair**). The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
 | G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the bracket reticle, full in 0.6 s), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
@@ -110,13 +110,13 @@ along the diagonal, from the dark texels found), so the channels' highlight line
 leave gaps.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
-(the weapon's own icon from its definition, clip / reserve; every weapon listed with names for
-2.5 s after a switch, the held one in orange), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
-grenades bottom right, and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT) above centre (y 187 of 480) - aiming and shots go
+(the weapon's own icon from its definition, clip / the squad's reserve, or "clip Regen" for a
+recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
+grenades bottom right, and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it. Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
-flipped). Health and energy are static: the demo has no damage. Ammo is a
-full clip plus ten in reserve per weapon. `BF_NO_HUD=1` hides it.
+flipped). `BF_NO_HUD=1` hides it. Ammo, the switch hint and the crosshair's
+size and hiding: see **Ammo, reload and the crosshair** below.
 
 How it works (`src/bf/locomotion.rs`): animation names are hashes, so clips are chosen from
 their data: root-channel velocity (forward is -Z; sprints are fastest), clean looping, head
@@ -165,6 +165,81 @@ f32 time + name hash per event): at `drop_weapon` the held gun goes to its stow 
 grab event the other one comes to the hand, each with the weapon's handling (`pickup-sound`)
 sound; no firing or aiming until the clip ends. Shots: muzzle flash and light,
 recoil, tracers that fly to what the crosshair is on (ground or pillars) and a spark there.
+
+### Ammo, reload and the crosshair (#114)
+
+`src/bin/play_ammo.rs`, the HUD parts in `play_hud.rs`. Logic from `default.xbe` (functions cited
+in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
+
+* **The reserve is the squad's**, one count per ammo-type, shared by every member and every gun
+  of that type (FUN_0022da80 looks the weapon's `ammo-type` up in the holder's inventory). The
+  Foley 356 and the L-Shot share 11mm Ammo (type 1); the MK-ASLT and the Minigun High ROF Ammo
+  (type 2). The panel reads "clip / reserve" (orange), e.g. "24 / 50" for Hawk's Foley.
+  * Each level starts with a full stack of every type: the stack-limit of the level's ammo item
+    (objecttypes `<inventory>` with function-type 14, IFSET_AMMO_BOX; its h_e5f51266 is the
+    ammo-type): 11mm 50, High ROF 600, Sonic 200, Particle 200, Rail 400, Shotgun 80, Cutter
+    120, Bio 200, Rocket 40, Energy 200. The same in every level that defines them, so a level
+    without the item uses those. The game's counts are the campaign's (the takes start with full
+    11mm, Sonic and Shotgun, half the High ROF and Cutter); the full stack is the demo's choice.
+  * A respawn (the test map's rack) keeps the reserve; the new gun comes with a full clip. The
+    test map's NPCs reload from a bottomless reserve of their own.
+* **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show
+  "N Regen" (string `h_e246de1d`) and never reload. Their clip gains a round every ammo-regen
+  seconds while it isn't full and the gun's cooldown is out, held or stowed (FUN_0022ebc0), so the
+  first round comes back cooldown + ammo-regen after the last shot (LZR-23: 1.65 s; the takes
+  1.6-1.7 s). This rule was pulled in from the LZR batch so an emptied LZR doesn't stay empty.
+* **Automatic reload**, as in the game, which has no reload button: on an empty clip the reload
+  starts when the fire cooldown runs out with the trigger held (FUN_0022f2a0 → FUN_002327f0 →
+  the character's FUN_00120d40), or when the trigger is let go (measured: Brutus's Bower tapped
+  dry reloads 0.13 s after its last shot, not at its 1 s cooldown; the game's L-Shot 0.07 s after
+  the release). The rounds leave the reserve at once (the takes: the reserve drops at the start),
+  the clip reads 0 on the red panel until the reload clip's magazine-in event (Brutus 0.93 s,
+  Tex 1.1-1.2 s; the takes 1.0-1.3 s). A reload drops out of the scope (FUN_00120d40 calls
+  FUN_001249b0 first; medium confidence that its flag is the scope).
+  * **R reloads early: the demo's own key** (the product owner's choice), from a partial clip,
+    once the character isn't busy.
+* **Dry fire.** An empty clip with nothing to reload clicks on each trigger cycle, once per
+  1 / rate while held (FUN_002327f0 sets the cooldown): the weapon's empty-fire sound
+  (`h_e6acaff7`): `f740ecdd` for the ballistic guns (spectrogram-matched in the takes),
+  `16bbf95c` for the energy ones (from the data; the takes never ran an LZR dry with the trigger
+  held). An empty LZR clicks too, as the code has it.
+* **"Q switch to <other weapon>."** (the game's Y-button icon + "switch to %s.", `h_ff017df6`;
+  the key stands for the icon, as E does in the panel prompt): once the held gun's clip and its
+  reserve are both empty, from the dry click or the release, under the health bar at x 53, its
+  letters at y 90-104 like the take's (`todo/49` take02 19 s). It goes with a switch away and is
+  back after the switch back. Not for a recharging gun (it posts message 0x53, which shows
+  nothing).
+* **The weapon's name after a pickup**: the held gun's name over its count for 2.7 s, its icon
+  hidden meanwhile (the take: "Bower 20" from 7.0 s, fading 9.55-9.85 s). The names (also in
+  the list after a switch) are the take's size: letters 13.8 units tall from y 43.
+* **The crosshair** is the held weapon's 64 × 64 texture drawn 1:1, centred at (320, 192), the
+  same standing, firing and moving; in the scope it moves to (320, 240) at the same size. It's
+  hidden during a weapon switch, from the old gun's drop to the new one's grab (the takes: gone
+  ~0.5 s after Y, back at ~0.95 s). Aiming and shots go through it (play.rs `CROSSHAIR_UP`). The
+  game also hides it during its pickup motion; the test map's rack has none.
+
+Checked on the test map (`BF_TEST_GOTO=0,0,0,0`, `BF_CAPTURE`), measured against the takes in
+640 × 480 units:
+
+| What | Game (take) | Demo |
+|---|---|---|
+| Bower crosshair box | 293.8-346.8 × 173.2-210.2 (49 take01 2.5 s) | 294.0-346.8 × 173.2-210.0 |
+| LZR-23 | 27.5 × 28.2 at (320.8, 191.9) (51 take01) | 26.5 × 28.0 at (320.5, 192.0) |
+| Minigun | 64.0 × 63.8 at (320.0, 191.9) (68 take01) | 63.5 × 63.5 at (320.0, 192.0) |
+| Foley scoped | 33.0 × 33.2 at (319.5, 240.6) (54 take01 27.5 s) | 33.0 × 32.8 at (319.8, 240.4) |
+| L-Shot, second zoom step | 8.0 × 7.8 at (320.0, 239.9) (61 take01 33 s) | 7.8 × 7.2 at (319.9, 239.9) |
+| switch hint "switch" | y 90.0-104.0 (49 take02 19 s) | y 90.5-104.3 |
+| name after a pickup, first letter | x 465.3, y 43.0-56.8 (49 take04 7.5 s) | x 465.8, y 43.0-57.0 |
+
+Also checked: the Minigun's reserve 600 → 520 when its reload starts as the cooldown runs out
+(held trigger, `BF_TEST_CLIP=3`), the clip full ~1.1 s later; the Bower's 80 → 68 at the
+release; the hint from the first dry click; f740ecdd and 16bbf95c found in sdm_e34's banks
+(`BF_SOUND_LOG`); the LZR-23 recharging held and stowed; R at 26.5 s of `BF_AUTOPILOT`.
+
+Test hooks: `BF_TEST_RESERVE=<n>` starts every ammo-type's reserve at n; `BF_TEST_CLIP=<n>`
+starts the player's clips at n; `BF_TEST_TRIGGER=<from>-<to>[,...]` holds the trigger over those
+windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the weapon switch then;
+`BF_AMMO_LOG=1` prints the reserve, each reload, dry shot, recharged round and the hint.
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's

@@ -18,7 +18,7 @@
 //!   Wheel       zoom
 //!   Left mouse  fire (hold)
 //!   Q           switch weapon
-//!   R           reload
+//!   R           reload early (the demo's own: the game reloads only by itself, see play_ammo.rs)
 //!   G           use the item in the item box (grenade: hold to charge, release to throw;
 //!               Roller / Sentry: set down at the press)
 //!   T           next grenade type carried
@@ -434,7 +434,7 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
-    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -478,6 +478,8 @@ mod testtools;
 mod menu;
 #[path = "play_scenery.rs"]
 mod scenery;
+#[path = "play_ammo.rs"]
+mod ammo;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1105,9 +1107,10 @@ const SQUAD_SWITCH_SOUND: u32 = 0x0794_9F0D;
 const HUD_LIST_TIME: f32 = 2.5;
 /// reload length when the definition has none (the capture shows ~0.7 s)
 const RELOAD_TIME: f32 = 0.7;
-/// the game's crosshair sits above the screen centre: y = 187 of 480, i.e. this fraction of the
-/// half-height above the middle; shots and aiming go through it
-const CROSSHAIR_UP: f32 = (240.0 - 187.0) / 240.0;
+/// the game's crosshair sits above the screen centre: y = 192 of 480 (play_hud.rs's CROSSHAIR_Y,
+/// measured in every weapon's take01), i.e. this fraction of the half-height above the middle;
+/// shots and aiming go through it
+const CROSSHAIR_UP: f32 = (240.0 - 192.0) / 240.0;
 /// Aiming a weapon that zooms (WeaponDef::zoom > 1) goes into the scope: the camera moves to the
 /// character's eyes (this far above and in front of the camera target, m), the field of view
 /// narrows by the weapon's zoom, the character's model is hidden, and its snipe-sound breathing
@@ -1257,8 +1260,13 @@ struct Player {
     /// false between a switch's drop and grab: both guns are stowed
     holding: bool,
     switching: Option<Switching>,
-    /// per weapon: rounds in the clip, rounds in reserve
+    /// per weapon: rounds in the clip, and rounds taken from the squad's reserve for the reload
+    /// under way (the game's weapon +0x1f8 and +0x1e8). The reserve itself is the squad's, per
+    /// ammo-type (play_ammo.rs's `Reserve`).
     ammo: Vec<[i64; 2]>,
+    /// per weapon: seconds toward the next recharged round (the game's weapon +0x220; see
+    /// play_ammo.rs's `recharge`)
+    regen: Vec<f32>,
     /// reload in progress: (weapon, seconds left, clip it fills to)
     reloading: Option<Reload>,
     /// grenades carried, by type (`grenade::GrenadeKits` order; filled by play_grenade.rs's
@@ -1464,7 +1472,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], pending_hits: vec![], shots_fired: 0, pending_shot: false,
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
@@ -2493,8 +2501,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.holding = true;
     p.switching = None;
     p.reloading = None;
-    // a full clip and ten more in reserve
-    p.ammo = weapons.iter().map(|w| { let c = w.def.ammo.max(1); [c, c * 10] }).collect();
+    // a full clip each (the reserve is the squad's: play_ammo.rs)
+    p.ammo = weapons.iter().map(|w| [w.def.ammo.max(1), 0]).collect();
+    p.regen = vec![0.0; weapons.len()];
     let switch_clips = [switch_clip(&model, game, &weapons, 0), switch_clip(&model, game, &weapons, 1)];
     let reload_clips = ["Sc_w1_reload", "Sc_w2_reload"].map(|n| overlay_clip(&model, game, n, feet));
     let use_clips = ["Sc_w1_use_item", "Sc_w2_use_item"].map(|n| overlay_clip(&model, game, n, feet));
@@ -4008,24 +4017,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
     p.hud_list -= dt;
-    // ---- ammo: a reload empties the clip at once (the HUD shows 0, in red) and plays the stance's
-    // reload clip; the clip is full again at its magazine-in event
-    p.reload_wanted |= p.reload_pressed;
-    let clip = p.ammo.get(p.weapon).map_or(0, |a| a[0]);
-    let clip_size = l.weapons.get(p.weapon).map_or(0, |w| w.def.ammo.max(1));
-    if armed && p.reloading.is_none() && p.switching.is_none() && p.throwing.is_none() && p.using.is_none() && (clip == 0 || p.reload_wanted) {
-        p.reload_wanted = false;
-        let w = p.weapon;
-        let a = &mut p.ammo[w];
-        let take = (clip_size - a[0]).min(a[1]);
-        if take > 0 {
-            let fill = a[0] + take;
-            a[1] -= take;
-            a[0] = 0;
-            p.reloading = Some(Reload { weapon: w, time: 0.0, fill, filled: false });
-            p.aim_hold = p.aim_hold.min(0.3);
-        }
-    }
+    // ---- ammo: a reload (started by play_ammo.rs, which empties the clip at once: the HUD
+    // shows 0, in red) plays the stance's reload clip; the clip is full again at its
+    // magazine-in event
     if let Some(mut r) = p.reloading.take() {
         r.time += dt;
         let def = &l.weapons[r.weapon].def;
@@ -4034,7 +4028,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         let mag_in = clip.and_then(|c| c.event(EV_MAG_IN)).unwrap_or(duration * 0.8);
         if !r.filled && r.time >= mag_in {
             r.filled = true;
-            p.ammo[r.weapon][0] = r.fill;
+            p.ammo[r.weapon] = [r.fill, 0];
             if def.reload_sound != 0 {
                 p.sound_queue.push((def.reload_sound, 0.8));        // lasers have none
             }
@@ -4692,7 +4686,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
         w.def.label, player.weapon + 1, l.weapons.len()))).unwrap_or_default();
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
-         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload   G use item   Tab items   T grenade type   E use   M surface   H hide\n\
+         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab items   T grenade type   E use   M surface   H hide\n\
          click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
          test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die\n\
          {}",

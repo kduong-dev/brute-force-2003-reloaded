@@ -40,6 +40,14 @@ const H_MUZZLE_REF_NAME: u32 = 0xE41C_B542;
 /// item base: HUD icon texture (+ its size, h_e2bc2c81 x h_f71189bb, 128 x 64 for guns)
 const H_HUD_ICON: u32 = 0xE5EC_3F1F;
 const H_RELOAD_SOUND: u32 = 0x0CBF_5B9C;
+/// weapon: the empty-fire sound (named by its use, a guess at the name): played by
+/// default.xbe's FUN_002327f0 when the trigger is pulled on an empty clip with nothing to
+/// reload (the weapon type's +0x114). Ballistic guns h_f740ecdd, energy guns h_16bbf95c.
+const H_EMPTY_SOUND: u32 = 0xE6AC_AFF7;
+/// weapon: seconds per round recharged (named by its use, a guess at the name): read by
+/// FUN_0022ebc0 from the weapon type's +0x14c; 0 for every gun but the LZR-10 (2), LZR-23
+/// (1.25) and LZR-50 (1).
+const H_AMMO_REGEN: u32 = 0x1D1E_0E9C;
 /// grenade: the weapon definition its explosion uses
 const H_PROJECTILE: u32 = 0x053C_429F;
 /// object event sound (state 7); for the Frag it is the sound heard as the throw starts charging
@@ -118,6 +126,11 @@ pub struct WeaponDef {
     /// seconds (0 in most definitions: the game times reloads by animation)
     pub reload_time: f32,
     pub reload_sound: u32,
+    /// dry fire (H_EMPTY_SOUND; 0 if none)
+    pub empty_sound: u32,
+    /// seconds per round the clip recharges by itself (H_AMMO_REGEN; 0: it reloads from the
+    /// squad's reserve instead)
+    pub ammo_regen: f32,
     /// grenades: fuse seconds (attribute `timer`; 0 for guns)
     pub fuse: f32,
     /// grenades: definition of the explosion (a weapon with Damage radius and impact sound)
@@ -202,6 +215,8 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             icon: find(H_HUD_ICON).and_then(|v| v.as_hash()).unwrap_or(0),
             reload_time: f32_of(Some(&w), h("reload-time"), 0.0),
             reload_sound: hashes(w, H_RELOAD_SOUND).first().copied().unwrap_or(0),
+            empty_sound: hashes(w, H_EMPTY_SOUND).first().copied().filter(|&x| x != h("")).unwrap_or(0),
+            ammo_regen: f32_of(Some(&w), H_AMMO_REGEN, 0.0),
             fuse: f32_of(Some(&w), h("timer"), 0.0),
             projectile: w.attr(H_PROJECTILE).and_then(|v| v.as_hash()).unwrap_or(0),
             reticle: w.attr(h("reticule-prefix")).and_then(|v| v.as_hash()).unwrap_or(0),

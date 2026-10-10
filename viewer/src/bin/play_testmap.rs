@@ -4,7 +4,8 @@
 //!  - Every hand weapon (a `Game::weapons` definition with a clip, whose model loads; one per
 //!    model), from the first mission's and the multiplayer levels' data, floats on a rack in
 //!    front of the start, turning slowly. Walking into one puts it in the held weapon's slot
-//!    (the character is respawned with it: full ammo, the weapon in hand).
+//!    (the character is respawned with it: a full clip, the weapon in hand; the reserve is
+//!    the squad's, play_ammo.rs).
 //!  - One of every pickup type with a model (`Game::items`, one per model) is dropped in a
 //!    grid behind the rack, upright but tipped a little, settling as it would, a
 //!    level's inventory-object as far as play_pickups.rs is concerned: medkits and fruit are
@@ -234,14 +235,18 @@ fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: Res
 
 /// Walking into a rack weapon: it goes into the held weapon's slot, and the character is
 /// respawned carrying it (with it in hand once they're back).
+#[allow(clippy::too_many_arguments)]
 fn take_weapons(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>, mut pending: ResMut<PendingSlot>,
-                mut status: ResMut<UsePanel>, rack: Query<(Entity, &RackWeapon, &GlobalTransform, Has<Lying>)>) {
-    // back from a respawn: the new weapon in hand
+                mut status: ResMut<UsePanel>, rack: Query<(Entity, &RackWeapon, &GlobalTransform, Has<Lying>)>,
+                mut held_name: ResMut<super::ammo::HeldName>) {
+    // back from a respawn: the new weapon in hand, its name on the HUD a moment (as after the
+    // game's pickup)
     if let (Some(slot), Some(l)) = (pending.0, player.loaded.as_ref()) {
         let slot = slot.min(l.weapons.len().saturating_sub(1));
         player.weapon = slot;
         player.weapon_dirty = true;
         pending.0 = None;
+        held_name.0 = super::ammo::NAME_TIME;
         return;
     }
     // walking into it, not standing on it (taking over a squad member who stands on the rack)

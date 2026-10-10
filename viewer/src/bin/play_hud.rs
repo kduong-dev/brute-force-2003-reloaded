@@ -60,10 +60,21 @@ const FEED_LINES: usize = 4;
 const MESSAGE_Y: f32 = 290.0;
 const FEED_FIRST: f32 = 29.0;
 const FEED_STEP: f32 = 16.5;
-/// Strings: "Hold ", "to activate %s.", "NEW".
+/// Strings: "Hold ", "to activate %s.", "NEW", "switch to %s." (after the Y button's icon),
+/// "Regen".
 const S_HOLD: u32 = 0x1CC5_1F04;
 const S_TO_ACTIVATE: u32 = 0xF9D2_9692;
 const S_NEW: u32 = 0x0BA4_1874;
+const S_SWITCH_TO: u32 = 0xFF01_7DF6;
+const S_REGEN: u32 = 0xE246_DE1D;
+/// "[Y] switch to %s." once the held gun's clip and the reserve are both empty (FUN_00120d40
+/// posts message 0x52): top left under the health bar, pale blue (todo/49 take02 19 s; the same
+/// line as the pickup prompt). Here the key (Q) stands for the button's icon, as E does in the
+/// panel prompt. Measured there: "switch"'s letters span y 90-104 (14 units; with CAP 11.5 ours
+/// spanned 12.5, so CAP is scaled to 13), and TOP (the text line's top) puts them at 90.
+const SWITCH_HINT_X: f32 = 53.0;
+const SWITCH_HINT_TOP: f32 = 85.8;
+const SWITCH_HINT_CAP: f32 = 13.0;
 /// portraits by character (CHARACTERS order: Brutus, Flint, Hawk, Tex) and the centres of the
 /// faces round the radar: the whole squad, Tex top, Hawk left, Flint right, Brutus bottom (game
 /// screenshot, positions refined by template matching against it; same order as the options
@@ -153,10 +164,13 @@ const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
 /// rim where the capture shows it (77% of the width, nearly the full height), the quarters
 /// running past the screen's edge.
 const SCOPE_FRAME: u32 = 0x1807_EC04;
-/// The crosshair: 40 units across, centred at (320, 187); in the scope centred and larger.
-const CROSSHAIR_SIZE: f32 = 40.0;
-const CROSSHAIR_Y: f32 = 187.0;
-const SCOPE_CROSSHAIR_SIZE: f32 = 72.0;
+/// The crosshair: the held weapon's 64 x 64 texture drawn 1:1, centred at (320, 192); in the
+/// scope it moves to the middle, (320, 240), the same size. Measured for all 11 weapons in their
+/// take01s (todo/49-68, 2.5 s: each texture's alpha box matches the screen box to 1-2 units),
+/// the same standing, firing and strafing (no growth); scoped in the Foley's, MK's and L-Shot's
+/// (both zoom steps).
+const CROSSHAIR_SIZE: f32 = 64.0;
+const CROSSHAIR_Y: f32 = 192.0;
 const SCOPE_QUARTER: (f32, f32) = (397.0, 269.0);
 /// the frame's grey (153 155 153, alpha 153) drawn as a darkening, and the same beyond it
 const SCOPE_SHADE: Color = Color::srgb(0.12, 0.13, 0.12);
@@ -472,6 +486,13 @@ const ENERGY_FILL: u32 = 0xE11C_7D04;
 
 /// weapon rows: the first at y 43, the next 45 below
 const WEAPON_ROWS: usize = 3;
+/// A weapon's name over its count (after a pickup, and in the list after a switch): its left
+/// edge, how far above the panel's top its line starts, and its size. todo/49 take04 7.5 s:
+/// "Bower 20"'s B spans x 465.3, y 43.0-56.8 (13.8 units; with the old size 11 ours was 10.3
+/// tall, so the size is scaled by 1.34), the panel's top at 43.
+const WEAPON_NAME_X: f32 = 465.0;
+const WEAPON_NAME_UP: f32 = 5.7;
+const WEAPON_NAME_CAP: f32 = 14.7;
 const PALE: Color = Color::srgb(0.78, 0.85, 1.0);
 const HUD_BLUE: Color = Color::srgb(0.24, 0.52, 1.0);
 
@@ -485,6 +506,8 @@ enum Part {
     Crosshair,
     /// "Hold E to activate panel." while a gate's wall panel is in reach and in view
     UsePrompt,
+    /// "Q switch to <other weapon>." while the held gun and its reserve are empty
+    SwitchHint,
     /// the item box (bottom right, while anything's carried): its panel, the grenade's icon, the
     /// item's name, how many, and NEW for a newly taken kind; the item list above it (Tab held)
     ItemBox,
@@ -783,7 +806,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         let y = 43.0 + 45.0 * row as f32;
         commands.spawn((ChildOf(screen), at(463.0, y, 128.0, 32.0), image(&panel, Color::WHITE), Part::Panel(row), Visibility::Hidden));
         commands.spawn((ChildOf(screen), at(463.0, y - 25.0, 128.0, 64.0), flipped(Handle::default()), Part::Icon(row), Visibility::Hidden));
-        commands.spawn((ChildOf(screen), game_text("", 466.0, y - 1.0, 11.0, AMMO_ORANGE, Align::Left), Part::Name(row), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), game_text("", WEAPON_NAME_X, y - WEAPON_NAME_UP, WEAPON_NAME_CAP, AMMO_ORANGE, Align::Left), Part::Name(row), Visibility::Hidden));
         commands.spawn((ChildOf(screen), game_text("", 475.0, y + 9.0, 14.0, AMMO_ORANGE, Align::Left), Part::Ammo(row), Visibility::Hidden));
     }
 
@@ -858,6 +881,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     // game's "Hold " + its button icon + "to activate %s."; here the key), and the blue
     // target ring (the reticle texture h_1d2a68d0) on the panel's button ----
     commands.spawn((ChildOf(screen), game_text("", 52.0, 68.0, 11.5, MESSAGE_BLUE, Align::Left), Part::UsePrompt, Visibility::Hidden));
+    commands.spawn((ChildOf(screen), game_text("", SWITCH_HINT_X, SWITCH_HINT_TOP, SWITCH_HINT_CAP, MESSAGE_BLUE, Align::Left), Part::SwitchHint, Visibility::Hidden));
     let ring = texture(game, &mut images, &mut cache, CROSSHAIR_TEX);
     commands.spawn((ChildOf(screen), at(0.0, 0.0, RING_SIZE, RING_SIZE), image(&ring, RING_BLUE), Part::Ring, Visibility::Hidden));
 
@@ -868,9 +892,10 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                         Part::Feed(i), Visibility::Hidden));
     }
 
-    // ---- crosshair, above centre (320, 187) ----
-    // the held weapon's own crosshair (its definition's reticule-prefix texture), 40 units across
-    commands.spawn((ChildOf(screen), at(300.0, 167.0, 40.0, 40.0), image(&cross, Color::srgba(0.2, 0.55, 1.0, 0.95)), Part::Crosshair));
+    // ---- crosshair, above centre (320, 192) ----
+    // the held weapon's own crosshair (its definition's reticule-prefix texture), 64 units across
+    commands.spawn((ChildOf(screen), at(320.0 - CROSSHAIR_SIZE / 2.0, CROSSHAIR_Y - CROSSHAIR_SIZE / 2.0, CROSSHAIR_SIZE, CROSSHAIR_SIZE),
+                    image(&cross, Color::srgba(0.2, 0.55, 1.0, 0.95)), Part::Crosshair));
 
     // ---- grenade throw: bracket reticle and the charge meter right of it (capture: box 354..367 x
     // 163..221, orange fill from the bottom, dark tick at ~72%) ----
@@ -916,10 +941,16 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     }
 }
 
-/// Weapon rows (the held weapon first; every weapon with names for a moment after a switch),
-/// ammo, red panel on an empty clip, portrait, crosshair.
+/// Weapon rows (the held weapon first; every weapon with names for a moment after a switch, the
+/// held one's name for a moment after a pickup), ammo ("clip / reserve", the squad's reserve of
+/// its ammo-type; "clip Regen" for a recharging gun), red panel on an empty clip, the switch
+/// hint, portrait, crosshair.
+#[allow(clippy::too_many_arguments)]
 fn update_hud_widgets(
     player: Res<Player>,
+    reserve: Res<super::ammo::Reserve>,
+    held_name: Res<super::ammo::HeldName>,
+    switch_hint: Res<super::ammo::SwitchHint>,
     squad: Res<Squad>,
     use_panel: Res<super::UsePanel>,
     feed: Res<super::pickups::PickupFeed>,
@@ -977,6 +1008,12 @@ fn update_hud_widgets(
     let new_word = game.0.strings.get(&S_NEW).cloned().unwrap_or("NEW".into());
     let hold = game.0.strings.get(&S_HOLD).cloned().unwrap_or("Hold ".into());
     let to_activate = game.0.strings.get(&S_TO_ACTIVATE).cloned().unwrap_or("to activate %s.".into());
+    let regen_word = game.0.strings.get(&S_REGEN).cloned().unwrap_or("Regen".into());
+    // the switch hint (play_ammo.rs's SwitchHint) names the other weapon
+    let other = (l.weapons.len() > 1).then(|| &l.weapons[(player.weapon + 1) % l.weapons.len()].def.label).filter(|_| switch_hint.0);
+    let switch_to = game.0.strings.get(&S_SWITCH_TO).cloned().unwrap_or("switch to %s.".into());
+    // after a pickup: the held weapon's name over its count, its icon hidden meanwhile
+    let name_shown = held_name.0 > 0.0;
     let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| if *n > 0 { format!("{n}x {name}") } else { name.clone() }).collect();
 
     for (part, mut vis, img, mut text, node) in &mut parts {
@@ -991,7 +1028,7 @@ fn update_hud_widgets(
             Part::Panel(r) | Part::Icon(r) | Part::Name(r) | Part::Ammo(r) => {
                 let Some(&w) = order.get(r) else { show(&mut vis, false); continue };
                 let def = &l.weapons[w].def;
-                let [clip, reserve] = player.ammo.get(w).copied().unwrap_or([0, 0]);
+                let clip = player.ammo.get(w).map_or(0, |a| a[0]);
                 let empty = clip == 0;
                 let tint = if w == player.weapon { AMMO_ORANGE } else { MESSAGE_BLUE };
                 match *part {
@@ -1001,20 +1038,22 @@ fn update_hud_widgets(
                             img.color = if empty { Color::srgb(1.0, 0.35, 0.3) } else { Color::WHITE };
                         }
                     }
-                    Part::Icon(_) => {
+                    Part::Icon(r) => {
                         let h = (def.icon != 0).then(|| texture(&mut game.0, &mut images, &mut cache, def.icon)).flatten();
-                        show(&mut vis, h.is_some());
+                        show(&mut vis, h.is_some() && !(r == 0 && name_shown && !list));
                         if let (Some(mut img), Some(h)) = (img, h) {
                             if img.image != h { img.image = h; }
                         }
                     }
-                    Part::Name(_) => {
-                        show(&mut vis, list);
+                    Part::Name(r) => {
+                        show(&mut vis, list || (r == 0 && name_shown));
                         set(text, &def.label, Some(tint));
                     }
                     _ => {
                         show(&mut vis, true);
-                        set(text, &format!("{clip} / {reserve}"), Some(tint));
+                        let count = if def.ammo_regen > 0.0 { format!("{clip} {regen_word}") }
+                            else { format!("{clip} / {}", reserve.get(def.ammo_type)) };
+                        set(text, &count, Some(tint));
                     }
                 }
             }
@@ -1101,6 +1140,12 @@ fn update_hud_widgets(
                     set(text, &format!("{hold}E {}", to_activate.replace("%s", what)), None);
                 }
             }
+            Part::SwitchHint => {
+                show(&mut vis, other.is_some());
+                if let Some(name) = other {
+                    set(text, &format!("Q {}", switch_to.replace("%s", name)), None);
+                }
+            }
             Part::Ring => {
                 // a usable gate panel's button only
                 let at = use_panel.target.filter(|_| player.scope < 0.5).and_then(on_screen);
@@ -1126,11 +1171,13 @@ fn update_hud_widgets(
                 }
             }
             Part::Crosshair => {
-                // (none once dead: the reference recording's reticle goes on the death frame)
-                show(&mut vis, !l.weapons.is_empty() && player.charge <= 0.0 && !player.dead);
-                // in the scope: in the middle of the screen and larger
+                // (none once dead: the reference recording's reticle goes on the death frame; none
+                // during a weapon switch from the drop to the grab: the takes' crosshair goes
+                // ~0.5 s after Y and the new one shows at ~0.95 s, todo/49 and 58 take02)
+                show(&mut vis, !l.weapons.is_empty() && player.charge <= 0.0 && !player.dead && player.holding);
+                // in the scope: in the middle of the screen, the same size
                 let s = player.scope;
-                let size = CROSSHAIR_SIZE + (SCOPE_CROSSHAIR_SIZE - CROSSHAIR_SIZE) * s;
+                let size = CROSSHAIR_SIZE;
                 let (cx, cy) = (320.0, CROSSHAIR_Y + (240.0 - CROSSHAIR_Y) * s);
                 if let Some(mut n) = node {
                     let want = at(cx - size / 2.0, cy - size / 2.0, size, size);
