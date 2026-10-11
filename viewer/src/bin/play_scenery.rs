@@ -127,6 +127,22 @@ pub struct ObjectBlast {
 #[derive(Resource, Default)]
 pub struct ObjectBlasts(pub Vec<ObjectBlast>);
 
+/// A direct hit on a breakable object that isn't a shot (play.rs's `Shot`s find their own): a
+/// missile that strikes it (play_missile.rs, FUN_0022c4d0's roll on the object struck). Its
+/// object (`Arena::breakable`'s number), the amount before the object's damage-type factor, the
+/// damage type, where it struck and which way.
+pub struct ObjectHit {
+    pub target: usize,
+    pub amount: f32,
+    pub damage_type: i64,
+    pub at: Vec3,
+    pub dir: Vec3,
+}
+
+/// This frame's direct hits on breakable objects (`ObjectHit`).
+#[derive(Resource, Default)]
+pub struct ObjectHits(pub Vec<ObjectHit>);
+
 /// Where a breaking object was hit and which way (the push its main debris gets, the object's
 /// +0xe8..+0x100 that FUN_00156e50 fills from the damage message).
 #[derive(Clone, Copy)]
@@ -237,10 +253,12 @@ struct DebrisPiece {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Scenery>()
         .init_resource::<ObjectBlasts>()
+        .init_resource::<ObjectHits>()
         .add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| {
             commands.insert_resource(Scenery::default());
             PLACED_BOXES.lock().unwrap().clear();
             commands.insert_resource(ObjectBlasts::default());
+            commands.insert_resource(ObjectHits::default());
         }).after(setup))
         // (after the grenades: a blast's damage reaches the scenery on the frame the
         // characters take it)
@@ -418,8 +436,9 @@ fn debris_model(game: &mut Game, assets: &mut ModelAssets, kind: u32) -> Vec<Pie
 /// character (or BF_TEST_HIT_NEAR=<x>,<z>) at those times with TEST_HIT_DAMAGE ballistic, as the
 /// takes' gdb call did.
 fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-               mut blasts: ResMut<ObjectBlasts>) {
+               mut blasts: ResMut<ObjectBlasts>, mut direct: ResMut<ObjectHits>) {
     let dt = frame_dt(&time);
+    let direct = std::mem::take(&mut direct.0);
     let s = &mut *scenery;
     // grenade blasts: Damage max at the blast, nothing at the radius (as the characters take
     // it), to the object's origin. Their countdown starts on the frame after the blast, as the
@@ -478,6 +497,12 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
                 s.hits.push(PendingHit { delay: t / shot.speed.max(1.0), target: b, amount, damage_type: shot.damage_type, push });
             }
+        }
+    }
+    // missiles that struck one (`ObjectHits`), at once
+    for h in direct {
+        if matches!(s.list.get(h.target).map(|b| &b.state), Some(State::Intact)) {
+            s.hits.push(PendingHit { delay: 0.0, target: h.target, amount: h.amount, damage_type: h.damage_type, push: Push { at: h.at, dir: h.dir } });
         }
     }
     // ... or on the box of one put down without collision (`LateBreakable`)

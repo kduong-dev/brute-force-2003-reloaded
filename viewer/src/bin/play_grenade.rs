@@ -468,7 +468,7 @@ fn fly_grenades(
     delayed.1.retain_mut(|(left, decal, at)| {
         *left -= dt;
         if *left <= 0.0 {
-            decals.0.push((*decal, *at, GRENADE_DECAL_SCALE, None));
+            decals.0.push((*decal, *at, GRENADE_DECAL_SCALE));
         }
         *left > 0.0
     });

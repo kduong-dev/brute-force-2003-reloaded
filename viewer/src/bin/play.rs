@@ -450,6 +450,7 @@ fn main() {
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
+        .add_plugins(shake::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -501,6 +502,8 @@ mod ammo;
 mod shots;
 #[path = "play_missile.rs"]
 mod missile;
+#[path = "play_shake.rs"]
+mod shake;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -845,6 +848,9 @@ struct HeldWeapon {
     /// spinning parts (minigun barrel): entity, axis, offset
     spinners: Vec<(Entity, Vec3, Vec3)>,
     light: Entity,
+    /// its muzzle effect type has a light effect (the data's light_muzzle and the like), which
+    /// play_shots.rs plays with the effect and which stands in for `light`, the demo's own
+    data_light: bool,
     flash: Entity,
     muzzle: Hardpoint,
     /// the shell-eject hardpoint (ShotData::shell_hardpoint), if the model has it
@@ -2545,6 +2551,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             stowed: weapon::STOW.get(slot).and_then(|k| model.hardpoints.get(k)).zip(wm.hardpoints.get(&weapon::HOLSTER))
                 .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) }),
             shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
+            data_light: game.effect_type_defs.get(&def.shots.muzzle_effect).is_some_and(|t| t.light != 0),
             def, entity, spinners, light, flash, muzzle, fire_dir,
         });
     }
@@ -4889,8 +4896,9 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
         }
         if let Ok(mut light) = lights.get_mut(w.light) {
             // (off in the holder's scope: from the hidden gun under the eye it lit a hard-edged
-            // disc on the ground; the demo's rule)
-            light.intensity = if flash_on && p.scope <= 0.5 { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
+            // disc on the ground; the demo's rule. Off for a gun whose muzzle effect brings its
+            // own light: play_shots.rs plays that one)
+            light.intensity = if flash_on && p.scope <= 0.5 && !w.data_light { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
         }
     }
     for s in p.shots.drain(..) {

@@ -115,7 +115,7 @@ help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H.
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |
-| `BF_TEST_NPC=<s>,<character>,<friend\|enemy>,<dummy\|fight>[,<x>,<z>]` | spawn one at x, z or under the crosshair, facing the controlled character |
+| `BF_TEST_NPC=<s>,<character>,<friend\|enemy>,<dummy\|fight>[,<x>,<z>[,<y>]]` | spawn one at x, z or under the crosshair, facing the controlled character; on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one) |
 | `BF_TEST_NPC_TEAM`, `BF_TEST_NPC_FIGHT`, `BF_TEST_NPC_REMOVE` `=<s>,<n\|aim\|all>` | switch the team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or all |
 | `BF_TEST_PLACER=<s>,<object>[,<yaw>]` | O with that object picked (its label in any case, else the first containing it), turned that way |
 | `BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]` | the object menu's click (at the crosshair: in the air in the free camera); or that object put at x, z, `height` m above the ground (in the air) |

@@ -201,6 +201,9 @@ pub struct MeshBullet {
     /// bullet mesh-name: the projectile's object type (objecttypes, object-type 21: the Therm
     /// Sweeper's missile h_e9327576, its model, attached effect and sound)
     pub object: u32,
+    /// bullet radius (m): its physics body's (0.1 for the Therm Sweeper); its centre is this far
+    /// off what it touches, where it goes off
+    pub radius: f32,
     /// h_07cdf040 (+0x14, flag 8): after the straight phase it steers to its target (or aim point)
     pub homes: bool,
     /// h_ea5327e6 (+0x18): the straight phase, as a share of its life (projectile +0x230)
@@ -381,6 +384,7 @@ fn mesh_bullet(b: &Element) -> Option<MeshBullet> {
     let mirv = b.children.iter().find(|c| c.name == h("mirv"));
     Some(MeshBullet {
         object,
+        radius: num(b, h("radius")),
         homes: flag(0x07CD_F040),
         straight: num(b, 0xEA53_27E6),
         seeks: flag(0xF69B_7D4C),

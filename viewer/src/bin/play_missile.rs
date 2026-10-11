@@ -18,33 +18,38 @@
 //!    without a blast; `<mirv>` h_fe04300d children (2) leave beside it, each turned spread-max x
 //!    90 degrees (9) off its heading at a random roll, after the hostiles the split finds within
 //!    the range and 30 degrees, else 200 m along the parent's heading.
-//!  - **Hitting something** (the collision callback FUN_002278e0 -> 0x22d0b0): the body struck
-//!    takes a roll of Damage min..max (FUN_0022c4d0), a blast object goes off there
-//!    (FUN_0022bfc0) and the explosion effect type plays (FUN_0022cfc0). A child whose second
-//!    timer runs out, or whose fuse fires, goes off the same way where it is, with no direct hit
-//!    (FUN_00227760).
+//!  - **Hitting something** (the collision callback FUN_002278e0 -> 0x22d0b0): the world, a
+//!    body (standing, or lying knocked down), a breakable object or a Sentry. The body or
+//!    object struck takes a roll of Damage min..max (FUN_0022c4d0), a blast object goes off at
+//!    the missile's centre (FUN_0022bfc0) and the explosion effect type plays (FUN_0022cfc0). A
+//!    child whose second timer runs out, or whose fuse fires, goes off the same way where it is,
+//!    with no direct hit (FUN_00227760).
 //!  - **The blast** (FUN_0022bfc0, dealt once by FUN_00224770 -> FUN_0022c4d0): its own roll,
-//!    after 0.05-0.25 s, to every body within the Damage radius with nothing of the world in
-//!    between: half of it anywhere inside (Damage h_011cb154 false), x 0.7 for the shooter's
-//!    own side (FUN_0004b9c0), x the body's damage-type factor. The scorch (bullet h_06a27365)
-//!    is laid where it struck.
+//!    after 0.05-0.25 s, to every body it reaches with nothing of the world in between (a body
+//!    behind cover isn't touched at all, FUN_00224a90): half of it anywhere inside (Damage
+//!    h_011cb154 false), x 0.7 for the shooter's own side (FUN_0004b9c0), x the body's
+//!    damage-type factor; the scenery's share is the same, flat. Its pass lays the scorch
+//!    (bullet h_06a27365) under the blast point, and every blast shakes the player's view
+//!    (FUN_00228c70, play_shake.rs). No hit or blast knocks its victim down (`hurt_still`).
 //!
-//! Only mesh projectiles steered at a steady speed (h_0b03ece5: the Therm Sweeper, the Sweeper
-//! V) fly here: the others (the iKhan-GPL's lobbed cluster, the creatures' weapons) fly under
-//! their physics body's gravity, which isn't traced, and keep play.rs's plain `Shot`.
+//! Only mesh projectiles steered at a steady speed that split (h_0b03ece5 and a `<mirv>`: the
+//! Therm Sweeper) fly here. The Sweeper V's (steady, no MIRV) keeps play.rs's plain `Shot` until
+//! #72 checks it against its own takes; the others (the iKhan-GPL's lobbed cluster, the
+//! creatures' weapons) fly under their physics body's gravity, which isn't traced.
 //!
 //! `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (with its children
 //! and their targets), fuse and end (where, how far from its launch, how long after, what it
 //! struck), and each body its blast reaches with the damage; `BF_MISSILE_DEBUG=1` also prints
 //! every body each target search looks at (distance, angle, line of sight).
 //!
-//! Not here: the ~1.4x the takes' hits show on top of the data's 84-96 (the spec's M), whose
-//! source isn't found (see play.md); the camera shake every blast gives (FUN_00228c70: 0.74 x a
-//! falloff over 7 x the radius, low confidence on its units); the 75 m noise for the AI's hearing
-//! (FUN_0004d490); the damage event (FUN_001fe3d0).
+//! Not here: the difficulty step on every hit on a character (x1.4 on enemies, x0.6 on the
+//! squad on STANDARD, 0x125600: #127, todo/damage-factor/answer.md) and the hit-location factor
+//! of a direct hit (FUN_00125940, as the other guns' shots leave it out); the 75 m noise for the
+//! AI's hearing (FUN_0004d490); the damage event (FUN_001fe3d0).
 
 use super::*;
 use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET, DECAL_DELAY, GRENADE_DECAL_SCALE};
+use super::shake::CameraShake;
 use bf_viewer::bf::character::EffectType;
 use bf_viewer::bf::weapon::MeshBullet;
 
@@ -57,14 +62,19 @@ const STEER_SPEED: f32 = 0.15;
 /// FUN_002266d0: a speed along the steering way within this (m/s) of the bullet's is left alone.
 const STEER_SLACK: f32 = 0.01;
 /// FUN_00226cc0: an aim point within 1 m (squared, 1), or more than 60 degrees off the heading
-/// (a dot product under 0.5, [0x3a4f74]), is given up for a point RETARGET_AHEAD m straight
-/// ahead (and the target with it); a missile that seeks looks again RESEEK s later (+0x1d0).
+/// (a dot product under 0.5, [0x3a4f74]), is given up for a point RETARGET_AHEAD s of its
+/// velocity ahead (and the target with it); a missile that seeks looks again RESEEK s later
+/// (+0x1d0).
 const RETARGET_NEAR_SQ: f32 = 1.0;
 /// FUN_00226cc0: the cosine under which an aim point is too far off the heading (60 degrees,
 /// [0x3a4f74] = 0.5).
 const RETARGET_COS: f32 = 0.5;
-/// FUN_00226cc0: how far straight ahead (m) the aim point given up for is put.
+/// FUN_00226cc0 (0x227038): the aim point given up for is put its velocity (vtable +0x54) x
+/// this far ahead: 6 km at 30 m/s.
 const RETARGET_AHEAD: f32 = 200.0;
+/// FUN_00227f80: a child the split has no target for aims this far (m) along the parent's
+/// heading (its frame's -z x 200).
+const SPLIT_AHEAD: f32 = 200.0;
 /// FUN_00226cc0: when (s) a missile that seeks looks again after giving up its aim point (+0x1d0).
 const RESEEK: f32 = 0.5;
 /// FUN_00226b80: a missile that seeks and has no target looks every SEEK_EVERY s for the most
@@ -104,20 +114,24 @@ const BLAST_SHARE: f32 = 0.5;
 /// other's squad; here the same team, the shooter too) deals this share.
 const FRIENDLY: f32 = 0.7;
 /// A body's reach for the blast: the blast's physics query (FUN_00224a90) gathers bodies whose
-/// collision is inside its sphere. The demo's body is play.rs's standing cylinder (BODY_RADIUS
-/// round, BODY_HEIGHT tall from the feet), so a blast reaches it when its nearest point is
-/// within the radius. Its line of sight is to the body's middle, this high (m): the demo's.
+/// collision is inside its sphere, a character's being its parts (the motion set's
+/// `<collision>` bones, each with its own radius). The demo's body is a standing cylinder this
+/// round (m) and BODY_HEIGHT tall from the feet, and a blast reaches it when the cylinder's
+/// nearest point is within the radius. Fitted to the takes, not traced: Tex was hurt by his own
+/// blast on the wall 5 m from his feet and not at 6 m (takes 12, 13, 15; the arms holding the
+/// launcher reach out toward it), so at least 0.44 m; play.rs's BODY_RADIUS (0.4) missed at 5 m.
+const BLAST_BODY_REACH: f32 = 0.6;
+/// Its line of sight is to the body's middle, this high (m): the demo's.
 const BODY_MIDDLE: f32 = 1.0;
 /// The blast's line of sight leaves from this far (m) off the surface the missile struck (along
 /// its normal; up for a body or the air): the game's blast sits where the missile's centre was
 /// when it touched, and a ray from the surface itself meets that surface at once. The demo's.
 const COVER_LIFT: f32 = 0.25;
-/// The search's line of sight (FUN_002237c0 casts a ray to the character's origin, the feet)
-/// goes to this far above the feet and stops this short of it (m), so a ray to the feet doesn't
-/// graze the ground they stand on (the AI's sight test leaves 0.3 too, `hostile_in_sight`). The
-/// demo's.
-const SIGHT_LIFT: f32 = 0.3;
-/// How far short of that point (m) the search's ray stops (see SIGHT_LIFT). The demo's.
+/// The search's line of sight (FUN_002237c0) is a ray to the character's origin, the feet, that
+/// meets only the terrain (`Arena::ray_terrain`: the query's flags 0xfffffffa leave out the
+/// level's placed geometry, rocks and walls, FUN_000df0a0); it stops this short of the feet (m),
+/// so the ground they stand on doesn't count (the AI's sight test leaves 0.3 too,
+/// `hostile_in_sight`). The demo's.
 const SIGHT_SLACK: f32 = 0.3;
 /// A missile's sound and its explosion's are heard at this volume from the player (play.rs's
 /// grenade trail and play_sounds use 0.8); farther ones fall off as play_sounds does a
@@ -134,6 +148,21 @@ const SOUND_FLOOR: f32 = 0.15;
 const HIT_PUSH: (f32, f32) = (4.0, 1.5);
 /// The blast's push (m/s): out from it, up (see HIT_PUSH). The demo's numbers.
 const BLAST_PUSH: (f32, f32) = (6.0, 4.0);
+/// FUN_00228c70: a blast shakes the view within this many times the Damage radius (weapon type
+/// +0x1fc x 7.0)...
+const SHAKE_REACH: f32 = 7.0;
+/// ... by the weapon's Damage (weapon type +0x1f0, the Damage record's amount: its max) x this
+/// (0.00769), at most 1...
+const SHAKE_PER_DAMAGE: f32 = 0.007_69;
+/// ... held this long (s, FUN_0006bdd0's second argument 0.5)...
+const SHAKE_HOLD: f32 = 0.5;
+/// ... then falling to nothing over this x the falloff (s)...
+const SHAKE_FALL: f32 = 0.75;
+/// ... and past half the reach, not at all if the falloff is this or less.
+const SHAKE_LEAST: f32 = 0.1;
+/// A body lying knocked down is struck where a missile passes within this (m) of one of its
+/// ragdoll's bones (`ray_lying`). The demo's: about a limb's or the torso's half thickness.
+const LYING_RADIUS: f32 = 0.2;
 /// The effects' user parameter (`AleEffect::sp`, the game's +0xbc that FUN_0021c380 sets): a hit's
 /// explosion is started at 1 (FUN_0022cbe0's factor 1.0); a timeout's isn't set (FUN_0022cea0),
 /// taken as 1 too (a guess). Every curve of exp-rocket-* has one variant, so it changes nothing
@@ -212,7 +241,7 @@ struct Missile {
 }
 
 /// A missile going off: where, which way it flew, what it struck (a body, the world's surface
-/// and its normal, a Sentry mine), and whether it was a collision (the explosion turned along
+/// and its normal, a breakable object, a Sentry mine), and whether it was a collision (the explosion turned along
 /// its way, FUN_0022cbe0) or its timers or fuse (upright, FUN_0022cea0).
 struct Blow {
     id: u32,
@@ -225,6 +254,8 @@ struct Blow {
     struck: Option<Who>,
     surface: Option<Vec3>,
     mine: Option<Entity>,
+    /// the breakable object struck (`Arena::breakable`'s number), if the world it struck is one
+    breakable: Option<usize>,
     collision: bool,
     cause: &'static str,
     from: Vec3,
@@ -247,14 +278,14 @@ struct PendingBlast {
 }
 
 /// The missiles' shared state: the next number, the random numbers, the blasts and scorches
-/// still to come (the scorch: seconds left, the decal, where, the surface's normal or None for
-/// the ground under it), and the explosion sounds waiting for their delay (s, id, volume).
+/// still to come (the scorch: seconds left, the decal, the blast point it's laid under), and the
+/// explosion sounds waiting for their delay (s, id, volume).
 #[derive(Resource, Default)]
 struct MissileState {
     next: u32,
     seed: u32,
     blasts: Vec<PendingBlast>,
-    scorches: Vec<(f32, u32, Vec3, Option<Vec3>)>,
+    scorches: Vec<(f32, u32, Vec3)>,
     sounds: Vec<(f32, u32, f32)>,
 }
 
@@ -278,16 +309,19 @@ pub fn plugin(app: &mut App) {
             .after(update_player).before(super::grenade::GrenadeSystems).run_if(in_state(AppState::Playing)));
 }
 
-/// Whether a weapon's shots fly here: a mesh projectile steered at a steady speed (see the
-/// module notes).
+/// Whether a weapon's shots fly here: a mesh projectile steered at a steady speed that splits
+/// (see the module notes). The Sweeper V's (steady, no MIRV) keeps play.rs's plain shot until
+/// #72: its own takes (todo/72-sweeper-v) don't match this path's blast and damage yet.
 pub fn flies(def: &WeaponDef) -> bool {
-    def.mesh_bullet.as_ref().is_some_and(|b| b.steady)
+    def.mesh_bullet.as_ref().is_some_and(|b| b.steady && b.mirv_mode != 0 && b.mirv_count > 0)
 }
 
 /// The projectile objects of the weapons whose shots fly here (and their MIRV children's), their
 /// models and trail effects made ready, and the trail's and the explosion's ALE effects
-/// compiled with the grenades' recorded rules (`load_recorded`: exp-rocket-* are the
-/// exp-lrg-* family's siblings) and their render pipelines built ahead (`ale_fx::warm_up`).
+/// compiled with the grenades' recorded rules and the game's facing 3 (`load_recorded_facing`:
+/// exp-rocket-* are the exp-lrg-* family's siblings; exp-rocket-add.app and the shrapnel's rect
+/// quads are facing 3, see ale_fx's FACING) and their render pipelines built ahead
+/// (`ale_fx::warm_up`).
 #[allow(clippy::too_many_arguments)]
 fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut kits: ResMut<MissileKits>, mut state: ResMut<MissileState>,
              mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
@@ -319,8 +353,8 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut kits: ResMu
             let blast = game.0.effect_type_defs.get(&gun.blast_effect).cloned().unwrap_or_default();
             let trails: Vec<u32> = objects.iter().filter_map(|o| kits.0.get(o).and_then(|k| k.as_ref())).flat_map(|k| k.trail.effects.clone()).collect();
             for e in blast.effects.iter().chain([&blast.light]).chain(trails.iter()).copied().filter(|&e| e != 0) {
-                if ale.cached_recorded(e).is_none() {
-                    if let Some(fx) = ale.load_recorded(&mut game.0, &mut images, &mut materials, e) {
+                if ale.cached_recorded_facing(e).is_none() {
+                    if let Some(fx) = ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, e) {
                         bf_viewer::ale_fx::warm_up(&mut commands, ale, &fx);
                     }
                 }
@@ -382,8 +416,11 @@ fn search(units: &[&Player], at: Vec3, fwd: Vec3, range: f32, cone: f32, count: 
         }
         let dir = to / d;
         let dot = dir.dot(fwd);
-        let sight = to + Vec3::Y * SIGHT_LIFT;
-        let clear = ray_hit(at, sight.normalize_or(dir), (sight.length() - SIGHT_SLACK).max(0.01)).is_none();
+        let reach = (d - SIGHT_SLACK).max(0.01);
+        let clear = match world::arena() {
+            Some(a) => a.ray_terrain(at, dir, reach).is_none(),
+            None => ray_hit(at, dir, reach).is_none(),
+        };
         if std::env::var("BF_MISSILE_DEBUG").is_ok() {
             println!("  search from {at:.2}: {} at {:.1} m, {:.0} degrees (cone {cone}), clear {clear}", name(u), d, dot.clamp(-1.0, 1.0).acos().to_degrees());
         }
@@ -412,27 +449,30 @@ enum Tick {
 #[allow(clippy::too_many_arguments)]
 fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Player], mines: &super::sentry::MineTargets,
         dt: f32, now: f32, log: bool) -> Tick {
-    // the move, and what it meets on the way: the world, a body (but its shooter's, and those
-    // on the ground: shots pass them too), a Sentry
+    // the move, and what it meets on the way (FUN_002278e0): the world (a breakable object's
+    // collision among it), a body but its shooter's, standing or lying knocked down, a Sentry
     let step = m.vel * dt;
     let len = step.length();
     if len > 1e-6 {
         let dir = step / len;
-        let mut first: Option<(f32, Option<Who>, Option<Vec3>, Option<Entity>)> = super::shots::hit_normal(m.pos, dir, len)
-            .map(|(t, n)| (t, None, Some(n), None));
-        for u in units.iter().filter(|u| !u.dead && !knocked_down(u) && u.who() != m.owner) {
-            if let Some(t) = ray_body(m.pos, dir, u, len).filter(|&t| first.is_none_or(|f| t < f.0)) {
-                first = Some((t, Some(u.who()), None, None));
+        let piece = world::arena().and_then(|a| a.ray_breakable(m.pos, dir, len)).and_then(|(t, b)| b.map(|b| (t, b)));
+        let mut first: Option<(f32, Option<Who>, Option<Vec3>, Option<Entity>, Option<usize>)> = super::shots::hit_normal(m.pos, dir, len)
+            .map(|(t, n)| (t, None, Some(n), None, piece.filter(|p| (p.0 - t).abs() < 1e-3).map(|p| p.1)));
+        for u in units.iter().filter(|u| !u.dead && u.who() != m.owner) {
+            let t = if knocked_down(u) { ray_lying(m.pos, dir, u, len) } else { ray_body(m.pos, dir, u, len) };
+            if let Some(t) = t.filter(|&t| first.is_none_or(|f| t < f.0)) {
+                first = Some((t, Some(u.who()), None, None, None));
             }
         }
         if let Some((e, t)) = mines.first_on(m.pos, dir, len).filter(|&(_, t)| first.is_none_or(|f| t < f.0)) {
-            first = Some((t, None, None, Some(e)));
+            first = Some((t, None, None, Some(e), None));
         }
-        if let Some((t, struck, surface, mine)) = first {
+        if let Some((t, struck, surface, mine, breakable)) = first {
             m.pos += dir * t;
             m.heading = dir;
-            let cause = if struck.is_some() { "hits a body" } else if mine.is_some() { "hits a Sentry" } else { "hits the world" };
-            return Tick::Blow(blow(m, struck, surface, mine, true, cause));
+            let cause = if struck.is_some() { "hits a body" } else if mine.is_some() { "hits a Sentry" }
+                else if breakable.is_some() { "hits a breakable object" } else { "hits the world" };
+            return Tick::Blow(Blow { breakable, ..blow(m, struck, surface, mine, true, cause) });
         }
         m.pos += step;
         m.heading = dir;
@@ -463,7 +503,7 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
                     println!("t {now:.2}: missile {} gives up {} for a point ahead", m.id,
                              if d.length_squared() <= RETARGET_NEAR_SQ { "its aim point (within 1 m)" } else { "its aim (over 60 degrees off)" });
                 }
-                m.aim = m.pos + m.heading * RETARGET_AHEAD;
+                m.aim = m.pos + m.vel * RETARGET_AHEAD;
                 m.target = None;
                 if b.seeks {
                     m.seek_in = RESEEK;
@@ -535,7 +575,22 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
 /// The missile going off where it is now (see `Blow`).
 fn blow(m: &Missile, struck: Option<Who>, surface: Option<Vec3>, mine: Option<Entity>, collision: bool, cause: &'static str) -> Blow {
     Blow { id: m.id, weapon: m.weapon, owner: m.owner, team: m.team, human: m.human, at: m.pos, dir: m.heading, struck, surface, mine,
-           collision, cause, from: m.from, age: m.age }
+           breakable: None, collision, cause, from: m.from, age: m.age }
+}
+
+/// Where along a ray (within `max`) it meets a body lying knocked down: its ragdoll's bones,
+/// each taken as a ball of LYING_RADIUS (the game's missile strikes the ragdoll's own bodies,
+/// FUN_002278e0; the shape is the demo's).
+fn ray_lying(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
+    let r = &u.knock.as_ref()?.ragdoll;
+    let turn = Quat::from_rotation_y(r.yaw);
+    r.pos.iter().filter_map(|&p| {
+        let off = origin - (r.origin + turn * p);
+        let b = off.dot(dir);
+        let disc = b * b - (off.length_squared() - LYING_RADIUS * LYING_RADIUS);
+        let t = -b - disc.max(0.0).sqrt();
+        (disc >= 0.0 && t > 0.0 && t < max).then_some(t)
+    }).min_by(|a, b| a.total_cmp(b))
 }
 
 /// FUN_00226b80: every SEEK_EVERY s, the most central hostile within the range and SEEK_CONE
@@ -592,7 +647,7 @@ fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32
         let pos = m.pos + side * (radii.0 + radii.1);
         let heading = (fwd * turn.cos() + side * turn.sin()).normalize();
         let target = (!targets.is_empty()).then(|| targets[i % targets.len()]);
-        let aim = target.and_then(|t| origin_of(units, t)).unwrap_or(m.pos + fwd * RETARGET_AHEAD);
+        let aim = target.and_then(|t| origin_of(units, t)).unwrap_or(m.pos + fwd * SPLIT_AHEAD);
         state.next += 1;
         out.push(Missile {
             id: state.next, weapon: m.weapon, object: if b.mirv_object != 0 { b.mirv_object } else { m.object }, owner: m.owner, team: m.team,
@@ -621,7 +676,7 @@ fn spawn_missile(commands: &mut Commands, kit: Option<&MissileKit>, ale: Option<
         }
         if let Some(ale) = ale {
             for (i, &effect) in kit.trail.effects.iter().enumerate() {
-                if let Some(fx) = ale.cached_recorded(effect) {
+                if let Some(fx) = ale.cached_recorded_facing(effect) {
                     let sp = if m.start > 0.0 { (m.life / m.start).clamp(0.0, 1.0) } else { 1.0 };
                     let e = commands.spawn((Transform::default(), Visibility::default(),
                                             bf_viewer::ale_fx::AleEffect::new(fx, sp, 0x5EED_0000 ^ m.id.wrapping_mul(7919) ^ i as u32), ChildOf(root))).id();
@@ -659,12 +714,14 @@ fn launch_missiles(mut commands: Commands, mut player: ResMut<Player>, mut squad
     for (l, owner, team) in out {
         let Some(def) = game.0.weapons.get(&l.weapon) else { continue };
         let Some(b) = &def.mesh_bullet else { continue };
-        // weapon +0x360: the hostile on the shooter's line, before the world (an inference: the
-        // character under the crosshair; a squadmate there isn't one)
+        // weapon +0x360: the character on the shooter's line, before the world, if it's hostile
+        // (an inference: the character under the crosshair; a squadmate in front of a hostile
+        // hides it, as it would the crosshair's)
         let (from, ray) = l.look;
         let wall = ray_hit(from, ray, 150.0).unwrap_or(150.0);
-        let target = units.iter().filter(|u| !u.dead && u.team != team && u.who() != owner)
-            .filter_map(|u| ray_body(from, ray, u, wall).map(|t| (t, u.who()))).min_by(|a, b| a.0.total_cmp(&b.0)).map(|x| x.1);
+        let target = units.iter().filter(|u| !u.dead && u.who() != owner)
+            .filter_map(|u| ray_body(from, ray, u, wall).map(|t| (t, u.who(), u.team))).min_by(|a, b| a.0.total_cmp(&b.0))
+            .filter(|x| x.2 != team).map(|x| x.1);
         let speed = def.bullet_speed.max(1e-3);
         let start = def.range / speed;
         let dir = l.dir.normalize_or(Vec3::NEG_Z);
@@ -692,9 +749,10 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
                 kits: Res<MissileKits>, mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut state: ResMut<MissileState>,
                 mut missiles: Query<(Entity, &mut Missile, &mut Transform)>, mut trails: Query<&mut bf_viewer::ale_fx::AleEffect>,
                 (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-                (mut mines, mut loose, mut objects, mut tint): (ResMut<super::sentry::MineTargets>, ResMut<super::pickups::Blasts>,
-                                                                ResMut<super::scenery::ObjectBlasts>, ResMut<ScreenTint>),
-                test: Option<Res<super::testmap::TestMap>>) {
+                (mut mines, mut loose, mut objects, mut tint, mut hits): (ResMut<super::sentry::MineTargets>, ResMut<super::pickups::Blasts>,
+                                                                ResMut<super::scenery::ObjectBlasts>, ResMut<ScreenTint>,
+                                                                ResMut<super::scenery::ObjectHits>),
+                test: Option<Res<super::testmap::TestMap>>, mut shaker: ResMut<CameraShake>) {
     let dt = frame_dt(&time);
     let log = std::env::var("BF_MISSILE_LOG").is_ok();
     let now = player.sim_time;
@@ -753,7 +811,7 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
     let instant = test.as_ref().is_some_and(|t| t.instant_kill);
     for bl in blows {
         go_off(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, bl, &mut player, &mut squad, &mut state,
-               &mut mines, &mut loose, &mut objects, &mut tint, instant, now, log);
+               &mut mines, &mut loose, &mut objects, &mut tint, &mut hits, &mut shaker, instant, now, log);
     }
 }
 
@@ -762,13 +820,13 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
 /// sounds), the bullet's impact sound, the direct hit's damage on the body it struck
 /// (FUN_0022c4d0: a roll of Damage min..max, x 0.7 on its own side, x its damage-type factor),
 /// a Sentry it struck set off, the blast object (its own roll, after 0.05-0.25 s), loose pickups
-/// thrown and the scenery's share, and the scorch where it struck (the world's surface, or the
-/// ground under the blast within its radius), laid DECAL_DELAY later as the grenades' are.
+/// thrown and the scenery's share, and the scorch on the ground under the blast point (within
+/// its radius), laid DECAL_DELAY later as the grenades' are.
 #[allow(clippy::too_many_arguments)]
 fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
           materials: &mut Assets<StandardMaterial>, bl: Blow, player: &mut Player, squad: &mut Squad, state: &mut MissileState,
           mines: &mut super::sentry::MineTargets, loose: &mut super::pickups::Blasts, objects: &mut super::scenery::ObjectBlasts, tint: &mut ScreenTint,
-          instant: bool, now: f32, log: bool) {
+          hits: &mut super::scenery::ObjectHits, shaker: &mut CameraShake, instant: bool, now: f32, log: bool) {
     let Some(def) = game.weapons.get(&bl.weapon).cloned() else { return };
     let struck_name = bl.struck.and_then(|w| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.who() == w)).map(|u| name(u));
     if log {
@@ -778,12 +836,18 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     if bl.cause == "ends without a blast" {
         return;
     }
-    // the explosion effect type, a little off what it struck (as a bullet's hit effect is)
-    let at = bl.at - bl.dir * 0.05;
+    // where it goes off: the missile's centre when it touched, its physics radius (the bullet's
+    // radius, 0.1 m) off the surface it struck along the surface's normal, else back along its way
+    let off = def.mesh_bullet.as_ref().map_or(0.1, |b| b.radius);
+    let at = match bl.surface {
+        Some(n) => bl.at + n.normalize_or(-bl.dir) * off,
+        None if bl.collision => bl.at - bl.dir * off,
+        None => bl.at,
+    };
     let fx = game.effect_type_defs.get(&def.blast_effect).cloned().unwrap_or_default();
     if let Some(ale) = ale {
         for &effect in fx.effects.iter().chain([&fx.light]).filter(|&&e| e != 0) {
-            if let Some(c) = ale.load_recorded(game, images, materials, effect) {
+            if let Some(c) = ale.load_recorded_facing(game, images, materials, effect) {
                 let life = c.duration();
                 let place = if bl.collision { Transform::from_translation(at).looking_to(bl.dir, Vec3::Y) } else { Transform::from_translation(at) };
                 let seed = (at.x * 977.0 + at.z * 131.0) as u32 ^ bl.id;
@@ -791,6 +855,8 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
             }
         }
     }
+    // the player's view shakes (FUN_00228c70, from the follow camera's eye)
+    shake(shaker, at, camera_pose(player, 0.0).0, &def);
     let volume = (1.0 - at.distance(player.position) / BLAST_HEARD).clamp(BLAST_QUIET, 1.0);
     for &(id, delay, _, _) in &fx.sounds {
         if delay > 0.0 {
@@ -801,6 +867,16 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     }
     if def.impact_sound != 0 {
         player.sound_queue.push((def.impact_sound, volume));
+    }
+    // a breakable object struck: a roll of Damage min..max (FUN_0022c4d0 on the object struck;
+    // the scenery applies its damage-type factor), then the blast's share too
+    if let Some(target) = bl.breakable {
+        let (lo, hi) = (def.damage_min.min(def.damage), def.damage);
+        let roll = lo + (hi - lo) * state.random();
+        hits.0.push(super::scenery::ObjectHit { target, amount: roll, damage_type: def.damage_type, at: bl.at, dir: bl.dir });
+        if log {
+            println!("t {now:.2}: missile {} direct hit: breakable {target} takes a roll of {roll:.1}", bl.id);
+        }
     }
     if let Some(e) = bl.mine {
         mines.strike(e, 0.0, 1.0, now);
@@ -815,7 +891,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         let amount = if instant && bl.human && !controlled { u.health.max(amount) } else { amount };
         let push = Vec3::new(bl.dir.x, 0.0, bl.dir.z).normalize_or(Vec3::Z) * HIT_PUSH.0 + Vec3::Y * HIT_PUSH.1;
         let before = u.health;
-        hurt(u, game, amount, HURT_CHATTER, push, bl.at, -1);
+        hurt_still(u, game, amount, push, bl.at);
         if controlled && u.health < before {
             tint.0 = 0.0;
         }
@@ -837,19 +913,68 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         println!("t {now:.2}: missile {} blast: roll {roll:.1}, dealt in {left:.3} s within {radius} m", bl.id);
     }
     loose.0.push((at, radius));
+    // objects other than characters: the blast object's entry for them is its own centre
+    // (FUN_00224a90), so FUN_0022c4d0 sees them at distance 0: the whole roll with Damage
+    // h_011cb154 true, half without, and no falloff (the grenades' scenery keeps its falloff:
+    // play_grenade.rs, not checked against this path)
     let share = if def.blast_core { roll } else { roll * BLAST_SHARE };
-    objects.0.push(super::scenery::ObjectBlast { left, at, radius, damage: share, damage_type: def.damage_type, label: def.label.clone(), flat: !def.blast_core });
-    // the scorch: on the surface it struck; else on the ground under it, if that's in reach
+    objects.0.push(super::scenery::ObjectBlast { left, at, radius, damage: share, damage_type: def.damage_type, label: def.label.clone(), flat: true });
+    // the scorch: every blast, a timeout's and the fuse's too (FUN_00227760 makes a blast object
+    // as well). A blast weapon's direct hit lays none (the handler 0x22d0b0 calls FUN_0022ca20 on
+    // a hit only for a Damage radius of 0.05 m or less: bullet holes); the blast's pass over what
+    // it reaches does (FUN_00224770 back into the handler), the static world's entry sitting at
+    // the blast's centre with its normal straight up (FUN_00224a90), so the bullet's decal is
+    // laid round the blast point and projected down: on the ground under it, also after a body
+    // hit (take03: under the enemy struck, from f256) and a wall hit. The demo's flat decal goes
+    // on the ground below, if that's within the radius (the projection's reach isn't traced).
+    // The pass comes with the blast's damage, 0.05-0.25 s after the explosion; the demo lays it
+    // DECAL_DELAY (0.7 s) after, as the grenades' scorch: laid as early as the code does, the
+    // dark decal shows through the demo's paler added fireball as a hard dark disc (#104). The
+    // takes show it from ~0.85-1.0 s, once their fireball clears
     if def.decal != 0 {
         let ground = floor_y(at.x, at.z, at.y + 0.5);
-        let place = match bl.surface {
-            Some(n) => Some((bl.at, Some(n))),
-            None => (at.y - ground <= radius).then_some((at, None)),
-        };
-        if let Some((p, n)) = place {
-            state.scorches.push((DECAL_DELAY, def.decal, p, n));
+        if at.y - ground <= radius {
+            state.scorches.push((DECAL_DELAY, def.decal, at));
         }
     }
+}
+
+/// `hurt` without the knockdown it may start (play.rs's rule for a hit of KNOCKDOWN_DAMAGE or
+/// more): no missile hit or blast in the takes moved its victim (Tex hurt by his own blasts,
+/// takes 10-16; frozen enemies hit directly and by blasts, takes 06, 18, 19, 23). The game's
+/// knockdown rule isn't traced. A kill still throws the body (the death push).
+fn hurt_still(u: &mut Player, game: &Game, amount: f32, push: Vec3, at: Vec3) {
+    let asked = u.knock_request.is_some();
+    hurt(u, game, amount, HURT_CHATTER, push, at, -1);
+    if !asked && !u.dead && u.knock_request.take().is_some() && std::env::var("BF_COMBAT_LOG").is_ok() {
+        println!("  (not knocked down after all: a missile's hit, play_missile.rs)");
+    }
+}
+
+/// FUN_00228c70, every blast of a missile (its only callers, 0x227867 and 0x227b1d, are the
+/// missile's two explosion paths: a grenade's blast doesn't shake the view through it): the player's
+/// view shakes if the blast is within SHAKE_REACH x the Damage radius of the camera (31.5 m for
+/// the Therm Sweeper's 4.5): fully within half that, then less to nothing at the edge (and not
+/// at all under SHAKE_LEAST of it), by the weapon's Damage x SHAKE_PER_DAMAGE (at most 1: 0.74
+/// for the Therm Sweeper's 96), held SHAKE_HOLD s and falling over SHAKE_FALL x the falloff
+/// (play_shake.rs). The takes: take03's blast 6 m out turned the view +-5-10 of 960 units for
+/// ~1 s, take04's at 25 m +-1-5 for ~0.7 s.
+fn shake(shake: &mut CameraShake, at: Vec3, eye: Vec3, def: &WeaponDef) {
+    let reach = def.blast_radius * SHAKE_REACH;
+    if reach <= 1.0 {
+        return;
+    }
+    let half = reach * 0.5;
+    let strength = (def.damage * SHAKE_PER_DAMAGE).clamp(0.0, 1.0);
+    let d = at.distance(eye);
+    if d >= reach {
+        return;
+    }
+    let falloff = if d <= half { 1.0 } else { 1.0 - (d - half) / half };
+    if d > half && falloff <= SHAKE_LEAST {
+        return;
+    }
+    shake.kick(strength * falloff, SHAKE_HOLD, falloff * SHAKE_FALL);
 }
 
 /// The blasts whose delay is out (FUN_00224770 -> FUN_0022c4d0): every living body within the
@@ -882,7 +1007,7 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             }
             // the nearest point of the body's cylinder
             let f = feet(u);
-            let across = (Vec2::new(b.at.x - f.x, b.at.z - f.z).length() - BODY_RADIUS).max(0.0);
+            let across = (Vec2::new(b.at.x - f.x, b.at.z - f.z).length() - BLAST_BODY_REACH).max(0.0);
             let up = b.at.y - b.at.y.clamp(f.y, f.y + BODY_HEIGHT);
             let d = across.hypot(up);
             if d > radius {
@@ -909,7 +1034,7 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             let amount = if instant && human && k != 0 { u.health.max(amount) } else { amount };
             let away = Vec3::new(f.x - b.at.x, 0.0, f.z - b.at.z).normalize_or(Vec3::X);
             let before = u.health;
-            hurt(u, &game.0, amount, HURT_CHATTER, away * BLAST_PUSH.0 + Vec3::Y * BLAST_PUSH.1, middle, -1);
+            hurt_still(u, &game.0, amount, away * BLAST_PUSH.0 + Vec3::Y * BLAST_PUSH.1, middle);
             if k == 0 && u.health < before {
                 tint.0 = 0.0;
             }
@@ -920,10 +1045,10 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             }
         }
     }
-    state.scorches.retain_mut(|(left, decal, at, n)| {
+    state.scorches.retain_mut(|(left, decal, at)| {
         *left -= dt;
         if *left <= 0.0 {
-            decals.0.push((*decal, *at, GRENADE_DECAL_SCALE, *n));
+            decals.0.push((*decal, *at, GRENADE_DECAL_SCALE));
         }
         *left > 0.0
     });

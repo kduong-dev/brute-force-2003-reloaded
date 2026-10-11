@@ -448,10 +448,13 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
         let d = &w.def.shots;
         // the muzzle effect, once a frame however many shots (the Bower's pellets are one), in
         // the muzzle hardpoint's own frame: FUN_00232060 attaches the effect object at the
-        // hardpoint (vtable +0xdc). Every gun's muzzle hardpoint has the barrel along its -z
-        // (unturned, or half a turn about y on the models built facing +z) and the flash
+        // hardpoint (vtable +0xdc). Every weapon's muzzle hardpoint has the barrel along its
+        // -z (unturned, or half a turn about y on the models built facing +z) and the flash
         // emitters are turned -90 degrees about x to fire along it (sminigun_muzzle.emt: the
-        // MK's); the Therm Sweeper's back-blast dust (mtrail-dust:
+        // MK's). One exception: the Psionic Blast's (ORIENTATION w x y z 0 0 0.707 0.707, half
+        // a turn about (0, 1, 1)) puts its -z down the model's -y; its effect
+        // (seer_fball_mzl_purple) isn't checked against a take. The Therm Sweeper's back-blast
+        // dust (mtrail-dust:
         // jetdust_Cube.emt#1.emt, 4.3 m along +z and 2 m down) lands behind the launcher, where
         // turned +y along the barrel it hung 4.3 m above the holder
         if flashes > 0 && d.muzzle_effect != 0 {
@@ -467,21 +470,41 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                 let toward = (fwd + right * x - up * y).normalize();
                 // its axis along the line of sight, as the game's barrel nearly is from the scope:
                 // the effect's flat flash quads, which lie along the barrel, then stay edge-on
-                // (along the real barrel, seen from above, they were bright ellipses under it)
+                // (along the real barrel, seen from above, they were bright ellipses under it).
+                // This turn (+y along the sight) is the one the unscoped flash had before the
+                // hardpoint frame; kept on purpose: the scoped flash was fitted to the take with
+                // it, and it draws as before pixel for pixel (#73's check against main)
                 Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).with_rotation(Quat::from_rotation_arc(Vec3::Y, toward))
             });
-            for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, d.muzzle_effect) {
+            // its ALE effects, with the game's facing 3 (ale_fx's FACING: the sphere muzzles'
+            // glows face the camera about their motion, where lying flat across the hardpoint's
+            // y they were edge-on); in the scope, with the demo's perp rules, the fit to the take
+            // that's kept on purpose (see SCOPE_FLASH_AT); and its light effect (the effect
+            // type's light-effect: light_muzzle on most guns, 0.24 s growing 0.5 -> 4.6 m), a
+            // point light at the muzzle as ale_fx plays the blasts' lights
+            let kind = game.0.effect_type_defs.get(&d.muzzle_effect).cloned().unwrap_or_default();
+            let fxs: Vec<_> = kind.effects.iter().filter_map(|&e| match scoped {
+                Some(_) => ale.load(&mut game.0, &mut images, &mut materials, e),
+                None => ale.load_facing(&mut game.0, &mut images, &mut materials, e),
+            }).collect();
+            let light = (kind.light != 0).then(|| ale.load(&mut game.0, &mut images, &mut materials, kind.light)).flatten();
+            let mut drawn = 0;
+            for (fx, is_light) in fxs.into_iter().map(|f| (f, false)).chain(light.map(|l| (l, true))) {
                 let life = fx.duration();
-                let seed = p.fire_state.next_seed();
+                // (the light's seed is made from the last effect's: the gun's random stream,
+                // which the shots' spread and frame jitter share, runs as it did before the
+                // light was played)
+                let seed = if is_light { drawn ^ LIGHT_SEED } else { p.fire_state.next_seed() };
+                drawn = seed;
                 // (in the scope, without its flat flash quads: seen from the eye they lay as
                 // bright ellipses or lines under the star, which the take doesn't show; the
                 // demo's rule)
                 let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed);
-                run.hide_flat = scoped.is_some();
+                run.hide_flat = scoped.is_some() && !is_light;
                 let effect = (Visibility::default(), run, AleExpire(life));
                 match scoped {
-                    Some(place) => commands.spawn((place, effect)),
-                    None => commands.spawn((at, effect, ChildOf(w.entity))),
+                    Some(place) if !is_light => commands.spawn((place, effect)),
+                    _ => commands.spawn((at, effect, ChildOf(w.entity))),
                 };
             }
         }
@@ -546,6 +569,10 @@ fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, player: Res<Pl
     let list = game.0.character_weapons.entry(CHARACTERS[player.character].to_string()).or_default();
     if slot < list.len() { list[slot] = key } else { list.push(key) }
 }
+
+/// Mixed into the last muzzle effect's seed for its light effect's (any odd constant: the
+/// demo's), so the light draws no number of the gun's own random stream.
+const LIGHT_SEED: u32 = 0x4C16_4855;
 
 /// Casings fall, bounce off the floor losing most of their speed, and go after their life.
 fn move_shells(mut commands: Commands, time: Res<Time>, mut shells: Query<(Entity, &mut Shell, &mut Transform)>) {

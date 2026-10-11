@@ -10,7 +10,9 @@
 //!              a texture, its blend (5,2 added to the picture, 5,6 alpha), and "perp": the
 //!              quad lies flat in the emitter's frame (normal +y), turned by the appearance's
 //!              transform at the effect's time it was born (the icons' particles fan out round
-//!              the turn); otherwise it faces the camera.
+//!              the turn); otherwise it faces the camera. The game turns quads by the
+//!              appearance's facing type instead (see FACING); facing 3 is drawn the game's way
+//!              in the effects compiled with `Compiled::facing`.
 //! Curves with keys run on the emitter's time in seconds (flagged ones repeat); per-particle
 //! floats run over the particle's life (0-1). An emitter flagged "attached" (h_e2999ffd: the
 //! projectiles' bolts) keeps its particles in its own frame, so they travel with it; one with no
@@ -25,7 +27,10 @@
 //! A "light_" effect (an effect type's light-effect: light_explosion, light_phosphor ...) lights
 //! the scene instead of drawing: each of its particles is a point light whose reach is the
 //! appearance's size (m) and whose strength is its colour x alpha x size, as the hand-made DNA
-//! light in play_fx.rs reads light_powerup_pill.
+//! light in play_fx.rs reads light_powerup_pill. (The effect types with a light-effect also
+//! list a light object type in h_f8c6a8b4: h_09020c30, a point light of range 10, for the
+//! Therm Sweeper's muzzle and explosion. That the light effect drives it is an inference from
+//! the data; the code isn't traced.)
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -143,24 +148,31 @@ const PERP_RADIAL_SPEED: f32 = 0.3;
 /// flat streak. Only this one, checked against the Sonic recording: the Energy's stun_hit_s
 /// has a perp cone too and stays as it was checked.
 const PERP_OUT_CONES: [&str; 1] = ["sonic_grenade.emt"];
-/// Perp appearances whose quads lie across the effect's z axis (facing along it) rather than flat
-/// across its y: the Therm Sweeper's explosion (exp-rocket-add.app, the white-hot Exp5 quads
-/// growing to 13.6 m; exp-rocket-shrap.rect.app, its sparks). Its effect is turned by the game's
-/// FUN_0001d0c0 frame of the missile's way (FUN_0022cbe0: z back along it, y up for a level
-/// shot), and the takes' fireball is upright rectangles facing the shooter, straight vertical and
-/// horizontal edges (todo/73-therm-sweeper take04 f226-238, take03 f218-228), where lying flat
-/// across y they were long horizontal streaks edge-on to the camera, and facing out from the
-/// middle a fan of streaks. An inference for these two only, checked against those takes.
-///
-/// From default.xbe's own appearance class (h_111035aa, the "GeneralApp_" parameters: names at
-/// 0x403a58-0x403bc0, their table from 0x403904): PERP (0d645074) is GeneralApp_AngleFadeOut (bit 1 of
-/// the appearance's +0x40, setter 0x2a09f0), and the facing is GeneralApp_FacingType (e3542300,
-/// +0x44): 1 on the camera-facing fire, flash, dirt and trail apps, 3 on these two and on the
-/// Frag's exp-lrg-add.app; the converter for Freelancer's perp appearances (0x2b26d0) gives them
-/// AngleFadeOut and facing 0 (their transform) or 2 (their velocity). How the vertex shader turns
-/// a facing 3 quad isn't read; the game's hit effects are turned like this explosion, and the
-/// demo's lie across y with +y turned back along the shot gives the same picture there.
-const PERP_FACING_Z: [&str; 2] = ["exp-rocket-add.app", "exp-rocket-shrap.rect.app"];
+/// GeneralApp_FacingType (the appearance's +0x44; names of the "GeneralApp_" parameters at
+/// 0x403a58-0x403bc0, their table from 0x403904): how the game turns a particle's quad. The
+/// appearance's draw (0x2a1de6) hands the particle vertex shader (0x3b8bf8) a one-hot selector
+/// for it (the table at 0x390ce8, shader constant 45), and the shader builds the quad from:
+/// 0, the particle's own transform; 1, the camera (a billboard); 2, the plane square to the
+/// particle's motion; 3, a quad stretched along its motion (height along it, ScaleY) and turned
+/// about it to face the camera, Freelancer's "rect" appearance (the .rect sparks are all 3).
+/// The motion is the particle's velocity, normalised each frame while it moves (0x2a17b0), and
+/// +z of the particle's frame for one born still (0x2a1768). The flag the demo calls PERP
+/// (0d645074) is GeneralApp_AngleFadeOut: the shader fades out a quad seen within 20 degrees of
+/// edge-on, to nothing at 5 (cosines 0.342 and 0.087, set at 0x2a1c9d), and doesn't turn it
+/// (that fade isn't drawn: the demo's materials are shared per life step). The demo's perp rules
+/// (flat across the emitter's y, PERP_RADIAL_SPEED) stand in for these elsewhere; facing 3 is
+/// drawn as the shader does only for the effects compiled with `Compiled::facing` (see `Pair::axial`).
+const FACING: u32 = 0xE354_2300;
+/// GeneralApp_ShapeType (the appearance's +0x48): which of the game's particle shapes the quad
+/// is. The table at 0x402a4c lists them (FUN_002b1bb0 registers each with FUN_002b1bf0, into
+/// 0x443658; the appearance's draw picks its own at 0x2a1a7e), each a vertex list scaled by the
+/// particle's Scale x ScaleX / ScaleY: 1, a triangle round a circle of radius 1; 2, a quad from -1
+/// to +1 (twice its Scale across: 411 of the library's appearances); 3, a quad standing on the
+/// particle, x -0.5..0.5 and y 0..1 (89); 4, a 12-point shape; 5, a quad from -0.5 to 0.5 (its
+/// Scale across: 284, the muzzle flashes and the hit dust among them). The demo draws every quad
+/// as a 5; the effects compiled with `Compiled::shapes` draw 2 twice as big and 3 standing on its
+/// particle (1 and 4 stay quads).
+const SHAPE: u32 = 0x17D4_5550;
 /// Air fields, linked to an appearance by the effect's pair list (appearance -> field, as
 /// Freelancer's ALE links them; FxAirField, AirField_Magnitude and AirField_Approach are the
 /// game's hashes of Freelancer's names). One pulls its particles' velocity toward a wind of
@@ -182,8 +194,12 @@ const AIR_APPROACH: u32 = 0x1042_3CEB;
 /// The air fields that run (node names): the Gas cloud's two (gas-grenade.fld: a wind of about
 /// +-1 m/s swinging round; gas-grenade2.fld: 0.26 m/s up; checked against the Gas recording)
 /// and grenade_trail_rise (0.8 m/s up: the tester saw the trail rise the right way, thinner and
-/// more vertical than the recordings' - left on, a partial match).
-const AIR_FIELDS: [&str; 3] = ["gas-grenade.fld#1.fld", "gas-grenade2.fld#1.fld", "grenade_trail_rise"];
+/// more vertical than the recordings' - left on, a partial match); the Therm Sweeper's trail's
+/// mtrail-rise (0.3 m/s up, Approach 1) and mtrail-rise#1 (1.0 m/s up, Approach 1.66, taken as
+/// 1): they hold the puffs where they're born, slowly rising, instead of their cones' 0.9 and
+/// 14.5 m/s back along the missile's way, as take21's side view shows them (a cloud round the
+/// missile from 0.1 s, then a line of puffs it leaves behind; flying back they passed the holder).
+const AIR_FIELDS: [&str; 5] = ["gas-grenade.fld#1.fld", "gas-grenade2.fld#1.fld", "grenade_trail_rise", "mtrail-rise", "mtrail-rise#1"];
 /// How often an air field's Approach is applied (per second): once per 30 fps game frame. Not
 /// in the data: fitted to the Gas recording, whose cloud is ~6 m wide and ~4 m tall and swallows
 /// Tex although gas-grenade_Cone.emt#1.emt throws its puffs out at 4-6.5 m/s for 2.3-4.4 s.
@@ -244,6 +260,14 @@ pub struct Pair {
     /// how the flipbook's frame is picked (see TEX_FRAME)
     frame: FrameMode,
     perp: bool,
+    /// the game's shape of its quad (see SHAPE): 2 or 3 where the effect is compiled with
+    /// `Compiled::shapes`, else 5 (the demo's quad)
+    shape: u32,
+    /// a facing-3 appearance drawn as the game's shader does (see FACING): stretched along the
+    /// particle's motion and turned about it to face the camera. Its perp (AngleFadeOut)
+    /// appearances in the effects compiled with `Compiled::facing` only; every other quad keeps
+    /// the demo's rules
+    axial: bool,
     /// particles stay in the emitter's frame (move with it)
     attached: bool,
     /// turned along their motion
@@ -304,6 +328,16 @@ pub struct Compiled {
     /// outward-facing perp quads (PERP_RADIAL_SPEED). Every other effect plays as before them;
     /// they may hold for those too, once checked against their own captures.
     pub recorded: bool,
+    /// Compiled with the game's facing 3 (see FACING, `Pair::axial`): the muzzle effects, which
+    /// play in the muzzle hardpoint's frame (play_shots.rs), and the Therm Sweeper's trail and
+    /// explosion (play_missile.rs), checked against their takes. Other effects keep the demo's
+    /// perp rules until checked against their own captures.
+    pub facing: bool,
+    /// Drawn with the game's particle shapes (see SHAPE): the effects compiled with both the
+    /// recorded rules and the game's facing, the Therm Sweeper's trail and explosion
+    /// (`load_recorded_facing`), checked against their takes. Every other effect keeps the
+    /// demo's quad, half the size of the game's for its shape-2 appearances.
+    pub shapes: bool,
 }
 
 impl Compiled {
@@ -335,8 +369,10 @@ impl Compiled {
 #[derive(Resource)]
 pub struct AleAssets {
     quad: Handle<Mesh>,
-    /// by (name hash, `recorded`)
-    effects: HashMap<(u32, bool), Option<Arc<Compiled>>>,
+    /// a unit quad standing on its middle-bottom (y 0..1): the game's shape 3 (see SHAPE)
+    quad_base: Handle<Mesh>,
+    /// by (name hash, `recorded`, `facing`)
+    effects: HashMap<(u32, bool, bool), Option<Arc<Compiled>>>,
     textures: HashMap<(u32, bool), Option<Handle<Image>>>,
 }
 
@@ -447,49 +483,71 @@ fn end_warm_up(mut commands: Commands, mut quads: Query<(Entity, &mut WarmUp)>) 
 
 impl AleAssets {
     pub fn new(meshes: &mut Assets<Mesh>) -> Self {
-        AleAssets { quad: meshes.add(Rectangle::new(1.0, 1.0)), effects: HashMap::new(), textures: HashMap::new() }
+        AleAssets { quad: meshes.add(Rectangle::new(1.0, 1.0)), quad_base: meshes.add(Mesh::from(Rectangle::new(1.0, 1.0)).translated_by(Vec3::Y * 0.5)),
+                    effects: HashMap::new(), textures: HashMap::new() }
     }
 
     /// An effect compiled already (`load`).
     pub fn cached(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, false)).cloned().flatten()
+        self.effects.get(&(effect, false, false)).cloned().flatten()
     }
 
     /// An effect compiled already with the recorded rules (`load_recorded`).
     pub fn cached_recorded(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, true)).cloned().flatten()
+        self.effects.get(&(effect, true, false)).cloned().flatten()
+    }
+
+    /// An effect compiled already with the recorded rules and the game's facing
+    /// (`load_recorded_facing`).
+    pub fn cached_recorded_facing(&mut self, effect: u32) -> Option<Arc<Compiled>> {
+        self.effects.get(&(effect, true, true)).cloned().flatten()
     }
 
     /// Compile an effect of the library by name hash (cached); None if the library lacks it.
     pub fn load(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                 effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, false)
+        self.load_as(game, images, materials, effect, false, false)
     }
 
     /// `load`, with the rules checked against the Frag recording only (see `Compiled::recorded`):
     /// for the grenades' blast and trail effects.
     pub fn load_recorded(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                          effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, true)
+        self.load_as(game, images, materials, effect, true, false)
+    }
+
+    /// `load`, with the game's facing 3 (see `Compiled::facing`): for the muzzle effects.
+    pub fn load_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
+                       effect: u32) -> Option<Arc<Compiled>> {
+        self.load_as(game, images, materials, effect, false, true)
+    }
+
+    /// `load_recorded`, with the game's facing 3 (see `Compiled::facing`): for the Therm
+    /// Sweeper's trail and explosion.
+    pub fn load_recorded_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
+                                effect: u32) -> Option<Arc<Compiled>> {
+        self.load_as(game, images, materials, effect, true, true)
     }
 
     fn load_as(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
-               effect: u32, recorded: bool) -> Option<Arc<Compiled>> {
-        if let Some(c) = self.effects.get(&(effect, recorded)) {
+               effect: u32, recorded: bool, facing: bool) -> Option<Arc<Compiled>> {
+        if let Some(c) = self.effects.get(&(effect, recorded, facing)) {
             return c.clone();
         }
         // (an effect that carries itself, through its effect appearances, carries nothing)
-        self.effects.insert((effect, recorded), None);
-        let compiled = self.compile(game, images, materials, effect, recorded).map(Arc::new);
+        self.effects.insert((effect, recorded, facing), None);
+        let compiled = self.compile(game, images, materials, effect, recorded, facing).map(Arc::new);
         if compiled.is_none() {
             warn!("ALE effect h_{effect:08x}: not in the library, or nothing it draws is supported");
         }
-        self.effects.insert((effect, recorded), compiled.clone());
+        self.effects.insert((effect, recorded, facing), compiled.clone());
         compiled
     }
 
     fn compile(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
-               effect: u32, recorded: bool) -> Option<Compiled> {
+               effect: u32, recorded: bool, facing: bool) -> Option<Compiled> {
+        // the game's particle shapes (see SHAPE, `Compiled::shapes`)
+        let shapes = recorded && facing;
         let e = game.effects.effects.get(&effect)?.clone();
         let node = |game: &Game, i: u32| e.refs.iter().find(|r| r.3 == i).and_then(|r| game.effects.nodes.get(&r.1)).cloned();
         let node_name = |i: u32| e.refs.iter().find(|r| r.3 == i).map_or(0, |r| r.1);
@@ -506,9 +564,9 @@ impl AleAssets {
                     continue;
                 }
                 let child = app.string(SPAWN_EFFECT).filter(|n| !n.is_empty())
-                    .and_then(|n| self.load_as(game, images, materials, h(n), recorded));
+                    .and_then(|n| self.load_as(game, images, materials, h(n), recorded, facing));
                 if let Some(child) = child {
-                    pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
+                    pairs.push(Pair { perp: false, axial: false, shape: 5, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
                                       frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None, vertical: false });
                 }
                 continue;
@@ -533,7 +591,7 @@ impl AleAssets {
                 })).collect();
                 let material = mats[0].clone();
                 let fps = book.map_or(0.0, |b| b.fps);
-                pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![mats], fps,
+                pairs.push(Pair { perp: false, axial: false, shape: 5, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![mats], fps,
                                   frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields: vec![], rise: None, vertical: false });
                 continue;
             }
@@ -541,7 +599,7 @@ impl AleAssets {
                 continue;
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
-                pairs.push(Pair { perp: false, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
+                pairs.push(Pair { perp: false, axial: false, shape: 5, attached: emitter.flag(ATTACHED), streak: false, emitter, app, steps: vec![], fps: 0.0,
                                   frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![], rise: None, vertical: false });
                 continue;
             }
@@ -582,12 +640,19 @@ impl AleAssets {
             // a spark (see SPARK_ASPECT): drawn as a streak along its motion, not a perp quad
             let spark = recorded && app.flag(PERP) && emitter.class == CLASS_CONE
                 && emitter.curve(SPEED, 0.0, 0.0).unwrap_or(0.0) >= PERP_RADIAL_SPEED && app.floats(ASPECT, 0.0, 0.0).unwrap_or(1.0) > SPARK_ASPECT;
-            let (perp, streak) = if spark { (false, true) } else { (app.flag(PERP), streak) };
+            // the game's facing 3, where the effect is compiled with it (see FACING; stored as a
+            // u32, parameter type 4)
+            let axial = facing && app.flag(PERP) && matches!(app.params.get(&FACING), Some(crate::bf::ale::Value::U32(3)));
+            let (perp, streak) = if axial { (false, false) } else if spark { (false, true) } else { (app.flag(PERP), streak) };
             let vertical = recorded && VERTICAL_STREAKS.contains(&app.name.as_str());
-            pairs.push(Pair { perp, attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
+            let shape = match app.params.get(&SHAPE) {
+                Some(crate::bf::ale::Value::U32(k @ (2 | 3))) if shapes => *k,
+                _ => 5,
+            };
+            pairs.push(Pair { perp, axial, shape, attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false, fields, child: None, rise, vertical });
         }
-        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded })
+        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes })
     }
 
     fn texture(&mut self, game: &mut Game, images: &mut Assets<Image>, id: u32, linear: bool) -> Option<Handle<Image>> {
@@ -807,12 +872,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 // (stun_grenade_master's 7.49 s particles carry 0.8 s bolts): it would carry an
                 // effect with nothing left to draw
                 let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
-                let roll = if pair.perp || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
+                // (a facing-3 quad turns only by its Rotate, see FACING)
+                let roll = if pair.perp || pair.axial || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
                 let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-                if compiled.recorded && pair.perp && PERP_FACING_Z.contains(&pair.app.name.as_str()) {
-                    // across the effect's z (see PERP_FACING_Z): the quad's own +z along it
-                    lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]);
-                } else if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
+                if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
                     && speed >= PERP_RADIAL_SPEED {
                     // a perp quad from a sphere emitter (or a PERP_OUT_CONES cone) that throws its
                     // particles out: facing out along its direction from the middle (see
@@ -859,7 +922,8 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     commands.spawn((at.with_scale(Vec3::ONE), particle,
                                     PointLight { intensity: 0.0, range: 0.5, shadows_enabled: false, ..default() }));
                 } else {
-                    commands.spawn((Mesh3d(assets.quad.clone()), MeshMaterial3d(pair.steps[0][0].clone()), NotShadowCaster, at, particle));
+                    let quad = if pair.shape == 3 { assets.quad_base.clone() } else { assets.quad.clone() };
+                    commands.spawn((Mesh3d(quad), MeshMaterial3d(pair.steps[0][0].clone()), NotShadowCaster, at, particle));
                 }
             }
         }
@@ -873,7 +937,8 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
            camera: Query<&GlobalTransform, With<Camera3d>>, owners: Query<&GlobalTransform, (With<AleEffect>, Without<AleParticle>)>,
            mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>, Option<&mut PointLight>)>) {
     let dt = clock(&time, fixed);
-    let facing = camera.iter().next().map(|c| c.compute_transform().rotation).unwrap_or_default();
+    let view = camera.iter().next().map(|c| c.compute_transform()).unwrap_or_default();
+    let (facing, eye) = (view.rotation, view.translation);
     for (e, mut p, mut tr, mat, light) in &mut particles {
         p.age += dt;
         if p.age >= p.life {
@@ -949,7 +1014,19 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         let height = (size * app.floats(ASPECT, p.sp, k).unwrap_or(1.0)).max(0.001);
         let spin = Quat::from_rotation_z(p.roll + app.floats(ROTATE, p.sp, k).unwrap_or(0.0));
         let aspect = app.floats(ASPECT, p.sp, k).unwrap_or(1.0);
-        tr.rotation = if pair.perp {
+        tr.rotation = if pair.axial {
+            // facing 3 (see FACING): its height along its motion (+z of its frame if it has
+            // none: its effect's for an attached particle, the world's otherwise, a
+            // simplification of the shader's particle frame), its width square to that and to
+            // the eye, so it faces the camera as much as it can, then turned in that plane by
+            // its Rotate (the vertex shader's two axes and sine / cosine, 0x3b8bf8)
+            let along = if moving.length_squared() > 1e-12 { moving.normalize() } else if p.owner.is_some() { turn * Vec3::Z } else { Vec3::Z };
+            let side = along.cross(eye - tr.translation);
+            let side = if side.length_squared() > 1e-12 { side.normalize() } else { along.any_orthonormal_vector() };
+            let (s, c) = app.floats(ROTATE, p.sp, k).unwrap_or(0.0).sin_cos();
+            let (x, y) = (side * c - along * s, side * s + along * c);
+            Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y)))
+        } else if pair.perp {
             turn * p.frame * spin
         } else if pair.vertical && !pair.streak {
             // standing up, turned about the vertical to face the camera (VERTICAL_STREAKS)
@@ -963,7 +1040,9 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         } else {
             facing * spin
         };
-        tr.scale = Vec3::new(width, height, 1.0);
+        // (the game's shape 2 spans -1..1 of its Scale, see SHAPE)
+        let across = if pair.shape == 2 { 2.0 } else { 1.0 };
+        tr.scale = Vec3::new(width * across, height * across, 1.0);
         let step = ((k * STEPS as f32) as usize).min(STEPS - 1);
         let frames = pair.steps[step].len();
         let frame = match pair.frame {

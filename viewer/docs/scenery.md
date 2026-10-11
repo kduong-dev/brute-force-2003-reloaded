@@ -28,6 +28,11 @@
       `ObjectBlast`). The Energy and the Sonic are dealt the same plain way, though their
       characters' damage comes with their bolts and ring: a simplification. The Gas cloud does
       nothing to objects (Type 4: x0 on these).
+    * Missiles (#73, play.md's **Missiles**): one that strikes an intact object deals it a roll
+      of Damage min..max at once (`ObjectHits`), then its blast's share as every object in
+      reach takes it, flat: the blast's entry for an object is its own centre (FUN_00224a90),
+      so it's half the roll anywhere inside the radius for the Therm Sweeper (Damage
+      h_011cb154 false), the whole roll when true (`ObjectBlast::flat`).
   * **Breaking** (FUN_00157260 on message 0x4e, then the countdown FUN_0015af20 each frame):
     * a countdown starts at the list's longest `h_1b6a0ede`;
     * each frame the first queued entry whose delay is at least what's left spawns, one a
