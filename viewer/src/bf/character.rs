@@ -185,6 +185,14 @@ pub struct Game {
     /// character name -> blood decals: per hit (h_fb4bfc68) and the pool where the body lies
     /// (h_efc2a874), names into `decals`
     pub character_decals: HashMap<String, (u32, u32)>,
+    /// character name -> its special skill and stamina (see `SkillData`): the campaign squad's,
+    /// or squad deathmatch's once `load_squad_library` has put them in their place
+    pub character_skills: HashMap<String, SkillData>,
+    /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`)
+    pub skill_overlays: HashMap<String, SkillOverlays>,
+    /// character name -> chatter line tag -> its block's `h_ea21ae4b` (10, 20 and 30 on the
+    /// skill's three lines; play_skills.rs reads it as the chance in %, a guess)
+    pub chatter_chance: HashMap<String, HashMap<u32, i64>>,
     /// ground decals of objecttypes `<decal>`, by name
     pub decals: HashMap<u32, DecalDef>,
     /// object type name -> its mesh archetype (objecttypes `<base mesh-name>` around `<base name>`)
@@ -353,6 +361,75 @@ const H_CAMERA_BLOCK: u32 = 0x0D41_E5F1;
 const H_OFFSET_DEAD: u32 = 0xF13F_B0C4;
 const H_OFFSET_5: u32 = 0xE42D_50A5;
 
+/// A squad character's special skill and stamina, from its objecttypes character entry
+/// (`common/objecttypes-common.xml` for the campaign squad, `mp_common/objecttypes-sdm_bf.xml`
+/// for squad deathmatch's, see `Game::load_squad_library`):
+///
+///   <h_e275fb80 motion-archetype="ms_tex" h_e78efbb2="true" max-stamina="100" ..>
+///     <combat-skill skill-set="3" stamina-cost="2.2" stamina-recovery="1.8">
+///       <sounds start-skill="h_ed7492f4" end-skill="h_e00d91fa" ../>
+///
+/// (`stamina-cost` and `stamina-recovery` are hashes 105c13aa / f2a2beb9 in the file, their
+/// names recovered by hashing.) default.xbe: the parser FUN_00190330 keeps max-stamina, the
+/// type loader 0x12ed40 copies it to the runtime type, the spawn (FUN_0012f440) sets stamina and
+/// its max from it and the skill's cost (skill+4); FUN_0011a840 drains and refills.
+#[derive(Clone, Debug, Default)]
+pub struct SkillData {
+    /// the skill (`skill-set`, default.xbe's CSKILL_ name table 0x3bd814): 1 Brutus's Spirit of
+    /// Vengar, 2 Flint's Advanced Targeting, 3 Tex's Berserker, 4 Hawk's Stealth
+    pub skill_set: i64,
+    /// `max-stamina`: the stamina at spawn and its cap (0x12f46e); 100 for the squad
+    pub max_stamina: f32,
+    /// `stamina-cost`: stamina per second while the skill is on (the base drain, cost x dt)
+    pub cost: f32,
+    /// `stamina-recovery`: stamina per second while it's off (FUN_0011a840)
+    pub recovery: f32,
+    /// `start-skill` / `end-skill`: the sounds at the switch on and off (type+0x328 / +0x330); 0
+    /// none
+    pub start_sound: u32,
+    pub end_sound: u32,
+    /// h_e78efbb2: the stamina update runs for the type at all (type+0x1a8 bit 0, tested at
+    /// 0x11a8b8); true for the four
+    pub stamina_update: bool,
+}
+
+/// The skill data on an objecttypes character entry `e` (see `SkillData`), if it has a
+/// `<combat-skill>`.
+fn skill_data(e: &Element) -> Option<SkillData> {
+    let c = e.child(h("combat-skill"))?;
+    let num = |x: &Element, k: u32| x.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
+    let sound = |k: &str| c.child(h("sounds")).and_then(|s| s.attr(h(k))).and_then(|v| v.as_hash())
+        .filter(|&x| x != 0 && x != h("")).unwrap_or(0);
+    Some(SkillData {
+        skill_set: int_of(c, h("skill-set")),
+        max_stamina: num(e, h("max-stamina")),
+        cost: num(c, h("stamina-cost")),
+        recovery: num(c, h("stamina-recovery")),
+        start_sound: sound("start-skill"),
+        end_sound: sound("end-skill"),
+        stamina_update: e.attr(H_STAMINA_UPDATE).and_then(|v| v.as_i64()).unwrap_or(0) != 0,
+    })
+}
+
+/// The character type's flag that turns its stamina update on (name not recovered).
+const H_STAMINA_UPDATE: u32 = 0xE78E_FBB2;
+/// A chatter block header's h_ea21ae4b (name not recovered): 10, 20 and 30 on the skill's on,
+/// off and off-at-0 lines; play_pickups.rs reads the medkit line's 30 as the chance in %.
+/// default.xbe's chatter gate rolls a percentage against a field of the line's record
+/// (FUN_001374c0, `rand % 100 + 1 <= record+4`), and the parser (0x19ca9a) stores this
+/// attribute at +4 of the record it fills; that the two records are the same isn't settled.
+const H_CHATTER_CHANCE: u32 = 0xEA21_AE4B;
+
+/// A motion set's skill toggle overlays (`ms_<name>.xmb`, `<overlay motion-type=..>`): [on, off],
+/// the entries of OMT_SPECIAL_ON (44) and OMT_SPECIAL_OFF (43), each its script and whether the
+/// stance's prefix goes before it (`prefix-type` 1: `Sc_w1_` / `Sc_w2_` + script; 0: the script
+/// is the clip's whole name). Tex `Sc_w1_bz_start` / `Sc_w1_bz_stop` (prefix 0); Brutus `spirit`
+/// on only; Hawk `activate_stealth` both ways; Flint none.
+pub type SkillOverlays = [Option<(String, bool)>; 2];
+/// The overlays' motion types (OMT_SPECIAL_ON, OMT_SPECIAL_OFF).
+const OMT_SPECIAL_ON: i64 = 44;
+const OMT_SPECIAL_OFF: i64 = 43;
+
 /// An inventory item type (objecttypes `<inventory>` entries: `<h_e275fb80 class-type=2
 /// function-type=..>` around `<base mesh-name><base name=T>`). `function` is the game's IFSET_
 /// enum (default.xbe name table at 0x3be3cc): 5 IFSET_GENERIC_HEALING (the Medkit: carried,
@@ -486,6 +563,9 @@ impl Game {
             character_camera: HashMap::new(),
             character_icons: HashMap::new(),
             character_decals: HashMap::new(),
+            character_skills: HashMap::new(),
+            skill_overlays: HashMap::new(),
+            chatter_chance: HashMap::new(),
             decals: HashMap::new(),
             object_meshes: HashMap::new(),
             liquids: HashMap::new(),
@@ -539,6 +619,7 @@ impl Game {
             let who = n.rsplit('/').next().unwrap_or(&n).trim_end_matches("_chatter.xmb").to_string();
             let mut lines: HashMap<u32, Vec<u32>> = HashMap::new();
             let mut responses: HashMap<u32, u32> = HashMap::new();
+            let mut chances: HashMap<u32, i64> = HashMap::new();
             for block in root.walk().into_iter().filter(|e| e.name == 0xF74E_6A16) {
                 let all = block.walk();
                 let Some(tag) = all.iter().find_map(|e| e.attr(h("line_tag"))).and_then(|v| v.as_hash()) else { continue };
@@ -547,9 +628,33 @@ impl Game {
                 if let Some(r) = all.iter().find_map(|e| e.attr(h("response_id"))).and_then(|v| v.as_hash()) {
                     responses.insert(tag, r);
                 }
+                // (the block header's h_ea21ae4b, beside its line_tag)
+                if let Some(c) = all.iter().find(|e| e.attr(h("line_tag")).is_some()).and_then(|e| e.attr(H_CHATTER_CHANCE)).and_then(|v| v.as_i64()) {
+                    chances.insert(tag, c);
+                }
             }
             self.chatter.insert(who.clone(), lines);
-            self.chatter_response.insert(who, responses);
+            self.chatter_response.insert(who.clone(), responses);
+            self.chatter_chance.insert(who, chances);
+        }
+        // the motion sets' skill toggle overlays: ms_<name>.xmb `<overlay motion-type=44|43
+        // prefix-type script>` (the first archive with the set wins)
+        for n in ar.find("ms_", ".xmb") {
+            let who = n.rsplit('/').next().unwrap_or(&n).trim_start_matches("ms_").trim_end_matches(".xmb").to_string();
+            if self.skill_overlays.contains_key(&who) {
+                continue;
+            }
+            // (a motion set that doesn't decode is skipped, not an error for the archive)
+            let Ok(Some(root)) = self.parse(ar, &n) else { continue };
+            let mut overlays: SkillOverlays = [None, None];
+            for o in root.walk().into_iter().filter(|e| e.name == h("overlay")) {
+                let slot = match int_of(o, h("motion-type")) { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
+                let script = o.attr(h("script")).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                if let Some(script) = script {
+                    overlays[slot] = Some((script, int_of(o, h("prefix-type")) == 1));
+                }
+            }
+            self.skill_overlays.insert(who, overlays);
         }
         // the level list: <level><h_1b8535f0 h_07f2f670=NAME texture-name=PREVIEW ...>
         // <zone file-name=ARCHIVE/><dm-data description=TEXT/>
@@ -858,6 +963,9 @@ impl Game {
                     self.character_icons.insert(name.clone(), (icon(0xF9D9_4425), icon(0x00C5_1907)));
                     let decal = |k: u32| weapon::hashes(e, k).into_iter().find(|&x| x != h("")).unwrap_or(0);
                     self.character_decals.insert(name.clone(), (decal(0xFB4B_FC68), decal(0xEFC2_A874)));
+                    if let Some(s) = skill_data(e) {
+                        self.character_skills.insert(name.clone(), s);
+                    }
                     // <ai ... squad-leash-dist (hash 1d50ffec, recovered from the game's name hash)>
                     if let Some(d) = e.walk().into_iter().find(|x| x.name == h("ai")).and_then(|a| a.attr(0x1D50_FFEC))
                         .and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))) {
@@ -893,6 +1001,29 @@ impl Game {
             self.sounds.add(&root, mem);
         }
         Ok(())
+    }
+
+    /// Put a multiplayer squad library's skill data in place of the campaign squad's: squad
+    /// deathmatch plays the Brute Force squad of `library` (game-options `<squad h_fed0689a="mp_tex
+    /// mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`), whose types are in
+    /// `mp_common/objecttypes-<library>.xmb`, keyed here by motion set like the campaign's. Only
+    /// the skill data is taken (#35 take21: on sdm_e34 Tex drains 6.55/s, sdm_bf's 6.5); the rest
+    /// of that squad (hitpoints, chatter) stays the campaign's in the demo. How many it read.
+    pub fn load_squad_library(&mut self, data_dir: &Path, library: &str) -> Result<usize, String> {
+        let file = format!("objecttypes-{library}.xmb");
+        let ar = Archive::open_until(&data_dir.join("mp_common.tgz"), |n| n == file, 1)?;
+        let Some(root) = self.parse(&ar, &file)? else { return Ok(0) };
+        let mut n = 0;
+        for e in root.walk() {
+            let Some(ms) = e.attr(h("motion-archetype")) else { continue };
+            let name = ms.as_str().map(|s| s.trim_start_matches("ms_").to_string())
+                .unwrap_or_else(|| format!("h_{:08x}", hash_of(Some(ms))));
+            if let Some(s) = skill_data(e) {
+                self.character_skills.insert(name, s);
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// Load a level's sound bank and world materials (surface footstep / landing sounds).

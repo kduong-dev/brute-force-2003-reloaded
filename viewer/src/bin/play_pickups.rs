@@ -507,7 +507,8 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>) {
         status.message = Some(("No Medkits".into(), MESSAGE_TIME));
     } else if player.health >= player.max_health {
         status.message = Some(("No need to heal".into(), MESSAGE_TIME));
-    } else if player.reloading.is_none() && player.throwing.is_none() && player.switching.is_none() {
+    } else if player.reloading.is_none() && player.throwing.is_none() && player.switching.is_none() && player.skill.toggling.is_none() {
+        // (not during a skill's toggle overlay: one overlay at a time, play_skills.rs)
         player.using = Some(0.0);
     }
 }

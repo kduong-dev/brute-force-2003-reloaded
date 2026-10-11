@@ -3,7 +3,7 @@
 | Keyboard / mouse (no gamepad for now) | Action |
 |---|---|
 | WASD | move (relative to the camera); the character turns toward the direction |
-| Shift | sprint |
+| Shift | sprint (the game's dash). `BF_TEST_SPRINT=<s>` sprints toward the goal from that time with `BF_TEST_GOTO` |
 | Ctrl | walk |
 | Right mouse (hold) | aim: the camera dollies in (as when firing), the gun is turned onto the crosshair while the legs keep moving; moving away from the aim backpedals. Moving across it (30-150 degrees off the crosshair) side-steps, standing (`Sc_w1/w2_rp_f_side_walk_l/r` up to 100 degrees, `rp_b_side_walk_l/r` past it) or crouched (`cr_f/b_side_walk_l/r`). Those clips twist the upper body about a quarter turn off the root, and their root motion runs straight along it, forward or back, as far as the walks. So the character turns until the gun is on the crosshair and walks where the clip takes it: across the aim, a little forward or back. `BF_TEST_STRAFE=<x>[,<y>]` moves that way (camera-relative) with `BF_TEST_GOTO` |
 | Left mouse (hold) | fire the held weapon (at its own rate; also aims while held). Standing, the feet turn with the aim (the spine keeps at most ~11° of twist, also when looking down and turning). As in the game, the camera snaps in on the first shot, holds ~0.7 s after the last, then eases back out; looking steeply down it stays out |
@@ -20,6 +20,7 @@
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
 | Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
+| V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Only the toggle, stamina and HUD so far, no effects: see [skills.md](skills.md) |
 
 ## Test map (`cargo run --bin bf_play -- --test`)
 
@@ -91,12 +92,19 @@ HUD health / stamina frame: the original's own art, the tutorial's picture of it
 256 × 64, only in tutorial.tgz: loaded for it directly). It's cut in pieces: the + and bolt icons
 (drawn solid), the frame's left cap, a middle that stretches and the right cap (drawn as glass, 45%:
 Bevy blends see-through UI in linear light, so that's what matches a capture's body colour,
-22 46 86, ours 17 51 91). Its baked bars are painted its own empty-bar navy (0 20 107) and the live
-bars drawn over them (rows 22–27 and 35–40, from column 56). The bars' length follows the
+22 46 86, ours 17 51 91). Its baked bars are cleared, so the bars' empty part is see-through as in
+the game (#35 take10: the sky shows through the empty stamina channel; it was the picture's navy
+before), and the live bars drawn over them (rows 22–27 and 35–40). The bars are the game's bar
+widget's length (FUN_000b7050: value / 150 × 249 units), 1.66 units per hit point of the
 character's maximum health (`combat-target hitpoints`: Tex 115, Brutus 105, Flint 90, Hawk 65;
-`BF_DUMP_HITPOINTS=1` lists them): Tex's 184, which gives the capture's frame proportions (5.4 to
-1), the others in proportion; the frame's middle stretches with them, and a squad switch resizes
-it. Without the tutorial's picture, the frame below is used.
+`BF_DUMP_HITPOINTS=1` lists them), from x 73.0, at least 2 units above 0: Tex's are 190.9 long,
+x 73.4–263.9 in the demo and in #35 take01 (it was 1.6 per hit point from x 74, 3.5% short). The
+stamina bar's value is stamina / max-stamina × max health, so it's as long as the health bar at
+full. The frame's middle stretches with them and its right cap follows their end, and a squad
+switch resizes it (the picture's right cap ends 12 units past the bars, the game's frame ~9.4:
+the demo's frame is ~3 units longer on the right, #35 takes 01, 06, 19). The stamina bar's
+colours, trail and low-stamina blink, and the skill's name under it: [skills.md](skills.md).
+Without the tutorial's picture, the frame below is used.
 
 HUD textures found for the panels: the health / energy frame is built from its corner
 `h_0cdf5876` (32 × 16 end cap, mirrored four ways; it holds the step from the raised ends down to
