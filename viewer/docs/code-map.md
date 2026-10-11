@@ -61,8 +61,8 @@ what it does in the row and say which place was wrong.
 | `FUN_001252b0` | Called for BIOREACTIVE (3) hits by the character's damage handler (0x1257dc adds to char+0x554 first). Not traced. | code (use only) | todo/damage-factor |
 | `0x125600` | A character's damage handler (combat-target vtable 0x39ddcc slot 0, set by FUN_00110d30; no Ghidra function). Two early exits with no damage (a world flag, char+8 then +0xc50 bit 4, and a check through the world's +0xbec; scripted invulnerability is a guess). Then x (1 - 0.1n) when the victim's team row has 1s in columns 3-6 of 0x3ffd80 (enemies), else x (1 + 0.1n) (the squad), n the difficulty (0x7c720, read at 0x12566d): on STANDARD enemies x1.4, the squad x0.6. Then x the victim's skill vtable +0xd8 (0x125747: Vengar's 0.85), its modifiers (+0x55c, +0x59c +0x1c, vtable +0x14), FUN_002232d0, FUN_00124a70. This is #73's unexplained x1.4 and the campaign squad's ~0.58 of a barrel blast (scenery.md). A live read: break at 0x125673 (eax = n) or 0x125735 (st0 = the factor). | code; n = -4 by fit | todo/damage-factor; todo/35 spec (Vengar) |
 | `FUN_00125940` | Hit factor of a weapon hit on a character: the victim type's +0x220 (`damage-multiplier`, h_e7e9fcd3: 0.62 for the campaign squad) x the hit bone's `Damage` from the map at char+0x564 when it isn't 1 (head x5, or x3 for hounds, Brutus and ferals; upper arms x0.8; forearms and calves x0.5). Instant rays (0x2303a0) and projectiles (0x227a03) use it; blast shares and FUN_00223160 don't. | code (which bone each take's hit struck: fit) | todo/damage-factor; #73 spec §6; todo/73 answer-round3 §1; play.md § Missiles (a missile's direct hit); `play_missile.rs` (`hit_factor`) |
-| `0x12ed40` | Character-type loader (no Ghidra function): copies the parsed record into the runtime type: max-stamina (parse +0x16c) to +0x224, `damage-multiplier` to +0x220; its neighbour h_1182c05d is scaled by pi / 180 (0x3a4fe0). | code | todo/damage-factor; todo/35 leads §2; `bf/character.rs` (`SkillData`) |
-| `FUN_0012f440` | A character's setup at spawn: stamina and max from the type's max-stamina (0x12f46e); the skill's +4 = stamina-cost (0x12f78c), +0x18 the character; resolves the type's collision bone list (+0x188, 0x14-byte records) against the model. | code (the bone list: medium) | todo/35 leads §2, §4, spec §1.2; todo/damage-factor; `play.rs` (`spawn_unit`: stamina full at spawn) |
+| `0x12ed40` | Character-type loader (no Ghidra function): copies the parsed record into the runtime type: max-stamina (parse +0x16c) to +0x224, `damage-multiplier` to +0x220; its neighbour h_1182c05d is scaled by pi / 180 (0x3a4fe0). h_1182c05d goes to type+0x2d0 (0x12ed6a): the turn rate the stick's yaw and pitch use and the follow camera's slew doubles. | code | todo/damage-factor; todo/35 leads §2; `bf/character.rs` (`SkillData`) |
+| `FUN_0012f440` | A character's setup at spawn: stamina and max from the type's max-stamina (0x12f46e); the skill's +4 = stamina-cost (0x12f78c), +0x18 the character; resolves the type's collision bone list (+0x188, 0x14-byte records) against the model. At 0x12f95d it finds the "Bip01 Head" node (char+0x3e8) and at 0x12fefe sets char+0x48c = its height above char+0x438: the follow camera's pivot height. | code (the bone list: medium) | todo/35 leads §2, §4, spec §1.2; todo/damage-factor; `play.rs` (`spawn_unit`: stamina full at spawn) |
 | `FUN_00154740` | Fills a combat target type's per-damage-type factors (h_142be76f): all 12 to 1.0, then the data's pairs. | code | todo/damage-factor |
 | `FUN_00156938` | Object constructor; at 0x15699f it sets the combat target's modifier (+0x18) to 0. | code | this page |
 | `FUN_00156e50` | Fills a struck object's push (+0xe8..+0x100) from the damage message: the hit's direction x its damage. The debris's main entry gets it (FUN_0015ac90). | code | `play_scenery.rs` (`Push`, `DEBRIS_*`) |
@@ -200,16 +200,19 @@ what it does in the row and say which place was wrong.
 |---|---|---|---|
 | `FUN_001098f0` | Read with FUN_0014dd50: the character's crouch height, for motion states 6 and 7 (MT_CROUCH, MT_CROUCH_WALK). | code (a reading) | `play_shots.rs` (`Trigger::crouched`) |
 | `0x10f8e0` | Character vtable +0x124 (no Ghidra function): reads h_17a554bf (object +0x70 bit 4), the mark of the characters a player can take control of; only FUN_000da8f0 and FUN_000db3e0 read it. | code | xemu.md; #102 |
+| `0x10fdb0` | The aim interface's frame (the char+0x1b4 sub-object, vtable 0x39dce8 +0x28): returns char+0x5bc. | code | todo/126 leads §2 |
 | `FUN_00110d30` | Character constructor: vtable 0x39ddd8, combat-target vtable 0x39ddcc. | code, live | xemu.md; todo/damage-factor |
 | `FUN_00112790` | Whether a character is the locally controlled one. | code (meaning inferred) | todo/35 spec §3; `play_skills.rs` (`switched`) |
-| `FUN_00112800` | Whether a character has a human player (its player record's flag 2). | code (meaning inferred) | #73 spec §3; play.md § Missiles; `play_missile.rs` (`Missile::human`) |
+| `FUN_00112800` | Whether a character has a human player (its player record's flag 2). The detector filter's h_e707ecc1 (FUN_001fb7d0) and the aim shift's countdown (0x11ccdc) ask it. | code (meaning inferred) | #73 spec §3; play.md § Missiles; `play_missile.rs` (`Missile::human`) |
 | `FUN_00115000` | A character's hit part for a physics body: its bone index, or -1 (char+0x4d8 list, or +0x4f8 when ragdolled). | code | todo/73 answer-round3 §1; `play_missile.rs` (`hit_factor`) |
 | `0x1154b0` | `FUN_001154b0` in the docs (no Ghidra function): the character position setter (vtable +0x38); moves the body and the model; the trainer's teleport calls it. | code, live | xemu.md |
 | `FUN_00115d50` | Character death; at 0x115df5 it switches the skill off through FUN_0010e3e0 (its end sound and chatter, as for an off). | code, live (#35 take30) | todo/35 spec §3, §6; `play_skills.rs` (`step`: the dead); skills.md |
 | `FUN_00117210` | Whether a character is free to act (no blocking state at +0x214 / +0x225, not dead, no held item of kind 0x2e at +0x1fc / +0x200), then its skill's vtable +0x14. Hawk's toggle needs it. Tex's toggle asks it switching on (0x13d5c4), Hawk's always (0x13cfd2); Brutus's (FUN_0013bfe0) and Flint's (FUN_0013cad0) don't. | code (meaning inferred) | todo/35 leads §4.3; `play_skills.rs` (`free_to_act`) |
 | `FUN_00117660` | Animation event switch (called from FUN_00118ef0): eaba3d48 at 0x118ae7 (Tex's berserk on: his second gun out through FUN_0014d090, FUN_0014d310, FUN_0014a880, FUN_0022daf0), 14ee2201 at 0x1180bb (off: stowed), ead033a3 at 0x118b8f (Hawk's stealth on or off), 0f8408d5 at 0x117b12 (clears the fire request); 1b2ec99e, a reload clip's magazine-in, moves the held gun's rounds taken from the reserve (+0x1e8) into its clip (+0x1f8) and clears them, so the clip refills at that event. | code, live | play.md § Shots (Taps), § Missiles (the reload, take08); `play.rs` (`EV_MAG_IN`); `play_shots.rs`; todo/35 leads §4.1, §4.3, spec §2.3; `play_skills.rs` (`EV_BERSERK_ON`, `EV_BERSERK_OFF`, `EV_STEALTH`); skills.md § The toggle |
 | `FUN_00118ef0` | The character's animation-event callback: jump_launch to FUN_0012b630, every other event to FUN_00117660. | code | `decompiled/xbe/ghidra/README.md` (Player movement); this page |
-| `FUN_0011caa0` | Character update (vtable +0x6c); calls the stamina update FUN_0011a840 at 0x11cedb. | code | todo/35 leads §2, spec §1.2 |
+| `FUN_0011caa0` | Character update (vtable +0x6c); calls the stamina update FUN_0011a840 at 0x11cedb. It also counts the aim shift's char+0x430 down (0x11cce9) and runs the body fade FUN_0011be80 (0x11cc8e). | code | todo/35 leads §2, spec §1.2 |
+| `0x11e5e0` | The aim's yaw rate: char+0x5f8 = type+0x2d0 x the stick (kept at char+0x600), 0 while +0x604 or +0x638 is set. | code (the stick: inferred) | todo/126 leads §2 |
+| `FUN_0011e7c0` | Sets the aim pitch char+0x5f4, clamped to ±60° (±1.0472), turning the aim frame char+0x5bc about its x by the change (FUN_00072010); 0x11e840 adds to it (the player controller at 0x134086: type+0x2d0 x stick x 0.5 x dt). | code | todo/126 leads §2 |
 | `0x122040` | The character's command handler (vtable +0x15c; no Ghidra function): a jump table at 0x12276c over the CT_ commands 0-35. CT_TOGGLE_SPECIAL (8) at 0x1224a5 calls the skill's toggle (vtable +4; ignored while +0x640 is set unless the skill is on at 0 stamina). CT_FIRE_WEAPON (10) at 0x1225d7 raises the gun (FUN_00123ea0) and sets the weapon's fire bits (0x122614-0x122655) from the request at +0x260 bit 3. CT_TOGGLE_SNIPE (16) at 0x122399 holds the scope-in (0x1223da). CT_RELOAD_WEAPON (17) at 0x122069. CT_TARGET_LOCK_TOGGLE (18) at 0x12238d (no sender found). CT_DASH (19) at 0x1220ef. CT_JUMP (22) at 0x1226ef. | code | play.md § Shots (Taps, Muzzle effects); `play_shots.rs`; todo/35 leads §3; `play_skills.rs` (`command`) |
 | `0x12b000` | The character controller, 0x12b000-0x12e000. | code | `decompiled/xbe/ghidra/README.md` |
 | `FUN_0012b630` | Jump launch: 5.8 m/s up. From the jump_launch event (FUN_00118ef0), the jump command and the AI. | code | `play.rs` (`JUMP_SPEED`); ghidra README |
@@ -220,6 +223,7 @@ what it does in the row and say which place was wrong.
 | `FUN_0012c020` | Slide update: the amount ramp (+0x71c) and the slide velocity. | code | `play.rs`; ghidra README |
 | `FUN_0012cd10` | Character physics step: gravity 18 m/s^2, air drag 0.99 a frame, the collision sweep (FUN_00153810), ground contact within 65 degrees. | code | `play.rs` (`GRAVITY`); ghidra README |
 | `FUN_0012dab0` | Fills the ground record at +0x43c: the slide flag, the ground kind, the world material, the normal. | code | ghidra README |
+| `FUN_0012e870` | Builds a bone name from the type's prefix (type+0x320, default "Bip01") and a part: "Bip01 Head" for the follow camera's pivot (0x12f8be). | code | todo/126 leads §2 |
 | `0x1332a0` | `FUN_001332a0` in the docs (no Ghidra function): the player controller update (vtable 0x39db74 +4), the pad's virtual buttons to commands. White (VB 9) at 0x134cff sends CT_TOGGLE_SPECIAL; LT (VB 7) or black (VB 63) at 0x134367, and holding X long enough to reload (FUN_00120c50) at 0x134c50, switch Tex's and Flint's skill off first; the left stick past 0.9 (0x3a50b8) sends CT_DASH (19) at 0x134f52; it raises the gun (FUN_00123ea0) at 0x134a3f. +0x10 the character, +0x20 the pad port. | code, live | xemu.md; todo/35 leads §3, §4.2, spec §2.1; `play_skills.rs` (`skill_input`: V) |
 | `FUN_001351c0` | A squad entry's character (entry vtable 0x39f878, +0xe0). | code, live | xemu.md |
 | `FUN_0014dd50` | See FUN_001098f0. | code | `play_shots.rs` |
@@ -355,7 +359,7 @@ Materials and shaders are here too.
 | `FUN_0009e960` | Writes a material's h_e59d69a0 (60) to render state +0x294 of the state cache, flagging it when not 255; which state that is isn't established. | code | squad.md § Memory chip; `play_dna.rs` |
 | `FUN_000a4d00` | Sets a pixel shader (51 callers). | code | squad.md § Memory chip; `play_dna.rs` |
 | `FUN_000a4d80` | Packs four floats into a shader constant (33 callers). | code | squad.md § Memory chip; `play_dna.rs` |
-| `FUN_000e7850` | Render cull, per object drawn: vtable +0x74(vtable +0x70(camera)), the distance LOD (0xe78c7-0xe78d0). Then the render lists; effect objects (type 17) go to 0x41b818. | code | todo/73 answer-round3 §3; `ale_fx.rs` (`LOD_TAN`) |
+| `FUN_000e7850` | Render cull, per object drawn: vtable +0x74(vtable +0x70(camera)), the distance LOD (0xe78c7-0xe78d0). Then the render lists; effect objects (type 17) go to 0x41b818. A character whose alpha (char+0x738 x char+0x72c from its own camera, else FUN_00116340) is under 1 goes to the sorted transparent lists (0x41b818, 0x41d1a0). | code | todo/73 answer-round3 §3; `ale_fx.rs` (`LOD_TAN`) |
 | `FUN_00156050` | A game object's distance LOD (vtable +0x70 via 0x145270): d = tan(FOV/2) x max(0, (camera to bounding-sphere centre - radius) x obj+0x40); 1 to near, linear to 0 at far; near / far its vtable +0x78 / +0x7c x world+0xc74; exponent +0x80. | code | todo/73 answer-round3 §3.2; play.md § Missiles; `ale_fx.rs` (`LOD_TAN`) |
 | `FUN_00213e60` | Adds a decal through the decal manager: point, normal, frame, the decal type, two sizes, an object's node or the world. | code (arguments: inferred) | this page |
 | `FUN_00214710` | Decal manager: clips the world's triangles for a decal (with FUN_00217920), so a scorch wraps the rock. | code | play.md § Missiles |
@@ -389,16 +393,39 @@ Materials and shaders are here too.
 |---|---|---|---|
 | `FUN_00156390` | A game object's attribute parser (object vtable +0x14 by default): h_17a554bf into +0x70 bit 4; at 0x156666 inventory-drop (h_0f77963d, into +0xc4: the squad's memory chip); h_f2990a77 the lights. `play_dna.rs` calls it the character type's parser; it's every game object's, placements included. | code | xemu.md; `play_dna.rs` (`CHIP_AHEAD`) |
 | `FUN_00160da0` | Type maps of [0x469980], keyed by objecttypes hashes (not by placements' `name=`); FUN_0022ca20 finds a decal type through it. | code, live | xemu.md |
+| `FUN_00162e90` | World button constructor (`world-button-object`, vtable 0x39a8e0): its signal +0x1b0 = 14 (TRIG_SIG_USE_OBJECT), +0x1b4 = −1. | code | todo/125 leads §1 |
+| `FUN_00162fc0` | World button attribute parser: h_eaf8a35b to +0x1b0 (the signal it sends), h_f1660a0d to +0x1b4. | code | todo/125 leads §1 |
+| `0x163060` | World button use (vtable +0x138; no Ghidra function): sends {+0x1b0, +0x1b4} to its listeners through FUN_001fe3d0. | code | todo/125 leads §1 |
 | `FUN_00187fc0` | Parser of a debris entry `<h_19c8df19>`: a 16-byte record (archetype-name, h_1c1e17fe, h_1b6a0ede, h_f2e4e1a3). | code | scenery.md § Data; `bf/character.rs` (`Debris`) |
+| `0x18b0f0` | Detector `<filter>` parser: h_19656b35 +0, h_1d083f6a +1, h_115c7b01 +2, h_e707ecc1 +3, h_ebfd2b20 +4, alignment +8, the object and object-type lists. | code | todo/125 leads §1 |
 | `FUN_0018ba00` | objecttypes loader: a switch on hashed element names; reload-time lands in the weapon record's +0x288. | code | ghidra README; #73 spec §1 |
+| `0x18e060` | Trigger entry parser (`<base>` in h_031cd9f5): Type (SH_, 0x3bf924) +0, signal +4, action (TRIG_ACT_) +8, match-id +0xc, h_170a9b80 +0x10, h_f136d22d (how many times it acts) +0x14, h_e2da3955 +0x18. | code | todo/125 leads §1 |
+| `0x18e290` | `<anim>` entry parser: command (AC_, 0x3bd3c4) +0x1c, `wwit-debugging` (the AM_ play mode, 0x3bd41c) +0x20, animation-archetype +0x24, time-scale +0x28, translation-scale +0x30. | code | todo/125 leads §1 |
 | `0x18f8b0` | objecttypes field-parser tables embedded in `.text`, 0x18f8b0-0x190fd0. | code | ghidra README |
 | `FUN_00191170` | Parser of an effect object's `<h_fb0a5f1d><Damage>`: a 0x1c-byte record (amount, Type, h_ed582b3c, h_f724cb8c, duration, range, falloff). | code | scenery.md § Data; `bf/character.rs` (`AreaDamage`) |
 | `FUN_00193420` | Liquid types (`<h_fa2f5452>`): liquid-type and three damage rates. | code | levels.md (Liquids aren't solid) |
 | `FUN_001e1090` | A field parser that takes its arguments in EAX / ECX (read the asm). | code | ghidra README |
+| `FUN_001f8c90` | Detector attributes after the trigger base: h_e25d95e3 +0xf4, `filter` +0x80 (FUN_001faf20 → FUN_0015b9d0), h_051ac63e +0x104. | code | todo/125 leads §1 |
+| `FUN_001f8db0` | Detector occupancy: who is inside, with 0.1 / 0.2 s delays on entering and leaving. | code (in outline) | todo/125 leads §1 |
+| `FUN_001fb980` | Detector filter test, all must pass: FUN_001fb770 alignment; FUN_001fb810 h_1d083f6a, characters of non-squad types; FUN_001fb850 h_19656b35, squad types (type+0x1a8 bit 0, h_e78efbb2); FUN_001fb7d0 h_e707ecc1, a human player (FUN_00112800); FUN_001fb890 h_115c7b01, any character; FUN_001fb8b0 / FUN_001fb910 the object / object-type lists. h_ebfd2b20 inverts each. | code | todo/125 leads §1 |
+| `FUN_001fe260` | At level start (from 0xd8bae) sends FIRST_UPDATE (13) to every trigger of kind 0x14, the script-triggers. | code | todo/125 leads §1 |
+| `FUN_001fe610` | The trigger base update (slot +0x1c of 15 trigger vtables): while enabled, FIRST_UPDATE to itself once (FUN_001fe660). | code | todo/125 leads §1 |
+| `FUN_001fe660` | Sends a trigger FIRST_UPDATE (13) once (+0x3d bit 5). | code | todo/125 leads §1 |
+| `FUN_001feb60` | The next of a trigger's entries matching an event: the same signal and id, its use count under its h_f136d22d. | code | todo/125 leads §1 |
+| `FUN_001febb0` | Links a trigger's objects (h_0b6b92ba): triggers (OT_TRIGGER) directly, game objects as listeners. | code (in outline) | todo/125 leads §1 |
+| `FUN_001fedb0` | Trigger base attributes: `enabled` +0x3d bit 0, h_137926ff bit 3, h_1eec0e75 bit 2, h_f657f799 bit 1, h_f090ebbb bit 4, `iD` +0x3c; h_e91cf6a8 its targets, h_0b6b92ba its objects; **h_0884288c is read and dropped** (the editor's back-references; signals don't flow along it). | code | todo/125 leads §1 |
+| `FUN_001ff0a0` | Sends an event to a trigger's targets (their vtable +0x60), only while it's enabled. | code | todo/125 leads §1 |
+| `FUN_001ff0f0` | The trigger base's actions: ENABLE / DISABLE / TOGGLE_ENABLE (then ENABLED 4 / DISABLED 5 to its targets); USER_SIG1-8 (37-44) send USER_SIGNAL1, 2, 3-8 (11, 12, 32-37) to its targets. | code | todo/125 leads §1 |
 | `0x209250` | `FUN_00209250` in the docs (no Ghidra function): spawn-trigger parser (vtable +0x14). | code | xemu.md |
 | `FUN_002099e0` | Spawn-trigger spawn: clones its template (+0xcc) at its spawn point (+0xb4) and keeps the copy at +0xc4. | code, live | xemu.md |
 | `0x209ac0` | `FUN_00209ac0` in the docs (no Ghidra function): spawn-trigger actions (vtable +0x60). TRIG_ACT_OPERATE (1) while armed (+0xe4 bit 3) spawns at once or after h_eab6952f (+0xe0); TRIG_ACT_SPAWN_RESET (36) re-arms when h_0f95f576 (+0xe4 bit 2) is set. | code, live | xemu.md |
 | `0x395838` | Spawn-trigger vtable. | code, live | xemu.md |
+| `0x395ab8` | Script-trigger vtable: +0x5c its kind 0x14 (FUN_001fcc10), +0x60 its signal handler 0x205000. | code | todo/125 leads §1 |
+| `0x3bd3c4` | AC_ anim command name table: 0 PLAY, 1 PLAY_LOOPING, 2 PAUSE, 3 RESUME, 4 STOP_AND_RELEASE, 5 RESET_TIME. | code | todo/125 leads §1 |
+| `0x3bd41c` | AM_ play mode name table (the anim entry's `wwit-debugging`): 0 FORWARD, 1 FORWARD_LOOP, 2 FORWARD_OSCILLATE, 3 BACKWARD, 4 BACKWARD_LOOP, 5 BACKWARD_OSCILLATE. | code | todo/125 leads §1 |
+| `0x3bed0c` | TRIG_ACT_ action name table: 1 OPERATE, 2 ENABLE, 3 DISABLE, 4 STOP, 5 TOGGLE_ENABLE, 6 PLAY_SOUND ... 14 INC_COUNTER ... 30-35 MOVE_FORWARD / BACKWARD (LOOP, OSCILLATE), 36 SPAWN_RESET, 37-44 USER_SIG1-8. | code | todo/125 leads §1 |
+| `0x3bef5c` | TRIG_SIG_ signal name table: 0 ENTER_DETECTOR, 1 EXIT_DETECTOR, 2 TRUE, 3 FALSE, 4 ENABLED, 5 DISABLED, 6 DESTROYED, 8 TIMER_PULSE, 9 DAMAGED, 10 CALCULATOR, 11 USER_SIGNAL1, 12 USER_SIGNAL2, 13 FIRST_UPDATE, 14 USE_OBJECT, 24 SPAWNED, 25 FINISHED, 31 ANIM_START, 32-37 USER_SIGNAL3-8, 38 ANIM_END, 42 EMPTIED_DETECTOR, 49 ANIM_BACK_START, 50 ENTER_DETECTOR_FIRST. | code | todo/125 leads §1 |
+| `0x3bf924` | SH_ entry type name table: 0 BASE, 1 ANIM, 3 CALC, 6 SCRIPT. | code | todo/125 leads §1 |
 | `0x3d50f8` | Terrain vertex shader (NV2A): row x 65 + column on a 2 m grid from the first short, heights in 1/16 m; its constants are set at run time. | code | levels.md; `bf/character.rs` (`TERRAIN_VERTEX`) |
 | `0x469948` | Player slots: [0x469948] + 0x22c + 4n, whose +0xc4 is a team object (not the character). | live | xemu.md |
 | `0x469980` | Object type maps (FUN_00160da0), not the list of placed objects. | live | xemu.md |
@@ -424,22 +451,55 @@ Materials and shaders are here too.
 
 | Address | What it does | How sure | Where |
 |---|---|---|---|
-| `FUN_0006a9f0` | tan of the view's +0x14: FOV / 2, set by FUN_0006e450. The camera's default FOV is 70 degrees (+0xc8, 0x6bc09). | code | todo/73 answer-round3 §3.2; `ale_fx.rs` (`LOD_TAN`) |
+| `FUN_0006a950` | Stores a camera archetype's screen-effect values (from the attach 0x6ba30): h_fa21933f into cam+0x4c bit 2, then cam+0x115, +0x114, +0x11c bits 0-1 and +0x116 from h_067e3f7a, h_fee059bd, h_f5f77f68 and h_e4442435 (the attach passes the int and a float swapped, so +0x114 stays 0). The begin-render 0x6c3c0 hands cam+0x117..+0x119 and +0x11c to the renderer ([world+0xb78]+0x110..+0x120); FUN_000702a0 drives them in the scope and at low health. A depth-of-field-like screen effect. | code (the effect: inferred) | todo/126 leads §1 |
+| `FUN_0006a9f0` | tan of the view's +0x14: FOV / 2, set by FUN_0006e450. The camera's default FOV is 70 degrees (+0xc8, 0x6bc09). The FOV is the level's follow-camera archetype's (fov 70 on e34 / sdm_e34, set by the attach 0x6ba30); the 70 at 0x6bc09 is the base constructor's default. | code | todo/73 answer-round3 §3.2; `ale_fx.rs` (`LOD_TAN`) |
+| `FUN_0006ac90` | Sets the view's near plane (+0x1c) and recomputes its tangents. Called by the camera type's attach (0x6bab4: the archetype's clip-plane-near) and FUN_0006be90. | code | todo/126 leads §1 |
+| `FUN_0006b760` | The view object's constructor (0x94 bytes, vtable 0x3a27a0): near +0x1c 1.0, far +0x20 100000, aspect +0x2c 4/3, a scene node at +0x5c (the camera's position at node+0x38, its frame at node+0x14). Only defaults: the type's attach (0x6ba30) sets near, far and FOV from the archetype. **Correction:** the follow camera's near is the archetype's clip-plane-near, 0.1 m, not this 1.0 m (the #73 analyst's reading, repeated in the uncommitted `BF_CAMERA_NEAR` comment on the #73 branch). | code | todo/126 leads §1 |
+| `0x6ba30` | The camera type's attach (type vtable +0x1c of both `<camera>` 0x3a277c and `<follow-camera>` 0x3a261c; no Ghidra function): cam+0xc = the type; cam+0xc8 = fov (type+0x18) through FUN_0006e450; the aspect forced to 4:3 (view+0x28 = 0.75 x view+0x24); near = clip-plane-near (type+0x1c, FUN_0006ac90 at 0x6bab4); far = clip-plane-far (type+0x20); then FUN_0006a950. | code | todo/126 leads §1 |
 | `FUN_0006bdd0` | A camera's shake kick (its +0xdc block: amplitude, fall rate +0xe0, a one-frame amplitude +0xe4, hold +0xe8): (amplitude, hold, fall time). It replaces the shake only if it's stronger than what's left; the amplitude holds, then falls to nothing over the fall time; with no fall time it lasts one frame. FUN_00228c70 kicks it with (a, 0.5, 0.75 f). | code | #73 spec §5; `play_shake.rs` (`CameraShake::kick`) |
-| `0x6c780` | The camera's update (no Ghidra function): each frame the shake's amplitude (FUN_00073d20), its turn (FUN_00073c00), then its hold and fall (FUN_00073a80). | code | `play_shake.rs` |
+| `FUN_0006be90` | A near / far override for one render pass: a value of 0 or more saves the view's own (cam+0x138 / +0x13c) and sets it, a negative one restores it. The main pass (FUN_000d9f00 through 0x6c3c0) passes −1 for near. | code | todo/126 leads §1 |
+| `0x6c3c0` | A camera's begin-render (vtable +0x118; no Ghidra function): pass 0 turns the frame by the shake, calls FUN_0006be90 with its near and far arguments, and hands the screen-effect values to [world+0xb78]+0x110..+0x120; passes 1 and 2 (FUN_0006c0d0) clear them. | code | todo/126 leads §1 |
+| `FUN_0006c720` | The zoomed FOV: cam+0xcc = cam+0xc8 at zoom 1, else 2 atan(tan(cam+0xc8 / 2) / zoom). | code | todo/126 leads §3 |
+| `0x6c780` | The camera's update (no Ghidra function): each frame the shake's amplitude (FUN_00073d20), its turn (FUN_00073c00), then its hold and fall (FUN_00073a80). This is the base camera's (vtable 0x3a2868); the follow camera's update FUN_000702a0 runs the same shake steps. | code | `play_shake.rs` |
+| `FUN_0006d240` | The share of the screen a sphere covers: its centre in view space ± the radius in x and y, projected and clamped to the screen, (x1 − x0)(y1 − y0) / 4, 0..1. The body fade's measure (FUN_0011be80). | code | todo/126 leads §5 |
+| `FUN_0006dfc0` | The world-space direction through a screen pixel of a camera: the aim shift's crosshair ray (0x1285f2). | code | todo/126 leads §2 |
+| `FUN_0006e450` | Sets a camera's FOV: cam+0xc8 (unless scoped), view+0x14 = FOV / 2 (the horizontal half angle, degrees), view+0x24 its tangent. | code | todo/126 leads §1 |
+| `0x6f040` | The follow camera type's create (type vtable 0x3a261c +8; no Ghidra function): new 0x254 bytes, FUN_0006f0a0, the init 0x6cae0, the attach 0x6ba30. | code | todo/126 leads §1 |
+| `FUN_0006f0a0` | The follow camera's constructor (0x254 bytes; vtable 0x3a2640, the sub-object vtable 0x3a2810 at +0x48): +0x54 = 1, the target +0x148, the pivot leash +0x14c (FUN_00073660(0.25)), the height smoother +0x174 (0.25 m, 0.5 s at +0x18c), distances +0x190 / +0x198 (1.55), the cut flag (+0x1f4 bit 1) so the first frame snaps. | code | todo/126 leads §3 |
+| `0x6fcb0` | The follow camera's render (vtable +0x11c; no Ghidra function): FUN_000d9f00 from the camera. Scoped (cam+0x4c bit 0) it draws that pass with the zoomed FOV cam+0xcc, from the camera's own position (it adds the aim frame x (0, 0, 0)). | code (the scoped view's position: inferred) | todo/126 leads §4 |
+| `FUN_0006ffc0` | Yaw and pitch of the follow camera's boom, for its wall test. | code | todo/126 leads §3 |
+| `FUN_00070090` | A cubic Hermite step from (position, velocity) to (target, end velocity) over T, at dt: the follow camera's distance easing (T 0.2 s moving out, 0.14 s pulling in; re-planned each frame; a frame longer than T snaps). | code | todo/126 leads §3 |
+| `FUN_000702a0` | The follow camera's update (vtable 0x3a2640 +0x6c): the character's parameters (character vtable +0x12c, 0x128280; dead: FUN_0006f780 / FUN_0006fb00), the cut (the cut flag, or more than 10 m: snap), the zoom (FUN_0006c720), the frame turned toward the aim frame by at most 2 x type+0x2d0 a second (FUN_00073f10), the pivot leash (FUN_00073710) and height smoother (FUN_00073970), the wall test (FUN_000718f0), the distance easing (FUN_00070090), position = pivot + distance x frame x offset, cam+0x194 = distance − near, the shake, and the scope / low-health screen effect. | code | todo/126 leads §3 |
+| `FUN_000718f0` | The follow camera's wall test: a 7-point wedge (the pivot; back along the boom's yaw + 180° and ± 30°, each at pitch ± 5°; the straight pair at D, the side pairs at D / 2) against the world's triangles near it (FUN_00152a50 on world+0xc54; FUN_00167c40): none → D, else 0.75 D, 0.5 D, then 0.4 m (0x3f7f18). | code (the world: static geometry, inferred) | todo/126 leads §3 |
 | `FUN_00072010` | Turns a frame about its x axis (the shake's pitch). | code | `play_shake.rs` |
 | `FUN_000720d0` | Turns a frame about its y axis (the shake's yaw). | code | `play_shake.rs` |
+| `FUN_00073710` | The follow camera's pivot leash (cam+0x14c): more than 0.25 m away, the inner point catches up over 0.5 s and the output trails 0.25 m behind; within it, a settling average (weight t / (t + dt), t up to 6 s). | code | todo/126 leads §3 |
+| `FUN_00073970` | The same on the pivot's height (cam+0x174): a 0.25 m dead zone and a 0.5 s (cam+0x18c) catch-up; the camera uses cam+0x17c. | code | todo/126 leads §3 |
 | `FUN_00073a80` | The shake's hold (+0xe8) and fall (+0xdc less dt x +0xe0, to 0); clears the one-frame amplitude (+0xe4). | code | `play_shake.rs` (`CameraShake::tick`) |
 | `FUN_00073b20` | Multiplies the shake's turn into the camera's own frame (reached at 0x6c54a through the camera's vtable +0x3c); whether the crosshair's ray reads that frame isn't traced. | code | `play_shake.rs` (the demo turns the view only) |
 | `FUN_00073c00` | The shake's turn of the view, new each frame: a random pitch and yaw within +-0.025 x the amplitude rad and a roll within half that (FUN_00072010, FUN_000720d0, FUN_00073d80; FUN_00233b90's numbers). | code | `play_shake.rs` (`SHAKE_TURN`, `SHAKE_ROLL`) |
 | `FUN_00073d20` | The shake's amplitude this frame: the larger of +0xdc and the one-frame +0xe4, at most 1. | code | `play_shake.rs` (`SHAKE_MAX`) |
 | `FUN_00073d80` | Turns a frame about its z axis (the shake's roll). | code | `play_shake.rs` |
-| `FUN_000da8f0` | Gives an object a `follow_cam_%X` camera (the characters a player can take control of, h_17a554bf). | code | xemu.md |
+| `FUN_00073e40` | Turns a quaternion toward another by at most an angle (the follow camera's slew, with FUN_00073f10). | code | todo/126 leads §3 |
+| `FUN_00073f10` | Turns a frame toward another by at most an angle (quaternions through FUN_00073e40). | code | todo/126 leads §3 |
+| `FUN_000ab390` | The crosshair's screen point: x = the viewport's width / 2, y = its height x the reticle's +0x6c (0.5 while scoped, char+0x7a8). | code | todo/126 leads §2 |
+| `FUN_000da8f0` | Gives an object a `follow_cam_%X` camera (the characters a player can take control of, h_17a554bf). Its archetype: the one named by world+0xa74 (the level-file's h_e8eb1b7b, parser 0x198690), looked up with FUN_00160da0. | code | xemu.md |
 | `FUN_000db3e0` | Deletes that camera with the object. | code | xemu.md |
+| `FUN_00116340` | A character's alpha in another character's follow camera: when its sphere centre is nearer the camera (view depth) than the followed character's, clamp(|z / z_followed|, 0, 1). | code | todo/126 leads §5 |
+| `FUN_00116480` | The character's draw: alpha (ctx+0x90) = char+0x738 (the spawn fade, FUN_0011bd00) x char+0x72c in its own follow camera, x FUN_00116340 in any other. | code | todo/126 leads §5 |
+| `FUN_0011be80` | The body's fade near its own follow camera (from the character update, 0x11cc8e; player-controlled characters only; dead → 1): c = the screen share of its bounding sphere (FUN_0006d240); target alpha 1 below c = 0.6, else 0.65 − 0.15 (1 − ((1 − c) / 0.4)²) (0.65 to 0.5); char+0x72c drops to it at once and rises to it over 0.25 s (timer char+0x730). | code | todo/126 leads §5 |
 | `FUN_001249b0` | Leaves the scope: clears +0x7a8, with the zoom sound and the sway. A reload (FUN_00120d40) and an item use (FUN_00121170) call it first. | code (+0x7a8 as the scope: inferred) | play.md § Ammo, § Shots (Muzzle effects); `play_ammo.rs`; `play_shots.rs` |
 | `FUN_00126320` | Called when the gun is raised (FUN_00123ea0): for the locally controlled character a camera step (FUN_0017c020 with 0.5). | guess | this page |
-| `FUN_0018fa80` | objecttypes parser of a character type's camera block (h_0d41e5f1): seven offsets from +0x1b0 (walk, run, dash, ready, h_e42d50a5, dead, snipe). | code | squad.md § Death camera; `bf/character.rs` |
+| `0x126bc0` | Whether a character is hidden from its own follow camera (asked by character vtable +0x88 = 0x126c10; no Ghidra function): yes when scoped (cam+0x4c bit 0) or when cam+0x194 (distance − near) is under 0.15 (0x3a51e4). | code | todo/126 leads §5 |
+| `0x128280` | Character vtable +0x12c, the follow camera's parameters (no Ghidra function): the pivot (the node's x, z; y = char+0x438 + the head height char+0x48c, x 0.7 crouched), offset-walk alive / offset-dead dead, the aim frame (char+0x5bc), the zoom (char+0x7ac), the distance x (1 − 0.4 pitch); while char+0x430 > 0 (3 s, set while the gun is raised or scoped) the boom gains 1.75 m x clamp(1.5 x char+0x430, 0, 1) x min(1, 1 − 0.4 pitch) along the crosshair ray. | code | todo/126 leads §2 |
+| `FUN_0012eca0` | Turns a character camera offset (distance, elevation °, yaw °) into a direction (sin yaw cos el, sin el, cos yaw cos el) and a distance; all zero gives 1.55 m along +z. The type loader stores them at type+0x688 + 12k and type+0x6dc + 4k (0x12f129-0x12f1c5). | code | todo/126 leads §2 |
+| `0x18ed60` | Camera-archetype field parser (record = type + 8): fov +0x10, h_04570f05 `clip-plane-near` +0x14, h_f0ecfd49 `clip-plane-far` +0x18 (both names recovered by hashing), h_fa21933f +0x1c, h_f5f77f68 +0x20, h_067e3f7a +0x24, h_fee059bd +0x28, h_e4442435 +0x2c. | code, data | todo/126 leads §1 |
+| `FUN_0018fa80` | objecttypes parser of a character type's camera block (h_0d41e5f1): seven offsets from +0x1b0 (walk, run, dash, ready, h_e42d50a5, dead, snipe). Each offset is (distance m, elevation °, yaw °) (FUN_0012eca0): the follow camera reads offset-walk only. squad.md § Death camera reads offset-dead as 3.5 m up and 5 m back; the code reads 3.5 m at 5°, and the death camera (FUN_0006f780 / FUN_0006fb00) doesn't read it (the follow camera asks the character's +0x12c only while alive, 0x70411). | code | squad.md § Death camera; `bf/character.rs` |
+| `0x198690` | Level-file attribute parser: h_e8eb1b7b, the follow camera's archetype name (h_0129ad29, "follow_camera", on 35 levels), to record +0x10 (world+0xa74: inferred); h_ee8663a7 to +0. | code, data | todo/126 leads §1 |
 | `FUN_00228c70` | A missile blast's camera shake: its only callers are the missile code (0x227867 in FUN_00227760, 0x227b1d in FUN_002278e0). Each camera within 7 x the Damage radius gets clamp(Damage max x 0.00769, 0, 1) x f over 0.75 f s (FUN_0006bdd0), with f = 1 within 3.5 x the radius, then 1 - (d - 3.5 r) / 3.5 r, and nothing once f is 0.1 or less. The Therm Sweeper's 96 gives 0.74 x f. | code (units: read through FUN_00073c00's turn, +-0.025 rad at 1) | #73 spec §5; play.md § Missiles; `play_missile.rs` (`shake`); `play_shake.rs` |
+| `0x3a261c` | The follow camera type's vtable (object type 16): +8 create 0x6f040, +0x1c attach 0x6ba30. | code | todo/126 leads §1 |
+| `0x3a2640` | The follow camera's vtable: +0x6c update FUN_000702a0, +0x118 begin-render 0x6c3c0, +0x11c render 0x6fcb0, +0x130 the view's frame (0x6df10). The base camera's vtable is 0x3a2868 (+0x6c 0x6c780). | code | todo/126 leads §3 |
+| `0x3a27a0` | The view object's vtable (FUN_0006b760): +0x10 the node's frame, +0x24 near, +0x28 far. | code | todo/126 leads §1 |
 
 ## Sound
 
@@ -491,7 +551,7 @@ Materials and shaders are here too.
 | `FUN_001597d0` | Object position setter (item vtable +0x38): changes the data, but the drawn memory chip stays put. | code, live | todo/43 notes |
 | `FUN_001e7b30` | Reads the pad bindings: 16-byte records {pad input, VB, mode, threshold}, eight blocks, from game-options' `<action>`. | code, live | xemu.md |
 | `FUN_001e8160` | Stores the name `common/debug-config-xbox.xmb` in the `std::string` at 0x400438; the file is never loaded. | code | xemu.md |
-| `FUN_001fe3d0` | Sends an event from an object (a missile's or a grenade's going off; 11 callers). | code (meaning inferred) | #73 spec §5; play.md § Missiles; `play_missile.rs` |
+| `FUN_001fe3d0` | Sends an event from an object (a missile's or a grenade's going off; 11 callers). Its listeners are the triggers listing the object (the list from the object's vtable +0xfc, FUN_001fe320); a world button's use (0x163060) sends its signal this way. | code (meaning inferred) | #73 spec §5; play.md § Missiles; `play_missile.rs` |
 | `FUN_00233b90` | The game's random numbers: x x 0x19660d + 0x3c6ef35f, the top 23 bits as a float in [0, 1). The same step is inlined on the globals 0x46cfd8 and 0x46cfdc. | code | `play_shake.rs`; `play_shots.rs` (`random`) |
 | `FUN_00238d00` | Fills a static table that holds motion-type numbers; not the movement code. | code | ghidra README |
 | `FUN_00254c60` | BXML reader (with FUN_00255330 and FUN_00281d30). | code | `xmb_tool.py` |
@@ -506,8 +566,11 @@ Materials and shaders are here too.
 | `0x3ba968` | The fixed 256-entry normal palette of P8 bump maps (`.data`), copied into a D3D palette by FUN_00285780. | code | `tex_tool.py` |
 | `0x3bc150` | The name hash's CRC table: CRC32's polynomial, with the top byte of most entries different. | code | `bf/hash.rs`; `xmb_tool.py` |
 | `0x3bc94c` | ALIGN_ team name table (records from 0x3bc948): -1 NONE, 0 CONFEDERATION, 1 SHRIKE, 2 NEUTRAL, 3-6 TEAM1-4, 7 PC_NO_TEAM, 8 HOSTILE, 9 SEER_SLAVE. | code | todo/73 answer-round3 §2; `play_missile.rs` (`NEUTRAL`) |
+| `0x3bd480` | AT_ archetype-type name table: 1 BILLBOARD, 2 CAMERA, 3 FOLLOW_CAMERA, 4 CHARACTER, 7 GAME, 25 TRIGGER, 28 WORLDBUTTON ... | code | todo/126 leads §1 |
 | `0x3be3cc` | IFSET_ name table (parser FUN_00185620): 5 GENERIC_HEALING, 8 PROXIMITY_EXPLOSIVE, 13 ROLLING_BOMB, 14 AMMO_BOX, 16 MINIGUN, 18 POWERUP_POWER_CRYSTAL (the memory chip's function-type), 19 POWERUP_MEDKIT, 20 POWERUP_BRUTAL_DAMAGE, 21 POWERUP_FORCE_SHIELD, 22 POWERUP_SQUAD_REGENERATOR, 23 POWERUP_PAIN_BROADCASTER, 24 SHIELD_BATTERY. | code | pickups.md; `bf/character.rs`; `play_ammo.rs` |
 | `0x3be61c` | IOU_ name table (parser at 0x185a30, not split out): 0 USE_IN_HAND, 1 ATTACH_TO_FACE, 2 PLACE_ON_GROUND, 3 THROW_TO_USE, 4 RELOAD, 5 EAT, 6 JUST_USE, 7 ATTACH_TO_EQUIP_SLOT, 8 SKILL_MELEE_ATTACK, 9 MELEE_ATTACK_RANDOM, 10-12 MELEE_ATTACK_A-C. | code | `bf/weapon.rs` (`H_USE_TYPE`); todo/35 leads §4.3 |
+| `0x3be87c` | OT_ object type name table: 2 STATIC_GEOMETRY, 3 CHARACTER, 7 TRIGGER, 12 CAMERA, 16 FOLLOW_CAMERA, 17 EFFECT, 20 WEAPON, 31 WORLDBUTTON ... | code | todo/126 leads §1 |
+| `0x3beb64` | RACT_ reticule-action name table: 0 NONE, 1 USE, 2 PICKUP, 3 LOCK, 6 SPECIAL_USE. | code | todo/125 leads §1 |
 | `0x3bf39c` | VB_ name table (records from 0x3bf398, which xemu.md cites; parser FUN_00186c10): 0 NONE, 9 SPECIAL_ABILITY, 43-60 the VB_DEBUG_ actions (no reader), 63 USE_HEALTHPACK. | code, live | xemu.md; todo/35 leads §3 |
 | `0x400438` | The `std::string` holding the debug-config file's name. | code | xemu.md |
 | `0x46cfc8` | BXML schema global: the hash of the `stringid` type (values stored as a 4-byte name hash). | code | `xmb_tool.py` |
@@ -522,31 +585,42 @@ Values read from `.rdata` / `.data`; the reader is the function that loads them.
 | Address | Value | Read by, for | Where |
 |---|---|---|---|
 | `0x39a848` | 3.0 | FUN_000c72b0: the skill name's fade rate (0xc7473) | todo/35 spec §5.5; `play_hud.rs` (`LABEL_FADE`) |
-| `0x3a4f74` | 0.5 | FUN_00226cc0: the cosine past which an aim point is given up (60 degrees) | `play_missile.rs` |
+| `0x3a4f74` | 0.5 | FUN_00226cc0: the cosine past which an aim point is given up (60 degrees); FUN_00073710: the leash's catch-up time (s) | `play_missile.rs` |
 | `0x3a4f78` | 1.0 | 0x125600: the 1 in 1 -+ 0.1n; 0x10e3d0 returns it; FUN_0022f0e0 and FUN_0022dc00: 1 / rate; FUN_00224a90: the push needs the type's +0x234 at 1 or more | todo/damage-factor; this page |
 | `0x3a4f88` | 0.0 | FUN_0010e3e0 (stamina at 0), 0x22d0b0 (radius not 0) | this page |
 | `0x3a4f90` | 0.2 | 0x10e3b0: the default skill +0x58 | this page |
 | `0x3a4f94` | 0.05 | 0x22d0b0: the Damage radius between bullet holes and blast scorches | this page |
 | `0x3a4f98` | 0.01 | FUN_0010e7a0: volume 100 to 1.0 | todo/35 spec §3; `play_skills.rs` (`SOUND_VOLUME`) |
-| `0x3a4fb4` | 1.5 | 0x147430: the Sentry filter's height | `play_sentry.rs` |
+| `0x3a4fb4` | 1.5 | 0x147430: the Sentry filter's height; 0x128280: s = 1.5 x char+0x430 | `play_sentry.rs` |
 | `0x3a4fd0` | 4.0 | FUN_0011a840: the x4 refill | todo/35 leads §2, spec §1.2 |
 | `0x3a4fd4` | 5.0 | FUN_0013d030 (Hawk's x5 with the Power Blade), 0x13d340 (an item's -5) | todo/35 leads §4.3 |
 | `0x3a4fe0` | pi / 180 | 0x12ed40: h_1182c05d to radians | todo/damage-factor |
+| `0x3a4fec` | 100 | FUN_000702a0: the follow camera's cut distance, squared (10 m) | todo/126 leads §3 |
 | `0x3a4ff0` | 0.1 | FUN_0010e470 (the 10% rule), 0x147620 (the Sentry check's jitter), 0x125600 (0.1n) | todo/35 leads §2; `play_sentry.rs`; todo/damage-factor; `play_skills.rs` (`ACTIVATE_SHARE`) |
 | `0x3a500c` | 15 | FUN_001409c0: the chatter priority step's distance | todo/35 answer-120-chatter; `play_skills.rs` (`LINE_FAR_STEP`) |
 | `0x3a5010` | 45 | FUN_001409a0: the chatter cut-off distance | todo/35 answer-120-chatter; `play_skills.rs` (`LINE_FAR_CUT`) |
 | `0x3a5014` | 0.8 | Flint's skill +0x58 | todo/35 leads §4.4 |
-| `0x3a5028` | 0.25 | FUN_0011a840: the refill in MT_DASH | todo/35 leads §2, spec §1.2; `play_skills.rs` (`DASH_REFILL`) |
+| `0x3a5028` | 0.25 | FUN_0011a840: the refill in MT_DASH; FUN_000718f0: the wall test's step (0.25 of the distance); FUN_0006d240: the cover's / 4 | todo/35 leads §2, spec §1.2; `play_skills.rs` (`DASH_REFILL`) |
 | `0x3a50b8` | 0.9 | 0x1332a0: the stick past which it sends CT_DASH | todo/35 leads §4.2 |
-| `0x3a51e4` | 0.15 | 0x147620: the Sentry's check interval | `play_sentry.rs` |
+| `0x3a510c` | 0.75 | 0x6ba30: the vertical tangent's share of the horizontal (4:3) | todo/126 leads §1 |
+| `0x3a5154` | 0.7 | 0x128280: the crouched pivot height; FUN_000702a0: the easing time pulling in (0.2 x 0.7) | todo/126 leads §2, §3 |
+| `0x3a51e4` | 0.15 | 0x147620: the Sentry's check interval; 0x126bc0: the distance past the near plane under which the body is hidden | `play_sentry.rs` |
 | `0x3a51f0` | 2.5 (double) | FUN_00212430: BF_InvisMaterial's sine | todo/35 leads §4.3 |
 | `0x3a5208` | 0.55 | Flint's skill +0x38 while on | todo/35 leads §4.4 |
+| `0x3a5250` | 3.14159 | FUN_000702a0: the frame's turn rate toward a target that isn't a character | todo/126 leads §3 |
 | `0x3a52e0` | 0.017444 | FUN_002229b0, FUN_0022e1d0: degrees to radians | `play_shots.rs` (`DEG`) |
 | `0x3a52f0` | 0.09 | 0x147430: 0.3 m squared | `play_sentry.rs` |
 | `0x3a52f4` | -1.5 | 0x147430: the Sentry filter's lower height | `play_sentry.rs` |
+| `0x3a5380` | −0.4 | 0x128280: the distance's pitch factor, 1 − 0.4 pitch | todo/126 leads §2 |
 | `0x3bc6f0` | 1.5 | FUN_00224a90: the push on loose bodies | scenery.md (debris push) |
 | `0x3c05fc` | 4.0 | FUN_00123f60: the ready hold | `play_shots.rs` (`READY_HOLD`) |
+| `0x3f7f14` | 0.2 | FUN_000702a0: the distance easing's time | todo/126 leads §3 |
+| `0x3f7f18` | 0.4 | FUN_000718f0: the wall test's floor (m) | todo/126 leads §3 |
 | `0x406f94` | 0.5 | FUN_002266d0: the cut across the steering way | #73 spec §3; `play_missile.rs` (`STEER_ACROSS`) |
 | `0x40706c` | 0.5 | FUN_00212430: a ramp | todo/35 leads §4.3 |
 | `0x407070` | 0.5 | FUN_00212430: a ramp | todo/35 leads §4.3 |
 | `0x407078` | 0.1 | FUN_00212430: the sine's factor | todo/35 leads §4.3 |
+| `0x40cbd4` | 1.75 | 0x128280: the aim shift along the crosshair ray (m) | todo/126 leads §2 |
+| `0x40cbd8` | 3.0 | 0x128280: char+0x430 while the gun is raised or scoped (s) | todo/126 leads §2 |
+| `0x40cbf8` | 0.5, 0.25, 0.5, 0.65, 1.0, 0.6 (to 0x40cc0c) | FUN_0011be80: the fade-in span, its timer's length, the alpha at full cover, the alpha at the threshold, the cover's top, the threshold | todo/126 leads §5 |
+| `0x40de1c` | 0.5, 0.8, 1000 (0x40de18, 0x40de20) | FUN_000702a0: the low-health effect's health share, its target value, the scope focus's speed (m/s) | todo/126 leads §1 |
