@@ -37,8 +37,9 @@ archetype>` (each part's geosets: offset, bounds, normals, winding, UV direction
     layer's material now carries its depth-test bias apart (`Lamps::layer_bias`, set in the
     pipeline by `Lamps::specialize`), since bevy takes both the sort and the test from the one
     `depth_bias`.
-  * Checked: take04's view on e40 (`play.md`'s Missiles: the blast's bright area 17.9k units²,
-    the take's 16.9k; nothing before); sdm_e34's autopilot run differs from main's by at most
+  * Checked: take04's view on e40 (`play.md`'s Missiles: with the impact on the reticle the
+    blasts' bright area peaks at 25.4k units², the take's 16.9k, the explosion's own excess;
+    nothing showed before); sdm_e34's autopilot run differs from main's by at most
     0.4% of the pixels before its first shot (#120's stamina bar); a Frag going off 6 m ahead at
     sdm_e34's start (`BF_MAP=sdm_e34 BF_TEST_EXPLOSION=1 BF_TEST_GOTO=0,0,0,0`) shows its fire
     from its first frame, where main drew the ground over all of it.

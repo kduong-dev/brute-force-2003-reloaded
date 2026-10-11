@@ -452,12 +452,17 @@ cover) came after it and are compared under **Verified**.
   second timer h_f0a56297, 5 s (FUN_00227dd0).
 * **Flight** (FUN_00226cc0, in 30 Hz ticks: the move first, then the rest). Steering
   (FUN_002266d0): each tick removes half the velocity across the steering direction and pulls
-  the speed 15% of the way to 30 m/s. The direction is its own heading in the straight phase,
-  then its target's origin (the feet) or its aim point. An aim point within 1 m, or over 60
-  degrees off the heading, is given up for one ahead along its velocity (velocity x 200: 6 km,
-  0x227038), and the target with it. The trail's user parameter follows life / start
-  (FUN_00228c10). No gravity: measured, not traced (take20's children climbed straight at ~8.5
-  degrees for 168.6 m in 5.58 s).
+  the speed 15% of the way to 30 m/s. The direction is along its velocity in the straight
+  phase, then its target's root or its aim point. **The root** is where it homes on a character
+  (`root_point`): FUN_00226cc0 refreshes the aim point each tick from the target's scene node
+  (vtable +0x40, 0x10fda0; 0x2270fe), a character's model root node, which FUN_0023d4f0 puts at
+  the feet + the root-height of the clip last started: the hips, ~1 m up (Brutus's rp_idle
+  0.98, the Shrikes' idles 1.014 and 1.121), not the feet. An aim point within 1 m, or over 60
+  degrees off its heading, is given up for one ahead along its velocity (velocity x 200: 6 km,
+  0x227038), and the target with it; that test runs before the fuse, so a NEUTRAL child that
+  gives up has no fuse and flies on to contact or its timeout. The trail's user parameter
+  follows life / start (FUN_00228c10). No gravity: measured, not traced (take20's children
+  climbed straight at ~8.5 degrees for 168.6 m in 5.58 s).
 * **The trail's puffs** rise in place: the air fields linked to them, mtrail-rise (0.3 m/s up)
   and mtrail-rise#1 (1.0 m/s up, Approach 1.66 taken as 1), now run (`AIR_FIELDS`,
   `src/ale_fx.rs`). take21's side view shows a cloud round the missile from 0.1 s, then a line
@@ -468,28 +473,32 @@ cover) came after it and are compared under **Verified**.
   the two missiles' bounding radii (0.32 m) along a side axis rolled at random (180 degrees on
   for the second), turned spread-max x 90 = 9 degrees toward it, at 30 m/s, living 0.85-1.15 x
   0.667 s and then 5 s more. The hostiles the split finds within 20 m and 30 degrees of the
-  parent's heading are dealt out to them in turn, the most central first; without any, each
-  aims 200 m along the parent's heading and comes back near parallel. **A child is NEUTRAL**:
+  parent's velocity (its body's, vtable +0x54 = 0x159d70: the split builds its frame from it
+  with FUN_0001d0c0) are dealt out to them in turn, the most central first; without any, each
+  aims 200 m along the parent's velocity and comes back near parallel. **A child is NEUTRAL**:
   it keeps the projectile constructor's side 2 (FUN_002264e0 at 0x2265ec), since the split calls
   FUN_00227dd0, which copies the owner's team, before it copies the owner (0x2282bf, 0x22834a),
   and row 2 of the hostility table (0x3ffd80) is hostile only to PC_NO_TEAM (7), a side no
-  character of the demo is on. So its own search (FUN_00226b80, from its first tick, every
-  0.25 s, 60 degrees) finds nobody: its only target is the one the split dealt it, and one that
-  gives that up flies on along its velocity. The split searches with the parent's side, the
-  shooter's (0x228199). The search
-  (FUN_002237c0) needs a clear ray to the character's origin (the feet), through a world query
-  (FUN_000df0a0, flags 0xfffffffa) that takes the terrain and some dynamic objects but none of
-  the level's placed geometry: the demo's ray meets only the terrain (`Arena::ray_terrain`) and
-  stops 0.3 m short of the feet, so the ground they stand on doesn't count (the demo's, as the
-  AI's sight test).
+  character of the demo is on. So its own search (FUN_00226b80: once at the straight phase's
+  end, target or not, 0x226d8e-0x226da7, and every tick while it has no target, 0x226e02; its
+  timer 0.25 s; 60 degrees off its heading) finds nobody, which keeps the target it has: its
+  only target is the one the split dealt it, and one that gives that up flies on along its
+  velocity. The split searches with the parent's side, the shooter's (0x228199). The search
+  (FUN_002237c0) measures its cone to each character's root and needs a clear ray to it,
+  through a world query (FUN_000df0a0, flags 0xfffffffa) that takes the terrain and some
+  dynamic objects but none of the level's placed geometry: the demo's ray meets only the
+  terrain (`Arena::ray_terrain`); at the hips the ground they stand on isn't in the way.
 * **Proximity fuse** (h_0bafbd6f): every 0.25 s, for a player's missile (FUN_00112800, read as
   "a human player's": medium confidence) with a target or a side other than NEUTRAL
   (0x22731c-0x22732d), a hostile (only its target, if it has one) within Damage radius x 0.375
-  = 1.69 m of it, to their origin, that it has passed. The parent then splits; a child (only
-  while it holds the split's target) goes off.
-* **The heading lags a step.** The 60-degree test and the seek's cone read the node's -z
-  (FUN_0001fdd0 at 0x226fdc), and FUN_002266d0 turns the node along the velocity it had before
-  that tick's steering (0x2268b4-0x22690d): the demo's heading is set there, not from the move.
+  = 1.69 m of it, to their root, that it has passed. It runs after the give-up and the timers.
+  The parent then splits; a child (only while it holds the split's target) goes off.
+* **The heading stays the launch's** (a child's, the split's). The 60-degree test and the
+  seek's cone read the node's -z (FUN_0001fdd0 at 0x226fdc), and each physics step
+  (FUN_00169e20 -> 0x159eb0) sets the node back from the missile's body, whose turn is set only
+  at the launch and the split (FUN_00227ce0's vtable +0x50): FUN_002266d0's turn of the node
+  (0x2268b4-0x22690d) shows only in that frame's picture. So the drawn missile faces its
+  velocity, and the tests read the direction it left in. Round 3's one-step lag is gone.
 * **Hitting something** (the collision callback FUN_002278e0): the map's collision, a living body
   (not the shooter's) standing (play.rs's cylinder) or lying knocked down (its ragdoll's bones,
   each a ball 0.2 m round: `LYING_RADIUS`, the demo's shape; the game's missile strikes the
@@ -573,17 +582,22 @@ cover) came after it and are compared under **Verified**.
       Emitter_LODCurve at that LOD (fe077e05, 0x659ed-0x65a12), cut again; the fractions are
       thrown away. Cut each update, the count depends on the step: round 3 stepped it once a
       render frame, and exp-rocket-fire made 1 sprite at 15 and 60 fps where 30 gives 2. A game
-      frame's batch is born at its end, spread over its part of the effect's move.
+      frame's batch is born at its end, spread over its part of the effect's move, and starts
+      back by its age along its way (`animate` moves every particle by the whole render frame).
       So exp-rocket-flash makes 3 particles (2 at 0.076 s, 1 at 0.16 s) up to ~72 m and none
       past ~94 m; the launch dust's 18 a second for 0.43 s make one card, at ~0.13 s. The
       initial particles come once (the flag the emitter's constructor FUN_00065640 sets). A
-      trail emitter starting its 4 s over (a child's flight past 4 s) counts from 0 again: the
-      demo's, as the game's loop of an emitter's time isn't traced.
+      trail emitter starting its 4 s over (a child's flight past 4 s) counts from 0 again, the
+      demo's choice (the game's loop of an emitter's time isn't traced; it may stop it at its
+      lifespan): its rate starts over at 0 for 0.07-0.09 s, so the trail has a ~0.2 s gap there.
     * A missile's trail is placed from the missile's own transform each frame, so each game
-      frame's particles are born where the missile is then; read from the last frame's
-      placement, they were born a frame behind it (2 m at 15 fps). Like every effect on a
-      parent just made, it starts on the frame after the missile's, when the missile starts to
-      move, so its time keeps with the flight.
+      frame's particles are born along the missile's move up to where it is then; read from the
+      last frame's placement, they were born a frame behind it (2 m at 15 fps). The game's:
+      its world update runs the physics step, which moves the missile (FUN_00169e20 at
+      0xd9ad4), before the objects' ticks (FUN_000d9840 at 0xd9d0b), where the trail's
+      (0x21b7a0) follows the missile and births along its move since the last frame. Like
+      every effect on a parent just made, it starts on the frame after the missile's, when the
+      missile starts to move, so its time keeps with the flight.
     * A particle's size is its Scale x its Appearance_LODCurve at that LOD (0c53b008; 1 on these
       effects) x the shape.
     * Every other effect keeps the demo's count (a rate's fraction carried over, an emit
@@ -634,13 +648,15 @@ cover) came after it and are compared under **Verified**.
 Test hooks: `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (children,
 targets), fuse and end (where, how far, how long after the launch, what it struck), each direct
 hit's amount with its roll, hit-location factor and struck bone (`x0.31 at bone h_044f3505`),
-and each body its blast reaches or finds behind cover; `BF_MISSILE_DEBUG=1` also prints every
-body each target search looks at; `BF_SHAKE_LOG=1` prints each shake kick and its end. The
-takes' places, with
+and each body its blast reaches or finds behind cover; a give-up says how far and how far off
+its heading the aim point was. `BF_MISSILE_DEBUG=1` also prints every body each target search
+looks at, with the root it measures to; `BF_SHAKE_LOG=1` prints each shake kick and its end.
+The takes' places, with
 `BF_TEST_WEAPON="Therm Sweeper"` and taps as `BF_TEST_TRIGGER=3.0-3.15,...`:
 * take01 `BF_MAP=e34 BF_TEST_GOTO=-53.64,31.07,-53.76,31.56`; take04 `BF_MAP=e40
-  BF_TEST_GOTO=-16.00,152.32,-16.50,152.26` (the take's view: `BF_CAMERA_PITCH=-0.10
-  BF_TEST_FREECAM=0.5,-13.24,28.9,152.81,80,-13`); take06 `-- --test BF_MAP=e40
+  BF_TEST_GOTO=-16.00,152.32,-16.50,152.26` (the take's view, the impact on the reticle:
+  `BF_CAMERA_PITCH=-0.10 BF_TEST_FREECAM=0.5,-13.24,28.9,152.81,80,-7.5`); take06 `-- --test
+  BF_MAP=e40
   BF_TEST_GOTO=17.15,175.43,16.69,175.23 BF_CAMERA_PITCH=-0.2 BF_TEST_INSTANT_KILL=0
   BF_TEST_NPC=0.5,brutus,enemy,dummy,-5.81,165.55` (the crosshair on him; the take's view:
   `BF_TEST_FREECAM=0.5,19.72,31.14,176.54,66.7,-15`).
@@ -653,7 +669,10 @@ takes' places, with
 * The homing takes (17-19) on the test map: `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5
   BF_CAMERA_PITCH=-0.08 BF_TEST_INSTANT_KILL=0` and Brutus dummies 24 m out 2 m either side of
   the line (17), 30 m out (18), or 30 m out 4 m left (19); the takes' camera 3.5 m behind Tex:
-  `BF_TEST_FREECAM=0.5,4.5,1.3,23.5,0,-3`. take07's 45 m: one dummy at (4.5, -25).
+  `BF_TEST_FREECAM=0.5,4.5,1.3,23.5,0,-3`. take07's 45 m: one dummy at (4.5, -25). Four shots
+  2.4 s apart, each at fresh dummies (`BF_TEST_TRIGGER=3.0-3.15,5.4-5.55,7.8-7.95,10.2-10.35`,
+  the dummies spawned again at 5.0, 7.4 and 9.8 s, and
+  `BF_TEST_NPC_REMOVE=4.95,all;7.35,all;9.75,all`) give eight children each.
 * A side view of a launch (the dust): the same spot, `BF_TEST_FREECAM=0.5,10.5,1.6,19.0,90,-5`.
 * The reload (08): `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5 BF_TEST_RESERVE=32 BF_AMMO_LOG=1
   BF_START_WEAPON=1 BF_TEST_TRIGGER=2.5-11.9,15.5-15.65,...`; the open air (20): the same spot,
@@ -667,31 +686,32 @@ step):
   takes: blasts 0.80 s after the glow at ~25 m).
 * Open air (take20): the children's timers run out 5.67 s after the split, 168.8 m beyond it,
   and they go off where they are (the take: 5.58 s game time, 168.6 m, a climb with no drop).
-* Homing (round 3: the children NEUTRAL, the heading lag, the hit-location factor; the
-  dummies are Brutus, damage-multiplier 0.62, where the takes' Shrikes are 1):
-  * take17 (two enemies 4 m apart, 24 m out): the split, 4 m short of them, deals neither out;
-    the children don't seek and fly on together between them, nobody hurt, as the take shows.
-    From the takes' camera their glows are 35, 36, 29, 23 and 23 units apart at +0.27, +0.4,
-    +0.53, +0.67 and +0.8 s after the split (the take holds 25-28 from +0.27 to +0.8 s; round 2's
-    children drew apart, 36 to 125).
-  * take18 (30 m out): the split finds both and gives each child one; each strikes its enemy's
-    calf (28.9, 29.1: a roll x 0.5 x 0.62), then each takes both blasts' shares (47.2 and 42.9):
-    three hits each, as the analyst reads the take (a x0.5 direct, then both shares in one
-    sample).
-  * take19 (one enemy 30 m out, 4 m left of the line): both children turn onto him and strike
-    his calf (28.9, 29.1); the take's two directs were x1 bones.
-  * take07's 45 m (the enemy on the line): the split, 25 m short, finds nobody; the children fly
-    the parent's line and land 1.7 m either side of his feet, 1.40 and 1.50 s after the launch
-    (two shares, 46.9 and 43.3). take07's two children struck him directly (-256.8 at once,
-    two x1 directs, ~1.5 s): not matched (see below).
-  * take06 (25 m, three shots 2.37 s apart): shot 1, two shares (46.5 at 1.1 m, 47.5 at 3.0 m:
-    the second child gives up its aim within 1 m of his feet and lands 3 m past); shot 2, one
-    (44.8 at 2.0 m; the other child gives up within 1 m and lands 17 m past). The 105 HP dummy
-    dies on shot 2. take06: one share per shot (61.6, 64.6, 64.0), both on shot 4.
+* Homing (round 5: the root, the fixed heading, the give-up before the fuse; the dummies are
+  Brutus, damage-multiplier 0.62 and holding his gun in front, where the takes' Shrikes are 1;
+  four shots each, `BF_MISSILE_LOG`):
+  * take17 (two enemies 4 m apart, 24 m out): the split, 2.9 m short of their hips and ~38
+    degrees off, deals neither out in any of the four; the children fly on between them, nobody
+    hurt, as the take shows.
+  * take18 (30 m out): the split gives each child an enemy; all eight strike, at a forearm
+    (x0.5, so x0.31) but one at a thigh (x1, x0.62), then each enemy takes both blasts' shares
+    (42-47): a x0.5 direct and both shares, as the analyst reads the take.
+  * take19 (one enemy 30 m out, 4 m left of the line): 5 of the 8 children strike him, each at a
+    forearm (x0.31); 3 give their aim up 4-6 m short at 61-62 degrees off their heading and fly
+    on, landing 36-42 m out. The take: all four children of its two shots struck, at x1 parts.
+    Not matched (see below).
+  * take07's 45 m (the enemy on the line): the split, 25 m short, finds nobody; the children,
+    turned 9 degrees and homing on the parent's point 200 m ahead, fly parallel 1.05 m either
+    side of his hips (the demo's body is 0.4 m round) and on: no hit, no share. take07's two
+    children struck him directly (-256.8 at once, two x1 directs): not matched (see below).
+  * take06 (25 m, three shots 2.37 s apart, the tester's setup): the children give their aim up
+    within 1 m of his hips at the end of their straight phase (0.95 m, 93-95 degrees off) and
+    fly on: shot 1, one share (46.5, the blast 4.3 m from him; the other child lands 26 m on),
+    shot 2 one (44.8 at 1.3 m), shot 3 none (the nearer lands 6.1 m from him). take06: one share
+    per shot (61.6, 64.6, 64.0), both on shot 4. Round 4 gave two on shot 1.
 * On sdm_e34 (the sdm_bf squad, damage-multiplier 1): a Brutus dummy 7 m ahead of the first
   start point (`BF_MAP=sdm_e34 -- --test BF_TEST_NPC=0.5,brutus,enemy,dummy,-0.26,41.69`, a tap
-  at 3 s) takes the missile on his calf, x0.50 (46.8 of a 93.6 roll), where the campaign's
-  types give x0.31.
+  at 3 s) takes the missile on his thigh, x1.00 (93.6 of a 93.6 roll), where the campaign's types
+  give x0.62.
 * The count once a game frame (round 4): take18's two blasts emit the same at 15, 30, 60 and
   144 fps (`BF_CAPTURE_FPS`, `BF_ALE_LOG=1` prints each batch): per blast 3 flash, 2 + 2 fire,
   5 fire-add, 6 dirt and 43 shrapnel particles, the analyst's simulation of FUN_00065800. The
@@ -719,15 +739,16 @@ step):
   6 m (take03, where the code gives the full 0.74).
 * The look, from the takes' own views (`BF_TEST_FREECAM` above), in 640 x 480 units² above
   luminance 200 (and 240):
-  * take04 (the cliff, 25 m): the blast peaks at 17.8k (12.7k), the take at 16.9k (12.7k), and
-    is bright for ~0.4 s (frames 54-59), the take's ~0.41 s (round 3's 0.27 s lost fire sprites
-    to the count once a render frame). The launch glow lights ~14.0k units² by 40 or more over
-    the frame before (the take ~19.2k; round 3's 17.5k had the trail born a frame behind the
-    missile, nearer Tex), 0.2-0.27 s after the shot (the take's 0.3 s). Before the
-    terrain-layer fix neither showed at the cliff.
-  * take06 (the sand, 25 m): the launch glow up to 5.6k (the take up to 4.7k); the blast peaks
-    at 17.6k (9.2k), the take at 6.5k (3.6k): 2.7x (round 3: 1.8x), bright for ~0.55 s (the
-    take 0.47 s or more, its fire column still going).
+  * take04 (the cliff, 25 m), with the impact on the reticle (round 4's view cut the fireball's
+    top off, the impact ~50 units above the reticle, and read 17.8k): the two fireballs peak at
+    25.4k (18.3k), box 227 x 162 units and reaching the HUD band, bright for ~0.5 s (frames
+    54-61); the take at 16.9k (12.7k), 216 x 125, ~0.47 s. **Not matching: 1.5x**, taller and
+    whiter. The launch glow lights ~14.0k units² by 40 or more over the frame before (the take
+    ~19.2k), 0.2-0.27 s after the shot (the take's 0.3 s): short, and not from the trail's birth
+    position (the analyst's Q1). Before the terrain-layer fix neither showed at the cliff.
+  * take06 (the sand, 25 m), one fireball at a time: the first shot's nearer blast peaks at
+    10.3k, box 137 x 115, bright ~0.4 s; the take's first (f250-f278) 6.5k, 154 x 103, 0.47 s or
+    more: 1.6x, the same excess as take04's. The launch glow up to 5.6k (the take up to 4.7k).
   * take20 (the open air, ~190 m, LOD 0): no white flash; each child's blast makes 1 fire-add
     sprite, 1 dirt card and 3 sparks (the analyst's counts), an orange flame ~30 x 25 units for
     ~0.4 s from the takes' camera (the take: 12 x 15 units, ~0.33 s, no flash); round 2's
@@ -752,14 +773,17 @@ step):
   Not measured.
 
 Not matching or not done:
-* On take06's sand the blast's peak is 2.7x the take's bright area, where take04's cliff
-  matches: the game's own blast is ~2.6x smaller on the sand than on the cliff at a like
-  distance, and the demo's is the same on both. The explosion's frame along the missile's way
-  (FUN_0022cbe0, FUN_0001d0c0: which axis), or the sprites meeting the ground, may be why: not
-  traced. take20's open-air flame is ~2x the take's. take04's late fire column (the take's at
-  +1.4 s) is missing. The added sprites summed in linear light (#104) and the curves' easing
-  (the demo reads easing bytes 0, 5 and 6 as linear, `bf/ale.rs`'s ease; no exp-rocket curve
-  uses them) stay open.
+* The explosion is too big: 1.5x the take's bright area on take04's cliff (two fireballs) and
+  1.6x on take06's sand (one), taller and whiter. Nothing in the game's explosion depends on
+  the surface (the analyst's Q2: placement, frame, slots and LOD are the same on both), and no
+  exp-rocket appearance uses shape 3 (Q4). Left for a ticket of its own; its leads: the angle
+  fade of the facing-3 quads near edge-on (exp-rocket-add's, up to 13.6 m), which the demo
+  doesn't do, and the added sprites summed in linear light (#104). take20's open-air flame is
+  ~2x the take's. take04's late fire column (the take's at +1.4 s) is missing. The curves'
+  easing (the demo reads easing bytes 0, 5 and 6 as linear, `bf/ale.rs`'s ease; no exp-rocket
+  curve uses them) stays open.
+* The launch glow is ~0.7x the take's (14.0k against 19.2k): not the trail's birth position
+  (Q1); the trail head's look or the muzzle light (light_muzzle), not traced.
 * A missile's trail stops with the missile: its entity goes in the frame the missile ends,
   before the effects run, so the game frames of that render frame aren't emitted (up to 2 at
   15 fps, 1 at 60 fps). take18's three trails make 11, 25 and 8 particles (mtrail, mtrail#1,
@@ -767,10 +791,15 @@ Not matching or not done:
 * The scorch is a flat quad: at the cliff's foot it has a straight edge where it leaves the
   rock, where the game's wraps the rock (its decal manager clips the world's triangles,
   FUN_00214710 -> FUN_00217920). On flat ground it's the takes' dark ragged blot.
-* Where the children home: the demo aims them at the target's feet (its origin); the game homes
-  on the target's scene node (vtable +0x40 -> +0x24), not read live. take07's two x1 directs at
-  45 m and take19's x1 bones fit a point higher up the body; take06's one share per shot isn't
-  reproduced either (no code rule stops a second share: the second child must land out of reach).
+* The children's hits on take19 and take07: they home on the hips now (the analyst's Q3), and
+  take06's one share per shot holds on two of three shots, but take19's children strike
+  Brutus's forearms (x0.5, his gun held in front) where the take's struck the Shrikes' x1 parts,
+  and 3 of 8 give up at 61-62 degrees off their fixed heading 4-6 m short and miss, where the
+  take's four all struck. take07's children pass 1.05 m either side of him (the split's 9-degree
+  turn and the straight phase's drift, then homing on the point 200 m ahead) where the take's
+  both struck him. The demo has no Shrike to test on, and its body is a 0.4 m cylinder where the
+  game's are the collision parts; which of those (or the paths) makes the difference isn't
+  settled.
 * The demo's follow camera (its 45-degree view and the aiming dolly, #126) puts Tex over the
   crosshair, so the launch and the blasts are mostly behind him. On e40 Tex and the standing
   stones draw black (main too): not this ticket's.

@@ -11,13 +11,14 @@
 //!    the squad: 20 / 30 = 0.667 s), its straight phase h_ea5327e6 of that (0.1 s), then its
 //!    second timer h_f0a56297 (5 s) runs (FUN_00227dd0).
 //!  - **Each game frame** (FUN_00226cc0, here in 30 Hz ticks after the physics move): steered
-//!    (FUN_002266d0) along its own heading in the straight phase, then toward its target's
-//!    origin (the feet) or its aim point, its node turned along the velocity it had before (so
-//!    the 60-degree test lags a step); the proximity fuse; life, then the second timer, run down.
+//!    (FUN_002266d0) along its velocity in the straight phase, then toward its target's root
+//!    (the hips, `root_point`) or its aim point. It gives its aim up within 1 m of it or over 60
+//!    degrees off its heading, which stays the launch's (a child's, the split's) direction all
+//!    its flight; then life and the second timer run down, and the proximity fuse looks.
 //!  - **The split** (WM_MIRV_ON_EXPLODE, FUN_00227f80), when its life is out: the parent goes
 //!    without a blast; `<mirv>` h_fe04300d children (2) leave beside it, each turned spread-max x
-//!    90 degrees (9) off its heading at a random roll, after the hostiles the split finds within
-//!    the range and 30 degrees, else 200 m along the parent's heading. A child is NEUTRAL (team
+//!    90 degrees (9) off its velocity at a random roll, after the hostiles the split finds within
+//!    the range and 30 degrees, else 200 m along the parent's velocity. A child is NEUTRAL (team
 //!    2): its own searches find nobody, and without the split's target it has no fuse.
 //!  - **Hitting something** (the collision callback FUN_002278e0 -> 0x22d0b0): the world, a
 //!    body (standing, or lying knocked down), a breakable object or a Sentry. The body or
@@ -42,7 +43,7 @@
 //! `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (with its children
 //! and their targets), fuse and end (where, how far from its launch, how long after, what it
 //! struck), and each body its blast reaches with the damage; `BF_MISSILE_DEBUG=1` also prints
-//! every body each target search looks at (distance, angle, line of sight).
+//! every body each target search looks at (distance, its root, angle, line of sight).
 //!
 //! Not here: the difficulty step on every hit on a character (x1.4 on enemies, x0.6 on the
 //! squad on STANDARD, 0x125600: #127, todo/damage-factor/answer.md); the 75 m noise for the AI's
@@ -74,7 +75,7 @@ const RETARGET_COS: f32 = 0.5;
 /// this far ahead: 6 km at 30 m/s.
 const RETARGET_AHEAD: f32 = 200.0;
 /// FUN_00227f80: a child the split has no target for aims this far (m) along the parent's
-/// heading (its frame's -z x 200).
+/// velocity (the frame FUN_0001d0c0 builds from it, its -z x 200).
 const SPLIT_AHEAD: f32 = 200.0;
 /// FUN_00226cc0: when (s) a missile that seeks looks again after giving up its aim point (+0x1d0).
 const RESEEK: f32 = 0.5;
@@ -85,14 +86,14 @@ const SEEK_EVERY: f32 = 0.25;
 /// FUN_00226b80: the cone (degrees off its heading) a child without a target looks in.
 const SEEK_CONE: f32 = 60.0;
 /// FUN_00227f80: the split looks for up to its child count of hostiles within the range and
-/// SPLIT_CONE degrees of the parent's heading (FUN_002237c0 with 30.0).
+/// SPLIT_CONE degrees of the parent's velocity (FUN_002237c0 with 30.0).
 const SPLIT_CONE: f32 = 30.0;
 /// FUN_00227f80: at most this many children (a count over 5 is 6).
 const MIRV_MAX: i64 = 6;
 /// FUN_00227f80: a child's life is the bullet's range / speed x (1 - CHILD_LIFE + 2 x CHILD_LIFE
 /// x U): 0.85-1.15 of it.
 const CHILD_LIFE: f32 = 0.15;
-/// FUN_00227f80: a child is turned off the parent's heading by spread-max x SPREAD_TURN degrees.
+/// FUN_00227f80: a child is turned off the parent's velocity by spread-max x SPREAD_TURN degrees.
 const SPREAD_TURN: f32 = 90.0;
 /// FUN_00226cc0: a WM_MIRV_ON_APOGEE parent splits once its upward speed is under this (m/s),
 /// past its straight phase. (No mesh projectile that flies here has that mode: the iKhan-GPL's
@@ -134,12 +135,6 @@ const BODY_MIDDLE: f32 = 1.0;
 /// its normal; up for a body or the air): the game's blast sits where the missile's centre was
 /// when it touched, and a ray from the surface itself meets that surface at once. The demo's.
 const COVER_LIFT: f32 = 0.25;
-/// The search's line of sight (FUN_002237c0) is a ray to the character's origin, the feet, that
-/// meets only the terrain (`Arena::ray_terrain`: the query's flags 0xfffffffa leave out the
-/// level's placed geometry, rocks and walls, FUN_000df0a0); it stops this short of the feet (m),
-/// so the ground they stand on doesn't count (the AI's sight test leaves 0.3 too,
-/// `hostile_in_sight`). The demo's.
-const SIGHT_SLACK: f32 = 0.3;
 /// A missile's sound and its explosion's are heard at this volume from the player (play.rs's
 /// grenade trail and play_sounds use 0.8); farther ones fall off as play_sounds does a
 /// squadmate's (1 - d / SOUND_REACH, at least SOUND_FLOOR).
@@ -225,8 +220,11 @@ struct Missile {
     side: u8,
     pos: Vec3,
     vel: Vec3,
-    /// its heading, the node's -z: FUN_002266d0 turns it along the velocity it had before each
-    /// steering, so it lags the motion by a step (the model, the 60-degree test, the seek's cone)
+    /// its heading, the node's -z as its tick reads it (the 60-degree test, the seek's cone):
+    /// the launch direction (the aim after the accuracy turn) for a parent, the split's for a
+    /// child, all its flight. FUN_002266d0 turns only the node, and each physics step sets the
+    /// node back from the body (0x159eb0), whose turn is set only at the launch and the split
+    /// (FUN_00227ce0's vtable +0x50)
     heading: Vec3,
     /// +0x208: the speed steering holds it to (the bullet's)
     speed: f32,
@@ -405,10 +403,32 @@ fn missile_kit(game: &mut Game, assets: &mut ModelAssets, object: u32) -> Option
     Some(MissileKit { parts, trail, radius })
 }
 
-/// Where a character's origin is (the feet: the game's character origin, which a missile homes
-/// on, the spec's reading of take06).
+/// Where a character's feet are (the game's character position, char+0x458; the blast's body
+/// cylinder stands on them).
 fn feet(u: &Player) -> Vec3 {
     u.position + Vec3::Y * (GROUND + u.height)
+}
+
+/// The point a missile homes on, and its searches and its fuse measure to, on a character: its
+/// scene node (the target's vtable +0x40 position, 0x10fda0: FUN_00226cc0 at 0x2270fe,
+/// FUN_002237c0, the fuse), which for a character is its model's root node (0x158290 from
+/// FUN_0012f440). FUN_0023d4f0 puts that at the feet's x and z, the feet's height + the
+/// `root-height` of the clip last started (animations-*.xml; FUN_0023d240 sets it as a clip
+/// starts): the hips, not the feet (Brutus's Sc_w1_rp_idle 0.98 m, the Shrikes' idles 1.014 and
+/// 1.121; their height-offset is 0). A clip without one (-100000) takes the model's own
+/// (model+0x40, not read: the demo's GROUND, 1.05). Knocked down, the root node follows the
+/// ragdoll (not traced): the demo takes the ragdoll's root bone.
+fn root_point(u: &Player) -> Vec3 {
+    let f = feet(u);
+    let Some(l) = u.loaded.as_ref() else { return f - Vec3::Y * GROUND };
+    if let Some(k) = &u.knock {
+        let root = l.model.parent.iter().position(|p| p.is_none()).and_then(|i| k.ragdoll.pos.get(i));
+        if let Some(&p) = root {
+            return k.ragdoll.origin + Quat::from_rotation_y(k.ragdoll.yaw) * p;
+        }
+    }
+    let height = u.layers.last().and_then(|x| l.model.anims.get(x.clip)).and_then(|a| a.root_height).unwrap_or(-GROUND);
+    f + Vec3::Y * height
 }
 
 /// A character's name for the log.
@@ -424,25 +444,27 @@ fn hostile(side: u8, team: u8) -> bool {
 }
 
 /// FUN_002237c0: up to `count` living characters hostile to `side` (see `hostile`) within
-/// `range` m of `at` and `cone` degrees of `fwd`, to their origin, with nothing of the world in
-/// between (the game casts a ray to it), the most central first.
+/// `range` m of `at` and `cone` degrees of `fwd`, to their root (`root_point`), with nothing of
+/// the world in between, the most central first. The line of sight is a ray to the root that
+/// meets only the terrain (`Arena::ray_terrain`: the query's flags 0xfffffffa leave out the
+/// level's placed geometry, rocks and walls, FUN_000df0a0); at the hips, the ground they stand
+/// on isn't in the way.
 fn search(units: &[&Player], at: Vec3, fwd: Vec3, range: f32, cone: f32, count: usize, side: u8) -> Vec<Who> {
     let cos = cone.to_radians().cos();
     let mut found: Vec<(f32, Who)> = units.iter().filter(|u| !u.dead && hostile(side, u.team)).filter_map(|u| {
-        let to = feet(u) - at;
+        let to = root_point(u) - at;
         let d = to.length();
         if d > range || d < 1e-3 {
             return None;
         }
         let dir = to / d;
         let dot = dir.dot(fwd);
-        let reach = (d - SIGHT_SLACK).max(0.01);
         let clear = match world::arena() {
-            Some(a) => a.ray_terrain(at, dir, reach).is_none(),
-            None => ray_hit(at, dir, reach).is_none(),
+            Some(a) => a.ray_terrain(at, dir, d).is_none(),
+            None => ray_hit(at, dir, d).is_none(),
         };
         if std::env::var("BF_MISSILE_DEBUG").is_ok() {
-            println!("  search from {at:.2}: {} at {:.1} m, {:.0} degrees (cone {cone}), clear {clear}", name(u), d, dot.clamp(-1.0, 1.0).acos().to_degrees());
+            println!("  search from {at:.2}: {} at {:.1} m (their root {:.2}), {:.0} degrees (cone {cone}), clear {clear}", name(u), d, at + to, dot.clamp(-1.0, 1.0).acos().to_degrees());
         }
         (dot >= cos && clear).then(|| (-dot, u.who()))
     }).collect();
@@ -450,9 +472,10 @@ fn search(units: &[&Player], at: Vec3, fwd: Vec3, range: f32, cone: f32, count: 
     found.into_iter().take(count).map(|f| f.1).collect()
 }
 
-/// The origin of the character `who` (None if they're gone).
+/// Where a missile aims on the character `who`: their root (`root_point`; None if they're
+/// gone).
 fn origin_of(units: &[&Player], who: Who) -> Option<Vec3> {
-    units.iter().find(|u| u.who() == who).map(|u| feet(u))
+    units.iter().find(|u| u.who() == who).map(|u| root_point(u))
 }
 
 /// What a tick of a missile came to.
@@ -496,13 +519,19 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
         m.pos += step;
     }
     m.age += dt;
-    // the straight phase (a child without a target searches from its first tick all the same,
-    // in the steering below, not at its end: `seek`)
+    // the straight phase; at its end a missile that seeks searches once, target or not (a
+    // search that finds nobody keeps the target), 0x226d8e-0x226da7 (`seek`)
     if m.straight > 0.0 {
-        m.straight = (m.straight - dt).max(0.0);
+        m.straight -= dt;
+        if m.straight <= 0.0 {
+            m.straight = 0.0;
+            if b.seeks && m.mode == 0 {
+                seek(m, range, units, dt, now, log);
+            }
+        }
     }
-    // steering (FUN_002266d0): always for a steady one; along its own heading in the straight
-    // phase, after it toward its target's origin or its aim point
+    // steering (FUN_002266d0): always for a steady one; along its velocity in the straight
+    // phase, after it toward its target's root or its aim point
     let homing = b.homes || b.seeks;
     if b.steady || (homing && m.straight <= 0.0) {
         if b.seeks && m.target.is_none() && m.mode == 0 {
@@ -513,8 +542,9 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
             let d = m.aim - m.pos;
             if d.length_squared() <= RETARGET_NEAR_SQ || d.normalize_or(m.heading).dot(m.heading) < RETARGET_COS {
                 if log {
-                    println!("t {now:.2}: missile {} gives up {} for a point ahead", m.id,
-                             if d.length_squared() <= RETARGET_NEAR_SQ { "its aim point (within 1 m)" } else { "its aim (over 60 degrees off)" });
+                    let off = d.normalize_or(m.heading).dot(m.heading).clamp(-1.0, 1.0).acos().to_degrees();
+                    println!("t {now:.2}: missile {} gives up {} for a point ahead ({:.2} m away, {off:.0} degrees off its heading)", m.id,
+                             if d.length_squared() <= RETARGET_NEAR_SQ { "its aim point (within 1 m)" } else { "its aim (over 60 degrees off)" }, d.length());
                 }
                 m.aim = m.pos + m.vel * RETARGET_AHEAD;
                 m.target = None;
@@ -528,16 +558,11 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
             dir = (m.aim - m.pos).normalize_or(m.heading);
         }
         let speed = if b.steady { m.speed } else { m.vel.length() };
-        // FUN_002266d0 turns the node along the velocity it had before this steering
-        // (0x2268b4-0x22690d): the heading the next tick's 60-degree test and the seek's cone
-        // read (FUN_0001fdd0, the node's -z) lags the motion by a step
-        let before = m.vel;
         let along = m.vel.dot(dir);
         m.vel -= (m.vel - dir * along) * STEER_ACROSS;
         if (speed - along).abs() > STEER_SLACK {
             m.vel += dir * ((speed - along) * STEER_SPEED);
         }
-        m.heading = before.normalize_or(m.heading);
     }
     // the timers: life, then the second timer
     if m.life > 0.0 {
@@ -548,8 +573,9 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
     if m.mode == 1 && m.vel.y < APOGEE_VY && m.straight == 0.0 {
         return Tick::Split;
     }
-    // the proximity fuse: every FUSE_EVERY s, a body (its target, if it has one, else any
-    // hostile) within reach, to its origin, that it has passed (on it, or behind its velocity).
+    // the proximity fuse, after the give-up and the timers: every FUSE_EVERY s, a body (its
+    // target, if it has one, else any hostile) within reach of its root (`root_point`), that it
+    // has passed (on it, or behind its velocity).
     // Only for a player's missile (FUN_00112800), and one with a target or a side other than
     // NEUTRAL (0x22731c-0x22732d): a child without the split's target has none
     let mut fused = None;
@@ -561,7 +587,7 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
             let reach = radius * FUSE_REACH;
             fused = units.iter().filter(|u| !u.dead && match m.target { Some(t) => u.who() == t, None => hostile(m.side, u.team) })
                 .find(|u| {
-                    let off = feet(u) - m.pos;
+                    let off = root_point(u) - m.pos;
                     let d2 = off.length_squared();
                     d2 <= reach * reach && (d2 <= 0.0 || (m.vel.length_squared() > 1.2e-7 && off.dot(m.vel) <= 0.0))
                 }).map(|u| name(u));
@@ -611,11 +637,12 @@ fn ray_lying(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
     }).min_by(|a, b| a.total_cmp(b))
 }
 
-/// FUN_00226b80: every SEEK_EVERY s, the most central hostile within the range and SEEK_CONE
-/// degrees, with nothing in between, becomes its target. A seeking missile without a target
-/// runs it every tick from its first (its +0x1d0 is 0 from the constructor FUN_002264e0; the
-/// tick calls it at 0x226e02), the straight phase or not. By its own side: a NEUTRAL child's
-/// finds nobody (see NEUTRAL).
+/// FUN_00226b80: every SEEK_EVERY s (its timer +0x1d0 runs down on each call, 0 from the
+/// constructor FUN_002264e0), the most central hostile within the range and SEEK_CONE degrees
+/// of its heading, with nothing in between, becomes its target; finding nobody keeps the one it
+/// has. The tick calls it at the straight phase's end, target or not (0x226d8e-0x226da7), and
+/// every tick while there's no target (0x226e02). By its own side: a NEUTRAL child's finds
+/// nobody (see NEUTRAL).
 fn seek(m: &mut Missile, range: f32, units: &[&Player], dt: f32, now: f32, log: bool) {
     m.seek_in -= dt;
     if m.seek_in > 0.0 {
@@ -638,16 +665,17 @@ fn seek(m: &mut Missile, range: f32, units: &[&Player], dt: f32, now: f32, log: 
 /// 360 / count degrees on for the next), turned spread-max x 90 degrees toward that side, at the
 /// parent's speed, living range / speed x 0.85-1.15. If the parent seeks, the split's hostiles
 /// (up to the count, within the range and 30 degrees) are dealt out to them in turn; without
-/// any, each aims 200 m along the parent's heading.
+/// any, each aims 200 m along the parent's velocity.
 #[allow(clippy::too_many_arguments)]
 fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32, f32), state: &mut MissileState, now: f32, log: bool) -> Vec<Missile> {
     let count = b.mirv_count.min(MIRV_MAX).max(0) as usize;
     if count == 0 {
         return vec![];
     }
-    // the parent's node: its -z (FUN_00227f80 reads its frame)
-    let fwd = m.heading;
-    let up0 = if fwd.y.abs() > 0.999 { Vec3::X } else { Vec3::Y };
+    // along the parent's velocity (its body's, vtable +0x54 = 0x159d70), the frame FUN_0001d0c0
+    // builds from it: up is world y, or world z within ~10 degrees of vertical (|y| > 0.9848)
+    let fwd = m.vel.normalize_or(m.heading);
+    let up0 = if fwd.y.abs() > 0.9848 { Vec3::Z } else { Vec3::Y };
     let right = fwd.cross(up0).normalize();
     let up = right.cross(fwd).normalize();
     let mut roll = state.random() * std::f32::consts::TAU;
@@ -812,8 +840,10 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
             // (drawn where it is by now: the time not yet run in ticks carries it on, so it
             // doesn't stand still every other frame at 60 fps)
             tr.translation = m.pos + m.vel * m.clock;
-            if m.heading.length_squared() > 0.5 {
-                tr.look_to(m.heading, Vec3::Y);
+            // (the mesh faces its velocity: FUN_002266d0 turns the node along it for the
+            // frame's picture)
+            if m.vel.length_squared() > 1e-6 {
+                tr.look_to(m.vel.normalize(), Vec3::Y);
             }
             // FUN_00228c10: the trail's user parameter is life / start
             let sp = if m.start > 0.0 { (m.life / m.start).clamp(0.0, 1.0) } else { 1.0 };

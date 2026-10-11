@@ -855,8 +855,11 @@ fn spread(fx: &mut AleEffect, lo: f32, hi: f32) -> Vec3 {
 /// time it's born at.
 fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, at: f32, fresh: bool) -> (usize, f32) {
     // the emitter's own time: once, up to its lifespan; else it starts its lifespan again, its
-    // last batch's time going back to 0 (the demo's: the game's loop of an emitter's time isn't
-    // traced; the trail's 4 s emitters are the only counted ones that loop, on a flight past 4 s)
+    // last batch's time going back to 0. The demo's choice: the game's loop of an emitter's time
+    // isn't traced (it may stop it at its lifespan instead). The trail's 4 s emitters are the
+    // only counted ones that loop, on a child's flight past 4 s: their rates start over at 0 for
+    // 0.07-0.09 s, so the trail has a ~0.2 s gap there (nothing comes in the game frame of the
+    // restart either, its rate being read at the new time)
     let t1 = if fx.once { at.min(lifespan) } else { at % lifespan };
     if t1 < fx.last[i] {
         fx.last[i] = 0.0;
@@ -916,8 +919,11 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
         }
         // a counted effect on a parent at the top (a missile's trail): from the parent's own
         // transform this frame, not its placement from the last frame's propagation, so the
-        // particles of each game frame (GAME_FRAME) are born where the missile is then; they
-        // were born a frame behind it (2 m at 15 fps)
+        // particles of each game frame (GAME_FRAME) are born along the missile's move up to
+        // where it is then; they were born a frame behind it (2 m at 15 fps). The game's world
+        // update runs the physics step, which moves the missile (FUN_00169e20 at 0xd9ad4),
+        // before the objects' ticks (FUN_000d9840 at 0xd9d0b), where the trail's (0x21b7a0)
+        // follows the missile (FUN_0021a700) and births along its move since the last frame
         if let Some(Ok((_, t, false))) = parent.map(|p| parents.get(p.parent())) {
             if fx.fx.counted {
                 *at = GlobalTransform::from(*t).mul_transform(*local);
@@ -940,6 +946,8 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
         // a counted effect's game frames this render frame: those its time reaches (GAME_FRAME)
         let mut ticks = vec![];
         if compiled.counted {
+            // (1e-5 s of slack: the effect's time is a float sum of frame times, which can land
+            // a hair short of a game frame due at this frame's end and put it off a frame)
             while (fx.ticks + 1) as f32 * GAME_FRAME <= fx.t + dt + 1e-5 {
                 fx.ticks += 1;
                 ticks.push(fx.ticks);
@@ -1076,9 +1084,17 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                         (Some(rate), Some(carried)) => -((j + 1) as f32 - carried) / rate,
                         _ => b.age,
                     };
+                    // a game frame's batch, born before this render frame's end, starts back by
+                    // its age (negative) along its way: `animate` moves every particle by the
+                    // whole frame, so it stands where its age since its birth puts it
+                    let back = if b.carried.is_none() { vel * age } else { Vec3::ZERO };
+                    let (local, spawn) = match owner {
+                        Some(_) => (local + back, origin + frame * local),
+                        None => (local, origin + frame * local + back),
+                    };
                     let particle = AleParticle { fx: compiled.clone(), pair: i, lod: fx.lod, age, life, vel, sp, born: b.born, roll, step: 0, frame: lie, owner, local,
                                                  turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0 };
-                    let at = Transform::from_translation(origin + frame * local).with_scale(Vec3::splat(0.001));
+                    let at = Transform::from_translation(spawn).with_scale(Vec3::splat(0.001));
                     if let Some(child) = &pair.child {
                         // an effect appearance: the particle carries its effect, turned to face
                         // (+z) the way the particle goes along the ground and kept upright. The

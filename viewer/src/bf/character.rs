@@ -123,6 +123,10 @@ pub struct AnimDef {
     pub targets: Vec<(u32, u32)>,
     /// timed events (footsteps, drop_weapon, ...), see `Game::events`
     pub event_channel: u32,
+    /// its `root-height` (m): how high the root bone sits over the floor in this clip, where
+    /// FUN_0023d4f0 puts a character's root node, the point a missile homes on (play_missile's
+    /// `root_point`); None for the data's -100000 (the model's own height then)
+    pub root_height: Option<f32>,
 }
 
 /// Everything loaded from data/common.tgz (+ textures found in level archives on demand).
@@ -862,6 +866,7 @@ impl Game {
                             duration: head.and_then(|p| p.attr(h("duration"))).and_then(|v| v.as_f32()).unwrap_or(1.0),
                             targets,
                             event_channel: hash_of(head.and_then(|p| p.attr(h("event-channel")))),
+                            root_height: head.and_then(|p| p.attr(h("root-height"))).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).filter(|&r| r > -1000.0),
                         });
                     }
                     self.anim_sets.entry(set_name).or_insert(anims);
@@ -1504,7 +1509,7 @@ impl Character {
 
         let copy = |set: u32| -> Vec<AnimDef> {
             game.anim_sets.get(&set).map(|a| a.iter().map(|d| AnimDef {
-                name: d.name, duration: d.duration, targets: d.targets.clone(), event_channel: d.event_channel }).collect()).unwrap_or_default()
+                name: d.name, duration: d.duration, targets: d.targets.clone(), event_channel: d.event_channel, root_height: d.root_height }).collect()).unwrap_or_default()
         };
         let anims = copy(h(name));
         let face_anims = copy(h(&format!("{name}face")));
