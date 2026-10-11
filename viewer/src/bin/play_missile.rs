@@ -23,17 +23,19 @@
 //!  - **Hitting something** (the collision callback FUN_002278e0 -> 0x22d0b0): the world, a
 //!    body (standing, or lying knocked down), a breakable object or a Sentry. The body or
 //!    object struck takes a roll of Damage min..max (FUN_0022c4d0; a character's x its type's
-//!    damage-multiplier x the struck bone's Damage, FUN_00125940), a blast object goes off at
-//!    the missile's centre (FUN_0022bfc0) and the explosion effect type plays (FUN_0022cfc0). A
-//!    child whose second timer runs out, or whose fuse fires, goes off the same way where it is,
-//!    with no direct hit (FUN_00227760).
+//!    damage-multiplier x the struck hit part's bone's Damage, FUN_00125940, then the victim's
+//!    difficulty step: play_damage.rs), a blast object goes off at the missile's centre
+//!    (FUN_0022bfc0) and the explosion effect type plays (FUN_0022cfc0). A child whose second
+//!    timer runs out, or whose fuse fires, goes off the same way where it is, with no direct hit
+//!    (FUN_00227760).
 //!  - **The blast** (FUN_0022bfc0, dealt once by FUN_00224770 -> FUN_0022c4d0): its own roll,
 //!    after 0.05-0.25 s, to every body it reaches with nothing of the world in between (a body
 //!    behind cover isn't touched at all, FUN_00224a90): half of it anywhere inside (Damage
 //!    h_011cb154 false), x 0.7 for the shooter's own side (FUN_0004b9c0), x the body's
-//!    damage-type factor; the scenery's share is the same, flat. Its pass lays the scorch
-//!    (bullet h_06a27365) under the blast point, and every blast shakes the player's view
-//!    (FUN_00228c70, play_shake.rs). No hit or blast knocks its victim down (`hurt_still`).
+//!    difficulty step and damage-type factor (play_damage.rs); the scenery's share is the same,
+//!    flat, with no step. Its pass lays the scorch (bullet h_06a27365) under the blast point,
+//!    and every blast shakes the player's view (FUN_00228c70, play_shake.rs). No hit or blast
+//!    knocks its victim down (`hurt_still`).
 //!
 //! Only mesh projectiles steered at a steady speed that split (h_0b03ece5 and a `<mirv>`: the
 //! Therm Sweeper) fly here. The Sweeper V's (steady, no MIRV) keeps play.rs's plain `Shot` until
@@ -45,11 +47,11 @@
 //! struck), and each body its blast reaches with the damage; `BF_MISSILE_DEBUG=1` also prints
 //! every body each target search looks at (distance, its root, angle, line of sight).
 //!
-//! Not here: the difficulty step on every hit on a character (x1.4 on enemies, x0.6 on the
-//! squad on STANDARD, 0x125600: #127, todo/damage-factor/answer.md); the 75 m noise for the AI's
-//! hearing (FUN_0004d490); the damage event (FUN_001fe3d0).
+//! Not here: the 75 m noise for the AI's hearing (FUN_0004d490); the damage event
+//! (FUN_001fe3d0).
 
 use super::*;
+use super::damage::{self, Difficulty};
 use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET, DECAL_DELAY, GRENADE_DECAL_SCALE};
 use super::shake::CameraShake;
 use bf_viewer::bf::character::EffectType;
@@ -112,9 +114,10 @@ const BLAST_DELAY_MORE: f32 = 0.2;
 /// FUN_0022c4d0, a blast object's damage with Damage h_011cb154 false: this share of its roll,
 /// at any distance inside the radius.
 const BLAST_SHARE: f32 = 0.5;
-/// FUN_0022c4d0: a hit on the shooter's own side (FUN_0004b9c0: both characters, one in the
-/// other's squad; here the same team, the shooter too) deals this share.
-const FRIENDLY: f32 = 0.7;
+/// A direct hit's hit part is looked for along the missile's way into the body from this far (m)
+/// before the contact (`damage::struck_bone`): the game's missile meets the part's own body
+/// (FUN_002278e0), where the demo's met the cylinder round it. The demo's.
+const STRUCK_BACK: f32 = 0.5;
 /// ALIGN_NEUTRAL (the ALIGN_ table at 0x3bc94c): the side the projectile constructor gives
 /// (+0x21c = 2 at 0x2265ec), which a MIRV child keeps (the split calls FUN_00227dd0, which
 /// copies the owner's team, before it copies the owner: 0x2282bf, 0x22834a). Row 2 of 0x3ffd80
@@ -802,7 +805,7 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
                 (mut mines, mut loose, mut objects, mut tint, mut hits): (ResMut<super::sentry::MineTargets>, ResMut<super::pickups::Blasts>,
                                                                 ResMut<super::scenery::ObjectBlasts>, ResMut<ScreenTint>,
                                                                 ResMut<super::scenery::ObjectHits>),
-                test: Option<Res<super::testmap::TestMap>>, mut shaker: ResMut<CameraShake>) {
+                test: Option<Res<super::testmap::TestMap>>, mut shaker: ResMut<CameraShake>, difficulty: Res<Difficulty>) {
     let dt = frame_dt(&time);
     let log = std::env::var("BF_MISSILE_LOG").is_ok();
     let now = player.sim_time;
@@ -863,14 +866,15 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
     let instant = test.as_ref().is_some_and(|t| t.instant_kill);
     for bl in blows {
         go_off(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, bl, &mut player, &mut squad, &mut state,
-               &mut mines, &mut loose, &mut objects, &mut tint, &mut hits, &mut shaker, instant, now, log);
+               &mut mines, &mut loose, &mut objects, &mut tint, &mut hits, &mut shaker, &difficulty, instant, now, log);
     }
 }
 
 /// A missile going off (`Blow`): unless it ended without a blast, its explosion effect type
 /// (the ALE effects and light at the point, turned along its way for a collision, and its
 /// sounds), the bullet's impact sound, the direct hit's damage on the body it struck
-/// (FUN_0022c4d0: a roll of Damage min..max, x 0.7 on its own side, x its damage-type factor),
+/// (FUN_0022c4d0: a roll of Damage min..max x the struck hit part's factor, x 0.7 on its own
+/// side, x the victim's step and damage-type factor: play_damage.rs),
 /// a Sentry it struck set off, the blast object (its own roll, after 0.05-0.25 s), loose pickups
 /// thrown and the scenery's share, and the scorch on the ground under the blast point (within
 /// its radius), laid DECAL_DELAY later as the grenades' are.
@@ -878,7 +882,7 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
 fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
           materials: &mut Assets<StandardMaterial>, bl: Blow, player: &mut Player, squad: &mut Squad, state: &mut MissileState,
           mines: &mut super::sentry::MineTargets, loose: &mut super::pickups::Blasts, objects: &mut super::scenery::ObjectBlasts, tint: &mut ScreenTint,
-          hits: &mut super::scenery::ObjectHits, shaker: &mut CameraShake, instant: bool, now: f32, log: bool) {
+          hits: &mut super::scenery::ObjectHits, shaker: &mut CameraShake, difficulty: &Difficulty, instant: bool, now: f32, log: bool) {
     let Some(def) = game.weapons.get(&bl.weapon).cloned() else { return };
     let struck_name = bl.struck.and_then(|w| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.who() == w)).map(|u| name(u));
     if log {
@@ -938,13 +942,15 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     }
     let (lo, hi) = (def.damage_min.min(def.damage), def.damage);
     // the direct hit (FUN_0022c4d0 with no blast object): a roll, now, x the hit-location
-    // factor (FUN_00125940 at 0x227a03: the victim type's damage-multiplier x the struck bone's
-    // Damage; the missile's own +0x1cc is 1.0)
+    // factor (FUN_00125940 at 0x227a03: the victim type's damage-multiplier x the struck part's
+    // bone's Damage; the missile's own +0x1cc is 1.0), x0.7 on its own side, then the victim's
+    // step and damage-type factor (play_damage.rs). The part: along the missile's way into the
+    // body from STRUCK_BACK m before the contact
     if let Some((u, controlled)) = bl.struck.and_then(|w| unit_mut(player, squad, w)) {
         let roll = lo + (hi - lo) * state.random();
-        let own = if u.team == bl.team { FRIENDLY } else { 1.0 };
-        let (factor, bone) = hit_factor(u, game, bl.at);
-        let amount = roll * factor * own * game.damage_factor(CHARACTERS[u.character], def.damage_type);
+        let bone = damage::struck_bone(u, game, bl.at - bl.dir * STRUCK_BACK, bl.dir, STRUCK_BACK);
+        let mut hit = damage::Hit::new(roll, "roll", def.damage_type).by(bl.owner, bl.team, u).struck(u, game, bone);
+        let amount = hit.land(u, game, difficulty, now);
         // (the test map's instant kill: anyone but the player, from the player's missiles)
         let amount = if instant && bl.human && !controlled { u.health.max(amount) } else { amount };
         let push = Vec3::new(bl.dir.x, 0.0, bl.dir.z).normalize_or(Vec3::Z) * HIT_PUSH.0 + Vec3::Y * HIT_PUSH.1;
@@ -954,8 +960,10 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
             tint.0 = 0.0;
         }
         if log {
-            println!("t {now:.2}: missile {} direct hit: {} takes {amount:.1} (roll {roll:.1}, x{factor:.2} at bone {}{}) -> {:.1} / {:.0}", bl.id, name(u),
-                     bone.map_or("-".to_string(), |b| format!("h_{b:08x}")), if own < 1.0 { ", own side x0.7" } else { "" }, u.health, u.max_health);
+            let part = hit.part.map_or(1.0, |(m, b)| m * b.map_or(1.0, |b| b.1));
+            println!("t {now:.2}: missile {} direct hit: {} takes {amount:.1} (roll {roll:.1}, x{part:.2} at bone {}{}, x{:.2} the step) -> {:.1} / {:.0}", bl.id,
+                     name(u), bone.map_or("-".to_string(), |b| format!("h_{b:08x}")), if hit.friendly < 1.0 { ", own side x0.7" } else { "" }, hit.step,
+                     u.health, u.max_health);
         }
     }
     let radius = def.blast_radius;
@@ -1009,38 +1017,6 @@ fn hurt_still(u: &mut Player, game: &Game, amount: f32, push: Vec3, at: Vec3) {
     }
 }
 
-/// FUN_00125940, a direct hit's factor on a character: its type's damage-multiplier (the
-/// campaign squad's 0.62) x the struck bone's Damage (its motion set's `<collision>` list: the
-/// head x5, upper arms x0.8, forearms and calves x0.5, the hips, spine and thighs x1). The
-/// struck bone: the one of that list nearest the contact on the posed skeleton (the ragdoll's
-/// while knocked down), each taken as the line from its joint to its first child's (the calf
-/// from the knee to the ankle), where the game reads the physics body the missile met
-/// (FUN_00115000); the shape is the demo's. Blast shares take none of it (FUN_00224a90 passes
-/// 0). Returns the factor and the bone.
-fn hit_factor(u: &Player, game: &Game, at: Vec3) -> (f32, Option<u32>) {
-    let who = CHARACTERS[u.character % CHARACTERS.len()];
-    let multiplier = game.character_damage_multiplier.get(who).copied().unwrap_or(1.0);
-    let (Some(bones), Some(l)) = (game.character_hit_bones.get(who), u.loaded.as_ref()) else { return (multiplier, None) };
-    let place = |i: usize| -> Option<Vec3> {
-        match &u.knock {
-            Some(k) => k.ragdoll.pos.get(i).map(|&p| k.ragdoll.origin + Quat::from_rotation_y(k.ragdoll.yaw) * p),
-            None => u.last_world.get(i).map(|m| u.position + Vec3::Y * (u.height + u.lift_now) + Quat::from_rotation_y(u.yaw) * m.w_axis.truncate()),
-        }
-    };
-    // the distance from the contact to a bone's line (its joint to its first child's)
-    let reach = |i: usize| -> Option<f32> {
-        let a = place(i)?;
-        let Some(b) = l.model.parent.iter().position(|&p| p == Some(i)).and_then(|j| place(j)) else { return Some(a.distance(at)) };
-        let ab = b - a;
-        let k = if ab.length_squared() > 1e-8 { ((at - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
-        Some((a + ab * k).distance(at))
-    };
-    bones.iter().filter_map(|&(bone, damage)| {
-        let i = l.model.bones.iter().position(|&b| b == bone)?;
-        Some((reach(i)?, damage, bone))
-    }).min_by(|a, b| a.0.total_cmp(&b.0)).map_or((multiplier, None), |(_, damage, bone)| (multiplier * damage, Some(bone)))
-}
-
 /// FUN_00228c70, every blast of a missile (its only callers, 0x227867 and 0x227b1d, are the
 /// missile's two explosion paths: a grenade's blast doesn't shake the view through it): the player's
 /// view shakes if the blast is within SHAKE_REACH x the Damage radius of the camera (31.5 m for
@@ -1070,11 +1046,13 @@ fn shake(shake: &mut CameraShake, at: Vec3, eye: Vec3, def: &WeaponDef) {
 /// The blasts whose delay is out (FUN_00224770 -> FUN_0022c4d0): every living body within the
 /// Damage radius of the blast with nothing of the world between it and the body's middle takes
 /// the share (half the roll, flat; Damage h_011cb154 true: the whole roll to half the radius,
-/// then (1 - 2 (d / r - 0.5))^2 of it), x 0.7 on the shooter's own side (the shooter too), x its
-/// damage-type factor; the player's view goes red. Then the scorches and sounds due.
+/// then (1 - 2 (d / r - 0.5))^2 of it), with no hit part (FUN_00224a90 passes 0), x 0.7 on the
+/// shooter's own side (the shooter too), x the victim's step and damage-type factor
+/// (play_damage.rs); the player's view goes red. Then the scorches and sounds due.
 #[allow(clippy::too_many_arguments)]
 fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut state: ResMut<MissileState>,
-               mut tint: ResMut<ScreenTint>, mut decals: ResMut<super::fx::DecalRequests>, test: Option<Res<super::testmap::TestMap>>) {
+               mut tint: ResMut<ScreenTint>, mut decals: ResMut<super::fx::DecalRequests>, test: Option<Res<super::testmap::TestMap>>,
+               difficulty: Res<Difficulty>) {
     let dt = frame_dt(&time);
     let log = std::env::var("BF_MISSILE_LOG").is_ok();
     let now = player.sim_time;
@@ -1119,8 +1097,9 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             } else {
                 b.roll * BLAST_SHARE
             };
-            let own = if u.team == b.team { FRIENDLY } else { 1.0 };
-            let amount = share * own * game.0.damage_factor(CHARACTERS[u.character], def.damage_type);
+            let kind = if def.blast_core { "the core rule's share" } else { "half the roll" };
+            let mut hit = damage::Hit::new(share, kind, def.damage_type).by(b.owner, b.team, u);
+            let amount = hit.land(u, &game.0, &difficulty, now);
             let amount = if instant && human && k != 0 { u.health.max(amount) } else { amount };
             let away = Vec3::new(f.x - b.at.x, 0.0, f.z - b.at.z).normalize_or(Vec3::X);
             let before = u.health;
@@ -1129,9 +1108,8 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
                 tint.0 = 0.0;
             }
             if log {
-                println!("t {now:.2}: missile {} blast: {} {d:.1} m away takes {amount:.1} ({}{}) -> {:.1} / {:.0}", b.id, name(u),
-                         if def.blast_core { "core rule" } else { "half the roll" }, if own < 1.0 { ", own side x0.7" } else { "" },
-                         u.health, u.max_health);
+                println!("t {now:.2}: missile {} blast: {} {d:.1} m away takes {amount:.1} ({kind}{}, x{:.2} the step) -> {:.1} / {:.0}", b.id, name(u),
+                         if hit.friendly < 1.0 { ", own side x0.7" } else { "" }, hit.step, u.health, u.max_health);
             }
         }
     }

@@ -83,8 +83,13 @@
     * `h_ed582b3c` is the push the damage message carries, scaled by ((1 - w) x 0.4 + 0.6).
       w is world +0xc58, a load measure FUN_000d9090 recomputes every second (0 in
       multiplayer). It scales pushes, not damage.
-    * The campaign's squad took ~0.58 of a blast, against SDM's 1. That isn't traced; the demo
-      uses 1.
+    * The campaign's squad took ~0.58 of a blast, against SDM's 1: the difficulty step (#127,
+      play.md **Damage**). An area reaches a character through its own handler (FUN_0021ade0
+      calls the target's vtable slot 0, 0x125600), which takes x (1 + 0.1n) for the squad:
+      x0.6 on STANDARD, the campaign takes'; the multiplayer maps have none (n = 0). The
+      objects aren't stepped. Checked: campaign e34 at take01's spot (`BF_MAP=e34
+      BF_TEST_GOTO=-31.52,16.64,-31.52,16.64 BF_TEST_HIT=2.0`), Tex 115 -> 91.0 over
+      2.13-2.60 s (take01: 91.22 by 2.59 s); take29's spot on sdm_e34, 40.0 as before.
   * **Not done**:
     * intact objects aren't pushed (the takes: they never move, they break);
     * the objects' `h_f2990a77` light lists aren't removed (empty on every sdm_e34 object);
@@ -102,7 +107,7 @@
       (or `BF_TEST_HIT_NEAR=<x>,<z>`) with 50 ballistic at those times, as the takes' gdb call
       did;
     * `BF_SCENERY_LOG=1` lists the breakable objects and logs each hit, break, spawn and area;
-    * `BF_COMBAT_LOG=1` prints each area tick's damage.
+    * `BF_COMBAT_LOG=1` prints each area tick's damage and the victim's difficulty step.
   * **Verified**:
     * take29's spot (`BF_MAP=sdm_e34 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6 BF_TEST_HIT=2.0`): Tex
       loses 40.0 HP from +0.07 to +0.53 s (take29: 39.4, +0.10 to +0.64 s).

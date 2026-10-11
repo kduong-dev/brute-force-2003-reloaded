@@ -14,7 +14,10 @@
 //!    from its edge 2.2 s after it went off, without the rate rising as he came closer: no
 //!    falloff seen) and 16.9 HP/s in the second (~2 m from it); max over the time is the data's
 //!    nearest value. Whether the game rolls min..max per cloud isn't known: that would average
-//!    13.2 HP/s, below both clouds. A guess fitted to the recording;
+//!    13.2 HP/s, below both clouds. A guess fitted to the recording. The recording's Tex is the
+//!    campaign's, on STANDARD, so the rate holds the squad's step there (x0.6): it's divided
+//!    out before each character's own step (play_damage.rs): 17.7 HP/s on the squad on
+//!    STANDARD, 29.5 with no step (HARD, the multiplayer maps), 41.3 on an enemy on STANDARD;
 //!  - it starts GAS_DELAY after the blast and lasts h_04ea9251 seconds. The recording's drain
 //!    stops 5.80 s after the first cloud went off (the demo's 5.58 s, 0.2 s short);
 //!  - the thrower is poisoned like anyone (it was Tex's own cloud), times each character's
@@ -82,11 +85,12 @@ fn test_drop(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, mut don
 }
 
 /// The clouds' poison: everyone within a cloud's radius (the same distance the blasts use)
-/// loses Damage max / h_04ea9251 HP a second, times their factor for its damage-type, from
-/// GAS_DELAY after the blast for h_04ea9251 seconds; then the cloud stops hurting. The test
-/// map's instant kill kills a squadmate it reaches (the player's grenades do there).
+/// loses Damage max / h_04ea9251 HP a second (with STANDARD's squad step divided out), times
+/// their difficulty step and factor for its damage-type (play_damage.rs), from GAS_DELAY after
+/// the blast for h_04ea9251 seconds; then the cloud stops hurting. The test map's instant kill
+/// kills a squadmate it reaches (the player's grenades do there).
 fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, kits: Option<Res<GrenadeKits>>,
-          mut clouds: ResMut<GasClouds>, test: Option<Res<super::testmap::TestMap>>) {
+          mut clouds: ResMut<GasClouds>, test: Option<Res<super::testmap::TestMap>>, difficulty: Res<super::damage::Difficulty>) {
     let Some(kits) = kits else { return };
     let dt = frame_dt(&time);
     let instant = test.as_ref().is_some_and(|t| t.instant_kill);
@@ -112,9 +116,13 @@ fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
                 if u.dead || u.position.distance(c.at) >= radius {
                     continue;
                 }
-                let factor = game.0.damage_factor(CHARACTERS[u.character], kit.blast.damage_type);
+                // the rate was measured on the campaign's Tex: it holds STANDARD's step for the
+                // squad already, divided out before the victim's step and damage-type factor
+                // (play_damage.rs; no log line: it's dealt every frame)
+                let base = rate * inside / super::damage::footage_squad_step(&game.0);
+                let poisoned = super::damage::Hit::new(base, "gas", kit.blast.damage_type).source(Who::Squad(c.thrower)).on(u, &game.0, &difficulty);
                 // (the thrower is the squad's: a test map NPC of their character isn't them)
-                let amount = if kill && u.who() != Who::Squad(c.thrower) { u.health } else { rate * inside * factor };
+                let amount = if kill && u.who() != Who::Squad(c.thrower) { u.health } else { poisoned };
                 if amount >= u.health {
                     // its last breath: dies as from any hurt
                     hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y, u.position, -1);

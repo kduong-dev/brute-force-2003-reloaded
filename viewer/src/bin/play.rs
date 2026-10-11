@@ -220,6 +220,13 @@ struct CurrentMap(String);
 /// AppState::Playing begins).
 pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     let LoadedMap { game, level, deathmatch, map } = map;
+    // the difficulty every hit on a character is stepped by (play_damage.rs)
+    let difficulty = damage::Difficulty::for_map(&game, &map);
+    if std::env::var("BF_COMBAT_LOG").is_ok() {
+        println!("difficulty on {map}: {} (n {}): enemies take x{:.2}, the squad x{:.2}", difficulty.name, difficulty.n,
+                 difficulty.step(testtools::ENEMY_TEAM), difficulty.step(0));
+    }
+    commands.insert_resource(difficulty);
     commands.insert_resource(CurrentMap(map));
     let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % CHARACTERS.len();
     commands.insert_resource(player_at_start(start));
@@ -463,6 +470,7 @@ fn main() {
         .add_plugins(missile::plugin)
         .add_plugins(shake::plugin)
         .add_plugins(skills::plugin)
+        .add_plugins(damage::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -520,6 +528,8 @@ mod shake;
 mod skills;
 #[path = "play_background.rs"]
 mod background;
+#[path = "play_damage.rs"]
+mod damage;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1078,6 +1088,9 @@ const LIQUID_TOUCH: f32 = 0.2;
 const LIQUID_TICK: f32 = 0.4;
 /// Falls (FUN_0012b740): from 5 m a landing hurts, 100 x ((drop - 5) / 25)^2, up to 100 at 30 m.
 const FALL_HURT: (f32, f32, f32) = (5.0, 30.0, 100.0);
+/// A fall's damage type: FUN_0012b740 puts 0 (DTYPE_NORMAL) in its record's +4 and sends it to
+/// the character's own handler (char+0x48's vtable slot 0: 0x125600, the difficulty's step).
+const FALL_DAMAGE_TYPE: i64 = 0;
 /// Effect type of the dust kicked up sliding (objecttypes <effect>: slide_puff).
 const SLIDE_EFFECT: u32 = 0x0151_3B0F;
 /// seconds to charge a throw fully (the recordings: a linear fill, full in 0.60 s, then held)
@@ -1302,12 +1315,14 @@ struct Loaded {
 
 /// A shot for the effects system: from the muzzle along `dir`, `dist` metres to a hit (or range).
 /// `hit`: it ends on the world (a spark there); a body hit gets the flesh effects instead.
-/// A shot on its way to a squad member: it lands after `delay` s (blood at `local` from them).
+/// A shot on its way to a squad member: it lands after `delay` s (blood at `local` from them),
+/// its hit record made at the shot (the roll, the falloff, the hit part struck, the own side's
+/// share: play_damage.rs), the victim's own factors taken as it lands.
 #[derive(Clone, Copy)]
 struct PendingHit {
     delay: f32,
     member: usize,
-    amount: f32,
+    hit: damage::Hit,
     dir: Vec3,
     local: Vec3,
     ammo: i64,
@@ -2997,7 +3012,8 @@ struct AiHits(Vec<PendingHit>);
 #[allow(clippy::too_many_arguments)]
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                  mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>,
-                 kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>, mut ai_hits: ResMut<AiHits>) {
+                 kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>, mut ai_hits: ResMut<AiHits>,
+                 difficulty: Res<damage::Difficulty>) {
     let dt = frame_dt(&time);
     let kits: &[grenade::GrenadeKit] = kits.as_ref().map_or(&[], |k| &k.0);
     // the squad's heading: the leader's facing, smoothed (formation places turn with it)
@@ -3033,7 +3049,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         m.loaded = Some(l);
     }
     // friendly fire: the player's shots this frame stop at the first teammate in their way
-    let (damage, ammo, damage_type) = shot_damage(&player);
+    let (rolls, ammo, damage_type) = shot_damage(&player);
+    let (shooter, team) = (player.who(), player.team);
     let now = player.sim_time;
     // the squadmates' shots stop at a Sentry on their line (play_sentry.rs: 1 hitpoint)
     for m in squad.0.iter_mut() {
@@ -3059,14 +3076,16 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if let Some((i, t)) = hit {
             shot.dist = t;
             shot.hit = false;
-            // it lands when the shot gets there (a bolt flies at its weapon's speed)
-            let (lo, hi) = damage;
+            // it lands when the shot gets there (a bolt flies at its weapon's speed): a roll x the
+            // falloff over the range (play_shots.rs) x the hit part struck, x0.7 on the own side
+            // (play_damage.rs)
+            let (lo, hi) = rolls;
             let m = &mut squad.0[i];
-            // (falloff over the range: play_shots.rs)
-            let amount = (lo + (hi - lo) * m.random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[m.character], damage_type)
-                * shot.falloff_at(t);
+            let roll = lo + (hi - lo) * m.random(1000) as f32 / 1000.0;
+            let bone = damage::struck_bone(m, &game.0, shot.origin, shot.dir, t);
+            let hit = damage::Hit::new(roll, "roll", damage_type).by(shooter, team, m).falloff(shot.falloff_at(t)).struck(m, &game.0, bone);
             let local = shot.origin + shot.dir * t - m.position;
-            player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, amount, dir: shot.dir, local, ammo });
+            player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo });
         } else if let Some((e, t)) = mine {
             mines.strike(e, t, shot.speed, now);
         }
@@ -3099,18 +3118,21 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let hit = std::iter::once(&*player).chain(squad.0.iter()).enumerate().filter(|&(i, u)| i != k + 1 && !u.dead)
                 .filter_map(|(i, u)| ray_body(shot.origin, shot.dir, u, shot.dist).map(|t| (i, t, u.character, u.position)))
                 .min_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((i, t, character, at)) = hit {
+            if let Some((i, t, _, at)) = hit {
                 shot.dist = t;
                 shot.hit = false;
-                let amount = (lo + (hi - lo) * squad.0[k].random(1000) as f32 / 1000.0) * game.0.damage_factor(CHARACTERS[character], damage_type)
-                    * shot.falloff_at(t);
+                // a roll x the falloff x the hit part struck, x0.7 on the own side (play_damage.rs)
+                let roll = lo + (hi - lo) * squad.0[k].random(1000) as f32 / 1000.0;
+                let (shooter, team) = (squad.0[k].who(), squad.0[k].team);
+                let victim = if i == 0 { &*player } else { &squad.0[i - 1] };
+                let bone = damage::struck_bone(victim, &game.0, shot.origin, shot.dir, t);
+                let hit = damage::Hit::new(roll, "roll", damage_type).by(shooter, team, victim).falloff(shot.falloff_at(t)).struck(victim, &game.0, bone);
                 let local = shot.origin + shot.dir * t - at;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {
                     let name = |u: &Player| format!("{}{}", CHARACTERS[u.character], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
-                    let target = if i == 0 { name(&player) } else { name(&squad.0[i - 1]) };
-                    println!("{} shoots {target} ({t:.1} m)", name(&squad.0[k]));
+                    println!("{} shoots {} ({t:.1} m)", name(&squad.0[k]), name(victim));
                 }
-                ai_hits.0.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, amount, dir: shot.dir, local, ammo });
+                ai_hits.0.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo });
             }
         }
         squad.0[k].shots = shots;
@@ -3127,7 +3149,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         let u = if h.member == 0 { Some(&mut *player) } else { squad.0.get_mut(h.member - 1) };
         let Some(u) = u else { continue };
         let at = u.position + h.local;
-        hurt(u, &game.0, h.amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+        // (the victim's step and damage-type factor as it lands: play_damage.rs)
+        let mut hit = h.hit;
+        let amount = hit.land(u, &game.0, &difficulty, now);
+        hurt(u, &game.0, amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
     }
     // shots arriving: the hit lands on the member (blood where the shot meets them)
     let mut due = vec![];
@@ -3143,8 +3168,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // mostly grunts, now and then "I'm hit" or a word about friendly fire
         let tag = match m.random(6) { 0 => FRIENDLY_FIRE_CHATTER, 1 => HIT_CHATTER, _ => HURT_CHATTER };
         let at = m.position + h.local;
+        // (the victim's step and damage-type factor as it lands: play_damage.rs)
+        let mut hit = h.hit;
+        let amount = hit.land(m, &game.0, &difficulty, now);
         // the test map's instant kill: one hit is enough
-        let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { m.health.max(h.amount) } else { h.amount };
+        let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { m.health.max(amount) } else { amount };
         hurt(m, &game.0, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
         // shot by the player: sidestep one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
         if !m.dead && m.knock_request.is_none() && m.random(3) == 0 {
@@ -3316,7 +3344,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     if drop > lo && !wet {
                         let k = ((drop - lo) / (hi - lo)).min(1.0);
                         let at = u.position + Vec3::Y * 0.2;
-                        hurt(u, &game.0, most * k * k, HURT_CHATTER, Vec3::Y * 2.0, at, -1);
+                        // (DTYPE_NORMAL, through the character's handler: the step, play_damage.rs)
+                        let amount = damage::Hit::new(most * k * k, "fall", FALL_DAMAGE_TYPE).land(u, &game.0, &difficulty, now);
+                        hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y * 2.0, at, -1);
                     }
                     u.fall_from = g;
                 }
