@@ -91,10 +91,9 @@ const PLAYER_ICON: u32 = 0xEEAA_5549;
 const HEALTH_ICON: u32 = 0x1BFA_5678;
 /// bar fills (4 x 8 gradients): health red, energy blue
 const HEALTH_FILL: u32 = 0xE801_997B;
-/// grenade reticle (two brackets) shown while a throw charges
-const GRENADE_RETICLE: u32 = 0x0EF1_1EE8;
 /// The charge meter (the recordings, every grenade): a blue outlined bar x 354.0-367.7,
-/// y 162.0-221.7 beside the reticle brackets; its fill x 355.3-365.7 grows linearly from
+/// y 162.0-221.7 right of the crosshair (todo/119 take01: outline y 161.3-222.0, fill y 164.0-218.7,
+/// tick y 178-180); its fill x 355.3-365.7 grows linearly from
 /// y 218.7 to 164.3 (full), sRGB (255, 160, 53) at ~0.65 opacity; a dark divider at y ~179.
 /// (left, top, right, bottom)
 const METER_BOX: (f32, f32, f32, f32) = (354.0, 162.0, 367.7, 221.7);
@@ -698,7 +697,6 @@ enum SquadPart {
     MeterBox,
     MeterFill,
     MeterTick,
-    Reticle,
 }
 
 #[derive(Resource, Default)]
@@ -1053,11 +1051,9 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     commands.spawn((ChildOf(screen), at(320.0 - CROSSHAIR_SIZE / 2.0, CROSSHAIR_Y - CROSSHAIR_SIZE / 2.0, CROSSHAIR_SIZE, CROSSHAIR_SIZE),
                     image(&cross, Color::srgba(0.2, 0.55, 1.0, 0.95)), Part::Crosshair));
 
-    // ---- grenade throw: bracket reticle and the charge meter right of it (capture: box 354..367 x
-    // 163..221, orange fill from the bottom, dark tick at ~72%) ----
-    let reticle = texture(game, &mut images, &mut cache, GRENADE_RETICLE);
-    commands.spawn((ChildOf(screen), at(302.0, 169.0, 36.0, 36.0), image(&reticle, Color::srgba(0.2, 0.55, 1.0, 0.95)),
-                    SquadPart::Reticle, Visibility::Hidden));
+    // ---- grenade throw: the charge meter, right of the crosshair (capture: box 354..367 x 163..221,
+    // orange fill from the bottom, dark tick at ~72%). A thrown grenade has no crosshair of its own:
+    // the gun's crosshair stays as it is meanwhile (todo/119 take01) ----
     commands.spawn((ChildOf(screen), SquadPart::MeterBox, Visibility::Hidden, BorderColor(HUD_BLUE), BackgroundColor(Color::srgba(0.0, 0.05, 0.15, 0.25)),
                     Node { border: UiRect::all(Val::Px(1.5)), ..at(METER_BOX.0, METER_BOX.1, METER_BOX.2 - METER_BOX.0, METER_BOX.3 - METER_BOX.1) }));
     commands.spawn((ChildOf(screen), SquadPart::MeterFill, Visibility::Hidden, BackgroundColor(METER_ORANGE),
@@ -1425,8 +1421,10 @@ fn update_hud_widgets(
             Part::Crosshair => {
                 // (none once dead: the reference recording's reticle goes on the death frame; none
                 // during a weapon switch from the drop to the grab: the takes' crosshair goes
-                // ~0.5 s after Y and the new one shows at ~0.95 s, todo/49 and 58 take02)
-                show(&mut vis, !l.weapons.is_empty() && player.charge <= 0.0 && !player.dead && player.holding);
+                // ~0.5 s after Y and the new one shows at ~0.95 s, todo/49 and 58 take02). Kept through a
+                // grenade throw's charge, release and motion: todo/119 take01 has the Therm Sweeper's
+                // box x 294.7-346.7, y 172.0-210.7 on every frame of three full-charge Frag throws.
+                show(&mut vis, !l.weapons.is_empty() && !player.dead && player.holding);
                 // in the scope: in the middle of the screen, the same size
                 let s = player.scope;
                 let size = CROSSHAIR_SIZE;
@@ -1448,7 +1446,7 @@ fn update_hud_widgets(
 }
 
 /// Squad blips on the radar (turning with the camera), the selection marker and the name (centre
-/// of the screen) while control passes to another member, and the grenade meter / reticle while a throw charges.
+/// of the screen) while control passes to another member, and the grenade meter while a throw charges.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_squad_hud(
     time: Res<Time>,
@@ -1616,7 +1614,7 @@ fn update_squad_hud(
             SquadPart::FrameRight => {
                 node.left = Val::Percent((TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + frame_stretch(player.max_health)) / 6.4);
             }
-            SquadPart::MeterBox | SquadPart::MeterTick | SquadPart::Reticle => show(&mut vis, meter),
+            SquadPart::MeterBox | SquadPart::MeterTick => show(&mut vis, meter),
             SquadPart::MeterFill => {
                 show(&mut vis, meter);
                 let h = (METER_FILL.3 - METER_FILL.2) * level;

@@ -25,11 +25,15 @@ first contact (how long after leaving the hand, how far from the thrower), each 
 decal, and a throw called off.
 
 * **Throwing** (thrown types): hold G to charge. The meter (the recordings, every grenade): a
-  blue outlined bar at x 354.0-367.7, y 162.0-221.7 beside the reticle brackets, its fill
+  blue outlined bar at x 354.0-367.7, y 162.0-221.7 right of the crosshair, its fill
   x 355.3-365.7 growing linearly from y 218.7 to 164.3 in 0.6 s, sRGB 255 160 53 at 0.65, a
   dark divider at y 179; let go, it holds its level 0.5 s and goes (the recordings' 0.1 s
-  fade is drawn as a cut halfway through it). The count drops at the button (the recordings:
-  one game frame after it). The stance's throw clip takes the grenade in hand at its reach
+  fade is drawn as a cut halfway through it). A thrown grenade has no crosshair of its own:
+  the held gun's stays, unchanged, through the charge and the throw (#119: `todo/119` take01,
+  the Therm Sweeper's crosshair in the same box on every frame of three full-charge Frag
+  throws). h_0ef11ee8, the two-bracket texture the demo used to show here, is the Jax-iR's
+  crosshair (its `reticule-prefix`), and no grenade definition has one. The count drops at
+  the button (the recordings: one game frame after it). The stance's throw clip takes the grenade in hand at its reach
   event - its trail (grenade_trail's smoke, riding on it) and the trail effect type's sound
   (the Frag's hiss, ~0.33 s after the button in the recordings) start then - and lets go at
   its release event (0.60 s after the button for Tex, as recorded). It flies at 12-20 m/s over
@@ -617,3 +621,19 @@ recordings at 60 fps):
   rising trail column lit by its blast); the Sonic's dome and ring and the Frag's blast are
   identical (before #81, which changed the Sonic's).
 * Energy: see **Energy grenade**.
+* No crosshair of the grenade's own (#119; `BF_MAP=sdm_e34 BF_TEST_GOTO=-44.4,15.5,-44.4,15.5
+  BF_TEST_THROW=1.5,2.0`, 75 frames): the gun's crosshair keeps the same box (HUD-blue pixels
+  x 306.7-334.7, y 177.7-207.0, centred on (320.7, 192.3)) on every frame, before, through the
+  2 s charge, the release and the meter's hold; no blue pixel outside its first-frame mask in
+  the window x 280-352, y 155-230;
+  the meter's outline x 354-368, y 162-222 from 1.53 to 4.07 s. Side by side with `todo/119`
+  take01 f138, f170, f264, f286, f313 (the Therm Sweeper's arcs stay, the meter beside them in
+  the same place). Edge cases: a hand-over mid-charge (`BF_TEST_SELECT=1,2.0`) shows the new
+  member's crosshair (Flint's) and nothing else; a death mid-charge (`BF_TEST_DIE=2.5`) hides
+  the crosshair from the death frame; a weapon switch (`BF_TEST_SWITCH=1.5`) still hides it
+  from the drop to the grab; a Roller press shows no meter and keeps the crosshair. In the scope
+  (`BF_TEST_WEAPON=L-Shot-75 BF_TEST_AIM=1`: the autopilot aims from `BF_TEST_AIM`, and a
+  zooming gun scopes; `BF_TEST_SCOPE` isn't read under the autopilot) the crosshair stays at
+  (320, 239.7) through the charge and the throw, and the meter stays at its unscoped place
+  (x 354-368, y 162-222); the game's scoped throw isn't filmed. The Jax-iR
+  (`BF_TEST_WEAPON=Jax-iR`) keeps its own crosshair (h_0ef11ee8) through a charge.
