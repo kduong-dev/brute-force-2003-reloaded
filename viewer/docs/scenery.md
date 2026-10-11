@@ -62,8 +62,9 @@
       the rack's 200 x 0.5 = 100, flat at 4 and 7 m as in takes 08 / 09.
     * The 1.45 m point is a fit: the barrel reached Tex at 2.7 m along the ground but not at
       2.9 m.
-    * No line of sight: FUN_0021ade0 sends no ray. The weapons' blast areas (FUN_00224a90) are
-      what ray-test their targets. So a barrel hurts through a wall, as the code does.
+    * No line of sight: FUN_0021ade0 sends no ray. The weapons' blasts (FUN_00224a90) ray-test
+      the characters they reach, not other objects. So a barrel hurts through a wall, as the
+      code does.
     * The player hurt by an area gets the red tint.
     * The breakable objects in range take it too, times their factor: the rack (Type 10, x10)
       sets off the barrels 4.4 m and 5.3 m from it on its first tick (take13, campaign e34). The
