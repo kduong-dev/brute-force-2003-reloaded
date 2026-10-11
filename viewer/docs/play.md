@@ -627,6 +627,11 @@ step):
   BF_VIEW_YAW=<yaw>`): the sphere emitters' glows (A10, Saryl-45, Jax-iC) are round as on main;
   the Minigun's flash leaves the barrel forward (main's fires across it); the scoped MK draws as
   on main.
+* The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel main's from frame
+  7 to the first shot (296; frames 1-6 differ while the scene's render pipelines finish
+  compiling). From the shot on, Tex's LZR-23 plays its muzzle effect type's light (h_1a96e11e):
+  a reddish light at the shot, as the LZR-23's take01 shows on the ground at Hawk's feet
+  (f196-f200), where main's demo light was orange-white and brighter. Not measured.
 
 Not matching or not done:
 * The explosion is paler than the takes' white-hot fireball, most over bright rock (take04's
