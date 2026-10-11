@@ -51,6 +51,9 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=x,z,x2,z2[,height] BF_CAPTURE=<dir> BF_CAPTURE_FRAME
 - Look at the frames (crop or tile them with PIL) and compare them with the reference captures
   in `todo/`.
 - Put scratch output in your scratchpad, never in the repo.
+- Search only the repo, `todo/` and `D:\Emulators\Xbox\agent*\`. Never search `C:\Users\Kevin`
+  or a drive root recursively: the home folder holds OneDrive, and a search there downloads its
+  files from the cloud. If something isn't in those places, say so in your report.
 
 ## Team workflow
 
