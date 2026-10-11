@@ -44,6 +44,9 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=x,z,x2,z2[,height] BF_CAPTURE=<dir> BF_CAPTURE_FRAME
 - `BF_TEST_GOTO`: start at (x, z) and run toward (x2, z2). A goal equal to the start stands
   still.
 - `BF_CAPTURE`: saves every frame as a PNG, at a fixed 15 fps.
+- **The user may be at the PC.** Agents run the demo with `BF_MUTE=1` and `BF_BACKGROUND=1`
+  (no gamepad, the window opens without focus; from #163), unless the check is about sound or
+  input. Drive it with the `BF_TEST_*` hooks, not live play.
 - Feature hooks: `BF_TEST_USE`, `BF_TEST_MEDKIT=<s>`, `BF_TEST_HEALTH=<hp>`,
   `BF_TEST_FIRE`, `BF_TEST_KILL`, `BF_MENU_GO`.
 - Logging: `BF_PICKUP_LOG`, `BF_DOOR_LOG`, `BF_SOUND_LOG`, `BF_MAT_LOG`, `BF_LEVEL_DUMP`
@@ -51,7 +54,9 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=x,z,x2,z2[,height] BF_CAPTURE=<dir> BF_CAPTURE_FRAME
 - Look at the frames (crop or tile them with PIL) and compare them with the reference captures
   in `todo/`.
 - Put scratch output in your scratchpad, never in the repo.
-- Search only the repo, `todo/` and `D:\Emulators\Xbox\agent*\`. Never search `C:\Users\Kevin`
+- Search only the repo, `todo/`, `D:\Emulators\Xbox\agent*\` and, for a library's source, its
+  own folder in the cargo registry (`C:\Users\Kevin\.cargo\registry\src\*\<crate>-<version>\`).
+  Never search `C:\Users\Kevin`
   or a drive root recursively: the home folder holds OneDrive, and a search there downloads its
   files from the cloud. If something isn't in those places, say so in your report.
 
@@ -106,6 +111,11 @@ filing those, or files them with the `triage` label for the user to accept or cl
    against the footage.
 6. Send the findings back to the same developer (SendMessage) until the reviewer approves and
    the tester passes it. A code question nobody can settle goes to `analyst` meanwhile.
+   **The bar for passing:** the fundamental mechanics match the takes and the visuals look
+   right, with no regressions. Exact effect measurements, items the demo can't show yet
+   (missing enemies, knockdown, ...) and anything that needs shared systems become follow-up
+   tickets, not more rounds. When writing the spec, mark acceptance items the demo can't
+   reach yet as blocked. Split new shared machinery into its own ticket that goes first.
 7. The lead summarises the result for the user. On their yes: merge to `main`, push, and the
    commit's `Closes #N` closes the ticket. Then delete the ticket's build folder
    (`CARGO_TARGET_DIR`), its worktree and branch, and the agents' captures for it: each ticket
