@@ -109,6 +109,12 @@ Times in s of the controlled character's clock; several entries of one hook sepa
 yaw and pitch in degrees. `BF_TOOLS_LOG=1` prints each step as it's due and what it did. The
 help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H.
 
+Hook-driven sessions run beside someone at the PC with `BF_BACKGROUND=1 BF_MUTE=1`: no gamepad
+is read (pads only drive the front end), the mouse's events are dropped (the free camera's look and clicks, and the menus' wheel and
+clicks, with it; Esc closing a menu doesn't grab the cursor), and the window opens behind the
+others without focus. `BF_WINDOW_MONITOR=<n>` opens it on monitor n. See play.md, "Running in
+the background (#163)".
+
 | Hook | Does |
 |---|---|
 | `BF_TEST_FREECAM=<s>[,<x>,<y>,<z>,<yaw>,<pitch>]` | F: the free camera from where the camera is, or put there. `BF_TEST_FREECAM_OFF=<s>`: F again |
