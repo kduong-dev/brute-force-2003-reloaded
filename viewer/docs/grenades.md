@@ -624,12 +624,16 @@ recordings at 60 fps):
 * No crosshair of the grenade's own (#119; `BF_MAP=sdm_e34 BF_TEST_GOTO=-44.4,15.5,-44.4,15.5
   BF_TEST_THROW=1.5,2.0`, 75 frames): the gun's crosshair keeps the same box (HUD-blue pixels
   x 306.7-334.7, y 177.7-207.0, centred on (320.7, 192.3)) on every frame, before, through the
-  2 s charge, the release and the meter's hold; no blue pixel outside its first-frame mask;
+  2 s charge, the release and the meter's hold; no blue pixel outside its first-frame mask in
+  the window x 280-352, y 155-230;
   the meter's outline x 354-368, y 162-222 from 1.53 to 4.07 s. Side by side with `todo/119`
   take01 f138, f170, f264, f286, f313 (the Therm Sweeper's arcs stay, the meter beside them in
   the same place). Edge cases: a hand-over mid-charge (`BF_TEST_SELECT=1,2.0`) shows the new
   member's crosshair (Flint's) and nothing else; a death mid-charge (`BF_TEST_DIE=2.5`) hides
   the crosshair from the death frame; a weapon switch (`BF_TEST_SWITCH=1.5`) still hides it
-  from the drop to the grab; a Roller press shows no meter and keeps the crosshair. Not run:
-  a throw in the scope (`BF_TEST_THROW` only runs under `BF_TEST_GOTO`, whose autopilot
-  overrides `BF_TEST_SCOPE`); by the code the crosshair now stays at (320, 240) there.
+  from the drop to the grab; a Roller press shows no meter and keeps the crosshair. In the scope
+  (`BF_TEST_WEAPON=L-Shot-75 BF_TEST_AIM=1`: the autopilot aims from `BF_TEST_AIM`, and a
+  zooming gun scopes; `BF_TEST_SCOPE` isn't read under the autopilot) the crosshair stays at
+  (320, 239.7) through the charge and the throw, and the meter stays at its unscoped place
+  (x 354-368, y 162-222); the game's scoped throw isn't filmed. The Jax-iR
+  (`BF_TEST_WEAPON=Jax-iR`) keeps its own crosshair (h_0ef11ee8) through a charge.
