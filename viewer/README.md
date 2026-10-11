@@ -25,6 +25,7 @@ and how it was checked):
 | [docs/levels.md](docs/levels.md) | `bf_level` and how levels are drawn: terrain, materials, liquids, lights, sky, each map's quirks |
 | [docs/character-viewer.md](docs/character-viewer.md) | `bf_viewer`: the format readers, its keys and shading notes |
 | [docs/xemu.md](docs/xemu.md) | the original game in xemu: what the trainer and takes rely on in `default.xbe` |
+| [docs/code-map.md](docs/code-map.md) | code map: the `default.xbe` functions and addresses the project relies on, by area: what each does, how sure, where it's used |
 
 A change updates the page for its area (and this table if it adds a page).
 
