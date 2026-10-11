@@ -419,8 +419,21 @@ impl Arena {
         self.ray_tri(origin, dir, max).map(|(t, i)| (t, self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize)))
     }
 
+    /// Distance along a ray to the terrain alone (no objects or blockers), if within `max`: the
+    /// sight test of the game's target search, whose world query (FUN_000df0a0 with the flags
+    /// 0xfffffffa that FUN_002237c0 sets) takes the terrain and some dynamic objects but none of
+    /// the level's placed geometry.
+    pub fn ray_terrain(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+        self.ray_tri_where(origin, dir, max, |t| t.terrain).map(|(t, _)| t)
+    }
+
     /// `ray`, with the triangle hit.
     fn ray_tri(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, usize)> {
+        self.ray_tri_where(origin, dir, max, |_| true)
+    }
+
+    /// `ray_tri` against the solid triangles `keep` takes.
+    fn ray_tri_where(&self, origin: Vec3, dir: Vec3, max: f32, keep: impl Fn(&Tri) -> bool) -> Option<(f32, usize)> {
         let mut best = max;
         let mut hit = None;
         let mut seen = HashSet::new();
@@ -434,7 +447,7 @@ impl Arena {
                     continue;
                 }
                 let tri = &self.tris[i as usize];
-                if !self.solid(tri) {
+                if !self.solid(tri) || !keep(tri) {
                     continue;
                 }
                 // Moller-Trumbore, both sides

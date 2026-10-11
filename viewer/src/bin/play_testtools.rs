@@ -251,7 +251,9 @@ pub(super) enum Hook {
     Teleport { camera: bool },
     NpcMenu,
     Close,
-    Npc { character: usize, team: u8, fight: bool, at: Option<Vec2> },
+    /// `at`: x, z, and the height the ground is looked for under (None: 50 m over the
+    /// controlled character)
+    Npc { character: usize, team: u8, fight: bool, at: Option<(Vec2, Option<f32>)> },
     Team(Pick),
     Fight(Pick),
     Remove(Pick),
@@ -286,9 +288,11 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_TELEPORT=<s>[,camera]: the left click in the free camera (teleport to the ground
 ///    under the crosshair); `camera`: the right click (under the camera).
 ///  - BF_TEST_NPC_MENU=<s>: N (the menu opens). BF_TEST_TOOL_CLOSE=<s>: Esc (a menu closes).
-///  - BF_TEST_NPC=<s>,<character>,<friend|enemy>,<dummy|fight>[,<x>,<z>]: spawn one (character
-///    by name or 0-3) on the ground at x, z, or under the crosshair, facing the controlled
-///    character.
+///  - BF_TEST_NPC=<s>,<character>,<friend|enemy>,<dummy|fight>[,<x>,<z>[,<y>]]: spawn one
+///    (character by name or 0-3) on the ground at x, z, or under the crosshair, facing the
+///    controlled character. The ground is the first floor under y (world height), by default
+///    50 m above the controlled character: a y just over the floor wanted puts it under a roof
+///    or a gate's top (#73's takes 14, 16, 22 and 23 at sdm_e34's gate).
 ///  - BF_TEST_NPC_TEAM / BF_TEST_NPC_FIGHT / BF_TEST_NPC_REMOVE=<s>,<n|aim|all>: switch the
 ///    team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or
 ///    every one.
@@ -419,7 +423,7 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
             character: character(e.get(1)?)?,
             team: if e.get(2)?.eq_ignore_ascii_case("enemy") { ENEMY_TEAM } else { 0 },
             fight: e.get(3)?.eq_ignore_ascii_case("fight"),
-            at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| Vec2::new(x, z)),
+            at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6))),
         }))();
         add(num(&e, 0), hook);
     }
@@ -675,7 +679,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
             mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>) {
     let types = npc_types();
     let open = tools.panel == Panel::Npcs;
-    let mut spawns: Vec<(usize, u8, bool, Option<Vec2>)> = vec![];
+    let mut spawns: Vec<(usize, u8, bool, Option<(Vec2, Option<f32>)>)> = vec![];
     let mut acts: Vec<Hook> = vec![];
     if keys.just_pressed(KeyCode::KeyN) || script.now.iter().any(|h| matches!(h, Hook::NpcMenu)) {
         tools.panel = if open { Panel::None } else { Panel::Npcs };
@@ -717,7 +721,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     let (origin, dir) = crosshair(&player, &tools);
     for (character, team, fight, at) in spawns {
         let ground = match at {
-            Some(p) => Some(Vec3::new(p.x, floor_y(p.x, p.y, player.position.y + GROUND + 50.0), p.y)),
+            Some((p, from)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0)), p.y)),
             None => ground_point(origin, dir),
         };
         let Some(ground) = ground else {

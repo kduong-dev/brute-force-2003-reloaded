@@ -180,6 +180,57 @@ pub struct WeaponDef {
     /// what the fire loop reads besides the above: bursts, accuracy, tracers, muzzle and shell
     /// effects, damage falloff (see `ShotData`)
     pub shots: ShotData,
+    /// Damage h_011cb154 (the Damage record's +0x10, weapon type +0x200): how a blast object's
+    /// share falls off (FUN_0022c4d0): false, half the blast's roll anywhere inside the radius
+    /// (the Therm Sweeper's, the Sweeper V's); true, the whole roll to half the radius, then
+    /// (1 - 2 (d / r - 0.5))^2 of it to the edge
+    pub blast_core: bool,
+    /// a mesh projectile's bullet (bullet-type 2 with a projectile object, `MeshBullet`); None
+    /// for every other bullet
+    pub mesh_bullet: Option<MeshBullet>,
+}
+
+/// The `<bullet>` of a mesh projectile (bullet-type 2, BTYPE_MESH_PROJECTILE: FUN_0022f1d0 case 2
+/// launches the bullet's object, FUN_0022fb50). Offsets are the bullet block's (loaders
+/// FUN_0018a8d0 / FUN_0018a7a0; the block is at +0x210 of the weapon type), with the projectile
+/// flag each sets (FUN_00227dd0 copies them to the projectile's +0x220) and the code that reads
+/// it (the projectile's tick FUN_00226cc0, the MIRV split FUN_00227f80). Names not in the
+/// string table are read from their use.
+#[derive(Clone, Debug, Default)]
+pub struct MeshBullet {
+    /// bullet mesh-name: the projectile's object type (objecttypes, object-type 21: the Therm
+    /// Sweeper's missile h_e9327576, its model, attached effect and sound)
+    pub object: u32,
+    /// bullet radius (m): its physics body's (0.1 for the Therm Sweeper); its centre is this far
+    /// off what it touches, where it goes off
+    pub radius: f32,
+    /// h_07cdf040 (+0x14, flag 8): after the straight phase it steers to its target (or aim point)
+    pub homes: bool,
+    /// h_ea5327e6 (+0x18): the straight phase, as a share of its life (projectile +0x230)
+    pub straight: f32,
+    /// h_f69b7d4c (+0x1c, flag 0x40): it looks for targets (at the split, 30 degrees; a child
+    /// every 0.25 s, 60 degrees: FUN_002237c0, FUN_00226b80)
+    pub seeks: bool,
+    /// h_f0a56297 (+0x20): the second timer (s), run down once its life is out (+0x1d4)
+    pub after: f32,
+    /// h_0976a9dc (+0x28, flag 0x10): it explodes where it is when both timers are out
+    /// (FUN_00227760)
+    pub explode_at_end: bool,
+    /// h_0b03ece5 (+0x29, flag 4): steered every frame, held to the bullet's speed (FUN_002266d0)
+    pub steady: bool,
+    /// h_0bafbd6f (+0x91, flag 0x20): the proximity fuse (a hostile within Damage radius x 0.375
+    /// that it has passed, checked every 0.25 s)
+    pub fuse: bool,
+    /// `<mirv>` h_fe04300d (+0x78): how many it splits into (capped at 6 by FUN_00227f80)
+    pub mirv_count: i64,
+    /// `<mirv>` h_11f515c5 (+0x7c): WM_ enum at 0x3be7f4: 0 WM_NO_MIRV, 1 WM_MIRV_ON_APOGEE, 2
+    /// WM_MIRV_ON_EXPLODE
+    pub mirv_mode: i64,
+    /// `<mirv>` h_e8ebd6e0 (+0x80): the children's object type (0: the bullet's own)
+    pub mirv_object: u32,
+    /// `<mirv>` spread-min / spread-max (+0x84 / +0x88): the split turns each child by
+    /// spread-max x 90 degrees (FUN_00227f80; spread-min isn't read there)
+    pub spread: [f32; 2],
 }
 
 /// The `<weapon>` attributes the shot code reads (play_shots.rs), with where the loader at
@@ -315,9 +366,37 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
                 .filter(|&x| x != h("")).unwrap_or(0),
             proximity_radius: find(H_PROXIMITY_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0),
             shots: shot_data(w, bullet),
+            blast_core: all.iter().find(|e| e.name == h("Damage")).and_then(|e| e.attr(0x011C_B154)).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
+            mesh_bullet: bullet.and_then(|b| mesh_bullet(b)),
         });
     }
     out
+}
+
+/// `MeshBullet` of a `<bullet>`: bullet-type 2 with a projectile object (mesh-name), else None.
+fn mesh_bullet(b: &Element) -> Option<MeshBullet> {
+    if b.attr(h("bullet-type")).and_then(|v| v.as_i64().or(v.ints().first().copied())) != Some(2) {
+        return None;
+    }
+    let object = b.attr(h("mesh-name")).and_then(|v| v.as_hash()).filter(|&x| x != 0 && x != h(""))?;
+    let num = |e: &Element, a: u32| e.attr(a).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0);
+    let flag = |a: u32| b.attr(a).and_then(|v| v.as_i64()).is_some_and(|v| v != 0);
+    let mirv = b.children.iter().find(|c| c.name == h("mirv"));
+    Some(MeshBullet {
+        object,
+        radius: num(b, h("radius")),
+        homes: flag(0x07CD_F040),
+        straight: num(b, 0xEA53_27E6),
+        seeks: flag(0xF69B_7D4C),
+        after: num(b, 0xF0A5_6297),
+        explode_at_end: flag(0x0976_A9DC),
+        steady: flag(0x0B03_ECE5),
+        fuse: flag(0x0BAF_BD6F),
+        mirv_count: mirv.map_or(0, |m| num(m, 0xFE04_300D) as i64),
+        mirv_mode: mirv.map_or(0, |m| num(m, 0x11F5_15C5) as i64),
+        mirv_object: mirv.and_then(|m| m.attr(0xE8EB_D6E0)).and_then(|v| v.as_hash()).filter(|&x| x != h("")).unwrap_or(0),
+        spread: mirv.map_or([0.0; 2], |m| [num(m, h("spread-min")), num(m, h("spread-max"))]),
+    })
 }
 
 /// HARDPOINT children of an archetype.
