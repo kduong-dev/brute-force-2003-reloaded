@@ -15,6 +15,11 @@ bevy = { version = "0.16.1", features = ["pbr_specular_textures", "wav", "jpeg"]
 flate2 = "1"
 tar = "0.4"
 
+# BF_BACKGROUND (play_background.rs) shows its window through user32 and needs the HWND bevy's
+# RawHandleWrapper holds; the same version bevy and winit already use.
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+
 # Bevy is very slow unoptimised; optimise dependencies even in debug builds,
 # and our own crate moderately.
 [profile.dev]

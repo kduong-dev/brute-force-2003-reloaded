@@ -430,13 +430,17 @@ fn main() {
         loaded = Some(LoadedMap { game, level, deathmatch, map: map.clone() });
     }
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window { title: "Brute Force".into(), ..default() }),
-            ..default()
-        }))
+    // (BF_BACKGROUND / BF_WINDOW_MONITOR shape the window, and the first leaves the gamepads
+    // out: play_background.rs)
+    let mut plugins = DefaultPlugins.set(WindowPlugin { primary_window: Some(background::window()), ..default() });
+    if background::on() {
+        plugins = plugins.disable::<bevy::gilrs::GilrsPlugin>();
+    }
+    app.add_plugins(plugins)
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(AmbientLight { brightness: 220.0, ..default() })
         .init_state::<AppState>();
+    background::plugin(&mut app);
     bf_viewer::level_scene::plugin(&mut app);
     // the front end; its pictures and sounds come from the game data
     menu::plugin(&mut app);
@@ -508,6 +512,8 @@ mod ammo;
 mod shots;
 #[path = "play_skills.rs"]
 mod skills;
+#[path = "play_background.rs"]
+mod background;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -2685,7 +2691,8 @@ fn read_input(
     let mut was_captured = false;
     if let Ok(mut win) = windows.single_mut() {
         was_captured = win.cursor_options.grab_mode != CursorGrabMode::None;
-        if mouse.just_pressed(MouseButton::Left) {
+        // (never under BF_BACKGROUND, play_background.rs, whose mouse events are dropped too)
+        if mouse.just_pressed(MouseButton::Left) && !background::on() {
             win.cursor_options.grab_mode = CursorGrabMode::Locked;
             win.cursor_options.visible = false;
         }

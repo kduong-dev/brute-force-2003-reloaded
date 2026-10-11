@@ -577,8 +577,9 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
     }
     if keys.just_pressed(KeyCode::Escape) && tools.panel != Panel::None {
         close = true;
-        // (read_input let the mouse go: a menu's Esc only closes it)
-        if let Ok(mut w) = windows.single_mut() {
+        // (read_input let the mouse go: a menu's Esc only closes it. Never grabbed under
+        // BF_BACKGROUND, play_background.rs)
+        if let (false, Ok(mut w)) = (super::background::on(), windows.single_mut()) {
             w.cursor_options.grab_mode = CursorGrabMode::Locked;
             w.cursor_options.visible = false;
         }
