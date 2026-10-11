@@ -20,7 +20,8 @@ and stamina" and "HUD") and the data, checked against the 32 takes in
 * `BF_TEST_SKILL=<s>[,<s>...]`: presses V at those times (once each).
 * `BF_TEST_STAMINA=<n>[@<s>][,...]`: sets the controlled character's stamina to n at those times
   (at the start without one), as the takes' pokes: `30@1.9` with `BF_TEST_SKILL=2.0` is take02.
-* `BF_SKILL_CHATTER=<percent>`: the skill lines' chance (100: every switch), to hear them.
+* `BF_SKILL_CHATTER=<percent>`: the skill lines' `probability` (100: every line the rest of the
+  chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each
   overlay and when it switches, each switch with its sound and line, and every squad member's
   stamina each half second with its state (`on`, or `off x` its refill factor).
@@ -57,35 +58,44 @@ Each frame, for every squad member with a skill, the controlled one and the AI a
   delay before the refill): stamina rises by `stamina-recovery` × dt × a factor by what the
   character is doing (the motion state): ×0.25 dashing, the demo's sprint (Shift, and the AI's
   sprint to catch up); ×2 crouched still (kneeling, `Action::Crouched` not moving); ×1 otherwise,
-  the crouch walk and the kneel's way down and up (MT_TRANSITION, measured ×1) included. A ×4
+  the crouch walk, the kneel's way down and up (MT_TRANSITION, measured ×1) and a knock-down
+  (MT_KNOCKDOWN, a sprint's too) included. A ×4
   while a byte at char+0x5c is set is left out: nothing in the takes set it.
 * Clamped to 0..max on every write. Full at spawn (and a respawn). The dead don't change (take30:
   Brutus's 94.11 stays for the 9.4 s after his death).
 
 ## The toggle
 
-V asks the controlled character's skill to toggle (`Skill::request`); a squad order will too
-(#33's "Toggle Ability"). The command handler (0x1224a5) calls the skill's own toggle, which
-answers one of three ways (`Toggle`):
+V asks the controlled character's skill to toggle (`Skill::request`, read after the hand-over so
+a press in that frame goes to the new character); a squad order will too (#33's "Toggle
+Ability"). The command handler (0x1224a5) calls the skill's own toggle, which switches the skill
+itself or not, and whose return picks the motion (0x1224e4): 0 none, 1 the type's overlay, 2
+MT_TOGGLE_SPECIAL. In the demo (`Toggle`):
 
 * **Refused**: nothing at all happens. No motion, sound, text or HUD change (take03 2.0 s, take11
   52.0 s; the low-stamina blink already running isn't a reaction to it).
-* **Now**: the skill switches at once, and the motion set's toggle overlay plays if it has one.
-* **At the clip's event**: the overlay plays and the skill switches at its event (the game's
-  animation event handler, FUN_00117660).
+* **Now**: the skill switches at once; `overlay` would play the overlay too (a toggle that
+  switches and returns 1; none of the four).
+* **At the clip's event**: the toggle returns 1 without switching, the overlay plays and the skill
+  switches at its event (the game's animation event handler, FUN_00117660).
 
-The overlays are the motion sets' `<overlay motion-type=44>` (OMT_SPECIAL_ON) and `43`
-(OMT_SPECIAL_OFF) (`Game::skill_overlays`, read from `ms_<name>.xmb`; `prefix-type` 1 puts
-`Sc_w1_` / `Sc_w2_` before the script for the held weapon's stance). They're played as the
+For a 1 the handler looks the overlay up by the skill's state after the toggle, OMT_SPECIAL_OFF
+(43) if it's on and OMT_SPECIAL_ON (44) if not (0x122500-0x122564), the only lookup of those two
+overlay types in default.xbe, and queues it only into a free overlay slot (char+0x218, or +0x244
+by the overlay record's +0x3d bit 2: 0x12253a-0x122587). The overlays are the motion sets'
+`<overlay motion-type=44 / 43>` (`Game::skill_overlays`, read from `ms_<name>.xmb`; `prefix-type`
+1 puts `Sc_w1_` / `Sc_w2_` before the script for the held weapon's stance). They're played as the
 reload is, the whole body standing and the upper body on the move (`Loaded::skill_clips`,
 `step_player`).
 
-| | Toggle | Overlay | Switches |
-|---|---|---|---|
-| Tex | 0x13d490 | `Sc_w1_bz_start` / `Sc_w1_bz_stop`, 1.0 s | at the clip's 0.50 s event (eaba3d48 on, 14ee2201 off). A 1.0 s timer from an accepted press refuses presses meanwhile; switching on also needs him free (FUN_00117210) |
-| Brutus | FUN_0013bfe0 | `Sc_w1/w2_spirit`, 1.5 s, at the on only | at the press |
-| Hawk | FUN_0013cf90 | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (her clip under way counts); at stamina 0 or dead: off at once, no clip |
-| Flint | FUN_0013cad0 | none | at the press |
+| | Toggle | Returns | Overlay | Switches |
+|---|---|---|---|---|
+| Tex | 0x13d490 | 1 | `Sc_w1_bz_start` / `Sc_w1_bz_stop`, 1.0 s | at the clip's 0.50 s event (eaba3d48 on, 14ee2201 off). A 1.0 s timer from an accepted press refuses presses meanwhile; switching on also needs him free (FUN_00117210, 0x13d5c4) and 10% (0x13d5d3) |
+| Brutus | FUN_0013bfe0 | 0 (0x13c00e, both ways) | none: his motion set's `Sc_w1/w2_spirit` never plays from the button | at the press |
+| Hawk | FUN_0013cf90 | 1; 0 at stamina 0 or dead | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way counts); at stamina 0 or dead: off at once, no clip |
+| Flint | FUN_0013cad0 | 0, or 2 with a rifle (MT 45, never seen in the takes) | none | at the press |
+
+Brutus's and Flint's toggles don't ask FUN_00117210 (Flint's makes checks of its own, #124's).
 
 The demo switches 0.50 s (Tex) and 0.83 s (Hawk) after the press frame (a clip started this frame
 starts moving the next); the takes measured 0.53 s for Tex, the event plus about one 30 Hz frame,
@@ -93,7 +103,11 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
 
 * **Switching on** (FUN_0010e470) needs stamina ≥ 10% of the maximum (equal is allowed). Tex's and
   Hawk's toggles check it before their clip; Brutus's and Flint's switch is refused by it the
-  same silent way (no overlay plays then).
+  same silent way.
+* **Free to act** (`free_to_act`, the demo's FUN_00117210): alive, not knocked down, no grenade
+  held (charging one: V then is refused instead of dropping the throw) and no reload, throw,
+  medkit, weapon switch or toggle under way. FUN_00117210 itself tests the action slot +0x214,
+  +0x225, the dead flag and the items held in +0x1fc / +0x200.
 * **At 0** each skill ends as its toggle does: Tex plays his stop clip and goes off 0.5 s later,
   on at 0 meanwhile (the repeated commands refused by his timer; take02); Brutus, Hawk and Flint
   go off in that frame (take07, take11, take17).
@@ -103,9 +117,14 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
   clip dry; Brutus's charge). Being hit doesn't (take27).
 * **Handing control over doesn't end it** (take19): the skill stays on and drains on the
   character you left, under the AI; it's on when control comes back. A clip under way plays on.
-* A knock-down cuts a toggle's clip short, and the switch it carried with it.
-* **One overlay at a time**: no reload, throw, item use or weapon switch starts during a toggle's
-  overlay, and the aim doesn't turn the gun over it.
+* **The demo's choices** (not traced in the game):
+  * a knock-down cuts a toggle's clip short, and the switch it carried with it (the ragdoll
+    takes over the pose);
+  * one overlay at a time: no reload, throw, medkit or weapon switch starts during a toggle's
+    overlay. The code shows only that a toggle overlay goes into a free overlay slot (above);
+    whether a reload, throw or switch waits for one isn't traced.
+  * The aim doesn't turn the gun over a toggle's overlay: every motion set's `<overlay>` entry
+    says aim="false".
 * The squad AI never switches a skill on by itself (take32: 60 s of fighting); only the order will
   (#33).
 
@@ -116,17 +135,43 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
   / 1656217b) at full volume, in 2D, **for the controlled character only** (FUN_0010e7a0 asks
   FUN_00112790; take18: an AI Hawk's switches are silent). At the switch, not the press. The off
   doesn't cut the start sound (take08: Brutus's 6.1 s rumble plays on).
-* Each switch sends a chatter tag, said through `say()` 0.1 s later (the takes: 0.03-0.5 s, mostly
-  0.05-0.2): on h_1c0514bd; off with stamina left h_09087c9c; off at 0 h_ee0a5cbc (the stamina
-  tested at 0x10e40d; leads.md had the two off tags swapped). The AI's lines are heard too.
-* **The chance is a guess** (spec Part 1 section 4, open question 1): the chatter block's
-  `h_ea21ae4b` (10 on, 20 off, 30 at 0) read as a percentage, as `play_pickups.rs` reads the
-  medkit line's. The game's gate (FUN_00140a60) does roll a percentage against a field of the
-  line's record (FUN_001374c0), and the parser stores this attribute at that offset of the record
-  it fills (0x19ca9a), but they may not be the same record, and the gate also checks a condition
-  per line (FUN_001372c0: the off line's needs a count at char+0x5a8 of 2 or more, not traced)
-  and a time throttle. The takes heard the on line 13 times in 35, the off line 3 in 23 (all
-  Flint's), the line at 0 2 in 9.
+* Each switch sends a chatter tag (on h_1c0514bd; off with stamina left h_09087c9c; off at 0
+  h_ee0a5cbc, the stamina tested at 0x10e40d; leads.md had the two off tags swapped) through the
+  game's chatter gate, FUN_00140a60 (`skill_line`; the analyst's
+  `todo/35-special-skills/answer-120-chatter.md`). Each `<chatter_line>` block gives it its
+  values (`Game::chatter_blocks`, read with the parser's defaults, FUN_0019cd70), the same for
+  the four: `probability` 50, `replay-delay` 10 / 20 / 30 s, `priority` 1 / 1 / 5. In the code's
+  order:
+  * **Replay delay** (FUN_001263e0): once a character has said the tag it can't say it again for
+    its replay-delay (started when the line is said, FUN_00140cd0 -> FUN_00126460; counted down by
+    the character update, FUN_0011c100). Per character: Hawk's line doesn't hold Tex's.
+  * **Distance**: beyond 45 m of the player's character no line (FUN_001409a0); beyond 15 m a step
+    of priority less (FUN_001409c0), so a squadmate more than 15 m away never says the on and off
+    lines (priority 1 -> 0, refused). The player's own lines are at 0 m.
+  * **Condition** (FUN_001372c0, FUN_00137360): the block's condition value must lie in one of
+    its variants' ranges (each sound_id's h_0ab96f95 / h_16087610, 0..100 when not given). The on
+    line's kind is the default (0): any variant. The off line with stamina left tests char+0x5a8,
+    which only ever holds 0 in default.xbe: Tex's and Brutus's variants need 2..100, Hawk's
+    1..100, so only Flint (no ranges) says it. The line at 0 tests FUN_0001b460, read as the
+    enemies the character is fighting (inferred): Hawk's variants need 1..100, so she says it only
+    in a fight. The demo counts 1 while a hostile is in the speaker's sight (`hostile_in_sight`):
+    **a guess**; the main game has no enemies yet, so she never says it there.
+  * **Roll**: `probability` % (FUN_001374c0): 50. `BF_SKILL_CHATTER=<percent>` sets it.
+  * **Variant**: picked at random among those that fit and haven't been said yet; when all have,
+    the list starts over (FUN_001371f0; per character and tag, `LineHistory`, one per map).
+  * **A dead speaker is silent** (FUN_0013fab0): the line of the death's off isn't heard.
+  * **The queue: a stand-in.** The game has one chatter queue for everyone: a playing line of the
+    same or lower priority makes a new one wait (up to the block's 5 s), a waiting line of the same
+    or higher priority refuses it (FUN_00141020, FUN_00140a40). The demo refuses a skill line while
+    its speaker is talking or has a line due (its own `say()` check), and nothing else.
+  * The line starts the next frame: the code has no delay of its own (the manager's update starts
+    it), and the samples have no silence before the voice (0-0.07 s); the takes' 0.03-0.5 s from
+    the switch to the voice isn't explained (a wait behind another line, inferred).
+* What the takes heard fits: the on line 13 times in 26 for Tex, Hawk and Flint (50%); the off
+  line 3 in 6 for Flint and never for the others (0 of 17); the line at 0 never for Hawk (out of a
+  fight). Brutus's on line was never heard (0 of 9): the code doesn't explain it; his 6.1 s start
+  rumble may have hidden it (answer-120-chatter 1.6). The other lines (`hurt`'s, the follow line,
+  the death cry) still go through `say()` without the gate: a ticket of their own.
 
 ## HUD
 
@@ -191,6 +236,14 @@ game's fire hook +0xb0, item use +0x104, damage taken +0xd8, visibility +0xe4, n
 damage dealt +0xec, the reticle's +0xf8 / +0xfc / +0x100, the AI's hold fire +0x108, the overlay
 filter +0xa4) are added to the trait with the base class's answer as their default.
 
+Known limits the skill tickets will meet (not changed yet):
+* `toggle` gets only `&Player`. Tex's clip top-up at the press (#121) takes rounds from the
+  squad's `Reserve`, a resource: his toggle will need `&mut Player` and the resources (or the
+  top-up done by the caller from what the toggle returns).
+* A system outside the character can't reach a concrete skill's own state (Hawk's level, Flint's
+  target) through `Box<dyn SkillKind>`: it will need an `as_any_mut` on the trait to downcast, or
+  the state kept on `Skill` / `Player` where those systems can read it.
+
 ## How it was checked
 
 Captures on the flat floor (`BF_MAP=flat BF_TEST_GOTO=0,4,0,4`, campaign rates) and sdm_e34,
@@ -212,10 +265,17 @@ rig's time base):
 
 **Timings**: Tex on 0.53 s after the press frame at 15 fps (0.50 at 60), off at 0 0.53 s after
 the frame it reached 0 (take02: 0.51-0.56); Hawk on 0.87 s after the press frame at 15 fps;
-Brutus and Flint in the press frame, off in the frame of 0; 9.1 refused (`BF_TEST_STAMINA=9@1.9`),
-11.2 on (take03's sequence). The AI's Tex at 0 after a hand-over: his stop clip, off 0.53 s
-later, no sound, its line heard (`BF_SKILL_CHATTER=100`). Death with Vengar on: off in the frame
-of death, the end sound, the stamina frozen.
+Brutus and Flint in the press frame, off in the frame of 0, Brutus with no overlay; 9.9 refused
+and 10.0 on (the poke and the press in one frame; take03's 9.2 / 11.2). The AI's Tex at 0 after a
+hand-over: his stop clip, off 0.53 s later, no sound, its line heard (`BF_SKILL_CHATTER=100`).
+Death with Vengar on: off in the frame of death, the end sound, the stamina frozen. V while a
+grenade charges (`BF_TEST_THROW=1.0,1.0 BF_TEST_SKILL=1.5`): refused, the grenade thrown. A
+knock-down mid-sprint (`BF_TEST_SPRINT`, `BF_TEST_KNOCK`): x1 while down.
+
+**Chatter** (`BF_SKILL_CHATTER=100`, presses at 1, 6 and 9 s, `BF_TEST_STAMINA=2@13`): each
+character said the on line at 1 s and was refused it at 9 s (its replay delay, 1.9 s left); the off
+line with stamina left at 6 s was said by Flint only (Tex, Brutus: no variant for 0 in 2..100;
+Hawk: 1..100); the line at 0 by Tex, Brutus and Flint, not Hawk (no fight).
 
 **HUD**, side by side with the takes at the same scale:
 * Bars at full: x 73.4-263.9 for Tex, 73.4-247.3 for Brutus, as take01 / take06.
@@ -234,7 +294,9 @@ of death, the end sound, the stamina frozen.
 * The name's letter cores span x 56.7-130.0, y 89.6-103.6 ("Berserker"; take01 56.7-130.0, 90.0-103.3);
   "Vengar" 56.7-108.0 against take06's 55.3-110.0 (the demo's font isn't the game's).
 
-**Guessed or open**: the chatter chance (above); what holds the name 0.15 s; which message
-widgets push the name down; the blink's colour operation (the red copy matches the takes'
-pixels); the ×4 refill; Brutus and Flint at the 10% threshold (code only); the demo's frame is
-~3 units longer on the right than the game's (the tutorial picture's proportions, play.md).
+**Guessed or open**: the chatter queue (a stand-in) and the fight count for the line at 0 (a
+guess); Brutus's unheard on line; what holds the name 0.15 s; which message widgets push the name
+down; the blink's colour operation (the red copy matches the takes' pixels); the ×4 refill;
+Brutus and Flint at the 10% threshold (code only); the demo's choices under "The toggle"; the
+demo's frame is ~3 units longer on the right than the game's (the tutorial picture's proportions,
+play.md).

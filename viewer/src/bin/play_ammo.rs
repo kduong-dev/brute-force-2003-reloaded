@@ -208,7 +208,9 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
     let def = &held.def;
     let size = def.ammo.max(1);
     // (knocked down: step_player doesn't run for them, so nothing may start here either)
-    // (nor during a skill's toggle overlay: one overlay at a time, play_skills.rs)
+    // (nor during a skill's toggle overlay, play_skills.rs: one overlay at a time is the demo's
+    // choice; the game queues a toggle overlay only into a free overlay slot, char+0x218 or +0x244,
+    // 0x12253a-0x122587, and whether a reload waits for one isn't traced)
     let busy = u.reloading.is_some() || u.switching.is_some() || u.throwing.is_some() || u.using.is_some() || knocked_down(u)
         || u.skill.toggling.is_some();
     // a recharging gun never reloads (FUN_00120d40's ammo-regen branch, message 0x53); the test

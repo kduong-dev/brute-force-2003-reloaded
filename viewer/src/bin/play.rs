@@ -1221,8 +1221,9 @@ struct Loaded {
     /// the throwing hand: bone and the grip point in its frame
     throw_hand: Option<(usize, Vec3)>,
     /// the skill's toggle overlays, [on, off] by stance (the motion set's OMT_SPECIAL_ON / OFF,
-    /// `Game::skill_overlays`; play_skills.rs): Tex's Sc_w1_bz_start / bz_stop, Brutus's
-    /// Sc_w1/w2_spirit (on only), Hawk's Sc_w1/w2_activate_stealth
+    /// `Game::skill_overlays`; play_skills.rs): Tex's Sc_w1_bz_start / bz_stop, Hawk's
+    /// Sc_w1/w2_activate_stealth. (Brutus's Sc_w1/w2_spirit is loaded too, but his toggle never
+    /// plays it: it returns 0, FUN_0013bfe0.)
     skill_clips: [[Option<OverlayClip>; 2]; 2],
 }
 
@@ -4060,7 +4061,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     // ---- weapons: switch and fire ----
     let armed = !l.weapons.is_empty();
-    // (one overlay at a time: not during a skill's toggle overlay either)
+    // (not during a skill's toggle overlay either: one overlay at a time is the demo's choice.
+    // The game queues a toggle overlay only into a free overlay slot, char+0x218 or +0x244,
+    // 0x12253a-0x122587; whether a switch waits for one isn't traced)
     if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
         && p.skill.toggling.is_none() {
         let to = (p.weapon + 1) % l.weapons.len();
@@ -4154,6 +4157,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // grenade is in the hand from the reach event and leaves it at the release event. Placed
     // (Roller, Sentry): set down at the feet at the press, no meter
     let kind = match p.item { Item::Grenade(k) if p.grenades.get(k).is_some_and(|&n| n > 0) => kits.get(k).map(|kit| (k, kit)), _ => None };
+    // (not during a skill's toggle overlay: the demo's choice, as for the weapon switch above)
     let can_throw = kind.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
         && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && p.skill.toggling.is_none()
         && matches!(p.action, Action::None) && !p.on_all_fours;
@@ -4450,7 +4454,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
     // aim the gun itself: yaw and pitch from the barrel in the animated pose to what the crosshair
-    // is on, turned over the spine bones that carry the trigger arm
+    // is on, turned over the spine bones that carry the trigger arm. Not over a skill's toggle
+    // overlay: the motion sets' `<overlay>` entries all say aim="false" (ms_*.xml; that the
+    // game's aim follows the flag isn't traced)
     let held = l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|h| (w, h)));
     let want_aim = if upper_aim && armed && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
         && p.skill.toggling.is_none() { 1.0 } else { 0.0 };

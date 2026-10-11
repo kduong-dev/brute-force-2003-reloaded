@@ -190,9 +190,9 @@ pub struct Game {
     pub character_skills: HashMap<String, SkillData>,
     /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`)
     pub skill_overlays: HashMap<String, SkillOverlays>,
-    /// character name -> chatter line tag -> its block's `h_ea21ae4b` (10, 20 and 30 on the
-    /// skill's three lines; play_skills.rs reads it as the chance in %, a guess)
-    pub chatter_chance: HashMap<String, HashMap<u32, i64>>,
+    /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
+    /// `ChatterBlock`; play_skills.rs's skill lines go through it)
+    pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
     /// ground decals of objecttypes `<decal>`, by name
     pub decals: HashMap<u32, DecalDef>,
     /// object type name -> its mesh archetype (objecttypes `<base mesh-name>` around `<base name>`)
@@ -413,12 +413,44 @@ fn skill_data(e: &Element) -> Option<SkillData> {
 
 /// The character type's flag that turns its stamina update on (name not recovered).
 const H_STAMINA_UPDATE: u32 = 0xE78E_FBB2;
-/// A chatter block header's h_ea21ae4b (name not recovered): 10, 20 and 30 on the skill's on,
-/// off and off-at-0 lines; play_pickups.rs reads the medkit line's 30 as the chance in %.
-/// default.xbe's chatter gate rolls a percentage against a field of the line's record
-/// (FUN_001374c0, `rand % 100 + 1 <= record+4`), and the parser (0x19ca9a) stores this
-/// attribute at +4 of the record it fills; that the two records are the same isn't settled.
-const H_CHATTER_CHANCE: u32 = 0xEA21_AE4B;
+
+/// What the game's chatter gate (FUN_00140a60) reads of a `<chatter_line>` block (h_f74e6a16,
+/// `common/characters/<name>_chatter.xml`), with the defaults the parser sets (FUN_0019cd70; the
+/// header's attributes FUN_0019ca10, the variants FUN_0019c5d0, copied into the runtime record by
+/// FUN_00136ab0). For the skill lines: probability 50, replay-delay 10 / 20 / 30 s, priority 1 /
+/// 1 / 5 (on, off with stamina left, off at 0). todo/35-special-skills/answer-120-chatter.md.
+#[derive(Clone, Debug)]
+pub struct ChatterBlock {
+    /// `probability` (h_ead503b2, name recovered by hashing): the gate's roll in % (FUN_001374c0:
+    /// 100 or more always passes); 100 when not given
+    pub probability: i64,
+    /// `replay-delay` (h_ea21ae4b, recovered by hashing): seconds the speaker can't say the tag
+    /// again once said (char+0x7f4, FUN_00126460); 0 when not given
+    pub replay_delay: f32,
+    /// `priority` (h_e146dc86, recovered by hashing); 5 when not given
+    pub priority: i64,
+    /// the condition kind (h_ff361b85, not recovered; the runtime record's +0x58): which value
+    /// the variants' ranges test (FUN_00137360); h_1409c600 (its value 0) when not given
+    pub condition: u32,
+    /// h_f1cb4e63 (not recovered; default true): a step of priority less beyond 15 m of the
+    /// player (FUN_001409c0); h_19be8951 (default true): not said beyond 45 m (FUN_001409a0)
+    pub far_step: bool,
+    pub far_cut: bool,
+    /// the sound variants: id and the condition value's range (h_0ab96f95 min, 0 when not given;
+    /// h_16087610 max, 100), in the file's order
+    pub variants: Vec<(u32, i64, i64)>,
+}
+
+/// A chatter block's condition kind when it gives none (FUN_0019cd70's default; FUN_00137360
+/// gives it the value 0).
+pub const CHATTER_CONDITION_NONE: u32 = 0x1409_C600;
+/// The block header's and the variants' attributes whose names weren't recovered (see
+/// `ChatterBlock`).
+const H_CHATTER_CONDITION: u32 = 0xFF36_1B85;
+const H_CHATTER_FAR_STEP: u32 = 0xF1CB_4E63;
+const H_CHATTER_FAR_CUT: u32 = 0x19BE_8951;
+const H_CHATTER_MIN: u32 = 0x0AB9_6F95;
+const H_CHATTER_MAX: u32 = 0x1608_7610;
 
 /// A motion set's skill toggle overlays (`ms_<name>.xmb`, `<overlay motion-type=..>`): [on, off],
 /// the entries of OMT_SPECIAL_ON (44) and OMT_SPECIAL_OFF (43), each its script and whether the
@@ -565,7 +597,7 @@ impl Game {
             character_decals: HashMap::new(),
             character_skills: HashMap::new(),
             skill_overlays: HashMap::new(),
-            chatter_chance: HashMap::new(),
+            chatter_blocks: HashMap::new(),
             decals: HashMap::new(),
             object_meshes: HashMap::new(),
             liquids: HashMap::new(),
@@ -619,7 +651,7 @@ impl Game {
             let who = n.rsplit('/').next().unwrap_or(&n).trim_end_matches("_chatter.xmb").to_string();
             let mut lines: HashMap<u32, Vec<u32>> = HashMap::new();
             let mut responses: HashMap<u32, u32> = HashMap::new();
-            let mut chances: HashMap<u32, i64> = HashMap::new();
+            let mut blocks: HashMap<u32, ChatterBlock> = HashMap::new();
             for block in root.walk().into_iter().filter(|e| e.name == 0xF74E_6A16) {
                 let all = block.walk();
                 let Some(tag) = all.iter().find_map(|e| e.attr(h("line_tag"))).and_then(|v| v.as_hash()) else { continue };
@@ -628,14 +660,27 @@ impl Game {
                 if let Some(r) = all.iter().find_map(|e| e.attr(h("response_id"))).and_then(|v| v.as_hash()) {
                     responses.insert(tag, r);
                 }
-                // (the block header's h_ea21ae4b, beside its line_tag)
-                if let Some(c) = all.iter().find(|e| e.attr(h("line_tag")).is_some()).and_then(|e| e.attr(H_CHATTER_CHANCE)).and_then(|v| v.as_i64()) {
-                    chances.insert(tag, c);
-                }
+                // the gate's values: the header beside the line_tag, and each sound_id with its
+                // range (a later block with the same tag is dropped, as FUN_001352a0 does)
+                let Some(head) = all.iter().find(|e| e.attr(h("line_tag")).is_some()) else { continue };
+                let int = |e: &Element, k: u32, or: i64| e.attr(k).and_then(|v| v.as_i64()).unwrap_or(or);
+                let variants = all.iter().filter_map(|e| {
+                    let id = e.attr(h("sound_id")).and_then(|v| v.as_hash())?;
+                    Some((id, int(e, H_CHATTER_MIN, 0), int(e, H_CHATTER_MAX, 100)))
+                }).collect();
+                blocks.entry(tag).or_insert(ChatterBlock {
+                    probability: int(head, h("probability"), 100),
+                    replay_delay: head.attr(h("replay-delay")).and_then(|v| v.as_f32()).unwrap_or(0.0),
+                    priority: int(head, h("priority"), 5),
+                    condition: head.attr(H_CHATTER_CONDITION).and_then(|v| v.as_hash()).unwrap_or(CHATTER_CONDITION_NONE),
+                    far_step: int(head, H_CHATTER_FAR_STEP, 1) != 0,
+                    far_cut: int(head, H_CHATTER_FAR_CUT, 1) != 0,
+                    variants,
+                });
             }
             self.chatter.insert(who.clone(), lines);
             self.chatter_response.insert(who.clone(), responses);
-            self.chatter_chance.insert(who, chances);
+            self.chatter_blocks.insert(who, blocks);
         }
         // the motion sets' skill toggle overlays: ms_<name>.xmb `<overlay motion-type=44|43
         // prefix-type script>` (the first archive with the set wins)
