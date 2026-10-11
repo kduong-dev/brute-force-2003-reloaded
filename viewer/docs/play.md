@@ -669,7 +669,8 @@ The takes' places, with
 * The homing takes (17-19) on the test map: `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5
   BF_CAMERA_PITCH=-0.08 BF_TEST_INSTANT_KILL=0` and Brutus dummies 24 m out 2 m either side of
   the line (17), 30 m out (18), or 30 m out 4 m left (19); the takes' camera 3.5 m behind Tex:
-  `BF_TEST_FREECAM=0.5,4.5,1.3,23.5,0,-3`. take07's 45 m: one dummy at (4.5, -25). Four shots
+  `BF_TEST_FREECAM=0.5,4.5,1.3,23.5,0,-3`. take07's 45 m: one dummy at (4.5, -25), with
+  `BF_CAMERA_PITCH=-0.115` to put the crosshair on it (at -0.08 the line passes over him). Four shots
   2.4 s apart, each at fresh dummies (`BF_TEST_TRIGGER=3.0-3.15,5.4-5.55,7.8-7.95,10.2-10.35`,
   the dummies spawned again at 5.0, 7.4 and 9.8 s, and
   `BF_TEST_NPC_REMOVE=4.95,all;7.35,all;9.75,all`) give eight children each.
