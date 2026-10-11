@@ -398,7 +398,7 @@ fn main() {
                             let a = &model.anims[c];
                             let ev: Vec<String> = game.events(a.event_channel).iter().map(|(t, e)| format!("{t:.2}:{e:08x}")).collect();
                             let root = locomotion::root_delta(&model, &game, c, 0.0, a.duration - 1e-3);
-                            println!("{name:7} {n:24} clip {c:3} {:.2}s bones {:3} root {:.2} events [{}]", a.duration, a.targets.len(), root, ev.join(" "));
+                            println!("{name:7} {n:24} clip {c:3} {:.2}s bones {:3} root {:.2} speed {:?} events [{}]", a.duration, a.targets.len(), root, a.move_speed, ev.join(" "));
                         }
                         None => println!("{name:7} {n:24} -"),
                     }
@@ -758,7 +758,7 @@ struct Layer {
     once: bool,
 }
 
-#[derive(Default, Clone, Copy, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 enum Gait {
     #[default]
     Idle,
@@ -789,6 +789,30 @@ fn side_step(rel: f32, set: &[Option<usize>; 4], armed: bool) -> Option<Gait> {
 const SIDE_FROM: f32 = 0.52;
 const SIDE_BACK_FROM: f32 = 1.75;
 const BACK_FROM: f32 = 2.62;
+
+/// BF_MOVE_LOG=1: the controlled character's position, facing, gait and clip every half second,
+/// with the clip whose root motion moves it when that's a stand-in (`root_stand_ins`).
+fn move_log(p: &Player, l: &Loaded, dt: f32) {
+    if (p.sim_time * 2.0).floor() == ((p.sim_time - dt) * 2.0).floor() || std::env::var("BF_MOVE_LOG").is_err() {
+        return;
+    }
+    let top = p.layers.last().map(|x| x.clip);
+    println!("t={:.2} pos ({:.2}, {:.2}) yaw {:.0} gait {:?} {:?} clip {:?} root from {:?}", p.sim_time, p.position.x, p.position.z,
+             p.yaw.to_degrees(), p.gait, p.action, top, top.and_then(|t| l.clips.root_stand_in.get(&t)));
+}
+
+/// A looping clip's root motion from `t` over `dt`; a side step without root motion of its own
+/// takes its stand-in walk's (`root_stand_ins`), at the same point of the cycle, one walk cycle
+/// per cycle of the side step.
+fn clip_root_delta(model: &Character, game: &Game, clips: &Clips, clip: usize, t: f32, dt: f32) -> Vec3 {
+    match clips.root_stand_in.get(&clip) {
+        Some(&walk) => {
+            let k = model.anims[walk].duration / model.anims[clip].duration.max(1e-3);
+            locomotion::root_delta(model, game, walk, t * k, dt * k)
+        }
+        None => locomotion::root_delta(model, game, clip, t, dt),
+    }
+}
 
 /// A side step's clip in a set of four (forward left, forward right, back left, back right).
 fn side_index(left: bool, back: bool) -> usize {
@@ -835,6 +859,39 @@ struct Clips {
     /// per weapon slot (Sc_w1_* holds the first weapon, Sc_w2_* the second): carried and ready
     /// (rp_*, raised and pointing ahead, used while aiming or firing)
     slots: [SlotClips; 2],
+    /// side steps whose own root doesn't move, and the walk whose root motion moves them instead
+    /// (`root_stand_ins`)
+    root_stand_in: HashMap<usize, usize>,
+}
+
+/// Below this a clip's own speed (`AnimDef::move_speed`, m/s) counts as none: FUN_0012c6c0's
+/// test before it divides by the speed (0x3a4fe4 = 0.001).
+const NO_CLIP_SPEED: f32 = 0.001;
+
+/// The game doesn't move a walking character by its clip: FUN_0012c6c0 sets the ground speed
+/// from the type's `speeds` along the stick (the clip's root term is scaled by 0x4699e4, which
+/// nothing writes: zero), and plays a clip without a speed of its own at rate 1. The demo moves by
+/// root motion, so a side step whose root stays put (Tex's Sc_w1_rp_f_side_walk_l, speed 5.9e-05
+/// and no root translation: #170) borrows the root motion of the walk in its direction, forward
+/// (rp_walk, cr_walk) or back (rp_back_walk, cr_back_walk). Every other side step in the squad's
+/// sets carries its walk's speed and length, or within 6% (Flint's and Hawk's crouched ones);
+/// Tex's other three Sc_w1 side steps carry rp_walk's and rp_back_walk's exactly.
+fn root_stand_ins(model: &Character, slots: &[SlotClips; 2]) -> HashMap<usize, usize> {
+    let speed = |c: usize| model.anims[c].move_speed.unwrap_or(f32::MAX);
+    let mut out = HashMap::new();
+    for s in slots {
+        for (side, fwd, back) in [(&s.rp_side, s.rp.walk, s.rp.walk_back), (&s.cr_side, s.cr_walk, s.cr_back_walk)] {
+            for (k, clip) in side.iter().enumerate() {
+                let walk = if k < 2 { fwd } else { back };
+                if let (Some(c), Some(w)) = (*clip, walk) {
+                    if speed(c) < NO_CLIP_SPEED && speed(w) >= NO_CLIP_SPEED {
+                        out.insert(c, w);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 #[derive(Default, Debug)]
@@ -2287,6 +2344,7 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
     };
     let slots = [slot("Sc_w1_"), slot("Sc_w2_")];
     Clips {
+        root_stand_in: root_stand_ins(model, &slots),
         slots,
         loco,
         jump_crouch: named("Sc_w1_jump_crouch"),
@@ -2950,6 +3008,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     if !player.dead && !knocked_down(&player) {
         if let Some(l) = player.loaded.take() {
             step_player(&mut player, &l, &game.0, kits, dt, &mut transforms);
+            move_log(&player, &l, dt);
             player.loaded = Some(l);
         }
     }
@@ -4403,7 +4462,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             delta += locomotion::root_delta(&l.model, game, layer.clip, layer.time, step) * layer.weight;
             layer.time = (layer.time + dt).min(d - 1e-3);
         } else {
-            delta += locomotion::root_delta(&l.model, game, layer.clip, layer.time, dt) * layer.weight;
+            delta += clip_root_delta(&l.model, game, c, layer.clip, layer.time, dt) * layer.weight;
             layer.time = (layer.time + dt) % d;
         }
         let mut pose = l.model.pose(game, layer.clip, layer.time, l.model.default_face, p.face_time);

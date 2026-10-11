@@ -116,6 +116,9 @@ pub struct Channel {
     pub blob: Arc<Vec<u8>>,
 }
 
+/// An animation archetype's own ground speed attribute (see `AnimDef::move_speed`).
+const H_MOVE_SPEED: u32 = 0xF962_8571;
+
 pub struct AnimDef {
     pub name: u32,
     pub duration: f32,
@@ -127,6 +130,12 @@ pub struct AnimDef {
     /// FUN_0023d4f0 puts a character's root node, the point a missile homes on (play_missile's
     /// `root_point`); None for the data's -100000 (the model's own height then)
     pub root_height: Option<f32>,
+    /// its own ground speed (m/s), attribute h_f9628571 (name not recovered): the clip record's
+    /// +8 (FUN_00286710's attribute handler at 0x286f0f, copied at 0x286a6b), which FUN_0012c6c0
+    /// divides a walk's speed by for the clip's play rate. On the squad's walks it is the root
+    /// channel's distance over the clip's length (Tex's Sc_w1_rp_walk 1.616: 1.83 m in 1.133 s);
+    /// 5.9e-05 on Tex's Sc_w1_rp_f_side_walk_l, whose root doesn't move. None when absent.
+    pub move_speed: Option<f32>,
 }
 
 /// Everything loaded from data/common.tgz (+ textures found in level archives on demand).
@@ -867,6 +876,7 @@ impl Game {
                             targets,
                             event_channel: hash_of(head.and_then(|p| p.attr(h("event-channel")))),
                             root_height: head.and_then(|p| p.attr(h("root-height"))).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).filter(|&r| r > -1000.0),
+                            move_speed: head.and_then(|p| p.attr(H_MOVE_SPEED)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))),
                         });
                     }
                     self.anim_sets.entry(set_name).or_insert(anims);
@@ -1509,7 +1519,8 @@ impl Character {
 
         let copy = |set: u32| -> Vec<AnimDef> {
             game.anim_sets.get(&set).map(|a| a.iter().map(|d| AnimDef {
-                name: d.name, duration: d.duration, targets: d.targets.clone(), event_channel: d.event_channel, root_height: d.root_height }).collect()).unwrap_or_default()
+                name: d.name, duration: d.duration, targets: d.targets.clone(), event_channel: d.event_channel, root_height: d.root_height,
+                move_speed: d.move_speed }).collect()).unwrap_or_default()
         };
         let anims = copy(h(name));
         let face_anims = copy(h(&format!("{name}face")));
