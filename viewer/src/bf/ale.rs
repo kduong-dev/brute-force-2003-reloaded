@@ -284,6 +284,15 @@ impl Node {
     pub fn curve(&self, p: u32, sp: f32, t: f32) -> Option<f32> {
         match self.params.get(&p)? { Value::Curve(c) => Some(c.at(sp, t)), _ => None }
     }
+    /// A curve's keys (time, value) for the user parameter `sp`: those of the first variant at
+    /// or past it (the last one past them all), unblended; none for a curve without keys. The
+    /// game's emit count adds its keys as they're passed (FUN_00065800).
+    pub fn curve_keys(&self, p: u32, sp: f32) -> Vec<(f32, f32)> {
+        match self.params.get(&p) {
+            Some(Value::Curve(c)) => c.0.iter().find(|v| v.0 >= sp).or(c.0.last()).map(|v| v.3.clone()).unwrap_or_default(),
+            _ => vec![],
+        }
+    }
     /// A float animation over life `k` (0-1).
     pub fn floats(&self, p: u32, sp: f32, k: f32) -> Option<f32> {
         match self.params.get(&p)? {
