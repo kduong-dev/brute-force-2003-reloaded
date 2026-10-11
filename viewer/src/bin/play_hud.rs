@@ -228,8 +228,8 @@ fn upright(w: u32, h: u32, px: Vec<u8>) -> Image {
 /// The original's health / stamina frame: the tutorial's picture of it (tutorial h_17f34cbe,
 /// 256 x 64, the + and bolt icons, the frame with its corner tabs and divider, both bars baked
 /// in). Cut in three across: the left cap with the icons, a middle that stretches, the right cap.
-/// Its baked bars are painted the empty-bar navy it shows itself (the stamina bar's empty end)
-/// and the live bars drawn over them. Upright texel columns and rows:
+/// Its baked bars are cleared (TB_EMPTY) and the live bars drawn over them. Upright texel columns
+/// and rows:
 const TUTORIAL_BAR: u32 = 0x17F3_4CBE;
 /// the picture's frame (icons to the right tab) and its pieces: the icons (drawn solid), then the
 /// frame's left cap, middle and right cap (drawn as glass)
@@ -241,45 +241,99 @@ const TB_RIGHT: (u32, u32) = (185, 212);
 /// the bars (health, stamina): rows, and the columns both span
 const TB_BAR_ROWS: [(u32, u32); 2] = [(22, 28), (35, 41)];
 const TB_BAR_COLS: (u32, u32) = (56, 200);
-const TB_EMPTY: [u8; 4] = [0, 20, 107, 255];
+/// The bars' empty part is see-through, the channel's inside clear (#35 spec 5.1: the sky shows
+/// through the empty stamina channel, take10 14 s; the dark scene through both, take07). It was
+/// the picture's own empty-bar navy (0 20 107) before the takes.
+const TB_EMPTY: [u8; 4] = [0, 20, 107, 0];
 /// where the picture's icons and frame go on the 640 x 480 screen (their top-left, native size: its body
 /// is 38 texels high, the old frame's 37)
 const TB_AT: (f32, f32) = (52.0, 39.0);
-/// The bars' length for a character's maximum health: Tex's 115 gives TB_FULL (the frame's
-/// length to height then matches a capture, 5.4; the picture's own bars are 144 texels).
-const TB_FULL: f32 = 184.0;
-const TB_FULL_HEALTH: f32 = 115.0;
 /// how opaque the frame is drawn (the picture is opaque, baked on the tutorial's screen; the
 /// capture's frame is glass, the sky showing through)
 const TB_ALPHA: f32 = 0.45;
+/// The picture row where the frame's lower half begins: the stamina widget's own frame (its
+/// pieces h_1289112b / h_f5678943 / h_0565a96e, 0xb7cb0), which the low-stamina blink tints
+/// (#35 spec 5.4: from y 57.3 down, take02; TB_AT puts picture row 12 at y 39, so 57.3 is row
+/// ~30).
+const TB_LOWER: u32 = 30;
 
-/// The bars' length (screen units) for a maximum health.
+/// The bars' left edge on the screen: the take's fill starts at x 73.0-73.3 in every take (#35
+/// spec 5.1; the picture's channel starts at 74, so the bar covers its first column).
+const BAR_X: f32 = 73.0;
+/// The bars' length per hit point of the character's maximum health: the bar widget's length is
+/// value / +0x6c (150) x +0x84 (249) units (FUN_000b7050), its value hit points for the health
+/// bar and stamina / max-stamina x max health for the stamina bar (FUN_000b7fb0, 0xb817d): 1.66
+/// units a hit point. Measured at full (#35 spec 5.1): Tex 190.0, Brutus 174.0, Flint 148.7,
+/// Hawk 106.7 (the code's 190.9, 174.3, 149.4, 107.9).
+const BAR_PER_HP: f32 = 249.0 / 150.0;
+/// A bar above 0 is drawn at least this long (FUN_000b7050: 2 units; the takes' sliver at 0.4
+/// stamina, take02 16.3-17.0 s).
+const BAR_MIN: f32 = 2.0;
+
+/// The bars' full length (screen units) for a maximum health.
 fn bar_length(max_health: f32) -> f32 {
-    TB_FULL * max_health.max(1.0) / TB_FULL_HEALTH
+    max_health.max(1.0) * BAR_PER_HP
 }
 
-/// The tutorial picture's pieces (icons, left, middle, right), upright, the bars emptied.
-fn tutorial_frame(w: u32, h: u32, px: &[u8]) -> [Image; 4] {
+/// A bar's drawn length for its value (in hit points; FUN_000b7050).
+fn bar_fill(value: f32) -> f32 {
+    if value > 0.0 { (value * BAR_PER_HP).max(BAR_MIN) } else { 0.0 }
+}
+
+/// How far the frame's middle stretches and its right cap moves for a maximum health: the bars'
+/// end against the picture's own bar end (column TB_BAR_COLS.1).
+fn frame_stretch(max_health: f32) -> f32 {
+    BAR_X + bar_length(max_health) - (TB_AT.0 + (TB_BAR_COLS.1 - TB_ICONS.0) as f32)
+}
+
+/// The low-stamina blink's red: a red copy of the frame's lower half, each texel's luminance in
+/// red and this share of it in green, no blue, its own alpha. The takes: a red-phase pixel is
+/// ~ (L, 0.15 L + 14, ~24) of the normal pixel's luminance L (rms 6-11 levels, take02; the
+/// game's tint, bytes a0 20 20 ff at 0xb720a, combines in a way not traced). The bar channel's
+/// inside stays as it is.
+const LOW_GREEN: f32 = 0.15;
+
+/// One piece of the tutorial picture, its columns (upright, all its rows TB_ROWS), the bars
+/// emptied; `red`: the low-stamina blink's copy of it, its lower half (from TB_LOWER) in red
+/// (LOW_GREEN), the stamina channel's inside kept. (The halves are one image, not two nodes: two
+/// nodes left a seam between them.)
+fn tutorial_piece(w: u32, h: u32, px: &[u8], (x0, x1): (u32, u32), red: bool) -> Image {
     let at = |x: u32, y: u32| -> [u8; 4] {
         let in_bar = TB_BAR_ROWS.iter().any(|&(a, b)| (a..b).contains(&y)) && (TB_BAR_COLS.0..TB_BAR_COLS.1).contains(&x);
         if in_bar {
             return TB_EMPTY;
         }
         let i = (((h - 1 - y) * w + x) * 4) as usize;
-        [px[i], px[i + 1], px[i + 2], px[i + 3]]
-    };
-    [TB_ICONS, TB_LEFT, TB_MIDDLE, TB_RIGHT].map(|(x0, x1)| {
-        let mut out = vec![];
-        for y in TB_ROWS.0..TB_ROWS.1 {
-            for x in x0..x1 {
-                out.extend_from_slice(&at(x, y));
-            }
+        let p = [px[i], px[i + 1], px[i + 2], px[i + 3]];
+        if red && y >= TB_LOWER {
+            let l = 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32;
+            return [l.round() as u8, (l * LOW_GREEN).round() as u8, 0, p[3]];
         }
-        Image::new(bevy::render::render_resource::Extent3d { width: x1 - x0, height: TB_ROWS.1 - TB_ROWS.0, depth_or_array_layers: 1 },
-                   bevy::render::render_resource::TextureDimension::D2, out,
-                   bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
-    })
+        p
+    };
+    let mut out = vec![];
+    for y in TB_ROWS.0..TB_ROWS.1 {
+        for x in x0..x1 {
+            out.extend_from_slice(&at(x, y));
+        }
+    }
+    Image::new(bevy::render::render_resource::Extent3d { width: x1 - x0, height: TB_ROWS.1 - TB_ROWS.0, depth_or_array_layers: 1 },
+               bevy::render::render_resource::TextureDimension::D2, out,
+               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
 }
+
+/// The tutorial picture cut up (see TUTORIAL_BAR): the icons; the frame's left cap, middle and
+/// right cap, and their copies with the lower half red for the blink.
+struct TutorialFrame {
+    icons: Handle<Image>,
+    pieces: [Handle<Image>; 3],
+    red: [Handle<Image>; 3],
+}
+
+/// A piece of the frame: its image and its copy with the lower half (the stamina widget's own
+/// frame) red, shown while the low-stamina blink is red.
+#[derive(Component)]
+struct FrameBlink(Handle<Image>, Handle<Image>);
 
 /// The health / energy frame from its corner and edge (see BAR_FRAME_CORNER).
 fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
@@ -406,6 +460,10 @@ struct HudGen {
     bubble: Handle<Image>,
     /// skulls for the dead, by character
     skulls: [Handle<Image>; 4],
+    /// the stamina bar's fill (ENERGY_FILL), remade mixed toward white by its brighten, and the
+    /// texture's own texels it's made from
+    stamina_fill: Handle<Image>,
+    stamina_texels: Vec<u8>,
 }
 
 /// The radar frame's four diagonal health channels, by character (see HEALTH_BARS): texel index
@@ -484,6 +542,69 @@ fn radar_channels(w: usize, h: usize, px: &[u8]) -> [Vec<(usize, f32)>; 4] {
 
 const ENERGY_FILL: u32 = 0xE11C_7D04;
 
+/// The stamina bar widget (the HUD's bar widget, base class FUN_000b6cc0, stamina subclass
+/// FUN_000b7bf0; #35 spec 5.2-5.4). The fill brightens toward white when the value changes:
+/// set to 0.5 on a rise (+0xb8) and 1.0 on a fall (+0xbc) by FUN_000b7850, fading by 0.5 a
+/// second (FUN_000b75a0). So it's white while a skill drains it and pale while it refills (take01
+/// `f163`, `f1124`), and pale fades to teal in 1 s once full (take25 11.53-12.48 s).
+const BRIGHTEN_RISE: f32 = 0.5;
+const BRIGHTEN_FALL: f32 = 1.0;
+const BRIGHTEN_FADE: f32 = 0.5;
+/// The bar's shown value (the trail's end) follows the value up at +0x70 8 and down at +0x74 12
+/// bar units a second (FUN_000b75a0), 12 x 1.66 = 19.9 screen units a second for everyone (take03
+/// after the poke: 19.7 a second), after a delay of +0x64 / +0x60 (0 for stamina: FUN_000b7bf0;
+/// the health bar's fall delay is 1.0).
+const TRAIL_UP: f32 = 8.0;
+const TRAIL_DOWN: f32 = 12.0;
+/// The low-stamina blink (FUN_000b76c0): while the value is at most +0x68 0.15 of the max
+/// (FUN_000b7bf0) a triangle wave +0x40 runs between -0.5 and +0.5 of +0xac (1.0) at 1 a second,
+/// reset to 0 heading down whenever the value is above it; the frame's lower half is tinted
+/// while it's below 0 (the draw at 0xb71d0). So 1.0 s red, 1.0 s normal, starting red, stopping at
+/// once above 15% (take02, take03, take07, take11, take17: red 0.98-1.08 s, gaps 1.00-1.07 s).
+const LOW_STAMINA: f32 = 0.15;
+const BLINK_SPAN: f32 = 1.0;
+/// The skill's name under the bars (the HUD message widget h_1a5ceeb9, FUN_000c72b0 at hud+0xfc;
+/// text FUN_000c75c0, its font h_0c626fd5 at size 14), in the message blue (the takes' letter
+/// cores 189-197 206-212 242-249): the left edge, the line's top and the capital height, fitted
+/// so "Berserker"'s bright letter cores span the take's box, x 56.7-130.0 and y 90.0-103.3
+/// (take01 3.5 s, take03 7.93 s; the demo's font is the body atlas, a little narrower and
+/// taller: at the switch hint's size it spanned 55.3-126.7, and now spans x 56.7-130.0, y
+/// 89.6-103.6).
+const LABEL_X: f32 = 56.9;
+const LABEL_TOP: f32 = 85.5;
+const LABEL_CAP: f32 = 13.4;
+/// The label moves this much lower for each other message widget showing (0xc73b4-0xc73cb: 20
+/// units full screen). Here the switch hint, which sits in its place, counts: **a guess** (the
+/// takes never show the two together).
+const LABEL_STACK: f32 = 20.0;
+/// After the off the label stays at full for LABEL_HOLD, then fades at LABEL_FADE a second (the
+/// widget's alpha, 3.0 at 0x39a848, 0xc7473). The hold is measured, 0.13-0.18 s after the bar
+/// turns pale (takes 01, 02, 10, 15, 16, 17); what holds it in the code isn't traced.
+const LABEL_HOLD: f32 = 0.15;
+const LABEL_FADE: f32 = 3.0;
+
+/// The stamina bar widget's state (see BRIGHTEN_RISE ...), its fill's brighten as last drawn,
+/// and the skill's name label. Control passing resets it to the new character's at once, no
+/// trail or brighten carried over and the label shown or hidden (FUN_000b7940; take19 4.867 s).
+#[derive(Resource, Default)]
+struct StaminaBar {
+    /// the character it shows
+    who: Option<usize>,
+    /// the value (+0x34) and the shown value (+0x38, the trail's end), in hit points
+    value: f32,
+    shown: f32,
+    /// the brighten (+0x4c, 0..1) and the one the fill image was last made with
+    brighten: f32,
+    drawn: f32,
+    /// the blink's wave (+0x40) and its way (+0x44)
+    blink: f32,
+    blink_dir: f32,
+    /// the label: the skill's name (a string id), its opacity and the hold left after the off
+    label: u32,
+    label_alpha: f32,
+    label_hold: f32,
+}
+
 /// weapon rows: the first at y 43, the next 45 below
 const WEAPON_ROWS: usize = 3;
 /// A weapon's name over its count (after a pickup, and in the list after a switch): its left
@@ -511,6 +632,8 @@ enum Part {
     UsePrompt,
     /// "Q switch to <other weapon>." while the held gun and its reserve are empty
     SwitchHint,
+    /// the special skill's name while it's on (and a moment after), under the bars
+    SkillLabel,
     /// the item box (bottom right, while anything's carried): its panel, the grenade's icon, the
     /// item's name, how many, and NEW for a newly taken kind; the item list above it (Tab held)
     ItemBox,
@@ -555,9 +678,11 @@ enum SquadPart {
     Health(usize),
     /// the controlled character's health (top-left red bar)
     PlayerHealth,
-    /// the stamina bar, and the frame's stretching middle and its right cap (the tutorial
-    /// picture's frame: they follow the character's maximum health, see `bar_length`)
+    /// the stamina bar and its trail (see `StaminaBar`), and the frame's stretching middle and
+    /// its right cap (the tutorial picture's frame: they follow the character's maximum health,
+    /// see `bar_length`)
     PlayerStamina,
+    StaminaTrail,
     FrameMiddle,
     FrameRight,
     /// the selection's three chevrons on the radar
@@ -591,11 +716,16 @@ struct NameLabel {
 pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
         .init_resource::<NameLabel>()
+        .init_resource::<StaminaBar>()
         .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities),
-            (|mut commands: Commands| commands.insert_resource(NameLabel::default())).after(setup)))
+            (|mut commands: Commands| {
+                commands.insert_resource(NameLabel::default());
+                commands.insert_resource(StaminaBar::default());
+            }).after(setup)))
         .init_resource::<HudGen>()
         // (after the death camera: its label and reticle show the frame it decides them)
-        .add_systems(Update, (update_hud_widgets, update_squad_hud, update_scope).after(update_weapons).after(deathcam::death_cam)
+        .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
+                              update_hud_widgets, update_squad_hud, update_scope).after(update_weapons).after(deathcam::death_cam)
             .run_if(in_state(AppState::Playing)));
 }
 
@@ -724,7 +854,23 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let game = &mut game.0;
     let rim = images.add(sniper_rim());
     game.load_textures_for(&super::data_dir(), "tutorial", TUTORIAL_BAR);
-    let tutorial = game.texture_rgba(TUTORIAL_BAR).map(|(w, h, px)| tutorial_frame(w, h, &px).map(|i| images.add(i)));
+    let tutorial = game.texture_rgba(TUTORIAL_BAR).map(|(w, h, px)| {
+        let mut piece = |cols: (u32, u32), red: bool| images.add(tutorial_piece(w, h, &px, cols, red));
+        TutorialFrame {
+            icons: piece(TB_ICONS, false),
+            pieces: [TB_LEFT, TB_MIDDLE, TB_RIGHT].map(|c| piece(c, false)),
+            red: [TB_LEFT, TB_MIDDLE, TB_RIGHT].map(|c| piece(c, true)),
+        }
+    });
+    // the stamina bar's own fill image, remade as it brightens (see `StaminaBar`)
+    if let Some((w, h, px)) = game.texture_rgba(ENERGY_FILL) {
+        gen.stamina_fill = images.add(Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                                                 bevy::render::render_resource::TextureDimension::D2, px.clone(),
+                                                 bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                                                 bevy::asset::RenderAssetUsages::default()));
+        gen.stamina_texels = px;
+    }
+    let stamina_fill = gen.stamina_fill.clone();
     let bar_frame = game.texture_rgba(BAR_FRAME_CORNER).map(|(w, h, px)| images.add(bar_frame(w, h, &px)));
     let item_panel = game.texture_rgba(ITEM_PANEL).map(|(w, h, px)| images.add(upright(w, h, px)));
     let mut tex = |name: u32| texture(game, &mut images, &mut cache, name);
@@ -762,25 +908,30 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let (x0, y0, x1, y1) = BAR_FILL_RECT;
     let fill = |h: &Option<Handle<Image>>| ImageNode { rect: Some(Rect::new(x0, y0, x1, y1)), ..image(h, Color::WHITE) };
     gen.tutorial_frame = tutorial.is_some();
-    if let Some([icons, left, middle, right]) = tutorial {
+    if let Some(t) = tutorial {
         // the original's frame (see TUTORIAL_BAR): left cap with the icons, the middle stretched
-        // and the right cap placed for the character (update_squad_hud), the bars over it
+        // and the right cap placed for the character (update_squad_hud), the bars over it; each
+        // piece has a copy with its lower half red for the low-stamina blink
         let glass = Color::srgba(1.0, 1.0, 1.0, TB_ALPHA);
         let piece = |(a, b): (u32, u32)| (b - a) as f32;
         let (top, high) = (TB_AT.1, (TB_ROWS.1 - TB_ROWS.0) as f32);
         let left_x = TB_AT.0 + piece(TB_ICONS);
         let mid_x = left_x + piece(TB_LEFT);
-        commands.spawn((ChildOf(screen), at(TB_AT.0, top, piece(TB_ICONS), high), ImageNode::new(icons)));
-        commands.spawn((ChildOf(screen), at(left_x, top, piece(TB_LEFT), high), ImageNode::new(left).with_color(glass)));
-        commands.spawn((ChildOf(screen), at(mid_x, top, piece(TB_MIDDLE), high), ImageNode::new(middle).with_color(glass), SquadPart::FrameMiddle));
-        commands.spawn((ChildOf(screen), at(mid_x + piece(TB_MIDDLE), top, piece(TB_RIGHT), high), ImageNode::new(right).with_color(glass),
-                        SquadPart::FrameRight));
-        let bar_x = TB_AT.0 + (TB_BAR_COLS.0 - TB_ICONS.0) as f32;
+        commands.spawn((ChildOf(screen), at(TB_AT.0, top, piece(TB_ICONS), high), ImageNode::new(t.icons)));
+        for (k, (cols, x)) in [(TB_LEFT, left_x), (TB_MIDDLE, mid_x), (TB_RIGHT, mid_x + piece(TB_MIDDLE))].into_iter().enumerate() {
+            let node = commands.spawn((ChildOf(screen), at(x, top, piece(cols), high), ImageNode::new(t.pieces[k].clone()).with_color(glass),
+                                       FrameBlink(t.pieces[k].clone(), t.red[k].clone()))).id();
+            if let Some(p) = [None, Some(SquadPart::FrameMiddle), Some(SquadPart::FrameRight)][k] {
+                commands.entity(node).insert(p);
+            }
+        }
         let row = |i: usize| (TB_AT.1 + (TB_BAR_ROWS[i].0 - TB_ROWS.0) as f32, (TB_BAR_ROWS[i].1 - TB_BAR_ROWS[i].0) as f32);
         let ((hy, hh), (sy, sh)) = (row(0), row(1));
         let full = piece(TB_BAR_COLS);
-        commands.spawn((ChildOf(screen), at(bar_x, hy, full, hh), fill(&red), SquadPart::PlayerHealth));
-        commands.spawn((ChildOf(screen), at(bar_x, sy, full, sh), fill(&blue), SquadPart::PlayerStamina));
+        commands.spawn((ChildOf(screen), at(BAR_X, hy, full, hh), fill(&red), SquadPart::PlayerHealth));
+        // the stamina bar's trail (the lost part, in the plain texture) under its fill
+        commands.spawn((ChildOf(screen), at(BAR_X, sy, 0.0, sh), fill(&blue), SquadPart::StaminaTrail, Visibility::Hidden));
+        commands.spawn((ChildOf(screen), at(BAR_X, sy, full, sh), fill(&Some(stamina_fill.clone())), SquadPart::PlayerStamina));
     } else {
     match bar_frame {
         Some(f) => {
@@ -885,6 +1036,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     // target ring (the reticle texture h_1d2a68d0) on the panel's button ----
     commands.spawn((ChildOf(screen), game_text("", 52.0, 68.0, 11.5, MESSAGE_BLUE, Align::Left), Part::UsePrompt, Visibility::Hidden));
     commands.spawn((ChildOf(screen), game_text("", SWITCH_HINT_X, SWITCH_HINT_TOP, SWITCH_HINT_CAP, MESSAGE_BLUE, Align::Left), Part::SwitchHint, Visibility::Hidden));
+    // the special skill's name, under the bars while it's on (see `StaminaBar`)
+    commands.spawn((ChildOf(screen), game_text("", LABEL_X, LABEL_TOP, LABEL_CAP, MESSAGE_BLUE, Align::Left), Part::SkillLabel, Visibility::Hidden));
     let ring = texture(game, &mut images, &mut cache, CROSSHAIR_TEX);
     commands.spawn((ChildOf(screen), at(0.0, 0.0, RING_SIZE, RING_SIZE), image(&ring, RING_BLUE), Part::Ring, Visibility::Hidden));
 
@@ -944,10 +1097,83 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     }
 }
 
+/// The stamina bar widget each frame (see `StaminaBar`): FUN_000b7850 sets the value (the
+/// brighten on a change), FUN_000b75a0 fades the brighten and moves the trail's end, FUN_000b76c0
+/// runs the blink. Then the fill image is remade mixed toward white by the brighten in sRGB (the
+/// takes' rising bar, (139-145, 183-186, 200-206), is the texture half way to white in sRGB,
+/// (144, 188, 206); Bevy mixes UI colours in linear light, which gives (188, 202, 214)), the
+/// frame's lower half is red while the blink is, and the skill's name label is kept.
+fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<StaminaBar>, gen: Res<HudGen>,
+                      mut images: ResMut<Assets<Image>>, mut frame: Query<(&FrameBlink, &mut ImageNode)>) {
+    let dt = frame_dt(&time);
+    let max = player.max_health.max(1.0);
+    // the HUD's value: stamina / max-stamina x max health, at least 1 when not 0 (FUN_000b7fb0)
+    let v = player.stamina / player.max_stamina.max(1e-3) * max;
+    let v = if v > 0.0 { v.clamp(1.0, max) } else { 0.0 };
+    let name = player.skill.name().unwrap_or(0);
+    if bar.who != Some(player.character) {
+        // control passed (or the map began): the new character's, at once
+        let on = player.skill.on;
+        *bar = StaminaBar { who: Some(player.character), value: v, shown: v, blink_dir: -1.0, drawn: -1.0, label: name,
+                            label_alpha: if on { 1.0 } else { 0.0 }, label_hold: if on { LABEL_HOLD } else { 0.0 }, ..default() };
+    } else {
+        if v != bar.value {
+            bar.brighten = if v > bar.value { BRIGHTEN_RISE } else { BRIGHTEN_FALL };
+            bar.value = v;
+        }
+        bar.brighten = (bar.brighten - dt * BRIGHTEN_FADE).max(0.0);
+        if bar.shown < bar.value {
+            bar.shown = (bar.shown + dt * TRAIL_UP).min(bar.value);
+        } else if bar.shown > bar.value {
+            bar.shown = (bar.shown - dt * TRAIL_DOWN).max(bar.value);
+        }
+        let half = BLINK_SPAN * 0.5;
+        if bar.value > LOW_STAMINA * max {
+            bar.blink = 0.0;
+            bar.blink_dir = -1.0;
+        } else {
+            bar.blink += dt * bar.blink_dir;
+            if bar.blink <= -half || bar.blink >= half {
+                bar.blink_dir = -bar.blink_dir;
+                bar.blink = bar.blink.clamp(-half, half);
+            }
+        }
+        // the label: full while on, then the hold, then the fade
+        if player.skill.on {
+            bar.label = name;
+            bar.label_alpha = 1.0;
+            bar.label_hold = LABEL_HOLD;
+        } else if bar.label_hold > 0.0 {
+            bar.label_hold -= dt;
+        } else {
+            bar.label_alpha = (bar.label_alpha - dt * LABEL_FADE).max(0.0);
+        }
+    }
+    if (bar.brighten - bar.drawn).abs() > 1e-3 {
+        bar.drawn = bar.brighten;
+        let b = bar.brighten;
+        if let Some(data) = images.get_mut(&gen.stamina_fill).and_then(|i| i.data.as_mut()) {
+            for (o, i) in data.chunks_exact_mut(4).zip(gen.stamina_texels.chunks_exact(4)) {
+                for c in 0..3 {
+                    o[c] = (i[c] as f32 + (255.0 - i[c] as f32) * b).round() as u8;
+                }
+                o[3] = i[3];
+            }
+        }
+    }
+    let red = bar.blink < 0.0;
+    for (f, mut img) in &mut frame {
+        let want = if red { &f.1 } else { &f.0 };
+        if img.image != *want {
+            img.image = want.clone();
+        }
+    }
+}
+
 /// Weapon rows (the held weapon first; every weapon with names for a moment after a switch, the
 /// held one's name for a moment after a pickup), ammo ("clip / reserve", the squad's reserve of
 /// its ammo-type; "clip Regen" for a recharging gun), red panel on an empty clip, the switch
-/// hint, portrait, crosshair.
+/// hint, the skill's name, portrait, crosshair.
 #[allow(clippy::too_many_arguments)]
 fn update_hud_widgets(
     player: Res<Player>,
@@ -964,6 +1190,7 @@ fn update_hud_widgets(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut GameText>, Option<&mut Node>)>,
     kits: Option<Res<super::grenade::GrenadeKits>>,
+    stamina: Res<StaminaBar>,
 ) {
     let Some(l) = player.loaded.as_ref() else { return };
     let list = player.hud_list > 0.0;
@@ -1156,6 +1383,21 @@ fn update_hud_widgets(
                     set(text, &format!("Q {}", switch_to.replace("%s", name)), None);
                 }
             }
+            Part::SkillLabel => {
+                let name = game.0.strings.get(&stamina.label).cloned().unwrap_or_default();
+                show(&mut vis, stamina.label_alpha > 0.0 && !name.is_empty());
+                // (lower with the switch hint up: LABEL_STACK)
+                let y = LABEL_TOP + if other.is_some() { LABEL_STACK } else { 0.0 };
+                if let Some(t) = text.as_mut() {
+                    if t.y != y {
+                        t.y = y;
+                    }
+                }
+                // (the console blends the stored sRGB values, so its fade is linear in them; Bevy
+                // blends in linear light, where the same alpha looks brighter: raised to 2.2 the
+                // fade matches take01's, 18.87-19.17 s)
+                set(text, &name, Some(MESSAGE_BLUE.with_alpha(stamina.label_alpha.powf(2.2))));
+            }
             Part::Ring => {
                 // a usable gate panel's button only
                 let at = use_panel.target.filter(|_| player.scope < 0.5).and_then(on_screen);
@@ -1216,6 +1458,7 @@ fn update_squad_hud(
     mut images: ResMut<Assets<Image>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut label: ResMut<NameLabel>,
+    stamina: Res<StaminaBar>,
     mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>)>,
 ) {
     let dt = frame_dt(&time);
@@ -1352,18 +1595,26 @@ fn update_squad_hud(
             }
             SquadPart::PlayerHealth => {
                 let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
-                let full = if gen.tutorial_frame { bar_length(player.max_health) } else { bar_span().1 };
-                node.width = Val::Percent(full * f / 6.4);
+                let width = if gen.tutorial_frame { bar_fill(player.health.clamp(0.0, player.max_health)) } else { bar_span().1 * f };
+                node.width = Val::Percent(width / 6.4);
             }
-            SquadPart::PlayerStamina => node.width = Val::Percent(bar_length(player.max_health) / 6.4),
+            // the stamina bar's value and its trail, as `update_stamina_bar` keeps them
+            SquadPart::PlayerStamina => {
+                node.width = Val::Percent(bar_fill(stamina.value) / 6.4);
+                show(&mut vis, stamina.value > 0.0);
+            }
+            SquadPart::StaminaTrail => {
+                let (from, to) = (bar_fill(stamina.value), bar_fill(stamina.shown));
+                show(&mut vis, to > from);
+                node.left = Val::Percent((BAR_X + from) / 6.4);
+                node.width = Val::Percent((to - from).max(0.0) / 6.4);
+            }
             SquadPart::FrameMiddle => {
                 // the middle takes up what the bars' length adds to (or takes from) the picture's
-                let extra = bar_length(player.max_health) - (TB_BAR_COLS.1 - TB_BAR_COLS.0) as f32;
-                node.width = Val::Percent(((TB_MIDDLE.1 - TB_MIDDLE.0) as f32 + extra).max(1.0) / 6.4);
+                node.width = Val::Percent(((TB_MIDDLE.1 - TB_MIDDLE.0) as f32 + frame_stretch(player.max_health)).max(1.0) / 6.4);
             }
             SquadPart::FrameRight => {
-                let extra = bar_length(player.max_health) - (TB_BAR_COLS.1 - TB_BAR_COLS.0) as f32;
-                node.left = Val::Percent((TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + extra) / 6.4);
+                node.left = Val::Percent((TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + frame_stretch(player.max_health)) / 6.4);
             }
             SquadPart::MeterBox | SquadPart::MeterTick | SquadPart::Reticle => show(&mut vis, meter),
             SquadPart::MeterFill => {
