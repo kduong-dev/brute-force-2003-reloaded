@@ -497,17 +497,18 @@ cover) came after it and are compared under **Verified**.
   body struck takes a roll of Damage min..max (84-96, FUN_0022c4d0), x the hit-location factor,
   x 0.7 on the shooter's side (FUN_0004b9c0), x its damage-type factor. **The hit-location
   factor** (FUN_00125940 at 0x227a03, the bone from FUN_00115000; the missile's own +0x1cc is
-  1.0): the victim type's `damage-multiplier` (h_e7e9fcd3: 0.62 for the campaign squad, 1 for
-  the Shrikes) x the struck bone's `Damage` from its motion set's `<collision>` list (the head
-  x5, x3 for Brutus and the hounds; upper arms x0.8; forearms and calves x0.5; the hips, spine
-  and thighs x1; no feet). The demo's struck bone is the listed one nearest the contact on the
-  posed skeleton (the ragdoll's while knocked down), each taken as the line from its joint to its
-  first child's (`hit_factor`; the shape is the demo's). Blast shares take none of it
-  (FUN_00224a90 passes 0). The plain shots of the other guns still leave it out. A breakable
-  object struck takes a roll too (the scenery applies its damage-type factor), then the blast's
-  share. A missile that hits something before its split goes off there without splitting (the
-  takes' gate, the Shrike at 7 m). A child whose 5 s run out goes off where it is (h_0976a9dc,
-  FUN_00227760).
+  1.0): the victim type's `damage-multiplier` (h_e7e9fcd3: 0.62 for the campaign squad, 1 for the
+  Shrikes, and 1 for the sdm_bf squad of the squad deathmatch maps, which
+  `Game::load_squad_library` reads with its skill data) x the struck bone's `Damage` from its
+  motion set's `<collision>` list (the head x5, x3 for Brutus and the hounds; upper arms x0.8;
+  forearms and calves x0.5; the hips, spine and thighs x1; no feet). The demo's struck bone is the
+  listed one nearest the contact on the posed skeleton (the ragdoll's while knocked down), each
+  taken as the line from its joint to its first child's (`hit_factor`; the shape is the demo's).
+  Blast shares take none of it (FUN_00224a90 passes 0). The plain shots of the other guns still
+  leave it out. A breakable object struck takes a roll too (the scenery applies its damage-type
+  factor), then the blast's share. A missile that hits something before its split goes off there
+  without splitting (the takes' gate, the Shrike at 7 m). A child whose 5 s run out goes off where
+  it is (h_0976a9dc, FUN_00227760).
 * **The blast** (FUN_0022bfc0, dealt once by FUN_00224770) goes off at the missile's centre:
   the bullet's radius (0.1 m) off the surface it struck, along its normal. Its own roll,
   0.05-0.25 s later (at random), to every living body it reaches with nothing of the world
@@ -565,15 +566,24 @@ cover) came after it and are compared under **Verified**.
       radius 0; the dust's (0.08, 0.19, 4.13), 5.21 m; `EffectType::bounds`); LOD 1 to 10 m,
       falling to 0 at 60 m (0x2194d0, 0x2194e0; x (2 - w) / 2 for the world's load and x 1 for
       one view, both 1 in the demo).
-    * Each emitter's new particles (FUN_00065800): the whole number of its frequency's over the
-      time since its last batch (the frequency read at its end), its initial particles on its
-      first update, plus each emit count key passed (cut to a whole number each time), then
-      x its Emitter_LODCurve at that LOD (fe077e05), cut again; the fractions are thrown away.
+    * Each emitter's new particles (FUN_00065800), once a game frame (30 a second,
+      `GAME_FRAME`) whatever the frame rate: the whole number of its frequency's over the time
+      since its last batch (the frequency read at its end), its initial particles on its first
+      update, plus each emit count key passed (cut to a whole number each time), then x its
+      Emitter_LODCurve at that LOD (fe077e05, 0x659ed-0x65a12), cut again; the fractions are
+      thrown away. Cut each update, the count depends on the step: round 3 stepped it once a
+      render frame, and exp-rocket-fire made 1 sprite at 15 and 60 fps where 30 gives 2. A game
+      frame's batch is born at its end, spread over its part of the effect's move.
       So exp-rocket-flash makes 3 particles (2 at 0.076 s, 1 at 0.16 s) up to ~72 m and none
       past ~94 m; the launch dust's 18 a second for 0.43 s make one card, at ~0.13 s. The
       initial particles come once (the flag the emitter's constructor FUN_00065640 sets). A
       trail emitter starting its 4 s over (a child's flight past 4 s) counts from 0 again: the
       demo's, as the game's loop of an emitter's time isn't traced.
+    * A missile's trail is placed from the missile's own transform each frame, so each game
+      frame's particles are born where the missile is then; read from the last frame's
+      placement, they were born a frame behind it (2 m at 15 fps). Like every effect on a
+      parent just made, it starts on the frame after the missile's, when the missile starts to
+      move, so its time keeps with the flight.
     * A particle's size is its Scale x its Appearance_LODCurve at that LOD (0c53b008; 1 on these
       effects) x the shape.
     * Every other effect keeps the demo's count (a rate's fraction carried over, an emit
@@ -622,9 +632,11 @@ cover) came after it and are compared under **Verified**.
   sound list h_03dc7b9a, the red enemy crosshair (a shared HUD feature).
 
 Test hooks: `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (children,
-targets), fuse and end (where, how far, how long after the launch, what it struck) and each body
-its blast reaches or finds behind cover; `BF_MISSILE_DEBUG=1` also prints every body each target
-search looks at; `BF_SHAKE_LOG=1` prints each shake kick and its end. The takes' places, with
+targets), fuse and end (where, how far, how long after the launch, what it struck), each direct
+hit's amount with its roll, hit-location factor and struck bone (`x0.31 at bone h_044f3505`),
+and each body its blast reaches or finds behind cover; `BF_MISSILE_DEBUG=1` also prints every
+body each target search looks at; `BF_SHAKE_LOG=1` prints each shake kick and its end. The
+takes' places, with
 `BF_TEST_WEAPON="Therm Sweeper"` and taps as `BF_TEST_TRIGGER=3.0-3.15,...`:
 * take01 `BF_MAP=e34 BF_TEST_GOTO=-53.64,31.07,-53.76,31.56`; take04 `BF_MAP=e40
   BF_TEST_GOTO=-16.00,152.32,-16.50,152.26` (the take's view: `BF_CAMERA_PITCH=-0.10
@@ -676,6 +688,14 @@ step):
     the second child gives up its aim within 1 m of his feet and lands 3 m past); shot 2, one
     (44.8 at 2.0 m; the other child gives up within 1 m and lands 17 m past). The 105 HP dummy
     dies on shot 2. take06: one share per shot (61.6, 64.6, 64.0), both on shot 4.
+* On sdm_e34 (the sdm_bf squad, damage-multiplier 1): a Brutus dummy 7 m ahead of the first
+  start point (`BF_MAP=sdm_e34 -- --test BF_TEST_NPC=0.5,brutus,enemy,dummy,-0.26,41.69`, a tap
+  at 3 s) takes the missile on his calf, x0.50 (46.8 of a 93.6 roll), where the campaign's
+  types give x0.31.
+* The count once a game frame (round 4): take18's two blasts emit the same at 15, 30, 60 and
+  144 fps (`BF_CAPTURE_FPS`, `BF_ALE_LOG=1` prints each batch): per blast 3 flash, 2 + 2 fire,
+  5 fire-add, 6 dirt and 43 shrapnel particles, the analyst's simulation of FUN_00065800. The
+  trails differ by a game frame or two at each missile's end (see below).
 * Self-damage (takes 10-16, the gate): Tex 2, 3, 4 and 5 m from the panel takes 32.8 from his
   own blast (half of 93.6, x 0.7), at 6 m nothing (the takes: 18.6-20.1 at 2-5 m, x0.6; nothing
   at 6 m); he isn't knocked down. Flint 1 m to his left or right takes the same 32.8 (takes 14,
@@ -699,16 +719,26 @@ step):
   6 m (take03, where the code gives the full 0.74).
 * The look, from the takes' own views (`BF_TEST_FREECAM` above), in 640 x 480 units² above
   luminance 200 (and 240):
-  * take04 (the cliff, 25 m): the blast peaks at 17.9k (13.0k), the take at 16.9k (12.7k); the
-    demo's bright phase lasts 0.27 s, the take's ~0.41 s. The launch glow lights ~17.5k units²
-    by 40 or more over the frame before (the take ~19.2k), 0.2 s after the shot (the take's
-    0.3 s). Before the terrain-layer fix neither showed at the cliff.
-  * take06 (the sand, 25 m): the launch glow 4.2-5.0k (the take 2.7-4.7k); the blast peaks at
-    11.6k (8.5k), the take at 6.5k (3.6k), with its fire column lasting ~0.2 s longer.
-  * take20 (the open air, ~190 m): no white flash, one small orange flame ~20 units across for
-    ~0.3 s (the take: 12 x 15 units, ~0.33 s, no flash); round 2's ~55-unit white disc is gone.
+  * take04 (the cliff, 25 m): the blast peaks at 17.8k (12.7k), the take at 16.9k (12.7k), and
+    is bright for ~0.4 s (frames 54-59), the take's ~0.41 s (round 3's 0.27 s lost fire sprites
+    to the count once a render frame). The launch glow lights ~14.0k units² by 40 or more over
+    the frame before (the take ~19.2k; round 3's 17.5k had the trail born a frame behind the
+    missile, nearer Tex), 0.2-0.27 s after the shot (the take's 0.3 s). Before the
+    terrain-layer fix neither showed at the cliff.
+  * take06 (the sand, 25 m): the launch glow up to 5.6k (the take up to 4.7k); the blast peaks
+    at 17.6k (9.2k), the take at 6.5k (3.6k): 2.7x (round 3: 1.8x), bright for ~0.55 s (the
+    take 0.47 s or more, its fire column still going).
+  * take20 (the open air, ~190 m, LOD 0): no white flash; each child's blast makes 1 fire-add
+    sprite, 1 dirt card and 3 sparks (the analyst's counts), an orange flame ~30 x 25 units for
+    ~0.4 s from the takes' camera (the take: 12 x 15 units, ~0.33 s, no flash); round 2's
+    ~55-unit white disc is gone.
   * The launch dust: one brown card rising behind the launcher from ~0.13 s, out of the follow
-    camera's view (the side view above).
+    camera's view (the side view above). From the game's camera aimed (#126's leads: the aim
+    shift brings Tex's 3.9 m boom to ~2.2 m behind his head while the gun is up;
+    `BF_TEST_FREECAM=0.5,4.5,0.9,22.2,0,-3`) the card is born behind the camera: no veil (the
+    frame's mean rises by 2.6 at most, the launch's light). From the 3.5 m spot of the takes'
+    view above it's born just in front of the camera and veils the view for ~0.5 s (mean red
+    48 -> 91 -> 50). Which of the two the takes' launches are seen from is #126's to settle.
 * Muzzle effects (above), the branch against main in the same side views (`-- --test
   BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12 BF_TEST_FIRE=1 BF_CAMERA_DISTANCE=2.2
   BF_VIEW_YAW=<yaw>`): the sphere emitters' glows (A10, Saryl-45, Jax-iC) are round as on main;
@@ -722,10 +752,18 @@ step):
   Not measured.
 
 Not matching or not done:
-* The blast's bright phase is shorter than the takes' and the late fire column (the take's at
-  +1.4 s) is short; on take06's sand its peak is ~1.8x the take's bright area. The added
-  sprites summed in linear light (#104) and the curves' easing (the demo reads easing bytes 0,
-  5 and 6 as linear, `bf/ale.rs`'s ease; no exp-rocket curve uses them) stay open.
+* On take06's sand the blast's peak is 2.7x the take's bright area, where take04's cliff
+  matches: the game's own blast is ~2.6x smaller on the sand than on the cliff at a like
+  distance, and the demo's is the same on both. The explosion's frame along the missile's way
+  (FUN_0022cbe0, FUN_0001d0c0: which axis), or the sprites meeting the ground, may be why: not
+  traced. take20's open-air flame is ~2x the take's. take04's late fire column (the take's at
+  +1.4 s) is missing. The added sprites summed in linear light (#104) and the curves' easing
+  (the demo reads easing bytes 0, 5 and 6 as linear, `bf/ale.rs`'s ease; no exp-rocket curve
+  uses them) stay open.
+* A missile's trail stops with the missile: its entity goes in the frame the missile ends,
+  before the effects run, so the game frames of that render frame aren't emitted (up to 2 at
+  15 fps, 1 at 60 fps). take18's three trails make 11, 25 and 8 particles (mtrail, mtrail#1,
+  the flare) at 15 fps, 15, 31 and 8 at 30 and 60 fps, 15, 32 and 9 at 144 fps.
 * The scorch is a flat quad: at the cliff's foot it has a straight edge where it leaves the
   rock, where the game's wraps the rock (its decal manager clips the world's triangles,
   FUN_00214710 -> FUN_00217920). On flat ground it's the takes' dark ragged blot.

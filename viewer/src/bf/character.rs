@@ -197,7 +197,7 @@ pub struct Game {
     pub character_hit_bones: HashMap<String, Vec<(u32, f32)>>,
     /// character name -> its type's `damage-multiplier` (h_e7e9fcd3, the type's +0x220): a
     /// direct hit's factor with the struck bone's (FUN_00125940). The campaign squad 0.62, the
-    /// Shrikes 1
+    /// Shrikes 1; on a squad deathmatch map the sdm_bf squad's 1 (`load_squad_library`)
     pub character_damage_multiplier: HashMap<String, f32>,
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
     /// `ChatterBlock`; play_skills.rs's skill lines go through it)
@@ -1079,12 +1079,14 @@ impl Game {
         Ok(())
     }
 
-    /// Put a multiplayer squad library's skill data in place of the campaign squad's: squad
-    /// deathmatch plays the Brute Force squad of `library` (game-options `<squad h_fed0689a="mp_tex
-    /// mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`), whose types are in
-    /// `mp_common/objecttypes-<library>.xmb`, keyed here by motion set like the campaign's. Only
-    /// the skill data is taken (#35 take21: on sdm_e34 Tex drains 6.55/s, sdm_bf's 6.5); the rest
-    /// of that squad (hitpoints, chatter) stays the campaign's in the demo. How many it read.
+    /// Put a multiplayer squad library's skill data and damage-multiplier in place of the
+    /// campaign squad's: squad deathmatch plays the Brute Force squad of `library` (game-options
+    /// `<squad h_fed0689a="mp_tex mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`), whose
+    /// types are in `mp_common/objecttypes-<library>.xmb`, keyed here by motion set like the
+    /// campaign's. The skill data (#35 take21: on sdm_e34 Tex drains 6.55/s, sdm_bf's 6.5) and
+    /// the damage-multiplier h_e7e9fcd3 (sdm_bf's 1 for all four, the campaign's 0.62: a direct
+    /// hit's factor, FUN_00125940) are taken; the rest of that squad (hitpoints, chatter) stays
+    /// the campaign's in the demo. How many skill entries it read.
     pub fn load_squad_library(&mut self, data_dir: &Path, library: &str) -> Result<usize, String> {
         let file = format!("objecttypes-{library}.xmb");
         let ar = Archive::open_until(&data_dir.join("mp_common.tgz"), |n| n == file, 1)?;
@@ -1094,6 +1096,9 @@ impl Game {
             let Some(ms) = e.attr(h("motion-archetype")) else { continue };
             let name = ms.as_str().map(|s| s.trim_start_matches("ms_").to_string())
                 .unwrap_or_else(|| format!("h_{:08x}", hash_of(Some(ms))));
+            if let Some(m) = e.attr(0xE7E9_FCD3).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))) {
+                self.character_damage_multiplier.insert(name.clone(), m);
+            }
             if let Some(s) = skill_data(e) {
                 self.character_skills.insert(name, s);
                 n += 1;

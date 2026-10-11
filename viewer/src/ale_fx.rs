@@ -98,10 +98,18 @@ const APP_LOD: u32 = 0x0C53_B008;
 /// at 0x6bc09), whatever the demo's view is.
 const LOD_TAN: f32 = 0.700_207_5;
 /// The effect LOD's near distance (m): 10.0 at 0x3a4fdc (0x2194d0), x (2 - w) / 2 for the
-/// world's load w (0x3bc720) and x 1 for one view (world+0xc74), both 1 in the demo.
+/// world's load w (0x3bc720, which FUN_000d9090 writes: 0 in multiplayer, varying in the
+/// campaign) and x 1 for one view (world+0xc74). The demo takes w = 0 everywhere, its
+/// assumption: the factor is 1.
 const LOD_NEAR: f32 = 10.0;
 /// The far one (m): 60.0 at 0x3a2220 (0x2194e0), x the same.
 const LOD_FAR: f32 = 60.0;
+/// The game's frame (s): it runs at 30 a second (#73 spec: each game frame shows on two video
+/// frames; play_shots' TICK). A counted effect's emitters update once a game frame, whatever
+/// the demo's frame rate (`game_count`): FUN_00065800 cuts each update's count to a whole
+/// number, so stepped once a render frame the count changed with the frame rate (exp-rocket-fire
+/// made 1 particle at 15 and 60 fps where 30 gives 2, the shrapnel 47 to 29 from 15 to 144 fps).
+const GAME_FRAME: f32 = 1.0 / 30.0;
 const LIFE: u32 = 0x0A63_5880;
 const SPEED: u32 = 0x0AB1_80C5;
 const CUBE: [u32; 3] = [0xFD22_A11C, 0xEFB0_F8CF, 0x14B7_4EB2];
@@ -343,27 +351,29 @@ impl FrameMode {
 pub struct Compiled {
     pub name: String,
     pairs: Vec<Pair>,
-    /// Compiled with the rules checked against the Frag recording only (the grenades' blast and
-    /// trail effects): the flipbook frame curve (TEX_FRAME), the opening burst (BURST) and
-    /// outward-facing perp quads (PERP_RADIAL_SPEED). Every other effect plays as before them;
-    /// they may hold for those too, once checked against their own captures.
+    /// Compiled with the rules first checked against the Frag recording (the grenades' blast and
+    /// trail effects, `load_recorded`; and, with the game's facing, the Therm Sweeper's trail,
+    /// explosion and launch dust, `load_recorded_facing`): the flipbook frame curve
+    /// (TEX_FRAME), the opening burst (BURST) and outward-facing perp quads
+    /// (PERP_RADIAL_SPEED). Every other effect plays as before them; they may hold for those
+    /// too, once checked against their own captures.
     pub recorded: bool,
     /// Compiled with the game's facing 3 (see FACING, `Pair::axial`): the muzzle effects, which
     /// play in the muzzle hardpoint's frame (play_shots.rs; compared with main's, not with each
-    /// gun's take), and the Therm Sweeper's trail and explosion (play_missile.rs, checked
-    /// against its takes). Other effects keep the demo's perp rules until checked against their
-    /// own captures.
+    /// gun's take), and the Therm Sweeper's trail, explosion and launch dust (its muzzle
+    /// effect; play_missile.rs, play_shots.rs; checked against its takes). Other effects keep
+    /// the demo's perp rules until checked against their own captures.
     pub facing: bool,
     /// Drawn with the game's particle shapes (see SHAPE): the effects compiled with both the
-    /// recorded rules and the game's facing, the Therm Sweeper's trail and explosion
-    /// (`load_recorded_facing`), checked against their takes. Every other effect keeps the
+    /// recorded rules and the game's facing, the Therm Sweeper's trail, explosion and launch
+    /// dust (`load_recorded_facing`), checked against their takes. Every other effect keeps the
     /// demo's quad, half the size of the game's for its shape-2 appearances.
     pub shapes: bool,
-    /// Emitted by the game's count (FUN_00065800, `game_count`) and drawn at the effect's
-    /// distance LOD (see LOD_TAN, EMIT_LOD, APP_LOD): the same effects, the Therm Sweeper's
-    /// trail, explosion and launch dust. Every other effect keeps the demo's count (a rate's
-    /// fraction carried over, an emit count's burst at the start) and no LOD, until checked
-    /// against its own captures.
+    /// Emitted by the game's count, once a game frame (FUN_00065800, `game_count`,
+    /// GAME_FRAME), and drawn at the effect's distance LOD (see LOD_TAN, EMIT_LOD, APP_LOD):
+    /// the same effects, the Therm Sweeper's trail, explosion and launch dust. Every other
+    /// effect keeps the demo's count (a rate's fraction carried over each render frame, an emit
+    /// count's burst at the start) and no LOD, until checked against its own captures.
     pub counted: bool,
 }
 
@@ -437,6 +447,30 @@ pub struct AleEffect {
     lod: f32,
     /// per pair: the emitter's time of its last batch (`game_count`)
     last: Vec<f32>,
+    /// the game frames its counted emitters have run (GAME_FRAME)
+    ticks: u32,
+}
+
+/// One batch of an emitter's new particles in a frame (`emit`): the demo's one a render frame,
+/// or a counted effect's one a game frame (GAME_FRAME).
+struct Batch {
+    /// how many
+    n: usize,
+    /// the emitter's time they're born at, where its curves are read
+    t: f32,
+    /// how far back over the emitter's time (its animated offset) they spread, the newest at `t`
+    span: f32,
+    /// the shares of the effect's move this render frame (from its last place to this one) the
+    /// oldest is born before and the newest at
+    from: f32,
+    to: f32,
+    /// their age at the render frame's start (`animate` adds the frame's time)
+    age: f32,
+    /// the effect's time they're born at
+    born: f32,
+    /// the demo's count: the rate's fraction carried in (a steady light spaces its particles by
+    /// it, `steady_rate`)
+    carried: Option<f32>,
 }
 
 #[derive(Component)]
@@ -559,7 +593,7 @@ impl AleAssets {
     }
 
     /// `load_recorded`, with the game's facing 3 (see `Compiled::facing`): for the Therm
-    /// Sweeper's trail and explosion.
+    /// Sweeper's trail, explosion and launch dust (its muzzle effect, play_shots.rs).
     pub fn load_recorded_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                                 effect: u32) -> Option<Arc<Compiled>> {
         self.load_as(game, images, materials, effect, true, true)
@@ -706,7 +740,7 @@ impl AleEffect {
     pub fn new(fx: Arc<Compiled>, sp: f32, seed: u32) -> Self {
         let n = fx.pairs.len();
         AleEffect { fx, active: true, sp, once: false, placed: false, prev: None, strips: vec![None; n], t: 0.0, acc: vec![0.0; n], started: false, rng: seed | 1,
-                    hide_flat: false, lod_sphere: None, lod: 1.0, last: vec![0.0; n] }
+                    hide_flat: false, lod_sphere: None, lod: 1.0, last: vec![0.0; n], ticks: 0 }
     }
 
     /// With its effect type's bounding sphere (`EffectType::bounds`), so its distance LOD is
@@ -808,22 +842,22 @@ fn spread(fx: &mut AleEffect, lo: f32, hi: f32) -> Vec3 {
     Vec3::new(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin())
 }
 
-/// FUN_00065800, the game's count of an emitter's new particles for this frame (the emitter's
-/// time from its last batch to the end of this frame): the whole number of its frequency's
-/// particles over that time (the frequency read at its end), its initial particles on its
-/// first update (the flag the emitter's constructor FUN_00065640 sets), plus each emit count
-/// key that falls in it (cut to a whole number each time), then x its LOD curve at the effect's
-/// LOD (EMIT_LOD), cut again. The fractions are thrown away: the time keeps piling up only
-/// while nothing comes and the frequency isn't 0. So a low-rate emitter makes far fewer
-/// particles than its rate (the launch dust's 18 a second for 0.43 s give one card), and
-/// exp-rocket-flash's keys 3.59 at 0.076 s and 2.26 at 0.16 s give 2 and 1. For the effects
-/// compiled with `Compiled::counted`.
-fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, dt: f32, fresh: bool) -> usize {
-    let end = fx.t + dt;
+/// FUN_00065800, the game's count of an emitter's new particles for the game frame that ends at
+/// the effect's time `at` (GAME_FRAME; the emitter's time from its last batch to then): the
+/// whole number of its frequency's particles over that time (the frequency read at its end),
+/// its initial particles on its first update (the flag the emitter's constructor FUN_00065640
+/// sets), plus each emit count key that falls in it (cut to a whole number each time), then x
+/// its LOD curve at the effect's LOD (EMIT_LOD), cut again. The fractions are thrown away: the
+/// time keeps piling up only while nothing comes and the frequency isn't 0. So a low-rate
+/// emitter makes far fewer particles than its rate (the launch dust's 18 a second for 0.43 s
+/// give one card), and exp-rocket-flash's keys 3.59 at 0.076 s and 2.26 at 0.16 s give 2 and
+/// 1. For the effects compiled with `Compiled::counted`. Returns the count and the emitter's
+/// time it's born at.
+fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, at: f32, fresh: bool) -> (usize, f32) {
     // the emitter's own time: once, up to its lifespan; else it starts its lifespan again, its
     // last batch's time going back to 0 (the demo's: the game's loop of an emitter's time isn't
     // traced; the trail's 4 s emitters are the only counted ones that loop, on a flight past 4 s)
-    let t1 = if fx.once { end.min(lifespan) } else { end % lifespan };
+    let t1 = if fx.once { at.min(lifespan) } else { at % lifespan };
     if t1 < fx.last[i] {
         fx.last[i] = 0.0;
     }
@@ -843,7 +877,7 @@ fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, dt: f32, f
     if n > 0.0 || freq == 0.0 {
         fx.last[i] = t1;
     }
-    n as usize
+    (n as usize, t1)
 }
 
 fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
@@ -854,7 +888,8 @@ fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
 fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, assets: Option<Res<AleAssets>>,
         mut count: ResMut<Count>, mut seq: ResMut<Seq>, mut meshes: ResMut<Assets<Mesh>>,
         mut effects: Query<(Entity, &mut AleEffect, &mut GlobalTransform, &Transform, Option<&ChildOf>)>,
-        parents: Query<Ref<GlobalTransform>, Without<AleEffect>>, camera: Query<&GlobalTransform, (With<Camera3d>, Without<AleEffect>)>) {
+        parents: Query<(Ref<GlobalTransform>, &Transform, Has<ChildOf>), Without<AleEffect>>,
+        camera: Query<&GlobalTransform, (With<Camera3d>, Without<AleEffect>)>) {
     let Some(assets) = assets else { return };
     let dt = clock(&time, fixed);
     let eye = camera.iter().next().map(|c| c.translation());
@@ -867,15 +902,25 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
         // parent's moved by a frame at most), so its attached particles and beam ribbons
         // (placed from it in `animate`) aren't drawn at the origin for that frame. A parent not
         // placed yet (made since this last ran: a missile and its trail, an effect particle's
-        // carrier) makes it wait a frame, as every parented effect did before
+        // carrier) makes it wait a frame, as every parented effect did before: a missile moves
+        // from the frame after it's made, so its trail's time keeps with its flight
         if !fx.placed {
             match parent.map(|p| parents.get(p.parent())) {
                 None => *at = GlobalTransform::from(*local),
-                Some(Ok(g)) if !g.is_added() => *at = g.mul_transform(*local),
+                Some(Ok((g, _, _))) if !g.is_added() => *at = g.mul_transform(*local),
                 Some(_) => {
                     fx.placed = true;
                     continue;
                 }
+            }
+        }
+        // a counted effect on a parent at the top (a missile's trail): from the parent's own
+        // transform this frame, not its placement from the last frame's propagation, so the
+        // particles of each game frame (GAME_FRAME) are born where the missile is then; they
+        // were born a frame behind it (2 m at 15 fps)
+        if let Some(Ok((_, t, false))) = parent.map(|p| parents.get(p.parent())) {
+            if fx.fx.counted {
+                *at = GlobalTransform::from(*t).mul_transform(*local);
             }
         }
         let place = at.compute_transform();
@@ -892,18 +937,42 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
         let fresh = !fx.started;
         fx.started = true;
         let compiled = fx.fx.clone();
+        // a counted effect's game frames this render frame: those its time reaches (GAME_FRAME)
+        let mut ticks = vec![];
+        if compiled.counted {
+            while (fx.ticks + 1) as f32 * GAME_FRAME <= fx.t + dt + 1e-5 {
+                fx.ticks += 1;
+                ticks.push(fx.ticks);
+            }
+        }
+        let (from, from_turn) = fx.prev.unwrap_or((place.translation, place.rotation));
+        let start = fx.t;
+        // the share of this render frame's move (from the last place to this one) at the
+        // effect's time `s`
+        let share = |s: f32| ((s - start) / dt.max(1e-6)).clamp(0.0, 1.0);
         for (i, pair) in compiled.pairs.iter().enumerate() {
             let em = &pair.emitter;
             let lifespan = em.float(LIFESPAN).unwrap_or(1.0).max(0.01);
-            if fx.once && fx.t >= lifespan {
-                continue;
-            }
-            // a finite emitter starts over while the effect stays on
-            let t = fx.t % lifespan;
             let sp = fx.sp;
-            let (n, carried) = if compiled.counted {
-                (game_count(&mut fx, i, em, lifespan, dt, fresh), 0.0)
+            let mut batches = vec![];
+            if compiled.counted {
+                // the game's count, a batch a game frame, born at its end and spread over its
+                // part of the move
+                for &k in &ticks {
+                    let at = k as f32 * GAME_FRAME;
+                    // (run once: nothing after the update that reached its lifespan)
+                    if fx.once && at - GAME_FRAME >= lifespan {
+                        break;
+                    }
+                    let (n, t) = game_count(&mut fx, i, em, lifespan, at, k == 1);
+                    batches.push(Batch { n, t, span: GAME_FRAME, from: share(at - GAME_FRAME), to: share(at), age: start - at, born: at, carried: None });
+                }
             } else {
+                if fx.once && fx.t >= lifespan {
+                    continue;
+                }
+                // a finite emitter starts over while the effect stays on
+                let t = fx.t % lifespan;
                 let mut rate = em.curve(RATE, sp, t).unwrap_or(0.0).max(0.0);
                 let initial = em.int(INITIAL).unwrap_or(0).max(0) as usize;
                 // no rate and no initial count: its burst when it starts (exp-lrg-flash's 4),
@@ -919,113 +988,119 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 fx.acc[i] += rate * dt;
                 n += fx.acc[i] as usize;
                 fx.acc[i] = fx.acc[i].fract();
-                (n, carried)
-            };
-            let (from, from_turn) = fx.prev.unwrap_or((place.translation, place.rotation));
-            // a beam pair's ribbon, made with its first particles
-            if let (true, Some(material), None) = (n > 0, &pair.beam, fx.strips[i]) {
-                let mesh = meshes.add(Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default()));
-                // (never culled: its bounds would be those of its first few points, its mesh
-                // being rebuilt in the world every frame)
-                fx.strips[i] = Some(commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
-                    bevy::render::view::NoFrustumCulling, Transform::default(), Visibility::default(),
-                    BeamStrip { source: owner, pair: i, fx: compiled.clone(), mesh, age: 0.0 })).id());
+                batches.push(Batch { n, t, span: dt, from: 0.0, to: 1.0, age: 0.0, born: fx.t, carried: Some(carried) });
             }
-            if n > 0 && std::env::var("BF_ALE_LOG").is_ok() {
-                println!("{} pair {i}: t {:.3} dt {dt:.4} emits {n} (alive {}) at {:.2}", compiled.name, fx.t, count.0, place.translation);
-            }
-            for j in 0..n {
-                if count.0 >= MAX_PARTICLES {
-                    break;
+            for b in batches {
+                let n = b.n;
+                // a beam pair's ribbon, made with its first particles
+                if let (true, Some(material), None) = (n > 0, &pair.beam, fx.strips[i]) {
+                    let mesh = meshes.add(Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default()));
+                    // (never culled: its bounds would be those of its first few points, its mesh
+                    // being rebuilt in the world every frame)
+                    fx.strips[i] = Some(commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
+                        bevy::render::view::NoFrustumCulling, Transform::default(), Visibility::default(),
+                        BeamStrip { source: owner, pair: i, fx: compiled.clone(), mesh, age: 0.0 })).id());
                 }
-                // spread over the frame: the emitter's own animated offset and the effect's
-                // movement since the last frame (a fast trail or a beam drawn down the line)
-                let f = (j + 1) as f32 / n as f32;
-                let tj = (t - dt * (1.0 - f)).max(0.0);
-                let (at, rot) = (from.lerp(place.translation, f), from_turn.slerp(place.rotation, f));
-                let [offset, turn, _] = em.transform(TRANSFORM, tj);
-                let frame = rot * euler(turn);
-                // (a grenade effect's offsets are scaled by its entity's scale: play_energy.rs
-                // fits a bolt's reach to the body it strikes so)
-                let offset = if compiled.recorded { Vec3::from(offset) * place.scale } else { Vec3::from(offset) };
-                let origin = at + rot * offset;
-                let speed = em.curve(SPEED, sp, t).unwrap_or(0.0);
-                let c = |p: u32| em.curve(p, sp, t).unwrap_or(0.0);
-                let (local, dir) = match em.class {
-                    CLASS_SPHERE => {
-                        let d = spread(&mut fx, 0.0, 180.0);
-                        let (r0, r1) = (c(SPHERE_RADIUS[0]), c(SPHERE_RADIUS[1]));
-                        (d * (r0 + (r1 - r0) * fx.random()), d)
-                    }
-                    CLASS_CONE => {
-                        let d = spread(&mut fx, c(CONE_SPREAD[0]), c(CONE_SPREAD[1]));
-                        let (r0, r1) = (c(CONE_RADIUS[0]), c(CONE_RADIUS[1]));
-                        let flat = Vec3::new(d.x, 0.0, d.z).normalize_or_zero();
-                        (flat * (r0 + (r1 - r0) * fx.random()), d)
-                    }
-                    _ => {
-                        let size = Vec3::new(c(CUBE[0]), c(CUBE[1]), c(CUBE[2]));
-                        let p = Vec3::new(fx.random() - 0.5, fx.random() - 0.5, fx.random() - 0.5) * size;
-                        (p, spread(&mut fx, c(CUBE_SPREAD[0]), c(CUBE_SPREAD[1])))
-                    }
-                };
-                let life = em.curve(LIFE, sp, t).unwrap_or(1.0).max(0.02);
-                // a particle carrying an effect lives no longer than that effect runs once
-                // (stun_grenade_master's 7.49 s particles carry 0.8 s bolts): it would carry an
-                // effect with nothing left to draw
-                let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
-                // (a facing-3 quad turns only by its Rotate, see FACING)
-                let roll = if pair.perp || pair.axial || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
-                let mut lie = frame * euler(pair.app.transform(TRANSFORM, fx.t)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-                if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
-                    && speed >= PERP_RADIAL_SPEED {
-                    // a perp quad from a sphere emitter (or a PERP_OUT_CONES cone) that throws its
-                    // particles out: facing out along its direction from the middle (see
-                    // PERP_RADIAL_SPEED)
-                    lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
+                if n > 0 && std::env::var("BF_ALE_LOG").is_ok() {
+                    println!("{} pair {i}: t {:.3} dt {dt:.4} emits {n} (alive {}) at {:.2}", compiled.name, b.born, count.0, place.translation);
                 }
-                if fx.hide_flat && pair.perp && (lie * Vec3::Z).dot(rot * Vec3::Y).abs() < 0.5 {
-                    continue;
-                }
-                count.0 += 1;
-                // attached: kept in the effect's frame (offset and turn without the effect's own)
-                let (owner, local, vel, lie) = if pair.attached {
-                    let inv = place.rotation.inverse();
-                    (Some(owner), inv * (origin - place.translation) + inv * frame * local, inv * frame * dir * speed, inv * lie)
-                } else {
-                    (None, Vec3::ZERO, frame * dir * speed, lie)
-                };
-                seq.0 += 1;
-                // a steady light's particles start at the moment within the frame the rate says
-                // they're due, so they come at even spacing (see `steady_rate`)
-                let age = match steady_rate(&compiled, pair) {
-                    Some(rate) => -((j + 1) as f32 - carried) / rate,
-                    None => 0.0,
-                };
-                let particle = AleParticle { fx: compiled.clone(), pair: i, lod: fx.lod, age, life, vel, sp, born: fx.t, roll, step: 0, frame: lie, owner, local,
-                                             turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0 };
-                let at = Transform::from_translation(origin + frame * local).with_scale(Vec3::splat(0.001));
-                if let Some(child) = &pair.child {
-                    // an effect appearance: the particle carries its effect, turned to face
-                    // (+z) the way the particle goes along the ground and kept upright. The turn
-                    // is an inference: the Energy recording's bolts run out every way from the
-                    // middle, and the bolt's own reach runs along its +z (stun_grenade.emt's
-                    // offset sweeps 0 -> 5.8 m along z)
-                    let going = particle.vel;
-                    let flat = Vec3::new(going.x, 0.0, going.z).normalize_or(Vec3::Z);
-                    let carrier = commands.spawn((Transform::from_translation(at.translation).with_rotation(Quat::from_rotation_arc(Vec3::Z, flat)),
-                                                  Visibility::default(), particle)).id();
-                    let seed = fx.rng ^ (seq.0 as u32).wrapping_mul(0x9E37_79B9);
-                    commands.spawn((Transform::default(), Visibility::default(), AleEffect::once(child.clone(), sp, seed), ChildOf(carrier)));
-                } else if pair.beam.is_some() {
-                    // drawn by the ribbon, not as a quad
-                    commands.spawn((at, particle));
-                } else if pair.light {
-                    commands.spawn((at.with_scale(Vec3::ONE), particle,
-                                    PointLight { intensity: 0.0, range: 0.5, shadows_enabled: false, ..default() }));
-                } else {
-                    let quad = if pair.shape == 3 { assets.quad_base.clone() } else { assets.quad.clone() };
-                    commands.spawn((Mesh3d(quad), MeshMaterial3d(pair.steps[0][0].clone()), NotShadowCaster, at, particle));
+                for j in 0..n {
+                    if count.0 >= MAX_PARTICLES {
+                        break;
+                    }
+                    // spread over the batch: the emitter's own animated offset and the effect's
+                    // movement over it (a fast trail or a beam drawn down the line)
+                    let g = (j + 1) as f32 / n as f32;
+                    let f = b.from + (b.to - b.from) * g;
+                    let tj = (b.t - b.span * (1.0 - g)).max(0.0);
+                    let t = b.t;
+                    let (at, rot) = (from.lerp(place.translation, f), from_turn.slerp(place.rotation, f));
+                    let [offset, turn, _] = em.transform(TRANSFORM, tj);
+                    let frame = rot * euler(turn);
+                    // (a grenade effect's offsets are scaled by its entity's scale: play_energy.rs
+                    // fits a bolt's reach to the body it strikes so)
+                    let offset = if compiled.recorded { Vec3::from(offset) * place.scale } else { Vec3::from(offset) };
+                    let origin = at + rot * offset;
+                    let speed = em.curve(SPEED, sp, t).unwrap_or(0.0);
+                    let c = |p: u32| em.curve(p, sp, t).unwrap_or(0.0);
+                    let (local, dir) = match em.class {
+                        CLASS_SPHERE => {
+                            let d = spread(&mut fx, 0.0, 180.0);
+                            let (r0, r1) = (c(SPHERE_RADIUS[0]), c(SPHERE_RADIUS[1]));
+                            (d * (r0 + (r1 - r0) * fx.random()), d)
+                        }
+                        CLASS_CONE => {
+                            let d = spread(&mut fx, c(CONE_SPREAD[0]), c(CONE_SPREAD[1]));
+                            let (r0, r1) = (c(CONE_RADIUS[0]), c(CONE_RADIUS[1]));
+                            let flat = Vec3::new(d.x, 0.0, d.z).normalize_or_zero();
+                            (flat * (r0 + (r1 - r0) * fx.random()), d)
+                        }
+                        _ => {
+                            let size = Vec3::new(c(CUBE[0]), c(CUBE[1]), c(CUBE[2]));
+                            let p = Vec3::new(fx.random() - 0.5, fx.random() - 0.5, fx.random() - 0.5) * size;
+                            (p, spread(&mut fx, c(CUBE_SPREAD[0]), c(CUBE_SPREAD[1])))
+                        }
+                    };
+                    let life = em.curve(LIFE, sp, t).unwrap_or(1.0).max(0.02);
+                    // a particle carrying an effect lives no longer than that effect runs once
+                    // (stun_grenade_master's 7.49 s particles carry 0.8 s bolts): it would carry an
+                    // effect with nothing left to draw
+                    let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
+                    // (a facing-3 quad turns only by its Rotate, see FACING)
+                    let roll = if pair.perp || pair.axial || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
+                    let mut lie = frame * euler(pair.app.transform(TRANSFORM, b.born)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                    if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
+                        && speed >= PERP_RADIAL_SPEED {
+                        // a perp quad from a sphere emitter (or a PERP_OUT_CONES cone) that
+                        // throws its particles out: facing out along its direction from the
+                        // middle (see PERP_RADIAL_SPEED)
+                        lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
+                    }
+                    if fx.hide_flat && pair.perp && (lie * Vec3::Z).dot(rot * Vec3::Y).abs() < 0.5 {
+                        continue;
+                    }
+                    count.0 += 1;
+                    // attached: kept in the effect's frame (offset and turn without the
+                    // effect's own)
+                    let (owner, local, vel, lie) = if pair.attached {
+                        let inv = place.rotation.inverse();
+                        (Some(owner), inv * (origin - place.translation) + inv * frame * local, inv * frame * dir * speed, inv * lie)
+                    } else {
+                        (None, Vec3::ZERO, frame * dir * speed, lie)
+                    };
+                    seq.0 += 1;
+                    // a steady light's particles start at the moment within the frame the rate says
+                    // they're due, so they come at even spacing (see `steady_rate`); a game frame's
+                    // batch is born at its end
+                    let age = match (steady_rate(&compiled, pair), b.carried) {
+                        (Some(rate), Some(carried)) => -((j + 1) as f32 - carried) / rate,
+                        _ => b.age,
+                    };
+                    let particle = AleParticle { fx: compiled.clone(), pair: i, lod: fx.lod, age, life, vel, sp, born: b.born, roll, step: 0, frame: lie, owner, local,
+                                                 turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0 };
+                    let at = Transform::from_translation(origin + frame * local).with_scale(Vec3::splat(0.001));
+                    if let Some(child) = &pair.child {
+                        // an effect appearance: the particle carries its effect, turned to face
+                        // (+z) the way the particle goes along the ground and kept upright. The
+                        // turn is an inference: the Energy recording's bolts run out every way
+                        // from the middle, and the bolt's own reach runs along its +z
+                        // (stun_grenade.emt's offset sweeps 0 -> 5.8 m along z)
+                        let going = particle.vel;
+                        let flat = Vec3::new(going.x, 0.0, going.z).normalize_or(Vec3::Z);
+                        let carrier = commands.spawn((Transform::from_translation(at.translation).with_rotation(Quat::from_rotation_arc(Vec3::Z, flat)),
+                                                      Visibility::default(), particle)).id();
+                        let seed = fx.rng ^ (seq.0 as u32).wrapping_mul(0x9E37_79B9);
+                        commands.spawn((Transform::default(), Visibility::default(), AleEffect::once(child.clone(), sp, seed), ChildOf(carrier)));
+                    } else if pair.beam.is_some() {
+                        // drawn by the ribbon, not as a quad
+                        commands.spawn((at, particle));
+                    } else if pair.light {
+                        commands.spawn((at.with_scale(Vec3::ONE), particle,
+                                        PointLight { intensity: 0.0, range: 0.5, shadows_enabled: false, ..default() }));
+                    } else {
+                        let quad = if pair.shape == 3 { assets.quad_base.clone() } else { assets.quad.clone() };
+                        commands.spawn((Mesh3d(quad), MeshMaterial3d(pair.steps[0][0].clone()), NotShadowCaster, at, particle));
+                    }
                 }
             }
         }

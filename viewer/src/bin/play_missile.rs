@@ -496,15 +496,10 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
         m.pos += step;
     }
     m.age += dt;
-    // the straight phase; at its end a child looks for a target (FUN_00226b80)
+    // the straight phase (a child without a target searches from its first tick all the same,
+    // in the steering below, not at its end: `seek`)
     if m.straight > 0.0 {
-        m.straight -= dt;
-        if m.straight <= 0.0 {
-            m.straight = 0.0;
-            if b.seeks && m.mode == 0 {
-                seek(m, range, units, dt, now, log);
-            }
-        }
+        m.straight = (m.straight - dt).max(0.0);
     }
     // steering (FUN_002266d0): always for a steady one; along its own heading in the straight
     // phase, after it toward its target's origin or its aim point
@@ -617,7 +612,9 @@ fn ray_lying(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
 }
 
 /// FUN_00226b80: every SEEK_EVERY s, the most central hostile within the range and SEEK_CONE
-/// degrees, with nothing in between, becomes its target. By its own side: a NEUTRAL child's
+/// degrees, with nothing in between, becomes its target. A seeking missile without a target
+/// runs it every tick from its first (its +0x1d0 is 0 from the constructor FUN_002264e0; the
+/// tick calls it at 0x226e02), the straight phase or not. By its own side: a NEUTRAL child's
 /// finds nobody (see NEUTRAL).
 fn seek(m: &mut Missile, range: f32, units: &[&Player], dt: f32, now: f32, log: bool) {
     m.seek_in -= dt;
