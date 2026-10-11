@@ -6,11 +6,11 @@ use std::collections::HashMap;
 use bevy::{
     asset::{weak_handle, RenderAssetUsages},
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
-    pbr::{ExtendedMaterial, MaterialExtension, NotShadowCaster},
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, NotShadowCaster},
     prelude::*,
     render::{
-        mesh::{Indices, PrimitiveTopology, VertexAttributeValues},
-        render_resource::{AsBindGroup, Extent3d, ShaderRef, TextureDimension, TextureFormat},
+        mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues},
+        render_resource::{AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError, TextureDimension, TextureFormat},
         storage::ShaderStorageBuffer,
     },
 };
@@ -28,9 +28,26 @@ pub type LevelMaterial = ExtendedMaterial<StandardMaterial, Lamps>;
 
 /// The level's point lights, for `LevelMaterial`: one buffer shared by all its materials.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+#[bind_group_data(LampsKey)]
 pub struct Lamps {
     #[storage(100, read_only)]
     pub lamps: Handle<ShaderStorageBuffer>,
+    /// A terrain layer's depth-test bias (the pipeline's constant depth bias), where its base
+    /// material's `depth_bias` is used to sort it (see TERRAIN_LAYER_SORT): bevy takes both
+    /// from that one field.
+    pub layer_bias: Option<i32>,
+}
+
+/// What a `Lamps` material's pipeline depends on: the layer's own depth-test bias, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LampsKey {
+    layer_bias: Option<i32>,
+}
+
+impl From<&Lamps> for LampsKey {
+    fn from(lamps: &Lamps) -> Self {
+        LampsKey { layer_bias: lamps.layer_bias }
+    }
 }
 
 const LAMP_SHADER: Handle<Shader> = weak_handle!("6b0f6c1e-5a3d-4f0e-9a51-1d2c7e4b8a90");
@@ -39,7 +56,27 @@ impl MaterialExtension for Lamps {
     fn fragment_shader() -> ShaderRef {
         LAMP_SHADER.into()
     }
+
+    /// A terrain layer keeps its own depth-test bias (the base material set it from the sort
+    /// bias, see TERRAIN_LAYER_SORT).
+    fn specialize(_pipeline: &MaterialExtensionPipeline, descriptor: &mut RenderPipelineDescriptor, _layout: &MeshVertexBufferLayoutRef,
+                  key: MaterialExtensionKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
+        if let (Some(bias), Some(depth)) = (key.bind_group_data.layer_bias, descriptor.depth_stencil.as_mut()) {
+            depth.bias.constant = bias;
+        }
+        Ok(())
+    }
 }
+
+/// Added to a terrain layer's sort distance: bevy sorts transparent meshes back to front by
+/// their origin's depth in the view plus the material's `depth_bias`, and a layer's origin is
+/// the world's (its mesh is in world coordinates). Where that origin is nearer the camera than
+/// an effect, the layer drew after it, painting the ground over explosions, muzzle flashes and
+/// decals: take04's cliff blasts in #73 vanished, and their scorch showed only where the rock
+/// layer's mask let it through, as straight-edged wedges. A layer is part of the ground, so it
+/// sorts first, before every other transparent thing; the layers keep their order among
+/// themselves (+10 each, as before). Its depth-test bias stays as it was (`Lamps::layer_bias`).
+const TERRAIN_LAYER_SORT: f32 = -1.0e6;
 
 /// A liquid's surface (the game's animated liquid shader h_f124a774: lava, toxic rivers; its
 /// water h_0f8904b9): bevy's standard material, its colour the moving layers (src/liquid.wgsl).
@@ -596,7 +633,7 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     let mut doors = vec![];
     let mut cache = HashMap::new();
     let mut liquid_cache = HashMap::new();
-    let lamps = Lamps { lamps: buffers.add(lamp_buffer(level)) };
+    let lamps = Lamps { lamps: buffers.add(lamp_buffer(level)), layer_bias: None };
     // terrain: the ground, then each layer blended over it by its mask (baked into vertex alpha)
     for (k, (g, mask)) in level.terrain.iter().enumerate() {
         let base = material(game, images, materials, &lamps, &mut cache, g.material, false, false);
@@ -632,7 +669,10 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 let colors = g.positions.iter().map(|p| { let l = light(p); [l * hue[0], l * hue[1], l * hue[2], mask_at(&m, p[0], p[2], level.terrain_half)] }).collect();
                 let mut layer = materials.get(&base).cloned().unwrap_or_default();
                 layer.base.alpha_mode = AlphaMode::Blend;
-                layer.base.depth_bias = 10.0 * k as f32;
+                // drawn over the ground and the layers under it (depth-test bias 10 each), sorted
+                // before every other transparent thing (see TERRAIN_LAYER_SORT)
+                layer.base.depth_bias = TERRAIN_LAYER_SORT + 10.0 * k as f32;
+                layer.extension.layer_bias = Some(10 * k as i32);
                 (mesh_of(g, Some(colors), 0.02 * k as f32, true), materials.add(layer))
             }
             None => {
@@ -804,7 +844,7 @@ pub type SkyLayers = Vec<(Handle<Mesh>, Handle<LevelMaterial>, Vec3)>;
 pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
                   buffers: &mut Assets<ShaderStorageBuffer>, images: &mut Assets<Image>) -> SkyLayers {
     let none = vec![0u8; 32];
-    let lamps = Lamps { lamps: buffers.add(ShaderStorageBuffer::new(&none, RenderAssetUsages::default())) };
+    let lamps = Lamps { lamps: buffers.add(ShaderStorageBuffer::new(&none, RenderAssetUsages::default())), layer_bias: None };
     make_sky(game, sky, at, meshes, materials, images, &lamps, &mut HashMap::new())
 }
 

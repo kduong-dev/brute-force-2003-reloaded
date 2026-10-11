@@ -480,15 +480,27 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
             // its ALE effects, with the game's facing 3 (ale_fx's FACING: the sphere muzzles'
             // glows face the camera about their motion, where lying flat across the hardpoint's
             // y they were edge-on); in the scope, with the demo's perp rules, the fit to the take
-            // that's kept on purpose (see SCOPE_FLASH_AT); and its light effect (the effect
-            // type's light-effect: light_muzzle on most guns, 0.24 s growing 0.5 -> 4.6 m), a
-            // point light at the muzzle as ale_fx plays the blasts' lights
+            // that's kept on purpose (see SCOPE_FLASH_AT). And the effect type's light-effect, a
+            // point light at the muzzle as ale_fx plays the blasts' lights; each kind of gun
+            // names its own (light_muz_minigun h_08b5bbab on the ballistic guns, 0.2 s growing
+            // 0.28 -> 2.66 m; light_muz_laser h_1a96e11e on the LZRs; light_muzzle h_e7e8d51b on
+            // the Therm Sweeper and the Sweeper V; _bio, _cutter, _sonic, _particle, _rail,
+            // _seer, _energy on the others; none on the iKhan-GPL). Not in the holder's own
+            // scope, the demo's choice: from the gun under the eye it washed the whole scope view
+            // orange for a frame (the scoped MK pitched down: +29 red on average), and no take
+            // shows what the game's light does there, so the scope keeps the demo's old rule of
+            // no light
             let kind = game.0.effect_type_defs.get(&d.muzzle_effect).cloned().unwrap_or_default();
+            // (a missile launcher's, the Therm Sweeper's launch dust: with its trail's and its
+            // explosion's rules, so the game's count makes it one card, see ale_fx's
+            // `Compiled::counted`)
+            let missile = super::missile::flies(&w.def);
             let fxs: Vec<_> = kind.effects.iter().filter_map(|&e| match scoped {
                 Some(_) => ale.load(&mut game.0, &mut images, &mut materials, e),
+                None if missile => ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, e),
                 None => ale.load_facing(&mut game.0, &mut images, &mut materials, e),
             }).collect();
-            let light = (kind.light != 0).then(|| ale.load(&mut game.0, &mut images, &mut materials, kind.light)).flatten();
+            let light = (kind.light != 0 && scoped.is_none()).then(|| ale.load(&mut game.0, &mut images, &mut materials, kind.light)).flatten();
             let mut drawn = 0;
             for (fx, is_light) in fxs.into_iter().map(|f| (f, false)).chain(light.map(|l| (l, true))) {
                 let life = fx.duration();
@@ -500,12 +512,12 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                 // (in the scope, without its flat flash quads: seen from the eye they lay as
                 // bright ellipses or lines under the star, which the take doesn't show; the
                 // demo's rule)
-                let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed);
-                run.hide_flat = scoped.is_some() && !is_light;
+                let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed).with_lod_sphere(kind.bounds);
+                run.hide_flat = scoped.is_some();
                 let effect = (Visibility::default(), run, AleExpire(life));
                 match scoped {
-                    Some(place) if !is_light => commands.spawn((place, effect)),
-                    _ => commands.spawn((at, effect, ChildOf(w.entity))),
+                    Some(place) => commands.spawn((place, effect)),
+                    None => commands.spawn((at, effect, ChildOf(w.entity))),
                 };
             }
         }

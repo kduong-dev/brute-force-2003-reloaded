@@ -81,7 +81,27 @@ const BURST: u32 = 0xE722_1F95;
 /// than recorded over its first ~0.2 s, where the quads' own size (0 -> 5.5 m over a quarter of
 /// their life) sets the width.
 const EMIT_COUNT_RATE: [&str; 1] = ["sonic_grenade.emt"];
+/// Emitter_Frequency (the emitter node's +0x30): particles per second.
 const RATE: u32 = 0x023C_350C;
+/// Emitter_LODCurve (the emitter node's +0x48): a float animation over the effect's distance
+/// LOD (0-1) that scales each batch's count before it's cut to a whole number (FUN_00065800 at
+/// 0x659ed-0x65a12). Read for the effects compiled with `Compiled::counted`.
+const EMIT_LOD: u32 = 0xFE07_7E05;
+/// Appearance_LODCurve (the appearance's +0x3c): the particle's size is Scale x this at the
+/// effect's LOD (the appearance's bounds code at 0x2a12f0 reads both). 1 on the Therm Sweeper's
+/// effects. Read for the effects compiled with `Compiled::counted`.
+const APP_LOD: u32 = 0x0C53_B008;
+/// An effect object's distance LOD (the render cull FUN_000e7850 -> FUN_00156050): d = tan(FOV
+/// / 2) x the camera's distance past the effect type's bounding sphere (FUN_00219ed0: centre
+/// h_e99750a9 in the effect's frame, radius h_1ab09530); LOD 1 up to LOD_NEAR, falling to 0 at
+/// LOD_FAR. This is tan(35 degrees): the game camera's 70-degree field of view (its +0xc8, set
+/// at 0x6bc09), whatever the demo's view is.
+const LOD_TAN: f32 = 0.700_207_5;
+/// The effect LOD's near distance (m): 10.0 at 0x3a4fdc (0x2194d0), x (2 - w) / 2 for the
+/// world's load w (0x3bc720) and x 1 for one view (world+0xc74), both 1 in the demo.
+const LOD_NEAR: f32 = 10.0;
+/// The far one (m): 60.0 at 0x3a2220 (0x2194e0), x the same.
+const LOD_FAR: f32 = 60.0;
 const LIFE: u32 = 0x0A63_5880;
 const SPEED: u32 = 0x0AB1_80C5;
 const CUBE: [u32; 3] = [0xFD22_A11C, 0xEFB0_F8CF, 0x14B7_4EB2];
@@ -329,15 +349,22 @@ pub struct Compiled {
     /// they may hold for those too, once checked against their own captures.
     pub recorded: bool,
     /// Compiled with the game's facing 3 (see FACING, `Pair::axial`): the muzzle effects, which
-    /// play in the muzzle hardpoint's frame (play_shots.rs), and the Therm Sweeper's trail and
-    /// explosion (play_missile.rs), checked against their takes. Other effects keep the demo's
-    /// perp rules until checked against their own captures.
+    /// play in the muzzle hardpoint's frame (play_shots.rs; compared with main's, not with each
+    /// gun's take), and the Therm Sweeper's trail and explosion (play_missile.rs, checked
+    /// against its takes). Other effects keep the demo's perp rules until checked against their
+    /// own captures.
     pub facing: bool,
     /// Drawn with the game's particle shapes (see SHAPE): the effects compiled with both the
     /// recorded rules and the game's facing, the Therm Sweeper's trail and explosion
     /// (`load_recorded_facing`), checked against their takes. Every other effect keeps the
     /// demo's quad, half the size of the game's for its shape-2 appearances.
     pub shapes: bool,
+    /// Emitted by the game's count (FUN_00065800, `game_count`) and drawn at the effect's
+    /// distance LOD (see LOD_TAN, EMIT_LOD, APP_LOD): the same effects, the Therm Sweeper's
+    /// trail, explosion and launch dust. Every other effect keeps the demo's count (a rate's
+    /// fraction carried over, an emit count's burst at the start) and no LOD, until checked
+    /// against its own captures.
+    pub counted: bool,
 }
 
 impl Compiled {
@@ -403,12 +430,21 @@ pub struct AleEffect {
     /// leave out perp quads lying along the effect's axis (not facing along it): a muzzle
     /// flash seen down its own axis from the holder's scope (play_shots.rs; the demo's rule)
     pub hide_flat: bool,
+    /// its effect type's bounding sphere (centre in the effect's frame, radius), from which its
+    /// distance LOD is worked out each frame (see LOD_TAN); None: LOD 1
+    pub lod_sphere: Option<(Vec3, f32)>,
+    /// its distance LOD now (1 near, 0 far)
+    lod: f32,
+    /// per pair: the emitter's time of its last batch (`game_count`)
+    last: Vec<f32>,
 }
 
 #[derive(Component)]
 struct AleParticle {
     fx: Arc<Compiled>,
     pair: usize,
+    /// its effect's distance LOD when it was born (APP_LOD)
+    lod: f32,
     age: f32,
     life: f32,
     vel: Vec3,
@@ -633,7 +669,8 @@ impl AleAssets {
             let streak = app.flag(MOTION_BLUR);
             let frame = if recorded { FrameMode::of(&app) } else { FrameMode::Play };
             // the air fields linked to this appearance (pairs appearance -> field) that run (see
-            // AIR_FIELDS; the grenades' effects only)
+            // AIR_FIELDS; the effects compiled with the recorded rules: the grenades' and the
+            // Therm Sweeper's trail)
             let fields = e.pairs.iter().filter(|p| recorded && p.0 == ap).filter_map(|p| node(game, p.1))
                 .filter(|n| n.class == CLASS_AIR_FIELD && AIR_FIELDS.contains(&n.name.as_str())).collect();
             let rise = (recorded && !app.flag(PERP) && !streak && upright(&app)).then(|| offset_end(&app));
@@ -652,7 +689,7 @@ impl AleAssets {
             pairs.push(Pair { perp, axial, shape, attached: emitter.flag(ATTACHED), streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false, fields, child: None, rise, vertical });
         }
-        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes })
+        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted: shapes })
     }
 
     fn texture(&mut self, game: &mut Game, images: &mut Assets<Image>, id: u32, linear: bool) -> Option<Handle<Image>> {
@@ -668,7 +705,16 @@ impl AleAssets {
 impl AleEffect {
     pub fn new(fx: Arc<Compiled>, sp: f32, seed: u32) -> Self {
         let n = fx.pairs.len();
-        AleEffect { fx, active: true, sp, once: false, placed: false, prev: None, strips: vec![None; n], t: 0.0, acc: vec![0.0; n], started: false, rng: seed | 1, hide_flat: false }
+        AleEffect { fx, active: true, sp, once: false, placed: false, prev: None, strips: vec![None; n], t: 0.0, acc: vec![0.0; n], started: false, rng: seed | 1,
+                    hide_flat: false, lod_sphere: None, lod: 1.0, last: vec![0.0; n] }
+    }
+
+    /// With its effect type's bounding sphere (`EffectType::bounds`), so its distance LOD is
+    /// worked out from the camera (see LOD_TAN): it matters to the effects compiled with
+    /// `Compiled::counted`.
+    pub fn with_lod_sphere(mut self, sphere: Option<(Vec3, f32)>) -> Self {
+        self.lod_sphere = sphere;
+        self
     }
 
     /// Run the effect once (a hit, a shot's tracer): each emitter for its lifespan.
@@ -762,6 +808,44 @@ fn spread(fx: &mut AleEffect, lo: f32, hi: f32) -> Vec3 {
     Vec3::new(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin())
 }
 
+/// FUN_00065800, the game's count of an emitter's new particles for this frame (the emitter's
+/// time from its last batch to the end of this frame): the whole number of its frequency's
+/// particles over that time (the frequency read at its end), its initial particles on its
+/// first update (the flag the emitter's constructor FUN_00065640 sets), plus each emit count
+/// key that falls in it (cut to a whole number each time), then x its LOD curve at the effect's
+/// LOD (EMIT_LOD), cut again. The fractions are thrown away: the time keeps piling up only
+/// while nothing comes and the frequency isn't 0. So a low-rate emitter makes far fewer
+/// particles than its rate (the launch dust's 18 a second for 0.43 s give one card), and
+/// exp-rocket-flash's keys 3.59 at 0.076 s and 2.26 at 0.16 s give 2 and 1. For the effects
+/// compiled with `Compiled::counted`.
+fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, dt: f32, fresh: bool) -> usize {
+    let end = fx.t + dt;
+    // the emitter's own time: once, up to its lifespan; else it starts its lifespan again, its
+    // last batch's time going back to 0 (the demo's: the game's loop of an emitter's time isn't
+    // traced; the trail's 4 s emitters are the only counted ones that loop, on a flight past 4 s)
+    let t1 = if fx.once { end.min(lifespan) } else { end % lifespan };
+    if t1 < fx.last[i] {
+        fx.last[i] = 0.0;
+    }
+    let t0 = fx.last[i];
+    let sp = fx.sp;
+    let freq = em.curve(RATE, sp, t1).unwrap_or(0.0).max(0.0);
+    let mut n = ((t1 - t0) * freq).max(0.0).trunc();
+    if fresh {
+        n += em.int(INITIAL).unwrap_or(0).max(0) as f32;
+    }
+    for (kt, kv) in em.curve_keys(BURST, sp) {
+        if kt >= t0 && kt <= t1 {
+            n = (n + kv).trunc();
+        }
+    }
+    let n = (em.floats(EMIT_LOD, sp, fx.lod).unwrap_or(1.0) * n).trunc().max(0.0);
+    if n > 0.0 || freq == 0.0 {
+        fx.last[i] = t1;
+    }
+    n as usize
+}
+
 fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
     fixed.map_or(time.delta_secs().min(0.1), |c| c.0)
 }
@@ -769,25 +853,38 @@ fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, assets: Option<Res<AleAssets>>,
         mut count: ResMut<Count>, mut seq: ResMut<Seq>, mut meshes: ResMut<Assets<Mesh>>,
-        mut effects: Query<(Entity, &mut AleEffect, &mut GlobalTransform, &Transform, Has<ChildOf>)>) {
+        mut effects: Query<(Entity, &mut AleEffect, &mut GlobalTransform, &Transform, Option<&ChildOf>)>,
+        parents: Query<Ref<GlobalTransform>, Without<AleEffect>>, camera: Query<&GlobalTransform, (With<Camera3d>, Without<AleEffect>)>) {
     let Some(assets) = assets else { return };
     let dt = clock(&time, fixed);
-    for (fx_entity, mut fx, mut at, local, parented) in &mut effects {
+    let eye = camera.iter().next().map(|c| c.translation());
+    for (fx_entity, mut fx, mut at, local, parent) in &mut effects {
         let owner = fx_entity;
-        // a new effect's world placement is known from its second frame (transforms propagate
-        // after this runs); one without a parent is where its own transform says at once (a
-        // blast starts on the frame it goes off), and its global transform is set from it now so
-        // its attached particles and beam ribbons (placed from it in `animate`) aren't drawn at
-        // the origin for that frame
-        if !fx.placed && parented {
-            fx.placed = true;
-            continue;
-        }
+        // a new effect's world placement, set now (transforms propagate after this runs): one
+        // without a parent is where its own transform says (a blast starts on the frame it goes
+        // off), one with a parent at its own transform from the parent's last placement (a
+        // muzzle effect and its light start on the shot's frame, a frame late before; the
+        // parent's moved by a frame at most), so its attached particles and beam ribbons
+        // (placed from it in `animate`) aren't drawn at the origin for that frame. A parent not
+        // placed yet (made since this last ran: a missile and its trail, an effect particle's
+        // carrier) makes it wait a frame, as every parented effect did before
         if !fx.placed {
-            *at = GlobalTransform::from(*local);
+            match parent.map(|p| parents.get(p.parent())) {
+                None => *at = GlobalTransform::from(*local),
+                Some(Ok(g)) if !g.is_added() => *at = g.mul_transform(*local),
+                Some(_) => {
+                    fx.placed = true;
+                    continue;
+                }
+            }
         }
         let place = at.compute_transform();
         fx.placed = true;
+        // its distance LOD (see LOD_TAN)
+        if let (Some((centre, radius)), Some(eye)) = (fx.lod_sphere, eye) {
+            let d = LOD_TAN * ((eye - place.transform_point(centre)).length() - radius).max(0.0);
+            fx.lod = ((LOD_FAR - d) / (LOD_FAR - LOD_NEAR)).clamp(0.0, 1.0);
+        }
         if !fx.active {
             fx.started = false;
             continue;
@@ -804,21 +901,26 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
             // a finite emitter starts over while the effect stays on
             let t = fx.t % lifespan;
             let sp = fx.sp;
-            let mut rate = em.curve(RATE, sp, t).unwrap_or(0.0).max(0.0);
-            let initial = em.int(INITIAL).unwrap_or(0).max(0) as usize;
-            // no rate and no initial count: its burst when it starts (exp-lrg-flash's 4), else
-            // one particle (a gun's tracer); an EMIT_COUNT_RATE emitter goes on emitting its emit
-            // count per second after the burst
-            let burst = if compiled.recorded { em.curve(BURST, sp, 0.0).unwrap_or(0.0).round().max(1.0) as usize } else { 1 };
-            let over_time = compiled.recorded && initial == 0 && rate == 0.0 && EMIT_COUNT_RATE.contains(&em.name.as_str());
-            if over_time {
-                rate = em.curve(BURST, sp, t).unwrap_or(0.0).max(0.0);
-            }
-            let mut n = if fresh { if over_time || (initial == 0 && rate == 0.0) { burst } else { initial } } else { 0 };
-            let carried = fx.acc[i];
-            fx.acc[i] += rate * dt;
-            n += fx.acc[i] as usize;
-            fx.acc[i] = fx.acc[i].fract();
+            let (n, carried) = if compiled.counted {
+                (game_count(&mut fx, i, em, lifespan, dt, fresh), 0.0)
+            } else {
+                let mut rate = em.curve(RATE, sp, t).unwrap_or(0.0).max(0.0);
+                let initial = em.int(INITIAL).unwrap_or(0).max(0) as usize;
+                // no rate and no initial count: its burst when it starts (exp-lrg-flash's 4),
+                // else one particle (a gun's tracer); an EMIT_COUNT_RATE emitter goes on emitting
+                // its emit count per second after the burst
+                let burst = if compiled.recorded { em.curve(BURST, sp, 0.0).unwrap_or(0.0).round().max(1.0) as usize } else { 1 };
+                let over_time = compiled.recorded && initial == 0 && rate == 0.0 && EMIT_COUNT_RATE.contains(&em.name.as_str());
+                if over_time {
+                    rate = em.curve(BURST, sp, t).unwrap_or(0.0).max(0.0);
+                }
+                let mut n = if fresh { if over_time || (initial == 0 && rate == 0.0) { burst } else { initial } } else { 0 };
+                let carried = fx.acc[i];
+                fx.acc[i] += rate * dt;
+                n += fx.acc[i] as usize;
+                fx.acc[i] = fx.acc[i].fract();
+                (n, carried)
+            };
             let (from, from_turn) = fx.prev.unwrap_or((place.translation, place.rotation));
             // a beam pair's ribbon, made with its first particles
             if let (true, Some(material), None) = (n > 0, &pair.beam, fx.strips[i]) {
@@ -900,7 +1002,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     Some(rate) => -((j + 1) as f32 - carried) / rate,
                     None => 0.0,
                 };
-                let particle = AleParticle { fx: compiled.clone(), pair: i, age, life, vel, sp, born: fx.t, roll, step: 0, frame: lie, owner, local,
+                let particle = AleParticle { fx: compiled.clone(), pair: i, lod: fx.lod, age, life, vel, sp, born: fx.t, roll, step: 0, frame: lie, owner, local,
                                              turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0 };
                 let at = Transform::from_translation(origin + frame * local).with_scale(Vec3::splat(0.001));
                 if let Some(child) = &pair.child {
@@ -986,9 +1088,11 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             tr.translation += at(p.age) - at(p.age - dt);
         }
         let moving = turn * p.vel;
+        // the appearance's LOD curve at its effect's LOD (APP_LOD), on its size
+        let lod_scale = if p.fx.counted { app.floats(APP_LOD, p.sp, p.lod).unwrap_or(1.0) } else { 1.0 };
         // a light's: reach = size, strength = colour x alpha x size
         if let Some(mut light) = light {
-            let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0);
+            let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0) * lod_scale;
             let a = app.floats(ALPHA, p.sp, k).unwrap_or(1.0).clamp(0.0, 1.0);
             let c = Vec3::from(app.color(COLOR, p.sp, k).unwrap_or([1.0; 3]));
             let peak = c.max_element();
@@ -1009,7 +1113,7 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             continue;
         }
         let Some(mut mat) = mat else { continue };           // a beam's: the ribbon draws it
-        let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0);
+        let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0) * lod_scale;
         let width = (size * app.floats(WIDTH, p.sp, k).unwrap_or(1.0)).max(0.001);
         let height = (size * app.floats(ASPECT, p.sp, k).unwrap_or(1.0)).max(0.001);
         let spin = Quat::from_rotation_z(p.roll + app.floats(ROTATE, p.sp, k).unwrap_or(0.0));

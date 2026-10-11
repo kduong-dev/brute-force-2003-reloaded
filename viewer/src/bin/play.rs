@@ -858,8 +858,9 @@ struct HeldWeapon {
     /// spinning parts (minigun barrel): entity, axis, offset
     spinners: Vec<(Entity, Vec3, Vec3)>,
     light: Entity,
-    /// its muzzle effect type has a light effect (the data's light_muzzle and the like), which
-    /// play_shots.rs plays with the effect and which stands in for `light`, the demo's own
+    /// its muzzle effect type has a light effect (light_muz_minigun, light_muz_laser and the
+    /// like: each kind of gun names its own), which play_shots.rs plays with the effect out of
+    /// the holder's scope and which stands in for `light`, the demo's own
     data_light: bool,
     flash: Entity,
     muzzle: Hardpoint,

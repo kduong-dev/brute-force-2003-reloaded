@@ -27,6 +27,21 @@ archetype>` (each part's geosets: offset, bounds, normals, winding, UV direction
   material's "alpha" mask. Each mask is a single 128 px image over the 256 m terrain (x and z
   from −128 to 128, v toward −z), the orientation that best matches where each layer's
   triangles are.
+  * A layer is drawn over the ground and the layers under it (a depth-test bias of 10 each)
+    and sorted before every other see-through thing (`TERRAIN_LAYER_SORT` in
+    `src/level_scene.rs`, #73). Bevy sorts see-through meshes by their origin's depth plus the
+    material's depth bias, and a layer's mesh is in world coordinates, so its origin is the
+    world's: where that was nearer the camera than an effect, the layer was drawn after it and
+    could paint the ground over any effect or decal behind its sort point. e40's
+    cliff hid the Therm Sweeper's blasts and its launch glow from take04's view that way. The
+    layer's material now carries its depth-test bias apart (`Lamps::layer_bias`, set in the
+    pipeline by `Lamps::specialize`), since bevy takes both the sort and the test from the one
+    `depth_bias`.
+  * Checked: take04's view on e40 (`play.md`'s Missiles: the blast's bright area 17.9k units²,
+    the take's 16.9k; nothing before); sdm_e34's autopilot run differs from main's by at most
+    0.4% of the pixels before its first shot (#120's stamina bar); a Frag going off 6 m ahead at
+    sdm_e34's start (`BF_MAP=sdm_e34 BF_TEST_EXPLOSION=1 BF_TEST_GOTO=0,0,0,0`) shows its fire
+    from its first frame, where main drew the ground over all of it.
 * A level `<transform>` is a 3 × 3 rotation followed by the position. The rotation's columns are
   the object's axes; read that way, the level's cameras come out level and looking down −z.
 * Object types map to mesh archetypes through objecttypes (`mesh-name` beside the type's

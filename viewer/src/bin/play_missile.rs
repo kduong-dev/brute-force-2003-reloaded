@@ -12,15 +12,17 @@
 //!    second timer h_f0a56297 (5 s) runs (FUN_00227dd0).
 //!  - **Each game frame** (FUN_00226cc0, here in 30 Hz ticks after the physics move): steered
 //!    (FUN_002266d0) along its own heading in the straight phase, then toward its target's
-//!    origin (the feet) or its aim point; a child without a target looks for one (FUN_00226b80);
-//!    the proximity fuse; life, then the second timer, run down.
+//!    origin (the feet) or its aim point, its node turned along the velocity it had before (so
+//!    the 60-degree test lags a step); the proximity fuse; life, then the second timer, run down.
 //!  - **The split** (WM_MIRV_ON_EXPLODE, FUN_00227f80), when its life is out: the parent goes
 //!    without a blast; `<mirv>` h_fe04300d children (2) leave beside it, each turned spread-max x
 //!    90 degrees (9) off its heading at a random roll, after the hostiles the split finds within
-//!    the range and 30 degrees, else 200 m along the parent's heading.
+//!    the range and 30 degrees, else 200 m along the parent's heading. A child is NEUTRAL (team
+//!    2): its own searches find nobody, and without the split's target it has no fuse.
 //!  - **Hitting something** (the collision callback FUN_002278e0 -> 0x22d0b0): the world, a
 //!    body (standing, or lying knocked down), a breakable object or a Sentry. The body or
-//!    object struck takes a roll of Damage min..max (FUN_0022c4d0), a blast object goes off at
+//!    object struck takes a roll of Damage min..max (FUN_0022c4d0; a character's x its type's
+//!    damage-multiplier x the struck bone's Damage, FUN_00125940), a blast object goes off at
 //!    the missile's centre (FUN_0022bfc0) and the explosion effect type plays (FUN_0022cfc0). A
 //!    child whose second timer runs out, or whose fuse fires, goes off the same way where it is,
 //!    with no direct hit (FUN_00227760).
@@ -43,9 +45,8 @@
 //! every body each target search looks at (distance, angle, line of sight).
 //!
 //! Not here: the difficulty step on every hit on a character (x1.4 on enemies, x0.6 on the
-//! squad on STANDARD, 0x125600: #127, todo/damage-factor/answer.md) and the hit-location factor
-//! of a direct hit (FUN_00125940, as the other guns' shots leave it out); the 75 m noise for the
-//! AI's hearing (FUN_0004d490); the damage event (FUN_001fe3d0).
+//! squad on STANDARD, 0x125600: #127, todo/damage-factor/answer.md); the 75 m noise for the AI's
+//! hearing (FUN_0004d490); the damage event (FUN_001fe3d0).
 
 use super::*;
 use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET, DECAL_DELAY, GRENADE_DECAL_SCALE};
@@ -113,6 +114,12 @@ const BLAST_SHARE: f32 = 0.5;
 /// FUN_0022c4d0: a hit on the shooter's own side (FUN_0004b9c0: both characters, one in the
 /// other's squad; here the same team, the shooter too) deals this share.
 const FRIENDLY: f32 = 0.7;
+/// ALIGN_NEUTRAL (the ALIGN_ table at 0x3bc94c): the side the projectile constructor gives
+/// (+0x21c = 2 at 0x2265ec), which a MIRV child keeps (the split calls FUN_00227dd0, which
+/// copies the owner's team, before it copies the owner: 0x2282bf, 0x22834a). Row 2 of 0x3ffd80
+/// is hostile only to PC_NO_TEAM (7), a side no character of the demo is on: a child's own
+/// searches find nobody, and its fuse needs the split's target (0x22731c-0x22732d).
+const NEUTRAL: u8 = 2;
 /// A body's reach for the blast: the blast's physics query (FUN_00224a90) gathers bodies whose
 /// collision is inside its sphere, a character's being its parts (the motion set's
 /// `<collision>` bones, each with its own radius). The demo's body is a standing cylinder this
@@ -141,12 +148,13 @@ const SOUND_VOLUME: f32 = 0.8;
 const SOUND_REACH: f32 = 35.0;
 /// The least share of SOUND_VOLUME a missile's sounds keep however far (play_sounds' rule).
 const SOUND_FLOOR: f32 = 0.15;
-/// The push a missile's hit and its blast give a body (m/s): along the missile's way for a
-/// direct hit (as play.rs's shots push), out from the blast and up for the blast (the grenades'
-/// push at their middle, `hurt_by_blast`). The demo's numbers: the game's push (h_e39b994b, 2,
-/// copied to the damage record +0x54) isn't in m/s.
+/// The push handed to `hurt_still` for a missile's direct hit (m/s): along the missile's way, and
+/// up. With no knockdown from a missile it only sets which way the blood sprays and, for a kill,
+/// the death push that throws the body (as play.rs's shots push). The demo's numbers: the
+/// game's push (h_e39b994b, 2, copied to the damage record +0x54) isn't in m/s.
 const HIT_PUSH: (f32, f32) = (4.0, 1.5);
-/// The blast's push (m/s): out from it, up (see HIT_PUSH). The demo's numbers.
+/// The same for the blast (m/s): out from it, and up (the grenades' push at their middle,
+/// `hurt_by_blast`). The demo's numbers.
 const BLAST_PUSH: (f32, f32) = (6.0, 4.0);
 /// FUN_00228c70: a blast shakes the view within this many times the Damage radius (weapon type
 /// +0x1fc x 7.0)...
@@ -206,14 +214,19 @@ struct Missile {
     weapon: u32,
     /// its object type (`MissileKits`)
     object: u32,
-    /// who fired it (+0x1b4), their team (+0x21c) and whether a player controls them
-    /// (FUN_00112800, the fuse's condition: read as "a human player's", medium confidence)
+    /// who fired it (+0x1b4), their team (the side its damage counts as own, FUN_0004b9c0) and
+    /// whether a player controls them (FUN_00112800, the fuse's condition: read as "a human
+    /// player's", medium confidence)
     owner: Who,
     team: u8,
     human: bool,
+    /// its own side (+0x21c), which its searches and its fuse go by: the shooter's team for a
+    /// missile they launched (FUN_00227dd0 copies the owner's), NEUTRAL for a MIRV child
+    side: u8,
     pos: Vec3,
     vel: Vec3,
-    /// its heading when it last moved (the frame's -z: FUN_002266d0 turns it along the velocity)
+    /// its heading, the node's -z: FUN_002266d0 turns it along the velocity it had before each
+    /// steering, so it lags the motion by a step (the model, the 60-degree test, the seek's cone)
     heading: Vec3,
     /// +0x208: the speed steering holds it to (the bullet's)
     speed: f32,
@@ -403,12 +416,19 @@ fn name(u: &Player) -> String {
     format!("{}{}", CHARACTERS[u.character], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)))
 }
 
-/// FUN_002237c0: up to `count` living characters hostile to `team` (the demo's teams: another
-/// team is hostile) within `range` m of `at` and `cone` degrees of `fwd`, to their origin, with
-/// nothing of the world in between (the game casts a ray to it), the most central first.
-fn search(units: &[&Player], at: Vec3, fwd: Vec3, range: f32, cone: f32, count: usize, team: u8) -> Vec<Who> {
+/// Whether a missile of side `side` takes a character of team `team` for hostile (the table at
+/// 0x3ffd80): the demo's teams, 0 (the squad, CONFEDERATION) and 1 (the enemies), are hostile to
+/// each other; NEUTRAL to neither.
+fn hostile(side: u8, team: u8) -> bool {
+    side != NEUTRAL && side != team
+}
+
+/// FUN_002237c0: up to `count` living characters hostile to `side` (see `hostile`) within
+/// `range` m of `at` and `cone` degrees of `fwd`, to their origin, with nothing of the world in
+/// between (the game casts a ray to it), the most central first.
+fn search(units: &[&Player], at: Vec3, fwd: Vec3, range: f32, cone: f32, count: usize, side: u8) -> Vec<Who> {
     let cos = cone.to_radians().cos();
-    let mut found: Vec<(f32, Who)> = units.iter().filter(|u| !u.dead && u.team != team).filter_map(|u| {
+    let mut found: Vec<(f32, Who)> = units.iter().filter(|u| !u.dead && hostile(side, u.team)).filter_map(|u| {
         let to = feet(u) - at;
         let d = to.length();
         if d > range || d < 1e-3 {
@@ -469,13 +489,11 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
         }
         if let Some((t, struck, surface, mine, breakable)) = first {
             m.pos += dir * t;
-            m.heading = dir;
             let cause = if struck.is_some() { "hits a body" } else if mine.is_some() { "hits a Sentry" }
                 else if breakable.is_some() { "hits a breakable object" } else { "hits the world" };
             return Tick::Blow(Blow { breakable, ..blow(m, struck, surface, mine, true, cause) });
         }
         m.pos += step;
-        m.heading = dir;
     }
     m.age += dt;
     // the straight phase; at its end a child looks for a target (FUN_00226b80)
@@ -515,11 +533,16 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
             dir = (m.aim - m.pos).normalize_or(m.heading);
         }
         let speed = if b.steady { m.speed } else { m.vel.length() };
+        // FUN_002266d0 turns the node along the velocity it had before this steering
+        // (0x2268b4-0x22690d): the heading the next tick's 60-degree test and the seek's cone
+        // read (FUN_0001fdd0, the node's -z) lags the motion by a step
+        let before = m.vel;
         let along = m.vel.dot(dir);
         m.vel -= (m.vel - dir * along) * STEER_ACROSS;
         if (speed - along).abs() > STEER_SLACK {
             m.vel += dir * ((speed - along) * STEER_SPEED);
         }
+        m.heading = before.normalize_or(m.heading);
     }
     // the timers: life, then the second timer
     if m.life > 0.0 {
@@ -532,17 +555,16 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
     }
     // the proximity fuse: every FUSE_EVERY s, a body (its target, if it has one, else any
     // hostile) within reach, to its origin, that it has passed (on it, or behind its velocity).
-    // Only for a player's missile (FUN_00112800); the code also leaves it off for a missile with
-    // no target on the game's team 2, which the demo's teams (0 the squad, 1 the test map's
-    // enemies) don't map to
+    // Only for a player's missile (FUN_00112800), and one with a target or a side other than
+    // NEUTRAL (0x22731c-0x22732d): a child without the split's target has none
     let mut fused = None;
-    if b.fuse && m.human {
+    if b.fuse && m.human && (m.target.is_some() || m.side != NEUTRAL) {
         if m.fuse_clock < FUSE_EVERY {
             m.fuse_clock += dt;
         } else {
             m.fuse_clock = 0.0;
             let reach = radius * FUSE_REACH;
-            fused = units.iter().filter(|u| !u.dead && match m.target { Some(t) => u.who() == t, None => u.team != m.team })
+            fused = units.iter().filter(|u| !u.dead && match m.target { Some(t) => u.who() == t, None => hostile(m.side, u.team) })
                 .find(|u| {
                     let off = feet(u) - m.pos;
                     let d2 = off.length_squared();
@@ -572,9 +594,10 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
     Tick::Flying
 }
 
-/// The missile going off where it is now (see `Blow`).
+/// The missile going off where it is now (see `Blow`), its way its velocity (the hit record's
+/// +0x1c, FUN_002278e0).
 fn blow(m: &Missile, struck: Option<Who>, surface: Option<Vec3>, mine: Option<Entity>, collision: bool, cause: &'static str) -> Blow {
-    Blow { id: m.id, weapon: m.weapon, owner: m.owner, team: m.team, human: m.human, at: m.pos, dir: m.heading, struck, surface, mine,
+    Blow { id: m.id, weapon: m.weapon, owner: m.owner, team: m.team, human: m.human, at: m.pos, dir: m.vel.normalize_or(m.heading), struck, surface, mine,
            breakable: None, collision, cause, from: m.from, age: m.age }
 }
 
@@ -594,14 +617,15 @@ fn ray_lying(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
 }
 
 /// FUN_00226b80: every SEEK_EVERY s, the most central hostile within the range and SEEK_CONE
-/// degrees, with nothing in between, becomes its target.
+/// degrees, with nothing in between, becomes its target. By its own side: a NEUTRAL child's
+/// finds nobody (see NEUTRAL).
 fn seek(m: &mut Missile, range: f32, units: &[&Player], dt: f32, now: f32, log: bool) {
     m.seek_in -= dt;
     if m.seek_in > 0.0 {
         return;
     }
     m.seek_in = SEEK_EVERY;
-    if let Some(&who) = search(units, m.pos, m.heading, range, SEEK_CONE, 1, m.team).first() {
+    if let Some(&who) = search(units, m.pos, m.heading, range, SEEK_CONE, 1, m.side).first() {
         if log && m.target != Some(who) {
             println!("t {now:.2}: missile {} seeks: {}", m.id, units.iter().find(|u| u.who() == who).map_or(String::new(), |u| name(u)));
         }
@@ -624,14 +648,15 @@ fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32
     if count == 0 {
         return vec![];
     }
-    let fwd = m.vel.normalize_or(m.heading);
+    // the parent's node: its -z (FUN_00227f80 reads its frame)
+    let fwd = m.heading;
     let up0 = if fwd.y.abs() > 0.999 { Vec3::X } else { Vec3::Y };
     let right = fwd.cross(up0).normalize();
     let up = right.cross(fwd).normalize();
     let mut roll = state.random() * std::f32::consts::TAU;
     let step = std::f32::consts::TAU / count as f32;
     let targets: Vec<Who> = if b.seeks {
-        search(units, m.pos, fwd, range, SPLIT_CONE, count, m.team)
+        search(units, m.pos, fwd, range, SPLIT_CONE, count, m.side)
     } else if b.homes {
         m.target.into_iter().collect()
     } else {
@@ -651,7 +676,7 @@ fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32
         state.next += 1;
         out.push(Missile {
             id: state.next, weapon: m.weapon, object: if b.mirv_object != 0 { b.mirv_object } else { m.object }, owner: m.owner, team: m.team,
-            human: m.human, pos, vel: heading * m.speed, heading, speed: m.speed, life, start, straight: start * b.straight, after: b.after,
+            side: NEUTRAL, human: m.human, pos, vel: heading * m.speed, heading, speed: m.speed, life, start, straight: start * b.straight, after: b.after,
             seek_in: 0.0, fuse_clock: 0.0, target, aim, mode: 0, clock: m.clock, from: m.from, age: m.age, trails: vec![],
         });
     }
@@ -678,8 +703,8 @@ fn spawn_missile(commands: &mut Commands, kit: Option<&MissileKit>, ale: Option<
             for (i, &effect) in kit.trail.effects.iter().enumerate() {
                 if let Some(fx) = ale.cached_recorded_facing(effect) {
                     let sp = if m.start > 0.0 { (m.life / m.start).clamp(0.0, 1.0) } else { 1.0 };
-                    let e = commands.spawn((Transform::default(), Visibility::default(),
-                                            bf_viewer::ale_fx::AleEffect::new(fx, sp, 0x5EED_0000 ^ m.id.wrapping_mul(7919) ^ i as u32), ChildOf(root))).id();
+                    let run = bf_viewer::ale_fx::AleEffect::new(fx, sp, 0x5EED_0000 ^ m.id.wrapping_mul(7919) ^ i as u32).with_lod_sphere(kit.trail.bounds);
+                    let e = commands.spawn((Transform::default(), Visibility::default(), run, ChildOf(root))).id();
                     m.trails.push(e);
                 }
             }
@@ -727,7 +752,7 @@ fn launch_missiles(mut commands: Commands, mut player: ResMut<Player>, mut squad
         let dir = l.dir.normalize_or(Vec3::NEG_Z);
         state.next += 1;
         let m = Missile {
-            id: state.next, weapon: l.weapon, object: b.object, owner, team, human: owner == human, pos: l.origin, vel: dir * speed, heading: dir,
+            id: state.next, weapon: l.weapon, object: b.object, owner, team, side: team, human: owner == human, pos: l.origin, vel: dir * speed, heading: dir,
             speed, life: start, start, straight: start * b.straight, after: b.after, seek_in: 0.0, fuse_clock: 0.0,
             target, aim: target.and_then(|t| origin_of(&units, t)).unwrap_or(l.aim), mode: b.mirv_mode, clock: 0.0, from: l.origin, age: 0.0, trails: vec![],
         };
@@ -851,7 +876,10 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
                 let life = c.duration();
                 let place = if bl.collision { Transform::from_translation(at).looking_to(bl.dir, Vec3::Y) } else { Transform::from_translation(at) };
                 let seed = (at.x * 977.0 + at.z * 131.0) as u32 ^ bl.id;
-                commands.spawn((place, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(c, EXPLOSION_SP, seed), AleExpire(life)));
+                // (at its distance LOD from the camera, by the type's bounding sphere: the flash
+                // goes beyond ~94 m, see ale_fx's LOD_TAN)
+                let run = bf_viewer::ale_fx::AleEffect::once(c, EXPLOSION_SP, seed).with_lod_sphere(fx.bounds);
+                commands.spawn((place, Visibility::default(), run, AleExpire(life)));
             }
         }
     }
@@ -882,11 +910,14 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         mines.strike(e, 0.0, 1.0, now);
     }
     let (lo, hi) = (def.damage_min.min(def.damage), def.damage);
-    // the direct hit (FUN_0022c4d0 with no blast object): a roll, now
+    // the direct hit (FUN_0022c4d0 with no blast object): a roll, now, x the hit-location
+    // factor (FUN_00125940 at 0x227a03: the victim type's damage-multiplier x the struck bone's
+    // Damage; the missile's own +0x1cc is 1.0)
     if let Some((u, controlled)) = bl.struck.and_then(|w| unit_mut(player, squad, w)) {
         let roll = lo + (hi - lo) * state.random();
         let own = if u.team == bl.team { FRIENDLY } else { 1.0 };
-        let amount = roll * own * game.damage_factor(CHARACTERS[u.character], def.damage_type);
+        let (factor, bone) = hit_factor(u, game, bl.at);
+        let amount = roll * factor * own * game.damage_factor(CHARACTERS[u.character], def.damage_type);
         // (the test map's instant kill: anyone but the player, from the player's missiles)
         let amount = if instant && bl.human && !controlled { u.health.max(amount) } else { amount };
         let push = Vec3::new(bl.dir.x, 0.0, bl.dir.z).normalize_or(Vec3::Z) * HIT_PUSH.0 + Vec3::Y * HIT_PUSH.1;
@@ -896,8 +927,8 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
             tint.0 = 0.0;
         }
         if log {
-            println!("t {now:.2}: missile {} direct hit: {} takes {amount:.1} (roll {roll:.1}{}) -> {:.1} / {:.0}", bl.id, name(u),
-                     if own < 1.0 { ", own side x0.7" } else { "" }, u.health, u.max_health);
+            println!("t {now:.2}: missile {} direct hit: {} takes {amount:.1} (roll {roll:.1}, x{factor:.2} at bone {}{}) -> {:.1} / {:.0}", bl.id, name(u),
+                     bone.map_or("-".to_string(), |b| format!("h_{b:08x}")), if own < 1.0 { ", own side x0.7" } else { "" }, u.health, u.max_health);
         }
     }
     let radius = def.blast_radius;
@@ -949,6 +980,38 @@ fn hurt_still(u: &mut Player, game: &Game, amount: f32, push: Vec3, at: Vec3) {
     if !asked && !u.dead && u.knock_request.take().is_some() && std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("  (not knocked down after all: a missile's hit, play_missile.rs)");
     }
+}
+
+/// FUN_00125940, a direct hit's factor on a character: its type's damage-multiplier (the
+/// campaign squad's 0.62) x the struck bone's Damage (its motion set's `<collision>` list: the
+/// head x5, upper arms x0.8, forearms and calves x0.5, the hips, spine and thighs x1). The
+/// struck bone: the one of that list nearest the contact on the posed skeleton (the ragdoll's
+/// while knocked down), each taken as the line from its joint to its first child's (the calf
+/// from the knee to the ankle), where the game reads the physics body the missile met
+/// (FUN_00115000); the shape is the demo's. Blast shares take none of it (FUN_00224a90 passes
+/// 0). Returns the factor and the bone.
+fn hit_factor(u: &Player, game: &Game, at: Vec3) -> (f32, Option<u32>) {
+    let who = CHARACTERS[u.character % CHARACTERS.len()];
+    let multiplier = game.character_damage_multiplier.get(who).copied().unwrap_or(1.0);
+    let (Some(bones), Some(l)) = (game.character_hit_bones.get(who), u.loaded.as_ref()) else { return (multiplier, None) };
+    let place = |i: usize| -> Option<Vec3> {
+        match &u.knock {
+            Some(k) => k.ragdoll.pos.get(i).map(|&p| k.ragdoll.origin + Quat::from_rotation_y(k.ragdoll.yaw) * p),
+            None => u.last_world.get(i).map(|m| u.position + Vec3::Y * (u.height + u.lift_now) + Quat::from_rotation_y(u.yaw) * m.w_axis.truncate()),
+        }
+    };
+    // the distance from the contact to a bone's line (its joint to its first child's)
+    let reach = |i: usize| -> Option<f32> {
+        let a = place(i)?;
+        let Some(b) = l.model.parent.iter().position(|&p| p == Some(i)).and_then(|j| place(j)) else { return Some(a.distance(at)) };
+        let ab = b - a;
+        let k = if ab.length_squared() > 1e-8 { ((at - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+        Some((a + ab * k).distance(at))
+    };
+    bones.iter().filter_map(|&(bone, damage)| {
+        let i = l.model.bones.iter().position(|&b| b == bone)?;
+        Some((reach(i)?, damage, bone))
+    }).min_by(|a, b| a.0.total_cmp(&b.0)).map_or((multiplier, None), |(_, damage, bone)| (multiplier * damage, Some(bone)))
 }
 
 /// FUN_00228c70, every blast of a missile (its only callers, 0x227867 and 0x227b1d, are the

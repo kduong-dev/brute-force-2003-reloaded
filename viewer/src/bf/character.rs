@@ -190,6 +190,15 @@ pub struct Game {
     pub character_skills: HashMap<String, SkillData>,
     /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`)
     pub skill_overlays: HashMap<String, SkillOverlays>,
+    /// character name -> its motion set's hit bones (`<collision><..><bone name Damage>`): the
+    /// bone and the factor a direct hit on it takes (FUN_00114010 keeps those that aren't 1;
+    /// FUN_00125940 reads them): the head x5 (x3 for Brutus and the hounds), upper arms x0.8,
+    /// forearms and calves x0.5, the hips, spine and thighs x1
+    pub character_hit_bones: HashMap<String, Vec<(u32, f32)>>,
+    /// character name -> its type's `damage-multiplier` (h_e7e9fcd3, the type's +0x220): a
+    /// direct hit's factor with the struck bone's (FUN_00125940). The campaign squad 0.62, the
+    /// Shrikes 1
+    pub character_damage_multiplier: HashMap<String, f32>,
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
     /// `ChatterBlock`; play_skills.rs's skill lines go through it)
     pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
@@ -542,6 +551,11 @@ pub struct EffectType {
     /// `<h_fb0a5f1d><Damage ..>`: the damage areas it sets up where it's started (the
     /// exploding scenery's effects, see `AreaDamage`); empty on most
     pub damage: Vec<AreaDamage>,
+    /// its bounding sphere: the centre `<h_e99750a9>` in the effect's own frame and the radius
+    /// h_1ab09530 (FUN_00219ed0 reads them for the effect's distance LOD, ale_fx's LOD_TAN). The
+    /// Therm Sweeper's explosion h_173132f0: (-1.99, -3.21, -1.67), 25 m; its trail h_194dc78e
+    /// radius 0. None if the type has neither
+    pub bounds: Option<(Vec3, f32)>,
 }
 
 /// A ground decal (objecttypes `<decal>`): one of its textures at random (white shapes), tinted
@@ -609,6 +623,8 @@ impl Game {
             effects: ale::Library::default(),
             effect_types: HashMap::new(),
             effect_type_defs: HashMap::new(),
+            character_hit_bones: HashMap::new(),
+            character_damage_multiplier: HashMap::new(),
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
         };
@@ -691,6 +707,14 @@ impl Game {
             }
             // (a motion set that doesn't decode is skipped, not an error for the archive)
             let Ok(Some(root)) = self.parse(ar, &n) else { continue };
+            // its `<collision>` bones (name, `Damage`): the hit parts and their factors
+            let bones: Vec<(u32, f32)> = root.walk().into_iter().filter(|e| e.name == h("collision"))
+                .flat_map(|c| c.walk()).filter(|b| b.name == h("bone"))
+                .filter_map(|b| Some((b.attr(h("name"))?.as_hash()?, b.attr(h("Damage")).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(1.0))))
+                .collect();
+            if !bones.is_empty() {
+                self.character_hit_bones.insert(who.clone(), bones);
+            }
             let mut overlays: SkillOverlays = [None, None];
             for o in root.walk().into_iter().filter(|e| e.name == h("overlay")) {
                 let slot = match int_of(o, h("motion-type")) { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
@@ -919,8 +943,12 @@ impl Game {
                         AreaDamage { amount: f(h("amount")), damage_type: i(h("Type")), mode: i(0xED58_2B3C), delay: f(0xF724_CB8C),
                                      duration: f(h("duration")), range: f(h("range")), falloff: i(h("falloff")) }
                     }).collect()).unwrap_or_default();
+                    let radius = t.attr(0x1AB0_9530).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+                    let centre = t.child(0xE997_50A9).and_then(|c| c.text.as_ref()).map(|x| x.floats()).filter(|f| f.len() >= 3)
+                        .map(|f| Vec3::new(f[0], f[1], f[2]));
+                    let bounds = (radius.is_some() || centre.is_some()).then(|| (centre.unwrap_or(Vec3::ZERO), radius.unwrap_or(0.0).max(0.0)));
                     self.effect_type_defs.entry(name).or_insert(EffectType {
-                        effects: list, light: if light == h("") { 0 } else { light }, sounds, damage,
+                        effects: list, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
                     });
                 }
             }
@@ -1003,6 +1031,9 @@ impl Game {
                             Some((num(h("Type"))? as i64, num(H_DAMAGE_FACTOR)?))
                         }).collect()).unwrap_or_default();
                         self.character_damage_factors.insert(name.clone(), factors);
+                    }
+                    if let Some(m) = e.attr(0xE7E9_FCD3).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))) {
+                        self.character_damage_multiplier.insert(name.clone(), m);
                     }
                     let icon = |k: u32| e.attr(k).and_then(|v| v.as_hash()).unwrap_or(0);
                     self.character_icons.insert(name.clone(), (icon(0xF9D9_4425), icon(0x00C5_1907)));

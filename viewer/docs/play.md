@@ -346,18 +346,28 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   down the model's -y; its effect (seer_fball_mzl_purple) isn't checked against a take. The
   frame was found on the Therm Sweeper, whose back-blast dust (mtrail-dust, 4.3 m along +z,
   2 m down) hung 4.3 m above Tex and now lies behind the launcher, where the follow camera
-  doesn't see it (the takes show none from behind Tex).
+  doesn't see it (the takes show none from behind Tex); by the game's emission count it's one
+  brown card (see **Missiles**, the effects' count). An effect parented to the gun now starts on
+  the shot's frame, placed from the gun's last placement (`ale_fx.rs`'s emit; it waited a frame
+  before).
   * **Facing 3** (#73; `src/ale_fx.rs`, `FACING`): an appearance flagged AngleFadeOut (the
     demo's "perp") whose GeneralApp_FacingType is 3 is drawn as the game's particle vertex
     shader (0x3b8bf8) builds it: a quad stretched along its particle's motion and turned about
     it to face the camera. In the hardpoint frame, lying flat across its y, the sphere
     emitters' glows (the A10's, the Saryl-45's, the Jax-iC's) were edge-on lines; they're round
     again, as before it. Every other appearance keeps the demo's rules.
-  * **The light**: a muzzle effect type with a light-effect (h_002779c8's light_muzzle on most
-    guns, h_e7e8d51b: 0.24 s, growing 0.5 -> 4.6 m) plays it as a point light at the muzzle,
-    as the blasts' lights are played (`src/ale_fx.rs`), in place of the demo's own point light
-    (`HeldWeapon::data_light`); a gun without one keeps the demo's. Its seed is made from the
-    effects', so the gun's random stream (spread, frame jitter) runs as before it.
+  * **The light**: a muzzle effect type with a light-effect plays it as a point light at the
+    muzzle, as the blasts' lights are played (`src/ale_fx.rs`), in place of the demo's own point
+    light (`HeldWeapon::data_light`); a gun without one keeps the demo's. Each kind of gun names
+    its own: light_muz_minigun (h_08b5bbab, 0.2 s growing 0.28 -> 2.66 m) on the ballistic guns
+    (MK, Minigun, Bower, Foley, Kman, L-Shots), light_muz_laser (h_1a96e11e, 0.2 s, 0.26 ->
+    2.53 m) on the LZRs, light_muzzle (h_e7e8d51b, 0.24 s, 0.5 -> 4.6 m) on the Therm Sweeper and
+    the Sweeper V, and _bio, _cutter, _sonic, _particle, _rail, _seer and _energy on the others;
+    none on the iKhan-GPL. Its seed is made from the effects', so the gun's random stream
+    (spread, frame jitter) runs as before it. It's lit from the shot's frame (`BF_SHOT_LOG`'s
+    round, the effect and the light's first update share it) but draws from the next: a point
+    light made that frame shows a frame late in the demo, where the demo's own light (an
+    existing one turned up) showed at once. Not fixed.
   * **In the controlled character's own scope** it's drawn 3.8 m from the eye with its axis
     along the line of sight, where the take shows it (`SCOPE_FLASH_REACH`, `SCOPE_FLASH_AT`; the
     demo's rule): at the muzzle, a few tenths of a metre from the scoped eye and magnified, its
@@ -366,7 +376,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     before the hardpoint frame (+y along the sight) and the demo's perp rules: the fit below was
     made with them, and the scoped MK draws as on main (frames 14-39 of
     `BF_TEST_WEAPON=MK-ASLT BF_TEST_FIRE=1 BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12` differ
-    from main's by at most 7 of 255). Its light stays at the muzzle.
+    from main's by at most 7 of 255). No light there, the demo's old rule and a choice: from the
+    gun under the eye the data light washed the whole scope view orange for a frame (the scoped
+    MK pitched down, +29 red on average), and no take shows the game's light in the scope.
     * The take (63/take01 at 28.77-28.85 s, the bright pixels that changed, 640 x 480 units): a
       soft orange ball, centroid 95-104 right of the crosshair and level, 124 x 144, its left
       edge (x 344) clear of the crosshair (303-336), gone in ~0.1 s.
@@ -457,28 +469,45 @@ cover) came after it and are compared under **Verified**.
   for the second), turned spread-max x 90 = 9 degrees toward it, at 30 m/s, living 0.85-1.15 x
   0.667 s and then 5 s more. The hostiles the split finds within 20 m and 30 degrees of the
   parent's heading are dealt out to them in turn, the most central first; without any, each
-  aims 200 m along the parent's heading and comes back near parallel. A child without a target
-  looks every 0.25 s for one within 20 m and 60 degrees (FUN_00226b80). The search
+  aims 200 m along the parent's heading and comes back near parallel. **A child is NEUTRAL**:
+  it keeps the projectile constructor's side 2 (FUN_002264e0 at 0x2265ec), since the split calls
+  FUN_00227dd0, which copies the owner's team, before it copies the owner (0x2282bf, 0x22834a),
+  and row 2 of the hostility table (0x3ffd80) is hostile only to PC_NO_TEAM (7), a side no
+  character of the demo is on. So its own search (FUN_00226b80, from its first tick, every
+  0.25 s, 60 degrees) finds nobody: its only target is the one the split dealt it, and one that
+  gives that up flies on along its velocity. The split searches with the parent's side, the
+  shooter's (0x228199). The search
   (FUN_002237c0) needs a clear ray to the character's origin (the feet), through a world query
   (FUN_000df0a0, flags 0xfffffffa) that takes the terrain and some dynamic objects but none of
   the level's placed geometry: the demo's ray meets only the terrain (`Arena::ray_terrain`) and
   stops 0.3 m short of the feet, so the ground they stand on doesn't count (the demo's, as the
   AI's sight test).
 * **Proximity fuse** (h_0bafbd6f): every 0.25 s, for a player's missile (FUN_00112800, read as
-  "a human player's": medium confidence), a hostile (only its target, if it has one) within
-  Damage radius x 0.375 = 1.69 m of it, to their origin, that it has passed. The parent then
-  splits; a child goes off.
+  "a human player's": medium confidence) with a target or a side other than NEUTRAL
+  (0x22731c-0x22732d), a hostile (only its target, if it has one) within Damage radius x 0.375
+  = 1.69 m of it, to their origin, that it has passed. The parent then splits; a child (only
+  while it holds the split's target) goes off.
+* **The heading lags a step.** The 60-degree test and the seek's cone read the node's -z
+  (FUN_0001fdd0 at 0x226fdc), and FUN_002266d0 turns the node along the velocity it had before
+  that tick's steering (0x2268b4-0x22690d): the demo's heading is set there, not from the move.
 * **Hitting something** (the collision callback FUN_002278e0): the map's collision, a living body
   (not the shooter's) standing (play.rs's cylinder) or lying knocked down (its ragdoll's bones,
   each a ball 0.2 m round: `LYING_RADIUS`, the demo's shape; the game's missile strikes the
   ragdoll's bodies, where the plain shots pass over them), a breakable object, or a Sentry. A
-  body struck takes a roll of Damage min..max (84-96, FUN_0022c4d0), x 0.7 on the shooter's
-  side (FUN_0004b9c0), x its damage-type factor. The code's hit also takes the hit-location
-  factor (FUN_00125940 at 0x227a03: the victim type's damage-multiplier x the bone's); it's left
-  out, as the other guns' shots leave it out. A breakable object struck takes a roll too (the
-  scenery applies its damage-type factor), then the blast's share. A missile that hits
-  something before its split goes off there without splitting (the takes' gate, the Shrike at
-  7 m). A child whose 5 s run out goes off where it is (h_0976a9dc, FUN_00227760).
+  body struck takes a roll of Damage min..max (84-96, FUN_0022c4d0), x the hit-location factor,
+  x 0.7 on the shooter's side (FUN_0004b9c0), x its damage-type factor. **The hit-location
+  factor** (FUN_00125940 at 0x227a03, the bone from FUN_00115000; the missile's own +0x1cc is
+  1.0): the victim type's `damage-multiplier` (h_e7e9fcd3: 0.62 for the campaign squad, 1 for
+  the Shrikes) x the struck bone's `Damage` from its motion set's `<collision>` list (the head
+  x5, x3 for Brutus and the hounds; upper arms x0.8; forearms and calves x0.5; the hips, spine
+  and thighs x1; no feet). The demo's struck bone is the listed one nearest the contact on the
+  posed skeleton (the ragdoll's while knocked down), each taken as the line from its joint to its
+  first child's (`hit_factor`; the shape is the demo's). Blast shares take none of it
+  (FUN_00224a90 passes 0). The plain shots of the other guns still leave it out. A breakable
+  object struck takes a roll too (the scenery applies its damage-type factor), then the blast's
+  share. A missile that hits something before its split goes off there without splitting (the
+  takes' gate, the Shrike at 7 m). A child whose 5 s run out goes off where it is (h_0976a9dc,
+  FUN_00227760).
 * **The blast** (FUN_0022bfc0, dealt once by FUN_00224770) goes off at the missile's centre:
   the bullet's radius (0.1 m) off the surface it struck, along its normal. Its own roll,
   0.05-0.25 s later (at random), to every living body it reaches with nothing of the world
@@ -527,6 +556,28 @@ cover) came after it and are compared under **Verified**.
     a light object type in h_f8c6a8b4 (h_09020c30, a point light of range 10, for the Therm
     Sweeper's muzzle and explosion); that the light effect drives it is an inference from the
     data.
+  * **The count and the distance LOD** (`Compiled::counted`, `game_count`, `LOD_TAN` in
+    `src/ale_fx.rs`), for the Therm Sweeper's trail, explosion and launch dust:
+    * Each effect object has a distance LOD from the camera (the render cull FUN_000e7850 ->
+      FUN_00156050): d = tan(35 degrees: the game camera's 70-degree view) x the distance past
+      the effect type's bounding sphere (FUN_00219ed0: centre h_e99750a9 in the effect's
+      frame, radius h_1ab09530; the explosion's (-1.99, -3.21, -1.67), 25 m; the trail's
+      radius 0; the dust's (0.08, 0.19, 4.13), 5.21 m; `EffectType::bounds`); LOD 1 to 10 m,
+      falling to 0 at 60 m (0x2194d0, 0x2194e0; x (2 - w) / 2 for the world's load and x 1 for
+      one view, both 1 in the demo).
+    * Each emitter's new particles (FUN_00065800): the whole number of its frequency's over the
+      time since its last batch (the frequency read at its end), its initial particles on its
+      first update, plus each emit count key passed (cut to a whole number each time), then
+      x its Emitter_LODCurve at that LOD (fe077e05), cut again; the fractions are thrown away.
+      So exp-rocket-flash makes 3 particles (2 at 0.076 s, 1 at 0.16 s) up to ~72 m and none
+      past ~94 m; the launch dust's 18 a second for 0.43 s make one card, at ~0.13 s. The
+      initial particles come once (the flag the emitter's constructor FUN_00065640 sets). A
+      trail emitter starting its 4 s over (a child's flight past 4 s) counts from 0 again: the
+      demo's, as the game's loop of an emitter's time isn't traced.
+    * A particle's size is its Scale x its Appearance_LODCurve at that LOD (0c53b008; 1 on these
+      effects) x the shape.
+    * Every other effect keeps the demo's count (a rate's fraction carried over, an emit
+      count's burst at the start) and no LOD: the general rule is a ticket of its own.
 * **The scorch** (bullet h_06a27365 = h_e6868a8d: 5 x 5, RGBA 10 10 10 200, 25 s, fading over the
   last 5), from the code: the damage handler (0x22d0b0) lays a hit's decal (FUN_0022ca20) on a
   direct hit only when the Damage radius is 0.05 m or less (bullet holes). A blast weapon's
@@ -540,6 +591,9 @@ cover) came after it and are compared under **Verified**.
   blast's damage, 0.05-0.25 s after the explosion; the demo lays it 0.7 s after (`DECAL_DELAY`,
   the grenades'): laid that early, the dark decal shows through the demo's paler added fireball
   as a hard dark disc (#104). The takes show it from ~0.85-1.0 s, once their fireball clears.
+  At take04's cliff foot it showed only as a straight-edged wedge: the terrain's layers were drawn
+  over it (see the terrain layers below); now it's a dark blot there, with the flat quad's
+  straight edge where it leaves the curved rock.
 * **The camera shake** (`play_shake.rs`): every missile blast shakes the player's view
   (FUN_00228c70, whose only callers are the missile's two explosion paths, 0x227867 and
   0x227b1d: a grenade's blast doesn't shake the view through it). A camera within 7 x the Damage
@@ -548,8 +602,16 @@ cover) came after it and are compared under **Verified**.
   falling to nothing over 0.75 f s (FUN_0006bdd0). Each game frame the camera's update (0x6c780:
   FUN_00073d20, FUN_00073c00, FUN_00073a80) turns the view by a random pitch and yaw within
   +-0.025 x the amplitude rad and a roll within half that (FUN_00072010, FUN_000720d0,
-  FUN_00073d80), new each frame. The view only: the aim keeps the unshaken camera. A weaker
-  kick doesn't replace a stronger one still running.
+  FUN_00073d80), new each frame. The view only, the demo's choice: the aim keeps the unshaken
+  camera. The game multiplies the turn into the camera's own frame (0x6c54a, FUN_00073b20, the
+  camera's vtable +0x3c); whether its crosshair ray reads that frame isn't traced. A weaker kick
+  doesn't replace a stronger one still running.
+* **The terrain's layers sort first** (`TERRAIN_LAYER_SORT`, `src/level_scene.rs`; see
+  [levels.md](levels.md)). Bevy sorts transparent meshes by their origin's depth, and a terrain
+  layer's origin is the world's: where that origin was nearer the camera than an effect, the
+  layer was drawn after it and painted the ground over it. At take04's cliff the blasts and the
+  launch glow vanished that way (the tester's "no blast pixels over 200"), and the scorch showed
+  only where the rock layer's mask let it through.
 * **Damage factor: the difficulty step**, not here. Every hit in the takes' HP logs is ~1.4x
   the code's rule on enemies and ~0.6x on the squad: the character damage handler (0x125600)
   scales every hit on a character by 1 - 0.1n for enemies and 1 + 0.1n for the squad, n = -4 on
@@ -578,7 +640,9 @@ search looks at; `BF_SHAKE_LOG=1` prints each shake kick and its end. The takes'
   which opens for anyone in the demo, enemies too), take23's in front at (-56.7, 40.5).
 * The homing takes (17-19) on the test map: `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5
   BF_CAMERA_PITCH=-0.08 BF_TEST_INSTANT_KILL=0` and Brutus dummies 24 m out 2 m either side of
-  the line (17), 30 m out (18), or 30 m out 4 m left (19).
+  the line (17), 30 m out (18), or 30 m out 4 m left (19); the takes' camera 3.5 m behind Tex:
+  `BF_TEST_FREECAM=0.5,4.5,1.3,23.5,0,-3`. take07's 45 m: one dummy at (4.5, -25).
+* A side view of a launch (the dust): the same spot, `BF_TEST_FREECAM=0.5,10.5,1.6,19.0,90,-5`.
 * The reload (08): `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5 BF_TEST_RESERVE=32 BF_AMMO_LOG=1
   BF_START_WEAPON=1 BF_TEST_TRIGGER=2.5-11.9,15.5-15.65,...`; the open air (20): the same spot,
   `BF_CAMERA_PITCH=0.17`, one tap.
@@ -591,20 +655,27 @@ step):
   takes: blasts 0.80 s after the glow at ~25 m).
 * Open air (take20): the children's timers run out 5.67 s after the split, 168.8 m beyond it,
   and they go off where they are (the take: 5.58 s game time, 168.6 m, a climb with no drop).
-* Homing: take06's enemy at 25 m (a Brutus dummy): the split finds him and both children dive
-  to his feet (blasts 1.1 and 3.0 m from his body: 46.5 and 47.5 HP, half the roll each); a
-  later shot hits him directly (89.5, a roll). At 35 m the split finds him and both children
-  strike him (93.1, 93.8: take07's two direct hits). On the flat test map at 45 m, past the
-  split's 20 m, both children find him 0.27 s after the split and strike him 1.43 s after the
-  launch (take07: 1.50 s at 45 m); an enemy 4 m aside takes both blasts' halves (47.2, 42.9).
+* Homing (round 3: the children NEUTRAL, the heading lag, the hit-location factor; the
+  dummies are Brutus, damage-multiplier 0.62, where the takes' Shrikes are 1):
   * take17 (two enemies 4 m apart, 24 m out): the split, 4 m short of them, deals neither out;
-    the children find them 0.07 s later, give them up as over 60 degrees off 0.07 s after that
-    and fly on straight between them, nobody hurt (the take: the children carry on between
-    them, no HP change).
-  * take18 (30 m out): the split finds both and gives each child one; each strikes its enemy
-    (93.1, 93.8), then a blast share (47.2). The take: each child takes one target.
+    the children don't seek and fly on together between them, nobody hurt, as the take shows.
+    From the takes' camera their glows are 35, 36, 29, 23 and 23 units apart at +0.27, +0.4,
+    +0.53, +0.67 and +0.8 s after the split (the take holds 25-28 from +0.27 to +0.8 s; round 2's
+    children drew apart, 36 to 125).
+  * take18 (30 m out): the split finds both and gives each child one; each strikes its enemy's
+    calf (28.9, 29.1: a roll x 0.5 x 0.62), then each takes both blasts' shares (47.2 and 42.9):
+    three hits each, as the analyst reads the take (a x0.5 direct, then both shares in one
+    sample).
   * take19 (one enemy 30 m out, 4 m left of the line): both children turn onto him and strike
-    him (93.1, 93.8), as the take's two direct hits.
+    his calf (28.9, 29.1); the take's two directs were x1 bones.
+  * take07's 45 m (the enemy on the line): the split, 25 m short, finds nobody; the children fly
+    the parent's line and land 1.7 m either side of his feet, 1.40 and 1.50 s after the launch
+    (two shares, 46.9 and 43.3). take07's two children struck him directly (-256.8 at once,
+    two x1 directs, ~1.5 s): not matched (see below).
+  * take06 (25 m, three shots 2.37 s apart): shot 1, two shares (46.5 at 1.1 m, 47.5 at 3.0 m:
+    the second child gives up its aim within 1 m of his feet and lands 3 m past); shot 2, one
+    (44.8 at 2.0 m; the other child gives up within 1 m and lands 17 m past). The 105 HP dummy
+    dies on shot 2. take06: one share per shot (61.6, 64.6, 64.0), both on shot 4.
 * Self-damage (takes 10-16, the gate): Tex 2, 3, 4 and 5 m from the panel takes 32.8 from his
   own blast (half of 93.6, x 0.7), at 6 m nothing (the takes: 18.6-20.1 at 2-5 m, x0.6; nothing
   at 6 m); he isn't knocked down. Flint 1 m to his left or right takes the same 32.8 (takes 14,
@@ -626,43 +697,49 @@ step):
   from the camera, over 0.77 and 0.73 s: a turn of up to +-0.0066 rad, which shows as a jitter
   of the frames. The takes: +-1-5 of 960 units for ~0.7 s at 25 m (take04), +-5-10 for ~1 s at
   6 m (take03, where the code gives the full 0.74).
-* The look, against take06 from the take's own view (`BF_TEST_FREECAM` above): the bright area
-  of the launch glow is 41-48% of the take's (3-7% before the light effect and the shapes); the
-  blast at its peak 79%, its near-white part 21%; 1.13 s after the launch 42%, 1.4 s after it
-  6% (the take's fire column stays).
+* The look, from the takes' own views (`BF_TEST_FREECAM` above), in 640 x 480 units² above
+  luminance 200 (and 240):
+  * take04 (the cliff, 25 m): the blast peaks at 17.9k (13.0k), the take at 16.9k (12.7k); the
+    demo's bright phase lasts 0.27 s, the take's ~0.41 s. The launch glow lights ~17.5k units²
+    by 40 or more over the frame before (the take ~19.2k), 0.2 s after the shot (the take's
+    0.3 s). Before the terrain-layer fix neither showed at the cliff.
+  * take06 (the sand, 25 m): the launch glow 4.2-5.0k (the take 2.7-4.7k); the blast peaks at
+    11.6k (8.5k), the take at 6.5k (3.6k), with its fire column lasting ~0.2 s longer.
+  * take20 (the open air, ~190 m): no white flash, one small orange flame ~20 units across for
+    ~0.3 s (the take: 12 x 15 units, ~0.33 s, no flash); round 2's ~55-unit white disc is gone.
+  * The launch dust: one brown card rising behind the launcher from ~0.13 s, out of the follow
+    camera's view (the side view above).
 * Muzzle effects (above), the branch against main in the same side views (`-- --test
   BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12 BF_TEST_FIRE=1 BF_CAMERA_DISTANCE=2.2
   BF_VIEW_YAW=<yaw>`): the sphere emitters' glows (A10, Saryl-45, Jax-iC) are round as on main;
   the Minigun's flash leaves the barrel forward (main's fires across it); the scoped MK draws as
   on main.
-* The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel main's from frame
-  7 to the first shot (296; frames 1-6 differ while the scene's render pipelines finish
-  compiling). From the shot on, Tex's LZR-23 plays its muzzle effect type's light (h_1a96e11e):
-  a reddish light at the shot, as the LZR-23's take01 shows on the ground at Hawk's feet
-  (f196-f200), where main's demo light was orange-white and brighter. Not measured.
+* The main game on sdm_e34 (`BF_AUTOPILOT=1`, 300 frames) differs from main's by at most 0.4%
+  of the pixels from frame 8 to the first shot (296; #120's stamina bar; frames 1-7 differ while
+  the scene's render pipelines finish compiling). From the shot on, Tex's LZR-23 plays its
+  muzzle effect type's light (light_muz_laser): a reddish light, as the LZR-23's take01 shows on
+  the ground at Hawk's feet (f196-f200), where main's demo light was orange-white and brighter.
+  Not measured.
 
 Not matching or not done:
-* The explosion is paler than the takes' white-hot fireball, most over bright rock (take04's
-  cliff: barely there; its foot is mostly hidden in the rock, where the game draws it clear:
-  not traced): the added sprites summed in linear light (#104). The late fire column (the take's
-  at +1.4 s) is short. On the beach's sand it's a dense orange fire wall with a straight bottom
-  edge on the ground, as take04's.
-* The back-blast dust (mtrail-dust) shows behind the launcher in a side view of the demo, not in
-  take21's.
-* The scorch is a flat quad: at the cliff's foot it stands out of the rock with straight edges,
-  where the game's wraps the rock (its decal manager clips the world's triangles, FUN_00214710
-  -> FUN_00217920). On flat ground it's the takes' dark ragged blot.
-* take18's first shot takes 188.5 and 189.7 HP off the two enemies, two hits' worth each (a
-  direct and one share, x1.4); by the code's rule, as the demo reads it, the other child's blast
-  4 m away reaches each too, a third. The demo's dummies die before it (105 HP): not compared,
-  and the take's log order (the shares first) isn't explained.
+* The blast's bright phase is shorter than the takes' and the late fire column (the take's at
+  +1.4 s) is short; on take06's sand its peak is ~1.8x the take's bright area. The added
+  sprites summed in linear light (#104) and the curves' easing (the demo reads easing bytes 0,
+  5 and 6 as linear, `bf/ale.rs`'s ease; no exp-rocket curve uses them) stay open.
+* The scorch is a flat quad: at the cliff's foot it has a straight edge where it leaves the
+  rock, where the game's wraps the rock (its decal manager clips the world's triangles,
+  FUN_00214710 -> FUN_00217920). On flat ground it's the takes' dark ragged blot.
+* Where the children home: the demo aims them at the target's feet (its origin); the game homes
+  on the target's scene node (vtable +0x40 -> +0x24), not read live. take07's two x1 directs at
+  45 m and take19's x1 bones fit a point higher up the body; take06's one share per shot isn't
+  reproduced either (no code rule stops a second share: the second child must land out of reach).
 * The demo's follow camera (its 45-degree view and the aiming dolly, #126) puts Tex over the
   crosshair, so the launch and the blasts are mostly behind him. On e40 Tex and the standing
   stones draw black (main too): not this ticket's.
-* The other effects keep the demo's quads and perp rules: the shape 2 appearances elsewhere
-  (half the game's size), facing 3 on non-perp appearances (the Psionic Blast's muzzle ball),
-  the Frag's facing 3 quads. Hit lights (an effect type's light on a bullet's hit) aren't
-  played.
+* The other effects keep the demo's quads, perp rules and count, and have no LOD: the shape 2
+  appearances elsewhere (half the game's size), facing 3 on non-perp appearances (the Psionic
+  Blast's muzzle ball), the Frag's facing 3 quads. Hit lights (an effect type's light on a
+  bullet's hit) aren't played.
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's
