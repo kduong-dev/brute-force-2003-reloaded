@@ -20,12 +20,16 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
 - The GNU toolchain's dlltool fails on paths with spaces ("XBE Mod"), so build outside the
   repo. `viewer/.cargo/config.toml` (ignored, per machine) sets
   `target-dir = "C:/Users/Kevin/.cargo/target/bf_viewer"`. A git worktree has no copy of it:
-  set `CARGO_TARGET_DIR` to a directory of its own, without spaces, e.g.
-  `C:/Users/Kevin/.cargo/target/bf_<branch>`.
+  set `CARGO_TARGET_DIR` to one of the two build slots,
+  `C:/Users/Kevin/.cargo/target/bf_slot1` or `bf_slot2`, one per heavy slot (the lead says
+  which). They're kept between tickets, so a new ticket's first build only catches up on what
+  changed (a minute or two) instead of a fresh folder's ~15 minutes. Never give two agents the
+  same slot at once.
 - Game data is found at `../Brute Force/data` from `viewer/`. A worktree has no copy of it:
   set `BF_DATA_DIR="C:/Users/Kevin/projects/github/XBE Mod/Brute Force/data"`.
 - `cd viewer && cargo build --bins` must finish with **no errors and no warnings**.
-- A full build takes minutes. Agents that share a target dir queue on its lock.
+- A full build takes minutes; a rebuild after a change takes seconds (debug info is line
+  tables only, `viewer/Cargo.toml`). Agents that share a target dir queue on its lock.
 - Builds go through sccache (machine-wide `~/.cargo/config.toml`, cache on `D:\sccache`), so a
   new worktree's build reuses the compiled dependencies. Leave it on.
 - **xemu runs at above-normal priority**, so builds and demo runs don't make the game stutter
@@ -117,9 +121,9 @@ filing those, or files them with the `triage` label for the user to accept or cl
    tickets, not more rounds. When writing the spec, mark acceptance items the demo can't
    reach yet as blocked. Split new shared machinery into its own ticket that goes first.
 7. The lead summarises the result for the user. On their yes: merge to `main`, push, and the
-   commit's `Closes #N` closes the ticket. Then delete the ticket's build folder
-   (`CARGO_TARGET_DIR`), its worktree and branch, and the agents' captures for it: each ticket
-   leaves about 12 GB of build output and several GB of frames. Keep `todo/` footage.
+   commit's `Closes #N` closes the ticket. Then delete its worktree and branch and
+   the agents' captures for it (several GB of frames). Keep the build slot, and keep `todo/`
+   footage.
 
 **The board.** Tickets are tracked on the project "Brute Force Reloaded Project" (#4,
 owner `kduong-dev`). Its statuses are Backlog → Ready → In progress → In review → Done. The
