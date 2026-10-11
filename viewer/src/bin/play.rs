@@ -27,6 +27,7 @@
 //!   M           next ground surface (footstep / landing sounds)
 //!   Backspace   back to the map menu (in the same window)
 //!   1-4         Brutus / Flint / Hawk / Tex
+//!   V           the special skill on / off (the game's White button; play_skills.rs)
 //!
 //! Movement is root motion: each frame the character moves by exactly what the playing clip's
 //! root channel moves. Clips are looked up by their real names (animation names are hashes of
@@ -148,6 +149,12 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
             // door and gate sounds stream from the map's language wave bank
             if let Err(e) = game.load_level_streams(&data_dir(), map, "en") {
                 eprintln!("no streamed sounds for {map}: {e}");
+            }
+            // a squad deathmatch map: the deathmatch squad's skill rates (play_skills.rs)
+            if map.starts_with("sdm_") {
+                if let Err(e) = game.load_squad_library(&data_dir(), skills::SDM_SQUAD) {
+                    eprintln!("no squad deathmatch skills: {e}");
+                }
             }
             let a = world::Arena::install(game, &l);
             a.settle_pickups(game, &mut l);
@@ -451,6 +458,7 @@ fn main() {
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
         .add_plugins(shake::plugin)
+        .add_plugins(skills::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -504,6 +512,8 @@ mod shots;
 mod missile;
 #[path = "play_shake.rs"]
 mod shake;
+#[path = "play_skills.rs"]
+mod skills;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1219,6 +1229,11 @@ struct Loaded {
     place_clips: [Option<OverlayClip>; 2],
     /// the throwing hand: bone and the grip point in its frame
     throw_hand: Option<(usize, Vec3)>,
+    /// the skill's toggle overlays, [on, off] by stance (the motion set's OMT_SPECIAL_ON / OFF,
+    /// `Game::skill_overlays`; play_skills.rs): Tex's Sc_w1_bz_start / bz_stop, Hawk's
+    /// Sc_w1/w2_activate_stealth. (Brutus's Sc_w1/w2_spirit is loaded too, but his toggle never
+    /// plays it: it returns 0, FUN_0013bfe0.)
+    skill_clips: [[Option<OverlayClip>; 2]; 2],
 }
 
 /// A shot for the effects system: from the muzzle along `dir`, `dist` metres to a hit (or range).
@@ -1351,6 +1366,11 @@ struct Player {
     /// hitpoints (the character's combat-target hitpoints at the start)
     health: f32,
     max_health: f32,
+    /// stamina and its maximum (the game's char+0x490 / +0x494: both the type's max-stamina at
+    /// spawn, 0x12f46e), and the special skill it pays for (play_skills.rs)
+    stamina: f32,
+    max_stamina: f32,
+    skill: skills::Skill,
     dead: bool,
     /// the body once dead (physics on the skeleton)
     ragdoll: Option<Ragdoll>,
@@ -1512,7 +1532,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], aim_friend: false, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
@@ -2577,6 +2597,14 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let use_clips = ["Sc_w1_use_item", "Sc_w2_use_item"].map(|n| overlay_clip(&model, game, n, feet));
     let throw_clips = ["Sc_w1_throw_grenade", "Sc_w2_throw_grenade"].map(|n| overlay_clip(&model, game, n, feet));
     let place_clips = ["Sc_w1_place_hi", "Sc_w2_place_hi"].map(|n| overlay_clip(&model, game, n, feet));
+    // the skill's toggle overlays, per stance: a prefixed script is Sc_w1_ / Sc_w2_ + script,
+    // otherwise the clip's whole name (Tex's bz_start serves both his stances)
+    let skill_clips = game.skill_overlays.get(name).cloned().unwrap_or_default().map(|o| [0, 1].map(|stance| {
+        o.as_ref().and_then(|(script, prefixed)| {
+            let clip = if *prefixed { format!("Sc_w{}_{script}", stance + 1) } else { script.clone() };
+            overlay_clip(&model, game, &clip, feet)
+        })
+    }));
     // the throwing hand: whichever hand moves further between reaching for the grenade and letting go
     let throw_hand = throw_clips[0].as_ref().and_then(|c| {
         let at = |t: f32| model.world(&model.pose(game, c.clip, t, model.default_face, 0.0));
@@ -2594,6 +2622,10 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.grenades.clear();
     p.max_health = game.character_hitpoints.get(name).copied().unwrap_or(100.0);
     p.health = p.max_health;
+    // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs)
+    p.skill = skills::Skill::new(game.character_skills.get(name));
+    p.max_stamina = p.skill.data.as_ref().map_or(100.0, |d| d.max_stamina.max(1.0));
+    p.stamina = p.max_stamina;
     p.leash = game.squad_leash.get(name).copied().unwrap_or(15.0);
     p.scope_sounds = game.character_scope_sounds.get(name).copied().unwrap_or((0, 0));
     p.snipe_sound = game.character_snipe_sound.get(name).and_then(|&id| game.sounds.pcm(id).map(|(r, pcm)| (id, pcm.len() as f32 / r as f32)));
@@ -2616,7 +2648,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.lift_now = lift;
     info!("{name}: soles {lift:.3} m below the floor, raised by that");
     p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand });
+                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips });
 }
 
 fn read_input(
@@ -2797,7 +2829,8 @@ fn autopilot(player: &mut Player) -> bool {
             player.fire = player.sim_time > 1.0;
             player.switch_pressed = w == "2" && (0.3..0.4).contains(&player.sim_time);
         }
-        player.sprint = false;
+        // BF_TEST_SPRINT=<s>: sprint (the game's dash) toward the goal from that time on
+        player.sprint = std::env::var("BF_TEST_SPRINT").ok().and_then(|v| v.parse::<f32>().ok()).is_some_and(|at| player.sim_time >= at);
         // BF_TEST_CROUCH=<s>: crouch from that time on
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
             player.crouch_wanted = player.sim_time >= at;
@@ -4041,7 +4074,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     // ---- weapons: switch and fire ----
     let armed = !l.weapons.is_empty();
-    if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none() {
+    // (not during a skill's toggle overlay either: one overlay at a time is the demo's choice.
+    // The game queues a toggle overlay only into a free overlay slot, char+0x218 or +0x244,
+    // 0x12253a-0x122587; whether a switch waits for one isn't traced)
+    if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
+        && p.skill.toggling.is_none() {
         let to = (p.weapon + 1) % l.weapons.len();
         p.fire_state.reset_burst();                         // FUN_0022dc00
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
@@ -4133,8 +4170,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // grenade is in the hand from the reach event and leaves it at the release event. Placed
     // (Roller, Sentry): set down at the feet at the press, no meter
     let kind = match p.item { Item::Grenade(k) if p.grenades.get(k).is_some_and(|&n| n > 0) => kits.get(k).map(|kit| (k, kit)), _ => None };
+    // (not during a skill's toggle overlay: the demo's choice, as for the weapon switch above)
     let can_throw = kind.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
-        && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && matches!(p.action, Action::None) && !p.on_all_fours;
+        && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && p.skill.toggling.is_none()
+        && matches!(p.action, Action::None) && !p.on_all_fours;
     p.meter_after.1 = (p.meter_after.1 - dt).max(0.0);
     if !p.throw_held {
         p.place_latch = false;
@@ -4414,6 +4453,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, p.face_time);
         }
     }
+    // the skill's toggle overlay (play_skills.rs times it and switches at its event)
+    if let Some(t) = &p.skill.toggling {
+        if let Some(c) = &l.skill_clips[t.slot()][t.stance] {
+            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, p.face_time);
+        }
+    }
     if let Some(w) = l.weapons.get(p.weapon) {
         if let Some((hb, r, _)) = w.in_hand {
             let d = l.model.world(&pose)[hb].transform_vector3(r * w.fire_dir);
@@ -4422,9 +4467,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
     // aim the gun itself: yaw and pitch from the barrel in the animated pose to what the crosshair
-    // is on, turned over the spine bones that carry the trigger arm
+    // is on, turned over the spine bones that carry the trigger arm. Not over a skill's toggle
+    // overlay: the motion sets' `<overlay>` entries all say aim="false" (ms_*.xml; that the
+    // game's aim follows the flag isn't traced)
     let held = l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|h| (w, h)));
-    let want_aim = if upper_aim && armed && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none() { 1.0 } else { 0.0 };
+    let want_aim = if upper_aim && armed && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
+        && p.skill.toggling.is_none() { 1.0 } else { 0.0 };
     p.aim_weight += (want_aim - p.aim_weight) * (1.0 - (-10.0 * dt).exp());
     match held {
         Some((w, (hb, r, t))) if p.aim_weight > 0.01 && !l.arm_chain.is_empty() => {
@@ -4787,7 +4835,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
         w.def.label, player.weapon + 1, l.weapons.len()))).unwrap_or_default();
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
-         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab items   T grenade type   E use   M surface   H hide\n\
+         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab items   T grenade type   E use   V special skill   M surface   H hide\n\
          click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
          test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die\n\
          {}",

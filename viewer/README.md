@@ -17,6 +17,7 @@ and how it was checked):
 | [docs/play.md](docs/play.md) | `bf_play`: keys, the test map, health and HUD, locomotion, weapons and shots (fire timing, pellets, accuracy, holes, tracers, casings), missiles (the Therm Sweeper's MIRV, blasts, scorch and camera shake), ammo, reload and the crosshair, sounds, the general test hooks |
 | [docs/maps.md](docs/maps.md) | playing on a level: spawning, collision, doors and gates, HUD text, movement, music, shots, look, power-ups |
 | [docs/squad.md](docs/squad.md) | the squad: follow AI, standing on the floor, scopes, hand-over, hits, deaths, the death camera |
+| [docs/skills.md](docs/skills.md) | special skills: stamina, the skill toggle (V), its sounds, chatter and HUD (the blue bar's colours, trail and blink, the skill's name), and the interface the four skills plug into |
 | [docs/grenades.md](docs/grenades.md) | grenades: throwing and placing, blasts and damage, Gas, Sentry, Light, Sonic, Energy |
 | [docs/pickups.md](docs/pickups.md) | health pickups and the item box |
 | [docs/scenery.md](docs/scenery.md) | interactive scenery: barrels, racks and crates that break, explode and chain |
