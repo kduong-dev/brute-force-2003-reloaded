@@ -150,8 +150,9 @@ pub struct FireState {
     ready: f32,
 }
 
-/// After a shot the holder stays in its ready pose this long (s): FUN_00123f60 keeps the
-/// character's +0x7dc at 4 (0x3c05fc) or more while it's running, and FUN_00123ea0 counts it.
+/// After a shot the holder stays in its ready pose this long (s): FUN_00123ea0 raises the gun or
+/// keeps it raised, holding the character's ready timer +0x7dc at 4 (0x3c05fc) or more through
+/// FUN_00123f60 while it runs (and starting it otherwise).
 /// Read as the time the gun stays raised (medium confidence): within it a pull fires without the
 /// raise, as the takes' taps 2.2 s apart fire 0.07-0.11 s after the press, against 0.19-0.24 s
 /// from idle.

@@ -408,10 +408,11 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
 
 `src/bin/play_missile.rs` (the camera shake in `src/bin/play_shake.rs`), the bullet's data in
 `weapon::MeshBullet` (`src/bf/weapon.rs`), from default.xbe's projectile class
-(0x226000-0x229000) and the weapon type's damage handler (0x22d0b0). The measurements are the
-tester's spec, `todo/73-therm-sweeper/spec.md`, from takes 01-07 there; takes 08-23 (a real
-reload, self-damage at a wall, homing on two enemies and an off-line one, the open air, a side
-view, cover) came after it and are compared under **Verified**.
+(0x226000-0x229000) and the weapon type's damage handler (0x22d0b0); every function cited here
+is in [code-map.md](code-map.md). The measurements are the tester's spec,
+`todo/73-therm-sweeper/spec.md`, from takes 01-07 there; takes 08-23 (a real reload,
+self-damage at a wall, homing on two enemies and an off-line one, the open air, a side view,
+cover) came after it and are compared under **Verified**.
 
 * **Which guns.** bullet-type 2 is BTYPE_MESH_PROJECTILE (the enum at 0x3bd63c): FUN_0022f1d0
   launches the bullet's mesh-name object (FUN_0022fb50). Those steered at a steady speed
