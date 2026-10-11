@@ -16,7 +16,7 @@
 | wheel | zoom |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: **the demo's own key** (the game has no reload button; it reloads by itself on an empty clip, see **Ammo, reload and the crosshair**). The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
-| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the bracket reticle, full in 0.6 s), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
+| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
 | Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
@@ -234,7 +234,9 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
 * **The crosshair** is the held weapon's 64 × 64 texture drawn 1:1, centred at (320, 192), the
   same standing, firing and moving; in the scope it moves to (320, 240) at the same size. It's
   hidden during a weapon switch, from the old gun's drop to the new one's grab (the takes: gone
-  ~0.5 s after Y, back at ~0.95 s). Aiming and shots go through it (play.rs `CROSSHAIR_UP`). The
+  ~0.5 s after Y, back at ~0.95 s). It stays, unchanged, while a grenade throw charges and
+  through the throw: a thrown grenade has no crosshair of its own (#119; `todo/119` take01).
+  Aiming and shots go through it (play.rs `CROSSHAIR_UP`). The
   game also hides it during its pickup motion; the test map's rack has none.
 
 Checked on the test map (`BF_TEST_GOTO=0,0,0,0`, `BF_CAPTURE`), measured against the takes in
