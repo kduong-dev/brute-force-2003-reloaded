@@ -2,20 +2,25 @@
 //! agent's capture run mustn't take the user's controller, mouse or focus.
 //!
 //!  - `BF_BACKGROUND=1` (any value but 0): no gamepad is read (bevy's gilrs plugin is left out,
-//!    so no `Gamepad` entity exists), the mouse's motion, buttons, wheel and pointer moves are
-//!    dropped before anything reads them (so the cursor is never grabbed or hidden either), and
-//!    the window opens without focus, at the bottom of the z-order, behind the other windows.
-//!    The keyboard is left alone: it only reaches a focused window, and this one is never
-//!    focused unless the user clicks it. Frames render (and `BF_CAPTURE` saves them) whether
-//!    the window is covered or not.
+//!    so no `Gamepad` entity exists; only the front end reads pads, `play_menu.rs`: in-game
+//!    control is keyboard and mouse); the mouse's motion, button, wheel and pointer-move events
+//!    are dropped before anything reads them and bevy_picking's mouse input is off, so the
+//!    cursor is never grabbed or hidden either; and on Windows the window opens without focus,
+//!    at the bottom of the z-order, behind the other windows. The cursor position bevy_winit
+//!    stores on the `Window` (which the UI's hover reads) isn't touched. The keyboard and raw
+//!    mouse motion are left to the focus: winit only delivers them to a focused window, and
+//!    this one is never focused unless the user clicks it. Frames render (and `BF_CAPTURE`
+//!    saves them) whether the window is covered or not.
 //!  - `BF_WINDOW_MONITOR=<n>`: opens the window centred on monitor n (0-based, in the order the
-//!    system lists them), with or without `BF_BACKGROUND`. Unset: where it opened before.
+//!    system lists them), with or without `BF_BACKGROUND`. Unset, or past the last monitor
+//!    (bevy logs "Couldn't get monitor selected with: Index(n)"): the default position.
 //!
 //! Without either variable nothing changes.
 
 use bevy::{
     ecs::event::EventUpdates,
     input::mouse::{MouseButtonInput, MouseMotion, MouseWheel},
+    picking::input::PointerInputPlugin,
     prelude::*,
     window::{CursorMoved, MonitorSelection, PrimaryWindow, RawHandleWrapper, WindowPosition},
     winit::{UpdateMode, WinitSettings, WinitWindows},
@@ -32,24 +37,26 @@ fn monitor() -> Option<usize> {
     std::env::var("BF_WINDOW_MONITOR").ok().and_then(|v| v.trim().parse().ok())
 }
 
-/// The demo's primary window. Under `BF_BACKGROUND` it's created hidden and unfocused, and
-/// `show_window` shows it without activating it: bevy 0.16 creates every window with winit's
-/// default `active: true` (`Window::focused` isn't passed on at creation), and winit's first
-/// show of such a window is a `ShowWindow(SW_SHOW)`, which brings it to the front with focus.
+/// The demo's primary window. Under `BF_BACKGROUND` it's created unfocused, and on Windows
+/// hidden, for `show_window` to show without activating it: bevy 0.16 creates every window with
+/// winit's default `active: true` (`Window::focused` isn't passed on at creation), and winit's
+/// first show of such a window is a `ShowWindow(SW_SHOW)`, which brings it to the front with
+/// focus.
 pub fn window() -> Window {
     let mut w = Window { title: "Brute Force".into(), ..default() };
     if let Some(n) = monitor() {
         w.position = WindowPosition::Centered(MonitorSelection::Index(n));
     }
     if on() {
-        w.visible = false;
+        // (hidden only where show_window can show it again)
+        w.visible = !cfg!(windows);
         w.focused = false;
     }
     w
 }
 
 /// Adds the background mode's systems (nothing without `BF_BACKGROUND`). After DefaultPlugins:
-/// its `WinitSettings` replaces theirs.
+/// its `WinitSettings` and `PointerInputPlugin` resources replace theirs.
 pub fn plugin(app: &mut App) {
     if !on() {
         return;
@@ -57,16 +64,22 @@ pub fn plugin(app: &mut App) {
     // the window is never focused, so the default unfocused mode (an update at most every
     // 1/60 s) would hold every run to that; run flat out as a focused window does
     app.insert_resource(WinitSettings { focused_mode: UpdateMode::Continuous, unfocused_mode: UpdateMode::Continuous })
+        // bevy_picking reads the mouse from `Events<WindowEvent>`, which drop_mouse leaves alone
+        .insert_resource(PointerInputPlugin { is_mouse_enabled: false, ..default() })
         .add_systems(First, drop_mouse.before(EventUpdates))
         .add_systems(Update, show_window);
 }
 
-/// Drops the frame's mouse events before anything reads them: the motion (raw device events,
-/// which arrive whatever window has focus), the buttons, the wheel and the pointer's moves. With
-/// them go `ButtonInput<MouseButton>`, `AccumulatedMouseMotion` / `AccumulatedMouseScroll`
-/// (bevy_input), the UI's clicks and the menu's hover (`play_menu::input`), and so the left
-/// click that grabs the cursor (`read_input`). Runs in First before the event buffers swap,
-/// ahead of bevy_picking's input (also in First) and bevy_input's systems (PreUpdate).
+/// Drops the frame's mouse events before anything reads them: the motion (raw device events;
+/// winit registers raw input only while the window has focus, and bevy_winit 0.16 never widens
+/// that, so they come only once the user clicks the window), the buttons, the wheel and the
+/// pointer-move events. With them go `ButtonInput<MouseButton>`, `AccumulatedMouseMotion` /
+/// `AccumulatedMouseScroll` (bevy_input), the UI's clicks, the menu's pointing
+/// (`play_menu::input` acts on a hover only in a frame with a `CursorMoved`), and so the left
+/// click that grabs the cursor (`read_input`). Not cleared: the cursor position bevy_winit
+/// writes on the `Window` itself, and the same events' copies in `Events<WindowEvent>`
+/// (bevy_picking's input, switched off in `plugin`). Runs in First before the event buffers
+/// swap, ahead of bevy_input's systems (PreUpdate).
 fn drop_mouse(mut motion: ResMut<Events<MouseMotion>>, mut buttons: ResMut<Events<MouseButtonInput>>,
               mut wheel: ResMut<Events<MouseWheel>>, mut cursor: ResMut<Events<CursorMoved>>) {
     motion.clear();
@@ -78,8 +91,12 @@ fn drop_mouse(mut motion: ResMut<Events<MouseMotion>>, mut buttons: ResMut<Event
 /// Shows the hidden window once it exists, at the bottom of the z-order and without
 /// activating it (`SetWindowPos` with `SWP_SHOWWINDOW | SWP_NOACTIVATE`). On the main thread
 /// (the `WinitWindows` parameter): the window belongs to it, and a synchronous call from a
-/// worker could wait on the main thread while it waits on the schedule. Not on Windows the
-/// window stays hidden (untested there).
+/// worker could wait on the main thread while it waits on the schedule. The trap: winit still
+/// thinks the window is hidden, so any later change to `Window::mode`, `decorations`,
+/// `resizable`, `window_level`, `enabled_buttons` or `hit_test`, or a maximize / minimize, makes
+/// winit call `ShowWindow(SW_HIDE)`, and the window stays hidden for the rest of the run (the
+/// demo changes none of them). Other platforms never hide it (`window`), so this does nothing
+/// there.
 fn show_window(_main_thread: NonSend<WinitWindows>, windows: Query<&RawHandleWrapper, With<PrimaryWindow>>,
                mut done: Local<bool>) {
     if *done {
