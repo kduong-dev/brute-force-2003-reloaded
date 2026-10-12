@@ -249,6 +249,45 @@ impl SoundBank {
         n
     }
 
+    /// A bank of only the sounds `ids` this one can play from its files (in-memory or attached
+    /// streamed ones), each with its own copy of its bytes: what's kept of a level's language
+    /// wave bank for a few voice lines, without the whole bank (type_assets.rs, #180).
+    pub fn subset(&self, ids: &std::collections::HashSet<u32>) -> SoundBank {
+        let mut out = SoundBank::default();
+        for &id in ids {
+            let Some((&file, rec)) = self.sounds.get(&id).and_then(|f| self.files.get_key_value(f)) else { continue };
+            let Some(data) = rec.blob.get(rec.offset..rec.offset + rec.size) else { continue };
+            out.sounds.insert(id, file);
+            if let Some(&t) = self.types.get(&id) {
+                out.types.insert(id, t);
+            }
+            out.files.entry(file).or_insert(FileRec { offset: 0, size: rec.size, rate: rec.rate, codec: rec.codec, blob: Arc::new(data.to_vec()) });
+        }
+        out
+    }
+
+    /// Add `other`'s sounds `ids` where this bank can't play them yet: its file for each (a sound
+    /// already named here keeps its own file name, which gets `other`'s data when it has none).
+    /// How many became playable.
+    pub fn merge(&mut self, other: &SoundBank, ids: &std::collections::HashSet<u32>) -> usize {
+        let mut n = 0;
+        for &id in ids {
+            if self.has(id) {
+                continue;
+            }
+            let Some((&file, rec)) = other.sounds.get(&id).and_then(|f| other.files.get_key_value(f)) else { continue };
+            let name = *self.sounds.entry(id).or_insert(file);
+            if let Some(&t) = other.types.get(&id) {
+                self.types.entry(id).or_insert(t);
+            }
+            if !self.files.contains_key(&name) {
+                self.files.insert(name, FileRec { offset: rec.offset, size: rec.size, rate: rec.rate, codec: rec.codec, blob: rec.blob.clone() });
+                n += 1;
+            }
+        }
+        n
+    }
+
     pub fn has(&self, id: u32) -> bool {
         self.sounds.get(&id).is_some_and(|f| self.files.contains_key(f)) || self.voices.contains_key(&id)
     }
