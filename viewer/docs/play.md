@@ -424,8 +424,10 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   an 80 ms tap fires. With two guns (Tex's berserk) it holds it for each until that gun's first
   shot, so a tap fires both, the one still cooling down when it's ready (#121: a tap at 3.98 s
   fired the LZR-50 at 4.07 and the Jax-iC at 4.27, after the button came up), and while either
-  is owed its shot an empty one runs its dry cycle as under the button (the request sets both
-  flags). From idle the gun is raised first (the demo's 0.2 s, which the takes' 0.19-0.24 s
+  is owed its shot an empty one runs its dry cycle (the request sets both flags), but the demo
+  clicks and syncs the LZR recharge only while the button is down (`u.fire`, play_ammo.rs); the
+  game's FUN_002327f0 clicks on every such cycle, so an empty gun after a short tap stays silent
+  in the demo. From idle the gun is raised first (the demo's 0.2 s, which the takes' 0.19-0.24 s
   press-to-shot fits); after a shot it stays up 4 s
   (`READY_HOLD`: FUN_00123f60 keeps +0x7dc at 4 or more, medium confidence), so the takes' taps
   2.2 s apart fire at once (0.07-0.11 s). Checked: 80 ms Bower taps at 2, 4 and 6 s fire at

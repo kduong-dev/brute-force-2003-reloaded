@@ -37,7 +37,7 @@ and stamina" and "HUD") and the data, checked against the 32 takes in
   hand, as takes 05 and 26), `BF_TEST_CLIP=<n>[,<n>...]` (a clip per slot: `99,4` is take05's
   poke), `BF_TEST_TRIGGER`, `BF_TEST_SWITCH`, `BF_TEST_RELOAD=<s>[,...]` (presses R),
   `BF_TEST_THROW`, `BF_TEST_CROUCH_KEY=<s>[,...]` (presses Z: a crouch press, not
-  `BF_TEST_CROUCH`'s hold), `BF_TEST_SCOPE=<step>,<from s>` (the scope asked for from that time,
+  `BF_TEST_CROUCH`'s hold), `BF_TEST_SCOPE=<step>[,<from s>]` (the scope asked for from that time,
   without `BF_TEST_GOTO`, whose autopilot doesn't read it); on the test map
   `BF_TEST_NPC_HP=<s>,<n|aim|all>,<hp>` (testtools.md) gives an NPC take04's 999 HP, and
   `BF_RETICLE_LOG=1` (play.md) shows the lock's reach.
@@ -462,6 +462,9 @@ takes' watch logs and frames:
 * **The scope** (`-- --test BF_NO_SQUAD=1 BF_TEST_WEAPON="L-Shot-75;Jax-iC" BF_TEST_SKILL=2,6
   BF_TEST_SCOPE=1,3`): asked for from 3.0 s, it stays out through berserk (the frames at 3.3,
   4.7 and 6.1 s from behind him) and comes in after the off event (6.67 s: in at 6.7-7.7 s).
+  The hook sets the scope step every frame, so Tex stays aimed through berserk here; a real
+  right-click on a zoomable gun aims for one frame only in berserk (its aim is the scope step,
+  which the block clears), a demo choice until shot T2.
 * **The crouch** (the taps' spot, `BF_TEST_SKILL=2,5 BF_TEST_CROUCH_KEY=3.5,6.5
   BF_MOVE_LOG=1`): Z at 3.5 s in berserk does nothing (bz_idle); after the off (5.67 s) he stands
   on; Z at 6.5 kneels (crouching at 7.07, crouched at 7.53).
