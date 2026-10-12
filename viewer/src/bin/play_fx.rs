@@ -9,6 +9,10 @@
 //!  - decals: each character names two ground decals: one per hit (h_14410af1: 0.5 x 0.25 m,
 //!    RGBA 128,34,34,220) and one under the body (h_16d327fd: 1 x 1 m, 148,44,44,220): white
 //!    splat textures tinted by that colour (objecttypes `<decal>`, see `DecalDef`).
+//!  - Shrike flesh (23, #129): its own green debris bundle (blood_puff#1, bloodsplat_s#1,
+//!    giblet#1) and the game's decal rule (FUN_00124a70: `game_decals`), the first list at the
+//!    body and the second along the shot, multiplied into what's under them. The other fleshes
+//!    keep the demo's reading (a splat past each hit, splats and a pool at death) until #150.
 //!  - the memory chip a dead squadmate drops (what this module used to draw as "the DNA", with
 //!    the DNA canister's powerup_pill effect) is a mesh pickup now: play_dna.rs.
 //!
@@ -45,6 +49,21 @@ pub(super) const FLESH: i64 = 21;
 /// is too. Every other flesh (22 MUTANT, 23 SHRIKE, 25 SEER, 26 FIREHOUND) still gets
 /// FLESH_HUMAN's hit effects and bundle here: their own are the species tickets' (#129-#133).
 const SYNTHETIC: i64 = 24;
+/// Shrike flesh (WMAT_FLESH_SHRIKE, 23: the Shrike Soldier, Heavy and Hound, the Hunter Lord, and
+/// as stored the Supermutant; `Game::flesh`). Its world-materials entry is FLESH_HUMAN's (the same
+/// hit effects and sounds per ammo type) but for the debris bundle h_14559f7c: blood_puff#1,
+/// bloodsplat_s#1 and giblet#1, green (#129; spec §6.1). Its blood decals follow the game's rule
+/// (`game_decals`): the product owner's scope for #129 is the Shrikes, the rest is #150's.
+const SHRIKE: i64 = 23;
+/// The game's blood decals (`game_decals`, FUN_00124af0 / FUN_00124f60): the first list's decal
+/// goes down when the hit's amount is at least this share of the max hit points (0x3a4f94) or at
+/// least the hit points left; the second list's while it lives at this share (0.1); the second's
+/// ray along the shot reaches this far (m, 0x40800000); the first's spot moves up to this far (m)
+/// at random from the middle of the body and the hit point (the takes' logged offsets 0.2-0.25 m).
+const DECAL_HIT_SHARE: f32 = 0.05;
+const DECAL_BEHIND_SHARE: f32 = 0.1;
+const DECAL_BEHIND_REACH: f32 = 4.0;
+const DECAL_JITTER: f32 = 0.3;
 /// Particle colour / alpha steps (one shared material each).
 const STEPS: usize = 32;
 /// Streaked particles (motion blur) are drawn this many seconds of motion long.
@@ -52,7 +71,9 @@ const STREAK_TIME: f32 = 0.035;
 const MAX_PARTICLES: usize = 2500;
 const MAX_DECALS: usize = 80;
 /// A decal's width / height read as half sizes: the capture's hit splats are about 1 m across
-/// (h_14410af1 says 0.5 x 0.25), landing 1-3 m past the one hit, along the shot.
+/// (h_14410af1 says 0.5 x 0.25), landing 1-3 m past the one hit, along the shot. The code agrees
+/// (#129, answers.md Q4): FUN_00217920 builds a decal's UVs as 0.5 + d x 0.5 / extent, so it
+/// spans 2 x width x scale by 2 x height x scale (FUN_00214710 scales them).
 const DECAL_SCALE: f32 = 2.0;
 const SPLAT_PAST: (f32, f32) = (1.0, 2.5);
 /// How far inside the hit cylinder (radius 0.4 m) a body's skin is, and how far out of its middle.
@@ -396,13 +417,106 @@ static GIBLET_B: Effect = Effect {
     },
 };
 
-static EFFECTS: [&Effect; 9] = [&BLOOD_MIST, &BLOOD_DROPS, &GIBLET, &FLESH_SPARKS, &FLESH_CUTTER, &FLESH_LASER,
-                                 &BLOOD_MIST_B, &BLOOD_DROPS_B, &GIBLET_B];
+/// blood_puff#1 (Shrike flesh, #129): blood_mist.emt#1, the very node blood_mist_b.emt is (every
+/// parameter the same), and blood_mist.app#1: green, starting at 0.29, 0.81, 0.16 (common.ale,
+/// `ale_tool.py node`).
+static BLOOD_MIST_1: Effect = Effect {
+    id: 9,
+    emit: Emit {
+        time: 0.21,
+        rate: &[(0.0135, &[(-0.0088, 49.92), (0.1939, 42.1), (0.2056, 0.0)]),
+                (1.0, &[(-0.0027, 69.7), (0.1491, 67.54), (0.2076, 0.0)])],
+        life: &[(0.0158, 0.546), (0.0802, 0.333), (0.122, 0.503), (0.161, 0.357)],
+        speed: &[(0.0, &[(0.0, 0.2268)])],
+        size: 0.2412,
+        spread_min: &[(0.0, 28.48)],
+        spread_max: &[(0.0, 90.0)],
+        gravity: 0.0,
+    },
+    look: Look {
+        texture: 0xEA18_1967,   // smokecard.tga
+        additive: false,
+        color: &[(0.0, [0.290, 0.812, 0.161]), (1.0, [0.306, 0.502, 0.290])],
+        alpha: &[(0.0, 0.678), (1.0, 0.0)],
+        size: &[(0.0, &[(0.0, 0.021), (0.0524, 0.3285), (1.0, 1.2777)]),
+                (1.0, &[(0.0, 0.0385), (0.0536, 0.3723), (1.0, 1.6487)])],
+        size_ease: LINEAR,
+        aspect: 1.0,
+        width: &[(0.0, 1.0)],
+        streak: false,
+        spin: &[(0.0, 0.0)],
+    },
+};
+
+/// bloodsplat_s#1 (Shrike flesh): bloodsplat_s.emt#1 (a longer, steadier jet than bloodsplat_s's,
+/// 0.4 s), bloodsplat_s.app#1 (green, 0.17, 0.79, 0.15) and its field bloodsplat_s_gravfld_y.
+static BLOOD_DROPS_1: Effect = Effect {
+    id: 10,
+    emit: Emit {
+        time: 0.4,
+        rate: &[(0.189, &[(0.0005, 258.08), (0.0647, 152.51), (0.1032, 187.13), (0.1513, 0.0)]),
+                (0.703, &[(0.0035, 257.44), (0.1259, 0.0)]),
+                (1.0, &[(-0.0042, 323.77), (0.0637, 225.09), (0.3558, 193.33), (0.3581, 0.0)])],
+        life: &[(0.00419, 0.936), (0.0462, 0.417)],
+        speed: &[(0.0, &[(0.0235, 3.907), (0.1059, 3.798), (0.1135, -2.803)]),
+                 (1.0, &[(0.0272, 6.777), (0.1059, 6.809), (0.1124, -5.068)])],
+        size: 0.046,
+        spread_min: &[(0.0, 0.0)],
+        spread_max: &[(0.00737, 0.0), (0.2664, 8.651)],
+        gravity: 2.312,
+    },
+    look: Look {
+        texture: 0x1500_CF27,   // diffuse_big.tga
+        additive: false,
+        color: &[(0.0172, [0.173, 0.788, 0.153])],
+        alpha: &[(0.0, 0.0), (0.0641, 0.606), (1.0, 0.0)],
+        size: &[(0.0, &[(0.0, 0.156), (0.0727, 0.0673), (1.0, 0.0)])],
+        size_ease: LINEAR,
+        aspect: 1.0,
+        width: &[(0.0, 1.0)],
+        streak: true,
+        spin: &[(0.0, 0.0)],
+    },
+};
+
+/// giblet#1 (Shrike flesh): giblet.emt#1 (fewer spatters at the top of the user parameter than
+/// giblet's, 0.25 s) and giblet.app#1 (green, 0.31, 0.65, 0.25).
+static GIBLET_1: Effect = Effect {
+    id: 11,
+    emit: Emit {
+        time: 0.25,
+        rate: &[(0.0, &[(0.0199, 5.911), (0.2021, 5.946), (0.2021, 0.0)]),
+                (1.0, &[(-0.0046, 21.01), (0.1776, 20.16), (0.2221, 0.0)])],
+        life: &[(-0.00345, 0.236), (0.0962, 0.165)],
+        speed: &[(0.0, &[(0.0059, 1.325), (0.0942, 1.304), (0.1731, -1.245), (0.2607, -1.391)])],
+        size: 0.1094,
+        spread_min: &[(0.0, 0.0)],
+        spread_max: &[(0.0, 10.57)],
+        gravity: 0.0,
+    },
+    look: Look {
+        texture: 0xFBD5_61C9,   // blood.tga
+        additive: false,
+        color: &[(0.0057, [0.310, 0.655, 0.247])],
+        alpha: &[(0.0, 0.857), (1.0, 0.0)],
+        size: &[(0.0, &[(0.00015, 0.133), (1.0, 0.953)])],
+        size_ease: LINEAR,
+        aspect: 1.0,
+        width: &[(0.0, 1.0)],
+        streak: false,
+        spin: &[(0.0091, -0.0009)],
+    },
+};
+
+static EFFECTS: [&Effect; 12] = [&BLOOD_MIST, &BLOOD_DROPS, &GIBLET, &FLESH_SPARKS, &FLESH_CUTTER, &FLESH_LASER,
+                                 &BLOOD_MIST_B, &BLOOD_DROPS_B, &GIBLET_B, &BLOOD_MIST_1, &BLOOD_DROPS_1, &GIBLET_1];
 
 /// The debris bundle every flesh hit gets (h_f304f9fb).
 static BLOOD: [&Effect; 3] = [&BLOOD_DROPS, &GIBLET, &BLOOD_MIST];
 /// Synthetic flesh's debris bundle (h_1f7ca034).
 static BLOOD_B: [&Effect; 3] = [&BLOOD_DROPS_B, &GIBLET_B, &BLOOD_MIST_B];
+/// Shrike flesh's debris bundle (h_14559f7c).
+static BLOOD_1: [&Effect; 3] = [&BLOOD_DROPS_1, &GIBLET_1, &BLOOD_MIST_1];
 
 /// A flesh material's hit effect for an ammo type: the squad's three (ballistic, cutter, laser)
 /// and their lights.
@@ -469,9 +583,14 @@ struct FxAssets {
     /// per effect: its look's material at each step of a particle's life
     steps: Vec<Vec<Handle<StandardMaterial>>>,
     decal_textures: HashMap<u32, Handle<Image>>,
+    /// the game's decal colour per (decal texture, tint) of the character types' decals
+    /// (`decal_factor`, `spawn_game_decal`)
+    decal_factors: HashMap<(u32, [u8; 3]), Handle<Image>>,
     flesh: Option<Surface>,
     /// SYNTHETIC's entry: Flint's hit sounds and effects
     synthetic: Option<Surface>,
+    /// SHRIKE's entry (the Shrikes' hit sounds and effects: FLESH_HUMAN's, #129)
+    shrike: Option<Surface>,
 }
 
 #[derive(Resource)]
@@ -640,6 +759,7 @@ fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResM
     decal_ids.dedup();
     let flesh = game.0.surfaces.iter().find(|s| s.id == FLESH).cloned();
     let synthetic = game.0.surfaces.iter().find(|s| s.id == SYNTHETIC).cloned();
+    let shrike = game.0.surfaces.iter().find(|s| s.id == SHRIKE).cloned();
     let mut tex = |id: u32, linear: bool| game.0.texture_rgba(id).map(|(w, h, px)| images.add(rgba(w, h, px, linear)));
     let mut steps = vec![];
     for fx in EFFECTS {
@@ -668,13 +788,29 @@ fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResM
             e.insert(t);
         }
     }
+    // the game's decal colour of every character type's decal textures under their tints (the
+    // game's rule draws Shrike flesh's: `spawn_game_decal`)
+    let mut decal_factors = HashMap::new();
+    let defs: Vec<DecalDef> = game.0.character_types.values().flat_map(|t| t.decals.iter().flatten().copied())
+        .filter_map(|name| game.0.decals.get(&name).cloned()).collect();
+    for def in defs {
+        let tint = tint_key(&def);
+        for &id in &def.textures {
+            if decal_factors.contains_key(&(id, tint)) {
+                continue;
+            }
+            if let Some((w, h, px)) = game.0.texture_rgba(id) {
+                decal_factors.insert((id, tint), images.add(rgba(w, h, decal_factor(&px, tint), false)));
+            }
+        }
+    }
     if let Some(f) = &flesh {
         info!("flesh (world material {FLESH}): hit effects {:x?}, debris effect {:x?}", f.hit_effect, f.debris_effect);
     }
     commands.insert_resource(FxAssets {
         quad: meshes.add(Rectangle::new(1.0, 1.0)),
         floor: meshes.add(Plane3d::default().mesh().size(1.0, 1.0)),
-        steps, decal_textures, flesh, synthetic,
+        steps, decal_textures, decal_factors, flesh, synthetic, shrike,
     });
     commands.insert_resource(FxState { rng: 0x9E37_79B9, particles: 0, lights: 0, decals: Default::default(), holes: Default::default() });
 }
@@ -734,6 +870,131 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
     }
 }
 
+/// The game's blood decals for one hit on `u` (FUN_00124a70, read in the code map; the takes'
+/// breakpoints on the two FUN_00213e60 calls confirmed it, spec §6.2), `skin` the hit point at
+/// the skin. a = the amount over the type's damage-multiplier (`Bleed::a`); nothing for a <= 0
+/// (take 38: the hits the shield took whole laid none).
+///  - FUN_00124af0, the first list (h_fb4bfc68, one at random): when a is at least DECAL_HIT_SHARE
+///    of the max hit points or at least the hit points left; on the floor at the middle of the
+///    body and the hit point, moved up to DECAL_JITTER m at random, turned at random; scale
+///    min(1 + 0.05a, 2), doubled when a is more than the hit points left (every kill; on the
+///    62-HP Soldier any hit over 31), alpha 0.5 + 0.5 min(0.05a, 1).
+///  - FUN_00124f60, the second list (h_efc2a874): while the victim lives and a is at least
+///    DECAL_BEHIND_SHARE of the max: a ray from the hit point along the shot, DECAL_BEHIND_REACH
+///    m; on the first surface it meets (take 23: the gate's panel 2.8-3.3 m behind), facing back
+///    along it; scale min(0.5 + 0.05a, 1), alpha 0.8 + 0.2 min(0.05a, 1). Nothing if it meets
+///    nothing (take 14's first hit: the panel 4.03 m on). The shot's way is taken level (the
+///    hit's push: the demo's shots are near level at these ranges).
+/// The decal is multiplied into what's under it (`spawn_game_decal`).
+#[allow(clippy::too_many_arguments)]
+fn game_decals(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>, game: &Game,
+               u: &Player, b: &Bleed, skin: Vec3, lists: [&[u32]; 2]) {
+    let a = b.a;
+    if a <= 0.0 || b.shielded {
+        return;
+    }
+    let max = u.max_health.max(1.0);
+    let log = std::env::var("BF_COMBAT_LOG").is_ok();
+    let k = (0.05 * a).min(1.0);
+    if a >= DECAL_HIT_SHARE * max || a >= b.hp_left {
+        let name = pick(lists[0], state);
+        if let Some(def) = game.decals.get(&name) {
+            let scale = (1.0 + 0.05 * a).min(2.0) * if a > b.hp_left { 2.0 } else { 1.0 };
+            let alpha = 0.5 + 0.5 * k;
+            let mid = (u.position + skin) * 0.5;
+            let (turn, r) = (state.random() * std::f32::consts::TAU, DECAL_JITTER * state.random());
+            let spot = Vec3::new(mid.x + r * turn.cos(), u.position.y + GROUND, mid.z + r * turn.sin());
+            if log {
+                println!("  decal 1 h_{name:08x} at {spot:.2}: a {a:.1}, scale {scale:.2}, alpha {alpha:.2}");
+            }
+            spawn_game_decal(commands, state, fx, materials, def, spot, None, scale, alpha);
+        }
+    }
+    let way = Vec3::new(b.dir.x, 0.0, b.dir.z).normalize_or_zero();
+    if b.hp_left > 0.0 && a >= DECAL_BEHIND_SHARE * max && way != Vec3::ZERO {
+        let name = pick(lists[1], state);
+        let met = shots::hit_normal(skin, way, DECAL_BEHIND_REACH);
+        if let (Some(def), Some((t, normal))) = (game.decals.get(&name), met) {
+            let scale = (0.5 + 0.05 * a).min(1.0);
+            let alpha = 0.8 + 0.2 * k;
+            let at = skin + way * t;
+            if log {
+                println!("  decal 2 h_{name:08x} at {at:.2} ({t:.2} m behind) normal {normal:.2}: scale {scale:.2}, alpha {alpha:.2}");
+            }
+            spawn_game_decal(commands, state, fx, materials, def, at, Some(normal), scale, alpha);
+        } else if log {
+            println!("  decal 2: nothing within {DECAL_BEHIND_REACH} m behind");
+        }
+    }
+}
+
+/// A decal of `game_decals`: `def` at `at`, on the floor there (`normal` None: projected down,
+/// along the slope) or on the surface with that normal, `scale` on its width and height read as
+/// half sizes (`DECAL_SCALE`: FUN_00217920 builds the UVs as 0.5 + d x 0.5 / extent, so a decal
+/// spans 2 x width x scale; a kill's list-1 decal is 4 x 2 m, its visible patch ~1.5 m by the
+/// texture's alpha; answers.md Q4), turned at random within its rotation, fading over its life as
+/// the others do. Drawn as the game's decal pass draws it (FUN_002175e0: SRCBLEND ZERO, DESTBLEND
+/// SRCCOLOR, pixel shader 25; answers.md Q4): what's under it times
+/// lerp(1, min(1, tint + 1 - the texture's alpha), a), a = the tint's alpha x `alpha` x the fade;
+/// the texture's colour unused. That's `decal_factor`'s texture (the min(..) per texel) through
+/// Bevy's `AlphaMode::Multiply` (dst x (1 - a + a x colour)), unlit; the console multiplies stored
+/// (gamma) values, Bevy linear ones, the same where a is 1. Take 20's kill at 18.0 s: a floor of
+/// 35, 28, 36 to 15, 23, 17 (this gives 19, 22, 20). The defs' h_071e88fb / h_17dd78a4 (132 on the
+/// Shrikes') are stencil references, of no use in the normal view (answers.md Q4), and the pass's
+/// fog toward white isn't drawn.
+#[allow(clippy::too_many_arguments)]
+fn spawn_game_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>,
+                    def: &DecalDef, at: Vec3, normal: Option<Vec3>, scale: f32, alpha: f32) {
+    if def.textures.is_empty() {
+        return;
+    }
+    let texture = def.textures[(state.random() * def.textures.len() as f32) as usize % def.textures.len()];
+    let mut def = def.clone();
+    def.color[3] = (def.color[3] * alpha).clamp(0.0, 1.0);
+    let a = def.color[3];
+    let material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 1.0, 1.0, a), base_color_texture: fx.decal_factors.get(&(texture, tint_key(&def))).cloned(),
+        alpha_mode: AlphaMode::Multiply, unlit: true, depth_bias: 40.0, ..default()
+    });
+    let turn = (state.random() * 2.0 - 1.0) * def.rotation.to_radians();
+    let lift = 0.01 + 0.004 * state.random();
+    let (at, normal) = match normal {
+        Some(n) => (at + n.normalize_or(Vec3::Y) * lift, n.normalize_or(Vec3::Y)),
+        None => {
+            let y = floor_y(at.x, at.z, at.y + 0.5) + lift;
+            let n = world::arena().and_then(|a| a.floor_at(at.x, at.z, at.y + 0.5)).map(|f| f.1).filter(|n| n.y > 0.5).unwrap_or(Vec3::Y);
+            (Vec3::new(at.x, y, at.z), n.normalize())
+        }
+    };
+    let size = Vec3::new(def.width * scale * DECAL_SCALE, 1.0, def.height * scale * DECAL_SCALE);
+    let e = commands.spawn((Mesh3d(fx.floor.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
+                            Transform::from_translation(at).with_rotation(Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(turn))
+                                .with_scale(size),
+                            Decal { age: 0.0, def, material })).id();
+    state.decals.push_back(e);
+    while state.decals.len() > MAX_DECALS {
+        if let Some(old) = state.decals.pop_front() {
+            commands.entity(old).despawn();
+        }
+    }
+}
+
+/// A decal def's tint as bytes (its `h_1c2f0cfb` RGB), the key of its factor textures.
+fn tint_key(def: &DecalDef) -> [u8; 3] {
+    [0, 1, 2].map(|k| (def.color[k].clamp(0.0, 1.0) * 255.0).round() as u8)
+}
+
+/// The colour the game's decal pass multiplies the picture by where a decal's alpha is 1, per
+/// texel of decal texture `rgba` under `tint` (pixel shader 25's first combiner stage,
+/// answers.md Q4): min(1, tint + 1 - the texel's alpha), its colour unused; alpha 1 (the decal's
+/// own alpha is the material's).
+fn decal_factor(rgba: &[u8], tint: [u8; 3]) -> Vec<u8> {
+    rgba.chunks_exact(4).flat_map(|p| {
+        let open = 255 - p[3] as u16;
+        [(tint[0] as u16 + open).min(255) as u8, (tint[1] as u16 + open).min(255) as u8, (tint[2] as u16 + open).min(255) as u8, 255]
+    }).collect()
+}
+
 /// A character's blood decals (`<decal>` names): its type's two lists (#128: the hit's
 /// h_fb4bfc68, up to three, and the pool's h_efc2a874), none without a type. The squad's lists
 /// hold one each, the ones their names gave before (BF_DUMP_TYPES compares them); the Shrikes'
@@ -769,21 +1030,28 @@ fn spawn_fx(
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         let [hit_decals, pool_decals] = blood_decals(&game.0, u);
         // what they're made of (their parts' world material): its hit sounds and effects, and
-        // its debris (grey for Flint)
-        let (surface, blood) = if u.loaded.as_ref().map_or(FLESH, |l| l.flesh) == SYNTHETIC {
-            (fx.synthetic.as_ref(), &BLOOD_B)
-        } else {
-            (fx.flesh.as_ref(), &BLOOD)
+        // its debris (grey for Flint, green for the Shrikes)
+        let flesh = u.loaded.as_ref().map_or(FLESH, |l| l.flesh);
+        let (surface, blood) = match flesh {
+            SYNTHETIC => (fx.synthetic.as_ref(), &BLOOD_B),
+            SHRIKE => (fx.shrike.as_ref().or(fx.flesh.as_ref()), &BLOOD_1),
+            _ => (fx.flesh.as_ref(), &BLOOD),
         };
-        for (at, dir, ammo) in std::mem::take(&mut u.blood) {
+        // the game's decal rule (FUN_00124a70), for Shrike flesh (#129; the rest is #150's)
+        let game_rule = flesh == SHRIKE;
+        for b in std::mem::take(&mut u.blood) {
+            let (at, dir, ammo) = (b.at, b.dir, b.ammo);
             // the effect's axis: the hit's normal (back toward the shooter)
             let back = -Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::Z);
             // at the skin: shots stop on the hit cylinder, which is wider than a body; blasts hit
             // the middle
             let at = at + back * if ammo >= 0 { -SKIN_IN } else { SKIN_OUT };
             let sp = state.random();
-            for e in blood {
-                spawn_emitter(&mut commands, &mut state, e, at, back, sp);
+            // (a hit a stamina shield took whole: no blood, play_enemies.rs)
+            if !b.shielded {
+                for e in blood {
+                    spawn_emitter(&mut commands, &mut state, e, at, back, sp);
+                }
             }
             let (effect, light) = hit_effect(surface, ammo);
             if let Some(e) = effect {
@@ -802,14 +1070,22 @@ fn spawn_fx(
                     u.sound_queue.push((sounds[k], 1.0));
                 }
             }
-            // a splat on the ground past the hit
-            if let Some(def) = game.0.decals.get(&pick(hit_decals, &mut state)) {
+            if game_rule {
+                game_decals(&mut commands, &mut state, &fx, &mut materials, &game.0, u, &b, at, [hit_decals, pool_decals]);
+            } else if let Some(def) = game.0.decals.get(&pick(hit_decals, &mut state)) {
+                // a splat on the ground past the hit
                 let past = at - back * (SPLAT_PAST.0 + (SPLAT_PAST.1 - SPLAT_PAST.0) * state.random());
                 spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, past, DECAL_SCALE);
             }
         }
         if !u.dead {
             u.dead_for = 0.0;
+            continue;
+        }
+        // (the game's rule has nothing more at a death: the killing hit's own decal, doubled, and
+        // its blood bundle are all, takes 17-22)
+        if game_rule {
+            u.dead_for += dt;
             continue;
         }
         // the moment they die: blood splashed round where they fall, a spray and splats on the

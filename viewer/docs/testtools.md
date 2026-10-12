@@ -48,11 +48,15 @@ left) lists them all. They work on any map of a test session: `--test` starts on
     e01's, mp_common's deathmatch and squad deathmatch types, m02_a's and m09_a's (Shrike
     Soldier, Heavy and Hound). A squad type is that squad slot's character; any other is slot
     `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals, and it takes
-    damage by its type's factors, hit parts and damage-multiplier (play_damage.rs). What's still
-    looked up by the squad's names reads nothing for it: it says nothing and has no skill; its
-    ground, ragdoll, reactions and blood bundle are the squad's (the species tickets,
-    #129-#134); its capsule is the squad's and its skin's glow isn't drawn (#173). See
-    character-types.md, "In play" and "Not done".
+    damage by its type's factors, hit parts and damage-multiplier (play_damage.rs). It runs its
+    type's own behaviour (#129, [enemies.md](enemies.md)): the MOTION table's clips and the
+    type's speeds, hit reactions by its personality, the game's ragdoll bodies and leg limits,
+    its death line from its type's chatter, and on Shrike flesh green blood and the game's decal
+    rule. It says nothing else and has no skill; its ground is the squad's (the sole lift); its
+    capsule is the squad's and its skin's glow isn't drawn (#173). The other species' tickets
+    (#130-#134) check theirs. See character-types.md, "In play" and "Not done".
+  * A **frozen** one (`BF_TEST_NPC`'s behaviour) is a dummy with its brain off, as the takes'
+    trainer freeze: no hit reactions (enemies.md).
   * Several characters can share a squad character (an NPC Tex beside the squad's Tex), so
     what reaches a body later tells them apart by `Player::who` (a squad member's character, an
     NPC's number): Energy bolts and Sonic rings land on the body they were drawn to, and the
@@ -133,7 +137,8 @@ the background (#163)".
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |
-| `BF_TEST_NPC=<s>,<character>,<friend\|enemy\|neutral\|team>,<dummy\|fight>[,<x>,<z>[,<y>]]` | spawn one at x, z or under the crosshair, facing the controlled character; on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). Its team: friend 0, enemy 1, neutral 2 or a number 0-9 of the game's team table. The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`) or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; an unknown one is logged and skipped |
+| `BF_TEST_NPC=<s>,<character>,<friend\|enemy\|neutral\|team>,<dummy\|fight\|frozen>[,<x>,<z>[,<y>]]` | spawn one at x, z or under the crosshair, facing the controlled character; on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). Its team: friend 0, enemy 1, neutral 2 or a number 0-9 of the game's team table. The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`) or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; else a placement of a loaded level by its name (`h_1c5780f8`: its type with the placement's weapons and personality, enemies.md); an unknown one is logged and skipped. `frozen`: a dummy with no hit reactions |
+| `BF_TEST_NPC_MOTION=<s>,<n\|aim\|all>,<motion>[,<x>,<z>[,relaxed]]` | drive an enemy of a type of its own in a motion type (`walk`, `run`, `dash`, `move_left`, `backpedal`, `idle`, `dizzy`, `knockdown` ... or its MT_ number) to x, z, or in place: its MOTION table's clip, its type's speed (enemies.md, "Test hooks") |
 | `BF_TEST_NPC_TEAM`, `BF_TEST_NPC_FIGHT`, `BF_TEST_NPC_REMOVE` `=<s>,<n\|aim\|all>` | switch the team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or all. `BF_TEST_NPC_TEAM=<s>,<n\|aim\|all>,<team>` puts them on that team (named as for `BF_TEST_NPC`; one it doesn't know is skipped, with a warning) |
 | `BF_TEST_NPC_RADAR=<s>,<n\|aim\|all>,<value>` | give them that radar-contact (every character has 1), as #141's take08 rewrote the Shrike's: 2 or 4 turns the crosshair yellow with its centre on a friend or a neutral; a hostile skips the radar test (red in its lock box, else blue) |
 | `BF_TEST_PLACER=<s>,<object>[,<yaw>]` | O with that object picked (its label in any case, else the first containing it), turned that way |
@@ -162,7 +167,8 @@ the switch plays one: by the game's level list).
 "Verified").
 
 `BF_COMBAT_LOG=1` also names NPCs ("flint (NPC 1)") and prints each AI shot that meets a body
-("brutus (NPC 3) shoots hawk (1.2 m)").
+("brutus (NPC 3) shoots hawk (1.2 m)"). `BF_ENEMY_LOG=1` prints an enemy's MOTION table, its hit
+reactions' draws, its motions and drives, its stamina shield and its death line (enemies.md).
 
 ## Verified
 

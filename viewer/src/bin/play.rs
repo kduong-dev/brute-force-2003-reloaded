@@ -494,6 +494,7 @@ fn main() {
         .add_plugins(skills::plugin)
         .add_plugins(damage::plugin)
         .add_plugins(reticle::plugin)
+        .add_plugins(enemies::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -555,6 +556,8 @@ mod background;
 mod damage;
 #[path = "play_reticle.rs"]
 mod reticle;
+#[path = "play_enemies.rs"]
+mod enemies;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -791,6 +794,9 @@ struct Layer {
     weight: f32,
     /// one-shot: plays to its end instead of looping
     once: bool,
+    /// how fast it plays (1 but for an enemy's walking clip driven at its type's walk speed,
+    /// play_enemies.rs)
+    rate: f32,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
@@ -1158,7 +1164,8 @@ const RAGDOLL_SELF_HOPS: usize = 3;
 /// this part of its sliding; it rests after this many still substeps. Non-hinge joints hold their
 /// bend this stiffly (fingers, toes, the spine's links outside the torso pieces); the waist joins
 /// the hips and chest this stiffly. Knees fold to at most this part of their straight length
-/// (about 120 degrees), elbows a little more.
+/// (about 120 degrees), elbows a little more (the squad's; an enemy's are the game's limits,
+/// RAGDOLL_KNEE_LIMIT and RAGDOLL_ELBOW_LIMIT).
 const RAGDOLL_DAMPING: f32 = 0.985;
 const RAGDOLL_FRICTION: f32 = 0.6;
 const RAGDOLL_SETTLE: u32 = 20;
@@ -1177,6 +1184,22 @@ const RAGDOLL_BEND_STIFFNESS: f32 = 0.25;
 const RAGDOLL_WAIST_STIFFNESS: f32 = 0.35;
 const RAGDOLL_KNEE_FOLD: f32 = 0.5;
 const RAGDOLL_ELBOW_FOLD: f32 = 0.4;
+/// The game's ragdoll joint limits (FUN_00113120, by the child bone's name hash), used for
+/// #129's enemies (`Ragdoll::new`'s `parts`; the squad keeps the demo's above): a knee (Calf)
+/// bends one way by at most RAGDOLL_KNEE_LIMIT (its y range, -90..0 degrees; x and z none), an
+/// elbow (Forearm) by RAGDOLL_ELBOW_LIMIT (y, -100..0); a hip (Thigh) swings at most
+/// RAGDOLL_HIP_FORWARD forward, RAGDOLL_HIP_BACK back (its y range, -60..110) and
+/// RAGDOLL_HIP_SIDE to either side (z, -20..20) of its way in the bind pose. Not traced, so the
+/// demo's reading: which bend axis is which and their signs (the joints' frames come from the
+/// parent node, FUN_00039510): the larger range is the forward swing, as a hip's is; a knee or
+/// elbow bends the way it was bent at death, 0 being straight; the hip's zero is the bind pose.
+/// The hip's twist (x, -45..45) has no counterpart in the demo's point bodies, nor have the
+/// shoulders', spine's and head's limits.
+const RAGDOLL_KNEE_LIMIT: f32 = std::f32::consts::FRAC_PI_2;
+const RAGDOLL_ELBOW_LIMIT: f32 = 100.0 * std::f32::consts::PI / 180.0;
+const RAGDOLL_HIP_FORWARD: f32 = 110.0 * std::f32::consts::PI / 180.0;
+const RAGDOLL_HIP_BACK: f32 = 60.0 * std::f32::consts::PI / 180.0;
+const RAGDOLL_HIP_SIDE: f32 = 20.0 * std::f32::consts::PI / 180.0;
 const RAGDOLL_STEP_UP: f32 = 0.4;
 const GET_UP_TIME: f32 = 0.45;
 /// grenade landing this close makes a squadmate dive away (EVT_GRENADE_NEAR -> GOAL_DIVE)
@@ -1341,6 +1364,9 @@ struct Loaded {
     /// Sc_w1/w2_activate_stealth. (Brutus's Sc_w1/w2_spirit is loaded too, but his toggle never
     /// plays it: it returns 0, FUN_0013bfe0.)
     skill_clips: [[Option<OverlayClip>; 2]; 2],
+    /// its type's MOTION table resolved to its clips (#129, play_enemies.rs): an enemy's gait,
+    /// reactions and the test hook's motions
+    motions: enemies::Motions,
 }
 
 /// A shot for the effects system: from the muzzle along `dir`, `dist` metres to a hit (or range).
@@ -1356,6 +1382,28 @@ struct PendingHit {
     dir: Vec3,
     local: Vec3,
     ammo: i64,
+}
+
+/// A hit to show on a character (`Player::blood`, play_fx.rs): where (world), the way it went (the
+/// push's, world), the ammo type (-1: a blast), and what it did for the game's blood decals
+/// (FUN_00124a70, #129): `a`, the amount over the victim type's damage-multiplier (0 for a shot
+/// into a body on the ground), and the hit points left after it. `shielded`: a stamina shield
+/// took it whole (play_enemies.rs: no blood, the shield's look).
+#[derive(Clone, Copy, Debug)]
+struct Bleed {
+    at: Vec3,
+    dir: Vec3,
+    ammo: i64,
+    a: f32,
+    hp_left: f32,
+    shielded: bool,
+}
+
+impl Bleed {
+    /// A hit to show that did no damage (a shot into a body on the ground).
+    fn shown(at: Vec3, dir: Vec3, ammo: i64) -> Self {
+        Bleed { at, dir, ammo, a: 0.0, hp_left: 0.0, shielded: false }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1521,9 +1569,8 @@ struct Player {
     idle_left: f32,
     /// the AI's squad-leash-dist (m)
     leash: f32,
-    /// hits to show (blood, sparks, hit sound): hit point, shot direction (world), ammo type (-1:
-    /// a blast)
-    blood: Vec<(Vec3, Vec3, i64)>,
+    /// hits to show (blood, sparks, hit sound, decals: play_fx.rs)
+    blood: Vec<Bleed>,
     /// the body has hit the ground (thud played) / where it lies
     thud: bool,
     body_at: Option<Vec3>,
@@ -1643,6 +1690,9 @@ struct Player {
     /// the AI's target point (a hostile's chest, see `ai_fire`): the gun is turned onto it and
     /// shots go to it, instead of to what the camera's crosshair is on. None for the player.
     ai_target: Option<Vec3>,
+    /// an enemy's own state (#129, play_enemies.rs: its personality, reactions, the test hook's
+    /// drive, its stamina shield); the squad's stays at its default
+    enemy: enemies::State,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -1693,6 +1743,7 @@ impl Player {
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
             shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), was_scoped: false, scope_level: 0, test_selected: false, sway: Vec2::ZERO,
             wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
+            enemy: Default::default(),
         }
     }
 
@@ -2303,6 +2354,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
          mut buffers: ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>) {
     let mut ale = bf_viewer::ale_fx::AleAssets::new(&mut meshes);
     info!("ALE library: {} effects, {} nodes", game.0.effects.effects.len(), game.0.effects.nodes.len());
+    // a new world: the enemies' chatter history starts empty (play_enemies.rs)
+    enemies::new_world();
     // the slide dust, ready before anyone slides
     if let Some(&fx) = game.0.effect_types.get(&SLIDE_EFFECT).and_then(|l| l.first()) {
         ale.load(&mut game.0, &mut images, &mut materials, fx);
@@ -2663,7 +2716,15 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             return;
         }
     };
-    let clips = pick_clips(&model, game);
+    let mut clips = pick_clips(&model, game);
+    // its type's MOTION table resolved to its clips; an enemy's gait clips come from it (#129,
+    // play_enemies.rs), the squad keeps the clips by name
+    let mut motions = enemies::Motions::default();
+    if let (OTHER, Some(t)) = (p.character, ty.as_ref()) {
+        motions = enemies::motions(&model, game, t);
+        enemies::table_clips(&mut clips, &motions, game, t);
+        clips.root_stand_in = root_stand_ins(&model, &clips.slots);
+    }
     info!("{label} clips: {clips:?}");
     let (feet, foot_rest) = find_feet(&model, game, clips.loco.idle);
     let (footstep_type, jump_sound) = game.character_audio.get(name).copied()
@@ -2700,7 +2761,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let flash_mat = assets.materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.4),
         emissive: LinearRgba::rgb(30.0, 18.0, 5.0), unlit: true, ..default() });
     let mut weapons = vec![];
-    let inventory = game.character_weapons.get(name).cloned().or(ty.as_ref().map(|t| t.weapons.clone())).unwrap_or_default();
+    // (an enemy spawned from a placement holds the placement's: play_enemies.rs)
+    let inventory = p.enemy.weapons.clone().or(game.character_weapons.get(name).cloned()).or(ty.as_ref().map(|t| t.weapons.clone())).unwrap_or_default();
     let classes = game.character_weapon_classes.get(name).copied().or(ty.as_ref().map(|t| t.weapon_classes));
     for (slot, w) in inventory.into_iter().enumerate() {
         let Some(def) = game.weapons.get(&w).cloned() else { continue };
@@ -2815,9 +2877,11 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     }
     p.lift_now = lift;
     info!("{label}: soles {lift:.3} m below the floor, raised by that; flesh {flesh}");
+    // an enemy's personality, stamina refill and shield (play_enemies.rs)
+    enemies::spawned(p, ty.as_ref());
     p.name = label;
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips });
+                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
 }
 
 fn read_input(
@@ -3285,7 +3349,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         for &(origin, dir, dist) in &shots {
             if let Some(at) = body.shove(origin, dir, dist) {
                 // it bleeds where it's hit, as the living do (a bullet's hit: ammo type 1)
-                u.blood.push((at, dir, 1));
+                u.blood.push(Bleed::shown(at, dir, 1));
                 if !name.is_empty() {
                     println!("shot {name}'s body at {at:.2}");
                 }
@@ -3300,8 +3364,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if let (Some(push), false) = (u.knock_request.take(), u.dead) {
             if !u.last_world.is_empty() {
                 let push = Quat::from_rotation_y(-u.yaw) * (push + u.last_velocity);
-                // (the model stands raised by its sole lift: the ragdoll starts where it's drawn)
-                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw);
+                // (the model stands raised by its sole lift: the ragdoll starts where it's drawn;
+                // an enemy's has the game's bodies and joint limits, play_enemies.rs)
+                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push, &enemies::ragdoll_parts(&game.0, u)).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw);
                 u.knock = Some(Knock { ragdoll, time: 0.0, lying: None });
                 u.thud = false;
                 u.action = Action::None;
@@ -3316,7 +3381,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 // the knocked down die where they lie
                 u.ragdoll = Some(match u.knock.take() {
                     Some(k) => k.ragdoll,
-                    None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw),
+                    None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push, &enemies::ragdoll_parts(&game.0, u)).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw),
                 });
             }
             // (its name for the log, taken before its ragdoll is borrowed)
@@ -3640,8 +3705,10 @@ fn body_thud(position: Vec3, yaw: f32, height: f32, r: &Ragdoll, thud: &mut bool
 }
 
 /// Have `u` say a random line of a chatter set (after `delay` s), unless they are already talking.
+/// The squad's lines are their names' chatter files. An enemy (OTHER) says only its death line
+/// (`enemies::death_cry`): the takes' Shrikes said nothing on the hits before the kill.
 fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
-    if u.speaking > 0.0 || u.quote_in.is_some() {
+    if u.speaking > 0.0 || u.quote_in.is_some() || u.character == OTHER {
         return;
     }
     let lines: Vec<u32> = game.chatter.get(CHARACTERS[u.character]).and_then(|c| c.get(&tag))
@@ -3659,8 +3726,19 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     if u.dead || amount <= 0.0 {
         return;
     }
-    u.blood.push((at, push.normalize_or(Vec3::Y), ammo));
+    let dir = push.normalize_or(Vec3::Y);
+    // an enemy's stamina shield takes it first (#129, play_enemies.rs: the deathmatch Shrikes');
+    // one it takes whole draws no blood (the shield's look instead)
+    let amount = enemies::absorb(u, game, amount);
+    if amount <= 0.0 {
+        u.blood.push(Bleed { at, dir, ammo, a: 0.0, hp_left: u.health, shielded: true });
+        return;
+    }
     u.health = (u.health - amount).max(0.0);
+    // (the game's blood decals size by the amount over the type's damage-multiplier, and by the
+    // hit points left after it: FUN_00124a70, play_fx.rs)
+    let a = amount / damage::damage_multiplier(game, u).max(1e-3);
+    u.blood.push(Bleed { at, dir, ammo, a, hp_left: u.health, shielded: false });
     if std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", unit_name(u),
                  u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)), u.health, u.knock_cooldown);
@@ -3673,7 +3751,12 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
         u.quote_in = None;
         u.speaking = 0.0;
         u.knock = None;
-        say(u, game, DEATH_CHATTER, 0.0);
+        // (an enemy's from its type's chatter, started now: play_enemies.rs)
+        if enemies::enemy(u) {
+            enemies::death_cry(u, game, DEATH_CHATTER);
+        } else {
+            say(u, game, DEATH_CHATTER, 0.0);
+        }
         // the answer comes once the cry is over
         let cry = u.quote_in.map_or(1.5, |(_, id)| game.sounds.pcm(id).map_or(1.5, |(r, s)| s.len() as f32 / r as f32));
         if let Some(&r) = game.chatter_response.get(CHARACTERS[u.character]).and_then(|m| m.get(&DEATH_CHATTER)) {
@@ -3683,8 +3766,11 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
         }
         return;
     }
-    // a hard hit floors them now and then (not right after getting up)
-    if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
+    // a hard hit floors them now and then (not right after getting up); an enemy reacts by its
+    // personality instead (#129: a stun or a knock-down clip, play_enemies.rs)
+    if enemies::enemy(u) {
+        enemies::damaged(u, game, amount, dir);
+    } else if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
         u.knock_request = Some(push);
         if std::env::var("BF_COMBAT_LOG").is_ok() {
             println!("  knocked down: {}", unit_name(u));
@@ -3805,10 +3891,29 @@ struct Ragdoll {
     flesh: Vec<f32>,
     /// times it has been rolled off its side (see ROLL_TRIES)
     rolls: u8,
+    /// per bone: whether it has a body of its own (FUN_00127290, #129: an enemy's hit parts and
+    /// their ancestors; every bone of the squad's); one without stays as posed at death, rigid
+    /// with the nearest bone above it that has one
+    bodied: Vec<bool>,
+    /// per bone with others rigid with it: the one of them farthest off the line to the child
+    /// it points at, and its offset from that line at the start (so the bone also turns about
+    /// that line, as the bones it carries went)
+    twist: Vec<Option<(usize, Vec3)>>,
+    /// hip limits (FUN_00113120, #129's enemies; see RAGDOLL_HIP_FORWARD): thigh, knee, which
+    /// way is outward on the hips' right axis (-1 left, 1 right), and the thigh's way in the
+    /// bind pose the limits are about (radians forward of straight down, outward)
+    swings: Vec<(usize, usize, f32, Vec2)>,
+    /// which way the hips' frame's third axis (right x up) points: 1 forward, -1 back (the
+    /// body faces -z in its frame at the start)
+    hips_forward: f32,
 }
 
 impl Ragdoll {
-    fn new(model: &Character, world: &[Mat4], floor: f32, push: Vec3) -> Self {
+    /// A ragdoll from the pose at death (`world`, the bones' model-space transforms), started
+    /// with `push`. `parts`: the bones the game gives bodies to (an enemy's hit parts,
+    /// `enemies::ragdoll_parts`, #129), with its knee, elbow and hip limits; empty, every bone
+    /// moves, held by the demo's own limits (the squad's).
+    fn new(model: &Character, world: &[Mat4], floor: f32, push: Vec3, parts: &[u32]) -> Self {
         let n = model.bones.len().min(world.len());
         let (mut pos, mut rest_rot) = (Vec::with_capacity(n), Vec::with_capacity(n));
         for m in &world[..n] {
@@ -3822,12 +3927,15 @@ impl Ragdoll {
         let bone = |name: &str| model.bones.iter().position(|&b| b == bf_viewer::bf::hash::h(name)).filter(|&i| i < n);
         let sides = ["L", "R"];
         // hinges (upper, middle, end): knees and elbows; their upper-to-end distance is limited
-        // instead of held, so they bend freely within reason
-        let hinges: Vec<(usize, usize, usize)> = sides.iter().flat_map(|s| [
-            (bone(&format!("Bip01 {s} Thigh")), bone(&format!("Bip01 {s} Calf")), bone(&format!("Bip01 {s} Foot"))),
-            (bone(&format!("Bip01 {s} UpperArm")), bone(&format!("Bip01 {s} Forearm")), bone(&format!("Bip01 {s} Hand"))),
-        ]).filter_map(|t| Some((t.0?, t.1?, t.2?))).collect();
-        let hinge_end = |g: usize, i: usize| hinges.iter().any(|&(a, _, c)| a == g && c == i);
+        // instead of held, so they bend freely within reason. Each says whether it's a leg's (the
+        // hips' frame, the knee's fold; nearly straight at death, a knee bends forward, an elbow
+        // back). A digitigrade leg (Thigh -> Calf -> HorseLink -> Foot: the Shrikes, #129)
+        // bends at the knee, (Thigh, Calf, HorseLink); below the calf it's rigid (`bodied`).
+        let hinges: Vec<(usize, usize, usize, bool)> = sides.iter().flat_map(|s| {
+            let b = |part: &str| bone(&format!("Bip01 {s} {part}"));
+            [(b("Thigh"), b("Calf"), b("HorseLink").or(b("Foot")), true), (b("UpperArm"), b("Forearm"), b("Hand"), false)]
+        }).filter_map(|t| Some((t.0?, t.1?, t.2?, t.3))).collect();
+        let hinge_end = |g: usize, i: usize| hinges.iter().any(|&(a, _, c, _)| a == g && c == i);
         for i in 0..n {
             if let Some(p) = model.parent[i] {
                 links.push((p, i, pos[i].distance(pos[p]), 1.0));
@@ -3837,6 +3945,68 @@ impl Ragdoll {
                 let d = pos[i] - pos[p];
                 if d.length() > 0.03 && aim[p].is_none_or(|(c, _): (usize, Vec3)| d.length() > (pos[c] - pos[p]).length()) {
                     aim[p] = Some((i, d));
+                }
+            }
+        }
+        // FUN_00127290 (#129): the game's ragdoll gives a body to each hit part and each of
+        // their ancestors up to the root; a bone below the lowest hit part of its chain (a
+        // Shrike's HorseLink, foot and toes under the calf, a hand under the forearm) has none
+        // and stays as posed at death, rigid with the nearest bone above that has one. The demo
+        // holds them rigid where that bone points at one of them (its line then carries their
+        // turn: the calf at the HorseLink, the forearm at the hand); elsewhere they move as the
+        // squad's do.
+        let mut bodied = vec![parts.is_empty(); n];
+        for i in 0..n {
+            if parts.contains(&model.bones[i]) {
+                let mut k = Some(i);
+                while let Some(j) = k.filter(|&j| j < n && !bodied[j]) {
+                    bodied[j] = true;
+                    k = model.parent[j];
+                }
+            }
+        }
+        if !bodied.contains(&true) {
+            bodied = vec![true; n];
+        }
+        let owner_of = |bodied: &[bool], i: usize| {
+            let mut j = i;
+            while !bodied[j] {
+                match model.parent[j] {
+                    Some(p) if p < n => j = p,
+                    _ => break,
+                }
+            }
+            j
+        };
+        let owner: Vec<usize> = (0..n).map(|i| owner_of(&bodied, i)).collect();
+        for i in 0..n {
+            if !bodied[i] && aim[owner[i]].is_none_or(|(c, _): (usize, Vec3)| owner[c] != owner[i]) {
+                bodied[i] = true;
+            }
+        }
+        let owner: Vec<usize> = (0..n).map(|i| owner_of(&bodied, i)).collect();
+        // the rigid ones held to their bone, to the child it points at and to the one farthest
+        // off that line, at full stiffness (three points fix a fourth). The part may roll about
+        // its own line, which the game's knee and elbow don't let it (FUN_00113120 locks their
+        // other two axes): the point bodies have no twist to lock it to (a lock tried on the
+        // knee's plane fought the floor and kept the body writhing)
+        let mut twist = vec![None; n];
+        for b in 0..n {
+            let rigid: Vec<usize> = (0..n).filter(|&i| i != b && owner[i] == b).collect();
+            let Some((c, d0)) = aim[b].filter(|_| !rigid.is_empty()) else { continue };
+            let line = d0.normalize();
+            let off = |i: usize| { let d = pos[i] - pos[b]; d - line * d.dot(line) };
+            twist[b] = rigid.iter().filter(|&&i| i != c).map(|&i| (i, off(i))).filter(|(_, o)| o.length() > 0.03)
+                .max_by(|x, y| x.1.length().total_cmp(&y.1.length()));
+            let anchors: Vec<usize> = [Some(b), Some(c), twist[b].map(|t| t.0)].into_iter().flatten().collect();
+            for (k, &x) in anchors.iter().enumerate() {
+                for &y in &anchors[k + 1..] {
+                    links.push((x, y, pos[x].distance(pos[y]), 1.0));
+                }
+            }
+            for &i in rigid.iter().filter(|i| !anchors.contains(i)) {
+                for &x in &anchors {
+                    links.push((x, i, pos[x].distance(pos[i]), 1.0));
                 }
             }
         }
@@ -3876,9 +4046,8 @@ impl Ragdoll {
             Some(pos[toe] - pos[foot])
         })();
         let mut hinge_sides = vec![];
-        for &(a, b, c) in &hinges {
-            let knee = bone("Bip01 L Thigh") == Some(a) || bone("Bip01 R Thigh") == Some(a);
-            let f = if knee { 0 } else { 1 };
+        for &(a, b, c, leg) in &hinges {
+            let f = if leg { 0 } else { 1 };
             let Some(axes) = frames[f].and_then(|fr| torso_axes(&pos, fr)) else { continue };
             let off = hinge_offset(&pos, a, b, c);
             let side = if off.length() > 0.02 {
@@ -3887,15 +4056,57 @@ impl Ragdoll {
                 // nearly straight: by the body's forward
                 let Some(fw) = forward else { continue };
                 let fw = (fw - axes.0 * fw.dot(axes.0)).normalize_or_zero();
-                if knee { fw } else { -fw }
+                if leg { fw } else { -fw }
             };
             hinge_sides.push((a, b, c, f, Vec3::new(side.dot(axes.0), side.dot(axes.1), side.dot(axes.2))));
         }
         let mut ranges = vec![];
-        for &(a, b, c) in &hinges {
-            let straight = pos[a].distance(pos[b]) + pos[b].distance(pos[c]);
-            let near = if bone("Bip01 L Thigh") == Some(a) || bone("Bip01 R Thigh") == Some(a) { RAGDOLL_KNEE_FOLD } else { RAGDOLL_ELBOW_FOLD };
-            ranges.push((a, c, straight * near, straight * 0.995));
+        for &(a, b, c, leg) in &hinges {
+            let (upper, lower) = (pos[a].distance(pos[b]), pos[b].distance(pos[c]));
+            let straight = upper + lower;
+            let near = match (leg, parts.is_empty()) {
+                // the game's knee and elbow (FUN_00113120): at most RAGDOLL_KNEE_LIMIT or
+                // RAGDOLL_ELBOW_LIMIT from straight (the two bones' ends as far apart as that
+                // bend puts them), or as far as it was folded at death (not snapped open)
+                (_, false) => {
+                    let limit = if leg { RAGDOLL_KNEE_LIMIT } else { RAGDOLL_ELBOW_LIMIT };
+                    (upper * upper + lower * lower + 2.0 * upper * lower * limit.cos()).max(0.0).sqrt().min(pos[a].distance(pos[c]))
+                }
+                (true, true) => straight * RAGDOLL_KNEE_FOLD,
+                (false, true) => straight * RAGDOLL_ELBOW_FOLD,
+            };
+            ranges.push((a, c, near, straight * 0.995));
+        }
+        // the game's hips (FUN_00113120, #129's enemies): each thigh's swing limited about its
+        // way in the bind pose, in the hips' frame (forward: the body's -z, as at the start)
+        let hips_forward = frames[0].and_then(|fr| torso_axes(&pos, fr)).map_or(1.0, |(_, _, t)| if t.z <= 0.0 { 1.0 } else { -1.0 });
+        let mut swings = vec![];
+        if !parts.is_empty() {
+            let bind: Vec<Vec3> = model.inverse_bind.iter().take(n).map(|m| m.inverse().w_axis.truncate()).collect();
+            if let Some((right, up, third)) = frames[0].filter(|_| bind.len() == n).and_then(|fr| torso_axes(&bind, fr)) {
+                let fwd = if third.z <= 0.0 { third } else { -third };
+                for (s, out) in [("L", -1.0), ("R", 1.0)] {
+                    let (Some(t), Some(c)) = (bone(&format!("Bip01 {s} Thigh")), bone(&format!("Bip01 {s} Calf"))) else { continue };
+                    let d = (bind[c] - bind[t]).normalize_or_zero();
+                    if d != Vec3::ZERO && bodied[t] && bodied[c] {
+                        swings.push((t, c, out, Vec2::new(d.dot(fwd).atan2(-d.dot(up)), (d.dot(right) * out).clamp(-1.0, 1.0).asin())));
+                    }
+                }
+            }
+        }
+        if std::env::var("BF_RAGDOLL_LOG").is_ok() && !parts.is_empty() {
+            let names: Vec<String> = ["Thigh", "Calf", "HorseLink", "Foot", "Toe0", "UpperArm", "Forearm", "Hand"].iter()
+                .flat_map(|p| sides.iter().map(move |s| format!("Bip01 {s} {p}"))).chain(["Bip01 Head".to_string()]).collect();
+            let name = |i: usize| names.iter().find(|b| bone(b) == Some(i)).cloned().unwrap_or_else(|| format!("h_{:08x}", model.bones[i]));
+            let carried = |b: usize| (0..n).filter(|&i| i != b && owner[i] == b).count();
+            let rigid: Vec<String> = (0..n).filter(|&b| carried(b) > 0).map(|b| format!("{} +{}", name(b), carried(b))).collect();
+            let bends: Vec<String> = hinges.iter().map(|&(a, b, c, _)| {
+                let bend = std::f32::consts::PI - (pos[a] - pos[b]).angle_between(pos[c] - pos[b]);
+                format!("{} {:.0} deg", name(b), bend.to_degrees())
+            }).collect();
+            let hip: Vec<String> = swings.iter().map(|&(t, _, _, r)| format!("{} {:.0} fwd {:.0} out", name(t), r.x.to_degrees(), r.y.to_degrees())).collect();
+            println!("ragdoll: {} bones, {} with bodies (FUN_00127290); rigid below: {}; bent at death: {}; hips about the bind pose: {}",
+                     n, bodied.iter().filter(|&&b| b).count(), rigid.join(", "), bends.join(", "), hip.join(", "));
         }
         if let (Some(head), Some(neck)) = (bone("Bip01 Head"), bone("Bip01 Neck")) {
             for &c in &chest {
@@ -3923,7 +4134,8 @@ impl Ragdoll {
         }
         let rest_offset = (0..n).map(|i| model.parent[i].filter(|&p| p < n).map_or(pos[i], |p| rest_rot[p].inverse() * (pos[i] - pos[p]))).collect();
         let flesh = flesh(model, world, &pos, &aim);
-        Ragdoll { pos, prev, rest_rot, rest_offset, aim, links, ranges, frames, hinge_sides, still: 0, floor, origin: Vec3::ZERO, yaw: 0.0, pairs, flesh, rolls: 0 }
+        Ragdoll { pos, prev, rest_rot, rest_offset, aim, links, ranges, frames, hinge_sides, still: 0, floor, origin: Vec3::ZERO, yaw: 0.0, pairs, flesh, rolls: 0,
+                  bodied, twist, swings, hips_forward }
     }
 
     /// Place its frame in the world (the body's root: position + height, turned by yaw), so
@@ -4028,6 +4240,24 @@ impl Ragdoll {
                     self.pos[c] -= fix * 0.17;
                 }
             }
+            // the hips: each thigh back within its swing (the knee moved, about the hip)
+            if let Some((right, up, third)) = self.frames[0].filter(|_| !self.swings.is_empty()).and_then(|fr| torso_axes(&self.pos, fr)) {
+                let fwd = third * self.hips_forward;
+                for &(t, c, out, rest) in &self.swings {
+                    let d = self.pos[c] - self.pos[t];
+                    let len = d.length();
+                    if len < 1e-4 {
+                        continue;
+                    }
+                    let (ahead, aside) = (d.dot(fwd).atan2(-d.dot(up)), (d.dot(right) * out / len).clamp(-1.0, 1.0).asin());
+                    let want = (clamp_turn(ahead, rest.x - RAGDOLL_HIP_BACK, rest.x + RAGDOLL_HIP_FORWARD),
+                                aside.clamp(rest.y - RAGDOLL_HIP_SIDE, rest.y + RAGDOLL_HIP_SIDE));
+                    if want != (ahead, aside) {
+                        let level = want.1.cos();
+                        self.pos[c] = self.pos[t] + (right * (out * want.1.sin()) - up * (level * want.0.cos()) + fwd * (level * want.0.sin())) * len;
+                    }
+                }
+            }
             // joint limits
             for &(a, b, lo, hi) in &self.ranges {
                 let d = self.pos[b] - self.pos[a];
@@ -4086,15 +4316,30 @@ impl Ragdoll {
         }
     }
 
-    /// The bones' local transforms for the current positions.
+    /// The bones' local transforms for the current positions. A bone without a body of its own
+    /// (`bodied`) keeps its pose at death under its parent.
     fn local(&self, model: &Character) -> Vec<(Quat, Vec3)> {
         let n = self.pos.len();
         let mut rot = vec![Quat::IDENTITY; n];
         for i in 0..n {
-            let delta = match self.aim[i] {
+            let delta = match self.aim[i].filter(|_| self.bodied[i]) {
                 Some((c, d0)) => {
                     let d = self.pos[c] - self.pos[i];
-                    if d.length() > 1e-4 { Quat::from_rotation_arc(d0.normalize(), d.normalize()) } else { Quat::IDENTITY }
+                    if d.length() > 1e-4 {
+                        let turn = Quat::from_rotation_arc(d0.normalize(), d.normalize());
+                        // and about that line, as the bones rigid with it went
+                        match self.twist[i] {
+                            Some((m, was)) => {
+                                let line = d.normalize();
+                                let off = self.pos[m] - self.pos[i];
+                                let (was, now) = ((turn * was).normalize_or_zero(), (off - line * off.dot(line)).normalize_or_zero());
+                                Quat::from_axis_angle(line, line.dot(was.cross(now)).atan2(was.dot(now))) * turn
+                            }
+                            None => turn,
+                        }
+                    } else {
+                        Quat::IDENTITY
+                    }
                 }
                 None => model.parent[i].map_or(Quat::IDENTITY, |p| rot[p] * self.rest_rot[p].inverse()),
             };
@@ -4113,6 +4358,17 @@ fn torso_axes(pos: &[Vec3], [l, r, lo, hi]: [usize; 4]) -> Option<(Vec3, Vec3, V
     let up = pos[hi] - pos[lo];
     let up = (up - right * up.dot(right)).normalize_or_zero();
     (right != Vec3::ZERO && up != Vec3::ZERO).then(|| (right, up, right.cross(up)))
+}
+
+/// `v` (an angle) held within `lo`..`hi`: outside, the nearer end, going round the circle.
+fn clamp_turn(v: f32, lo: f32, hi: f32) -> f32 {
+    if (lo..=hi).contains(&v) {
+        v
+    } else if wrap_angle(v - hi).abs() < wrap_angle(v - lo).abs() {
+        hi
+    } else {
+        lo
+    }
 }
 
 /// Where a hinge's joint is off the straight line from its upper bone to its end.
@@ -4171,6 +4427,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         p.surface = (p.surface + 1) % game.surfaces.len();
     }
     let surface = game.surfaces.get(p.surface).cloned().unwrap_or_default();
+    // an enemy's own motion (#129, play_enemies.rs): a hit reaction or the test hook's drive,
+    // played in place of the gait, its own inputs dropped meanwhile
+    let scripted = enemies::step(p, l, game, dt);
 
     // camera-relative directions (camera yaw 0 looks down -Z)
     let fwd = Vec3::new(-p.cam_yaw.sin(), 0.0, -p.cam_yaw.cos());
@@ -4552,15 +4811,25 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         Action::Rising => (stance.crouch2stand, true),
         Action::Dive => (stance.dive, true),
     };
+    // (an enemy's own motion over both, play_enemies.rs)
+    let (action_clip, once) = match &scripted {
+        Some(s) => (Some(s.clip), s.once),
+        None => (action_clip, once),
+    };
     let Some(want) = action_clip.or(gait_clip) else { return };
 
     // ---- crossfade stack ----
-    if p.layers.last().map(|x| x.clip) != Some(want) {
+    // (a reaction played again from its start: a second knock-down on the same clip)
+    let restart = std::mem::take(&mut p.enemy.restart);
+    if p.layers.last().map(|x| x.clip) != Some(want) || restart {
         // loops start in phase with the current clip (keeps feet in step), one-shots from 0
         let phase = p.layers.last().map(|x| x.time / l.model.anims[x.clip].duration.max(1e-3)).unwrap_or(0.0);
         let first = p.layers.is_empty();
         let time = if once { 0.0 } else { phase * l.model.anims[want].duration };
-        p.layers.push(Layer { clip: want, time, weight: if first { 1.0 } else { 0.0 }, once });
+        p.layers.push(Layer { clip: want, time, weight: if first { 1.0 } else { 0.0 }, once, rate: 1.0 });
+    }
+    if let (Some(s), Some(top)) = (&scripted, p.layers.last_mut()) {
+        top.rate = s.rate;
     }
     let n = p.layers.len();
     let top = (p.layers[n - 1].weight + dt / FADE).min(1.0);
@@ -4576,6 +4845,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     p.face_time += dt;
     for layer in p.layers.iter_mut() {
         let d = l.model.anims[layer.clip].duration.max(1e-3);
+        let dt = dt * layer.rate;
         if layer.once {
             let step = (d - layer.time).clamp(0.0, dt);
             delta += locomotion::root_delta(&l.model, game, layer.clip, layer.time, step) * layer.weight;
@@ -4715,7 +4985,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.step_mute = 0.3;
         }
     } else {
-        let step = facing * Vec3::new(delta.x, 0.0, delta.z);
+        // (an enemy driven by the test hook, or sliding to a stop after, moves by its type's
+        // speeds, not its clip's root: play_enemies.rs)
+        let step = enemies::glide(p, scripted.as_ref(), dt).unwrap_or(facing * Vec3::new(delta.x, 0.0, delta.z));
         p.position += step;
         if dt > 0.0 {
             p.last_velocity = step / dt;
@@ -5058,7 +5330,8 @@ fn update_weapons(
                     continue;
                 }
                 if let Ok(g) = globals.get(w.entity) {
-                    let push = p.death_push * DROP_PUSH + Vec3::Y * DROP_HOP;
+                    // (an enemy's drops at its feet, #129: the takes' guns lie at the standing spot)
+                    let push = if enemies::enemy(p) { Vec3::ZERO } else { p.death_push * DROP_PUSH + Vec3::Y * DROP_HOP };
                     let spin = Vec3::new(p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0) * 0.1;
                     commands.entity(w.entity).remove::<ChildOf>()
                         .insert((g.compute_transform(), pickups::Thrown { velocity: push, spin }));

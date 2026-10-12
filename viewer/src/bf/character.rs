@@ -19,6 +19,7 @@ use super::audio::{self, SoundBank, Surface};
 use super::weapon::{self, Hardpoint, WeaponDef};
 use super::bxml::{self, Element, SchemaSet, Value};
 use super::character_type::{CharacterType, MotionSet, Placement};
+use super::personality::{self, Personality};
 use super::hash::h;
 use super::texture::{self, TexInfo};
 
@@ -265,6 +266,9 @@ pub struct Game {
     /// the loaded levels' placed characters (`<character-object>`, see
     /// `character_type::Placement`)
     pub placements: Vec<Placement>,
+    /// the AI personalities (common/ai/personality.xmb, #129) by name hash (see
+    /// `personality::Personality`)
+    pub personalities: HashMap<u32, Personality>,
 }
 
 /// An object type's `<base object-type>`: 0 a compound of loose pieces (archetype-type 9, the
@@ -469,8 +473,8 @@ pub struct SkillData {
 }
 
 /// The skill data on an objecttypes character entry `e` (see `SkillData`), if it has a
-/// `<combat-skill>`.
-fn skill_data(e: &Element) -> Option<SkillData> {
+/// `<combat-skill>` (every character type has one: `CharacterType::skill`).
+pub(crate) fn skill_data(e: &Element) -> Option<SkillData> {
     let c = e.child(h("combat-skill"))?;
     let num = |x: &Element, k: u32| x.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
     let sound = |k: &str| c.child(h("sounds")).and_then(|s| s.attr(h(k))).and_then(|v| v.as_hash())
@@ -698,6 +702,7 @@ impl Game {
             character_type_order: vec![],
             motion_sets: HashMap::new(),
             placements: vec![],
+            personalities: HashMap::new(),
         };
         g.load_archive(&common, "common")?;
         let mut others: Vec<PathBuf> = std::fs::read_dir(data_dir)
@@ -747,6 +752,12 @@ impl Game {
                 }
             }
             self.skill_overlays.entry(stem.trim_start_matches("ms_").to_string()).or_insert(overlays);
+        }
+        // the AI personalities (common's ai/personality.xmb: the enemies' hit reactions, #129)
+        if self.personalities.is_empty() {
+            if let Some(root) = self.parse(ar, "personality.xmb")? {
+                self.personalities = personality::parse_personalities(&root);
+            }
         }
         // chatter: <h_f74e6a16> blocks of a line_tag and its sound_id alternatives (a file
         // already loaded from another archive is kept: the levels' copies of the enemies' files)

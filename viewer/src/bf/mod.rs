@@ -9,5 +9,6 @@ pub mod character_type;
 pub mod hash;
 pub mod level;
 pub mod locomotion;
+pub mod personality;
 pub mod texture;
 pub mod weapon;

@@ -96,6 +96,8 @@ Squad movement and deaths follow the game's own data and the captures:
   and smaller - and whose hit sounds for the heavier ammo are metallic. Her hit decal
   (h_02d017b7) is tinted 50,50,50. Each hit and death splat is one of the type's hit decal list
   (h_fb4bfc68), the pool its second list (h_efc2a874); the squad's lists hold one decal each.
+  (The Shrikes, flesh 23, lay theirs by the game's own rule and blend: [enemies.md](enemies.md),
+  "Blood"; the squad keeps this reading until #150.)
   Verified with `BF_CHARACTER=1 BF_TEST_SUICIDE=1 -- --test`
   captures against Brutus (`BF_CHARACTER=0`): grey mist and splats for her, red for him; and
   (#128) Brutus killing her on the test map, frame for frame as before the flesh came from the

@@ -18,6 +18,7 @@ and how it was checked):
 | [docs/maps.md](docs/maps.md) | playing on a level: spawning, collision, doors and gates, HUD text, movement, music, shots, look, power-ups |
 | [docs/squad.md](docs/squad.md) | the squad: follow AI, standing on the floor, scopes, hand-over, hits, deaths, the death camera |
 | [docs/character-types.md](docs/character-types.md) | character types from the data (#128): every type by its `<base name>`, motion sets and their clips, placements and teams, flesh; what play keys by type; `BF_DUMP_TYPES` |
+| [docs/enemies.md](docs/enemies.md) | the enemy species' own behaviour (#129, the Shrikes first): a placement's gun, the MOTION table's clips and the type's speeds, hit reactions by personality, the ragdoll's bodies and leg limits, the death line, green blood and the game's decal rule, the deathmatch stamina shield; `BF_TEST_NPC_MOTION`, `BF_ENEMY_LOG` |
 | [docs/skills.md](docs/skills.md) | special skills: stamina, the skill toggle (V), its sounds, chatter and HUD (the blue bar's colours, trail and blink, the skill's name), and the interface the four skills plug into |
 | [docs/grenades.md](docs/grenades.md) | grenades: throwing and placing, blasts and damage, Gas, Sentry, Light, Sonic, Energy |
 | [docs/pickups.md](docs/pickups.md) | health pickups and the item box |
