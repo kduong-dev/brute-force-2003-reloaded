@@ -114,7 +114,9 @@ const TERRORIST_ARCHIVES: [&str; 6] = ["e05", "e13", "e16", "m03_c", "m08_a", "t
 /// default) every type of the data, from TYPE_ARCHIVES; `terrorists` only the terrorists; a
 /// comma-separated list of archives every type they define; `none` nothing more. The types
 /// come with their models, clips, chatter, weapons and sounds, not their levels
-/// (`Game::load_type_assets`).
+/// (`Game::load_type_assets`). `all` is the default as it costs little: measured on --test,
+/// about 0.9 s more data loading (2.9 s against 1.9 s; the window's start takes 8-10 s either
+/// way) and about 145 MB (`terrorists`: 0.3 s, 30 MB).
 pub fn load_types(game: &mut bf_viewer::bf::character::Game) {
     let t = std::time::Instant::now();
     let which = std::env::var("BF_TEST_TYPES").unwrap_or_else(|_| "all".into());
@@ -122,11 +124,11 @@ pub fn load_types(game: &mut bf_viewer::bf::character::Game) {
     let terrorist = |t: &bf_viewer::bf::character_type::CharacterType| t.chatter.trim_end_matches("_chatter") == "terrorist";
     let results = match which.as_str() {
         "none" | "0" => return,
-        "all" => game.load_type_assets(&data_dir(), &TYPE_ARCHIVES, |_| true),
-        "terrorists" => game.load_type_assets(&data_dir(), &TERRORIST_ARCHIVES, terrorist),
+        "all" => game.load_type_assets(&data_dir(), &TYPE_ARCHIVES, "en", |_| true),
+        "terrorists" => game.load_type_assets(&data_dir(), &TERRORIST_ARCHIVES, "en", terrorist),
         list => {
             let archives: Vec<&str> = list.split(',').map(str::trim).filter(|a| !a.is_empty()).collect();
-            game.load_type_assets(&data_dir(), &archives, |_| true)
+            game.load_type_assets(&data_dir(), &archives, "en", |_| true)
         }
     };
     for (archive, r) in results {

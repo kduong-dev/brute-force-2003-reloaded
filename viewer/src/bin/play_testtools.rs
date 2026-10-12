@@ -810,6 +810,13 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
             mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>, game: Res<GameData>, mut npcs: ResMut<NpcList>) {
     if npcs.0.is_empty() {
         npcs.0 = npc_list(&game.0);
+        // BF_TOOLS_LOG: the menu's entries, once a map's list is made
+        if std::env::var("BF_TOOLS_LOG").is_ok() {
+            println!("NPC menu: {} entries", npcs.0.len());
+            for (label, k) in &npcs.0 {
+                println!("  {label} (h_{k:08x})");
+            }
+        }
     }
     let types = &npcs.0;
     let open = tools.panel == Panel::Npcs;

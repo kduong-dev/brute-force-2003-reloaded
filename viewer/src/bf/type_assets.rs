@@ -17,8 +17,10 @@
 //!    `Game::texture_rgba`);
 //!  - their motion sets, their animation and face sets with only the channels those use, and
 //!    their chatter files;
-//!  - the archive's sound bank (first loaded wins, as for any level: their weapons' and voices'
-//!    in-memory sounds).
+//!  - the archive's sound bank (first loaded wins, as for any level: their weapons' in-memory
+//!    sounds), and their chatter's lines: those are streamed files (resource-type 1) of the
+//!    bank, in the level's language wave bank (data/ml-sounds/<lang>/<level>-<lang>.tgz), of
+//!    which only those lines' bytes are kept (`SoundBank::subset`).
 //!
 //! Placements, items, object types, the level file and its geometry aren't read, so nothing
 //! the test map lists (the rack, the pickups, the object menu) changes.
@@ -32,6 +34,7 @@ use super::bxml::{self, Element, SchemaSet, Value};
 use super::character::{Game, H_PHYSICS, H_PHYSICS_FILE, H_PHYSICS_NAME};
 use super::character_type::{parse_types, CharacterType};
 use super::hash::h;
+use super::audio::SoundBank;
 use super::weapon::{self, WeaponDef};
 
 /// The members of a level archive a type's assets come from (by base name): its objecttypes,
@@ -113,23 +116,50 @@ fn prune_objects(root: &Element, roots: &[u32]) -> Option<(Element, HashSet<u32>
 /// unpacking threads (the motion sets and chatter files are small and read on demand).
 const DOCUMENTS: [&str; 5] = ["objecttypes", "objects-", "materials-", "animations-", "sounds-"];
 
-/// A level archive unpacked and its documents parsed (`DOCUMENTS`, by member name), on a thread.
+/// A level archive unpacked and its documents parsed (`DOCUMENTS`, by member name), on a thread,
+/// with its voice lines.
 struct Unpacked {
     ar: Archive,
     docs: Vec<(String, Element)>,
+    /// the sounds its chatter files name, each a copy of its data: most are streamed files
+    /// (resource-type 1) of its sound bank, in its language wave bank, which isn't kept
+    voices: SoundBank,
 }
 
 impl Unpacked {
-    /// Unpack `path` (its `wanted` members) and parse its documents with `schemas`.
-    fn read(path: &Path, schemas: &SchemaSet) -> Result<Self, String> {
-        let ar = Archive::open(path, wanted)?;
+    /// Unpack `archive` of `data_dir` (its `wanted` members), parse its documents with `schemas`,
+    /// and take its chatter's sounds out of its sound bank and its language wave bank
+    /// (data/ml-sounds/<lang>/<archive>-<lang>.tgz, as `Game::load_bank_streams` attaches
+    /// mp_common's: a voice line's file is streamed from there). None of a wave bank that isn't
+    /// there.
+    fn read(data_dir: &Path, archive: &str, lang: &str, schemas: &SchemaSet) -> Result<Self, String> {
+        let ar = Archive::open(&data_dir.join(format!("{archive}.tgz")), wanted)?;
         let mut docs = vec![];
         for n in DOCUMENTS.iter().flat_map(|p| ar.find(p, ".xmb")) {
             if let Some(d) = ar.get(&n) {
                 docs.push((n.clone(), bxml::parse(d, schemas).map_err(|e| format!("{n}: {e}"))?));
             }
         }
-        Ok(Self { ar, docs })
+        // every sound_id of its chatter files (the blocks' alternatives, `Game::load_chatter`)
+        let mut ids = HashSet::new();
+        for n in ar.find("", "_chatter.xmb") {
+            let Some(root) = ar.get(&n).and_then(|d| bxml::parse(d, schemas).ok()) else { continue };
+            ids.extend(root.walk().into_iter().filter_map(|e| e.attr(h("sound_id")).and_then(|v| v.as_hash())));
+        }
+        let mut voices = SoundBank::default();
+        if !ids.is_empty() {
+            let path = data_dir.join("ml-sounds").join(lang).join(format!("{archive}-{lang}.tgz"));
+            let waves = Archive::open(&path, |n| n.ends_with(".xwb")).ok();
+            let mut bank = SoundBank::default();
+            for (n, root) in docs.iter().filter(|(n, _)| n.starts_with("sounds-")) {
+                bank.add(root, Arc::new(ar.get(&n.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec()));
+                for w in waves.iter().flat_map(|w| w.find("", ".xwb").into_iter().filter_map(|x| w.get(&x))) {
+                    bank.add_stream(Arc::new(w.to_vec()));
+                }
+            }
+            voices = bank.subset(&ids);
+        }
+        Ok(Self { ar, docs, voices })
     }
 
     /// The parsed documents whose name starts with `prefix`, with their names.
@@ -148,15 +178,16 @@ impl Game {
     /// the loaded data doesn't, those `keep` passes, with what they need to be spawned (see the
     /// module's comment). The archives are unpacked and parsed on threads (as many at once as
     /// there are cores), then added in the order given: where two define a type, the first in
-    /// `archives` wins. Per archive: how many types it added, or why it couldn't be read.
-    pub fn load_type_assets(&mut self, data_dir: &Path, archives: &[&str], keep: impl Fn(&CharacterType) -> bool)
+    /// `archives` wins. Their voice lines are language `lang`'s ("en"). Per archive: how many
+    /// types it added, or why it couldn't be read.
+    pub fn load_type_assets(&mut self, data_dir: &Path, archives: &[&str], lang: &str, keep: impl Fn(&CharacterType) -> bool)
         -> Vec<(String, Result<usize, String>)> {
         // (the threads read with a copy of the schemas, as `self` is written meanwhile)
         let schemas = self.schemas.clone();
         std::thread::scope(|s| {
             let jobs: Vec<_> = archives.iter().map(|a| {
-                let (path, schemas) = (data_dir.join(format!("{a}.tgz")), &schemas);
-                s.spawn(move || Unpacked::read(&path, schemas))
+                let schemas = &schemas;
+                s.spawn(move || Unpacked::read(data_dir, a, lang, schemas))
             }).collect();
             archives.iter().zip(jobs).map(|(archive, job)| {
                 let u = job.join().unwrap_or_else(|_| Err("its reader stopped".into()));
@@ -234,6 +265,9 @@ impl Game {
         for (n, root) in u.docs("sounds-") {
             self.sounds.add(root, u.beside(n, ".mem"));
         }
+        // and their chatter's lines, which the bank streams from the language wave bank
+        let lines: HashSet<u32> = libraries.iter().filter_map(|l| self.chatter.get(l)).flat_map(|c| c.values().flatten().copied()).collect();
+        self.sounds.merge(&u.voices, &lines);
         let count = new.len();
         for t in new {
             self.add_character_type(t);

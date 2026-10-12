@@ -165,6 +165,42 @@ demo yet.
   two NPCs that share a slot (OTHER, or an NPC of a squad member's type) each take a damage
   area's first hurt and get their own log line. The squad's are one per member, as before.
 
+## The test map's other types (#180)
+
+The test map's levels (common, e01 for the first mission, mp_common, mp1-mp8, m02_a, m09_a,
+sdm_e34) define 55 of the 128 types. The other 73 are each defined only in campaign
+archives: the terrorists (chatter-library terrorist_chatter: Red Hand in e05, e13 and the
+tutorial; Terrorist in e16, m03_c and m08_a; Subversive in m03_c and m08_a), Edward Kingman
+(m03_c), Gunthar Ghent (e16), McTavish (m08_b), the Militia (m03_b), the Supermutants (e23),
+the ferals (e06, e10, m01_a/b, m05_*), the Seers and the Shadoon (m02_b/c, m04_a, m05_c/d,
+m07_*), the Hunter Lord (m09_c, m14_d), the Fire Hounds, e34's, e40's and m14's Shrikes, the
+Shadoon's head (m02_c, no weapon), and the campaign's own copies of the marines, mutants and
+Brutus. `Game::load_type_assets` (`src/bf/type_assets.rs`) adds such types from a level
+archive without its level:
+
+* only the types not loaded yet (the first loaded wins, FUN_00160da0, as for whole archives);
+  `TYPE_ARCHIVES` (play_testmap.rs) lists, for each of the 73, the first archive by name that
+  defines it, so each comes from the archive `BF_DUMP_TYPES=all` names: 31 archives;
+* the weapon definitions they carry that aren't loaded (and what those fire), the archive's
+  effect and decal types (looked up by name: first wins);
+* from the objects file only the archetypes and meshes their models and those weapons' reach
+  (each kept element's every name reference followed: PARTs, LOD meshes, hardpoints) with the
+  collision surfaces those name (the flesh), not the level's geometry; the materials those
+  meshes name; textures are found on demand as for anyone (`Game::texture_rgba`);
+* their motion sets and chatter files, and the animation and face sets the motion sets name,
+  with only the data channels those clips use;
+* the archive's sound bank (first wins), and their chatter's lines: those are streamed files of
+  the bank (resource-type 1) in the level's language wave bank,
+  `data/ml-sounds/<lang>/<level>-<lang>.tgz`, of which only those lines' bytes are kept
+  (`SoundBank::subset` / `merge`), so a terrorist says its death line;
+* not the placements, items, object types, level file or anything else: the rack, the pickups
+  and the object menu don't change.
+
+The archives are unpacked and parsed on threads, then added in list order. The 128 types'
+`BF_DUMP_TYPES` blocks are the same as with the whole archives (`BF_DUMP_TYPES=all`). On the
+test map it's `testmap::load_types`, by `BF_TEST_TYPES` (testtools.md): every type by default,
+the terrorists alone, some archives' or none.
+
 ## Test hooks
 
 * `BF_DUMP_TYPES=1` (bf_play, with `BF_MAP` or `--test`): every character type of the loaded
@@ -184,9 +220,20 @@ demo yet.
   (`shrike soldier@m09_a`) or `name@library` (mp_common's libraries: `shrike
   soldier@sdm_shrike`), a `<base name>` (`mp_brutus`) or `h_xxxxxxxx`. The menu lists them by
   name, where they're defined (`CharacterType::place`: the archive, `mp_common/dm` for
-  mp_common's) and HP, with the key added to any two that still read the same.
+  mp_common's) and HP, with the key added to any two that still read the same. On `--test`
+  that's every type (128; `BF_TEST_TYPES`, above), each added one by the archive it came from
+  (`red hand@e05`; `terrorist@m03_c` is m03_c's first Terrorist, h_11fe9c5e: its two read the
+  same but for their key, which picks the other).
+* `BF_TEST_TYPES=all|terrorists|none|<archive>,...` (testtools.md): the test map's other types.
 
 ## Verified
+
+* #180 (testtools.md, "Every character type"): on `--test`, `BF_DUMP_TYPES=1` gives "128
+  character types (0 models not loaded, 0 without a motion set, 0 without clips; 30 MOTION
+  clips missing), 22 motion sets", and each type's block is the same as `BF_DUMP_TYPES=all`'s;
+  with `BF_TEST_TYPES=none` the dumps on `--test` and with `all` are the same as before the
+  change. Terrorists, bosses, ferals, Seers, the Hunter Lord and a Fire Hound spawned with
+  `fight`: each with its own model and gun, firing, hit, dying with its death line.
 
 * `BF_DUMP_TYPES=all` (BF_MAP=sdm_e34): "128 character types (0 models not loaded, 0 without a
   motion set, 0 without clips; 30 MOTION clips missing), 22 motion sets, 542 placements (0

@@ -9,7 +9,7 @@ left) lists them all. They work on any map of a test session: `--test` starts on
 | Key | Tool |
 |---|---|
 | F | **free camera** on / off. Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl: up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
-| N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked, 55 types on the test map); J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
+| N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
 | J / B / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / remove it. Shift+Delete removes every NPC |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
 | Y | **sky menu**: none, the map's own, or the sky of any level whose level file names one; click or Enter shows it over the map in place of its own, with that level's background colour |
@@ -44,9 +44,15 @@ left) lists them all. They work on any map of a test session: `--test` starts on
     gun and body follow the crosshair from the first frame.
   * NPCs take no pickups (medkits and fruit are the squad's).
   * Removing one takes its body; the gun it dropped, its blood and its DNA stay.
-  * Any loaded character type can be spawned (#128): on the test map that's common's squad,
-    e01's, mp_common's deathmatch and squad deathmatch types, m02_a's and m09_a's (Shrike
-    Soldier, Heavy and Hound). A squad type is that squad slot's character; any other is slot
+  * Any loaded character type can be spawned (#128). The test map's own levels define 55
+    (common's squad, e01's, mp_common's deathmatch and squad deathmatch types, m02_a's and
+    m09_a's); it adds the other 73 of the data's 128 from the level archives that define them
+    (#180, `BF_TEST_TYPES`, below; character-types.md, "The test map's other types"): the
+    terrorists (Red Hand, Terrorist, Subversive), Kingman, Gunthar Ghent, McTavish, the
+    Militia, the Supermutants, the ferals, the Seers and the Shadoon, the Hunter Lord, the Fire
+    Hounds, e34's, e40's and m14's Shrikes and the campaign's other copies of the marines,
+    mutants and Brutus. The menu names each by the archive it came from (`Red Hand (e05, 31
+    hp)`), as `name@archive` does. A squad type is that squad slot's character; any other is slot
     `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals, and it takes
     damage by its type's factors, hit parts and damage-multiplier (play_damage.rs). It runs its
     type's own behaviour (#129, [enemies.md](enemies.md)): the MOTION table's clips and the
@@ -122,8 +128,18 @@ left) lists them all. They work on any map of a test session: `--test` starts on
 ## Test hooks
 
 Times in s of the controlled character's clock; several entries of one hook separated by `;`;
-yaw and pitch in degrees. `BF_TOOLS_LOG=1` prints each step as it's due and what it did. The
-help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H.
+yaw and pitch in degrees. `BF_TOOLS_LOG=1` prints each step as it's due and what it did, and
+the NPC menu's entries once a map's list is made ("NPC menu: 128 entries", then each with its
+key). The help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H.
+
+`BF_TEST_TYPES` (read as the test map's data loads, on every map of the session) sets which
+character types the test map adds to its levels' 55 (`testmap::load_types`,
+`Game::load_type_assets`): `all` (the default) the other 73, from the 31 archives that define
+them (`TYPE_ARCHIVES`: for each, the first archive by name that has it, as `BF_DUMP_TYPES=all`
+loads them); `terrorists` only the 10 terrorist types (chatter-library `terrorist_chatter`, from
+e05, e13, e16, m03_c, m08_a and the tutorial); a comma-separated list of archives (`m03_c,e16`)
+every type those define that isn't loaded; `none` nothing. The log says what it added ("test
+map: character types (all) in 0.9 s: 73 more, 128 in all"; `BF_TESTMAP_LOG` per archive).
 
 Hook-driven sessions run beside someone at the PC with `BF_BACKGROUND=1 BF_MUTE=1`: no gamepad
 is read (pads only drive the front end), the mouse's events are dropped (the free camera's look and clicks, and the menus' wheel and
@@ -253,6 +269,45 @@ Test map, captures at 15 fps, frames looked at:
   differ: effect seeds come from entity numbers, and the tools add an entity).
 * Not tested in a capture: the keys themselves (the hooks drive the same code, but the key
   and mouse handling is only read, not run), PageUp / PageDown, Shift+Delete.
+
+Every character type (#180), `--test` with `BF_TOOLS_LOG=1 BF_COMBAT_LOG=1 BF_ENEMY_LOG=1`,
+captures at 15 fps, frames looked at:
+* The menu: "NPC menu: 128 entries" (55 with `BF_TEST_TYPES=none`, 65 with `terrorists`),
+  among them "Red Hand (e05, 31 hp)", "Red Hand (e13, 128 hp)", "Red Hand (tutorial, 23 hp)",
+  "Terrorist (e16, 57 hp)", "Terrorist (m03_c, 25 hp) h_0571d345", "Terrorist (m03_c, 25 hp)
+  h_11fe9c5e", "Terrorist (m08_a, 72 hp)", "Subversive (m03_c, 36 hp) h_0de6c6dd", "Subversive
+  (m03_c, 36 hp) h_1597807e", "Subversive (m08_a, 88 hp)". After a switch to e16
+  (`BF_TEST_LEVEL=0.5,e16 BF_TEST_ON_MAP=2 BF_TEST_NPC_MENU=0.8`) the menu reads "(1 of 128
+  character types)" there too (e16's own two come from its level: "71 more").
+* The ten terrorists by key in a row (`BF_TEST_GOTO=6,30,6,30 BF_TEST_FREECAM=0.3,6,2.4,24,0,-5
+  BF_TEST_NPC="0.5,h_12073efa,enemy,dummy,-0.75,14;..."`, 1.5 m apart): each stands in its idle
+  with its model, skin and LZR-23: the Red Hands' red-marked armour, the Terrorists' black, the
+  Subversives' olive.
+* Fights (`BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=6,30,6,30 BF_TEST_FREECAM=0.3,6,7,36,0,-25`, each
+  `enemy,fight` 14 m in front of the squad): e05's Red Hand, m03_c's Terrorist and m08_a's
+  Subversive fire on Tex ("Red Hand (NPC 1) -> tex: ... = 2.15"), the squad fires back, and each
+  dies (ragdoll, blood) with its death line from terrorist_chatter ("Red Hand's death line
+  e0027b57 of 18"). Gunthar Ghent, Edward Kingman, the Militia, McTavish and the Supermutant (HP
+  set to 60) all fire and take hits; Ghent and Kingman die with their lines, the squad falls
+  before the rest. The Hunter Lord, a Shadoon, the Feral Shaman, the Seer Spy, e13's Fire Hound,
+  Corporal Stout and m01_a's Feral Colonist (HP 40) all fire, are hit and die, each with its
+  death line.
+* `BF_DUMP_TYPES=1` on `--test` gives the full dump's line: "128 character types (0 models not
+  loaded, 0 without a motion set, 0 without clips; 30 MOTION clips missing), 22 motion sets",
+  and each of the 128 types' blocks (model bones and vertices, face clips, motion set and
+  clips, flesh, HP, weapons, chatter loaded) is the same as `BF_DUMP_TYPES=all`'s, which loads
+  the whole archives.
+* Unchanged: the rack (27 weapons) and the pickups (44); the NPC run above with
+  `BF_TEST_TYPES=none` and with the default: the same log, and the frames differ only as two
+  runs of `none` differ from each other (a few pixels of effects in 128 of 240 frames, both
+  ways). With `none` the `BF_DUMP_TYPES` outputs on `--test` and with `all` are the same as
+  before the change (`Game::load_archive`'s parts were split out for this).
+* Cost (this PC, 20 threads): the data loads in about 2.9 s against 1.9 s with `none` (the
+  types 0.8-0.9 s, 1.7 s on a cold file cache); the window's start to its first frames takes
+  8-10 s either way. The process is about 145 MB larger (`BF_TOOLS_LOG`'s "process 1074 MB"
+  against 931 MB; `terrorists` 963 MB), mostly the objects' whole .ivd / .ipn of the archives
+  whose models it takes. Every level switch of the session loads them again with the test
+  map's weapon data.
 
 The world menus and air placement (#116), captures at 15 fps with `BF_TOOLS_LOG=1`, frames
 looked at:
