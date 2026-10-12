@@ -22,7 +22,9 @@
 //!     charge). It takes x (1 - 0.1n) for a victim on an enemy team and x (1 + 0.1n) for the
 //!     squad's, n the difficulty (`Difficulty`; STANDARD -4: enemies x1.4, the squad x0.6); then
 //!     its skill's factor (vtable +0xd8 at 0x125747: Vengar's 0.85, #122, not here); then
-//!     FUN_002232d0's factor for the damage type (h_142be76f, `Game::damage_factor`). Only the
+//!     FUN_002232d0's factor for the damage type (h_142be76f, `CharacterType::vulnerability`).
+//!     The victim's data is its character type's (`Player::kind`, #128): its hit parts, its
+//!     factors, and its damage-multiplier when its squad slot has none of its own. Only the
 //!     trainer's `!hit` calls FUN_002232d0 directly (the one direct call is 0x1257c0, in
 //!     0x125600 itself), so older xemu logs of it carry no step.
 //!
@@ -41,6 +43,7 @@
 //! (`draw_hit_parts`).
 
 use super::*;
+use bf_viewer::bf::character_type::HitBone;
 use bf_viewer::bf::hash::h;
 
 /// 0x125600's step per level of difficulty (0x3a4ff0 = 0.1): 1 - 0.1n or 1 + 0.1n (the 1 is
@@ -166,25 +169,30 @@ pub fn friendly(shooter_team: u8, victim_team: u8) -> f32 {
     if shooter_team == victim_team { FRIENDLY } else { 1.0 }
 }
 
-/// The victim's hit parts' bones and their `Damage` (its motion set's `<collision>` list,
-/// `Game::character_hit_bones`, by the squad character's motion set; FUN_00114010 keeps those
-/// that aren't 1 in the map FUN_00125940 reads). The one place they're looked up: a registry of
-/// character types (#128) re-points it.
-pub fn hit_bones<'a>(game: &'a Game, u: &Player) -> &'a [(u32, f32)] {
-    game.character_hit_bones.get(CHARACTERS[u.character % CHARACTERS.len()]).map_or(&[], |v| v.as_slice())
+/// The victim's hit parts: its type's motion set's `<collision>` bones and their `Damage`
+/// (`Game::hit_bones` by `Player::kind`, #128; FUN_00130aa0 copies them to type+0x188, and
+/// FUN_00114010 keeps those that aren't 1 in the map FUN_00125940 reads). For the squad their
+/// own motion sets' (ms_brutus ...), as before #128 (BF_DUMP_TYPES checks the squad's types
+/// name them). Empty when its type or its motion set isn't loaded.
+pub fn hit_bones<'a>(game: &'a Game, u: &Player) -> &'a [HitBone] {
+    game.hit_bones(u.kind).unwrap_or(&[])
 }
 
-/// The victim type's `damage-multiplier` (h_e7e9fcd3, type+0x220; `Game::character_damage_multiplier`,
-/// the sdm_bf squad's in place on a squad deathmatch map), 1 if the data has none. Re-pointed with
-/// `hit_bones`.
+/// The victim type's `damage-multiplier` (h_e7e9fcd3, type+0x220): its squad slot's entry
+/// first (`Game::character_damage_multiplier`: the campaign squad's 0.62, or on a squad
+/// deathmatch map the sdm_bf squad's 1, which `load_squad_library` puts there), else its type's
+/// (#128: a test map NPC of any other type; OTHER's empty name has no entry), 1 if neither has
+/// one.
 pub fn damage_multiplier(game: &Game, u: &Player) -> f32 {
-    game.character_damage_multiplier.get(CHARACTERS[u.character % CHARACTERS.len()]).copied().unwrap_or(1.0)
+    game.character_damage_multiplier.get(CHARACTERS[u.character]).copied()
+        .or(game.character_type(u.kind).map(|t| t.damage_multiplier)).unwrap_or(1.0)
 }
 
-/// The victim type's factor for a damage type (FUN_002232d0: its combat target's h_142be76f list,
-/// `Game::damage_factor`). Re-pointed with `hit_bones`.
+/// The victim type's factor for a damage type (FUN_002232d0: its combat target's
+/// vulnerabilities, h_142be76f; `CharacterType::vulnerability` by `Player::kind`, #128; for the
+/// squad the same as `Game::damage_factor` by name), 1 when its type isn't loaded.
 pub fn vulnerability(game: &Game, u: &Player, damage_type: i64) -> f32 {
-    game.damage_factor(CHARACTERS[u.character % CHARACTERS.len()], damage_type)
+    game.character_type(u.kind).map_or(1.0, |t| t.vulnerability(damage_type))
 }
 
 /// Which hit part a shot struck on `u` (its bone), for FUN_00125940. The shot left `from` along
@@ -269,10 +277,10 @@ fn model_root(u: &Player) -> Mat4 {
 fn posed_parts<'a>(u: &'a Player, game: &'a Game) -> Vec<(u32, f32, Mat4, &'a [[Vec3; 3]])> {
     let Some(l) = u.loaded.as_ref() else { return vec![] };
     let root = model_root(u);
-    hit_bones(game, u).iter().filter_map(|&(bone, damage)| {
-        let i = l.model.bones.iter().position(|&b| b == bone)?;
+    hit_bones(game, u).iter().filter_map(|b| {
+        let i = l.model.bones.iter().position(|&x| x == b.bone)?;
         let surface = l.model.part_collision.get(i).filter(|s| !s.is_empty())?;
-        Some((bone, damage, root * *u.last_world.get(i)?, surface.as_slice()))
+        Some((b.bone, b.damage, root * *u.last_world.get(i)?, surface.as_slice()))
     }).collect()
 }
 
@@ -302,8 +310,8 @@ fn draw_hit_parts(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, m
 
 /// Of `bones`, the one whose bone (the line from its joint to its first child's, placed by
 /// `place`) comes nearest any of `points`.
-fn nearest_part(bones: &[(u32, f32)], model: &Character, place: &dyn Fn(usize) -> Option<Vec3>, points: &[Vec3]) -> Option<u32> {
-    bones.iter().filter_map(|&(bone, _)| {
+fn nearest_part(bones: &[HitBone], model: &Character, place: &dyn Fn(usize) -> Option<Vec3>, points: &[Vec3]) -> Option<u32> {
+    bones.iter().filter_map(|&HitBone { bone, .. }| {
         let i = model.bones.iter().position(|&b| b == bone)?;
         let a = place(i)?;
         let b = model.parent.iter().position(|&p| p == Some(i)).and_then(place).unwrap_or(a);
@@ -338,14 +346,6 @@ fn ray_triangles(tris: &[[Vec3; 3]], o: Vec3, d: Vec3, max: f32) -> Option<f32> 
 /// A bone's name for the log (`HIT_BONE_NAMES`), else its hash.
 fn bone_name(bone: u32) -> String {
     HIT_BONE_NAMES.iter().find(|n| h(n) == bone).map_or_else(|| format!("h_{bone:08x}"), |n| n.to_string())
-}
-
-/// A character's name for the log: the squad character, and the test map NPC's number.
-fn who_name(who: Who) -> String {
-    match who {
-        Who::Squad(c) => CHARACTERS[c % CHARACTERS.len()].to_string(),
-        Who::Npc(n) => format!("NPC {n}"),
-    }
 }
 
 /// One hit on a character with every factor of the game's path (the module notes), for its
@@ -407,7 +407,7 @@ impl Hit {
     /// A direct hit that struck `part` on `victim` (`struck_bone`): FUN_00125940, the victim
     /// type's damage-multiplier x the bone's Damage (1 for a bone the list doesn't hold).
     pub fn struck(mut self, victim: &Player, game: &Game, part: Option<Struck>) -> Self {
-        let struck = part.map(|s| (s, hit_bones(game, victim).iter().find(|x| x.0 == s.bone).map_or(1.0, |x| x.1)));
+        let struck = part.map(|s| (s, hit_bones(game, victim).iter().find(|x| x.bone == s.bone).map_or(1.0, |x| x.damage)));
         self.part = Some(Part { multiplier: damage_multiplier(game, victim), struck });
         self
     }
@@ -429,18 +429,18 @@ impl Hit {
     /// `on`, then the log line (BF_COMBAT_LOG), at sim time `now`. The amount.
     pub fn land(&mut self, u: &Player, game: &Game, difficulty: &Difficulty, now: f32) -> f32 {
         let amount = self.on(u, game, difficulty);
-        self.report(u, now);
+        self.report(u, game, now);
         amount
     }
 
     /// BF_COMBAT_LOG: the hit on `u` with each factor and the amount (play.rs's `hurt` prints the
     /// hit points left after it).
-    pub fn report(&self, u: &Player, now: f32) {
+    pub fn report(&self, u: &Player, game: &Game, now: f32) {
         if std::env::var("BF_COMBAT_LOG").is_err() {
             return;
         }
-        let victim = format!("{}{}", CHARACTERS[u.character % CHARACTERS.len()], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
-        let mut s = format!("t {now:.2}: {} -> {victim}: {} {:.2}", self.by.map_or("-".into(), who_name), self.kind, self.base);
+        let victim = format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
+        let mut s = format!("t {now:.2}: {} -> {victim}: {} {:.2}", self.by.map_or("-".into(), |w| who_name(w, game)), self.kind, self.base);
         if self.falloff != 1.0 {
             s += &format!(" x falloff {:.3}", self.falloff);
         }

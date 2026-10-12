@@ -123,7 +123,7 @@ fn body_place(u: &Player) -> Vec3 {
 /// New blasts draw a bolt to every body in their radius; bolts crawl out, and strike: the
 /// damage (the thrower SELF_BOLT of Damage max, the others Damage max falling to nothing at the
 /// radius, as play_grenade.rs's blasts; both times the character's factor for damage-type 6,
-/// `Game::damage_factor`: Flint's x2), the red tint for the player, a knock-down for a living
+/// play_damage.rs `vulnerability`: Flint's x2), the red tint for the player, a knock-down for a living
 /// squadmate, a shove into the air for a corpse.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut game: ResMut<GameData>,
@@ -149,7 +149,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             bolts.0.push(Bolt { kind, thrower, target: u.who(), from: at, dir, dist, scale: (dist / BOLT_REACH).clamp(BOLT_MIN_SCALE, 1.0),
                                 age: 0.0, entity: None, struck: false, blast_time: player.sim_time });
             if log {
-                println!("t {:.2}: {} bolt to {} ({}) {dist:.1} m away", player.sim_time, kit.def.label, CHARACTERS[u.character],
+                println!("t {:.2}: {} bolt to {} ({}) {dist:.1} m away", player.sim_time, kit.def.label, unit_name(u),
                          if u.dead { "dead" } else { "alive" });
             }
         }
@@ -190,13 +190,13 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
         let Some((u, leader)) = unit_mut(p, &mut squad, b.target) else { continue };
         let throw = b.dir * THROW_BACK + Vec3::Y * THROW_UP;
         if log {
-            println!("t {:.2}: {} bolt strikes {} {:.2} s after the blast, {:.1} m out", p_time(b), kit.def.label, CHARACTERS[u.character], b.age, b.dist);
+            println!("t {:.2}: {} bolt strikes {} {:.2} s after the blast, {:.1} m out", p_time(b), kit.def.label, unit_name(u), b.age, b.dist);
         }
         if u.dead {
             // a corpse: shoved up and out
             let shoved = u.ragdoll.as_mut().is_some_and(|r| shove_up(r, throw));
             if log {
-                println!("  {}'s body {}", CHARACTERS[u.character], if shoved { "thrown" } else { "missed" });
+                println!("  {}'s body {}", unit_name(u), if shoved { "thrown" } else { "missed" });
             }
             continue;
         }
@@ -233,7 +233,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             u.knock_request = Some(throw);
         }
         if std::env::var("BF_COMBAT_LOG").is_ok() {
-            println!("{} bolt at {:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}{}", kit.def.label, b.dist, CHARACTERS[u.character], u.health, u.max_health,
+            println!("{} bolt at {:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}{}", kit.def.label, b.dist, unit_name(u), u.health, u.max_health,
                      if knocked { ", thrown down" } else if u.knock.is_some() { ", down already" } else if u.action.airborne() { ", in the air" } else { "" });
         }
     }

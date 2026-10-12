@@ -205,13 +205,10 @@ pub struct Game {
     /// character name -> its special skill and stamina (see `SkillData`): the campaign squad's,
     /// or squad deathmatch's once `load_squad_library` has put them in their place
     pub character_skills: HashMap<String, SkillData>,
-    /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`)
+    /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`; from the
+    /// parsed `motion_sets`). (A motion set's hit bones are its `MotionSet::hit_bones`, a type's
+    /// `Game::hit_bones`.)
     pub skill_overlays: HashMap<String, SkillOverlays>,
-    /// character name -> its motion set's hit bones (`<collision><..><bone name Damage>`): the
-    /// bone and the factor a direct hit on it takes (FUN_00114010 keeps those that aren't 1;
-    /// FUN_00125940 reads them): the head x5 (x3 for Brutus and the hounds), upper arms x0.8,
-    /// forearms and calves x0.5, the hips, spine and thighs x1
-    pub character_hit_bones: HashMap<String, Vec<(u32, f32)>>,
     /// character name -> its type's `damage-multiplier` (h_e7e9fcd3, the type's +0x220): a
     /// direct hit's factor with the struck bone's (FUN_00125940). The campaign squad 0.62, the
     /// Shrikes 1; on a squad deathmatch map the sdm_bf squad's 1 (`load_squad_library`)
@@ -657,7 +654,6 @@ impl Game {
             effects: ale::Library::default(),
             effect_types: HashMap::new(),
             effect_type_defs: HashMap::new(),
-            character_hit_bones: HashMap::new(),
             character_damage_multiplier: HashMap::new(),
             difficulty_settings: None,
             idle_effects: HashMap::new(),
@@ -702,8 +698,20 @@ impl Game {
     /// Read an archive's data (`archive`: its name, e.g. "common" or "e34", kept with the
     /// character types it defines). Entries already loaded win.
     fn load_archive(&mut self, ar: &Archive, archive: &str) -> Result<(), String> {
-        // the motion sets whole, for the character types (character_type.rs)
-        self.add_motion_sets(ar);
+        // the motion sets (character_type.rs), and each new one's skill toggle overlays by its
+        // name without "ms_": its `<overlay motion-type=44|43 prefix-type script>` (the first
+        // archive with the set wins)
+        for stem in self.add_motion_sets(ar) {
+            let Some(ms) = self.motion_sets.get(&h(&stem)) else { continue };
+            let mut overlays: SkillOverlays = [None, None];
+            for o in &ms.overlays {
+                let slot = match o.motion_type { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
+                if !o.script.is_empty() {
+                    overlays[slot] = Some((o.script.clone(), o.prefix == 1));
+                }
+            }
+            self.skill_overlays.entry(stem.trim_start_matches("ms_").to_string()).or_insert(overlays);
+        }
         // chatter: <h_f74e6a16> blocks of a line_tag and its sound_id alternatives (a file
         // already loaded from another archive is kept: the levels' copies of the enemies' files)
         for n in ar.find("", "_chatter.xmb") {
@@ -744,33 +752,6 @@ impl Game {
             self.chatter.insert(who.clone(), lines);
             self.chatter_response.insert(who.clone(), responses);
             self.chatter_blocks.insert(who, blocks);
-        }
-        // the motion sets' skill toggle overlays: ms_<name>.xmb `<overlay motion-type=44|43
-        // prefix-type script>` (the first archive with the set wins)
-        for n in ar.find("ms_", ".xmb") {
-            let who = n.rsplit('/').next().unwrap_or(&n).trim_start_matches("ms_").trim_end_matches(".xmb").to_string();
-            if self.skill_overlays.contains_key(&who) {
-                continue;
-            }
-            // (a motion set that doesn't decode is skipped, not an error for the archive)
-            let Ok(Some(root)) = self.parse(ar, &n) else { continue };
-            // its `<collision>` bones (name, `Damage`): the hit parts and their factors
-            let bones: Vec<(u32, f32)> = root.walk().into_iter().filter(|e| e.name == h("collision"))
-                .flat_map(|c| c.walk()).filter(|b| b.name == h("bone"))
-                .filter_map(|b| Some((b.attr(h("name"))?.as_hash()?, b.attr(h("Damage")).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(1.0))))
-                .collect();
-            if !bones.is_empty() {
-                self.character_hit_bones.insert(who.clone(), bones);
-            }
-            let mut overlays: SkillOverlays = [None, None];
-            for o in root.walk().into_iter().filter(|e| e.name == h("overlay")) {
-                let slot = match int_of(o, h("motion-type")) { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
-                let script = o.attr(h("script")).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-                if let Some(script) = script {
-                    overlays[slot] = Some((script, int_of(o, h("prefix-type")) == 1));
-                }
-            }
-            self.skill_overlays.insert(who, overlays);
         }
         // the level list: <level><h_1b8535f0 h_07f2f670=NAME texture-name=PREVIEW ...>
         // <zone file-name=ARCHIVE/><dm-data description=TEXT/>

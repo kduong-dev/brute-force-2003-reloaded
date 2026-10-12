@@ -17,9 +17,10 @@
 //!    acts on the squad acts on them (shots, blasts, Sentries, ragdolls, blood), but they're not
 //!    in the formation, can't be taken control of and don't show on the HUD's portraits.
 //!    - A type of the squad's is that squad slot's character. Any other type is slot OTHER: its
-//!      model, clips, HP, weapons, flesh and blood decals are its type's; what's still looked up
-//!      by the squad's names (damage factors, hit factor, chatter, skills) reads nothing for it,
-//!      so it takes x1 of every damage type and is silent (the species tickets, #129-#134).
+//!      model, clips, HP, weapons, flesh, blood decals and damage (its factors, hit parts and
+//!      damage-multiplier, play_damage.rs) are its type's; what's still looked up by the
+//!      squad's names (chatter, skills) reads nothing for it, so it's silent and has no skill
+//!      (the species tickets, #129-#134).
 //!    - Teams: the friend side is the squad's (team 0), the enemy side ENEMY_TEAM. An enemy sets
 //!      off the squad's Sentries (play_sentry.rs) and the crosshair isn't green on one.
 //!    - A dummy stands still where it was put (it doesn't dive from grenades), a target for the

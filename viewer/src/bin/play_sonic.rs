@@ -117,7 +117,7 @@ pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMu
             }
             let due = (d / RING_SPEED).max(RING_FIRST);
             if log {
-                println!("t {:.2}: {} ring reaches {} ({d:.1} m) at +{due:.2} s", player.sim_time, kit.def.label, CHARACTERS[u.character]);
+                println!("t {:.2}: {} ring reaches {} ({d:.1} m) at +{due:.2} s", player.sim_time, kit.def.label, unit_name(u));
             }
             hits.0.push(RingHit { kind, at, thrower, target: u.who(), due, age: 0.0 });
         }

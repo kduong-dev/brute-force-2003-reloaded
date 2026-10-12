@@ -235,7 +235,7 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
         // holder's +0x7a8 is set: read as the scope (medium confidence, weapons spec section 0)
         u.scope_level = 0;
         if log {
-            println!("t={:.2} {} reloads {}: {took} rounds, reserve type {} now {}", u.sim_time, CHARACTERS[u.character % CHARACTERS.len()],
+            println!("t={:.2} {} reloads {}: {took} rounds, reserve type {} now {}", u.sim_time, unit_name(u),
                      def.label, def.ammo_type, reserve.get(def.ammo_type));
         }
     } else if u.fire && clip == 0 && empty && carried == 0 && ready(u) {
@@ -250,7 +250,7 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
         }
         clicked = true;
         if log {
-            println!("t={:.2} {} dry fire {} (sound h_{:08x})", u.sim_time, CHARACTERS[u.character % CHARACTERS.len()], def.label, def.empty_sound);
+            println!("t={:.2} {} dry fire {} (sound h_{:08x})", u.sim_time, unit_name(u), def.label, def.empty_sound);
         }
     }
     if !busy {
@@ -309,7 +309,7 @@ fn recharge(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad
                     c.timer = 0.0;
                     u.ammo[k][0] += 1;
                     if log {
-                        println!("t={:.2} {} weapon {k} recharged to {}", u.sim_time, CHARACTERS[u.character % CHARACTERS.len()], u.ammo[k][0]);
+                        println!("t={:.2} {} weapon {k} recharged to {}", u.sim_time, unit_name(u), u.ammo[k][0]);
                     }
                 }
             } else {

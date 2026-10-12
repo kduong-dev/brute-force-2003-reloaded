@@ -68,9 +68,9 @@ const CHARACTERS: [&str; 5] = ["brutus", "flint", "hawk", "tex", ""];
 /// How many of CHARACTERS are the squad: the slots control passes between.
 const SQUAD: usize = 4;
 /// The slot of a character of any other type (a test map NPC, #128), whose own data is its type's
-/// (`Player::kind`). Its name is empty: what's still looked up by slot name (the damage factors,
-/// hit factor, chatter) finds nothing there, so it takes x1 and says nothing until those
-/// lookups are keyed by type.
+/// (`Player::kind`: its model, HP, weapons, flesh, decals, and its damage, play_damage.rs). Its
+/// name is empty: what's still looked up by slot name (chatter, skills, the scope and camera)
+/// finds nothing there, so it says nothing and has no skill.
 const OTHER: usize = 4;
 const FADE: f32 = 0.2;
 const TURN_RATE: f32 = 9.0;
@@ -1296,6 +1296,9 @@ struct Loaded {
     index: usize,
     /// the character type it was built from (`Player::kind`)
     kind: u32,
+    /// its name for logs (`unit_name`): its squad slot's ("brutus"), or for OTHER its type's
+    /// display name (`Game::type_label`)
+    name: String,
     /// what it's made of: the world material of its parts' collision (`Game::flesh`: 21 FLESH_HUMAN,
     /// 24 SYNTHETIC for Flint, 23 SHRIKE ...; play_fx.rs picks its hit effects and blood by it)
     flesh: i64,
@@ -1642,10 +1645,29 @@ fn squad_type(c: usize) -> u32 {
     CHARACTERS.get(c).filter(|n| !n.is_empty()).map_or(0, |n| bf_viewer::bf::hash::h(n))
 }
 
-/// A character's name for logs and the tools' messages: its squad slot's ("brutus"), or for
-/// OTHER its type's display name (`Game::type_label`).
-fn unit_name(u: &Player, game: &Game) -> String {
-    if u.character == OTHER { game.type_label(u.kind) } else { CHARACTERS[u.character].to_string() }
+/// A character's name for logs: as spawned (`Loaded::name`: its squad slot's, "brutus", or for
+/// OTHER its type's display name), before that its slot's name or its type's key.
+fn unit_name(u: &Player) -> String {
+    match &u.loaded {
+        Some(l) => l.name.clone(),
+        None if u.character == OTHER => format!("h_{:08x}", u.kind),
+        None => CHARACTERS[u.character].to_string(),
+    }
+}
+
+/// `unit_name` by character type alone: a squad type's slot name ("flint"), any other type's
+/// display name (`Game::type_label`).
+fn kind_name(kind: u32, game: &Game) -> String {
+    (0..SQUAD).find(|&c| squad_type(c) == kind).map_or_else(|| game.type_label(kind), |c| CHARACTERS[c].to_string())
+}
+
+/// A character's name for logs by its identity alone (a shooter, a gas cloud's or a damage
+/// area's victim): a squad member's slot name, or a test map NPC's type (`kind_name`) and number.
+fn who_name(who: Who, game: &Game) -> String {
+    match who {
+        Who::Squad(c) => CHARACTERS[c].to_string(),
+        Who::Npc(n, kind) => format!("{} (NPC {n})", kind_name(kind, game)),
+    }
 }
 
 impl Player {
@@ -1704,7 +1726,7 @@ impl Player {
     /// NPC by its number (several can share a squad character).
     fn who(&self) -> Who {
         match self.npc {
-            Some(n) => Who::Npc(n.id),
+            Some(n) => Who::Npc(n.id, self.kind),
             None => Who::Squad(self.character),
         }
     }
@@ -1729,11 +1751,11 @@ impl Player {
 struct Squad(Vec<Player>);
 
 /// A character's identity (`Player::who`): a squad member's character, or a test map NPC's
-/// number.
+/// number, with its character type (fixed for the NPC: for naming it, `who_name`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Who {
     Squad(usize),
-    Npc(u32),
+    Npc(u32, u32),
 }
 
 impl Who {
@@ -1741,7 +1763,7 @@ impl Who {
     fn seed(self) -> u32 {
         match self {
             Who::Squad(c) => c as u32,
-            Who::Npc(n) => 100 + n,
+            Who::Npc(n, _) => 100 + n,
         }
     }
 }
@@ -1820,7 +1842,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
                 m.idle_cautious = !first && m.random(2) == 0;
                 m.idle_left = if m.idle_cautious { IDLE_CAUTIOUS_TIME } else { IDLE_CROUCH_TIME };
                 if std::env::var("BF_AI_LOG").is_ok() {
-                    println!("{} idles: {} for {} s", CHARACTERS[m.character], if m.idle_cautious { "cautious" } else { "crouch" }, m.idle_left);
+                    println!("{} idles: {} for {} s", unit_name(m), if m.idle_cautious { "cautious" } else { "crouch" }, m.idle_left);
                 }
             }
             m.idle_left -= dt;
@@ -2784,7 +2806,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     }
     p.lift_now = lift;
     info!("{label}: soles {lift:.3} m below the floor, raised by that; flesh {flesh}");
-    p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
+    p.loaded = Some(Loaded { index, kind: p.kind, name: label, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips });
 }
 
@@ -3054,7 +3076,7 @@ fn wrap_angle(a: f32) -> f32 {
 
 /// A character's shots' damage, by the held weapon: its Damage min..max per shot, its ammo
 /// type (for the hit's effects) and its Damage damage-type (for the target's factor,
-/// Game::damage_factor); 8-10 of ammo type 1 unarmed.
+/// play_damage.rs `vulnerability`); 8-10 of ammo type 1 unarmed.
 fn shot_damage(p: &Player) -> ((f32, f32), i64, i64) {
     let held = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon));
     let damage = held.map_or((8.0, 10.0), |w| if w.def.damage > 0.0 { (w.def.damage_min.min(w.def.damage), w.def.damage) } else { (8.0, 10.0) });
@@ -3156,7 +3178,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if (shot.origin + shot.dir * t).distance(chest) < SHOT_AT_RADIUS && m.random(SHOT_AT_DODGE_ODDS) == 0 {
                 m.dodge_request = Some(m.random(2) == 0);
                 if std::env::var("BF_AI_LOG").is_ok() {
-                    println!("{} shot at: dodges", CHARACTERS[m.character]);
+                    println!("{} shot at: dodges", unit_name(m));
                 }
             }
         }
@@ -3186,7 +3208,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 let hit = damage::Hit::new(roll, "roll", damage_type).by(shooter, team, victim).falloff(shot.falloff_at(t)).struck(victim, &game.0, bone);
                 let local = shot.origin + shot.dir * t - at;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {
-                    let name = |u: &Player| format!("{}{}", CHARACTERS[u.character], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
+                    let name = |u: &Player| format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
                     println!("{} shoots {} ({t:.1} m)", name(&squad.0[k]), name(victim));
                 }
                 ai_hits.0.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo });
@@ -3247,6 +3269,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let shots: Vec<(Vec3, Vec3, f32)> = std::iter::once(&*player).chain(squad.0.iter())
         .flat_map(|u| u.shots.iter().map(|s| (s.origin, s.dir, s.dist))).collect();
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
+        // (its name for the log, taken before its body is borrowed)
+        let name = if std::env::var("BF_RAGDOLL_LOG").is_ok() { unit_name(u) } else { String::new() };
         let body = match (u.ragdoll.as_mut(), u.knock.as_mut()) {
             (Some(r), _) => r,
             (None, Some(k)) => &mut k.ragdoll,
@@ -3256,8 +3280,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if let Some(at) = body.shove(origin, dir, dist) {
                 // it bleeds where it's hit, as the living do (a bullet's hit: ammo type 1)
                 u.blood.push((at, dir, 1));
-                if std::env::var("BF_RAGDOLL_LOG").is_ok() {
-                    println!("shot {}'s body at {at:.2}", CHARACTERS[u.character]);
+                if !name.is_empty() {
+                    println!("shot {name}'s body at {at:.2}");
                 }
             }
         }
@@ -3289,9 +3313,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw),
                 });
             }
+            // (its name for the log, taken before its ragdoll is borrowed)
+            let name = if std::env::var("BF_RAGDOLL_LOG").is_ok() { unit_name(u) } else { String::new() };
             if let Some(r) = u.ragdoll.as_mut() {
                 let local = r.step(&l.model, dt);
-                if std::env::var("BF_RAGDOLL_LOG").is_ok() && (u.dead_for * 2.0).fract() < dt * 2.0 {
+                if !name.is_empty() && (u.dead_for * 2.0).fract() < dt * 2.0 {
                     let closest = r.pairs.iter().map(|&(a, b)| r.pos[a].distance(r.pos[b])).fold(f32::MAX, f32::min);
                     let turn = Quat::from_rotation_y(r.yaw);
                     let below = r.pos.iter().map(|&p| { let w = r.origin + turn * p;
@@ -3302,8 +3328,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                         let along = (r.pos[c] - r.pos[a]).normalize_or_zero();
                         Some(hinge_offset(&r.pos, a, b, c).dot((n - along * n.dot(along)).normalize_or_zero()))
                     }).fold(f32::MAX, f32::min);
-                    println!("ragdoll {} t {:.1}: pelvis at {:.2}, {} pairs, closest {:.3} m, lowest bone {:.3} m above its floor, {} hinges, worst bend {:.3} m (negative: wrong way)",
-                             CHARACTERS[u.character], u.dead_for, r.origin + turn * r.pos[0], r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
+                    println!("ragdoll {name} t {:.1}: pelvis at {:.2}, {} pairs, closest {:.3} m, lowest bone {:.3} m above its floor, {} hinges, worst bend {:.3} m (negative: wrong way)",
+                             u.dead_for, r.origin + turn * r.pos[0], r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
                 }
                 apply_pose(&l, &local, &mut transforms);
                 body_thud(u.position, u.yaw, u.height + u.lift_now, r, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
@@ -3384,7 +3410,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 u.position.y = g - GROUND;
                 u.was_air = true;
                 if std::env::var("BF_SLIDE_LOG").is_ok() {
-                    println!("{} walks off a ledge at {:.1}: {:.1} m to the floor", CHARACTERS[u.character], u.position, feet - g);
+                    println!("{} walks off a ledge at {:.1}: {:.1} m to the floor", unit_name(u), u.position, feet - g);
                 }
             } else {
                 u.position.y = g - GROUND;
@@ -3393,7 +3419,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     u.was_air = false;
                     let drop = u.fall_from - g;
                     if std::env::var("BF_SLIDE_LOG").is_ok() {
-                        println!("{} lands at {:.1} after a {drop:.1} m drop", CHARACTERS[u.character], u.position);
+                        println!("{} lands at {:.1} after a {drop:.1} m drop", unit_name(u), u.position);
                     }
                     let (lo, hi, most) = FALL_HURT;
                     // a liquid breaks the fall
@@ -3435,7 +3461,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     }
                 }
                 if std::env::var("BF_SLIDE_LOG").is_ok() {
-                    println!("{} in liquid {} {deep:.2} m deep: {} hp", CHARACTERS[u.character], liquid.kind, u.health);
+                    println!("{} in liquid {} {deep:.2} m deep: {} hp", unit_name(u), liquid.kind, u.health);
                 }
             }
             u.prev_xz = Vec2::new(u.position.x, u.position.z);
@@ -3630,7 +3656,7 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     u.blood.push((at, push.normalize_or(Vec3::Y), ammo));
     u.health = (u.health - amount).max(0.0);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
-        println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", CHARACTERS[u.character],
+        println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", unit_name(u),
                  u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)), u.health, u.knock_cooldown);
     }
     if u.health <= 0.0 {
@@ -3655,7 +3681,7 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
         u.knock_request = Some(push);
         if std::env::var("BF_COMBAT_LOG").is_ok() {
-            println!("  knocked down: {}", CHARACTERS[u.character]);
+            println!("  knocked down: {}", unit_name(u));
         }
     }
     if u.hurt_quiet <= 0.0 {
@@ -4191,7 +4217,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.action = Action::Dive;
             p.action_left = dur(stance.dive);
             if std::env::var("BF_COMBAT_LOG").is_ok() {
-                println!("  dive: {} away from {from:.1}", CHARACTERS[p.character]);
+                println!("  dive: {} away from {from:.1}", unit_name(p));
             }
             p.crouch_wanted = false;
             p.still_time = 0.0;
@@ -4415,7 +4441,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- sliding down steep ground: the slide clip, facing downhill ----
     let sliding = p.sliding > 0.0 && matches!(p.action, Action::None) && c.slide.is_some() && !p.on_all_fours;
     if sliding != p.slide_on && std::env::var("BF_SLIDE_LOG").is_ok() {
-        println!("t={:.2} {} slide {} at {:.1}", p.sim_time, CHARACTERS[p.character], if sliding { "starts" } else { "ends" }, p.position);
+        println!("t={:.2} {} slide {} at {:.1}", p.sim_time, unit_name(p), if sliding { "starts" } else { "ends" }, p.position);
     }
     if sliding && !p.slide_on {
         p.queue_any(&surface.slide, 0.8);

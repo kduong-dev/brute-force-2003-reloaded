@@ -50,8 +50,8 @@ const H_DECALS: [u32; 2] = [0xFB4B_FC68, 0xEFC2_A874];
 /// not recovered).
 const H_ATTACHED: u32 = 0x18B6_AB72;
 const H_ATTACHED_EFFECT: u32 = 0x0813_98D6;
-/// A shield's h_e76e8170 (an effect name, unrecovered) and its `<recharge>` values h_f0a56297,
-/// h_1cf65a16, h_fe14a5b7 (unrecovered: the m09_c Hunter Lord's 5, 30, 100).
+/// A shield's `<recharge>` values (FUN_00189a90): `delay` (h_f0a56297, name recovered by
+/// hashing), h_1cf65a16 and h_fe14a5b7 (unrecovered); the m09_c Hunter Lord's 5, 30, 100.
 const H_SHIELD_RECHARGE: [u32; 3] = [0xF0A5_6297, 0x1CF6_5A16, 0xFE14_A5B7];
 /// The motion set's two (in, out) pairs `<h_170db5cd h_141433f1 out-time>` and `<h_f599b114 ..>`
 /// (names unrecovered but out-time's).
@@ -198,9 +198,10 @@ pub struct TypeAi {
     pub squad_leash: f32,
 }
 
-/// A combat-target's `<shield>` (FUN_00154780): the stamina shield of the deathmatch Shrikes and
-/// Hunter Lord, the energy shield of six bosses. Taken through the shield object's absorb
-/// (0x223690 stamina, 0x223400 energy) before the vulnerabilities (FUN_002232d0).
+/// A combat-target's `<shield>` (FUN_00189c40 and FUN_00189a90 parse it, FUN_00154780 copies it
+/// into the type): the stamina shield of the deathmatch Shrikes and Hunter Lord, the energy
+/// shield of six bosses. Taken through the shield object's absorb (0x223690 stamina, 0x223400
+/// energy) before the vulnerabilities (FUN_002232d0).
 #[derive(Clone, Debug, Default)]
 pub struct Shield {
     /// shield-type: the EST_ enum (0x3bf99c): 1 ENERGY_SHIELD, 2 STAMINA_SHIELD
@@ -210,8 +211,8 @@ pub struct Shield {
     /// active-effect and hit-effect (effect types), 0 none
     pub active_effect: u32,
     pub hit_effect: u32,
-    /// `<recharge enabled>`'s three values (h_f0a56297, h_1cf65a16, h_fe14a5b7; meanings not
-    /// traced), None when not enabled
+    /// `<recharge enabled>`'s three values (`delay`, h_1cf65a16, h_fe14a5b7: the record's +0x18,
+    /// +0x1c, +0x20; what reads them isn't traced), None when not enabled
     pub recharge: Option<[f32; 3]>,
 }
 
@@ -262,8 +263,9 @@ pub struct Motion {
     pub name: u32,
     /// motion-type: the MT_ enum (`MOTION_TYPES`)
     pub motion_type: i64,
-    /// script and ready-script (with the gun up): up to two alternatives each (`stunned
-    /// stunned2`; the parser keeps two string slots of each, FUN_00195710), "" none
+    /// script and ready-script (with the gun up): their two slots each, in order, "" for an
+    /// empty one (the parser fills two 0x1c-byte strings of each, FUN_00195710: `stunned
+    /// stunned2` both, most MOTIONs the first; `ready-script=" "` is two empty ones)
     pub scripts: Vec<String>,
     pub ready_scripts: Vec<String>,
     /// prefix-type (FUN_001879e0): MS_PREFIX_NONE 0 (the script is the clip's whole name),
@@ -387,15 +389,28 @@ impl Motion {
         }
     }
 
-    /// The clip a script of this MOTION plays, by FUN_00130c50's rule: its name in `stance` (1
-    /// w1_, 2 w2_) with `suffix`; when the animation set has no such clip (`has` tells, by the
-    /// name's hash), the suffix's fallbacks (0x38db80) in turn; then the name with no stance and
-    /// no suffix (FUN_001314c0, the overlays' builder, shows that last try's arguments; the
-    /// MOTIONs' passes them in registers). `ready`: the ready-script (the gun up). `variant`
-    /// picks between two alternatives (`stunned stunned2`). The name found, or None.
+    /// The clip of one of this MOTION's slots, by FUN_00130c50's rule: `variant` is the slot (0
+    /// or 1: `stunned` / `stunned2`), `ready` its ready-script's (the gun up), in `stance` (1 w1_,
+    /// 2 w2_) with `suffix`.
+    ///  - A slot whose script and ready-script are both empty is empty (0x130f1a-0x130f26).
+    ///  - The name is made of the ready-script for a ready slot, of the script for a script's,
+    ///    and of the script too when the ready-script is empty (FUN_00130ba0: `test dl,dl` at
+    ///    0x130bb3 and `cmp byte ptr [eax],0` at 0x130bb7 send both to the script in EDI): so
+    ///    the 90 MOTIONs with an empty ready-script (stand2crouch, crouch2stand and
+    ///    throw_grenade in 15 sets, the hounds' gas attacks, ...: character-types.md) play their
+    ///    script with the gun up too.
+    ///  - When the animation set has no clip of that name (`has` tells, by the name's hash), the
+    ///    suffix's fallbacks (0x38db80) in turn, then the name with no stance and no suffix (the
+    ///    third call zeroes both: `xor esi,esi` at 0x131058, `xor ecx,ecx` at 0x131061).
+    ///
+    /// The name found, or None.
     pub fn clip(&self, variant: usize, ready: bool, stance: usize, suffix: usize, has: impl Fn(u32) -> bool) -> Option<String> {
-        let list = if ready { &self.ready_scripts } else { &self.scripts };
-        let script = list.get(variant).or(list.first()).filter(|s| !s.is_empty())?;
+        let script = self.scripts.get(variant).map_or("", String::as_str);
+        let ready_script = self.ready_scripts.get(variant).map_or("", String::as_str);
+        if script.is_empty() && ready_script.is_empty() {
+            return None;
+        }
+        let script = if ready && !ready_script.is_empty() { ready_script } else { script };
         let mut k = suffix.min(5);
         loop {
             let n = self.clip_name(script, stance, k);
@@ -438,13 +453,13 @@ fn all(e: &Element, k: u32) -> impl Iterator<Item = &Value> {
     e.attrs.iter().filter(move |(n, _)| *n == k).map(|(_, v)| v)
 }
 
-/// A list of strings (MOTION script and ready-script): every entry of attribute `k` (a list
-/// value's items, a string split at its spaces), empty ones left out.
+/// A list of strings by slot (a MOTION's script and ready-script): one entry per value of
+/// attribute `k`, in order, an empty one kept as "" so the slots stay in their places (the
+/// decoder's XML writes them space-joined: `script="idle_stop "` is "idle_stop" and "").
 fn strings(e: &Element, k: u32) -> Vec<String> {
     all(e, k).flat_map(|v| match v {
-        Value::List(l) => l.iter().filter_map(|x| x.as_str()).flat_map(|s| s.split_whitespace()).map(str::to_string).collect(),
-        Value::Str(s) => s.split_whitespace().map(str::to_string).collect(),
-        _ => vec![],
+        Value::List(l) => l.iter().map(|x| x.as_str().unwrap_or("").trim().to_string()).collect(),
+        v => vec![v.as_str().unwrap_or("").trim().to_string()],
     }).collect()
 }
 
@@ -618,8 +633,10 @@ impl Game {
 
     /// Adds an archive's motion sets (characters/ms_<x>.xmb), keyed by the hash of the file's
     /// stem; one already loaded is kept (every copy of a file is the same). A file that doesn't
-    /// decode is skipped.
-    pub(crate) fn add_motion_sets(&mut self, ar: &Archive) {
+    /// decode is skipped. The stems added ("ms_lf"), for what's derived from them
+    /// (`Game::skill_overlays`).
+    pub(crate) fn add_motion_sets(&mut self, ar: &Archive) -> Vec<String> {
+        let mut added = vec![];
         for n in ar.find("ms_", ".xmb") {
             let stem = n.trim_end_matches(".xmb");
             if self.motion_sets.contains_key(&h(stem)) {
@@ -627,7 +644,9 @@ impl Game {
             }
             let Some(root) = ar.get(&n).and_then(|d| bxml::parse(d, &self.schemas).ok()) else { continue };
             self.motion_sets.insert(h(stem), parse_motion_set(&root, stem));
+            added.push(stem.to_string());
         }
+        added
     }
 
     /// Adds the placed characters of a level file read from `archive` (each archive has one
@@ -690,8 +709,7 @@ impl Game {
     }
 
     /// A character type's hit bones: its motion set's `<collision>` list (FUN_00130aa0; the
-    /// game's type+0x188), as `character_hit_bones` gives the squad by name. None when the type or
-    /// its motion set isn't loaded.
+    /// game's type+0x188). None when the type or its motion set isn't loaded.
     pub fn hit_bones(&self, key: u32) -> Option<&[HitBone]> {
         let t = self.character_types.get(&key)?;
         self.motion_sets.get(&t.motion_set).map(|m| m.hit_bones.as_slice())
@@ -767,22 +785,25 @@ impl Game {
             for mt in types {
                 let mut line = format!("    {mt:2} {:<22}", MOTION_TYPES.get(mt as usize).copied().unwrap_or("?"));
                 for m in ms.motions_of(mt) {
-                    for (v, script) in m.scripts.iter().enumerate() {
-                        let show = |ready: bool, given: &str| -> String {
-                            if given.is_empty() {
-                                return "-".into();
-                            }
-                            match m.clip(v, ready, 1, 0, has) {
+                    // each slot that isn't empty: its script's clip / its ready-script's (the
+                    // script's when the ready-script is empty, `Motion::clip`)
+                    for v in 0..m.scripts.len().max(m.ready_scripts.len()) {
+                        let slot = |l: &[String]| l.get(v).map_or("", |s| s.as_str()).to_string();
+                        let (script, ready) = (slot(&m.scripts), slot(&m.ready_scripts));
+                        if script.is_empty() && ready.is_empty() {
+                            continue;
+                        }
+                        let show = |is_ready: bool| -> String {
+                            match m.clip(v, is_ready, 1, 0, has) {
                                 Some(n) => {
                                     let (d, r) = seconds(&n).unwrap_or((0.0, None));
                                     let r = if mt == MT_IDLE { r.map_or(String::from(" root -"), |r| format!(" root {r:.3}")) } else { String::new() };
                                     format!("{n} {d:.2}s{r}")
                                 }
-                                None => format!("!{}", m.clip_name(given, 1, 0)),
+                                None => format!("!{}", m.clip_name(if is_ready && !ready.is_empty() { &ready } else { &script }, 1, 0)),
                             }
                         };
-                        let ready = m.ready_scripts.get(v).or(m.ready_scripts.first()).map_or("", |s| s.as_str());
-                        let (a, b) = (show(false, script), show(true, ready));
+                        let (a, b) = (show(false), show(true));
                         missing_clips += a.starts_with('!') as usize + b.starts_with('!') as usize;
                         line += &format!(" | {a} / {b}");
                     }
@@ -805,11 +826,11 @@ impl Game {
         }
         out.push(format!("{} character types ({} models not loaded, {} without a motion set, {} without clips; {} MOTION clips missing), {} motion sets, {} placements ({} unresolved, {} with their own team)",
             self.character_types.len(), no_model, no_motion, no_anims, missing_clips, self.motion_sets.len(), self.placements.len(), unresolved, differ));
-        // the squad's type against the tables keyed by its name (what play reads today): the
-        // same HP, damage factors, multiplier, hit bones, weapons, decals and leash, so those
-        // lookups can move to the type without a change. (On a squad deathmatch map the
-        // damage-multiplier by name is sdm_bf's 1, `load_squad_library`, not the campaign type's
-        // 0.62.)
+        // the squad's type against the tables keyed by its name: the same HP, damage factors,
+        // multiplier, weapons, decals and leash, and its own motion set (ms_<name>, whose hit
+        // bones and skill overlays the name-keyed lookups had), so play can read them by type
+        // without a change. (On a squad deathmatch map the damage-multiplier by name is sdm_bf's
+        // 1, `load_squad_library`, not the campaign type's 0.62: play_damage.rs keeps it.)
         for &s in squad {
             let Some(t) = self.character_type(h(s)) else { continue };
             let mut differ: Vec<String> = vec![];
@@ -818,8 +839,7 @@ impl Game {
             if let Some(m) = self.character_damage_multiplier.get(s).filter(|&&m| m != t.damage_multiplier) {
                 differ.push(format!("damage-multiplier ({m} by name, {} by type)", t.damage_multiplier));
             }
-            let bones = self.hit_bones(t.key).map(|b| b.iter().map(|b| (b.bone, b.damage)).collect::<Vec<_>>());
-            if self.character_hit_bones.get(s) != bones.as_ref() { differ.push("hit bones".into()); }
+            if t.motion_set != h(&format!("ms_{s}")) { differ.push("motion set".into()); }
             if self.character_weapons.get(s) != Some(&t.weapons) { differ.push("weapons".into()); }
             if self.character_decals.get(s).copied() != Some((t.decals[0].first().copied().unwrap_or(0), t.decals[1].first().copied().unwrap_or(0))) { differ.push("decals".into()); }
             if self.squad_leash.get(s) != Some(&t.ai.squad_leash) { differ.push("squad-leash-dist".into()); }

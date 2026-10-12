@@ -735,16 +735,11 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
 }
 
 /// A character's blood decals (`<decal>` names): its type's two lists (#128: the hit's
-/// h_fb4bfc68, up to three, and the pool's h_efc2a874), else its slot's name-keyed first entries.
-/// The squad's lists hold one each; the Shrikes' hit list two.
-fn blood_decals(game: &Game, u: &Player) -> [Vec<u32>; 2] {
-    match game.character_type(u.kind) {
-        Some(t) => t.decals.clone(),
-        None => {
-            let (hit, pool) = game.character_decals.get(CHARACTERS[u.character]).copied().unwrap_or((0, 0));
-            [vec![hit], vec![pool]]
-        }
-    }
+/// h_fb4bfc68, up to three, and the pool's h_efc2a874), none without a type. The squad's lists
+/// hold one each, the ones their names gave before (BF_DUMP_TYPES compares them); the Shrikes'
+/// hit list two.
+fn blood_decals<'a>(game: &'a Game, u: &Player) -> [&'a [u32]; 2] {
+    game.character_type(u.kind).map_or([&[], &[]], |t| [&t.decals[0], &t.decals[1]])
 }
 
 /// One decal of a list: at random, as the game picks one per hit (FUN_00124af0: floor(U x
@@ -808,7 +803,7 @@ fn spawn_fx(
                 }
             }
             // a splat on the ground past the hit
-            if let Some(def) = game.0.decals.get(&pick(&hit_decals, &mut state)) {
+            if let Some(def) = game.0.decals.get(&pick(hit_decals, &mut state)) {
                 let past = at - back * (SPLAT_PAST.0 + (SPLAT_PAST.1 - SPLAT_PAST.0) * state.random());
                 spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, past, DECAL_SCALE);
             }
@@ -826,7 +821,7 @@ fn spawn_fx(
                 spawn_emitter(&mut commands, &mut state, e, at, Vec3::Y, sp);
             }
             for _ in 0..DEATH_SPLATS {
-                if let Some(def) = game.0.decals.get(&pick(&hit_decals, &mut state)) {
+                if let Some(def) = game.0.decals.get(&pick(hit_decals, &mut state)) {
                     let (a, r) = (state.random() * std::f32::consts::TAU, DEATH_SPLAT_REACH * state.random().sqrt());
                     let spot = Vec3::new(u.position.x + r * a.cos(), u.position.y + GROUND, u.position.z + r * a.sin());
                     spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, spot, DECAL_SCALE);
@@ -837,11 +832,11 @@ fn spawn_fx(
         // (the memory chip beside them: play_dna.rs, from dead_for)
         // the pool under the body, once it's down and still
         if !u.pool_done && u.thud && u.dead_for >= POOL_DELAY {
-            let pool_decal = pick(&pool_decals, &mut state);
+            let pool_decal = pick(pool_decals, &mut state);
             if let (Some(body), Some(def)) = (u.body_at, game.0.decals.get(&pool_decal)) {
                 u.pool_done = true;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {
-                    println!("pool h_{pool_decal:08x} under {} at {body:.2}: {def:?}", unit_name(u, &game.0));
+                    println!("pool h_{pool_decal:08x} under {} at {body:.2}: {def:?}", unit_name(u));
                 }
                 spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, body, DECAL_SCALE);
             }

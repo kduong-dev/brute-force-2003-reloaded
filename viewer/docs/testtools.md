@@ -42,10 +42,11 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   * Any loaded character type can be spawned (#128): on the test map that's common's squad,
     e01's, mp_common's deathmatch and squad deathmatch types, m02_a's and m09_a's (Shrike
     Soldier, Heavy and Hound). A squad type is that squad slot's character; any other is slot
-    `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals. What's still
-    looked up by the squad's names reads nothing for it: it takes x1 of every damage type, says
-    nothing and has no skill, and its ground, capsule, ragdoll, reactions and blood bundle are
-    the squad's (the species tickets, #129-#134; see character-types.md, "In play").
+    `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals, and it takes
+    damage by its type's factors, hit parts and damage-multiplier (play_damage.rs). What's still
+    looked up by the squad's names reads nothing for it: it says nothing and has no skill; and
+    its ground, capsule, ragdoll, reactions and blood bundle are the squad's (the species
+    tickets, #129-#134; see character-types.md, "In play").
   * Several characters can share a squad character (an NPC Tex beside the squad's Tex), so
     what reaches a body later tells them apart by `Player::who` (a squad member's character, an
     NPC's number): Energy bolts and Sonic rings land on the body they were drawn to, and the

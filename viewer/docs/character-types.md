@@ -48,10 +48,10 @@ runtime offset; see the code map's rows for each).
 | `motion_archetype`, `motion_set` | `motion-archetype` | type+0x1a4, FUN_00131a10 | the clips (its set's animation set) |
 | `face_set` | `<face viseme-file>` | (the face block) | the face clips |
 | `chatter` | `chatter-library` (h_f18a456f) | FUN_001304b0 | loaded; not yet said by enemies |
-| `hitpoints`, `target_type` | `<combat-target>` | type+0x1c, +0x20 | HP |
-| `vulnerabilities` | `<vulnerabilities><vulnerability Type modifier>` | type+0x78, FUN_00154740 | `vulnerability()`; play still reads the squad's by name (see below) |
-| `shield` | `<shield shield-type ..>` (1 energy, 2 stamina) | FUN_001546d0, 0x223400 / 0x223690 | carried: the deathmatch Shrikes' and Hunter Lord's stamina shields, six bosses' energy shields |
-| `damage_multiplier` | `damage-multiplier` (h_e7e9fcd3) | type+0x220, FUN_00125940 | carried (0.62 the campaign squad and its allies, 1.8 the deathmatch hounds) |
+| `hitpoints`, `target_type` | `<combat-target hitpoints target-type>` (the TTYPE_ enum, 0x3bf294) | FUN_00189f80; type+0x1c, +0x20 | HP |
+| `vulnerabilities` | `<vulnerabilities><vulnerability Type modifier>` | type+0x78, FUN_00154740 | every hit's factor for its damage type (play_damage.rs `vulnerability`) |
+| `shield` | `<shield shield-type ..>` (1 energy, 2 stamina) | FUN_00189c40, FUN_00189a90, FUN_00154780; 0x223400 / 0x223690 | carried: the deathmatch Shrikes' and Hunter Lord's stamina shields, six bosses' energy shields |
+| `damage_multiplier` | `damage-multiplier` (h_e7e9fcd3) | type+0x220, FUN_00125940 | a direct hit's factor when the squad slot has none (play_damage.rs `damage_multiplier`; 0.62 the campaign squad and its allies, 1.8 the deathmatch hounds) |
 | `max_stamina`, `height_offset`, `turn_rate`, `player_type` | the attributes | type+0x224, +0x2ac, +0x2d0, +0x1a8 bit 0 | stamina for OTHER; the rest carried |
 | `ragdoll_death` | `enable-ragdoll-death` (h_f397278e) | type+0x34c bit 0, FUN_00115d50 at 0x115e1f | carried: false on the 9 Seer Priest types and the 1189-HP Shadoon (they have death clips, #133 / #134); everyone ragdolls in the demo |
 | `ai` | `<ai alignment-type personality-* vision-range half-fov squad-leash-dist>` | type+0x358, FUN_0001ff70 | the leash for OTHER; the team rule below |
@@ -77,20 +77,29 @@ the attribute is read, not the first.
 
 ## The motion set's clips
 
-A MOTION has a motion type (the MT_ enum, `MOTION_TYPES`), up to two `script`s and two
-`ready-script`s (the gun raised; `stunned stunned2` is two alternatives) and a prefix-type.
-`Motion::clip` resolves one as FUN_00130c50 does:
+A MOTION has a motion type (the MT_ enum, `MOTION_TYPES`), two slots of `script` and two of
+`ready-script` (the gun raised; the parser's two strings of each, FUN_00195710: `stunned
+stunned2` fills both slots, most MOTIONs only the first, and an empty slot stays empty in its
+place) and a prefix-type. `Motion::clip` resolves a slot as FUN_00130c50 does:
 
-* the name is `"Sc_" + stance + script + suffix` for prefix-type 1 or 2 (MS_PREFIX_WEAPON,
-  MS_PREFIX_WEAPON_NUMBER), the script + suffix for 0 (MS_PREFIX_NONE; the table at 0x40cae8);
+* a slot whose script and ready-script are both empty has no clip (0x130f1a-0x130f26);
+* the string a slot is named from is its ready-script for a ready slot, its script for a
+  script's, **and its script too when its ready-script is empty** (FUN_00130ba0: `test dl,dl`
+  at 0x130bb3 and `cmp byte ptr [eax],0` at 0x130bb7 both go to the script, EDI). 90 MOTIONs in
+  21 of the 22 motion sets have a slot like that (all but ms_kingman): stand2crouch,
+  crouch2stand and throw_grenade in 15 sets, the priest's and the Shadoon's deaths, the hounds'
+  gas attacks, the mutants' eat_*, teleport_*, prayer_*, the Shadoon head's idle; with the gun
+  up they play their script's clip;
+* the name is `"Sc_" + stance + string + suffix` for prefix-type 1 or 2 (MS_PREFIX_WEAPON,
+  MS_PREFIX_WEAPON_NUMBER), the string + suffix for 0 (MS_PREFIX_NONE; the table at 0x40cae8);
   the stances are `w1_` and `w2_` (0x40cb30), the suffixes "", `_cr`, `_left`, `_right`,
   `_left_cr`, `_right_cr` (0x40cafc);
 * a name the animation set lacks falls back by suffix (0x38db80: `_left_cr` / `_right_cr` to
-  `_cr`, the rest to none), then to the name with no stance and no suffix (the overlays'
-  builder FUN_001314c0 shows that last try's arguments; the MOTIONs' passes them in registers);
+  `_cr`, the rest to none), then to the name with no stance and no suffix (the third call,
+  0x131063, zeroes both: `xor esi,esi` at 0x131058, `xor ecx,ecx` at 0x131061);
 * clips are found by the name's hash in the animation set.
 
-The game builds 48 clips per MOTION this way (two alternatives x script and ready-script x two
+The game builds 48 clips per MOTION this way (two slots x script and ready-script x two
 stances x six suffixes). The demo's locomotion still picks its clips by fixed names
 (`pick_clips`, play.rs); the table is for the species tickets and the dump.
 
@@ -130,20 +139,24 @@ demo yet.
   random per decal (the squad's have one each, so nothing changes for them; the Shrikes' hit
   list has two). Fleshes other than 21 and 24 still get FLESH_HUMAN's hit effects and blood
   bundle: each species' own is its ticket's.
-* What's still looked up by the slot's name, so reads nothing for OTHER: the damage factors
-  (`Game::damage_factor`), the hit factor (`character_damage_multiplier`, `character_hit_bones`
-  in play_missile.rs), chatter (an enemy says nothing), skills, the scope and camera. An enemy
-  NPC therefore takes x1 of every damage type for now.
-* **To key the rest by type** (after #127, which extends the hit factor to every weapon, is
-  merged): `game.damage_factor(CHARACTERS[u.character], t)` becomes
-  `game.character_type(u.kind).map_or(1.0, |c| c.vulnerability(t))`; the hit factor's
-  `character_damage_multiplier.get(who)` becomes the type's `damage_multiplier` and
-  `character_hit_bones.get(who)` becomes `game.hit_bones(u.kind)` (`HitBone::bone`,
-  `HitBone::damage`). One catch, which the dump shows: on a squad deathmatch map
-  `load_squad_library` puts sdm_bf's multiplier (1) in the squad's name-keyed entry while their
-  campaign types say 0.62, so that override has to stay (or the squad on those maps take
-  sdm_bf's own types, `mp_brutus` ...). Everything else of the squad's equals its type's
-  (`BF_DUMP_TYPES` on a campaign map: "type's data == the name-keyed tables'").
+* **The damage** (play_damage.rs, #127): the victim's hit parts (`hit_bones`: its type's motion
+  set's `<collision>` bones, `Game::hit_bones`) and its factor for the damage type
+  (`vulnerability`: `CharacterType::vulnerability`) are its type's. Its damage-multiplier is its
+  squad slot's name-keyed entry when it has one, else its type's: on a squad deathmatch map
+  `load_squad_library` puts sdm_bf's 1 in the squad's entry while their campaign types say 0.62,
+  and that override stays. So an enemy NPC takes its own type's numbers (a Shrike Soldier: GAS
+  x0.2, SONIC x2, its head x5, multiplier 1), and the squad's are what they were: everything of
+  theirs equals their types' but that override (`BF_DUMP_TYPES` on a campaign map: "type's data
+  == the name-keyed tables'").
+* What's still looked up by the slot's name, so reads nothing for OTHER: chatter (an enemy says
+  nothing), skills, the scope and the camera.
+* Logs name a character by `unit_name` (its slot's name, or for OTHER its type's display name:
+  `Loaded::name`, set at spawn) and, where only its identity is at hand (a shot's or a blast's
+  source, a gas cloud's or a damage area's victims), by `who_name`: `Who::Npc` carries the NPC's
+  type for it.
+* The gas clouds and damage areas keep their victims per character (`Who`), not per squad slot:
+  two NPCs that share a slot (OTHER, or an NPC of a squad member's type) each take a damage
+  area's first hurt and get their own log line. The squad's are one per member, as before.
 
 ## Test hooks
 
@@ -200,7 +213,23 @@ demo yet.
   fight (testtools.md's run). Every frame and the combat, pickup, grenade and scenery logs are
   the same as main's but for the first frames after a map loads, which differ between runs of
   either build (when its scenery reaches the screen), and the NPC lines, which now name the
-  type.
+  type. Again after #127's merge (main 9a2ac43): sdm_e34's `BF_AUTOPILOT=1` (300 frames), the
+  death and hand-over (100 frames) and Tex's and Hawk's skill overlays (`--test
+  BF_TEST_SKILL=1.0,4.0`, 90 frames: every frame the same as main's; the overlays are now read
+  from the parsed motion sets).
+* The damage by type (`BF_COMBAT_LOG`, #127's recipes in play.md § Damage): the squad's numbers
+  are main's line for line (take03, takes 04 / 05's LZR-50 and Jax-iC, take27, take28, #115),
+  but for an NPC shooter's name (`brutus (NPC 1)` where main printed `NPC 1`). A Shrike Heavy
+  dummy in the NPC Tex's place (`shrike heavy@m09_a`, 139 HP) takes its own: take03's missile
+  131.07 at its Bip01 L Thigh (x1), then the blast's share 59.79, which kills it; the Jax-iC
+  30.73 and 34.79 (the calves' x0.5 and its SONIC x2: the takes' 30.1-35.2); the LZR-50
+  2.48-5.22 (LASER x1). ms_hf's hit list is ms_tex's, so for a list of its own: the test map's
+  Feral Outcast (ms_feral_colonist, the head x3) under the LZR-50 at head height (takes 04 / 05's
+  recipe with `BF_CAMERA_PITCH=-0.035`) takes `Bip01 Head 3`, where an NPC Tex takes `Bip01 Head
+  5` (`-0.02`).
+* The ready slots (`Motion::clip`): with the script's fallback the dump's totals are unchanged
+  (the 30 missing clips are the data's); the slots it fills now show their script's clip on both
+  sides, e.g. the Shrike Soldier's stand2crouch and the hounds' gas attacks.
 
 ## Not done
 

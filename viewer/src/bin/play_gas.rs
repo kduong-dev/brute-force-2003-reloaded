@@ -24,7 +24,7 @@
 //!  - it starts GAS_DELAY after the blast and lasts h_04ea9251 seconds. The recording's drain
 //!    stops 5.80 s after the first cloud went off (the demo's 5.58 s, 0.2 s short);
 //!  - the thrower is poisoned like anyone (it was Tex's own cloud), times each character's
-//!    factor for damage-type 4 (`Game::damage_factor`: Flint's x0.05);
+//!    factor for damage-type 4 (play_damage.rs `vulnerability`: Flint's x0.05);
 //!  - no blood, no red tint (the recording's picture only goes olive in the cloud), no hurt
 //!    chatter; a character it kills dies as any other (`hurt`).
 //!
@@ -48,7 +48,9 @@ pub struct GasCloud {
     thrower: usize,
     age: f32,
     fresh: bool,
-    victims: Vec<(usize, f32, f32, f32)>,
+    /// per character it reached, for the log: (who: a squad member, or a test map NPC by its
+    /// number, #128; its age when first and last poisoning them, HP)
+    victims: Vec<(Who, f32, f32, f32)>,
 }
 
 /// The poison clouds hanging where Gas grenades went off.
@@ -134,9 +136,9 @@ fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
                 } else {
                     u.health -= amount;
                 }
-                match c.victims.iter_mut().find(|v| v.0 == u.character) {
+                match c.victims.iter_mut().find(|v| v.0 == u.who()) {
                     Some(v) => { v.2 = now; v.3 += amount; }
-                    None => c.victims.push((u.character, now, now, amount)),
+                    None => c.victims.push((u.who(), now, now, amount)),
                 }
             }
         }
@@ -144,8 +146,8 @@ fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
         if over && log {
             println!("t {:.2}: {} cloud over, {:.2} s after its blast", player.sim_time, kit.def.label, c.age);
             for &(who, first, last, total) in &c.victims {
-                let u = std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == who);
-                println!("  {} poisoned from +{first:.2} to +{last:.2} s: {total:.1} HP ({:.1} HP/s), health {:.1} / {:.0}", CHARACTERS[who],
+                let u = std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.who() == who);
+                println!("  {} poisoned from +{first:.2} to +{last:.2} s: {total:.1} HP ({:.1} HP/s), health {:.1} / {:.0}", who_name(who, &game.0),
                          total / (last - first).max(1e-3), u.map_or(0.0, |u| u.health), u.map_or(0.0, |u| u.max_health));
             }
         }
