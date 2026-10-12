@@ -19,6 +19,7 @@ use super::audio::{self, SoundBank, Surface};
 use super::weapon::{self, Hardpoint, WeaponDef};
 use super::bxml::{self, Element, SchemaSet, Value};
 use super::character_type::{CharacterType, MotionSet, Placement};
+use super::personality::{self, Personality};
 use super::hash::h;
 use super::texture::{self, TexInfo};
 
@@ -267,6 +268,9 @@ pub struct Game {
     /// the loaded levels' placed characters (`<character-object>`, see
     /// `character_type::Placement`)
     pub placements: Vec<Placement>,
+    /// the AI personalities (common/ai/personality.xmb, #129) by name hash (see
+    /// `personality::Personality`)
+    pub personalities: HashMap<u32, Personality>,
 }
 
 /// An object type's `<base object-type>`: 0 a compound of loose pieces (archetype-type 9, the
@@ -495,8 +499,8 @@ pub struct SkillData {
 }
 
 /// The skill data on an objecttypes character entry `e` (see `SkillData`), if it has a
-/// `<combat-skill>`.
-fn skill_data(e: &Element) -> Option<SkillData> {
+/// `<combat-skill>` (every character type has one: `CharacterType::skill`).
+pub(crate) fn skill_data(e: &Element) -> Option<SkillData> {
     let c = e.child(h("combat-skill"))?;
     let num = |x: &Element, k: u32| x.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
     let sound = |k: &str| c.child(h("sounds")).and_then(|s| s.attr(h(k))).and_then(|v| v.as_hash())
@@ -725,6 +729,7 @@ impl Game {
             character_type_order: vec![],
             motion_sets: HashMap::new(),
             placements: vec![],
+            personalities: HashMap::new(),
         };
         g.load_archive(&common, "common")?;
         let mut others: Vec<PathBuf> = std::fs::read_dir(data_dir)
@@ -774,6 +779,12 @@ impl Game {
                 }
             }
             self.skill_overlays.entry(stem.trim_start_matches("ms_").to_string()).or_insert(overlays);
+        }
+        // the AI personalities (common's ai/personality.xmb: the enemies' hit reactions, #129)
+        if self.personalities.is_empty() {
+            if let Some(root) = self.parse(ar, "personality.xmb")? {
+                self.personalities = personality::parse_personalities(&root);
+            }
         }
         // chatter: <h_f74e6a16> blocks of a line_tag and its sound_id alternatives (a file
         // already loaded from another archive is kept: the levels' copies of the enemies' files)
@@ -1252,6 +1263,31 @@ impl Game {
         for name in ar.find("", ".xwb") {
             if let Some(d) = ar.get(&name) {
                 n += self.sounds.add_stream(Arc::new(d.to_vec()));
+            }
+        }
+        Ok(n)
+    }
+
+    /// Attach the streamed files (resource-type 1) of every sound bank of an archive to their own
+    /// language wave banks: `sounds-<bank>.xmb` streams from data/ml-sounds/<lang>/<bank>-<lang>.tgz
+    /// (mp_common's `sounds-dm` from dm-en.tgz, `sounds-sdm_shrike` from sdm_shrike-en.tgz: the
+    /// deathmatch types' voice lines, their death lines among them, #129). Each bank is read again
+    /// (what's loaded already wins) for its streamed files, which `SoundBank::add` keeps for the
+    /// last bank only. Returns how many files were attached.
+    pub fn load_bank_streams(&mut self, data_dir: &Path, archive: &str, lang: &str) -> Result<usize, String> {
+        let ar = Archive::open(&data_dir.join(format!("{archive}.tgz")), |n| n.starts_with("sounds-"))?;
+        let mut n = 0;
+        for name in ar.find("sounds-", ".xmb") {
+            let Some(root) = self.parse(&ar, &name)? else { continue };
+            let mem = Arc::new(ar.get(&name.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec());
+            self.sounds.add(&root, mem);
+            let bank = name.rsplit('/').next().unwrap_or(&name).trim_start_matches("sounds-").trim_end_matches(".xmb");
+            let path = data_dir.join("ml-sounds").join(lang).join(format!("{bank}-{lang}.tgz"));
+            let Ok(waves) = Archive::open(&path, |x| x.ends_with(".xwb")) else { continue };
+            for x in waves.find("", ".xwb") {
+                if let Some(d) = waves.get(&x) {
+                    n += self.sounds.add_stream(Arc::new(d.to_vec()));
+                }
             }
         }
         Ok(n)

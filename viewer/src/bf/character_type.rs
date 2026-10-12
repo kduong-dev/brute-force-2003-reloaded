@@ -28,7 +28,7 @@ use bevy::math::{Mat4, Vec3};
 
 use super::archive::Archive;
 use super::bxml::{self, Element, Value};
-use super::character::{Character, Game};
+use super::character::{skill_data, Character, Game, SkillData};
 use super::collision::MATERIAL_ID;
 use super::hash::h;
 use super::level;
@@ -179,6 +179,11 @@ pub struct CharacterType {
     /// footstep type (h_072ab4af) and `<movement-sounds jump-sound>` (0 none)
     pub footstep_type: i64,
     pub jump_sound: u32,
+    /// its `<combat-skill skill-set stamina-cost stamina-recovery>` with max-stamina and
+    /// h_e78efbb2 (`SkillData`; the squad's are read by name too): the stamina update
+    /// (FUN_0011a840) refills `stamina-recovery` a second for a type with h_e78efbb2, the
+    /// deathmatch Shrikes' 5 / 4 (#129: their stamina shield's)
+    pub skill: Option<SkillData>,
 }
 
 /// A character type's AI settings (`<ai>`, the parse record's +0x21c; FUN_0001ff70 copies them
@@ -548,6 +553,7 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
             .filter(|&(fx, _)| fx != 0).collect()).unwrap_or_default(),
         footstep_type: int(e, H_FOOTSTEP).unwrap_or(-1),
         jump_sound: e.child(h("movement-sounds")).map_or(0, |m| name(m, h("jump-sound"))),
+        skill: skill_data(e),
     })
 }
 

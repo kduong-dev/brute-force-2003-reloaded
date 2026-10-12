@@ -83,6 +83,14 @@ pub fn load_weapon_data(game: &mut bf_viewer::bf::character::Game) {
     }
     // (the first mission's surfaces and their footsteps, as on any map)
     game.surfaces = surfaces;
+    // mp_common's deathmatch types speak from its sound banks' language wave banks (their death
+    // lines: #129, play_enemies.rs `death_cry`)
+    if list.split(',').any(|l| l == "mp_common") {
+        match game.load_bank_streams(&data_dir(), "mp_common", "en") {
+            Ok(n) => println!("test map: {n} streamed sounds of mp_common's banks"),
+            Err(e) => eprintln!("test map: no streamed sounds for mp_common: {e}"),
+        }
+    }
     let hand = game.weapons.values().filter(|d| d.ammo > 0).count();
     println!("test map: weapon data from {list} in {:.1} s: {hand} hand weapons", t.elapsed().as_secs_f32());
 }

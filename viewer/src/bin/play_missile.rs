@@ -953,7 +953,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         let mut hit = damage::Hit::new(roll, "roll", def.damage_type).by(bl.owner, bl.team, u).struck(u, game, bone);
         let amount = hit.land(u, game, difficulty, now);
         // (the test map's instant kill: anyone but the player, from the player's missiles)
-        let amount = if instant && bl.human && !controlled { u.health.max(amount) } else { amount };
+        let amount = if instant && bl.human && !controlled { enemies::lethal(u).max(amount) } else { amount };
         let push = Vec3::new(bl.dir.x, 0.0, bl.dir.z).normalize_or(Vec3::Z) * HIT_PUSH.0 + Vec3::Y * HIT_PUSH.1;
         let before = u.health;
         hurt_still(u, game, amount, push, bl.at);
@@ -1101,7 +1101,7 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             let kind = if def.blast_core { "the core rule's share" } else { "half the roll" };
             let mut hit = damage::Hit::new(share, kind, def.damage_type).by(b.owner, b.team, u);
             let amount = hit.land(u, &game.0, &difficulty, now);
-            let amount = if instant && human && k != 0 { u.health.max(amount) } else { amount };
+            let amount = if instant && human && k != 0 { enemies::lethal(u).max(amount) } else { amount };
             let away = Vec3::new(f.x - b.at.x, 0.0, f.z - b.at.z).normalize_or(Vec3::X);
             let before = u.health;
             hurt_still(u, &game.0, amount, away * BLAST_PUSH.0 + Vec3::Y * BLAST_PUSH.1, middle);

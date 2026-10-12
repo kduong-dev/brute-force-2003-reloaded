@@ -213,7 +213,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             super::damage::Hit::new(max * k, "Damage max x (1 - d / r)", kit.blast.damage_type)
         }.source(Who::Squad(b.thrower));
         let damage = hit.land(u, &game.0, &difficulty, p_time(b));
-        let damage = if instant && !leader && u.who() != Who::Squad(b.thrower) { u.health.max(damage) } else { damage };
+        let damage = if instant && !leader && u.who() != Who::Squad(b.thrower) { enemies::lethal(u).max(damage) } else { damage };
         // the thrower stays up (Brutus did in the recording): `hurt`'s own chance of a
         // knock-down is held off for them by its knock-down cooldown, put back after
         // (the thrower is the squad's: a test map NPC of their character isn't them)

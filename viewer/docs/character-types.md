@@ -137,8 +137,9 @@ demo yet.
 * The blood: a character's flesh is read from its parts (`Loaded::flesh`; play_fx.rs picked
   Flint's SYNTHETIC by her name before) and its decals are its type's lists, one of a list at
   random per decal (the squad's have one each, so nothing changes for them; the Shrikes' hit
-  list has two). Fleshes other than 21 and 24 still get FLESH_HUMAN's hit effects and blood
-  bundle: each species' own is its ticket's.
+  list has two). Fleshes other than 21, 23 and 24 still get FLESH_HUMAN's hit effects and
+  blood bundle: each species' own is its ticket's. Shrike flesh (23, #129) has its green bundle
+  and lays its decals by the game's rule (enemies.md, "Blood").
 * **The damage** (play_damage.rs, #127): the victim's hit parts (`hit_bones`: its type's motion
   set's `<collision>` bones, `Game::hit_bones`) and its factor for the damage type
   (`vulnerability`: `CharacterType::vulnerability`) are its type's. Its damage-multiplier is its
@@ -148,8 +149,13 @@ demo yet.
   x0.2, SONIC x2, its head x5, multiplier 1), and the squad's are what they were: everything of
   theirs equals their types' but that override (`BF_DUMP_TYPES` on a campaign map: "type's data
   == the name-keyed tables'").
-* What's still looked up by the slot's name, so reads nothing for OTHER: chatter (an enemy says
-  nothing), skills, the scope and the camera.
+* **An enemy's own behaviour** (OTHER, #129: play_enemies.rs, [enemies.md](enemies.md)): its
+  gait's and motions' clips from its type's MOTION table, its speeds, hit reactions by its
+  personality (`Game::personalities`, bf/personality.rs), the game's ragdoll bodies and leg
+  limits, its death line from its type's `chatter-library`, the deathmatch types' stamina
+  shield; a `BF_TEST_NPC` placement gives it the placement's weapons and personality.
+* What's still looked up by the slot's name, so reads nothing for OTHER: the rest of the
+  chatter (an enemy says only its death line), skills, the scope and the camera.
 * Logs name a character by `unit_name` (its slot's name, or for OTHER its type's display name:
   `Player::name`, set at spawn and kept on the Player, so it holds while the update systems have
   its `Loaded` taken out) and, where only its identity is at hand (a shot's or a blast's
@@ -238,5 +244,6 @@ demo yet.
   material): drawn for level objects only (`level_scene.rs`), not by `scene::material`: #173.
 * The per-type capsule for shots and collision: #173.
 * The per-type ground height (root-height), the ragdoll switch and death effects in play, the
-  species' blood bundles and reactions, the enemies' chatter: the species tickets.
+  other species' blood bundles, and every species' reactions and chatter checked against their
+  own footage: the species tickets (#130-#134; the Shrikes' are #129's, enemies.md).
 * Spawning placements (#102), and placements' teams, AI and inventories in play.

@@ -127,7 +127,7 @@ fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
                 let base = rate * inside / super::damage::footage_squad_step(&game.0);
                 let poisoned = super::damage::Hit::new(base, "gas", kit.blast.damage_type).source(Who::Squad(c.thrower)).on(u, &game.0, &difficulty);
                 // (the thrower is the squad's: a test map NPC of their character isn't them)
-                let amount = if kill && u.who() != Who::Squad(c.thrower) { u.health } else { poisoned };
+                let amount = if kill && u.who() != Who::Squad(c.thrower) { enemies::lethal(u) } else { poisoned };
                 if amount >= u.health {
                     // its last breath: dies as from any hurt
                     hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y, u.position, -1);

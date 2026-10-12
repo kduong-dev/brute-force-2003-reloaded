@@ -265,12 +265,16 @@ pub(super) enum Hook {
     NpcMenu,
     Close,
     /// `character`: the type as the hook names it (see `npc_kind`); `at`: x, z, and the height
-    /// the ground is looked for under (None: 50 m over the controlled character)
-    Npc { character: String, team: u8, fight: bool, at: Option<(Vec2, Option<f32>)> },
+    /// the ground is looked for under (None: 50 m over the controlled character); `frozen`: a dummy
+    /// whose brain is off (play_enemies.rs: no hit reactions)
+    Npc { character: String, team: u8, fight: bool, frozen: bool, at: Option<(Vec2, Option<f32>)> },
     /// the team to put them on (None: switch friend <-> enemy, as J does)
     Team(Pick, Option<u8>),
     /// the radar-contact to give them (`Player::radar_contact`)
     Radar(Pick, u8),
+    /// drive them in a motion type to a point (play_enemies.rs `drive`): the motion type, the
+    /// point (x, z; None: in place), the ready-script's clips (else the script's)
+    Motion(Pick, i64, Option<Vec2>, bool),
     /// the hit points to give them, both the current and the maximum (#35 take04's trainer `hp
     /// spawned 999 999`, so a target outlives a long burst)
     Health(Pick, f32),
@@ -307,7 +311,7 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_TELEPORT=<s>[,camera]: the left click in the free camera (teleport to the ground
 ///    under the crosshair); `camera`: the right click (under the camera).
 ///  - BF_TEST_NPC_MENU=<s>: N (the menu opens). BF_TEST_TOOL_CLOSE=<s>: Esc (a menu closes).
-///  - BF_TEST_NPC=<s>,<character>,<friend|enemy|neutral|team>,<dummy|fight>[,<x>,<z>[,<y>]]: spawn
+///  - BF_TEST_NPC=<s>,<character>,<friend|enemy|neutral|team>,<dummy|fight|frozen>[,<x>,<z>[,<y>]]: spawn
 ///    one on the ground at x, z, or under the crosshair, facing the controlled character. Its team:
 ///    friend 0, enemy ENEMY_TEAM, neutral NEUTRAL_TEAM, or a number 0-9 (`team_of`). The character: a
 ///    squad name or 0-3, or any loaded character type (#128) by its display name (any case; the
@@ -324,9 +328,21 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_NPC_RADAR=<s>,<n|aim|all>,<value>: gives them that radar-contact (every character
 ///    has 1; 2 or 4 turns the crosshair yellow on them, play_reticle.rs), as #141's take08 rewrote
 ///    the Shrike's.
+///  - BF_TEST_NPC_MOTION=<s>,<n|aim|all>,<motion>[,<x>,<z>[,relaxed]]: drives an enemy NPC (a type
+///    of its own, #129) in that motion type (MT_ name or number: walk, run, dash, move_left,
+///    move_right_back_slow, backpedal, backstep, dizzy, knockdown, dodge_left ...) to x, z, or in
+///    place: its MOTION table's clip (the ready-script's, the gun raised as the takes' Shrikes
+///    hold it; `relaxed`: the script's) at its type's speed for the motion type
+///    (play_enemies.rs). A motion that plays once (a reaction, a dodge) plays through. The
+///    fighting AI that moves enemies in the game isn't in the demo.
+///  - BF_TEST_NPC's character may also be a placement of a loaded level by its name
+///    (`h_1c5780f8`: `<character-object name>`, #129): its type, with the placement's weapons and
+///    personality (e34's Shrikes' A50s, Saryl-45s, Rail RVRs, and h_0bb586cf's knock-downs).
 ///  - BF_TEST_NPC_HP=<s>,<n|aim|all>,<hp>: gives them that many hit points, now and at most (once
 ///    they're loaded: a spawn's own come with its model the frame after), as #35 take04's trainer
-///    gave its Shrike 999.
+///    gave its Shrike 999. (An enemy's heavy-hit and blood-decal thresholds are shares of its max
+///    hit points, so at 999 a Shrike takes no heavy hit and lays almost no decals: play_enemies.rs,
+///    play_fx.rs.)
 ///  - BF_TEST_PLACER=<s>,<object>[,<yaw>]: O with that object picked (by its label, any case;
 ///    else the first whose label contains it), turned that way: its copy follows the crosshair.
 ///  - BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]: a click with the object menu open
@@ -402,6 +418,13 @@ fn npc_kind(game: &Game, s: &str) -> Option<u32> {
     s.parse::<usize>().ok().filter(|&i| i < SQUAD).map(squad_type).or_else(|| game.find_character_type(s))
 }
 
+/// A placement of the loaded levels named by a hook (`h_xxxxxxxx`, its `<character-object name>`)
+/// whose type is loaded: what BF_TEST_NPC spawns with its weapons and personality (#129).
+fn npc_placement(game: &Game, s: &str) -> Option<bf_viewer::bf::character_type::Placement> {
+    let k = s.trim().strip_prefix("h_").and_then(|x| u32::from_str_radix(x, 16).ok())?;
+    game.placements.iter().find(|p| p.name == k && game.character_type(p.kind).is_some()).cloned()
+}
+
 /// The squad slot of character type `kind`: the squad member's whose type it is, else OTHER.
 fn slot_of(kind: u32) -> usize {
     (0..SQUAD).find(|&c| squad_type(c) == kind).unwrap_or(OTHER)
@@ -467,6 +490,7 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
             character: e.get(1)?.clone(),
             team: team_of(e.get(2)?).unwrap_or(0),
             fight: e.get(3)?.eq_ignore_ascii_case("fight"),
+            frozen: e.get(3)?.eq_ignore_ascii_case("frozen"),
             at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6))),
         }))();
         add(num(&e, 0), hook);
@@ -488,6 +512,15 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     for e in entries("BF_TEST_NPC_RADAR") {
         let value = e.get(2).and_then(|v| v.parse::<u8>().ok());
         add(num(&e, 0), e.get(1).and_then(|p| pick(p)).zip(value).map(|(p, v)| Hook::Radar(p, v)));
+    }
+    for e in entries("BF_TEST_NPC_MOTION") {
+        let mt = e.get(2).and_then(|m| super::enemies::motion_type(m));
+        if mt.is_none() {
+            warn!("BF_TEST_NPC_MOTION: {:?} isn't a motion type; skipped", e.get(2));
+        }
+        let goal = num(&e, 3).zip(num(&e, 4)).map(|(x, z)| Vec2::new(x, z));
+        let ready = !e.iter().any(|x| x.eq_ignore_ascii_case("relaxed"));
+        add(num(&e, 0), e.get(1).and_then(|p| pick(p)).zip(mt).map(|(p, mt)| Hook::Motion(p, mt, goal, ready)));
     }
     for e in entries("BF_TEST_NPC_HP") {
         add(num(&e, 0), e.get(1).and_then(|p| pick(p)).zip(num(&e, 2)).map(|(p, hp)| Hook::Health(p, hp)));
@@ -780,7 +813,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     }
     let types = &npcs.0;
     let open = tools.panel == Panel::Npcs;
-    let mut spawns: Vec<(u32, u8, bool, Option<(Vec2, Option<f32>)>)> = vec![];
+    let mut spawns: Vec<(u32, u8, bool, bool, Option<(Vec2, Option<f32>)>, Option<bf_viewer::bf::character_type::Placement>)> = vec![];
     let mut acts: Vec<Hook> = vec![];
     if keys.just_pressed(KeyCode::KeyN) || script.now.iter().any(|h| matches!(h, Hook::NpcMenu)) {
         tools.panel = if open { Panel::None } else { Panel::Npcs };
@@ -798,7 +831,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
             tools.npc_fight = !tools.npc_fight;
         }
         if keys.just_pressed(KeyCode::Enter) || (mouse.just_pressed(MouseButton::Left) && tools.before.captured) {
-            spawns.push((types[tools.npc_type].1, tools.npc_team, tools.npc_fight, None));
+            spawns.push((types[tools.npc_type].1, tools.npc_team, tools.npc_fight, false, None, None));
         }
     } else {
         if keys.just_pressed(KeyCode::KeyJ) {
@@ -813,20 +846,21 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     }
     for hook in &script.now {
         match hook {
-            Hook::Npc { character, team, fight, at } => match npc_kind(&game.0, character) {
-                Some(kind) => spawns.push((kind, *team, *fight, *at)),
-                None => {
+            Hook::Npc { character, team, fight, frozen, at } => match (npc_kind(&game.0, character), npc_placement(&game.0, character)) {
+                (Some(kind), _) => spawns.push((kind, *team, *fight, *frozen, *at, None)),
+                (None, Some(placed)) => spawns.push((placed.kind, *team, *fight, *frozen, *at, Some(placed))),
+                (None, None) => {
                     println!("test tools: no character type {character} in the loaded data");
                     status.message = Some((format!("No character type {character}"), MESSAGE_TIME));
                 }
             },
-            Hook::Team(..) | Hook::Radar(..) | Hook::Health(..) | Hook::Fight(_) | Hook::Remove(_) => acts.push(hook.clone()),
+            Hook::Team(..) | Hook::Radar(..) | Hook::Health(..) | Hook::Fight(_) | Hook::Remove(_) | Hook::Motion(..) => acts.push(hook.clone()),
             _ => {}
         }
     }
     let log = std::env::var("BF_TOOLS_LOG").is_ok();
     let (origin, dir) = crosshair(&player, &tools);
-    for (kind, team, fight, at) in spawns {
+    for (kind, team, fight, frozen, at, placed) in spawns {
         let ground = match at {
             Some((p, from)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0)), p.y)),
             None => ground_point(origin, dir),
@@ -852,9 +886,18 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
         m.npc = Some(Npc { id, fight, face: m.yaw });
         // (its own random stream: hit reactions, bursts)
         m.rng ^= id.wrapping_mul(0x9E37_79B9) | 1;
-        let label = format!("{} {} ({})", side(team), npc_name(&game.0, &m), if fight { "fight" } else { "dummy" });
+        // its brain off (no hit reactions: play_enemies.rs)
+        m.enemy.frozen = frozen;
+        // a placement's: its weapons and personality (play_enemies.rs; its type's otherwise)
+        if let Some(pl) = &placed {
+            m.enemy.weapons = Some(pl.weapons.iter().map(|w| w.0).collect());
+            m.enemy.personality = pl.ai.personalities[0];
+        }
+        let label = format!("{} {} ({})", side(team), npc_name(&game.0, &m), if fight { "fight" } else if frozen { "frozen" } else { "dummy" });
         if log {
-            println!("t {:.2}: NPC {id}: {label} at {ground:.2}, type h_{kind:08x}", player.sim_time);
+            let from = placed.as_ref().map_or(String::new(), |pl| format!(", placement h_{:08x} [{}] weapons {:?} personality h_{:08x}", pl.name, pl.archive,
+                pl.weapons.iter().map(|(w, _)| game.0.weapons.get(w).map_or(format!("h_{w:08x}"), |d| d.label.clone())).collect::<Vec<_>>(), pl.ai.personalities[0]));
+            println!("t {:.2}: NPC {id}: {label} at {ground:.2}, type h_{kind:08x}{from}", player.sim_time);
         }
         status.message = Some((format!("Spawned {label}"), MESSAGE_TIME));
         squad.0.push(m);
@@ -862,6 +905,15 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     let aimed = npc_at(&squad, origin, dir);
     for act in acts {
         match act {
+            Hook::Motion(p, mt, goal, ready) => {
+                for i in picked(&squad, p, aimed) {
+                    let m = &mut squad.0[i];
+                    super::enemies::drive(m, mt, goal, ready);
+                    if log {
+                        println!("t {:.2}: NPC {}: motion {mt} to {goal:?}{}", player.sim_time, m.npc.map_or(0, |n| n.id), if ready { "" } else { " (relaxed)" });
+                    }
+                }
+            }
             Hook::Team(p, _) | Hook::Radar(p, _) | Hook::Health(p, _) | Hook::Fight(p) => {
                 let list = picked(&squad, p, aimed);
                 if list.is_empty() {
