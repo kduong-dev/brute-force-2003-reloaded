@@ -57,7 +57,9 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=x,z,x2,z2[,height] BF_CAPTURE=<dir> BF_CAPTURE_FRAME
   (`bf_level`), `BF_PART_DUMP=<hex archetype>` (`bf_level`).
 - Look at the frames (crop or tile them with PIL) and compare them with the reference captures
   in `todo/`.
-- Put scratch output in your scratchpad, never in the repo.
+- Put scratch output in your scratchpad, never in the repo, in a folder of your own named
+  for the ticket and role (e.g. `t128dev/`, `t128test/`): agents share the scratchpad, and
+  scripts left at its root get overwritten.
 - Search only the repo, `todo/`, `D:\Emulators\Xbox\agent*\` and, for a library's source, its
   own folder in the cargo registry (`C:\Users\Kevin\.cargo\registry\src\*\<crate>-<version>\`).
   Never search `C:\Users\Kevin`
