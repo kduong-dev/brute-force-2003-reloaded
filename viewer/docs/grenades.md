@@ -153,7 +153,19 @@ decal, and a throw called off.
   the thrower takes 0.2 x a roll of Damage min..max anywhere inside it. That rule is the
   demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
   each, ~11%, no falloff). The game's rule is read from the code (see **Sentry**,
-  FUN_0022c4d0) but not implemented, and it doesn't explain the recordings. No damage from a
+  FUN_0022c4d0) but not implemented (#112): half the roll x0.7 on the thrower's own squad x0.6,
+  the squad's difficulty step on STANDARD, is 0.21 of a roll, the recording's ~11%.
+  **The difficulty step** (#127, play.md **Damage**): every blast's hit on a character takes the
+  victim's step (STANDARD, the default on every map: enemies x1.4, the squad x0.6) and its
+  damage-type factor. The recordings were the campaign's on STANDARD, so the amounts fitted to
+  the squad there (this thrower's 0.2, the Sonic's and the Energy's thrower shares, the Gas's
+  rate) already hold its x0.6: they're divided by it before the step, which gives them back as
+  measured on STANDARD, sdm_e34 included (12.6 of Tex's 115 for this Frag test), and scales
+  them with the difficulty (with `BF_DIFFICULTY=hard`, no step, the thrower takes x1 / 0.6 of
+  the recording's share: 21.0 for that roll, where the game's half roll x0.7 = 0.35 of a roll
+  gives 22.1). Measured on the thrower in its own blast, they hold
+  FUN_0004b9c0's x0.7 too, so none is added. The others in reach take the rule above x their
+  step, with no x0.7 (the demo's rule; the game's, with it, is #112's). No damage from a
   blast without any (the Light); one whose damage is dealt over time (h_04ea9251 > 0: the Gas,
   whose recording shows none at once) leaves a poison cloud instead (see **The Gas's cloud**
   below). The Energy's damage comes with its bolts instead (see **Energy grenade**), the
@@ -193,7 +205,11 @@ decal, and a throw called off.
   5.80 s after the first went off; the second killed him. The demo: everyone within the
   radius (3 m, the blasts' distance) loses Damage max / h_04ea9251 = 17.7 HP/s (the data's
   nearest value to the recording's; a roll of min..max would average 13.2 HP/s - a guess),
-  times their damage-type factor (Flint 0.9 HP/s), from 0.083 s after the blast for 5.5 s
+  times their damage-type factor (Flint 0.9 HP/s) and their difficulty step with STANDARD's
+  squad x0.6 divided out (the recording's, **Damage** above: 17.7 on the squad on STANDARD,
+  29.5 with no step (`BF_DIFFICULTY=hard`); 41.3 on an enemy on STANDARD, the demo's extrapolation: measured on the
+  thrower in its own cloud, the rate holds the x0.7 too, and with that taken out it would be
+  ~59; #112's), from 0.083 s after the blast for 5.5 s
   (5.58 s after it: 0.2 s shorter than recorded). The thrower is poisoned like anyone (it was
   Tex's own cloud). No blood, red tint or hurt chatter (the recording's picture only goes
   olive); one it kills dies as from any hurt. Squadmates don't leave or avoid it (not
@@ -427,8 +443,9 @@ h_fb24bcb7; its trail grenade_trail with f6dbdb17. Measured from the recording
   +0.86 s at 10 m (on the first frame at or after that time). A body out of the radius by then
   is missed. Damage max falling to nothing at the radius (the other blasts' rule), times the
   damage-type factor.
-* **The thrower** takes 0.653 x Damage max x (1 - d / 5 m): 28 HP at 2 m, nothing from 5 m.
-  Fitted to the recording's two throws, not the game's formula: Tex lost ~28 HP at ~2 m (T1,
+* **The thrower** takes 0.653 x Damage max x (1 - d / 5 m): 28 HP at 2 m, nothing from 5 m
+  (on STANDARD: measured there, it's taken through the difficulty step like the Frag's, see
+  **Damage**). Fitted to the recording's two throws, not the game's formula: Tex lost ~28 HP at ~2 m (T1,
   below the data's minimum of 39) and nothing at ~5 m (T2: his health frame flashed red, the
   bar didn't move, no tint; with ~9.5 HP left a flat share would have killed him). A thrower at
   1, 3 and 4 m (a new shot) would settle the shape. The red tint comes only with a hit of
@@ -537,8 +554,9 @@ EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
   105 HP in one step at +0.2 s, the one measurement; the Frag's 0.2 x the roll would be
   7.8-19.5 here) at any distance within the 9 m: it doesn't fall off, so a thrower 8.5 m out
   still takes 33 while a squadmate beside them takes ~5 (only the 0 m case was measured). The
-  thrower stays standing, as Brutus did. Either is multiplied by the character's factor for
-  damage-type 6 (**Damage types** above: Flint x2, the others 1); anyone else takes Damage max falling to
+  thrower stays standing, as Brutus did. Either is multiplied by the character's difficulty step
+  (the thrower's measured share with STANDARD's x0.6 divided out, as the Frag's: **Damage**) and
+  factor for damage-type 6 (**Damage types** above: Flint x2, the others 1); anyone else takes Damage max falling to
   nothing at the radius (the other grenades' rule; instant kill on the test map) and, if alive
   and not in the air, is thrown down back and up (3 m/s back, 4 m/s up: the demo's amounts;
   the recording's squadmate went up and back at +0.6 s, was down ~1 s and got up). A corpse

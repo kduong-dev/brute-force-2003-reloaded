@@ -14,7 +14,7 @@ and how it was checked):
 
 | Page | What |
 |---|---|
-| [docs/play.md](docs/play.md) | `bf_play`: keys, the test map, health and HUD, locomotion, weapons and shots (fire timing, pellets, accuracy, holes, tracers, casings), missiles (the Therm Sweeper's MIRV, blasts, scorch and camera shake), ammo, reload and the crosshair, sounds, the general test hooks |
+| [docs/play.md](docs/play.md) | `bf_play`: keys, the test map, health and HUD, locomotion, weapons and shots (fire timing, pellets, accuracy, holes, tracers, casings), missiles (the Therm Sweeper's MIRV, blasts, scorch and camera shake), damage (the difficulty step, the hit parts and their factors, the combat log), ammo, reload and the crosshair, sounds, the general test hooks |
 | [docs/maps.md](docs/maps.md) | playing on a level: spawning, collision, doors and gates, HUD text, movement, music, shots, look, power-ups |
 | [docs/squad.md](docs/squad.md) | the squad: follow AI, standing on the floor, scopes, hand-over, hits, deaths, the death camera |
 | [docs/character-types.md](docs/character-types.md) | character types from the data (#128): every type by its `<base name>`, motion sets and their clips, placements and teams, flesh; what play keys by type; `BF_DUMP_TYPES` |

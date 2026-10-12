@@ -117,7 +117,9 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * World hits also leave the bullet's h_06a27365 hole or scorch on the collision triangle they
     meet, and each gun has its own muzzle effect and casings; the fire timing, pellets and
     accuracy spread are in [play.md](play.md), "Shots".
-  * A shot's damage (friendly fire) lands when it reaches the body: distance / speed later.
+  * A shot's damage (friendly fire) lands when it reaches the body: distance / speed later
+    (its factors: the hit part struck, x0.7 on the own side, the difficulty step, STANDARD on
+    every map: play.md **Damage**).
   * Beam appearances (class h_1f55f13e) are ribbons through their emitter's live particles in
     birth order, facing the camera. They have their own colour, alpha and width parameters, and
     their texture runs along v.

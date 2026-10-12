@@ -34,7 +34,8 @@ const RING_FIRST: f32 = 0.1;
 /// lost ~28 HP at ~2 m from his first Sonic (T1) and nothing at ~5 m from his second (T2: no
 /// tint, his health frame flashed red but the bar didn't move; he had ~9.5 HP, so a flat share
 /// would have killed him). 0.653 x 71.5 x (1 - 2/5) = 28. Two points: a thrower at 1, 3 and 4 m
-/// would settle the shape (a new shot).
+/// would settle the shape (a new shot). Measured on the campaign's Tex (115 HP), so it holds
+/// STANDARD's step for the squad already (`hurt_by_blast` divides it out before the step).
 const SELF_PEAK: f32 = 0.653;
 const SELF_REACH: f32 = 5.0;
 /// The least damage (HP) that brings the player's red tint: smaller hits hurt without it. The
@@ -99,7 +100,7 @@ fn self_damage(kit: &super::grenade::GrenadeKit, d: f32) -> f32 {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, kits: Option<Res<GrenadeKits>>,
                    mut requests: ResMut<RingRequests>, mut hits: ResMut<RingHits>, mut tint: ResMut<super::grenade::ScreenTint>,
-                   test: Option<Res<super::testmap::TestMap>>) {
+                   test: Option<Res<super::testmap::TestMap>>, difficulty: Res<super::damage::Difficulty>) {
     let Some(kits) = kits else { return };
     let log = std::env::var("BF_GRENADE_LOG").is_ok();
     // (hits already out age first: one requested this frame is at +0 s, not +1 frame)
@@ -123,6 +124,7 @@ pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMu
     }
     let instant = test.as_ref().is_some_and(|t| t.instant_kill);
     let p = &mut *player;
+    let now = p.sim_time;
     hits.0.retain_mut(|hit| {
         if hit.age < hit.due {
             return true;
@@ -136,7 +138,7 @@ pub(super) fn ring(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMu
             // the call (and its log says nothing of one)
             let cooldown = u.knock_cooldown;
             u.knock_cooldown = cooldown.max(1.0);
-            let hurt = super::grenade::hurt_by_blast(u, &game.0, kit, hit.at, own, hit.thrower, kill);
+            let hurt = super::grenade::hurt_by_blast(u, &game.0, kit, hit.at, own, hit.thrower, kill, &difficulty, now);
             u.knock_cooldown = cooldown;
             if hurt.is_some_and(|d| d >= TINT_MIN) && controlled {
                 tint.0 = 0.0;
