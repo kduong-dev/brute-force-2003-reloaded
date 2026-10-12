@@ -20,7 +20,7 @@
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
 | Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
-| V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Tex's Berserker draws his other gun into his left hand and fires both; in it Q and R end it instead of switching or reloading. The other three have only the toggle, stamina and HUD so far: see [skills.md](skills.md) |
+| V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Tex's Berserker draws his other gun into his left hand and fires both; in it Q and R end it instead of switching or reloading. Brutus's Vengar heals him, cuts the damage he takes, charges enemies down when he sprints into them, and turns the view grey with every living character a heat figure. Flint's Targeting widens the crosshair's lock. Hawk's has only the toggle, stamina and HUD so far: see [skills.md](skills.md) |
 
 ## Test map (`cargo run --bin bf_play -- --test`)
 
@@ -130,7 +130,9 @@ recharging gun; every weapon listed with names for 2.5 s after a switch, the hel
 grenades bottom right, and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
-flipped). `BF_NO_HUD=1` hides it. Ammo, the switch hint and the crosshair's
+flipped). The HUD is drawn by the main camera's child, the Vengar view's heat camera
+(play_vengar.rs, marked `IsDefaultUiCamera`), over the world and the heat figures, whatever the
+cameras' order. `BF_NO_HUD=1` hides it. Ammo, the switch hint and the crosshair's
 size and hiding: see **Ammo, reload and the crosshair** below.
 
 How it works (`src/bf/locomotion.rs`): animation names are hashes, so clips are chosen from
@@ -1045,7 +1047,7 @@ on a character goes:
   shooter's own blast included).
 * **The victim** (0x125600, a character's combat-target vtable slot 0): x (1 - 0.1n) on an
   enemy team, x (1 + 0.1n) on the squad's, n the difficulty; then its skill's factor (Vengar's
-  0.85: #122, not in); then FUN_002232d0's factor for the damage type. Every hit on a character
+  0.85 while on, `Hit::victim_skill`, skills.md); then FUN_002232d0's factor for the damage type. Every hit on a character
   reaches it: the guns' hits and blasts, the scenery's damage areas (FUN_0021ade0), falls
   (FUN_0012b740, DTYPE_NORMAL), FUN_00223160 (Brutus's charge). Only the trainer's `!hit` skips
   it (it calls FUN_002232d0 itself), so older xemu logs of `!hit` carry no step.
@@ -1158,7 +1160,8 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
   BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,20 BF_TEST_NPC=0.5,brutus,enemy,fight,4.5,7
   BF_TEST_WEAPON=Saryl-45 BF_TEST_INSTANT_KILL=0` (the enemy, a Brutus too, carries the hook's gun): 14 hits of
   4.77-5.69, rolls 12.83-15.30 x 0.62 x Bip01 1 x 0.6 (the take 4.93-5.81, allowed 4.74-5.86).
-  `BF_DIFFICULTY=hard`: 7.95-9.15 (answer.md's HARD 7.9-9.8). Vengar's x0.85 is #122's.
+  `BF_DIFFICULTY=hard`: 7.95-9.15 (answer.md's HARD 7.9-9.8). With Vengar on (`BF_TEST_SKILL=8`,
+  #122) each hit x0.85: 4.09-4.87 (mean 4.50; the take 4.43), skills.md.
 * **#35 takes 04 / 05** (the hovering Shrike's legs): `BF_MAP=sdm_e34 BF_DIFFICULTY=standard -- --test
   BF_TEST_GOTO=4.77,36.82,4.41,37.17 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_FIRE=1
   BF_CAMERA_PITCH=-0.28 BF_TEST_INSTANT_KILL=0`: the LZR-50 (`BF_TEST_WEAPON="Confed LZR-50"`) 19 hits, all on a calf

@@ -393,9 +393,10 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
   aren't in the demo: in his own view the heat figure covers him (the renderer masks that kind
   out while drawing the heat figures, FUN_000e81e0), and nobody else sees him yet.
 * **Regeneration** (his update 0x13c0b0): h_eaa78fdf, 1 hit point a second while on, up to the
-  max; none after the off. take07: 50.0 -> 65.04 over the 15 s on, +1.01/s. The takes draw the
-  health bar's fill pale while it rises (the HUD bar's brighten, as the stamina bar's): the demo's
-  health bar has no brighten yet.
+  max; none after the off. take07: 50.0 -> 65.04 over the 15 s on, +1.01/s. **Not in the demo:**
+  take07 draws the health bar's fill pale while it rises (the HUD bar widget's brighten, the
+  stamina bar's rule, [HUD](#hud)); the demo's health bar has no brighten (nor trail) yet: a
+  follow-up for the shared bar widget, not this skill.
 * **Damage taken** x0.85 while on (`vengar-damage-multiplier` h_f4f602c6: his +0xd8, 0x13c140,
   which the damage handler 0x125600 multiplies in at 0x125747 after the difficulty step;
   play_damage.rs `Hit::victim_skill`), on every hit that reaches the handler: shots, blasts,
@@ -428,12 +429,15 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
     (take24) does nothing.
 * **The Vengar view**, while the controlled character's Vengar is on (the renderer takes the
   vision mode from his view, FUN_000e81e0):
-  * the world's two lights are a fixed white pair from straight up and straight down in place of
-    the level's key and fill, the ambient kept (FUN_000dcc10 in a vision mode: colour 1.0, the
-    table at 0x41b3a8): floors lit full, walls dark (take08: the sunlit tower dark, the shaded
-    sand bright). The demo turns the level's directional lights (`vision_lights`); a level's
-    baked terrain, drawn unlit with its light in the vertex colours, is drawn lit with those
-    colours grey x4 (`vision_terrain`, `TERRAIN_GAIN`: a fit to take09's forest at night);
+  * the world's two lights, the terrain's pair and the objects', are a fixed white pair from
+    straight up and straight down in place of the level's, the ambient kept (FUN_000dcc10 in a
+    vision mode: colour 1.0, the table at 0x41b3a8): floors lit, walls by the ambient alone
+    (take08: the sunlit tower dark, the shaded sand light). The demo puts the level's directional
+    lights out and lights the world with that pair (`vision_lights`), and the terrain per vertex
+    with it and the terrain's own ambient, unlit (`vision_terrain`): the game's terrain takes its
+    light from its pair, not from the baked map the demo's normal view draws it with. The pair's
+    strength, `VISION_LIGHT` 0.35, is a fit: the takes' Vengar views are lit at about a third of
+    the code's white (worked back from takes 06, 08 and 09);
   * then the world pass (FUN_000e66d0; its vertex shader 0x6d and pixel shader 0x45 are
     `vengar.wgsl`'s): four taps of the picture zoomed toward the middle (1, 0.985, 0.97, 0.955),
     blended, made grey by the dot with (0.9, 0.9, 0.5), the darks tinted blue by (1 - (2g)^2)^2,
@@ -749,14 +753,18 @@ the takes' watch logs and frames:
   280, off the tick after. With 125 HP (take22): 125 -> 0, "killed: thrown", the body thrown and
   down. Without the sprint (take23's walk; the demo's run isn't the dash) and with Vengar off
   (take24): no hit, his stamina as it was.
-* **The view**, frames beside the takes': e34 (take06: `BF_MAP=e34
-  BF_TEST_GOTO=-53.56,30.81,-53.69,31.29 BF_TEST_SKILL=2.0,6.0`), m03_a (take08's tower), e01
-  at night (take09: `BF_MAP=e01 BF_TEST_GOTO=-14.8,103.66,-18.16,116.76 BF_TEST_GO_AT=99
+* **The view**, frames beside the takes': e34 at take06's spot (`BF_MAP=e34 BF_CAMERA_DISTANCE=6
+  BF_TEST_GOTO=-55.78,30.28,-55.91,30.76 BF_TEST_SKILL=2.0`), m03_a at take08's tower
+  (`BF_MAP=m03_a BF_TEST_GOTO=-182.6,-43.5,-185.16,-48.93 BF_TEST_GO_AT=99 BF_TEST_SKILL=2.0`),
+  e01 at night (take09: `BF_MAP=e01 BF_TEST_GOTO=-14.8,103.66,-18.16,116.76 BF_TEST_GO_AT=99
   BF_TEST_SKILL=2.0`) and the test map with a friend and two enemies (`BF_NO_SQUAD=1
   BF_TEST_NPC="0.5,tex,friend,dummy,7,13;0.5,shrike soldier@m09_a,enemy,dummy,2,8;0.5,hawk,enemy,dummy,4,4"`):
-  the grey streaked world, floors bright and walls dark, Brutus and the enemies bright, the friend
-  dim, the halo, the HUD as it was. e01's ground at the lower right ((1000, 620)-(1250, 700)):
-  (47, 47, 57), take09's (41, 43, 55).
+  the grey streaked world, floors lit and walls dark, Brutus and the enemies bright, the friend
+  dim, the halo, the HUD as it was. The ground's grey (the lower picture without the HUD and the
+  figures, median and quartiles): e34 43 (29-56) against take06's 59 (45-75), m03_a 102 (97-108)
+  against take08's 147 (138-156), e01 59 (50-67) against take09's 49 (41-72); e34's gate wall
+  (13, 13, 18) against (12, 11, 19). (Round 1 drew the baked terrain light x4, fitted to e01: it
+  blew e34 and m03_a out to near white.)
 * **The pulse** (e01 as above, 150 frames): the figure's mean green (its pixels alone) 103-164,
   the autocorrelation's peak at 1.000 s (0.86); take09 104-175 (1.000 s, 0.82), take06 125-184
   (1.000 s, 0.81).
@@ -770,7 +778,8 @@ the takes' watch logs and frames:
   where loading finished a few frames apart, which two runs of either build show too.
 
 **Guessed or open (Brutus)**: the heat figures' texture, and so their colours and the pulse's
-shape (fits); the halo's weight; the terrain's light in the view (`TERRAIN_GAIN`); the kill's
+shape (fits); the halo's weight; the vision pair's strength (`VISION_LIGHT`, a third of the code's
+white: m03_a comes out darker than take08, e01 a little lighter than take09); the kill's
 throw (`KNOCK_SCALE`); what the game's view does at a hand-over with Vengar on. On the first
 switch of a session the figures are missing for two frames at 60 fps (their pipeline compiles),
 hidden by the red fade then. The spec's shots B6 (the cone, an enemy 45 degrees off), B7 (a

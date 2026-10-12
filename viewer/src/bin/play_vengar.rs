@@ -18,8 +18,9 @@
 //!    the tick after the hit). Walking (take23) or with the skill off (take24): nothing.
 //!  - **The Vengar view**, while the controlled character's Vengar is on (his on sets the vision
 //!    mode 2, 0x13c020; the game's renderer FUN_000e81e0 takes it from the player's view): the
-//!    world is lit by two white lights straight up and down in place of the level's
-//!    (FUN_000dcc10: `vision_lights`, `vision_terrain`); after it's drawn, the world pass
+//!    world, terrain and objects, is lit by two white lights straight up and down in place of the
+//!    level's (FUN_000dcc10: `vision_lights`, `vision_terrain`; their strength a fit,
+//!    VISION_LIGHT); after it's drawn, the world pass
 //!    (FUN_000e66d0: a zoom blur toward the screen's middle, made grey with blue darks, laid over
 //!    at 70%: src/vengar.wgsl); then the living characters are drawn over it as heat figures
 //!    (the vision set's material, class 0xe2c39ac2: `HeatMaterial`, src/heat.wgsl; bright for him
@@ -87,13 +88,15 @@ const KNOCK_SCALE: f32 = 1.0;
 /// How long the view's colour fade takes to go from its colour to none (s): the 0.6 FUN_000c6980 is
 /// given at both switches (0x13c08b on, 0x126e53 off; take06: 2.20-2.80 s and 20.17-20.80 s).
 const FADE_TIME: f32 = 0.6;
-/// The baked terrain's light in the Vengar view, as a share of its own (in linear terms, made
-/// grey): a fit, the terrain's own shader in a vision mode not being traced (see `vision_terrain`).
-/// Measured on e01 at night against take09 (8.0 s), the ground at the lower right of the screen,
-/// (1000, 620)-(1250, 700) of 1280 x 720: the take's (41, 43, 55); the demo's (32, 32, 44) with
-/// 2, (47, 47, 57) with 4. The take's ground comes out about 1.3 times its normal view's (31, 39,
-/// 30) as the world pass's input (44, 46, 32), which 4 gives the demo's too.
-const TERRAIN_GAIN: f32 = 4.0;
+/// The vision pair's strength in the console's terms (the light a surface facing it takes, as a
+/// share of its texture, in gamma terms): a fit. FUN_000dcc10 gives the pair white (1.0), but the
+/// takes' Vengar views are lit at about a third of that. Worked back through the world pass from
+/// each take's ground, with the ground's texture from the same spot's normal view, the light on it
+/// is 0.67 on m03_a (take08 3.5 s; its terrain ambient 0.25), 0.33 on e34 (take06 3.5 s) and 0.35
+/// on e01 (take09 8.0 s; ambients 0.05 and 0.04): the pair's share 0.42, 0.29 and 0.31. take06's
+/// grass, which faces up as the ground does, comes out as grey as the ground (58). What scales the
+/// shaders' light isn't traced.
+const VISION_LIGHT: f32 = 0.35;
 /// The render layer the heat figures are drawn on, by the heat camera alone.
 const HEAT_LAYER: usize = 1;
 /// The halo's weight for each of its 24 taps (vengar.wgsl): a fit to take09 (Brutus's edge at 8.0
@@ -144,7 +147,11 @@ pub fn plugin(app: &mut App) {
     app.add_plugins((MaterialPlugin::<HeatMaterial>::default(), ExtractComponentPlugin::<VengarPass>::default(),
                      UniformComponentPlugin::<VengarPass>::default(), PassPlugin))
         .init_resource::<VengarView>()
-        .add_systems(OnEnter(AppState::Playing), |mut commands: Commands| commands.insert_resource(VengarView::default()))
+        .init_resource::<TerrainCopies>()
+        .add_systems(OnEnter(AppState::Playing), |mut commands: Commands| {
+            commands.insert_resource(VengarView::default());
+            commands.insert_resource(TerrainCopies::default());
+        })
         .add_systems(Update, (charge.after(skills::update_skills).before(play_sounds), log_health.after(skills::update_skills),
                               (heat_camera, view_state, heat_figures, vision_lights, vision_terrain).chain().after(charge))
             .run_if(in_state(AppState::Playing)))
@@ -301,7 +308,7 @@ struct VengarView {
 /// game draws the living characters after the world pass in vision mode 2 (FUN_000e81e0, the
 /// lists 0x41b690 / 0x41b518 that 0xe7ab2 puts them on), against the world's depth. Its own
 /// picture starts clear and goes over the main camera's (premultiplied alpha), so the halo it
-/// adds round them lands on the world; it draws the HUD too, being the last camera.
+/// adds round them lands on the world. It draws the HUD too (`IsDefaultUiCamera`), over both.
 #[derive(Component)]
 struct HeatCamera;
 
@@ -382,6 +389,7 @@ fn heat_camera(mut commands: Commands, main: Query<(Entity, Option<&Children>, H
             CameraMainTextureUsages(CameraMainTextureUsages::default().0 | TextureUsages::COPY_DST),
             Tonemapping::None,
             RenderLayers::layer(HEAT_LAYER),
+            IsDefaultUiCamera,
             Transform::default(),
             VengarPass::default(),
             ChildOf(e),
@@ -427,34 +435,49 @@ fn view_state(time: Res<Time>, player: Res<Player>, mut view: ResMut<VengarView>
 
 /// One of the level's directional lights while the view is Vengar's, and what it was.
 #[derive(Component)]
-struct LevelLight(DirectionalLight, Transform);
+struct LevelLight(DirectionalLight);
+
+/// One of the Vengar view's two lights (`vision_lights`).
+#[derive(Component)]
+struct VisionLight;
 
 /// The world's lights in the Vengar view. The world's shaders take their two lights from the
-/// constants FUN_000dcc10 uploads (c16-c19: a direction and a colour each), and in a vision mode
+/// constants FUN_000dcc10 uploads (c16-c19: a direction and a colour each; the terrain's pair, the
+/// lights marked h_e02aba1c, or the objects', h_1f416687, by what's drawn), and in a vision mode
 /// (its second argument, the view's vision mode not 0, 0x9f443-0x9f45a) it uploads a fixed pair in
-/// place of the level's key and fill: colour (1, 1, 1) (1.0 at 0x40d5b8) from straight up and
-/// straight down (the table 0x41b3a8, filled at 0xdd10e-0xdd1dc), the ambient left as it is.
-/// Floors and ceilings are lit full, walls by the ambient alone: the takes' Vengar view has the
-/// ground bright and the walls dark where the level's light had them the other way (take08: the
-/// sunlit tower dark, the shaded sand bright; take06: the blue-lit gate black). Here the key light
-/// shines straight down and the fill straight up, white at the console's 1.0 (play.rs's lighting:
-/// PI lux), without shadows; the level's own come back at the off.
-fn vision_lights(mut commands: Commands, view: Res<VengarView>, mut lights: Query<(Entity, &mut DirectionalLight, &mut Transform, Option<&LevelLight>)>) {
-    for (e, mut light, mut at, own) in &mut lights {
+/// place of either: white (1.0 at 0x40d5b8) from straight up and straight down (the table 0x41b3a8,
+/// filled at 0xdd10e-0xdd1dc), the ambient left as it is. Floors are lit, walls by the ambient
+/// alone: take08's sunlit tower goes dark and its shaded sand light, take06's blue-lit gate dark.
+/// Here the level's directional lights are put out and the pair takes their place, at VISION_LIGHT
+/// (play.rs's lighting: PI lux is the console's 1.0, in linear terms), without shadows; the level's
+/// own come back at the off. The terrain takes the same pair per vertex (`vision_terrain`).
+fn vision_lights(mut commands: Commands, view: Res<VengarView>,
+                 mut lights: Query<(Entity, &mut DirectionalLight, Option<&LevelLight>), Without<VisionLight>>,
+                 pair: Query<Entity, With<VisionLight>>) {
+    for (e, mut light, own) in &mut lights {
         match (view.on, own) {
             (true, None) => {
-                // (the key light, the one with shadows, from above; the fill from below)
-                let down = light.shadows_enabled;
-                commands.entity(e).insert(LevelLight(light.clone(), *at));
-                *light = DirectionalLight { illuminance: std::f32::consts::PI, color: Color::WHITE, shadows_enabled: false, ..light.clone() };
-                *at = Transform::default().looking_to(if down { Vec3::NEG_Y } else { Vec3::Y }, Vec3::Z);
+                commands.entity(e).insert(LevelLight(light.clone()));
+                light.illuminance = 0.0;
+                light.shadows_enabled = false;
             }
             (false, Some(own)) => {
                 *light = own.0.clone();
-                *at = own.1;
                 commands.entity(e).remove::<LevelLight>();
             }
             _ => {}
+        }
+    }
+    if view.on && pair.is_empty() {
+        for to in [Vec3::NEG_Y, Vec3::Y] {
+            commands.spawn((VisionLight, Transform::default().looking_to(to, Vec3::Z), DirectionalLight {
+                illuminance: std::f32::consts::PI * VISION_LIGHT.powf(2.2), color: Color::WHITE, shadows_enabled: false, ..default()
+            }));
+        }
+    }
+    if !view.on {
+        for e in &pair {
+            commands.entity(e).despawn();
         }
     }
 }
@@ -463,38 +486,54 @@ fn vision_lights(mut commands: Commands, view: Res<VengarView>, mut lights: Quer
 #[derive(Component)]
 struct LevelTerrain(Handle<Mesh>, Handle<bf_viewer::level_scene::LevelMaterial>);
 
-/// The terrain in the Vengar view: lit by the vision lights as the rest of the world is
-/// (`vision_lights`; take08's sand, dark in the tower's shade, comes out bright: an input of about
-/// (98, 78, 42) to the world pass, where its normal view is (31, 31, 32)). A level's terrain with a
-/// baked light map is drawn unlit with that light in its vertex colours (level_scene.rs
-/// `spawn_level`): here each layer's mesh is copied with those colours made grey and raised by
-/// TERRAIN_GAIN (the layer's mask kept in their alpha) and its material copied lit and untinted,
-/// and both are put back at the off.
+/// The terrain layers' Vengar-view copies made on this map (mesh, material), by their own mesh.
+#[derive(Resource, Default)]
+struct TerrainCopies(HashMap<AssetId<Mesh>, (Handle<Mesh>, Handle<bf_viewer::level_scene::LevelMaterial>)>);
+
+/// The terrain in the Vengar view, lit by the vision pair (`vision_lights`) and its own ambient
+/// (the Terrain's `<ambient>`), as the console lights its vertices, in the colours' gamma terms.
+/// The game's terrain matches its takes lit by its own light pair and ambient (take08's sand,
+/// lit by the ambient and a grazing fill alone, (28, 29, 32) against the take's (31, 31, 32);
+/// take09's e01, which has no terrain pair, by the objects' pair: (21, 27, 29) against (19, 22,
+/// 20)), not by the baked light map the demo draws it with (level_scene.rs `spawn_level`); in a
+/// vision mode that pair is the vision pair. So each layer's mesh is copied with its vertex
+/// colours made that light (ambient + VISION_LIGHT x the up-facing share of its normal, and as much
+/// for the down-facing, the pair's other light; its mask kept in their alpha), drawn unlit, and
+/// both are put back at the off.
 #[allow(clippy::type_complexity)]
-fn vision_terrain(mut commands: Commands, view: Res<VengarView>, mut meshes: ResMut<Assets<Mesh>>,
+fn vision_terrain(mut commands: Commands, view: Res<VengarView>, map: Res<MapLevel>, mut meshes: ResMut<Assets<Mesh>>,
                   mut materials: ResMut<Assets<bf_viewer::level_scene::LevelMaterial>>,
                   mut layers: Query<(Entity, &Name, &mut Mesh3d, &mut MeshMaterial3d<bf_viewer::level_scene::LevelMaterial>, Option<&LevelTerrain>)>,
-                  mut copies: Local<HashMap<AssetId<Mesh>, (Handle<Mesh>, Handle<bf_viewer::level_scene::LevelMaterial>)>>) {
+                  mut copies: ResMut<TerrainCopies>) {
+    let ambient = map.0.as_ref().map_or([0.0; 3], |l| l.terrain_ambient);
     for (e, name, mut mesh, mut material, own) in &mut layers {
         if !name.as_str().starts_with("terrain layer") {
             continue;
         }
         match (view.on, own) {
             (true, None) => {
-                if !copies.contains_key(&mesh.0.id()) {
+                if !copies.0.contains_key(&mesh.0.id()) {
                     let Some(mut m) = meshes.get(&mesh.0).cloned() else { continue };
-                    if let Some(VertexAttributeValues::Float32x4(c)) = m.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
-                        for v in c.iter_mut() {
-                            let grey = (v[0] + v[1] + v[2]) / 3.0 * TERRAIN_GAIN;
-                            v[..3].copy_from_slice(&[grey; 3]);
-                        }
-                    }
+                    let normals: Vec<[f32; 3]> = match m.attribute(Mesh::ATTRIBUTE_NORMAL) {
+                        Some(VertexAttributeValues::Float32x3(n)) => n.clone(),
+                        _ => vec![],
+                    };
+                    let mask: Vec<f32> = match m.attribute(Mesh::ATTRIBUTE_COLOR) {
+                        Some(VertexAttributeValues::Float32x4(c)) => c.iter().map(|c| c[3]).collect(),
+                        _ => vec![1.0; normals.len()],
+                    };
+                    let colors: Vec<[f32; 4]> = normals.iter().zip(&mask).map(|(n, &a)| {
+                        let light = VISION_LIGHT * (n[1].max(0.0) + (-n[1]).max(0.0));
+                        let lin = |c: f32| Color::srgb((c + light).min(1.0), 0.0, 0.0).to_linear().red;
+                        [lin(ambient[0]), lin(ambient[1]), lin(ambient[2]), a]
+                    }).collect();
+                    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
                     let mut mat = materials.get(&material.0).cloned().unwrap_or_default();
-                    mat.base.unlit = false;
+                    mat.base.unlit = true;
                     mat.base.base_color = Color::WHITE;
-                    copies.insert(mesh.0.id(), (meshes.add(m), materials.add(mat)));
+                    copies.0.insert(mesh.0.id(), (meshes.add(m), materials.add(mat)));
                 }
-                let Some(lit) = copies.get(&mesh.0.id()).cloned() else { continue };
+                let Some(lit) = copies.0.get(&mesh.0.id()).cloned() else { continue };
                 commands.entity(e).insert(LevelTerrain(mesh.0.clone(), material.0.clone()));
                 mesh.0 = lit.0;
                 material.0 = lit.1;

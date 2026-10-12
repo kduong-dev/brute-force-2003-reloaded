@@ -690,9 +690,10 @@ fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: 
 /// `LevelMaterial`); a character's materials are bevy's own, so each takes the light at its chest
 /// from every direction, as its texture added to the picture (emissive), at CHARACTER_LAMP of it
 /// (about the average N.L over a body).
+#[allow(clippy::too_many_arguments)]
 fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
-                   parts: Query<&MeshMaterial3d<StandardMaterial>>, mut materials: ResMut<Assets<StandardMaterial>>,
-                   mut last: Local<HashMap<Entity, Vec3>>) {
+                   parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), With<Mesh3d>>,
+                   mut materials: ResMut<Assets<StandardMaterial>>, mut last: Local<HashMap<Entity, Vec3>>) {
     let Some(level) = &map.0 else { return };
     if level.lamps.is_empty() {
         return;
@@ -704,9 +705,14 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
         if last.get(&l.root).is_some_and(|v| v.distance(light) < 0.005) {
             continue;
         }
-        last.insert(l.root, light);
+        // (a part drawn with another material meanwhile, the Vengar view's heat figure, keeps the
+        // light unset: it's set again once the part has its own back)
+        let mut all = true;
         for e in children.iter_descendants(l.root) {
-            let Ok(m) = parts.get(e) else { continue };
+            let Ok(m) = parts.get(e) else {
+                all &= !drawn.contains(e);
+                continue;
+            };
             let Some(mat) = materials.get_mut(&m.0) else { continue };
             if mat.unlit {
                 continue;
@@ -715,6 +721,9 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
             if mat.emissive_texture.is_none() {
                 mat.emissive_texture = mat.base_color_texture.clone();
             }
+        }
+        if all {
+            last.insert(l.root, light);
         }
     }
 }
