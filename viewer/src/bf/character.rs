@@ -99,8 +99,8 @@ const H_EFFECT_DAMAGE: u32 = 0xFB0A_5F1D;
 const H_ARCHETYPE_CENTRE: u32 = 0xE997_50A9;
 /// Collision: the objects file's surface table, its entries (name, h_e9e44859 = offset in the
 /// .ipn) and the attribute an archetype / terrain block / blocker names its surface with.
-const H_PHYSICS_FILE: u32 = 0x104D_B1CD;
-const H_PHYSICS: u32 = 0xF3F0_67AD;
+pub(crate) const H_PHYSICS_FILE: u32 = 0x104D_B1CD;
+pub(crate) const H_PHYSICS: u32 = 0xF3F0_67AD;
 const H_PHYSICS_OFFSET: u32 = 0xE9E4_4859;
 pub const H_PHYSICS_NAME: u32 = 0x051A_C63E;
 
@@ -766,10 +766,22 @@ impl Game {
     /// Read an archive's data (`archive`: its name, e.g. "common" or "e34", kept with the
     /// character types it defines). Entries already loaded win.
     fn load_archive(&mut self, ar: &Archive, archive: &str) -> Result<(), String> {
-        // the motion sets (character_type.rs), and each new one's skill toggle overlays by its
-        // name without "ms_": its `<overlay motion-type=44|43 prefix-type script>` (the first
-        // archive with the set wins)
-        for stem in self.add_motion_sets(ar) {
+        self.load_motion_sets(ar, |_| true);
+        // the AI personalities (common's ai/personality.xmb: the enemies' hit reactions, #129)
+        if self.personalities.is_empty() {
+            if let Some(root) = self.parse(ar, "personality.xmb")? {
+                self.personalities = personality::parse_personalities(&root);
+            }
+        }
+        self.load_chatter(ar, |_| true)?;
+        self.load_archive_rest(ar, archive)
+    }
+
+    /// An archive's motion sets whose file stem ("ms_lf") passes `keep` (character_type.rs
+    /// `add_motion_sets`), and each new one's skill toggle overlays by its name without "ms_":
+    /// its `<overlay motion-type=44|43 prefix-type script>` (the first archive with the set wins).
+    pub(crate) fn load_motion_sets(&mut self, ar: &Archive, keep: impl Fn(&str) -> bool) {
+        for stem in self.add_motion_sets(ar, keep) {
             let Some(ms) = self.motion_sets.get(&h(&stem)) else { continue };
             let mut overlays: SkillOverlays = [None, None];
             for o in &ms.overlays {
@@ -780,17 +792,15 @@ impl Game {
             }
             self.skill_overlays.entry(stem.trim_start_matches("ms_").to_string()).or_insert(overlays);
         }
-        // the AI personalities (common's ai/personality.xmb: the enemies' hit reactions, #129)
-        if self.personalities.is_empty() {
-            if let Some(root) = self.parse(ar, "personality.xmb")? {
-                self.personalities = personality::parse_personalities(&root);
-            }
-        }
-        // chatter: <h_f74e6a16> blocks of a line_tag and its sound_id alternatives (a file
-        // already loaded from another archive is kept: the levels' copies of the enemies' files)
+    }
+
+    /// An archive's chatter files (characters/<who>_chatter.xmb) whose `who` passes `keep`:
+    /// <h_f74e6a16> blocks of a line_tag and its sound_id alternatives (a file already loaded
+    /// from another archive is kept: the levels' copies of the enemies' files).
+    pub(crate) fn load_chatter(&mut self, ar: &Archive, keep: impl Fn(&str) -> bool) -> Result<(), String> {
         for n in ar.find("", "_chatter.xmb") {
             let who = n.rsplit('/').next().unwrap_or(&n).trim_end_matches("_chatter.xmb").to_string();
-            if self.chatter.contains_key(&who) {
+            if self.chatter.contains_key(&who) || !keep(&who) {
                 continue;
             }
             let Some(root) = self.parse(ar, &n)? else { continue };
@@ -827,6 +837,11 @@ impl Game {
             self.chatter_response.insert(who.clone(), responses);
             self.chatter_blocks.insert(who, blocks);
         }
+        Ok(())
+    }
+
+    /// The rest of `load_archive`, after the motion sets, the personalities and the chatter.
+    fn load_archive_rest(&mut self, ar: &Archive, archive: &str) -> Result<(), String> {
         // the level list: <level><h_1b8535f0 h_07f2f670=NAME texture-name=PREVIEW ...>
         // <zone file-name=ARCHIVE/><dm-data description=TEXT/>
         if let Some(root) = self.parse(ar, "campaign-bf.xmb")? {
@@ -882,18 +897,9 @@ impl Game {
         }
         for n in ar.find("objects-", ".xmb") {
             if let Some(root) = self.parse(ar, &n)? {
-                let ivd = ar.get(&n.replace(".xmb", ".ivd")).unwrap_or(&[]).to_vec();
-                // the collision surfaces' table: <h_104db1cd data-file=..ipn><h_f3f067ad name off>
+                let ivd = Arc::new(ar.get(&n.replace(".xmb", ".ivd")).unwrap_or(&[]).to_vec());
                 let ipn = Arc::new(ar.get(&n.replace(".xmb", ".ipn")).unwrap_or(&[]).to_vec());
-                for table in root.children_named(H_PHYSICS_FILE) {
-                    for s in table.children_named(H_PHYSICS) {
-                        let (name, off) = (hash_of(s.attr(h("name"))), s.attr(H_PHYSICS_OFFSET).and_then(|v| v.as_i64()));
-                        if let (true, Some(off)) = (name != 0 && !ipn.is_empty(), off) {
-                            self.physics.entry(name).or_insert((ipn.clone(), off as usize));
-                        }
-                    }
-                }
-                self.objects.push((root, Arc::new(ivd)));
+                self.add_objects(root, ivd, ipn);
             }
         }
         for n in ar.find("", ".ale") {
@@ -909,93 +915,14 @@ impl Game {
         }
         for n in ar.find("materials-", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
-            // (name, type, textures param->texture, constants param->values, wrapper count,
-            // address modes texture->[u, v])
-            type Consts = HashMap<u32, Vec<f32>>;
-            let mut seq: Vec<(u32, u32, HashMap<u32, u32>, Consts, usize, HashMap<u32, [Address; 2]>)> = vec![];
-            for m in root.walk().into_iter().filter(|e| e.name == h("Material")) {
-                let mut tex = HashMap::new();
-                let mut consts = HashMap::new();
-                let mut address = HashMap::new();
-                for e in m.walk() {
-                    if e.name == h("texture") {
-                        let name = hash_of(e.attr(h("texture-name")));
-                        tex.insert(hash_of(e.attr(h("param-id"))), name);
-                        address.insert(name, [h("address-u"), h("address-v")].map(|k| Address::of(hash_of(e.attr(k)))));
-                    }
-                    if e.name == h("constant") {
-                        // vector constants are repeated value attributes
-                        let v: Vec<f32> = e.attrs.iter().filter(|(k, _)| *k == h("value")).flat_map(|(_, v)| v.floats()).collect();
-                        consts.insert(hash_of(e.attr(h("param-id"))), v);
-                    }
-                }
-                let count = consts.get(&H_WRAP_COUNT).and_then(|v| v.first().copied()).unwrap_or(1.0) as usize;
-                seq.push((hash_of(m.attr(h("name"))), hash_of(m.attr(h("Type"))), tex, consts, count, address));
-            }
-            for i in 0..seq.len() {
-                let (name, mut ty, mut tex, mut consts, count, mut address) = seq[i].clone();
-                if ty == SKIN_WRAPPER && tex.is_empty() {
-                    if let Some(next) = seq[i + 1..].iter().take(count.max(1)).find(|s| !s.2.is_empty()) {
-                        ty = next.1;
-                        tex = next.2.clone();
-                        address = next.5.clone();
-                        // the wrapper's own opacity (0-255) stays with the material
-                        let alpha = consts.get(&H_WRAP_ALPHA).cloned();
-                        consts = next.3.clone();
-                        if let Some(a) = alpha {
-                            consts.insert(H_WRAP_ALPHA, a);
-                        }
-                    }
-                }
-                // first loaded wins, unless it found no textures and this one did (a skin
-                // wrapper is resolved by the material after it, which differs per archive)
-                if self.materials.get(&name).is_none_or(|t| t.is_empty() && !tex.is_empty()) {
-                    self.material_types.insert(name, ty);
-                    self.materials.insert(name, tex);
-                    self.material_constants.insert(name, consts);
-                    self.material_address.insert(name, address);
-                }
-            }
+            self.add_materials(&root, |_| true);
         }
         self.load_textures(ar)?;
         self.load_sounds(ar)?;
         for n in ar.find("animations-", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
             let blob = Arc::new(ar.get(&n.replace(".xmb", ".chnl")).unwrap_or(&[]).to_vec());
-            for e in root.walk() {
-                if let Some(frames) = e.attr(h("num-frames")).and_then(|v| v.as_i64()) {
-                    let name = hash_of(e.attr(h("name")));
-                    self.channels.entry(name).or_insert(Channel {
-                        data_type: hash_of(e.attr(h("data-type"))),
-                        keyed: hash_of(e.attr(h("frame-type"))) == FT_KEYED,
-                        interval: e.attr(H_INTERVAL).and_then(|v| v.as_f32()).unwrap_or(1.0 / 30.0),
-                        frames: frames as usize,
-                        offset: int_of(e, h("offset")) as usize,
-                        size: int_of(e, h("size")) as usize,
-                        blob: blob.clone(),
-                    });
-                }
-                if e.name == h("archetype-set") {
-                    let set_name = hash_of(e.children.first().and_then(|c| c.attr(h("name"))));
-                    let mut anims = vec![];
-                    for a in e.children_named(h("archetype")) {
-                        let head = a.children.first();
-                        let targets = a.children_named(h("target")).filter_map(|t| {
-                            let p = t.children.first()?;
-                            Some((hash_of(p.attr(h("name"))), hash_of(p.attr(h("data-channel")))))
-                        }).collect();
-                        anims.push(AnimDef {
-                            name: hash_of(head.and_then(|p| p.attr(h("name")))),
-                            duration: head.and_then(|p| p.attr(h("duration"))).and_then(|v| v.as_f32()).unwrap_or(1.0),
-                            targets,
-                            event_channel: hash_of(head.and_then(|p| p.attr(h("event-channel")))),
-                            root_height: head.and_then(|p| p.attr(h("root-height"))).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).filter(|&r| r > -1000.0),
-                            move_speed: head.and_then(|p| p.attr(H_MOVE_SPEED)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))),
-                        });
-                    }
-                    self.anim_sets.entry(set_name).or_insert(anims);
-                }
-            }
+            self.add_animations(&root, blob, None);
         }
         for n in ar.find("objecttypes", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
@@ -1051,37 +978,7 @@ impl Game {
                     });
                 }
             }
-            // effect types: <effect><.. ><base name=T/><alchemy-effects><effect effect-name=E/>..
-            for t in root.children_named(h("effect")).flat_map(|l| l.children.iter()) {
-                let name = hash_of(t.child(h("base")).and_then(|b| b.attr(h("name"))));
-                let list: Vec<u32> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
-                    .map(|e| hash_of(e.attr(h("effect-name")))).filter(|&x| x != 0 && x != h("")).collect()).unwrap_or_default();
-                if name != 0 && !list.is_empty() {
-                    self.effect_types.entry(name).or_insert(list.clone());
-                }
-                if name != 0 {
-                    let light = hash_of(t.child(h("light-effect")).and_then(|l| l.attr(h("effect-name"))));
-                    let sounds = t.child(h("sounds")).map(|s| s.children_named(h("Sound")).filter_map(|e| {
-                        let id = hash_of(e.attr(h("sound-id")));
-                        let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
-                        let looping = e.attr(h("enable-looping")).and_then(|v| v.as_i64()).unwrap_or(0) != 0;
-                        (id != 0 && id != h("")).then_some((id, f(0xF724_CB8C), f(h("play-length")), looping))
-                    }).collect()).unwrap_or_default();
-                    let damage = t.child(H_EFFECT_DAMAGE).map(|d| d.children_named(h("Damage")).map(|e| {
-                        let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
-                        let i = |k: u32| e.attr(k).and_then(|v| v.as_i64()).unwrap_or(0);
-                        AreaDamage { amount: f(h("amount")), damage_type: i(h("Type")), mode: i(0xED58_2B3C), delay: f(0xF724_CB8C),
-                                     duration: f(h("duration")), range: f(h("range")), falloff: i(h("falloff")) }
-                    }).collect()).unwrap_or_default();
-                    let radius = t.attr(0x1AB0_9530).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
-                    let centre = t.child(0xE997_50A9).and_then(|c| c.text.as_ref()).map(|x| x.floats()).filter(|f| f.len() >= 3)
-                        .map(|f| Vec3::new(f[0], f[1], f[2]));
-                    let bounds = (radius.is_some() || centre.is_some()).then(|| (centre.unwrap_or(Vec3::ZERO), radius.unwrap_or(0.0).max(0.0)));
-                    self.effect_type_defs.entry(name).or_insert(EffectType {
-                        effects: list, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
-                    });
-                }
-            }
+            self.add_effect_types(&root);
             // object types: <h_e275fb80><base name=T object-type=K/><combat-target ..>
             // <h_197caf14 debris list> (see `ObjectType`)
             for t in root.walk() {
@@ -1122,17 +1019,7 @@ impl Game {
                     self.idle_effects.entry(name).or_insert(fx);
                 }
             }
-            for d in root.children_named(h("decal")).flat_map(|l| l.children.iter()) {
-                let name = hash_of(d.child(h("base")).and_then(|b| b.attr(h("name"))));
-                let f = |k: u32| d.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
-                let color = d.child(0x1C2F_0CFB).and_then(|c| c.text.as_ref()).map(|t| t.floats()).unwrap_or_default();
-                let color = if color.len() >= 4 { [0, 1, 2, 3].map(|i| color[i] / 255.0) } else { [1.0; 4] };
-                self.decals.entry(name).or_insert(DecalDef {
-                    textures: weapon::hashes(d, 0xE2AB_97B1).into_iter().filter(|&x| x != h("")).collect(),
-                    width: f(h("width")), height: f(h("height")), color,
-                    life: f(0x1998_70EC), fade: f(0xFE4E_1D82), rotation: f(0xF1C6_C7B5),
-                });
-            }
+            self.add_decals(&root);
             for e in root.walk() {
                 let Some(ms) = e.attr(h("motion-archetype")) else { continue };
                 let Some(mesh) = e.child(h("base")).map(|b| hash_of(b.attr(h("mesh-name")))) else { continue };
@@ -1199,6 +1086,181 @@ impl Game {
             }
         }
         Ok(())
+    }
+
+    /// An objecttypes file's effect types (first loaded wins): `effect_types`, their ALE
+    /// effects, and `effect_type_defs`, the whole definition.
+    pub(crate) fn add_effect_types(&mut self, root: &Element) {
+        // effect types: <effect><.. ><base name=T/><alchemy-effects><effect effect-name=E/>..
+        for t in root.children_named(h("effect")).flat_map(|l| l.children.iter()) {
+            let name = hash_of(t.child(h("base")).and_then(|b| b.attr(h("name"))));
+            let list: Vec<u32> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
+                .map(|e| hash_of(e.attr(h("effect-name")))).filter(|&x| x != 0 && x != h("")).collect()).unwrap_or_default();
+            if name != 0 && !list.is_empty() {
+                self.effect_types.entry(name).or_insert(list.clone());
+            }
+            if name != 0 {
+                let light = hash_of(t.child(h("light-effect")).and_then(|l| l.attr(h("effect-name"))));
+                let sounds = t.child(h("sounds")).map(|s| s.children_named(h("Sound")).filter_map(|e| {
+                    let id = hash_of(e.attr(h("sound-id")));
+                    let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
+                    let looping = e.attr(h("enable-looping")).and_then(|v| v.as_i64()).unwrap_or(0) != 0;
+                    (id != 0 && id != h("")).then_some((id, f(0xF724_CB8C), f(h("play-length")), looping))
+                }).collect()).unwrap_or_default();
+                let damage = t.child(H_EFFECT_DAMAGE).map(|d| d.children_named(h("Damage")).map(|e| {
+                    let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
+                    let i = |k: u32| e.attr(k).and_then(|v| v.as_i64()).unwrap_or(0);
+                    AreaDamage { amount: f(h("amount")), damage_type: i(h("Type")), mode: i(0xED58_2B3C), delay: f(0xF724_CB8C),
+                                 duration: f(h("duration")), range: f(h("range")), falloff: i(h("falloff")) }
+                }).collect()).unwrap_or_default();
+                let radius = t.attr(0x1AB0_9530).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+                let centre = t.child(0xE997_50A9).and_then(|c| c.text.as_ref()).map(|x| x.floats()).filter(|f| f.len() >= 3)
+                    .map(|f| Vec3::new(f[0], f[1], f[2]));
+                let bounds = (radius.is_some() || centre.is_some()).then(|| (centre.unwrap_or(Vec3::ZERO), radius.unwrap_or(0.0).max(0.0)));
+                self.effect_type_defs.entry(name).or_insert(EffectType {
+                    effects: list, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
+                });
+            }
+        }
+    }
+
+    /// An objecttypes file's decal types (first loaded wins): `<decal><.. width height
+    /// h_e2ab97b1=TEXTURES h_1c2f0cfb=COLOUR ..><base name=T/>`.
+    pub(crate) fn add_decals(&mut self, root: &Element) {
+        for d in root.children_named(h("decal")).flat_map(|l| l.children.iter()) {
+            let name = hash_of(d.child(h("base")).and_then(|b| b.attr(h("name"))));
+            let f = |k: u32| d.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
+            let color = d.child(0x1C2F_0CFB).and_then(|c| c.text.as_ref()).map(|t| t.floats()).unwrap_or_default();
+            let color = if color.len() >= 4 { [0, 1, 2, 3].map(|i| color[i] / 255.0) } else { [1.0; 4] };
+            self.decals.entry(name).or_insert(DecalDef {
+                textures: weapon::hashes(d, 0xE2AB_97B1).into_iter().filter(|&x| x != h("")).collect(),
+                width: f(h("width")), height: f(h("height")), color,
+                life: f(0x1998_70EC), fade: f(0xFE4E_1D82), rotation: f(0xF1C6_C7B5),
+            });
+        }
+    }
+
+    /// An objects file (objects-<lvl>.xmb, its vertex data `ivd` and its collision `ipn`): its
+    /// archetypes and meshes, looked up in the order the files were added (`archetype`, `mesh`),
+    /// and its collision surfaces' table, `<h_104db1cd data-file=..ipn><h_f3f067ad name off>`
+    /// (a surface already loaded wins).
+    pub(crate) fn add_objects(&mut self, root: Element, ivd: Arc<Vec<u8>>, ipn: Arc<Vec<u8>>) {
+        for table in root.children_named(H_PHYSICS_FILE) {
+            for s in table.children_named(H_PHYSICS) {
+                let (name, off) = (hash_of(s.attr(h("name"))), s.attr(H_PHYSICS_OFFSET).and_then(|v| v.as_i64()));
+                if let (true, Some(off)) = (name != 0 && !ipn.is_empty(), off) {
+                    self.physics.entry(name).or_insert((ipn.clone(), off as usize));
+                }
+            }
+        }
+        self.objects.push((root, ivd));
+    }
+
+    /// A materials file's materials whose name passes `keep`. A skin wrapper (SKIN_WRAPPER with
+    /// no textures) takes the textures, type and constants of the next material of the file
+    /// that has some, within its wrapper count, keeping its own opacity.
+    pub(crate) fn add_materials(&mut self, root: &Element, keep: impl Fn(u32) -> bool) {
+        // (name, type, textures param->texture, constants param->values, wrapper count,
+        // address modes texture->[u, v])
+        type Consts = HashMap<u32, Vec<f32>>;
+        let mut seq: Vec<(u32, u32, HashMap<u32, u32>, Consts, usize, HashMap<u32, [Address; 2]>)> = vec![];
+        for m in root.walk().into_iter().filter(|e| e.name == h("Material")) {
+            let mut tex = HashMap::new();
+            let mut consts = HashMap::new();
+            let mut address = HashMap::new();
+            for e in m.walk() {
+                if e.name == h("texture") {
+                    let name = hash_of(e.attr(h("texture-name")));
+                    tex.insert(hash_of(e.attr(h("param-id"))), name);
+                    address.insert(name, [h("address-u"), h("address-v")].map(|k| Address::of(hash_of(e.attr(k)))));
+                }
+                if e.name == h("constant") {
+                    // vector constants are repeated value attributes
+                    let v: Vec<f32> = e.attrs.iter().filter(|(k, _)| *k == h("value")).flat_map(|(_, v)| v.floats()).collect();
+                    consts.insert(hash_of(e.attr(h("param-id"))), v);
+                }
+            }
+            let count = consts.get(&H_WRAP_COUNT).and_then(|v| v.first().copied()).unwrap_or(1.0) as usize;
+            seq.push((hash_of(m.attr(h("name"))), hash_of(m.attr(h("Type"))), tex, consts, count, address));
+        }
+        for i in 0..seq.len() {
+            if !keep(seq[i].0) {
+                continue;
+            }
+            let (name, mut ty, mut tex, mut consts, count, mut address) = seq[i].clone();
+            if ty == SKIN_WRAPPER && tex.is_empty() {
+                if let Some(next) = seq[i + 1..].iter().take(count.max(1)).find(|s| !s.2.is_empty()) {
+                    ty = next.1;
+                    tex = next.2.clone();
+                    address = next.5.clone();
+                    // the wrapper's own opacity (0-255) stays with the material
+                    let alpha = consts.get(&H_WRAP_ALPHA).cloned();
+                    consts = next.3.clone();
+                    if let Some(a) = alpha {
+                        consts.insert(H_WRAP_ALPHA, a);
+                    }
+                }
+            }
+            // first loaded wins, unless it found no textures and this one did (a skin
+            // wrapper is resolved by the material after it, which differs per archive)
+            if self.materials.get(&name).is_none_or(|t| t.is_empty() && !tex.is_empty()) {
+                self.material_types.insert(name, ty);
+                self.materials.insert(name, tex);
+                self.material_constants.insert(name, consts);
+                self.material_address.insert(name, address);
+            }
+        }
+    }
+
+    /// An animations file's animation sets (`<archetype-set>`: its clips, each a list of bone
+    /// targets and their data channels, an event channel, duration, root-height, move speed) and
+    /// its data channels (keyed by name, their data in `blob`, the .chnl beside it); the first
+    /// loaded of each wins. `sets`: only those animation sets, and only the channels their clips
+    /// use (None: everything).
+    pub(crate) fn add_animations(&mut self, root: &Element, blob: Arc<Vec<u8>>, sets: Option<&std::collections::HashSet<u32>>) {
+        let mut used = std::collections::HashSet::new();
+        for e in root.walk().into_iter().filter(|e| e.name == h("archetype-set")) {
+            let set_name = hash_of(e.children.first().and_then(|c| c.attr(h("name"))));
+            if sets.is_some_and(|s| !s.contains(&set_name)) {
+                continue;
+            }
+            let mut anims = vec![];
+            for a in e.children_named(h("archetype")) {
+                let head = a.children.first();
+                let targets: Vec<(u32, u32)> = a.children_named(h("target")).filter_map(|t| {
+                    let p = t.children.first()?;
+                    Some((hash_of(p.attr(h("name"))), hash_of(p.attr(h("data-channel")))))
+                }).collect();
+                let event_channel = hash_of(head.and_then(|p| p.attr(h("event-channel"))));
+                used.extend(targets.iter().map(|t| t.1));
+                used.insert(event_channel);
+                anims.push(AnimDef {
+                    name: hash_of(head.and_then(|p| p.attr(h("name")))),
+                    duration: head.and_then(|p| p.attr(h("duration"))).and_then(|v| v.as_f32()).unwrap_or(1.0),
+                    targets,
+                    event_channel,
+                    root_height: head.and_then(|p| p.attr(h("root-height"))).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).filter(|&r| r > -1000.0),
+                    move_speed: head.and_then(|p| p.attr(H_MOVE_SPEED)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))),
+                });
+            }
+            self.anim_sets.entry(set_name).or_insert(anims);
+        }
+        for e in root.walk() {
+            let Some(frames) = e.attr(h("num-frames")).and_then(|v| v.as_i64()) else { continue };
+            let name = hash_of(e.attr(h("name")));
+            if sets.is_some() && !used.contains(&name) {
+                continue;
+            }
+            self.channels.entry(name).or_insert(Channel {
+                data_type: hash_of(e.attr(h("data-type"))),
+                keyed: hash_of(e.attr(h("frame-type"))) == FT_KEYED,
+                interval: e.attr(H_INTERVAL).and_then(|v| v.as_f32()).unwrap_or(1.0 / 30.0),
+                frames: frames as usize,
+                offset: int_of(e, h("offset")) as usize,
+                size: int_of(e, h("size")) as usize,
+                blob: blob.clone(),
+            });
+        }
     }
 
     fn load_sounds(&mut self, ar: &Archive) -> Result<(), String> {

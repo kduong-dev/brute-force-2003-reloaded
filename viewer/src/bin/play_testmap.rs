@@ -93,6 +93,51 @@ pub fn load_weapon_data(game: &mut bf_viewer::bf::character::Game) {
     }
     let hand = game.weapons.values().filter(|d| d.ammo > 0).count();
     println!("test map: weapon data from {list} in {:.1} s: {hand} hand weapons", t.elapsed().as_secs_f32());
+    load_types(game);
+}
+
+/// The archives that define the character types the test map's levels don't (#180), in name
+/// order: for each of the 73 types BF_DUMP_TYPES on `--test` lacks, the first archive by name
+/// that defines it, as `BF_DUMP_TYPES=all` loads them (so each type comes from the archive the
+/// full dump names). With them the test map has all 128 of the data's types.
+const TYPE_ARCHIVES: [&str; 31] = [
+    "e05", "e06", "e10", "e13", "e16", "e23", "e34", "e40", "m01_a", "m01_b", "m02_b", "m02_c", "m03_a", "m03_b", "m03_c",
+    "m04_a", "m05_a", "m05_c", "m05_d", "m05_y", "m07_a", "m07_b", "m07_c", "m08_a", "m08_b", "m09_b", "m09_c",
+    "m14_a", "m14_b", "m14_d", "tutorial",
+];
+/// The archives that define the terrorists (the types whose chatter-library is
+/// terrorist_chatter: Red Hand, Terrorist, Subversive), the first of each by name: e05, e13,
+/// e16, m03_c, m08_a and the tutorial (m08_b's are m08_a's).
+const TERRORIST_ARCHIVES: [&str; 6] = ["e05", "e13", "e16", "m03_c", "m08_a", "tutorial"];
+
+/// The character types the test map adds to its levels' (#180), by BF_TEST_TYPES: `all` (the
+/// default) every type of the data, from TYPE_ARCHIVES; `terrorists` only the terrorists; a
+/// comma-separated list of archives every type they define; `none` nothing more. The types
+/// come with their models, clips, chatter, weapons and sounds, not their levels
+/// (`Game::load_type_assets`).
+pub fn load_types(game: &mut bf_viewer::bf::character::Game) {
+    let t = std::time::Instant::now();
+    let which = std::env::var("BF_TEST_TYPES").unwrap_or_else(|_| "all".into());
+    let before = game.character_types.len();
+    let terrorist = |t: &bf_viewer::bf::character_type::CharacterType| t.chatter.trim_end_matches("_chatter") == "terrorist";
+    let results = match which.as_str() {
+        "none" | "0" => return,
+        "all" => game.load_type_assets(&data_dir(), &TYPE_ARCHIVES, |_| true),
+        "terrorists" => game.load_type_assets(&data_dir(), &TERRORIST_ARCHIVES, terrorist),
+        list => {
+            let archives: Vec<&str> = list.split(',').map(str::trim).filter(|a| !a.is_empty()).collect();
+            game.load_type_assets(&data_dir(), &archives, |_| true)
+        }
+    };
+    for (archive, r) in results {
+        match r {
+            Err(e) => eprintln!("test map: no character types from {archive}: {e}"),
+            Ok(n) if std::env::var("BF_TESTMAP_LOG").is_ok() => println!("test map: {n} character types from {archive}"),
+            Ok(_) => {}
+        }
+    }
+    println!("test map: character types ({which}) in {:.1} s: {} more, {} in all",
+             t.elapsed().as_secs_f32(), game.character_types.len() - before, game.character_types.len());
 }
 
 /// A weapon on the rack, or one the object tool laid on the ground (`Lying`): its definition

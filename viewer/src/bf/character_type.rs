@@ -624,28 +624,40 @@ pub fn parse_placements(root: &Element, archive: &str) -> Vec<Placement> {
     }).collect()
 }
 
+/// The character types of an objecttypes document, library `library` of `archive` (its
+/// `<character>` list), in the document's order.
+pub(crate) fn parse_types(root: &Element, archive: &str, library: &str) -> Vec<CharacterType> {
+    root.children_named(h("character")).flat_map(|l| l.children_named(H_ENTRY))
+        .filter_map(|e| parse_type(e, archive, library)).collect()
+}
+
 impl Game {
     /// Adds the character types of an objecttypes document, library `library` of `archive` (its
     /// `<character>` list): a name already loaded keeps its first definition (FUN_00160da0).
     pub(crate) fn add_character_types(&mut self, root: &Element, archive: &str, library: &str) {
-        for e in root.children_named(h("character")).flat_map(|l| l.children_named(H_ENTRY)) {
-            let Some(t) = parse_type(e, archive, library) else { continue };
-            if !self.character_types.contains_key(&t.key) {
-                self.character_type_order.push(t.key);
-                self.character_types.insert(t.key, t);
-            }
+        for t in parse_types(root, archive, library) {
+            self.add_character_type(t);
+        }
+    }
+
+    /// Adds one character type, unless a type of its name is loaded already (FUN_00160da0: the
+    /// first library with the name wins).
+    pub(crate) fn add_character_type(&mut self, t: CharacterType) {
+        if !self.character_types.contains_key(&t.key) {
+            self.character_type_order.push(t.key);
+            self.character_types.insert(t.key, t);
         }
     }
 
     /// Adds an archive's motion sets (characters/ms_<x>.xmb), keyed by the hash of the file's
     /// stem; one already loaded is kept (every copy of a file is the same). A file that doesn't
-    /// decode is skipped. The stems added ("ms_lf"), for what's derived from them
-    /// (`Game::skill_overlays`).
-    pub(crate) fn add_motion_sets(&mut self, ar: &Archive) -> Vec<String> {
+    /// decode is skipped, and so is one whose stem ("ms_lf") `keep` refuses. The stems added,
+    /// for what's derived from them (`Game::skill_overlays`).
+    pub(crate) fn add_motion_sets(&mut self, ar: &Archive, keep: impl Fn(&str) -> bool) -> Vec<String> {
         let mut added = vec![];
         for n in ar.find("ms_", ".xmb") {
             let stem = n.trim_end_matches(".xmb");
-            if self.motion_sets.contains_key(&h(stem)) {
+            if self.motion_sets.contains_key(&h(stem)) || !keep(stem) {
                 continue;
             }
             let Some(root) = ar.get(&n).and_then(|d| bxml::parse(d, &self.schemas).ok()) else { continue };

@@ -11,4 +11,5 @@ pub mod level;
 pub mod locomotion;
 pub mod personality;
 pub mod texture;
+pub mod type_assets;
 pub mod weapon;
