@@ -2,7 +2,7 @@
 name: reviewer
 description: Reviews code changes (a worktree branch, a pull request, or an uncommitted diff) of the Brute Force viewer for bugs, faithfulness to the game data and project conventions, before they're merged. Read-only. Use after a developer finishes a ticket.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: fable
 effort: max
 ---
 You review changes to the Brute Force reimplementation. You do not edit files. Read `CLAUDE.md`
