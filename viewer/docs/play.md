@@ -1159,9 +1159,12 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
   BF_TEST_GOTO=4.77,36.82,4.41,37.17 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_FIRE=1
   BF_CAMERA_PITCH=-0.28 BF_TEST_INSTANT_KILL=0`: the LZR-50 (`BF_TEST_WEAPON="Confed LZR-50"`) 19 hits, all on a calf
   (x0.5), 2.65-5.22 (the takes 2.6-4.9, allowed 2.45-5.25); the Jax-iC 15.4 and 17.5 on the
-  calves. With m09_a's Shrike Heavy in Tex's place (`BF_TEST_NPC=0.5,shrike
-  heavy@m09_a,enemy,dummy,-0.26,41.69`, #128) its SONIC x2 makes the Jax-iC's 30.7 and 34.8
-  (the takes 30.1-35.2); the LZR-50 2.48-5.22.
+  calves, then 32.5 on the knocked-down dummy's right thigh: since #124 the shots go to the
+  crosshair's lock, which follows the body down. With m09_a's Shrike Heavy in Tex's place
+  (`BF_TEST_NPC=0.5,shrike heavy@m09_a,enemy,dummy,-0.26,41.69`, #128) its SONIC x2 makes the
+  Jax-iC's 30.7 and 29.7 on the calves (the takes 30.1-35.2; the second roll 21.2, the takes'
+  21.5-25.1), then 70.2 and 68.8 on a thigh (#124's lock aim, as above; before it and #129's
+  merge, 30.7 and 34.8); the LZR-50 2.48-5.22.
 * **#35 take28** (Flint's L-Shot-75, x1 parts): `BF_MAP=sdm_e34 BF_DIFFICULTY=standard -- --test
   BF_CHARACTER=1 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_WEAPON=L-Shot-75
   BF_TEST_TRIGGER=3.0-3.1,4.5-4.6,6.0-6.1 BF_TEST_INSTANT_KILL=0`, from the sdm_e34 start (no
@@ -1170,8 +1173,10 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
 * **#115** (the Bower 20's falloff): Brutus's shell at a campaign Tex 7.7 m out on the test map
   (`-- --test BF_CHARACTER=0 BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,19.5
   BF_TEST_NPC=0.5,tex,enemy,dummy,5.1,11.5 BF_TEST_WEAPON="Bower 20" BF_TEST_TRIGGER=3.0-3.08
-  BF_CAMERA_PITCH=-0.16 BF_TEST_INSTANT_KILL=0`): two pellets, 16.70 x falloff 0.680 x 0.62 x 1.4 = 9.85 (thigh) and
-  5.40 (forearm). The take's m03_a mutant (BALLISTIC x0.8, multiplier 1) isn't in the demo.
+  BF_CAMERA_PITCH=-0.16 BF_TEST_INSTANT_KILL=0`): two pellets, aimed at the crosshair's lock
+  since #124: 16.70 x falloff 0.682 x 0.62 x 1.4 = 9.88 (Bip01) and 18.57 x 0.678 x 0.62 x 0.8
+  (an upper arm) x 1.4 = 8.74 (before the lock aim, 9.85 on a thigh and 5.40 on a forearm). The
+  take's m03_a mutant (BALLISTIC x0.8, multiplier 1) isn't in the demo.
 * **The scenery's areas**: campaign e34 at #85 take01's spot (`BF_MAP=e34
   BF_TEST_GOTO=-31.52,16.64,-31.52,16.64 BF_TEST_HIT=2.0`): Tex 115 -> 91.0 over 2.13-2.60 s
   (take01: 91.22 by 2.59 s). take29's spot on sdm_e34 (`BF_MAP=sdm_e34

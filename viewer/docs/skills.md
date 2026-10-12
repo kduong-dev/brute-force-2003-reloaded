@@ -261,7 +261,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | `lock_shares(u)` | +0xc4 | none (0x2894f0) | the lock box's shares of the screen the skill puts in the target selection (`lock_shares`): Flint's 0.4 / 0.4 |
 | `crosshair_alpha(u, alpha, fill)` | +0xfc | the alpha (0x10e8f0) | the crosshair's alpha (FUN_000c6280; `crosshair_alpha`): Flint's fades it as her marker fills |
 | `has_marker` | (+0xc4) | false | the skill shows the targeting marker for the controlled character (play_targeting.rs): Flint's |
-| `keeps_gun_up(u)` | (FUN_00123ea0) | false | the skill keeps the gun raised (the ready pose, play.rs): Flint's while on |
+| `keeps_gun_up(u)` | (FUN_00123ea0) | false | the skill keeps the gun raised, holding its ready timer (`Skill::raised`: the ready pose, `gun_raised`) and the camera's aim shift after it (`Skill::shift`, `aim_shift`: the camera in): Flint's while on |
 | `bars_scope(u)` | | false | the demo's choice: no scope in Tex's berserk motions |
 
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
@@ -376,7 +376,9 @@ game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`).
 * **The press** (her toggle, FUN_0013cad0), either way, needs a motion type 45 transition from
   her motion (the motion record's +0x534): in `ms_flint.xml` her idles, walk, run, side and back
   steps, dash, crouch idle and crouch walks have one, so not getting down or up, in a jump, a
-  dodge, a dive or a slide, nor knocked down (`sniper_transition`). Switching on is also refused
+  dodge, a dive or a slide, knocked down, nor with a grenade in the hand (the throw,
+  `throw_grenade`, MT 42, has none; the demo counts its charge and a pending release too, as its
+  charge runs in her own motion) (`sniper_transition`). Switching on is also refused
   with a gun in the second hand, no gun in hand, or its clip at 0; then the 10% check. It
   switches at the press (takes 15-17, 29, 31), with no overlay; her start / end sounds and lines
   as #120's.
@@ -386,13 +388,31 @@ game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`).
   `Sc_w1_sn_*` walks (play.rs `SpecialClips`): the rifle raised to the shoulder (take15 2.5 s);
   the off asks again, back to her own motions. Their motion state is an idle or a walk, which is
   why the takes' logs never showed 45. They lead to no run, crouch, dash, dodge, dive, throw or
-  jump: those are dropped while she's in them. With the pistol there's no mark: the toggle
-  raises the gun (FUN_00123ea0) and she keeps her motions.
-* **While on** (her update, 0x13cbf0): the gun is kept raised (FUN_00123ea0 every frame; the
-  demo's ready pose, without the aiming camera: take15's framing doesn't change), and the gun in
-  hand's clip at 0 sends the toggle, in the shot's frame, before the reload (take29). She walks:
-  her +0x38 caps the move stick at 0.55 (0x13ceb0), as the scope does (FUN_001195c0), under the
-  run's 0.65: no run, no sprint (`move_capped`).
+  jump: those are dropped while she's in them. Switched on kneeling, the demo has her get up
+  through her crouch2stand into the sniper idle, its choice: the crouch idle's type 45
+  transition goes straight to `Sc_w1_sniper_idle` (with the motion blend; not filmed). With the
+  pistol there's no mark: the toggle raises the gun (FUN_00123ea0) and she keeps her motions.
+* **While on** (her update, 0x13cbf0): the gun is kept raised (FUN_00123ea0 every frame), and
+  the gun in hand's clip at 0 sends the toggle, in the shot's frame, before the reload (take29).
+  She walks: her +0x38 caps the move stick at 0.55 (0x13ceb0), as the scope does
+  (FUN_001195c0), under the run's 0.65 (0x3a53f0, 0x11973a): no run, no sprint (`move_capped`;
+  this frame's gait only, the inputs as read). Two of the demo's choices there: the AI's Flint
+  walks too (the game's cap is on the stick's way), and the sprint (the game's dash) is barred
+  with the pistol as well, where the game's dash command comes from the stick before the cap
+  (0x134f52) and her own motions, which the pistol keeps, have a dash (not filmed).
+* **The pose and the camera** (`Skill::raised`, `Skill::shift`): raising the gun every frame
+  holds its ready timer (char+0x7dc) at 4 s (FUN_00123f60), and the follow camera's aim shift
+  (char+0x430, 0x128280) is held at 3 s while that runs, for the controlled character: the
+  camera in, over the shoulder, as the demo's aiming camera after a shot (`Player::shoulder`).
+  After the off the ready pose stays 4 s and the camera 3 s more, coming out over its last 0.67
+  s (s = clamp(1.5 x the timer, 0, 1)), 3 x as fast dashing. take17 (no enemy, no shot): in by
+  2.27 s (on at 2.09), the rifle down at 15.5-15.8 s and the camera out over 18.13-18.6 s (off
+  at 11.55). A reload after the off ends the hold at once: a fit to take29, where the reload
+  right after the off left the rifle lowered once done and the camera out at 7.6-8.0 s, 2.3-3 s
+  after it began; what clears the game's timer there isn't found (the reload keeps a raised gun
+  raised, 0x120e63-0x120e6e). The demo's own post-shot hold (0.7 s, `Player::aim_hold`, #126's
+  fit) is left as it was: the same code rule would give a shot 4 s of pose and 7 of camera, which
+  #126's open question (its leads §10) is about.
 * **The lock box** (her +0xc4 and +0x100): each frame the target selection runs the controlled
   character's skill's +0xc4 (0xbd0c6); hers (0x13cd30) puts her box shares in the selection
   while on, h_108f0925 0.4 across and h_081520f0 0.4 down (the reticle's own 0.14 x 0.75 and
@@ -403,8 +423,12 @@ game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`).
 * **The guns aim at the lock** (every character's, not Flint's only; play.md § The crosshair's
   colours, step 4): with a lock the reticle gives the controlled character its point (0xc5b90 ->
   FUN_0011e9d0, char+0x804), the character update aims its guns at it (0x11aa20 -> 0x22dc60),
-  and each muzzle's shot goes there (FUN_0022e5b0). That's the "aim assist" take28 measured: 1 hit
-  in 8 off, 7 in 8 on.
+  and each muzzle's shot goes there (FUN_0022e5b0). That's the "aim assist" take28 measured, the
+  reticle on the frozen Shrike's body: 1 hit in 8 off, 7 in 8 on. The demo's check differs in its
+  setup: its bodies are solid cylinders the centre ray hits, so its shots on the body hit with
+  the skill off too; it aims 7 degrees off the body instead, inside the box (below). Every gun is
+  steered to the point: the demo's choice, as FUN_0022e5b0 leaves a weapon whose data +0x170 is
+  set alone (which weapons have it isn't traced).
 * **Damage** (her +0xec, 0x13cc70, in the roll FUN_0022c940, so every roll she makes: a shot's,
   a missile's and its blast's, a breakable object's): x1.5 (h_191dafb6) while scoped, on or off;
   while on, a roll of the game's random numbers at most h_18bf34d4 0.15 doubles it
@@ -626,10 +650,12 @@ the demo's formation stands it between Flint and the Shrike.
   units right of the crosshair; the corners slide in from the sides (the left one at x ~255
   0.26 s after the switch, the take's ~215 0.28 s after; the right one still on its way) and
   close round the Shrike by 0.6 s with the glyph strip (eight glyphs) over the top left and the
-  wave under the bottom right, as take15 2.5-3.0 s; the box 98.5 units (49 x 74 each way), the
-  take's 105 (52 x 81); the crosshair red, then fading out by 2.6 s (the take's by 2.8); the
-  rifle raised to the shoulder (from the side, `BF_VIEW_YAW=1.9`) and lowered at the off; at the
-  off the fill falls in 0.5 s. Drain 3.2/s.
+  wave under the bottom right, as take15 2.5-3.0 s; the box 115.5 units across (58 x 87 each
+  way) with the camera in, the take's 105 (52 x 81) with the game's, which sits a little further
+  back: round the body as the take's frames it (98.5 with the camera out, before the camera's
+  hold); the crosshair red, then fading out by 2.6 s (the take's by 2.8); the
+  rifle raised to the shoulder (from the side, `BF_VIEW_YAW=1.9`); at the off the fill falls in
+  0.5 s. Drain 3.2/s.
 * **take16** (the Jax-iP, `BF_START_WEAPON=1`, `BF_TEST_SKILL=2,9`): the same marker, no sniper
   motions; at the off the pistol's own lock stays on the Shrike, the crosshair red, and the corners
   close onto a 64 x 64 box at the crosshair as they fade, the strips still there: take16's
@@ -638,8 +664,17 @@ the demo's formation stands it between Flint and the Shrike.
   (448, 288), its bracket lines where take17's are (x 204 / 438, y 100 / 279); 30.05 to 0 in 9.33 s
   (3.22/s), off in the frame of 0 with the line at 0 and the end sound, the corners sliding out,
   the crosshair back at once, the label fading, the low-stamina blink; refill 0.8/s.
+* **The pose and the camera** (take17's recipe with no NPC, without `-- --test`, set beside
+  take17 aligned on the off, the demo's at 11.40 s and the take's at 11.55): far before the
+  press, in a frame after it (the take's within 0.18 s of its switch, 2.09 to 2.27 s); in through
+  the drain; the rifle down 4.0 s after the off (the take's 3.95-4.25); the camera in until 6.3 s
+  after it and out by 6.8 (the take's out over 6.6-7.05). take29's recipe (the reload right after
+  the off): the reload at 5.20 s, the rifle lowered once it's done, the camera out over 7.6-8.2
+  s, as take29's 7.6-8.0.
 * **take28** (single shots, the crosshair turned 7 degrees left of the Shrike, inside the
-  128-unit box and off its body; `BF_TEST_INSTANT_KILL=0`): off, 0 hits in 8; on, 8 in 8 (38-46
+  128-unit box and off its body; `BF_TEST_INSTANT_KILL=0`; the take had the reticle on the
+  body, 1 hit in 8 off and 7 in 8 on, but the demo's solid cylinders take a shot on the body with
+  the skill off too, so its check aims off the body): off, 0 hits in 8; on, 8 in 8 (38-46
   on a thigh, x1.4 the STANDARD step: the take's 40-44), one doubled (80.72: the take's 80.6;
   `BF_TEST_DOUBLE=100` doubles every one); the 12th round ended it in its frame (take28 51.1 s).
   Scoped (`BF_TEST_AIM=1`, standing): x1.5 on every roll (29.3 on a calf, the take's 29.6 "leg";
@@ -659,8 +694,14 @@ the demo's formation stands it between Flint and the Shrike.
 * **Refusals**: the clip and the reserve empty (`BF_TEST_CLIP=0 BF_TEST_RESERVE=0`): "the clip in
   hand is empty"; in the autopilot's running jump (`BF_AUTOPILOT=1 BF_TEST_SKILL=17.25,18.5`): "no
   motion type 45 transition", then on at 18.6 on the ground, the run becoming the sniper walk.
+  With a Frag in the hand (`BF_MAP=flat BF_CHARACTER=1 BF_TEST_GOTO=0,4,0,4
+  BF_TEST_GRENADE_TYPE=Frag BF_TEST_THROW=2.0,1.0 BF_TEST_SKILL=2.5,3.5,5.0`): refused charging
+  (2.60 s) and throwing (3.60), on at 5.13 after the throw.
 * **The walk** (`BF_MAP=flat BF_TEST_GOTO=0,0,0,-60 BF_TEST_SPRINT=0.5 BF_TEST_SKILL=3,6
   BF_MOVE_LOG=1`): the sprint becomes the sniper walk at the press and comes back at the off.
+  Without the sprint (`BF_CHARACTER=1`, no `BF_TEST_SPRINT`): the run becomes the walk at 3.13 s
+  and the run is back from the off at 6.13 (the autopilot doesn't set the walk input each frame,
+  so the cap stays on the frame's gait, not on the input).
 * **Hand-over** (`BF_TEST_SELECT=3,4.0`, the squad in): the AI's Flint stays on and drains 3.2/s;
   Tex's HUD has no marker and a full crosshair.
 * **The aim at the lock, for everyone** (Tex on the test map, the LZR-50, an enemy NPC 9 m out;
@@ -677,4 +718,9 @@ tiny-box lock caught the Shrike, so the demo's corners closed on the crosshair t
 leaves out the bones' own spheres (FUN_00236670's union of the posed pieces). The game's corners
 move whole units a frame, the demo's by the frame's time. The 0.65 run threshold stands for the
 demo's walk key; the sniper motions' speeds are their clips' roots. The black button has no demo
-key.
+key. The camera comes in as the demo's aiming camera does (`camera_pose`'s dolly, #126), not
+the game's 1.75 m along the crosshair ray, so the close view frames her less tightly than the
+takes'. The reload ending the pose and the camera's hold is a fit to take29 (the code that clears
+the ready timer there isn't found). The box's size against the take's waits on the cameras
+matching: re-measured after #129's merge with the camera in, 115.5 units to the take's 105, where
+it was 98.5 with the camera out; the sphere leaves out the bones' parts (above).

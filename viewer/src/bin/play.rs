@@ -903,8 +903,8 @@ struct Clips {
     /// per weapon slot (Sc_w1_* holds the first weapon, Sc_w2_* the second): carried and ready
     /// (rp_*, raised and pointing ahead, used while aiming or firing)
     slots: [SlotClips; 2],
-    /// the motion set's special motions, where it has them (Tex's berserk set; see
-    /// `SpecialClips`)
+    /// the motion set's special motions, where it has them (Tex's berserk set, Flint's sniper set;
+    /// see `SpecialClips`)
     special: Option<SpecialClips>,
     /// side steps whose own root doesn't move, and the walk whose root motion moves them instead
     /// (`root_stand_ins`)
@@ -4553,11 +4553,14 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // played in place of the gait, its own inputs dropped meanwhile
     let scripted = enemies::step(p, l, game, dt);
     // a skill that holds the move stick under the run (Flint's targeting, 0.55: FUN_001195c0
-    // through its +0x38) walks, as in the scope: no run, no sprint
-    if skills::move_capped(p) {
-        p.sprint = false;
-        p.walk = true;
-    }
+    // through its +0x38) walks, as in the scope: no run, no sprint. Only this frame's gait takes
+    // it (the inputs stay as read: the autopilot doesn't set the walk again each frame). Two of
+    // the demo's choices: the AI's Flint walks too (the game's cap is on the stick's way,
+    // FUN_001195c0), and the sprint (the game's dash) is barred with the pistol as well, where the
+    // game's dash command comes from the stick before the cap (0x134f52) and her own motions,
+    // which the pistol keeps, have a dash (not filmed)
+    let capped = skills::move_capped(p);
+    let (sprint, walk) = (p.sprint && !capped, p.walk || capped);
 
     // camera-relative directions (camera yaw 0 looks down -Z)
     let fwd = Vec3::new(-p.cam_yaw.sin(), 0.0, -p.cam_yaw.cos());
@@ -4585,7 +4588,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     };
     // a crouch asked for in them is dropped, not kept for after the off: the demo's choice until
     // a take shows what the game does with one (#35's shot T3); kept, he'd drop into a crouch at
-    // the off
+    // the off. Switched on kneeling, Flint gets up through her crouch2stand into the sniper idle:
+    // also the demo's, where ms_flint.xml's crouch idle has its type 45 transition straight to
+    // `Sc_w1_sniper_idle` (with the motion blend; not filmed)
     if special.is_some() {
         p.crouch_wanted = false;
     }
@@ -4899,9 +4904,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // is subtracted, so a gun carried across the body still lines up with the crosshair
     let aim_yaw = p.cam_yaw;
     let off = if armed { p.muzzle_off } else { 0.0 };
-    // (and while a skill keeps the gun raised, FUN_00123ea0 every frame: Flint's targeting; the
-    // aiming camera stays out, `follow_camera`, as take15's framing does)
-    let upper_aim = p.aim || (p.aim_hold > 0.0 && armed) || (armed && skills::keeps_gun_up(p));
+    // (and while a skill holds the gun raised: FUN_00123ea0 every frame of Flint's targeting, and
+    // the ready timer's 4 s after the off, `skills::gun_raised`; the camera comes in with it,
+    // `follow_camera`)
+    let upper_aim = p.aim || (p.aim_hold > 0.0 && armed) || (armed && skills::gun_raised(p));
     let mut twist_goal = 0.0;
     if sliding {
         let down = p.slide_yaw;
@@ -4929,15 +4935,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 side
             } else if wrap_angle(dir_yaw - aim_yaw).abs() > 2.0 {
                 turn_to(&mut p.yaw, wrap_angle(dir_yaw + std::f32::consts::PI), TURN_RATE);
-                if p.sprint { Gait::RunBack } else { Gait::WalkBack }
+                if sprint { Gait::RunBack } else { Gait::WalkBack }
             } else {
                 turn_to(&mut p.yaw, dir_yaw, TURN_RATE);
-                if p.sprint { Gait::Run } else { Gait::Walk }
+                if sprint { Gait::Run } else { Gait::Walk }
             }
         } else if moving {
             turn_to(&mut p.yaw, dir_yaw, TURN_RATE);
             // (no dash in the berserk set: the dash request finds no transition, the run goes on)
-            if p.sprint && special.is_none() { Gait::Sprint } else if p.walk { Gait::Walk } else { Gait::Run }
+            if sprint && special.is_none() { Gait::Sprint } else if walk { Gait::Walk } else { Gait::Run }
         } else {
             if upper_aim {
                 let goal = stand_aim_yaw(p, aim_yaw - off);
@@ -5238,7 +5244,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             let reach = skills::weapon_range(p, &w.def);
             let range = reach.max(20.0);
             // to the AI's target, the crosshair's lock (FUN_0022e5b0: the muzzle to the aim point
-            // the reticle gave, char+0x804), or what the crosshair is on
+            // the reticle gave, char+0x804), or what the crosshair is on. Every gun is steered so:
+            // the demo's choice, as FUN_0022e5b0 leaves a weapon whose data +0x170 is set alone
+            // (which weapons have it isn't traced)
             let target = p.ai_target.or(p.lock_aim).unwrap_or_else(|| cam + ray * ray_hit(cam, ray, range + 10.0).unwrap_or(range));
             let mut dir = if scoped && p.lock_aim.is_none() { ray } else { (target - origin).normalize_or_zero() };
             if dir.dot(ray) < 0.3 || dir == Vec3::ZERO {
@@ -5427,8 +5435,14 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&m
     // in close while aiming or firing: the game snaps in within ~0.1 s of the first shot, holds
     // briefly after the last one (aim_hold), then drifts back out over ~2 s
     let armed = player.loaded.as_ref().is_some_and(|l| !l.weapons.is_empty());
-    let want = if player.aim || (armed && player.aim_hold > 0.0) { 1.0 } else { 0.0 };
-    let rate = if want > player.shoulder { 25.0 } else { 1.6 };
+    let firing: f32 = if player.aim || (armed && player.aim_hold > 0.0) { 1.0 } else { 0.0 };
+    // and in while a skill holds the gun raised and its aim shift after (Flint's targeting, the
+    // game's rule, 0x128280: `skills::aim_shift`): in as when firing, out along the shift's own
+    // ramp (the last 0.67 s of its 3 s; the game eases its distance over 0.2 s, FUN_00070090, so
+    // the demo's in-rate both ways). take17: off at 11.55 s, the camera out over 18.13-18.6 s
+    let shift = if armed { skills::aim_shift(&player) } else { 0.0 };
+    let want = firing.max(shift);
+    let rate = if want > player.shoulder || shift > firing { 25.0 } else { 1.6 };
     player.shoulder += (want - player.shoulder) * (1.0 - (-rate * dt).exp());
     // test hook: BF_VIEW_YAW turns only the rendered view (aim and controls are unchanged)
     let view = std::env::var("BF_VIEW_YAW").ok().and_then(|s| s.parse().ok()).unwrap_or(0.0);

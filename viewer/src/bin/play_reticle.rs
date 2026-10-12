@@ -52,7 +52,11 @@
 //!     to each gun, FUN_0022e5b0 aims the muzzle at it): the centre ray's point when the ray meets
 //!     the locked body (0xc59fe), else the lock's aim point (0xc5330 -> 0xc5170: the selection's).
 //!     So a shot near a hostile in the lock box goes to it; Flint's targeting box is what makes
-//!     hers hit (#35 take28: 1 hit in 8 off, 7 in 8 on).
+//!     hers hit: #35 take28, the reticle on the frozen Shrike's body, had 1 hit in 8 off and 7 in
+//!     8 on. The demo's check aims 7 degrees off the body instead (0 in 8 off, 8 in 8 on): its
+//!     bodies are solid cylinders the centre ray hits, so its shots on the body hit with the skill
+//!     off too (play_skills.rs `Targeting`). Without a lock it gives the centre ray's point, which
+//!     the demo's shots go to already.
 //!
 //! The ranges (the centre ray's, the lock's reach) are the gun's in the player's hands
 //! (FUN_002324c0 through the skill's +0x54: Flint's rifles x1.25, play_skills.rs
