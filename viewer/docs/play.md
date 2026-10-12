@@ -824,7 +824,9 @@ backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing
 fixed 15 fps. `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
 and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `BF_DUMP_SOUNDS=<dir>` writes the character's jump and surface sounds as WAV files
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
-hardpoints, fire sounds) and exits; `BF_SHOT_LOG=1` prints each shot's barrel and shot
+hardpoints, fire sounds) and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
+character types, their motion sets' clips and the placements, and exits
+([character-types.md](character-types.md)); `BF_SHOT_LOG=1` prints each shot's barrel and shot
 directions. Camera hooks: `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` / `BF_CAMERA_DISTANCE` set the
 start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
 something), `BF_VIEW_YAW` turns only the rendered view (aim unchanged), `BF_START_WEAPON=1` starts with

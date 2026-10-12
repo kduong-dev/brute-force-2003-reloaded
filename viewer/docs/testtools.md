@@ -9,7 +9,7 @@ left) lists them all. They work on any map of a test session: `--test` starts on
 | Key | Tool |
 |---|---|
 | F | **free camera** on / off. Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl: up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
-| N | **NPC menu**: Up / Down or the wheel picks Brutus, Flint, Hawk or Tex; J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
+| N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, archive and HP ("Shrike Soldier (m09_a, 73 hp)"; nine lines show round the one picked); J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
 | J / B / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / remove it. Shift+Delete removes every NPC |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
 | Y | **sky menu**: none, the map's own, or the sky of any level whose level file names one; click or Enter shows it over the map in place of its own, with that level's background colour |
@@ -39,9 +39,13 @@ left) lists them all. They work on any map of a test session: `--test` starts on
     gun and body follow the crosshair from the first frame.
   * NPCs take no pickups (medkits and fruit are the squad's).
   * Removing one takes its body; the gun it dropped, its blood and its DNA stay.
-  * The menu lists the data's other character types (militia, mutant, feral_colonist,
-    shadoon, the hounds ...) as "not yet, #110": `Player` needs a squad character's model and
-    clips. #110 adds them to `npc_types`.
+  * Any loaded character type can be spawned (#128): on the test map that's common's squad,
+    e01's, mp_common's deathmatch and squad deathmatch types, m02_a's and m09_a's (Shrike
+    Soldier, Heavy and Hound). A squad type is that squad slot's character; any other is slot
+    `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals. What's still
+    looked up by the squad's names reads nothing for it: it takes x1 of every damage type, says
+    nothing and has no skill, and its ground, capsule, ragdoll, reactions and blood bundle are
+    the squad's (the species tickets, #129-#134; see character-types.md, "In play").
   * Several characters can share a squad character (an NPC Tex beside the squad's Tex), so
     what reaches a body later tells them apart by `Player::who` (a squad member's character, an
     NPC's number): Energy bolts and Sonic rings land on the body they were drawn to, and the
@@ -101,7 +105,8 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   load fails (an error, or its thread stops without a result, e.g. a panic) is noted and the map
   the switch came from loads instead, then the test map; only if that fails too does the program
   stop. `BF_TEST_LEVEL_FAIL=<level>` makes that level's load panic, to try it.
-* Not done: moving NPCs, removing placed objects, saving a layout, enemy species (#110).
+* Not done: moving NPCs, removing placed objects, saving a layout, the enemy species' own
+  behaviour (#110's sub-issues).
 
 ## Test hooks
 
@@ -121,7 +126,7 @@ the background (#163)".
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |
-| `BF_TEST_NPC=<s>,<character>,<friend\|enemy>,<dummy\|fight>[,<x>,<z>[,<y>]]` | spawn one at x, z or under the crosshair, facing the controlled character; on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one) |
+| `BF_TEST_NPC=<s>,<character>,<friend\|enemy>,<dummy\|fight>[,<x>,<z>[,<y>]]` | spawn one at x, z or under the crosshair, facing the controlled character; on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; an unknown one is logged and skipped |
 | `BF_TEST_NPC_TEAM`, `BF_TEST_NPC_FIGHT`, `BF_TEST_NPC_REMOVE` `=<s>,<n\|aim\|all>` | switch the team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or all |
 | `BF_TEST_PLACER=<s>,<object>[,<yaw>]` | O with that object picked (its label in any case, else the first containing it), turned that way |
 | `BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]` | the object menu's click (at the crosshair: in the air in the free camera); or that object put at x, z, `height` m above the ground (in the air) |
@@ -173,6 +178,12 @@ Test map, captures at 15 fps, frames looked at:
 * Spawning at the crosshair (`BF_TEST_NPC=2,hawk,enemy,dummy` with the free camera and the
   menu open): Hawk stands where the crosshair meets the floor; `aim` switched his team and
   removed him.
+* Character types (#128, character-types.md "Verified"): a Shrike Soldier, Shrike Heavy and
+  Shrike Hound (`@m09_a`), a Lesser Priest, a Filthy Mutant and a Feral Outcast by name each
+  stand with their own model, skin and gun beside an NPC Flint ("NPC 2: enemy Shrike Soldier
+  (dummy) at [2.00, -1.05, 14.00], type h_fcec1024"). The NPC run above, captured with main's
+  build and this one: the same frames (within the noise of two runs of main's) and the same
+  combat log, the spawn lines now naming the type.
 * Sentry (`BF_TEST_GRENADE_TYPE=Sentry BF_TEST_GOTO=4.5,24,4.5,24 BF_TEST_THROW=1,0.1
   BF_TEST_FREECAM="2.5,30,3,40,30,-25;8,9.5,2.5,29,30,-22" BF_TEST_TELEPORT=3,camera
   BF_TEST_NPC=9,flint,enemy,dummy,4.5,22 BF_SENTRY_LOG=1`): Tex sets one down, is teleported

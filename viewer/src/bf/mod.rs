@@ -5,6 +5,7 @@ pub mod archive;
 pub mod audio;
 pub mod bxml;
 pub mod character;
+pub mod character_type;
 pub mod hash;
 pub mod level;
 pub mod locomotion;
