@@ -297,8 +297,9 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_NPC=<s>,<character>,<friend|enemy>,<dummy|fight>[,<x>,<z>[,<y>]]: spawn one on the
 ///    ground at x, z, or under the crosshair, facing the controlled character. The character: a
 ///    squad name or 0-3, or any loaded character type (#128) by its display name (any case; the
-///    first loaded of that name, e.g. `shrike soldier`), `name@archive` (`shrike soldier@m09_a`),
-///    its `<base name>` (`mp_brutus`) or its key `h_xxxxxxxx` (`npc_kind`). The ground is the
+///    first loaded of that name, e.g. `shrike soldier`), `name@archive` (`shrike soldier@m09_a`)
+///    or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or its key
+///    `h_xxxxxxxx` (`npc_kind`). The ground is the
 ///    first floor under y (world height), by default 50 m above the controlled character: a y
 ///    just over the floor wanted puts it under a roof or a gate's top (#73's takes 14, 16, 22
 ///    and 23 at sdm_e34's gate).
@@ -373,8 +374,8 @@ fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<
 }
 
 /// The character type a hook or the menu names: a squad slot's (0-3) or any loaded type by name
-/// (`Game::find_character_type`: brutus, mp_brutus, a display name, `name@archive`,
-/// h_xxxxxxxx).
+/// (`Game::find_character_type`: brutus, mp_brutus, a display name, `name@archive` or
+/// `name@library`, h_xxxxxxxx).
 fn npc_kind(game: &Game, s: &str) -> Option<u32> {
     let s = s.trim();
     s.parse::<usize>().ok().filter(|&i| i < SQUAD).map(squad_type).or_else(|| game.find_character_type(s))
@@ -647,13 +648,20 @@ pub(super) struct NpcList(Vec<(String, u32)>);
 
 /// The character types the NPC menu offers (#128): the squad's four by name (each its slot's
 /// type), then every other type the loaded archives define whose model is loaded, by display
-/// name with its archive and HP (41 militia definitions share 7 names: those tell them apart).
+/// name with where it's defined and its HP (41 militia definitions share 7 names: those tell
+/// them apart), and its key when two still read the same (as the object menu's entries).
 fn npc_list(game: &Game) -> Vec<(String, u32)> {
     let mut out: Vec<(String, u32)> = (0..SQUAD).map(|c| (title(CHARACTERS[c]), squad_type(c))).collect();
     let mut others: Vec<(String, u32)> = game.character_type_order.iter().copied().filter(|&k| slot_of(k) == OTHER).filter_map(|k| {
         let t = game.character_type(k)?;
-        game.has_model(t).then(|| (format!("{} ({}, {} hp)", game.type_label(k), t.archive, t.hitpoints), k))
+        game.has_model(t).then(|| (format!("{} ({}, {} hp)", game.type_label(k), t.place(), t.hitpoints), k))
     }).collect();
+    let labels: Vec<String> = others.iter().map(|o| o.0.clone()).collect();
+    for (label, k) in others.iter_mut() {
+        if labels.iter().filter(|l| l.as_str() == label.as_str()).count() > 1 {
+            *label = format!("{label} h_{k:08x}");
+        }
+    }
     others.sort_by(|a, b| a.0.cmp(&b.0));
     out.extend(others);
     out

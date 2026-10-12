@@ -103,8 +103,11 @@ pub struct CharacterType {
     /// campaign squad (brutus, flint, hawk, tex) and the deathmatch one (mp_brutus ...), hashes
     /// for the rest
     pub key: u32,
-    /// the archive it was read from (the first loaded that defines it)
+    /// the archive it was read from (the first loaded that defines it), and its objecttypes
+    /// library there (`objecttypes-<library>.xmb`: the archive's own name in the campaign's;
+    /// mp_common has six: dm, sdm_bf, sdm_feral, sdm_ferg, sdm_seers, sdm_shrike)
     pub archive: String,
+    pub library: String,
     /// its display name: a string id (`<base h_1dd3a49d>`, into `Game::strings`), 0 none
     pub label: u32,
     /// its model: the compound archetype `<base mesh-name>` (type+0xc4, FUN_00154a20)
@@ -339,6 +342,12 @@ pub struct PlacementAi {
 }
 
 impl CharacterType {
+    /// Where it's defined, for lists: its archive ("e34"), with the library when that has
+    /// another name ("mp_common/sdm_shrike").
+    pub fn place(&self) -> String {
+        if self.library.eq_ignore_ascii_case(&self.archive) { self.archive.clone() } else { format!("{}/{}", self.archive, self.library) }
+    }
+
     /// The factor it takes damage of `damage_type` by (its vulnerabilities; 1 for a type they
     /// don't list: FUN_00154740 starts all 12 at 1.0). What `Game::damage_factor` gives the
     /// squad by name.
@@ -449,8 +458,8 @@ fn counted<'a>(list: impl Iterator<Item = &'a Element>) -> Vec<(u32, i64)> {
 }
 
 /// A character type from its objecttypes entry `e` (`<h_e275fb80 motion-archetype ..>`), read
-/// from `archive`; None when it has no `<base mesh-name><base name>`.
-pub fn parse_type(e: &Element, archive: &str) -> Option<CharacterType> {
+/// from `archive`'s library `library`; None when it has no `<base mesh-name><base name>`.
+pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<CharacterType> {
     let part = e.child(h("base"))?;
     let key = name(part.child(h("base"))?, h("name"));
     if key == 0 {
@@ -489,6 +498,7 @@ pub fn parse_type(e: &Element, archive: &str) -> Option<CharacterType> {
     Some(CharacterType {
         key,
         archive: archive.to_string(),
+        library: library.to_string(),
         label: name(part, H_LABEL),
         mesh: name(part, h("mesh-name")),
         motion_archetype: motion.and_then(|v| v.as_str()).map(|s| s.trim().to_string())
@@ -594,11 +604,11 @@ pub fn parse_placements(root: &Element, archive: &str) -> Vec<Placement> {
 }
 
 impl Game {
-    /// Adds the character types of an objecttypes document read from `archive` (its
+    /// Adds the character types of an objecttypes document, library `library` of `archive` (its
     /// `<character>` list): a name already loaded keeps its first definition (FUN_00160da0).
-    pub(crate) fn add_character_types(&mut self, root: &Element, archive: &str) {
+    pub(crate) fn add_character_types(&mut self, root: &Element, archive: &str, library: &str) {
         for e in root.children_named(h("character")).flat_map(|l| l.children_named(H_ENTRY)) {
-            let Some(t) = parse_type(e, archive) else { continue };
+            let Some(t) = parse_type(e, archive, library) else { continue };
             if !self.character_types.contains_key(&t.key) {
                 self.character_type_order.push(t.key);
                 self.character_types.insert(t.key, t);
@@ -641,7 +651,8 @@ impl Game {
 
     /// The character type a test hook names (`s`, any case): its key as h_xxxxxxxx, its
     /// `<base name>` (brutus, mp_brutus), its display name (the first loaded of that name), or
-    /// `name@archive` (that archive's). None if no loaded type matches.
+    /// `name@archive` (that archive's or that objecttypes library's: `@m09_a`, `@sdm_shrike`).
+    /// None if no loaded type matches.
     pub fn find_character_type(&self, s: &str) -> Option<u32> {
         let s = s.trim();
         if let Some(k) = s.strip_prefix("h_").and_then(|x| u32::from_str_radix(x, 16).ok()) {
@@ -656,7 +667,8 @@ impl Game {
         };
         self.character_type_order.iter().copied().find(|k| {
             let t = &self.character_types[k];
-            self.strings.get(&t.label).is_some_and(|n| n.eq_ignore_ascii_case(label)) && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a))
+            self.strings.get(&t.label).is_some_and(|n| n.eq_ignore_ascii_case(label))
+                && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a) || t.library.eq_ignore_ascii_case(a))
         })
     }
 
@@ -732,7 +744,7 @@ impl Game {
             let hashes = |v: &[u32]| v.iter().map(|x| format!("h_{x:08x}")).collect::<Vec<_>>().join(" ");
             let weapons: Vec<String> = t.weapons.iter().map(|w| self.weapons.get(w).map_or(format!("h_{w:08x}"), |d| d.label.clone())).collect();
             let chatter = t.chatter.trim_end_matches("_chatter");
-            out.push(format!("type h_{k:08x} [{}] \"{}\" mesh h_{:08x}: {model}", t.archive, self.type_label(k), t.mesh));
+            out.push(format!("type h_{k:08x} [{}] \"{}\" mesh h_{:08x}: {model}", t.place(), self.type_label(k), t.mesh));
             out.push(format!("  motion set {} -> anim set h_{set:08x} ({clips} clips){}, face h_{:08x}{}, flesh {:?}, default root-height {:.3}",
                 t.motion_archetype, if ms.is_none() { " NOT LOADED" } else { "" }, t.face_set,
                 if t.face_set != 0 && !self.anim_sets.contains_key(&t.face_set) { " (not loaded)" } else { "" },

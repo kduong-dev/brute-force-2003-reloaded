@@ -161,7 +161,10 @@ demo yet.
   `BF_DUMP_TYPES_FAST=1` leaves the models unloaded.
 * `BF_TEST_NPC=<s>,<character>,...` and the N menu take any loaded type (testtools.md): a squad
   name or 0-3, a display name (`shrike soldier`: the first loaded), `name@archive`
-  (`shrike soldier@m09_a`), a `<base name>` (`mp_brutus`) or `h_xxxxxxxx`.
+  (`shrike soldier@m09_a`) or `name@library` (mp_common's libraries: `shrike
+  soldier@sdm_shrike`), a `<base name>` (`mp_brutus`) or `h_xxxxxxxx`. The menu lists them by
+  name, where they're defined (`CharacterType::place`: the archive, `mp_common/dm` for
+  mp_common's) and HP, with the key added to any two that still read the same.
 
 ## Verified
 

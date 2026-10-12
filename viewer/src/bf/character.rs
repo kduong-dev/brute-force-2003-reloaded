@@ -910,7 +910,7 @@ impl Game {
         }
         for n in ar.find("objecttypes", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
-            self.add_character_types(&root, archive);
+            self.add_character_types(&root, archive, n.trim_start_matches("objecttypes-").trim_end_matches(".xmb"));
             for w in weapon::parse_weapons(&root, &self.strings) {
                 self.weapons.entry(w.name).or_insert(w);
             }
