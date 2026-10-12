@@ -221,7 +221,7 @@ struct CurrentMap(String);
 pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     let LoadedMap { game, level, deathmatch, map } = map;
     // the difficulty every hit on a character is stepped by (play_damage.rs)
-    let difficulty = damage::Difficulty::for_map(&game, &map);
+    let difficulty = damage::Difficulty::for_session(&game);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("difficulty on {map}: {} (n {}): enemies take x{:.2}, the squad x{:.2}", difficulty.name, difficulty.n,
                  difficulty.step(testtools::ENEMY_TEAM), difficulty.step(0));

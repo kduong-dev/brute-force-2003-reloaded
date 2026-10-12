@@ -34,13 +34,13 @@
 //! come out as measured. Not stepped: the test hooks' kills (BF_TEST_DIE, the test map's suicide and
 //! instant kill) and a harmful liquid's (play.rs: the game's liquid damage isn't traced).
 //!
-//! `BF_DIFFICULTY=<standard|hard|brutal|n>` sets the difficulty (`Difficulty::for_map`).
+//! `BF_DIFFICULTY=<standard|hard|brutal|n>` sets the difficulty, STANDARD on every map without
+//! it (`Difficulty::for_session`).
 //! `BF_COMBAT_LOG=1` prints each hit with its factors (`Hit::report`), before play.rs's `hurt`
 //! line with the hit points left. `BF_HIT_PARTS=1` draws every standing character's hit parts
 //! (`draw_hit_parts`).
 
 use super::*;
-use bf_viewer::bf::character::{LEVEL_DEATHMATCH, LEVEL_SQUAD_DEATHMATCH};
 use bf_viewer::bf::hash::h;
 
 /// 0x125600's step per level of difficulty (0x3a4ff0 = 0.1): 1 - 0.1n or 1 + 0.1n (the 1 is
@@ -93,32 +93,31 @@ const PART_COLOURS: [(f32, Color); 4] = [(2.0, Color::srgb(1.0, 0.2, 0.2)), (0.9
 const HIT_BONE_NAMES: [&str; 11] = ["Bip01", "Bip01 Spine2", "Bip01 Head", "Bip01 L Thigh", "Bip01 R Thigh", "Bip01 L Calf",
                                     "Bip01 R Calf", "Bip01 L UpperArm", "Bip01 R UpperArm", "Bip01 L Forearm", "Bip01 R Forearm"];
 
-/// The difficulty of the map being played, n (0x7c720, the game session's vtable +0x234: the
-/// int game flag campaign/difficulty-setting, path at 0x401f60; 0x125600 reads it at 0x12566d).
+/// The difficulty the demo plays at, n (0x7c720, the game session's vtable +0x234: the int game
+/// flag campaign/difficulty-setting, path at 0x401f60; 0x125600 reads it at 0x12566d).
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct Difficulty {
     pub n: i64,
-    /// for the log: the menu's name, "none" on a multiplayer map, or "set" for a number
+    /// for the log: the menu's name, "set" for a number, or "none" if the data has no values
     pub name: &'static str,
 }
 
 impl Difficulty {
-    /// The difficulty a map is played at:
-    ///  - BF_DIFFICULTY=<standard|hard|brutal> (the menu's names, any case) or a number n, on any
-    ///    map (a test hook; on a multiplayer map too);
-    ///  - else on a multiplayer map (the game's level list, campaign-bf.xmb Type: the deathmatch
-    ///    arenas and the squad deathmatch maps) none, n = 0. **A fit, not read from the code**:
-    ///    #85's take29 on sdm_e34 had Tex take 39.4 of a barrel's 40 at 1 m (the campaign's took
-    ///    ~24 at 1-2.7 m, takes 01-04), and #146's takes 01-03 on sdm_e13 had Brutus lose
-    ///    exactly 30.00 per lava entry, the lava's rate: x1 both. How a match gets there isn't
-    ///    traced. The getter (0x7c720) reads the flag from the current slot's tree (the
-    ///    session's vtable +0x210, 0x78d60: [session + 0x5cc + 4 x [session + 0x5c8]]) through
-    ///    FUN_00078320, which gives 0 only without a tree or without the flag, and the default
-    ///    game flags hold it at -4 (default-gameflags.xml's `<campaign>`, where the decoder names
-    ///    its hash h_1a98de0a `shadoon-look`), so a session built from them would read STANDARD.
-    ///    A live read at 0x125673 in a match would settle it;
-    ///  - else (the missions, the test map) STANDARD, the takes'.
-    pub fn for_map(game: &Game, map: &str) -> Self {
+    /// The difficulty, the same on every map:
+    ///  - BF_DIFFICULTY=<standard|hard|brutal> (the menu's names, any case) or a number n;
+    ///  - else STANDARD, the takes', on every map: the multiplayer ones (the squad deathmatch
+    ///    maps, the arenas) too, the product owner's choice.
+    ///
+    /// That goes against the multiplayer takes, kept here for a later live read: #85's take29 on
+    /// sdm_e34 had Tex take 39.4 of a barrel's 40 at 1 m (the campaign's took ~24 at 1-2.7 m,
+    /// takes 01-04), and #146's takes 01-03 on sdm_e13 had Brutus lose exactly 30.00 per lava
+    /// entry, the lava's rate: both fit n = 0 in a match. The code read doesn't explain it: the
+    /// getter (0x7c720) reads the flag from the current slot's tree (the session's vtable +0x210,
+    /// 0x78d60: [session + 0x5cc + 4 x [session + 0x5c8]]) through FUN_00078320, which gives 0
+    /// only without a tree or without the flag, and the default game flags hold it at -4
+    /// (default-gameflags.xml's `<campaign>`, where the decoder names its hash h_1a98de0a
+    /// `shadoon-look`). A live read at 0x125673 in a match would settle it.
+    pub fn for_session(game: &Game) -> Self {
         let values = game.difficulty_settings;
         let menu = |k: usize| values.map(|v| Difficulty { n: v[k], name: MENU[k] });
         if let Ok(want) = std::env::var("BF_DIFFICULTY") {
@@ -130,12 +129,6 @@ impl Difficulty {
                 return Difficulty { n, name: "set" };
             }
             warn!("BF_DIFFICULTY: {want} isn't standard, hard, brutal or a number");
-        }
-        let map = map.to_lowercase();
-        let multiplayer = game.campaign.iter().any(|l| (l.kind == LEVEL_DEATHMATCH || l.kind == LEVEL_SQUAD_DEATHMATCH)
-                                                     && (l.file == map || l.zones.contains(&map)));
-        if multiplayer {
-            return Difficulty { n: 0, name: "none" };
         }
         menu(FOOTAGE).unwrap_or_else(|| {
             warn!("no <difficulty-settings> in game-options-en: no difficulty step");

@@ -156,14 +156,14 @@ decal, and a throw called off.
   FUN_0022c4d0) but not implemented (#112): half the roll x0.7 on the thrower's own squad x0.6,
   the squad's difficulty step on STANDARD, is 0.21 of a roll, the recording's ~11%.
   **The difficulty step** (#127, play.md **Damage**): every blast's hit on a character takes the
-  victim's step (STANDARD: enemies x1.4, the squad x0.6; none on the multiplayer maps, the
-  demo's fit there) and its damage-type factor. The recordings were the campaign's on
-  STANDARD, so the amounts fitted to the squad there (this thrower's 0.2, the Sonic's and the
-  Energy's thrower shares, the Gas's rate) already hold its x0.6: they're divided by it before
-  the step, which gives them back as measured on STANDARD (12.6 of Tex's 115 for this Frag
-  test) and scales them with the difficulty; on sdm_e34, where the demo has no step, the thrower
-  takes x1 / 0.6 of the recording's share (21.0 for that roll; the game's rule there: half
-  x0.7 = 0.35 of a roll, 22.1). Measured on the thrower in its own blast, they hold
+  victim's step (STANDARD, the default on every map: enemies x1.4, the squad x0.6) and its
+  damage-type factor. The recordings were the campaign's on STANDARD, so the amounts fitted to
+  the squad there (this thrower's 0.2, the Sonic's and the Energy's thrower shares, the Gas's
+  rate) already hold its x0.6: they're divided by it before the step, which gives them back as
+  measured on STANDARD, sdm_e34 included (12.6 of Tex's 115 for this Frag test), and scales
+  them with the difficulty (with `BF_DIFFICULTY=hard`, no step, the thrower takes x1 / 0.6 of
+  the recording's share: 21.0 for that roll, where the game's half roll x0.7 = 0.35 of a roll
+  gives 22.1). Measured on the thrower in its own blast, they hold
   FUN_0004b9c0's x0.7 too, so none is added. The others in reach take the rule above x their
   step, with no x0.7 (the demo's rule; the game's, with it, is #112's). No damage from a
   blast without any (the Light); one whose damage is dealt over time (h_04ea9251 > 0: the Gas,
@@ -207,7 +207,7 @@ decal, and a throw called off.
   nearest value to the recording's; a roll of min..max would average 13.2 HP/s - a guess),
   times their damage-type factor (Flint 0.9 HP/s) and their difficulty step with STANDARD's
   squad x0.6 divided out (the recording's, **Damage** above: 17.7 on the squad on STANDARD,
-  29.5 with no step; 41.3 on an enemy on STANDARD, the demo's extrapolation: measured on the
+  29.5 with no step (`BF_DIFFICULTY=hard`); 41.3 on an enemy on STANDARD, the demo's extrapolation: measured on the
   thrower in its own cloud, the rate holds the x0.7 too, and with that taken out it would be
   ~59; #112's), from 0.083 s after the blast for 5.5 s
   (5.58 s after it: 0.2 s shorter than recorded). The thrower is poisoned like anyone (it was

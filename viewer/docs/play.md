@@ -641,7 +641,7 @@ cover) came after it and are compared under **Verified**.
 * **The difficulty step** (#127, see **Damage** below): every hit in the takes' HP logs is x1.4
   the code's rule on enemies and x0.6 on the squad, the character damage handler's (0x125600)
   1 - 0.1n and 1 + 0.1n on STANDARD (n = -4). The direct hits and the blasts here take it: on
-  the missions and the test map Tex's own blast is 0.5 x 0.7 x 0.6 = 0.21 of a roll (takes
+  STANDARD, the demo's default on every map, Tex's own blast is 0.5 x 0.7 x 0.6 = 0.21 of a roll (takes
   10-16: 18.2-20.1), take03's direct x1.4 of a roll (118-134). The numbers under **Verified**
   below are #73's, from before the step (x1 there: 32.8 for Tex's own blast, 93.6 and 42.7 for
   take03's geometry) and before the hit-part surfaces (the bones the homing takes' children
@@ -870,31 +870,31 @@ on a character goes:
 * The values are read from `common/game-options-en.xmb` (`Game::difficulty_settings`). The
   sign goes by the victim's team: its row of the team table (0x3ffd80) has 1s in columns 3-6
   for an enemy (teams 1, 7, 8); the squad's 0 and the others take the plus.
-* **The default**: the missions and the test map play STANDARD, the takes' (both sides of their
-  HP logs fit n = -4: answer.md). The multiplayer maps (the game's level list: the squad
-  deathmatch maps sdm_*, the arenas mp*) play none, n = 0. **That is a fit, not a code
-  reading** (kept until the user decides): #85's take29 on sdm_e34 had Tex take 39.4 of a
-  barrel's 40 (the campaign's took ~24, takes 01-04), and #146's takes 01-03 on sdm_e13 had
-  Brutus lose exactly 30.00 per lava entry, the lava's rate: x1 both. How a match gets there
-  isn't traced. The getter (0x7c720) reads the flag from the current slot's tree (the session's
-  vtable +0x210, 0x78d60: [session + 0x5cc + 4 x [session + 0x5c8]]) through FUN_00078320, which
-  gives 0 only without a tree or without the flag; and the default game flags hold it at -4
+* **The default is STANDARD on every map**, the takes' (both sides of their HP logs fit
+  n = -4: answer.md). On the multiplayer maps (the squad deathmatch maps sdm_*, the arenas mp*)
+  too: **the product owner's choice**, against the takes there. #85's take29 on sdm_e34 had Tex
+  take 39.4 of a barrel's 40 (the campaign's took ~24, takes 01-04), and #146's takes 01-03 on
+  sdm_e13 had Brutus lose exactly 30.00 per lava entry, the lava's rate: both fit n = 0 in a
+  match. The code read doesn't explain that, and it's kept here for a later live read: the
+  getter (0x7c720) reads the flag from the current slot's tree (the session's vtable +0x210,
+  0x78d60: [session + 0x5cc + 4 x [session + 0x5c8]]) through FUN_00078320, which gives 0 only
+  without a tree or without the flag; the default game flags hold it at -4
   (`common/default-gameflags.xml`'s `<campaign>`, where the decoder names its hash h_1a98de0a
-  `shadoon-look`, a name collision with `difficulty-setting`), so a session built from them
-  reads STANDARD. RESUME LAST and QUICK CAMPAIGN set STANDARD as well (FUN_000f7140,
-  FUN_000f7230). A live read at 0x125673 in a match would settle it.
-* **What changes on sdm_e34**, where the demo has no step:
-  * the grenades' thrower shares are x1 / 0.6 of before: the Frag's thrower takes 21.0 where it
-    took 12.6, as the game's half roll x0.7 gives (0.35 of a roll, 22.1 for the same roll); the
-    Sonic's and the Energy's thrower shares the same;
-  * the Gas poisons at 29.5 HP/s (17.7 before);
-  * every gun's hit on a squadmate takes the struck part's `Damage` and x0.7 (sdm_bf's
-    damage-multiplier is 1): a head shot x3.5 (Brutus's x2.1), a forearm or calf x0.35;
-  * the AI's shots on their own side take the x0.7 too;
-  * the missiles (#73 had the part and the x0.7 already) and the scenery's areas are unchanged.
-* `BF_DIFFICULTY=<standard|hard|brutal>` (any case) or a number n sets it, on any map (on a
-  multiplayer map too: a test hook, to put the takes' STANDARD on the sdm_bf squad's
-  damage-multiplier 1, the Shrikes').
+  `shadoon-look`, a name collision with `difficulty-setting`); RESUME LAST and QUICK CAMPAIGN set
+  STANDARD as well (FUN_000f7140, FUN_000f7230). A live read at 0x125673 in a match would settle
+  it.
+* **On sdm_e34 (the main game)**, STANDARD means:
+  * the squad takes x0.6 and enemies x1.4 of every hit: shots, missiles and blasts, grenades,
+    falls, the scenery's damage areas;
+  * #85 take29's barrel deals 24.0 to Tex where the take shows 39.4: a known mismatch (the
+    choice above);
+  * the grenades' thrower shares are the recorded ones (the Frag's thrower 12.6 for a roll of
+    63), the Gas 17.7 HP/s on the squad;
+  * and, as on every map, every gun's hit on a squadmate takes the struck part's `Damage` and
+    x0.7 (sdm_bf's damage-multiplier is 1): a head shot x3.5 x0.6 (Brutus's x2.1 x0.6), a
+    forearm or calf x0.35 x0.6; the AI's shots on their own side take the x0.7 too.
+* `BF_DIFFICULTY=<standard|hard|brutal>` (any case) or a number n sets it, on any map
+  (`BF_DIFFICULTY=hard`, n = 0, gives the multiplayer takes' x1).
 
 **The hit parts** (`struck_bone`). On the squad's models exactly the eleven bones of the
 `<collision>` list have a collision surface in their part archetype (`<h_f3f067ad
@@ -915,8 +915,9 @@ blast rule is #112's) and take the step and the damage-type factor through the s
 Their amounts fitted to recordings on the campaign squad on STANDARD (the thrower's share of a
 Frag, Sentry or Roller blast, of the Sonic's and of the Energy's bolt, and the Gas's rate) hold
 that x0.6 already: they're divided by it (`footage_squad_step`), so they come out as measured
-on STANDARD and scale with the difficulty like any hit (on sdm_e34, with no step, x1 / 0.6 of
-what they were). Measured on the thrower in its own blast, they hold FUN_0004b9c0's x0.7 too,
+on STANDARD and scale with the difficulty like any hit (with `BF_DIFFICULTY=hard`, no step,
+x1 / 0.6 of them: the Frag's thrower 21.0 for a roll of 63, where the game's half roll x0.7
+gives 22.1). Measured on the thrower in its own blast, they hold FUN_0004b9c0's x0.7 too,
 so no x0.7 is added (`Hit::source`); the others' rule (Damage max falling to nothing at the
 radius) is the demo's, without it. The Gas's 41.3 HP/s on an enemy on STANDARD is the demo's
 extrapolation (with the x0.7 taken out too it would be ~59). The scenery's damage areas take
@@ -936,13 +937,13 @@ head red, upper arms yellow, forearms and calves cyan, the x1 parts white).
 
 Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are answer.md's):
 * **#73 take03** (Therm Sweeper, a Shrike Heavy 7 m out, damage-multiplier 1): `BF_MAP=sdm_e34
-  BF_DIFFICULTY=standard -- --test BF_TEST_NPC="0.5,tex,enemy,dummy,-0.26,41.69;0.5,hawk,enemy,dummy,1.3,41.69"
-  BF_TEST_WEAPON="Therm Sweeper" BF_TEST_TRIGGER=3.0-3.15 BF_TEST_INSTANT_KILL=0` (the sdm_bf
-  squad's 1 standing in for the Shrike's): the direct hit at Bip01, 93.62 x 1.4 = 131.1 (the
+  -- --test BF_TEST_NPC="0.5,tex,enemy,dummy,-0.26,41.69;0.5,hawk,enemy,dummy,1.3,41.69"
+  BF_TEST_WEAPON="Therm Sweeper" BF_TEST_TRIGGER=3.0-3.15 BF_TEST_INSTANT_KILL=0` (STANDARD, the
+  default; the sdm_bf squad's 1 standing in for the Shrike's): the direct hit at Bip01, 93.62 x 1.4 = 131.1 (the
   takes 118.2-134.1, allowed 117.6-134.4); the other enemy's share 42.70 x 1.4 = 59.8 (59.07-66.9);
   the squad near it 17.9 (0.21 of the roll). A Brutus dummy in Tex's place takes the missile on
   his forearm (x0.5: 65.5). BRUTAL: 56.2 direct and 25.6 shares (answer.md: 50.4-57.6,
-  25.2-28.8), the squad 41.9 (41.2-47.0). sdm_e34's own default (none): 93.6 and 42.7, as before.
+  25.2-28.8), the squad 41.9 (41.2-47.0). `BF_DIFFICULTY=hard` (n = 0): 93.6 and 42.7.
 * **#73 takes 10-16** (Tex's own blast): at a test map pillar 2 m ahead (`-- --test
   BF_TEST_GOTO=0,-15.7,0,-16.2 BF_TEST_NPC=0.5,flint,friend,dummy,-1,-15.7 BF_TEST_WEAPON="Therm Sweeper"
   BF_TEST_TRIGGER=3.0-3.15 BF_CAMERA_PITCH=-0.05 BF_TEST_INSTANT_KILL=0`): Tex and Flint 19.66 each, 0.5 x 93.62 x 0.7
@@ -954,12 +955,12 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
   BF_TEST_WEAPON=Saryl-45 BF_TEST_INSTANT_KILL=0` (the enemy, a Brutus too, carries the hook's gun): 14 hits of
   4.77-5.69, rolls 12.83-15.30 x 0.62 x Bip01 1 x 0.6 (the take 4.93-5.81, allowed 4.74-5.86).
   `BF_DIFFICULTY=hard`: 7.95-9.15 (answer.md's HARD 7.9-9.8). Vengar's x0.85 is #122's.
-* **#35 takes 04 / 05** (the hovering Shrike's legs): `BF_MAP=sdm_e34 BF_DIFFICULTY=standard -- --test
+* **#35 takes 04 / 05** (the hovering Shrike's legs): `BF_MAP=sdm_e34 -- --test
   BF_TEST_GOTO=4.77,36.82,4.41,37.17 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_FIRE=1
   BF_CAMERA_PITCH=-0.28 BF_TEST_INSTANT_KILL=0`: the LZR-50 (`BF_TEST_WEAPON="Confed LZR-50"`) 19 hits, all on a calf
   (x0.5), 2.65-5.22 (the takes 2.6-4.9, allowed 2.45-5.25); the Jax-iC 15.4 and 17.5 on the
   calves, which the Shrike's SONIC x2 makes the takes' 30.1-35.2 (the demo has no Shrike).
-* **#35 take28** (Flint's L-Shot-75, x1 parts): `BF_MAP=sdm_e34 BF_DIFFICULTY=standard -- --test
+* **#35 take28** (Flint's L-Shot-75, x1 parts): `BF_MAP=sdm_e34 -- --test
   BF_CHARACTER=1 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_WEAPON=L-Shot-75
   BF_TEST_TRIGGER=3.0-3.1,4.5-4.6,6.0-6.1 BF_TEST_INSTANT_KILL=0`, from the sdm_e34 start (no
   `BF_TEST_GOTO`): 44.7, 45.1, 40.7 on the right thigh (the take 40-44, allowed 38.2-46.6).
@@ -971,7 +972,10 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
   5.40 (forearm). The take's m03_a mutant (BALLISTIC x0.8, multiplier 1) isn't in the demo.
 * **The scenery's areas**: campaign e34 at #85 take01's spot (`BF_MAP=e34
   BF_TEST_GOTO=-31.52,16.64,-31.52,16.64 BF_TEST_HIT=2.0`): Tex 115 -> 91.0 over 2.13-2.60 s
-  (take01: 91.22 by 2.59 s); take29's spot on sdm_e34: 40.0 (39.4), as before.
+  (take01: 91.22 by 2.59 s). take29's spot on sdm_e34 (`BF_MAP=sdm_e34
+  BF_TEST_GOTO=-53.96,24.6,-53.96,24.6 BF_TEST_HIT=2.0`): 24.0 where the take shows 39.4, the
+  known mismatch of STANDARD on the multiplayer maps (40.0 with `BF_DIFFICULTY=hard`). The
+  start-of-map line there reads `difficulty on sdm_e34: STANDARD (n -4)`.
 * **The grenades** on the test map (STANDARD): the Frag's thrower takes 12.6 of 115 (as before:
   the thrower's share 21.0 x 0.6); the Sonic's (W2 of grenades.md) 8.0 at 4.1 m (7.8 at 4.2 m
   before); the squadmates it reaches x0.6 of before.
