@@ -36,13 +36,15 @@
 //! come out as measured. Not stepped: the test hooks' kills (BF_TEST_DIE, the test map's suicide and
 //! instant kill) and a harmful liquid's (play.rs: the game's liquid damage isn't traced).
 //!
-//! `BF_DIFFICULTY=<standard|hard|brutal|n>` sets the difficulty, STANDARD on every map without
-//! it (`Difficulty::for_session`).
+//! `BF_DIFFICULTY=<standard|hard|brutal|n>` sets the difficulty; without it the missions and the
+//! test map play STANDARD and the multiplayer maps none, n = 0, as read live in a match
+//! (`Difficulty::for_session`).
 //! `BF_COMBAT_LOG=1` prints each hit with its factors (`Hit::report`), before play.rs's `hurt`
 //! line with the hit points left. `BF_HIT_PARTS=1` draws every standing character's hit parts
 //! (`draw_hit_parts`).
 
 use super::*;
+use bf_viewer::bf::character::{LEVEL_DEATHMATCH, LEVEL_SQUAD_DEATHMATCH};
 use bf_viewer::bf::character_type::HitBone;
 use bf_viewer::bf::hash::h;
 
@@ -101,26 +103,33 @@ const HIT_BONE_NAMES: [&str; 11] = ["Bip01", "Bip01 Spine2", "Bip01 Head", "Bip0
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct Difficulty {
     pub n: i64,
-    /// for the log: the menu's name, "set" for a number, or "none" if the data has no values
+    /// for the log: the menu's name, "set" for a number, or "none" on a multiplayer map (or if
+    /// the data has no values)
     pub name: &'static str,
 }
 
 impl Difficulty {
-    /// The difficulty, the same on every map:
-    ///  - BF_DIFFICULTY=<standard|hard|brutal> (the menu's names, any case) or a number n;
-    ///  - else STANDARD, the takes', on every map: the multiplayer ones (the squad deathmatch
-    ///    maps, the arenas) too, the product owner's choice.
-    ///
-    /// That goes against the multiplayer takes, kept here for a later live read: #85's take29 on
-    /// sdm_e34 had Tex take 39.4 of a barrel's 40 at 1 m (the campaign's took ~24 at 1-2.7 m,
-    /// takes 01-04), and #146's takes 01-03 on sdm_e13 had Brutus lose exactly 30.00 per lava
-    /// entry, the lava's rate: both fit n = 0 in a match. The code read doesn't explain it: the
-    /// getter (0x7c720) reads the flag from the current slot's tree (the session's vtable +0x210,
-    /// 0x78d60: [session + 0x5cc + 4 x [session + 0x5c8]]) through FUN_00078320, which gives 0
-    /// only without a tree or without the flag, and the default game flags hold it at -4
-    /// (default-gameflags.xml's `<campaign>`, where the decoder names its hash h_1a98de0a
-    /// `shadoon-look`). A live read at 0x125673 in a match would settle it.
-    pub fn for_session(game: &Game) -> Self {
+    /// The difficulty a map is played at:
+    ///  - BF_DIFFICULTY=<standard|hard|brutal> (the menu's names, any case) or a number n, on any
+    ///    map (a test hook; on a multiplayer map too);
+    ///  - else on a multiplayer map (the game's level list, campaign-bf.xmb Type: the deathmatch
+    ///    arenas mp* and the squad deathmatch maps sdm_*) none, n = 0. **Read live**: in #129's
+    ///    deathmatch takes on mp1 (todo/129-shrikes/notes.md, B2: takes 35, 36, 38, 39) the getter
+    ///    gave n = 0 at 0x12566d, and each hit was the roll x the bone's Damage with no x1.4
+    ///    (Soldier 30.1-31.4, Heavy 29.6-31.9). #85's take29 on sdm_e34 (Tex took 39.4 of a
+    ///    barrel's 40 at 1 m, where the campaign's took ~24) and #146's takes 01-03 on sdm_e13
+    ///    (Brutus lost exactly 30.00 per lava entry, the lava's rate) agree. How a match gets
+    ///    there isn't traced: 0x125600 steps on every map with no mode check; the getter (0x7c720)
+    ///    reads the flag from the current slot's tree (the session's vtable +0x210, 0x78d60:
+    ///    [session + 0x5cc + 4 x [session + 0x5c8]]) through FUN_00078320, which gives 0 only
+    ///    without a tree or without the flag; the default game flags hold -4
+    ///    (default-gameflags.xml's `<campaign>`, where the decoder names its hash h_1a98de0a
+    ///    `shadoon-look`); and none of the setter's callers (SELECT DIFFICULTY, RESUME LAST, QUICK
+    ///    CAMPAIGN, the system-link join at 0x1eef81) is on a split-screen match's start. So a
+    ///    match's slot evidently lacks the flag; which slot it uses isn't traced. System-link play,
+    ///    whose join calls the setter, is untested;
+    ///  - else (the missions, the test map) STANDARD, the takes'.
+    pub fn for_session(game: &Game, map: &str) -> Self {
         let values = game.difficulty_settings;
         let menu = |k: usize| values.map(|v| Difficulty { n: v[k], name: MENU[k] });
         if let Ok(want) = std::env::var("BF_DIFFICULTY") {
@@ -132,6 +141,12 @@ impl Difficulty {
                 return Difficulty { n, name: "set" };
             }
             warn!("BF_DIFFICULTY: {want} isn't standard, hard, brutal or a number");
+        }
+        let map = map.to_lowercase();
+        let multiplayer = game.campaign.iter().any(|l| (l.kind == LEVEL_DEATHMATCH || l.kind == LEVEL_SQUAD_DEATHMATCH)
+                                                     && (l.file == map || l.zones.contains(&map)));
+        if multiplayer {
+            return Difficulty { n: 0, name: "none" };
         }
         menu(FOOTAGE).unwrap_or_else(|| {
             warn!("no <difficulty-settings> in game-options-en: no difficulty step");
