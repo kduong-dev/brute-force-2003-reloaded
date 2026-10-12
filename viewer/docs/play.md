@@ -827,7 +827,9 @@ backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing
 fixed 15 fps. `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
 and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `BF_DUMP_SOUNDS=<dir>` writes the character's jump and surface sounds as WAV files
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
-hardpoints, fire sounds) and exits; `BF_SHOT_LOG=1` prints each shot's barrel and shot
+hardpoints, fire sounds) and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
+character types, their motion sets' clips and the placements, and exits
+([character-types.md](character-types.md)); `BF_SHOT_LOG=1` prints each shot's barrel and shot
 directions. Camera hooks: `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` / `BF_CAMERA_DISTANCE` set the
 start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
 something), `BF_VIEW_YAW` turns only the rendered view (aim unchanged), `BF_START_WEAPON=1` starts with
@@ -858,6 +860,13 @@ on a character goes:
   reaches it: the guns' hits and blasts, the scenery's damage areas (FUN_0021ade0), falls
   (FUN_0012b740, DTYPE_NORMAL), FUN_00223160 (Brutus's charge). Only the trainer's `!hit` skips
   it (it calls FUN_002232d0 itself), so older xemu logs of `!hit` carry no step.
+
+The victim's values are its character type's (`Player::kind`, #128,
+[character-types.md](character-types.md)): its hit parts (its motion set's `<collision>` list)
+and its damage-type factors by type; its damage-multiplier by its squad slot's own entry first
+(the sdm_bf squad's 1 on a squad deathmatch map), else its type's. The squad's are what they
+were; a test map NPC of an enemy type takes its own (a Shrike's SONIC x2 and GAS x0.2, its head
+x5).
 
 **The difficulty** (`Difficulty`, set as each map begins):
 
@@ -959,7 +968,9 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
   BF_TEST_GOTO=4.77,36.82,4.41,37.17 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_FIRE=1
   BF_CAMERA_PITCH=-0.28 BF_TEST_INSTANT_KILL=0`: the LZR-50 (`BF_TEST_WEAPON="Confed LZR-50"`) 19 hits, all on a calf
   (x0.5), 2.65-5.22 (the takes 2.6-4.9, allowed 2.45-5.25); the Jax-iC 15.4 and 17.5 on the
-  calves, which the Shrike's SONIC x2 makes the takes' 30.1-35.2 (the demo has no Shrike).
+  calves. With m09_a's Shrike Heavy in Tex's place (`BF_TEST_NPC=0.5,shrike
+  heavy@m09_a,enemy,dummy,-0.26,41.69`, #128) its SONIC x2 makes the Jax-iC's 30.7 and 34.8
+  (the takes 30.1-35.2); the LZR-50 2.48-5.22.
 * **#35 take28** (Flint's L-Shot-75, x1 parts): `BF_MAP=sdm_e34 -- --test
   BF_CHARACTER=1 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_WEAPON=L-Shot-75
   BF_TEST_TRIGGER=3.0-3.1,4.5-4.6,6.0-6.1 BF_TEST_INSTANT_KILL=0`, from the sdm_e34 start (no

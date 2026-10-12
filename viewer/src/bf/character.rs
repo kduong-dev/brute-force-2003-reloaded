@@ -18,6 +18,7 @@ use super::archive::Archive;
 use super::audio::{self, SoundBank, Surface};
 use super::weapon::{self, Hardpoint, WeaponDef};
 use super::bxml::{self, Element, SchemaSet, Value};
+use super::character_type::{CharacterType, MotionSet, Placement};
 use super::hash::h;
 use super::texture::{self, TexInfo};
 
@@ -204,13 +205,10 @@ pub struct Game {
     /// character name -> its special skill and stamina (see `SkillData`): the campaign squad's,
     /// or squad deathmatch's once `load_squad_library` has put them in their place
     pub character_skills: HashMap<String, SkillData>,
-    /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`)
+    /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`; from the
+    /// parsed `motion_sets`). (A motion set's hit bones are its `MotionSet::hit_bones`, a type's
+    /// `Game::hit_bones`.)
     pub skill_overlays: HashMap<String, SkillOverlays>,
-    /// character name -> its motion set's hit bones (`<collision><..><bone name Damage>`): the
-    /// bone and the factor a direct hit on it takes (FUN_00114010 keeps those that aren't 1;
-    /// FUN_00125940 reads them): the head x5 (x3 for Brutus and the hounds), upper arms x0.8,
-    /// forearms and calves x0.5, the hips, spine and thighs x1
-    pub character_hit_bones: HashMap<String, Vec<(u32, f32)>>,
     /// character name -> its type's `damage-multiplier` (h_e7e9fcd3, the type's +0x220): a
     /// direct hit's factor with the struck bone's (FUN_00125940). The campaign squad 0.62, the
     /// Shrikes 1; on a squad deathmatch map the sdm_bf squad's 1 (`load_squad_library`)
@@ -254,6 +252,17 @@ pub struct Game {
     /// object types (objecttypes `<h_e275fb80><base name object-type ..>`): type name -> its
     /// object-type, combat target and what it breaks into (see `ObjectType`)
     pub object_types: HashMap<u32, ObjectType>,
+    /// character types (#128): every objecttypes `<character>` entry by its `<base name>` hash,
+    /// the first loaded archive's (see `character_type::CharacterType`)
+    pub character_types: HashMap<u32, CharacterType>,
+    /// `character_types`' keys in the order they were loaded (common's squad first)
+    pub character_type_order: Vec<u32>,
+    /// motion sets (characters/ms_<x>.xmb of every loaded archive) by the hash of the file's
+    /// stem, a type's motion-archetype (see `character_type::MotionSet`)
+    pub motion_sets: HashMap<u32, MotionSet>,
+    /// the loaded levels' placed characters (`<character-object>`, see
+    /// `character_type::Placement`)
+    pub placements: Vec<Placement>,
 }
 
 /// An object type's `<base object-type>`: 0 a compound of loose pieces (archetype-type 9, the
@@ -645,13 +654,16 @@ impl Game {
             effects: ale::Library::default(),
             effect_types: HashMap::new(),
             effect_type_defs: HashMap::new(),
-            character_hit_bones: HashMap::new(),
             character_damage_multiplier: HashMap::new(),
             difficulty_settings: None,
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
+            character_types: HashMap::new(),
+            character_type_order: vec![],
+            motion_sets: HashMap::new(),
+            placements: vec![],
         };
-        g.load_archive(&common)?;
+        g.load_archive(&common, "common")?;
         let mut others: Vec<PathBuf> = std::fs::read_dir(data_dir)
             .map_err(|e| e.to_string())?
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -683,11 +695,31 @@ impl Game {
         Ok(n)
     }
 
-    fn load_archive(&mut self, ar: &Archive) -> Result<(), String> {
-        // chatter: <h_f74e6a16> blocks of a line_tag and its sound_id alternatives
+    /// Read an archive's data (`archive`: its name, e.g. "common" or "e34", kept with the
+    /// character types it defines). Entries already loaded win.
+    fn load_archive(&mut self, ar: &Archive, archive: &str) -> Result<(), String> {
+        // the motion sets (character_type.rs), and each new one's skill toggle overlays by its
+        // name without "ms_": its `<overlay motion-type=44|43 prefix-type script>` (the first
+        // archive with the set wins)
+        for stem in self.add_motion_sets(ar) {
+            let Some(ms) = self.motion_sets.get(&h(&stem)) else { continue };
+            let mut overlays: SkillOverlays = [None, None];
+            for o in &ms.overlays {
+                let slot = match o.motion_type { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
+                if !o.script.is_empty() {
+                    overlays[slot] = Some((o.script.clone(), o.prefix == 1));
+                }
+            }
+            self.skill_overlays.entry(stem.trim_start_matches("ms_").to_string()).or_insert(overlays);
+        }
+        // chatter: <h_f74e6a16> blocks of a line_tag and its sound_id alternatives (a file
+        // already loaded from another archive is kept: the levels' copies of the enemies' files)
         for n in ar.find("", "_chatter.xmb") {
-            let Some(root) = self.parse(ar, &n)? else { continue };
             let who = n.rsplit('/').next().unwrap_or(&n).trim_end_matches("_chatter.xmb").to_string();
+            if self.chatter.contains_key(&who) {
+                continue;
+            }
+            let Some(root) = self.parse(ar, &n)? else { continue };
             let mut lines: HashMap<u32, Vec<u32>> = HashMap::new();
             let mut responses: HashMap<u32, u32> = HashMap::new();
             let mut blocks: HashMap<u32, ChatterBlock> = HashMap::new();
@@ -720,33 +752,6 @@ impl Game {
             self.chatter.insert(who.clone(), lines);
             self.chatter_response.insert(who.clone(), responses);
             self.chatter_blocks.insert(who, blocks);
-        }
-        // the motion sets' skill toggle overlays: ms_<name>.xmb `<overlay motion-type=44|43
-        // prefix-type script>` (the first archive with the set wins)
-        for n in ar.find("ms_", ".xmb") {
-            let who = n.rsplit('/').next().unwrap_or(&n).trim_start_matches("ms_").trim_end_matches(".xmb").to_string();
-            if self.skill_overlays.contains_key(&who) {
-                continue;
-            }
-            // (a motion set that doesn't decode is skipped, not an error for the archive)
-            let Ok(Some(root)) = self.parse(ar, &n) else { continue };
-            // its `<collision>` bones (name, `Damage`): the hit parts and their factors
-            let bones: Vec<(u32, f32)> = root.walk().into_iter().filter(|e| e.name == h("collision"))
-                .flat_map(|c| c.walk()).filter(|b| b.name == h("bone"))
-                .filter_map(|b| Some((b.attr(h("name"))?.as_hash()?, b.attr(h("Damage")).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(1.0))))
-                .collect();
-            if !bones.is_empty() {
-                self.character_hit_bones.insert(who.clone(), bones);
-            }
-            let mut overlays: SkillOverlays = [None, None];
-            for o in root.walk().into_iter().filter(|e| e.name == h("overlay")) {
-                let slot = match int_of(o, h("motion-type")) { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
-                let script = o.attr(h("script")).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-                if let Some(script) = script {
-                    overlays[slot] = Some((script, int_of(o, h("prefix-type")) == 1));
-                }
-            }
-            self.skill_overlays.insert(who, overlays);
         }
         // the level list: <level><h_1b8535f0 h_07f2f670=NAME texture-name=PREVIEW ...>
         // <zone file-name=ARCHIVE/><dm-data description=TEXT/>
@@ -810,6 +815,7 @@ impl Game {
         }
         for n in ar.find("levels-", ".xmb") {
             if let Some(root) = self.parse(ar, &n)? {
+                self.add_placements(&root, archive);
                 self.levels.push(root);
             }
         }
@@ -905,6 +911,7 @@ impl Game {
         }
         for n in ar.find("objecttypes", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
+            self.add_character_types(&root, archive, n.trim_start_matches("objecttypes-").trim_end_matches(".xmb"));
             for w in weapon::parse_weapons(&root, &self.strings) {
                 self.weapons.entry(w.name).or_insert(w);
             }
@@ -1142,14 +1149,16 @@ impl Game {
         Ok(n)
     }
 
-    /// Load a level's sound bank and world materials (surface footstep / landing sounds).
     /// Load a level's objects (weapon models), materials, weapon definitions, sound bank and
-    /// world materials (surface footstep / landing sounds). Entries already loaded win.
+    /// world materials (surface footstep / landing sounds), its characters' motion sets and
+    /// chatter (characters/ms_*.xmb, *_chatter.xmb: #128) and its placed characters. Entries
+    /// already loaded win.
     pub fn load_level(&mut self, data_dir: &Path, level: &str) -> Result<(), String> {
         let ar = Archive::open(&data_dir.join(format!("{level}.tgz")), |n| {
-            ["objects-", "materials-", "objecttypes-", "sounds-", "world-materials", "levels-", "animations-"].iter().any(|p| n.starts_with(p))
+            ["objects-", "materials-", "objecttypes-", "sounds-", "world-materials", "levels-", "animations-", "ms_"].iter().any(|p| n.starts_with(p))
+                || n.ends_with("_chatter.xmb")
         })?;
-        self.load_archive(&ar)?;
+        self.load_archive(&ar, level)?;
         if let Some(root) = self.parse(&ar, "world-materials.xmb")? {
             self.surfaces = audio::surfaces(&root);
         }
@@ -1473,9 +1482,29 @@ fn rows(v: &[f32]) -> Mat3 {
 }
 
 impl Character {
+    /// A character by its motion set's stem (`Game::characters`: "brutus", the first definition
+    /// with that motion set): its mesh, the animation set of its name and the face set
+    /// `<name>face`. Right for the squad, whose motion sets name their own sets; the other types
+    /// load with `load_type`.
     pub fn load(game: &Game, name: &str, lod: usize) -> Result<Self, String> {
         let &(_, compound) = game.characters.iter().find(|(n, _)| n == name)
             .ok_or_else(|| format!("unknown character {name}"))?;
+        Self::load_model(game, compound, h(name), h(&format!("{name}face")), lod)
+    }
+
+    /// A character type's model (#128): its mesh (`<base mesh-name>`), the animation set its
+    /// motion set names (animation-set-name: the type's +0xcc, FUN_00131a10; ms_feral_colonist
+    /// plays brutus, ms_dm_lf lf, ...) and its `<face viseme-file>` set (none for Shrikes and
+    /// hounds). For the squad this is what `load` gives (BF_DUMP_TYPES checks it).
+    pub fn load_type(game: &Game, t: &CharacterType, lod: usize) -> Result<Self, String> {
+        let anims = game.motion_sets.get(&t.motion_set).map_or(0, |m| m.anim_set);
+        Self::load_model(game, t.mesh, anims, t.face_set, lod)
+    }
+
+    /// A character model: the compound archetype `compound` (its PARTs the skeleton, its LOD
+    /// meshes the skin), with the clips of animation set `anim_set` and the face clips of set
+    /// `face_set` (0: none).
+    fn load_model(game: &Game, compound: u32, anim_set: u32, face_set: u32, lod: usize) -> Result<Self, String> {
         let (arch, _) = game.archetype(compound).ok_or("compound archetype not found")?;
         let all = arch.walk();
 
@@ -1551,8 +1580,8 @@ impl Character {
                 name: d.name, duration: d.duration, targets: d.targets.clone(), event_channel: d.event_channel, root_height: d.root_height,
                 move_speed: d.move_speed }).collect()).unwrap_or_default()
         };
-        let anims = copy(h(name));
-        let face_anims = copy(h(&format!("{name}face")));
+        let anims = copy(anim_set);
+        let face_anims = if face_set == 0 { vec![] } else { copy(face_set) };
         let default_face = face_anims.iter().position(|a| a.name == NEUTRAL_FACE)
             .or(if face_anims.is_empty() { None } else { Some(0) });
         Ok(Character { bones, parent, bind_rows, bind_pos, parent_point, child_point,

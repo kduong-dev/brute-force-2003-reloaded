@@ -436,7 +436,7 @@ fn root_point(u: &Player) -> Vec3 {
 
 /// A character's name for the log.
 fn name(u: &Player) -> String {
-    format!("{}{}", CHARACTERS[u.character], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)))
+    format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)))
 }
 
 /// Whether a missile of side `side` takes a character of team `team` for hostile (the table at

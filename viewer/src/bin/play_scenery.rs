@@ -199,8 +199,9 @@ struct Area {
     /// seconds until it starts, then its age since it started
     wait: f32,
     age: f32,
-    /// per character it reached: (character, its age when first and last hurting them, HP)
-    victims: Vec<(usize, f32, f32, f32)>,
+    /// per character it reached: (who: a squad member, or a test map NPC by its number, #128;
+    /// its age when first and last hurting them, HP)
+    victims: Vec<(Who, f32, f32, f32)>,
 }
 
 /// A shot on its way to a breakable object: lands after `delay` s.
@@ -753,7 +754,7 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             if amount <= 0.0 {
                 continue;
             }
-            let first = !a.victims.iter().any(|v| v.0 == u.character);
+            let first = !a.victims.iter().any(|v| v.0 == u.who());
             if first || amount >= u.health {
                 // hurt as by a blast (a grunt, blood); dies from it as from any hurt
                 let away = Vec3::new(u.position.x - a.at.x, 0.0, u.position.z - a.at.z).normalize_or(Vec3::X);
@@ -765,12 +766,12 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 u.health -= amount;
             }
             if combat {
-                println!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} (x{:.2} the step) -> {:.1} / {:.0}", a.effect, CHARACTERS[u.character],
+                println!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} (x{:.2} the step) -> {:.1} / {:.0}", a.effect, unit_name(u),
                          hit.step, u.health, u.max_health);
             }
-            match a.victims.iter_mut().find(|v| v.0 == u.character) {
+            match a.victims.iter_mut().find(|v| v.0 == u.who()) {
                 Some(v) => { v.2 = a.age; v.3 += amount; }
-                None => a.victims.push((u.character, a.age, a.age, amount)),
+                None => a.victims.push((u.who(), a.age, a.age, amount)),
             }
         }
         // the breakable objects in range (to their origin)
@@ -791,7 +792,7 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             println!("t {now:.2}: area h_{:08x} over ({} x {} s, range {}, type {}, falloff {})", a.effect, a.damage.amount, a.damage.duration,
                      a.damage.range, a.damage.damage_type, a.damage.falloff);
             for &(who, first, last, total) in &a.victims {
-                println!("  {} hurt from +{first:.2} to +{last:.2} s: {total:.1} HP", CHARACTERS[who]);
+                println!("  {} hurt from +{first:.2} to +{last:.2} s: {total:.1} HP", who_name(who, &game.0));
             }
         }
         !over

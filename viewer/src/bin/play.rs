@@ -62,7 +62,16 @@ use bf_viewer::bf::weapon::{self, Hardpoint, WeaponDef, WeaponModel};
 use bf_viewer::scene::{spawn_model, spawn_static, ModelAssets};
 use bf_viewer::bf::level::Level;
 
-const CHARACTERS: [&str; 4] = ["brutus", "flint", "hawk", "tex"];
+/// The squad's four by squad slot (`Player::character`): the names their motion sets, their
+/// types (common's objecttypes) and the name-keyed `Game::character_*` tables go by; then OTHER's.
+const CHARACTERS: [&str; 5] = ["brutus", "flint", "hawk", "tex", ""];
+/// How many of CHARACTERS are the squad: the slots control passes between.
+const SQUAD: usize = 4;
+/// The slot of a character of any other type (a test map NPC, #128), whose own data is its type's
+/// (`Player::kind`: its model, HP, weapons, flesh, decals, and its damage, play_damage.rs). Its
+/// name is empty: what's still looked up by slot name (chatter, skills, the scope and camera)
+/// finds nothing there, so it says nothing and has no skill.
+const OTHER: usize = 4;
 const FADE: f32 = 0.2;
 const TURN_RATE: f32 = 9.0;
 /// yaw (radians) the spine takes when aiming standing; the feet turn for the rest
@@ -228,7 +237,7 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     }
     commands.insert_resource(difficulty);
     commands.insert_resource(CurrentMap(map));
-    let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % CHARACTERS.len();
+    let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % SQUAD;
     commands.insert_resource(player_at_start(start));
     commands.insert_resource(squad_at_start(start, deathmatch));
     commands.insert_resource(GameData(game));
@@ -280,7 +289,7 @@ fn player_at_start(start: usize) -> Player {
 fn squad_at_start(start: usize, deathmatch: bool) -> Squad {
     // the rest of the squad, in formation behind the start character
     let origin = world::arena().and_then(|a| a.starts.get(std::env::var("BF_START").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) % a.starts.len().max(1)).copied());
-    let members = (0..CHARACTERS.len()).filter(|&c| c != start).enumerate().map(|(slot, c)| {
+    let members = (0..SQUAD).filter(|&c| c != start).enumerate().map(|(slot, c)| {
         let mut m = Player::new(c);
         let f = FORMATION[slot % FORMATION.len()];
         let top = origin.map_or(GROUND, |(at, _)| at.y + 1.0);
@@ -359,7 +368,20 @@ fn main() {
         if test_map {
             testmap::load_weapon_data(&mut game);
         }
-        let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % CHARACTERS.len();
+        let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % SQUAD;
+        // BF_DUMP_TYPES=1  the character types of the loaded archives (character_type.rs:
+        // `character_type_report`), their placements and the squad's check, and exit; `all`:
+        // every archive of data/ loaded first (the whole cast: 128 types, 542 placements);
+        // BF_DUMP_TYPES_FAST=1 leaves the models unloaded
+        if let Ok(which) = std::env::var("BF_DUMP_TYPES") {
+            if which == "all" {
+                dump_all_archives(&mut game);
+            }
+            for line in game.character_type_report(std::env::var("BF_DUMP_TYPES_FAST").is_err(), &CHARACTERS[..SQUAD]) {
+                println!("{line}");
+            }
+            return;
+        }
         // BF_DUMP_MUSIC=<file.wav>  write the map's music track and exit
         if let Ok(out) = std::env::var("BF_DUMP_MUSIC") {
             let tracks = Game::load_music(&data_dir(), &map).unwrap_or_default();
@@ -1272,6 +1294,11 @@ struct Switching {
 
 struct Loaded {
     index: usize,
+    /// the character type it was built from (`Player::kind`)
+    kind: u32,
+    /// what it's made of: the world material of its parts' collision (`Game::flesh`: 21 FLESH_HUMAN,
+    /// 24 SYNTHETIC for Flint, 23 SHRIKE ...; play_fx.rs picks its hit effects and blood by it)
+    flesh: i64,
     root: Entity,
     joints: Vec<Entity>,
     model: Character,
@@ -1353,7 +1380,16 @@ struct Shot {
 
 #[derive(Resource)]
 struct Player {
+    /// the squad slot (a CHARACTERS index): who of the four this is, or OTHER
     character: usize,
+    /// its character type (#128: a `Game::character_types` key, the hash of the type's `<base
+    /// name>`): the squad's own (`squad_type`), or a test map NPC's of any type. Its model,
+    /// clips, HP, weapons, flesh and decals come from it
+    kind: u32,
+    /// its name for logs (`unit_name`), set by `spawn_unit`: its squad slot's ("brutus"), or for
+    /// OTHER its type's display name (`Game::type_label`); "" before it's spawned. Kept here
+    /// rather than in `Loaded`, which the update systems take out of the Player while they step it
+    name: String,
     loaded: Option<Loaded>,
     position: Vec3,
     /// facing angle about +Y; the model faces -Z at yaw 0
@@ -1603,10 +1639,44 @@ struct Player {
     ai_target: Option<Vec3>,
 }
 
+/// The character type of squad slot `c`: the campaign squad's types are named after them in
+/// common's objecttypes (`<base name="brutus">` ...; no other archive defines those names). 0
+/// for OTHER.
+fn squad_type(c: usize) -> u32 {
+    CHARACTERS.get(c).filter(|n| !n.is_empty()).map_or(0, |n| bf_viewer::bf::hash::h(n))
+}
+
+/// A character's name for logs: as spawned (`Player::name`: its squad slot's, "brutus", or for
+/// OTHER its type's display name), before that its slot's name or its type's key.
+fn unit_name(u: &Player) -> String {
+    if !u.name.is_empty() {
+        u.name.clone()
+    } else if u.character == OTHER {
+        format!("h_{:08x}", u.kind)
+    } else {
+        CHARACTERS[u.character].to_string()
+    }
+}
+
+/// `unit_name` by character type alone: a squad type's slot name ("flint"), any other type's
+/// display name (`Game::type_label`).
+fn kind_name(kind: u32, game: &Game) -> String {
+    (0..SQUAD).find(|&c| squad_type(c) == kind).map_or_else(|| game.type_label(kind), |c| CHARACTERS[c].to_string())
+}
+
+/// A character's name for logs by its identity alone (a shooter, a gas cloud's or a damage
+/// area's victim): a squad member's slot name, or a test map NPC's type (`kind_name`) and number.
+fn who_name(who: Who, game: &Game) -> String {
+    match who {
+        Who::Squad(c) => CHARACTERS[c].to_string(),
+        Who::Npc(n, kind) => format!("{} (NPC {n})", kind_name(kind, game)),
+    }
+}
+
 impl Player {
     fn new(character: usize) -> Self {
         Self {
-            character, loaded: None, position: Vec3::ZERO, yaw: 0.0, layers: vec![], gait: Gait::Idle,
+            character, kind: squad_type(character), name: String::new(), loaded: None, position: Vec3::ZERO, yaw: 0.0, layers: vec![], gait: Gait::Idle,
             action: Action::None, action_left: 0.0, on_all_fours: false,
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
@@ -1659,7 +1729,7 @@ impl Player {
     /// NPC by its number (several can share a squad character).
     fn who(&self) -> Who {
         match self.npc {
-            Some(n) => Who::Npc(n.id),
+            Some(n) => Who::Npc(n.id, self.kind),
             None => Who::Squad(self.character),
         }
     }
@@ -1684,11 +1754,11 @@ impl Player {
 struct Squad(Vec<Player>);
 
 /// A character's identity (`Player::who`): a squad member's character, or a test map NPC's
-/// number.
+/// number, with its character type (fixed for the NPC: for naming it, `who_name`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Who {
     Squad(usize),
-    Npc(u32),
+    Npc(u32, u32),
 }
 
 impl Who {
@@ -1696,7 +1766,7 @@ impl Who {
     fn seed(self) -> u32 {
         match self {
             Who::Squad(c) => c as u32,
-            Who::Npc(n) => 100 + n,
+            Who::Npc(n, _) => 100 + n,
         }
     }
 }
@@ -1775,7 +1845,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
                 m.idle_cautious = !first && m.random(2) == 0;
                 m.idle_left = if m.idle_cautious { IDLE_CAUTIOUS_TIME } else { IDLE_CROUCH_TIME };
                 if std::env::var("BF_AI_LOG").is_ok() {
-                    println!("{} idles: {} for {} s", CHARACTERS[m.character], if m.idle_cautious { "cautious" } else { "crouch" }, m.idle_left);
+                    println!("{} idles: {} for {} s", unit_name(m), if m.idle_cautious { "cautious" } else { "crouch" }, m.idle_left);
                 }
             }
             m.idle_left -= dt;
@@ -2561,7 +2631,7 @@ fn spawn_player(
 ) {
     let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
     for p in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        if p.loaded.as_ref().is_some_and(|l| l.index == p.character) {
+        if p.loaded.as_ref().is_some_and(|l| l.index == p.character && l.kind == p.kind) {
             continue;
         }
         if let Some(old) = p.loaded.take() {
@@ -2571,21 +2641,31 @@ fn spawn_player(
     }
 }
 
-/// Load a character and spawn it with its weapons and clips into `p`.
+/// Load a character and spawn it with its weapons and clips into `p`: its type's model (#128),
+/// and its data from the tables keyed by its slot's name where they have it (the squad's: the
+/// test map's rack changes `character_weapons`, a squad deathmatch map the skills), else from its
+/// type (OTHER's).
 fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: &mut ModelAssets) {
     let name = CHARACTERS[p.character];
-    let model = match Character::load(game, name, 0) {
+    let ty = game.character_types.get(&p.kind).cloned();
+    let label = if p.character == OTHER { game.type_label(p.kind) } else { name.to_string() };
+    // (the squad's by type is its model by name: BF_DUMP_TYPES compares the two)
+    let model = match ty.as_ref().map_or_else(|| Character::load(game, name, 0), |t| Character::load_type(game, t, 0)) {
         Ok(m) => m,
         Err(e) => {
-            error!("{name}: {e}");
+            error!("{label}: {e}");
             return;
         }
     };
     let clips = pick_clips(&model, game);
-    info!("{name} clips: {clips:?}");
+    info!("{label} clips: {clips:?}");
     let (feet, foot_rest) = find_feet(&model, game, clips.loco.idle);
-    let (footstep_type, jump_sound) = game.character_audio.get(name).copied().unwrap_or((-1, 0));
-    let root = commands.spawn((Transform::from_translation(p.position), Visibility::default(), Name::new(name))).id();
+    let (footstep_type, jump_sound) = game.character_audio.get(name).copied()
+        .or(ty.as_ref().map(|t| (t.footstep_type, t.jump_sound))).unwrap_or((-1, 0));
+    // what it's made of: its parts' world material (Flint's 24 SYNTHETIC, the rest of the
+    // squad's 21 FLESH_HUMAN), FLESH_HUMAN when its collision isn't loaded
+    let flesh = ty.as_ref().and_then(|t| game.flesh(t.mesh)).map_or(fx::FLESH, |f| f as i64);
+    let root = commands.spawn((Transform::from_translation(p.position), Visibility::default(), Name::new(label.clone()))).id();
     let joints = spawn_model(commands, game, &model, assets, root, true);
     p.layers.clear();
     p.gait = Gait::Idle;
@@ -2614,7 +2694,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let flash_mat = assets.materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.4),
         emissive: LinearRgba::rgb(30.0, 18.0, 5.0), unlit: true, ..default() });
     let mut weapons = vec![];
-    for (slot, w) in game.character_weapons.get(name).cloned().unwrap_or_default().into_iter().enumerate() {
+    let inventory = game.character_weapons.get(name).cloned().or(ty.as_ref().map(|t| t.weapons.clone())).unwrap_or_default();
+    let classes = game.character_weapon_classes.get(name).copied().or(ty.as_ref().map(|t| t.weapon_classes));
+    for (slot, w) in inventory.into_iter().enumerate() {
         let Some(def) = game.weapons.get(&w).cloned() else { continue };
         let wm = match WeaponModel::load(game, def.archetype) {
             Ok(m) => m,
@@ -2644,7 +2726,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             Transform::from_translation(muzzle.point + fire_dir * 0.1), ChildOf(entity))).id();
         let in_hand = model.hardpoints.get(&weapon::TRIGGER_HAND).zip(wm.hardpoints.get(&weapon::TRIGGER_GRIP))
             .map(|(&(bone, hand), grip)| { let (r, t) = hand.mount(grip); (bone, r, t) });
-        let stance = stance_for(game.character_weapon_classes.get(name).copied(), def.weapon_type, slot);
+        let stance = stance_for(classes, def.weapon_type, slot);
         weapons.push(HeldWeapon {
             stance,
             in_hand,
@@ -2655,10 +2737,10 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             def, entity, spinners, light, flash, muzzle, fire_dir,
         });
     }
-    info!("{name} weapons: {:?}", weapons.iter().map(|w| format!("{} (class {}, stance w{}) held by bone {}", w.def.label, w.def.weapon_type,
+    info!("{label} weapons: {:?}", weapons.iter().map(|w| format!("{} (class {}, stance w{}) held by bone {}", w.def.label, w.def.weapon_type,
         w.stance + 1, w.in_hand.map(|(b, ..)| format!("{:08x}", model_bones[b])).unwrap_or("-".into()))).collect::<Vec<_>>());
     for (k, set) in clips.slots.iter().enumerate() {
-        info!("{name} slot {} clips: carry {:?} / ready {:?}", k + 1, set.carry, set.rp);
+        info!("{label} slot {} clips: carry {:?} / ready {:?}", k + 1, set.carry, set.rp);
     }
     // test hook: BF_START_WEAPON=1 starts with the second weapon in hand
     p.weapon = std::env::var("BF_START_WEAPON").ok().and_then(|v| v.parse().ok()).unwrap_or(0).min(weapons.len().saturating_sub(1));
@@ -2694,25 +2776,25 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             .map(|&(bone, hp)| (a[bone].transform_point3(hp.point).distance(b[bone].transform_point3(hp.point)), bone, hp.point))
             .max_by(|x, y| x.0.total_cmp(&y.0)).map(|(_, bone, point)| (bone, point))
     });
-    info!("{name} reload {:?} / throw {:?} clips, throwing hand {:?}",
+    info!("{label} reload {:?} / throw {:?} clips, throwing hand {:?}",
           reload_clips.iter().map(|c| c.as_ref().map(|c| c.duration)).collect::<Vec<_>>(),
           throw_clips.iter().map(|c| c.as_ref().map(|c| c.duration)).collect::<Vec<_>>(), throw_hand.map(|h| h.0));
     p.throwing = None;
     // (play_grenade.rs's stock_inventory fills it again: a respawn starts with the start stock)
     p.grenades.clear();
-    p.max_health = game.character_hitpoints.get(name).copied().unwrap_or(100.0);
+    p.max_health = game.character_hitpoints.get(name).copied().or(ty.as_ref().map(|t| t.hitpoints)).unwrap_or(100.0);
     p.health = p.max_health;
-    // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs)
+    // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs; the squad's only)
     p.skill = skills::Skill::new(game.character_skills.get(name));
-    p.max_stamina = p.skill.data.as_ref().map_or(100.0, |d| d.max_stamina.max(1.0));
+    p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
     p.stamina = p.max_stamina;
-    p.leash = game.squad_leash.get(name).copied().unwrap_or(15.0);
+    p.leash = game.squad_leash.get(name).copied().or(ty.as_ref().map(|t| t.ai.squad_leash)).unwrap_or(15.0);
     p.scope_sounds = game.character_scope_sounds.get(name).copied().unwrap_or((0, 0));
     p.snipe_sound = game.character_snipe_sound.get(name).and_then(|&id| game.sounds.pcm(id).map(|(r, pcm)| (id, pcm.len() as f32 / r as f32)));
     p.kneel_jitter = 1.5 * p.random(1000) as f32 / 1000.0;
     for (to, s) in switch_clips.iter().enumerate() {
         if let Some(s) = s {
-            info!("{name} switch to weapon {}: clip {} ({:.2}s), drop {:.2}s, grab {:.2}s", to + 1, s.clip, s.duration, s.drop, s.grab);
+            info!("{label} switch to weapon {}: clip {} ({:.2}s), drop {:.2}s, grab {:.2}s", to + 1, s.clip, s.duration, s.drop, s.grab);
         }
     }
     let lift = sole_lift(&model, game, clips.loco.idle);
@@ -2726,8 +2808,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
         }
     }
     p.lift_now = lift;
-    info!("{name}: soles {lift:.3} m below the floor, raised by that");
-    p.loaded = Some(Loaded { index, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
+    info!("{label}: soles {lift:.3} m below the floor, raised by that; flesh {flesh}");
+    p.name = label;
+    p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips });
 }
 
@@ -2997,7 +3080,7 @@ fn wrap_angle(a: f32) -> f32 {
 
 /// A character's shots' damage, by the held weapon: its Damage min..max per shot, its ammo
 /// type (for the hit's effects) and its Damage damage-type (for the target's factor,
-/// Game::damage_factor); 8-10 of ammo type 1 unarmed.
+/// play_damage.rs `vulnerability`); 8-10 of ammo type 1 unarmed.
 fn shot_damage(p: &Player) -> ((f32, f32), i64, i64) {
     let held = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon));
     let damage = held.map_or((8.0, 10.0), |w| if w.def.damage > 0.0 { (w.def.damage_min.min(w.def.damage), w.def.damage) } else { (8.0, 10.0) });
@@ -3099,7 +3182,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if (shot.origin + shot.dir * t).distance(chest) < SHOT_AT_RADIUS && m.random(SHOT_AT_DODGE_ODDS) == 0 {
                 m.dodge_request = Some(m.random(2) == 0);
                 if std::env::var("BF_AI_LOG").is_ok() {
-                    println!("{} shot at: dodges", CHARACTERS[m.character]);
+                    println!("{} shot at: dodges", unit_name(m));
                 }
             }
         }
@@ -3129,7 +3212,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 let hit = damage::Hit::new(roll, "roll", damage_type).by(shooter, team, victim).falloff(shot.falloff_at(t)).struck(victim, &game.0, bone);
                 let local = shot.origin + shot.dir * t - at;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {
-                    let name = |u: &Player| format!("{}{}", CHARACTERS[u.character], u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
+                    let name = |u: &Player| format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
                     println!("{} shoots {} ({t:.1} m)", name(&squad.0[k]), name(victim));
                 }
                 ai_hits.0.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo });
@@ -3190,6 +3273,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let shots: Vec<(Vec3, Vec3, f32)> = std::iter::once(&*player).chain(squad.0.iter())
         .flat_map(|u| u.shots.iter().map(|s| (s.origin, s.dir, s.dist))).collect();
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
+        // (its name for the log, taken before its body is borrowed)
+        let name = if std::env::var("BF_RAGDOLL_LOG").is_ok() { unit_name(u) } else { String::new() };
         let body = match (u.ragdoll.as_mut(), u.knock.as_mut()) {
             (Some(r), _) => r,
             (None, Some(k)) => &mut k.ragdoll,
@@ -3199,8 +3284,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if let Some(at) = body.shove(origin, dir, dist) {
                 // it bleeds where it's hit, as the living do (a bullet's hit: ammo type 1)
                 u.blood.push((at, dir, 1));
-                if std::env::var("BF_RAGDOLL_LOG").is_ok() {
-                    println!("shot {}'s body at {at:.2}", CHARACTERS[u.character]);
+                if !name.is_empty() {
+                    println!("shot {name}'s body at {at:.2}");
                 }
             }
         }
@@ -3232,9 +3317,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw),
                 });
             }
+            // (its name for the log, taken before its ragdoll is borrowed)
+            let name = if std::env::var("BF_RAGDOLL_LOG").is_ok() { unit_name(u) } else { String::new() };
             if let Some(r) = u.ragdoll.as_mut() {
                 let local = r.step(&l.model, dt);
-                if std::env::var("BF_RAGDOLL_LOG").is_ok() && (u.dead_for * 2.0).fract() < dt * 2.0 {
+                if !name.is_empty() && (u.dead_for * 2.0).fract() < dt * 2.0 {
                     let closest = r.pairs.iter().map(|&(a, b)| r.pos[a].distance(r.pos[b])).fold(f32::MAX, f32::min);
                     let turn = Quat::from_rotation_y(r.yaw);
                     let below = r.pos.iter().map(|&p| { let w = r.origin + turn * p;
@@ -3245,8 +3332,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                         let along = (r.pos[c] - r.pos[a]).normalize_or_zero();
                         Some(hinge_offset(&r.pos, a, b, c).dot((n - along * n.dot(along)).normalize_or_zero()))
                     }).fold(f32::MAX, f32::min);
-                    println!("ragdoll {} t {:.1}: pelvis at {:.2}, {} pairs, closest {:.3} m, lowest bone {:.3} m above its floor, {} hinges, worst bend {:.3} m (negative: wrong way)",
-                             CHARACTERS[u.character], u.dead_for, r.origin + turn * r.pos[0], r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
+                    println!("ragdoll {name} t {:.1}: pelvis at {:.2}, {} pairs, closest {:.3} m, lowest bone {:.3} m above its floor, {} hinges, worst bend {:.3} m (negative: wrong way)",
+                             u.dead_for, r.origin + turn * r.pos[0], r.pairs.len(), closest, below, r.hinge_sides.len(), worst);
                 }
                 apply_pose(&l, &local, &mut transforms);
                 body_thud(u.position, u.yaw, u.height + u.lift_now, r, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
@@ -3327,7 +3414,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 u.position.y = g - GROUND;
                 u.was_air = true;
                 if std::env::var("BF_SLIDE_LOG").is_ok() {
-                    println!("{} walks off a ledge at {:.1}: {:.1} m to the floor", CHARACTERS[u.character], u.position, feet - g);
+                    println!("{} walks off a ledge at {:.1}: {:.1} m to the floor", unit_name(u), u.position, feet - g);
                 }
             } else {
                 u.position.y = g - GROUND;
@@ -3336,7 +3423,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     u.was_air = false;
                     let drop = u.fall_from - g;
                     if std::env::var("BF_SLIDE_LOG").is_ok() {
-                        println!("{} lands at {:.1} after a {drop:.1} m drop", CHARACTERS[u.character], u.position);
+                        println!("{} lands at {:.1} after a {drop:.1} m drop", unit_name(u), u.position);
                     }
                     let (lo, hi, most) = FALL_HURT;
                     // a liquid breaks the fall
@@ -3378,7 +3465,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     }
                 }
                 if std::env::var("BF_SLIDE_LOG").is_ok() {
-                    println!("{} in liquid {} {deep:.2} m deep: {} hp", CHARACTERS[u.character], liquid.kind, u.health);
+                    println!("{} in liquid {} {deep:.2} m deep: {} hp", unit_name(u), liquid.kind, u.health);
                 }
             }
             u.prev_xz = Vec2::new(u.position.x, u.position.z);
@@ -3573,7 +3660,7 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     u.blood.push((at, push.normalize_or(Vec3::Y), ammo));
     u.health = (u.health - amount).max(0.0);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
-        println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", CHARACTERS[u.character],
+        println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", unit_name(u),
                  u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)), u.health, u.knock_cooldown);
     }
     if u.health <= 0.0 {
@@ -3598,7 +3685,7 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
         u.knock_request = Some(push);
         if std::env::var("BF_COMBAT_LOG").is_ok() {
-            println!("  knocked down: {}", CHARACTERS[u.character]);
+            println!("  knocked down: {}", unit_name(u));
         }
     }
     if u.hurt_quiet <= 0.0 {
@@ -4134,7 +4221,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.action = Action::Dive;
             p.action_left = dur(stance.dive);
             if std::env::var("BF_COMBAT_LOG").is_ok() {
-                println!("  dive: {} away from {from:.1}", CHARACTERS[p.character]);
+                println!("  dive: {} away from {from:.1}", unit_name(p));
             }
             p.crouch_wanted = false;
             p.still_time = 0.0;
@@ -4358,7 +4445,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- sliding down steep ground: the slide clip, facing downhill ----
     let sliding = p.sliding > 0.0 && matches!(p.action, Action::None) && c.slide.is_some() && !p.on_all_fours;
     if sliding != p.slide_on && std::env::var("BF_SLIDE_LOG").is_ok() {
-        println!("t={:.2} {} slide {} at {:.1}", p.sim_time, CHARACTERS[p.character], if sliding { "starts" } else { "ends" }, p.position);
+        println!("t={:.2} {} slide {} at {:.1}", p.sim_time, unit_name(p), if sliding { "starts" } else { "ends" }, p.position);
     }
     if sliding && !p.slide_on {
         p.queue_any(&surface.slide, 0.8);
@@ -5269,10 +5356,27 @@ fn dump_sounds(game: &mut Game, character: usize, dir: &str) {
     }
 }
 
+/// BF_DUMP_TYPES=all: every archive of data/ into `game` (common's and the map's are in already;
+/// one loaded twice adds nothing: first loaded wins), in name order, as the test map loads its
+/// levels (`Game::load_level`).
+fn dump_all_archives(game: &mut Game) {
+    let t = std::time::Instant::now();
+    let mut names: Vec<String> = std::fs::read_dir(data_dir()).into_iter().flatten().filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".tgz")).map(str::to_string))
+        .filter(|n| n != "common").collect();
+    names.sort();
+    for n in &names {
+        if let Err(e) = game.load_level(&data_dir(), n) {
+            eprintln!("{n}: {e}");
+        }
+    }
+    println!("loaded {} archives in {:.1} s", names.len(), t.elapsed().as_secs_f32());
+}
+
 /// BF_DUMP_WEAPONS=1: each character's weapons as loaded (definition, model, hardpoints, sounds).
 fn dump_weapons(game: &Game) {
     println!("{} weapon definitions, {} strings", game.weapons.len(), game.strings.len());
-    for name in CHARACTERS {
+    for &name in &CHARACTERS[..SQUAD] {
         let hand = Character::load(game, name, 0).ok().map(|m| {
             [weapon::TRIGGER_HAND, weapon::SUPPORT_HAND, weapon::STOW[0], weapon::STOW[1]].iter()
                 .map(|k| format!("{k:08x}:{}", m.hardpoints.get(k).map(|(b, _)| format!("bone {:08x}", m.bones[*b])).unwrap_or("-".into())))

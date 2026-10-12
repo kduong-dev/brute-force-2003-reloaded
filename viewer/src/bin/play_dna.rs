@@ -264,7 +264,7 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {
             println!("{} dropped a memory chip at {at:.2} (t {:.2}): body at {:.2}, feet {feet:.2}, yaw {:.2}",
-                     CHARACTERS[u.character], u.sim_time, u.position, u.yaw);
+                     unit_name(u), u.sim_time, u.position, u.yaw);
         }
     }
 }

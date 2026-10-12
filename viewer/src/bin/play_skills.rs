@@ -377,7 +377,7 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
             hooks.last_poke = at;
             player.stamina = n.clamp(0.0, player.max_stamina);
             if std::env::var("BF_SKILL_LOG").is_ok() {
-                println!("t={t:.2} {}: stamina set to {:.2}", CHARACTERS[player.character % CHARACTERS.len()], player.stamina);
+                println!("t={t:.2} {}: stamina set to {:.2}", unit_name(&player), player.stamina);
             }
         }
     }
@@ -418,7 +418,7 @@ fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     if log && (t * 2.0).floor() > (*last_log * 2.0).floor() {
         let list: Vec<String> = std::iter::once(&*player).chain(squad.0.iter().filter(|m| m.in_squad())).map(|u| {
             let state = if u.skill.on { "on".to_string() } else { format!("off x{}", refill_factor(u)) };
-            format!("{} {:.2} {state}", CHARACTERS[u.character % CHARACTERS.len()], u.stamina)
+            format!("{} {:.2} {state}", unit_name(u), u.stamina)
         }).collect();
         println!("t={t:.2} stamina: {}", list.join(" | "));
     }
@@ -529,7 +529,7 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let was = u.skill.on;
     let answer = k.toggle(u);
     if env.log && (why != "at 0" || answer != Toggle::Refused) {
-        println!("t={:.2} {}: toggle ({why}) at stamina {:.2}, {}: {answer:?}", u.sim_time, CHARACTERS[u.character % CHARACTERS.len()],
+        println!("t={:.2} {}: toggle ({why}) at stamina {:.2}, {}: {answer:?}", u.sim_time, unit_name(u),
                  u.stamina, if was { "on" } else { "off" });
     }
     // (the overlay, for a toggle that returns 1, is picked by the skill's state after the toggle:
@@ -577,7 +577,7 @@ fn start_overlay(u: &mut Player, on: bool, event: Option<u32>, log: bool) -> boo
         None => None,
     };
     if log {
-        println!("t={:.2} {}: {} overlay, {:.2} s{}", u.sim_time, CHARACTERS[u.character % CHARACTERS.len()], if on { "on" } else { "off" },
+        println!("t={:.2} {}: {} overlay, {:.2} s{}", u.sim_time, unit_name(u), if on { "on" } else { "off" },
                  clip.duration, switch_at.map_or(String::new(), |at| format!(", switches at {at:.2} s")));
     }
     u.skill.toggling = Some(Toggling { on, stance, time: 0.0, duration: clip.duration, switch_at });
@@ -590,7 +590,7 @@ fn start_overlay(u: &mut Player, on: bool, event: Option<u32>, log: bool) -> boo
 fn activate(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env) -> bool {
     if !can_activate(u) {
         if env.log {
-            println!("t={:.2} {}: not switched on at stamina {:.2} (under 10%)", u.sim_time, CHARACTERS[u.character % CHARACTERS.len()], u.stamina);
+            println!("t={:.2} {}: not switched on at stamina {:.2} (under 10%)", u.sim_time, unit_name(u), u.stamina);
         }
         return false;
     }
@@ -631,7 +631,7 @@ fn switched(u: &mut Player, env: &mut Env, sound: u32, line: u32) {
     if env.log {
         let what = if u.skill.on { "on" } else { "off" };
         println!("t={:.2} {}: skill {what} at stamina {:.2}; sound {}; line {line:08x}: {said}", u.sim_time,
-                 CHARACTERS[u.character % CHARACTERS.len()], u.stamina,
+                 unit_name(u), u.stamina,
                  if env.controlled && sound != 0 { format!("{sound:08x}") } else { "none".into() });
     }
 }

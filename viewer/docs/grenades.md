@@ -171,8 +171,9 @@ decal, and a throw called off.
   below). The Energy's damage comes with its bolts instead (see **Energy grenade**), the
   Sonic's with its ring (see **Sonic grenade**).
 * **Damage types.** Each character's combat-target lists factors per damage-type
-  (`<h_142be76f><h_1d403525 Type h_04653d86>`, read into `Game::character_damage_factors`;
-  the shield's own list is empty): Flint takes type 4 (the Gas) x0.05 and type 6 (the Energy)
+  (`<h_142be76f><h_1d403525 Type h_04653d86>`, read into its character type's
+  `vulnerabilities`, #128, and taken by play_damage.rs's `vulnerability`; the shield's own list
+  is empty): Flint takes type 4 (the Gas) x0.05 and type 6 (the Energy)
   x2; Brutus, Hawk and Tex list none; the mutants 3 x0, 5 x0.5-0.75, 1 x0.8. Blasts, the gas
   and the player's shots on squadmates (their weapon's damage-type) are multiplied by them.
   `BF_DUMP_HITPOINTS=1` (with `BF_MAP`) prints them.

@@ -693,10 +693,10 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
     if dealt <= 0.0 {
         return None;
     }
-    hit.report(u, now);
+    hit.report(u, game, now);
     hurt(u, game, dealt, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
-        println!("{} blast at {d:.1} m: {} takes {dealt:.1} -> {:.1} / {:.0}", kit.def.label, CHARACTERS[u.character], u.health, u.max_health);
+        println!("{} blast at {d:.1} m: {} takes {dealt:.1} -> {:.1} / {:.0}", kit.def.label, unit_name(u), u.health, u.max_health);
     }
     Some(dealt)
 }

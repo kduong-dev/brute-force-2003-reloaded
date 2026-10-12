@@ -11,9 +11,16 @@
 //!  - N: the NPC menu. Up / Down (or the wheel) picks the character type, J the team (friend or
 //!    enemy) and B the behaviour (dummy or fight) for the next one; Enter or a click spawns it on
 //!    the ground under the crosshair, facing the controlled character. N or Esc closes it.
+//!    The types (#128): the squad's four, then every other character type the loaded archives
+//!    define (`Game::character_types`), by display name with its archive and HP.
 //!    Spawned characters are `Player`s at the end of `Squad` with `npc` set: everything that
 //!    acts on the squad acts on them (shots, blasts, Sentries, ragdolls, blood), but they're not
 //!    in the formation, can't be taken control of and don't show on the HUD's portraits.
+//!    - A type of the squad's is that squad slot's character. Any other type is slot OTHER: its
+//!      model, clips, HP, weapons, flesh, blood decals and damage (its factors, hit parts and
+//!      damage-multiplier, play_damage.rs) are its type's; what's still looked up by the
+//!      squad's names (chatter, skills) reads nothing for it, so it's silent and has no skill
+//!      (the species tickets, #129-#134).
 //!    - Teams: the friend side is the squad's (team 0), the enemy side ENEMY_TEAM. An enemy sets
 //!      off the squad's Sentries (play_sentry.rs) and the crosshair isn't green on one.
 //!    - A dummy stands still where it was put (it doesn't dive from grenades), a target for the
@@ -42,8 +49,8 @@
 //!      objects' damage areas break it, it explodes and chains. With no collision on the flat
 //!      floor, shots meet its model's box and characters walk through it.
 //!
-//! Not done: enemy species (#110: the menu lists them from the data but can't spawn them yet),
-//! moving NPCs, removing placed objects, saving a layout.
+//! Not done: the enemy species' own behaviour (#110's sub-issues: their reactions, blood, death
+//! clips), moving NPCs, removing placed objects, saving a layout.
 //!
 //! NPCs share the squad's characters, so what reaches a body later tells them apart by
 //! `Player::who` (play_energy.rs's bolts, play_sonic.rs's rings), and a blast's thrower share
@@ -167,7 +174,7 @@ pub(super) struct Before {
 pub(super) struct Tools {
     freecam: Option<FreeCam>,
     pub(super) panel: Panel,
-    /// the NPC menu: the type picked (an index into `npc_types`), the team and behaviour of the
+    /// the NPC menu: the entry picked (an index into `NpcList`), the team and behaviour of the
     /// next one
     npc_type: usize,
     npc_team: u8,
@@ -251,9 +258,9 @@ pub(super) enum Hook {
     Teleport { camera: bool },
     NpcMenu,
     Close,
-    /// `at`: x, z, and the height the ground is looked for under (None: 50 m over the
-    /// controlled character)
-    Npc { character: usize, team: u8, fight: bool, at: Option<(Vec2, Option<f32>)> },
+    /// `character`: the type as the hook names it (see `npc_kind`); `at`: x, z, and the height
+    /// the ground is looked for under (None: 50 m over the controlled character)
+    Npc { character: String, team: u8, fight: bool, at: Option<(Vec2, Option<f32>)> },
     Team(Pick),
     Fight(Pick),
     Remove(Pick),
@@ -288,11 +295,15 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_TELEPORT=<s>[,camera]: the left click in the free camera (teleport to the ground
 ///    under the crosshair); `camera`: the right click (under the camera).
 ///  - BF_TEST_NPC_MENU=<s>: N (the menu opens). BF_TEST_TOOL_CLOSE=<s>: Esc (a menu closes).
-///  - BF_TEST_NPC=<s>,<character>,<friend|enemy>,<dummy|fight>[,<x>,<z>[,<y>]]: spawn one
-///    (character by name or 0-3) on the ground at x, z, or under the crosshair, facing the
-///    controlled character. The ground is the first floor under y (world height), by default
-///    50 m above the controlled character: a y just over the floor wanted puts it under a roof
-///    or a gate's top (#73's takes 14, 16, 22 and 23 at sdm_e34's gate).
+///  - BF_TEST_NPC=<s>,<character>,<friend|enemy>,<dummy|fight>[,<x>,<z>[,<y>]]: spawn one on the
+///    ground at x, z, or under the crosshair, facing the controlled character. The character: a
+///    squad name or 0-3, or any loaded character type (#128) by its display name (any case; the
+///    first loaded of that name, e.g. `shrike soldier`), `name@archive` (`shrike soldier@m09_a`)
+///    or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or its key
+///    `h_xxxxxxxx` (`npc_kind`). The ground is the
+///    first floor under y (world height), by default 50 m above the controlled character: a y
+///    just over the floor wanted puts it under a roof or a gate's top (#73's takes 14, 16, 22
+///    and 23 at sdm_e34's gate).
 ///  - BF_TEST_NPC_TEAM / BF_TEST_NPC_FIGHT / BF_TEST_NPC_REMOVE=<s>,<n|aim|all>: switch the
 ///    team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or
 ///    every one.
@@ -331,7 +342,7 @@ pub(super) struct Session {
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Tools>().init_resource::<Catalogue>().init_resource::<Script>().init_resource::<Session>()
+    app.init_resource::<Tools>().init_resource::<Catalogue>().init_resource::<NpcList>().init_resource::<Script>().init_resource::<Session>()
         .add_systems(OnEnter(AppState::Playing), (reset, spawn_panel).after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (run_script, before_input).chain().before(read_input).run_if(active))
         .add_systems(Update, (gate_input, camera_tool, npc_tool, object_tool).chain().after(read_input).before(squad_control).run_if(active))
@@ -346,13 +357,15 @@ pub(super) fn active(state: Res<State<AppState>>, test: Option<Res<TestMap>>) ->
 
 use super::testmap::TestMap;
 
-/// A new map: the tools closed, nothing spawned, the object list to be built again, the hooks
-/// read (all of them on the session's first map, else only its BF_TEST_LEVEL entry).
+/// A new map: the tools closed, nothing spawned, the object and NPC lists to be built again (a
+/// level switch loads more data), the hooks read (all of them on the session's first map, else
+/// only its BF_TEST_LEVEL entry).
 fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<AiHits>, mut list: ResMut<Catalogue>,
-         mut session: ResMut<Session>) {
+         mut npcs: ResMut<NpcList>, mut session: ResMut<Session>) {
     *tools = Tools { npc_team: ENEMY_TEAM, air: AIR_DISTANCE, ..default() };
     // (built again once this map's grenade types are in: its entries index them)
     list.0.clear();
+    npcs.0.clear();
     hits.0.clear();
     session.maps += 1;
     *script = Script { steps: read_hooks(session.maps), next: 0, now: vec![] };
@@ -361,10 +374,17 @@ fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<
     }
 }
 
-/// A character by name (brutus, flint, hawk, tex; any case) or CHARACTERS index.
-fn character(s: &str) -> Option<usize> {
+/// The character type a hook or the menu names: a squad slot's (0-3) or any loaded type by name
+/// (`Game::find_character_type`: brutus, mp_brutus, a display name, `name@archive` or
+/// `name@library`, h_xxxxxxxx).
+fn npc_kind(game: &Game, s: &str) -> Option<u32> {
     let s = s.trim();
-    s.parse::<usize>().ok().filter(|&i| i < CHARACTERS.len()).or_else(|| CHARACTERS.iter().position(|c| c.eq_ignore_ascii_case(s)))
+    s.parse::<usize>().ok().filter(|&i| i < SQUAD).map(squad_type).or_else(|| game.find_character_type(s))
+}
+
+/// The squad slot of character type `kind`: the squad member's whose type it is, else OTHER.
+fn slot_of(kind: u32) -> usize {
+    (0..SQUAD).find(|&c| squad_type(c) == kind).unwrap_or(OTHER)
 }
 
 /// `n`, `aim` or `all`.
@@ -420,7 +440,7 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     }
     for e in entries("BF_TEST_NPC") {
         let hook = (|| Some(Hook::Npc {
-            character: character(e.get(1)?)?,
+            character: e.get(1)?.clone(),
             team: if e.get(2)?.eq_ignore_ascii_case("enemy") { ENEMY_TEAM } else { 0 },
             fight: e.get(3)?.eq_ignore_ascii_case("fight"),
             at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6))),
@@ -623,17 +643,34 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
     }
 }
 
-/// The character types the NPC menu can spawn: the squad's four, by name (each a `CHARACTERS`
-/// index, as `Player` needs). #110 adds the enemy species here once they have models and
-/// animations in play; till then the menu lists the other characters the data defines as not
-/// yet spawnable (`other_types`).
-fn npc_types() -> Vec<(String, usize)> {
-    CHARACTERS.iter().enumerate().map(|(i, c)| (title(c), i)).collect()
+/// The NPC menu's entries (label, character type), built once a map's data is in (`npc_list`).
+#[derive(Resource, Default)]
+pub(super) struct NpcList(Vec<(String, u32)>);
+
+/// The character types the NPC menu offers (#128): the squad's four by name (each its slot's
+/// type), then every other type the loaded archives define whose model is loaded, by display
+/// name with where it's defined and its HP (41 militia definitions share 7 names: those tell
+/// them apart), and its key when two still read the same (as the object menu's entries).
+fn npc_list(game: &Game) -> Vec<(String, u32)> {
+    let mut out: Vec<(String, u32)> = (0..SQUAD).map(|c| (title(CHARACTERS[c]), squad_type(c))).collect();
+    let mut others: Vec<(String, u32)> = game.character_type_order.iter().copied().filter(|&k| slot_of(k) == OTHER).filter_map(|k| {
+        let t = game.character_type(k)?;
+        game.has_model(t).then(|| (format!("{} ({}, {} hp)", game.type_label(k), t.place(), t.hitpoints), k))
+    }).collect();
+    let labels: Vec<String> = others.iter().map(|o| o.0.clone()).collect();
+    for (label, k) in others.iter_mut() {
+        if labels.iter().filter(|l| l.as_str() == label.as_str()).count() > 1 {
+            *label = format!("{label} h_{k:08x}");
+        }
+    }
+    others.sort_by(|a, b| a.0.cmp(&b.0));
+    out.extend(others);
+    out
 }
 
-/// The data's other character types (`Game::characters` but the squad), for the menu's note.
-fn other_types(game: &Game) -> Vec<String> {
-    game.characters.iter().map(|(n, _)| n.clone()).filter(|n| !CHARACTERS.contains(&n.as_str())).collect()
+/// An NPC's name for the menu and the messages: its squad name ("Brutus") or its type's.
+fn npc_name(game: &Game, m: &Player) -> String {
+    if m.character == OTHER { game.type_label(m.kind) } else { title(CHARACTERS[m.character]) }
 }
 
 /// "brutus" -> "Brutus".
@@ -676,10 +713,13 @@ fn side(team: u8) -> &'static str {
 #[allow(clippy::too_many_arguments)]
 fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
             scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
-            mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>) {
-    let types = npc_types();
+            mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>, game: Res<GameData>, mut npcs: ResMut<NpcList>) {
+    if npcs.0.is_empty() {
+        npcs.0 = npc_list(&game.0);
+    }
+    let types = &npcs.0;
     let open = tools.panel == Panel::Npcs;
-    let mut spawns: Vec<(usize, u8, bool, Option<(Vec2, Option<f32>)>)> = vec![];
+    let mut spawns: Vec<(u32, u8, bool, Option<(Vec2, Option<f32>)>)> = vec![];
     let mut acts: Vec<Hook> = vec![];
     if keys.just_pressed(KeyCode::KeyN) || script.now.iter().any(|h| matches!(h, Hook::NpcMenu)) {
         tools.panel = if open { Panel::None } else { Panel::Npcs };
@@ -712,14 +752,20 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     }
     for hook in &script.now {
         match hook {
-            Hook::Npc { character, team, fight, at } => spawns.push((*character, *team, *fight, *at)),
+            Hook::Npc { character, team, fight, at } => match npc_kind(&game.0, character) {
+                Some(kind) => spawns.push((kind, *team, *fight, *at)),
+                None => {
+                    println!("test tools: no character type {character} in the loaded data");
+                    status.message = Some((format!("No character type {character}"), MESSAGE_TIME));
+                }
+            },
             Hook::Team(_) | Hook::Fight(_) | Hook::Remove(_) => acts.push(hook.clone()),
             _ => {}
         }
     }
     let log = std::env::var("BF_TOOLS_LOG").is_ok();
     let (origin, dir) = crosshair(&player, &tools);
-    for (character, team, fight, at) in spawns {
+    for (kind, team, fight, at) in spawns {
         let ground = match at {
             Some((p, from)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0)), p.y)),
             None => ground_point(origin, dir),
@@ -730,7 +776,9 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
         };
         tools.spawned += 1;
         let id = tools.spawned;
-        let mut m = Player::new(character);
+        // a squad type is its slot's character; any other is OTHER with its own type
+        let mut m = Player::new(slot_of(kind));
+        m.kind = kind;
         m.position = Vec3::new(ground.x, ground.y - GROUND, ground.z);
         m.prev_xz = Vec2::new(ground.x, ground.z);
         m.fall_from = ground.y;
@@ -743,9 +791,9 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
         m.npc = Some(Npc { id, fight, face: m.yaw });
         // (its own random stream: hit reactions, bursts)
         m.rng ^= id.wrapping_mul(0x9E37_79B9) | 1;
-        let label = format!("{} {} ({})", side(team), title(CHARACTERS[character]), if fight { "fight" } else { "dummy" });
+        let label = format!("{} {} ({})", side(team), npc_name(&game.0, &m), if fight { "fight" } else { "dummy" });
         if log {
-            println!("t {:.2}: NPC {id}: {label} at {ground:.2}", player.sim_time);
+            println!("t {:.2}: NPC {id}: {label} at {ground:.2}, type h_{kind:08x}", player.sim_time);
         }
         status.message = Some((format!("Spawned {label}"), MESSAGE_TIME));
         squad.0.push(m);
@@ -767,7 +815,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
                         npc.fight = !npc.fight;
                     }
                     m.npc = Some(npc);
-                    let label = format!("NPC {} ({}): {} {}", npc.id, title(CHARACTERS[m.character]), side(m.team), if npc.fight { "fight" } else { "dummy" });
+                    let label = format!("NPC {} ({}): {} {}", npc.id, npc_name(&game.0, m), side(m.team), if npc.fight { "fight" } else { "dummy" });
                     if log {
                         println!("t {:.2}: {label}", player.sim_time);
                     }
@@ -1204,7 +1252,7 @@ fn spawn_panel(mut commands: Commands) {
 
 /// What the panel shows: the free camera's keys, or the open menu (the sky, music and level
 /// menus' text from play_testworld.rs).
-pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, game: Res<GameData>, squad: Res<Squad>, world: Res<super::testworld::WorldText>,
+pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcList>, squad: Res<Squad>, world: Res<super::testworld::WorldText>,
               mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
     let Ok((mut text, mut node)) = panel.single_mut() else { return };
     let mut s = String::new();
@@ -1217,13 +1265,13 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, game: Res<Game
                 s += "\n";
             }
             s += "SPAWN NPC   (N / Esc: close)\n";
-            for (i, (label, _)) in npc_types().iter().enumerate() {
-                s += &format!("{} {label}\n", if i == tools.npc_type { ">" } else { " " });
+            // (a window of the list round the one picked, as the object menu's)
+            let n = npcs.0.len();
+            let first = tools.npc_type.saturating_sub(LIST_LINES / 2).min(n.saturating_sub(LIST_LINES));
+            for i in first..(first + LIST_LINES).min(n) {
+                s += &format!("{} {}\n", if i == tools.npc_type { ">" } else { " " }, npcs.0[i].0);
             }
-            let others = other_types(&game.0);
-            if !others.is_empty() {
-                s += &format!("  (not yet, #110: {})\n", others.join(", "));
-            }
+            s += &format!("  ({} of {n} character types)\n", tools.npc_type + 1);
             s += &format!("J team: {}   B: {}\nclick / Enter: spawn at the crosshair\n", side(tools.npc_team).to_uppercase(),
                           if tools.npc_fight { "FIGHT" } else { "DUMMY" });
             let n = squad.0.iter().filter(|m| m.npc.is_some()).count();

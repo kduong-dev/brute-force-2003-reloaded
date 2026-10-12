@@ -36,15 +36,15 @@ const LINEAR: u8 = 1;
 const EASE_IN: u8 = 2;
 const EASE_IN_OUT: u8 = 4;
 
-/// The world material characters are made of (WMAT_FLESH_HUMAN).
-const FLESH: i64 = 21;
-/// Flint's world material: WMAT_FLESH_SYNTHETIC (24 in the XBE's WMAT_ name table, counted from
-/// WMAT_DEFAULT = 0). An inference: the data doesn't name a character's material, but Flint's
-/// decals are grey (h_02d017b7, h_0d7a5245: RGBA 50,50,50) and 24 is the flesh whose debris
-/// (h_1f7ca034: blood_puff_b, bloodsplat_b, giblet_b) is grey.
+/// The world material most characters are made of (WMAT_FLESH_HUMAN): the squad's but Flint's,
+/// the humans' and the ferals' (their parts' collision, `Game::flesh`; `Loaded::flesh`).
+pub(super) const FLESH: i64 = 21;
+/// Flint's world material, read from her parts' collision (#128): WMAT_FLESH_SYNTHETIC (24 in the
+/// XBE's WMAT_ name table, counted from WMAT_DEFAULT = 0), whose debris (h_1f7ca034: blood_puff_b,
+/// bloodsplat_b, giblet_b) and decals (h_02d017b7, h_0d7a5245: RGBA 50,50,50) are grey. Kingman's
+/// is too. Every other flesh (22 MUTANT, 23 SHRIKE, 25 SEER, 26 FIREHOUND) still gets
+/// FLESH_HUMAN's hit effects and bundle here: their own are the species tickets' (#129-#133).
 const SYNTHETIC: i64 = 24;
-/// The character made of SYNTHETIC.
-const SYNTHETIC_CHARACTER: &str = "flint";
 /// Particle colour / alpha steps (one shared material each).
 const STEPS: usize = 32;
 /// Streaked particles (motion blur) are drawn this many seconds of motion long.
@@ -631,9 +631,13 @@ fn rgba(w: u32, h: u32, px: Vec<u8>, linear: bool) -> Image {
 
 fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
             mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    // the squad's blood decals' textures
-    let decal_ids: Vec<u32> = game.0.character_decals.values().flat_map(|&(a, b)| [a, b])
+    // the blood decals' textures: the squad's, and every loaded character type's (the same white
+    // splats, tinted: the Shrikes' green, the Seers' purple)
+    let mut decal_ids: Vec<u32> = game.0.character_decals.values().flat_map(|&(a, b)| [a, b])
+        .chain(game.0.character_types.values().flat_map(|t| t.decals.iter().flatten().copied()))
         .flat_map(|name| game.0.decals.get(&name).map(|d| d.textures.clone()).unwrap_or_default()).collect();
+    decal_ids.sort();
+    decal_ids.dedup();
     let flesh = game.0.surfaces.iter().find(|s| s.id == FLESH).cloned();
     let synthetic = game.0.surfaces.iter().find(|s| s.id == SYNTHETIC).cloned();
     let mut tex = |id: u32, linear: bool| game.0.texture_rgba(id).map(|(w, h, px)| images.add(rgba(w, h, px, linear)));
@@ -730,6 +734,24 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
     }
 }
 
+/// A character's blood decals (`<decal>` names): its type's two lists (#128: the hit's
+/// h_fb4bfc68, up to three, and the pool's h_efc2a874), none without a type. The squad's lists
+/// hold one each, the ones their names gave before (BF_DUMP_TYPES compares them); the Shrikes'
+/// hit list two.
+fn blood_decals<'a>(game: &'a Game, u: &Player) -> [&'a [u32]; 2] {
+    game.character_type(u.kind).map_or([&[], &[]], |t| [&t.decals[0], &t.decals[1]])
+}
+
+/// One decal of a list: at random, as the game picks one per hit (FUN_00124af0: floor(U x
+/// count)); a list of one takes no draw (the effects' random stream stays as it was). 0 for none.
+fn pick(list: &[u32], state: &mut FxState) -> u32 {
+    match list.len() {
+        0 => 0,
+        1 => list[0],
+        n => list[((state.random() * n as f32) as usize).min(n - 1)],
+    }
+}
+
 /// New hits (blood, sparks, the hit sound, a decal) and, for the dead, the pool.
 #[allow(clippy::too_many_arguments)]
 fn spawn_fx(
@@ -745,9 +767,10 @@ fn spawn_fx(
     let Some(fx) = fx else { return };
     let dt = frame_dt(&time);
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        let (hit_decal, pool_decal) = game.0.character_decals.get(CHARACTERS[u.character]).copied().unwrap_or((0, 0));
-        // what they're made of: its hit sounds and effects, and its debris (grey for Flint)
-        let (surface, blood) = if CHARACTERS[u.character] == SYNTHETIC_CHARACTER {
+        let [hit_decals, pool_decals] = blood_decals(&game.0, u);
+        // what they're made of (their parts' world material): its hit sounds and effects, and
+        // its debris (grey for Flint)
+        let (surface, blood) = if u.loaded.as_ref().map_or(FLESH, |l| l.flesh) == SYNTHETIC {
             (fx.synthetic.as_ref(), &BLOOD_B)
         } else {
             (fx.flesh.as_ref(), &BLOOD)
@@ -780,7 +803,7 @@ fn spawn_fx(
                 }
             }
             // a splat on the ground past the hit
-            if let Some(def) = game.0.decals.get(&hit_decal) {
+            if let Some(def) = game.0.decals.get(&pick(hit_decals, &mut state)) {
                 let past = at - back * (SPLAT_PAST.0 + (SPLAT_PAST.1 - SPLAT_PAST.0) * state.random());
                 spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, past, DECAL_SCALE);
             }
@@ -797,8 +820,8 @@ fn spawn_fx(
             for e in blood {
                 spawn_emitter(&mut commands, &mut state, e, at, Vec3::Y, sp);
             }
-            if let Some(def) = game.0.decals.get(&hit_decal) {
-                for _ in 0..DEATH_SPLATS {
+            for _ in 0..DEATH_SPLATS {
+                if let Some(def) = game.0.decals.get(&pick(hit_decals, &mut state)) {
                     let (a, r) = (state.random() * std::f32::consts::TAU, DEATH_SPLAT_REACH * state.random().sqrt());
                     let spot = Vec3::new(u.position.x + r * a.cos(), u.position.y + GROUND, u.position.z + r * a.sin());
                     spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, spot, DECAL_SCALE);
@@ -809,10 +832,11 @@ fn spawn_fx(
         // (the memory chip beside them: play_dna.rs, from dead_for)
         // the pool under the body, once it's down and still
         if !u.pool_done && u.thud && u.dead_for >= POOL_DELAY {
+            let pool_decal = pick(pool_decals, &mut state);
             if let (Some(body), Some(def)) = (u.body_at, game.0.decals.get(&pool_decal)) {
                 u.pool_done = true;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {
-                    println!("pool h_{pool_decal:08x} under {} at {body:.2}: {def:?}", CHARACTERS[u.character]);
+                    println!("pool h_{pool_decal:08x} under {} at {body:.2}: {def:?}", unit_name(u));
                 }
                 spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, body, DECAL_SCALE);
             }

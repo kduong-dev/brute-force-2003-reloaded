@@ -123,10 +123,10 @@ pub fn plugin(app: &mut App) {
     // (`trip` runs in play_grenade.rs's chain, right before the grenades' fuses)
 }
 
-/// A character by name (brutus, flint, hawk, tex) or CHARACTERS index.
+/// A squad member by name (brutus, flint, hawk, tex) or squad slot (0-3).
 fn character(s: &str) -> Option<usize> {
     let s = s.trim();
-    s.parse::<usize>().ok().filter(|&i| i < CHARACTERS.len()).or_else(|| CHARACTERS.iter().position(|c| c.eq_ignore_ascii_case(s)))
+    s.parse::<usize>().ok().filter(|&i| i < SQUAD).or_else(|| CHARACTERS[..SQUAD].iter().position(|c| c.eq_ignore_ascii_case(s)))
 }
 
 /// A new map: no shots on their way, the test hooks read afresh.
