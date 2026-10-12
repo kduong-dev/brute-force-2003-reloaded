@@ -271,6 +271,9 @@ pub(super) enum Hook {
     Team(Pick, Option<u8>),
     /// the radar-contact to give them (`Player::radar_contact`)
     Radar(Pick, u8),
+    /// the hit points to give them, both the current and the maximum (#35 take04's trainer `hp
+    /// spawned 999 999`, so a target outlives a long burst)
+    Health(Pick, f32),
     Fight(Pick),
     Remove(Pick),
     Placer { object: String, yaw: f32 },
@@ -321,6 +324,9 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_NPC_RADAR=<s>,<n|aim|all>,<value>: gives them that radar-contact (every character
 ///    has 1; 2 or 4 turns the crosshair yellow on them, play_reticle.rs), as #141's take08 rewrote
 ///    the Shrike's.
+///  - BF_TEST_NPC_HP=<s>,<n|aim|all>,<hp>: gives them that many hit points, now and at most (once
+///    they're loaded: a spawn's own come with its model the frame after), as #35 take04's trainer
+///    gave its Shrike 999.
 ///  - BF_TEST_PLACER=<s>,<object>[,<yaw>]: O with that object picked (by its label, any case;
 ///    else the first whose label contains it), turned that way: its copy follows the crosshair.
 ///  - BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]: a click with the object menu open
@@ -482,6 +488,9 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     for e in entries("BF_TEST_NPC_RADAR") {
         let value = e.get(2).and_then(|v| v.parse::<u8>().ok());
         add(num(&e, 0), e.get(1).and_then(|p| pick(p)).zip(value).map(|(p, v)| Hook::Radar(p, v)));
+    }
+    for e in entries("BF_TEST_NPC_HP") {
+        add(num(&e, 0), e.get(1).and_then(|p| pick(p)).zip(num(&e, 2)).map(|(p, hp)| Hook::Health(p, hp)));
     }
     for (k, make) in [("BF_TEST_NPC_FIGHT", Hook::Fight as fn(Pick) -> Hook), ("BF_TEST_NPC_REMOVE", Hook::Remove)] {
         for e in entries(k) {
@@ -811,7 +820,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
                     status.message = Some((format!("No character type {character}"), MESSAGE_TIME));
                 }
             },
-            Hook::Team(..) | Hook::Radar(..) | Hook::Fight(_) | Hook::Remove(_) => acts.push(hook.clone()),
+            Hook::Team(..) | Hook::Radar(..) | Hook::Health(..) | Hook::Fight(_) | Hook::Remove(_) => acts.push(hook.clone()),
             _ => {}
         }
     }
@@ -853,7 +862,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     let aimed = npc_at(&squad, origin, dir);
     for act in acts {
         match act {
-            Hook::Team(p, _) | Hook::Radar(p, _) | Hook::Fight(p) => {
+            Hook::Team(p, _) | Hook::Radar(p, _) | Hook::Health(p, _) | Hook::Fight(p) => {
                 let list = picked(&squad, p, aimed);
                 if list.is_empty() {
                     status.message = Some(("No NPC under the crosshair".into(), MESSAGE_TIME));
@@ -865,12 +874,14 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
                         Hook::Team(_, Some(team)) => m.team = team,
                         Hook::Team(_, None) => m.team = if m.team == 0 { ENEMY_TEAM } else { 0 },
                         Hook::Radar(_, value) => m.radar_contact = value,
+                        Hook::Health(_, hp) => (m.health, m.max_health) = (hp, hp),
                         _ => npc.fight = !npc.fight,
                     }
                     m.npc = Some(npc);
                     // (its radar-contact when a hook has changed it from every character's 1)
                     let radar = if m.radar_contact != 1 { format!(", radar-contact {}", m.radar_contact) } else { String::new() };
-                    let label = format!("NPC {} ({}): {} {}{radar}", npc.id, npc_name(&game.0, m), side(m.team), if npc.fight { "fight" } else { "dummy" });
+                    let hp = if matches!(act, Hook::Health(..)) { format!(", {:.0} HP", m.health) } else { String::new() };
+                    let label = format!("NPC {} ({}): {} {}{radar}{hp}", npc.id, npc_name(&game.0, m), side(m.team), if npc.fight { "fight" } else { "dummy" });
                     if log {
                         println!("t {:.2}: {label}", player.sim_time);
                     }

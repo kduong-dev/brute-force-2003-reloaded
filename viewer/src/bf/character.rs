@@ -221,6 +221,8 @@ pub struct Game {
     pub difficulty_settings: Option<[i64; 3]>,
     /// game-options `<reticule>`: the crosshair's lock reach and box (see `ReticuleOptions`)
     pub reticule: ReticuleOptions,
+    /// game-options `<combat-skills>`: the skills' own tuning (see `CombatSkills`)
+    pub combat_skills: CombatSkills,
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
     /// `ChatterBlock`; play_skills.rs's skill lines go through it)
     pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
@@ -323,6 +325,30 @@ pub struct ReticuleOptions {
     /// 4:3 aspect) in its +0x2c for the width
     pub box_share: f32,
 }
+
+/// game-options `<combat-skills>` (h_f7bc2603, name recovered by hashing; line 158 of the decoded
+/// decompiled/xml/common/game-options-en.xml): one block per skill, parsed by FUN_0019e1f0 into
+/// the settings the app's vtable +0x48 returns, which each skill's constructor copies. What the
+/// demo's skills use of it (play_skills.rs); the defaults are the shipped file's.
+#[derive(Clone, Copy, Debug)]
+pub struct CombatSkills {
+    /// Tex's block h_04aa86aa, h_1469a0df: his drain's factor while the gun in hand's clip is
+    /// empty, 0.5 (settings +0x25c, which his constructor FUN_0013d440 copies to skill+0x24 at
+    /// 0x13d475 and his drain 0x13d720 multiplies by; take05 measured -2.22/s, then -1.12/s)
+    pub berserk_empty_drain: f32,
+}
+
+impl Default for CombatSkills {
+    fn default() -> Self {
+        CombatSkills { berserk_empty_drain: 0.5 }
+    }
+}
+
+/// game-options' `<combat-skills>` element and Tex's block in it, and the block's attribute read
+/// as `CombatSkills::berserk_empty_drain` (names not recovered but the first).
+const H_COMBAT_SKILLS: u32 = 0xF7BC_2603;
+const H_BERSERKER_BLOCK: u32 = 0x04AA_86AA;
+const H_BERSERK_EMPTY_DRAIN: u32 = 0x1469_A0DF;
 
 impl Default for ReticuleOptions {
     fn default() -> Self {
@@ -692,6 +718,7 @@ impl Game {
             character_damage_multiplier: HashMap::new(),
             difficulty_settings: None,
             reticule: ReticuleOptions::default(),
+            combat_skills: CombatSkills::default(),
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
             character_types: HashMap::new(),
@@ -828,6 +855,11 @@ impl Game {
                     lock_share: num(0x0C3E_B4FF).unwrap_or(d.lock_share),
                     box_share: num(0xF079_AEBD).unwrap_or(d.box_share),
                 };
+            }
+            // the skills' tuning: <h_f7bc2603><h_04aa86aa h_1469a0df="0.5"/>.. (CombatSkills)
+            if let Some(tex) = root.walk().into_iter().find(|e| e.name == H_COMBAT_SKILLS).and_then(|c| c.child(H_BERSERKER_BLOCK)) {
+                let num = |k: u32| tex.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                self.combat_skills.berserk_empty_drain = num(H_BERSERK_EMPTY_DRAIN).unwrap_or(self.combat_skills.berserk_empty_drain);
             }
         }
         if let Some(root) = self.parse(ar, "string-table-en.xmb")? {

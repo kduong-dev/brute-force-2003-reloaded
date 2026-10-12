@@ -39,6 +39,11 @@
 //!    other two axes (turned +-15 degrees about z).
 //!  - **Damage falloff**: an instant hit's damage is scaled by FUN_00223780(Damage h_fb124e6c,
 //!    1 - distance / range) (FUN_00230040): the Bower's mode 2 is (1 - d/range)^2, 0.60 at 9 m.
+//!  - **Two guns** (Tex's berserk, play_skills.rs): each weapon object runs its own fire loop
+//!    (FUN_0022ee30), and the fire command sets the fire flag of the gun in hand and of the
+//!    second hand's gun alike (CT_FIRE_WEAPON, 0x122614-0x122655). So both fire on the trigger,
+//!    each at its own rate from its own clip, with its own cooldown, burst counter and accuracy
+//!    (#35 take04: the LZR-50 every 0.29 s and the Jax-iC every 0.52 s, from the same frame).
 
 use super::*;
 use bf_viewer::bf::weapon::ShotData;
@@ -113,9 +118,15 @@ struct WeaponFire {
     shells: f32,
 }
 
+/// The hands a character fires from: 0 the gun in hand (inventory +0x164), 1 the second hand's
+/// (inventory +0x198: Tex's berserk, `Player::second`).
+pub const HANDS: usize = 2;
+
 /// One shot the fire loop let off this frame, for the shot builder (play.rs).
 #[derive(Clone, Copy, Debug)]
 pub struct Pellet {
+    /// the hand whose gun let it off (see `HANDS`)
+    pub hand: usize,
     /// the game frame it went in (the accuracy turn is once a frame)
     tick: u32,
     /// the accuracy spread then (degrees, FUN_000c4e10)
@@ -132,19 +143,19 @@ pub struct FireState {
     /// time not yet run in game frames
     clock: f32,
     tick: u32,
-    /// shots into the current burst (weapon+0x28c)
-    burst: i64,
+    /// shots into the current burst (weapon+0x28c), by hand
+    burst: [i64; HANDS],
     weapons: Vec<WeaponFire>,
     /// the shots let off since the shot builder last took them
     pub pellets: Vec<Pellet>,
-    /// muzzle effects and casings owed to the effects (`shot_fx`)
-    pub flashes: u32,
-    pub shells: u32,
-    /// empty trigger cycles since play_ammo.rs last took them (FUN_002327f0)
-    empty: u32,
+    /// muzzle effects and casings owed to the effects (`shot_fx`), by hand
+    pub flashes: [u32; HANDS],
+    pub shells: [u32; HANDS],
+    /// empty trigger cycles since play_ammo.rs last took them (FUN_002327f0), by hand
+    empty: [u32; HANDS],
     seed: u32,
-    /// a trigger pull still owed its first shot (see `pull`), and the trigger last frame
-    latched: bool,
+    /// a trigger pull still owed its first shot, by hand (see `pull`), and the trigger last frame
+    latched: [bool; HANDS],
     was_held: bool,
     /// seconds the gun stays up after a shot (see `READY_HOLD`)
     ready: f32,
@@ -170,7 +181,8 @@ pub fn period(def: &WeaponDef, scoped: bool) -> f32 {
 pub struct Trigger {
     /// the trigger for the fire loop (`pull`: held, or a tap still owed its shot)
     pub held: bool,
-    /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case)
+    /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case), or a pull
+    /// still owed the other hand's shot (the request sets both guns' fire flags, `pull`)
     pub dry: bool,
     /// rounds in the clip
     pub clip: i64,
@@ -186,6 +198,22 @@ pub fn spread_at(a: f32) -> f32 {
     (100.0 - (a + ACCURACY_BONUS).clamp(0.0, 100.0)) * SPREAD_PER_POINT
 }
 
+/// One gun for the fire loop this frame (`FireState::run`): the game's weapon object, which
+/// keeps its own cooldown (+0x218).
+pub struct Gun<'a> {
+    /// the hand it's in (see `HANDS`)
+    pub hand: usize,
+    /// its index in the character's weapons, and its data
+    pub weapon: usize,
+    pub def: &'a WeaponDef,
+    pub trigger: Trigger,
+    /// its cooldown (weapon+0x218), run down and set by the loop: the gun in hand's is
+    /// `Player::cooldown`, the second hand's `SecondGun::cooldown`
+    pub cooldown: f32,
+    /// the rounds the loop took from its clip this frame (out)
+    pub rounds: i64,
+}
+
 impl FireState {
     fn weapon(&mut self, i: usize) -> &mut WeaponFire {
         if self.weapons.len() <= i {
@@ -195,37 +223,38 @@ impl FireState {
     }
 
     /// A reload starting (FUN_0022daf0), a dry click (FUN_002327f0) or a switch (FUN_0022dc00):
-    /// each clears the burst counter weapon+0x28c, so the next pull starts a fresh cycle.
-    pub fn reset_burst(&mut self) {
-        self.burst = 0;
+    /// each clears the burst counter weapon+0x28c of the gun in `hand`, so its next pull starts a
+    /// fresh cycle.
+    pub fn reset_burst(&mut self, hand: usize) {
+        self.burst[hand] = 0;
     }
 
-    /// The trigger for the fire loop this frame: held, or pressed earlier and still owed its first
-    /// shot. The game's request outlives the button: the press sets the holder's +0x260 bit 8,
-    /// which sets the weapon's fire bits each frame (0x122614-0x122655) until an animation event
-    /// clears it (0x0f8408d5, FUN_00117660 at 0x117b12), so an 80 ms tap fires 0.19-0.24 s later
-    /// (the takes). The clip that clears it isn't placed; the demo clears the request at the
-    /// pull's first shot, or when the gun can't fire.
-    pub fn pull(&mut self, held: bool, can_fire: bool) -> bool {
-        if held && !self.was_held {
-            self.latched = true;
-        }
+    /// The trigger for each hand's fire loop this frame (`can_fire`: whether that hand's gun can
+    /// fire): held, or pressed earlier and still owed its first shot. The game's request outlives
+    /// the button: the press sets the holder's +0x260 bit 3 (8), which sets the fire flag (+0x224
+    /// bit 2) of the gun in hand and of the second hand's each frame (0x122614-0x122655) until an
+    /// animation event clears it (0x0f8408d5, FUN_00117660 at 0x117b12, which clears both guns'
+    /// +0x224 bit 1 too), so an 80 ms tap fires 0.19-0.24 s later (the takes), both guns in Tex's
+    /// berserk. The clip that clears it isn't placed; the demo keeps each hand's request until
+    /// that gun's first shot, or until it can't fire.
+    pub fn pull(&mut self, held: bool, can_fire: [bool; HANDS]) -> [bool; HANDS] {
+        let pressed = held && !self.was_held;
         self.was_held = held;
-        if !can_fire {
-            self.latched = false;
-        }
-        (held || self.latched) && can_fire
+        std::array::from_fn(|k| {
+            self.latched[k] = (self.latched[k] || pressed) && can_fire[k];
+            (held || self.latched[k]) && can_fire[k]
+        })
     }
 
-    /// Whether the fire loop ran an empty cycle since the last call (play_ammo.rs: the reload
-    /// or the dry click it leads to, FUN_002327f0 -> FUN_00120d40).
-    pub fn take_empty(&mut self) -> bool {
-        std::mem::take(&mut self.empty) > 0
+    /// Whether the fire loop of the gun in `hand` ran an empty cycle since the last call
+    /// (play_ammo.rs: the reload or the dry click it leads to, FUN_002327f0 -> FUN_00120d40).
+    pub fn take_empty(&mut self, hand: usize) -> bool {
+        std::mem::take(&mut self.empty[hand]) > 0
     }
 
     /// Forget a pull still owed its shot (control passing to another character).
     pub fn drop_pull(&mut self) {
-        self.latched = false;
+        self.latched = [false; HANDS];
         self.was_held = false;
     }
 
@@ -239,108 +268,118 @@ impl FireState {
         self.weapons.get(i).and_then(|w| w.accuracy)
     }
 
-    /// Runs the weapon's fire loop over `dt` in whole game frames: the cooldown (weapon+0x218,
-    /// kept by play.rs), bursts, accuracy, tracers and casings. Returns the rounds taken from
-    /// the clip; the shots themselves wait in `pellets`.
-    pub fn run(&mut self, cooldown: &mut f32, weapon: usize, def: &WeaponDef, t: Trigger, seed: u32, dt: f32) -> i64 {
+    /// Runs the guns' fire loops over `dt` in whole game frames, the gun in hand first: each
+    /// one's cooldown (weapon+0x218, kept by play.rs), bursts, accuracy, tracers and casings.
+    /// Each gun's `rounds` gets the rounds taken from its clip; the shots themselves wait in
+    /// `pellets`.
+    pub fn run(&mut self, guns: &mut [Gun], seed: u32, dt: f32) {
         if self.seed == 0 {
             self.seed = seed | 1;
         }
-        let d: &ShotData = &def.shots;
-        let [min, max, scoped_cap, recoil, recovery] = d.accuracy;
-        let cap = if t.scoped { scoped_cap } else { max };
-        let cycle = period(def, t.scoped);
-        let mut rounds = 0;
         self.ready -= dt;
         self.clock += dt;
         while self.clock >= TICK {
             self.clock -= TICK;
             self.tick = self.tick.wrapping_add(1);
-            // FUN_0022ec90 (with the frame time's wobble, TICK_JITTER)
+            // FUN_0022ec90 (with the frame time's wobble, TICK_JITTER: one frame time for both)
             let frame = TICK * (1.0 + (random(&mut self.seed) * 2.0 - 1.0) * TICK_JITTER);
-            if *cooldown > 0.0 {
-                *cooldown -= frame;
+            for g in guns.iter_mut() {
+                self.tick_gun(g, frame);
             }
-            // FUN_00222ac0: held within [min, cap]
-            let mut a = self.weapon(weapon).accuracy.unwrap_or(cap).max(min).min(cap);
-            // FUN_0022e4c0: the aim's turn this frame, from the accuracy before the shots
-            let spread = spread_at(a);
-            // FUN_0022f2a0: an empty clip ends the loop (FUN_002327f0, play_ammo.rs). The clip
-            // drops only after a shot for which FUN_0022fe00 returns 0: in a zero-delay burst
-            // that's the last shot, once FUN_0022f0e0 has cleared the counter, so the clip stays
-            // put through the burst and every shell is its full pellets, the last one included
-            while t.held && *cooldown <= 0.0 && t.clip - rounds > 0 {
-                // turned from the shot before: a zero-delay burst's shots after the first
-                let walk = self.burst > 0 && d.burst_delay == 0.0;
-                // FUN_0022f0e0 (the clip it tests hasn't dropped yet this cycle)
-                self.burst += 1;
-                if self.burst < d.burst_count && t.clip - rounds > 0 {
-                    *cooldown = d.burst_delay;
-                } else {
-                    *cooldown = cycle;
-                    self.burst = 0;
-                }
-                // FUN_0022fe00: no round for a zero-delay burst's shots before its last
-                if self.burst == 0 || d.burst_delay != 0.0 {
-                    rounds += 1;
-                }
-                self.latched = false;
-                self.ready = READY_HOLD;
-                // FUN_002317e0: instant rays carry the flight effect every (N+1)th shot
-                let tracer = if d.bullet_type == 4 {
-                    let w = self.weapon(weapon);
-                    if w.tracer == 0 {
-                        w.tracer = d.tracer_gap;
-                        true
-                    } else {
-                        w.tracer -= 1;
-                        false
-                    }
-                } else {
-                    true
-                };
-                self.pellets.push(Pellet { tick: self.tick, spread, walk, tracer });
-                self.flashes += 1;
-                // the end of a trigger cycle: casings, recoil (FUN_0022f2a0 -> FUN_00222c10)
-                if self.burst == 0 || d.burst_delay != 0.0 {
-                    let (lost, floor) = if t.crouched { ((recoil as i64 / 2) as f32, (min + CROUCH_FLOOR).min(cap)) } else { (recoil, min) };
-                    a = (a - lost).max(floor).min(cap);
-                    if d.shell_object != 0 && d.shell_hardpoint != 0 {
-                        self.weapon(weapon).shells += d.shell_rate;
-                    }
-                }
-                if *cooldown > 0.0 {
-                    break;
-                }
-            }
-            // FUN_002327f0: the trigger down on an empty clip once the cooldown is out sets the
-            // cooldown as a shot does (1 / rate, scoped rate in the scope) and clears the burst;
-            // the character then reloads or clicks (play_ammo.rs). In game frames, so dry clicks
-            // keep the fire loop's rhythm
-            if (t.dry || t.held) && *cooldown <= 0.0 && t.clip - rounds <= 0 {
-                *cooldown = cycle;
-                self.burst = 0;
-                self.empty += 1;
-            }
-            // FUN_0022eee0: a casing for each whole one owed
-            let w = self.weapon(weapon);
-            let owed = w.shells.floor().max(0.0);
-            w.shells -= owed;
-            self.shells += owed as u32;
-            // FUN_00222b30: back toward the cap while the cooldown is out
-            if *cooldown <= 0.0 {
-                a += recovery * frame * if t.crouched { 2.0 } else { 1.0 };
-            }
-            self.weapon(weapon).accuracy = Some(a.max(min).min(cap));
         }
-        rounds
     }
 
-    /// The directions of the shots waiting, from the aim `base`: each game frame's turned once
-    /// by the accuracy (FUN_002229b0), a zero-delay burst's later shots each turned again from
-    /// the one before by the burst-spread (FUN_0022e1d0).
-    pub fn directions(&mut self, base: Vec3, burst_spread: f32) -> Vec<(Pellet, Vec3)> {
-        let pellets = std::mem::take(&mut self.pellets);
+    /// One game frame of one gun's fire loop (see `run`).
+    fn tick_gun(&mut self, g: &mut Gun, frame: f32) {
+        let (t, weapon, hand) = (&g.trigger, g.weapon, g.hand);
+        let d: &ShotData = &g.def.shots;
+        let [min, max, scoped_cap, recoil, recovery] = d.accuracy;
+        let cap = if t.scoped { scoped_cap } else { max };
+        let cycle = period(g.def, t.scoped);
+        let cooldown = &mut g.cooldown;
+        if *cooldown > 0.0 {
+            *cooldown -= frame;
+        }
+        // FUN_00222ac0: held within [min, cap]
+        let mut a = self.weapon(weapon).accuracy.unwrap_or(cap).max(min).min(cap);
+        // FUN_0022e4c0: the aim's turn this frame, from the accuracy before the shots
+        let spread = spread_at(a);
+        // FUN_0022f2a0: an empty clip ends the loop (FUN_002327f0, play_ammo.rs). The clip
+        // drops only after a shot for which FUN_0022fe00 returns 0: in a zero-delay burst
+        // that's the last shot, once FUN_0022f0e0 has cleared the counter, so the clip stays
+        // put through the burst and every shell is its full pellets, the last one included
+        while t.held && *cooldown <= 0.0 && t.clip - g.rounds > 0 {
+            // turned from the shot before: a zero-delay burst's shots after the first
+            let walk = self.burst[hand] > 0 && d.burst_delay == 0.0;
+            // FUN_0022f0e0 (the clip it tests hasn't dropped yet this cycle)
+            self.burst[hand] += 1;
+            if self.burst[hand] < d.burst_count && t.clip - g.rounds > 0 {
+                *cooldown = d.burst_delay;
+            } else {
+                *cooldown = cycle;
+                self.burst[hand] = 0;
+            }
+            // FUN_0022fe00: no round for a zero-delay burst's shots before its last
+            if self.burst[hand] == 0 || d.burst_delay != 0.0 {
+                g.rounds += 1;
+            }
+            self.latched[hand] = false;
+            self.ready = READY_HOLD;
+            // FUN_002317e0: instant rays carry the flight effect every (N+1)th shot
+            let tracer = if d.bullet_type == 4 {
+                let w = self.weapon(weapon);
+                if w.tracer == 0 {
+                    w.tracer = d.tracer_gap;
+                    true
+                } else {
+                    w.tracer -= 1;
+                    false
+                }
+            } else {
+                true
+            };
+            self.pellets.push(Pellet { hand, tick: self.tick, spread, walk, tracer });
+            self.flashes[hand] += 1;
+            // the end of a trigger cycle: casings, recoil (FUN_0022f2a0 -> FUN_00222c10)
+            if self.burst[hand] == 0 || d.burst_delay != 0.0 {
+                let (lost, floor) = if t.crouched { ((recoil as i64 / 2) as f32, (min + CROUCH_FLOOR).min(cap)) } else { (recoil, min) };
+                a = (a - lost).max(floor).min(cap);
+                if d.shell_object != 0 && d.shell_hardpoint != 0 {
+                    self.weapon(weapon).shells += d.shell_rate;
+                }
+            }
+            if *cooldown > 0.0 {
+                break;
+            }
+        }
+        // FUN_002327f0: the trigger down on an empty clip once the cooldown is out sets the
+        // cooldown as a shot does (1 / rate, scoped rate in the scope) and clears the burst;
+        // the character then reloads or clicks (play_ammo.rs). In game frames, so dry clicks
+        // keep the fire loop's rhythm
+        if (t.dry || t.held) && *cooldown <= 0.0 && t.clip - g.rounds <= 0 {
+            *cooldown = cycle;
+            self.burst[hand] = 0;
+            self.empty[hand] += 1;
+        }
+        // FUN_0022eee0: a casing for each whole one owed
+        let w = self.weapon(weapon);
+        let owed = w.shells.floor().max(0.0);
+        w.shells -= owed;
+        self.shells[hand] += owed as u32;
+        // FUN_00222b30: back toward the cap while the cooldown is out
+        if *cooldown <= 0.0 {
+            a += recovery * frame * if t.crouched { 2.0 } else { 1.0 };
+        }
+        self.weapon(weapon).accuracy = Some(a.max(min).min(cap));
+    }
+
+    /// The directions of the shots of the gun in `hand` waiting, from its aim `base`: each game
+    /// frame's turned once by the accuracy (FUN_002229b0, each weapon object's own turn,
+    /// FUN_0022e4c0), a zero-delay burst's later shots each turned again from the one before by
+    /// the burst-spread (FUN_0022e1d0). The other hand's shots stay waiting.
+    pub fn directions(&mut self, hand: usize, base: Vec3, burst_spread: f32) -> Vec<(Pellet, Vec3)> {
+        let (pellets, rest): (Vec<Pellet>, Vec<Pellet>) = std::mem::take(&mut self.pellets).into_iter().partition(|p| p.hand == hand);
+        self.pellets = rest;
         let mut out = Vec::with_capacity(pellets.len());
         let (mut tick, mut dir) = (None, base);
         for p in pellets {
@@ -436,121 +475,125 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
            mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
     let Some(mut ale) = ale else { return };
     for (k, p) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
-        let (flashes, shells) = (std::mem::take(&mut p.fire_state.flashes), std::mem::take(&mut p.fire_state.shells));
-        if flashes == 0 && shells == 0 {
-            continue;
-        }
-        // the controlled character's eye, when the view is its scope (see SCOPE_FLASH_REACH)
-        let eye = (k == 0 && p.scope > 0.5).then(|| {
-            let (eye, look) = camera_pose(p, 0.0);
-            (eye, (look - eye).normalize_or(Vec3::NEG_Z), (fov_at(p.zoom) * 0.5).tan())
-        });
-        let Some(w) = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon)) else { continue };
-        let d = &w.def.shots;
-        // the muzzle effect, once a frame however many shots (the Bower's pellets are one), in
-        // the muzzle hardpoint's own frame: FUN_00232060 attaches the effect object at the
-        // hardpoint (vtable +0xdc). Every weapon's muzzle hardpoint has the barrel along its
-        // -z (unturned, or half a turn about y on the models built facing +z) and the flash
-        // emitters are turned -90 degrees about x to fire along it (sminigun_muzzle.emt: the
-        // MK's). One exception: the Psionic Blast's (ORIENTATION w x y z 0 0 0.707 0.707, half
-        // a turn about (0, 1, 1)) puts its -z down the model's -y; its effect
-        // (seer_fball_mzl_purple) isn't checked against a take. The Therm Sweeper's back-blast
-        // dust (mtrail-dust:
-        // jetdust_Cube.emt#1.emt, 4.3 m along +z and 2 m down) lands behind the launcher, where
-        // turned +y along the barrel it hung 4.3 m above the holder
-        if flashes > 0 && d.muzzle_effect != 0 {
-            let at = Transform::from_translation(w.muzzle.point).with_rotation(w.muzzle.rot);
-            // in the holder's own scope: SCOPE_FLASH_REACH from the eye toward the muzzle,
-            // in the world (the demo's rule)
-            let scoped = eye.map(|(eye, fwd, half)| {
-                // where the take shows it in the scope: SCOPE_FLASH_AT units right of and below
-                // the crosshair (on the 640 x 480 picture, at whatever the zoom), the gun's side
-                let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
-                let up = right.cross(fwd);
-                let [x, y] = SCOPE_FLASH_AT.map(|u| u / 240.0 * half);
-                let toward = (fwd + right * x - up * y).normalize();
-                // its axis along the line of sight, as the game's barrel nearly is from the scope:
-                // the effect's flat flash quads, which lie along the barrel, then stay edge-on
-                // (along the real barrel, seen from above, they were bright ellipses under it).
-                // This turn (+y along the sight) is the one the unscoped flash had before the
-                // hardpoint frame; kept on purpose: the scoped flash was fitted to the take with
-                // it, and it draws as before pixel for pixel (#73's check against main)
-                Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).with_rotation(Quat::from_rotation_arc(Vec3::Y, toward))
-            });
-            // its ALE effects, with the game's facing 3 (ale_fx's FACING: the sphere muzzles'
-            // glows face the camera about their motion, where lying flat across the hardpoint's
-            // y they were edge-on); in the scope, with the demo's perp rules, the fit to the take
-            // that's kept on purpose (see SCOPE_FLASH_AT). And the effect type's light-effect, a
-            // point light at the muzzle as ale_fx plays the blasts' lights; each kind of gun
-            // names its own (light_muz_minigun h_08b5bbab on the ballistic guns, 0.2 s growing
-            // 0.28 -> 2.66 m; light_muz_laser h_1a96e11e on the LZRs; light_muzzle h_e7e8d51b on
-            // the Therm Sweeper and the Sweeper V; _bio, _cutter, _sonic, _particle, _rail,
-            // _seer, _energy on the others; none on the iKhan-GPL). Not in the holder's own
-            // scope, the demo's choice: from the gun under the eye it washed the whole scope view
-            // orange for a frame (the scoped MK pitched down: +29 red on average), and no take
-            // shows what the game's light does there, so the scope keeps the demo's old rule of
-            // no light
-            let kind = game.0.effect_type_defs.get(&d.muzzle_effect).cloned().unwrap_or_default();
-            // (a missile launcher's, the Therm Sweeper's launch dust: with its trail's and its
-            // explosion's rules, so the game's count makes it one card, see ale_fx's
-            // `Compiled::counted`)
-            let missile = super::missile::flies(&w.def);
-            let fxs: Vec<_> = kind.effects.iter().filter_map(|&e| match scoped {
-                Some(_) => ale.load(&mut game.0, &mut images, &mut materials, e),
-                None if missile => ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, e),
-                None => ale.load_facing(&mut game.0, &mut images, &mut materials, e),
-            }).collect();
-            let light = (kind.light != 0 && scoped.is_none()).then(|| ale.load(&mut game.0, &mut images, &mut materials, kind.light)).flatten();
-            let mut drawn = 0;
-            for (fx, is_light) in fxs.into_iter().map(|f| (f, false)).chain(light.map(|l| (l, true))) {
-                let life = fx.duration();
-                // (the light's seed is made from the last effect's: the gun's random stream,
-                // which the shots' spread and frame jitter share, runs as it did before the
-                // light was played)
-                let seed = if is_light { drawn ^ LIGHT_SEED } else { p.fire_state.next_seed() };
-                drawn = seed;
-                // (in the scope, without its flat flash quads: seen from the eye they lay as
-                // bright ellipses or lines under the star, which the take doesn't show; the
-                // demo's rule)
-                let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed).with_lod_sphere(kind.bounds);
-                run.hide_flat = scoped.is_some();
-                let effect = (Visibility::default(), run, AleExpire(life));
-                match scoped {
-                    Some(place) => commands.spawn((place, effect)),
-                    None => commands.spawn((at, effect, ChildOf(w.entity))),
-                };
+        // each hand's gun: the one in hand, and the second hand's (Tex's berserk)
+        for hand in 0..HANDS {
+            let (flashes, shells) = (std::mem::take(&mut p.fire_state.flashes[hand]), std::mem::take(&mut p.fire_state.shells[hand]));
+            if flashes == 0 && shells == 0 {
+                continue;
             }
-        }
-        let (Some(port), Ok(g)) = (w.shell, globals.get(w.entity)) else { continue };
-        if shells == 0 {
-            continue;
-        }
-        let parts = models.0.entry(d.shell_object).or_insert_with(|| {
-            let arch = *game.0.object_meshes.get(&d.shell_object)?;
-            let model = WeaponModel::load(&game.0, arch).ok()?;
-            let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
-            Some(model.parts.iter().flat_map(|part| {
-                let place = Transform::from_translation(part.offset).with_rotation(part.rotation);
-                bf_viewer::scene::static_meshes(&mut game.0, &part.geosets, &mut assets, true).into_iter().map(move |(m, mat)| (m, mat, place))
-            }).collect())
-        }).clone();
-        let Some(parts) = parts else { continue };
-        let frame = g.compute_transform();
-        let rot = frame.rotation * port.rot;
-        let at = frame.transform_point(port.point);
-        for _ in 0..shells {
-            let s = &mut p.fire_state;
-            let quarter = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-            let roll = (random(&mut s.seed) * 2.0 * SHELL_ROLL - SHELL_ROLL).to_radians();
-            let turned = quarter * rot * Quat::from_rotation_z(roll);
-            let speed = SHELL_SPEED + random(&mut s.seed) * SHELL_SPEED_MORE;
-            let velocity = -(turned * Vec3::Z) * speed + turned * Vec3::Y * (random(&mut s.seed) * SHELL_JITTER)
-                + turned * Vec3::X * (random(&mut s.seed) * SHELL_JITTER);
-            let spin = Vec3::new(random(&mut s.seed) - 0.5, random(&mut s.seed) - 0.5, random(&mut s.seed) - 0.5) * 30.0;
-            let root = commands.spawn((Transform::from_translation(at - rot * Vec3::Z * SHELL_BACK).with_rotation(rot),
-                                       Visibility::default(), Shell { velocity, spin, life: SHELL_LIFE })).id();
-            for (mesh, material, place) in &parts {
-                commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), *place, NotShadowCaster, ChildOf(root)));
+            // the controlled character's eye, when the view is its scope (see SCOPE_FLASH_REACH)
+            let eye = (k == 0 && hand == 0 && p.scope > 0.5).then(|| {
+                let (eye, look) = camera_pose(p, 0.0);
+                (eye, (look - eye).normalize_or(Vec3::NEG_Z), (fov_at(p.zoom) * 0.5).tan())
+            });
+            let gun = if hand == 0 { Some(p.weapon) } else { p.second.map(|s| s.weapon) };
+            let Some(w) = gun.and_then(|g| p.loaded.as_ref().and_then(|l| l.weapons.get(g))) else { continue };
+            let d = &w.def.shots;
+            // the muzzle effect, once a frame however many shots (the Bower's pellets are one), in
+            // the muzzle hardpoint's own frame: FUN_00232060 attaches the effect object at the
+            // hardpoint (vtable +0xdc). Every weapon's muzzle hardpoint has the barrel along its
+            // -z (unturned, or half a turn about y on the models built facing +z) and the flash
+            // emitters are turned -90 degrees about x to fire along it (sminigun_muzzle.emt: the
+            // MK's). One exception: the Psionic Blast's (ORIENTATION w x y z 0 0 0.707 0.707, half
+            // a turn about (0, 1, 1)) puts its -z down the model's -y; its effect
+            // (seer_fball_mzl_purple) isn't checked against a take. The Therm Sweeper's back-blast
+            // dust (mtrail-dust:
+            // jetdust_Cube.emt#1.emt, 4.3 m along +z and 2 m down) lands behind the launcher, where
+            // turned +y along the barrel it hung 4.3 m above the holder
+            if flashes > 0 && d.muzzle_effect != 0 {
+                let at = Transform::from_translation(w.muzzle.point).with_rotation(w.muzzle.rot);
+                // in the holder's own scope: SCOPE_FLASH_REACH from the eye toward the muzzle,
+                // in the world (the demo's rule)
+                let scoped = eye.map(|(eye, fwd, half)| {
+                    // where the take shows it in the scope: SCOPE_FLASH_AT units right of and below
+                    // the crosshair (on the 640 x 480 picture, at whatever the zoom), the gun's side
+                    let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
+                    let up = right.cross(fwd);
+                    let [x, y] = SCOPE_FLASH_AT.map(|u| u / 240.0 * half);
+                    let toward = (fwd + right * x - up * y).normalize();
+                    // its axis along the line of sight, as the game's barrel nearly is from the scope:
+                    // the effect's flat flash quads, which lie along the barrel, then stay edge-on
+                    // (along the real barrel, seen from above, they were bright ellipses under it).
+                    // This turn (+y along the sight) is the one the unscoped flash had before the
+                    // hardpoint frame; kept on purpose: the scoped flash was fitted to the take with
+                    // it, and it draws as before pixel for pixel (#73's check against main)
+                    Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).with_rotation(Quat::from_rotation_arc(Vec3::Y, toward))
+                });
+                // its ALE effects, with the game's facing 3 (ale_fx's FACING: the sphere muzzles'
+                // glows face the camera about their motion, where lying flat across the hardpoint's
+                // y they were edge-on); in the scope, with the demo's perp rules, the fit to the take
+                // that's kept on purpose (see SCOPE_FLASH_AT). And the effect type's light-effect, a
+                // point light at the muzzle as ale_fx plays the blasts' lights; each kind of gun
+                // names its own (light_muz_minigun h_08b5bbab on the ballistic guns, 0.2 s growing
+                // 0.28 -> 2.66 m; light_muz_laser h_1a96e11e on the LZRs; light_muzzle h_e7e8d51b on
+                // the Therm Sweeper and the Sweeper V; _bio, _cutter, _sonic, _particle, _rail,
+                // _seer, _energy on the others; none on the iKhan-GPL). Not in the holder's own
+                // scope, the demo's choice: from the gun under the eye it washed the whole scope view
+                // orange for a frame (the scoped MK pitched down: +29 red on average), and no take
+                // shows what the game's light does there, so the scope keeps the demo's old rule of
+                // no light
+                let kind = game.0.effect_type_defs.get(&d.muzzle_effect).cloned().unwrap_or_default();
+                // (a missile launcher's, the Therm Sweeper's launch dust: with its trail's and its
+                // explosion's rules, so the game's count makes it one card, see ale_fx's
+                // `Compiled::counted`)
+                let missile = super::missile::flies(&w.def);
+                let fxs: Vec<_> = kind.effects.iter().filter_map(|&e| match scoped {
+                    Some(_) => ale.load(&mut game.0, &mut images, &mut materials, e),
+                    None if missile => ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, e),
+                    None => ale.load_facing(&mut game.0, &mut images, &mut materials, e),
+                }).collect();
+                let light = (kind.light != 0 && scoped.is_none()).then(|| ale.load(&mut game.0, &mut images, &mut materials, kind.light)).flatten();
+                let mut drawn = 0;
+                for (fx, is_light) in fxs.into_iter().map(|f| (f, false)).chain(light.map(|l| (l, true))) {
+                    let life = fx.duration();
+                    // (the light's seed is made from the last effect's: the gun's random stream,
+                    // which the shots' spread and frame jitter share, runs as it did before the
+                    // light was played)
+                    let seed = if is_light { drawn ^ LIGHT_SEED } else { p.fire_state.next_seed() };
+                    drawn = seed;
+                    // (in the scope, without its flat flash quads: seen from the eye they lay as
+                    // bright ellipses or lines under the star, which the take doesn't show; the
+                    // demo's rule)
+                    let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed).with_lod_sphere(kind.bounds);
+                    run.hide_flat = scoped.is_some();
+                    let effect = (Visibility::default(), run, AleExpire(life));
+                    match scoped {
+                        Some(place) => commands.spawn((place, effect)),
+                        None => commands.spawn((at, effect, ChildOf(w.entity))),
+                    };
+                }
+            }
+            let (Some(port), Ok(g)) = (w.shell, globals.get(w.entity)) else { continue };
+            if shells == 0 {
+                continue;
+            }
+            let parts = models.0.entry(d.shell_object).or_insert_with(|| {
+                let arch = *game.0.object_meshes.get(&d.shell_object)?;
+                let model = WeaponModel::load(&game.0, arch).ok()?;
+                let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
+                Some(model.parts.iter().flat_map(|part| {
+                    let place = Transform::from_translation(part.offset).with_rotation(part.rotation);
+                    bf_viewer::scene::static_meshes(&mut game.0, &part.geosets, &mut assets, true).into_iter().map(move |(m, mat)| (m, mat, place))
+                }).collect())
+            }).clone();
+            let Some(parts) = parts else { continue };
+            let frame = g.compute_transform();
+            let rot = frame.rotation * port.rot;
+            let at = frame.transform_point(port.point);
+            for _ in 0..shells {
+                let s = &mut p.fire_state;
+                let quarter = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+                let roll = (random(&mut s.seed) * 2.0 * SHELL_ROLL - SHELL_ROLL).to_radians();
+                let turned = quarter * rot * Quat::from_rotation_z(roll);
+                let speed = SHELL_SPEED + random(&mut s.seed) * SHELL_SPEED_MORE;
+                let velocity = -(turned * Vec3::Z) * speed + turned * Vec3::Y * (random(&mut s.seed) * SHELL_JITTER)
+                    + turned * Vec3::X * (random(&mut s.seed) * SHELL_JITTER);
+                let spin = Vec3::new(random(&mut s.seed) - 0.5, random(&mut s.seed) - 0.5, random(&mut s.seed) - 0.5) * 30.0;
+                let root = commands.spawn((Transform::from_translation(at - rot * Vec3::Z * SHELL_BACK).with_rotation(rot),
+                                           Visibility::default(), Shell { velocity, spin, life: SHELL_LIFE })).id();
+                for (mesh, material, place) in &parts {
+                    commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), *place, NotShadowCaster, ChildOf(root)));
+                }
             }
         }
     }
@@ -567,20 +610,25 @@ impl FireState {
 /// BF_TEST_WEAPON=<label or hex name> (e.g. "Bower 20", "RVG50 Minigun", 0c3db625): the
 /// controlled character starts with that weapon in the slot BF_START_WEAPON picks (the first by
 /// default), if the map's data (or the test map's, `-- --test`) defines it. For trying a gun
-/// the character doesn't carry.
+/// the character doesn't carry. A list, `<a>;<b>`, fills the slots in order from the first
+/// instead (#35's Tex: `Confed LZR-50;Jax-iC`, the takes' loadout).
 fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, player: Res<Player>) {
     if std::mem::replace(&mut *done, true) {
         return;
     }
     let Ok(want) = std::env::var("BF_TEST_WEAPON") else { return };
-    let hex = u32::from_str_radix(want.trim_start_matches("h_").trim_start_matches("0x"), 16).ok();
-    let Some(key) = game.0.weapons.iter().find(|(k, d)| Some(**k) == hex || d.label.eq_ignore_ascii_case(&want)).map(|(k, _)| *k) else {
-        warn!("BF_TEST_WEAPON: no weapon {want}");
-        return;
-    };
-    let slot: usize = std::env::var("BF_START_WEAPON").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    let list = game.0.character_weapons.entry(CHARACTERS[player.character].to_string()).or_default();
-    if slot < list.len() { list[slot] = key } else { list.push(key) }
+    let names: Vec<&str> = want.split(';').map(str::trim).filter(|n| !n.is_empty()).collect();
+    let first: usize = if names.len() > 1 { 0 } else { std::env::var("BF_START_WEAPON").ok().and_then(|v| v.parse().ok()).unwrap_or(0) };
+    for (k, name) in names.into_iter().enumerate() {
+        let hex = u32::from_str_radix(name.trim_start_matches("h_").trim_start_matches("0x"), 16).ok();
+        let Some(key) = game.0.weapons.iter().find(|(k, d)| Some(**k) == hex || d.label.eq_ignore_ascii_case(name)).map(|(k, _)| *k) else {
+            warn!("BF_TEST_WEAPON: no weapon {name}");
+            continue;
+        };
+        let slot = first + k;
+        let list = game.0.character_weapons.entry(CHARACTERS[player.character].to_string()).or_default();
+        if slot < list.len() { list[slot] = key } else { list.push(key) }
+    }
 }
 
 /// Mixed into the last muzzle effect's seed for its light effect's (any odd constant: the

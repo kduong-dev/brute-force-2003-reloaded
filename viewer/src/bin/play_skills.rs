@@ -22,6 +22,14 @@
 //!  - **What ends a skill**: the toggle again, stamina at 0, death (the death handler calls the
 //!    deactivate, 0x115df5), and each skill's own ends (its `update`). Handing control over
 //!    doesn't: the skill stays on and drains on the character you left (take19).
+//!  - **Tex's Berserker** (#121, `Berserker`): the press tops the other weapon slot's gun up from
+//!    the reserve, takes the berserk motions (play.rs `SpecialClips`) and plays `Sc_w1_bz_start`;
+//!    at its 0.50 s event that gun is drawn into his left hand (`Player::second`) and fires with
+//!    the gun in hand, each from its own clip at its own rate (play_shots.rs). The drain halves
+//!    while the gun in hand is empty; berserk ends when the second gun runs dry, and the switch key
+//!    (Q, the game's Y) and the reload key (R, the game's X) end it instead of switching or
+//!    reloading. While it's on no other overlay starts: no reload, switch, throw or item use
+//!    (`overlays_blocked`).
 //!
 //! Squad deathmatch maps (`sdm_*`) take the deathmatch squad's rates (play.rs `load_map`,
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
@@ -29,11 +37,11 @@
 //! Test hooks: `BF_TEST_SKILL=<s>[,<s>...]` presses the skill key at those times;
 //! `BF_TEST_STAMINA=<n>[@<s>][,...]` sets the controlled character's stamina (at those times,
 //! at the start without one); `BF_SKILL_CHATTER=<percent>` sets the skill lines' chance (100:
-//! every time); `BF_SKILL_LOG=1` logs each command, switch, sound and line, and every
-//! character's stamina each half second.
+//! every time); `BF_SKILL_LOG=1` logs each command, switch, sound and line, Tex's top-ups,
+//! refusals and second gun, and every character's stamina each half second.
 
 use super::*;
-use bf_viewer::bf::character::SkillData;
+use bf_viewer::bf::character::{CombatSkills, SkillData};
 
 /// Squad deathmatch's Brute Force squad library (game-options-en.xml line 84, `<squad
 /// h_fed0689a="mp_tex mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`): the rates sdm maps
@@ -111,6 +119,14 @@ pub enum Toggle {
     AtEvent(u32),
 }
 
+/// What a skill's own methods reach outside its character: the squad's ammo reserve (Tex's
+/// clip top-up at the press, 0x13d643-0x13d692, and his second gun's load at the switch,
+/// FUN_0022daf0), and whether to log (BF_SKILL_LOG).
+pub struct Outside<'a> {
+    pub reserve: &'a mut ammo::Reserve,
+    pub log: bool,
+}
+
 /// A skill's own part, as the game's skill classes override their base class: the four below
 /// (`Berserker`, `Vengar`, `Stealth`, `Targeting`), each of which its ticket fills in with its
 /// effect. Each method's default is the base class's. The skill is taken out of its character
@@ -119,19 +135,33 @@ pub trait SkillKind: Send + Sync {
     /// The skill's name, a string table id (vtable +0x4c): the HUD shows it while it's on.
     fn name(&self) -> u32;
     /// The toggle command (vtable +0x04), with the skill on or off (`u.skill.on`).
-    fn toggle(&mut self, u: &Player) -> Toggle;
+    fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle;
     /// The stamina used over `dt` while on (vtable +0xbc); the base: `cost` x dt.
     fn drain(&self, _u: &Player, cost: f32, dt: f32) -> f32 {
         cost * dt
     }
-    /// Switched on (vtable +0x120): the skill's effects start.
-    fn on(&mut self, _u: &mut Player) {}
-    /// Switched off (vtable +0x124): its effects end.
+    /// Switched on (vtable +0x120; for Tex, his switch event's own work, 0x118ae7): the skill's
+    /// effects start.
+    fn on(&mut self, _u: &mut Player, _out: &mut Outside) {}
+    /// Switched off (vtable +0x124; for Tex, his off event's, 0x1180bb): its effects end.
     fn off(&mut self, _u: &mut Player) {}
     /// Every frame, on or off, while alive (vtable +0xc0). True sends the toggle command: the
     /// skill's own ends (Tex's other gun dry, Flint's clip dry: their tickets).
     fn update(&mut self, _u: &mut Player, _dt: f32) -> bool {
         false
+    }
+    /// Whether the switch key, the reload key and the black button end the skill while it's on,
+    /// instead of what they do (vtable +0x7c, asked by the player controller at 0x134367,
+    /// 0x134c50 and 0x134db4). The base says no (0x20e200); Tex's and Flint's yes (0x213690).
+    fn ended_by_actions(&self) -> bool {
+        false
+    }
+    /// Whether the character's other overlays may start while the skill is on (the overlay
+    /// filter, vtable +0xa4, asked for each queued overlay by the item update FUN_0011a440 at
+    /// 0x11a507, which drops a refused one). The base lets all through (0x262a80); Tex's
+    /// (0x13d850) only his own off overlay (OMT_SPECIAL_OFF 43, which the toggle plays here).
+    fn lets_overlays_play(&self) -> bool {
+        true
     }
 }
 
@@ -150,6 +180,11 @@ pub struct Skill {
     pub toggling: Option<Toggling>,
     /// the toggle command, asked for (the key; a squad order, #33) and not yet carried out
     pub request: bool,
+    /// the motion set's special motions taken (play.rs `SpecialClips`: Tex's berserk set). His
+    /// toggle asks for them at an accepted press switching on, and for the normal ones back at
+    /// one switching off (the motion request MT_TOGGLE_SPECIAL, FUN_0012eab0(type, 45, 1) at
+    /// 0x13d6ca); so they change at the press, under the toggle's overlay, not at its event
+    pub special_motions: bool,
     /// the character's chatter replay delays: tag -> seconds before it can say that tag again
     /// (the game's map at char+0x7f4: started when a line is said, FUN_00126460, counted down by
     /// FUN_0011c100 from the character update). Only the skill lines use it so far; it's here,
@@ -159,10 +194,11 @@ pub struct Skill {
 
 impl Skill {
     /// The skill of a character type (the spawn, FUN_0012f440, has the factory FUN_0012e590 make
-    /// it by skill-set).
-    pub fn new(data: Option<&SkillData>) -> Self {
+    /// it by skill-set), with game-options' `<combat-skills>` tuning (each constructor copies its
+    /// block).
+    pub fn new(data: Option<&SkillData>, settings: &CombatSkills) -> Self {
         let kind: Option<Box<dyn SkillKind>> = match data.map(|d| d.skill_set) {
-            Some(CSKILL_TEX) => Some(Box::new(Berserker::default())),
+            Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
             Some(CSKILL_BRUTUS) => Some(Box::new(Vengar)),
             Some(CSKILL_HAWK) => Some(Box::new(Stealth)),
             Some(CSKILL_FLINT) => Some(Box::new(Targeting)),
@@ -214,16 +250,93 @@ pub fn can_activate(u: &Player) -> bool {
     u.stamina >= ACTIVATE_SHARE * u.max_stamina
 }
 
-/// Tex's Berserker (CSKILL_TEX; skill vtable 0x39d058, toggle 0x13d490). The toggle returns 1, so
-/// `Sc_w1_bz_start` / `Sc_w1_bz_stop` play, and it switches at their 0.50 s events (measured
-/// 0.53 s after the toggle frame, on and off, takes 01-05, 21, 25, 26); its 1.0 s timer refuses
-/// presses meanwhile, which keeps it on at 0 for that half second. Switching on it also asks
-/// FUN_00117210 (0x13d5c4) and the 10% (0x13d5d3). His other refusals (crouched, scoped, no second
-/// gun, the clip top-up), the second gun and the drain's x0.5 are #121's.
-#[derive(Default)]
+/// Whether `u`'s skill refuses its other overlays now (`SkillKind::lets_overlays_play`, while
+/// it's on): in Tex's berserk no reload, weapon switch, grenade throw or item use starts (#35
+/// take05: no reload; take26 20.5 s: LT throws nothing).
+pub fn overlays_blocked(u: &Player) -> bool {
+    u.skill.on && u.skill.kind.as_ref().is_some_and(|k| !k.lets_overlays_play())
+}
+
+/// Whether `u`'s skill is on and the switch key, the reload key and the black button end it
+/// (`SkillKind::ended_by_actions`).
+pub fn ended_by_actions(u: &Player) -> bool {
+    u.skill.on && u.skill.kind.as_ref().is_some_and(|k| k.ended_by_actions())
+}
+
+/// The gun of `u`'s other weapon slot, the one berserk draws into the second hand: FUN_0014d090
+/// takes slot 2's with slot 1 in hand and slot 1's with slot 2 (inventory +0x1cc), and the
+/// toggle's top-up finds the same gun as the one a slot still holds (FUN_0014d430 slot 1, else
+/// FUN_0014d450 slot 2: the gun in hand has left its slot). None with a single gun.
+pub fn other_gun(u: &Player) -> Option<usize> {
+    let n = u.loaded.as_ref()?.weapons.len();
+    let w = if u.weapon == 0 { 1 } else { 0 };
+    (u.weapon < 2 && w < n).then_some(w)
+}
+
+/// Top the clip of `u`'s weapon `w` up from the squad's reserve: min(clip size - clip, reserve)
+/// rounds (Tex's toggle at the press, 0x13d643-0x13d692; take25: the Jax-iC 2 -> 36 and the
+/// reserve 200 -> 166 at the press). A recharging gun has no reserve (FUN_0022da80 finds no item
+/// of its ammo-type: the LZR-50 stays as it is). The rounds moved.
+fn top_up(u: &mut Player, w: usize, reserve: &mut ammo::Reserve) -> i64 {
+    let Some(def) = u.loaded.as_ref().and_then(|l| l.weapons.get(w)).map(|h| &h.def) else { return 0 };
+    let (Some(&[clip, _]), false) = (u.ammo.get(w), def.ammo_regen > 0.0) else { return 0 };
+    let need = (def.ammo.max(1) - clip).max(0);
+    let took = if u.npc.is_some() { need } else { reserve.take(def.ammo_type, need) };
+    u.ammo[w][0] += took;
+    took
+}
+
+/// Whether `u`'s current motion has a MT_TOGGLE_SPECIAL transition, which Tex's toggle needs
+/// either way (the motion record at char+0x1fc, its +0x534: the transition for motion type 45,
+/// 0x13d4b8-0x13d4ce): in ms_tex.xml only the stand, walk, run, side and back steps and the
+/// dash have one, and their berserk versions one back. So not crouched or getting there, in a
+/// jump, a dodge, a dive or a slide, nor knocked down.
+fn special_transition(u: &Player) -> bool {
+    matches!(u.action, Action::None) && !u.slide_on && !knocked_down(u)
+}
+
+/// Tex's Berserker (CSKILL_TEX; skill vtable 0x39d058, constructor FUN_0013d440): he fires the
+/// gun of his other weapon slot with the one in hand ("Uses two weapons at once.").
+///
+///  - **The toggle** (0x13d490): refused unless his motion has a berserk transition
+///    (`special_transition`). Switching on is also refused with a gun already in the second hand,
+///    crouched (MT 6/7), scoped (char+0x7a8), when he isn't free (FUN_00117210, 0x13d5c4), under
+///    10% (0x13d5d3; take03 2.0 s: nothing at all), within the timer, without a second gun, or
+///    when that gun's clip is still 0 after its top-up (take25 10.0 s); switching off with no gun
+///    in the second hand or within the timer. Accepted, it tops the other gun up from the reserve
+///    (switching on, `top_up`), asks for the berserk motions (or the normal ones back), starts its
+///    1.0 s timer and returns 1, so `Sc_w1_bz_start` / `bz_stop` play and switch at their 0.50 s
+///    events (measured 0.53 s after the toggle frame, on and off, takes 01-05, 21, 25, 26). The
+///    timer refuses presses meanwhile, which keeps it on at 0 for that half second (take02).
+///    "Out of Ammo" (h_ff471882, 0x13d6e2) is unreachable: the code refuses without a second gun
+///    before it gets there.
+///  - **On** (the event eaba3d48, 0x118ae7): the other slot's gun into his left hand
+///    (FUN_0014d090), loaded from the reserve at once (FUN_0022daf0); the weapon box lists both.
+///  - **Off** (14ee2201, 0x1180bb; and death): it goes back to its slot (FUN_0014d1a0).
+///  - **Drain** (0x13d720): `cost` x dt, x h_1469a0df (0.5) while the gun in hand's clip is 0
+///    (take05: -2.22/s, then -1.12/s).
+///  - **Update** (FUN_0013d780): the timer runs down; once it's out, the second gun's clip at 0
+///    sends the toggle (take26 30.23 s: the LZR-50 dry, berserk off 0.5 s later).
+///  - The switch key, the reload key and the black button end it (vtable +0x7c), and no other
+///    overlay plays while it's on (+0xa4, 0x13d850).
+///  - The demo's choices until #35's shots T2 / T3 show the game's: no scope while his berserk
+///    motions or second gun are in (play.rs `follow_camera`), and a crouch pressed in the motions
+///    dropped, not kept for after the off (`step_player`).
 struct Berserker {
     /// the toggle timer (skill+0x20, s left)
     timer: f32,
+    /// the drain's factor while the gun in hand is empty (skill+0x24, `CombatSkills`)
+    empty_drain: f32,
+}
+
+impl Berserker {
+    /// A refused toggle, with its reason in the log.
+    fn refused(u: &Player, out: &Outside, why: &str) -> Toggle {
+        if out.log {
+            println!("t={:.2} {}: berserk refused: {why}", u.sim_time, unit_name(u));
+        }
+        Toggle::Refused
+    }
 }
 
 impl SkillKind for Berserker {
@@ -231,17 +344,91 @@ impl SkillKind for Berserker {
         NAME_BERSERKER
     }
 
-    fn toggle(&mut self, u: &Player) -> Toggle {
-        // switching on also needs him free (FUN_00117210) and 10% (take03 2.0 s: nothing at all)
-        if self.timer > 0.0 || (!u.skill.on && (!free_to_act(u) || !can_activate(u))) {
-            return Toggle::Refused;
+    fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
+        if !special_transition(u) {
+            return Self::refused(u, out, "no berserk transition from his motion");
         }
+        if u.skill.on {
+            if u.second.is_none() {
+                return Self::refused(u, out, "no gun in the second hand");
+            }
+            if self.timer > 0.0 {
+                return Self::refused(u, out, "its timer runs");
+            }
+        } else {
+            // (crouched is in the motion check already)
+            let why = if u.second.is_some() { "a gun in the second hand already" }
+                else if u.scope_level > 0 { "scoped" }
+                else if !free_to_act(u) { "busy" }
+                else if !can_activate(u) { "under 10%" }
+                else if self.timer > 0.0 { "its timer runs" }
+                else { "" };
+            if !why.is_empty() {
+                return Self::refused(u, out, why);
+            }
+            let Some(w) = other_gun(u) else { return Self::refused(u, out, "no second gun") };
+            let took = top_up(u, w, out.reserve);
+            let clip = u.ammo.get(w).map_or(0, |a| a[0]);
+            if out.log {
+                println!("t={:.2} {}: berserk top-up of weapon {w}: {took} rounds, clip {clip}", u.sim_time, unit_name(u));
+            }
+            if clip == 0 {
+                return Self::refused(u, out, "the second gun has no rounds");
+            }
+        }
+        u.skill.special_motions = !u.skill.on;
         self.timer = BERSERK_TIMER;
         Toggle::AtEvent(if u.skill.on { EV_BERSERK_OFF } else { EV_BERSERK_ON })
     }
 
-    fn update(&mut self, _u: &mut Player, dt: f32) -> bool {
-        self.timer = (self.timer - dt).max(0.0);
+    fn drain(&self, u: &Player, cost: f32, dt: f32) -> f32 {
+        let empty = u.ammo.get(u.weapon).is_some_and(|a| a[0] == 0);
+        cost * dt * if empty { self.empty_drain } else { 1.0 }
+    }
+
+    fn on(&mut self, u: &mut Player, out: &mut Outside) {
+        let Some(w) = other_gun(u) else { return };
+        u.second = Some(SecondGun::new(w));
+        // (FUN_0022daf0 also clears its burst counter)
+        let took = top_up(u, w, out.reserve);
+        u.fire_state.reset_burst(1);
+        u.weapon_dirty = true;
+        // the weapon box names both a moment (take01: from the switch, 2.750 s, to 5.417 s)
+        u.hud_list = HUD_LIST_TIME;
+        if out.log {
+            println!("t={:.2} {}: second gun drawn: weapon {w} (loaded {took} more, clip {})", u.sim_time, unit_name(u),
+                     u.ammo.get(w).map_or(0, |a| a[0]));
+        }
+    }
+
+    fn off(&mut self, u: &mut Player) {
+        u.skill.special_motions = false;
+        if u.second.take().is_some() {
+            u.weapon_dirty = true;
+            // the weapon box lists the weapons again, the stowed one in blue (take01 18.767 s)
+            u.hud_list = HUD_LIST_TIME;
+        }
+    }
+
+    fn update(&mut self, u: &mut Player, dt: f32) -> bool {
+        // (the dry check waits for the timer: 0x13d783-0x13d7c2)
+        if self.timer > 0.0 {
+            self.timer = (self.timer - dt).max(0.0);
+            return false;
+        }
+        // (a toggle's overlay cut short by a knock-down, the demo's choice in `step`, leaves the
+        // motions as the skill is)
+        if u.skill.toggling.is_none() {
+            u.skill.special_motions = u.skill.on;
+        }
+        u.skill.on && u.second.is_some_and(|s| u.ammo.get(s.weapon).is_some_and(|a| a[0] == 0))
+    }
+
+    fn ended_by_actions(&self) -> bool {
+        true
+    }
+
+    fn lets_overlays_play(&self) -> bool {
         false
     }
 }
@@ -260,7 +447,7 @@ impl SkillKind for Vengar {
         NAME_VENGAR
     }
 
-    fn toggle(&mut self, _u: &Player) -> Toggle {
+    fn toggle(&mut self, _u: &mut Player, _out: &mut Outside) -> Toggle {
         Toggle::Now { overlay: false }
     }
 }
@@ -280,7 +467,7 @@ impl SkillKind for Stealth {
         NAME_STEALTH
     }
 
-    fn toggle(&mut self, u: &Player) -> Toggle {
+    fn toggle(&mut self, u: &mut Player, _out: &mut Outside) -> Toggle {
         if u.skill.on && (u.stamina <= 0.0 || u.dead) {
             return Toggle::Now { overlay: false };
         }
@@ -303,7 +490,7 @@ impl SkillKind for Targeting {
         NAME_TARGETING
     }
 
-    fn toggle(&mut self, _u: &Player) -> Toggle {
+    fn toggle(&mut self, _u: &mut Player, _out: &mut Outside) -> Toggle {
         Toggle::Now { overlay: false }
     }
 }
@@ -332,7 +519,8 @@ struct LineHistory(HashMap<(usize, u32), Vec<u32>>);
 /// The skill key and test hooks before the movement, every character's skill after it (so the
 /// refill sees this frame's motion, and its sounds play this frame). The key comes after the
 /// hand-over (`squad_control`), so a press in the frame control passes goes to the new character,
-/// not the one handed over from.
+/// not the one handed over from; and after the ammo test hooks (`ammo::test_trigger`), whose
+/// switch and reload presses it may turn into the toggle.
 pub fn plugin(app: &mut App) {
     app.init_resource::<SkillHooks>()
         .init_resource::<LineHistory>()
@@ -341,7 +529,7 @@ pub fn plugin(app: &mut App) {
             commands.insert_resource(LineHistory::default());
         })
         .add_systems(Update, (
-            skill_input.after(read_input).after(squad_control).before(update_player),
+            skill_input.after(read_input).after(squad_control).after(ammo::test_trigger).before(update_player),
             update_skills.after(update_player).before(play_sounds),
         ).run_if(in_state(AppState::Playing)));
 }
@@ -349,7 +537,18 @@ pub fn plugin(app: &mut App) {
 /// The skill key: V, the game's White button (VB_SPECIAL_ABILITY, game-options-en.xml line 151;
 /// the player controller sends CT_TOGGLE_SPECIAL at 0x134cff), for the controlled character,
 /// alive; and the test hooks BF_TEST_SKILL (presses) and BF_TEST_STAMINA (pokes).
-fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut hooks: ResMut<SkillHooks>) {
+///
+/// With a skill on that they end (`ended_by_actions`: Tex's), the player controller sends the
+/// toggle instead of what two more keys do: the switch key, Q (the game's Y, VB 10, 0x134db4-
+/// 0x134dde: the toggle in place of CT 9; take26 4.5 s, no switch, berserk off), and the reload
+/// key, R (the game's X let go, 0x134c2b-0x134c50), when a reload could start (FUN_00120c50: the
+/// gun in hand's clip below its size and a reserve for it), which also leaves the reload asked
+/// for (+0xa1 bit 2), so it follows once the skill is off (take26 14.0 s: the reload at 15.19 s);
+/// with no reload possible the reload key does nothing. R does it on the press, where the game's
+/// X does it on the release (take26: off about 0.6 s after X came up): the demo's choice, as its
+/// R reloads on the press. The black button (VB 63, 0x134367, the medkit shortcut) ends it the
+/// same way in the game; the demo has no key for it.
+fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut hooks: ResMut<SkillHooks>, reserve: Res<ammo::Reserve>) {
     if player.loaded.is_none() {
         return;
     }
@@ -362,6 +561,27 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
         if let Some(s) = due {
             hooks.last_press = s;
             press = true;
+        }
+    }
+    if ended_by_actions(&player) && !player.dead {
+        let log = std::env::var("BF_SKILL_LOG").is_ok();
+        if std::mem::take(&mut player.switch_pressed) {
+            press = true;
+            if log {
+                println!("t={t:.2} {}: the switch key ends the skill", unit_name(&player));
+            }
+        }
+        if player.reload_pressed {
+            // FUN_00120c50, can reload: the gun in hand's clip below its size and its reserve not
+            // empty (a recharging gun has none)
+            let can = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).zip(player.ammo.get(player.weapon))
+                .is_some_and(|(w, a)| a[0] < w.def.ammo.max(1) && w.def.ammo_regen <= 0.0 && reserve.get(w.def.ammo_type) > 0);
+            press |= can;
+            // (with no reload possible the key does nothing: FUN_00120d40 refuses in berserk)
+            player.reload_pressed = can;
+            if log {
+                println!("t={t:.2} {}: the reload key {}", unit_name(&player), if can { "ends the skill, the reload follows" } else { "does nothing" });
+            }
         }
     }
     if press && !player.dead {
@@ -395,22 +615,33 @@ struct Env<'a> {
     sight: &'a [(u8, Vec3, bool)],
     distance: f32,
     history: &'a mut LineHistory,
+    /// the squad's ammo (for the skill's own methods, `Outside`)
+    reserve: &'a mut ammo::Reserve,
+}
+
+impl Env<'_> {
+    /// What the skill's own methods get of it.
+    fn outside(&mut self) -> Outside<'_> {
+        Outside { reserve: &mut *self.reserve, log: self.log }
+    }
 }
 
 /// Every character's skill and stamina, after the movement (so the refill sees this frame's
 /// motion): the controlled one first, then the squad (the AI's, as the game runs it for
 /// everyone). Logs each half second with BF_SKILL_LOG.
+#[allow(clippy::too_many_arguments)]
 fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut history: ResMut<LineHistory>,
-                 mut last_log: Local<f32>) {
+                 mut reserve: ResMut<ammo::Reserve>, mut last_log: Local<f32>) {
     let dt = frame_dt(&time);
     let log = std::env::var("BF_SKILL_LOG").is_ok();
     // (the order the AI's sight uses: the player, then the squad, NPCs included)
     let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
     let at = player.position;
-    let mut env = Env { game: &game.0, controlled: true, log, me: 0, sight: &sight, distance: 0.0, history: &mut *history };
+    let mut env = Env { game: &game.0, controlled: true, log, me: 0, sight: &sight, distance: 0.0, history: &mut *history, reserve: &mut *reserve };
     step(&mut player, &mut env, dt);
     for (k, m) in squad.0.iter_mut().enumerate().filter(|(_, m)| m.in_squad()) {
-        let mut env = Env { game: &game.0, controlled: false, log, me: k + 1, sight: &sight, distance: m.position.distance(at), history: &mut *history };
+        let mut env = Env { game: &game.0, controlled: false, log, me: k + 1, sight: &sight, distance: m.position.distance(at), history: &mut *history,
+                            reserve: &mut *reserve };
         step(m, &mut env, dt);
     }
     // the stamina of each, every half second
@@ -461,6 +692,8 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
         if u.skill.on {
             deactivate(u, k, env);
         }
+        // (the motions the toggle asked for go with the body)
+        u.skill.special_motions = false;
         u.skill.kind = Some(kind);
         return;
     }
@@ -527,7 +760,11 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
 /// carried out. (`why` is for the log.)
 fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let was = u.skill.on;
-    let answer = k.toggle(u);
+    // (the one at 0 comes every frame: its refusals, the skill's own reasons included, go
+    // unlogged)
+    let mut out = env.outside();
+    out.log &= why != "at 0";
+    let answer = k.toggle(u, &mut out);
     if env.log && (why != "at 0" || answer != Toggle::Refused) {
         println!("t={:.2} {}: toggle ({why}) at stamina {:.2}, {}: {answer:?}", u.sim_time, unit_name(u),
                  u.stamina, if was { "on" } else { "off" });
@@ -598,7 +835,7 @@ fn activate(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env) -> bool {
     if let Some(t) = u.skill.toggling.as_mut() {
         t.switch_at = None;
     }
-    k.on(u);
+    k.on(u, &mut env.outside());
     let sound = u.skill.data.as_ref().map_or(0, |d| d.start_sound);
     switched(u, env, sound, LINE_ON);
     true
