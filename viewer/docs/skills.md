@@ -1,17 +1,18 @@
-# Special skills: stamina, the skill toggle (#120), Tex's Berserker (#121) and Flint's Advanced Targeting (#124)
+# Special skills: stamina, the skill toggle (#120), Tex's Berserker (#121), Brutus's Spirit of Vengar (#122) and Flint's Advanced Targeting (#124)
 
 Each squad member has a special skill that stamina (the blue bar) pays for: Tex's Berserker,
 Brutus's Spirit of Vengar, Hawk's Stealth, Flint's Advanced Targeting. This page is the part the
 four share (`src/bin/play_skills.rs`, the HUD in `play_hud.rs`): stamina, the toggle, its sounds,
 chatter and HUD, and the interface each skill plugs into; and the skills done so far. Each
 skill's own effect is its own ticket: #121 Tex, #122 Brutus, #123 Hawk, #124 Flint. Tex's
-Berserker ([below](#texs-berserker-121)) and Flint's Advanced Targeting
-([below](#flints-advanced-targeting-124)) work; Brutus's and Hawk's skills switch on and off,
-drain and show on the HUD, but do nothing else yet.
+Berserker ([below](#texs-berserker-121)), Brutus's Spirit of Vengar
+([below](#brutuss-spirit-of-vengar-122)) and Flint's Advanced Targeting
+([below](#flints-advanced-targeting-124)) work; Hawk's skill switches on and off, drains and
+shows on the HUD, but does nothing else yet.
 
 Everything here comes from default.xbe (the functions are in [code-map.md](code-map.md), "Skills
-and stamina" and "HUD") and the data, checked against the 32 takes in
-`todo/35-special-skills/` (the spec is `spec.md` there, Parts 1, 2 and 5).
+and stamina", "HUD" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
+`todo/35-special-skills/` (the spec is `spec.md` there, Parts 1, 2, 3 and 5).
 
 ## Keys and test hooks
 
@@ -52,6 +53,15 @@ and stamina" and "HUD") and the data, checked against the 32 takes in
   turn the crosshair off and back onto an enemy, `BF_TEST_INSTANT_KILL=0` so a test session's
   NPC outlives the first hit, `BF_TEST_AIM=1` for the scope (`BF_TEST_SCOPE` isn't read under
   `BF_TEST_GOTO`'s autopilot).
+* For Brutus's charge (`BF_CHARACTER=0` is Brutus): on the test map (`-- --test`) a frozen enemy
+  ahead, `BF_TEST_NPC=0.5,tex,enemy,frozen,4.5,14` with `BF_TEST_NPC_HP=1.0,1,300` (take08's
+  300 HP; 125 for take22's kill) and `BF_TEST_INSTANT_KILL=0`, then the dash at it:
+  `BF_TEST_GOTO=4.5,20,4.5,10 BF_TEST_GO_AT=4.0 BF_TEST_SPRINT=4.0` (`BF_TEST_GO_AT=<s>`,
+  maps.md: when the goto sets off, here after standing 4 s as take08). With `BF_SKILL_LOG=1` the log has
+  each charge hit (whom, the distance, the angle off his facing, the damage, a kill), his line,
+  the stamina taken, each switch of the Vengar view, and the hit points of every character with
+  Vengar on each half second; `BF_COMBAT_LOG=1` shows the hit's factors, and on a hit Brutus takes
+  with Vengar on " x the victim's skill 0.85".
 
 ## Stamina
 
@@ -138,8 +148,8 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
 * **What ends a skill**: the key again; stamina at 0; death (the death handler calls the
   deactivate, 0x115df5: in the frame of death, with its end sound and line); and each skill's
   own ends, from its `update` and the player controller (Tex's other gun dry, Flint's gun in hand
-  dry, and for both the switch and reload keys: below; Brutus's charge, #122's). Being hit
-  doesn't (take27).
+  dry, and for both the switch and reload keys; Brutus's charge hit, whose 100 stamina leaves him
+  at 0: below). Being hit doesn't (take27).
 * **Handing control over doesn't end it** (take19): the skill stays on and drains on the
   character you left, under the AI; it's on when control comes back. A clip under way plays on.
 * **The demo's choices** (not traced in the game):
@@ -255,6 +265,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | `lets_overlays_play` | +0xa4 | true (0x262a80) | false (Tex's 0x13d850): while on, no other overlay starts (`overlays_blocked`: the reload, the switch, the throw, item use) |
 | `lets_act(u)` | +0x14 | true (0x213690) | the last word of FUN_00117210, whether the character is free to act (`lets_act`, `free_to_act`): Flint's (0x13b980) says no while on, so no reload, weapon switch, grenade or medkit starts |
 | `roll_factor(u)` | +0xec | 1.0 (0x10e3d0) | the shooter's factor on its damage rolls (FUN_0022c940; `skills::roll_factor`, play_damage.rs `Hit::skill`): Flint's doubled and scoped rolls |
+| `damage_factor(u)` | +0xd8 | 1.0 (0x10e3d0) | the factor on the damage the character takes (0x125600 at 0x125747, after the difficulty step; `skills::damage_factor`, play_damage.rs `Hit::victim_skill`): Brutus's 0.85 while on (0x13c140) |
 | `range(u, def, range)` | +0x54 | the range (0x10e3a0) | a gun's range in the character's hands (FUN_002324c0; `weapon_range`): Flint's rifles x1.25 |
 | `move_cap(u, m)` | +0x38 | the stick (0x10e8f0) | the most of the move stick the character goes by (FUN_001195c0; `move_capped`): Flint's 0.55, a walk |
 | `lock_box(u, scale)` | +0x100 | the scale (0x10e8f0) | the crosshair's lock box scale (FUN_000c5d20; `lock_box`): Flint's 1.0 |
@@ -276,14 +287,16 @@ the reload (play_ammo.rs), the weapon switch and the grenade (play.rs) and the m
 (play_pickups.rs) ask on their own. A skill's effects outside the character (a
 material, the post-process, the HUD marker, the AI's view of Hawk) read `Player::skill`
 (`on`, `toggling`, `special_motions`, `double_hit`), the hooks above and the character (Tex's
-`Player::second`) from their own systems. The base-class hooks still to come (the game's fire
-hook +0xb0, item use +0x104, damage taken +0xd8, visibility +0xe4, noise +0xe8, the AI's hold
-fire +0x108) are added to the trait with the base class's answer as their default.
+`Player::second`) from their own systems: Brutus's charge and Vengar view are play_vengar.rs's
+systems, which ask `skills::vengar_on`. The base-class hooks still to come (the game's fire
+hook +0xb0, item use +0x104, visibility +0xe4, noise +0xe8, the AI's hold fire +0x108) are added
+to the trait with the base class's answer as their default.
 
 A system outside the character can't reach a concrete skill's own state through `Box<dyn
 SkillKind>`: what others need is a hook (above) or kept on `Skill` / `Player` (Tex's second gun,
-`Player::second`; Flint's doubled-roll flag, `Skill::double_hit`). Flint's marker is the HUD's
-own state (`targeting::Marker`), as the game's widget is.
+`Player::second`; Flint's doubled-roll flag, `Skill::double_hit`; the stamina Brutus's charge
+hit takes, `Skill::pending`, which play_vengar.rs sets and his drain takes). Flint's marker is
+the HUD's own state (`targeting::Marker`), as the game's widget is.
 
 ## Tex's Berserker (#121)
 
@@ -362,6 +375,92 @@ and 26 (spec Part 2).
   shot in the start clip left from behind his shoulder.
 * Handing control over, as for every skill: it stays on, the AI fires both guns, and the stamina
   drains (take19's rule).
+
+## Brutus's Spirit of Vengar (#122)
+
+"Heightens perception and regenerates health." (h_e051254d). While it's on Brutus heals, takes
+less damage and kills by charging, and his view changes: the world grey and streaked toward the
+middle, every living character a glowing heat figure. `Vengar` in `play_skills.rs` (skill vtable
+0x39d678, constructor FUN_0013bef0) is his own part; the charge and the view, which reach beyond
+him, are `play_vengar.rs` (with `src/vengar.wgsl` and `src/heat.wgsl`). His tuning is
+game-options' `<combat-skills>` block h_f5dc6aac (`VengarSkill`; only `vengar-damage-multiplier`
+is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
+
+* **On and off** at the press ([the toggle](#the-toggle)). His on (0x13c020) sets the vision mode
+  2 (char+0x644 and the view's +0xd8), switches on his material controllers of kind 0x100
+  (FUN_002107d0) and starts the view's colour fade; his off, FUN_00126df0(0), sets mode 0 and the
+  controllers off, with the fade again when the view was Vengar's. The kind-0x100 controllers
+  aren't in the demo: in his own view the heat figure covers him (the renderer masks that kind
+  out while drawing the heat figures, FUN_000e81e0), and nobody else sees him yet.
+* **Regeneration** (his update 0x13c0b0): h_eaa78fdf, 1 hit point a second while on, up to the
+  max; none after the off. take07: 50.0 -> 65.04 over the 15 s on, +1.01/s. **Not in the demo:**
+  take07 draws the health bar's fill pale while it rises (the HUD bar widget's brighten, the
+  stamina bar's rule, [HUD](#hud)); the demo's health bar has no brighten (nor trail) yet: a
+  follow-up for the shared bar widget, not this skill.
+* **Damage taken** x0.85 while on (`vengar-damage-multiplier` h_f4f602c6: his +0xd8, 0x13c140,
+  which the damage handler 0x125600 multiplies in at 0x125747 after the difficulty step;
+  play_damage.rs `Hit::victim_skill`), on every hit that reaches the handler: shots, blasts,
+  damage areas, falls, a charge. take27, a Shrike's Saryl-45 at 13 m: 5.28 a hit off, 4.43 on.
+* **The drain** (0x13c570): `stamina-cost` 2.0 x dt, and a charge hit's 100 the frame after it
+  (`Skill::pending`, which his update clears).
+* **The charge**, "Kill enemies by charging them" (FUN_0013c1c0, which his update runs every frame
+  while he dashes, motion state 8, the demo's sprint, with the skill on):
+  * the look ahead (FUN_00123080): a 2 m ray from his body along his facing, or 0.2 rad either
+    side, must meet a hostile character (the team table);
+  * then every character not on his side, alive and not on the ground, whose body is within
+    h_e26c9e84 1.5 m and h_f3d82857 30 degrees of his facing is hit: h_14935eb6 200 as
+    DTYPE_EXPLOSION (10) through FUN_00223160, a record with no hit part and no shooter's
+    factors, then the victim's own (on STANDARD x1.4 on an enemy: take08's trooper 300 -> 20 HP).
+    The hit draws the victim's reactions as any damage does (#128, #129);
+  * on each victim, the effect type h_0571f62e names, h_0dcd4fc7: its sound h_e6a4d091 (0.81 s).
+    Its ALE effect `vengar_hit` has a creation-time of 6.9e28 s, so it never shows, as in takes
+    08 and 22 (`EffectType::starts`: an effect type's ALE effects now start at their
+    creation-time, here the ones due at once);
+  * his type's sound h_1629a90a, h_e4c94dfe (`SkillData::hit_sound`, played as his skill sounds
+    are), and his charge line h_13601f7b through the chatter gate (Brutus's block: probability
+    60, replay-delay 15 s, priority 5);
+  * a kill throws the body (FUN_000e00b0: the push his velocity across and h_f5dae098 2 up; its
+    h_0e406b26 2 and h_fa20e794 75 go into the ragdoll's impulse list, whose reader wasn't
+    traced). The demo's ragdoll takes the push as is (`KNOCK_SCALE` 1, a fit to take22's trooper
+    thrown forward into the tower 3-4 m away);
+  * the hit sets his pending cost to h_0461a627 100 (0x13c474): his next drain takes the rest of
+    his stamina and the skill ends at 0 (takes 08, 22: stamina 0 and off the tick after the hit),
+    so one charge per activation. Running into an enemy (take23) or dashing with the skill off
+    (take24) does nothing.
+* **The Vengar view**, while the controlled character's Vengar is on (the renderer takes the
+  vision mode from his view, FUN_000e81e0):
+  * the world's two lights, the terrain's pair and the objects', are a fixed white pair from
+    straight up and straight down in place of the level's, the ambient kept (FUN_000dcc10 in a
+    vision mode: colour 1.0, the table at 0x41b3a8): floors lit, walls by the ambient alone
+    (take08: the sunlit tower dark, the shaded sand light). The demo puts the level's directional
+    lights out and lights the world with that pair (`vision_lights`), and the terrain per vertex
+    with it and the terrain's own ambient, unlit (`vision_terrain`): the game's terrain takes its
+    light from its pair, not from the baked map the demo's normal view draws it with. The pair's
+    strength, `VISION_LIGHT` 0.35, is a fit: the takes' Vengar views are lit at about a third of
+    the code's white (worked back from takes 06, 08 and 09);
+  * then the world pass (FUN_000e66d0; its vertex shader 0x6d and pixel shader 0x45 are
+    `vengar.wgsl`'s): four taps of the picture zoomed toward the middle (1, 0.985, 0.97, 0.955),
+    blended, made grey by the dot with (0.9, 0.9, 0.5), the darks tinted blue by (1 - (2g)^2)^2,
+    and laid over the picture at 70%;
+  * then the living characters as heat figures (the vision set's material h_eb7a6be1, class
+    0xe2c39ac2, FUN_000a8610): unlit, coloured by the normal in view space (a sphere map), bright
+    (k 0.8) for him and his hostiles, dim (0.2) for his friends, drawn by a second camera over the
+    main one's picture (`HeatCamera`, `HeatMaterial`). The material's texture wasn't found: the
+    colours are a radial ramp fitted to the takes (yellow facing the view, orange to red at the
+    rims; dark orange for the dim). The texture scrolls by the material's time, and the takes'
+    figures change colour with a period of 1.0 s, all in step: the ramp swings up and down by a
+    sine of that period (`scroll`, a fit). The dead are drawn as the world is (take22's body).
+    Round the figures a halo of their colour (the glare's 24 offset copies, FUN_000e47b0, at
+    0.006 of the screen; its weight a fit);
+  * the HUD on top, unchanged.
+  * **The colour fade** at each switch, on and off (FUN_000c6980: 0.6 s, level 1, colour ff 00
+    00): the picture, not the HUD, times red, back to white linearly in 0.6 s (take06: 2.20-2.80 s
+    and 20.17-20.80 s). Death ends the skill in its frame, so the view fades back from red there
+    (take30). A hand-over to or from a character with Vengar on swaps the view without a fade:
+    the demo's choice, not traced.
+* Not in the demo: his `spirit` overlay (never played from the button, #120); the ALE effects
+  `vengar` and `vengar_heal` (who plays them for Brutus wasn't found, and the takes show neither);
+  the health bar's brighten while he heals; his kind-0x100 material controllers.
 
 ## Flint's Advanced Targeting (#124)
 
@@ -634,6 +733,58 @@ game's weapon list goes 1.6 s after the off, the demo's holds its 2.5 s (`HUD_LI
 weapon box's timer isn't traced. Whether the game's camera pulls in when berserk fires (the
 demo's does, as for every gun; take04's doesn't) is play.md's question. A toggle overlay cut
 short by a knock-down (the demo's choice) leaves the motions as the skill is.
+
+### Brutus's Spirit of Vengar (#122)
+
+Brutus (`BF_CHARACTER=0`), `BF_CAPTURE` at 15 fps (60 for the fade), `BF_SKILL_LOG=1`, against
+the takes' watch logs and frames:
+
+* **Regeneration and drain** (take07: `BF_MAP=e34 BF_TEST_GOTO=-53.56,30.81,-53.56,30.81
+  BF_TEST_HEALTH=50 BF_TEST_STAMINA=30@1.9 BF_TEST_SKILL=2.0`): on at 2.07 s with 30.08, 50.53 hp
+  at 2.53 s to 65.00 at 17.00 s (+1.00/s), off at 0 at 17.07 s; take07 +1.01/s, 50.0 -> 65.04.
+* **Damage taken** (take27: `-- --test BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,20
+  BF_TEST_NPC=0.5,brutus,enemy,fight,4.5,7 BF_TEST_WEAPON=Saryl-45 BF_TEST_INSTANT_KILL=0
+  BF_TEST_SKILL=8 BF_COMBAT_LOG=1`): 12 hits off, 4.77-5.69 (mean 5.22); 12 on, each with " x
+  the victim's skill 0.85", 4.09-4.87 (mean 4.50); take27 5.28 and 4.43.
+* **The charge** (take08: the test-map hooks under [Keys and test hooks](#keys-and-test-hooks),
+  300 HP): on at 2.07 s, the dash from 4.0 s, the hit at 4.73 s at 1.46 m and 0 degrees: 200 x
+  1.40 = 280, 300 -> 20 hp, his line said (f6627a6d), 100 stamina taken; at 4.80 s stamina 0, off,
+  the view's fade; the refill x0.25 while he still dashes, then x1. take08: the hit at 1.34 m,
+  280, off the tick after. With 125 HP (take22): 125 -> 0, "killed: thrown", the body thrown and
+  down. Without the sprint (take23's walk; the demo's run isn't the dash) and with Vengar off
+  (take24): no hit, his stamina as it was.
+* **The view**, frames beside the takes': e34 at take06's spot (`BF_MAP=e34 BF_CAMERA_DISTANCE=6
+  BF_TEST_GOTO=-55.78,30.28,-55.91,30.76 BF_TEST_SKILL=2.0`), m03_a at take08's tower
+  (`BF_MAP=m03_a BF_TEST_GOTO=-182.6,-43.5,-185.16,-48.93 BF_TEST_GO_AT=99 BF_TEST_SKILL=2.0`),
+  e01 at night (take09: `BF_MAP=e01 BF_TEST_GOTO=-14.8,103.66,-18.16,116.76 BF_TEST_GO_AT=99
+  BF_TEST_SKILL=2.0`) and the test map with a friend and two enemies (`BF_NO_SQUAD=1
+  BF_TEST_NPC="0.5,tex,friend,dummy,7,13;0.5,shrike soldier@m09_a,enemy,dummy,2,8;0.5,hawk,enemy,dummy,4,4"`):
+  the grey streaked world, floors lit and walls dark, Brutus and the enemies bright, the friend
+  dim, the halo, the HUD as it was. The ground's grey (the lower picture without the HUD and the
+  figures, median and quartiles): e34 43 (29-56) against take06's 59 (45-75), m03_a 102 (97-108)
+  against take08's 147 (138-156), e01 59 (50-67) against take09's 49 (41-72); e34's gate wall
+  (13, 13, 18) against (12, 11, 19). (Round 1 drew the baked terrain light x4, fitted to e01: it
+  blew e34 and m03_a out to near white.)
+* **The pulse** (e01 as above, 150 frames): the figure's mean green (its pixels alone) 103-164,
+  the autocorrelation's peak at 1.000 s (0.86); take09 104-175 (1.000 s, 0.82), take06 125-184
+  (1.000 s, 0.81).
+* **The fade** (the test map, `BF_CAPTURE_FPS=60 BF_TEST_SKILL=1.0,2.5`): green and blue x (1 -
+  level), the level 1.00 in the switch's frame and 0 36 frames (0.6 s) later, falling 0.028 a
+  frame, on and off; take06 G 6 -> 43 over 2.20-2.80 s and 3 -> 21 over 20.17-20.80 s. Death
+  with it on (`BF_TEST_DIE=4.0`, take30): off in the frame of death and the view back from red.
+* **With it off, nothing changed**: the base commit's demo and this one on the same e34 scene
+  (`BF_MAP=e34 BF_TEST_GOTO=-53.56,30.81,-50.69,36.29`, 40 frames) agree within 2 levels on every
+  pixel (the HUD is now drawn by the heat camera and laid over the picture), but for the frames
+  where loading finished a few frames apart, which two runs of either build show too.
+
+**Guessed or open (Brutus)**: the heat figures' texture, and so their colours and the pulse's
+shape (fits); the halo's weight; the vision pair's strength (`VISION_LIGHT`, a third of the code's
+white: m03_a comes out darker than take08, e01 a little lighter than take09); the kill's
+throw (`KNOCK_SCALE`); what the game's view does at a hand-over with Vengar on. On the first
+switch of a session the figures are missing for two frames at 60 fps (their pipeline compiles),
+hidden by the red fade then. The spec's shots B6 (the cone, an enemy 45 degrees off), B7 (a
+grenade's blast on him, on and off) and B8 (a squadmate seen still at 3 and 15 m) weren't
+filmed: the cone and the 0.85 on blasts are the code's.
 
 ### Flint's Advanced Targeting (#124)
 

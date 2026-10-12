@@ -348,13 +348,64 @@ pub struct CombatSkills {
     /// empty, 0.5 (settings +0x25c, which his constructor FUN_0013d440 copies to skill+0x24 at
     /// 0x13d475 and his drain 0x13d720 multiplies by; take05 measured -2.22/s, then -1.12/s)
     pub berserk_empty_drain: f32,
+    /// Brutus's block h_f5dc6aac (Spirit of Vengar, see `VengarSkill`)
+    pub vengar: VengarSkill,
     /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
     pub tracking: Tracking,
 }
 
 impl Default for CombatSkills {
     fn default() -> Self {
-        CombatSkills { berserk_empty_drain: 0.5, tracking: Tracking::default() }
+        CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), tracking: Tracking::default() }
+    }
+}
+
+/// Brutus's `<combat-skills>` block h_f5dc6aac (game-options-en.xml line 160): FUN_0019e210 puts
+/// each attribute at its settings offset, and his skill's constructor FUN_0013bef0 copies them to
+/// the skill object (the offsets below). The names weren't recovered but `vengar-damage-multiplier`
+/// (h_f4f602c6); the uses are read from the code that takes each field (play_skills.rs `Vengar`,
+/// play_vengar.rs). The defaults are the shipped file's.
+#[derive(Clone, Copy, Debug)]
+pub struct VengarSkill {
+    /// h_eaa78fdf, settings +0x260, skill+0x20: hit points regenerated a second while on, up to
+    /// the max (his update 0x13c0b0): 1 (take07 +1.01/s)
+    pub regen: f32,
+    /// `vengar-damage-multiplier`, h_f4f602c6, +0x264, skill+0x24: what his skill's +0xd8 (0x13c140)
+    /// gives the damage handler 0x125600 (at 0x125747) while on: 0.85 (take27: 0.84 per hit)
+    pub damage_taken: f32,
+    /// h_0461a627, +0x268, skill+0x28: the stamina a charge hit takes (put in skill+0x2c at
+    /// 0x13c474, drained with the next frame's drain 0x13c570): 100
+    pub charge_cost: f32,
+    /// h_f5dae098, +0x26c, skill+0x30: the upward part of a charge kill's knock-back (the push
+    /// vector's y; its x and z are Brutus's velocity, 0x13c4c9-0x13c4fd): 2
+    pub knock_up: f32,
+    /// h_0e406b26, +0x270, skill+0x34, and h_fa20e794, +0x274, skill+0x38: FUN_000e00b0's third and
+    /// fifth arguments on a charge kill (2 and 75; a weapon kill passes twice its damage and the
+    /// damage record's +0x54 there, 0x11605b). What they do to the body isn't traced
+    pub knock_weight: f32,
+    pub knock_force: f32,
+    /// h_e26c9e84, +0x278, skill+0x3c: the charge's reach, m (the query's radius and its distance
+    /// test, FUN_0013c1c0): 1.5
+    pub reach: f32,
+    /// h_f3d82857, +0x27c, skill+0x40: the charge's half-angle off his facing, degrees (its cosine,
+    /// x pi/180 at 0x3a4fe0): 30
+    pub cone: f32,
+    /// h_14935eb6, +0x288, skill+0x44: a charge hit's damage, dealt as DTYPE_EXPLOSION (10) through
+    /// FUN_00223160: 200 (take08: 280 on an enemy, the difficulty step)
+    pub damage: f32,
+    /// h_0571f62e, +0x280 (the skill's vtable +0x134): the effect type started on a victim,
+    /// h_0dcd4fc7 (the sound h_e6a4d091, and ALE `vengar_hit` at a creation-time of 6.9e28 s, so
+    /// never: `EffectType::starts`); 0 none
+    pub hit_effect: u32,
+    /// h_e5417809, +0x284 (vtable +0x138): the effect type started on a victim killed: none for
+    /// Brutus (""), 0
+    pub kill_effect: u32,
+}
+
+impl Default for VengarSkill {
+    fn default() -> Self {
+        VengarSkill { regen: 1.0, damage_taken: 0.85, charge_cost: 100.0, knock_up: 2.0, knock_weight: 2.0, knock_force: 75.0, reach: 1.5,
+                      cone: 30.0, damage: 200.0, hit_effect: 0x0DCD_4FC7, kill_effect: 0 }
     }
 }
 
@@ -400,6 +451,20 @@ impl Default for Tracking {
 const H_COMBAT_SKILLS: u32 = 0xF7BC_2603;
 const H_BERSERKER_BLOCK: u32 = 0x04AA_86AA;
 const H_BERSERK_EMPTY_DRAIN: u32 = 0x1469_A0DF;
+/// Brutus's block in it (`VengarSkill`) and its attributes, by the settings offset FUN_0019e210
+/// gives each.
+const H_VENGAR_BLOCK: u32 = 0xF5DC_6AAC;
+const H_VENGAR_REGEN: u32 = 0xEAA7_8FDF;
+const H_VENGAR_DAMAGE_TAKEN: u32 = 0xF4F6_02C6;
+const H_VENGAR_CHARGE_COST: u32 = 0x0461_A627;
+const H_VENGAR_KNOCK_UP: u32 = 0xF5DA_E098;
+const H_VENGAR_KNOCK_WEIGHT: u32 = 0x0E40_6B26;
+const H_VENGAR_KNOCK_FORCE: u32 = 0xFA20_E794;
+const H_VENGAR_REACH: u32 = 0xE26C_9E84;
+const H_VENGAR_CONE: u32 = 0xF3D8_2857;
+const H_VENGAR_DAMAGE: u32 = 0x1493_5EB6;
+const H_VENGAR_HIT_EFFECT: u32 = 0x0571_F62E;
+const H_VENGAR_KILL_EFFECT: u32 = 0xE541_7809;
 /// Flint's block in `<combat-skills>` and its attributes (`Tracking`; tracking-weapon-type and
 /// weapon-range-modifier recovered by hashing, the rest not).
 const H_TRACKING_BLOCK: u32 = 0x0725_CDB1;
@@ -559,6 +624,10 @@ pub struct SkillData {
     /// none
     pub start_sound: u32,
     pub end_sound: u32,
+    /// h_1629a90a (name not recovered), the fourth sound of `<sounds>` (type+0x334): what Brutus's
+    /// charge plays at each hit (FUN_0013c1c0 at 0x13c40c, through FUN_0010e7a0), h_e4c94dfe; 0 for
+    /// the other three
+    pub hit_sound: u32,
     /// h_e78efbb2: the stamina update runs for the type at all (type+0x1a8 bit 0, tested at
     /// 0x11a8b8); true for the four
     pub stamina_update: bool,
@@ -569,21 +638,24 @@ pub struct SkillData {
 pub(crate) fn skill_data(e: &Element) -> Option<SkillData> {
     let c = e.child(h("combat-skill"))?;
     let num = |x: &Element, k: u32| x.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
-    let sound = |k: &str| c.child(h("sounds")).and_then(|s| s.attr(h(k))).and_then(|v| v.as_hash())
+    let sound = |k: u32| c.child(h("sounds")).and_then(|s| s.attr(k)).and_then(|v| v.as_hash())
         .filter(|&x| x != 0 && x != h("")).unwrap_or(0);
     Some(SkillData {
         skill_set: int_of(c, h("skill-set")),
         max_stamina: num(e, h("max-stamina")),
         cost: num(c, h("stamina-cost")),
         recovery: num(c, h("stamina-recovery")),
-        start_sound: sound("start-skill"),
-        end_sound: sound("end-skill"),
+        start_sound: sound(h("start-skill")),
+        end_sound: sound(h("end-skill")),
+        hit_sound: sound(H_SKILL_HIT_SOUND),
         stamina_update: e.attr(H_STAMINA_UPDATE).and_then(|v| v.as_i64()).unwrap_or(0) != 0,
     })
 }
 
 /// The character type's flag that turns its stamina update on (name not recovered).
 const H_STAMINA_UPDATE: u32 = 0xE78E_FBB2;
+/// `<combat-skill><sounds>`'s fourth sound (name not recovered; `SkillData::hit_sound`).
+const H_SKILL_HIT_SOUND: u32 = 0x1629_A90A;
 
 /// What the game's chatter gate (FUN_00140a60) reads of a `<chatter_line>` block (h_f74e6a16,
 /// `common/characters/<name>_chatter.xml`), with the defaults the parser sets (FUN_0019cd70; the
@@ -705,6 +777,11 @@ pub const LIQUID_WADE: usize = 3;
 pub struct EffectType {
     /// ALE effects (name hashes, keys of `Game::effects`)
     pub effects: Vec<u32>,
+    /// each effect's `creation-time` (s after the type starts, the alchemy entry's +4 by
+    /// FUN_00188a90), by `effects`' order: 0 for 30 of common's 37 entries, 2 for six; the
+    /// Vengar hit's (h_0dcd4fc7) is 6.9e28, so its `vengar_hit` never shows (#35 takes 08, 22: no
+    /// effect at the hit)
+    pub starts: Vec<f32>,
     /// the light effect (an ALE effect name hash), 0 if none
     pub light: u32,
     /// sounds: (sound id, h_f724cb8c, play-length s, enable-looping). h_f724cb8c is read as a
@@ -955,6 +1032,24 @@ impl Game {
                 let num = |k: u32| tex.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
                 self.combat_skills.berserk_empty_drain = num(H_BERSERK_EMPTY_DRAIN).unwrap_or(self.combat_skills.berserk_empty_drain);
             }
+            // Brutus's: <h_f5dc6aac h_eaa78fdf="1" h_f4f602c6="0.85" ..> (VengarSkill); an effect
+            // type given as "" is none
+            if let Some(b) = skills.and_then(|c| c.child(H_VENGAR_BLOCK)) {
+                let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                let effect = |k: u32| b.attr(k).map(|x| x.as_hash().filter(|&x| x != h("")).unwrap_or(0));
+                let v = &mut self.combat_skills.vengar;
+                v.regen = num(H_VENGAR_REGEN).unwrap_or(v.regen);
+                v.damage_taken = num(H_VENGAR_DAMAGE_TAKEN).unwrap_or(v.damage_taken);
+                v.charge_cost = num(H_VENGAR_CHARGE_COST).unwrap_or(v.charge_cost);
+                v.knock_up = num(H_VENGAR_KNOCK_UP).unwrap_or(v.knock_up);
+                v.knock_weight = num(H_VENGAR_KNOCK_WEIGHT).unwrap_or(v.knock_weight);
+                v.knock_force = num(H_VENGAR_KNOCK_FORCE).unwrap_or(v.knock_force);
+                v.reach = num(H_VENGAR_REACH).unwrap_or(v.reach);
+                v.cone = num(H_VENGAR_CONE).unwrap_or(v.cone);
+                v.damage = num(H_VENGAR_DAMAGE).unwrap_or(v.damage);
+                v.hit_effect = effect(H_VENGAR_HIT_EFFECT).unwrap_or(v.hit_effect);
+                v.kill_effect = effect(H_VENGAR_KILL_EFFECT).unwrap_or(v.kill_effect);
+            }
             // Flint's: <h_0725cdb1 h_108b56f9="1" .. h_f82a974c="1.25"/> (Tracking)
             if let Some(b) = skills.and_then(|c| c.child(H_TRACKING_BLOCK)) {
                 let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
@@ -1203,8 +1298,13 @@ impl Game {
                 let centre = t.child(0xE997_50A9).and_then(|c| c.text.as_ref()).map(|x| x.floats()).filter(|f| f.len() >= 3)
                     .map(|f| Vec3::new(f[0], f[1], f[2]));
                 let bounds = (radius.is_some() || centre.is_some()).then(|| (centre.unwrap_or(Vec3::ZERO), radius.unwrap_or(0.0).max(0.0)));
+                // each listed effect's creation-time (the entry's +4, FUN_00188a90), in the list's
+                // order
+                let starts: Vec<f32> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
+                    .filter(|e| { let x = hash_of(e.attr(h("effect-name"))); x != 0 && x != h("") })
+                    .map(|e| e.attr(h("creation-time")).and_then(|v| v.as_f32()).unwrap_or(0.0)).collect()).unwrap_or_default();
                 self.effect_type_defs.entry(name).or_insert(EffectType {
-                    effects: list, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
+                    effects: list, starts, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
                 });
             }
         }

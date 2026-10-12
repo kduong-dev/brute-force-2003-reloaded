@@ -496,6 +496,7 @@ fn main() {
         .add_plugins(reticle::plugin)
         .add_plugins(targeting::plugin)
         .add_plugins(enemies::plugin)
+        .add_plugins(vengar::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -561,6 +562,8 @@ mod reticle;
 mod targeting;
 #[path = "play_enemies.rs"]
 mod enemies;
+#[path = "play_vengar.rs"]
+mod vengar;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -687,9 +690,10 @@ fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: 
 /// `LevelMaterial`); a character's materials are bevy's own, so each takes the light at its chest
 /// from every direction, as its texture added to the picture (emissive), at CHARACTER_LAMP of it
 /// (about the average N.L over a body).
+#[allow(clippy::too_many_arguments)]
 fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
-                   parts: Query<&MeshMaterial3d<StandardMaterial>>, mut materials: ResMut<Assets<StandardMaterial>>,
-                   mut last: Local<HashMap<Entity, Vec3>>) {
+                   parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), With<Mesh3d>>,
+                   mut materials: ResMut<Assets<StandardMaterial>>, mut last: Local<HashMap<Entity, Vec3>>) {
     let Some(level) = &map.0 else { return };
     if level.lamps.is_empty() {
         return;
@@ -701,9 +705,14 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
         if last.get(&l.root).is_some_and(|v| v.distance(light) < 0.005) {
             continue;
         }
-        last.insert(l.root, light);
+        // (a part drawn with another material meanwhile, the Vengar view's heat figure, keeps the
+        // light unset: it's set again once the part has its own back)
+        let mut all = true;
         for e in children.iter_descendants(l.root) {
-            let Ok(m) = parts.get(e) else { continue };
+            let Ok(m) = parts.get(e) else {
+                all &= !drawn.contains(e);
+                continue;
+            };
             let Some(mat) = materials.get_mut(&m.0) else { continue };
             if mat.unlit {
                 continue;
@@ -712,6 +721,9 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
             if mat.emissive_texture.is_none() {
                 mat.emissive_texture = mat.base_color_texture.clone();
             }
+        }
+        if all {
+            last.insert(l.root, light);
         }
     }
 }
@@ -3162,7 +3174,10 @@ fn autopilot(player: &mut Player) -> bool {
         if stay {
             player.cam_yaw = 0.0;
         }
-        player.move_input = if player.sim_time > 1.0 && to.length() > 0.8 && !stay { Vec2::new(0.0, 1.0) } else { Vec2::ZERO };
+        // (BF_TEST_GO_AT=<s>: set off at that time instead of after 1 s, as #35 take08's dash at
+        // 4.0 s after standing; play_vengar.rs)
+        let go_at = std::env::var("BF_TEST_GO_AT").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        player.move_input = if player.sim_time > go_at && to.length() > 0.8 && !stay { Vec2::new(0.0, 1.0) } else { Vec2::ZERO };
         // BF_TEST_STRAFE=<x>[,<y>]: move that way instead (camera-relative: -1,0 left, 1,0
         // right, 1,-1 back right), from 1 s on; the camera keeps facing the goal
         if let Some(v) = std::env::var("BF_TEST_STRAFE").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()) {

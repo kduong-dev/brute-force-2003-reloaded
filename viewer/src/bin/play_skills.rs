@@ -51,7 +51,7 @@
 //! half second.
 
 use super::*;
-use bf_viewer::bf::character::{CombatSkills, SkillData, Tracking};
+use bf_viewer::bf::character::{CombatSkills, SkillData, Tracking, VengarSkill};
 
 /// Squad deathmatch's Brute Force squad library (game-options-en.xml line 84, `<squad
 /// h_fed0689a="mp_tex mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`): the rates sdm maps
@@ -193,6 +193,12 @@ pub trait SkillKind: Send + Sync {
     fn lets_overlays_play(&self) -> bool {
         true
     }
+    /// The factor on the damage the character takes (vtable +0xd8, which the damage handler
+    /// 0x125600 multiplies in at 0x125747, after the difficulty step: play_damage.rs `Hit::on`).
+    /// The base gives 1.0 (0x10e3d0); Brutus's Vengar 0.85 while on (0x13c140).
+    fn damage_factor(&self, _u: &Player) -> f32 {
+        1.0
+    }
     /// Whether the character may start an action now: the last word of FUN_00117210, which ends
     /// by asking the skill's vtable +0x14. The game asks it before a reload starts (FUN_00120d40,
     /// 0x120e16), a weapon switch (FUN_0011e130, 0x11e135; CT_TOGGLE_WEAPON, 0x12259a), an item
@@ -285,6 +291,10 @@ pub struct Skill {
     /// FUN_0011c100 from the character update). Only the skill lines use it so far; it's here,
     /// not on `Player`, for that reason alone.
     pub replay: HashMap<u32, f32>,
+    /// stamina the skill's own action took this frame, drained with the next frame's drain: Brutus's
+    /// charge hit (skill+0x2c = the h_0461a627 100 at 0x13c474; his drain 0x13c570 adds it, his
+    /// update clears it, 0x13c0fd). Set by play_vengar.rs, which reaches the other characters
+    pub pending: f32,
     /// a roll was doubled since the targeting marker last looked (Flint's +0xec sets its marker's
     /// flag 4, 0x13ccd2; the marker's corners show it for a frame and its update clears it,
     /// 0xb49cd: play_targeting.rs)
@@ -309,7 +319,7 @@ impl Skill {
     pub fn new(data: Option<&SkillData>, settings: &CombatSkills) -> Self {
         let kind: Option<Box<dyn SkillKind>> = match data.map(|d| d.skill_set) {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
-            Some(CSKILL_BRUTUS) => Some(Box::new(Vengar)),
+            Some(CSKILL_BRUTUS) => Some(Box::new(Vengar { s: settings.vengar })),
             Some(CSKILL_HAWK) => Some(Box::new(Stealth)),
             Some(CSKILL_FLINT) => Some(Box::new(Targeting { rifle: false, cfg: settings.tracking })),
             _ => None,
@@ -380,6 +390,18 @@ pub fn overlays_blocked(u: &Player) -> bool {
 /// (`SkillKind::ended_by_actions`).
 pub fn ended_by_actions(u: &Player) -> bool {
     u.skill.on && u.skill.kind.as_ref().is_some_and(|k| k.ended_by_actions())
+}
+
+/// The factor `u`'s skill puts on the damage `u` takes (`SkillKind::damage_factor`, the skill's
+/// vtable +0xd8 at 0x125747): Vengar's 0.85 while on, else 1.
+pub fn damage_factor(u: &Player) -> f32 {
+    u.skill.kind.as_ref().map_or(1.0, |k| k.damage_factor(u))
+}
+
+/// Whether `u`'s skill is Brutus's Spirit of Vengar and it's on (play_vengar.rs: the charge, the
+/// Vengar view; the vision mode 2 his on sets, char+0x644, 0x13c032).
+pub fn vengar_on(u: &Player) -> bool {
+    u.skill.on && u.skill.name() == Some(NAME_VENGAR)
 }
 
 /// The factor `u`'s skill puts on a damage roll `u` makes (FUN_0022c940 asks a character
@@ -656,14 +678,26 @@ impl SkillKind for Berserker {
     }
 }
 
-/// Brutus's Spirit of Vengar (CSKILL_BRUTUS; skill vtable 0x39d678, toggle FUN_0013bfe0): on or
-/// off at the press (takes 06-09, 22, 23, 27, 30: in the first log sample after it), with no
-/// motion. The toggle activates or deactivates and returns 0 either way (0x13c00e), and the
-/// command handler plays an overlay only for a 1 (0x1224e4): the handler at 0x122500-0x122587 is
-/// the only lookup of the overlay types 43 / 44, so his motion set's `spirit` overlay
-/// (`Sc_w1/w2_spirit`, OMT_SPECIAL_ON) never plays from the White button. It doesn't ask
-/// FUN_00117210 either. The Vengar view, regeneration, damage taken and the charge are #122's.
-struct Vengar;
+/// Brutus's Spirit of Vengar (CSKILL_BRUTUS; skill vtable 0x39d678, constructor FUN_0013bef0,
+/// toggle FUN_0013bfe0): "Heightens perception and regenerates health." On or off at the press
+/// (takes 06-09, 22, 23, 27, 30: in the first log sample after it), with no motion. The toggle
+/// activates or deactivates and returns 0 either way (0x13c00e), and the command handler plays an
+/// overlay only for a 1 (0x1224e4): the handler at 0x122500-0x122587 is the only lookup of the
+/// overlay types 43 / 44, so his motion set's `spirit` overlay (`Sc_w1/w2_spirit`,
+/// OMT_SPECIAL_ON) never plays from the White button. It doesn't ask FUN_00117210 either.
+///  - **Regeneration** (his update 0x13c0b0): while on, h_eaa78fdf (1) hit point a second, up to
+///    the max (take07: +1.01/s, 50.0 -> 65.04 over the 15 s on, none after the off).
+///  - **Damage taken** (+0xd8, 0x13c140): x vengar-damage-multiplier (0.85) while on, on every hit
+///    the damage handler takes (play_damage.rs `Hit::on`; take27: 0.84 per Saryl-45 hit).
+///  - **Drain** (0x13c570): `stamina-cost` x dt, plus a charge hit's cost the frame after it
+///    (`Skill::pending`, which his update clears: take22, S+0x2c 100 for one tick, then 0 and off).
+///  - **The charge** (FUN_0013c1c0, which his update runs while he dashes with the skill on), the
+///    **Vengar view** (vision mode 2: his on 0x13c020, his off FUN_00126df0) and the red fade at
+///    each switch reach beyond him: play_vengar.rs.
+struct Vengar {
+    /// his `<combat-skills>` block (h_f5dc6aac), as his constructor copies it
+    s: VengarSkill,
+}
 
 impl SkillKind for Vengar {
     fn name(&self) -> u32 {
@@ -672,6 +706,23 @@ impl SkillKind for Vengar {
 
     fn toggle(&mut self, _u: &mut Player, _out: &mut Outside) -> Toggle {
         Toggle::Now { overlay: false }
+    }
+
+    fn drain(&self, u: &Player, cost: f32, dt: f32) -> f32 {
+        cost * dt + u.skill.pending
+    }
+
+    fn update(&mut self, u: &mut Player, dt: f32) -> bool {
+        if u.skill.on {
+            u.health = (u.health + self.s.regen * dt).min(u.max_health);
+        }
+        // (the charge's cost has been drained: 0x13c0fd)
+        u.skill.pending = 0.0;
+        false
+    }
+
+    fn damage_factor(&self, u: &Player) -> f32 {
+        if u.skill.on { self.s.damage_taken } else { 1.0 }
     }
 }
 
@@ -911,7 +962,7 @@ impl Default for SkillHooks {
 /// character goes through all of a tag's variants before one repeats (FUN_001371f0, which clears
 /// them, FUN_00141580, once every matching one is said). One per map, as the manager is per world.
 #[derive(Resource, Default)]
-struct LineHistory(HashMap<(usize, u32), Vec<u32>>);
+pub struct LineHistory(HashMap<(usize, u32), Vec<u32>>);
 
 /// The skill key and test hooks before the movement, every character's skill after it (so the
 /// refill sees this frame's motion, and its sounds play this frame). The key comes after the
@@ -1023,12 +1074,23 @@ impl Env<'_> {
     }
 }
 
+/// A skill line `tag` from `u` through the chatter gate (`skill_line`) from outside a skill's
+/// step: Brutus's charge line h_13601f7b (FUN_0013c1c0 at 0x13c3fa, play_vengar.rs). `me` is `u`'s
+/// place in `sight` (0 the player's character), `distance` its distance to the player's. What came
+/// of it, for the log.
+#[allow(clippy::too_many_arguments)]
+pub fn line(u: &mut Player, game: &Game, history: &mut LineHistory, reserve: &mut ammo::Reserve, me: usize,
+            sight: &[(u8, Vec3, bool)], distance: f32, tag: u32) -> String {
+    let mut env = Env { game, controlled: me == 0, log: false, me, sight, distance, history, reserve };
+    skill_line(u, &mut env, tag)
+}
+
 /// Every character's skill and stamina, after the movement (so the refill sees this frame's
 /// motion): the controlled one first, then the squad (the AI's, as the game runs it for
 /// everyone). Logs each half second with BF_SKILL_LOG.
 #[allow(clippy::too_many_arguments)]
-fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut history: ResMut<LineHistory>,
-                 mut reserve: ResMut<ammo::Reserve>, mut last_log: Local<f32>) {
+pub fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut history: ResMut<LineHistory>,
+                     mut reserve: ResMut<ammo::Reserve>, mut last_log: Local<f32>) {
     let dt = frame_dt(&time);
     let log = std::env::var("BF_SKILL_LOG").is_ok();
     // (the order the AI's sight uses: the player, then the squad, NPCs included)
