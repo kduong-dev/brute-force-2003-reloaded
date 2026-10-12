@@ -41,8 +41,9 @@ pub const GOAL_KNOCKDOWN: i64 = 65;
 pub const GOAL_NOOP: i64 = 86;
 
 /// The parent attribute (h_f38c9694: every personality has one but the root's), an event entry
-/// (h_143df498), its priority (h_e146dc86) and its unknown h_f167afaa, a goal of it (h_04701700)
-/// and the goal's weight (h_0054cf83).
+/// (h_143df498), its priority (h_e146dc86) and the priority's decay a second (h_f167afaa:
+/// FUN_0001b4b0, exactly 86.86 and 0 don't decay), a goal of it (h_04701700) and the goal's
+/// weight (h_0054cf83).
 const H_PARENT: u32 = 0xF38C_9694;
 const H_EVENT: u32 = 0x143D_F498;
 const H_PRIORITY: u32 = 0xE146_DC86;

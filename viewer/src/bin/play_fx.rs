@@ -46,8 +46,9 @@ pub(super) const FLESH: i64 = 21;
 /// Flint's world material, read from her parts' collision (#128): WMAT_FLESH_SYNTHETIC (24 in the
 /// XBE's WMAT_ name table, counted from WMAT_DEFAULT = 0), whose debris (h_1f7ca034: blood_puff_b,
 /// bloodsplat_b, giblet_b) and decals (h_02d017b7, h_0d7a5245: RGBA 50,50,50) are grey. Kingman's
-/// is too. Every other flesh (22 MUTANT, 23 SHRIKE, 25 SEER, 26 FIREHOUND) still gets
-/// FLESH_HUMAN's hit effects and bundle here: their own are the species tickets' (#129-#133).
+/// is too. Shrike flesh (23) has its own bundle (`SHRIKE`); every other flesh (22 MUTANT,
+/// 25 SEER, 26 FIREHOUND) still gets FLESH_HUMAN's hit effects and bundle here: their own are the
+/// species tickets' (#130-#133).
 const SYNTHETIC: i64 = 24;
 /// Shrike flesh (WMAT_FLESH_SHRIKE, 23: the Shrike Soldier, Heavy and Hound, the Hunter Lord, and
 /// as stored the Supermutant; `Game::flesh`). Its world-materials entry is FLESH_HUMAN's (the same
@@ -634,11 +635,15 @@ struct Particle {
     step: usize,
 }
 
+/// A decal on the ground or a wall: its age, its def (life, fade, tint) and material.
 #[derive(Component)]
 struct Decal {
     age: f32,
     def: DecalDef,
     material: Handle<StandardMaterial>,
+    /// drawn as the game's decal pass draws it (`spawn_game_decal`: multiplied in, out of Bevy's
+    /// fog): it fades to no effect with the fog at it instead (`animate_fx`)
+    multiply: bool,
 }
 
 /// A point light run by a light effect: its particles' ages.
@@ -729,7 +734,7 @@ fn requested_holes(mut commands: Commands, mut game: ResMut<GameData>, fx: Optio
                                 Transform::from_translation(at + normal * (0.01 + 0.004 * state.random()))
                                     .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(turn))
                                     .with_scale(Vec3::new(def.width * HOLE_SCALE, 1.0, def.height * HOLE_SCALE)),
-                                Decal { age: 0.0, def: def.clone(), material })).id();
+                                Decal { age: 0.0, def: def.clone(), material, multiply: false })).id();
         state.holes.push_back(e);
         while state.holes.len() > MAX_HOLES {
             if let Some(old) = state.holes.pop_front() {
@@ -861,7 +866,7 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
                             Transform::from_translation(Vec3::new(at.x, y, at.z))
                                 .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal.normalize()) * Quat::from_rotation_y(turn))
                                 .with_scale(Vec3::new(def.width * scale, 1.0, def.height * scale)),
-                            Decal { age: 0.0, def: def.clone(), material })).id();
+                            Decal { age: 0.0, def: def.clone(), material, multiply: false })).id();
     state.decals.push_back(e);
     while state.decals.len() > MAX_DECALS {
         if let Some(old) = state.decals.pop_front() {
@@ -940,8 +945,10 @@ fn game_decals(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, mate
 /// Bevy's `AlphaMode::Multiply` (dst x (1 - a + a x colour)), unlit; the console multiplies stored
 /// (gamma) values, Bevy linear ones, the same where a is 1. Take 20's kill at 18.0 s: a floor of
 /// 35, 28, 36 to 15, 23, 17 (this gives 19, 22, 20). The defs' h_071e88fb / h_17dd78a4 (132 on the
-/// Shrikes') are stencil references, of no use in the normal view (answers.md Q4), and the pass's
-/// fog toward white isn't drawn.
+/// Shrikes') are stencil references, of no use in the normal view (answers.md Q4). The pass's
+/// shader lerps the factor to 1 by the fog, so a decal fades to no effect in the fog: Bevy's fog
+/// is off on it (fogged, the factor's white would take the fog's colour and the whole quad show)
+/// and `animate_fx` scales its alpha by 1 - the fog at it instead.
 #[allow(clippy::too_many_arguments)]
 fn spawn_game_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>,
                     def: &DecalDef, at: Vec3, normal: Option<Vec3>, scale: f32, alpha: f32) {
@@ -954,7 +961,7 @@ fn spawn_game_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets,
     let a = def.color[3];
     let material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 1.0, 1.0, a), base_color_texture: fx.decal_factors.get(&(texture, tint_key(&def))).cloned(),
-        alpha_mode: AlphaMode::Multiply, unlit: true, depth_bias: 40.0, ..default()
+        alpha_mode: AlphaMode::Multiply, unlit: true, fog_enabled: false, depth_bias: 40.0, ..default()
     });
     let turn = (state.random() * 2.0 - 1.0) * def.rotation.to_radians();
     let lift = 0.01 + 0.004 * state.random();
@@ -970,7 +977,7 @@ fn spawn_game_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets,
     let e = commands.spawn((Mesh3d(fx.floor.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
                             Transform::from_translation(at).with_rotation(Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(turn))
                                 .with_scale(size),
-                            Decal { age: 0.0, def, material })).id();
+                            Decal { age: 0.0, def, material, multiply: true })).id();
     state.decals.push_back(e);
     while state.decals.len() > MAX_DECALS {
         if let Some(old) = state.decals.pop_front() {
@@ -1157,8 +1164,21 @@ fn emit(mut commands: Commands, time: Res<Time>, fx: Option<Res<FxAssets>>, mut 
     }
 }
 
+/// How much of the view's colour fog `fog` lays over a point `distance` m from the camera (0 none,
+/// 1 all of it), as Bevy's fog shader works it out for each falloff (the demo's levels use the
+/// linear one: their start- and end-distance).
+fn fog_at(fog: &DistanceFog, distance: f32) -> f32 {
+    match fog.falloff {
+        FogFalloff::Linear { start, end } => ((distance - start) / (end - start).max(1e-3)).clamp(0.0, 1.0),
+        FogFalloff::Exponential { density } => 1.0 - (-density * distance).exp(),
+        FogFalloff::ExponentialSquared { density } => 1.0 - (-(density * distance).powi(2)).exp(),
+        FogFalloff::Atmospheric { extinction, .. } => 1.0 - (-extinction * distance).exp().max_element(),
+    }
+}
+
 /// Particles move, grow, change colour and face the camera; decals fade at the end of their
-/// time; a light effect's light follows its particles.
+/// time (the game's multiply ones also with the fog); a light effect's light follows its
+/// particles.
 #[allow(clippy::too_many_arguments)]
 fn animate_fx(
     mut commands: Commands,
@@ -1166,14 +1186,15 @@ fn animate_fx(
     fx: Option<Res<FxAssets>>,
     mut state: ResMut<FxState>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    camera: Query<&Transform, (With<MainCamera>, Without<Particle>)>,
+    camera: Query<(&Transform, Option<&DistanceFog>), (With<MainCamera>, Without<Particle>)>,
     mut particles: Query<(Entity, &mut Particle, &mut Transform, &mut MeshMaterial3d<StandardMaterial>)>,
-    mut decals: Query<(Entity, &mut Decal)>,
+    mut decals: Query<(Entity, &mut Decal, &Transform), Without<Particle>>,
     mut lights: Query<(Entity, &mut GlowLight, &mut PointLight)>,
 ) {
     let Some(fx) = fx else { return };
     let dt = frame_dt(&time);
-    let facing = camera.single().map(|c| c.rotation).unwrap_or_default();
+    let view = camera.single().ok();
+    let facing = view.map(|(c, _)| c.rotation).unwrap_or_default();
     let to_camera = facing.inverse();
     for (e, mut p, mut tr, mut mat) in &mut particles {
         p.age += dt;
@@ -1203,7 +1224,7 @@ fn animate_fx(
             mat.0 = fx.steps[p.fx.id][step].clone();
         }
     }
-    for (e, mut d) in &mut decals {
+    for (e, mut d, tr) in &mut decals {
         d.age += dt;
         let left = d.def.life - d.age;
         if left <= 0.0 {
@@ -1212,9 +1233,19 @@ fn animate_fx(
             state.holes.retain(|&x| x != e);
             continue;
         }
-        if left < d.def.fade {
+        let fade = (left / d.def.fade.max(0.01)).min(1.0);
+        if d.multiply {
+            // the game's decal pass: to no effect with the fog at it (`spawn_game_decal`)
+            let fog = view.and_then(|(c, f)| f.map(|f| fog_at(f, c.translation.distance(tr.translation)))).unwrap_or(0.0);
+            let want = d.def.color[3] * fade * (1.0 - fog);
+            if materials.get(&d.material).is_some_and(|m| (m.base_color.alpha() - want).abs() > 1e-3) {
+                if let Some(m) = materials.get_mut(&d.material) {
+                    m.base_color.set_alpha(want);
+                }
+            }
+        } else if left < d.def.fade {
             if let Some(m) = materials.get_mut(&d.material) {
-                m.base_color.set_alpha(d.def.color[3] * left / d.def.fade.max(0.01));
+                m.base_color.set_alpha(d.def.color[3] * fade);
             }
         }
     }

@@ -92,10 +92,14 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   KNOCKDOWN 1 : STUN 1 at priority 100. So a dummy reacts to every non-lethal hit, within the
   cooldowns. An NPC set to fight, with a hostile in sight, takes the heavy and light path, as the
   takes' alerted Shrikes.
-* **Cooldowns.** A knock-down's start (goal 65, 0x40870) sets the knock-down's cooldown to 6 s
-  and the stun's to 3 s; a stun's (goal 63, 0x3f460) the stun's to 4 s and the knock-down's to
-  2 s (FUN_000124f0 overwrites them). A goal refuses to start in its own; the draw strikes it out
-  and draws again among the rest (FUN_00054bc0).
+* **When.** The brain takes the event about 0.3 s after the hit (a fit, below) and draws its
+  goal then, with the cooldowns as they are then: the goals' starts test them.
+* **Cooldowns, and a type without the motion.** A knock-down's start (goal 65, 0x40870) sets the
+  knock-down's cooldown to 6 s and the stun's to 3 s; a stun's (goal 63, 0x3f460) the stun's to
+  4 s and the knock-down's to 2 s (FUN_000124f0 overwrites them). A goal refuses to start in its
+  own cooldown, or when the type has no MOTION of its motion type (MT_KNOCKDOWN, MT_DIZZY: the
+  deathmatch Shadoon has a DIZZY and no KNOCKDOWN); the draw strikes it out and draws again
+  among the rest (FUN_00054bc0).
 * **One at a time.** The reactions are uninterruptible goals (class 0x30 in the goal table
   0x4a5908): a damage event during one waits in the brain's queue (it doesn't decay) and is taken
   when the reaction ends, where the cooldowns mostly refuse it.
@@ -104,8 +108,9 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   idle. The takes' 3.2-3.4 s stuns and 2.6-3.0 s knock-downs were the hit log's stalls: the game
   steps at most 0.1 s a frame, re-timed they come out at the clips' 1.7-2.4 s (answers.md). The
   knock-down is a clip, not a ragdoll: thrown back, it lands, lies and gets up (take 14).
-* **Fits and guesses.** The reaction starts 0.3 s after the hit (a fit: the takes' +0.37-0.46 s
-  to the motion state in their column's time, which ran ahead of the game's clock). The body is
+* **Fits and guesses.** The brain takes the event 0.3 s after the hit (a fit: the takes'
+  +0.37-0.46 s to the motion state in their column's time, which ran ahead of the game's clock;
+  answers.md: about 0.3 s). The body is
   turned to face the shooter first, so the clip throws it away from the hit: the game turns the
   clip by char+0x434 + pi (0x150845), and that char+0x434 is the hit's way is the analyst's guess.
   The MOTION's blend-in (0.2 s hf, 0.25 s lf) is the demo's 0.2 s crossfade.
@@ -153,6 +158,12 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   are said), so a type's three all come before one repeats (`enemies::death_cry`, `SAID`; the
   skill lines' `LineHistory` keeps the same rule). An enemy says nothing else: the takes'
   Shrikes cried only at the kill, though their files have hurt lines.
+* **The deathmatch types' lines** (the dm Heavy's h_0c60112d, h_f6aa73af, h_1bc9d69a) are in
+  mp_common's sound banks (`sounds-dm`, `sounds-sdm_shrike`), streamed from their own language
+  wave banks (ml-sounds/en/dm-en.tgz, sdm_shrike-en.tgz): the test map attaches them
+  (`Game::load_bank_streams`), so they speak there, and on any map played with `--test`. The
+  dm h_f6aa73af decodes to the campaign Heavy's samples exactly. The takes' dm kills (36, 39) had
+  no cry checked.
 * **The gun** leaves the hand and drops at the feet (the takes' guns lie at the standing spot;
   the squad's are thrown by the hit). The placement's `inventory-drop` isn't dropped: the takes
   didn't show one (h_1c5780f8's Sonic Ammo; a shot for it is in the spec's shot list).
@@ -177,17 +188,23 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
 * **How they're drawn** (answers.md Q4): multiplied into what's under them, as the game's decal
   pass (FUN_002175e0: SRCBLEND ZERO, DESTBLEND SRCCOLOR; pixel shader 25): what's under it times
   lerp(1, min(1, tint + 1 - the texture's alpha), a), a = the tint's alpha (220) x the decal's
-  alpha x its fade; the texture's colour isn't used. Widths and heights are half sizes (a kill's
+  alpha x its fade; the texture's colour isn't used. The pass's shader lerps that factor to 1 by
+  the fog, so in the fog a decal fades to no effect: Bevy's fog is off on these decals (fogged,
+  the factor's white took the fog's colour and the whole quad showed, ~10% darker than the floor
+  at 60 m on e34), and their alpha is scaled by 1 - the fog at the decal each frame (`animate_fx`,
+  `fog_at`). Widths and heights are half sizes (a kill's
   0.5 x 0.25 decal at scale 4 is a 4 x 2 m quad; its visible patch is ~1.5 m, the texture's
   alpha). Take 20's kill spot: a floor of 35, 28, 36 darkened to 15, 23, 17 (the formula gives
   19, 22, 20).
 
 ## The stamina shield (the deathmatch Shrikes)
 
-* The deathmatch Soldier and Heavy (and their squad deathmatch copies) carry a stamina shield
-  (shield-type 2): a hit takes the stamina first, min(stamina, damage) off both (0x223690), and
-  what's left goes to the hit points in the same hit. Their stamina is the type's max-stamina:
-  25 (Soldier), 40 (Heavy). A hit the shield takes whole draws no blood and lays no decal.
+* The types whose shield-type is 2 carry a stamina shield: the deathmatch Shrike Soldier, Shrike
+  Heavy and Hunter Lord, and their squad deathmatch copies (the rule goes by the shield type). A
+  hit takes the stamina first, min(stamina, damage) off both (0x223690), and what's left goes to
+  the hit points in the same hit. Their stamina is the type's max-stamina: 25, 40 and 35 (dm), 28,
+  45 and 40 (sdm). A hit the shield takes whole draws no blood and lays no decal. The test map's
+  instant kill counts the stamina in (`enemies::lethal`), so K kills them in one hit.
 * It refills at the type's stamina-recovery a second, 5 (Soldier) and 4 (Heavy), x0.25 dashing
   and x2 crouched, with no pause (FUN_0011a840; answers.md Q5). The takes' steps of recovery / 10
   were frames whose time the game capped at 0.1 s while the hit log paused the console.
@@ -199,6 +216,9 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
 
 * `BF_TEST_NPC=<s>,<character>,<team>,<dummy|fight|frozen>[,<x>,<z>[,<y>]]`: the character may
   be a placement name (above); `frozen` has no reactions ([testtools.md](testtools.md)).
+* `BF_TEST_NPC_HP` (testtools.md) sets the maximum hit points too, and the heavy-hit threshold
+  and both decal thresholds are shares of the maximum: at 999 a Shrike takes no heavy hit and
+  lays almost no decals.
 * `BF_TEST_NPC_MOTION=<s>,<n|aim|all>,<motion>[,<x>,<z>[,relaxed]]`: drives an enemy NPC in a
   motion type (its MT_ name or number: `walk`, `run`, `dash`, `move_left`,
   `move_right_back_slow`, `backpedal`, `backstep`, `idle`, `crouch`, `dizzy`, `knockdown`,

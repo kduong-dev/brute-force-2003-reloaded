@@ -3400,8 +3400,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // (the victim's step and damage-type factor as it lands: play_damage.rs)
         let mut hit = h.hit;
         let amount = hit.land(m, &game.0, &difficulty, now);
-        // the test map's instant kill: one hit is enough
-        let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { m.health.max(amount) } else { amount };
+        // the test map's instant kill: one hit is enough (a stamina shield's share too)
+        let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { enemies::lethal(m).max(amount) } else { amount };
         hurt(m, &game.0, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
         // shot by the player: sidestep one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
         if !m.dead && m.knock_request.is_none() && m.random(3) == 0 {

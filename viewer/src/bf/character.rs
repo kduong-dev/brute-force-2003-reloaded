@@ -1268,6 +1268,31 @@ impl Game {
         Ok(n)
     }
 
+    /// Attach the streamed files (resource-type 1) of every sound bank of an archive to their own
+    /// language wave banks: `sounds-<bank>.xmb` streams from data/ml-sounds/<lang>/<bank>-<lang>.tgz
+    /// (mp_common's `sounds-dm` from dm-en.tgz, `sounds-sdm_shrike` from sdm_shrike-en.tgz: the
+    /// deathmatch types' voice lines, their death lines among them, #129). Each bank is read again
+    /// (what's loaded already wins) for its streamed files, which `SoundBank::add` keeps for the
+    /// last bank only. Returns how many files were attached.
+    pub fn load_bank_streams(&mut self, data_dir: &Path, archive: &str, lang: &str) -> Result<usize, String> {
+        let ar = Archive::open(&data_dir.join(format!("{archive}.tgz")), |n| n.starts_with("sounds-"))?;
+        let mut n = 0;
+        for name in ar.find("sounds-", ".xmb") {
+            let Some(root) = self.parse(&ar, &name)? else { continue };
+            let mem = Arc::new(ar.get(&name.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec());
+            self.sounds.add(&root, mem);
+            let bank = name.rsplit('/').next().unwrap_or(&name).trim_start_matches("sounds-").trim_end_matches(".xmb");
+            let path = data_dir.join("ml-sounds").join(lang).join(format!("{bank}-{lang}.tgz"));
+            let Ok(waves) = Archive::open(&path, |x| x.ends_with(".xwb")) else { continue };
+            for x in waves.find("", ".xwb") {
+                if let Some(d) = waves.get(&x) {
+                    n += self.sounds.add_stream(Arc::new(d.to_vec()));
+                }
+            }
+        }
+        Ok(n)
+    }
+
     /// A level's music (data/sounds/<level>.xwb, which the game streams by level name; sdm_e34
     /// holds one stereo track, caspian_action20) as WAV bytes: (track name, WAV) per entry.
     pub fn load_music(data_dir: &Path, level: &str) -> Result<Vec<(String, Vec<u8>)>, String> {

@@ -689,7 +689,7 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
         Hit::new(max * k, "Damage max x (1 - d / r)", kit.blast.damage_type)
     }.source(Who::Squad(thrower));
     let dealt = hit.on(u, game, difficulty);
-    let dealt = if kill && !own_blast { u.health.max(dealt) } else { dealt };
+    let dealt = if kill && !own_blast { enemies::lethal(u).max(dealt) } else { dealt };
     if dealt <= 0.0 {
         return None;
     }

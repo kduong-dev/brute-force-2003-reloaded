@@ -76,15 +76,16 @@ const BY_ROOT: [i64; 8] = [13, 14, 15, 16, 17, 18, 25, 44];
 const SPEED_UP: f32 = 4.5;
 const SLOW_DOWN: f32 = 7.0;
 /// A walking clip plays at the walk speed over its own speed (`AnimDef::move_speed`), at most
-/// this fast (0x3c05cc); a clip whose own speed is under 0.001 (0x3a4fe4) plays at rate 1.
+/// this fast (0x3c05cc); a clip whose own speed is under play.rs's NO_CLIP_SPEED (0x3a4fe4)
+/// plays at rate 1.
 const MAX_WALK_RATE: f32 = 1.25;
-const NO_CLIP_SPEED: f32 = 0.001;
 
-/// How long after the hit a reaction's motion starts (s). A fit: the takes' take-damage row to the
-/// goal +0.28-0.38 s and to the motion +0.37-0.46 s, in their column's time, which ran ahead of the
-/// game's clock after each hit (answers.md: the game steps 1/30 s at most twice a frame, and the
-/// hit log's stalls dropped the rest); the delay is the queued event waiting for the attack goal to
-/// be interruptible, not readable statically. The analyst's 0.25-0.3 s.
+/// How long after the hit the brain takes the damage event (s): the reaction is drawn then, and
+/// its motion starts (`step`). A fit: the takes' take-damage row to the goal +0.28-0.38 s and to
+/// the motion +0.37-0.46 s, in their column's time, which ran ahead of the game's clock after each
+/// hit (single-console play steps the game by the frame's time, capped at 0.1 s: FUN_00068d20,
+/// FUN_00069270; the hit log's stalls dropped the rest); the delay is the queued event waiting
+/// for the attack goal to be interruptible, not readable statically. answers.md: about 0.3 s.
 const REACTION_DELAY: f32 = 0.3;
 /// The brain's damage record keeps the hits of the last this many seconds (brain+0x238 = 2.7,
 /// 0x402ccccd, written once by the brain constructor FUN_000163f0 at 0x16719; FUN_0003da40 drops
@@ -246,8 +247,9 @@ pub struct State {
     pub weapons: Option<Vec<u32>>,
     /// the motion playing in place of its gait (a reaction, or the hook's)
     pub motion: Option<Playing>,
-    /// a reaction drawn and its goal (GOAL_STUN, GOAL_KNOCKDOWN), due in this many seconds, and
-    /// the yaw that faces the shooter (the clip turned away from the hit: see `start_once`)
+    /// a damage event the brain takes in this many seconds (REACTION_DELAY), when its reaction
+    /// is drawn: the event, and the yaw that faces the shooter (the clip turned away from the
+    /// hit: see `start_once`)
     pub pending: Option<(f32, i64, Option<f32>)>,
     /// the brain's damage record (brain+0x224): (sim time, amount) of the hits that reached the
     /// hit points in the last DAMAGE_WINDOW s
@@ -367,9 +369,9 @@ pub fn death_cry(u: &mut Player, game: &Game, tag: u32) {
     u.speaking = game.sounds.pcm(id).map_or(1.0, |(rate, s)| s.len() as f32 / rate as f32);
 }
 
-/// Whether `u` is reacting to a hit (drawn or playing): a hit meanwhile starts no reaction, its
-/// event waits for this one's end (`State::queued`; take 12's and take 14's hits during a stun
-/// drew none).
+/// Whether `u` is reacting to a hit (its event due, or the reaction playing): a hit meanwhile
+/// starts no reaction, its event waits for this one's end (`State::queued`; take 12's and take
+/// 14's hits during a stun drew none).
 pub fn reacting(u: &Player) -> bool {
     u.enemy.pending.is_some() || u.enemy.motion.is_some_and(|m| matches!(m.mt, MT_DIZZY | MT_KNOCKDOWN))
 }
@@ -419,9 +421,9 @@ pub fn drive(u: &mut Player, mt: i64, goal: Option<Vec2>, ready: bool) {
 ///     record emptied), else EVT_DAMAGE_LIGHT; an entry under FIGHT_PRIORITY never acts;
 ///  3. one that knows none (brain+0x3c4 bit 7; the demo's dummies) posts EVT_DAMAGED_NO_ENEMIES,
 ///     whose entry posts EVT_USER2 ("Involuntary response", KNOCKDOWN 1 : STUN 1 at 100);
-///  4. the entry's draw (FUN_00054c40), a goal refused in its cooldown struck out and drawn again
-///     (FUN_00054bc0); STUN or KNOCKDOWN starts REACTION_DELAY s later, NOOP does nothing.
-/// A frozen brain gets nothing (mode 6). While a reaction is drawn or playing the event waits
+///  4. REACTION_DELAY s later the brain takes the event (`step`): the entry's draw
+///     (`take_event`); STUN or KNOCKDOWN starts then, NOOP does nothing.
+/// A frozen brain gets nothing (mode 6). While an event is due or a reaction plays the event waits
 /// (`State::queued`): STUN and KNOCKDOWN are uninterruptible goals (class 0x30 in the goal table
 /// 0x4a5908, filled by FUN_000560c0; the event processing tests 0x20), and the brain takes the
 /// queued events, highest priority first, once the reaction's goal is done (`step`), when the
@@ -465,22 +467,26 @@ pub fn damaged(u: &mut Player, game: &Game, amount: f32, way: Vec3) {
         u.enemy.queued.push((entry.priority, event, face));
         return;
     }
-    take_event(u, game, event, face, REACTION_DELAY, log);
+    u.enemy.pending = Some((REACTION_DELAY, event, face));
 }
 
-/// The brain takes damage event `event` (its personality's entry): the draw (FUN_00054c40), a goal
-/// refused in its cooldown struck out and drawn again (FUN_00054bc0); STUN or KNOCKDOWN starts
-/// `delay` s later, facing `face`. Whether a reaction was drawn.
-fn take_event(u: &mut Player, game: &Game, event: i64, face: Option<f32>, delay: f32, log: bool) -> bool {
+/// The brain takes damage event `event` (its personality's entry) and draws its goal
+/// (FUN_0003b580): the draw (FUN_00054c40), and a goal whose start refuses it struck out and
+/// drawn again (FUN_00054bc0), at most once per goal of the entry. GOAL_KNOCKDOWN's start
+/// (0x40870) and GOAL_STUN's (0x3f460) refuse while their cooldown runs, or when the type has no
+/// MOTION of their motion type (MT_KNOCKDOWN, MT_DIZZY: type+0x1a8 bits 6 and 7, from its MOTION
+/// table, FUN_00130c50; `ms_shadoon` has a DIZZY and no KNOCKDOWN). The reaction drawn, if any.
+fn take_event(u: &mut Player, game: &Game, event: i64, log: bool) -> Option<i64> {
     let personality = u.enemy.personality;
-    let Some(entry) = game.personality_entry(personality, event) else { return false };
+    let entry = game.personality_entry(personality, event)?;
+    let t = game.character_type(u.kind);
     let mut out: Vec<i64> = vec![];
     let goal = loop {
         let draw = u.random(1_000_000) as f32 / 1_000_000.0;
         let Some(g) = entry.draw(draw, &out) else { break None };
         let refused = match g {
-            GOAL_KNOCKDOWN => u.enemy.cooldowns[0] > 0.0,
-            GOAL_STUN => u.enemy.cooldowns[1] > 0.0,
+            GOAL_KNOCKDOWN => u.enemy.cooldowns[0] > 0.0 || !has_motion(game, t, MT_KNOCKDOWN),
+            GOAL_STUN => u.enemy.cooldowns[1] > 0.0 || !has_motion(game, t, MT_DIZZY),
             _ => false,
         };
         if !refused {
@@ -492,14 +498,26 @@ fn take_event(u: &mut Player, game: &Game, event: i64, face: Option<f32>, delay:
         }
     };
     if log {
-        println!("  personality h_{personality:08x} event {event}: goals {:?}, refused {out:?}, drew {goal:?} (cooldowns {:?})", entry.goals,
-                 u.enemy.cooldowns);
+        println!("t={:.2} {}: personality h_{personality:08x} event {event}: goals {:?}, refused {out:?}, drew {goal:?} (cooldowns {:?})",
+                 u.sim_time, unit_name(u), entry.goals, u.enemy.cooldowns);
     }
-    if let Some(g @ (GOAL_STUN | GOAL_KNOCKDOWN)) = goal {
-        u.enemy.pending = Some((delay, g, face));
-        return true;
+    goal.filter(|&g| matches!(g, GOAL_STUN | GOAL_KNOCKDOWN))
+}
+
+/// Whether type `t` has a MOTION of motion type `mt` in its motion set's MOTION table (what the
+/// reaction goals' starts test, by the type flags FUN_00130c50 sets from it).
+fn has_motion(game: &Game, t: Option<&CharacterType>, mt: i64) -> bool {
+    t.and_then(|t| game.motion_sets.get(&t.motion_set)).is_some_and(|ms| ms.motions.iter().any(|m| m.motion_type == mt))
+}
+
+/// Start reaction `goal` (GOAL_STUN or GOAL_KNOCKDOWN): its motion type's clip, one of its two at
+/// random (`start_once`), the body first turned to face the shooter (`face`), so the clip throws
+/// it away from the hit.
+fn react(u: &mut Player, l: &Loaded, goal: i64, face: Option<f32>, log: bool) {
+    if let Some(f) = face {
+        u.yaw = f;
     }
-    false
+    start_once(u, l, if goal == GOAL_STUN { MT_DIZZY } else { MT_KNOCKDOWN }, log);
 }
 
 /// One frame of `u`'s own motions, before `step_player` picks its clip: a drawn reaction comes
@@ -515,28 +533,25 @@ pub fn step(u: &mut Player, l: &Loaded, game: &Game, dt: f32) -> Option<Scripted
     for c in u.enemy.cooldowns.iter_mut() {
         *c = (*c - dt).max(0.0);
     }
+    // a damage event comes due: the brain takes it now, drawing its reaction with the cooldowns
+    // as they are now (the goals' starts test them)
+    if let Some((left, event, face)) = u.enemy.pending.take() {
+        let left = left - dt;
+        if left > 0.0 {
+            u.enemy.pending = Some((left, event, face));
+        } else if let Some(goal) = take_event(u, game, event, log) {
+            react(u, l, goal, face, log);
+        }
+    }
     // the reaction done, the events that waited, highest priority first, until one draws a
     // reaction (the rest wait on)
     if !reacting(u) && !u.enemy.queued.is_empty() {
         u.enemy.queued.sort_by(|a, b| a.0.total_cmp(&b.0));
         while let Some((_, event, face)) = u.enemy.queued.pop() {
-            if take_event(u, game, event, face, 0.0, log) {
+            if let Some(goal) = take_event(u, game, event, log) {
+                react(u, l, goal, face, log);
                 break;
             }
-        }
-    }
-    // a drawn reaction comes due: its motion type's clip, one of its two at random, the body
-    // facing the shooter so the clip throws it away from the hit
-    if let Some((left, goal, face)) = u.enemy.pending.take() {
-        let left = left - dt;
-        if left > 0.0 {
-            u.enemy.pending = Some((left, goal, face));
-        } else {
-            if let Some(f) = face {
-                u.yaw = f;
-            }
-            let mt = if goal == GOAL_STUN { MT_DIZZY } else { MT_KNOCKDOWN };
-            start_once(u, l, mt, log);
         }
     }
     // the drive: a motion it holds (looping), or plays once
@@ -588,7 +603,7 @@ fn reaction(mt: i64) -> bool {
 /// the clip's end event 0xfaea99c9 clears it and the next-motion, idle_stop, starts; answers.md
 /// Q2). A reaction sets the cooldowns (`KNOCKDOWN_COOLDOWNS`, `STUN_COOLDOWNS`). The game turns the
 /// clip by char+0x434 + pi (0x150845); that char+0x434 is the hit's way is the analyst's guess, so
-/// the pending reaction faces the shooter first (`step`). The MOTION's blend-in (`transition`,
+/// a reaction faces the shooter first (`react`). The MOTION's blend-in (`transition`,
 /// 0.2 s hf, 0.25 s lf) is the demo's 0.2 s crossfade (FADE).
 fn start_once(u: &mut Player, l: &Loaded, mt: i64, log: bool) {
     let slots = l.motions.slots(mt).max(1);
@@ -709,13 +724,15 @@ pub fn glide(u: &mut Player, scripted: Option<&Scripted>, dt: f32) -> Option<Vec
     Some(u.enemy.velocity * dt)
 }
 
-/// The stamina shield (0x223690, the deathmatch Shrikes'): a hit of `amount` takes the stamina
-/// first, min(stamina, amount) off both, and what's left goes on to the hit points in the same
-/// hit (B2: the Soldier's 31.40 took its stamina 25 to 0 and its HP 50 to 43.60; the Heavy's
-/// 31.24 its stamina 40 to 8.76, its HP stayed 55). What's left. The game takes it before the
-/// damage type's factor (FUN_002232d0); here it's taken from the amount after it, the same for
-/// the deathmatch types (every factor 1) and for the squad deathmatch ones but on gas (0.75).
-/// A hit it takes some of plays the shield's hit-effect round the body (`shield_look`).
+/// The stamina shield (0x223690): a type whose shield-type is 2 (EST_STAMINA_SHIELD: the
+/// deathmatch and squad deathmatch Shrike Soldier, Shrike Heavy and Hunter Lord) takes a hit of
+/// `amount` from the stamina first, min(stamina, amount) off both, and what's left goes on to the
+/// hit points in the same hit (B2: the Soldier's 31.40 took its stamina 25 to 0 and its HP 50 to
+/// 43.60; the Heavy's 31.24 its stamina 40 to 8.76, its HP stayed 55). What's left. The game
+/// takes it before the damage type's factor (FUN_002232d0); here it's taken from the amount after
+/// it, the same for the deathmatch types (every factor 1) and for the squad deathmatch ones but
+/// on gas (0.75). A hit it takes some of plays the shield's hit-effect round the body
+/// (`shield_look`).
 pub fn absorb(u: &mut Player, game: &Game, amount: f32) -> f32 {
     if !u.enemy.stamina_shield || amount <= 0.0 {
         return amount;
@@ -730,6 +747,12 @@ pub fn absorb(u: &mut Player, game: &Game, amount: f32) -> f32 {
     }
     shield_look(u, game);
     amount - took
+}
+
+/// The damage that kills `u` in one hit (the test map's instant kill): its hit points, and the
+/// stamina its stamina shield would take first (`absorb`), so K kills the deathmatch Shrikes too.
+pub fn lethal(u: &Player) -> f32 {
+    u.health + if u.enemy.stamina_shield { u.stamina.max(0.0) } else { 0.0 }
 }
 
 /// The shield's hit-effect (`<shield hit-effect>`, h_1218cdc1 on the deathmatch Shrikes: an effect
