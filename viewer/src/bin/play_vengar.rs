@@ -2,7 +2,8 @@
 //! Vengar view. His skill's own part (the toggle, regeneration, the drain and the damage he
 //! takes) is play_skills.rs's `Vengar`. Sources: the spec and takes in `todo/35-special-skills/`
 //! (spec.md Part 3: takes 06-09, 22-24, 27, 30) and the functions cited (viewer/docs/code-map.md,
-//! "Skills and stamina" and "Vision modes").
+//! "Skills and stamina" and, for the view's materials and shaders, "Effects / ALE"); the page is
+//! viewer/docs/skills.md.
 //!
 //!  - **The charge** (FUN_0013c1c0, which his update 0x13c0b0 runs every frame while he dashes,
 //!    motion state 8, with the skill on; the demo's dash is the sprint): if a ray from his body
@@ -100,15 +101,34 @@ const HEAT_LAYER: usize = 1;
 const GLOW: f32 = 0.07;
 /// A heat figure's look (heat.wgsl): the colour at the middle of its ramp and at its far end
 /// (sRGB 0-1), the curve's power, and where the ramp starts and ends (distances of the texture
-/// coordinate from the texture's middle: facing the view 0.15, up 0.65, sideways 0.52, down 0.35).
-/// The code's colour is (k, k, 0) x a texture that wasn't found, k 0.8 for the viewer himself and
-/// his hostiles, 0.2 for his friends (0xa88b2-0xa890c); the colours are fitted to the takes: the
-/// bright figures R 253-255 throughout and G from 254 to ~51 (take09 8.0 s, take08 3.5 s, take06
-/// 5.0 s: G's 5th to 95th percentiles 55-254, 67-254, 93-254); the dim ones R 84-130, G 17-74
-/// (take09's Tex, 113 / 44 on average).
+/// coordinate from the texture's middle: 0 facing the view and 0.5 at the rims, before the
+/// scroll, `scroll`). The code's colour is (k, k, 0) x the material's texture, k 0.8 for the
+/// viewer himself and his hostiles, 0.2 for his friends (0xa88b2-0xa890c); the texture wasn't
+/// found, so the colours are fitted to the takes: the bright figures R 253-255 throughout and G
+/// from 254 to ~51 (take09 8.0 s, take08 3.5 s, take06 5.0 s: G's 5th to 95th percentiles 55-254,
+/// 67-254, 93-254); the dim ones R 84-130, G 17-74 (take09's Tex, 113 / 44 on average).
 type Look = ([f32; 3], [f32; 3], f32, [f32; 2]);
 const BRIGHT: Look = ([1.0, 1.0, 0.02], [0.89, 0.18, 0.0], 1.0, [0.2, 0.6]);
 const DIM: Look = ([0.51, 0.29, 0.01], [0.33, 0.07, 0.0], 1.0, [0.2, 0.6]);
+/// The heat figures' pulse: the material scrolls its texture down by its speed (+0x1c) times its
+/// time (+0x18), which the material library's update adds each frame's time to (0x25cf30, from
+/// FUN_001ea830): FUN_000a8610 puts the product in the vertex shader's texture offset (c28.y,
+/// 0xa8919-0xa892b). The takes' figures change colour with a period of 1.0 s, all of them in step
+/// and the world not (take09 3-10 s: the autocorrelation of Brutus's figure's mean green peaks at
+/// 1.000 s, 0.82; take06 3-9 s the same, 0.81; Brutus's and the enemy's greens correlate 0.975),
+/// the figure's mean green swinging 104-175 (take09) and 125-184 (take06, 5th-95th percentiles;
+/// the demo's 103-164 with these values, e01 as take09). The speed's
+/// writer wasn't found, nor the texture, so this is a fit: the ramp's middle moves up and down
+/// the texture by a sine of this period, between 0 and 0.45 (`SCROLL_MID` +- `SCROLL_SWING`).
+const PULSE_PERIOD: f32 = 1.0;
+/// The middle of the pulse's offset, and its swing either way (texture units, see PULSE_PERIOD).
+const SCROLL_MID: f32 = 0.225;
+const SCROLL_SWING: f32 = 0.225;
+
+/// The heat texture's offset down at `clock` s (PULSE_PERIOD).
+fn scroll(clock: f32) -> f32 {
+    SCROLL_MID + SCROLL_SWING * (std::f32::consts::TAU * clock / PULSE_PERIOD).sin()
+}
 
 /// The pass's and the heat material's shaders (src/vengar.wgsl, src/heat.wgsl).
 const PASS_SHADER: Handle<Shader> = weak_handle!("5e7f3a21-9c4d-4b8e-a6f2-0d1c3b5a7e90");
@@ -273,6 +293,8 @@ struct VengarView {
     fade: f32,
     /// the controlled character last frame (a hand-over isn't a switch: no fade)
     viewer: Option<Who>,
+    /// the heat material's time, s: the game's runs from the start (`scroll`)
+    clock: f32,
 }
 
 /// The camera that draws the heat figures over the main camera's picture (its child): the
@@ -299,7 +321,7 @@ impl HeatMaterial {
     fn new(look: Look) -> Self {
         let (m, e, power, [from, to]) = look;
         HeatMaterial { heat: HeatParams { middle: Vec4::new(m[0], m[1], m[2], 1.0), edge: Vec4::new(e[0], e[1], e[2], power),
-                                          ramp: Vec4::new(from, to, 0.0, 0.0) } }
+                                          ramp: Vec4::new(from, to, SCROLL_MID, 0.0) } }
     }
 }
 
@@ -387,6 +409,7 @@ fn view_state(time: Res<Time>, player: Res<Player>, mut view: ResMut<VengarView>
     let dt = frame_dt(&time);
     let on = skills::vengar_on(&player);
     let viewer = player.loaded.is_some().then(|| player.who());
+    view.clock += dt;
     view.fade = (view.fade - dt / FADE_TIME).max(0.0);
     if view.viewer.is_some() && view.viewer == viewer && on != view.on {
         view.fade = 1.0;
@@ -496,6 +519,14 @@ fn heat_figures(mut commands: Commands, view: Res<VengarView>, player: Res<Playe
                 plain: Query<&MeshMaterial3d<StandardMaterial>, Without<Heated>>, heated: Query<(&Heated, &MeshMaterial3d<HeatMaterial>)>,
                 standard: Res<Assets<StandardMaterial>>, mut assets: ResMut<Assets<HeatMaterial>>, mut looks: Local<Option<[Handle<HeatMaterial>; 2]>>) {
     let [bright, dim] = looks.get_or_insert_with(|| [assets.add(HeatMaterial::new(BRIGHT)), assets.add(HeatMaterial::new(DIM))]).clone();
+    // the pulse: both looks' texture offset now (the one material, k aside)
+    if view.on {
+        for look in [&bright, &dim] {
+            if let Some(m) = assets.get_mut(look) {
+                m.heat.ramp.z = scroll(view.clock);
+            }
+        }
+    }
     let viewer = player.who();
     for u in std::iter::once(&*player).chain(squad.0.iter()) {
         let Some(l) = &u.loaded else { continue };

@@ -3,7 +3,9 @@
 `bf_play` now runs on Battle of Bulgar by default (`BF_MAP=<level>` picks another level,
 `BF_MAP=flat` brings back the checkered test floor, `BF_START=<n>` picks a start point,
 `BF_TEST_GOTO=x,z,x2,z2[,y]` starts the player at one point (on the floor below height y if
-given, e.g. a roof) and runs them toward another, or stands still when both points are the same;
+given, e.g. a roof) and runs them toward another from 1 s on (`BF_TEST_GO_AT=<s>` sets off at
+that time instead: #35 take08's dash after standing 4 s, skills.md), or stands still when both
+points are the same;
 `BF_FIND_STEEP=1` lists slide surfaces steeper than 50° and ledges with a drop of more than 6 m,
 then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` prints particle emission;
 `BF_NO_IDLE_FX=1` leaves out the power-ups' effects):
