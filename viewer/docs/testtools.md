@@ -140,6 +140,9 @@ loads them); `terrorists` only the 10 terrorist types (chatter-library `terroris
 e05, e13, e16, m03_c, m08_a and the tutorial); a comma-separated list of archives (`m03_c,e16`)
 every type those define that isn't loaded; `none` nothing. The log says what it added ("test
 map: character types (all) in 0.9 s: 73 more, 128 in all"; `BF_TESTMAP_LOG` per archive).
+Any other value is read as an archive list, so a typo (`terorists`) loads nothing and logs
+"test map: no character types from terorists: ..." The archives are read on one thread per
+core, at most that many held at once.
 
 Hook-driven sessions run beside someone at the PC with `BF_BACKGROUND=1 BF_MUTE=1`: no gamepad
 is read (pads only drive the front end), the mouse's events are dropped (the free camera's look and clicks, and the menus' wheel and
@@ -303,7 +306,9 @@ captures at 15 fps, frames looked at:
   ways). With `none` the `BF_DUMP_TYPES` outputs on `--test` and with `all` are the same as
   before the change (`Game::load_archive`'s parts were split out for this).
 * Cost (this PC, 20 threads): the data loads in about 2.9 s against 1.9 s with `none` (the
-  types 0.8-0.9 s, 1.7 s on a cold file cache); the window's start to its first frames takes
+  types 0.8-0.9 s, 1.7 s on a cold file cache; with the threads bounded to one per core, measured
+  later with the PC busier, 1.7-1.9 s while the unchanged weapon step took 1.7-2.1 s instead of
+  1.2 s); the window's start to its first frames takes
   8-10 s either way. The process is about 145 MB larger (`BF_TOOLS_LOG`'s "process 1074 MB"
   against 931 MB; `terrorists` 963 MB), mostly the objects' whole .ivd / .ipn of the archives
   whose models it takes. Every level switch of the session loads them again with the test

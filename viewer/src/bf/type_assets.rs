@@ -176,24 +176,53 @@ impl Unpacked {
 impl Game {
     /// Add the character types that `archives` (level archive names, e.g. "m03_c") define and
     /// the loaded data doesn't, those `keep` passes, with what they need to be spawned (see the
-    /// module's comment). The archives are unpacked and parsed on threads (as many at once as
-    /// there are cores), then added in the order given: where two define a type, the first in
-    /// `archives` wins. Their voice lines are language `lang`'s ("en"). Per archive: how many
-    /// types it added, or why it couldn't be read.
+    /// module's comment). The archives are unpacked and parsed on threads, one per core, each
+    /// taking the next archive of the list but staying within a core count of the last one added
+    /// (so at most that many unpacked archives are held at once), and added in the order given:
+    /// where two define a type, the first in `archives` wins. Their voice lines are language
+    /// `lang`'s ("en"). Per archive: how many types it added, or why it couldn't be read.
     pub fn load_type_assets(&mut self, data_dir: &Path, archives: &[&str], lang: &str, keep: impl Fn(&CharacterType) -> bool)
         -> Vec<(String, Result<usize, String>)> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, archives.len().max(1));
         // (the threads read with a copy of the schemas, as `self` is written meanwhile)
         let schemas = self.schemas.clone();
+        let (next, added) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let (send, receive) = std::sync::mpsc::channel::<(usize, Result<Unpacked, String>)>();
         std::thread::scope(|s| {
-            let jobs: Vec<_> = archives.iter().map(|a| {
-                let schemas = &schemas;
-                s.spawn(move || Unpacked::read(data_dir, a, lang, schemas))
-            }).collect();
-            archives.iter().zip(jobs).map(|(archive, job)| {
-                let u = job.join().unwrap_or_else(|_| Err("its reader stopped".into()));
-                let added = u.and_then(|u| self.add_type_assets(&u, archive, &keep));
-                (archive.to_string(), added)
-            }).collect()
+            for _ in 0..workers {
+                let (schemas, next, added, send) = (&schemas, &next, &added, send.clone());
+                s.spawn(move || loop {
+                    let i = next.fetch_add(1, Ordering::SeqCst);
+                    let Some(archive) = archives.get(i) else { break };
+                    // wait while `workers` archives before it are read and not yet added
+                    while i >= added.load(Ordering::SeqCst) + workers {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Unpacked::read(data_dir, archive, lang, schemas)))
+                        .unwrap_or_else(|_| Err("its reader stopped".into()));
+                    if send.send((i, read)).is_err() {
+                        break;
+                    }
+                });
+            }
+            drop(send);
+            // added in list order, whichever thread finishes first
+            let mut waiting: HashMap<usize, Result<Unpacked, String>> = HashMap::new();
+            let mut out = vec![];
+            while out.len() < archives.len() {
+                let Some(u) = waiting.remove(&out.len()) else {
+                    match receive.recv() {
+                        Ok((i, u)) => { waiting.insert(i, u); }
+                        Err(_) => break,
+                    }
+                    continue;
+                };
+                let archive = archives[out.len()];
+                out.push((archive.to_string(), u.and_then(|u| self.add_type_assets(&u, archive, &keep))));
+                added.store(out.len(), Ordering::SeqCst);
+            }
+            out
         })
     }
 
@@ -212,6 +241,10 @@ impl Game {
         if new.is_empty() {
             return Ok(0);
         }
+        // their chatter first (the one part that can fail, before anything else is added), by
+        // the hashed name, as the game looks names up
+        let libraries: HashSet<u32> = new.iter().map(|t| h(t.chatter.trim_end_matches("_chatter"))).collect();
+        self.load_chatter(&u.ar, |who| libraries.contains(&h(who)))?;
         // the weapons they carry that aren't loaded, and what those fire
         let mut defs: HashMap<u32, WeaponDef> = HashMap::new();
         for root in &types {
@@ -220,23 +253,31 @@ impl Game {
             }
         }
         let mut want: Vec<u32> = new.iter().flat_map(|t| t.weapons.iter().copied()).collect();
-        let mut added_weapons = vec![];
         while let Some(w) = want.pop() {
             let Some(d) = defs.get(&w).filter(|_| !self.weapons.contains_key(&w)) else { continue };
             if d.projectile != 0 {
                 want.push(d.projectile);
             }
             self.weapons.insert(w, d.clone());
-            added_weapons.push(w);
         }
         for root in &types {
             self.add_effect_types(root);
             self.add_decals(root);
         }
-        // their models and those weapons' (the ones no loaded objects file has), cut out of the
-        // archive's objects, and the materials those name
-        let roots: Vec<u32> = new.iter().map(|t| t.mesh).chain(added_weapons.iter().filter_map(|w| self.weapons.get(w)).map(|d| d.archetype))
-            .filter(|&a| a != 0 && self.archetype(a).is_none()).collect();
+        // their models and their weapons' and what those fire, whichever archive defined the
+        // weapon (the models no loaded objects file has), cut out of the archive's objects, and
+        // the materials those name
+        let mut arms: Vec<u32> = new.iter().flat_map(|t| t.weapons.iter().copied()).collect();
+        let mut seen = HashSet::new();
+        let mut roots: Vec<u32> = new.iter().map(|t| t.mesh).collect();
+        while let Some(w) = arms.pop() {
+            let Some(d) = self.weapons.get(&w).filter(|_| seen.insert(w)) else { continue };
+            roots.push(d.archetype);
+            if d.projectile != 0 {
+                arms.push(d.projectile);
+            }
+        }
+        roots.retain(|&a| a != 0 && self.archetype(a).is_none());
         if !roots.is_empty() {
             let mut names: HashSet<u32> = HashSet::new();
             for (n, root) in u.docs("objects-") {
@@ -248,12 +289,10 @@ impl Game {
                 self.add_materials(root, |m| names.contains(&m));
             }
         }
-        // their motion sets and chatter, then the animation sets those motion sets name and their
-        // face sets
-        let stems: HashSet<String> = new.iter().map(|t| t.motion_archetype.clone()).collect();
-        self.load_motion_sets(&u.ar, |s| stems.contains(s));
-        let libraries: HashSet<String> = new.iter().map(|t| t.chatter.trim_end_matches("_chatter").to_string()).collect();
-        self.load_chatter(&u.ar, |who| libraries.contains(who))?;
+        // their motion sets (by the hashed name, as `CharacterType::motion_set`), then the
+        // animation sets those name and their face sets
+        let stems: HashSet<u32> = new.iter().map(|t| t.motion_set).collect();
+        self.load_motion_sets(&u.ar, |s| stems.contains(&h(s)));
         let sets: HashSet<u32> = new.iter().flat_map(|t| [self.motion_sets.get(&t.motion_set).map_or(0, |m| m.anim_set), t.face_set])
             .filter(|&s| s != 0 && !self.anim_sets.contains_key(&s)).collect();
         if !sets.is_empty() {
@@ -266,7 +305,8 @@ impl Game {
             self.sounds.add(root, u.beside(n, ".mem"));
         }
         // and their chatter's lines, which the bank streams from the language wave bank
-        let lines: HashSet<u32> = libraries.iter().filter_map(|l| self.chatter.get(l)).flat_map(|c| c.values().flatten().copied()).collect();
+        let lines: HashSet<u32> = self.chatter.iter().filter(|(who, _)| libraries.contains(&h(who)))
+            .flat_map(|(_, c)| c.values().flatten().copied()).collect();
         self.sounds.merge(&u.voices, &lines);
         let count = new.len();
         for t in new {

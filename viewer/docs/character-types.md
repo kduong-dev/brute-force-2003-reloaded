@@ -194,7 +194,9 @@ archive without its level:
   `data/ml-sounds/<lang>/<level>-<lang>.tgz`, of which only those lines' bytes are kept
   (`SoundBank::subset` / `merge`), so a terrorist says its death line;
 * not the placements, items, object types, level file or anything else: the rack, the pickups
-  and the object menu don't change.
+  and the object menu don't change;
+* not the archive's `.ale` effect library: the demo has one, the first archive's (common's), so
+  a campaign weapon's or type's ALE effect that only its level's library holds isn't drawn.
 
 The archives are unpacked and parsed on threads, then added in list order. The 128 types'
 `BF_DUMP_TYPES` blocks are the same as with the whole archives (`BF_DUMP_TYPES=all`). On the
