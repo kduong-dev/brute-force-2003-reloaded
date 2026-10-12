@@ -20,7 +20,7 @@
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
 | Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
-| V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Only the toggle, stamina and HUD so far, no effects: see [skills.md](skills.md) |
+| V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Tex's Berserker draws his other gun into his left hand and fires both; in it Q and R end it instead of switching or reloading. The other three have only the toggle, stamina and HUD so far: see [skills.md](skills.md) |
 
 ## Test map (`cargo run --bin bf_play -- --test`)
 
@@ -122,7 +122,7 @@ leave gaps.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
 (the weapon's own icon from its definition, clip / the squad's reserve, or "clip Regen" for a
-recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
+recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](skills.md)), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
 grenades bottom right, and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
@@ -260,12 +260,22 @@ away and no gap on the switch back (`BF_TEST_SWITCH=1.5,4.0`: rounds every 1.27 
 a knocked-down Brutus's Bower reload held until he gets up (`BF_TEST_KNOCK`); R reloading the
 Minigun at 27.40 s of `BF_MAP=sdm_e34 BF_AUTOPILOT=1 BF_START_WEAPON=1` (26 rounds).
 
-Test hooks: `BF_TEST_RESERVE=<n>` starts every ammo-type's reserve at n; `BF_TEST_CLIP=<n>`
-starts the player's clips at n; `BF_TEST_TRIGGER=<from>-<to>[,...]` holds the trigger over those
+* **A gun in the second hand** (Tex's berserk, [skills.md](skills.md)): the character's reload,
+  FUN_00120d40, returns at once while the inventory holds one (+0x198), before it touches the
+  reserve. So in berserk the gun in hand doesn't reload (#35 take05: 0 / 200 for 8.7 s), an empty
+  one clicks dry under the trigger, each gun with its own empty sound, no "switch to" hint shows
+  (FUN_00120d40 posts it), and a reload asked for (R) waits for berserk's end. Both guns' rows
+  show in the weapon box, both orange.
+
+Test hooks: `BF_TEST_RESERVE=<n>` starts every ammo-type's reserve at n; `BF_TEST_CLIP=<n>[,<n>...]`
+starts the player's clips at n (one value for every weapon, or one per weapon slot, the last for
+the rest: Tex's `99,4`); `BF_TEST_TRIGGER=<from>-<to>[,...]` holds the trigger over those
 windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the weapon switch once
-at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_KNOCK=<s>` knocks
-the player down then, once;
-`BF_AMMO_LOG=1` prints the reserve, each reload, dry shot, recharged round and the hint.
+at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_RELOAD=<s>[,...]`
+presses R once at each time (it owns R for the run); `BF_TEST_KNOCK=<s>` knocks the player down
+then, once;
+`BF_AMMO_LOG=1` prints the reserve, each reload, dry shot (and the second hand's), recharged
+round and the hint.
 
 ### The crosshair's colours (#141)
 
@@ -515,10 +525,19 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   vertical, plus up to 0.5 m/s on each other axis. MK, Minigun, L-Shot and Foley; the Bower has
   the hardpoint but no casing object. Their 2 s life, gravity and bounce are guesses.
 
+* **Two guns at once** (Tex's berserk, [skills.md](skills.md)): the fire loop steps each gun as
+  its own weapon object in the same game frames (`FireState::run` over `Gun`s: its cooldown,
+  burst counter, empty cycles, muzzle effects and casings per hand; accuracy and tracers per
+  weapon as before), both on the one trigger. Each shot carries its own gun's Damage,
+  damage-type and ammo-type to the body it hits (it used to take the gun in hand's for every
+  shot of the frame). One gun's fire is unchanged: the autopilot's shot and ammo logs, as Tex and
+  as Brutus, are main's line for line.
+
 Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"`, `0c3db625`)
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
-map's data has it (the test map has every hand weapon); `BF_SHOT_LOG=1` now also prints each
-pellet (its frame, spread, walk, tracer) and the gun's accuracy; `BF_TEST_FIRE=hip` fires
+map's data has it (the test map has every hand weapon); a list, `<a>;<b>`, fills the slots in
+order from the first (#35's Tex: `"Confed LZR-50;Jax-iC"`); `BF_SHOT_LOG=1` now also prints each
+pellet (its hand, frame, spread, walk, tracer) and the gun's accuracy; `BF_TEST_FIRE=hip` fires
 without aiming (no scope on a gun that zooms).
 
 Verified on the test map (`-- --test`, `BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12

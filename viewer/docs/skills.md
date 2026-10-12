@@ -1,21 +1,23 @@
-# Special skills: stamina and the skill toggle (#120)
+# Special skills: stamina, the skill toggle (#120) and Tex's Berserker (#121)
 
 Each squad member has a special skill that stamina (the blue bar) pays for: Tex's Berserker,
 Brutus's Spirit of Vengar, Hawk's Stealth, Flint's Advanced Targeting. This page is the part the
 four share (`src/bin/play_skills.rs`, the HUD in `play_hud.rs`): stamina, the toggle, its sounds,
-chatter and HUD, and the interface each skill plugs into. Each skill's own effect is its own
-ticket: #121 Tex, #122 Brutus, #123 Hawk, #124 Flint. So far a skill switches on and off, drains
-and shows on the HUD, but does nothing else.
+chatter and HUD, and the interface each skill plugs into; and the skills done so far. Each
+skill's own effect is its own ticket: #121 Tex, #122 Brutus, #123 Hawk, #124 Flint. Tex's
+Berserker works ([below](#texs-berserker-121)); the other three switch on and off, drain and
+show on the HUD, but do nothing else yet.
 
 Everything here comes from default.xbe (the functions are in [code-map.md](code-map.md), "Skills
 and stamina" and "HUD") and the data, checked against the 32 takes in
-`todo/35-special-skills/` (the spec is `spec.md` there, Part 1).
+`todo/35-special-skills/` (the spec is `spec.md` there, Parts 1 and 2).
 
 ## Keys and test hooks
 
 | Key | |
 |---|---|
 | V | the controlled character's skill on / off: the game's White button (VB_SPECIAL_ABILITY, `game-options-en.xml` line 151, which sends CT_TOGGLE_SPECIAL at 0x134cff). Not while dead |
+| Q, R | in Tex's berserk: end it, instead of switching weapons (Q, the game's Y) or reloading (R, the game's X; only when a reload could start, which then follows berserk's end). See [Tex's Berserker](#texs-berserker-121) |
 
 * `BF_TEST_SKILL=<s>[,<s>...]`: presses V at those times (once each).
 * `BF_TEST_STAMINA=<n>[@<s>][,...]`: sets the controlled character's stamina to n at those times
@@ -24,10 +26,18 @@ and stamina" and "HUD") and the data, checked against the 32 takes in
   chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each
   overlay and when it switches, each switch with its sound and line, and every squad member's
-  stamina each half second with its state (`on`, or `off x` its refill factor).
+  stamina each half second with its state (`on`, or `off x` its refill factor). For Tex also
+  each refusal and why, the top-up at the press, the second gun drawn, and the switch and reload
+  keys ending berserk.
 * `BF_TEST_SPRINT=<s>` (play.md): sprints toward the `BF_TEST_GOTO` goal from that time, for the
   dash's refill. With `BF_TEST_CROUCH`, `BF_TEST_SELECT`, `BF_TEST_DIE`, `BF_CAPTURE`
   (`BF_CAPTURE_FPS=60` for the blink and the fades).
+* For Tex's berserk (play.md's ammo and shot hooks): `BF_TEST_WEAPON="Confed LZR-50;Jax-iC"` (a
+  list fills the weapon slots in order: the takes' loadout), `BF_START_WEAPON=1` (the Jax-iC in
+  hand, as takes 05 and 26), `BF_TEST_CLIP=<n>[,<n>...]` (a clip per slot: `99,4` is take05's
+  poke), `BF_TEST_TRIGGER`, `BF_TEST_SWITCH`, `BF_TEST_RELOAD=<s>[,...]` (presses R),
+  `BF_TEST_THROW`; on the test map `BF_TEST_NPC_HP=<s>,<n|aim|all>,<hp>` (testtools.md) gives an
+  NPC take04's 999 HP.
 
 ## Stamina
 
@@ -90,7 +100,7 @@ reload is, the whole body standing and the upper body on the move (`Loaded::skil
 
 | | Toggle | Returns | Overlay | Switches |
 |---|---|---|---|---|
-| Tex | 0x13d490 | 1 | `Sc_w1_bz_start` / `Sc_w1_bz_stop`, 1.0 s | at the clip's 0.50 s event (eaba3d48 on, 14ee2201 off). A 1.0 s timer from an accepted press refuses presses meanwhile; switching on also needs him free (FUN_00117210, 0x13d5c4) and 10% (0x13d5d3) |
+| Tex | 0x13d490 | 1 | `Sc_w1_bz_start` / `Sc_w1_bz_stop`, 1.0 s | at the clip's 0.50 s event (eaba3d48 on, 14ee2201 off). A 1.0 s timer from an accepted press refuses presses meanwhile; switching on also needs him free (FUN_00117210, 0x13d5c4), 10% (0x13d5d3) and the rest of [his refusals](#texs-berserker-121) |
 | Brutus | FUN_0013bfe0 | 0 (0x13c00e, both ways) | none: his motion set's `Sc_w1/w2_spirit` never plays from the button | at the press |
 | Hawk | FUN_0013cf90 | 1; 0 at stamina 0 or dead | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way counts); at stamina 0 or dead: off at once, no clip |
 | Flint | FUN_0013cad0 | 0, or 2 with a rifle (MT 45, never seen in the takes) | none | at the press |
@@ -113,8 +123,9 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
   go off in that frame (take07, take11, take17).
 * **What ends a skill**: the key again; stamina at 0; death (the death handler calls the
   deactivate, 0x115df5: in the frame of death, with its end sound and line); and each skill's
-  own ends, from its `update` (their tickets: Tex's other gun dry, Y, holding the reload; Flint's
-  clip dry; Brutus's charge). Being hit doesn't (take27).
+  own ends, from its `update` and the player controller (Tex's other gun dry, the switch and
+  reload keys: below; Flint's clip dry and the same keys, #124's; Brutus's charge, #122's). Being
+  hit doesn't (take27).
 * **Handing control over doesn't end it** (take19): the skill stays on and drains on the
   character you left, under the AI; it's on when control comes back. A clip under way plays on.
 * **The demo's choices** (not traced in the game):
@@ -222,27 +233,90 @@ class's; the skill is taken out of its character while they run, so they get the
 | Method | vtable | Default | |
 |---|---|---|---|
 | `name` | +0x4c | | the string id the HUD shows |
-| `toggle` | +0x04 | | `Refused`, `Now { overlay }` or `AtEvent(event)` |
+| `toggle(u, out)` | +0x04 | | `Refused`, `Now { overlay }` or `AtEvent(event)` |
 | `drain(u, cost, dt)` | +0xbc | `cost` × dt | Tex's ×0.5 with the gun in hand empty, Brutus's charge lump, Hawk's blade ×5 |
-| `on` / `off` | +0x120 / +0x124 | nothing | the skill's effects start and end |
+| `on(u, out)` / `off(u)` | +0x120 / +0x124 | nothing | the skill's effects start and end |
 | `update(u, dt)` | +0xc0 | nothing | every frame, on or off, alive; true sends the toggle command: the skill's own ends |
+| `ended_by_actions` | +0x7c | false (0x20e200) | true (0x213690, Tex's and Flint's): while on, the switch key, the reload key and the black button end the skill instead (`skill_input`) |
+| `lets_overlays_play` | +0xa4 | true (0x262a80) | false (Tex's 0x13d850): while on, no other overlay starts (`overlays_blocked`: the reload, the switch, the throw, item use) |
+
+`toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
+`Reserve` (Tex's top-ups) and the log switch.
 
 Shared, not per skill (FUN_0010e470 / FUN_0010e3e0): the 10% check (`can_activate`), the on
 flag, the start / end sound for the controlled character, the chatter line. `free_to_act`
 (FUN_00117210) is what Tex's and Hawk's toggles ask. A skill's effects outside the character (a
 material, the post-process, the HUD marker, the AI's view of Hawk) read `Player::skill`
-(`on`, `toggling`) from their own systems. Other base-class hooks the tickets will want (the
-game's fire hook +0xb0, item use +0x104, damage taken +0xd8, visibility +0xe4, noise +0xe8,
-damage dealt +0xec, the reticle's +0xf8 / +0xfc / +0x100, the AI's hold fire +0x108, the overlay
-filter +0xa4) are added to the trait with the base class's answer as their default.
+(`on`, `toggling`, `special_motions`) and the character (Tex's `Player::second`) from their own
+systems. Other base-class hooks the tickets will want (the game's fire hook +0xb0, item use
++0x104, damage taken +0xd8, visibility +0xe4, noise +0xe8, damage dealt +0xec, the reticle's
++0xf8 / +0xfc / +0x100, the AI's hold fire +0x108) are added to the trait with the base class's
+answer as their default.
 
-Known limits the skill tickets will meet (not changed yet):
-* `toggle` gets only `&Player`. Tex's clip top-up at the press (#121) takes rounds from the
-  squad's `Reserve`, a resource: his toggle will need `&mut Player` and the resources (or the
-  top-up done by the caller from what the toggle returns).
-* A system outside the character can't reach a concrete skill's own state (Hawk's level, Flint's
-  target) through `Box<dyn SkillKind>`: it will need an `as_any_mut` on the trait to downcast, or
-  the state kept on `Skill` / `Player` where those systems can read it.
+Known limit the skill tickets will meet: a system outside the character can't reach a concrete
+skill's own state (Hawk's level, Flint's target) through `Box<dyn SkillKind>`: it will need an
+`as_any_mut` on the trait to downcast, or the state kept on `Skill` / `Player` where those
+systems can read it (as Tex's second gun is, `Player::second`).
+
+## Tex's Berserker (#121)
+
+"Uses two weapons at once." (h_0bd0cbed). Tex draws the gun of his other weapon slot into his
+left hand and fires both. `Berserker` in `play_skills.rs` (skill vtable 0x39d058, constructor
+FUN_0013d440), the second gun's fire in `play_shots.rs` / `play.rs` (`Player::second`,
+`SecondGun`), its motions in `play.rs` (`SpecialClips`); measured against takes 01-05, 21, 25
+and 26 (spec Part 2).
+
+* **The press** (his toggle, 0x13d490), either way, needs a berserk transition from the motion
+  he's in (the current MOTION's transition for motion type 45, char+0x1fc's +0x534): in
+  `ms_tex.xml` the stand, walk, run, side and back steps and the dash have one, so not crouched
+  or getting up or down, in a jump, a dodge, a dive or a slide, nor knocked down. Switching on is
+  also refused with a gun already in the second hand, scoped (char+0x7a8), when he isn't free
+  (FUN_00117210), under 10%, within his 1.0 s timer, with no gun in the other slot, or when that
+  gun's clip is still 0 after its top-up (take25 10.0 s: both guns and the reserve emptied,
+  nothing happens). Switching off needs the second gun out and the timer run out. A refused press
+  shows and plays nothing.
+* **The top-up**: an accepted press switching on tops the other slot's gun up from the squad's
+  reserve, min(clip size − clip, reserve) (0x13d643-0x13d692). take25: the Jax-iC 2 → 36 and the
+  reserve 200 → 166 at the press, before the switch; the demo the same. A recharging gun (the
+  LZRs) has no reserve and isn't topped up. "Out of Ammo" (h_ff471882, 0x13d6e2) can't show:
+  the code refuses without a second gun before it gets there.
+* **The motions** change at the press (the toggle asks for motion type 45, FUN_0012eab0, at
+  0x13d6ca): idle, walk, run, the side and back steps, the jump and the slide become
+  `Sc_w1_bz_*` (`SpecialClips`; prefix-type 0, the same with either gun in hand), back at the
+  press switching off. The berserk set has no transition to a crouch, a dash, a dodge or a dive,
+  so in berserk Z doesn't crouch, Shift runs (`bz_run`) and C doesn't roll. `Sc_w1_bz_start` /
+  `bz_stop` (upper body, 1.0 s) play over them (#120's toggle).
+* **The switch** (0.50 s into `bz_start`, the event eaba3d48 at 0x118ae7, after the activate):
+  the other slot's gun goes into his left hand (FUN_0014d090), held by its trigger grip at his
+  `SECOND_HAND` hardpoint h_15ab6d29 (the inventory's second-hand holder names it at 0x14c7b8),
+  and loaded from the reserve at once if it isn't full (FUN_0022daf0 with 0). The weapon box
+  lists both guns with their names for `HUD_LIST_TIME` (take01: 2.750-5.417 s), then shows two
+  rows, both in the held guns' orange: the gun in hand on top, the second gun below (take04 8.5
+  s). At the off event (14ee2201, 0x1180bb) the gun goes back to its slot (FUN_0014d1a0) and the
+  box lists the weapons again, the stowed one in blue (take01 18.767 s).
+* **Fire**: the fire command sets both guns' fire flags (0x122621-0x122655), so the trigger fires
+  both from the same frame, each at its own rate from its own clip, with its own cooldown, burst
+  counter, accuracy and muzzle effect (`play_shots.rs`: `FireState::run` steps every gun in the
+  same game frames). Each gun's shots fly from its own muzzle to the one crosshair's point and
+  hit with its own damage (each `Shot` carries its gun's Damage, damage-type and ammo-type). No
+  damage factor: berserk's firepower is the second gun. With the gun in hand empty the second
+  fires on alone (take05), and a recharging second gun keeps recharging.
+* **The drain** (0x13d720): `stamina-cost` × dt, × 0.5 (game-options' `<combat-skills>` block
+  h_04aa86aa, h_1469a0df, `CombatSkills::berserk_empty_drain`) while the gun in hand's clip is 0.
+* **What ends it**, each through the toggle, so `bz_stop` plays and it goes off 0.5 s later: V;
+  stamina at 0; the second gun's clip at 0 (his update FUN_0013d780, once the timer has run out);
+  Q, the switch key (the game's Y: the controller sends the toggle instead of the switch,
+  0x134db4-0x134dde); R, the reload key (the game's X: 0x134c50, when a reload could start,
+  FUN_00120c50; the reload asked for stays, +0xa1 bit 2, and follows berserk's end); death. The
+  black button (the medkit shortcut, 0x134367) ends it the same way in the game; the demo has no
+  key for it. G (the game's LT) doesn't: it throws or uses nothing (take26 20.5 s).
+* **While it's on** no other overlay starts (his overlay filter 0x13d850, asked for each queued
+  overlay at 0x11a507): no weapon switch, grenade throw (the count stays) or medkit. And no
+  reload: the character's reload (FUN_00120d40) returns at once while a gun is in the second
+  hand, so an empty gun in hand clicks dry under the trigger (each gun's empty cycle clicks with
+  its own empty sound) and reloads once berserk is over (take05: the reserve taken at 15.19 s).
+* Handing control over, as for every skill: it stays on, the AI fires both guns, and the stamina
+  drains (take19's rule).
 
 ## How it was checked
 
@@ -300,3 +374,69 @@ down; the blink's colour operation (the red copy matches the takes' pixels); the
 Brutus and Flint at the 10% threshold (code only); the demo's choices under "The toggle"; the
 demo's frame is ~3 units longer on the right than the game's (the tutorial picture's proportions,
 play.md).
+
+### Tex's Berserker (#121)
+
+On campaign e34 at the takes' range spot (`BF_MAP=e34 BF_TEST_GOTO=-53.56,30.81,-53.69,31.29
+BF_TEST_WEAPON="Confed LZR-50;Jax-iC"`, `BF_SKILL_LOG`, `BF_AMMO_LOG`, 15 fps captures), against the
+takes' watch logs and frames:
+
+* **take01** (`BF_TEST_SKILL=2,18`): on 0.53 s after the press frame and off 0.53 s after the
+  second (the takes' mean 0.537 / 0.527); 100 → 64.80 over the 16 s on (2.2/s; take01 65.52 at
+  18.64). The weapon box: one row before, both guns named for 2.5 s from the switch, then two
+  rows; the list after the off with the Jax-iC blue, as the take's.
+* **take04** (`-- --test`, an e34 Shrike Heavy at the take's place `BF_TEST_NPC="0.5,shrike
+  heavy,enemy,dummy,-55.39,37.57" BF_TEST_NPC_HP=1.0,1,999 BF_TEST_INSTANT_KILL=0
+  BF_TEST_TRIGGER=2-5,9.5-12.5 BF_TEST_SKILL=7,15 BF_COMBAT_LOG=1 BF_SHOT_LOG=1`): both guns' first
+  shots in one game frame; the LZR-50 every 8-9 frames (0.27-0.30 s, 10 shots in the 3 s: take04
+  0.292 s, 10 shots), the Jax-iC every 16 (0.533 s, 6 shots: take04 0.516 s, 6). Each gun hits
+  with its own damage, as in its normal fire: the Jax-iC 32.9-33.4 on a calf (the take's 30.1-35.2,
+  its calf hits) and 63-69 on a thigh, the LZR-50 3.5-4.9 on a calf (the take's 2.8-4.9) and
+  6.6-10.3 on a thigh; the burst's damage per second is the two guns' sum (take04's 87.6/s is ten
+  LZR hits and six Jax-iC hits at the calf values). In the frames the LZR's orange bolt leaves his
+  right hand and the Jax-iC's purple ball his left, both to the crosshair (take04 9.67-9.90 s);
+  from behind, the berserk idle's pose as take04 8.5 s's (both guns held out in front, their
+  muzzles showing either side of his shoulders from the raised camera; from the front, which no
+  take shows, the guns are at his hips).
+* **take05** (`BF_START_WEAPON=1 BF_TEST_CLIP=99,4 BF_TEST_SKILL=2,14 BF_TEST_TRIGGER=4-10`): the
+  LZR-50 drawn; nothing topped up (it recharges); the drain 2.21/s, then 1.10/s once the Jax-iC is
+  empty (~5.8 s; take05 5.84 s, -2.22 / -1.12); the Jax-iC clicks dry (16bbf95c), no reload while
+  on; the LZR-50 fires on alone; off at 14.67, the reload at 15.20 with the reserve 200 → 164
+  (take05: 15.19 s, 164). The weapon box frame by frame with the take's: "4 / 200", the two rows
+  named, "0 / 200" red over "92 Regen" at 6.2 s (the take the same), 78 / 80 Regen at 10.2 /
+  13.0 s (the take 79 / 81), "0 / 164" then "36 / 164" with the list after the off.
+* **take25** (`BF_TEST_CLIP=2 BF_TEST_SKILL=2,6`): the Jax-iC 2 → 36 (34 from the reserve) at the
+  press, before the switch; the LZR-50 not topped up. With every clip and reserve at 0
+  (`BF_TEST_CLIP=0 BF_TEST_RESERVE=0`): refused, "the second gun has no rounds".
+* **take26** (`BF_START_WEAPON=1 BF_TEST_CLIP=99,20 BF_TEST_SKILL=2,10,18,24 BF_TEST_SWITCH=4.5
+  BF_TEST_RELOAD=12.5 BF_TEST_THROW=20.5,0.15`): Q at 4.5 ends it (off 5.01, no switch: take26
+  5.08-5.13 after Y at 4.5); R at 12.5 ends it (off 13.01) and the reload follows as the stop clip
+  ends (13.52: 16 rounds, 200 → 184, the take's 184); G at 20.5 throws nothing, the count stays,
+  berserk stays on to the press at 24. The other gun dry (`BF_TEST_CLIP=4,36`, trigger 4.5-8.5):
+  the LZR-50 empty at 6.80, the toggle in that frame, off at 7.33 (take26: 30.23 → 30.73-30.78);
+  the box "0 Regen" red, then the list with "Confed LZR-50 0 Regen" in blue, the Jax-iC firing on
+  (as the take's).
+* **Refusals**: crouched (`BF_TEST_CROUCH=1 BF_TEST_SKILL=3`: "no berserk transition"), scoped
+  (`BF_TEST_WEAPON="L-Shot-75;Jax-iC" BF_TEST_SCOPE=1`, without `BF_TEST_GOTO`, whose autopilot
+  doesn't read it), no rounds for the second gun (above).
+* **Motions** (`BF_MAP=flat BF_AUTOPILOT=1 BF_TEST_SKILL=1.0 BF_MOVE_LOG=1`): from the press on,
+  bz_idle, bz_run (the autopilot's sprint stays bz_run), the aimed side step bz_f_side_walk_r, the
+  backpedal bz_back_walk, the dodge at 13.0 s a plain run, both jumps bz_jump_launch; the
+  autopilot's Q at 21.8 s ends it and the normal set is back at the press. Aimed left
+  (`BF_TEST_AIM=1 BF_TEST_STRAFE=-1,0`): bz_f_side_walk_l moved by bz_walk's root (1.3 m/s). No
+  take shows these (spec shot T1).
+* **Death** (`BF_TEST_DIE=3`): off in the frame of death with the end sound; both guns fall.
+  **Hand-over** (`-- --test BF_TEST_SELECT=1,3.0` and a fighting enemy Brutus NPC): the AI's Tex
+  stays in berserk, drains 2.2/s and fires both guns (the LZR-23's and the Minigun's hits, ammo
+  types 11 and 2).
+* **Regression**: one gun's fire is unchanged: `BF_MAP=flat BF_AUTOPILOT=1` as Tex and as Brutus
+  (`BF_CHARACTER=0`, the Bower's walked pellets), 480 frames, `BF_SHOT_LOG` and `BF_AMMO_LOG`
+  line for line the same as main's; the frames the same but for the hand-over chevrons' phase at
+  31 s.
+
+**Guessed or open (Tex)**: the berserk walk, run, side steps and jumps aren't in any take (shot
+T1); the demo moves them by their clips' roots (bz_walk 1.29 m/s against the walk's 1.62), where
+the game moves at the type's speeds. The scope in berserk (shot T2) and the black button (T3)
+aren't filmed; the black button has no demo key. Whether the game's camera pulls in when
+berserk fires (the demo's does, as for every gun; take04's doesn't) is play.md's question. A
+toggle overlay cut short by a knock-down (the demo's choice) leaves the motions as the skill is.

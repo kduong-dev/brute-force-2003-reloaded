@@ -91,6 +91,11 @@ pub const TRIGGER_HAND: u32 = 0x1D4B_6D69;
 pub const SUPPORT_HAND: u32 = 0xF847_4385;
 /// Character stow hardpoints, one per inventory slot (on the back, or the hip for sidearms).
 pub const STOW: [u32; 2] = [0xFF4C_691B, 0xF4CC_F78C];
+/// Character hardpoint of the second hand's gun (Tex's berserk): the inventory's second-hand
+/// holder (+0x178) names it (0x14c7b8, as +0x144's names TRIGGER_HAND at 0x14c791), and both hand
+/// holders (vtable 0x39b138) hold a weapon by its TRIGGER_GRIP (+0x6c = 0x14c5b0). Only Tex's
+/// model has it, on his left hand's part (h_f1becca5 in objects-common).
+pub const SECOND_HAND: u32 = 0x15AB_6D29;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Hardpoint {
