@@ -152,7 +152,6 @@ const CHEVRON: u32 = 0x158F_87C1;
 const CHEVRON_RED: Color = Color::srgb(1.0, 0.33, 0.2);
 /// speech icons: beside each portrait, on the side away from its command tab (by character)
 const BUBBLE_AT: [(f32, f32); 4] = [(96.0, 426.0), (176.0, 383.0), (45.0, 344.0), (136.0, 292.0)];
-const FRIEND_GREEN: Color = Color::srgba(0.3, 1.0, 0.35, 0.95);
 /// a dead member's portrait: their own skull (the character's h_00c51907 icon; Brutus's is the
 /// wide one), dimmed; their command tab and radar health bar go. Fallbacks if the data lacks one:
 const SKULL_HUMAN: u32 = 0x1834_3E47;
@@ -1047,9 +1046,10 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     }
 
     // ---- crosshair, above centre (320, 192) ----
-    // the held weapon's own crosshair (its definition's reticule-prefix texture), 64 units across
+    // the held weapon's own crosshair (its definition's reticule-prefix texture), 64 units across,
+    // in the reticle's tint (play_reticle.rs)
     commands.spawn((ChildOf(screen), at(320.0 - CROSSHAIR_SIZE / 2.0, CROSSHAIR_Y - CROSSHAIR_SIZE / 2.0, CROSSHAIR_SIZE, CROSSHAIR_SIZE),
-                    image(&cross, Color::srgba(0.2, 0.55, 1.0, 0.95)), Part::Crosshair));
+                    image(&cross, super::reticle::BLUE), Part::Crosshair));
 
     // ---- grenade throw: the charge meter, right of the crosshair (capture: box 354..367 x 163..221,
     // orange fill from the bottom, dark tick at ~72%). A thrown grenade has no crosshair of its own:
@@ -1187,6 +1187,7 @@ fn update_hud_widgets(
     mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut GameText>, Option<&mut Node>)>,
     kits: Option<Res<super::grenade::GrenadeKits>>,
     stamina: Res<StaminaBar>,
+    reticle: Res<super::reticle::Reticle>,
 ) {
     let Some(l) = player.loaded.as_ref() else { return };
     let list = player.hud_list > 0.0;
@@ -1438,7 +1439,10 @@ fn update_hud_widgets(
                 let id = l.weapons.get(player.weapon).map(|w| w.def.reticle).filter(|&r| r != 0).unwrap_or(CROSSHAIR_TEX);
                 if let (Some(mut img), Some(h)) = (img, texture(&mut game.0, &mut images, &mut cache, id)) {
                     if img.image != h { img.image = h; }
-                    img.color = if player.aim_friend { FRIEND_GREEN } else { Color::srgba(0.2, 0.55, 1.0, 0.95) };
+                    // red with a lock, green on a teammate, yellow on a radar-contact 2 or 4, else
+                    // blue: switched on the frame it changes (play_reticle.rs)
+                    let tint = reticle.tint.color();
+                    if img.color != tint { img.color = tint; }
                 }
             }
         }

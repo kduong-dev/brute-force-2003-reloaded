@@ -219,6 +219,8 @@ pub struct Game {
     /// hard in the game flag campaign/difficulty-setting, the n of every hit's step on a
     /// character (0x125600; play_damage.rs). None if the file doesn't have them
     pub difficulty_settings: Option<[i64; 3]>,
+    /// game-options `<reticule>`: the crosshair's lock reach and box (see `ReticuleOptions`)
+    pub reticule: ReticuleOptions,
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
     /// `ChatterBlock`; play_skills.rs's skill lines go through it)
     pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
@@ -293,6 +295,39 @@ pub struct ObjectType {
     pub factors: Vec<(i64, f32)>,
     /// h_197caf14: what it breaks into, in the list's order
     pub debris: Vec<Debris>,
+    /// its radar-contact by default (H_RADAR_CONTACT on the game-archetype record that holds the
+    /// `<base name object-type>`; the type's +0x130, set on the object at its set-up, 0x155058):
+    /// 0 for the scenery, 7 for the squad's memory chip h_f50f94f9, 6 for the bosses
+    pub radar_contact: u8,
+}
+
+/// An object's radar-contact (name recovered by hashing as `radar-contact-type`; byte +0x7a of
+/// the object, set by FUN_0015b310): RCONTACT_ (name table 0x3beaac) 0 NONE, 1 ALIGNMENT (every
+/// character), 2 OBJECTIVE, 3 OBJECTIVE_NO_CURSOR, 4 OBJECTIVE_SECONDARY, 5 INVISIBLE, 6
+/// BOSS_ALIGNMENT, 7 IMPORTANT_PICKUP. On an objecttypes game-archetype record (the type's
+/// default) and on a level's placements (the object's own). The crosshair turns yellow over a 2
+/// or a 4 (0xc59d7, play_reticle.rs); the radar reads it too (#160).
+pub const H_RADAR_CONTACT: u32 = 0x1905_F381;
+
+/// game-options `<reticule>` (common/game-options-en.xmb; line 125 of the decoded
+/// decompiled/xml/common/game-options-en.xml; its attribute handler
+/// 0x19d7d0 fills the settings the app's vtable +0x48 returns): the crosshair's lock rules
+/// (play_reticle.rs). The defaults are the shipped file's.
+#[derive(Clone, Copy, Debug)]
+pub struct ReticuleOptions {
+    /// h_0c3eb4ff (settings +0x18c, 0x19d80d): 0.7, the lock's reach as a share of the gun's
+    /// (FUN_000bf7a0 and FUN_00232590 multiply FUN_00232520 by it)
+    pub lock_share: f32,
+    /// h_f079aebd (settings +0x178, 0x19d8ba): 0.14, the lock box's size as a share of the
+    /// screen's height; 0xc50b0 puts it in the target selection's +0x30, and x 0.75 (0x3a510c, the
+    /// 4:3 aspect) in its +0x2c for the width
+    pub box_share: f32,
+}
+
+impl Default for ReticuleOptions {
+    fn default() -> Self {
+        ReticuleOptions { lock_share: 0.7, box_share: 0.14 }
+    }
 }
 
 impl ObjectType {
@@ -656,6 +691,7 @@ impl Game {
             effect_type_defs: HashMap::new(),
             character_damage_multiplier: HashMap::new(),
             difficulty_settings: None,
+            reticule: ReticuleOptions::default(),
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
             character_types: HashMap::new(),
@@ -783,6 +819,15 @@ impl Game {
                 .find_map(|e| Some([int(e.attr(h("easy"))?)?, int(e.attr(h("normal"))?)?, int(e.attr(h("hard"))?)?]));
             if values.is_some() {
                 self.difficulty_settings = values;
+            }
+            // the crosshair's lock options: <reticule h_0c3eb4ff h_f079aebd ..> (ReticuleOptions)
+            if let Some(r) = root.walk().into_iter().find(|e| e.name == h("reticule")) {
+                let num = |k: u32| r.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                let d = ReticuleOptions::default();
+                self.reticule = ReticuleOptions {
+                    lock_share: num(0x0C3E_B4FF).unwrap_or(d.lock_share),
+                    box_share: num(0xF079_AEBD).unwrap_or(d.box_share),
+                };
             }
         }
         if let Some(root) = self.parse(ar, "string-table-en.xmb")? {
@@ -1020,6 +1065,7 @@ impl Game {
                     hitpoints: combat.and_then(|c| num(c, h("hitpoints"))).unwrap_or(0.0),
                     factors,
                     debris,
+                    radar_contact: t.attr(H_RADAR_CONTACT).and_then(|v| v.as_i64()).map_or(0, |v| v.clamp(0, 255) as u8),
                 });
             }
             // idle effects: a type's <events><event state="1" h_ed0c9fac=EFFECT_TYPE/>

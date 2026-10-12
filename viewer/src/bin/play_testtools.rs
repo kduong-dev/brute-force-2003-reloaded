@@ -21,8 +21,10 @@
 //!      damage-multiplier, play_damage.rs) are its type's; what's still looked up by the
 //!      squad's names (chatter, skills) reads nothing for it, so it's silent and has no skill
 //!      (the species tickets, #129-#134).
-//!    - Teams: the friend side is the squad's (team 0), the enemy side ENEMY_TEAM. An enemy sets
-//!      off the squad's Sentries (play_sentry.rs) and the crosshair isn't green on one.
+//!    - Teams: the friend side is the squad's (team 0), the enemy side ENEMY_TEAM; the hooks can
+//!      put one on any of the game's ten (`neutral`, NEUTRAL_TEAM, among them). An enemy sets
+//!      off the squad's Sentries (play_sentry.rs); the crosshair turns red on one in its lock box
+//!      and green on a friend under its centre (play_reticle.rs).
 //!    - A dummy stands still where it was put (it doesn't dive from grenades), a target for the
 //!      player only: the AI never fires at it (the product owner's choice: the squad shoots only
 //!      enemies set to fight). One set to fight stays put (but dives from a grenade, as the
@@ -67,6 +69,10 @@ pub const HELP: &str = "tools:   F free camera (WASD fly, Space / Ctrl up / down
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
 pub const ENEMY_TEAM: u8 = 1;
+/// A neutral NPC's team (the hooks' `neutral`): the game's ALIGN_NEUTRAL (the ALIGN_ table
+/// 0x3bc94c). In the team table only PC_NO_TEAM (7) and it are hostile to each other, so the
+/// squad's crosshair stays blue on one (#141 take08 2.7-5.6 s).
+pub const NEUTRAL_TEAM: u8 = 2;
 /// The free camera's speed (m/s), Shift's factor, and the mouse's turn (rad per pixel: the
 /// follow camera's, read_input).
 const FLY_SPEED: f32 = 6.0;
@@ -261,7 +267,10 @@ pub(super) enum Hook {
     /// `character`: the type as the hook names it (see `npc_kind`); `at`: x, z, and the height
     /// the ground is looked for under (None: 50 m over the controlled character)
     Npc { character: String, team: u8, fight: bool, at: Option<(Vec2, Option<f32>)> },
-    Team(Pick),
+    /// the team to put them on (None: switch friend <-> enemy, as J does)
+    Team(Pick, Option<u8>),
+    /// the radar-contact to give them (`Player::radar_contact`)
+    Radar(Pick, u8),
     Fight(Pick),
     Remove(Pick),
     Placer { object: String, yaw: f32 },
@@ -295,8 +304,9 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_TELEPORT=<s>[,camera]: the left click in the free camera (teleport to the ground
 ///    under the crosshair); `camera`: the right click (under the camera).
 ///  - BF_TEST_NPC_MENU=<s>: N (the menu opens). BF_TEST_TOOL_CLOSE=<s>: Esc (a menu closes).
-///  - BF_TEST_NPC=<s>,<character>,<friend|enemy>,<dummy|fight>[,<x>,<z>[,<y>]]: spawn one on the
-///    ground at x, z, or under the crosshair, facing the controlled character. The character: a
+///  - BF_TEST_NPC=<s>,<character>,<friend|enemy|neutral|team>,<dummy|fight>[,<x>,<z>[,<y>]]: spawn
+///    one on the ground at x, z, or under the crosshair, facing the controlled character. Its team:
+///    friend 0, enemy ENEMY_TEAM, neutral NEUTRAL_TEAM, or a number 0-9 (`team_of`). The character: a
 ///    squad name or 0-3, or any loaded character type (#128) by its display name (any case; the
 ///    first loaded of that name, e.g. `shrike soldier`), `name@archive` (`shrike soldier@m09_a`)
 ///    or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or its key
@@ -306,7 +316,11 @@ impl std::fmt::Debug for FreeCam {
 ///    and 23 at sdm_e34's gate).
 ///  - BF_TEST_NPC_TEAM / BF_TEST_NPC_FIGHT / BF_TEST_NPC_REMOVE=<s>,<n|aim|all>: switch the
 ///    team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or
-///    every one.
+///    every one. BF_TEST_NPC_TEAM=<s>,<n|aim|all>,<team> puts them on that team instead (as
+///    BF_TEST_NPC names one).
+///  - BF_TEST_NPC_RADAR=<s>,<n|aim|all>,<value>: gives them that radar-contact (every character
+///    has 1; 2 or 4 turns the crosshair yellow on them, play_reticle.rs), as #141's take08 rewrote
+///    the Shrike's.
 ///  - BF_TEST_PLACER=<s>,<object>[,<yaw>]: O with that object picked (by its label, any case;
 ///    else the first whose label contains it), turned that way: its copy follows the crosshair.
 ///  - BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]: a click with the object menu open
@@ -439,15 +453,37 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
         add(num(&e, 0), Some(Hook::Close));
     }
     for e in entries("BF_TEST_NPC") {
+        // (a team it doesn't know: a friend, as before the team numbers, with a warning)
+        if let Some(t) = e.get(2).filter(|t| team_of(t).is_none()) {
+            warn!("BF_TEST_NPC: {t} isn't friend, enemy, neutral or a team 0-9; spawned as a friend");
+        }
         let hook = (|| Some(Hook::Npc {
             character: e.get(1)?.clone(),
-            team: if e.get(2)?.eq_ignore_ascii_case("enemy") { ENEMY_TEAM } else { 0 },
+            team: team_of(e.get(2)?).unwrap_or(0),
             fight: e.get(3)?.eq_ignore_ascii_case("fight"),
             at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6))),
         }))();
         add(num(&e, 0), hook);
     }
-    for (k, make) in [("BF_TEST_NPC_TEAM", Hook::Team as fn(Pick) -> Hook), ("BF_TEST_NPC_FIGHT", Hook::Fight), ("BF_TEST_NPC_REMOVE", Hook::Remove)] {
+    for e in entries("BF_TEST_NPC_TEAM") {
+        // (a team named: that one, or nothing if it isn't one; none: the J key's switch)
+        let team = match e.get(2) {
+            Some(t) => match team_of(t) {
+                Some(team) => Some(team),
+                None => {
+                    warn!("BF_TEST_NPC_TEAM: {t} isn't friend, enemy, neutral or a team 0-9; skipped");
+                    continue;
+                }
+            },
+            None => None,
+        };
+        add(num(&e, 0), e.get(1).and_then(|p| pick(p)).map(|p| Hook::Team(p, team)));
+    }
+    for e in entries("BF_TEST_NPC_RADAR") {
+        let value = e.get(2).and_then(|v| v.parse::<u8>().ok());
+        add(num(&e, 0), e.get(1).and_then(|p| pick(p)).zip(value).map(|(p, v)| Hook::Radar(p, v)));
+    }
+    for (k, make) in [("BF_TEST_NPC_FIGHT", Hook::Fight as fn(Pick) -> Hook), ("BF_TEST_NPC_REMOVE", Hook::Remove)] {
         for e in entries(k) {
             add(num(&e, 0), e.get(1).and_then(|p| pick(p)).map(make));
         }
@@ -703,9 +739,25 @@ fn picked(squad: &Squad, pick: Pick, aimed: Option<usize>) -> Vec<usize> {
     }
 }
 
-/// "enemy" / "friend".
-fn side(team: u8) -> &'static str {
-    if team == 0 { "friend" } else { "enemy" }
+/// "friend", "enemy", "neutral" or "team n".
+fn side(team: u8) -> String {
+    match team {
+        0 => "friend".into(),
+        ENEMY_TEAM => "enemy".into(),
+        NEUTRAL_TEAM => "neutral".into(),
+        n => format!("team {n}"),
+    }
+}
+
+/// A team as a hook names it: `friend` (the squad's 0), `enemy` (ENEMY_TEAM), `neutral`
+/// (NEUTRAL_TEAM) or a number of the game's team table, 0-9 (play_damage.rs's `TEAM_TABLE`).
+fn team_of(s: &str) -> Option<u8> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "friend" => Some(0),
+        "enemy" => Some(ENEMY_TEAM),
+        "neutral" => Some(NEUTRAL_TEAM),
+        n => n.parse::<u8>().ok().filter(|&t| t < 10),
+    }
 }
 
 /// The NPC menu (N) and the NPC keys (J, B, Delete) and hooks: spawn, switch team or
@@ -741,7 +793,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
         }
     } else {
         if keys.just_pressed(KeyCode::KeyJ) {
-            acts.push(Hook::Team(Pick::Aim));
+            acts.push(Hook::Team(Pick::Aim, None));
         }
         if keys.just_pressed(KeyCode::KeyB) {
             acts.push(Hook::Fight(Pick::Aim));
@@ -759,7 +811,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
                     status.message = Some((format!("No character type {character}"), MESSAGE_TIME));
                 }
             },
-            Hook::Team(_) | Hook::Fight(_) | Hook::Remove(_) => acts.push(hook.clone()),
+            Hook::Team(..) | Hook::Radar(..) | Hook::Fight(_) | Hook::Remove(_) => acts.push(hook.clone()),
             _ => {}
         }
     }
@@ -801,7 +853,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     let aimed = npc_at(&squad, origin, dir);
     for act in acts {
         match act {
-            Hook::Team(p) | Hook::Fight(p) => {
+            Hook::Team(p, _) | Hook::Radar(p, _) | Hook::Fight(p) => {
                 let list = picked(&squad, p, aimed);
                 if list.is_empty() {
                     status.message = Some(("No NPC under the crosshair".into(), MESSAGE_TIME));
@@ -809,13 +861,16 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
                 for i in list {
                     let m = &mut squad.0[i];
                     let Some(mut npc) = m.npc else { continue };
-                    if matches!(act, Hook::Team(_)) {
-                        m.team = if m.team == 0 { ENEMY_TEAM } else { 0 };
-                    } else {
-                        npc.fight = !npc.fight;
+                    match act {
+                        Hook::Team(_, Some(team)) => m.team = team,
+                        Hook::Team(_, None) => m.team = if m.team == 0 { ENEMY_TEAM } else { 0 },
+                        Hook::Radar(_, value) => m.radar_contact = value,
+                        _ => npc.fight = !npc.fight,
                     }
                     m.npc = Some(npc);
-                    let label = format!("NPC {} ({}): {} {}", npc.id, npc_name(&game.0, m), side(m.team), if npc.fight { "fight" } else { "dummy" });
+                    // (its radar-contact when a hook has changed it from every character's 1)
+                    let radar = if m.radar_contact != 1 { format!(", radar-contact {}", m.radar_contact) } else { String::new() };
+                    let label = format!("NPC {} ({}): {} {}{radar}", npc.id, npc_name(&game.0, m), side(m.team), if npc.fight { "fight" } else { "dummy" });
                     if log {
                         println!("t {:.2}: {label}", player.sim_time);
                     }

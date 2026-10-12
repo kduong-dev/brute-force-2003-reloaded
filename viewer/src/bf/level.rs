@@ -27,11 +27,14 @@
 //!              on to (h_e91cf6a8 objects) and their objects (h_0b6b92ba: a router's are the
 //!              buttons it listens to, an anim-trigger's the object it animates). A gate's
 //!              panels reach its anim-triggers through a router (see `Level::button_opens`).
+//!  radar       each placement's radar-contact (h_1905f381, else its type's), and the
+//!              radar-triggers (radar-contact N on their h_0b6b92ba objects); those that act at
+//!              the level's start (signal 13) are applied as it loads (`RadarTrigger`)
 
 use bevy::math::{Mat4, Vec3};
 
 use super::bxml::{Element, Value};
-use super::character::{Game, Geoset, H_PHYSICS_NAME};
+use super::character::{Game, Geoset, H_PHYSICS_NAME, H_RADAR_CONTACT};
 use super::hash::h;
 use super::weapon;
 
@@ -63,7 +66,39 @@ pub struct Placement {
     /// its mesh archetype, if it has one
     pub archetype: Option<u32>,
     pub transform: Mat4,
+    /// its radar-contact (`character::H_RADAR_CONTACT`, the object's +0x7a) as the level starts:
+    /// its own attribute (the placement's handler 0x15646f -> FUN_0015b310), else its type's
+    /// default (`ObjectType::radar_contact`), then the radar-triggers that act at the level's
+    /// start (`Level::radar_triggers`). e34's five missile racks and three h_e8589e7e devices 4,
+    /// its device h_00bc61ab 2 (as read live in #141); 0 on every squad deathmatch map
+    pub radar_contact: u8,
 }
+
+/// A radar-trigger (`<radar-trigger radar-contact=N h_e2145a6c=T h_12b33046=B>`): on
+/// TRIG_ACT_OPERATE its action handler (0x207230) sets radar-contact N, with a time T, on each
+/// object in its h_0b6b92ba list (FUN_0015b310 at 0x207321). Only those acting on the level's
+/// start are run (`Level::load`); the others wait for the level's trigger runtime.
+pub struct RadarTrigger {
+    pub name: u32,
+    /// `enabled` (+0x3d bit 0): a disabled one runs only the base actions (0x207236)
+    pub enabled: bool,
+    /// `radar-contact` (+0x40): the value it sets
+    pub contact: u8,
+    /// h_e2145a6c (+0x44): the time it gives the objects (s; the radar's blink, #160)
+    pub time: f32,
+    /// h_12b33046 (+0x48): with a 2 or a 3, a cue follows (FUN_00179d60; inferred to be a sound)
+    pub cue: bool,
+    /// its entries (h_031cd9f5 > base): (signal, action), the TRIG_SIG_ and TRIG_ACT_ enums
+    pub on: Vec<(i64, i64)>,
+    /// the objects it sets (h_0b6b92ba objects)
+    pub objects: Vec<u32>,
+}
+
+/// TRIG_SIG_FIRST_UPDATE (the TRIG_SIG_ name table 0x3bef5c): every enabled trigger sends it to
+/// itself once, at the level's start (FUN_001fe610 / FUN_001fe660).
+pub const TRIG_SIG_FIRST_UPDATE: i64 = 13;
+/// TRIG_ACT_OPERATE (the TRIG_ACT_ name table 0x3bed0c): what a radar-trigger sets its value on.
+pub const TRIG_ACT_OPERATE: i64 = 1;
 
 /// A directional light of the level (see the module notes).
 #[derive(Clone, Copy, Debug)]
@@ -143,6 +178,9 @@ pub struct Level {
     pub terrain_light: Option<(usize, f32, Vec<Vec<u8>>)>,
     pub buttons: Vec<Button>,
     pub triggers: Vec<Trigger>,
+    /// the level's radar-triggers (see `RadarTrigger`); those acting at its start have set
+    /// `Placement::radar_contact` already
+    pub radar_triggers: Vec<RadarTrigger>,
 }
 
 fn floats(e: Option<&Element>) -> Vec<f32> {
@@ -282,7 +320,30 @@ impl Level {
             }
             let Some(m) = transform(&t) else { continue };
             let kind = hash(e, H_TYPE);
-            objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m });
+            let radar_contact = e.attr(H_RADAR_CONTACT).and_then(|v| v.as_i64()).map(|v| v.clamp(0, 255) as u8)
+                .or_else(|| game.object_types.get(&kind).map(|t| t.radar_contact)).unwrap_or(0);
+            objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m,
+                                     radar_contact });
+        }
+        // the radar-triggers; those that operate on the level's start (an entry on
+        // TRIG_SIG_FIRST_UPDATE with TRIG_ACT_OPERATE, enabled) set their objects' value now, in
+        // the level file's order
+        let flag = |e: &Element, k: u32| e.attr(k).and_then(|v| v.as_i64()).is_some_and(|v| v != 0);
+        let radar_triggers: Vec<RadarTrigger> = all.iter().filter(|e| e.name == h("radar-trigger")).map(|e| RadarTrigger {
+            name: hash(e, h("name")),
+            enabled: flag(e, h("enabled")),
+            contact: e.attr(h("radar-contact")).and_then(|v| v.as_i64()).map_or(0, |v| v.clamp(0, 255) as u8),
+            time: e.attr(0xE214_5A6C).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0),
+            cue: flag(e, 0x12B3_3046),
+            on: e.child(H_SIGNALS).map(|s| s.children_named(h("base")).filter_map(|b| {
+                Some((b.attr(h("signal")).and_then(|v| v.as_i64())?, b.attr(h("action")).and_then(|v| v.as_i64()).unwrap_or(TRIG_ACT_OPERATE)))
+            }).collect()).unwrap_or_default(),
+            objects: object_list(e, H_TRIGGER_OBJECTS),
+        }).collect();
+        for t in radar_triggers.iter().filter(|t| t.enabled && t.on.contains(&(TRIG_SIG_FIRST_UPDATE, TRIG_ACT_OPERATE))) {
+            for o in objects.iter_mut().filter(|o| o.name != 0 && t.objects.contains(&o.name)) {
+                o.radar_contact = t.contact;
+            }
         }
         let (sky, sky_at, background) = Self::sky_of(game, &all);
         // fog and ambient
@@ -367,7 +428,7 @@ impl Level {
             Trigger { tag: e.name, name: hash(e, h("name")), on, to: object_list(e, H_SENDS_TO), objects: object_list(e, H_TRIGGER_OBJECTS) }
         }).collect();
         Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, sounds, terrain_collision, blockers, lights, lamps, terrain_ambient,
-                   terrain_half, terrain_light, buttons, triggers })
+                   terrain_half, terrain_light, buttons, triggers, radar_triggers })
     }
 
     /// What using a button does to the level's animated objects: (object name, clip, times)

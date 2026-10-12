@@ -149,6 +149,13 @@ impl Difficulty {
     }
 }
 
+/// Whether a character on `team` takes one on `other` for hostile: the team table's row `team`,
+/// column `other` (0x3ffd80, as FUN_000bf6d0 reads it for the crosshair's lock, play_reticle.rs).
+/// A team past the table's 10 is hostile to nobody.
+pub fn hostile(team: u8, other: u8) -> bool {
+    TEAM_TABLE.get(team as usize).and_then(|row| row.get(other as usize)).is_some_and(|&b| b != 0)
+}
+
 /// Whether 0x125600 takes a victim on `team` for an enemy (see `Difficulty::step`).
 fn enemy_side(team: u8) -> bool {
     TEAM_TABLE.get(team as usize).is_some_and(|row| row[3..=6].iter().all(|&b| b != 0))
