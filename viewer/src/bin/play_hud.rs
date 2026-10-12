@@ -714,7 +714,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
         .init_resource::<NameLabel>()
         .init_resource::<StaminaBar>()
-        .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities),
+        .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities).in_set(HudSetup),
             (|mut commands: Commands| {
                 commands.insert_resource(NameLabel::default());
                 commands.insert_resource(StaminaBar::default());
@@ -725,6 +725,11 @@ pub fn plugin(app: &mut App) {
                               update_hud_widgets, update_squad_hud, update_scope).after(update_weapons).after(deathcam::death_cam)
             .run_if(in_state(AppState::Playing)));
 }
+
+/// The HUD's set-up as a map starts: what draws over the HUD (Flint's targeting marker,
+/// play_targeting.rs) is spawned after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HudSetup;
 
 /// A game texture as a UI image (cached; None if the texture isn't found).
 fn texture(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, name: u32) -> Option<Handle<Image>> {
@@ -766,7 +771,7 @@ fn at_box(x: f32, y: f32, w: f32, h: f32) -> Node {
 }
 
 /// Absolute placement in 640 x 480 screen units.
-fn at(x: f32, y: f32, w: f32, h: f32) -> Node {
+pub(super) fn at(x: f32, y: f32, w: f32, h: f32) -> Node {
     Node {
         position_type: PositionType::Absolute,
         left: Val::Percent(x / 6.4), top: Val::Percent(y / 4.8),
@@ -1445,8 +1450,9 @@ fn update_hud_widgets(
                 if let (Some(mut img), Some(h)) = (img, texture(&mut game.0, &mut images, &mut cache, id)) {
                     if img.image != h { img.image = h; }
                     // red with a lock, green on a teammate, yellow on a radar-contact 2 or 4, else
-                    // blue: switched on the frame it changes (play_reticle.rs)
-                    let tint = reticle.tint.color();
+                    // blue: switched on the frame it changes; at the reticle's alpha, which Flint's
+                    // targeting fades out (play_reticle.rs)
+                    let tint = reticle.tint.color().with_alpha(reticle.alpha);
                     if img.color != tint { img.color = tint; }
                 }
             }

@@ -494,6 +494,7 @@ fn main() {
         .add_plugins(skills::plugin)
         .add_plugins(damage::plugin)
         .add_plugins(reticle::plugin)
+        .add_plugins(targeting::plugin)
         .add_plugins(enemies::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
@@ -556,6 +557,8 @@ mod background;
 mod damage;
 #[path = "play_reticle.rs"]
 mod reticle;
+#[path = "play_targeting.rs"]
+mod targeting;
 #[path = "play_enemies.rs"]
 mod enemies;
 use bf_viewer::arena as world;
@@ -900,22 +903,31 @@ struct Clips {
     /// per weapon slot (Sc_w1_* holds the first weapon, Sc_w2_* the second): carried and ready
     /// (rp_*, raised and pointing ahead, used while aiming or firing)
     slots: [SlotClips; 2],
-    /// the motion set's special motions, where it has them (Tex's berserk set; see
-    /// `SpecialClips`)
+    /// the motion set's special motions, where it has them (Tex's berserk set, Flint's sniper set;
+    /// see `SpecialClips`)
     special: Option<SpecialClips>,
     /// side steps whose own root doesn't move, and the walk whose root motion moves them instead
     /// (`root_stand_ins`)
     root_stand_in: HashMap<usize, usize>,
 }
 
-/// The motions a motion set's MT_TOGGLE_SPECIAL (45) transitions lead to: Tex's berserk set
-/// (common/characters/ms_tex.xml). His toggle asks for motion type 45 at an accepted press, on
-/// and off (FUN_0012eab0(type, 45, 1) at 0x13d6ca), and each of his stand, walk, run, side step,
-/// back step and dash motions has a transition of that type to its berserk motion, which has one
-/// back (`Skill::special_motions`). The berserk motions are `Sc_w1_bz_*`, prefix-type 0: the same
-/// for both stances, carried and aimed alike (script = ready-script). They have no transition to
-/// a crouch, a dash, a dodge, a dive or a throw: in berserk he can't do those (the dash stays
-/// the run). Their clips (BF_ANIM_PROBE): idle 9.97 s, walk 1.29 m/s, run 4.69 m/s.
+/// The motions a motion set's MT_TOGGLE_SPECIAL (45) transitions lead to, which a skill's toggle
+/// asks for (`Skill::special_motions`):
+///  - Tex's berserk set (common/characters/ms_tex.xml). His toggle asks for motion type 45 at an
+///    accepted press, on and off (FUN_0012eab0(type, 45, 1) at 0x13d6ca), and each of his stand,
+///    walk, run, side step, back step and dash motions has a transition of that type to its
+///    berserk motion, which has one back. The berserk motions are `Sc_w1_bz_*`, prefix-type 0: the
+///    same for both stances, carried and aimed alike (script = ready-script). They have no
+///    transition to a crouch, a dash, a dodge, a dive or a throw: in berserk he can't do those
+///    (the dash stays the run). Their clips (BF_ANIM_PROBE): idle 9.97 s, walk 1.29 m/s, run 4.69
+///    m/s.
+///  - Flint's sniper set (ms_flint.xml), which her targeting's toggle asks for with a rifle in
+///    hand (FUN_0013cad0 returns 2): her idles and crouch idle lead to `Sc_w1_sniper_idle`, the
+///    walk, run, crouch walk and dash to `Sc_w1_sn_walk`, the side steps and runs to
+///    `Sc_w1_sn_{f,b}_side_walk_{l,r}`, the back walk and run to `Sc_w1_sn_back_walk`, all
+///    prefix-type 0, and each has a type 45 transition back. They lead on to nothing but each
+///    other, the slide and the fall (types 35 and 21: the normal ones): no run, crouch, dash,
+///    dodge, dive, throw or jump.
 #[derive(Default, Debug)]
 struct SpecialClips {
     /// idle, walk, run, back walk, back run (no sprint)
@@ -927,6 +939,9 @@ struct SpecialClips {
     jump_fall: Option<usize>,
     jump_land: Option<usize>,
     slide: Option<usize>,
+    /// a jump (motion types 20 / 24) can start from them: Tex's set has its own, Flint's sniper
+    /// motions no transition to one
+    jumps: bool,
 }
 
 /// Below this a clip's own speed (`AnimDef::move_speed`, m/s) counts as none: FUN_0012c6c0's
@@ -1746,6 +1761,12 @@ struct Player {
     /// the AI's target point (a hostile's chest, see `ai_fire`): the gun is turned onto it and
     /// shots go to it, instead of to what the camera's crosshair is on. None for the player.
     ai_target: Option<Vec3>,
+    /// the controlled character's aim point while the crosshair holds a lock (play_reticle.rs
+    /// `Reticle::aim`, last frame's): the reticle puts its lock's point in char+0x804 (0xc5b90 ->
+    /// FUN_0011e9d0), the character update aims its guns there (FUN_0011aa20 -> 0x22dc60), and
+    /// each muzzle's shot goes to it (FUN_0022e5b0). None without a lock (the crosshair's own
+    /// point) and for the AI
+    lock_aim: Option<Vec3>,
     /// an enemy's own state (#129, play_enemies.rs: its personality, reactions, the test hook's
     /// drive, its stamina shield); the squad's stays at its default
     enemy: enemies::State,
@@ -1799,6 +1820,7 @@ impl Player {
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
             shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), was_scoped: false, scope_level: 0, test_selected: false, sway: Vec2::ZERO,
             wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
+            lock_aim: None,
             enemy: Default::default(),
         }
     }
@@ -2543,8 +2565,11 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
         }
     };
     let slots = [slot("Sc_w1_"), slot("Sc_w2_")];
-    // the berserk motions (SpecialClips), for a set that has their idle
+    // the special motions (SpecialClips): the berserk set, for a set that has its idle (Tex's),
+    // else the sniper set, for one that has the sniper idle (Flint's: the run and the back run
+    // lead to the walks, ms_flint.xml)
     let bz = |m: &str| named(&format!("Sc_w1_bz_{m}"));
+    let sn = |m: &str| named(&format!("Sc_w1_sn_{m}"));
     let special = bz("idle").map(|idle| SpecialClips {
         loco: Locomotion { idle: Some(idle), walk: bz("walk"), run: bz("run"), walk_back: bz("back_walk"), run_back: bz("back_run"), ..default() },
         side: ["f_side_walk_l", "f_side_walk_r", "b_side_walk_l", "b_side_walk_r"].map(bz),
@@ -2553,7 +2578,18 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
         jump_fall: bz("jump_fall"),
         jump_land: bz("jump_land"),
         slide: bz("slide_idle"),
-    });
+        jumps: true,
+    }).or_else(|| named("Sc_w1_sniper_idle").map(|idle| SpecialClips {
+        loco: Locomotion { idle: Some(idle), walk: sn("walk"), run: sn("walk"), walk_back: sn("back_walk"), run_back: sn("back_walk"), ..default() },
+        side: ["f_side_walk_l", "f_side_walk_r", "b_side_walk_l", "b_side_walk_r"].map(sn),
+        // (the fall and the slide are the normal ones)
+        jump_crouch: None,
+        jump_launch: None,
+        jump_fall: None,
+        jump_land: None,
+        slide: None,
+        jumps: false,
+    }));
     Clips {
         root_stand_in: root_stand_ins(model, &slots, special.as_ref()),
         slots,
@@ -3243,9 +3279,12 @@ struct AiHits(Vec<PendingHit>);
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                  mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>,
                  kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>, mut ai_hits: ResMut<AiHits>,
-                 difficulty: Res<damage::Difficulty>) {
+                 difficulty: Res<damage::Difficulty>, reticle: Res<reticle::Reticle>) {
     let dt = frame_dt(&time);
     let kits: &[grenade::GrenadeKit] = kits.as_ref().map_or(&[], |k| &k.0);
+    // the controlled character's guns aim at the crosshair's lock (play_reticle.rs, last
+    // frame's); the AI's at its own target
+    player.lock_aim = reticle.aim;
     // the squad's heading: the leader's facing, smoothed (formation places turn with it)
     let h = heading.get_or_insert(player.yaw);
     *h = wrap_angle(*h + wrap_angle(player.yaw - *h) * (1.0 - (-1.5 * dt).exp()));
@@ -3261,6 +3300,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // who can see whom (the squad AI and the test map's NPCs fire only at a hostile in sight)
     let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
     for (slot, m) in squad.0.iter_mut().enumerate() {
+        // (the crosshair's lock is the controlled character's alone: one handed over drops it)
+        m.lock_aim = None;
         if m.dead || knocked_down(m) {
             continue;
         }
@@ -3306,13 +3347,15 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             shot.dist = t;
             shot.hit = false;
             // it lands when the shot gets there (a bolt flies at its weapon's speed): a roll x the
-            // falloff over the range (play_shots.rs) x the hit part struck, x0.7 on the own side
-            // (play_damage.rs)
+            // shooter's skill's factor (Flint's doubled and scoped rolls) x the falloff over the
+            // range (play_shots.rs) x the hit part struck, x0.7 on the own side (play_damage.rs)
             let (lo, hi) = shot_rolls(shot);
+            let factor = skills::roll_factor(&mut player);
             let m = &mut squad.0[i];
             let roll = lo + (hi - lo) * m.random(1000) as f32 / 1000.0;
             let bone = damage::struck_bone(m, &game.0, shot.origin, shot.dir, t);
-            let hit = damage::Hit::new(roll, "roll", shot.damage_type).by(shooter, team, m).falloff(shot.falloff_at(t)).struck(m, &game.0, bone);
+            let hit = damage::Hit::new(roll, "roll", shot.damage_type).skill(factor).by(shooter, team, m).falloff(shot.falloff_at(t))
+                .struck(m, &game.0, bone);
             let local = shot.origin + shot.dir * t - m.position;
             player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo: shot.ammo });
         } else if let Some((e, t)) = mine {
@@ -3350,12 +3393,15 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if let Some((i, t, _, at)) = hit {
                 shot.dist = t;
                 shot.hit = false;
-                // a roll x the falloff x the hit part struck, x0.7 on the own side (play_damage.rs)
+                // a roll x the shooter's skill's factor x the falloff x the hit part struck, x0.7 on
+                // the own side (play_damage.rs)
                 let roll = lo + (hi - lo) * squad.0[k].random(1000) as f32 / 1000.0;
+                let factor = skills::roll_factor(&mut squad.0[k]);
                 let (shooter, team) = (squad.0[k].who(), squad.0[k].team);
                 let victim = if i == 0 { &*player } else { &squad.0[i - 1] };
                 let bone = damage::struck_bone(victim, &game.0, shot.origin, shot.dir, t);
-                let hit = damage::Hit::new(roll, "roll", damage_type).by(shooter, team, victim).falloff(shot.falloff_at(t)).struck(victim, &game.0, bone);
+                let hit = damage::Hit::new(roll, "roll", damage_type).skill(factor).by(shooter, team, victim).falloff(shot.falloff_at(t))
+                    .struck(victim, &game.0, bone);
                 let local = shot.origin + shot.dir * t - at;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {
                     let name = |u: &Player| format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
@@ -4506,6 +4552,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // an enemy's own motion (#129, play_enemies.rs): a hit reaction or the test hook's drive,
     // played in place of the gait, its own inputs dropped meanwhile
     let scripted = enemies::step(p, l, game, dt);
+    // a skill that holds the move stick under the run (Flint's targeting, 0.55: FUN_001195c0
+    // through its +0x38) walks, as in the scope: no run, no sprint. Only this frame's gait takes
+    // it (the inputs stay as read: the autopilot doesn't set the walk again each frame). Two of
+    // the demo's choices: the AI's Flint walks too (the game's cap is on the stick's way,
+    // FUN_001195c0), and the sprint (the game's dash) is barred with the pistol as well, where the
+    // game's dash command comes from the stick before the cap (0x134f52) and her own motions,
+    // which the pistol keeps, have a dash (not filmed)
+    let capped = skills::move_capped(p);
+    let (sprint, walk) = (p.sprint && !capped, p.walk || capped);
 
     // camera-relative directions (camera yaw 0 looks down -Z)
     let fwd = Vec3::new(-p.cam_yaw.sin(), 0.0, -p.cam_yaw.cos());
@@ -4522,8 +4577,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let four = p.on_all_fours && c.leg4_launch.is_some();
     // the held weapon's stance set (kneel and dive clips)
     let stance = &c.slots[stance_of(l, p.weapon)];
-    // Tex's berserk motions while his toggle has taken them (SpecialClips, play_skills.rs): their
-    // own jump and slide; no crouch, dash, dodge or dive, which they have no transition to
+    // the special motions while a skill's toggle has taken them (SpecialClips, play_skills.rs:
+    // Tex's berserk set, Flint's sniper set): their own jump (Tex's) and slide; no crouch, dash,
+    // dodge or dive, which they have no transition to, nor a jump in Flint's
     let special = if p.skill.special_motions { c.special.as_ref() } else { None };
     let (jump_crouch, jump_launch, jump_fall, jump_land, slide_clip) = match special {
         Some(s) => (s.jump_crouch.or(c.jump_crouch), s.jump_launch.or(c.jump_launch), s.jump_fall.or(c.jump_fall),
@@ -4532,7 +4588,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     };
     // a crouch asked for in them is dropped, not kept for after the off: the demo's choice until
     // a take shows what the game does with one (#35's shot T3); kept, he'd drop into a crouch at
-    // the off
+    // the off. Switched on kneeling, Flint gets up through her crouch2stand into the sniper idle:
+    // also the demo's, where ms_flint.xml's crouch idle has its type 45 transition straight to
+    // `Sc_w1_sniper_idle` (with the motion blend; not filmed)
     if special.is_some() {
         p.crouch_wanted = false;
     }
@@ -4580,6 +4638,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.still_time = 0.0;
         }
     }
+    // (a jump pressed in motions with no transition to one is dropped: Flint's sniper set)
+    if special.is_some_and(|s| !s.jumps) {
+        p.jump_buffer = 0.0;
+    }
     if grounded && matches!(p.action, Action::None) {
         if p.jump_buffer > 0.0 {
             p.jump_buffer = 0.0;
@@ -4614,9 +4676,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // (not during a skill's toggle overlay either: one overlay at a time is the demo's choice.
     // The game queues a toggle overlay only into a free overlay slot, char+0x218 or +0x244,
     // 0x12253a-0x122587; whether a switch waits for one isn't traced. Nor while the skill's
-    // overlay filter refuses the switch's overlay: Tex's berserk, `skills::overlays_blocked`)
+    // overlay filter refuses the switch's overlay: Tex's berserk, `skills::overlays_blocked`; nor
+    // while the skill says the character isn't free, FUN_0011e130 asking FUN_00117210: Flint's
+    // targeting on, `skills::lets_act`)
     if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
-        && p.skill.toggling.is_none() && !skills::overlays_blocked(p) {
+        && p.skill.toggling.is_none() && !skills::overlays_blocked(p) && skills::lets_act(p) {
         let to = (p.weapon + 1) % l.weapons.len();
         p.fire_state.reset_burst(0);                        // FUN_0022dc00
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
@@ -4710,10 +4774,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let kind = match p.item { Item::Grenade(k) if p.grenades.get(k).is_some_and(|&n| n > 0) => kits.get(k).map(|kit| (k, kit)), _ => None };
     // (not during a skill's toggle overlay: the demo's choice, as for the weapon switch above;
     // nor in Tex's berserk, whose overlay filter refuses the throw's and whose motions have no
-    // throw: #35 take26 20.5 s, LT throws nothing and the count stays)
+    // throw: #35 take26 20.5 s, LT throws nothing and the count stays; nor while the skill says
+    // the character isn't free: the item use FUN_001210c0 asks FUN_00117210 for all but
+    // IOU_JUST_USE, 0x121139, so not in Flint's targeting, `skills::lets_act`)
     let can_throw = kind.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
         && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && p.skill.toggling.is_none()
-        && !skills::overlays_blocked(p) && matches!(p.action, Action::None) && !p.on_all_fours;
+        && !skills::overlays_blocked(p) && skills::lets_act(p) && matches!(p.action, Action::None) && !p.on_all_fours;
     p.meter_after.1 = (p.meter_after.1 - dt).max(0.0);
     if !p.throw_held {
         p.place_latch = false;
@@ -4838,7 +4904,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // is subtracted, so a gun carried across the body still lines up with the crosshair
     let aim_yaw = p.cam_yaw;
     let off = if armed { p.muzzle_off } else { 0.0 };
-    let upper_aim = p.aim || (p.aim_hold > 0.0 && armed);
+    // (and while a skill holds the gun raised: FUN_00123ea0 every frame of Flint's targeting, and
+    // the ready timer's 4 s after the off, `skills::gun_raised`; the camera comes in with it,
+    // `follow_camera`)
+    let upper_aim = p.aim || (p.aim_hold > 0.0 && armed) || (armed && skills::gun_raised(p));
     let mut twist_goal = 0.0;
     if sliding {
         let down = p.slide_yaw;
@@ -4866,15 +4935,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 side
             } else if wrap_angle(dir_yaw - aim_yaw).abs() > 2.0 {
                 turn_to(&mut p.yaw, wrap_angle(dir_yaw + std::f32::consts::PI), TURN_RATE);
-                if p.sprint { Gait::RunBack } else { Gait::WalkBack }
+                if sprint { Gait::RunBack } else { Gait::WalkBack }
             } else {
                 turn_to(&mut p.yaw, dir_yaw, TURN_RATE);
-                if p.sprint { Gait::Run } else { Gait::Walk }
+                if sprint { Gait::Run } else { Gait::Walk }
             }
         } else if moving {
             turn_to(&mut p.yaw, dir_yaw, TURN_RATE);
             // (no dash in the berserk set: the dash request finds no transition, the run goes on)
-            if p.sprint && special.is_none() { Gait::Sprint } else if p.walk { Gait::Walk } else { Gait::Run }
+            if sprint && special.is_none() { Gait::Sprint } else if walk { Gait::Walk } else { Gait::Run }
         } else {
             if upper_aim {
                 let goal = stand_aim_yaw(p, aim_yaw - off);
@@ -5066,8 +5135,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     match held {
         Some((w, (hb, r, t))) if p.aim_weight > 0.01 && !l.arm_chain.is_empty() => {
             let (cam, ray) = aim_ray(p);
-            // (the AI aims at its target itself, see `ai_fire`)
-            let mut hit = p.ai_target.unwrap_or_else(|| cam + ray * ray_hit(cam, ray, 150.0).unwrap_or(80.0));
+            // (the AI aims at its target itself, see `ai_fire`; the controlled character at the
+            // crosshair's lock, `lock_aim`, else at what the crosshair is on)
+            let mut hit = p.ai_target.or(p.lock_aim).unwrap_or_else(|| cam + ray * ray_hit(cam, ray, 150.0).unwrap_or(80.0));
             let heading = Vec3::new(-p.cam_yaw.sin(), 0.0, -p.cam_yaw.cos());
             let reach = (hit - p.position).dot(heading);
             if reach < MIN_AIM_REACH {
@@ -5166,12 +5236,19 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             let barrel = hand.transform_vector3(r * w.fire_dir).normalize();
             let (cam, ray) = aim_ray(p);
             // in the scope the shot leaves from the eye along the crosshair's ray (the hidden
-            // muzzle sits ~0.4 m lower: through a 5-10x zoom its line lands visibly low)
+            // muzzle sits ~0.4 m lower: through a 5-10x zoom its line lands visibly low), or to
+            // the lock's point when the crosshair holds one
             let scoped = p.scope > 0.5 && side == 0;
             let origin = if scoped { cam + ray * 0.3 } else { hand.transform_point3(r * w.muzzle.point + t) };
-            let range = w.def.range.max(20.0);
-            let target = p.ai_target.unwrap_or_else(|| cam + ray * ray_hit(cam, ray, range + 10.0).unwrap_or(range));
-            let mut dir = if scoped { ray } else { (target - origin).normalize_or_zero() };
+            // (the bullet's range in this character's hands, FUN_002324c0: Flint's rifles x1.25)
+            let reach = skills::weapon_range(p, &w.def);
+            let range = reach.max(20.0);
+            // to the AI's target, the crosshair's lock (FUN_0022e5b0: the muzzle to the aim point
+            // the reticle gave, char+0x804), or what the crosshair is on. Every gun is steered so:
+            // the demo's choice, as FUN_0022e5b0 leaves a weapon whose data +0x170 is set alone
+            // (which weapons have it isn't traced)
+            let target = p.ai_target.or(p.lock_aim).unwrap_or_else(|| cam + ray * ray_hit(cam, ray, range + 10.0).unwrap_or(range));
+            let mut dir = if scoped && p.lock_aim.is_none() { ray } else { (target - origin).normalize_or_zero() };
             if dir.dot(ray) < 0.3 || dir == Vec3::ZERO {
                 dir = if upper_aim { ray } else { barrel };
             }
@@ -5198,8 +5275,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                                     flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
                                     damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type, ammo: w.def.ammo_type,
                                     decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff,
-                                    // (the falloff runs over the bullet's own range, FUN_00230040)
-                                    range: w.def.range });
+                                    // (the falloff runs over the bullet's range in the holder's
+                                    // hands, FUN_00230040 at 0x2302ef)
+                                    range: reach });
                 // (the pellet's hand: 0 the gun in hand, 1 the second hand's)
                 if std::env::var("BF_SHOT_LOG").is_ok() {
                     println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?}",
@@ -5297,8 +5375,9 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&m
     // none in Tex's berserk either, from the accepted press to the second gun's stowing (his
     // toggle only refuses a press made scoped, 0x13d490): the demo's choice until a take shows
     // whether the game lets him (#35's shot T2). Scoped, the second gun's muzzle effect washes the
-    // view, and a shot in the start clip leaves from behind his shoulder
-    let berserk = player.skill.special_motions || player.second.is_some();
+    // view, and a shot in the start clip leaves from behind his shoulder. (Flint scopes in her
+    // sniper motions: take15 14.5 s)
+    let berserk = skills::bars_scope(&player) || player.second.is_some();
     let busy = player.switching.is_some() || player.reloading.is_some() || player.dead || berserk;
     if busy {
         player.scope_level = 0;
@@ -5356,8 +5435,14 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&m
     // in close while aiming or firing: the game snaps in within ~0.1 s of the first shot, holds
     // briefly after the last one (aim_hold), then drifts back out over ~2 s
     let armed = player.loaded.as_ref().is_some_and(|l| !l.weapons.is_empty());
-    let want = if player.aim || (armed && player.aim_hold > 0.0) { 1.0 } else { 0.0 };
-    let rate = if want > player.shoulder { 25.0 } else { 1.6 };
+    let firing: f32 = if player.aim || (armed && player.aim_hold > 0.0) { 1.0 } else { 0.0 };
+    // and in while a skill holds the gun raised and its aim shift after (Flint's targeting, the
+    // game's rule, 0x128280: `skills::aim_shift`): in as when firing, out along the shift's own
+    // ramp (the last 0.67 s of its 3 s; the game eases its distance over 0.2 s, FUN_00070090, so
+    // the demo's in-rate both ways). take17: off at 11.55 s, the camera out over 18.13-18.6 s
+    let shift = if armed { skills::aim_shift(&player) } else { 0.0 };
+    let want = firing.max(shift);
+    let rate = if want > player.shoulder || shift > firing { 25.0 } else { 1.6 };
     player.shoulder += (want - player.shoulder) * (1.0 - (-rate * dt).exp());
     // test hook: BF_VIEW_YAW turns only the rendered view (aim and controls are unchanged)
     let view = std::env::var("BF_VIEW_YAW").ok().and_then(|s| s.parse().ok()).unwrap_or(0.0);
