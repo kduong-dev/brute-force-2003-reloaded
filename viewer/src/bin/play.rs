@@ -1296,9 +1296,6 @@ struct Loaded {
     index: usize,
     /// the character type it was built from (`Player::kind`)
     kind: u32,
-    /// its name for logs (`unit_name`): its squad slot's ("brutus"), or for OTHER its type's
-    /// display name (`Game::type_label`)
-    name: String,
     /// what it's made of: the world material of its parts' collision (`Game::flesh`: 21 FLESH_HUMAN,
     /// 24 SYNTHETIC for Flint, 23 SHRIKE ...; play_fx.rs picks its hit effects and blood by it)
     flesh: i64,
@@ -1389,6 +1386,10 @@ struct Player {
     /// name>`): the squad's own (`squad_type`), or a test map NPC's of any type. Its model,
     /// clips, HP, weapons, flesh and decals come from it
     kind: u32,
+    /// its name for logs (`unit_name`), set by `spawn_unit`: its squad slot's ("brutus"), or for
+    /// OTHER its type's display name (`Game::type_label`); "" before it's spawned. Kept here
+    /// rather than in `Loaded`, which the update systems take out of the Player while they step it
+    name: String,
     loaded: Option<Loaded>,
     position: Vec3,
     /// facing angle about +Y; the model faces -Z at yaw 0
@@ -1645,13 +1646,15 @@ fn squad_type(c: usize) -> u32 {
     CHARACTERS.get(c).filter(|n| !n.is_empty()).map_or(0, |n| bf_viewer::bf::hash::h(n))
 }
 
-/// A character's name for logs: as spawned (`Loaded::name`: its squad slot's, "brutus", or for
+/// A character's name for logs: as spawned (`Player::name`: its squad slot's, "brutus", or for
 /// OTHER its type's display name), before that its slot's name or its type's key.
 fn unit_name(u: &Player) -> String {
-    match &u.loaded {
-        Some(l) => l.name.clone(),
-        None if u.character == OTHER => format!("h_{:08x}", u.kind),
-        None => CHARACTERS[u.character].to_string(),
+    if !u.name.is_empty() {
+        u.name.clone()
+    } else if u.character == OTHER {
+        format!("h_{:08x}", u.kind)
+    } else {
+        CHARACTERS[u.character].to_string()
     }
 }
 
@@ -1673,7 +1676,7 @@ fn who_name(who: Who, game: &Game) -> String {
 impl Player {
     fn new(character: usize) -> Self {
         Self {
-            character, kind: squad_type(character), loaded: None, position: Vec3::ZERO, yaw: 0.0, layers: vec![], gait: Gait::Idle,
+            character, kind: squad_type(character), name: String::new(), loaded: None, position: Vec3::ZERO, yaw: 0.0, layers: vec![], gait: Gait::Idle,
             action: Action::None, action_left: 0.0, on_all_fours: false,
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
@@ -2806,7 +2809,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     }
     p.lift_now = lift;
     info!("{label}: soles {lift:.3} m below the floor, raised by that; flesh {flesh}");
-    p.loaded = Some(Loaded { index, kind: p.kind, name: label, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
+    p.name = label;
+    p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips });
 }
 

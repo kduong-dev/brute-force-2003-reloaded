@@ -174,7 +174,7 @@ pub(super) struct Before {
 pub(super) struct Tools {
     freecam: Option<FreeCam>,
     pub(super) panel: Panel,
-    /// the NPC menu: the type picked (an index into `npc_types`), the team and behaviour of the
+    /// the NPC menu: the entry picked (an index into `NpcList`), the team and behaviour of the
     /// next one
     npc_type: usize,
     npc_team: u8,

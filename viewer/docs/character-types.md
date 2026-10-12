@@ -151,7 +151,8 @@ demo yet.
 * What's still looked up by the slot's name, so reads nothing for OTHER: chatter (an enemy says
   nothing), skills, the scope and the camera.
 * Logs name a character by `unit_name` (its slot's name, or for OTHER its type's display name:
-  `Loaded::name`, set at spawn) and, where only its identity is at hand (a shot's or a blast's
+  `Player::name`, set at spawn and kept on the Player, so it holds while the update systems have
+  its `Loaded` taken out) and, where only its identity is at hand (a shot's or a blast's
   source, a gas cloud's or a damage area's victims), by `who_name`: `Who::Npc` carries the NPC's
   type for it.
 * The gas clouds and damage areas keep their victims per character (`Who`), not per squad slot:
@@ -234,8 +235,8 @@ demo yet.
 ## Not done
 
 * The glow of the h_1df292a1 skins on characters (the Shrikes', the hounds', Brutus's one such
-  material): drawn for level objects only (`level_scene.rs`), not by `scene::material`.
-* The per-type capsule for shots and collision, the per-type ground height (root-height), the
-  ragdoll switch and death effects in play, the species' blood bundles and reactions, the
-  enemies' chatter: the species tickets.
+  material): drawn for level objects only (`level_scene.rs`), not by `scene::material`: #173.
+* The per-type capsule for shots and collision: #173.
+* The per-type ground height (root-height), the ragdoll switch and death effects in play, the
+  species' blood bundles and reactions, the enemies' chatter: the species tickets.
 * Spawning placements (#102), and placements' teams, AI and inventories in play.
