@@ -20,8 +20,11 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   on the squad acts on them: the player's shots (with instant kill), blasts, Sentries,
   ragdolls, blood. They aren't in the formation, can't be taken control of (1-4, the hand-over
   after a death) and don't show on the portraits, health bars or speech icons. Friends are on
-  the squad's team (0), enemies on `ENEMY_TEAM` (1).
-  * An enemy sets off the squad's Sentries, and the crosshair isn't green on it.
+  the squad's team (0), enemies on `ENEMY_TEAM` (1); the hooks can put one on any of the game's
+  ten teams, `neutral` (2, ALIGN_NEUTRAL) among them, and give it a radar-contact (#141).
+  * An enemy sets off the squad's Sentries. The crosshair turns red on an enemy in its lock box,
+    green with its centre on a friend, yellow on one given radar-contact 2 or 4, and stays blue
+    on a neutral ([play.md](play.md), "The crosshair's colours").
   * A **dummy** stands where it was put, facing the way it was put, a target for the player:
     the AI never fires at it (as BF_TEST_HOSTILE's held squadmate; the product owner's
     choice: the squad shoots only enemies set to fight). It doesn't dive from grenades.
@@ -128,8 +131,9 @@ the background (#163)".
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |
-| `BF_TEST_NPC=<s>,<character>,<friend\|enemy>,<dummy\|fight>[,<x>,<z>[,<y>]]` | spawn one at x, z or under the crosshair, facing the controlled character; on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`) or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; an unknown one is logged and skipped |
-| `BF_TEST_NPC_TEAM`, `BF_TEST_NPC_FIGHT`, `BF_TEST_NPC_REMOVE` `=<s>,<n\|aim\|all>` | switch the team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or all |
+| `BF_TEST_NPC=<s>,<character>,<friend\|enemy\|neutral\|team>,<dummy\|fight>[,<x>,<z>[,<y>]]` | spawn one at x, z or under the crosshair, facing the controlled character; on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). Its team: friend 0, enemy 1, neutral 2 or a number 0-9 of the game's team table. The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`) or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; an unknown one is logged and skipped |
+| `BF_TEST_NPC_TEAM`, `BF_TEST_NPC_FIGHT`, `BF_TEST_NPC_REMOVE` `=<s>,<n\|aim\|all>` | switch the team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or all. `BF_TEST_NPC_TEAM=<s>,<n\|aim\|all>,<team>` puts them on that team (named as for `BF_TEST_NPC`) |
+| `BF_TEST_NPC_RADAR=<s>,<n\|aim\|all>,<value>` | give them that radar-contact (every character has 1; 2 or 4 turns the crosshair yellow on them, as #141's take08 rewrote the Shrike's) |
 | `BF_TEST_PLACER=<s>,<object>[,<yaw>]` | O with that object picked (its label in any case, else the first containing it), turned that way |
 | `BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]` | the object menu's click (at the crosshair: in the air in the free camera); or that object put at x, z, `height` m above the ground (in the air) |
 | `BF_TEST_AIR=<s>,<m>` | the free camera's air distance (Shift + the wheel) |

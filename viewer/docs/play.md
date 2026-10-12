@@ -75,7 +75,7 @@ texels darker than 27/255), starting by the member's portrait, and drains toward
 game. For whoever you control, health also shows in the top-left bar. Grenade blasts hurt everyone in range (the explosion's Damage max, falling
 off to nothing at its radius; the thrower takes a flat share, see **Grenades**) and the hurt give a pain grunt (chatter e856009f). Friendly
 fire: your shots hit squadmates in the way (the weapon's damage, x0.7 on your own side, by the hit part struck and the difficulty: see **Damage**; they say "I'm hit" or "Careful!"
-/ "Stop shooting at me!"), and the crosshair turns green while it is on one. At 0 health a
+/ "Stop shooting at me!"), and the crosshair turns green while its centre is on one (see **The crosshair's colours**). At 0 health a
 character dies: death cry (chatter ef32191d), the body goes limp as a ragdoll (verlet point
 masses on the skeleton, pushed by the hit or blast; its limb bones are 0.09 m spheres that don't pass through each other, and every bone lies on the level's own floors, kept as far above them as the body is thick round it (`flesh`: of the skin each bone moves most, the distance from the bone's line that 80% of it is within, 0.04-0.2 m; a flat 5 cm let a thigh or the chest sink into the floor), and is kept out of its walls - `BF_RAGDOLL_LOG=1` prints the closest limb pair and the lowest bone; the pose takes only the bones' turns from the simulation and keeps their rest offsets, so limbs don't stretch or twist; the ragdoll starts where the body is drawn, sole lift included (see "Standing on the floor"); the torso moves as two solid pieces (hips; chest with shoulders), stiffly joined at the waist, with the head held to the chest; knees and elbows (found by their Bip01 names) bend but don't fold past about 120 degrees or straighten past straight, and only one way: each joint keeps to its side of the line from the upper bone to the end, in the torso's own frame (hips for knees, chest for elbows), the side it was bent at death; a nearly straight limb uses knees forward, elbows back (forward from the toes); bodies keep 98.5% of their speed per substep, lose 60% of their sliding on the ground, and rest once still - but not on their side: a body come to rest propped on a shoulder and a hip (its chest's left-right axis more than 0.6 upright) is rolled on, its upper shoulder pushed 2 m/s toward its back (or front, if it leans that way), up to 3 times (the demo's choice). Shots hitting a body on the ground (dead or knocked down) push it: the first bone the shot passes within its thickness of is brought up to 3 m/s along the shot, and bones within 0.6 m less, so it jolts and rolls (a burst doesn't add up past that speed, so it doesn't drive the body across the ground); it wakes the body to settle again and it bleeds where it's hit, as the living do (blood effects, hit sound, a splat on the ground) (`BF_RAGDOLL_LOG` prints each body hit and the pelvis's position); `BF_TEST_DIE=<s>` drops the player dead at that time, once; `BF_TEST_DIE=1` at 1 s). Both their guns drop, the one in hand and the one on their back (the ragdoll can't feel a stowed gun, so it propped bodies on their side): each falls from where it was, thrown by half of what killed them plus a 1.5 m/s hop, and tumbles as a loose object (see "Pickups are loose"). Then the portrait greys out and the blip leaves
 the radar; if you die, the death camera circles your body and control passes to the next
@@ -124,7 +124,7 @@ HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon pa
 (the weapon's own icon from its definition, clip / the squad's reserve, or "clip Regen" for a
 recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
 grenades bottom right, and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
-through it. Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
+through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
 flipped). `BF_NO_HUD=1` hides it. Ammo, the switch hint and the crosshair's
 size and hiding: see **Ammo, reload and the crosshair** below.
@@ -266,6 +266,114 @@ windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the we
 at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_KNOCK=<s>` knocks
 the player down then, once;
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot, recharged round and the hint.
+
+### The crosshair's colours (#141)
+
+`src/bin/play_reticle.rs`, drawn by `play_hud.rs`. Read from `default.xbe` (each function is
+cited in the code and has a row in [code-map.md](code-map.md)), checked against the takes in
+`todo/141-crosshair-colours/` (takes 01-09 and xemu's live reads in their notes).
+
+The crosshair is drawn in one of four tints, worked out every frame and switched on the frame
+its condition changes (no fade, as in every take):
+
+| Tint | When | The game's colour (FUN_000bbd70) | Drawn as |
+|---|---|---|---|
+| red | the reticle holds a **lock** on a hostile | 160 32 32 | 152 32 32 |
+| yellow | no lock; the first thing under the centre has **radar-contact 2 or 4** | 200 200 0 | 190 190 0 |
+| green | no lock; the first thing under the centre is a living **teammate** (not a 2 or 4) | 68 220 68 | 66 209 67 |
+| blue | anything else | 50 150 255 | 49 143 243 |
+
+At alpha 229 / 255 (FUN_000c6280's 0.9 x 255; it was 0.95). The console blends in the stored
+sRGB values, Bevy's UI in linear light, so each is drawn as the colour that gives the game's
+result over a dark ground, as the grenade meter's orange is. The demo's own green on a squadmate
+(77 255 89, no source) is gone: the game's is the code's 68 220 68, by its own rule.
+
+* **The lock** (the target selection's FUN_000bf7a0, the best kept by FUN_000bfe40): any living
+  character but the player when
+  * it's hostile by the team table (0x3ffd80, the row of the player's team): the squad locks
+    teams 1, 7 and 8; a neutral (2) or a teammate never;
+  * its **aim point** is within reach of the gun's muzzle: game-options' `<reticule
+    h_0c3eb4ff="0.7">` x the gun's reach (FUN_00232520): the bullet's `range`, x0.9 for a burst
+    of pellets (the Bower 20), and for a mesh projectile its second timer x its speed added (and
+    its range again with MIRV on explode): LZR-50 63 m, Jax-iP 28 m, Therm Sweeper
+    0.7 x (20 + 20 + 5 x 30) = 133 m. The aim point is the point of the character's **aim
+    capsule** (its vtable +0x134, 0x121d00) nearest the crosshair's ray (FUN_0015b450): from 40%
+    of the way from its "Bip01 Head" node to its root node (the hips) to half that length below
+    the hips, 0.15 of it thick. So a sweep locks as the body's middle, chest to thighs, comes
+    near the centre, not one point of it;
+  * projected on the HUD, it's within a box round the crosshair's centre of 33.6 x s units each
+    way (`<reticule h_f079aebd="0.14">` x 480 / 2; across, x 0.75 x 640 / 2: square on screen),
+    s the weapon's `h_e1e41c2d` (`WeaponDef::lock_box`: LZR-50 0.85, Jax-iP 0.6, Therm Sweeper
+    0.8, the iKhan-GPL 0: never), **x1.2 for the one locked last frame** (0xbfae9): the LZR-50
+    locks within ±28.6 units and keeps it to ±34.3;
+  * a ray from the camera to it (256 m) meets it before the world or another body: a squadmate
+    walking in front hides it.
+
+  Of those, the most central wins: the lowest depth x (0.3 + 0.8 (1 - score)), the score a
+  smoothstep of how near the box's centre it is.
+* **The centre ray** (0xc5720), with no lock: the first body or placed object the ray through
+  the crosshair's centre meets within the gun's range (256 m with no gun) decides. A hostile is
+  locked at once in the scope (and with no gun, or a gun whose lock reach outruns its range: the
+  Therm Sweeper's 133 m against its 20 m); out of the scope it stays blue (take02 and take03: out
+  of reach, blue). A living teammate (the same team, one not hostile to itself) is green; then a
+  radar-contact 2 or 4 makes it yellow. So red beats yellow and yellow beats green. No box: green
+  and yellow only while the centre is on the thing.
+* **Radar-contact** (an object's +0x7a, `radar-contact-type` h_1905f381; RCONTACT_ 2 OBJECTIVE,
+  4 OBJECTIVE_SECONDARY): every character has 1 (`Player::radar_contact`). A level's objects take
+  the placement's own `h_1905f381`, else their type's, then the radar-triggers that operate at the
+  level's start (signal 13, FIRST_UPDATE) set theirs (`bf/level.rs`: `Placement::radar_contact`,
+  `Level::radar_triggers`, for the radar's #160 too). On e34 that's the five missile racks and
+  three h_e8589e7e devices at 4 and the device h_00bc61ab at 2, exactly as the game had them
+  live; no squad deathmatch map has any. The centre ray tells which placed object it met from
+  the arena (`Arena::ray_object`).
+* **Not in:** the line-of-fire ray (0xc54d0: an obstacle between the gun and a locked target
+  would show its own colour after two frames; never filmed); Hawk's stealth (an enemy below 0.1
+  visibility can't be locked: the demo's skills have no visibility); Flint's x1.25 range with a
+  rifle (FUN_002324c0 through his skill: the demo's shots don't have it either); the alpha's
+  blink; Flint's targeting box (#124). The demo's bodies are cylinders, so the centre ray
+  doesn't slip between an arm and the body (take04's 2-3 blue frames on Flint), and it passes
+  the dead (the game's meets a body and tests its radar-contact).
+
+Test hooks: `BF_RETICLE_LOG=1` prints the tint, the lock and what the centre ray is on at each
+change (`=2`: every frame), with each hostile's aim point on the HUD, the box it's tested
+against and why it isn't locked, and the camera; `BF_TEST_SWEEP=<deg>|<from>,<to>,<deg/s>[;...]`
+turns the camera (degrees, + to the left; with `BF_TEST_GOTO` from its start-to-goal heading);
+`BF_TEST_RADAR=<object>,<value>[;...]` sets a level object's radar-contact by its name as the map
+starts (sdm_e34's rack: `h_128f3de2,4`). On the test map `BF_TEST_NPC` takes `neutral` or a team
+number, `BF_TEST_NPC_TEAM=<s>,<n>,<team>` sets one and `BF_TEST_NPC_RADAR=<s>,<n>,<value>` gives an
+NPC a radar-contact ([testtools.md](testtools.md)).
+
+Checked on the test map, Tex kneeling with an NPC 9 m ahead (`BF_NO_SQUAD=1
+BF_TEST_GOTO=4.5,20,4.5,19.5 BF_TEST_CROUCH=0.2 BF_CAMERA_PITCH=-0.12 BF_TEST_WEAPON="Confed
+LZR-50"`, `BF_CAPTURE`):
+
+* take08's sequence on one NPC (`BF_TEST_NPC=0.5,tex,enemy,dummy,4.5,11 BF_TEST_SWEEP=1.1
+  BF_TEST_NPC_TEAM="3,1,neutral;9,1,friend;12,1,enemy" BF_TEST_NPC_RADAR="6,1,2;9,1,1"`): red,
+  blue, yellow, green, red, each a one-frame step. The arcs against take08 (the 15 strongest
+  pixels' median; the mean of the arc's pixels): red 120 25 24 / 100 31 29 (the take 125 26 32 /
+  95 22 26), blue 43 114 196 / 38 89 148 (44 114 201 / 35 85 142), yellow 150 151 1 / 116 116 17
+  (156 161 16 / 118 126 20), green 52 168 52 / 44 129 45 (64 184 56 / 48 134 46). The peaks run
+  a few levels low: the game draws the 64 x 64 texture 1:1 at 640 x 480 and xemu scales the
+  picture, the demo samples it at 1.5x (so every HUD texture); the take's yellow leans green
+  from the video's colour encoding.
+* A sweep like take01 (`BF_TEST_SWEEP="20;2,9,-6;11,18,6"`): red from +27.5 units (the
+  LZR-50's ±28.6) to -34.8 (its ±34.3 kept), and back from -28.3 to +35.9: it locks nearer the
+  centre than it lets go, as take01 does.
+* A friend (`BF_TEST_NPC=0.5,flint,friend,dummy,4.5,14`, `BF_CAMERA_PITCH=-0.17`): green only
+  while the centre ray is on her, a narrower window than the red's. With the squad in play,
+  squadmates walking across the crosshair turn it green, and one walking between Tex and the
+  enemy hid the enemy (blue) until it passed.
+* Precedence: an enemy with radar-contact 2 stays red; a friend with 2 is yellow; with 1, green;
+  shot dead (`BF_TEST_TRIGGER=12-12.6`), blue.
+* Reach: the Jax-iP (28 m) locks an enemy at 25 m and not one at 33 m with the centre on it
+  (blue; the log: "out of reach: 32.7 m from the muzzle, reach 28.0"). Flint's MK-ASLT on an
+  enemy 60 m away: blue unscoped, red in the scope (`BF_TEST_AIM=1`: the centre ray's lock). The
+  Therm Sweeper locks it at 63 m (box 26.9) while its centre ray stops at its 20 m range.
+* Level data: on e34 the level's radar-contacts load (`BF_RETICLE_LOG` lists them as the map
+  starts) and the crosshair is yellow on the missile rack h_00815cce from take06's spot (`BF_MAP=e34
+  BF_NO_SQUAD=1 BF_TEST_GOTO=-44.68,17.61,-44.21,17.77 BF_TEST_CROUCH=0.2 BF_CAMERA_PITCH=-0.2
+  BF_CAMERA_DISTANCE=7 BF_TEST_WEAPON="Confed LZR-50" BF_TEST_SWEEP="15;1.5,11.5,-3"`), blue on
+  the pillar beside it.
 
 ### Shots: fire timing, pellets, accuracy, holes, muzzle effects, tracers, casings (#115)
 

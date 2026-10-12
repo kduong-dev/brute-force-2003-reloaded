@@ -73,6 +73,8 @@ const H_ATTACHED_EFFECTS: u32 = 0x18B6_AB72;
 /// Damage: h_04ea9251, seconds the damage is dealt over (the Gas's 5.5; 0 for the rest - an
 /// inference from the Gas recording's ~5.7 s of steady damage)
 const H_DAMAGE_TIME: u32 = 0x04EA_9251;
+/// weapon: the crosshair's lock box scale (name not recovered; see `WeaponDef::lock_box`)
+const H_LOCK_BOX: u32 = 0xE1E4_1C2D;
 const H_PARTS: u32 = 0xE487_418A;
 const H_MESHES: u32 = 0xEA78_3362;
 const H_JOINT: u32 = 0x151A_CE78;
@@ -188,6 +190,20 @@ pub struct WeaponDef {
     /// a mesh projectile's bullet (bullet-type 2 with a projectile object, `MeshBullet`); None
     /// for every other bullet
     pub mesh_bullet: Option<MeshBullet>,
+    /// `<weapon>` h_e1e41c2d (H_LOCK_BOX): the crosshair's lock box scale, s. The weapon-type
+    /// handler stores it at type +0x2dc (0x193d7d -> 0x193dbd), the weapon data's +0x134, and
+    /// FUN_000c5d20 puts it in the target selection's +0x34: the box round the crosshair is
+    /// 33.6 x s HUD units each way (play_reticle.rs). LZR-50 0.85, Jax-iC 0.65, RVG50 Minigun
+    /// 0.6 (read live in #141); 0 never locks (the iKhan-GPL)
+    pub lock_box: f32,
+    /// bullet h_f0a56297 (data+0x58, the bullet block's +0x20; `MeshBullet::after` for a mesh
+    /// projectile): FUN_00232520 adds it x the bullet's speed to a mesh projectile's reach (the
+    /// Therm Sweeper's 5 s x 30 m/s)
+    pub bullet_after: f32,
+    /// bullet `<mirv>` h_11f515c5 (data+0xb4, the bullet block's +0x7c, the WM_ enum;
+    /// `MeshBullet::mirv_mode`): FUN_00232520 adds the range again to a mesh projectile's reach
+    /// for WM_MIRV_ON_EXPLODE (2), 0.75 x it for WM_MIRV_ON_APOGEE (1)
+    pub mirv_mode: i64,
 }
 
 /// The `<bullet>` of a mesh projectile (bullet-type 2, BTYPE_MESH_PROJECTILE: FUN_0022f1d0 case 2
@@ -368,6 +384,10 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             shots: shot_data(w, bullet),
             blast_core: all.iter().find(|e| e.name == h("Damage")).and_then(|e| e.attr(0x011C_B154)).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
             mesh_bullet: bullet.and_then(|b| mesh_bullet(b)),
+            lock_box: f32_of(Some(&w), H_LOCK_BOX, 0.0),
+            bullet_after: f32_of(bullet, 0xF0A5_6297, 0.0),
+            mirv_mode: bullet.and_then(|b| b.children.iter().find(|c| c.name == h("mirv"))).and_then(|m| m.attr(0x11F5_15C5))
+                .and_then(|v| v.as_i64().or(v.as_f32().map(|f| f as i64))).unwrap_or(0),
         });
     }
     out

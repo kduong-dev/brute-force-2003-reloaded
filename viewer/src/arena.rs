@@ -1,7 +1,8 @@
 //! A level as solid ground and walls, indexed by 2 m cell: the game's own collision surfaces
 //! (objects-<lvl>.ipn, see bf::collision) of the terrain blocks, the invisible blockers and the
 //! placed objects' parts (door leaves switch off while open). Each triangle keeps its material:
-//! the world-material id and the slide flag. A level without collision data falls back to the
+//! the world-material id and the slide flag; and the placed object it's part of, if any (what
+//! the crosshair's centre ray is on, `ray_object`). A level without collision data falls back to the
 //! drawn triangles (cut-outs left out). Used to stand characters on the ground (or on objects'
 //! floors), push them out of walls, cast shots and settle pickups.
 //!
@@ -55,6 +56,10 @@ struct Tri {
     /// a breakable object's (its index, see `breakable`) and whether it blocks once broken (what
     /// it leaves behind) or until then (the object itself)
     piece: Option<(u32, bool)>,
+    /// the placed object it's part of (its index in `Level::objects`): its own parts' triangles
+    /// and its level blocker's (`<blocker object-instance>`); None for the terrain, a blocker of
+    /// no object and what a broken object leaves behind (`ray_object`)
+    object: Option<u32>,
 }
 
 pub struct Arena {
@@ -137,14 +142,18 @@ impl Arena {
                 a.add(t, true, None, m);
             }
         }
+        // (every named object by name, for the blockers that belong to one)
+        let object_of: HashMap<u32, u32> = level.objects.iter().enumerate().filter(|(_, o)| o.name != 0).map(|(i, o)| (o.name, i as u32)).collect();
         for (s, at, owner) in &level.blockers {
             let first = a.tris.len();
             for (t, m) in game.collision(*s) {
                 a.add(t.map(|v| at.transform_point3(v)), false, None, m);
             }
             let piece = by_name.get(owner).map(|&b| (b, false));
+            let object = object_of.get(owner).copied().filter(|_| *owner != 0);
             for t in &mut a.tris[first..] {
                 t.piece = piece;
+                t.object = object;
             }
         }
         if !physics {
@@ -185,6 +194,7 @@ impl Arena {
             for t in &mut a.tris[first..] {
                 t.liquid = liquid;
                 t.piece = piece.map(|b| (b, false));
+                t.object = Some(i as u32);
             }
             // what a breakable one leaves behind (its debris list's game objects: the missile
             // rack's stand), blocking once it's broken
@@ -221,7 +231,7 @@ impl Arena {
         let n = n.normalize();
         let n = if n.y < 0.0 { -n } else { n };
         let i = self.tris.len() as u32;
-        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None });
+        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None, object: None });
         let (lo, hi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
         let (c0, c1) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
         for x in c0.0..=c1.0 {
@@ -417,6 +427,13 @@ impl Arena {
     /// nearest thing on the ray is one.
     pub fn ray_breakable(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
         self.ray_tri(origin, dir, max).map(|(t, i)| (t, self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize)))
+    }
+
+    /// `ray`, with the placed object it meets first (its index in `Level::objects`), if the
+    /// nearest thing on the ray is part of one: what the crosshair's centre ray is on
+    /// (play_reticle.rs).
+    pub fn ray_object(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
+        self.ray_tri(origin, dir, max).map(|(t, i)| (t, self.tris[i].object.map(|o| o as usize)))
     }
 
     /// Distance along a ray to the terrain alone (no objects or blockers), if within `max`: the

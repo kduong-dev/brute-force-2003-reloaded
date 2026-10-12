@@ -420,8 +420,9 @@ fn feet(u: &Player) -> Vec3 {
 /// starts): the hips, not the feet (Brutus's Sc_w1_rp_idle 0.98 m, the Shrikes' idles 1.014 and
 /// 1.121; their height-offset is 0). A clip without one (-100000) takes the model's own
 /// (model+0x40, not read: the demo's GROUND, 1.05). Knocked down, the root node follows the
-/// ragdoll (not traced): the demo takes the ragdoll's root bone.
-fn root_point(u: &Player) -> Vec3 {
+/// ragdoll (not traced): the demo takes the ragdoll's root bone. The crosshair's aim capsule
+/// hangs from it too (0x121d00, play_reticle.rs).
+pub(super) fn root_point(u: &Player) -> Vec3 {
     let f = feet(u);
     let Some(l) = u.loaded.as_ref() else { return f - Vec3::Y * GROUND };
     if let Some(k) = &u.knock {
