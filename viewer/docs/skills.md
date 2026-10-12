@@ -1,23 +1,24 @@
-# Special skills: stamina, the skill toggle (#120) and Tex's Berserker (#121)
+# Special skills: stamina, the skill toggle (#120), Tex's Berserker (#121) and Flint's Advanced Targeting (#124)
 
 Each squad member has a special skill that stamina (the blue bar) pays for: Tex's Berserker,
 Brutus's Spirit of Vengar, Hawk's Stealth, Flint's Advanced Targeting. This page is the part the
 four share (`src/bin/play_skills.rs`, the HUD in `play_hud.rs`): stamina, the toggle, its sounds,
 chatter and HUD, and the interface each skill plugs into; and the skills done so far. Each
 skill's own effect is its own ticket: #121 Tex, #122 Brutus, #123 Hawk, #124 Flint. Tex's
-Berserker works ([below](#texs-berserker-121)); the other three switch on and off, drain and
-show on the HUD, but do nothing else yet.
+Berserker ([below](#texs-berserker-121)) and Flint's Advanced Targeting
+([below](#flints-advanced-targeting-124)) work; Brutus's and Hawk's skills switch on and off,
+drain and show on the HUD, but do nothing else yet.
 
 Everything here comes from default.xbe (the functions are in [code-map.md](code-map.md), "Skills
 and stamina" and "HUD") and the data, checked against the 32 takes in
-`todo/35-special-skills/` (the spec is `spec.md` there, Parts 1 and 2).
+`todo/35-special-skills/` (the spec is `spec.md` there, Parts 1, 2 and 5).
 
 ## Keys and test hooks
 
 | Key | |
 |---|---|
 | V | the controlled character's skill on / off: the game's White button (VB_SPECIAL_ABILITY, `game-options-en.xml` line 151, which sends CT_TOGGLE_SPECIAL at 0x134cff). Not while dead |
-| Q, R | in Tex's berserk: end it, instead of switching weapons (Q, the game's Y) or reloading (R, the game's X; only when a reload could start, which then follows berserk's end; on R's press, where the game's X ends it when let go). See [Tex's Berserker](#texs-berserker-121) |
+| Q, R | in Tex's berserk and Flint's targeting: end it, instead of switching weapons (Q, the game's Y) or reloading (R, the game's X; only when a reload could start, which then follows the skill's end; on R's press, where the game's X ends it when let go). See [Tex's Berserker](#texs-berserker-121) |
 
 * `BF_TEST_SKILL=<s>[,<s>...]`: presses V at those times (once each).
 * `BF_TEST_STAMINA=<n>[@<s>][,...]`: sets the controlled character's stamina to n at those times
@@ -26,9 +27,15 @@ and stamina" and "HUD") and the data, checked against the 32 takes in
   chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each
   overlay and when it switches, each switch with its sound and line, and every squad member's
-  stamina each half second with its state (`on`, or `off x` its refill factor). For Tex also
-  each refusal and why (not those of the command at 0, which comes every frame), the top-up at
-  the press, the second gun drawn, and the switch and reload keys ending berserk.
+  stamina each half second with its state (`on`, or `off x` its refill factor). For Tex and
+  Flint also each refusal and why (not those of the command at 0, which comes every frame), and
+  the switch and reload keys ending their skill; for Tex the top-up at the press and the second
+  gun drawn; for Flint whether the rifle was marked (her sniper motions) and each doubled roll.
+* `BF_TEST_DOUBLE=<percent>`: the chance of Flint's doubled rolls while her targeting is on (100:
+  every one), to see the x2 and its flash.
+* `BF_TARGETING_LOG=1`: Flint's targeting marker when it changes (on, the lock, the fill at 0 or
+  1, where its corners head, the target's size, the glyphs), `=2` every frame; the first lock on
+  a character type prints its bounding sphere.
 * `BF_TEST_SPRINT=<s>` (play.md): sprints toward the `BF_TEST_GOTO` goal from that time, for the
   dash's refill. With `BF_TEST_CROUCH`, `BF_TEST_SELECT`, `BF_TEST_DIE`, `BF_CAPTURE`
   (`BF_CAPTURE_FPS=60` for the blink and the fades).
@@ -41,6 +48,10 @@ and stamina" and "HUD") and the data, checked against the 32 takes in
   without `BF_TEST_GOTO`, whose autopilot doesn't read it); on the test map
   `BF_TEST_NPC_HP=<s>,<n|aim|all>,<hp>` (testtools.md) gives an NPC take04's 999 HP, and
   `BF_RETICLE_LOG=1` (play.md) shows the lock's reach.
+* For Flint's targeting, the same, and `BF_TEST_SWEEP=<deg>|<from>,<to>,<deg/s>` (play.md) to
+  turn the crosshair off and back onto an enemy, `BF_TEST_INSTANT_KILL=0` so a test session's
+  NPC outlives the first hit, `BF_TEST_AIM=1` for the scope (`BF_TEST_SCOPE` isn't read under
+  `BF_TEST_GOTO`'s autopilot).
 
 ## Stamina
 
@@ -106,9 +117,9 @@ reload is, the whole body standing and the upper body on the move (`Loaded::skil
 | Tex | 0x13d490 | 1 | `Sc_w1_bz_start` / `Sc_w1_bz_stop`, 1.0 s | at the clip's 0.50 s event (eaba3d48 on, 14ee2201 off). A 1.0 s timer from an accepted press refuses presses meanwhile; switching on also needs him free (FUN_00117210, 0x13d5c4), 10% (0x13d5d3) and the rest of [his refusals](#texs-berserker-121) |
 | Brutus | FUN_0013bfe0 | 0 (0x13c00e, both ways) | none: his motion set's `Sc_w1/w2_spirit` never plays from the button | at the press |
 | Hawk | FUN_0013cf90 | 1; 0 at stamina 0 or dead | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way counts); at stamina 0 or dead: off at once, no clip |
-| Flint | FUN_0013cad0 | 0, or 2 with a rifle (MT 45, never seen in the takes) | none | at the press |
+| Flint | FUN_0013cad0 | 0, or 2 with a rifle (motion type 45: her sniper motions, whose motion state is still 19 or 47, so the takes' logs never showed 45) | none | at the press; refused unless her motion has a type 45 transition, and switching on without a gun with rounds in hand ([below](#flints-advanced-targeting-124)) |
 
-Brutus's and Flint's toggles don't ask FUN_00117210 (Flint's makes checks of its own, #124's).
+Brutus's and Flint's toggles don't ask FUN_00117210 (Flint's makes checks of its own).
 
 The demo switches 0.50 s (Tex) and 0.83 s (Hawk) after the press frame (a clip started this frame
 starts moving the next); the takes measured 0.53 s for Tex, the event plus about one 30 Hz frame,
@@ -126,9 +137,9 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
   go off in that frame (take07, take11, take17).
 * **What ends a skill**: the key again; stamina at 0; death (the death handler calls the
   deactivate, 0x115df5: in the frame of death, with its end sound and line); and each skill's
-  own ends, from its `update` and the player controller (Tex's other gun dry, the switch and
-  reload keys: below; Flint's clip dry and the same keys, #124's; Brutus's charge, #122's). Being
-  hit doesn't (take27).
+  own ends, from its `update` and the player controller (Tex's other gun dry, Flint's gun in hand
+  dry, and for both the switch and reload keys: below; Brutus's charge, #122's). Being hit
+  doesn't (take27).
 * **Handing control over doesn't end it** (take19): the skill stays on and drains on the
   character you left, under the AI; it's on when control comes back. A clip under way plays on.
 * **The demo's choices** (not traced in the game):
@@ -242,24 +253,37 @@ class's; the skill is taken out of its character while they run, so they get the
 | `update(u, dt)` | +0xc0 | nothing | every frame, on or off, alive; true sends the toggle command: the skill's own ends |
 | `ended_by_actions` | +0x7c | false (0x20e200) | true (0x213690, Tex's and Flint's): while on, the switch key, the reload key and the black button end the skill instead (`skill_input`) |
 | `lets_overlays_play` | +0xa4 | true (0x262a80) | false (Tex's 0x13d850): while on, no other overlay starts (`overlays_blocked`: the reload, the switch, the throw, item use) |
+| `lets_act(u)` | +0x14 | true (0x213690) | the last word of FUN_00117210, whether the character is free to act (`lets_act`, `free_to_act`): Flint's (0x13b980) says no while on, so no reload, weapon switch, grenade or medkit starts |
+| `roll_factor(u)` | +0xec | 1.0 (0x10e3d0) | the shooter's factor on its damage rolls (FUN_0022c940; `skills::roll_factor`, play_damage.rs `Hit::skill`): Flint's doubled and scoped rolls |
+| `range(u, def, range)` | +0x54 | the range (0x10e3a0) | a gun's range in the character's hands (FUN_002324c0; `weapon_range`): Flint's rifles x1.25 |
+| `move_cap(u, m)` | +0x38 | the stick (0x10e8f0) | the most of the move stick the character goes by (FUN_001195c0; `move_capped`): Flint's 0.55, a walk |
+| `lock_box(u, scale)` | +0x100 | the scale (0x10e8f0) | the crosshair's lock box scale (FUN_000c5d20; `lock_box`): Flint's 1.0 |
+| `lock_shares(u)` | +0xc4 | none (0x2894f0) | the lock box's shares of the screen the skill puts in the target selection (`lock_shares`): Flint's 0.4 / 0.4 |
+| `crosshair_alpha(u, alpha, fill)` | +0xfc | the alpha (0x10e8f0) | the crosshair's alpha (FUN_000c6280; `crosshair_alpha`): Flint's fades it as her marker fills |
+| `has_marker` | (+0xc4) | false | the skill shows the targeting marker for the controlled character (play_targeting.rs): Flint's |
+| `keeps_gun_up(u)` | (FUN_00123ea0) | false | the skill keeps the gun raised (the ready pose, play.rs): Flint's while on |
+| `bars_scope(u)` | | false | the demo's choice: no scope in Tex's berserk motions |
 
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
-`Reserve` (Tex's top-ups) and the log switch.
+`Reserve` (Tex's top-ups) and the log switch. The free functions of the same names in
+`play_skills.rs` ask the controlled or any character's skill for the other systems (play.rs,
+play_reticle.rs, play_damage.rs's callers, play_targeting.rs).
 
 Shared, not per skill (FUN_0010e470 / FUN_0010e3e0): the 10% check (`can_activate`), the on
 flag, the start / end sound for the controlled character, the chatter line. `free_to_act`
-(FUN_00117210) is what Tex's and Hawk's toggles ask. A skill's effects outside the character (a
+(FUN_00117210) is what Tex's and Hawk's toggles ask; it ends with the skill's `lets_act`, which
+the reload (play_ammo.rs), the weapon switch and the grenade (play.rs) and the medkit
+(play_pickups.rs) ask on their own. A skill's effects outside the character (a
 material, the post-process, the HUD marker, the AI's view of Hawk) read `Player::skill`
-(`on`, `toggling`, `special_motions`) and the character (Tex's `Player::second`) from their own
-systems. Other base-class hooks the tickets will want (the game's fire hook +0xb0, item use
-+0x104, damage taken +0xd8, visibility +0xe4, noise +0xe8, damage dealt +0xec, the reticle's
-+0xf8 / +0xfc / +0x100, the AI's hold fire +0x108) are added to the trait with the base class's
-answer as their default.
+(`on`, `toggling`, `special_motions`, `double_hit`), the hooks above and the character (Tex's
+`Player::second`) from their own systems. The base-class hooks still to come (the game's fire
+hook +0xb0, item use +0x104, damage taken +0xd8, visibility +0xe4, noise +0xe8, the AI's hold
+fire +0x108) are added to the trait with the base class's answer as their default.
 
-Known limit the skill tickets will meet: a system outside the character can't reach a concrete
-skill's own state (Hawk's level, Flint's target) through `Box<dyn SkillKind>`: it will need an
-`as_any_mut` on the trait to downcast, or the state kept on `Skill` / `Player` where those
-systems can read it (as Tex's second gun is, `Player::second`).
+A system outside the character can't reach a concrete skill's own state through `Box<dyn
+SkillKind>`: what others need is a hook (above) or kept on `Skill` / `Player` (Tex's second gun,
+`Player::second`; Flint's doubled-roll flag, `Skill::double_hit`). Flint's marker is the HUD's
+own state (`targeting::Marker`), as the game's widget is.
 
 ## Tex's Berserker (#121)
 
@@ -338,6 +362,103 @@ and 26 (spec Part 2).
   shot in the start clip left from behind his shoulder.
 * Handing control over, as for every skill: it stays on, the AI fires both guns, and the stamina
   drains (take19's rule).
+
+## Flint's Advanced Targeting (#124)
+
+"Automatically targets enemies." (h_0f1ee6cd). While it's on, the crosshair's lock box grows to
+most of the screen, so an enemy near the crosshair is locked and the guns, which aim at the
+lock, find it; a HUD marker frames the box or the locked enemy. `Targeting` in
+`play_skills.rs` (skill vtable 0x39d2c8, constructor FUN_0013c9e0), the marker in
+`play_targeting.rs`, the lock box in `play_reticle.rs`, the aim and the sniper motions in
+`play.rs`; measured against takes 15-17, 28, 29 and 31 (spec Part 5). The tuning is
+game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`).
+
+* **The press** (her toggle, FUN_0013cad0), either way, needs a motion type 45 transition from
+  her motion (the motion record's +0x534): in `ms_flint.xml` her idles, walk, run, side and back
+  steps, dash, crouch idle and crouch walks have one, so not getting down or up, in a jump, a
+  dodge, a dive or a slide, nor knocked down (`sniper_transition`). Switching on is also refused
+  with a gun in the second hand, no gun in hand, or its clip at 0; then the 10% check. It
+  switches at the press (takes 15-17, 29, 31), with no overlay; her start / end sounds and lines
+  as #120's.
+* **The sniper motions**: switched on with a gun of the tracking-weapon-type (h_108b56f9:
+  WTYPE_RIFLE, the L-Shot-75; her data's class is `WeaponDef::weapon_type`) the toggle marks the
+  skill (+0x48) and asks for motion type 45, which takes her into `Sc_w1_sniper_idle` and the
+  `Sc_w1_sn_*` walks (play.rs `SpecialClips`): the rifle raised to the shoulder (take15 2.5 s);
+  the off asks again, back to her own motions. Their motion state is an idle or a walk, which is
+  why the takes' logs never showed 45. They lead to no run, crouch, dash, dodge, dive, throw or
+  jump: those are dropped while she's in them. With the pistol there's no mark: the toggle
+  raises the gun (FUN_00123ea0) and she keeps her motions.
+* **While on** (her update, 0x13cbf0): the gun is kept raised (FUN_00123ea0 every frame; the
+  demo's ready pose, without the aiming camera: take15's framing doesn't change), and the gun in
+  hand's clip at 0 sends the toggle, in the shot's frame, before the reload (take29). She walks:
+  her +0x38 caps the move stick at 0.55 (0x13ceb0), as the scope does (FUN_001195c0), under the
+  run's 0.65: no run, no sprint (`move_capped`).
+* **The lock box** (her +0xc4 and +0x100): each frame the target selection runs the controlled
+  character's skill's +0xc4 (0xbd0c6); hers (0x13cd30) puts her box shares in the selection
+  while on, h_108f0925 0.4 across and h_081520f0 0.4 down (the reticle's own 0.14 x 0.75 and
+  0.14 back while off), and her +0x100 gives the box scale 1.0 in place of the gun's
+  h_e1e41c2d (the L-Shot's 0.1, the Jax-iP's 0.6). So the box is 128 x 96 units each way round
+  the crosshair, and an enemy 12 degrees off it is locked at the switch (take15). The crosshair
+  turns red as usual, but fades out (below).
+* **The guns aim at the lock** (every character's, not Flint's only; play.md § The crosshair's
+  colours, step 4): with a lock the reticle gives the controlled character its point (0xc5b90 ->
+  FUN_0011e9d0, char+0x804), the character update aims its guns at it (0x11aa20 -> 0x22dc60),
+  and each muzzle's shot goes there (FUN_0022e5b0). That's the "aim assist" take28 measured: 1 hit
+  in 8 off, 7 in 8 on.
+* **Damage** (her +0xec, 0x13cc70, in the roll FUN_0022c940, so every roll she makes: a shot's,
+  a missile's and its blast's, a breakable object's): x1.5 (h_191dafb6) while scoped, on or off;
+  while on, a roll of the game's random numbers at most h_18bf34d4 0.15 doubles it
+  (h_fe103e1b 2). The two stack (x3). take28: one hit of seven doubled (80.6 against the others'
+  42.7), the scoped ones x1.36-1.59. On top come the hit part's factor and the difficulty step
+  (play.md § Damage).
+* **Range** (her +0x54, 0x13ce80): her rifles (h_ec0b2194, WTYPE_RIFLE) reach x1.25
+  (h_f82a974c), on or off: the shot's ray and its falloff, the crosshair's centre ray and the
+  lock's reach (`weapon_range`). The L-Shot-75: 225 m in place of 180.
+* **The crosshair** (her +0xfc, 0x13cce0): while on, its alpha is 0.9 x (1 - the marker's fill),
+  so it fades out over the marker's 0.625 s (take15: red and dimming 2.4-2.8 s, gone after) and is
+  back at the off in one frame (`Reticle::alpha`).
+* **The marker** (the HUD widget h_121cf7bb her +0xc4 makes; `play_targeting.rs`):
+  * Two bracket corners, the 64 x 64 texture h_e1b45a4c and the same turned half a turn, drawn
+    1:1 in HUD units. Without a lock they frame the wide box, (192, 96) to (448, 288) round the
+    crosshair (take17: the bracket lines at x 204 / 438, y 100 / 279). With a lock they frame
+    the locked character: its bounding sphere (`Character::bounds`, the union of its skin mesh's
+    geoset spheres: the Shrike Heavy's 1.24 m) projected, its size 640 x the radius / the depth in
+    the game's 70-degree view, the box half that size across and three quarters of it down, at
+    least 32 units, kept inside the HUD's safe area (game-options' 48 x 36 margins, 3 units in:
+    in the scope the corners sit at the screen's corners, take15 14.6-18.5 s).
+  * Switched off they head for the screen's sides, (-256, -96) and (384, 96) from the crosshair,
+    so switched on they slide in from there. They move at 450 units a second inward and 900
+    outward across, 400 up and down (take15: wide to tight 0.25-0.3 s, tight to wide 0.1-0.15 s).
+  * With a lock, the glyph strip h_0f00136e over the top left corner shows the target's health,
+    a glyph for each 15 hit points rounded up, up to 8 (all eight on the takes' 999-hp Shrike),
+    and a third of the wave h_0e3d0ad2 scrolls under the bottom right one.
+  * Its fill rises at 1.6 a second while on and falls at 2 while off (the takes' log: 0.56-0.61
+    s, 0.46-0.57 s); its alpha is the fill, less up to 32% in a 4 s pulse (the takes' flag bit
+    toggling every 2.06 s).
+  * A lock while off (the crosshair's own, the pistol's on the enemy at take16's off) gives the
+    corners a 64 x 64 box at the crosshair as the marker fades: take16 9.17-9.55 s shows them
+    closing in, the strips still there.
+  * A doubled roll draws the corners in red for a frame (the cyan texture x red: nearly black).
+  * The game draws it additively; the demo blends it over with the alpha's sRGB look: the same
+    over the takes' dark ground.
+* **What ends it**: V; stamina at 0 (in that frame, take17); the gun in hand's clip at 0 (take29);
+  Q, the switch key (the game's Y, take31 18.0 s: no switch); R, the reload key, when a reload
+  could start (the game's X), the reload following; death. The black button ends it in the game
+  (take31 10.0 s); the demo has no key for it. B, the item box, doesn't (take31 14.0 s). Each
+  goes through the toggle, so in a jump (no type 45 transition) even stamina 0 waits for the
+  landing.
+* **Not free to act** (her +0x14, 0x13b980, "the skill is off", where the other three's say yes,
+  0x213690): FUN_00117210, whether a character is free to act, ends by asking it, so while she
+  tracks no reload starts (FUN_00120d40, 0x120e16), no weapon switch (FUN_0011e130, 0x11e135),
+  no item use but an IOU_JUST_USE one (FUN_001210c0, 0x121139: a grenade thrown or placed, the
+  medkit) and no melee (CT_ATTACK, 0x1226d2; the demo has none). The keys that end it come first,
+  so the reload R asks for and the empty clip's start in the frame after the off. G (the game's
+  LT) throws nothing and the medkit isn't used while she tracks: from the code, not filmed.
+* **Not done**: her +0xf8, the tracking-reticule-speed 2 (FUN_000c5e20: how fast the crosshair
+  moves onto a lock; hidden while she tracks); her +0x58, 0.8 for the scoped lock box in place of
+  the base's 0.2 (0x11cfb5: the demo's scope keeps the gun's box for everyone: a #141 follow-up);
+  the camera lock the tutorial describes (CT_TARGET_LOCK_TOGGLE 18 has no sender in retail, and
+  take31 shows none).
 
 ## How it was checked
 
@@ -489,3 +610,71 @@ game's weapon list goes 1.6 s after the off, the demo's holds its 2.5 s (`HUD_LI
 weapon box's timer isn't traced. Whether the game's camera pulls in when berserk fires (the
 demo's does, as for every gun; take04's doesn't) is play.md's question. A toggle overlay cut
 short by a knock-down (the demo's choice) leaves the motions as the skill is.
+
+### Flint's Advanced Targeting (#124)
+
+On campaign e34 at the takes' range spot, Flint with the takes' loadout and an e34 Shrike Heavy
+(its sphere 1.24 m) where the takes' stood, 7 m ahead (`BF_MAP=e34 BF_CHARACTER=1 BF_NO_SQUAD=1
+BF_TEST_WEAPON="L-Shot-75;Jax-iP" BF_TEST_GOTO=-52.96,30.96,-53.09,31.44 -- --test
+BF_TEST_NPC="0.3,shrike heavy,enemy,dummy,-54.84,37.70" BF_TEST_NPC_HP=1.0,1,999`), with
+`BF_SKILL_LOG`, `BF_TARGETING_LOG`, `BF_RETICLE_LOG`, `BF_COMBAT_LOG`, 15 fps captures set beside
+the takes' frames at the same scale (scripts in the developer's scratchpad). The squad left out:
+the demo's formation stands it between Flint and the Shrike.
+
+* **take15** (the L-Shot; `BF_TEST_SWEEP="0.5,1.0,24;4.0,4.5,-24;8.5,9.0,24;11.0,11.5,-24"`, the
+  takes' 12-degree turns, `BF_TEST_SKILL=2,21`): on at the press; the Shrike locked at once 82
+  units right of the crosshair; the corners slide in from the sides (the left one at x ~255
+  0.26 s after the switch, the take's ~215 0.28 s after; the right one still on its way) and
+  close round the Shrike by 0.6 s with the glyph strip (eight glyphs) over the top left and the
+  wave under the bottom right, as take15 2.5-3.0 s; the box 98.5 units (49 x 74 each way), the
+  take's 105 (52 x 81); the crosshair red, then fading out by 2.6 s (the take's by 2.8); the
+  rifle raised to the shoulder (from the side, `BF_VIEW_YAW=1.9`) and lowered at the off; at the
+  off the fill falls in 0.5 s. Drain 3.2/s.
+* **take16** (the Jax-iP, `BF_START_WEAPON=1`, `BF_TEST_SKILL=2,9`): the same marker, no sniper
+  motions; at the off the pistol's own lock stays on the Shrike, the crosshair red, and the corners
+  close onto a 64 x 64 box at the crosshair as they fade, the strips still there: take16's
+  9.17-9.55 s.
+* **take17** (no enemy, `BF_TEST_STAMINA=30@1.9 BF_TEST_SKILL=2`): the wide box at (192, 96) -
+  (448, 288), its bracket lines where take17's are (x 204 / 438, y 100 / 279); 30.05 to 0 in 9.33 s
+  (3.22/s), off in the frame of 0 with the line at 0 and the end sound, the corners sliding out,
+  the crosshair back at once, the label fading, the low-stamina blink; refill 0.8/s.
+* **take28** (single shots, the crosshair turned 7 degrees left of the Shrike, inside the
+  128-unit box and off its body; `BF_TEST_INSTANT_KILL=0`): off, 0 hits in 8; on, 8 in 8 (38-46
+  on a thigh, x1.4 the STANDARD step: the take's 40-44), one doubled (80.72: the take's 80.6;
+  `BF_TEST_DOUBLE=100` doubles every one); the 12th round ended it in its frame (take28 51.1 s).
+  Scoped (`BF_TEST_AIM=1`, standing): x1.5 on every roll (29.3 on a calf, the take's 29.6 "leg";
+  34.0, 28.7, 33.4); in the scope the lock holds and the corners sit at the safe area's corners,
+  the glyph strip top left and the wave bottom right, as take15's scoped frames show. A doubled
+  roll's frame draws the corners dark red, the strips as they are.
+* **take29** (`BF_TEST_CLIP=1`, a shot at 5 s): the clip empty and the skill off in the shot's
+  frame (5.13), the reload in the next (12 rounds, the reserve 50 to 38).
+* **take31** (`BF_TEST_CLIP=8 BF_TEST_SKILL=2,6,10 BF_TEST_SWITCH=4 BF_TEST_RELOAD=8,12`): Q ends it
+  with no switch; R ends it (8.13) and the reload follows in the next frame (8.20, 4 rounds); R
+  with the clip full does nothing.
+* **Not free to act** (`BF_MAP=flat BF_CHARACTER=1 BF_TEST_GOTO=0,4,0,4 BF_TEST_GRENADE_TYPE=Frag
+  BF_TEST_SKILL=1.0,4.0 BF_TEST_THROW=2.0,0.3,5.5,0.3 BF_GRENADE_LOG=1`): the throw at 2.0 s, on,
+  does nothing; the one at 5.5 s, off since 4.13, lands at 6.60. The medkit (e34 on a Medkit
+  pickup, `BF_TEST_GOTO=-59.6,0.9,-59.6,0.9 BF_TEST_HEALTH=50 BF_TEST_MEDKIT=3.0
+  BF_PICKUP_LOG=1`): used with the skill off (50 to 90), not with it on from 1.0 s.
+* **Refusals**: the clip and the reserve empty (`BF_TEST_CLIP=0 BF_TEST_RESERVE=0`): "the clip in
+  hand is empty"; in the autopilot's running jump (`BF_AUTOPILOT=1 BF_TEST_SKILL=17.25,18.5`): "no
+  motion type 45 transition", then on at 18.6 on the ground, the run becoming the sniper walk.
+* **The walk** (`BF_MAP=flat BF_TEST_GOTO=0,0,0,-60 BF_TEST_SPRINT=0.5 BF_TEST_SKILL=3,6
+  BF_MOVE_LOG=1`): the sprint becomes the sniper walk at the press and comes back at the off.
+* **Hand-over** (`BF_TEST_SELECT=3,4.0`, the squad in): the AI's Flint stays on and drains 3.2/s;
+  Tex's HUD has no marker and a full crosshair.
+* **The aim at the lock, for everyone** (Tex on the test map, the LZR-50, an enemy NPC 9 m out;
+  `-- --test BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,19.5 BF_TEST_INSTANT_KILL=0
+  BF_TEST_NPC="0.5,tex,enemy,dummy,4.5,11" BF_TEST_SWEEP="1.5;4.5,4.6,60"
+  BF_TEST_TRIGGER="2-3,6-7"`): the burst with the crosshair red (inside the LZR-50's box) hits 4
+  of 4; the one 49 units off (blue) misses 4 of 4.
+
+**Guessed or open (Flint)**: what makes the game's rifle lose its lock for 1.0-1.4 s at a time
+(take15: tight, wide, tight with the camera still) and the pistol lock only once the crosshair
+came near the enemy (take16 2.5-4.5 s): the demo locks whatever is in the box and in sight, with
+either gun (shot F1). The game's L-Shot also had no lock after take15's off where the demo's
+tiny-box lock caught the Shrike, so the demo's corners closed on the crosshair there. The sphere
+leaves out the bones' own spheres (FUN_00236670's union of the posed pieces). The game's corners
+move whole units a frame, the demo's by the frame's time. The 0.65 run threshold stands for the
+demo's walk key; the sniper motions' speeds are their clips' roots. The black button has no demo
+key.

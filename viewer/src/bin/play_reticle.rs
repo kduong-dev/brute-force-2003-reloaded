@@ -22,7 +22,9 @@
 //!     - projected on the HUD's 640 x 480 (in front of the camera, at most DEPTH_MAX deep) the aim
 //!       point is inside a box round the crosshair's centre (FUN_000beb40): 33.6 x s units each
 //!       way, s the gun's `WeaponDef::lock_box`, x KEEP_BOX for last frame's lock (0xbfae9), so a
-//!       lock is kept further out than it's taken;
+//!       lock is kept further out than it's taken. While Flint's targeting is on the box is her
+//!       skill's: 0.4 of the screen each way at s = 1 (its +0xc4 and +0x100, play_skills.rs
+//!       `lock_shares`, `lock_box`), 128 x 96 units;
 //!     - a ray from the camera to it (SIGHT_RANGE m) meets that character first, or nothing
 //!       (FUN_000becf0).
 //!
@@ -45,12 +47,25 @@
 //!     - anything else, or nothing: blue.
 //!  3. **The tint** (0xc6380, FUN_000bbd70): red with a lock, else as the centre ray said; a
 //!     step on the frame it changes (the takes: no fade).
+//!  4. **The aim** (0xc5b90 -> FUN_0011e9d0, char+0x804): with a lock, the point the controlled
+//!     character's guns aim at (`Reticle::aim`, play.rs `Player::lock_aim`; FUN_0011aa20 gives it
+//!     to each gun, FUN_0022e5b0 aims the muzzle at it): the centre ray's point when the ray meets
+//!     the locked body (0xc59fe), else the lock's aim point (0xc5330 -> 0xc5170: the selection's).
+//!     So a shot near a hostile in the lock box goes to it; Flint's targeting box is what makes
+//!     hers hit (#35 take28: 1 hit in 8 off, 7 in 8 on).
+//!
+//! The ranges (the centre ray's, the lock's reach) are the gun's in the player's hands
+//! (FUN_002324c0 through the skill's +0x54: Flint's rifles x1.25, play_skills.rs
+//! `weapon_range`).
 //!
 //! Not in: the line-of-fire ray (0xc54d0: an obstacle between the gun and the locked target shows
 //! its own colour after two frames; not filmed), Hawk's stealth (a target below 0.1 visibility
-//! isn't a candidate: the demo's skills have no visibility yet), Flint's x1.25 range with a rifle
-//! (FUN_002324c0 through his skill's +0x54: the demo's shots don't have it either), the alpha's
-//! blink (controller +0x94 bit 1: what sets it isn't traced) and Flint's targeting box (#124).
+//! isn't a candidate: the demo's skills have no visibility yet), the alpha's blink (controller
+//! +0x94 bit 1: what sets it isn't traced), the scoped lock box (0x11cfb5: once the scope-in's
+//! 0.85 s timer, char+0x7c8, is out, FUN_000c5d20 takes the skill's +0x58, 0.2, Flint's 0.8,
+//! in place of 1.0: the demo's scope keeps the gun's box), the crosshair moving onto a lock
+//! (0xc5a50 and FUN_000c5e20 at the skill's +0xf8 speed: the takes' crosshair stays put) and a
+//! moving target's lead (FUN_0022e5b0, for a bullet that isn't instant).
 //! The demo's bodies are solid cylinders (`ray_body`), so the centre ray doesn't slip between an
 //! arm and the body as the game's does (take04's 2-3 frame blue gaps), and the dead aren't hit
 //! by it (the game's ray meets a body and tests its radar-contact). A choice of the demo's
@@ -72,6 +87,9 @@ use bf_viewer::bf::hash::h;
 /// The crosshair's alpha: 229 / 255, FUN_000c6280's 0.9 (0xc6290) x 255 (0x3a50e8), truncated
 /// into the sub-widget's +0x10 (0xc6373); read live at every draw in #141, 10 HP too.
 const ALPHA: f32 = 229.0 / 255.0;
+/// A fade's share of the alpha is raised to this (the console blends in sRGB values, Bevy's UI
+/// in linear light; the skill label's fade and Flint's marker do the same).
+const FADE_SRGB: f32 = 2.2;
 /// FUN_000bbd70's tints (jump table 0xbbe34; bytes R G B, alpha 255): style 0 blue 50 150 255,
 /// 1 red 160 32 32, 5 green 68 220 68, 6 yellow 200 200 0. The weapon's crosshair texture is
 /// drawn in them at ALPHA, and the console blends in the stored sRGB values. Bevy's UI blends in
@@ -165,15 +183,26 @@ impl Tint {
 }
 
 /// The reticle this frame: its tint and lock (the controller's +0x9c, copied from the
-/// selection's by 0xc52c0 or taken under the centre ray), and the selection's lock of last
-/// frame (FUN_000beae0 keeps it at the selector's +8), whose box is KEEP_BOX bigger.
-#[derive(Resource, Default)]
+/// selection's by 0xc52c0 or taken under the centre ray), the aim point it gives the controlled
+/// character's guns with the lock (step 4), and the selection's lock of last frame (FUN_000beae0
+/// keeps it at the selector's +8), whose box is KEEP_BOX bigger.
+#[derive(Resource)]
 pub struct Reticle {
     pub tint: Tint,
     pub lock: Option<Who>,
+    pub aim: Option<Vec3>,
+    /// the crosshair's alpha (FUN_000c6280: ALPHA through the skill's +0xfc; Flint's targeting
+    /// fades it as its marker fills, play_targeting.rs)
+    pub alpha: f32,
     kept: Option<Who>,
     /// the tint, lock and what's under the centre that BF_RETICLE_LOG printed last
     logged: String,
+}
+
+impl Default for Reticle {
+    fn default() -> Self {
+        Reticle { tint: Tint::Blue, lock: None, aim: None, alpha: ALPHA, kept: None, logged: String::new() }
+    }
 }
 
 pub fn plugin(app: &mut App) {
@@ -184,11 +213,17 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, update_reticle.after(follow_camera).before(update_weapons).run_if(in_state(AppState::Playing)));
 }
 
+/// The crosshair's centre on the HUD (FUN_000ab390: 0.4 of the height, game-options'
+/// h_1a504c05, the middle in the scope), as play_hud.rs draws it: (320, 192), (320, 240) scoped.
+pub(super) fn crosshair_centre(p: &Player) -> Vec2 {
+    Vec2::new(SCREEN.x * 0.5, SCREEN.y * 0.5 * (1.0 - CROSSHAIR_UP * (1.0 - p.scope)))
+}
+
 /// The camera as drawn: where it is, its turn, the tangent of half its vertical field of view
 /// and its near plane. The HUD's 640 x 480 is 4:3 centred in the window at its height, so a unit
 /// is the same across and down: 240 units are that tangent at unit depth.
 #[derive(Clone, Copy)]
-struct View {
+pub(super) struct View {
     at: Vec3,
     turn: Quat,
     tan: f32,
@@ -196,6 +231,17 @@ struct View {
 }
 
 impl View {
+    /// The main camera's view.
+    pub(super) fn of(tr: &Transform, pp: &PerspectiveProjection) -> View {
+        View { at: tr.translation, turn: tr.rotation, tan: (pp.fov * 0.5).tan(), near: pp.near }
+    }
+
+    /// The tangent of half its field of view across the HUD's 4:3 screen (320 units at unit
+    /// depth).
+    pub(super) fn tan_across(&self) -> f32 {
+        self.tan * SCREEN.x / SCREEN.y
+    }
+
     /// The world direction through a HUD point, with unit depth along the view (FUN_0006dfc0's
     /// ray, divided by the near plane as FUN_000bf7a0 does).
     fn through(&self, hud: Vec2) -> Vec3 {
@@ -208,7 +254,7 @@ impl View {
     }
 
     /// A world point on the HUD and its depth, if it's in front of the near plane (FUN_0006e270).
-    fn project(&self, p: Vec3) -> Option<(Vec2, f32)> {
+    pub(super) fn project(&self, p: Vec3) -> Option<(Vec2, f32)> {
         let v = self.turn.inverse() * (p - self.at);
         let depth = -v.z;
         (depth > self.near).then(|| (Vec2::new(320.0 + v.x / depth / self.tan * 240.0, 240.0 - v.y / depth / self.tan * 240.0), depth))
@@ -285,13 +331,14 @@ struct LockGun {
     muzzle: Vec3,
 }
 
-/// FUN_00232520: how far a gun reaches for the lock, before game-options' share. Its range
-/// (FUN_002324c0: the bullet's `range` through the holder's skill, which the demo's leave as it
-/// is), x PELLET_REACH for a burst of pellets; a mesh projectile's adds its second timer x its
-/// speed, and its range again (MIRV_ON_EXPLODE) or APOGEE_REACH of it (MIRV_ON_APOGEE). The
-/// Therm Sweeper: 20 + 20 + 5 x 30 = 190 m (read live in #141), its lock 133 m.
-fn reach(def: &WeaponDef) -> f32 {
-    let range = def.range;
+/// FUN_00232520: how far a gun reaches for the lock in `u`'s hands, before game-options' share.
+/// Its range (FUN_002324c0: the bullet's `range` through the holder's skill, play_skills.rs
+/// `weapon_range`: Flint's rifles x1.25), x PELLET_REACH for a burst of pellets; a mesh
+/// projectile's adds its second timer x its speed, and its range again (MIRV_ON_EXPLODE) or
+/// APOGEE_REACH of it (MIRV_ON_APOGEE). The Therm Sweeper: 20 + 20 + 5 x 30 = 190 m (read live in
+/// #141), its lock 133 m.
+fn reach(u: &Player, def: &WeaponDef) -> f32 {
+    let range = skills::weapon_range(u, def);
     if def.shots.bullet_type != MESH_PROJECTILE {
         return if def.shots.burst_delay == 0.0 && def.shots.burst_count > 1 { range * PELLET_REACH } else { range };
     }
@@ -363,14 +410,17 @@ fn name(u: &Player) -> String {
     format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)))
 }
 
-/// The selection's lock this frame (see the module's notes, step 1); with `notes` (BF_RETICLE_LOG)
-/// a note on each hostile for the log, made only then.
+/// The selection's lock this frame and its aim point (see the module's notes, step 1); with
+/// `notes` (BF_RETICLE_LOG) a note on each hostile for the log, made only then.
 #[allow(clippy::too_many_arguments)]
 fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option<LockGun>, options: &ReticuleOptions,
-          kept: Option<Who>, mut notes: Option<&mut Vec<String>>) -> Option<Who> {
+          kept: Option<Who>, mut notes: Option<&mut Vec<String>>) -> Option<(Who, Vec3)> {
     // (FUN_000bf7a0 needs a gun in hand)
     let LockGun { lock_box, reach, muzzle } = gun?;
-    let half = Vec2::new(SCREEN.x * options.box_share * BOX_ASPECT, SCREEN.y * options.box_share) * 0.5 * lock_box;
+    // the box's shares of the screen: the reticle's own (0xc50b0), or the skill's while it puts
+    // its own in the selection (Flint's targeting's +0xc4, 0x13cd30)
+    let shares = skills::lock_shares(player).unwrap_or([options.box_share * BOX_ASPECT, options.box_share]);
+    let half = Vec2::new(SCREEN.x * shares[0], SCREEN.y * shares[1]) * 0.5 * lock_box;
     let (mut best_wide, mut best_score, mut best_cost) = (0.0, 0.0, COST_MAX);
     let mut lock = None;
     let along = view.through(centre);
@@ -411,7 +461,7 @@ fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option
         let cost = depth * (COST_BASE + COST_OFF * (1.0 - score));
         if cost < best_cost {
             best_cost = cost;
-            lock = Some(u.who());
+            lock = Some((u.who(), aim));
             note(&|| format!("{}: locks (score {score:.2}, {depth:.1} m deep)", place()));
         }
     }
@@ -420,37 +470,45 @@ fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option
 
 /// The reticle each frame (see the module's notes).
 #[allow(clippy::too_many_arguments)]
-fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, map: Res<MapLevel>,
-                  camera: Query<(&Transform, &Projection), With<MainCamera>>, mut reticle: ResMut<Reticle>) {
+pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, map: Res<MapLevel>,
+                  camera: Query<(&Transform, &Projection), With<MainCamera>>, mut reticle: ResMut<Reticle>, marker: Res<targeting::Marker>) {
+    // the alpha (FUN_000c6280): 0.9 through the skill's +0xfc, here the share it leaves of the
+    // marker's last fill (Flint's targeting: 1 - the fill), raised to the sRGB look of a fade as
+    // the marker's (a fade's share of the game's 229)
+    let share = skills::crosshair_alpha(&player, 1.0, marker.fill);
+    reticle.alpha = ALPHA * share.clamp(0.0, 1.0).powf(FADE_SRGB);
     let Ok((tr, Projection::Perspective(pp))) = camera.single() else { return };
     if player.dead || player.loaded.is_none() {
         reticle.tint = Tint::Blue;
         reticle.lock = None;
+        reticle.aim = None;
         reticle.kept = None;
         return;
     }
-    let view = View { at: tr.translation, turn: tr.rotation, tan: (pp.fov * 0.5).tan(), near: pp.near };
-    // the crosshair's centre on the HUD (FUN_000ab390: 0.4 of the height, game-options'
-    // h_1a504c05, the middle in the scope), as play_hud.rs draws it
-    let centre = Vec2::new(SCREEN.x * 0.5, SCREEN.y * 0.5 * (1.0 - CROSSHAIR_UP * (1.0 - player.scope)));
+    let view = View::of(tr, pp);
+    let centre = crosshair_centre(&player);
     let held = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).filter(|_| player.holding);
     let options = game.0.reticule;
     // the lock's reach and muzzle: the gun in hand's, or the second hand's when it reaches less
-    // (Tex's berserk, 0xbf82a-0xbf8aa); the box stays the gun in hand's (`LockGun`)
+    // (Tex's berserk, 0xbf82a-0xbf8aa); the box stays the gun in hand's (`LockGun`), its scale
+    // through the skill's +0x100 (FUN_000c5d20: Flint's targeting's 1.0)
     let second = player.second.and_then(|s| player.loaded.as_ref()?.weapons.get(s.weapon))
-        .and_then(|w| muzzle(&player, w, w.second_hand).map(|m| (options.lock_share * reach(&w.def), m)));
+        .and_then(|w| muzzle(&player, w, w.second_hand).map(|m| (options.lock_share * reach(&player, &w.def), m)));
     let gun = held.and_then(|w| muzzle(&player, w, w.in_hand).map(|m| {
-        let own = options.lock_share * reach(&w.def);
+        let own = options.lock_share * reach(&player, &w.def);
         let (r, at) = second.filter(|&(r, _)| r < own).unwrap_or((own, m));
-        LockGun { lock_box: w.def.lock_box, reach: r, muzzle: at }
+        LockGun { lock_box: skills::lock_box(&player, w.def.lock_box), reach: r, muzzle: at }
     }));
     // (BF_RETICLE_LOG: the notes on each hostile, made only for the log)
     let log = std::env::var("BF_RETICLE_LOG").ok();
     let mut notes = log.as_ref().map(|_| vec![]);
-    let chosen = select(&player, &squad, &view, centre, gun, &options, reticle.kept, notes.as_mut());
-    // the centre ray (0xc5720), cut at the gun's range (FUN_002324c0) or 256 m with none
-    let range = held.map_or(NO_GUN_RANGE, |w| w.def.range);
-    let under = under_ray(view.at, view.through(centre).normalize(), range, &squad);
+    let selected = select(&player, &squad, &view, centre, gun, &options, reticle.kept, notes.as_mut());
+    let chosen = selected.map(|s| s.0);
+    // the centre ray (0xc5720), cut at the gun's range in her hands (FUN_002324c0) or 256 m with
+    // none
+    let range = held.map_or(NO_GUN_RANGE, |w| skills::weapon_range(&player, &w.def));
+    let ray = view.through(centre).normalize();
+    let under = under_ray(view.at, ray, range, &squad);
     let level = map.0.as_ref();
     let mut state = Tint::Blue;
     let mut direct = None;
@@ -462,7 +520,7 @@ fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, m
                     // FUN_000bf550 holds: with no gun, in the scope (char+0x7a8) or when the lock's
                     // reach is past the gun's range (FUN_00232590 > FUN_002324c0), it's locked
                     let scoped = player.scope > 0.5;
-                    if held.is_none_or(|w| scoped || options.lock_share * reach(&w.def) > w.def.range) {
+                    if held.is_none_or(|w| scoped || options.lock_share * reach(&player, &w.def) > skills::weapon_range(&player, &w.def)) {
                         direct = Some(u.who());
                     }
                 } else {
@@ -486,6 +544,13 @@ fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, m
     reticle.kept = chosen;
     reticle.lock = chosen.or(direct);
     reticle.tint = if reticle.lock.is_some() { Tint::Red } else { state };
+    // the aim point the guns take with a lock (0xc5b90): the centre ray's point when it meets the
+    // locked body (0xc59fe; a lock under the centre always), else the selection's
+    let on_lock = match under {
+        Some((t, Under::Body(i))) if reticle.lock == Some(squad.0[i].who()) => Some(view.at + ray * t),
+        _ => None,
+    };
+    reticle.aim = on_lock.or(selected.map(|s| s.1));
     // BF_RETICLE_LOG: on a change of the tint, the lock or what the centre ray is on (2: every
     // frame)
     let (Some(log), Some(notes)) = (log, notes) else { return };
@@ -513,7 +578,6 @@ fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, m
         Some((t, Under::Object(None))) => format!("the world at {t:.1} m"),
         None => format!("nothing within {range:.0} m"),
     };
-    let ray = view.through(centre).normalize();
     println!("t {:.2}: reticle {:?}: lock {locked}; centre on {what}; {}; camera at {:.2}, its ray heading {:.1} pitch {:.1} degrees",
              player.sim_time, reticle.tint, if notes.is_empty() { "no hostile".into() } else { notes.join("; ") }, view.at,
              (-ray.x).atan2(-ray.z).to_degrees(), ray.y.asin().to_degrees());

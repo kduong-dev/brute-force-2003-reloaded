@@ -871,6 +871,13 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
     }
 }
 
+/// The factor the shooter `who`'s skill puts on one roll of its missile's (FUN_0022c940 asks a
+/// character shooter's skill, +0xec: Flint's doubled and scoped rolls, play_skills.rs
+/// `roll_factor`), each roll its own; 1 once the shooter is gone.
+fn shooter_skill(player: &mut Player, squad: &mut Squad, who: Who) -> f32 {
+    unit_mut(player, squad, who).map_or(1.0, |(u, _)| super::skills::roll_factor(u))
+}
+
 /// A missile going off (`Blow`): unless it ended without a blast, its explosion effect type
 /// (the ALE effects and light at the point, turned along its way for a collision, and its
 /// sounds), the bullet's impact sound, the direct hit's damage on the body it struck
@@ -932,7 +939,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     // the scenery applies its damage-type factor), then the blast's share too
     if let Some(target) = bl.breakable {
         let (lo, hi) = (def.damage_min.min(def.damage), def.damage);
-        let roll = lo + (hi - lo) * state.random();
+        let roll = (lo + (hi - lo) * state.random()) * shooter_skill(player, squad, bl.owner);
         hits.0.push(super::scenery::ObjectHit { target, amount: roll, damage_type: def.damage_type, at: bl.at, dir: bl.dir });
         if log {
             println!("t {now:.2}: missile {} direct hit: breakable {target} takes a roll of {roll:.1}", bl.id);
@@ -942,15 +949,17 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         mines.strike(e, 0.0, 1.0, now);
     }
     let (lo, hi) = (def.damage_min.min(def.damage), def.damage);
-    // the direct hit (FUN_0022c4d0 with no blast object): a roll, now, x the hit-location
-    // factor (FUN_00125940 at 0x227a03: the victim type's damage-multiplier x the struck part's
-    // bone's Damage; the missile's own +0x1cc is 1.0), x0.7 on its own side, then the victim's
-    // step and damage-type factor (play_damage.rs). The part: along the missile's way into the
-    // body from STRUCK_BACK m before the contact
+    // the direct hit (FUN_0022c4d0 with no blast object): a roll, now, x the shooter's skill's
+    // factor (`shooter_skill`), x the hit-location factor (FUN_00125940 at 0x227a03: the victim
+    // type's damage-multiplier x the struck part's bone's Damage; the missile's own +0x1cc is
+    // 1.0), x0.7 on its own side, then the victim's step and damage-type factor
+    // (play_damage.rs). The part: along the missile's way into the body from STRUCK_BACK m before
+    // the contact
+    let factor = if bl.struck.is_some() { shooter_skill(player, squad, bl.owner) } else { 1.0 };
     if let Some((u, controlled)) = bl.struck.and_then(|w| unit_mut(player, squad, w)) {
         let roll = lo + (hi - lo) * state.random();
         let bone = damage::struck_bone(u, game, bl.at - bl.dir * STRUCK_BACK, bl.dir, STRUCK_BACK);
-        let mut hit = damage::Hit::new(roll, "roll", def.damage_type).by(bl.owner, bl.team, u).struck(u, game, bone);
+        let mut hit = damage::Hit::new(roll, "roll", def.damage_type).skill(factor).by(bl.owner, bl.team, u).struck(u, game, bone);
         let amount = hit.land(u, game, difficulty, now);
         // (the test map's instant kill: anyone but the player, from the player's missiles)
         let amount = if instant && bl.human && !controlled { u.health.max(amount) } else { amount };
@@ -971,8 +980,9 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     if radius <= 0.0 || def.damage <= 0.0 {
         return;
     }
-    // the blast object (FUN_0022bfc0): its own roll, dealt after its delay (`deal_blasts`)
-    let roll = lo + (hi - lo) * state.random();
+    // the blast object (FUN_0022bfc0): its own roll (x the shooter's skill's factor, its own:
+    // FUN_0022c940 again), dealt after its delay (`deal_blasts`)
+    let roll = (lo + (hi - lo) * state.random()) * shooter_skill(player, squad, bl.owner);
     let left = BLAST_DELAY + BLAST_DELAY_MORE * state.random();
     let eye = bl.at + bl.surface.unwrap_or(Vec3::Y) * COVER_LIFT;
     state.blasts.push(PendingBlast { left, at, eye, weapon: bl.weapon, roll, owner: bl.owner, team: bl.team, id: bl.id });

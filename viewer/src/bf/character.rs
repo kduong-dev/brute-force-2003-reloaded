@@ -71,6 +71,10 @@ const H_INVBIND: u32 = 0xE4B8_22AF;
 const H_JOINT: u32 = 0x151A_CE78;
 const H_PALETTE: u32 = 0xF133_0520;
 const H_DRAW: u32 = 0xFDE5_0E9F;
+/// A mesh geoset's bounding sphere: its radius attribute and its centre child (the names of an
+/// archetype's and an effect type's alike; `Character::bounds`).
+const H_GEOSET_RADIUS: u32 = 0x1AB0_9530;
+const H_GEOSET_CENTRE: u32 = H_ARCHETYPE_CENTRE;
 const H_INTERVAL: u32 = 0xF63F_0F49;
 /// First clip of every '<name>face' set: closed, relaxed mouth. Human faces are modelled
 /// mid-speech, so the game always layers a face clip; this one is the neutral default.
@@ -223,6 +227,10 @@ pub struct Game {
     pub reticule: ReticuleOptions,
     /// game-options `<combat-skills>`: the skills' own tuning (see `CombatSkills`)
     pub combat_skills: CombatSkills,
+    /// game-options' HUD `<main h_e72ec57a h_1d9f07c5>`: the screen's safe margins across and
+    /// down, 48 and 36 HUD units (7.5% of 640 x 480): the HUD keeps its widgets 3 units inside
+    /// them (FUN_000b2770 and its three neighbours; Flint's targeting marker, play_targeting.rs)
+    pub hud_safe: [f32; 2],
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
     /// `ChatterBlock`; play_skills.rs's skill lines go through it)
     pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
@@ -336,11 +344,50 @@ pub struct CombatSkills {
     /// empty, 0.5 (settings +0x25c, which his constructor FUN_0013d440 copies to skill+0x24 at
     /// 0x13d475 and his drain 0x13d720 multiplies by; take05 measured -2.22/s, then -1.12/s)
     pub berserk_empty_drain: f32,
+    /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
+    pub tracking: Tracking,
 }
 
 impl Default for CombatSkills {
     fn default() -> Self {
-        CombatSkills { berserk_empty_drain: 0.5 }
+        CombatSkills { berserk_empty_drain: 0.5, tracking: Tracking::default() }
+    }
+}
+
+/// Flint's `<combat-skills>` block h_0725cdb1 (line 162 of the decoded game-options-en.xml): its
+/// attribute handler 0x19e450 stores each in the settings, and her skill's constructor
+/// FUN_0013c9e0 copies them into the skill (0x13ca13-0x13cab9). The defaults are the shipped
+/// file's. (Its h_1b947b90, the tracking-reticule-speed 2 at settings +0x2b0 -> skill+0x38, only
+/// moves the hidden crosshair, play_skills.rs `Targeting`; h_f192e10e names the marker's HUD
+/// widget, h_121cf7bb, settings +0x2b4: both left out.)
+#[derive(Clone, Copy, Debug)]
+pub struct Tracking {
+    /// tracking-weapon-type (h_108b56f9, settings +0x29c -> skill+0x44, parsed as a WTYPE_ name or
+    /// number, FUN_00186e80): 1, WTYPE_RIFLE. Switched on with a gun of this class in hand, the
+    /// toggle marks skill+0x48 and asks for motion type 45 (0x13cbbc-0x13cbd5)
+    pub weapon_type: i64,
+    /// h_108f0925 (+0x2a4 -> skill+0x24) and h_081520f0 (+0x2a0 -> skill+0x28): 0.4 and 0.4,
+    /// the crosshair's lock box as shares of the screen's width and height while on (0x13cd30
+    /// writes them into the target selection's +0x2c / +0x30; the marker's wide box is the same,
+    /// 0xb4b14 / 0xb4b49)
+    pub box_shares: [f32; 2],
+    /// h_18bf34d4 (+0x2a8 -> skill+0x2c): 0.15, the chance of a doubled roll while on (0x13cc70)
+    pub double_chance: f32,
+    /// h_fe103e1b (+0x2ac -> skill+0x30): 2, that roll's factor
+    pub double_factor: f32,
+    /// h_191dafb6 (+0x2b8 -> skill+0x34): 1.5, the roll's factor while scoped, on or off
+    pub scope_factor: f32,
+    /// h_ec0b2194 (+0x2bc -> skill+0x3c): 1, WTYPE_RIFLE, the class whose range the skill
+    /// lengthens (0x13ce80)
+    pub range_weapon_type: i64,
+    /// h_f82a974c (+0x2c0 -> skill+0x40): 1.25, that range's factor
+    pub range_factor: f32,
+}
+
+impl Default for Tracking {
+    fn default() -> Self {
+        Tracking { weapon_type: 1, box_shares: [0.4, 0.4], double_chance: 0.15, double_factor: 2.0, scope_factor: 1.5,
+                   range_weapon_type: 1, range_factor: 1.25 }
     }
 }
 
@@ -349,6 +396,25 @@ impl Default for CombatSkills {
 const H_COMBAT_SKILLS: u32 = 0xF7BC_2603;
 const H_BERSERKER_BLOCK: u32 = 0x04AA_86AA;
 const H_BERSERK_EMPTY_DRAIN: u32 = 0x1469_A0DF;
+/// Flint's block in `<combat-skills>` and its attributes (`Tracking`; tracking-weapon-type and
+/// weapon-range-modifier recovered by hashing, the rest not).
+const H_TRACKING_BLOCK: u32 = 0x0725_CDB1;
+const H_TRACKING_WEAPON_TYPE: u32 = 0x108B_56F9;
+const H_TRACKING_BOX_X: u32 = 0x108F_0925;
+const H_TRACKING_BOX_Y: u32 = 0x0815_20F0;
+const H_DOUBLE_CHANCE: u32 = 0x18BF_34D4;
+const H_DOUBLE_FACTOR: u32 = 0xFE10_3E1B;
+const H_SCOPE_FACTOR: u32 = 0x191D_AFB6;
+const H_RANGE_WEAPON_TYPE: u32 = 0xEC0B_2194;
+const H_RANGE_FACTOR: u32 = 0xF82A_974C;
+
+/// game-options' HUD `<main>` block (line 122 of the decoded game-options-en.xml, in the HUD's
+/// h_06c98fbe beside `<reticule>`): its attribute handler (0x19d5ef, 0x19d61e) stores h_1d9f07c5
+/// at settings +0x128 and h_e72ec57a at +0x12c, which the HUD copies to its +0x1374 / +0x1378
+/// (0xb8b06-0xb8b0f; its constructor's own 30 / 40 at 0xb8aae are overwritten): the screen's
+/// safe margins in HUD units, down and across (`Game::hud_safe`).
+const H_HUD_SAFE_Y: u32 = 0x1D9F_07C5;
+const H_HUD_SAFE_X: u32 = 0xE72E_C57A;
 
 impl Default for ReticuleOptions {
     fn default() -> Self {
@@ -719,6 +785,7 @@ impl Game {
             difficulty_settings: None,
             reticule: ReticuleOptions::default(),
             combat_skills: CombatSkills::default(),
+            hud_safe: [48.0, 36.0],
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
             character_types: HashMap::new(),
@@ -857,9 +924,28 @@ impl Game {
                 };
             }
             // the skills' tuning: <h_f7bc2603><h_04aa86aa h_1469a0df="0.5"/>.. (CombatSkills)
-            if let Some(tex) = root.walk().into_iter().find(|e| e.name == H_COMBAT_SKILLS).and_then(|c| c.child(H_BERSERKER_BLOCK)) {
+            let skills = root.walk().into_iter().find(|e| e.name == H_COMBAT_SKILLS);
+            if let Some(tex) = skills.and_then(|c| c.child(H_BERSERKER_BLOCK)) {
                 let num = |k: u32| tex.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
                 self.combat_skills.berserk_empty_drain = num(H_BERSERK_EMPTY_DRAIN).unwrap_or(self.combat_skills.berserk_empty_drain);
+            }
+            // Flint's: <h_0725cdb1 h_108b56f9="1" .. h_f82a974c="1.25"/> (Tracking)
+            if let Some(b) = skills.and_then(|c| c.child(H_TRACKING_BLOCK)) {
+                let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                let int = |k: u32| b.attr(k).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                let t = &mut self.combat_skills.tracking;
+                t.weapon_type = int(H_TRACKING_WEAPON_TYPE).unwrap_or(t.weapon_type);
+                t.box_shares = [num(H_TRACKING_BOX_X).unwrap_or(t.box_shares[0]), num(H_TRACKING_BOX_Y).unwrap_or(t.box_shares[1])];
+                t.double_chance = num(H_DOUBLE_CHANCE).unwrap_or(t.double_chance);
+                t.double_factor = num(H_DOUBLE_FACTOR).unwrap_or(t.double_factor);
+                t.scope_factor = num(H_SCOPE_FACTOR).unwrap_or(t.scope_factor);
+                t.range_weapon_type = int(H_RANGE_WEAPON_TYPE).unwrap_or(t.range_weapon_type);
+                t.range_factor = num(H_RANGE_FACTOR).unwrap_or(t.range_factor);
+            }
+            // the HUD's safe margins: <main h_1d9f07c5="36" h_e72ec57a="48"> (Game::hud_safe)
+            if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {
+                let num = |k: u32| m.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                self.hud_safe = [num(H_HUD_SAFE_X).unwrap_or(self.hud_safe[0]), num(H_HUD_SAFE_Y).unwrap_or(self.hud_safe[1])];
             }
         }
         if let Some(root) = self.parse(ar, "string-table-en.xmb")? {
@@ -1547,6 +1633,25 @@ pub struct Character {
     /// makes a character's hit parts of (FUN_00114d00 builds each from the part's node), which
     /// a shot strikes (FUN_00115000 gives the part's bone)
     pub part_collision: Vec<Vec<[Vec3; 3]>>,
+    /// its bounding sphere in the model's frame (centre, radius): the union (FUN_002364a0, the
+    /// smallest sphere round both) of its skin mesh's geosets' spheres, each `<geoset
+    /// h_1ab09530>` radius round its `<h_e99750a9>` centre (the e34 Shrike Heavy's 1.24 m). The
+    /// game's object sphere (FUN_00022bc0 -> FUN_00236670) is the union of the model's pieces',
+    /// the posed bones' parts' too (not added: the skin's dominates). None without them
+    pub bounds: Option<(Vec3, f32)>,
+}
+
+/// FUN_002364a0: the smallest sphere round sphere `a` and sphere `b` (centre, radius).
+pub fn sphere_union(a: (Vec3, f32), b: (Vec3, f32)) -> (Vec3, f32) {
+    let d = a.0.distance(b.0);
+    if (b.1 - a.1).abs() < d {
+        let k = (b.1 - a.1) / d;
+        ((a.0 + b.0 + (b.0 - a.0) * k) * 0.5, (d + a.1 + b.1) * 0.5)
+    } else if a.1 < b.1 {
+        b
+    } else {
+        a
+    }
 }
 
 /// Rows-convention rotation (child rows = L * parent rows) -> quaternion of the column matrix L^T.
@@ -1645,11 +1750,19 @@ impl Character {
             .collect();
         let mut geosets = vec![];
         let mut rigid = vec![];
+        let mut bounds: Option<(Vec3, f32)> = None;
         for g in mesh.walk().into_iter().filter(|e| e.name == h("geoset")) {
             let rec = g.walk().into_iter().find(|e| e.name == H_DRAW).ok_or("geoset without draw record")?;
             let (gs, is_rigid) = read_geoset(rec, ivd, &palettes, hash_of(g.attr(h("material-name"))))?;
             rigid.push(is_rigid);
             geosets.push(gs);
+            // its bounding sphere: <geoset h_1ab09530=radius><h_e99750a9>centre</h_e99750a9>
+            let radius = g.attr(H_GEOSET_RADIUS).and_then(|v| v.as_f32());
+            let centre = g.child(H_GEOSET_CENTRE).and_then(|e| e.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
+                .map(|f| Vec3::new(f[0], f[1], f[2]));
+            if let (Some(r), Some(c)) = (radius.filter(|&r| r > 0.0), centre) {
+                bounds = Some(bounds.map_or((c, r), |b| sphere_union(b, (c, r))));
+            }
         }
         attach_rigid(&mut geosets, &rigid);
 
@@ -1663,7 +1776,7 @@ impl Character {
         let default_face = face_anims.iter().position(|a| a.name == NEUTRAL_FACE)
             .or(if face_anims.is_empty() { None } else { Some(0) });
         Ok(Character { bones, parent, bind_rows, bind_pos, parent_point, child_point,
-                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision })
+                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision, bounds })
     }
 
     /// Index of the animation whose (hashed) name is `script`, e.g. "Sc_w1_run".

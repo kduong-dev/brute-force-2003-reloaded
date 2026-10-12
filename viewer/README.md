@@ -18,7 +18,7 @@ and how it was checked):
 | [docs/maps.md](docs/maps.md) | playing on a level: spawning, collision, doors and gates, HUD text, movement, music, shots, look, power-ups |
 | [docs/squad.md](docs/squad.md) | the squad: follow AI, standing on the floor, scopes, hand-over, hits, deaths, the death camera |
 | [docs/character-types.md](docs/character-types.md) | character types from the data (#128): every type by its `<base name>`, motion sets and their clips, placements and teams, flesh; what play keys by type; `BF_DUMP_TYPES` |
-| [docs/skills.md](docs/skills.md) | special skills: stamina, the skill toggle (V), its sounds, chatter and HUD (the blue bar's colours, trail and blink, the skill's name), the interface the four skills plug into, and Tex's Berserker (his second gun, its fire, the berserk motions, what ends it) |
+| [docs/skills.md](docs/skills.md) | special skills: stamina, the skill toggle (V), its sounds, chatter and HUD (the blue bar's colours, trail and blink, the skill's name), the interface the four skills plug into, Tex's Berserker (his second gun, its fire, the berserk motions, what ends it) and Flint's Advanced Targeting (the lock box, the targeting marker, the sniper motions, her doubled and scoped rolls, the rifle's range) |
 | [docs/grenades.md](docs/grenades.md) | grenades: throwing and placing, blasts and damage, Gas, Sentry, Light, Sonic, Energy |
 | [docs/pickups.md](docs/pickups.md) | health pickups and the item box |
 | [docs/scenery.md](docs/scenery.md) | interactive scenery: barrels, racks and crates that break, explode and chain |

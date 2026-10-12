@@ -30,6 +30,13 @@
 //!    (Q, the game's Y) and the reload key (R, the game's X) end it instead of switching or
 //!    reloading. While it's on no other overlay starts: no reload, switch, throw or item use
 //!    (`overlays_blocked`).
+//!  - **Flint's Advanced Targeting** (#124, `Targeting`): on and off at the press (with a rifle
+//!    her motions become the sniper set, play.rs `SpecialClips`), while on the crosshair's lock box
+//!    grows to 0.4 of the screen (play_reticle.rs), so the guns, which aim at the lock, find the
+//!    enemies near the crosshair; her HUD marker shows the box or the locked target
+//!    (play_targeting.rs) and the crosshair fades out. Her rolls are doubled 15% of the time while
+//!    on and x1.5 scoped (play_damage.rs), her rifles reach x1.25, she walks, and the empty clip,
+//!    the switch key and the reload key end it.
 //!
 //! Squad deathmatch maps (`sdm_*`) take the deathmatch squad's rates (play.rs `load_map`,
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
@@ -37,11 +44,13 @@
 //! Test hooks: `BF_TEST_SKILL=<s>[,<s>...]` presses the skill key at those times;
 //! `BF_TEST_STAMINA=<n>[@<s>][,...]` sets the controlled character's stamina (at those times,
 //! at the start without one); `BF_SKILL_CHATTER=<percent>` sets the skill lines' chance (100:
-//! every time); `BF_SKILL_LOG=1` logs each command, switch, sound and line, Tex's top-ups,
-//! refusals and second gun, and every character's stamina each half second.
+//! every time); `BF_TEST_DOUBLE=<percent>` sets the chance of Flint's doubled rolls (100: every
+//! one); `BF_SKILL_LOG=1` logs each command, switch, sound and line, Tex's top-ups, refusals and
+//! second gun, Flint's refusals, rifle mark and doubled rolls, and every character's stamina each
+//! half second.
 
 use super::*;
-use bf_viewer::bf::character::{CombatSkills, SkillData};
+use bf_viewer::bf::character::{CombatSkills, SkillData, Tracking};
 
 /// Squad deathmatch's Brute Force squad library (game-options-en.xml line 84, `<squad
 /// h_fed0689a="mp_tex mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`): the rates sdm maps
@@ -100,6 +109,15 @@ const NAME_BERSERKER: u32 = 0x0DEE_4365;
 const NAME_VENGAR: u32 = 0x055B_624B;
 const NAME_STEALTH: u32 = 0xEC52_79A7;
 const NAME_TARGETING: u32 = 0x19E6_36BD;
+/// Flint's +0x38 while on (0x13ceb0, 0.55 at 0x3a5208): the movement (FUN_001195c0) takes the
+/// smaller of the stick's length and this, as it caps a scoped character's at 0.55 (0x11962e).
+const TARGETING_MOVE_CAP: f32 = 0.55;
+/// FUN_001195c0: a stick length under this moves at the walk (0.65, the compare after the caps);
+/// the demo's walk key stands for it (`move_capped`).
+const RUN_FROM: f32 = 0.65;
+/// The lock box's scale Flint's +0x100 gives while on (0x13cd1d: 1.0 at 0x3a4f78), in place of
+/// the gun's own h_e1e41c2d (the L-Shot-75's 0.1, the Jax-iP's 0.6).
+const TARGETING_LOCK_BOX: f32 = 1.0;
 
 /// What a skill's toggle makes of the command (the skill's vtable +0x04). In the game the toggle
 /// switches the skill itself or not, and its return picks the motion (the command handler,
@@ -163,6 +181,69 @@ pub trait SkillKind: Send + Sync {
     fn lets_overlays_play(&self) -> bool {
         true
     }
+    /// Whether the character may start an action now: the last word of FUN_00117210, which ends
+    /// by asking the skill's vtable +0x14. The game asks it before a reload starts (FUN_00120d40,
+    /// 0x120e16), a weapon switch (FUN_0011e130, 0x11e135; CT_TOGGLE_WEAPON, 0x12259a), an item
+    /// use other than IOU_JUST_USE (FUN_001210c0, 0x121139: a grenade thrown or placed, the
+    /// medkit, IOU_USE_IN_HAND), a melee attack (CT_ATTACK, 0x1226d2) and Tex's and Hawk's
+    /// toggles. Tex's, Brutus's and Hawk's say yes (0x213690); Flint's (0x13b980) only while her
+    /// skill is off.
+    fn lets_act(&self, _u: &Player) -> bool {
+        true
+    }
+    /// The shooter's own factor on a damage roll (vtable +0xec: the roll FUN_0022c940 asks a
+    /// character shooter's skill at 0x22c9a3, a blast's roll too). The base's 1.0 (0x10e3d0);
+    /// Flint's (0x13cc70) doubles some while on and gives x1.5 scoped.
+    fn roll_factor(&mut self, _u: &mut Player) -> f32 {
+        1.0
+    }
+    /// A gun's range in the character's hands, `range` its bullet's (vtable +0x54, asked by
+    /// FUN_002324c0 for the shot's ray, the falloff, the crosshair's centre ray and the lock's
+    /// reach). The base leaves it (0x10e3a0); Flint's lengthens her rifles' (0x13ce80).
+    fn range(&self, _u: &Player, _def: &WeaponDef, range: f32) -> f32 {
+        range
+    }
+    /// The most of the move stick's length the character goes by, `m` the length (vtable +0x38,
+    /// asked by the movement FUN_001195c0 at 0x119668, which keeps the smaller). The base passes
+    /// it on (0x10e8f0); Flint's caps it while on.
+    fn move_cap(&self, _u: &Player, m: f32) -> f32 {
+        m
+    }
+    /// The crosshair's lock box scale, `scale` the gun's h_e1e41c2d (vtable +0x100, asked by
+    /// FUN_000c5d20 at 0xc5d82 each frame, 0x11cfd5). The base passes it on (0x10e8f0); Flint's
+    /// is 1.0 while on.
+    fn lock_box(&self, _u: &Player, scale: f32) -> f32 {
+        scale
+    }
+    /// The lock box's shares of the screen's width and height that the skill puts in the target
+    /// selection (vtable +0xc4, which the selection runs for the controlled character's skill each
+    /// frame, 0xbd0c6); None leaves the reticle's own (0.14 x 0.75 and 0.14, play_reticle.rs).
+    /// The base's +0xc4 does nothing (0x2894f0); Flint's (0x13cd30) writes hers while on and the
+    /// reticle's own back while off.
+    fn lock_shares(&self, _u: &Player) -> Option<[f32; 2]> {
+        None
+    }
+    /// The crosshair's alpha, `alpha` the reticle's 0.9 and `fill` the skill's marker's fill
+    /// (vtable +0xfc, asked by FUN_000c6280 at 0xc62a7). The base passes it on (0x10e8f0);
+    /// Flint's fades it out as her marker fills.
+    fn crosshair_alpha(&self, _u: &Player, alpha: f32, _fill: f32) -> f32 {
+        alpha
+    }
+    /// Whether the skill has the targeting marker, the HUD widget h_121cf7bb its +0xc4 makes for
+    /// the controlled character (0x13cd74; play_targeting.rs): Flint's only.
+    fn has_marker(&self) -> bool {
+        false
+    }
+    /// Whether the skill keeps the gun raised now (FUN_00123ea0 every frame: Flint's update
+    /// 0x13cbf0 while on), which the demo shows as the ready pose without the aiming camera.
+    fn keeps_gun_up(&self, _u: &Player) -> bool {
+        false
+    }
+    /// Whether the scope is barred now: the demo's choice for Tex's berserk motions (see
+    /// `Berserker`), none of the game's.
+    fn bars_scope(&self, _u: &Player) -> bool {
+        false
+    }
 }
 
 /// A character's special skill: what the game's skill base class holds (on, the toggle under
@@ -190,6 +271,10 @@ pub struct Skill {
     /// FUN_0011c100 from the character update). Only the skill lines use it so far; it's here,
     /// not on `Player`, for that reason alone.
     pub replay: HashMap<u32, f32>,
+    /// a roll was doubled since the targeting marker last looked (Flint's +0xec sets its marker's
+    /// flag 4, 0x13ccd2; the marker's corners show it for a frame and its update clears it,
+    /// 0xb49cd: play_targeting.rs)
+    pub double_hit: bool,
 }
 
 impl Skill {
@@ -201,7 +286,7 @@ impl Skill {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
             Some(CSKILL_BRUTUS) => Some(Box::new(Vengar)),
             Some(CSKILL_HAWK) => Some(Box::new(Stealth)),
-            Some(CSKILL_FLINT) => Some(Box::new(Targeting)),
+            Some(CSKILL_FLINT) => Some(Box::new(Targeting { rifle: false, cfg: settings.tracking })),
             _ => None,
         };
         Skill { data: data.cloned().filter(|_| kind.is_some()), kind, ..default() }
@@ -236,12 +321,21 @@ impl Toggling {
 
 /// Whether `u` is free to start a toggle (FUN_00117210: no action in the slot char+0x214 or a
 /// finished one, +0x225 clear, alive, no item held in +0x1fc / +0x200 of kind 0x2e or flagged
-/// +0x252 bit 1). In the demo: alive, not knocked down, no grenade held (charging, `charge`) and
-/// no reload, throw, medkit, weapon switch or toggle under way. Only Tex's toggle (switching on,
-/// 0x13d5c4) and Hawk's (0x13cfd2) ask it; Brutus's (0x13bfe0) and Flint's (0x13cad0) don't.
+/// +0x252 bit 1, then the skill's +0x14, `lets_act`). In the demo: alive, not knocked down, no
+/// grenade held (charging, `charge`), no reload, throw, medkit, weapon switch or toggle under way,
+/// and the skill's word. Only Tex's toggle (switching on, 0x13d5c4) and Hawk's (0x13cfd2) ask it;
+/// Brutus's (0x13bfe0) and Flint's (0x13cad0) don't.
 pub fn free_to_act(u: &Player) -> bool {
     !u.dead && !knocked_down(u) && u.charge <= 0.0 && u.reloading.is_none() && u.throwing.is_none() && u.using.is_none()
-        && u.switching.is_none() && u.skill.toggling.is_none()
+        && u.switching.is_none() && u.skill.toggling.is_none() && lets_act(u)
+}
+
+/// Whether `u`'s skill lets `u` start an action now (`SkillKind::lets_act`, the skill's +0x14 that
+/// FUN_00117210 ends with): not while Flint's Advanced Targeting is on. A reload, a weapon switch,
+/// a grenade thrown or placed and the medkit wait for it (play_ammo.rs, play.rs,
+/// play_pickups.rs).
+pub fn lets_act(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_none_or(|k| k.lets_act(u))
 }
 
 /// Whether `u` has the stamina switching on needs (FUN_0010e560's check, the one FUN_0010e470
@@ -261,6 +355,70 @@ pub fn overlays_blocked(u: &Player) -> bool {
 /// (`SkillKind::ended_by_actions`).
 pub fn ended_by_actions(u: &Player) -> bool {
     u.skill.on && u.skill.kind.as_ref().is_some_and(|k| k.ended_by_actions())
+}
+
+/// The factor `u`'s skill puts on a damage roll `u` makes (FUN_0022c940 asks a character
+/// shooter's skill, +0xec, after the roll of Damage min..max: play_damage.rs `Hit::roll`); 1
+/// without a skill.
+pub fn roll_factor(u: &mut Player) -> f32 {
+    let Some(mut k) = u.skill.kind.take() else { return 1.0 };
+    let f = k.roll_factor(u);
+    u.skill.kind = Some(k);
+    f
+}
+
+/// How far gun `def` reaches in `u`'s hands (FUN_002324c0: the bullet's range through the
+/// holder's skill, +0x54): the shot's ray and its falloff (play.rs), the crosshair's centre ray
+/// and the lock's reach (play_reticle.rs).
+pub fn weapon_range(u: &Player, def: &WeaponDef) -> f32 {
+    u.skill.kind.as_ref().map_or(def.range, |k| k.range(u, def, def.range))
+}
+
+/// Whether `u`'s skill holds the move stick under the run (FUN_001195c0 takes the smaller of the
+/// stick and the skill's +0x38; under RUN_FROM the character walks): the demo's walk then, and
+/// no sprint, as in the scope.
+pub fn move_capped(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.move_cap(u, 1.0) < RUN_FROM)
+}
+
+/// The crosshair's lock box scale for `u`, `scale` the gun's (FUN_000c5d20 through the skill's
+/// +0x100).
+pub fn lock_box(u: &Player, scale: f32) -> f32 {
+    u.skill.kind.as_ref().map_or(scale, |k| k.lock_box(u, scale))
+}
+
+/// The lock box's shares of the screen `u`'s skill puts in the target selection, if it does
+/// (`SkillKind::lock_shares`).
+pub fn lock_shares(u: &Player) -> Option<[f32; 2]> {
+    u.skill.kind.as_ref().and_then(|k| k.lock_shares(u))
+}
+
+/// The crosshair's alpha for `u` (FUN_000c6280 through the skill's +0xfc), `fill` the
+/// targeting marker's.
+pub fn crosshair_alpha(u: &Player, alpha: f32, fill: f32) -> f32 {
+    u.skill.kind.as_ref().map_or(alpha, |k| k.crosshair_alpha(u, alpha, fill))
+}
+
+/// Whether `u`'s skill has the targeting marker (Flint's; play_targeting.rs).
+pub fn has_marker(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.has_marker())
+}
+
+/// Whether `u`'s skill keeps the gun raised now (`SkillKind::keeps_gun_up`): play.rs shows the
+/// ready pose.
+pub fn keeps_gun_up(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.keeps_gun_up(u))
+}
+
+/// Whether `u`'s skill bars the scope now (`SkillKind::bars_scope`, the demo's).
+pub fn bars_scope(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.bars_scope(u))
+}
+
+/// The gun in `u`'s hand (FUN_0014d2e0, inventory +0x164): its data, while one is held (not
+/// between a switch's drop and grab).
+fn gun_in_hand(u: &Player) -> Option<&WeaponDef> {
+    u.loaded.as_ref().and_then(|l| l.weapons.get(u.weapon)).filter(|_| u.holding).map(|w| &w.def)
 }
 
 /// The gun of `u`'s other weapon slot, the one berserk draws into the second hand: FUN_0014d090
@@ -431,6 +589,12 @@ impl SkillKind for Berserker {
     fn lets_overlays_play(&self) -> bool {
         false
     }
+
+    /// No scope from the accepted press (his berserk motions; the second gun, play.rs
+    /// `follow_camera`, until it's stowed): the demo's choice until #35's shot T2.
+    fn bars_scope(&self, u: &Player) -> bool {
+        u.skill.special_motions
+    }
 }
 
 /// Brutus's Spirit of Vengar (CSKILL_BRUTUS; skill vtable 0x39d678, toggle FUN_0013bfe0): on or
@@ -478,20 +642,182 @@ impl SkillKind for Stealth {
     }
 }
 
-/// Flint's Advanced Targeting (CSKILL_FLINT; skill vtable 0x39d2c8, toggle FUN_0013cad0): on or
-/// off at the press (takes 15-17, 29, 31), no overlay (her motion set has none; with a rifle
-/// the toggle returns 2, MT_TOGGLE_SPECIAL, which never showed in the takes). Her toggle makes
-/// its own checks, not FUN_00117210's; they, its need of a gun with rounds in hand, the marker,
-/// aim and damage are #124's.
-struct Targeting;
+/// Whether `u`'s current motion has a motion type 45 transition, which Flint's toggle needs
+/// either way (the motion record at char+0x1fc, its +0x534, 0x13caf3-0x13cb09): in ms_flint.xml
+/// her idles, walk, run, side and back steps, dash, crouch idle and crouch walks have one, and the
+/// sniper motions one back; the stand-to-crouch and back (MT 46), the jumps, dodges, dive, slide
+/// and the throw have none. So not getting down or up, in a jump, a dodge, a dive or a slide, nor
+/// knocked down.
+fn sniper_transition(u: &Player) -> bool {
+    matches!(u.action, Action::None | Action::Crouched) && !u.slide_on && !knocked_down(u)
+}
+
+/// Flint's Advanced Targeting (CSKILL_FLINT; skill vtable 0x39d2c8, constructor FUN_0013c9e0,
+/// the tuning `Tracking`, game-options' block h_0725cdb1): "Automatically targets enemies."
+///
+///  - **The toggle** (FUN_0013cad0), on or off at the press (takes 15-17, 29, 31: in the first
+///    log sample after it), no overlay: refused unless her motion has a motion type 45
+///    transition (`sniper_transition`). Off: the deactivate. On: refused with a gun in the second
+///    hand, without a gun in hand, or with its clip empty (0x13cb70-0x13cbaf); then the activate
+///    (10%), and `on`. Its own other refusals (char+0x748 bit 3, a motion state of 0, and the
+///    motion record's +0x250 / +0x252 flags with both action slots busy, 0x13cad8-0x13cb46) aren't
+///    modelled: what sets them isn't traced.
+///  - **On**: with a gun of the tracking class in hand (`Tracking::weapon_type`, the rifle) the
+///    toggle marks skill+0x48 and returns 2, motion type 45 (0x13cbbc-0x13cbd5): her motions
+///    become the sniper set (play.rs `SpecialClips`: `Sc_w1_sniper_idle` and the `Sc_w1_sn_*`
+///    walks; take15 2.5 s, the L-Shot raised to the shoulder). The motion state stays 19, an idle,
+///    which is why the takes' logs never showed 45. Otherwise it raises the gun (FUN_00123ea0) and
+///    returns 0.
+///  - **Off**: the toggle returns 2 again when the mark is set (0x13cb64-0x13cb6c): her own
+///    motions back.
+///  - **Update** (0x13cbf0), while on: the gun kept raised (FUN_00123ea0 every frame), and the
+///    gun in hand's clip at 0 sends the toggle (take29: off in the tick the clip read 0, before
+///    the reload).
+///  - **The crosshair's lock** (+0x100 and +0xc4, play_reticle.rs): while on the lock box is 0.4
+///    of the screen each way at scale 1.0, in place of 0.14 x 0.75 / 0.14 x the gun's
+///    h_e1e41c2d, so an enemy up to 128 units across and 96 down from the crosshair is locked, and
+///    the guns, which aim at the lock (play.rs), hit it (take28: 1 hit in 8 off, 7 in 8 on).
+///  - **Damage** (+0xec, 0x13cc70, in the roll FUN_0022c940): x1.5 scoped (char+0x7a8), on or off;
+///    while on, a roll of the game's random numbers at most 0.15 doubles it and sets the marker's
+///    flag 4 (`Skill::double_hit`). The two stack. take28: one hit of seven doubled (80.6 against
+///    42.7), the scoped ones x1.36-1.59.
+///  - **Range** (+0x54, 0x13ce80): her rifles' x1.25, on or off.
+///  - **Walk** (+0x38, 0x13ceb0): 0.55 of the stick while on, as scoped: a walk.
+///  - **The crosshair** (+0xfc, 0x13cce0): its 0.9 alpha x (1 - the marker's fill) while on, so
+///    it fades out as the marker fills (take15 2.2-2.8 s) and is back at the off.
+///  - The switch key, the reload key and the black button end it (+0x7c, 0x213690); her overlays
+///    play (+0xa4, the base's).
+///  - **Not free to act** (+0x14, 0x13b980: "off"): while on, FUN_00117210 says no, so no reload,
+///    weapon switch, grenade throw or placement, or medkit starts (`lets_act`); the keys that end
+///    it come first, and a reload asked for follows the off.
+///  - Not used: +0xf8, the tracking-reticule-speed 2 (0x13c9b0), how fast the crosshair moves to
+///    a lock (FUN_000c5e20), hidden while she tracks; +0x58, 0.8 in place of the base's 0.2 for
+///    the scoped lock box (0x11cfb5): the demo's scope keeps the gun's box (play_reticle.rs).
+struct Targeting {
+    /// skill+0x48 bit 0: switched on with the rifle in hand (its toggle asked for motion type 45
+    /// then, and asks for it again switching off)
+    rifle: bool,
+    /// game-options' tuning, copied at the constructor
+    cfg: Tracking,
+}
+
+impl Targeting {
+    /// A refused toggle, with its reason in the log.
+    fn refused(u: &Player, out: &Outside, why: &str) -> Toggle {
+        if out.log {
+            println!("t={:.2} {}: targeting refused: {why}", u.sim_time, unit_name(u));
+        }
+        Toggle::Refused
+    }
+}
 
 impl SkillKind for Targeting {
     fn name(&self) -> u32 {
         NAME_TARGETING
     }
 
-    fn toggle(&mut self, _u: &mut Player, _out: &mut Outside) -> Toggle {
+    fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
+        if !sniper_transition(u) {
+            return Self::refused(u, out, "no motion type 45 transition from her motion");
+        }
+        if !u.skill.on {
+            let why = if u.second.is_some() { "a gun in the second hand" }
+                else if gun_in_hand(u).is_none() { "no gun in hand" }
+                else if u.ammo.get(u.weapon).is_none_or(|a| a[0] <= 0) { "the clip in hand is empty" }
+                else { "" };
+            if !why.is_empty() {
+                return Self::refused(u, out, why);
+            }
+        }
+        // (the activate's 10% check and the mark come after: `command`, `on`)
         Toggle::Now { overlay: false }
+    }
+
+    fn on(&mut self, u: &mut Player, out: &mut Outside) {
+        // 0x13cbbc: the gun in hand's class (its data's first word, the weapon-type)
+        self.rifle = gun_in_hand(u).is_some_and(|d| d.weapon_type == self.cfg.weapon_type);
+        if self.rifle {
+            // motion type 45: the sniper set
+            u.skill.special_motions = true;
+        } else {
+            // FUN_00123ea0
+            u.fire_state.keep_raised();
+        }
+        if out.log {
+            println!("t={:.2} {}: targeting on, {}", u.sim_time, unit_name(u),
+                     if self.rifle { "the rifle marked: the sniper motions" } else { "no rifle: the gun raised" });
+        }
+    }
+
+    fn off(&mut self, u: &mut Player) {
+        // (with the mark, motion type 45 back to her own motions; without, she was never in the
+        // sniper set)
+        u.skill.special_motions = false;
+    }
+
+    fn update(&mut self, u: &mut Player, _dt: f32) -> bool {
+        if !u.skill.on {
+            return false;
+        }
+        u.fire_state.keep_raised();
+        // (only a gun in hand: none between a switch's drop and grab)
+        gun_in_hand(u).is_some() && u.ammo.get(u.weapon).is_some_and(|a| a[0] == 0)
+    }
+
+    fn ended_by_actions(&self) -> bool {
+        true
+    }
+
+    fn lets_act(&self, u: &Player) -> bool {
+        !u.skill.on
+    }
+
+    fn roll_factor(&mut self, u: &mut Player) -> f32 {
+        // (char+0x7a8, the scope: read as the scope's view being in, as play.rs's fire rate and
+        // play_reticle.rs read it)
+        let mut f = if u.scope > 0.5 { self.cfg.scope_factor } else { 1.0 };
+        if u.skill.on {
+            // the game's random numbers (the LCG at 0x46cfd8, a float in [0, 1) from its top 23
+            // bits) at most the chance; BF_TEST_DOUBLE=<percent> sets the chance
+            let chance = std::env::var("BF_TEST_DOUBLE").ok().and_then(|v| v.trim().parse::<f32>().ok()).map_or(self.cfg.double_chance, |p| p / 100.0);
+            let r = u.random(1 << 23) as f32 / (1u32 << 23) as f32;
+            if r <= chance {
+                f *= self.cfg.double_factor;
+                u.skill.double_hit = true;
+                if std::env::var("BF_SKILL_LOG").is_ok() {
+                    println!("t={:.2} {}: the roll doubled (x{})", u.sim_time, unit_name(u), self.cfg.double_factor);
+                }
+            }
+        }
+        f
+    }
+
+    fn range(&self, _u: &Player, def: &WeaponDef, range: f32) -> f32 {
+        if def.weapon_type == self.cfg.range_weapon_type { range * self.cfg.range_factor } else { range }
+    }
+
+    fn move_cap(&self, u: &Player, m: f32) -> f32 {
+        if u.skill.on { TARGETING_MOVE_CAP } else { m }
+    }
+
+    fn lock_box(&self, u: &Player, scale: f32) -> f32 {
+        if u.skill.on { TARGETING_LOCK_BOX } else { scale }
+    }
+
+    fn lock_shares(&self, u: &Player) -> Option<[f32; 2]> {
+        u.skill.on.then_some(self.cfg.box_shares)
+    }
+
+    fn crosshair_alpha(&self, u: &Player, alpha: f32, fill: f32) -> f32 {
+        if u.skill.on { alpha * (1.0 - fill) } else { alpha }
+    }
+
+    fn has_marker(&self) -> bool {
+        true
+    }
+
+    fn keeps_gun_up(&self, u: &Player) -> bool {
+        u.skill.on
     }
 }
 

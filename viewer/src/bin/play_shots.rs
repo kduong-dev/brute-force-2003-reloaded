@@ -263,6 +263,12 @@ impl FireState {
         self.ready > 0.0
     }
 
+    /// FUN_00123ea0 asked for besides a shot (Flint's targeting, every frame while it's on,
+    /// play_skills.rs): the gun raised, its ready timer held at READY_HOLD or more.
+    pub fn keep_raised(&mut self) {
+        self.ready = self.ready.max(READY_HOLD);
+    }
+
     /// The current accuracy of weapon `i` (for logs and tests).
     pub fn accuracy(&self, i: usize) -> Option<f32> {
         self.weapons.get(i).and_then(|w| w.accuracy)
