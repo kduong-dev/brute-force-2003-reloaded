@@ -266,6 +266,11 @@ Minigun at 27.40 s of `BF_MAP=sdm_e34 BF_AUTOPILOT=1 BF_START_WEAPON=1` (26 roun
   one clicks dry under the trigger, each gun with its own empty sound, no "switch to" hint shows
   (FUN_00120d40 posts it), and a reload asked for (R) waits for berserk's end. Both guns' rows
   show in the weapon box, both orange.
+* **Flint's targeting on** ([skills.md](skills.md#flints-advanced-targeting-124)): the reload also
+  asks whether the character is free (FUN_00117210, 0x120e16), which ends with the skill's
+  vtable +0x14, and hers says no while it's on (0x13b980). Her empty clip and R end it first, so
+  the reload starts in the frame after the off (`BF_TEST_CLIP=1`: off at 5.13 s, the reload at
+  5.20). The same rule holds back a weapon switch, a grenade thrown or placed, and the medkit.
 
 Test hooks: `BF_TEST_RESERVE=<n>` starts every ammo-type's reserve at n; `BF_TEST_CLIP=<n>[,<n>...]`
 starts the player's clips at n (one value for every weapon, or one per weapon slot, the last for
@@ -342,11 +347,29 @@ result over a dark ground, as the grenade meter's orange is. The demo's own gree
   three h_e8589e7e devices at 4 and the device h_00bc61ab at 2, exactly as the game had them
   live; no squad deathmatch map has any. The centre ray tells which placed object it met from
   the arena (`Arena::ray_object`).
+* **The guns aim at the lock** (#124): with a lock the reticle gives the controlled character its
+  point (0xc5b90 -> FUN_0011e9d0, char+0x804): the centre ray's point when it meets the locked
+  body (0xc59fe), else the lock's aim point (0xc5330 -> 0xc5170). The character update aims each
+  of its guns there (0x11aa20 -> 0x22dc60) and each muzzle's shot goes to it (FUN_0022e5b0):
+  `Reticle::aim`, play.rs `Player::lock_aim`, the arms turned onto it and the shots sent to it
+  (from the eye to it in the scope), the second hand's gun's too, a missile's aim point too. So a
+  burst fired with the crosshair red hits the locked body (the LZR-50 4 of 4 at 9 m with the
+  crosshair inside its box; blue, 49 units off, 4 misses). Without a lock nothing changes: the
+  shots go to what the crosshair is on. The AI aims at its own target.
+* **Flint's Advanced Targeting** ([skills.md](skills.md#flints-advanced-targeting-124)): while
+  it's on her skill sets the box: 0.4 of the screen each way (her +0xc4, 0x13cd30, writes the
+  selection's shares) at scale 1.0 (her +0x100, through FUN_000c5d20 each frame): 128 x 96
+  units round the crosshair; her +0xfc fades the crosshair's alpha (0.9 x (1 - her marker's
+  fill), `Reticle::alpha`); her rifles' range is x1.25 (FUN_002324c0 through her +0x54), the
+  centre ray's and the lock's reach with it.
 * **Not in:** the line-of-fire ray (0xc54d0: an obstacle between the gun and a locked target
   would show its own colour after two frames; never filmed); Hawk's stealth (an enemy below 0.1
-  visibility can't be locked: the demo's skills have no visibility); Flint's x1.25 range with a
-  rifle (FUN_002324c0 through his skill: the demo's shots don't have it either); the alpha's
-  blink; Flint's targeting box (#124). The demo's bodies are cylinders, so the centre ray
+  visibility can't be locked: the demo's skills have no visibility); the alpha's blink; the
+  scoped lock box (0x11cfb5: once the scope-in's 0.85 s timer, char+0x7c8, has run out, the box
+  scale is the skill's +0x58 x the gun's, 0.2 for the squad, 0.8 for Flint, where the demo keeps
+  the gun's); the crosshair moving onto a lock (0xc5a50, FUN_000c5e20 at the skill's +0xf8 speed:
+  the takes' crosshair stays put); a moving target's lead (FUN_0022e5b0, for a bullet that isn't
+  instant: the demo's shots reach their target at once). The demo's bodies are cylinders, so the centre ray
   doesn't slip between an arm and the body (take04's 2-3 blue frames on Flint), and it passes
   the dead (the game's meets a body and tests its radar-contact). A choice of the demo's: the
   candidates are tried in the squad's order: the game walks the world's target list (0xba1c0),
@@ -472,6 +495,10 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   2x, else none. Only the Bower has one (2): 0.60 at 9 m of its 40 m range. It's applied to the
   squad's, the NPCs' and breakable scenery's hits. The rest of the take's ~1.3x on the trooper
   is the difficulty step and the struck hit part (#127): see **Damage** below.
+* **Range in the holder's hands** (FUN_002324c0): a shot's ray and its falloff run over the
+  bullet's range through the holder's skill (+0x54): unchanged, but x1.25 for Flint's rifles
+  (WTYPE_RIFLE, on or off; #124, `skills::weapon_range`): the L-Shot-75's 180 m is 225 m in
+  her hands.
 * **Holes** (`play_fx.rs`, `HoleRequests`). Every gun shot that meets the world leaves its
   bullet's h_06a27365 decal (0.3 x 0.3 m holes and scorches, read as full sizes; 25 s, fading
   over the last 5) laid on the surface it met: the map's collision triangle
@@ -995,8 +1022,12 @@ the second weapon. Captures wait 60 frames for shaders to compile before the clo
 (`todo/damage-factor/answer.md`; every function cited is in [code-map.md](code-map.md)). A hit
 on a character goes:
 
-* **The roll** (FUN_0022c940): Damage min + U x (max - min). The shooter's own factors (a
-  damage power-up, char+0x754; Flint's double and scoped hits through his skill, #124) aren't in.
+* **The roll** (FUN_0022c940): Damage min + U x (max - min), x a character shooter's skill's
+  factor (its +0xec at 0x22c9a3; `Hit::skill`, the log's "x the shooter's skill"): Flint's x2 on
+  15% of her rolls while her targeting is on and x1.5 scoped (0x13cc70, [skills.md](skills.md#flints-advanced-targeting-124));
+  1 for the others. Every roll a shooter makes takes it: a shot's on a body or a breakable
+  object, a missile's direct hit and its blast's own roll. The damage power-up's char+0x754
+  isn't in.
 * **The hit record** (FUN_0022c4d0): a direct hit takes the roll, a blast its share of the
   blast's roll (half for h_011cb154 false, the Therm Sweeper's); then x the hit factor: an
   instant ray's range falloff (FUN_00230040, **Shots**) x FUN_00125940; a projectile's
@@ -1128,19 +1159,24 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
   BF_TEST_GOTO=4.77,36.82,4.41,37.17 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_FIRE=1
   BF_CAMERA_PITCH=-0.28 BF_TEST_INSTANT_KILL=0`: the LZR-50 (`BF_TEST_WEAPON="Confed LZR-50"`) 19 hits, all on a calf
   (x0.5), 2.65-5.22 (the takes 2.6-4.9, allowed 2.45-5.25); the Jax-iC 15.4 and 17.5 on the
-  calves. With m09_a's Shrike Heavy in Tex's place (`BF_TEST_NPC=0.5,shrike
-  heavy@m09_a,enemy,dummy,-0.26,41.69`, #128) its SONIC x2 makes the Jax-iC's 30.7 and 34.8
-  (the takes 30.1-35.2); the LZR-50 2.48-5.22.
+  calves, then 32.5 on the knocked-down dummy's right thigh: since #124 the shots go to the
+  crosshair's lock, which follows the body down. With m09_a's Shrike Heavy in Tex's place
+  (`BF_TEST_NPC=0.5,shrike heavy@m09_a,enemy,dummy,-0.26,41.69`, #128) its SONIC x2 makes the
+  Jax-iC's 30.7 and 29.7 on the calves (the takes 30.1-35.2; the second roll 21.2, the takes'
+  21.5-25.1), then 70.2 and 68.8 on a thigh (#124's lock aim, as above; before it and #129's
+  merge, 30.7 and 34.8); the LZR-50 2.48-5.22.
 * **#35 take28** (Flint's L-Shot-75, x1 parts): `BF_MAP=sdm_e34 BF_DIFFICULTY=standard -- --test
   BF_CHARACTER=1 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_WEAPON=L-Shot-75
   BF_TEST_TRIGGER=3.0-3.1,4.5-4.6,6.0-6.1 BF_TEST_INSTANT_KILL=0`, from the sdm_e34 start (no
   `BF_TEST_GOTO`): 44.7, 45.1, 40.7 on the right thigh (the take 40-44, allowed 38.2-46.6).
-  Flint's scoped x1.5 is #124's.
+  Flint's doubled and scoped rolls (#124): skills.md § How it was checked.
 * **#115** (the Bower 20's falloff): Brutus's shell at a campaign Tex 7.7 m out on the test map
   (`-- --test BF_CHARACTER=0 BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,19.5
   BF_TEST_NPC=0.5,tex,enemy,dummy,5.1,11.5 BF_TEST_WEAPON="Bower 20" BF_TEST_TRIGGER=3.0-3.08
-  BF_CAMERA_PITCH=-0.16 BF_TEST_INSTANT_KILL=0`): two pellets, 16.70 x falloff 0.680 x 0.62 x 1.4 = 9.85 (thigh) and
-  5.40 (forearm). The take's m03_a mutant (BALLISTIC x0.8, multiplier 1) isn't in the demo.
+  BF_CAMERA_PITCH=-0.16 BF_TEST_INSTANT_KILL=0`): two pellets, aimed at the crosshair's lock
+  since #124: 16.70 x falloff 0.682 x 0.62 x 1.4 = 9.88 (Bip01) and 18.57 x 0.678 x 0.62 x 0.8
+  (an upper arm) x 1.4 = 8.74 (before the lock aim, 9.85 on a thigh and 5.40 on a forearm). The
+  take's m03_a mutant (BALLISTIC x0.8, multiplier 1) isn't in the demo.
 * **The scenery's areas**: campaign e34 at #85 take01's spot (`BF_MAP=e34
   BF_TEST_GOTO=-31.52,16.64,-31.52,16.64 BF_TEST_HIT=2.0`): Tex 115 -> 91.0 over 2.13-2.60 s
   (take01: 91.22 by 2.59 s). take29's spot on sdm_e34 (`BF_MAP=sdm_e34

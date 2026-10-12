@@ -183,6 +183,13 @@ may start a `developer` at high for a small fix (one module, no new mechanics), 
 max for shots that need new memory research or tricky staging. Otherwise it leaves the
 default.
 
+**Models.** Each role's model is in its frontmatter too: `analyst` and `reviewer` on Fable
+(deep reading of the code and diffs, where the extra depth pays most), `developer` on Opus
+(long sessions of edits and builds), `tester` and `xemu` on Sonnet (mostly hooks, captures,
+measuring and scripted play). Fable has its own weekly bar on the plan's usage page ("Fable
+only") beside "All models"; the lead watches both and tells the user when either nears its
+limit.
+
 Relay what agents report faithfully, including what failed or wasn't tested.
 
 ## Conventions

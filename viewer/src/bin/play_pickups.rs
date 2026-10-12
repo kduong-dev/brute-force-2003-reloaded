@@ -508,11 +508,13 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>) {
     } else if player.health >= player.max_health {
         status.message = Some(("No need to heal".into(), MESSAGE_TIME));
     } else if player.reloading.is_none() && player.throwing.is_none() && player.switching.is_none() && player.skill.toggling.is_none()
-        && !super::skills::overlays_blocked(&player) {
+        && !super::skills::overlays_blocked(&player) && super::skills::lets_act(&player) {
         // (not during a skill's toggle overlay, play_skills.rs: one overlay at a time is the
         // demo's choice; whether the game's item use waits for one isn't traced. Nor in Tex's
         // berserk, whose overlay filter refuses the use_item overlay: #35 take26 20.5 s, LT uses
-        // nothing)
+        // nothing. Nor while the skill says the character isn't free: the medkit is
+        // IOU_USE_IN_HAND, which FUN_001210c0 asks FUN_00117210 for, 0x121139, so not in Flint's
+        // targeting, `skills::lets_act`; where the two lines above are posted isn't traced)
         player.using = Some(0.0);
     }
 }

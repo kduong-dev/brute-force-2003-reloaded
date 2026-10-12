@@ -166,8 +166,9 @@ pub struct FireState {
 /// FUN_00123f60 while it runs (and starting it otherwise).
 /// Read as the time the gun stays raised (medium confidence): within it a pull fires without the
 /// raise, as the takes' taps 2.2 s apart fire 0.07-0.11 s after the press, against 0.19-0.24 s
-/// from idle.
-const READY_HOLD: f32 = 4.0;
+/// from idle. #35 take17 shows it after Flint's targeting: off at 11.55 s, the rifle lowered at
+/// 15.5-15.8 (play_skills.rs `Skill::raised`).
+pub(super) const READY_HOLD: f32 = 4.0;
 
 /// The cooldown a trigger cycle, a dry click or a switch sets: 1 / rate, or 1 / the scoped rate
 /// h_019c314a while the holder's +0x7a8 is set (FUN_0022f0e0, FUN_002327f0, FUN_0022dc00 all
@@ -261,6 +262,12 @@ impl FireState {
     /// Whether the gun is still up from a recent shot (`READY_HOLD`): no raise before the next.
     pub fn raised(&self) -> bool {
         self.ready > 0.0
+    }
+
+    /// FUN_00123ea0 asked for besides a shot (Flint's targeting, every frame while it's on,
+    /// play_skills.rs): the gun raised, its ready timer held at READY_HOLD or more.
+    pub fn keep_raised(&mut self) {
+        self.ready = self.ready.max(READY_HOLD);
     }
 
     /// The current accuracy of weapon `i` (for logs and tests).
