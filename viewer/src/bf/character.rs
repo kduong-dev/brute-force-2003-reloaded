@@ -692,6 +692,8 @@ impl Game {
     /// Read an archive's data (`archive`: its name, e.g. "common" or "e34", kept with the
     /// character types it defines). Entries already loaded win.
     fn load_archive(&mut self, ar: &Archive, archive: &str) -> Result<(), String> {
+        // the motion sets whole, for the character types (character_type.rs)
+        self.add_motion_sets(ar);
         // chatter: <h_f74e6a16> blocks of a line_tag and its sound_id alternatives (a file
         // already loaded from another archive is kept: the levels' copies of the enemies' files)
         for n in ar.find("", "_chatter.xmb") {
@@ -760,8 +762,6 @@ impl Game {
             }
             self.skill_overlays.insert(who, overlays);
         }
-        // the motion sets whole, for the character types (character_type.rs)
-        self.add_motion_sets(ar);
         // the level list: <level><h_1b8535f0 h_07f2f670=NAME texture-name=PREVIEW ...>
         // <zone file-name=ARCHIVE/><dm-data description=TEXT/>
         if let Some(root) = self.parse(ar, "campaign-bf.xmb")? {
