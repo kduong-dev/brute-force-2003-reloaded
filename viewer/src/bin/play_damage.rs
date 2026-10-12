@@ -21,8 +21,9 @@
 //!     handler 0x22d0b0), a damage area (FUN_0021ade0), a fall (FUN_0012b740), FUN_00223160 (a
 //!     charge). It takes x (1 - 0.1n) for a victim on an enemy team and x (1 + 0.1n) for the
 //!     squad's, n the difficulty (`Difficulty`; STANDARD -4: enemies x1.4, the squad x0.6); then
-//!     its skill's factor (vtable +0xd8 at 0x125747: Vengar's 0.85, #122, not here); then
-//!     FUN_002232d0's factor for the damage type (h_142be76f, `CharacterType::vulnerability`).
+//!     its skill's factor (vtable +0xd8 at 0x125747: Brutus's Vengar 0.85 while on, #122,
+//!     play_skills.rs `damage_factor`); then FUN_002232d0's factor for the damage type
+//!     (h_142be76f, `CharacterType::vulnerability`).
 //!     The victim's data is its character type's (`Player::kind`, #128): its hit parts, its
 //!     factors, and its damage-multiplier when its squad slot has none of its own. Only the
 //!     trainer's `!hit` calls FUN_002232d0 directly (the one direct call is 0x1257c0, in
@@ -392,6 +393,9 @@ pub struct Hit {
     /// the victim's step (0x125600) and the difficulty it's at, once it reaches them
     pub step: f32,
     pub difficulty: Option<Difficulty>,
+    /// the victim's skill's factor (0x125600 at 0x125747, its vtable +0xd8: Brutus's Vengar 0.85
+    /// while on, else 1; play_skills.rs `damage_factor`), once it reaches them
+    pub skill: f32,
     /// the damage type (`Damage damage-type`), and the victim's factor for it (FUN_002232d0) once
     /// it reaches them
     pub damage_type: i64,
@@ -401,7 +405,7 @@ pub struct Hit {
 impl Hit {
     /// A hit of `base` (`kind`, for the log) of damage type `damage_type`, with no other factor yet.
     pub fn new(base: f32, kind: &'static str, damage_type: i64) -> Self {
-        Hit { base, kind, by: None, falloff: 1.0, part: None, friendly: 1.0, step: 1.0, difficulty: None, damage_type, vulnerability: 1.0 }
+        Hit { base, kind, by: None, falloff: 1.0, part: None, friendly: 1.0, step: 1.0, difficulty: None, skill: 1.0, damage_type, vulnerability: 1.0 }
     }
 
     /// Dealt by `who`, on `shooter_team`: x FRIENDLY on a victim of the same side (`friendly`).
@@ -434,18 +438,19 @@ impl Hit {
         self
     }
 
-    /// The hit reaching `u`: their step (0x125600, by their team) and their factor for the damage
-    /// type (FUN_002232d0). The amount.
+    /// The hit reaching `u`: their step (0x125600, by their team), their skill's factor (0x125747)
+    /// and their factor for the damage type (FUN_002232d0). The amount.
     pub fn on(&mut self, u: &Player, game: &Game, difficulty: &Difficulty) -> f32 {
         self.step = difficulty.step(u.team);
         self.difficulty = Some(*difficulty);
+        self.skill = skills::damage_factor(u);
         self.vulnerability = vulnerability(game, u, self.damage_type);
         self.amount()
     }
 
     /// The amount: every factor's product.
     pub fn amount(&self) -> f32 {
-        self.base * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly * self.step * self.vulnerability
+        self.base * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly * self.step * self.skill * self.vulnerability
     }
 
     /// `on`, then the log line (BF_COMBAT_LOG), at sim time `now`. The amount.
@@ -482,6 +487,9 @@ impl Hit {
         }
         if let Some(d) = self.difficulty {
             s += &format!(" x {} (n {}) {} {:.2}", d.name, d.n, if enemy_side(u.team) { "enemy" } else { "squad" }, self.step);
+        }
+        if self.skill != 1.0 {
+            s += &format!(" x skill {:.2}", self.skill);
         }
         s += &format!(" x type {} {:.2} = {:.2}", self.damage_type, self.vulnerability, self.amount());
         println!("{s}");

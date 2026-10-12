@@ -495,6 +495,7 @@ fn main() {
         .add_plugins(damage::plugin)
         .add_plugins(reticle::plugin)
         .add_plugins(enemies::plugin)
+        .add_plugins(vengar::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -558,6 +559,8 @@ mod damage;
 mod reticle;
 #[path = "play_enemies.rs"]
 mod enemies;
+#[path = "play_vengar.rs"]
+mod vengar;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -3126,7 +3129,10 @@ fn autopilot(player: &mut Player) -> bool {
         if stay {
             player.cam_yaw = 0.0;
         }
-        player.move_input = if player.sim_time > 1.0 && to.length() > 0.8 && !stay { Vec2::new(0.0, 1.0) } else { Vec2::ZERO };
+        // (BF_TEST_GO_AT=<s>: set off at that time instead of after 1 s, as #35 take08's dash at
+        // 4.0 s after standing; play_vengar.rs)
+        let go_at = std::env::var("BF_TEST_GO_AT").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        player.move_input = if player.sim_time > go_at && to.length() > 0.8 && !stay { Vec2::new(0.0, 1.0) } else { Vec2::ZERO };
         // BF_TEST_STRAFE=<x>[,<y>]: move that way instead (camera-relative: -1,0 left, 1,0
         // right, 1,-1 back right), from 1 s on; the camera keeps facing the goal
         if let Some(v) = std::env::var("BF_TEST_STRAFE").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()) {
