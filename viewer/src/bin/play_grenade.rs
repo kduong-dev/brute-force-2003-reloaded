@@ -37,6 +37,7 @@
 //! or a shot) is play_sentry.rs's: it sets the fuse of a mine that's due to 0.
 
 use super::*;
+use super::damage::{footage_squad_step, Difficulty, Hit};
 use bf_viewer::bf::character::EffectType;
 
 /// throw speed range (m/s) over the charge, and extra upward angle over the crosshair (radians).
@@ -69,9 +70,11 @@ const ROLL_SOUND_EVERY: f32 = 0.97;
 const ROLL_SOUND_NEAR: f32 = 5.0;
 const ROLL_SOUND_FAR: f32 = 25.0;
 /// The thrower's own damage from their blast: SELF_DAMAGE x a roll of the explosion's Damage
-/// min..max, at any distance within the radius. Measured, not the game's formula (unknown): the
-/// Frag recording's six blasts each took 12.5-13.3 HP of Tex's 115 (~11%) near or far, with no
-/// falloff; 58.5-65 x 0.2 fits.
+/// min..max, at any distance within the radius. Measured: the Frag recording's six blasts each
+/// took 12.5-13.3 HP of Tex's 115 (~11%, campaign) near or far, with no falloff; 58.5-65 x 0.2
+/// fits. The game's rule gives 0.21 (half the roll, h_011cb154 false, x0.7 own side x0.6 the
+/// squad's step on STANDARD: todo/drafts/comment-112-blast-rules.md), not in yet (#112). The
+/// amount holds STANDARD's step already (`hurt_by_blast` divides it out before the step).
 const SELF_DAMAGE: f32 = 0.2;
 /// The red damage tint, hurt by a blast (the Frag recording, all six blasts): the 3D picture's
 /// green and blue are multiplied by TINT_CURVE's factors, one per game frame (1/30 s; the
@@ -444,6 +447,7 @@ fn fly_grenades(
     mut detonated: Local<bool>,
     mut trails: Query<(&ChildOf, &mut bf_viewer::ale_fx::AleEffect)>,
     mut spent: Query<(Entity, &mut Spent)>,
+    difficulty: Res<Difficulty>,
 ) {
     let dt = frame_dt(&time);
     let p = &mut *player;
@@ -490,11 +494,12 @@ fn fly_grenades(
         let (max, min) = (kit.blast.damage, kit.blast.damage_min.min(kit.blast.damage));
         let roll = p.random(1000) as f32 / 1000.0;
         let own = SELF_DAMAGE * (min + (max - min) * roll);
-        if hurt_by_blast(p, &game.0, kit, at, own, thrower, false).is_some() {
+        let now = p.sim_time;
+        if hurt_by_blast(p, &game.0, kit, at, own, thrower, false, &difficulty, now).is_some() {
             tint.0 = 0.0;
         }
         for u in squad.0.iter_mut() {
-            hurt_by_blast(u, &game.0, kit, at, own, thrower, instant);
+            hurt_by_blast(u, &game.0, kit, at, own, thrower, instant, &difficulty, now);
         }
     }
     // test hook: BF_TEST_DETONATE=<s> sets off every grenade out at that time (a Sentry with
@@ -660,10 +665,15 @@ fn stays(kit: &GrenadeKit) -> bool {
 
 /// One character hurt by a blast of `kit` at `at`, if they're alive and within its radius:
 /// Damage max falling to nothing at the radius, the thrower `own` anywhere inside it (the
-/// test map's instant kill, `kill`, kills anyone else), times the character's factor for the
-/// explosion's damage-type; thrown back and up by as much. Returns the damage dealt (None if
-/// none: out of reach, dead, or no damage).
-pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: Vec3, own: f32, thrower: usize, kill: bool) -> Option<f32> {
+/// test map's instant kill, `kill`, kills anyone else), times the character's difficulty step
+/// and factor for the explosion's damage-type (play_damage.rs: a blast reaches a character's
+/// handler 0x125600 as every hit does); thrown back and up by as much. `own` is an amount
+/// measured on the takes' squad (STANDARD), which holds their step already: it's divided by it
+/// (`damage::footage_squad_step`) and comes out as measured there. Returns the damage dealt (None
+/// if none: out of reach, dead, or no damage).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: Vec3, own: f32, thrower: usize, kill: bool,
+                            difficulty: &Difficulty, now: f32) -> Option<f32> {
     let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
     let d = u.position.distance(at);
     if d >= radius || u.dead {
@@ -673,16 +683,22 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
     let away = Vec3::new(u.position.x - at.x, 0.0, u.position.z - at.z).normalize_or(Vec3::X);
     // (the thrower is the squad's: a test map NPC of their character isn't them)
     let own_blast = u.who() == Who::Squad(thrower);
-    let damage = game.damage_factor(CHARACTERS[u.character], kit.blast.damage_type) * if own_blast { own } else { max * k };
-    let damage = if kill && !own_blast { u.health.max(damage) } else { damage };
-    if damage <= 0.0 {
+    let mut hit = if own_blast {
+        Hit::new(own / footage_squad_step(game), "the thrower's share", kit.blast.damage_type)
+    } else {
+        Hit::new(max * k, "Damage max x (1 - d / r)", kit.blast.damage_type)
+    }.source(Who::Squad(thrower));
+    let dealt = hit.on(u, game, difficulty);
+    let dealt = if kill && !own_blast { u.health.max(dealt) } else { dealt };
+    if dealt <= 0.0 {
         return None;
     }
-    hurt(u, game, damage, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
+    hit.report(u, now);
+    hurt(u, game, dealt, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
-        println!("{} blast at {d:.1} m: {} takes {damage:.1} -> {:.1} / {:.0}", kit.def.label, CHARACTERS[u.character], u.health, u.max_health);
+        println!("{} blast at {d:.1} m: {} takes {dealt:.1} -> {:.1} / {:.0}", kit.def.label, CHARACTERS[u.character], u.health, u.max_health);
     }
-    Some(damage)
+    Some(dealt)
 }
 
 /// A blast at `at`: the explosion's effect type (its ALE effects and light effect, run once on

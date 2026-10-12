@@ -50,9 +50,13 @@
 //! ray: no line of sight (the weapons' damage areas, FUN_00224a90, test one). h_ed582b3c is
 //! the push its message carries, scaled by ((1 - w) x 0.4 + 0.6), w the world's load measure at
 //! +0xc58 (recomputed every second from counts of active characters and such, FUN_000d9090,
-//! and 0 in multiplayer): a push, not the damage, so the campaign's ~0.58 of the
-//! damage (see DAMAGE_SCALE) isn't this. Hurt by one, the player's view goes red (ScreenTint)
-//! as for a grenade.
+//! and 0 in multiplayer): a push, not the damage. A character takes the area's amount through
+//! its own handler (the target's vtable slot 0, 0x125600): x its difficulty step
+//! (play_damage.rs), which is the campaign squad's ~0.58 of a blast (STANDARD's x0.6; campaign
+//! e34, takes 01-09). sdm_e34 took the whole (take29: 39.4 of 40), but the demo plays STANDARD
+//! on every map, the product owner's choice (`Difficulty::for_session`), so there it deals ~24:
+//! a known mismatch. The objects aren't stepped. Hurt by one, the player's view goes red
+//! (ScreenTint) as for a grenade.
 //!
 //! The test map's object tool (play_testtools.rs) puts these down on the flat floor too
 //! (`LateBreakable`): they join the list after the map's, and with no arena their model's box
@@ -71,12 +75,6 @@ const AREA_DELAY: f32 = 0.1;
 /// 3 m from its centre (0.435 m up) reached Tex 2.7 m away along the ground and not 2.9 m (takes
 /// 04 / 05), so a point 1.2-1.74 m up. The middle of that: a fit.
 const CENTRE_UP: f32 = 1.45;
-/// The campaign's squad took ~0.58 of a blast (campaign e34, takes 01-09) where sdm_e34 took
-/// the whole (take29: 39.4 of 40). Not traced: the ((1 - w) x 0.4 + 0.6) in FUN_00157260 and
-/// FUN_0021ade0 scales the push (h_ed582b3c), not the damage (see the module notes); the
-/// characters' own take-damage runs a per-target modifier first (FUN_002232d0's
-/// combat-target[6]), not followed. The demo's maps are the squad deathmatch ones: 1.
-const DAMAGE_SCALE: f32 = 1.0;
 /// How long a broken object's loose pieces stay (s), and the last part of that over which they
 /// shrink away. A guess: the takes lose them out of frame (crate panels leave it 0.4-0.6 s
 /// after the break, still whole); the first capture's crate pieces are gone after ~0.8 s,
@@ -711,11 +709,12 @@ fn blast_volume(at: Vec3, listener: Vec3) -> f32 {
 }
 
 /// The damage areas: from their start for their duration, amount x dt x factor a frame to every
-/// character within range with a clear line from the object, and to the breakable objects in
-/// range (chain reactions). See the module notes.
+/// character within range with a clear line from the object (x its difficulty step,
+/// play_damage.rs), and to the breakable objects in range (chain reactions). See the module
+/// notes.
 #[allow(clippy::too_many_arguments)]
 fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-               mut tint: ResMut<ScreenTint>) {
+               mut tint: ResMut<ScreenTint>, difficulty: Res<super::damage::Difficulty>) {
     let dt = frame_dt(&time);
     let s = &mut *scenery;
     let now = player.sim_time;
@@ -734,7 +733,7 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
         if inside <= 0.0 {
             continue;
         }
-        let value = a.damage.amount * inside * DAMAGE_SCALE;
+        let value = a.damage.amount * inside;
         s.reach.push((a.at, a.damage.range, a.damage.damage_type));
         // the characters in range (FUN_0021ade0 measures each target's place to the effect's,
         // with no ray test: the weapons' blast areas test one, FUN_00224a90, not these)
@@ -747,7 +746,10 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             if d >= a.damage.range {
                 continue;
             }
-            let amount = falloff(&a.damage, value, d) * game.0.damage_factor(CHARACTERS[u.character], a.damage.damage_type);
+            // (through the character's handler: its difficulty step, then its factor for the Type,
+            // play_damage.rs; FUN_0021ade0 calls the target's vtable slot 0, 0x125600)
+            let mut hit = super::damage::Hit::new(falloff(&a.damage, value, d), "area", a.damage.damage_type);
+            let amount = hit.on(u, &game.0, &difficulty);
             if amount <= 0.0 {
                 continue;
             }
@@ -763,7 +765,8 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 u.health -= amount;
             }
             if combat {
-                println!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} -> {:.1} / {:.0}", a.effect, CHARACTERS[u.character], u.health, u.max_health);
+                println!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} (x{:.2} the step) -> {:.1} / {:.0}", a.effect, CHARACTERS[u.character],
+                         hit.step, u.health, u.max_health);
             }
             match a.victims.iter_mut().find(|v| v.0 == u.character) {
                 Some(v) => { v.2 = a.age; v.3 += amount; }

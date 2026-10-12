@@ -76,6 +76,9 @@ const H_INTERVAL: u32 = 0xF63F_0F49;
 const NEUTRAL_FACE: u32 = 0xEFF8_AC8D;
 /// Face clips shorter than this are held poses (the neutral face is two keys, 0.03 s).
 const STATIC_FACE: f32 = 0.1;
+/// game-options `<difficulty-settings>` (name recovered by hashing): the campaign's difficulty
+/// values (`Game::difficulty_settings`)
+const H_DIFFICULTY_SETTINGS: u32 = 0xFFC1_BECB;
 
 /// combat-target's damage-type factor list (h_142be76f; the shield holds an empty one of its own)
 /// and an entry's factor (`<h_1d403525 Type=4 h_04653d86=0.05>`: Flint's for the Gas, common
@@ -212,6 +215,12 @@ pub struct Game {
     /// direct hit's factor with the struck bone's (FUN_00125940). The campaign squad 0.62, the
     /// Shrikes 1; on a squad deathmatch map the sdm_bf squad's 1 (`load_squad_library`)
     pub character_damage_multiplier: HashMap<String, f32>,
+    /// the campaign's difficulty values [easy, normal, hard]: common/game-options-en.xmb
+    /// `<difficulty-settings>` (h_ffc1becb) `<h_1b8535f0 easy="-4" normal="0" hard="4">`. The
+    /// SELECT DIFFICULTY menu (FUN_000f13c0) stores STANDARD's easy, HARD's normal or BRUTAL's
+    /// hard in the game flag campaign/difficulty-setting, the n of every hit's step on a
+    /// character (0x125600; play_damage.rs). None if the file doesn't have them
+    pub difficulty_settings: Option<[i64; 3]>,
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
     /// `ChatterBlock`; play_skills.rs's skill lines go through it)
     pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
@@ -638,6 +647,7 @@ impl Game {
             effect_type_defs: HashMap::new(),
             character_hit_bones: HashMap::new(),
             character_damage_multiplier: HashMap::new(),
+            difficulty_settings: None,
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
         };
@@ -758,6 +768,16 @@ impl Game {
                         (n("min"), n("max"))
                     }),
                 });
+            }
+        }
+        // the campaign's difficulty values: <difficulty-settings><h_1b8535f0 easy normal hard>
+        // (a game options file that doesn't decode leaves them unset, not an error)
+        if let Ok(Some(root)) = self.parse(ar, "game-options-en.xmb") {
+            let int = |v: &Value| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()));
+            let values = root.walk().into_iter().filter(|e| e.name == H_DIFFICULTY_SETTINGS).flat_map(|e| e.children.iter())
+                .find_map(|e| Some([int(e.attr(h("easy"))?)?, int(e.attr(h("normal"))?)?, int(e.attr(h("hard"))?)?]));
+            if values.is_some() {
+                self.difficulty_settings = values;
             }
         }
         if let Some(root) = self.parse(ar, "string-table-en.xmb")? {
@@ -1433,6 +1453,13 @@ pub struct Character {
     pub default_face: Option<usize>,
     /// hardpoints of the bones' part archetypes: name -> (bone, hardpoint in the bone's frame)
     pub hardpoints: HashMap<u32, (usize, Hardpoint)>,
+    /// per bone, its part archetype's collision surface (`<h_f3f067ad h_051ac63e>`, in
+    /// objects-*.ipn): triangles in the bone's own frame, empty for a part without one. On the
+    /// squad's models exactly the eleven bones of the motion set's `<collision>` list have one
+    /// (Bip01, Spine2, Head, thighs, calves, upper arms, forearms): the bodies FUN_00114010
+    /// makes a character's hit parts of (FUN_00114d00 builds each from the part's node), which
+    /// a shot strikes (FUN_00115000 gives the part's bone)
+    pub part_collision: Vec<Vec<[Vec3; 3]>>,
 }
 
 /// Rows-convention rotation (child rows = L * parent rows) -> quaternion of the column matrix L^T.
@@ -1459,11 +1486,13 @@ impl Character {
         let index: HashMap<u32, usize> = bones.iter().enumerate().map(|(i, b)| (*b, i)).collect();
         let (mut bind_rows, mut bind_pos, mut inverse_bind) = (vec![], vec![], vec![]);
         let mut hardpoints = HashMap::new();
+        let mut part_collision = vec![];
         for (bi, &(_, an)) in parts.iter().enumerate() {
             let (pa, _) = game.archetype(an).ok_or("part archetype not found")?;
             for (k, hp) in weapon::parse_hardpoints(pa) {
                 hardpoints.entry(k).or_insert((bi, hp));
             }
+            part_collision.push(game.archetype_physics(an).map(|s| game.collision(s).into_iter().map(|(t, _)| t).collect()).unwrap_or_default());
             let v = pa.child(H_INVBIND).and_then(|e| e.text.as_ref()).map(|t| t.floats()).unwrap_or_default();
             if v.len() < 12 {
                 return Err("bad part matrix".into());
@@ -1527,7 +1556,7 @@ impl Character {
         let default_face = face_anims.iter().position(|a| a.name == NEUTRAL_FACE)
             .or(if face_anims.is_empty() { None } else { Some(0) });
         Ok(Character { bones, parent, bind_rows, bind_pos, parent_point, child_point,
-                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints })
+                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision })
     }
 
     /// Index of the animation whose (hashed) name is `script`, e.g. "Sc_w1_run".

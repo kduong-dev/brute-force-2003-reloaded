@@ -74,7 +74,7 @@ edges. Each bar fills that diagonal's dark channel in the radar frame texture (t
 texels darker than 27/255), starting by the member's portrait, and drains toward it as in the
 game. For whoever you control, health also shows in the top-left bar. Grenade blasts hurt everyone in range (the explosion's Damage max, falling
 off to nothing at its radius; the thrower takes a flat share, see **Grenades**) and the hurt give a pain grunt (chatter e856009f). Friendly
-fire: your shots hit squadmates in the way (the weapon's damage; they say "I'm hit" or "Careful!"
+fire: your shots hit squadmates in the way (the weapon's damage, x0.7 on your own side, by the hit part struck and the difficulty: see **Damage**; they say "I'm hit" or "Careful!"
 / "Stop shooting at me!"), and the crosshair turns green while it is on one. At 0 health a
 character dies: death cry (chatter ef32191d), the body goes limp as a ragdoll (verlet point
 masses on the skeleton, pushed by the hit or blast; its limb bones are 0.09 m spheres that don't pass through each other, and every bone lies on the level's own floors, kept as far above them as the body is thick round it (`flesh`: of the skin each bone moves most, the distance from the bone's line that 80% of it is within, 0.04-0.2 m; a flat 5 cm let a thigh or the chest sink into the floor), and is kept out of its walls - `BF_RAGDOLL_LOG=1` prints the closest limb pair and the lowest bone; the pose takes only the bones' turns from the simulation and keeps their rest offsets, so limbs don't stretch or twist; the ragdoll starts where the body is drawn, sole lift included (see "Standing on the floor"); the torso moves as two solid pieces (hips; chest with shoulders), stiffly joined at the waist, with the head held to the chest; knees and elbows (found by their Bip01 names) bend but don't fold past about 120 degrees or straighten past straight, and only one way: each joint keeps to its side of the line from the upper bone to the end, in the torso's own frame (hips for knees, chest for elbows), the side it was bent at death; a nearly straight limb uses knees forward, elbows back (forward from the toes); bodies keep 98.5% of their speed per substep, lose 60% of their sliding on the ground, and rest once still - but not on their side: a body come to rest propped on a shoulder and a hip (its chest's left-right axis more than 0.6 upright) is rolled on, its upper shoulder pushed 2 m/s toward its back (or front, if it leans that way), up to 3 times (the demo's choice). Shots hitting a body on the ground (dead or knocked down) push it: the first bone the shot passes within its thickness of is brought up to 3 m/s along the shot, and bones within 0.6 m less, so it jolts and rolls (a burst doesn't add up past that speed, so it doesn't drive the body across the ground); it wakes the body to settle again and it bleeds where it's hit, as the living do (blood effects, hit sound, a splat on the ground) (`BF_RAGDOLL_LOG` prints each body hit and the pelvis's position); `BF_TEST_DIE=<s>` drops the player dead at that time, once; `BF_TEST_DIE=1` at 1 s). Both their guns drop, the one in hand and the one on their back (the ragdoll can't feel a stowed gun, so it propped bodies on their side): each falls from where it was, thrown by half of what killed them plus a 1.5 m/s hop, and tumbles as a loose object (see "Pickups are loose"). Then the portrait greys out and the blip leaves
@@ -330,8 +330,8 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
 * **Damage falloff** (FUN_00230040 -> FUN_00223780). An instant hit's damage is scaled by the
   Damage's h_fb124e6c mode at x = 1 - distance / range: 1 x, 2 x^2, 3 full to half range then
   2x, else none. Only the Bower has one (2): 0.60 at 9 m of its 40 m range. It's applied to the
-  squad's, the NPCs' and breakable scenery's hits. (The rest of the take's ~1.3x on the
-  trooper isn't found yet: see the ticket's report.)
+  squad's, the NPCs' and breakable scenery's hits. The rest of the take's ~1.3x on the trooper
+  is the difficulty step and the struck hit part (#127): see **Damage** below.
 * **Holes** (`play_fx.rs`, `HoleRequests`). Every gun shot that meets the world leaves its
   bullet's h_06a27365 decal (0.3 x 0.3 m holes and scorches, read as full sizes; 25 s, fading
   over the last 5) laid on the surface it met: the map's collision triangle
@@ -506,18 +506,18 @@ cover) came after it and are compared under **Verified**.
   each a ball 0.2 m round: `LYING_RADIUS`, the demo's shape; the game's missile strikes the
   ragdoll's bodies, where the plain shots pass over them), a breakable object, or a Sentry. A
   body struck takes a roll of Damage min..max (84-96, FUN_0022c4d0), x the hit-location factor,
-  x 0.7 on the shooter's side (FUN_0004b9c0), x its damage-type factor. **The hit-location
-  factor** (FUN_00125940 at 0x227a03, the bone from FUN_00115000; the missile's own +0x1cc is
-  1.0): the victim type's `damage-multiplier` (h_e7e9fcd3: 0.62 for the campaign squad, 1 for the
-  Shrikes, and 1 for the sdm_bf squad of the squad deathmatch maps, which
-  `Game::load_squad_library` reads with its skill data) x the struck bone's `Damage` from its
-  motion set's `<collision>` list (the head x5, x3 for Brutus and the hounds; upper arms x0.8;
-  forearms and calves x0.5; the hips, spine and thighs x1; no feet). The demo's struck bone is the
-  listed one nearest the contact on the posed skeleton (the ragdoll's while knocked down), each
-  taken as the line from its joint to its first child's (`hit_factor`; the shape is the demo's).
-  Blast shares take none of it (FUN_00224a90 passes 0). The plain shots of the other guns still
-  leave it out. A breakable object struck takes a roll too (the scenery applies its damage-type
-  factor), then the blast's share. A missile that hits something before its split goes off there
+  x 0.7 on the shooter's side (FUN_0004b9c0), x the victim's difficulty step and damage-type
+  factor. **The hit-location factor** (FUN_00125940 at 0x227a03, the bone from FUN_00115000;
+  the missile's own +0x1cc is 1.0): the victim type's `damage-multiplier` (h_e7e9fcd3: 0.62 for
+  the campaign squad, 1 for the Shrikes, and 1 for the sdm_bf squad of the squad deathmatch
+  maps, which `Game::load_squad_library` reads with its skill data) x the struck hit part's
+  bone's `Damage` from its motion set's `<collision>` list (the head x5, x3 for Brutus and the
+  hounds; upper arms x0.8; forearms and calves x0.5; the hips, spine and thighs x1; no feet).
+  The struck part is the first of the body's hit-part surfaces along the missile's way, from
+  0.5 m before the contact (`STRUCK_BACK`; the ragdoll's nearest bone while knocked down): see
+  **Damage** below, where the same factor, the step and the log are shared with every gun's
+  shots. Blast shares take none of it (FUN_00224a90 passes 0). A breakable object struck takes
+  a roll too (the scenery applies its damage-type factor), then the blast's share. A missile that hits something before its split goes off there
   without splitting (the takes' gate, the Shrike at 7 m). A child whose 5 s run out goes off where
   it is (h_0976a9dc, FUN_00227760).
 * **The blast** (FUN_0022bfc0, dealt once by FUN_00224770) goes off at the missile's centre:
@@ -638,19 +638,22 @@ cover) came after it and are compared under **Verified**.
   layer was drawn after it and painted the ground over it. At take04's cliff the blasts and the
   launch glow vanished that way (the tester's "no blast pixels over 200"), and the scorch showed
   only where the rock layer's mask let it through.
-* **Damage factor: the difficulty step**, not here. Every hit in the takes' HP logs is ~1.4x
-  the code's rule on enemies and ~0.6x on the squad: the character damage handler (0x125600)
-  scales every hit on a character by 1 - 0.1n for enemies and 1 + 0.1n for the squad, n = -4 on
-  STANDARD (#127, `todo/damage-factor/answer.md`). The demo's hits keep the code's rule without
-  it: take03's direct 128.8 is x1.4 of a roll of 84-96, Tex's own blast in takes 10-16
-  (18.6-20.1) x0.6 of the demo's 32.8.
+* **The difficulty step** (#127, see **Damage** below): every hit in the takes' HP logs is x1.4
+  the code's rule on enemies and x0.6 on the squad, the character damage handler's (0x125600)
+  1 - 0.1n and 1 + 0.1n on STANDARD (n = -4). The direct hits and the blasts here take it: on
+  STANDARD, the demo's default on every map, Tex's own blast is 0.5 x 0.7 x 0.6 = 0.21 of a roll (takes
+  10-16: 18.2-20.1), take03's direct x1.4 of a roll (118-134). The numbers under **Verified**
+  below are #73's, from before the step (x1 there: 32.8 for Tex's own blast, 93.6 and 42.7 for
+  take03's geometry) and before the hit-part surfaces (the bones the homing takes' children
+  struck were then the nearest to the contact); **Damage** has the checks since.
 * **Not done**: the AI's 75 m noise (FUN_0004d490), the damage event (FUN_001fe3d0), the second
   sound list h_03dc7b9a, the red enemy crosshair (a shared HUD feature).
 
 Test hooks: `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (children,
 targets), fuse and end (where, how far, how long after the launch, what it struck), each direct
-hit's amount with its roll, hit-location factor and struck bone (`x0.31 at bone h_044f3505`),
-and each body its blast reaches or finds behind cover; a give-up says how far and how far off
+hit's amount with its roll, hit-location factor, struck bone and step (`x0.31 at bone
+h_044f3505, x0.60 the step`), and each body its blast reaches (with its step) or finds behind
+cover (`BF_COMBAT_LOG` adds each hit's factors, see **Damage**); a give-up says how far and how far off
 its heading the aim point was. `BF_MISSILE_DEBUG=1` also prints every body each target search
 looks at, with the root it measures to; `BF_SHAKE_LOG=1` prints each shake kick and its end.
 The takes' places, with
@@ -829,6 +832,158 @@ directions. Camera hooks: `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` / `BF_CAMERA_DISTA
 start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
 something), `BF_VIEW_YAW` turns only the rendered view (aim unchanged), `BF_START_WEAPON=1` starts with
 the second weapon. Captures wait 60 frames for shaders to compile before the clock starts.
+
+### Damage: the difficulty step and the hit parts (#127)
+
+`src/bin/play_damage.rs`, from default.xbe's damage path as the analyst read it
+(`todo/damage-factor/answer.md`; every function cited is in [code-map.md](code-map.md)). A hit
+on a character goes:
+
+* **The roll** (FUN_0022c940): Damage min + U x (max - min). The shooter's own factors (a
+  damage power-up, char+0x754; Flint's double and scoped hits through his skill, #124) aren't in.
+* **The hit record** (FUN_0022c4d0): a direct hit takes the roll, a blast its share of the
+  blast's roll (half for h_011cb154 false, the Therm Sweeper's); then x the hit factor: an
+  instant ray's range falloff (FUN_00230040, **Shots**) x FUN_00125940; a projectile's
+  FUN_00125940 (the missile's +0x1cc is always 1.0, FUN_002278e0); a blast's share 1
+  (FUN_00224a90 passes 0 to FUN_00224320). **FUN_00125940** is the victim type's
+  `damage-multiplier` (h_e7e9fcd3, type+0x220: the campaign squad 0.62; the Shrikes and the
+  squad deathmatch's sdm_bf squad 1) x the struck hit part's bone's `Damage` (the motion set's
+  `<collision>` list: the head x5, x3 for Brutus and the hounds; upper arms x0.8; forearms and
+  calves x0.5; Bip01, Spine2 and the thighs x1). Then x0.7 when the shooter and the victim are
+  both the squad's (FUN_0004b9c0; the demo's sides stand for its squads: the same team, the
+  shooter's own blast included).
+* **The victim** (0x125600, a character's combat-target vtable slot 0): x (1 - 0.1n) on an
+  enemy team, x (1 + 0.1n) on the squad's, n the difficulty; then its skill's factor (Vengar's
+  0.85: #122, not in); then FUN_002232d0's factor for the damage type. Every hit on a character
+  reaches it: the guns' hits and blasts, the scenery's damage areas (FUN_0021ade0), falls
+  (FUN_0012b740, DTYPE_NORMAL), FUN_00223160 (Brutus's charge). Only the trainer's `!hit` skips
+  it (it calls FUN_002232d0 itself), so older xemu logs of `!hit` carry no step.
+
+**The difficulty** (`Difficulty`, set as each map begins):
+
+| Menu (FUN_000f13c0) | `<difficulty-settings>` (game-options-en) | n | Enemies take | The squad takes |
+|---|---|---|---|---|
+| STANDARD | `easy` -4 | -4 | x1.4 | x0.6 |
+| HARD | `normal` 0 | 0 | x1 | x1 |
+| BRUTAL | `hard` 4 | 4 | x0.6 | x1.4 |
+
+* The values are read from `common/game-options-en.xmb` (`Game::difficulty_settings`). The
+  sign goes by the victim's team: its row of the team table (0x3ffd80) has 1s in columns 3-6
+  for an enemy (teams 1, 7, 8); the squad's 0 and the others take the plus.
+* **The default is STANDARD on every map**, the takes' (both sides of their HP logs fit
+  n = -4: answer.md). On the multiplayer maps (the squad deathmatch maps sdm_*, the arenas mp*)
+  too: **the product owner's choice**, against the takes there. #85's take29 on sdm_e34 had Tex
+  take 39.4 of a barrel's 40 (the campaign's took ~24, takes 01-04), and #146's takes 01-03 on
+  sdm_e13 had Brutus lose exactly 30.00 per lava entry, the lava's rate: both fit n = 0 in a
+  match. The code read doesn't explain that, and it's kept here for a later live read: the
+  getter (0x7c720) reads the flag from the current slot's tree (the session's vtable +0x210,
+  0x78d60: [session + 0x5cc + 4 x [session + 0x5c8]]) through FUN_00078320, which gives 0 only
+  without a tree or without the flag; the default game flags hold it at -4
+  (`common/default-gameflags.xml`'s `<campaign>`, where the decoder names its hash h_1a98de0a
+  `shadoon-look`, a name collision with `difficulty-setting`); RESUME LAST and QUICK CAMPAIGN set
+  STANDARD as well (FUN_000f7140, FUN_000f7230). A live read at 0x125673 in a match would settle
+  it.
+* **On sdm_e34 (the main game)**, STANDARD means:
+  * the squad takes x0.6 and enemies x1.4 of every hit: shots, missiles and blasts, grenades,
+    falls, the scenery's damage areas;
+  * #85 take29's barrel deals 24.0 to Tex where the take shows 39.4: a known mismatch (the
+    choice above);
+  * the grenades' thrower shares are the recorded ones (the Frag's thrower 12.6 for a roll of
+    63), the Gas 17.7 HP/s on the squad;
+  * and, as on every map, every gun's hit on a squadmate takes the struck part's `Damage` and
+    x0.7 (sdm_bf's damage-multiplier is 1): a head shot x3.5 x0.6 (Brutus's x2.1 x0.6), a
+    forearm or calf x0.35 x0.6; the AI's shots on their own side take the x0.7 too.
+* `BF_DIFFICULTY=<standard|hard|brutal>` (any case) or a number n sets it, on any map
+  (`BF_DIFFICULTY=hard`, n = 0, gives the multiplayer takes' x1).
+
+**The hit parts** (`struck_bone`). On the squad's models exactly the eleven bones of the
+`<collision>` list have a collision surface in their part archetype (`<h_f3f067ad
+h_051ac63e>`, objects-common.ipn; `Character::part_collision`, in the bone's frame): the bodies
+FUN_00114010 makes a character's hit parts of (FUN_00114d00 builds each from the part's node).
+A shot that meets a standing body (the demo's 0.4 m cylinder, `ray_body`) is followed through
+it, and the first part surface it meets, posed as drawn, is the part struck: the game's ray or
+missile strikes those bodies themselves and FUN_00115000 gives the body's bone. A shot through
+the cylinder that meets none of them (between the legs, past an arm) takes the part whose bone
+comes nearest its way through the body: the demo's (the cylinder still decides what's hit; in
+the game that shot would pass). Knocked down, the part whose bone is nearest the contact on the
+ragdoll (#73's rule). The surfaces sit on the drawn models (`BF_HIT_PARTS`): a character
+holding its gun in front takes a frontal shot at the hips on a forearm (x0.5), and Brutus's
+head (x3) hangs low in front of his chest.
+
+**The grenades and the scenery.** The grenades keep their own rules (grenades.md; the game's
+blast rule is #112's) and take the step and the damage-type factor through the same `Hit`.
+Their amounts fitted to recordings on the campaign squad on STANDARD (the thrower's share of a
+Frag, Sentry or Roller blast, of the Sonic's and of the Energy's bolt, and the Gas's rate) hold
+that x0.6 already: they're divided by it (`footage_squad_step`), so they come out as measured
+on STANDARD and scale with the difficulty like any hit (with `BF_DIFFICULTY=hard`, no step,
+x1 / 0.6 of them: the Frag's thrower 21.0 for a roll of 63, where the game's half roll x0.7
+gives 22.1). Measured on the thrower in its own blast, they hold FUN_0004b9c0's x0.7 too,
+so no x0.7 is added (`Hit::source`); the others' rule (Damage max falling to nothing at the
+radius) is the demo's, without it. The Gas's 41.3 HP/s on an enemy on STANDARD is the demo's
+extrapolation (with the x0.7 taken out too it would be ~59). The scenery's damage areas take
+the step: the campaign squad's ~0.58 of a barrel (scenery.md). Not stepped: the test hooks'
+kills (`BF_TEST_DIE`, the test map's suicide and instant kill) and a harmful liquid (its game
+path isn't traced).
+
+**The log** (`BF_COMBAT_LOG=1`): the map's difficulty as it begins (`difficulty on e34:
+STANDARD (n -4): enemies take x1.40, the squad x0.60`), then each hit with every factor, before
+`hurt`'s line with the hit points left:
+`t 3.60: tex -> tex (NPC 1): roll 93.62 x damage-multiplier 1.00 x Bip01 1 x STANDARD (n -4) enemy 1.40 x type 10 1.00 = 131.07`.
+A part found by the demo's own rules is tagged after its `Damage`: `(nearest)` for a shot that
+passed the cylinder between the part surfaces, `(nearest, lying)` on a body knocked down; an
+untagged part is the first surface the shot met. Damage dealt every frame (the Gas, a damage
+area) gets no hit line; the areas' own line shows the step. `BF_HIT_PARTS=1` draws every standing character's hit-part surfaces as lines (the
+head red, upper arms yellow, forearms and calves cyan, the x1 parts white).
+
+Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are answer.md's):
+* **#73 take03** (Therm Sweeper, a Shrike Heavy 7 m out, damage-multiplier 1): `BF_MAP=sdm_e34
+  -- --test BF_TEST_NPC="0.5,tex,enemy,dummy,-0.26,41.69;0.5,hawk,enemy,dummy,1.3,41.69"
+  BF_TEST_WEAPON="Therm Sweeper" BF_TEST_TRIGGER=3.0-3.15 BF_TEST_INSTANT_KILL=0` (STANDARD, the
+  default; the sdm_bf squad's 1 standing in for the Shrike's): the direct hit at Bip01, 93.62 x 1.4 = 131.1 (the
+  takes 118.2-134.1, allowed 117.6-134.4); the other enemy's share 42.70 x 1.4 = 59.8 (59.07-66.9);
+  the squad near it 17.9 (0.21 of the roll). A Brutus dummy in Tex's place takes the missile on
+  his forearm (x0.5: 65.5). BRUTAL: 56.2 direct and 25.6 shares (answer.md: 50.4-57.6,
+  25.2-28.8), the squad 41.9 (41.2-47.0). `BF_DIFFICULTY=hard` (n = 0): 93.6 and 42.7.
+* **#73 takes 10-16** (Tex's own blast): at a test map pillar 2 m ahead (`-- --test
+  BF_TEST_GOTO=0,-15.7,0,-16.2 BF_TEST_NPC=0.5,flint,friend,dummy,-1,-15.7 BF_TEST_WEAPON="Therm Sweeper"
+  BF_TEST_TRIGGER=3.0-3.15 BF_CAMERA_PITCH=-0.05 BF_TEST_INSTANT_KILL=0`): Tex and Flint 19.66 each, 0.5 x 93.62 x 0.7
+  x 0.6 (the takes 18.17-20.11; Flint 19.98, 19.67). (At the takes' e34 gate, #73's recipe
+  above, the gate opened in this build with Tex 4.6 m from door 6, which has no panels on e34,
+  and the missile flew through it: the pillar stands in.)
+* **#35 take27** (Brutus shot by an enemy's Saryl-45 at 13 m): `-- --test BF_CHARACTER=0
+  BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,20 BF_TEST_NPC=0.5,brutus,enemy,fight,4.5,7
+  BF_TEST_WEAPON=Saryl-45 BF_TEST_INSTANT_KILL=0` (the enemy, a Brutus too, carries the hook's gun): 14 hits of
+  4.77-5.69, rolls 12.83-15.30 x 0.62 x Bip01 1 x 0.6 (the take 4.93-5.81, allowed 4.74-5.86).
+  `BF_DIFFICULTY=hard`: 7.95-9.15 (answer.md's HARD 7.9-9.8). Vengar's x0.85 is #122's.
+* **#35 takes 04 / 05** (the hovering Shrike's legs): `BF_MAP=sdm_e34 -- --test
+  BF_TEST_GOTO=4.77,36.82,4.41,37.17 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_FIRE=1
+  BF_CAMERA_PITCH=-0.28 BF_TEST_INSTANT_KILL=0`: the LZR-50 (`BF_TEST_WEAPON="Confed LZR-50"`) 19 hits, all on a calf
+  (x0.5), 2.65-5.22 (the takes 2.6-4.9, allowed 2.45-5.25); the Jax-iC 15.4 and 17.5 on the
+  calves, which the Shrike's SONIC x2 makes the takes' 30.1-35.2 (the demo has no Shrike).
+* **#35 take28** (Flint's L-Shot-75, x1 parts): `BF_MAP=sdm_e34 -- --test
+  BF_CHARACTER=1 BF_TEST_NPC=0.5,tex,enemy,dummy,-0.26,41.69 BF_TEST_WEAPON=L-Shot-75
+  BF_TEST_TRIGGER=3.0-3.1,4.5-4.6,6.0-6.1 BF_TEST_INSTANT_KILL=0`, from the sdm_e34 start (no
+  `BF_TEST_GOTO`): 44.7, 45.1, 40.7 on the right thigh (the take 40-44, allowed 38.2-46.6).
+  Flint's scoped x1.5 is #124's.
+* **#115** (the Bower 20's falloff): Brutus's shell at a campaign Tex 7.7 m out on the test map
+  (`-- --test BF_CHARACTER=0 BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,19.5
+  BF_TEST_NPC=0.5,tex,enemy,dummy,5.1,11.5 BF_TEST_WEAPON="Bower 20" BF_TEST_TRIGGER=3.0-3.08
+  BF_CAMERA_PITCH=-0.16 BF_TEST_INSTANT_KILL=0`): two pellets, 16.70 x falloff 0.680 x 0.62 x 1.4 = 9.85 (thigh) and
+  5.40 (forearm). The take's m03_a mutant (BALLISTIC x0.8, multiplier 1) isn't in the demo.
+* **The scenery's areas**: campaign e34 at #85 take01's spot (`BF_MAP=e34
+  BF_TEST_GOTO=-31.52,16.64,-31.52,16.64 BF_TEST_HIT=2.0`): Tex 115 -> 91.0 over 2.13-2.60 s
+  (take01: 91.22 by 2.59 s). take29's spot on sdm_e34 (`BF_MAP=sdm_e34
+  BF_TEST_GOTO=-53.96,24.6,-53.96,24.6 BF_TEST_HIT=2.0`): 24.0 where the take shows 39.4, the
+  known mismatch of STANDARD on the multiplayer maps (40.0 with `BF_DIFFICULTY=hard`). The
+  start-of-map line there reads `difficulty on sdm_e34: STANDARD (n -4)`.
+* **The grenades** on the test map (STANDARD): the Frag's thrower takes 12.6 of 115 (as before:
+  the thrower's share 21.0 x 0.6); the Sonic's (W2 of grenades.md) 8.0 at 4.1 m (7.8 at 4.2 m
+  before); the squadmates it reaches x0.6 of before.
+* **The hit parts** (`-- --test BF_TEST_GOTO=4.5,20,4.5,19.5
+  BF_TEST_NPC="0.5,brutus,enemy,dummy,4.5,13;0.5,tex,enemy,dummy,6,13;0.5,hawk,enemy,dummy,3,13;0.5,flint,enemy,dummy,1.5,13"
+  BF_HIT_PARTS=1 BF_TEST_FREECAM=0.5,3.75,1.2,17.5,0,-5`): the four squad models' parts sit on
+  their drawn bodies: the head, the upper arms, the forearms on the guns, the torso, thighs and
+  calves.
 
 ### Running in the background (#163)
 

@@ -262,4 +262,5 @@ Squad movement and deaths follow the game's own data and the captures:
     - the follow camera's clamp then pulls it in close to him (frames 73-89). That comes from
       the hook and the clamp, not the hand-over.
   - With `BF_DEATHMATCH=1` there is no death camera.
-* `BF_COMBAT_LOG=1` prints hits, knockdowns and dives.
+* `BF_COMBAT_LOG=1` prints hits (each with its factors: the hit part struck, the own side's
+  x0.7, the difficulty step; play.md **Damage**), knockdowns and dives.

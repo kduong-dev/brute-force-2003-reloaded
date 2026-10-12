@@ -51,8 +51,9 @@ const BOLT_MIN_SCALE: f32 = 0.15;
 const BOLT_LIFE: f32 = 0.9;
 /// The thrower's damage from a bolt, as a share of the explosion's Damage max: Brutus at 0 m lost
 /// 31.5% of his 105 HP (33) in one step, 0.34 of 97.5. Fitted to that one measurement; the game's
-/// rule isn't known (the Frag's thrower took 0.2 x the roll, play_grenade.rs SELF_DAMAGE: 7.8-19.5
-/// here, which the recording's 33 doesn't fit).
+/// rule isn't in yet (#112; the Frag's thrower took 0.2 x the roll, play_grenade.rs SELF_DAMAGE:
+/// 7.8-19.5 here, which the recording's 33 doesn't fit). Measured on the campaign's Brutus, so it
+/// holds STANDARD's step for the squad already (divided out before the step, play_damage.rs).
 const SELF_BOLT: f32 = 0.34;
 /// A struck body (living or dead) is thrown back and up (m/s, world): the recording's squadmate
 /// went up and back and was down ~1 s; a corpse was thrown into the air. The amounts are the
@@ -129,7 +130,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
           kits: Option<Res<super::grenade::GrenadeKits>>, mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
           (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
           mut requests: ResMut<BoltRequests>, mut bolts: ResMut<Bolts>, mut tint: ResMut<super::grenade::ScreenTint>,
-          mut places: Query<&mut Transform>, test: Option<Res<super::testmap::TestMap>>) {
+          mut places: Query<&mut Transform>, test: Option<Res<super::testmap::TestMap>>, difficulty: Res<super::damage::Difficulty>) {
     let Some(kits) = kits else { return };
     let dt = frame_dt(&time);
     let log = std::env::var("BF_GRENADE_LOG").is_ok();
@@ -204,9 +205,14 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             shove_up(&mut k.ragdoll, throw);
         }
         let k = 1.0 - b.dist / radius;
-        // (times the character's factor for the explosion's damage-type, 6: Flint's x2)
-        let damage = game.0.damage_factor(CHARACTERS[u.character], kit.blast.damage_type)
-            * if u.who() == Who::Squad(b.thrower) { SELF_BOLT * max } else { max * k };
+        // (times the character's step and factor for the explosion's damage-type, 6: Flint's
+        // x2, play_damage.rs; the thrower's share holds STANDARD's step already, divided out)
+        let mut hit = if u.who() == Who::Squad(b.thrower) {
+            super::damage::Hit::new(SELF_BOLT * max / super::damage::footage_squad_step(&game.0), "the thrower's share", kit.blast.damage_type)
+        } else {
+            super::damage::Hit::new(max * k, "Damage max x (1 - d / r)", kit.blast.damage_type)
+        }.source(Who::Squad(b.thrower));
+        let damage = hit.land(u, &game.0, &difficulty, p_time(b));
         let damage = if instant && !leader && u.who() != Who::Squad(b.thrower) { u.health.max(damage) } else { damage };
         // the thrower stays up (Brutus did in the recording): `hurt`'s own chance of a
         // knock-down is held off for them by its knock-down cooldown, put back after
