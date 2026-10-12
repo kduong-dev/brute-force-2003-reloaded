@@ -260,10 +260,16 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
   twisted), easing in and sliding to a stop.
 * **Reactions** (the range spot, `BF_TEST_INSTANT_KILL=0
   BF_TEST_NPC=0.3,h_16c345fc,enemy,dummy,-54.5,35.8 BF_COMBAT_LOG=1 BF_ENEMY_LOG=1`, 150
-  frames): the dummy knows no enemy, so every hit is EVT_DAMAGED_NO_ENEMIES -> EVT_USER2; the
-  first draws a stun (stunned, 1.73 s, then the idle); the second, during it, waits and is
-  refused by both cooldowns when it ends (knock-down 0.27 s left, stun 2.27 s); the third draws a
-  knock-down (knockdown2, 2.17 s): thrown back, it lands, lies and gets up, as take 14's.
+  frames): the dummy knows no enemy, so every hit is EVT_DAMAGED_NO_ENEMIES -> EVT_USER2. The
+  first hit (0.87 s) is taken at 1.20 s and draws a knock-down (knockdown, 2.00 s): thrown back,
+  it lands, lies and gets up, as take 14's; the second, during it, waits and is refused by both
+  cooldowns when it ends (knock-down 4.0 s left, stun 1.0 s); the third (4.27 s) is taken at
+  4.60 s, where the knock-down's cooldown refuses it and a stun is drawn (stunned, 1.73 s, then
+  the idle).
+* **A type without the motion** (`--test BF_CHARACTER=1 BF_TEST_INSTANT_KILL=0
+  BF_TEST_GOTO=0,8,0,7.3 BF_TEST_NPC=0.3,h_f1dead6f,enemy,dummy,0.15,3 BF_TEST_FIRE=hip
+  BF_ENEMY_LOG=1`, the dm Shadoon): its draw struck KNOCKDOWN out ("refused [65]") and played
+  its stun.
 * **Death** (the range spot, `BF_TEST_NPC=0.3,h_1c5780f8,enemy,frozen,-54.5,35.8
   BF_TEST_FREECAM=1.1,-49.5,31.0,36.4,90,-14 BF_NO_HUD=1 BF_RAGDOLL_LOG=1 BF_SOUND_LOG=1`, 90
   frames): at the kill the green mist, the gun drops at the feet; the body goes limp, thrown back
@@ -277,7 +283,8 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
   `BF_TEST_NPC="0.3,h_1c5780f8,...;2.5,...;4.7,...;6.9,...;9.1,h_e9a41520,..." BF_ENEMY_LOG=1
   BF_SOUND_LOG=1`): the Heavies say h_04d16d90, h_f6aa73af, h_00c08720, then one of all three
   again ("3 not said yet"); the Soldier one of its own three (h_ecef9910). Each starts on the
-  frame of the killing hit's sound.
+  frame of the killing hit's sound. On the test map the dm Heavy (`shrike heavy@dm`) says its
+  own (h_0c60112d), from mp_common's dm bank.
 * **Decals** (the range spot, `BF_TEST_INSTANT_KILL=0 BF_TEST_NPC=0.3,h_1c5780f8,enemy,frozen,-54.5,35.8
   BF_TEST_FREECAM=9.0,-54.5,33.6,34.6,180,-72 BF_NO_HUD=1 BF_COMBAT_LOG=1`): each hit's list-1
   decal on the floor between the feet and the hit, scale 2, then 4 once the hit is more than
@@ -285,16 +292,22 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
   reactions run above, the hits after the stun had carried the Heavy 2 m back laid theirs on the
   gate panel 3.7-3.8 m behind, at z 41.32 facing back, as take 14's; the patches darken the
   floor dark green, multiplied, as take 20's kill spot.
+* **Decals in the fog** (the range spot with the kill, `BF_TEST_FREECAM=2.5,-54.5,79.2,-14.6,180,-45`:
+  the kill decal from 70 m above and behind, and from 90 m, `...,93.0,-28.4,...`): before the fog
+  fix the whole 4 x 2 m quad showed as a pale green parallelogram round the patch; now only the
+  patch shows, faint at 90 m, and from 15 m it looks as before.
 * **The stamina shield** (`--test BF_CHARACTER=1 BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=0,8,0,7.3
   BF_TEST_NPC=0.3,shrike heavy@dm,enemy,frozen,0.15,3 BF_TEST_FIRE=hip BF_CAMERA_PITCH=-0.12
   BF_ENEMY_LOG=1`): the dm Heavy's 40 stamina takes the first L-Shot hit's 37.4 whole (no blood,
-  no decal), refills at 4 a second, and the next hits take what's left from the hit points.
-* **No regressions** (the base build 8b5f701 against this one, frame by frame): the NPC fight of
-  "Verified" in testtools.md (202 of 225 frames the same, the rest within a few pixels; the same
-  combat log), `BF_TEST_KILL=3` (119 of 120; two runs of the base build: 118), the player's death
-  on sdm_e34 (`BF_TEST_DIE=1`: 91 of 100, the loading frames and a few pixels, as two runs of the
-  base build differ too) and the autopilot on sdm_e34 (296 of 300, the first frames). The
-  squad's ragdoll, decals, knock-down and chatter are untouched.
+  no decal), refills at 4 a second, and the next hits take what's left from the hit points. With
+  the instant kill on, one hit of 95 (its 55 HP and 40 stamina) kills it.
+* **No regressions** (main's build, 0681343, against this one, frame by frame): the autopilot on
+  sdm_e34 (293 of 300 frames the same: the first frames, which differ between two runs of one
+  build too) and `BF_TEST_KILL=3` on the test map (118 of 120, a few pixels; the same combat log
+  and the same sounds, so the test map's new streamed banks change none of the squad's lines).
+  Before the merge, against 8b5f701: the NPC fight of testtools.md's "Verified" (202 of 225, the
+  same combat log) and the player's death on sdm_e34 (91 of 100, the loading frames). The squad's
+  ragdoll, decals, knock-down and chatter are untouched.
 
 ## Not done
 
@@ -313,3 +326,6 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
   game's masses, damping and the lower leg's roll lock (above) aren't the demo's.
 * The squad's ragdoll by the game's rule (its bodies and joint limits, FUN_00127290 /
   FUN_00113120).
+* The tester's notes against the takes: the green mist covers about 0.44 of the take's area; the
+  Soldier's knock-down slot 1 (knockdown, 2.84 m to its right) throws it sideways; the second
+  list's ray is taken level.
