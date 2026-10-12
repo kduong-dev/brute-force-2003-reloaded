@@ -86,8 +86,10 @@
     * The campaign's squad took ~0.58 of a blast, against SDM's 1: the difficulty step (#127,
       play.md **Damage**). An area reaches a character through its own handler (FUN_0021ade0
       calls the target's vtable slot 0, 0x125600), which takes x (1 + 0.1n) for the squad:
-      x0.6 on STANDARD, the campaign takes'; the multiplayer maps have none (n = 0). The
-      objects aren't stepped. Checked: campaign e34 at take01's spot (`BF_MAP=e34
+      x0.6 on STANDARD, the campaign takes'. The demo plays the multiplayer maps with none
+      (n = 0): a fit to take29 and #146's lava takes on sdm_e13, not read from the code (the
+      default game flags hold the difficulty at -4; play.md **Damage**). The objects aren't
+      stepped. Checked: campaign e34 at take01's spot (`BF_MAP=e34
       BF_TEST_GOTO=-31.52,16.64,-31.52,16.64 BF_TEST_HIT=2.0`), Tex 115 -> 91.0 over
       2.13-2.60 s (take01: 91.22 by 2.59 s); take29's spot on sdm_e34, 40.0 as before.
   * **Not done**:

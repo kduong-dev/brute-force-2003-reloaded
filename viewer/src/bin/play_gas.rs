@@ -17,7 +17,10 @@
 //!    13.2 HP/s, below both clouds. A guess fitted to the recording. The recording's Tex is the
 //!    campaign's, on STANDARD, so the rate holds the squad's step there (x0.6): it's divided
 //!    out before each character's own step (play_damage.rs): 17.7 HP/s on the squad on
-//!    STANDARD, 29.5 with no step (HARD, the multiplayer maps), 41.3 on an enemy on STANDARD;
+//!    STANDARD, 29.5 with no step (HARD, the multiplayer maps), 41.3 on an enemy on STANDARD.
+//!    That last is the demo's extrapolation: the rate was measured on the thrower in its own
+//!    cloud, so it holds FUN_0004b9c0's x0.7 too, which an enemy wouldn't take (~59 HP/s with
+//!    it out). The game's rule for the cloud is #112's;
 //!  - it starts GAS_DELAY after the blast and lasts h_04ea9251 seconds. The recording's drain
 //!    stops 5.80 s after the first cloud went off (the demo's 5.58 s, 0.2 s short);
 //!  - the thrower is poisoned like anyone (it was Tex's own cloud), times each character's

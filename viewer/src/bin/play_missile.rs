@@ -960,9 +960,9 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
             tint.0 = 0.0;
         }
         if log {
-            let part = hit.part.map_or(1.0, |(m, b)| m * b.map_or(1.0, |b| b.1));
+            let part = hit.part.map_or(1.0, |p| p.factor());
             println!("t {now:.2}: missile {} direct hit: {} takes {amount:.1} (roll {roll:.1}, x{part:.2} at bone {}{}, x{:.2} the step) -> {:.1} / {:.0}", bl.id,
-                     name(u), bone.map_or("-".to_string(), |b| format!("h_{b:08x}")), if hit.friendly < 1.0 { ", own side x0.7" } else { "" }, hit.step,
+                     name(u), bone.map_or("-".to_string(), |b| format!("h_{:08x}", b.bone)), if hit.friendly < 1.0 { ", own side x0.7" } else { "" }, hit.step,
                      u.health, u.max_health);
         }
     }

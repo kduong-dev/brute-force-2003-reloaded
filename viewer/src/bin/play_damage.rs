@@ -29,9 +29,9 @@
 //! What uses it: play.rs's shots (the player's and the AI's) and falls, play_missile.rs's direct
 //! hits and blasts, the grenades (play_grenade.rs, play_energy.rs, play_sonic.rs, play_gas.rs)
 //! and the scenery's damage areas (play_scenery.rs). The grenades keep their own rules (their
-//! shares aren't the game's yet: grenades.md); their amounts fitted to the takes on a squad
-//! victim are divided by the takes' step (`footage_squad_step`), so on STANDARD they come out
-//! as measured. Not stepped: the test hooks' kills (BF_TEST_DIE, the test map's suicide and
+//! shares aren't the game's yet: #112, grenades.md); their amounts fitted to the recordings on a
+//! squad victim are divided by the recordings' step (`footage_squad_step`), so on STANDARD they
+//! come out as measured. Not stepped: the test hooks' kills (BF_TEST_DIE, the test map's suicide and
 //! instant kill) and a harmful liquid's (play.rs: the game's liquid damage isn't traced).
 //!
 //! `BF_DIFFICULTY=<standard|hard|brutal|n>` sets the difficulty (`Difficulty::for_map`).
@@ -48,8 +48,8 @@ use bf_viewer::bf::hash::h;
 const STEP_PER_LEVEL: f32 = 0.1;
 /// The team table at 0x3ffd80 (read from default.xbe): row t, column k is 1 when team t is
 /// hostile to team k. Rows (the ALIGN_ names at 0x3bc94c): 0 CONFEDERATION (the squad), 1 SHRIKE
-/// (the enemies), 2 NEUTRAL, 3-6 (hostile to each other: deathmatch teams, a guess), 7
-/// PC_NO_TEAM (hostile to itself), 8 HOSTILE, 9.
+/// (the enemies), 2 NEUTRAL, 3-6 TEAM1-TEAM4 (hostile to each other; that they're the
+/// deathmatch teams is a guess), 7 PC_NO_TEAM (hostile to itself), 8 HOSTILE, 9 SEER_SLAVE.
 const TEAM_TABLE: [[u8; 10]; 10] = [
     [0, 1, 0, 0, 0, 0, 0, 1, 1, 0],
     [1, 0, 0, 1, 1, 1, 1, 1, 1, 0],
@@ -105,12 +105,18 @@ pub struct Difficulty {
 impl Difficulty {
     /// The difficulty a map is played at:
     ///  - BF_DIFFICULTY=<standard|hard|brutal> (the menu's names, any case) or a number n, on any
-    ///    map (a test hook: a multiplayer map has none in the game);
+    ///    map (a test hook; on a multiplayer map too);
     ///  - else on a multiplayer map (the game's level list, campaign-bf.xmb Type: the deathmatch
-    ///    arenas and the squad deathmatch maps) none, n = 0: the getter 0x7c720 returns 0
-    ///    without the flag, and the session there has none (by fit: #85's take29 on sdm_e34 had
-    ///    Tex take 39.4 of a barrel's 40 at 1 m, where the campaign's took ~24 at 1-2.7 m, takes
-    ///    01-04: x1 and x0.6);
+    ///    arenas and the squad deathmatch maps) none, n = 0. **A fit, not read from the code**:
+    ///    #85's take29 on sdm_e34 had Tex take 39.4 of a barrel's 40 at 1 m (the campaign's took
+    ///    ~24 at 1-2.7 m, takes 01-04), and #146's takes 01-03 on sdm_e13 had Brutus lose
+    ///    exactly 30.00 per lava entry, the lava's rate: x1 both. How a match gets there isn't
+    ///    traced. The getter (0x7c720) reads the flag from the current slot's tree (the
+    ///    session's vtable +0x210, 0x78d60: [session + 0x5cc + 4 x [session + 0x5c8]]) through
+    ///    FUN_00078320, which gives 0 only without a tree or without the flag, and the default
+    ///    game flags hold it at -4 (default-gameflags.xml's `<campaign>`, where the decoder names
+    ///    its hash h_1a98de0a `shadoon-look`), so a session built from them would read STANDARD.
+    ///    A live read at 0x125673 in a match would settle it;
     ///  - else (the missions, the test map) STANDARD, the takes'.
     pub fn for_map(game: &Game, map: &str) -> Self {
         let values = game.difficulty_settings;
@@ -153,8 +159,9 @@ fn enemy_side(team: u8) -> bool {
 }
 
 /// The step the takes' squad took (STANDARD on a squad victim: x0.6). The demo's amounts fitted
-/// to the takes on the squad (the grenades' thrower shares, the Gas's rate) hold it already:
-/// divided by it they come out as measured on STANDARD, now that every hit takes the step.
+/// to the recordings on the squad (the grenades' thrower shares, the Gas's rate) hold it
+/// already: divided by it they come out as measured on STANDARD, now that every hit takes the
+/// step. (Measured on the thrower, they hold the x0.7 too: `Hit::source`.)
 pub fn footage_squad_step(game: &Game) -> f32 {
     game.difficulty_settings.map_or(1.0, |v| Difficulty { n: v[FOOTAGE], name: MENU[FOOTAGE] }.step(SQUAD_TEAM))
 }
@@ -202,26 +209,59 @@ pub fn vulnerability(game: &Game, u: &Player, damage_type: i64) -> f32 {
 ///
 /// None without a model or a hit-part list: FUN_00125940 then takes the damage-multiplier alone,
 /// as for a body that isn't one of the parts (FUN_00115000's -1).
-pub fn struck_bone(u: &Player, game: &Game, from: Vec3, dir: Vec3, met: f32) -> Option<u32> {
+pub fn struck_bone(u: &Player, game: &Game, from: Vec3, dir: Vec3, met: f32) -> Option<Struck> {
     let bones = hit_bones(game, u);
     let l = u.loaded.as_ref()?;
     let contact = from + dir * met;
     if let Some(k) = &u.knock {
         let turn = Quat::from_rotation_y(k.ragdoll.yaw);
         let place = |i: usize| k.ragdoll.pos.get(i).map(|&p| k.ragdoll.origin + turn * p);
-        return nearest_part(bones, &l.model, &place, &[contact]);
+        return nearest_part(bones, &l.model, &place, &[contact]).map(|bone| Struck { bone, found: Found::Lying });
     }
     let first = posed_parts(u, game).into_iter().filter_map(|(bone, _, frame, surface)| {
         let back = frame.inverse();
         Some((ray_triangles(surface, back.transform_point3(from), back.transform_vector3(dir), met + THROUGH)?, bone))
     }).min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, bone)) = first {
-        return Some(bone);
+        return Some(Struck { bone, found: Found::Surface });
     }
     let root = model_root(u);
     let place = |i: usize| u.last_world.get(i).map(|w| root.transform_point3(w.w_axis.truncate()));
     let way: Vec<Vec3> = (0..=CHORD_STEPS).map(|k| contact + dir * (2.0 * BODY_RADIUS * k as f32 / CHORD_STEPS as f32)).collect();
-    nearest_part(bones, &l.model, &place, &way)
+    nearest_part(bones, &l.model, &place, &way).map(|bone| Struck { bone, found: Found::Nearest })
+}
+
+/// How `struck_bone` found the part struck, for the log (BF_COMBAT_LOG tags the demo's own
+/// two rules, so they can be counted): the first surface the shot met (the game's rule), the
+/// part nearest a shot that passed between the surfaces (`(nearest)`), or the part nearest the
+/// contact on a body knocked down (`(nearest, lying)`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Found {
+    Surface,
+    Nearest,
+    Lying,
+}
+
+/// A hit part struck (`struck_bone`): its bone and how it was found.
+#[derive(Clone, Copy, Debug)]
+pub struct Struck {
+    pub bone: u32,
+    pub found: Found,
+}
+
+/// A direct hit's FUN_00125940 (`Hit::part`): the victim type's damage-multiplier, and the part
+/// struck with its bone's Damage (None: no part, x1).
+#[derive(Clone, Copy, Debug)]
+pub struct Part {
+    pub multiplier: f32,
+    pub struck: Option<(Struck, f32)>,
+}
+
+impl Part {
+    /// FUN_00125940's factor: the damage-multiplier x the struck bone's Damage.
+    pub fn factor(&self) -> f32 {
+        self.multiplier * self.struck.map_or(1.0, |s| s.1)
+    }
 }
 
 /// Where `u`'s model is drawn: its root's frame (play.rs: the position, raised by the height and
@@ -329,10 +369,9 @@ pub struct Hit {
     pub by: Option<Who>,
     /// an instant ray's range falloff (FUN_00230040 -> FUN_00223780); 1 for anything else
     pub falloff: f32,
-    /// a direct hit's FUN_00125940: the victim type's damage-multiplier, and the struck part's bone
-    /// with its Damage (None: no part, x1); None for a hit with no hit part (a blast's share
-    /// and the rest: FUN_00224a90 passes 0, FUN_00223160 has none)
-    pub part: Option<(f32, Option<(u32, f32)>)>,
+    /// a direct hit's FUN_00125940 (`Part`); None for a hit with no hit part (a blast's share and
+    /// the rest: FUN_00224a90 passes 0, FUN_00223160 has none)
+    pub part: Option<Part>,
     /// FRIENDLY when the shooter and the victim are both the squad's (FUN_0004b9c0), else 1
     pub friendly: f32,
     /// the victim's step (0x125600) and the difficulty it's at, once it reaches them
@@ -357,8 +396,10 @@ impl Hit {
         self
     }
 
-    /// Dealt by `who` (for the log), without FUN_0004b9c0's share: the grenades' own rules, whose
-    /// numbers were fitted without it.
+    /// Dealt by `who` (for the log), without FUN_0004b9c0's share: the grenades' own rules (#112
+    /// owns them). Their thrower numbers were measured on the thrower in its own blast, so they
+    /// hold the x0.7 already (and STANDARD's x0.6, `footage_squad_step`); the others' rule
+    /// (Damage max falling to nothing at the radius) is the demo's own, with no x0.7.
     pub fn source(mut self, who: Who) -> Self {
         self.by = Some(who);
         self
@@ -370,11 +411,11 @@ impl Hit {
         self
     }
 
-    /// A direct hit that struck `bone` on `victim` (`struck_bone`): FUN_00125940, the victim
+    /// A direct hit that struck `part` on `victim` (`struck_bone`): FUN_00125940, the victim
     /// type's damage-multiplier x the bone's Damage (1 for a bone the list doesn't hold).
-    pub fn struck(mut self, victim: &Player, game: &Game, bone: Option<u32>) -> Self {
-        let damage = bone.map(|b| (b, hit_bones(game, victim).iter().find(|x| x.0 == b).map_or(1.0, |x| x.1)));
-        self.part = Some((damage_multiplier(game, victim), damage));
+    pub fn struck(mut self, victim: &Player, game: &Game, part: Option<Struck>) -> Self {
+        let struck = part.map(|s| (s, hit_bones(game, victim).iter().find(|x| x.0 == s.bone).map_or(1.0, |x| x.1)));
+        self.part = Some(Part { multiplier: damage_multiplier(game, victim), struck });
         self
     }
 
@@ -389,8 +430,7 @@ impl Hit {
 
     /// The amount: every factor's product.
     pub fn amount(&self) -> f32 {
-        let part = self.part.map_or(1.0, |(m, b)| m * b.map_or(1.0, |b| b.1));
-        self.base * self.falloff * part * self.friendly * self.step * self.vulnerability
+        self.base * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly * self.step * self.vulnerability
     }
 
     /// `on`, then the log line (BF_COMBAT_LOG), at sim time `now`. The amount.
@@ -411,10 +451,14 @@ impl Hit {
         if self.falloff != 1.0 {
             s += &format!(" x falloff {:.3}", self.falloff);
         }
-        if let Some((multiplier, bone)) = self.part {
-            s += &format!(" x damage-multiplier {multiplier:.2}");
-            s += &match bone {
-                Some((b, damage)) => format!(" x {} {damage}", bone_name(b)),
+        if let Some(p) = self.part {
+            s += &format!(" x damage-multiplier {:.2}", p.multiplier);
+            s += &match p.struck {
+                Some((st, damage)) => format!(" x {} {damage}{}", bone_name(st.bone), match st.found {
+                    Found::Surface => "",
+                    Found::Nearest => " (nearest)",
+                    Found::Lying => " (nearest, lying)",
+                }),
                 None => " x no hit part 1".into(),
             };
         }
