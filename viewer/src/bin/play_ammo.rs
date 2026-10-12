@@ -27,8 +27,10 @@
 //! trigger over those windows (s, overriding BF_TEST_FIRE); BF_TEST_SWITCH=<s>[,<s>...] presses
 //! the weapon switch once at each time (owning the switch for the run, Q included);
 //! BF_TEST_RELOAD=<s>[,<s>...] presses the reload key (R) once at each time;
-//! BF_TEST_KNOCK=<s> knocks the player down then; BF_AMMO_LOG prints the reserve, each reload,
-//! dry shot, recharged round and the switch hint.
+//! BF_TEST_KNOCK=<s> knocks the player down then; BF_TEST_CROUCH_KEY=<s>[,<s>...] presses the
+//! crouch key (Z) once at each time (play.rs's crouch; its toggle, where BF_TEST_CROUCH holds
+//! it); BF_AMMO_LOG prints the reserve, each reload, dry shot, recharged round and the switch
+//! hint.
 //!
 //! **A gun in the second hand** (Tex's berserk, play_skills.rs): the character's reload,
 //! FUN_00120d40, does nothing while the inventory holds one (it returns at once, before the
@@ -150,8 +152,9 @@ fn test_clip(mut player: ResMut<Player>, mut done: Local<bool>) {
 /// BF_TEST_TRIGGER=<from>-<to>,...: the trigger held over those windows; BF_TEST_SWITCH=<s>,...:
 /// the weapon switch pressed at those times; BF_TEST_RELOAD=<s>,...: the reload key (R) pressed
 /// at those times; BF_TEST_KNOCK=<s>: the player knocked down then (thrown back, as by a blast),
-/// once.
-pub fn test_trigger(mut player: ResMut<Player>, mut last_switch: Local<f32>, mut last_reload: Local<f32>, mut knocked: Local<bool>) {
+/// once; BF_TEST_CROUCH_KEY=<s>,...: the crouch key (Z) pressed at those times.
+pub fn test_trigger(mut player: ResMut<Player>, mut last_switch: Local<f32>, mut last_reload: Local<f32>, mut knocked: Local<bool>,
+                    mut last_crouch: Local<f32>) {
     let t = player.sim_time;
     if let Some(at) = std::env::var("BF_TEST_KNOCK").ok().and_then(|v| v.parse::<f32>().ok()) {
         if !*knocked && t >= at && player.loaded.is_some() {
@@ -181,6 +184,15 @@ pub fn test_trigger(mut player: ResMut<Player>, mut last_switch: Local<f32>, mut
         player.reload_pressed = due.is_some();
         if let Some(s) = due {
             *last_reload = s;
+        }
+    }
+    // (once per time given, as the others: Z's toggle of the crouch, play.rs `read_input`; for
+    // a press that isn't held, as BF_TEST_CROUCH's is)
+    if let Ok(v) = std::env::var("BF_TEST_CROUCH_KEY") {
+        let due = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).filter(|&s| t >= s && *last_crouch < s).fold(None, |a: Option<f32>, s| Some(a.map_or(s, |a| a.max(s))));
+        if let Some(s) = due {
+            *last_crouch = s;
+            player.crouch_wanted = !player.crouch_wanted;
         }
     }
 }

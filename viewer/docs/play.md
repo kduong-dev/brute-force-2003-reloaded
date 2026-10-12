@@ -10,7 +10,7 @@
 | Q | switch between the character's two weapons (animated: stow one, draw the other; plays the game's hard-coded switch sounds ff820fda / e1e97460, 0.65 s apart) |
 | Space | jump: standing jumps crouch first, running jumps launch straight away and carry the run's momentum (Brutus uses his four-legged jump when sprinting on all fours) |
 | C | dodge roll / sidestep to the left or right of the movement |
-| Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` |
+| Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` (held: asked for again each frame); `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time, as the key toggles. In Tex's berserk Z does nothing and the press is dropped ([skills.md](skills.md)) |
 | M | cycle the ground surface (changes footstep / landing / slide sounds) |
 | click, then mouse | look around (Esc releases the mouse) |
 | wheel | zoom |
@@ -273,7 +273,7 @@ the rest: Tex's `99,4`); `BF_TEST_TRIGGER=<from>-<to>[,...]` holds the trigger o
 windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the weapon switch once
 at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_RELOAD=<s>[,...]`
 presses R once at each time (it owns R for the run); `BF_TEST_KNOCK=<s>` knocks the player down
-then, once;
+then, once; `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time;
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot (and the second hand's), recharged
 round and the hint.
 
@@ -306,7 +306,11 @@ result over a dark ground, as the grenade meter's orange is. The demo's own gree
     h_0c3eb4ff="0.7">` x the gun's reach (FUN_00232520): the bullet's `range`, x0.9 for a burst
     of pellets (the Bower 20), and for a mesh projectile its second timer x its speed added (and
     its range again with MIRV on explode): LZR-50 63 m, Jax-iP 28 m, Therm Sweeper
-    0.7 x (20 + 20 + 5 x 30) = 133 m. The aim point is the point of the character's **aim
+    0.7 x (20 + 20 + 5 x 30) = 133 m. With a gun in the second hand (Tex's berserk) the smaller
+    of the two guns' reaches counts, measured from that gun's muzzle (0xbf82a-0xbf8aa, then
+    FUN_000bff40 at 0xbfb14): with the LZR-50 in hand and the Jax-iC second, the Jax-iC's 42 m
+    from his left hand (`LockGun`); the box below and the centre ray stay the gun in hand's
+    (0xc57e1). The aim point is the point of the character's **aim
     capsule** (its vtable +0x134, 0x121d00) nearest the crosshair's ray (FUN_0015b450): from 40%
     of the way from its "Bip01 Head" node to its root node (the hips) to half that length below
     the hips, 0.15 of it thick. So a sweep locks as the body's middle, chest to thighs, comes
@@ -344,13 +348,11 @@ result over a dark ground, as the grenade meter's orange is. The demo's own gree
   rifle (FUN_002324c0 through his skill: the demo's shots don't have it either); the alpha's
   blink; Flint's targeting box (#124). The demo's bodies are cylinders, so the centre ray
   doesn't slip between an arm and the body (take04's 2-3 blue frames on Flint), and it passes
-  the dead (the game's meets a body and tests its radar-contact). Two choices of the demo's:
-  * only the gun in hand's reach counts: FUN_000bf7a0 takes the smaller of it and that of the
-    item in the holder's +0x178 slot (FUN_0014d310: Tex's second gun in his berserk), which the
-    demo doesn't have;
-  * the candidates are tried in the squad's order: the game walks the world's target list
-    (0xba1c0), whose order isn't traced, and with its running best scores that order decides
-    between close candidates.
+  the dead (the game's meets a body and tests its radar-contact). A choice of the demo's: the
+  candidates are tried in the squad's order: the game walks the world's target list (0xba1c0),
+  whose order isn't traced, and with its running best scores that order decides between close
+  candidates. (The second hand's reach, a choice here before #121, is the game's now: the lock
+  above.)
 
 Test hooks: `BF_RETICLE_LOG=1` prints the tint, the lock and what the centre ray is on at each
 change (`=2`: every frame), with each hostile's aim point on the HUD, the box it's tested
@@ -387,6 +389,11 @@ LZR-50"`, `BF_CAPTURE`):
   (blue; the log: "out of reach: 32.7 m from the muzzle, reach 28.0"). Flint's MK-ASLT on an
   enemy 60 m away: blue unscoped, red in the scope (`BF_TEST_AIM=1`: the centre ray's lock). The
   Therm Sweeper locks it at 63 m (box 26.9) while its centre ray stops at its 20 m range.
+* The second hand's reach (#121, standing: `-- --test BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.535,19.5
+  BF_CAMERA_PITCH=-0.07 BF_TEST_NPC=0.5,tex,enemy,dummy,8,-30 BF_TEST_SKILL=2 BF_RETICLE_LOG=1
+  BF_TEST_WEAPON="Confed LZR-50;Jax-iC"`): the enemy 50 m out is red with the LZR-50 alone
+  (0.60 s, "locks", 53.6 m deep) and blue from the Jax-iC's draw into Tex's left hand (2.60 s:
+  "out of reach: 50.9 m from the muzzle, reach 42.0"), as the frames show at 1.3-2.0 and 3.0-4.0 s.
 * Level data: on e34 the level's radar-contacts load (`BF_RETICLE_LOG` lists them as the map
   starts) and the crosshair is yellow on the missile rack h_00815cce from take06's spot (`BF_MAP=e34
   BF_NO_SQUAD=1 BF_TEST_GOTO=-44.68,17.61,-44.21,17.77 BF_TEST_CROUCH=0.2 BF_CAMERA_PITCH=-0.2
@@ -411,10 +418,15 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   the scope); a dry click (`play_ammo.rs`) and the Charge's shot cooldown use the same
   `shots::period` (FUN_002327f0, FUN_0022dc00).
 * **Taps and the raise.** A press is a request that outlives the button: the holder's +0x260 bit
-  8 sets the weapon's fire bits each frame (0x122614-0x122655) until an animation event clears
-  it (0x0f8408d5, FUN_00117660; which clip isn't placed), so the demo holds a press until its
-  first shot (`FireState::pull`): an 80 ms tap fires. From idle the gun is raised first (the
-  demo's 0.2 s, which the takes' 0.19-0.24 s press-to-shot fits); after a shot it stays up 4 s
+  3 (8) sets the fire flag of the gun in hand and of the second hand's each frame
+  (0x122614-0x122655) until an animation event clears it (0x0f8408d5, FUN_00117660 at 0x117b12;
+  which clip isn't placed), so the demo holds a press until its first shot (`FireState::pull`):
+  an 80 ms tap fires. With two guns (Tex's berserk) it holds it for each until that gun's first
+  shot, so a tap fires both, the one still cooling down when it's ready (#121: a tap at 3.98 s
+  fired the LZR-50 at 4.07 and the Jax-iC at 4.27, after the button came up), and while either
+  is owed its shot an empty one runs its dry cycle as under the button (the request sets both
+  flags). From idle the gun is raised first (the demo's 0.2 s, which the takes' 0.19-0.24 s
+  press-to-shot fits); after a shot it stays up 4 s
   (`READY_HOLD`: FUN_00123f60 keeps +0x7dc at 4 or more, medium confidence), so the takes' taps
   2.2 s apart fire at once (0.07-0.11 s). Checked: 80 ms Bower taps at 2, 4 and 6 s fire at
   +0.20, +0.13 and +0.13 s (15 fps capture steps); at `BF_CAPTURE_FPS=60`, +0.20 and +0.03 s.
@@ -530,8 +542,11 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   burst counter, empty cycles, muzzle effects and casings per hand; accuracy and tracers per
   weapon as before), both on the one trigger. Each shot carries its own gun's Damage,
   damage-type and ammo-type to the body it hits (it used to take the gun in hand's for every
-  shot of the frame). One gun's fire is unchanged: the autopilot's shot and ammo logs, as Tex and
-  as Brutus, are main's line for line.
+  shot of the frame). One gun's fire is unchanged: against main, the autopilot's shot and ammo
+  logs as Tex and as Brutus, and the LZR-50's held fire, taps and dry cycles on the test map
+  (`BF_TEST_TRIGGER=1-4,5-5.08,5.5-5.58,6.5-6.58`, with and without `BF_TEST_CLIP=6`), are the
+  same line for line once each pellet's new `hand: 0, ` is taken out of the shot log, and the
+  test map's frames pixel for pixel.
 
 Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"`, `0c3db625`)
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the

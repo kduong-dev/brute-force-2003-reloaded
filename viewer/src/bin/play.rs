@@ -2967,8 +2967,15 @@ fn read_input(
         let steps = if player.character == STILL_SNIPER { 2 } else { 1 };
         player.scope_level = (player.scope_level + 1) % (steps + 1);
     }
-    if let Some(l) = std::env::var("BF_TEST_SCOPE").ok().and_then(|v| v.parse().ok()) {
-        player.scope_level = l;
+    // BF_TEST_SCOPE=<step>[,<from s>]: hold that scope step (from that time on; from the start
+    // by default)
+    if let Ok(v) = std::env::var("BF_TEST_SCOPE") {
+        let mut it = v.split(',').map(str::trim);
+        let step = it.next().and_then(|x| x.parse().ok());
+        let from = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(0.0);
+        if let Some(l) = step.filter(|_| player.sim_time >= from) {
+            player.scope_level = l;
+        }
     }
     let aim = if zoomable { player.scope_level > 0 } else { mouse.pressed(MouseButton::Right) };
     let jump = keys.just_pressed(KeyCode::Space);
@@ -4264,7 +4271,13 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                     s.jump_land.or(c.jump_land), s.slide.or(c.slide)),
         None => (c.jump_crouch, c.jump_launch, c.jump_fall, c.jump_land, c.slide),
     };
-    let crouch_wanted = p.crouch_wanted && special.is_none();
+    // a crouch asked for in them is dropped, not kept for after the off: the demo's choice until
+    // a take shows what the game does with one (#35's shot T3); kept, he'd drop into a crouch at
+    // the off
+    if special.is_some() {
+        p.crouch_wanted = false;
+    }
+    let crouch_wanted = p.crouch_wanted;
     let dodge_pressed = p.dodge_pressed && special.is_none();
 
     // ---- actions: dodge and the jump chain (crouch -> launch -> fall -> land) ----
@@ -4498,13 +4511,13 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let gun_up = armed && p.reloading.is_none() && p.throwing.is_none()
         && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours;
     let clip_of = |p: &Player, w: usize| p.ammo.get(w).map_or(0, |a| a[0]);
-    // the second hand's gun (Tex's berserk): the trigger fires it too, so a pull holds while
-    // either gun has a round (take05: the gun in hand empty, the other fires on alone)
+    // the second hand's gun (Tex's berserk): the trigger fires it too, each gun while it has a
+    // round (take05: the gun in hand empty, the other fires on alone)
     let second = p.second.filter(|s| s.weapon < l.weapons.len());
-    let can_fire = gun_up && (clip_of(p, p.weapon) > 0 || second.is_some_and(|s| clip_of(p, s.weapon) > 0));
-    // (a tap is held until its first shot, play_shots.rs `pull`)
+    let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
+    // (a tap is held for each gun until its first shot, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire, can_fire);
-    if pulled {
+    if pulled.contains(&true) {
         if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
             // raise the gun before the first shot (both guns: take04's first berserk shots went
             // in one frame)
@@ -4519,13 +4532,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // accuracy; each round fired takes one from its clip and plays one report. The fire command
     // sets both guns' fire flags (0x122614-0x122655): each runs its own loop
     if let Some(def) = l.weapons.get(p.weapon).map(|w| &w.def) {
-        let trigger = |clip: i64| shots::Trigger { held: pulled, dry: p.fire && gun_up && p.using.is_none(), clip, scoped: p.scope > 0.5,
-                                                   crouched: crouch_wanted };
+        // (an empty gun's dry cycle: the button down, or a pull still owed the other gun's shot,
+        // as the game's request sets both guns' fire flags)
+        let dry = (p.fire || pulled.contains(&true)) && gun_up && p.using.is_none();
+        let trigger = |hand: usize, clip: i64| shots::Trigger { held: pulled[hand], dry, clip, scoped: p.scope > 0.5, crouched: crouch_wanted };
         let seed = p.character as u32 * 7919 + p.npc.map_or(0, |n| n.id as u32 * 104_729);
-        let mut guns = vec![shots::Gun { hand: 0, weapon: p.weapon, def, trigger: trigger(clip_of(p, p.weapon)), cooldown: p.cooldown, rounds: 0 }];
+        let mut guns = vec![shots::Gun { hand: 0, weapon: p.weapon, def, trigger: trigger(0, clip_of(p, p.weapon)), cooldown: p.cooldown, rounds: 0 }];
         // (its cooldown as the raise above left it)
         if let Some(s) = second.and(p.second) {
-            guns.push(shots::Gun { hand: 1, weapon: s.weapon, def: &l.weapons[s.weapon].def, trigger: trigger(clip_of(p, s.weapon)),
+            guns.push(shots::Gun { hand: 1, weapon: s.weapon, def: &l.weapons[s.weapon].def, trigger: trigger(1, clip_of(p, s.weapon)),
                                    cooldown: s.cooldown, rounds: 0 });
         }
         p.fire_state.run(&mut guns, seed, dt);
@@ -5007,7 +5022,12 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&m
     let dt = frame_dt(&time);
     // the scope: aiming (held, not just after firing) a weapon that zooms
     let held_zoom = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).map_or(0.0, |w| w.def.zoom);
-    let busy = player.switching.is_some() || player.reloading.is_some() || player.dead;
+    // none in Tex's berserk either, from the accepted press to the second gun's stowing (his
+    // toggle only refuses a press made scoped, 0x13d490): the demo's choice until a take shows
+    // whether the game lets him (#35's shot T2). Scoped, the second gun's muzzle effect washes the
+    // view, and a shot in the start clip leaves from behind his shoulder
+    let berserk = player.skill.special_motions || player.second.is_some();
+    let busy = player.switching.is_some() || player.reloading.is_some() || player.dead || berserk;
     if busy {
         player.scope_level = 0;
     }
@@ -5267,7 +5287,8 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
         }
     }
     // the second hand's gun (Tex's berserk): its own kick, plain flash and light, as the gun in
-    // hand's
+    // hand's; its barrels spin with the gun in hand's (one trigger fires both)
+    let spin_angle = p.spin_angle;
     if let Some(s) = p.second.as_mut() {
         s.recoil *= (-16.0 * dt).exp();
         let flash_on = s.flash > 0.0;
@@ -5276,6 +5297,11 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             if let (Some((_, r, t)), Ok(mut tr)) = (w.second_hand, transforms.get_mut(w.entity)) {
                 tr.translation = t - r * w.fire_dir * (0.04 * s.recoil);
                 tr.rotation = r;
+            }
+            for (e, axis, offset) in &w.spinners {
+                if let Ok(mut tr) = transforms.get_mut(*e) {
+                    *tr = Transform::from_translation(*offset).with_rotation(Quat::from_axis_angle(*axis, spin_angle));
+                }
             }
             let on = flash_on && w.def.shots.muzzle_effect == 0;
             if let Ok(mut v) = visibility.get_mut(w.flash) {

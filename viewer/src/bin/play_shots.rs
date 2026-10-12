@@ -154,8 +154,8 @@ pub struct FireState {
     /// empty trigger cycles since play_ammo.rs last took them (FUN_002327f0), by hand
     empty: [u32; HANDS],
     seed: u32,
-    /// a trigger pull still owed its first shot (see `pull`), and the trigger last frame
-    latched: bool,
+    /// a trigger pull still owed its first shot, by hand (see `pull`), and the trigger last frame
+    latched: [bool; HANDS],
     was_held: bool,
     /// seconds the gun stays up after a shot (see `READY_HOLD`)
     ready: f32,
@@ -181,7 +181,8 @@ pub fn period(def: &WeaponDef, scoped: bool) -> f32 {
 pub struct Trigger {
     /// the trigger for the fire loop (`pull`: held, or a tap still owed its shot)
     pub held: bool,
-    /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case)
+    /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case), or a pull
+    /// still owed the other hand's shot (the request sets both guns' fire flags, `pull`)
     pub dry: bool,
     /// rounds in the clip
     pub clip: i64,
@@ -228,21 +229,21 @@ impl FireState {
         self.burst[hand] = 0;
     }
 
-    /// The trigger for the fire loop this frame: held, or pressed earlier and still owed its first
-    /// shot. The game's request outlives the button: the press sets the holder's +0x260 bit 8,
-    /// which sets the weapon's fire bits each frame (0x122614-0x122655) until an animation event
-    /// clears it (0x0f8408d5, FUN_00117660 at 0x117b12), so an 80 ms tap fires 0.19-0.24 s later
-    /// (the takes). The clip that clears it isn't placed; the demo clears the request at the
-    /// pull's first shot, or when the gun can't fire.
-    pub fn pull(&mut self, held: bool, can_fire: bool) -> bool {
-        if held && !self.was_held {
-            self.latched = true;
-        }
+    /// The trigger for each hand's fire loop this frame (`can_fire`: whether that hand's gun can
+    /// fire): held, or pressed earlier and still owed its first shot. The game's request outlives
+    /// the button: the press sets the holder's +0x260 bit 3 (8), which sets the fire flag (+0x224
+    /// bit 2) of the gun in hand and of the second hand's each frame (0x122614-0x122655) until an
+    /// animation event clears it (0x0f8408d5, FUN_00117660 at 0x117b12, which clears both guns'
+    /// +0x224 bit 1 too), so an 80 ms tap fires 0.19-0.24 s later (the takes), both guns in Tex's
+    /// berserk. The clip that clears it isn't placed; the demo keeps each hand's request until
+    /// that gun's first shot, or until it can't fire.
+    pub fn pull(&mut self, held: bool, can_fire: [bool; HANDS]) -> [bool; HANDS] {
+        let pressed = held && !self.was_held;
         self.was_held = held;
-        if !can_fire {
-            self.latched = false;
-        }
-        (held || self.latched) && can_fire
+        std::array::from_fn(|k| {
+            self.latched[k] = (self.latched[k] || pressed) && can_fire[k];
+            (held || self.latched[k]) && can_fire[k]
+        })
     }
 
     /// Whether the fire loop of the gun in `hand` ran an empty cycle since the last call
@@ -253,7 +254,7 @@ impl FireState {
 
     /// Forget a pull still owed its shot (control passing to another character).
     pub fn drop_pull(&mut self) {
-        self.latched = false;
+        self.latched = [false; HANDS];
         self.was_held = false;
     }
 
@@ -322,7 +323,7 @@ impl FireState {
             if self.burst[hand] == 0 || d.burst_delay != 0.0 {
                 g.rounds += 1;
             }
-            self.latched = false;
+            self.latched[hand] = false;
             self.ready = READY_HOLD;
             // FUN_002317e0: instant rays carry the flight effect every (N+1)th shot
             let tracer = if d.bullet_type == 4 {

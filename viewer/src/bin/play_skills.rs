@@ -319,6 +319,9 @@ fn special_transition(u: &Player) -> bool {
 ///    sends the toggle (take26 30.23 s: the LZR-50 dry, berserk off 0.5 s later).
 ///  - The switch key, the reload key and the black button end it (vtable +0x7c), and no other
 ///    overlay plays while it's on (+0xa4, 0x13d850).
+///  - The demo's choices until #35's shots T2 / T3 show the game's: no scope while his berserk
+///    motions or second gun are in (play.rs `follow_camera`), and a crouch pressed in the motions
+///    dropped, not kept for after the off (`step_player`).
 struct Berserker {
     /// the toggle timer (skill+0x20, s left)
     timer: f32,
@@ -538,11 +541,13 @@ pub fn plugin(app: &mut App) {
 /// With a skill on that they end (`ended_by_actions`: Tex's), the player controller sends the
 /// toggle instead of what two more keys do: the switch key, Q (the game's Y, VB 10, 0x134db4-
 /// 0x134dde: the toggle in place of CT 9; take26 4.5 s, no switch, berserk off), and the reload
-/// key, R (the game's X let go, 0x134c50), when a reload could start (FUN_00120c50: the gun in
-/// hand's clip below its size and a reserve for it), which also leaves the reload asked for
-/// (+0xa1 bit 2), so it follows once the skill is off (take26 14.0 s: the reload at 15.19 s); with
-/// no reload possible the reload key does nothing. The black button (VB 63, 0x134367, the medkit
-/// shortcut) ends it the same way in the game; the demo has no key for it.
+/// key, R (the game's X let go, 0x134c2b-0x134c50), when a reload could start (FUN_00120c50: the
+/// gun in hand's clip below its size and a reserve for it), which also leaves the reload asked
+/// for (+0xa1 bit 2), so it follows once the skill is off (take26 14.0 s: the reload at 15.19 s);
+/// with no reload possible the reload key does nothing. R does it on the press, where the game's
+/// X does it on the release (take26: off about 0.6 s after X came up): the demo's choice, as its
+/// R reloads on the press. The black button (VB 63, 0x134367, the medkit shortcut) ends it the
+/// same way in the game; the demo has no key for it.
 fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut hooks: ResMut<SkillHooks>, reserve: Res<ammo::Reserve>) {
     if player.loaded.is_none() {
         return;
@@ -755,7 +760,11 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
 /// carried out. (`why` is for the log.)
 fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let was = u.skill.on;
-    let answer = k.toggle(u, &mut env.outside());
+    // (the one at 0 comes every frame: its refusals, the skill's own reasons included, go
+    // unlogged)
+    let mut out = env.outside();
+    out.log &= why != "at 0";
+    let answer = k.toggle(u, &mut out);
     if env.log && (why != "at 0" || answer != Toggle::Refused) {
         println!("t={:.2} {}: toggle ({why}) at stamina {:.2}, {}: {answer:?}", u.sim_time, unit_name(u),
                  u.stamina, if was { "on" } else { "off" });
