@@ -309,7 +309,8 @@ pub struct ObjectType {
 /// or a 4 (0xc59d7, play_reticle.rs); the radar reads it too (#160).
 pub const H_RADAR_CONTACT: u32 = 0x1905_F381;
 
-/// game-options `<reticule>` (common/game-options-en.xmb line 125; its attribute handler
+/// game-options `<reticule>` (common/game-options-en.xmb; line 125 of the decoded
+/// decompiled/xml/common/game-options-en.xml; its attribute handler
 /// 0x19d7d0 fills the settings the app's vtable +0x48 returns): the crosshair's lock rules
 /// (play_reticle.rs). The defaults are the shipped file's.
 #[derive(Clone, Copy, Debug)]

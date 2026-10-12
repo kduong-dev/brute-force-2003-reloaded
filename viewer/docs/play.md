@@ -315,9 +315,11 @@ result over a dark ground, as the grenade meter's orange is. The demo's own gree
   the crosshair's centre meets within the gun's range (256 m with no gun) decides. A hostile is
   locked at once in the scope (and with no gun, or a gun whose lock reach outruns its range: the
   Therm Sweeper's 133 m against its 20 m); out of the scope it stays blue (take02 and take03: out
-  of reach, blue). A living teammate (the same team, one not hostile to itself) is green; then a
-  radar-contact 2 or 4 makes it yellow. So red beats yellow and yellow beats green. No box: green
-  and yellow only while the centre is on the thing.
+  of reach, blue), whatever its radar-contact: for a hostile the radar test is skipped (0xc5943 ->
+  0xc5a3e). A living teammate (the same team, one not hostile to itself) is green; then anything
+  else with a radar-contact of 2 or 4 (a teammate, a neutral, a placed object) is yellow. So red
+  beats yellow and yellow beats green. No box: green and yellow only while the centre is on the
+  thing.
 * **Radar-contact** (an object's +0x7a, `radar-contact-type` h_1905f381; RCONTACT_ 2 OBJECTIVE,
   4 OBJECTIVE_SECONDARY): every character has 1 (`Player::radar_contact`). A level's objects take
   the placement's own `h_1905f381`, else their type's, then the radar-triggers that operate at the
@@ -332,7 +334,13 @@ result over a dark ground, as the grenade meter's orange is. The demo's own gree
   rifle (FUN_002324c0 through his skill: the demo's shots don't have it either); the alpha's
   blink; Flint's targeting box (#124). The demo's bodies are cylinders, so the centre ray
   doesn't slip between an arm and the body (take04's 2-3 blue frames on Flint), and it passes
-  the dead (the game's meets a body and tests its radar-contact).
+  the dead (the game's meets a body and tests its radar-contact). Two choices of the demo's:
+  * only the gun in hand's reach counts: FUN_000bf7a0 takes the smaller of it and that of the
+    item in the holder's +0x178 slot (FUN_0014d310: Tex's second gun in his berserk), which the
+    demo doesn't have;
+  * the candidates are tried in the squad's order: the game walks the world's target list
+    (0xba1c0), whose order isn't traced, and with its running best scores that order decides
+    between close candidates.
 
 Test hooks: `BF_RETICLE_LOG=1` prints the tint, the lock and what the centre ray is on at each
 change (`=2`: every frame), with each hostile's aim point on the HUD, the box it's tested

@@ -453,6 +453,10 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
         add(num(&e, 0), Some(Hook::Close));
     }
     for e in entries("BF_TEST_NPC") {
+        // (a team it doesn't know: a friend, as before the team numbers, with a warning)
+        if let Some(t) = e.get(2).filter(|t| team_of(t).is_none()) {
+            warn!("BF_TEST_NPC: {t} isn't friend, enemy, neutral or a team 0-9; spawned as a friend");
+        }
         let hook = (|| Some(Hook::Npc {
             character: e.get(1)?.clone(),
             team: team_of(e.get(2)?).unwrap_or(0),
@@ -462,7 +466,18 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
         add(num(&e, 0), hook);
     }
     for e in entries("BF_TEST_NPC_TEAM") {
-        add(num(&e, 0), e.get(1).and_then(|p| pick(p)).map(|p| Hook::Team(p, e.get(2).and_then(|t| team_of(t)))));
+        // (a team named: that one, or nothing if it isn't one; none: the J key's switch)
+        let team = match e.get(2) {
+            Some(t) => match team_of(t) {
+                Some(team) => Some(team),
+                None => {
+                    warn!("BF_TEST_NPC_TEAM: {t} isn't friend, enemy, neutral or a team 0-9; skipped");
+                    continue;
+                }
+            },
+            None => None,
+        };
+        add(num(&e, 0), e.get(1).and_then(|p| pick(p)).map(|p| Hook::Team(p, team)));
     }
     for e in entries("BF_TEST_NPC_RADAR") {
         let value = e.get(2).and_then(|v| v.parse::<u8>().ok());

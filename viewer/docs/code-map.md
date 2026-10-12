@@ -214,6 +214,7 @@ what it does in the row and say which place was wrong.
 
 | Address | What it does | How sure | Where |
 |---|---|---|---|
+| `FUN_0008b300` | Makes a character from a record (EBX, kept at char+0x5a0; FUN_000da800 makes the object), places it (vtable +0x50), registers it with the world's +0x1f8 manager (FUN_00056fe0) and sets its radar-contact to 1, RCONTACT_ALIGNMENT (FUN_0015b310 at 0x8b3ef). Called at 0x8ae14 and 0x8af33; that it's the squad's set-up is inferred (todo/drafts/radar-contacts.md). | code (whose set-up: inferred) | `play.rs` (`Player::radar_contact`) |
 | `FUN_000dfff0` | From the character death (0x115e4a): adds the body to a world list (world+4) and sets char+0x7d8 bit 1. Read as queueing the ragdoll: it's skipped for types whose enable-ragdoll-death is false (the Seer Priests, the boss Shadoon: the types with death clips). | code (the ragdoll: inferred) | todo/128 leads §1.3 |
 | `FUN_001098f0` | Read with FUN_0014dd50: the character's crouch height, for motion states 6 and 7 (MT_CROUCH, MT_CROUCH_WALK). | code (a reading) | `play_shots.rs` (`Trigger::crouched`) |
 | `0x10f8e0` | Character vtable +0x124 (no Ghidra function): reads h_17a554bf (object +0x70 bit 4), the mark of the characters a player can take control of; only FUN_000da8f0 and FUN_000db3e0 read it. | code | xemu.md; #102 |
@@ -479,6 +480,7 @@ Materials and shaders are here too.
 | `FUN_00162e90` | World button constructor (`world-button-object`, vtable 0x39a8e0): its signal +0x1b0 = 14 (TRIG_SIG_USE_OBJECT), +0x1b4 = −1. | code | todo/125 leads §1 |
 | `FUN_00162fc0` | World button attribute parser: h_eaf8a35b to +0x1b0 (the signal it sends), h_f1660a0d to +0x1b4. | code | todo/125 leads §1 |
 | `0x163060` | World button use (vtable +0x138; no Ghidra function): sends {+0x1b0, +0x1b4} to its listeners through FUN_001fe3d0. | code | todo/125 leads §1 |
+| `FUN_00179d60` | Queues an entry on its object (EAX; when that object's +4 bit 1 is set: its count +0x48, its list +0x28), its length from FUN_0017beb0's entry through [0x469940] vtable +100. A radar-trigger with h_12b33046 and a 2 or a 3 calls it (0x20736a) with EAX = [trigger+0x10]+0x208 and ECX = the game options' `<radar>` sound (settings +0x15c, h_ee13e943). What it does with them isn't traced further (a sound cue, inferred). | code (meaning: inferred) | `bf/level.rs` (`RadarTrigger::cue`) |
 | `FUN_00186a70` | TTYPE_ text parser (table 0x3bf294): a combat target's `target-type` (FUN_00189f80). | code | `bf/character_type.rs` (`CharacterType::target_type`) |
 | `FUN_001879e0` | MS_PREFIX_ text parser (names at 0x3c00c4): MS_PREFIX_NONE 0, MS_PREFIX_WEAPON 1, MS_PREFIX_WEAPON_NUMBER 2: a MOTION's prefix-type (no data uses 2). | code | character-types.md; `bf/character_type.rs` (`Motion::prefix`) |
 | `FUN_00187fc0` | Parser of a debris entry `<h_19c8df19>`: a 16-byte record (archetype-name, h_1c1e17fe, h_1b6a0ede, h_f2e4e1a3). | code | scenery.md § Data; `bf/character.rs` (`Debris`) |
@@ -726,8 +728,9 @@ Values read from `.rdata` / `.data`; the reader is the function that loads them.
 | `0x3a4ff0` | 0.1 | FUN_0010e470 (the 10% rule), 0x147620 (the Sentry check's jitter), 0x125600 (0.1n), FUN_000bf6d0 (the least visibility a lock candidate needs) | todo/35 leads §2; `play_sentry.rs`; todo/damage-factor; `play_skills.rs` (`ACTIVATE_SHARE`); `play_damage.rs` (`STEP_PER_LEVEL`) |
 | `0x3a500c` | 15 | FUN_001409c0: the chatter priority step's distance | todo/35 answer-120-chatter; `play_skills.rs` (`LINE_FAR_STEP`) |
 | `0x3a5010` | 45 | FUN_001409a0: the chatter cut-off distance | todo/35 answer-120-chatter; `play_skills.rs` (`LINE_FAR_CUT`) |
-| `0x3a5014` | 0.8 | Flint's skill +0x58 | todo/35 leads §4.4 |
+| `0x3a5014` | 0.8 | Flint's skill +0x58; FUN_000bfe40: a lock candidate's cost, the share of the depth it adds at the box's edge (0xbfe4e) | todo/35 leads §4.4; `play_reticle.rs` (`COST_OFF`) |
 | `0x3a5028` | 0.25 | FUN_0011a840: the refill in MT_DASH; FUN_000718f0: the wall test's step (0.25 of the distance); FUN_0006d240: the cover's / 4; 0xc54d0: the line of fire's slack past the lock (m) | todo/35 leads §2, spec §1.2; `play_skills.rs` (`DASH_REFILL`) |
+| `0x3a50b0` | 0.3 | FUN_000bfe40: a lock candidate's cost, its share of the depth however central it is (0xbfe57) | `play_reticle.rs` (`COST_BASE`) |
 | `0x3a50b8` | 0.9 | 0x1332a0: the stick past which it sends CT_DASH | todo/35 leads §4.2 |
 | `0x3a503c` | 206 | FUN_000bf7a0: the deepest a lock candidate's aim point may be (m) | `play_reticle.rs` (`DEPTH_MAX`) |
 | `0x3a50e8` | 255 | FUN_000c6280: the crosshair's alpha to a byte (0.9 x 255 = 229) | `play_reticle.rs` (`ALPHA`) |

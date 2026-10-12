@@ -15,7 +15,9 @@
 //!     - its aim point is within reach of the gun's muzzle: game-options' 0.7 (`ReticuleOptions::
 //!       lock_share`) x the gun's reach (FUN_00232520, `reach`). The aim point is the point of
 //!       its aim capsule (`AimCapsule`, the character's vtable +0x134) nearest the crosshair's
-//!       ray (FUN_0015b450);
+//!       ray (FUN_0015b450). Only the gun in hand's reach counts: the demo's choice.
+//!       FUN_000bf7a0 takes the smaller of it and that of the item in the holder's +0x178 slot
+//!       (+0x198; FUN_0014d310, Tex's second gun in his berserk), which the demo doesn't have;
 //!     - projected on the HUD's 640 x 480 (in front of the camera, at most DEPTH_MAX deep) the aim
 //!       point is inside a box round the crosshair's centre (FUN_000beb40): 33.6 x s units each
 //!       way, s the gun's `WeaponDef::lock_box`, x KEEP_BOX for last frame's lock (0xbfae9), so a
@@ -23,19 +25,22 @@
 //!     - a ray from the camera to it (SIGHT_RANGE m) meets that character first, or nothing
 //!       (FUN_000becf0).
 //!
-//!     Of the candidates, in the squad's order, each has to beat the best "outer" score so far
-//!     (`box_score`, over a box OUTER_BOX times as big) and then the best score so far
-//!     (FUN_000bf7a0); of those the lowest cost, depth x (0.3 + 0.8 (1 - score)), under COST_MAX
-//!     takes the lock (FUN_000bfe40): the most central, the nearer at a tie.
+//!     Of the candidates, each has to beat the best "outer" score so far (`box_score`, over a box
+//!     OUTER_BOX times as big) and then the best score so far (FUN_000bf7a0); of those the
+//!     lowest cost, depth x (0.3 + 0.8 (1 - score)), under COST_MAX takes the lock
+//!     (FUN_000bfe40): the most central, the nearer at a tie. They're tried in the squad's order:
+//!     the demo's choice. The game walks the world's target list (0xba1c0), whose order isn't
+//!     traced, and with the running best scores that order decides between close candidates.
 //!  2. **The centre ray** (0xc5720), with no lock: the first body or object on the ray through
 //!     the crosshair's centre, within the gun's range (256 m with no gun in hand), decides:
 //!     - a hostile (FUN_000bf550): locked at once (red) with no gun in hand, in the scope, or when
 //!       the gun's lock reach outruns its range (FUN_00232590 > FUN_002324c0: a mesh
-//!       projectile's, the Therm Sweeper's 133 m against its 20 m); otherwise blue;
+//!       projectile's, the Therm Sweeper's 133 m against its 20 m); otherwise blue, whatever its
+//!       radar-contact (the radar test is skipped, 0xc5943 -> 0xc5a3e);
 //!     - a living character of the player's team, a team not hostile to itself (FUN_0004b960):
 //!       green;
-//!     - then anything whose radar-contact is 2 or 4 (0xc59d7; `Player::radar_contact`,
-//!       `Placement::radar_contact`): yellow, over green;
+//!     - then anything else whose radar-contact is 2 or 4 (0xc59d7; `Player::radar_contact`,
+//!       `Placement::radar_contact`): a teammate, a neutral, a placed object: yellow, over green;
 //!     - anything else, or nothing: blue.
 //!  3. **The tint** (0xc6380, FUN_000bbd70): red with a lock, else as the centre ray said; a
 //!     step on the frame it changes (the takes: no fade).
@@ -47,7 +52,9 @@
 //! blink (controller +0x94 bit 1: what sets it isn't traced) and Flint's targeting box (#124).
 //! The demo's bodies are solid cylinders (`ray_body`), so the centre ray doesn't slip between an
 //! arm and the body as the game's does (take04's 2-3 frame blue gaps), and the dead aren't hit
-//! by it (the game's ray meets a body and tests its radar-contact).
+//! by it (the game's ray meets a body and tests its radar-contact). Two choices of the demo's
+//! (step 1): only the gun in hand's reach counts, and the candidates are tried in the squad's
+//! order.
 //!
 //! Test hooks:
 //!  - BF_RETICLE_LOG=1 prints the tint, the lock and what the centre ray meets when they change
@@ -90,8 +97,11 @@ const BOX_ASPECT: f32 = 0.75;
 const OUTER_BOX: f32 = 2.5;
 /// 0xbfae9: the box is 1.2 x (0x3f99999a) for the character locked last frame, 1.0 for another.
 const KEEP_BOX: f32 = 1.2;
-/// FUN_000bfe40's cost of a candidate: depth x (COST_BASE + COST_OFF x (1 - score)).
+/// FUN_000bfe40's cost of a candidate, depth x (COST_BASE + COST_OFF x (1 - score)): its share of
+/// the depth however central it is, 0.3 (0x3a50b0, at 0xbfe57).
 const COST_BASE: f32 = 0.3;
+/// FUN_000bfe40: the share of the depth a candidate at the box's edge adds over one at its
+/// centre, 0.8 (0x3a5014, at 0xbfe4e).
 const COST_OFF: f32 = 0.8;
 /// The highest cost that takes the lock (m): selector B's +0x48 (0x439a8000 = 309, set at
 /// 0xbcbeb), which FUN_000beae0 starts each frame's best at.
@@ -108,16 +118,21 @@ const PELLET_REACH: f32 = 0.9;
 /// FUN_00232520: a mesh projectile that splits at its apogee (WM_MIRV_ON_APOGEE) adds 0.75 of
 /// its range.
 const APOGEE_REACH: f32 = 0.75;
-/// The WM_ values FUN_00232520 tests (the bullet's `<mirv>` mode, 0x3be7f4).
+/// WM_MIRV_ON_APOGEE (the WM_ name table 0x3be7f4, the bullet's `<mirv>` mode): FUN_00232520
+/// adds APOGEE_REACH of the range for it.
 const MIRV_ON_APOGEE: i64 = 1;
+/// WM_MIRV_ON_EXPLODE (0x3be7f4): FUN_00232520 adds the whole range again for it (the Therm
+/// Sweeper's).
 const MIRV_ON_EXPLODE: i64 = 2;
 /// The bullet-type whose reach FUN_00232520 lengthens: BTYPE_MESH_PROJECTILE (0x3bd63c).
 const MESH_PROJECTILE: i64 = 2;
-/// 0x121d00, a character's aim capsule (its vtable +0x134): from its "Bip01 Head" node 0.4
-/// (0x3ecccccd) of the way to its root node, to 0.5 (0x3f000000) of that length past the root,
-/// 0.15 (0x3a51e4) of it thick.
+/// 0x121d00, a character's aim capsule (its vtable +0x134): its top end is this share of the way
+/// from its "Bip01 Head" node to its root node (0x3ecccccd, 0x121d73).
 const CAPSULE_TOP: f32 = 0.4;
+/// 0x121d00: the capsule's bottom end is this share of the head-to-root length past the root,
+/// below the hips (0x3f000000, 0x121dc8).
 const CAPSULE_BELOW: f32 = 0.5;
+/// 0x121d00: the capsule's radius, as a share of the head-to-root length (0x3a51e4, 0x121e91).
 const CAPSULE_THICK: f32 = 0.15;
 /// The radar-contacts that turn the crosshair yellow (0xc59da, 0xc59df): RCONTACT_OBJECTIVE
 /// and RCONTACT_OBJECTIVE_SECONDARY (0x3beaac).
@@ -334,11 +349,11 @@ fn name(u: &Player) -> String {
     format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)))
 }
 
-/// The selection's lock this frame (see the module's notes, step 1), with a note on each
-/// hostile for the log.
+/// The selection's lock this frame (see the module's notes, step 1); with `notes` (BF_RETICLE_LOG)
+/// a note on each hostile for the log, made only then.
 #[allow(clippy::too_many_arguments)]
 fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option<(&HeldWeapon, Vec3)>, options: &ReticuleOptions,
-          kept: Option<Who>, notes: &mut Vec<String>) -> Option<Who> {
+          kept: Option<Who>, mut notes: Option<&mut Vec<String>>) -> Option<Who> {
     // (FUN_000bf7a0 needs a gun in hand)
     let (w, muzzle) = gun?;
     let reach = options.lock_share * reach(&w.def);
@@ -351,29 +366,32 @@ fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option
         // the crosshair's ray at the depth of the capsule's middle (FUN_000a0c60)
         let aim = capsule.nearest(view.at + along * view.depth(capsule.middle()));
         let f = if kept == Some(u.who()) { KEEP_BOX } else { 1.0 };
-        let mut note = |why: String| notes.push(format!("{} {why}", name(u)));
+        // (the log's note, its text made only when the log is on)
+        let mut note = |why: &dyn Fn() -> String| if let Some(n) = notes.as_deref_mut() { n.push(format!("{} {}", name(u), why())) };
         if muzzle.distance(aim) > reach {
-            note(format!("out of reach: {:.1} m from the muzzle, reach {reach:.1}", muzzle.distance(aim)));
+            note(&|| format!("out of reach: {:.1} m from the muzzle, reach {reach:.1}", muzzle.distance(aim)));
             continue;
         }
         let Some((at, depth)) = view.project(aim).filter(|&(_, d)| d <= DEPTH_MAX) else {
-            note("behind the camera or too deep".into());
+            note(&|| "behind the camera or too deep".into());
             continue;
         };
         let (score, wide) = box_score(at, centre, half * f);
-        let off = at - centre;
-        let box_note = format!("at ({:+.1}, {:+.1}) units, box {:.1}{}", off.x, off.y, half.x * f, if f > 1.0 { " (kept)" } else { "" });
+        let place = || {
+            let off = at - centre;
+            format!("at ({:+.1}, {:+.1}) units, box {:.1}{}", off.x, off.y, half.x * f, if f > 1.0 { " (kept)" } else { "" })
+        };
         if wide <= best_wide {
-            note(format!("{box_note}: outside, or not first"));
+            note(&|| format!("{}: outside, or not first", place()));
             continue;
         }
         if !in_sight(view.at, aim, u.who(), squad) {
-            note(format!("{box_note}: hidden"));
+            note(&|| format!("{}: hidden", place()));
             continue;
         }
         best_wide = wide;
         if score <= best_score {
-            note(format!("{box_note}: outside the box"));
+            note(&|| format!("{}: outside the box", place()));
             continue;
         }
         best_score = score;
@@ -381,7 +399,7 @@ fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option
         if cost < best_cost {
             best_cost = cost;
             lock = Some(u.who());
-            note(format!("{box_note}: locks (score {score:.2}, {depth:.1} m deep)"));
+            note(&|| format!("{}: locks (score {score:.2}, {depth:.1} m deep)", place()));
         }
     }
     lock
@@ -405,8 +423,10 @@ fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, m
     let held = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).filter(|_| player.holding);
     let gun = held.and_then(|w| muzzle(&player, w).map(|m| (w, m)));
     let options = game.0.reticule;
-    let mut notes = vec![];
-    let chosen = select(&player, &squad, &view, centre, gun, &options, reticle.kept, &mut notes);
+    // (BF_RETICLE_LOG: the notes on each hostile, made only for the log)
+    let log = std::env::var("BF_RETICLE_LOG").ok();
+    let mut notes = log.as_ref().map(|_| vec![]);
+    let chosen = select(&player, &squad, &view, centre, gun, &options, reticle.kept, notes.as_mut());
     // the centre ray (0xc5720), cut at the gun's range (FUN_002324c0) or 256 m with none
     let range = held.map_or(NO_GUN_RANGE, |w| w.def.range);
     let under = under_ray(view.at, view.through(centre).normalize(), range, &squad);
@@ -447,7 +467,7 @@ fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, m
     reticle.tint = if reticle.lock.is_some() { Tint::Red } else { state };
     // BF_RETICLE_LOG: on a change of the tint, the lock or what the centre ray is on (2: every
     // frame)
-    let Ok(log) = std::env::var("BF_RETICLE_LOG") else { return };
+    let (Some(log), Some(notes)) = (log, notes) else { return };
     let on = match under {
         Some((_, Under::Body(i))) => format!("{:?}", squad.0[i].who()),
         Some((_, Under::Object(o))) => format!("{o:?}"),
