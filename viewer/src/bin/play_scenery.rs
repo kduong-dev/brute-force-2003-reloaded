@@ -53,9 +53,9 @@
 //! and 0 in multiplayer): a push, not the damage. A character takes the area's amount through
 //! its own handler (the target's vtable slot 0, 0x125600): x its difficulty step
 //! (play_damage.rs), which is the campaign squad's ~0.58 of a blast (STANDARD's x0.6; campaign
-//! e34, takes 01-09). sdm_e34 took the whole (take29: 39.4 of 40), but the demo plays STANDARD
-//! on every map, the product owner's choice (`Difficulty::for_session`), so there it deals ~24:
-//! a known mismatch. The objects aren't stepped. Hurt by one, the player's view goes red
+//! e34, takes 01-09) where sdm_e34 took the whole (take29: 39.4 of 40): a match has no step,
+//! n = 0, read live in #129's mp1 deathmatch takes (`Difficulty::for_session`). The objects
+//! aren't stepped. Hurt by one, the player's view goes red
 //! (ScreenTint) as for a grenade.
 //!
 //! The test map's object tool (play_testtools.rs) puts these down on the flat floor too
