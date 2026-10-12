@@ -49,6 +49,10 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 * **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Energy,
   Gas, Light, Sonic, Roller, Sentry. m09_a is
   loaded for the Light (only in m09_a/b/c/x). T steps through them. See **Grenades**.
+* **Every character type of the data** (128) for the NPC spawner (#180): its levels define
+  55; the other 73 come from the 31 level archives that define them, without those levels
+  (`Game::load_type_assets`, about 0.9 s more; `BF_TEST_TYPES` picks a smaller set). See
+  [testtools.md](testtools.md) and [character-types.md](character-types.md).
 * **Instant kill**, on at the start (`BF_TEST_INSTANT_KILL=0`: off), K toggles it (`BF_TEST_TOGGLE_KILL=<s>[,<s>...]` presses it at those times). The player's shots and grenades kill any
   squad member they hurt, in one hit. The player still takes normal damage.
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
