@@ -15,9 +15,10 @@
 //!     - its aim point is within reach of the gun's muzzle: game-options' 0.7 (`ReticuleOptions::
 //!       lock_share`) x the gun's reach (FUN_00232520, `reach`). The aim point is the point of
 //!       its aim capsule (`AimCapsule`, the character's vtable +0x134) nearest the crosshair's
-//!       ray (FUN_0015b450). Only the gun in hand's reach counts: the demo's choice.
-//!       FUN_000bf7a0 takes the smaller of it and that of the item in the holder's +0x178 slot
-//!       (+0x198; FUN_0014d310, Tex's second gun in his berserk), which the demo doesn't have;
+//!       ray (FUN_0015b450). With a gun in the second hand (inventory +0x198, FUN_0014d310: Tex's
+//!       berserk, `Player::second`) FUN_000bf7a0 keeps the smaller of the two guns' reaches and
+//!       measures from that gun's muzzle (0xbf82a-0xbf8aa, `LockGun`); the box stays the gun in
+//!       hand's;
 //!     - projected on the HUD's 640 x 480 (in front of the camera, at most DEPTH_MAX deep) the aim
 //!       point is inside a box round the crosshair's centre (FUN_000beb40): 33.6 x s units each
 //!       way, s the gun's `WeaponDef::lock_box`, x KEEP_BOX for last frame's lock (0xbfae9), so a
@@ -52,9 +53,8 @@
 //! blink (controller +0x94 bit 1: what sets it isn't traced) and Flint's targeting box (#124).
 //! The demo's bodies are solid cylinders (`ray_body`), so the centre ray doesn't slip between an
 //! arm and the body as the game's does (take04's 2-3 frame blue gaps), and the dead aren't hit
-//! by it (the game's ray meets a body and tests its radar-contact). Two choices of the demo's
-//! (step 1): only the gun in hand's reach counts, and the candidates are tried in the squad's
-//! order.
+//! by it (the game's ray meets a body and tests its radar-contact). A choice of the demo's
+//! (step 1): the candidates are tried in the squad's order.
 //!
 //! Test hooks:
 //!  - BF_RETICLE_LOG=1 prints the tint, the lock and what the centre ray meets when they change
@@ -263,12 +263,26 @@ fn head_point(u: &Player) -> Option<Vec3> {
     Some(root.transform_point3(u.last_world.get(i)?.w_axis.truncate()))
 }
 
-/// The held gun's muzzle (FUN_00232180): its hardpoint on the hand as posed, as play.rs's shots
-/// leave from it; None while it isn't in the hand.
-fn muzzle(p: &Player, w: &HeldWeapon) -> Option<Vec3> {
-    let (hb, r, t) = w.in_hand?;
+/// A held gun's muzzle (FUN_00232180): its hardpoint on the hand as posed, as play.rs's shots
+/// leave from it, the gun held at `mount` (its `in_hand`, or its `second_hand` in Tex's berserk);
+/// None while it isn't held there.
+fn muzzle(p: &Player, w: &HeldWeapon, mount: Option<(usize, Quat, Vec3)>) -> Option<Vec3> {
+    let (hb, r, t) = mount?;
     let root = Mat4::from_rotation_translation(Quat::from_rotation_y(p.yaw), p.position + Vec3::Y * p.height);
     Some((root * *p.last_world.get(hb)?).transform_point3(r * w.muzzle.point + t))
+}
+
+/// What FUN_000bf7a0 measures a candidate by: the lock box's scale (the gun in hand's
+/// `WeaponDef::lock_box`: the reticle's own, FUN_000c5d20), and the lock's reach (game-options'
+/// share x FUN_00232520) with the muzzle it's measured from (FUN_000bff40 at 0xbfb14, from
+/// FUN_00232180). The reach is the gun in hand's, or the second hand's when one is drawn and
+/// reaches less (0xbf82a-0xbf8aa: the smaller reach and its gun are kept): in Tex's berserk with
+/// the LZR-50 in hand and the Jax-iC second, the Jax-iC's.
+#[derive(Clone, Copy)]
+struct LockGun {
+    lock_box: f32,
+    reach: f32,
+    muzzle: Vec3,
 }
 
 /// FUN_00232520: how far a gun reaches for the lock, before game-options' share. Its range
@@ -352,12 +366,11 @@ fn name(u: &Player) -> String {
 /// The selection's lock this frame (see the module's notes, step 1); with `notes` (BF_RETICLE_LOG)
 /// a note on each hostile for the log, made only then.
 #[allow(clippy::too_many_arguments)]
-fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option<(&HeldWeapon, Vec3)>, options: &ReticuleOptions,
+fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option<LockGun>, options: &ReticuleOptions,
           kept: Option<Who>, mut notes: Option<&mut Vec<String>>) -> Option<Who> {
     // (FUN_000bf7a0 needs a gun in hand)
-    let (w, muzzle) = gun?;
-    let reach = options.lock_share * reach(&w.def);
-    let half = Vec2::new(SCREEN.x * options.box_share * BOX_ASPECT, SCREEN.y * options.box_share) * 0.5 * w.def.lock_box;
+    let LockGun { lock_box, reach, muzzle } = gun?;
+    let half = Vec2::new(SCREEN.x * options.box_share * BOX_ASPECT, SCREEN.y * options.box_share) * 0.5 * lock_box;
     let (mut best_wide, mut best_score, mut best_cost) = (0.0, 0.0, COST_MAX);
     let mut lock = None;
     let along = view.through(centre);
@@ -421,8 +434,16 @@ fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, m
     // h_1a504c05, the middle in the scope), as play_hud.rs draws it
     let centre = Vec2::new(SCREEN.x * 0.5, SCREEN.y * 0.5 * (1.0 - CROSSHAIR_UP * (1.0 - player.scope)));
     let held = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).filter(|_| player.holding);
-    let gun = held.and_then(|w| muzzle(&player, w).map(|m| (w, m)));
     let options = game.0.reticule;
+    // the lock's reach and muzzle: the gun in hand's, or the second hand's when it reaches less
+    // (Tex's berserk, 0xbf82a-0xbf8aa); the box stays the gun in hand's (`LockGun`)
+    let second = player.second.and_then(|s| player.loaded.as_ref()?.weapons.get(s.weapon))
+        .and_then(|w| muzzle(&player, w, w.second_hand).map(|m| (options.lock_share * reach(&w.def), m)));
+    let gun = held.and_then(|w| muzzle(&player, w, w.in_hand).map(|m| {
+        let own = options.lock_share * reach(&w.def);
+        let (r, at) = second.filter(|&(r, _)| r < own).unwrap_or((own, m));
+        LockGun { lock_box: w.def.lock_box, reach: r, muzzle: at }
+    }));
     // (BF_RETICLE_LOG: the notes on each hostile, made only for the log)
     let log = std::env::var("BF_RETICLE_LOG").ok();
     let mut notes = log.as_ref().map(|_| vec![]);

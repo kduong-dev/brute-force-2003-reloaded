@@ -1191,9 +1191,14 @@ fn update_hud_widgets(
 ) {
     let Some(l) = player.loaded.as_ref() else { return };
     let list = player.hud_list > 0.0;
+    // the gun in hand's row, then (in Tex's berserk) the second hand's: both in a hand, both
+    // tinted as held, two rows for as long as it's drawn (#35 take01 6.0 s, take04 8.5 s: "99
+    // Regen" over "36 / 200"); the list after a switch adds the rest
+    let second = player.second.map(|s| s.weapon).filter(|&w| w < l.weapons.len());
+    let held = |w: usize| w == player.weapon || Some(w) == second;
     let mut order: Vec<usize> = (0..l.weapons.len()).collect();
-    order.sort_by_key(|&i| i != player.weapon);
-    order.truncate(if list { WEAPON_ROWS } else { 1 });
+    order.sort_by_key(|&i| (i != player.weapon, Some(i) != second));
+    order.truncate(if list { WEAPON_ROWS } else if second.is_some() { 2 } else { 1 });
     // a world point on the HUD's 640 x 480 screen (4:3, centred in the window)
     let on_screen = |p: Vec3| -> Option<Vec2> {
         let (cam, at) = camera.single().ok()?;
@@ -1260,7 +1265,7 @@ fn update_hud_widgets(
                 let def = &l.weapons[w].def;
                 let clip = player.ammo.get(w).map_or(0, |a| a[0]);
                 let empty = clip == 0;
-                let tint = if w == player.weapon { AMMO_ORANGE } else { MESSAGE_BLUE };
+                let tint = if held(w) { AMMO_ORANGE } else { MESSAGE_BLUE };
                 match *part {
                     Part::Panel(_) => {
                         show(&mut vis, true);

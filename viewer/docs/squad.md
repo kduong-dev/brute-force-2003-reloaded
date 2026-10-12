@@ -28,8 +28,9 @@ Squad movement and deaths follow the game's own data and the captures:
 * **Scopes.** With a weapon that zooms, right mouse toggles its scope (click in, click out;
   other weapons still aim while it's held). Flint steps in twice: in, closer (the weapon's zoom
   doubled: the L-Shot-50's 5x, then 10x), out. The doubling is a choice; the data has one zoom
-  per weapon. Switching weapons or reloading drops out of the scope. `BF_TEST_SCOPE=<step>`
-  holds a step. A scoped shot leaves from the eye along the crosshair's ray (from the
+  per weapon. Switching weapons or reloading drops out of the scope, and Tex's berserk keeps him
+  out of it ([skills.md](skills.md)). `BF_TEST_SCOPE=<step>[,<from s>]` holds a step (from that
+  time on). A scoped shot leaves from the eye along the crosshair's ray (from the
   muzzle, a little lower, it would land low through the zoom). In the scope the camera
   moves to the character's eyes: the characters' `offset-snipe` camera offset is 0.001 0 0,
   against 3.2–3.4 m behind for walking, running and ready. The field of view narrows by the

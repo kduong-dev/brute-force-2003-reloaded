@@ -900,9 +900,33 @@ struct Clips {
     /// per weapon slot (Sc_w1_* holds the first weapon, Sc_w2_* the second): carried and ready
     /// (rp_*, raised and pointing ahead, used while aiming or firing)
     slots: [SlotClips; 2],
+    /// the motion set's special motions, where it has them (Tex's berserk set; see
+    /// `SpecialClips`)
+    special: Option<SpecialClips>,
     /// side steps whose own root doesn't move, and the walk whose root motion moves them instead
     /// (`root_stand_ins`)
     root_stand_in: HashMap<usize, usize>,
+}
+
+/// The motions a motion set's MT_TOGGLE_SPECIAL (45) transitions lead to: Tex's berserk set
+/// (common/characters/ms_tex.xml). His toggle asks for motion type 45 at an accepted press, on
+/// and off (FUN_0012eab0(type, 45, 1) at 0x13d6ca), and each of his stand, walk, run, side step,
+/// back step and dash motions has a transition of that type to its berserk motion, which has one
+/// back (`Skill::special_motions`). The berserk motions are `Sc_w1_bz_*`, prefix-type 0: the same
+/// for both stances, carried and aimed alike (script = ready-script). They have no transition to
+/// a crouch, a dash, a dodge, a dive or a throw: in berserk he can't do those (the dash stays
+/// the run). Their clips (BF_ANIM_PROBE): idle 9.97 s, walk 1.29 m/s, run 4.69 m/s.
+#[derive(Default, Debug)]
+struct SpecialClips {
+    /// idle, walk, run, back walk, back run (no sprint)
+    loco: Locomotion,
+    /// side steps: forward left, forward right, back left, back right (`side_index`)
+    side: [Option<usize>; 4],
+    jump_crouch: Option<usize>,
+    jump_launch: Option<usize>,
+    jump_fall: Option<usize>,
+    jump_land: Option<usize>,
+    slide: Option<usize>,
 }
 
 /// Below this a clip's own speed (`AnimDef::move_speed`, m/s) counts as none: FUN_0012c6c0's
@@ -916,18 +940,19 @@ const NO_CLIP_SPEED: f32 = 0.001;
 /// and no root translation: #170) borrows the root motion of the walk in its direction, forward
 /// (rp_walk, cr_walk) or back (rp_back_walk, cr_back_walk). Every other side step in the squad's
 /// sets carries its walk's speed and length, or within 6% (Flint's and Hawk's crouched ones);
-/// Tex's other three Sc_w1 side steps carry rp_walk's and rp_back_walk's exactly.
-fn root_stand_ins(model: &Character, slots: &[SlotClips; 2]) -> HashMap<usize, usize> {
+/// Tex's other three Sc_w1 side steps carry rp_walk's and rp_back_walk's exactly. His berserk
+/// set's forward left side step (Sc_w1_bz_f_side_walk_l) has no root motion either: it borrows
+/// Sc_w1_bz_walk's.
+fn root_stand_ins(model: &Character, slots: &[SlotClips; 2], special: Option<&SpecialClips>) -> HashMap<usize, usize> {
     let speed = |c: usize| model.anims[c].move_speed.unwrap_or(f32::MAX);
     let mut out = HashMap::new();
-    for s in slots {
-        for (side, fwd, back) in [(&s.rp_side, s.rp.walk, s.rp.walk_back), (&s.cr_side, s.cr_walk, s.cr_back_walk)] {
-            for (k, clip) in side.iter().enumerate() {
-                let walk = if k < 2 { fwd } else { back };
-                if let (Some(c), Some(w)) = (*clip, walk) {
-                    if speed(c) < NO_CLIP_SPEED && speed(w) >= NO_CLIP_SPEED {
-                        out.insert(c, w);
-                    }
+    let special = special.map(|s| (&s.side, s.loco.walk, s.loco.walk_back));
+    for (side, fwd, back) in slots.iter().flat_map(|s| [(&s.rp_side, s.rp.walk, s.rp.walk_back), (&s.cr_side, s.cr_walk, s.cr_back_walk)]).chain(special) {
+        for (k, clip) in side.iter().enumerate() {
+            let walk = if k < 2 { fwd } else { back };
+            if let (Some(c), Some(w)) = (*clip, walk) {
+                if speed(c) < NO_CLIP_SPEED && speed(w) >= NO_CLIP_SPEED {
+                    out.insert(c, w);
                 }
             }
         }
@@ -975,6 +1000,31 @@ struct HeldWeapon {
     /// placement under a joint (bone, rotation, translation): in hand / stowed for its slot
     in_hand: Option<(usize, Quat, Vec3)>,
     stowed: Option<(usize, Quat, Vec3)>,
+    /// and in the second hand (Tex's berserk): its trigger grip at the character's SECOND_HAND
+    /// hardpoint, as the gun in hand's at TRIGGER_HAND (weapon.rs); None for a model without it
+    second_hand: Option<(usize, Quat, Vec3)>,
+}
+
+/// A gun drawn into the second hand (Tex's berserk, play_skills.rs): the game's inventory
+/// second-hand holder (+0x178), its gun at +0x198 (FUN_0014d310). It fires with the gun in hand
+/// (play_shots.rs), as a weapon object of its own.
+#[derive(Clone, Copy, Debug)]
+pub struct SecondGun {
+    /// its index in the character's weapons (the other weapon slot's gun, FUN_0014d090)
+    pub weapon: usize,
+    /// its fire cooldown (its weapon+0x218; the gun in hand's is `Player::cooldown`)
+    pub cooldown: f32,
+    /// its kick back along the barrel and its muzzle flash's time left, as the gun in hand's
+    /// `Player::recoil` / `flash`
+    pub recoil: f32,
+    pub flash: f32,
+}
+
+impl SecondGun {
+    /// The gun of weapon `weapon`, just drawn.
+    pub fn new(weapon: usize) -> Self {
+        SecondGun { weapon, cooldown: 0.0, recoil: 0.0, flash: 0.0 }
+    }
 }
 
 /// A one-shot overlay clip (reload, grenade throw): played on its bones over the locomotion.
@@ -1417,9 +1467,12 @@ struct Shot {
     flight: u32,
     hit_fx: u32,
     /// the weapon's Damage min..max and damage-type (play_scenery.rs: what it takes off an
-    /// object it hits)
+    /// object it hits; `update_player`: the roll on a body), and its ammo-type (the hit's blood
+    /// and sparks). Each shot carries its own gun's: with two guns firing (Tex's berserk) a frame's
+    /// shots aren't all the gun in hand's
     damage: [f32; 2],
     damage_type: i64,
+    ammo: i64,
     /// the bullet's hole or scorch (h_06a27365; 0 none) and the normal of the surface the shot
     /// meets (play_shots.rs)
     decal: u32,
@@ -1477,6 +1530,9 @@ struct Player {
     /// false between a switch's drop and grab: both guns are stowed
     holding: bool,
     switching: Option<Switching>,
+    /// the gun drawn into the second hand (Tex's berserk, play_skills.rs), fired with the gun in
+    /// hand
+    second: Option<SecondGun>,
     /// per weapon: rounds in the clip, and rounds taken from the squad's reserve for the reload
     /// under way (the game's weapon +0x1f8 and +0x1e8). The reserve itself is the squad's, per
     /// ammo-type (play_ammo.rs's `Reserve`).
@@ -1737,7 +1793,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
@@ -2487,9 +2543,21 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
         }
     };
     let slots = [slot("Sc_w1_"), slot("Sc_w2_")];
+    // the berserk motions (SpecialClips), for a set that has their idle
+    let bz = |m: &str| named(&format!("Sc_w1_bz_{m}"));
+    let special = bz("idle").map(|idle| SpecialClips {
+        loco: Locomotion { idle: Some(idle), walk: bz("walk"), run: bz("run"), walk_back: bz("back_walk"), run_back: bz("back_run"), ..default() },
+        side: ["f_side_walk_l", "f_side_walk_r", "b_side_walk_l", "b_side_walk_r"].map(bz),
+        jump_crouch: bz("jump_crouch"),
+        jump_launch: bz("jump_launch"),
+        jump_fall: bz("jump_fall"),
+        jump_land: bz("jump_land"),
+        slide: bz("slide_idle"),
+    });
     Clips {
-        root_stand_in: root_stand_ins(model, &slots),
+        root_stand_in: root_stand_ins(model, &slots, special.as_ref()),
         slots,
+        special,
         loco,
         jump_crouch: named("Sc_w1_jump_crouch"),
         jump_launch: named("Sc_w1_jump_launch"),
@@ -2723,7 +2791,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     if let (OTHER, Some(t)) = (p.character, ty.as_ref()) {
         motions = enemies::motions(&model, game, t);
         enemies::table_clips(&mut clips, &motions, game, t);
-        clips.root_stand_in = root_stand_ins(&model, &clips.slots);
+        clips.root_stand_in = root_stand_ins(&model, &clips.slots, clips.special.as_ref());
     }
     info!("{label} clips: {clips:?}");
     let (feet, foot_rest) = find_feet(&model, game, clips.loco.idle);
@@ -2792,12 +2860,14 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
         let light = commands.spawn((
             PointLight { intensity: 0.0, range: 6.0, color: Color::srgb(1.0, 0.75, 0.4), ..default() },
             Transform::from_translation(muzzle.point + fire_dir * 0.1), ChildOf(entity))).id();
-        let in_hand = model.hardpoints.get(&weapon::TRIGGER_HAND).zip(wm.hardpoints.get(&weapon::TRIGGER_GRIP))
+        let held_at = |hand: u32| model.hardpoints.get(&hand).zip(wm.hardpoints.get(&weapon::TRIGGER_GRIP))
             .map(|(&(bone, hand), grip)| { let (r, t) = hand.mount(grip); (bone, r, t) });
+        let in_hand = held_at(weapon::TRIGGER_HAND);
         let stance = stance_for(classes, def.weapon_type, slot);
         weapons.push(HeldWeapon {
             stance,
             in_hand,
+            second_hand: held_at(weapon::SECOND_HAND),
             stowed: weapon::STOW.get(slot).and_then(|k| model.hardpoints.get(k)).zip(wm.hardpoints.get(&weapon::HOLSTER))
                 .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) }),
             shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
@@ -2815,6 +2885,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.weapon_dirty = true;
     p.holding = true;
     p.switching = None;
+    p.second = None;
     p.reloading = None;
     // new weapon objects: their accuracy, tracer counters, burst and casings start afresh
     // (play_shots.rs), as a new gun's do
@@ -2853,7 +2924,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.max_health = game.character_hitpoints.get(name).copied().or(ty.as_ref().map(|t| t.hitpoints)).unwrap_or(100.0);
     p.health = p.max_health;
     // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs; the squad's only)
-    p.skill = skills::Skill::new(game.character_skills.get(name));
+    p.skill = skills::Skill::new(game.character_skills.get(name), &game.combat_skills);
     p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
     p.stamina = p.max_stamina;
     p.leash = game.squad_leash.get(name).copied().or(ty.as_ref().map(|t| t.ai.squad_leash)).unwrap_or(15.0);
@@ -2960,8 +3031,15 @@ fn read_input(
         let steps = if player.character == STILL_SNIPER { 2 } else { 1 };
         player.scope_level = (player.scope_level + 1) % (steps + 1);
     }
-    if let Some(l) = std::env::var("BF_TEST_SCOPE").ok().and_then(|v| v.parse().ok()) {
-        player.scope_level = l;
+    // BF_TEST_SCOPE=<step>[,<from s>]: hold that scope step (from that time on; from the start
+    // by default)
+    if let Ok(v) = std::env::var("BF_TEST_SCOPE") {
+        let mut it = v.split(',').map(str::trim);
+        let step = it.next().and_then(|x| x.parse().ok());
+        let from = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(0.0);
+        if let Some(l) = step.filter(|_| player.sim_time >= from) {
+            player.scope_level = l;
+        }
     }
     let aim = if zoomable { player.scope_level > 0 } else { mouse.pressed(MouseButton::Right) };
     let jump = keys.just_pressed(KeyCode::Space);
@@ -3148,13 +3226,12 @@ fn wrap_angle(a: f32) -> f32 {
     (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
-/// A character's shots' damage, by the held weapon: its Damage min..max per shot, its ammo
-/// type (for the hit's effects) and its Damage damage-type (for the target's factor,
-/// play_damage.rs `vulnerability`); 8-10 of ammo type 1 unarmed.
-fn shot_damage(p: &Player) -> ((f32, f32), i64, i64) {
-    let held = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon));
-    let damage = held.map_or((8.0, 10.0), |w| if w.def.damage > 0.0 { (w.def.damage_min.min(w.def.damage), w.def.damage) } else { (8.0, 10.0) });
-    (damage, held.map_or(1, |w| w.def.ammo_type), held.map_or(0, |w| w.def.damage_type))
+/// A shot's damage roll on a body: its gun's Damage min..max (`Shot::damage`; the shot also
+/// carries the gun's damage-type, for the target's factor, play_damage.rs `vulnerability`, and its
+/// ammo type, for the hit's effects), 8-10 for a gun without one. Each shot's own gun's: Tex's
+/// berserk fires two at once.
+fn shot_rolls(shot: &Shot) -> (f32, f32) {
+    if shot.damage[1] > 0.0 { (shot.damage[0], shot.damage[1]) } else { (8.0, 10.0) }
 }
 
 /// The AI's shots on their way to a body (see `update_player`): `member` is the unit hit, 0 the
@@ -3202,7 +3279,6 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         m.loaded = Some(l);
     }
     // friendly fire: the player's shots this frame stop at the first teammate in their way
-    let (rolls, ammo, damage_type) = shot_damage(&player);
     let (shooter, team) = (player.who(), player.team);
     let now = player.sim_time;
     // the squadmates' shots stop at a Sentry on their line (play_sentry.rs: 1 hitpoint)
@@ -3232,13 +3308,13 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // it lands when the shot gets there (a bolt flies at its weapon's speed): a roll x the
             // falloff over the range (play_shots.rs) x the hit part struck, x0.7 on the own side
             // (play_damage.rs)
-            let (lo, hi) = rolls;
+            let (lo, hi) = shot_rolls(shot);
             let m = &mut squad.0[i];
             let roll = lo + (hi - lo) * m.random(1000) as f32 / 1000.0;
             let bone = damage::struck_bone(m, &game.0, shot.origin, shot.dir, t);
-            let hit = damage::Hit::new(roll, "roll", damage_type).by(shooter, team, m).falloff(shot.falloff_at(t)).struck(m, &game.0, bone);
+            let hit = damage::Hit::new(roll, "roll", shot.damage_type).by(shooter, team, m).falloff(shot.falloff_at(t)).struck(m, &game.0, bone);
             let local = shot.origin + shot.dir * t - m.position;
-            player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo });
+            player.pending_hits.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo: shot.ammo });
         } else if let Some((e, t)) = mine {
             mines.strike(e, t, shot.speed, now);
         }
@@ -3265,9 +3341,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if squad.0[k].shots.is_empty() {
             continue;
         }
-        let ((lo, hi), ammo, damage_type) = shot_damage(&squad.0[k]);
         let mut shots = std::mem::take(&mut squad.0[k].shots);
         for shot in shots.iter_mut() {
+            let ((lo, hi), ammo, damage_type) = (shot_rolls(shot), shot.ammo, shot.damage_type);
             let hit = std::iter::once(&*player).chain(squad.0.iter()).enumerate().filter(|&(i, u)| i != k + 1 && !u.dead)
                 .filter_map(|(i, u)| ray_body(shot.origin, shot.dir, u, shot.dist).map(|t| (i, t, u.character, u.position)))
                 .min_by(|a, b| a.1.total_cmp(&b.1));
@@ -4446,13 +4522,29 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let four = p.on_all_fours && c.leg4_launch.is_some();
     // the held weapon's stance set (kneel and dive clips)
     let stance = &c.slots[stance_of(l, p.weapon)];
+    // Tex's berserk motions while his toggle has taken them (SpecialClips, play_skills.rs): their
+    // own jump and slide; no crouch, dash, dodge or dive, which they have no transition to
+    let special = if p.skill.special_motions { c.special.as_ref() } else { None };
+    let (jump_crouch, jump_launch, jump_fall, jump_land, slide_clip) = match special {
+        Some(s) => (s.jump_crouch.or(c.jump_crouch), s.jump_launch.or(c.jump_launch), s.jump_fall.or(c.jump_fall),
+                    s.jump_land.or(c.jump_land), s.slide.or(c.slide)),
+        None => (c.jump_crouch, c.jump_launch, c.jump_fall, c.jump_land, c.slide),
+    };
+    // a crouch asked for in them is dropped, not kept for after the off: the demo's choice until
+    // a take shows what the game does with one (#35's shot T3); kept, he'd drop into a crouch at
+    // the off
+    if special.is_some() {
+        p.crouch_wanted = false;
+    }
+    let crouch_wanted = p.crouch_wanted;
+    let dodge_pressed = p.dodge_pressed && special.is_none();
 
     // ---- actions: dodge and the jump chain (crouch -> launch -> fall -> land) ----
     p.action_left -= dt;
     p.jump_buffer = if p.jump_pressed { 0.4 } else { p.jump_buffer - dt };
     let start_launch = |p: &mut Player| {
         p.action = Action::JumpLaunch;
-        p.action_left = dur(if four { c.leg4_launch } else { c.jump_launch });
+        p.action_left = dur(if four { c.leg4_launch } else { jump_launch });
         p.vy = JUMP_SPEED;
         p.air_velocity = Vec3::new(p.last_velocity.x, 0.0, p.last_velocity.z);
         p.fall_from = p.position.y + GROUND;
@@ -4464,7 +4556,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         Action::Dodge { .. } | Action::JumpLand | Action::Rising | Action::Dive if p.action_left <= FADE => p.action = Action::None,
         Action::Crouching if p.action_left <= FADE => p.action = Action::Crouched,
         // (moving, it crouch-walks where the stance has one, else stands)
-        Action::Crouched if !p.crouch_wanted || (moving && stance.cr_walk.is_none()) || p.jump_buffer > 0.0 || p.dodge_pressed => {
+        Action::Crouched if !crouch_wanted || (moving && stance.cr_walk.is_none()) || p.jump_buffer > 0.0 || dodge_pressed => {
             p.action = Action::Rising;
             p.action_left = dur(stance.crouch2stand);
             if stance.crouch2stand.is_none() {
@@ -4476,7 +4568,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let grounded = !p.action.airborne();
     // a grenade close by: dive away (out of a kneel too)
     if let Some(from) = p.dive_from.take() {
-        if grounded && matches!(p.action, Action::None | Action::Crouching | Action::Crouched) && stance.dive.is_some() {
+        if grounded && matches!(p.action, Action::None | Action::Crouching | Action::Crouched) && stance.dive.is_some() && special.is_none() {
             let away = Vec3::new(p.position.x - from.x, 0.0, p.position.z - from.z).normalize_or(Vec3::Z);
             p.yaw = (-away.x).atan2(-away.z);
             p.action = Action::Dive;
@@ -4495,18 +4587,18 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 start_launch(p);                             // running jump: straight into the launch
             } else {
                 p.action = Action::JumpCrouch;
-                p.action_left = dur(c.jump_crouch);
-                if c.jump_crouch.is_none() {
+                p.action_left = dur(jump_crouch);
+                if jump_crouch.is_none() {
                     start_launch(p);
                 }
             }
-        } else if p.crouch_wanted && moving && stance.cr_walk.is_some() && stance.crouch_idle.is_some() {
+        } else if crouch_wanted && moving && stance.cr_walk.is_some() && stance.crouch_idle.is_some() {
             // crouching on the move: straight into the crouch walk
             p.action = Action::Crouched;
-        } else if p.crouch_wanted && !moving && stance.stand2crouch.is_some() && stance.crouch_idle.is_some() {
+        } else if crouch_wanted && !moving && stance.stand2crouch.is_some() && stance.crouch_idle.is_some() {
             p.action = Action::Crouching;
             p.action_left = dur(stance.stand2crouch);
-        } else if p.dodge_pressed {
+        } else if dodge_pressed {
             let side = if moving { wrap_angle(dir_yaw - p.yaw).sin() } else { -input.x };
             let left = side > 0.0;
             if let Some(clip) = if left { c.loco.dodge_left } else { c.loco.dodge_right } {
@@ -4521,11 +4613,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let armed = !l.weapons.is_empty();
     // (not during a skill's toggle overlay either: one overlay at a time is the demo's choice.
     // The game queues a toggle overlay only into a free overlay slot, char+0x218 or +0x244,
-    // 0x12253a-0x122587; whether a switch waits for one isn't traced)
+    // 0x12253a-0x122587; whether a switch waits for one isn't traced. Nor while the skill's
+    // overlay filter refuses the switch's overlay: Tex's berserk, `skills::overlays_blocked`)
     if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
-        && p.skill.toggling.is_none() {
+        && p.skill.toggling.is_none() && !skills::overlays_blocked(p) {
         let to = (p.weapon + 1) % l.weapons.len();
-        p.fire_state.reset_burst();                         // FUN_0022dc00
+        p.fire_state.reset_burst(0);                        // FUN_0022dc00
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
         p.switch_sound_in = SWITCH_SOUND_GAP;
         p.hud_list = HUD_LIST_TIME;
@@ -4615,10 +4708,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // grenade is in the hand from the reach event and leaves it at the release event. Placed
     // (Roller, Sentry): set down at the feet at the press, no meter
     let kind = match p.item { Item::Grenade(k) if p.grenades.get(k).is_some_and(|&n| n > 0) => kits.get(k).map(|kit| (k, kit)), _ => None };
-    // (not during a skill's toggle overlay: the demo's choice, as for the weapon switch above)
+    // (not during a skill's toggle overlay: the demo's choice, as for the weapon switch above;
+    // nor in Tex's berserk, whose overlay filter refuses the throw's and whose motions have no
+    // throw: #35 take26 20.5 s, LT throws nothing and the count stays)
     let can_throw = kind.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
         && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && p.skill.toggling.is_none()
-        && matches!(p.action, Action::None) && !p.on_all_fours;
+        && !skills::overlays_blocked(p) && matches!(p.action, Action::None) && !p.on_all_fours;
     p.meter_after.1 = (p.meter_after.1 - dt).max(0.0);
     if !p.throw_held {
         p.place_latch = false;
@@ -4674,37 +4769,62 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     p.aim_hold -= dt;
     let gun_up = armed && p.reloading.is_none() && p.throwing.is_none()
         && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours;
-    let can_fire = gun_up && p.ammo.get(p.weapon).is_some_and(|a| a[0] > 0);
-    // (a tap is held until its first shot, play_shots.rs `pull`)
+    let clip_of = |p: &Player, w: usize| p.ammo.get(w).map_or(0, |a| a[0]);
+    // the second hand's gun (Tex's berserk): the trigger fires it too, each gun while it has a
+    // round (take05: the gun in hand empty, the other fires on alone)
+    let second = p.second.filter(|s| s.weapon < l.weapons.len());
+    let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
+    // (a tap is held for each gun until its first shot, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire, can_fire);
-    if pulled {
+    if pulled.contains(&true) {
         if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
-            p.cooldown = p.cooldown.max(0.2);             // raise the gun before the first shot
+            // raise the gun before the first shot (both guns: take04's first berserk shots went
+            // in one frame)
+            p.cooldown = p.cooldown.max(0.2);
+            if let Some(s) = p.second.as_mut() {
+                s.cooldown = s.cooldown.max(0.2);
+            }
         }
         p.aim_hold = 0.7;
     }
     // the fire loop in 30 Hz game frames (play_shots.rs): the cooldown, bursts and pellets,
-    // accuracy; each round fired takes one from the clip and plays one report
+    // accuracy; each round fired takes one from its clip and plays one report. The fire command
+    // sets both guns' fire flags (0x122614-0x122655): each runs its own loop
     if let Some(def) = l.weapons.get(p.weapon).map(|w| &w.def) {
-        let trigger = shots::Trigger { held: pulled, dry: p.fire && gun_up && p.using.is_none(), clip: p.ammo.get(p.weapon).map_or(0, |a| a[0]),
-                                       scoped: p.scope > 0.5, crouched: p.crouch_wanted };
+        // (an empty gun's dry cycle: the button down, or a pull still owed the other gun's shot,
+        // as the game's request sets both guns' fire flags)
+        let dry = (p.fire || pulled.contains(&true)) && gun_up && p.using.is_none();
+        let trigger = |hand: usize, clip: i64| shots::Trigger { held: pulled[hand], dry, clip, scoped: p.scope > 0.5, crouched: crouch_wanted };
         let seed = p.character as u32 * 7919 + p.npc.map_or(0, |n| n.id as u32 * 104_729);
-        let (weapon, mut cooldown) = (p.weapon, p.cooldown);
-        let rounds = p.fire_state.run(&mut cooldown, weapon, def, trigger, seed, dt);
-        p.cooldown = cooldown;
-        for _ in 0..rounds {
-            // one sound per round (each fire sound is a single report); fast guns overlap several
-            // (the minigun's ~0.4 s sounds at 15/s), so they play a little quieter
-            p.queue_any(&def.fire_sounds, if def.rate >= 8.0 { 0.55 } else { 0.8 });
-            p.shots_fired += 1;
-            p.ammo[weapon][0] -= 1;
-            p.recoil = 1.0;
-            p.flash = 0.05;
+        let mut guns = vec![shots::Gun { hand: 0, weapon: p.weapon, def, trigger: trigger(0, clip_of(p, p.weapon)), cooldown: p.cooldown, rounds: 0 }];
+        // (its cooldown as the raise above left it)
+        if let Some(s) = second.and(p.second) {
+            guns.push(shots::Gun { hand: 1, weapon: s.weapon, def: &l.weapons[s.weapon].def, trigger: trigger(1, clip_of(p, s.weapon)),
+                                   cooldown: s.cooldown, rounds: 0 });
+        }
+        p.fire_state.run(&mut guns, seed, dt);
+        for g in &guns {
+            if g.hand == 0 {
+                p.cooldown = g.cooldown;
+            } else if let Some(s) = p.second.as_mut() {
+                s.cooldown = g.cooldown;
+            }
+            for _ in 0..g.rounds {
+                // one sound per round (each fire sound is a single report); fast guns overlap
+                // several (the minigun's ~0.4 s sounds at 15/s), so they play a little quieter
+                p.queue_any(&g.def.fire_sounds, if g.def.rate >= 8.0 { 0.55 } else { 0.8 });
+                p.shots_fired += 1;
+                p.ammo[g.weapon][0] -= 1;
+                match p.second.as_mut().filter(|_| g.hand == 1) {
+                    Some(s) => (s.recoil, s.flash) = (1.0, 0.05),
+                    None => (p.recoil, p.flash) = (1.0, 0.05),
+                }
+            }
         }
     }
 
     // ---- sliding down steep ground: the slide clip, facing downhill ----
-    let sliding = p.sliding > 0.0 && matches!(p.action, Action::None) && c.slide.is_some() && !p.on_all_fours;
+    let sliding = p.sliding > 0.0 && matches!(p.action, Action::None) && slide_clip.is_some() && !p.on_all_fours;
     if sliding != p.slide_on && std::env::var("BF_SLIDE_LOG").is_ok() {
         println!("t={:.2} {} slide {} at {:.1}", p.sim_time, unit_name(p), if sliding { "starts" } else { "ends" }, p.position);
     }
@@ -4725,12 +4845,18 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         turn_to(&mut p.yaw, down, TURN_RATE);
         p.gait = Gait::Idle;
     } else if matches!(p.action, Action::None) || (matches!(p.action, Action::Crouched) && stance.cr_walk.is_some()) {
+        // (the berserk set's side steps for the aimed ones, SpecialClips)
+        let sides = match special {
+            Some(s) => &s.side,
+            None if matches!(p.action, Action::Crouched) => &stance.cr_side,
+            None => &stance.rp_side,
+        };
         p.gait = if p.aim {
             if !moving {
                 let goal = stand_aim_yaw(p, aim_yaw - off);
                 turn_to(&mut p.yaw, goal, TURN_RATE);
                 Gait::Idle
-            } else if let Some(side) = side_step(wrap_angle(dir_yaw - aim_yaw), if matches!(p.action, Action::Crouched) { &stance.cr_side } else { &stance.rp_side }, armed) {
+            } else if let Some(side) = side_step(wrap_angle(dir_yaw - aim_yaw), sides, armed) {
                 // stepping sideways: the side-walk clips twist the upper body about a quarter
                 // turn off the root, whose motion runs straight along it (forward steps forward,
                 // back steps back, as far as the walks). So the character turns until the gun is
@@ -4747,7 +4873,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             }
         } else if moving {
             turn_to(&mut p.yaw, dir_yaw, TURN_RATE);
-            if p.sprint { Gait::Sprint } else if p.walk { Gait::Walk } else { Gait::Run }
+            // (no dash in the berserk set: the dash request finds no transition, the run goes on)
+            if p.sprint && special.is_none() { Gait::Sprint } else if p.walk { Gait::Walk } else { Gait::Run }
         } else {
             if upper_aim {
                 let goal = stand_aim_yaw(p, aim_yaw - off);
@@ -4783,8 +4910,14 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // weapon up (ready pose) while aiming or firing, carried otherwise
     // the held weapon's slot picks the locomotion set (arms carry that gun); its ready pose
     // while aiming or firing. During a switch the set changes when the new gun is grabbed.
+    // (the berserk set carried and aimed alike: its script is its ready-script)
     let set = &c.slots[if armed { stance_of(l, p.weapon) } else { 0 }];
-    let lo = if upper_aim && armed && set.rp.idle.is_some() && set.rp.run.is_some() { &set.rp } else { &set.carry };
+    let lo = match special {
+        Some(s) => &s.loco,
+        None if upper_aim && armed && set.rp.idle.is_some() && set.rp.run.is_some() => &set.rp,
+        None => &set.carry,
+    };
+    let sides = special.map_or(&set.rp_side, |s| &s.side);
     let gait_clip = match p.gait {
         Gait::Idle => lo.idle,
         Gait::Walk => lo.walk,
@@ -4792,15 +4925,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         Gait::Sprint => lo.sprint.or(lo.run),
         Gait::WalkBack => lo.walk_back.or(lo.run_back),
         Gait::RunBack => lo.run_back.or(lo.walk_back),
-        Gait::Side { left, back } => set.rp_side[side_index(left, back)].or(lo.walk),
+        Gait::Side { left, back } => sides[side_index(left, back)].or(lo.walk),
     }.or(lo.idle);
     let (action_clip, once) = match p.action {
-        Action::None => (if sliding { c.slide } else { None }, false),
+        Action::None => (if sliding { slide_clip } else { None }, false),
         Action::Dodge { left } => (if left { c.loco.dodge_left } else { c.loco.dodge_right }, true),
-        Action::JumpCrouch => (c.jump_crouch, true),
-        Action::JumpLaunch => (if four { c.leg4_launch } else { c.jump_launch }, true),
-        Action::JumpFall => (if four { c.leg4_fall } else { c.jump_fall }, false),
-        Action::JumpLand => (if four { c.leg4_land } else { c.jump_land }, true),
+        Action::JumpCrouch => (jump_crouch, true),
+        Action::JumpLaunch => (if four { c.leg4_launch } else { jump_launch }, true),
+        Action::JumpFall => (if four { c.leg4_fall } else { jump_fall }, false),
+        Action::JumpLand => (if four { c.leg4_land } else { jump_land }, true),
         Action::Crouching => (stance.stand2crouch, true),
         Action::Crouched => (match p.gait {
             Gait::Walk => stance.cr_walk,
@@ -4980,7 +5113,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.height = 0.0;
             p.vy = 0.0;
             p.action = Action::JumpLand;
-            p.action_left = dur(if four { c.leg4_land } else { c.jump_land });
+            p.action_left = dur(if four { c.leg4_land } else { jump_land });
             p.queue_any(&surface.jump_land, 0.9);
             p.step_mute = 0.3;
         }
@@ -5021,54 +5154,57 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     }
 
     // ---- shots: from the muzzle to whatever the crosshair is on, turned by the accuracy and a
-    // burst's spread (play_shots.rs) ----
+    // burst's spread (play_shots.rs); the second hand's gun's from its own muzzle to the same
+    // point (take04: both guns' shots meet at the one crosshair) ----
     if !p.fire_state.pellets.is_empty() {
-        if let Some(w) = l.weapons.get(p.weapon) {
-            if let Some((hb, r, t)) = w.in_hand {
-                let root = Transform::from_translation(p.position + Vec3::Y * p.height).with_rotation(facing).compute_matrix();
-                let hand = root * world[hb];
-                let barrel = hand.transform_vector3(r * w.fire_dir).normalize();
-                let (cam, ray) = aim_ray(p);
-                // in the scope the shot leaves from the eye along the crosshair's ray (the hidden
-                // muzzle sits ~0.4 m lower: through a 5-10x zoom its line lands visibly low)
-                let scoped = p.scope > 0.5;
-                let origin = if scoped { cam + ray * 0.3 } else { hand.transform_point3(r * w.muzzle.point + t) };
-                let range = w.def.range.max(20.0);
-                let target = p.ai_target.unwrap_or_else(|| cam + ray * ray_hit(cam, ray, range + 10.0).unwrap_or(range));
-                let mut dir = if scoped { ray } else { (target - origin).normalize_or_zero() };
-                if dir.dot(ray) < 0.3 || dir == Vec3::ZERO {
-                    dir = if upper_aim { ray } else { barrel };
-                }
-                // bullet-type 4 is an instant ray whatever its speed (FUN_0022f1d0: the Bower's and
-                // MK's 80 m/s aren't used; their tracer effect flies on its own); speed 1 marks
-                // the others' instant hits; the rest fly at the bullet's speed
-                let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
-                let accuracy = p.fire_state.accuracy(p.weapon);
-                // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper) is
-                // a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50, play_missile.rs): it
-                // leaves the muzzle along the shot with the aim point and the shooter's line
-                let missile = missile::flies(&w.def);
-                let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
-                for (pellet, dir) in p.fire_state.directions(dir, w.def.shots.burst_spread) {
-                    if missile {
-                        p.launches.push(missile::Launch { weapon: w.def.name, origin, dir, aim: target, look });
-                        if std::env::var("BF_SHOT_LOG").is_ok() {
-                            println!("t={:.2} missile launch: origin {:.2} dir {dir:.3} aim {target:.2} {pellet:?} accuracy {accuracy:?}", p.sim_time, origin - p.position);
-                        }
-                        continue;
-                    }
-                    let hit = shots::hit_normal(origin, dir, range);
-                    p.shots.push(Shot { origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
-                                        flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
-                                        damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type,
-                                        decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff,
-                                        // (the falloff runs over the bullet's own range, FUN_00230040)
-                                        range: w.def.range });
+        let mounts = [l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (p.weapon, w, m))),
+                      p.second.and_then(|s| l.weapons.get(s.weapon).and_then(|w| w.second_hand.map(|m| (s.weapon, w, m))))];
+        for (side, mount) in mounts.into_iter().enumerate() {
+            let Some((index, w, (hb, r, t))) = mount else { continue };
+            let root = Transform::from_translation(p.position + Vec3::Y * p.height).with_rotation(facing).compute_matrix();
+            let hand = root * world[hb];
+            let barrel = hand.transform_vector3(r * w.fire_dir).normalize();
+            let (cam, ray) = aim_ray(p);
+            // in the scope the shot leaves from the eye along the crosshair's ray (the hidden
+            // muzzle sits ~0.4 m lower: through a 5-10x zoom its line lands visibly low)
+            let scoped = p.scope > 0.5 && side == 0;
+            let origin = if scoped { cam + ray * 0.3 } else { hand.transform_point3(r * w.muzzle.point + t) };
+            let range = w.def.range.max(20.0);
+            let target = p.ai_target.unwrap_or_else(|| cam + ray * ray_hit(cam, ray, range + 10.0).unwrap_or(range));
+            let mut dir = if scoped { ray } else { (target - origin).normalize_or_zero() };
+            if dir.dot(ray) < 0.3 || dir == Vec3::ZERO {
+                dir = if upper_aim { ray } else { barrel };
+            }
+            // bullet-type 4 is an instant ray whatever its speed (FUN_0022f1d0: the Bower's and
+            // MK's 80 m/s aren't used; their tracer effect flies on its own); speed 1 marks
+            // the others' instant hits; the rest fly at the bullet's speed
+            let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
+            let accuracy = p.fire_state.accuracy(index);
+            // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper) is
+            // a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50, play_missile.rs): it
+            // leaves the muzzle along the shot with the aim point and the shooter's line
+            let missile = missile::flies(&w.def);
+            let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
+            for (pellet, dir) in p.fire_state.directions(side, dir, w.def.shots.burst_spread) {
+                if missile {
+                    p.launches.push(missile::Launch { weapon: w.def.name, origin, dir, aim: target, look });
                     if std::env::var("BF_SHOT_LOG").is_ok() {
-                        println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?}",
-                                 p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),
-                                 barrel, ray, dir, origin - p.position, hit.map_or(range, |h| h.0));
+                        println!("t={:.2} missile launch: origin {:.2} dir {dir:.3} aim {target:.2} {pellet:?} accuracy {accuracy:?}", p.sim_time, origin - p.position);
                     }
+                    continue;
+                }
+                let hit = shots::hit_normal(origin, dir, range);
+                p.shots.push(Shot { origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
+                                    flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
+                                    damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type, ammo: w.def.ammo_type,
+                                    decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff,
+                                    // (the falloff runs over the bullet's own range, FUN_00230040)
+                                    range: w.def.range });
+                // (the pellet's hand: 0 the gun in hand, 1 the second hand's)
+                if std::env::var("BF_SHOT_LOG").is_ok() {
+                    println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?}",
+                             p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),
+                             barrel, ray, dir, origin - p.position, hit.map_or(range, |h| h.0));
                 }
             }
         }
@@ -5158,7 +5294,12 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&m
     let dt = frame_dt(&time);
     // the scope: aiming (held, not just after firing) a weapon that zooms
     let held_zoom = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).map_or(0.0, |w| w.def.zoom);
-    let busy = player.switching.is_some() || player.reloading.is_some() || player.dead;
+    // none in Tex's berserk either, from the accepted press to the second gun's stowing (his
+    // toggle only refuses a press made scoped, 0x13d490): the demo's choice until a take shows
+    // whether the game lets him (#35's shot T2). Scoped, the second gun's muzzle effect washes the
+    // view, and a shot in the start clip leaves from behind his shoulder
+    let berserk = player.skill.special_motions || player.second.is_some();
+    let busy = player.switching.is_some() || player.reloading.is_some() || player.dead || berserk;
     if busy {
         player.scope_level = 0;
     }
@@ -5360,9 +5501,19 @@ const DROP_HOP: f32 = 1.5;
 #[allow(clippy::too_many_arguments)]
 fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, transforms: &mut Query<&mut Transform, Without<Tracer>>,
              visibility: &mut Query<&mut Visibility>, lights: &mut Query<&mut PointLight>, dt: f32) {
-    if std::mem::take(&mut p.weapon_dirty) {
+    // (not the dead's: they've let go of their guns, which fall loose, `update_weapons`)
+    if std::mem::take(&mut p.weapon_dirty) && !l.weapon_dropped {
         for (i, w) in l.weapons.iter().enumerate() {
-            let place = if i == p.weapon && p.holding { w.in_hand } else { w.stowed };
+            // the gun in the hand, the one drawn into the second hand (Tex's berserk), the rest
+            // at their stow points
+            let drawn = i == p.weapon && p.holding;
+            let second = p.second.is_some_and(|s| s.weapon == i);
+            let place = if drawn { w.in_hand } else if second { w.second_hand.or(w.stowed) } else { w.stowed };
+            // a gun put away (the second hand's at berserk's end) leaves no flash or light on
+            if !drawn && !second {
+                if let Ok(mut v) = visibility.get_mut(w.flash) { *v = Visibility::Hidden; }
+                if let Ok(mut light) = lights.get_mut(w.light) { light.intensity = 0.0; }
+            }
             match place {
                 Some((bone, r, t)) => {
                     commands.entity(w.entity).insert((ChildOf(l.joints[bone]), Transform::from_translation(t).with_rotation(r)));
@@ -5406,6 +5557,32 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             // disc on the ground; the demo's rule. Off for a gun whose muzzle effect brings its
             // own light: play_shots.rs plays that one)
             light.intensity = if flash_on && p.scope <= 0.5 && !w.data_light { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
+        }
+    }
+    // the second hand's gun (Tex's berserk): its own kick, plain flash and light, as the gun in
+    // hand's; its barrels spin with the gun in hand's (one trigger fires both)
+    let spin_angle = p.spin_angle;
+    if let Some(s) = p.second.as_mut() {
+        s.recoil *= (-16.0 * dt).exp();
+        let flash_on = s.flash > 0.0;
+        s.flash -= dt;
+        if let Some(w) = l.weapons.get(s.weapon) {
+            if let (Some((_, r, t)), Ok(mut tr)) = (w.second_hand, transforms.get_mut(w.entity)) {
+                tr.translation = t - r * w.fire_dir * (0.04 * s.recoil);
+                tr.rotation = r;
+            }
+            for (e, axis, offset) in &w.spinners {
+                if let Ok(mut tr) = transforms.get_mut(*e) {
+                    *tr = Transform::from_translation(*offset).with_rotation(Quat::from_axis_angle(*axis, spin_angle));
+                }
+            }
+            let on = flash_on && w.def.shots.muzzle_effect == 0;
+            if let Ok(mut v) = visibility.get_mut(w.flash) {
+                *v = if on { Visibility::Inherited } else { Visibility::Hidden };
+            }
+            if let Ok(mut light) = lights.get_mut(w.light) {
+                light.intensity = if flash_on && !w.data_light { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
+            }
         }
     }
     for s in p.shots.drain(..) {

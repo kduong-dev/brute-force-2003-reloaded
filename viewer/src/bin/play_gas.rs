@@ -17,7 +17,7 @@
 //!    13.2 HP/s, below both clouds. A guess fitted to the recording. The recording's Tex is the
 //!    campaign's, on STANDARD, so the rate holds the squad's step there (x0.6): it's divided
 //!    out before each character's own step (play_damage.rs): 17.7 HP/s on the squad on
-//!    STANDARD (the missions' default), 29.5 with no step (the multiplayer maps, HARD), 41.3 on an enemy on STANDARD.
+//!    STANDARD (the missions' and the test map's default), 29.5 with no step (the multiplayer maps, HARD), 41.3 on an enemy on STANDARD.
 //!    That last is the demo's extrapolation: the rate was measured on the thrower in its own
 //!    cloud, so it holds FUN_0004b9c0's x0.7 too, which an enemy wouldn't take (~59 HP/s with
 //!    it out). The game's rule for the cloud is #112's;
