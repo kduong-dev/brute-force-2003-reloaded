@@ -50,6 +50,9 @@
 //!      joins play_scenery.rs's list as a map's does (`LateBreakable`): shots, blasts and other
 //!      objects' damage areas break it, it explodes and chains. With no collision on the flat
 //!      floor, shots meet its model's box and characters walk through it.
+//!  - P: the scenery menu (play_testscenery.rs, #185): any level's buildings and static scenery,
+//!    with the object menu's see-through copy, turn and air placement, drawn as its level draws
+//!    it and joining the map's collision.
 //!
 //! Not done: the enemy species' own behaviour (#110's sub-issues: their reactions, blood, death
 //! clips), moving NPCs, removing placed objects, saving a layout.
@@ -65,7 +68,7 @@ use bf_viewer::level_scene::Placed;
 /// The tools' line in the controls panel (H).
 pub const HELP: &str = "tools:   F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
-                        Y sky   U music (Left / Right: previous / next)   L switch level";
+                        P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level";
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
 pub const ENEMY_TEAM: u8 = 1;
@@ -81,44 +84,44 @@ const LOOK: f32 = 0.004;
 /// The free camera looks no further up or down than this (rad).
 const FLY_PITCH: f32 = 1.5;
 /// How far (m) the crosshair reaches for the ground, an NPC or a placement.
-const PICK_RANGE: f32 = 300.0;
+pub(super) const PICK_RANGE: f32 = 300.0;
 /// An NPC within this far (m, across) of the crosshair's ground point counts as under it (a
 /// body on the ground, or a near miss).
 const NPC_REACH: f32 = 1.2;
 /// A notch of the wheel turns the object this far (rad): 15 degrees.
-const TURN_STEP: f32 = std::f32::consts::PI / 12.0;
+pub(super) const TURN_STEP: f32 = std::f32::consts::PI / 12.0;
 /// The object's see-through copy: its colour's alpha, and a glow added so it reads as a preview
 /// on dark and light ground alike.
-const GHOST_ALPHA: f32 = 0.6;
-const GHOST_GLOW: LinearRgba = LinearRgba::rgb(0.05, 0.15, 0.2);
+pub(super) const GHOST_ALPHA: f32 = 0.6;
+pub(super) const GHOST_GLOW: LinearRgba = LinearRgba::rgb(0.05, 0.15, 0.2);
 /// How near (m, across; up or down) the feet must come to take a grenade off the ground:
 /// play_pickups.rs's REACH / REACH_UP.
 const GRENADE_REACH: f32 = 1.0;
 const GRENADE_REACH_UP: f32 = 1.5;
 /// How many lines of the object list show at once.
-const LIST_LINES: usize = 9;
+pub(super) const LIST_LINES: usize = 9;
 /// How long a tool's message shows (s): the test map's.
-const MESSAGE_TIME: f32 = 2.0;
+pub(super) const MESSAGE_TIME: f32 = 2.0;
 /// How far along the crosshair (m) the free camera puts an object in the air at first (the
 /// demo's choice).
 const AIR_DISTANCE: f32 = 4.0;
 /// How far (m) a notch of Shift + the wheel moves it along the crosshair (the demo's).
-const AIR_STEP: f32 = 0.5;
+pub(super) const AIR_STEP: f32 = 0.5;
 /// The nearest and furthest (m) it goes along the crosshair (the demo's).
-const AIR_RANGE: (f32, f32) = (1.0, 40.0);
+pub(super) const AIR_RANGE: (f32, f32) = (1.0, 40.0);
 /// How far short (m) of what the crosshair's ray meets first it stops, so it isn't put inside a
 /// wall or the floor (the demo's).
 const AIR_CLEAR: f32 = 0.3;
 /// An object whose lowest point would be less than this (m) above the ground is put on it.
-const AIR_MIN_HEIGHT: f32 = 0.05;
+pub(super) const AIR_MIN_HEIGHT: f32 = 0.05;
 /// The preview's mark for an object that drops (the demo's): a cyan line down to where it lands
 /// and a ring there.
 const DROP_MARK: Color = Color::srgb(0.3, 0.85, 1.0);
 /// The preview's mark for one that hangs where it's put (scenery; the demo's): a yellow ring
 /// round its foot.
-const HANG_MARK: Color = Color::srgb(1.0, 0.8, 0.25);
+pub(super) const HANG_MARK: Color = Color::srgb(1.0, 0.8, 0.25);
 /// The marks' ring radius (m, the demo's).
-const MARK_RING: f32 = 0.35;
+pub(super) const MARK_RING: f32 = 0.35;
 
 
 /// A character the NPC tool spawned (`Player::npc`): its number (1, 2, ... in the order
@@ -151,7 +154,7 @@ impl FreeCam {
     }
 }
 
-/// Which menu is open (Sky, Music, Levels: play_testworld.rs).
+/// Which menu is open (Sky, Music, Levels: play_testworld.rs; Scenery: play_testscenery.rs).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(super) enum Panel {
     #[default]
@@ -161,6 +164,7 @@ pub(super) enum Panel {
     Sky,
     Music,
     Levels,
+    Scenery,
 }
 
 /// The player's camera and crouch, and whether the mouse was captured, before `read_input`
@@ -178,7 +182,7 @@ pub(super) struct Before {
 /// The tools' state (a map's: `reset` as each map starts).
 #[derive(Resource, Default)]
 pub(super) struct Tools {
-    freecam: Option<FreeCam>,
+    pub(super) freecam: Option<FreeCam>,
     pub(super) panel: Panel,
     /// the NPC menu: the entry picked (an index into `NpcList`), the team and behaviour of the
     /// next one
@@ -193,8 +197,8 @@ pub(super) struct Tools {
     /// the see-through copy and the entry it shows
     ghost: Option<(Entity, usize)>,
     /// how far along the crosshair (m) the free camera puts an object in the air (AIR_DISTANCE
-    /// at first; Shift + the wheel)
-    air: f32,
+    /// at first; Shift + the wheel): the object menu's and the scenery menu's
+    pub(super) air: f32,
     pub(super) before: Before,
     /// BF_TEST_FLY: until when (sim time), the move (right, up, forward), fast
     fly: Option<(f32, Vec3, bool)>,
@@ -285,6 +289,13 @@ pub(super) enum Hook {
     Place { object: Option<String>, at: Option<(Vec2, f32, f32)> },
     /// the free camera's air distance (m)
     Air(f32),
+    /// P: the scenery menu (play_testscenery.rs)
+    SceneryMenu,
+    /// P with a piece picked (`<level>:<piece>`, play_testscenery.rs `find_piece`), turned `yaw`
+    Scenery { piece: String, yaw: f32 },
+    /// the scenery menu's click (None: the picked piece at the crosshair), or that piece put at
+    /// x, z turned `yaw`, a height above the ground (in the air)
+    SceneryPlace { piece: Option<String>, at: Option<(Vec2, f32, f32)> },
     SkyMenu,
     MusicMenu,
     LevelMenu,
@@ -349,6 +360,13 @@ impl std::fmt::Debug for FreeCam {
 ///    (the picked object at the crosshair: in the air in the free camera); or that object put at
 ///    x, z turned that way, `height` m above the ground (in the air: it drops, scenery hangs).
 ///  - BF_TEST_AIR=<s>,<m>: the free camera's air distance (Shift + the wheel).
+///  - BF_TEST_SCENERY_MENU=<s>: P (the scenery menu opens, play_testscenery.rs).
+///    BF_TEST_SCENERY=<s>,<level>:<piece>[,<yaw>]: P with that level's piece picked (its type or
+///    archetype `h_xxxxxxxx`, or its place in the level's list, 0 the largest), turned that way.
+///    BF_TEST_SCENERY_PLACE=<s>[,<level>:<piece>[,<x>,<z>[,<yaw>[,<height>]]]]: the scenery
+///    menu's click (the picked piece at the crosshair), that piece at the crosshair, or that piece
+///    put at x, z, `height` m up (it hangs there); each placed once its archive is loaded and
+///    it's built.
 ///  - BF_TEST_SKY_MENU / BF_TEST_MUSIC_MENU / BF_TEST_LEVEL_MENU=<s>: Y / U / L (the menu opens).
 ///  - BF_TEST_SKY=<s>,<level|none|map>: that level's sky (by its archive's name, e.g. sdm_e10),
 ///    none, or the map's own.
@@ -540,6 +558,16 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     for e in entries("BF_TEST_AIR") {
         add(num(&e, 0), num(&e, 1).map(Hook::Air));
     }
+    for e in entries("BF_TEST_SCENERY_MENU") {
+        add(num(&e, 0), Some(Hook::SceneryMenu));
+    }
+    for e in entries("BF_TEST_SCENERY") {
+        add(num(&e, 0), e.get(1).map(|p| Hook::Scenery { piece: p.clone(), yaw: num(&e, 2).unwrap_or(0.0).to_radians() }));
+    }
+    for e in entries("BF_TEST_SCENERY_PLACE") {
+        let at = num(&e, 2).zip(num(&e, 3)).map(|(x, z)| (Vec2::new(x, z), num(&e, 4).unwrap_or(0.0).to_radians(), num(&e, 5).unwrap_or(0.0)));
+        add(num(&e, 0), Some(Hook::SceneryPlace { piece: e.get(1).cloned(), at }));
+    }
     for (k, hook) in [("BF_TEST_SKY_MENU", Hook::SkyMenu), ("BF_TEST_MUSIC_MENU", Hook::MusicMenu), ("BF_TEST_LEVEL_MENU", Hook::LevelMenu)] {
         for e in entries(k) {
             add(num(&e, 0), Some(hook.clone()));
@@ -611,7 +639,7 @@ fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
 }
 
 /// The crosshair's ray: the free camera's, else the player's.
-fn crosshair(player: &Player, tools: &Tools) -> (Vec3, Vec3) {
+pub(super) fn crosshair(player: &Player, tools: &Tools) -> (Vec3, Vec3) {
     match tools.freecam {
         Some(c) => (c.pos, c.ray()),
         None => aim_ray(player),
@@ -1096,14 +1124,14 @@ fn placed_at(e: &Entry, at: Vec3, yaw: f32) -> Transform {
 /// Where an object goes: on the ground at a point, or (the free camera) in the air with its
 /// lowest point at `at`, the ground under it at `below`.
 #[derive(Clone, Copy, Debug)]
-enum Spot {
+pub(super) enum Spot {
     Ground(Vec3),
     Air { at: Vec3, below: Vec3 },
 }
 
 impl Spot {
     /// Where the object's lowest point goes.
-    fn at(self) -> Vec3 {
+    pub(super) fn at(self) -> Vec3 {
         match self {
             Spot::Ground(p) | Spot::Air { at: p, .. } => p,
         }
@@ -1120,7 +1148,7 @@ fn drops(k: Kind) -> bool {
 /// Where the crosshair puts an object. Following the character: on the ground under it. In the
 /// free camera: in the air, `air` m along its ray (short of what the ray meets first, by
 /// AIR_CLEAR), unless that's on (or under) the ground there.
-fn spot_at(origin: Vec3, dir: Vec3, freecam: bool, air: f32) -> Option<Spot> {
+pub(super) fn spot_at(origin: Vec3, dir: Vec3, freecam: bool, air: f32) -> Option<Spot> {
     if !freecam {
         return ground_point(origin, dir).map(Spot::Ground);
     }
@@ -1376,9 +1404,10 @@ fn spawn_panel(mut commands: Commands) {
 }
 
 /// What the panel shows: the free camera's keys, or the open menu (the sky, music and level
-/// menus' text from play_testworld.rs).
+/// menus' text from play_testworld.rs, the scenery menu's from play_testscenery.rs).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcList>, squad: Res<Squad>, world: Res<super::testworld::WorldText>,
-              mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
+              scenery: Res<super::testscenery::SceneryText>, mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
     let Ok((mut text, mut node)) = panel.single_mut() else { return };
     let mut s = String::new();
     if tools.freecam.is_some() {
@@ -1430,6 +1459,12 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
                 s += "\n";
             }
             s += &world.0;
+        }
+        Panel::Scenery => {
+            if !s.is_empty() {
+                s += "\n";
+            }
+            s += &scenery.0;
         }
         Panel::None => {}
     }

@@ -283,7 +283,8 @@ pub struct Game {
 
 /// An object type's `<base object-type>`: 0 a compound of loose pieces (archetype-type 9, the
 /// debris that flies apart), 2 a game object (scenery, archetype-type 7), 17 an effect object
-/// (archetype-type 6: effects, a light, sounds and `<Damage>` areas).
+/// (archetype-type 6: effects, a light, sounds and `<Damage>` areas). The game's OT_ name table
+/// (0x3be87c) names them OT_BODY, OT_STATIC_GEOMETRY and OT_EFFECT.
 pub const OBJECT_COMPOUND: i64 = 0;
 pub const OBJECT_GAME: i64 = 2;
 pub const OBJECT_EFFECT: i64 = 17;
@@ -819,7 +820,23 @@ impl Game {
         for n in common.find("", ".xsb") {
             schemas.add(common.get(&n).unwrap()).map_err(|e| format!("{n}: {e}"))?;
         }
-        let mut g = Game {
+        let mut g = Game::empty(schemas);
+        g.load_archive(&common, "common")?;
+        let mut others: Vec<PathBuf> = std::fs::read_dir(data_dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "tgz") && !p.ends_with("common.tgz"))
+            .collect();
+        others.sort();
+        g.pending_texture_archives = others;
+        Ok(g)
+    }
+
+    /// A Game with nothing loaded but `schemas` (common's, to parse the documents with) and no
+    /// archives to search for textures: what `Game::load` starts from, and the test map's
+    /// scenery (#185, bf/pieces.rs) loads one level archive's pieces into.
+    pub(crate) fn empty(schemas: SchemaSet) -> Game {
+        Game {
             schemas,
             objects: vec![],
             materials: HashMap::new(),
@@ -874,16 +891,21 @@ impl Game {
             motion_sets: HashMap::new(),
             placements: vec![],
             personalities: HashMap::new(),
-        };
-        g.load_archive(&common, "common")?;
-        let mut others: Vec<PathBuf> = std::fs::read_dir(data_dir)
-            .map_err(|e| e.to_string())?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "tgz") && !p.ends_with("common.tgz"))
-            .collect();
-        others.sort();
-        g.pending_texture_archives = others;
-        Ok(g)
+        }
+    }
+
+    /// Every texture `other` has found so far (its index entries; the data is shared, not
+    /// copied), as this one's, for a Game made with `empty`: a level's materials can name one of
+    /// common's (the static scenery of m01_a, m05_a and m05_b does 16 times, the rest none).
+    pub(crate) fn share_textures(&mut self, other: &Game) {
+        for (k, v) in &other.textures {
+            self.textures.entry(*k).or_insert_with(|| v.clone());
+        }
+    }
+
+    /// Whether an objects file loaded has the archetype `name` (`archetype`).
+    pub fn has_archetype(&self, name: u32) -> bool {
+        self.archetype(name).is_some()
     }
 
     fn parse(&self, ar: &Archive, name: &str) -> Result<Option<Element>, String> {
@@ -1653,7 +1675,9 @@ impl Game {
         bxml::parse(d, schemas).map(Some).map_err(|e| format!("{n}: {e}"))
     }
 
-    fn load_textures(&mut self, ar: &Archive) -> Result<(), String> {
+    /// An archive's texture libraries (textures-*.xmb, each with its .tex kept whole): their index
+    /// and animated textures; entries already loaded win.
+    pub(crate) fn load_textures(&mut self, ar: &Archive) -> Result<(), String> {
         for n in ar.find("textures-", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
             let blob = Arc::new(ar.get(&n.replace(".xmb", ".tex")).unwrap_or(&[]).to_vec());

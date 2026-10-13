@@ -431,13 +431,19 @@ impl Shot {
 }
 
 /// Where a ray meets the world, and the surface's normal facing back along it (for the hole it
-/// leaves): the map's collision, or on the flat test floor the ground, a pillar's side, or (a
-/// placed object's box, `ray_hit`) facing the shot.
+/// leaves): the map's collision, or on the flat test floor the ground, a pillar's side, a piece of
+/// scenery the test tools put there (#185, its triangle), or (a placed object's box, `ray_hit`)
+/// facing the shot.
 pub fn hit_normal(origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
-    if let Some(a) = world::arena() {
+    let arena = world::arena();
+    if let Some(a) = arena.as_ref().filter(|a| !a.is_flat()) {
         return a.ray_normal(origin, dir, max);
     }
     let t = ray_hit(origin, dir, max)?;
+    // (the flat floor's arena: its ground or a piece, when that's what the ray met first)
+    if let Some(hit) = arena.and_then(|a| a.ray_normal(origin, dir, max)).filter(|(ta, _)| (ta - t).abs() < 1e-4) {
+        return Some(hit);
+    }
     let at = origin + dir * t;
     if (at.y - GROUND).abs() < 0.01 {
         return Some((t, Vec3::Y));
