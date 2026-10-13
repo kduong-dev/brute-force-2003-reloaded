@@ -17,6 +17,12 @@
 //! object order: their own triangles and their level blocker (`<blocker object-instance>`) block
 //! until they're broken (`set_broken`), and the game objects they leave behind (the missile
 //! rack's stand) are put in from the start, blocking only once they're broken.
+//!
+//! The test tools' scenery (#185, play_testscenery.rs) joins the map's collision as it's placed
+//! (`Arena::place`): a piece's own triangles, solid like a placed object's. The flat test floor
+//! has no arena until then; placing a solid one gives it an arena of its flat ground
+//! (`Arena::flat`, a plane at the floor's height everywhere, counted as terrain) with the pieces
+//! on it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +81,9 @@ pub struct Arena {
     broken: Vec<AtomicBool>,
     /// level object index -> its breakable index
     breakable_of: HashMap<usize, u32>,
+    /// the flat test floor's ground: a plane at this height under every point, terrain (an
+    /// arena made for the flat floor when the test tools put scenery on it, `Arena::flat`)
+    flat: Option<f32>,
 }
 
 /// The current map's arena. A new map installs its own (bf_play loads maps one after another
@@ -122,7 +131,7 @@ fn closest_on_tri(p: Vec3, t: &[Vec3; 3]) -> Vec3 {
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
         let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
-                            breakable_of: HashMap::new() };
+                            breakable_of: HashMap::new(), flat: None };
         // breakable objects, numbered in level object order (and by name, for their blockers)
         let mut by_name: HashMap<u32, u32> = HashMap::new();
         for (i, o) in level.objects.iter().enumerate() {
@@ -253,6 +262,43 @@ impl Arena {
         *ARENA.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// The flat test floor as an arena: nothing but its ground, a plane at `ground` under every
+    /// point (see `flat`).
+    pub fn flat(ground: f32) -> Arena {
+        Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
+                breakable_of: HashMap::new(), flat: Some(ground) }
+    }
+
+    /// Whether this is the flat test floor's arena (`Arena::flat`): what the flat floor has of its
+    /// own (its pillars, the boxes of the breakables the test tools put down) isn't in it.
+    pub fn is_flat(&self) -> bool {
+        self.flat.is_some()
+    }
+
+    /// A copy of this arena (its doors' and breakables' state as they are now).
+    fn duplicate(&self) -> Arena {
+        let flags = |v: &[AtomicBool]| v.iter().map(|b| AtomicBool::new(b.load(Ordering::Relaxed))).collect();
+        Arena { cells: self.cells.clone(), tris: self.tris.clone(), starts: self.starts.clone(), doors: flags(&self.doors), liquids: self.liquids.clone(),
+                broken: flags(&self.broken), breakable_of: self.breakable_of.clone(), flat: self.flat }
+    }
+
+    /// Puts a placed object's collision into the current map's arena (the test tools' scenery,
+    /// #185): `tris` (corners in the object's own frame, `physics_tris`, and their material)
+    /// placed by `at`, solid as a level's placed objects are, belonging to no level object. On
+    /// the flat test floor (no arena) an arena of its ground at `ground` is made first. The shared
+    /// arena is read-only, so a copy with the triangles added takes its place: whoever holds the
+    /// old one this frame keeps it until they let it go.
+    pub fn place(tris: &[([Vec3; 3], u8)], at: Mat4, ground: f32) -> Arc<Arena> {
+        let mut slot = ARENA.write().unwrap_or_else(|e| e.into_inner());
+        let mut a = slot.as_deref().map_or_else(|| Arena::flat(ground), Arena::duplicate);
+        for (t, m) in tris {
+            a.add(t.map(|v| at.transform_point3(v)), false, None, *m);
+        }
+        let a = Arc::new(a);
+        *slot = Some(a.clone());
+        a
+    }
+
     fn near(&self, x: f32, z: f32) -> &[u32] {
         self.cells.get(&cell(x, z)).map_or(&[], |v| v.as_slice())
     }
@@ -327,10 +373,11 @@ impl Arena {
         (u >= -1e-4 && v >= -1e-4 && u + v <= 1.0001).then(|| t.v[0].y + (t.v[1].y - t.v[0].y) * u + (t.v[2].y - t.v[0].y) * v)
     }
 
-    /// The terrain's height at (x, z), if there is terrain there.
+    /// The terrain's height at (x, z), if there is terrain there (the flat floor's ground
+    /// everywhere).
     pub fn ground(&self, x: f32, z: f32) -> Option<f32> {
         self.near(x, z).iter().map(|&i| &self.tris[i as usize]).filter(|t| t.terrain)
-            .filter_map(|t| Self::height_on(t, x, z)).reduce(f32::max)
+            .filter_map(|t| Self::height_on(t, x, z)).chain(self.flat).reduce(f32::max)
     }
 
     /// The highest floor at (x, z) no higher than `top`: terrain or an object's surface no
@@ -340,8 +387,9 @@ impl Arena {
     }
 
     /// `floor_below` with the floor's collision material (world-material id | MATERIAL_SLIDE).
+    /// The flat floor's ground is level, of material 0.
     pub fn floor_at(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3, u8)> {
-        let mut best: Option<(f32, Vec3, u8)> = None;
+        let mut best: Option<(f32, Vec3, u8)> = self.flat.filter(|&g| g <= top).map(|g| (g, Vec3::Y, 0));
         for &i in self.near(x, z) {
             let t = &self.tris[i as usize];
             if t.n.y < FLOOR_NORMAL || !self.solid(t) {
@@ -412,28 +460,27 @@ impl Arena {
     }
 
     /// `ray`, with the hit triangle's normal turned to face back along the ray (where a bullet
-    /// hole lies, play_shots.rs).
+    /// hole lies, play_shots.rs); the flat floor's ground faces up.
     pub fn ray_normal(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
         self.ray_tri(origin, dir, max).map(|(t, i)| {
+            let Some(i) = i else { return (t, Vec3::Y) };
             let v = &self.tris[i].v;
             let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or(Vec3::Y);
             (t, if n.dot(dir) > 0.0 { -n } else { n })
         })
     }
 
-
-
     /// `ray`, with the breakable object it meets first (its index, see `breakable`), if the
     /// nearest thing on the ray is one.
     pub fn ray_breakable(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
-        self.ray_tri(origin, dir, max).map(|(t, i)| (t, self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize)))
+        self.ray_tri(origin, dir, max).map(|(t, i)| (t, i.and_then(|i| self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize))))
     }
 
     /// `ray`, with the placed object it meets first (its index in `Level::objects`), if the
     /// nearest thing on the ray is part of one: what the crosshair's centre ray is on
     /// (play_reticle.rs).
     pub fn ray_object(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
-        self.ray_tri(origin, dir, max).map(|(t, i)| (t, self.tris[i].object.map(|o| o as usize)))
+        self.ray_tri(origin, dir, max).map(|(t, i)| (t, i.and_then(|i| self.tris[i].object.map(|o| o as usize))))
     }
 
     /// Distance along a ray to the terrain alone (no objects or blockers), if within `max`: the
@@ -444,15 +491,24 @@ impl Arena {
         self.ray_tri_where(origin, dir, max, |t| t.terrain).map(|(t, _)| t)
     }
 
-    /// `ray`, with the triangle hit.
-    fn ray_tri(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, usize)> {
+    /// `ray`, with the triangle hit (None: the flat floor's ground).
+    fn ray_tri(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
         self.ray_tri_where(origin, dir, max, |_| true)
     }
 
-    /// `ray_tri` against the solid triangles `keep` takes.
-    fn ray_tri_where(&self, origin: Vec3, dir: Vec3, max: f32, keep: impl Fn(&Tri) -> bool) -> Option<(f32, usize)> {
+    /// `ray_tri` against the solid triangles `keep` takes, and the flat floor's ground (terrain,
+    /// which every `keep` here takes) met from above, as the flat floor's own rays meet it
+    /// (play.rs `ray_hit`).
+    fn ray_tri_where(&self, origin: Vec3, dir: Vec3, max: f32, keep: impl Fn(&Tri) -> bool) -> Option<(f32, Option<usize>)> {
         let mut best = max;
         let mut hit = None;
+        if let Some(g) = self.flat.filter(|_| dir.y < -1e-4) {
+            let d = (g - origin.y) / dir.y;
+            if d > 1e-3 && d < best {
+                best = d;
+                hit = Some(None);
+            }
+        }
         let mut seen = HashSet::new();
         let flat = Vec2::new(dir.x, dir.z).length();
         let step = if flat > 1e-4 { (CELL * 0.5 / flat).min(max) } else { max };
@@ -487,7 +543,7 @@ impl Arena {
                 let d = e2.dot(qv) / det;
                 if d > 1e-3 && d < best {
                     best = d;
-                    hit = Some(i as usize);
+                    hit = Some(Some(i as usize));
                 }
             }
             if t >= best || t >= max {
@@ -519,7 +575,7 @@ impl Arena {
 
 /// An archetype's collision triangles in its own frame (each part's surface, placed as the
 /// part), flagged if they belong to a sliding door leaf, with their material.
-pub(crate) fn physics_tris(game: &Game, arch: u32) -> Vec<([Vec3; 3], bool, u8)> {
+pub fn physics_tris(game: &Game, arch: u32) -> Vec<([Vec3; 3], bool, u8)> {
     let Ok(m) = WeaponModel::load(game, arch) else { return vec![] };
     let mut out = vec![];
     for p in &m.parts {

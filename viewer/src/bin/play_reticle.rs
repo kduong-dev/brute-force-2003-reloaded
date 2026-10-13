@@ -396,7 +396,8 @@ enum Under {
 
 /// The first body or object on the ray from `from` along `dir`, within `range` (m), and how far.
 fn under_ray(from: Vec3, dir: Vec3, range: f32, squad: &Squad) -> Option<(f32, Under)> {
-    let world = match world::arena() {
+    // (the flat floor's, with or without the test tools' scenery, #185: no level objects)
+    let world = match world::arena().filter(|a| !a.is_flat()) {
         Some(a) => a.ray_object(from, dir, range).map(|(t, o)| (t, Under::Object(o))),
         None => ray_hit(from, dir, range).map(|t| (t, Under::Object(None))),
     };

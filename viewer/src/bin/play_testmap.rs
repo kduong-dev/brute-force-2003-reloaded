@@ -19,9 +19,10 @@
 //!  - The controls panel (H) lives here; the main game doesn't show it. It starts hidden, with
 //!    an "H: help" hint.
 //!  - The developer tools (play_testtools.rs): a free camera with a teleport, an NPC spawner
-//!    and an object spawner; and (play_testworld.rs) a sky and a music picker and a level
-//!    switch. On a level the switch went to (or `--test` with BF_MAP) everything here but the
-//!    rack and the grid holds: the tools, instant kill, X, the grenade stacks, the help panel.
+//!    and an object spawner; (play_testworld.rs) a sky and a music picker and a level switch;
+//!    and (play_testscenery.rs) any level's buildings and static scenery to place. On a level
+//!    the switch went to (or `--test` with BF_MAP) everything here but the rack and the grid
+//!    holds: the tools, instant kill, X, the grenade stacks, the help panel.
 
 use super::*;
 use bf_viewer::bf::hash::h;
@@ -159,6 +160,7 @@ struct PendingSlot(Option<usize>);
 pub fn plugin(app: &mut App) {
     super::testtools::plugin(app);
     super::testworld::plugin(app);
+    super::testscenery::plugin(app);
     app.init_resource::<PendingSlot>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (toggle_instant_kill, suicide, take_weapons, spin_rack).chain().after(update_player)

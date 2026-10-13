@@ -463,7 +463,8 @@ fn search(units: &[&Player], at: Vec3, fwd: Vec3, range: f32, cone: f32, count: 
         }
         let dir = to / d;
         let dot = dir.dot(fwd);
-        let clear = match world::arena() {
+        // (the flat floor keeps its own sight test, its pillars and the test tools' scenery, #185)
+        let clear = match world::arena().filter(|a| !a.is_flat()) {
             Some(a) => a.ray_terrain(at, dir, d).is_none(),
             None => ray_hit(at, dir, d).is_none(),
         };

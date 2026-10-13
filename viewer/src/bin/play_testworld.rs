@@ -50,9 +50,9 @@ const SKY_FAR: f32 = 5000.0;
 /// it (`CampaignLevel::name`; a mission's zones by their archive too), its group, and whether
 /// the front end plays it alone (the deathmatch arenas).
 #[derive(Clone, Debug)]
-struct Entry {
-    zone: String,
-    title: String,
+pub(super) struct Entry {
+    pub(super) zone: String,
+    pub(super) title: String,
     group: &'static str,
     deathmatch: bool,
 }
@@ -144,7 +144,7 @@ struct AssetCounts<'w> {
 /// The process's working set and private bytes (MB), for BF_TOOLS_LOG's account of a switch
 /// (kernel32's K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX); none off Windows.
 #[cfg(windows)]
-fn process_mb() -> Option<(f32, f32)> {
+pub(super) fn process_mb() -> Option<(f32, f32)> {
     #[repr(C)]
     #[derive(Default)]
     struct Counters {
@@ -172,7 +172,7 @@ fn process_mb() -> Option<(f32, f32)> {
 
 /// See the Windows one: nothing to say elsewhere.
 #[cfg(not(windows))]
-fn process_mb() -> Option<(f32, f32)> {
+pub(super) fn process_mb() -> Option<(f32, f32)> {
     None
 }
 
@@ -213,7 +213,7 @@ pub fn arena(game: &Game, zone: &str) -> bool {
 
 /// The game's level list as the level menu shows it: the test map, then the squad deathmatch
 /// maps, the deathmatch arenas and the missions (each zone), each group in the game's order.
-fn level_list(game: &Game) -> Vec<Entry> {
+pub(super) fn level_list(game: &Game) -> Vec<Entry> {
     let mut out = vec![Entry { zone: "flat".into(), title: "Test map".into(), group: "test", deathmatch: false }];
     let s = |id: u32| game.strings.get(&id).cloned().filter(|t| !t.trim().is_empty());
     for (kind, group) in [(LEVEL_SQUAD_DEATHMATCH, "squad deathmatch"), (LEVEL_DEATHMATCH, "deathmatch"), (0, "missions")] {

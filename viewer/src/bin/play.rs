@@ -538,6 +538,8 @@ mod testmap;
 mod testtools;
 #[path = "play_testworld.rs"]
 mod testworld;
+#[path = "play_testscenery.rs"]
+mod testscenery;
 #[path = "play_menu.rs"]
 mod menu;
 #[path = "play_scenery.rs"]
@@ -2234,20 +2236,31 @@ struct Fx {
     spark_mat: Handle<StandardMaterial>,
 }
 
+/// Whether the map is the flat test floor: no arena, or the one the test tools' scenery gave it
+/// (#185, `world::Arena::flat`: its ground and the pieces put on it).
+fn flat_floor() -> bool {
+    world::arena().is_none_or(|a| a.is_flat())
+}
+
 /// Pillars of the test ground (centres); they stop shots.
 fn pillars() -> impl Iterator<Item = Vec3> {
-    (-3..=3).flat_map(|i| (-3..=3).map(move |j| (i, j))).filter(|_| world::arena().is_none())
+    (-3..=3).flat_map(|i| (-3..=3).map(move |j| (i, j))).filter(|_| flat_floor())
         .filter(|&(i, j): &(i32, i32)| (i + j) % 2 == 0 && (i, j) != (0, 0))
         .map(|(i, j)| Vec3::new(i as f32 * 9.0, GROUND + 1.5, j as f32 * 9.0))
 }
 
 /// Distance along a ray to the ground, a pillar or a breakable object the test map's tools put
-/// down (flat floor), or the map's collision, if within `max`.
+/// down (flat floor; with the scenery put on it, #185, its arena's ground and pieces), or the
+/// map's collision, if within `max`.
 fn ray_hit(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
-    if let Some(a) = world::arena() {
+    let arena = world::arena();
+    if let Some(a) = arena.as_ref().filter(|a| !a.is_flat()) {
         return a.ray(origin, dir, max);
     }
-    let mut best = if dir.y < -1e-4 { Some((GROUND - origin.y) / dir.y).filter(|t| *t > 0.0) } else { None };
+    let mut best = match &arena {
+        Some(a) => a.ray(origin, dir, max),
+        None => if dir.y < -1e-4 { Some((GROUND - origin.y) / dir.y).filter(|t| *t > 0.0) } else { None },
+    };
     for c in pillars() {
         let (lo, hi) = (c - Vec3::new(0.3, 1.5, 0.3), c + Vec3::new(0.3, 1.5, 0.3));
         let (mut t0, mut t1) = (0.0f32, f32::MAX);

@@ -1,4 +1,4 @@
-# Test map developer tools (`src/bin/play_testtools.rs`, #111; `src/bin/play_testworld.rs`, #116)
+# Test map developer tools (`src/bin/play_testtools.rs`, #111; `src/bin/play_testworld.rs`, #116; `src/bin/play_testscenery.rs`, #185)
 
 Demo tooling for trying features out on the test map ([play.md](play.md), "Test map"),
 not the game: the keys, speeds and layout are the demo's choices, none of them used by the
@@ -12,6 +12,7 @@ left) lists them all. They work on any map of a test session: `--test` starts on
 | N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
 | J / B / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / remove it. Shift+Delete removes every NPC |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
+| P | **scenery menu** (#185): every level's buildings and static scenery (2,412 pieces of 53 levels, below), by level, each by its type's name (a hash) with its size, parts and how many its level places, the largest first. Up / Down picks, Page Up / Down jumps a level; a see-through copy stands at the crosshair, the wheel turns it 15 degrees a notch; click or Enter puts one there, drawn as its level draws it and solid as there, and the menu stays open for more. P or Esc closes it. In the free camera the copy hangs on the crosshair's ray as the object menu's does (Shift + the wheel: how far), a yellow ring at its foot, and it's put where it hangs |
 | Y | **sky menu**: none, the map's own, or the sky of any level whose level file names one; click or Enter shows it over the map in place of its own, with that level's background colour |
 | U | **music menu**: off, the map's own, or any level's music bank, mixed as the game mixes a level's (its music with its ambience bed under it); click or Enter plays it; Left / Right: the previous / next bank at once |
 | L | **level menu**: the test map, the squad deathmatch maps, the deathmatch arenas and every mission zone, from the game's level list; click or Enter loads it in the same window, the tools with it |
@@ -91,6 +92,61 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   on whatever face it lands on, not on its side). Breakable scenery hangs where it's put: a
   level's scenery never moves, and its box (shots, the crosshair) and its blast are where it
   hangs; its debris falls from there. The follow camera keeps the ground placement.
+* **Scenery** (`play_testscenery.rs`, #185, the first part of the map creation epic #190): any
+  level's buildings and static scenery, on the test map or on any level the session is on.
+  * Which pieces (`src/bf/pieces.rs`): a level file's `<game-object>` whose object type's
+    `<base object-type>` is 2, OT_STATIC_GEOMETRY by the game's OT_ name table (0x3be87c), with
+    a mesh archetype. The game fixes such an object's physics bodies and never adds it to the
+    world's list of objects that move (FUN_001590a0: types 2, 26 OT_PLATFORM, 31
+    OT_WORLDBUTTON). Left out: the types that break (a debris list, h_197caf14: the object
+    menu's kind, FUN_00157260) and the doors and gates (a part on a sliding joint, h_fd8f670c:
+    they need the door machinery). Every other model a level places has its own element
+    (characters, pickups, weapons, liquids, world buttons, platforms, turrets); its other 77
+    game-objects are OT_BODY (object-type 0, loose bodies). In the 53 level files: 23,670
+    game-objects, 19,671 of them static scenery (3,823 break, 99 are doors), of 675 types; 2
+    (mp3) to 80 (m03_b) types a level, 2,412 entries counted level by level.
+  * The list: the levels in the level menu's order (the squad deathmatch maps, the deathmatch
+    arenas, the missions' zones), each its pieces, the largest first: its type's name (the data
+    names none, so the hash), its size across (twice its bounding radius, `h_1ab09530`, about its
+    origin), its parts, "no collision" for the few without a collision surface (grass, cables,
+    backdrops), and how many its level places ("x11 in its level"). Read when the menu first
+    opens, once a session: each level archive up to its objecttypes (its level file, objects and
+    objecttypes; not its models, textures or sounds), on 8 threads, with common's types and
+    archetypes first as the game looks them up (FUN_00160da0, the level file's libraries
+    "common <level>"). `BF_TOOLS_LOG=1` prints every entry ("sdm_e34:0 h_0baf091a 58 m, 19 parts
+    (x1 in its level) arch h_0baf091a").
+  * Building a piece: from its own archive, the only data it needs (all 53 checked: its objects,
+    materials, textures and collision surfaces; two of common's types placed in five missions
+    are built from common.tgz, and 16 texture references in m01_a, m05_a and m05_b are common's).
+    A picked piece's archive is read on a thread into a Game of its own (`Game::load_scenery`:
+    its objects files whole with their .ivd / .ipn, its materials and its textures, with the
+    test map's textures shared), and the piece made from it as its level makes its objects
+    (`level_scene::object_parts`, the code `spawn_level` uses: cut-outs, glows, grass lit from
+    above, glow decals), lit by the map's lights (on a level, its lamps too), casting no shadow.
+  * A piece's origin goes where it's put, as its level places it: on the ground, a building's
+    floor is the ground's (what its level sinks into its terrain goes under the floor). The
+    wheel turns it about its origin.
+  * Collision: its parts' collision surfaces (`arena::physics_tris`) are added to the map's
+    arena, solid like its own placed objects (`Arena::place`: the arena is copied with them
+    added, as it's shared read-only; 7-12 ms on m09_b's 149,166 triangles, none for a piece
+    without collision). The squad stands on it and is pushed out of its walls; shots,
+    grenades, missiles, the crosshair and the AI's sight meet it. One with no collision surface
+    is walked and shot through, as in its level.
+  * The flat floor has no arena: the first piece with collision put on it gives it one
+    (`Arena::flat`) of its ground, a plane at the floor's height under every point (terrain,
+    material 0). Its pillars
+    and the boxes of the breakables the object menu put down stay its own (`ray_hit`,
+    `hit_normal`, `pillars` keep them on that arena). Before a piece is placed nothing changes;
+    after, the floor's code paths are the arena's, which on flat ground give the same (the NPC
+    run below: the same combat log, the same frames). What does change: the follow camera stays
+    out of the pieces and above the ground, as on a level.
+  * Memory: one archive's data is held at a time (the one a piece was last built from, 4-16
+    MB: dropped when another's is loaded), and the pieces built: every placed one, and at most 6
+    others (`KEEP_UNPLACED`), the least recently picked dropped first with their meshes and
+    materials. A map switch drops them all (the menu's state is a map's); the list is the
+    session's.
+  * Hooks wait for what they need: a pick or a placement made before the list is in waits for
+    it, and a placement for its piece to be built (placed the frame it is).
 * **Skies** (`play_testworld.rs`): the list is every level whose level file names a sky mesh
   (`<sky><object mesh-name>`, `Level::sky_mesh`), read from each level archive (up to its
   levels-*.xmb) on a thread when the session starts. A pick loads that level's data on a thread
@@ -122,15 +178,20 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   load fails (an error, or its thread stops without a result, e.g. a panic) is noted and the map
   the switch came from loads instead, then the test map; only if that fails too does the program
   stop. `BF_TEST_LEVEL_FAIL=<level>` makes that level's load panic, to try it.
-* Not done: moving NPCs, removing placed objects, saving a layout, the enemy species' own
-  behaviour (#110's sub-issues).
+* Not done: moving NPCs, moving and removing placed objects and scenery (#187), saving a layout
+  (#188), the breakable types of the other levels (the scenery menu leaves them out; the object
+  menu has sdm_e34's three), the enemy species' own behaviour (#110's sub-issues).
 
 ## Test hooks
 
 Times in s of the controlled character's clock; several entries of one hook separated by `;`;
 yaw and pitch in degrees. `BF_TOOLS_LOG=1` prints each step as it's due and what it did, and
 the NPC menu's entries once a map's list is made ("NPC menu: 128 entries", then each with its
-key). The help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H.
+key). The help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H. For the scenery menu it prints the
+list once it's read (each level's count and each piece), each archive loaded (how long, how much
+it holds) and each piece built (how long, its meshes and collision triangles and their extent in
+its frame, what's held and built, the asset counts and the process's working set), dropped and
+placed (where, how high, its turn, the arena's triangles).
 
 `BF_TEST_TYPES` (read as the test map's data loads, on every map of the session) sets which
 character types the test map adds to its levels' 55 (`testmap::load_types`,
@@ -164,6 +225,9 @@ the background (#163)".
 | `BF_TEST_PLACER=<s>,<object>[,<yaw>]` | O with that object picked (its label in any case, else the first containing it), turned that way |
 | `BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]` | the object menu's click (at the crosshair: in the air in the free camera); or that object put at x, z, `height` m above the ground (in the air) |
 | `BF_TEST_AIR=<s>,<m>` | the free camera's air distance (Shift + the wheel) |
+| `BF_TEST_SCENERY_MENU=<s>` | P (the scenery menu opens; its list is read the first time) |
+| `BF_TEST_SCENERY=<s>,<level>:<piece>[,<yaw>]` | P with that piece picked, turned that way: `<piece>` its type's or archetype's `h_xxxxxxxx`, or its place in the level's list (0 the largest): `sdm_e34:h_0baf091a`, `e06:0`; without `<level>:`, the first level's that has that type |
+| `BF_TEST_SCENERY_PLACE=<s>[,<level>:<piece>[,<x>,<z>[,<yaw>[,<height>]]]]` | the scenery menu's click (the picked piece at the crosshair: in the air in the free camera); or that piece at the crosshair; or put at x, z turned that way, `height` m above the floor there (found under 50 m above the controlled character, as `BF_TEST_PLACE`'s: a roof if a piece is there), where it hangs. Each is placed once its piece is built |
 | `BF_TEST_SKY_MENU`, `BF_TEST_MUSIC_MENU`, `BF_TEST_LEVEL_MENU` `=<s>` | Y / U / L |
 | `BF_TEST_SKY=<s>,<level\|none\|map>` | that level's sky (its archive's name, e.g. `sdm_e10`, else the first whose title contains it), none, or the map's own |
 | `BF_TEST_MUSIC=<s>,<level\|off\|map\|next\|prev>` | that level's music bank, off, the map's own, or the next / previous bank of the list (Right / Left) |
@@ -394,3 +458,62 @@ looked at:
   the hooks drive the same code. A real load failure (none found: the fallback was driven by
   BF_TEST_LEVEL_FAIL), the second step of the fallback (the test map when the map it came from
   fails too). Mission zones other than the six above.
+
+The scenery menu (#185), `--test` with `BF_TOOLS_LOG=1`, captures at 15 fps (60 for the
+grenade), frames looked at:
+* The list: "test tools: scenery of 53 levels, 2412 pieces (19671 placements of 675 types),
+  listed in 0.5 s", the counts the decoded XML gives (`decompiled/xml`, the same rule).
+* As in its own level: Bulgar's barracks set (sdm_e34:0, h_0baf091a, 19 parts) hung 40 m over a
+  hill of sdm_e34 (`BF_MAP=sdm_e34 BF_TEST_SCENERY_PLACE="0.3,sdm_e34:h_0baf091a,-73,-40,-29,40"`),
+  turned as its level turns the original (-29 degrees), and seen from the same offset from each
+  ((12, 6, 14) m, `BF_TEST_FREECAM`): the walls and pillars clear of the original's cactus match
+  its pixels (95% within 8 levels, mean colour 34.4 38.8 38.5 against 34.5 39.0 38.6). On the
+  flat floor from that offset: the same geometry and textures under the flat floor's warmer key
+  light (and from 49 m away, its fog: 25 to 90 m, where sdm_e34's starts at 50).
+* Collision, on the flat floor, with Bulgar's Kingman silo (sdm_e34:4, h_ebace085, 15 m across,
+  14 m tall):
+  * Tex running at it from 32 m (`BF_TEST_GOTO=4.5,10,4.5,-60
+    BF_TEST_SCENERY_PLACE="0.3,sdm_e34:4,4.5,-30,0" BF_MOVE_LOG=1`) stops at its wall (z -22.5,
+    its face -22.4) and stays there, running into it; Flint stops beside him. (At the capture's
+    0.4 m steps he ends about 0.1 m from the wall rather than his 0.4 m radius: the arena's
+    push-out, on a level's walls the same.)
+  * Teleported onto its roof from the free camera (`BF_TEST_FREECAM="0.3,-40,25,-8,0,-80"
+    BF_TEST_TELEPORT=2.5`, silo at -40, -15): "teleported tex to [-40.00, 12.36, -11.32]", he runs
+    across the roof, "walks off a ledge at [-40.0, 0.0, -22.6]: 13.0 m to the floor" (its edge)
+    and "lands at [-40.3, 0.0, -27.7] after a 13.0 m drop".
+  * Firing at it from 7 m (`BF_TEST_FIRE=hip`, `BF_SHOT_LOG=1`): every shot ends at 6.7 m, where
+    each ended on the floor at 15 m before it was placed; a mark on the wall.
+  * A Frag thrown at its wall from 4.4 m (`BF_TEST_GRENADE_TYPE=Frag BF_TEST_THROW=2,0.8
+    BF_CAMERA_PITCH=0.1 BF_CAPTURE_FPS=60 BF_GRENADE_LOG=1`): "down 0.50 s after leaving the
+    hand, 2.2 m from the thrower", back off the wall; the same throw without it, 11.1 m.
+  * Bulgar's 39 m rock ridge (sdm_e34:1): Brutus and Hawk climbed it ("hawk walks off a ledge ...
+    4.8 m to the floor"); Tex, running into its steep end, went into it: a slope steeper than
+    about 51 degrees (under the 65-degree wall limit, so not a wall) rises more than the 0.5 m
+    step in one 0.4 m capture step. That's the demo's floor rule on any level.
+* In the air (`BF_TEST_FREECAM="0.3,-30,4,10,0,5" BF_TEST_SCENERY="0.5,sdm_e34:13,45"
+  BF_TEST_AIR=0.6,12 BF_TEST_SCENERY_PLACE=2.5`): the see-through cactus hangs 12 m along the
+  crosshair with the yellow ring at its foot, turned 45 degrees; the click leaves it "7.08 m up
+  (hangs) turned 45 deg", the copy still at the crosshair as the camera flies on.
+* Twelve of sdm_e34's pieces placed over two runs, one a frame as each was built: the barracks
+  set, the silo, a water tower, two sheds, a catwalk with its ramp, two rocks, the cactus.
+* Common's two pieces (m02_a:46 and m02_a:48, blue hologram markers) built from common.tgz.
+* Memory and load (`BF_TEST_SCENERY` picking the largest piece of 30 levels in turn, 0.8 s
+  apart; 26 were reached, the first while the list was still being read; three pieces placed on
+  the way): each archive read in 0.02-0.08 s on its thread (4-16 MB of vertex, collision and
+  texture data held), its Game started in 0.3 ms on the main thread, each piece built in 0-5 ms
+  (the barracks' 172 meshes in 3 ms). The process's working set: 1071 MB at the map's start,
+  1089 MB once the list was read, 1094-1143 MB while browsing, 1135 MB at the end; images 401,
+  at most 542, 431 at the end; at most 7 pieces built and not placed (6 and the one picked).
+* A level switch with two pieces on the flat floor (`BF_TEST_LEVEL="4,sdm_e34;3,flat"`): "left
+  flat: ... 0 of its own"; back on the flat floor its assets are as before any piece (meshes
+  152, level materials 0, buffers 0).
+* Unchanged: sdm_e34 (`BF_MAP=sdm_e34 BF_TEST_GOTO=0,0,0,-20 BF_TEST_FIRE=1 BF_TEST_HIT=2`, 75
+  frames), whose objects `spawn_level` now makes with `object_parts`: frame for frame the same as
+  main's build. The flat floor's NPC run (the "NPCs" check above, to 7 s): the same as main's
+  build (effects' noise: at most 0.005% of a frame's pixels), and with a piece placed out of view
+  (so the floor has its arena): the same combat log (65 lines) and the same frames but for the
+  "Placed ..." message.
+* Not tested: the keys and the mouse (P, Up / Down, Page Up / Down, the wheel, the click): the
+  hooks drive the same code. Missiles and the AI's sight at a piece (they meet the world through
+  `hit_normal` and `ray_hit`, as the shots and the teleport's crosshair above do). A piece lit by
+  a mission's lamps.

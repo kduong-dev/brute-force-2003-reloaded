@@ -265,6 +265,16 @@ pub fn lamp_light_at(level: &Level, p: Vec3) -> Vec3 {
     }).sum()
 }
 
+/// The level materials' lamps (`Lamps`): `level`'s point lights, or none (the flat test floor).
+/// What a map's scenery is lit by, the test tools' placed scenery too (#185).
+pub fn lamps_of(level: Option<&Level>, buffers: &mut Assets<ShaderStorageBuffer>) -> Lamps {
+    let buffer = match level {
+        Some(l) => lamp_buffer(l),
+        None => ShaderStorageBuffer::new(&[0u8; 32], RenderAssetUsages::default()),
+    };
+    Lamps { lamps: buffers.add(buffer), layer_bias: None }
+}
+
 /// The point lights' buffer: per lamp its place, range, linear colour and falloff kind (8
 /// floats); one that reaches nowhere when there are none (a buffer can't be empty).
 fn lamp_buffer(level: &Level) -> ShaderStorageBuffer {
@@ -626,6 +636,88 @@ fn mask_at(mask: &(u32, u32, Vec<u8>), x: f32, z: f32, half: f32) -> f32 {
     top * (1.0 - fv) + bottom * fv
 }
 
+/// One drawn geoset of a placed object, made ready as `spawn_level` draws a level's objects: its
+/// mesh and material, its part's placement in the object, the part's slide (a door leaf's axis
+/// and travel), the part's name (what animation targets name) and the geoset's material id.
+#[derive(Clone)]
+pub struct ObjectPart {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<LevelMaterial>,
+    pub at: Transform,
+    pub slide: Option<(Vec3, f32)>,
+    pub name: u32,
+    pub material_id: u32,
+}
+
+/// An archetype's drawn geosets, each part's most detailed mesh, as a level draws its placed
+/// objects (`spawn_level`; the test tools' scenery from any level, #185): the materials no level
+/// defines left out (`visible`), cut-outs and glows by their material type, grass lit from above,
+/// flat glow decals at full strength. `cache` keeps the materials made, by id (and the grass and
+/// glow-decal variants), across archetypes of one `game`.
+pub fn object_parts(game: &mut Game, arch: u32, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>, images: &mut Assets<Image>,
+                    lamps: &Lamps, cache: &mut HashMap<u32, Handle<LevelMaterial>>) -> Vec<ObjectPart> {
+    let mut parts = vec![];
+    let Ok(m) = WeaponModel::load(game, arch) else { return parts };
+    for p in &m.parts {
+        // a sliding leaf travels its own length along its axis (fully clear)
+        let slide = p.slide_axis.map(|axis| {
+            let along = p.geosets.iter().flat_map(|g| &g.positions).map(|v| (p.rotation * Vec3::from(*v)).dot(axis));
+            let (lo, hi) = along.fold((f32::MAX, f32::MIN), |(lo, hi), d| (lo.min(d), hi.max(d)));
+            (axis, (hi - lo).max(0.0) + 0.1)
+        });
+        let shown: Vec<&Geoset> = p.geosets.iter().filter(|g| visible(game, g)).collect();
+        for g in shown {
+            let mut mat = material(game, images, materials, lamps, cache, g.material, false, true);
+            let grass = is_grass(game, g);
+            if grass {
+                // both faces drawn, both lit from above (a double-sided material turns a back
+                // face's normal down)
+                let key = g.material ^ GRASS_KEY;
+                mat = match cache.get(&key) {
+                    Some(m) => m.clone(),
+                    None => {
+                        let mut m = materials.get(&mat).cloned().unwrap_or_default();
+                        m.base.double_sided = false;
+                        m.base.cull_mode = None;
+                        let m = materials.add(m);
+                        cache.insert(key, m.clone());
+                        m
+                    }
+                };
+            }
+            if is_glow_decal(game, g) {
+                let key = g.material ^ GLOW_DECAL_KEY;
+                mat = match cache.get(&key) {
+                    Some(m) => m.clone(),
+                    None => {
+                        let mut m = materials.get(&mat).cloned().unwrap_or_default();
+                        m.base.base_color.set_alpha(1.0);
+                        m.base.depth_bias = 1.0;
+                        let m = materials.add(m);
+                        cache.insert(key, m.clone());
+                        m
+                    }
+                };
+            }
+            let mesh = if grass { mesh_of(&upright_normals(g), None, 0.0, false) } else { mesh_of(g, None, 0.0, false) };
+            parts.push(ObjectPart { mesh: meshes.add(mesh), material: mat, at: Transform::from_translation(p.offset).with_rotation(p.rotation),
+                                    slide, name: p.name, material_id: g.material });
+        }
+    }
+    parts
+}
+
+/// Spawns `parts` (`object_parts`) under `root`, each with its own material or `material` in its
+/// place (a see-through copy's). The scenery casts no shadow: the game lights it per vertex by
+/// the level's lights (all `enable-static`), unshadowed, so building interiors are lit like the
+/// walls outside (a shadow-casting roof made them black) and a jungle canopy doesn't shade the
+/// whole floor; characters still cast theirs.
+pub fn spawn_object_parts(commands: &mut Commands, parts: &[ObjectPart], root: Entity, mut material: impl FnMut(&ObjectPart) -> Handle<LevelMaterial>) {
+    for p in parts {
+        commands.spawn((Mesh3d(p.mesh.clone()), MeshMaterial3d(material(p)), p.at, NotShadowCaster, ChildOf(root)));
+    }
+}
+
 /// Spawn the level's terrain, placed objects and sky; returns the doors (closed).
 pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, meshes: &mut Assets<Mesh>,
                    materials: &mut Assets<LevelMaterial>, liquids: &mut Assets<LiquidMaterial>, buffers: &mut Assets<ShaderStorageBuffer>,
@@ -684,59 +776,11 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     }
     // placed objects
     // per archetype: its geosets with their part placement, and the part's slide (axis, travel)
-    type Part = (Handle<Mesh>, Handle<LevelMaterial>, Transform, Option<(Vec3, f32)>, u32, u32);
-    let mut models: HashMap<u32, Vec<Part>> = HashMap::new();
+    let mut models: HashMap<u32, Vec<ObjectPart>> = HashMap::new();
     for o in &level.objects {
         let Some(arch) = o.archetype else { continue };
         if !models.contains_key(&arch) {
-            let mut parts = vec![];
-            if let Ok(m) = WeaponModel::load(game, arch) {
-                for p in &m.parts {
-                    // a sliding leaf travels its own length along its axis (fully clear)
-                    let slide = p.slide_axis.map(|axis| {
-                        let along = p.geosets.iter().flat_map(|g| &g.positions).map(|v| (p.rotation * Vec3::from(*v)).dot(axis));
-                        let (lo, hi) = along.fold((f32::MAX, f32::MIN), |(lo, hi), d| (lo.min(d), hi.max(d)));
-                        (axis, (hi - lo).max(0.0) + 0.1)
-                    });
-                    let shown: Vec<&Geoset> = p.geosets.iter().filter(|g| visible(game, g)).collect();
-                    for g in shown {
-                        let mut mat = material(game, images, materials, &lamps, &mut cache, g.material, false, true);
-                        let grass = is_grass(game, g);
-                        if grass {
-                            // both faces drawn, both lit from above (a double-sided material
-                            // turns a back face's normal down)
-                            let key = g.material ^ GRASS_KEY;
-                            mat = match cache.get(&key) {
-                                Some(m) => m.clone(),
-                                None => {
-                                    let mut m = materials.get(&mat).cloned().unwrap_or_default();
-                                    m.base.double_sided = false;
-                                    m.base.cull_mode = None;
-                                    let m = materials.add(m);
-                                    cache.insert(key, m.clone());
-                                    m
-                                }
-                            };
-                        }
-                        if is_glow_decal(game, g) {
-                            let key = g.material ^ GLOW_DECAL_KEY;
-                            mat = match cache.get(&key) {
-                                Some(m) => m.clone(),
-                                None => {
-                                    let mut m = materials.get(&mat).cloned().unwrap_or_default();
-                                    m.base.base_color.set_alpha(1.0);
-                                    m.base.depth_bias = 1.0;
-                                    let m = materials.add(m);
-                                    cache.insert(key, m.clone());
-                                    m
-                                }
-                            };
-                        }
-                        let mesh = if grass { mesh_of(&upright_normals(g), None, 0.0, false) } else { mesh_of(g, None, 0.0, false) };
-                        parts.push((meshes.add(mesh), mat, Transform::from_translation(p.offset).with_rotation(p.rotation), slide, p.name, g.material));
-                    }
-                }
-            }
+            let parts = object_parts(game, arch, meshes, materials, images, &lamps, &mut cache);
             models.insert(arch, parts);
         }
         if std::env::var("BF_LIQUID_LOG").is_ok() && o.tag == crate::bf::character::H_LIQUID_OBJECT {
@@ -764,25 +808,23 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         // was in the air; from above it lined up)
         let lift = liquid_kind.map_or(0.0, |_| liquid_lift(game, arch));
         let surfaces: Vec<_> = models[&arch].iter()
-            .map(|p| liquid_kind.and_then(|k| liquid_material(game, images, liquids, &mut liquid_cache, p.5, k, level.background))).collect();
+            .map(|p| liquid_kind.and_then(|k| liquid_material(game, images, liquids, &mut liquid_cache, p.material_id, k, level.background))).collect();
         // (the gate's set has a clip per leaf: h_10d3fde3 moves one, h_0a48ec76 the other)
         let clips = game.anim_sets.get(&arch).map(|a| a.as_slice()).unwrap_or_default();
         let mut leaves = vec![];
-        for ((mesh, mat, at, slide, name, _), surface) in models[&arch].iter().zip(surfaces) {
-            // the scenery casts no shadow: the game lights it per vertex by the level's lights
-            // (all `enable-static`), unshadowed, so building interiors are lit like the walls
-            // outside (a shadow-casting roof made them black) and a jungle canopy doesn't
-            // shade the whole floor; characters still cast theirs
-            let place = if surface.is_some() { Transform { translation: at.translation + Vec3::Y * lift, ..*at } } else { *at };
-            let part = commands.spawn((Mesh3d(mesh.clone()), place, NotShadowCaster, ChildOf(e))).id();
+        for (p, surface) in models[&arch].iter().zip(surfaces) {
+            let at = p.at;
+            // (the scenery casts no shadow: see `spawn_object_parts`)
+            let place = if surface.is_some() { Transform { translation: at.translation + Vec3::Y * lift, ..at } } else { at };
+            let part = commands.spawn((Mesh3d(p.mesh.clone()), place, NotShadowCaster, ChildOf(e))).id();
             match surface {
                 Some(l) => { commands.entity(part).insert(MeshMaterial3d(l)); }
-                None => { commands.entity(part).insert(MeshMaterial3d(mat.clone())); }
+                None => { commands.entity(part).insert(MeshMaterial3d(p.material.clone())); }
             }
-            if let Some((axis, travel)) = slide {
-                let channel = clips.iter().find_map(|c| c.targets.iter().find(|t| t.0 == *name)).and_then(|t| game.channel_floats(t.1));
+            if let Some((axis, travel)) = p.slide {
+                let channel = clips.iter().find_map(|c| c.targets.iter().find(|t| t.0 == p.name)).and_then(|t| game.channel_floats(t.1));
                 let (interval, curve) = channel.unwrap_or((1.0, vec![]));
-                leaves.push(Leaf { entity: part, axis: *axis, closed: *at, travel: *travel, curve, interval });
+                leaves.push(Leaf { entity: part, axis, closed: at, travel, curve, interval });
             }
         }
         if !leaves.is_empty() {
