@@ -65,6 +65,15 @@ const H_ACCURACY_ON: u32 = 0xEC53_37FB;
 const H_ACCURACY: u32 = 0x0728_37BB;
 const H_DROPS: u32 = 0x0F77_963D;
 const H_AMMO_ITEM: u32 = 0x10DD_6DB2;
+/// A type's death award `<base><h_1edc28b5 ..>` and its attributes in the parse record's order
+/// (FUN_0018cfb0: +0 amount, +4 h_ffc62853, +5 h_06961311, +6 h_f61ecbaf, +7 h_199ff965, +8
+/// h_e925f48b; see `Award`).
+const H_AWARD: u32 = 0x1EDC_28B5;
+const H_AWARD_PER_DAMAGE: u32 = 0xFFC6_2853;
+const H_AWARD_ON_HIT: u32 = 0x0696_1311;
+const H_AWARD_TO_SQUAD: u32 = 0xF61E_CBAF;
+const H_AWARD_TO_OWN: u32 = 0x199F_F965;
+const H_AWARD_KIND: u32 = 0xE925_F48B;
 
 /// The MT_ motion types by value, without their MT_ prefix (default.xbe's name table 0x3bfdac,
 /// values 0-49 in order; parser FUN_001876a0).
@@ -184,6 +193,36 @@ pub struct CharacterType {
     /// (FUN_0011a840) refills `stamina-recovery` a second for a type with h_e78efbb2, the
     /// deathmatch Shrikes' 5 / 4 (#129: their stamina shield's)
     pub skill: Option<SkillData>,
+    /// the cash its death pays or costs (see `Award`, #221)
+    pub award: Award,
+}
+
+/// A type's cash for its death (`<base><h_1edc28b5 amount h_ffc62853 h_06961311 h_f61ecbaf
+/// h_199ff965 h_e925f48b>`: FUN_0018cfb0 parses it into the parse record's +0x11c..+0x124,
+/// FUN_00154a20 copies it to type+0x124..+0x12c). FUN_00157070 pays it on the character's
+/// CBT_DEAD (and on CBT_DAMAGED with `on_hit`), in a campaign: `amount` x (1 + 0.1 x the
+/// difficulty), keyed in the cash record by the type's display name (type+0x120: its
+/// h_1dd3a49d, "NO NICE NAME" h_1ac9db24 without one). The tutorial's: the Red Hand 100 to the
+/// squad ($60 on STANDARD: take12's end screen "24 x Red Hand +$1440"), the four squad types
+/// -5000 to their own squad ("1 x Tex -$3000"), the three Confed marine types -1000; every other
+/// type 0.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Award {
+    /// amount (type+0x124)
+    pub amount: f32,
+    /// h_ffc62853 (type+0x128): x the hit's damage, or at a death the character's +0x50 (no type
+    /// in the data sets it)
+    pub per_damage: bool,
+    /// h_06961311 (type+0x129): paid on every hit, not only the death (none sets it)
+    pub on_hit: bool,
+    /// h_f61ecbaf (type+0x12a): paid to the campaign's squad, whoever killed it (the Red Hand's)
+    pub to_squad: bool,
+    /// h_199ff965 (type+0x12b): paid to its own squad when it's on the squad's side (the squad's
+    /// and the marines' death penalties)
+    pub to_own: bool,
+    /// h_e925f48b (type+0x12c, an enum: 2 on the characters, 1 on the rest): not read by
+    /// FUN_00157070
+    pub kind: i64,
 }
 
 /// A character type's AI settings (`<ai>`, the parse record's +0x21c; FUN_0001ff70 copies them
@@ -554,6 +593,14 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
         footstep_type: int(e, H_FOOTSTEP).unwrap_or(-1),
         jump_sound: e.child(h("movement-sounds")).map_or(0, |m| name(m, h("jump-sound"))),
         skill: skill_data(e),
+        award: part.child(H_AWARD).map(|a| Award {
+            amount: num(a, h("amount")).unwrap_or(0.0),
+            per_damage: int(a, H_AWARD_PER_DAMAGE).unwrap_or(0) != 0,
+            on_hit: int(a, H_AWARD_ON_HIT).unwrap_or(0) != 0,
+            to_squad: int(a, H_AWARD_TO_SQUAD).unwrap_or(0) != 0,
+            to_own: int(a, H_AWARD_TO_OWN).unwrap_or(0) != 0,
+            kind: int(a, H_AWARD_KIND).unwrap_or(0),
+        }).unwrap_or_default(),
     })
 }
 

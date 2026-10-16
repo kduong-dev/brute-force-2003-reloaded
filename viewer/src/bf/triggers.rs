@@ -75,6 +75,9 @@ pub mod sig {
     pub const ENTER_TO_SELF: i64 = 39;
     /// EXIT_DETECTOR_TO_SELF: to a detector's own handler, with each EXIT_DETECTOR it sends
     pub const EXIT_TO_SELF: i64 = 40;
+    /// VALUE_CHANGED: a gamevar-trigger's write changed its out operand (0x1fff6c), before its
+    /// TRUE / FALSE
+    pub const VALUE_CHANGED: i64 = 41;
     /// EMPTIED_DETECTOR: a detector's last occupant gone
     pub const EMPTIED_DETECTOR: i64 = 42;
     /// OPERATED: a spawn-trigger's copy made (FUN_002099e0), a menu opened
@@ -248,6 +251,82 @@ const H_ANY_CHARACTER: u32 = 0x115C_7B01;
 const H_HUMAN: u32 = 0xE707_ECC1;
 /// A `<filter>`'s invert, h_ebfd2b20 (+4): every test turned over.
 const H_INVERT: u32 = 0xEBFD_2B20;
+/// A gamevar-trigger's operation, h_015914ab (+0x50; its parser 0x1ffac0): see `Class::Gamevar`.
+const H_GAMEVAR_OP: u32 = 0x0159_14AB;
+/// A gamevar-trigger's operands, in the order the trigger keeps them (0x1ffac0 hands each to
+/// 0x1ff9d0 with its index: `out` 0, A h_1554ca7a 1, B h_0e5d9bc0 2; +0x40 + 4i the value, +0x4c + i
+/// the kind byte).
+const H_OPERANDS: [u32; 3] = [0xF39E_8D99, 0x1554_CA7A, 0x0E5D_9BC0];
+/// An operand's kind, h_18bbf97f (FUN_0018cbe0, the byte's low 7 bits): see `Operand`.
+const H_OPERAND_KIND: u32 = 0x18BB_F97F;
+/// An operand's invert, h_1fe1ecd1 (FUN_0018cbe0, the byte's bit 7): the value is 1 - it.
+const H_OPERAND_INVERT: u32 = 0x1FE1_ECD1;
+/// A score-trigger's key, h_19ca8cf3 (+0x44; FUN_0020b900): the cash record's entry it adds to;
+/// the null name (the data's "") is the record's own totals.
+const H_SCORE_KEY: u32 = 0x19CA_8CF3;
+/// A score-trigger's h_08f457d8 (+0x48 bit 2, set by the constructor 0x20bb73): add under its key
+/// (h_19ca8cf3), else under the null name.
+const H_SCORE_KEYED: u32 = 0x08F4_57D8;
+/// A score-trigger's h_1747360f (+0x48 bit 0, set by the constructor): not read by its handler
+/// (0x20ba00); false on five of the data's 75 (e06's two 300s, e16's 1200, e23's 280).
+const H_SCORE_FLAG0: u32 = 0x1747_360F;
+/// A score-trigger's h_11819686 (+0x48 bit 1, set by the constructor): the amount scaled by
+/// 1 + 0.1 x the difficulty (0x20babd-0x20bacd).
+const H_SCORE_SCALED: u32 = 0x1181_9686;
+
+/// The gamevar-trigger's operations (h_015914ab; its handler's jump table 0x200010 over 0-10).
+pub mod op {
+    /// A == B (|A - B| under 1e-5, 0x3a4fd8)
+    pub const EQUAL: i64 = 0;
+    /// A < B
+    pub const LESS: i64 = 1;
+    /// A <= B
+    pub const LESS_EQUAL: i64 = 2;
+    /// A > B
+    pub const GREATER: i64 = 3;
+    /// A >= B
+    pub const GREATER_EQUAL: i64 = 4;
+    /// A (the tutorial's objective states: `state` = 1 on completion, 0 at the start)
+    pub const ASSIGN: i64 = 5;
+    /// the out flag's default (FUN_001fdeb0 on the out operand's record)
+    pub const DEFAULT: i64 = 6;
+    /// B + A
+    pub const ADD: i64 = 7;
+    /// A - B
+    pub const SUBTRACT: i64 = 8;
+    /// B x A
+    pub const MULTIPLY: i64 = 9;
+    /// A / B (FLT_MAX for B 0)
+    pub const DIVIDE: i64 = 10;
+}
+
+/// The operand kinds (h_18bbf97f, its value enum read by FUN_001853b0; FUN_001ffb80 evaluates
+/// them).
+pub mod operand {
+    /// a game flag, by its path (`gameflag`): its value as a float (FUN_00077e80); 0 without it
+    pub const GAMEFLAG: i64 = 0;
+    /// `constant`
+    pub const CONSTANT: i64 = 1;
+    /// a random float in [0, 1) x `constant` (FUN_00233b90)
+    pub const RANDOM: i64 = 2;
+    /// the event's data (+0x10, its bits read as a float)
+    pub const SIGNAL_DATA: i64 = 3;
+    /// a random whole number: floor(random x `constant`)
+    pub const RANDOM_INT: i64 = 4;
+}
+
+/// A gamevar-trigger's operand (`<h_1554ca7a>` A, `<h_0e5d9bc0>` B, `<out>`; FUN_0018cbe0).
+#[derive(Clone, Debug, Default)]
+pub struct Operand {
+    /// h_18bbf97f: the kind (`operand::`); `out` is written for GAMEFLAG, kept for CONSTANT
+    pub kind: i64,
+    /// h_1fe1ecd1: 1 - the value (on `out`: 1 - the result, before it's written)
+    pub invert: bool,
+    /// `gameflag`: the flag's path (missions/m00/h_eaf792f4/state, tex/h_03761692 ...)
+    pub path: Vec<u32>,
+    /// `constant` (+0x40 + 4i): CONSTANT's value, RANDOM's and RANDOM_INT's scale
+    pub constant: f32,
+}
 
 /// One entry of a trigger: its `<base>` (0x18e060's record, copied into the runtime entry by its
 /// class's vtable +4: 0x1fb1c0 base, 0x1fb320 anim, 0x1fb5e0 calc) with its container's own
@@ -364,6 +443,14 @@ pub enum Class {
     Anim,
     /// destroyer-trigger (vtable 0x396170, parser 0x200a10: duration, start, end)
     Destroyer,
+    /// gamevar-trigger (vtable 0x3960a0, parser 0x1ffac0, handler 0x1ffc40): OPERATE works out
+    /// h_015914ab (`op::`) of A and B, writes it to `out`, sends VALUE_CHANGED when that changed
+    /// it, then TRUE (the result not 0) or FALSE. `operands` as the trigger keeps them: out, A, B
+    Gamevar { op: i64, operands: [Operand; 3] },
+    /// score-trigger (vtable 0x3953d8, parser FUN_0020b900, handler 0x20ba00): OPERATE adds
+    /// `amount` (x 1 + 0.1 x the difficulty with h_11819686) to the campaign squad's cash, under
+    /// `key` with h_08f457d8 (else the null name)
+    Score { amount: f32, key: u32, keyed: bool, flag0: bool, scaled: bool },
     /// every other class: its base actions only, until its step runs it
     Other,
 }
@@ -501,6 +588,20 @@ fn class(e: &Element) -> Class {
         Class::Anim
     } else if tag == h("destroyer-trigger") {
         Class::Destroyer
+    } else if tag == h("gamevar-trigger") {
+        let read = |k: u32| e.child(k).map(|o| Operand {
+            kind: int(o, H_OPERAND_KIND, operand::GAMEFLAG),
+            invert: flag(o, H_OPERAND_INVERT),
+            path: names(o, h("gameflag")),
+            constant: float(o, h("constant"), 0.0),
+        }).unwrap_or_default();
+        Class::Gamevar { op: int(e, H_GAMEVAR_OP, op::EQUAL), operands: H_OPERANDS.map(read) }
+    } else if tag == h("score-trigger") {
+        // (the constructor 0x20bb30: +0x40 0, +0x44 the null name, +0x48 |= 7: every flag on
+        // when the data doesn't say)
+        let on = |k: u32| e.attr(k).and_then(|v| v.as_i64()).is_none_or(|v| v != 0);
+        Class::Score { amount: float(e, h("amount"), 0.0), key: name_of(e, H_SCORE_KEY), keyed: on(H_SCORE_KEYED), flag0: on(H_SCORE_FLAG0),
+                       scaled: on(H_SCORE_SCALED) }
     } else {
         Class::Other
     }
@@ -549,13 +650,12 @@ pub fn class_name(tag: u32) -> String {
 }
 
 /// Which step of #28 runs a class the runtime doesn't run yet (plan.md §2; the steps' tickets
-/// #221-#228), for the log; None for the classes it runs, and for those that do nothing a player
-/// sees (waypoint, evaluate: their base actions only).
+/// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
+/// step 2, #221), and for those that do nothing a player sees (waypoint, evaluate: their base
+/// actions only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
     let is = |n: &str| h(n) == tag;
-    Some(if is("gamevar-trigger") || is("score-trigger") {
-        "step 2, #221"
-    } else if is("script-trigger") || is("letterbox-trigger") || is("warp-trigger") {
+    Some(if is("script-trigger") || is("letterbox-trigger") || is("warp-trigger") {
         "step 3, #222"
     } else if is("sound-trigger") || is("dialog-trigger") {
         "step 4, #223"

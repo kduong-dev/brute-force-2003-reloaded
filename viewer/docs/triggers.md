@@ -4,8 +4,9 @@ A level's logic is its triggers: routers, timers, calculators, spawn-triggers, d
 anim-triggers and some twenty more classes, wired to each other in the level file. The tutorial
 has 500 (58 routers, 54 timers, 47 spawn-triggers, 27 plates, 14 proximity detectors ...). This
 is the runtime that runs them, the first step of the tutorial (#28, plan step 1); the later
-steps plug their classes into it (gamevar and score: step 2, #221; script, letterbox and warp:
-step 3, #222; sound and dialog: step 4, #223; message, input, menu and event: step 5, #224). Everything here is read from
+steps plug their classes into it (gamevar and score since step 2, #221, with the game flags and
+the cash they work on: [campaign.md](campaign.md); script, letterbox and warp: step 3, #222;
+sound and dialog: step 4, #223; message, input, menu and event: step 5, #224). Everything here is read from
 default.xbe's trigger code (the addresses are in the code's comments and in
 [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
 
@@ -54,12 +55,48 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | anim-trigger (7) | OPERATE plays its entry's clip (`animation-archetype`) on its first object, forward or backward (`wwit-debugging`, AM_: 3-5 backward) at its `time-scale`; with AC_PLAY or AC_RESUME it sends ANIM_START when it starts forward after playing backward (its first forward play too), ANIM_BACK_START when it starts backward after playing forward (or ANIM_START for the other modes). The demo moves doors and gates with it ([maps.md](maps.md), "Doors and gates"); other animated objects (the tutorial's two looping props) are logged | 0x204d00, FUN_00204bb0 |
 | destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31), evaluate (6) | Their base actions only: a waypoint trigger marks AI route points; the evaluate-triggers' random tests pick ambient lines (both no-ops here) | |
+| gamevar (15) | See "Gamevar-triggers" | 0x1ffc40, FUN_001ffb80 |
+| score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
 
-Every other class (gamevar, score, script, letterbox, warp, sound, dialog, menu, message
-h_e9b3ae8e, input h_e2b9c3a2, event, radar, level-over h_1f07be84, property h_14cccfaa, the
-damage plate h_130818c0) runs its base actions; each of its own actions is counted as used, as
-its handler counts it, and logged with the step that runs it ("trigger_sound439 (sound)
-PLAY_SOUND on FIRST_UPDATE: not run yet (step 4, #223)").
+Every other class (script, letterbox, warp, sound, dialog, menu, message h_e9b3ae8e, input
+h_e2b9c3a2, event, radar, level-over h_1f07be84, property h_14cccfaa, the damage plate
+h_130818c0) runs its base actions; each of its own actions is counted as used, as its handler
+counts it, and logged with the step that runs it ("trigger_sound439 (sound) PLAY_SOUND on
+FIRST_UPDATE: not run yet (step 4, #223)").
+
+## Gamevar-triggers
+
+A gamevar-trigger (#221; vtable 0x3960a0, parser 0x1ffac0, handler 0x1ffc40) has an operation,
+h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
+(`<h_0e5d9bc0>`) (FUN_0018cbe0: each a kind h_18bbf97f and an invert h_1fe1ecd1).
+
+* **An operand** (FUN_001ffb80): kind 0 a game flag by its path (`gameflag`, read as a float; 0
+  without it), 1 its `constant`, 2 a random float in [0, 1) x the constant (FUN_00233b90), 3 the
+  event's data (its 32 bits read as a float), 4 floor(random x the constant); inverted, 1 - it.
+* **OPERATE** works out the operation (the jump table 0x200010): 0 A == B (|A - B| < 1e-5),
+  1 A < B, 2 A <= B, 3 A > B, 4 A >= B (1 or 0), 5 A, 6 the out flag's default, 7 A + B, 8 A - B,
+  9 A x B, 10 A / B (FLT_MAX for B 0). The entry is counted then (an entry that disables the
+  trigger silences what follows), the result turned over if `out` is inverted, and written: to
+  `out`'s flag (kind 0, FUN_00077eb0), kept as `out`'s constant (kind 1), or neither (the other
+  kinds). VALUE_CHANGED (41) goes to the targets when the result isn't the value it replaced
+  (always for the kinds that keep nothing, and for a flag the tree lacks), then TRUE when the
+  result isn't 0 (|r| >= 1e-6), else FALSE; both carry the result as their data and the event's
+  subject.
+* **On a multiplayer map** the gamevars have no flags: a flag operand reads 0 and a write does
+  nothing (VALUE_CHANGED still goes out, as for a flag the tree lacks), and the score-triggers
+  pay no cash, so a match can't change the campaign's flags or cash for a later mission in the
+  same run. The data doesn't need it: no multiplayer map's gamevar names a flag (the mp maps'
+  4 to 8 each work on constants, the sdm_ maps have none; the `missions/h_e466ad5c/..` writes
+  are e34's, a mission's). That a match has none of the campaign's flags is inferred: the
+  session's difficulty getter reads 0 in a split-screen match (live, #129), which it does only
+  without a tree or without the flag (0x7c720), where the default flags would give -4.
+* The data uses ops 0 (178), 3 (4), 5 (309) and 7 (5); operand kinds 0, 1, 3 and 4. The
+  tutorial's 15: four ops 5 (the objectives' `state`: 0 at the first update, h_ed0c1544 and
+  h_e0a5fecf; 1 on completion, h_11b9e83d and h_089d8e5f); ten member tests
+  `<member>/h_03761692 == 1` (four at the first update: the farcast flashes, the co-op hint's
+  calculator496, the V-squad's calculator501; two on the V-squad's plate; four at the end pad, the
+  farcast-out flashes); and `missions/<m14>/h_08bbbbc1/state == 1` (a reward of the finished
+  campaign: false).
 
 ## Detectors
 
@@ -117,23 +154,23 @@ PLAY_SOUND on FIRST_UPDATE: not run yet (step 4, #223)").
   10.9 m below its triggers (Brutus's live read, xemu.md); m09_a's two Shrikes 6.7 and 9.5 m
   below theirs; the tutorial's sentry TUTORIAL_terrorist_5 on the wall walkway (27.25), 3.1 m
   below his. An effect stays at the transform (a game object's place, 0x159b70, casts no ray).
-* **The squad member check** (FUN_00209900). A copy that's a character of a squad type (its type's
-  `h_e78efbb2`: the four, the tutorial's Confed marines) in a mission is checked against the
-  session's squad: from a trigger with `h_0fa4f510` (+0xe4 bit 5, set on nearly every one),
-  it's kept if its type's member flag is on or a player controls that type (the session's
-  vtable +0xb8, 0x83ee0), else taken away at once and no SPAWNED goes out (OPERATED still does);
-  from one without, it sets its type's flag (vtable +0xbc, 0x814b0). The flags are game flags,
-  `<type>/h_03761692` (default-gameflags.xml's top-level `<tex>`, `<hawk>`, ..., `<h_ef8787e4>`,
-  `<h_f48ed65e>`, `<h_fd89e6c8>`: all false by default). So the tutorial's three start marines
-  (Gonzales, Cogburn, Stout: spawn-triggers h_0d7313c9, h_167a4273, h_1f7d72e5, `h_0fa4f510`
-  true) never come with Tex's farcast: their flags are off at the start (take03-09's watch rows:
-  `1|0|0|0`) and Tex is kept as the player's. The V-squad's spawn64 and spawn76 (`h_0fa4f510`
-  false) do come, in take11, and set their types' flags. The game flags are step 2's (#221):
-  until then the runtime keeps the flags itself (`Triggers::member_flags`), starting with the
-  demo's squad's types on (as a campaign that got to the level has them: e40's four) and the rest
-  off; #221 should give them their real values (the campaign's, default-gameflags.xml's).
-  The roster check before it (0x8d430, the world's +0xbec) is taken to pass every squad type:
-  an inference.
+* **The squad member check** (FUN_00209900, #221). A copy that's a character of a squad type (its
+  type's `h_e78efbb2`: the four, the tutorial's Confed marines) in a mission is checked against
+  the session's squad. A clone (a re-armable trigger's, or one of a template several triggers
+  name: FUN_000dfd90's count, `Triggers::takes_clone`) is a new character, whose set-up has set
+  its type's member flag first (FUN_0012f440). From a trigger with `h_0fa4f510` (+0xe4 bit 5,
+  set on nearly every one) it's kept if the session counts it in the squad (vtable +0xb8,
+  0x83ee0: its type's save-game slot `campaign/save-game/character-N/h_03761692` true, or a
+  player controlling its type, or no slot of its type), else taken away at once: its death
+  (+0x144(1), which clears its type's member flag, FUN_00112830), out of the world, and no
+  SPAWNED goes out (OPERATED still does). From one without, it sets its type's member flag
+  (vtable +0xbc, 0x814b0) and is kept. So the tutorial's three start marines (Gonzales, Cogburn,
+  Stout: re-armable spawn-triggers h_0d7313c9, h_167a4273, h_1f7d72e5, `h_0fa4f510` true), whose
+  save-game slots aren't alive, never come with Tex's farcast and leave their member flags 0
+  (take03-09's `1|0|0|0`); the V-squad's spawn64 and spawn76 (`h_0fa4f510` false) do come, in
+  take11, and set theirs (`1|0|1|1`). The slots, the member flags and who else writes them are
+  [campaign.md](campaign.md)'s ("The squad's flags"). The roster check before it (0x8d430, the
+  world's +0xbec) is taken to pass every squad type: an inference.
 * **Which way it faces.** Down the trigger transform's -z, as the level's cameras look. Checked
   on Tex: after the opening (take03 at 32 s) the game's follow camera looks past him west, at the
   dark peak and the palms; the demo shows that facing -z, and the rock face east of the start
@@ -176,8 +213,9 @@ PLAY_SOUND on FIRST_UPDATE: not run yet (step 4, #223)").
 
 * **DESTROYED**: a character with a trigger name dies (a spawn copy: its spawn-trigger's
   listeners hear it; the squad started at its spawns counts as those copies); a named breakable
-  object that a trigger listens to breaks (play_scenery.rs). The event's subject is the object;
-  its id 0 and data -1 are a guess (the death's send isn't traced).
+  object that a trigger listens to breaks (play_scenery.rs). Its id 0 and data -1 are the game's
+  (the death's send: the object's +0x144(1), FUN_00157260, #221); the demo's subject is the dead
+  object, the game's a character from the dead one's (see "Not done").
 * **USE_OBJECT**: a wall panel used (play.rs `doors`): its signal h_eaf8a35b and data h_f1660a0d
   (0x163060), the user as the subject.
 * **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs). The tutorial's listened ones (the
@@ -196,6 +234,8 @@ PLAY_SOUND on FIRST_UPDATE: not run yet (step 4, #223)").
   `USER_SIGNAL1`, `ENTER_DETECTOR`, `TRIG_SIG_TIMER_PULSE`). The trigger: its name
   (`trigger_router_spawn_tex`) or `h_xxxxxxxx`. `@<object>,<signal>` sends it from an object to
   its listeners instead (`@TUTORIAL_terrorist_5,DESTROYED`).
+* The game flags, the cash and the objectives menu have their own (`BF_FLAG_LOG`,
+  `BF_FLAG_SET`, `BF_CASH_LOG`, `BF_TEST_OBJECTIVES`): [campaign.md](campaign.md).
 
 ```sh
 # the tutorial's base: the plate opens the door and spawns four terrorists
@@ -214,8 +254,9 @@ the log read and the frames looked at:
   (-37.9, 27.25, -9.8), 3.07 m below trigger_spawn46, removes the four editor leftovers h_0247aefb round (-98, 18, 44)
   (destroyers 473, 498-500), starts timers 383 / 384 (the west lava pit's bursts every 4 / 6 s:
   trigger_spawn382 / 381 at (-23.0, 14.0, 9.3) / (-20.2, 14.0, 15.7)), 458, 525 and h_0279cdb2,
-  and logs what steps 2-9 will run (the opening script, the gamevars, the music and ambience,
-  the first radar blip). Tex stands on the ground under trigger_spawn8 at (65.55, 25.25, 74.03),
+  runs the gamevars (since #221: the objectives' states 0, the member tests, campaign.md) and
+  logs what steps 3-9 will run (the opening script, the music and ambience, the first radar
+  blip). Tex stands on the ground under trigger_spawn8 at (65.55, 25.25, 74.03),
   take03's height, facing west; the camera behind him shows what the game's does after the
   opening (take03 at 32 s: the dark peak, the palms, the rock face right), and the HUD his
   template's MK-ASLT at 48 / 500, as take03's (frames 0-59, `BF_AMMO_LOG`: type 2 500).
@@ -249,24 +290,24 @@ the log read and the frames looked at:
   placements (Brutus at (-177.2, 62.1, -225.3)), its two Shrikes from trigger_spawn2 / 749 on the
   ground 6.75 / 9.46 m below their triggers. With `BF_DEATHMATCH=1` (no squad in the world) and
   `BF_TRIGGER_FIRE=h_14640a2e,USER1,1` e40's Brutus spawn makes nothing (no NPC Brutus).
-* **The marines' member check** (`BF_TRIGGER_FIRE=trigger_router_spawn_tex,USER1,1;
-  trigger_router_confed_one_fx,USER1,1;...two_fx...;...three_fx...`): Tex is moved to his spawn;
-  the three marines' copies are taken away at once (flags off) and their farcast effect spawns
-  stay disabled (their gamevar-triggers, step 2). With `trigger_spawn64,USER1,1` first (the
-  V-squad's Stout, `h_0fa4f510` false: spawned, his type's flag set),
-  `trigger_router_confed_three_fx` at 2 s spawns a Stout on the ground at (70.38, 25.25, 73.27)
-  while confed_one's marine is still taken away.
+* **The marines' member check** (#221, `BF_FLAG_LOG=1 BF_TRIGGER_FIRE=trigger_router_confed_one_fx,USER1,1;
+  ...two_fx...;...three_fx...;trigger_spawn64,USER1,2;trigger_spawn76,USER1,2.2`): each start
+  marine's copy is a clone (a re-armable trigger's) whose set-up sets its type's member flag,
+  then it's taken away at once (its save-game slot not alive) and its flag goes back to 0; their
+  farcast flashes stay disabled (their gamevar tests were FALSE at the first update). spawn64
+  and spawn76 (the V-squad, `h_0fa4f510` false, the templates themselves) spawn Stout and
+  Cogburn on the ground and set their flags: tex 1, Gonzales 0, Cogburn 1, Stout 1, take11's
+  `1|0|1|1`.
 * **Destroyers**: m09_a's trigger_destroyer556 (`BF_TRIGGER_FIRE=h_039f8930,USER1,2`) removes
   trigger_spawn2's Shrike; no level's destroyer lists a squad member, so the guard against
   removing one isn't exercised by the data.
 
 ## Not done here, or not known
 
-* The classes left to steps 2-9 (#221-#228, above). The tutorial's gate opens on its panel sound's
+* The classes left to steps 3-9 (#222-#228, above). The tutorial's gate opens on its panel sound's
   FINISHED: with step 4.
 * The character's spawn fade-in isn't drawn.
-* The squad member flags start from the demo's squad (#221 brings the game flags); the roster
-  check before them (0x8d430) is assumed to pass every squad type.
+* The member check's roster test (0x8d430) is assumed to pass every squad type.
 * The squad is in the world from the start, so the start area's detectors fire before the
   farcast (above); step 3 (#222).
 * Placed characters that no spawn-trigger names still add their bodies' collision to the arena
@@ -275,8 +316,12 @@ the log read and the frames looked at:
 * A character's body in a detector is the demo's cylinder, not its Ipion body against the
   phantom; a dead character leaves a detector 0.2 s after it dies (the game's ragdoll may stay
   in the phantom: not known).
-* DESTROYED's and PICKUP_OBJECT's id and data from objects are guesses (0, -1); a death's send
-  isn't traced.
+* A death's DESTROYED comes from the object's +0x144(1) (a game object's FUN_00157260, which a
+  character's FUN_00112830 runs first): id 0 and data -1, as the demo sends it, but for a
+  character its subject is a character from its vtable +0xf4 object's +0x45c (perhaps its last
+  attacker: not traced), not the dead object as the demo has it (#221's reading; nothing in the
+  tutorial reads it).
+  PICKUP_OBJECT's id and data are guesses (0, -1).
 * Usable game objects (`reticule-action` 1 consoles, e34's) don't send USE_OBJECT yet: only
   world buttons have the panel prompt.
 * Animated objects other than doors (the tutorial's looping props h_e5b1f2c8, h_0cbffd71) aren't

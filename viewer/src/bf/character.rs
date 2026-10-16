@@ -274,6 +274,12 @@ pub struct Game {
     pub levels: Vec<Element>,
     /// the game's level list (common campaign-bf.xmb), in its order
     pub campaign: Vec<CampaignLevel>,
+    /// the same file's missions: the squad, the extra marines, each mission's zones and
+    /// objectives (#221, `campaign::Campaign`)
+    pub missions: super::campaign::Campaign,
+    /// a new campaign's game flags (the file campaign-bf names, common/default-gameflags.xmb:
+    /// #221, `gameflags::GameFlags`); empty if it isn't there
+    pub default_flags: super::gameflags::GameFlags,
     /// animated textures (textures-*.xmb <animated-texture>): name -> the sheet texture, frames
     /// per second (h_e6375a47) and each frame's (u0, v0, u1, v1) on the sheet
     pub flipbooks: HashMap<u32, Flipbook>,
@@ -998,6 +1004,8 @@ impl Game {
             levels: vec![],
             flipbooks: HashMap::new(),
             campaign: vec![],
+            missions: Default::default(),
+            default_flags: Default::default(),
             physics: HashMap::new(),
             effects: ale::Library::default(),
             effect_types: HashMap::new(),
@@ -1158,6 +1166,14 @@ impl Game {
                         (n("min"), n("max"))
                     }),
                 });
+            }
+            // the missions (#221), and a new campaign's game flags from the file the root names
+            // (h_1a468238 "default-gameflags"); a flags file that doesn't decode leaves them
+            // empty, not an error
+            self.missions = super::campaign::Campaign::from_root(&root);
+            let file = format!("{}.xmb", self.missions.flags_file);
+            if let Ok(Some(flags)) = self.parse(ar, &file) {
+                self.default_flags = super::gameflags::GameFlags::from_root(&flags);
             }
         }
         // the campaign's difficulty values: <difficulty-settings><h_1b8535f0 easy normal hard>

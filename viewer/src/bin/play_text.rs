@@ -74,7 +74,7 @@ fn load_font(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
 
 impl GameFont {
     /// `text`'s width in units with capitals `cap` units tall.
-    fn width(&self, text: &str, cap: f32) -> f32 {
+    pub fn width(&self, text: &str, cap: f32) -> f32 {
         let f = &self.0;
         let px: f32 = text.chars().map(|c| match (c, f.glyph(c)) {
             (' ', _) | (_, None) => SPACE + SPACING,
@@ -86,6 +86,13 @@ impl GameFont {
     /// The line's height in units.
     fn line(&self, cap: f32) -> f32 {
         (self.0.rise + self.0.drop) * cap / self.0.cap
+    }
+
+    /// How far (units) below a `GameText`'s `y` (its line's top) its capitals start, with
+    /// capitals `cap` units tall: what of the atlas rises above them. For placing text by where
+    /// a capture has its capitals (play_objectives.rs).
+    pub fn cap_drop(&self, cap: f32) -> f32 {
+        (self.0.rise - self.0.cap) * cap / self.0.cap
     }
 }
 
