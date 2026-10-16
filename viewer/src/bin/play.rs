@@ -4800,6 +4800,14 @@ fn collide(units: &mut [&mut Player], player_first: bool) {
     }
 }
 
+/// The seed of a shooter's fire loop (play_shots.rs `FireState::run`): the demo's own hash of
+/// its character and, for a test tool's or a trigger's NPC, its number (the primes 7919 and
+/// 104729 are the demo's). Wrapping, as a hash: a number above ~41,000 overflowed a u32 (#229);
+/// below that the seeds are what they were.
+fn shot_seed(character: usize, npc: Option<u32>) -> u32 {
+    (character as u32).wrapping_mul(7919).wrapping_add(npc.map_or(0, |id| id.wrapping_mul(104_729)))
+}
+
 fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, transforms: &mut Query<&mut Transform>) {
     p.sim_time += dt;
     if p.next_surface && !game.surfaces.is_empty() {
@@ -5123,7 +5131,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         // as the game's request sets both guns' fire flags)
         let dry = (p.fire || pulled.contains(&true)) && gun_up && p.using.is_none();
         let trigger = |hand: usize, clip: i64| shots::Trigger { held: pulled[hand], dry, clip, scoped: p.scope > 0.5, crouched: crouch_wanted };
-        let seed = p.character as u32 * 7919 + p.npc.map_or(0, |n| n.id as u32 * 104_729);
+        let seed = shot_seed(p.character, p.npc.map(|n| n.id));
         let mut guns = vec![shots::Gun { hand: 0, weapon: p.weapon, def, trigger: trigger(0, clip_of(p, p.weapon)), cooldown: p.cooldown, rounds: 0 }];
         // (its cooldown as the raise above left it)
         if let Some(s) = second.and(p.second) {
@@ -6226,5 +6234,21 @@ fn dump_weapons(game: &Game) {
                 Err(e) => println!(" model error: {e}"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #229: the seed is the old product for the numbers that fitted, and a number past the old
+    /// limit (2^32 / 104729, about 41,010) wraps instead of overflowing.
+    #[test]
+    fn shot_seed_wraps_past_the_old_limit() {
+        for (c, id) in [(0usize, None), (3, None), (2, Some(1u32)), (1, Some(20_000)), (3, Some(41_000))] {
+            assert_eq!(shot_seed(c, id), c as u32 * 7919 + id.map_or(0, |n| n * 104_729));
+        }
+        assert_eq!(shot_seed(3, Some(41_011)), (3u64 * 7919 + 41_011 * 104_729) as u32);
+        assert_eq!(shot_seed(4, Some(u32::MAX)), (4u64 * 7919 + u32::MAX as u64 * 104_729) as u32);
     }
 }

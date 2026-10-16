@@ -481,6 +481,10 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   step (3.067 s), so that tap's shot logs at +0.30 from the window's start.
 * **The burst counter** is cleared by a reload starting (FUN_0022daf0), a dry click
   (FUN_002327f0) and a switch (FUN_0022dc00), as in the game.
+* **The seed** of a shooter's fire loop is the demo's own hash, character x 7919 + NPC number x
+  104729 (`play.rs` `shot_seed`), in wrapping arithmetic (#229): an NPC numbered above ~41,010
+  overflowed a u32 and panicked a debug build. The seeds below that are unchanged, so the shot
+  patterns are too. Checked by `cargo test --bin bf_play shot_seed`.
 * **Bursts and pellets**. A trigger cycle is h_e4076713 shots, h_e6c60892 s apart. At 0 s apart
   (the Bower 20's 6) they all go in the same frame for one round and one report, and each after
   the first is turned from the one before by up to h_e704fd69 degrees of yaw and of pitch
