@@ -21,7 +21,10 @@ true unless |v| < 1e-6. A path names a record folder by folder:
 
 The demo makes the tree from the defaults the first time a level starts and keeps it as long as
 bf_play runs, level after level, as a campaign carries it (`flags::Campaign::flags`). Saving it
-is #27's; carrying it through the mission flow is #226's.
+is #27's; carrying it through the mission flow is #226's. Only a mission's triggers see it: on a
+multiplayer map the gamevars have no flags (they read 0 and write nothing) and the score-triggers
+no cash, so a match doesn't touch the campaign's (inferred: [triggers.md](triggers.md),
+"Gamevar-triggers").
 
 ## The missions (`common/campaign-bf.xmb`)
 
@@ -96,8 +99,12 @@ The game's BACK (VB 62, OPEN_OBJECTIVES_MENU) opens it over the game in a missio
 key (or the pad's Back). I again, Enter, Space, or the pad's A or B close it. The game's clock
 stops under it (take04: the clock held at 60275 from the press at 62.6 s to the B at 74.5 s), so
 the demo's does: `frame_dt` is 0 (nothing in the world moves: characters, triggers' timers,
-effects) and `read_input` passes nothing to the character. It shows at once, whole (take04: in the
-first frame after the press), over the HUD.
+effects). The menu takes the controls: the keys and mouse buttons pressed in a frame it's up
+(the one it opens in and the one it closes in too) are taken from the frame's input before the
+game's systems run, so Space or Enter closing it doesn't make Tex jump or click a test tool's
+panel, and Backspace waits; `read_input` passes nothing to the character, which stops firing
+and aiming, and a Tab held as it opened doesn't step the item when let go. It shows at once,
+whole (take04: in the first frame after the press), over the HUD.
 
 It's game-options' menu h_0cfeaf6f, 470 x 360 at (85, 60) on the 640 x 480 screen:
 
@@ -200,5 +207,5 @@ the frames looked at:
 * A score-trigger's h_1747360f (bit 0) isn't read by its handler; an award's h_e925f48b isn't read
   by FUN_00157070; `per_damage` and `on_hit` (h_ffc62853, h_06961311) are set by no type, and the
   demo pays deaths only.
-* Only `read_input` stops taking the controls under the menu: other keys (V, the test tools')
-  still act, on a world that doesn't move.
+* Under the menu the pad's presses aren't taken from the game's other systems as the keys' and
+  the mouse's are (the demo reads the pad in few places).

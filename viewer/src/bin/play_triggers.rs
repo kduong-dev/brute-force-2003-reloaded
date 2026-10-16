@@ -448,8 +448,9 @@ pub struct Triggers {
     /// controls is kept whatever its slot says)
     player_kind: u32,
     /// the campaign's state (play_flags.rs: the game flags, the squad slots, the cash), held here
-    /// while `run` runs the triggers (the gamevar and score triggers and the member check use it)
-    /// and handed back after; an empty one between frames
+    /// while `run` runs a mission's triggers (the gamevar and score triggers and the member check
+    /// use it) and handed back after; an empty one between frames, and all along on a
+    /// multiplayer map (no flags, no cash: see `run`)
     campaign: Campaign,
     /// each spawn template's count (the placement's +0x24 short, FUN_000dfe90): one per
     /// spawn-trigger that names it, -1 once a re-armable one does; a spawn (FUN_000dfd90) clones
@@ -698,9 +699,18 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
     tr.clock = player.sim_time;
     tr.player_kind = player.kind;
     // the campaign's state, held while the triggers run (handed back at the end of `run`: no
-    // return in between)
-    std::mem::swap(&mut tr.campaign, &mut *campaign);
-    tr.campaign.player_kind = player.kind;
+    // return in between). Only in a mission: a multiplayer map's triggers keep their own empty
+    // one, no flags (their gamevars read 0 and write nothing, as on a flag the tree lacks) and no
+    // cash. That a match has none of the campaign's flags is inferred: the session's difficulty
+    // getter reads 0 in a split-screen match (live, #129), which it does only without a tree or
+    // without the flag (0x7c720), where the campaign's default flags would give -4. (No
+    // multiplayer map's gamevar names a flag in the data: this only keeps a match off the
+    // campaign's state.)
+    let mission = tr.mission;
+    if mission {
+        std::mem::swap(&mut tr.campaign, &mut *campaign);
+        tr.campaign.player_kind = player.kind;
+    }
     // the level's start: FIRST_UPDATE to every script-trigger, then its update (FUN_001fe260)
     if !tr.started {
         tr.started = true;
@@ -837,7 +847,9 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
             }
         }
     }
-    std::mem::swap(&mut tr.campaign, &mut *campaign);
+    if mission {
+        std::mem::swap(&mut tr.campaign, &mut *campaign);
+    }
 }
 
 /// A spawn-trigger's copy in the world (FUN_00209620): its template's kind decides what it is.

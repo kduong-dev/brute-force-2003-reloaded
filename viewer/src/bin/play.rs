@@ -3225,13 +3225,16 @@ fn read_input(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut player: ResMut<Player>,
 ) {
-    // under a menu (the game's clock stopped, `paused`) the controls go to the menu: nothing held
-    // or pressed reaches the character
+    // under a menu (the game's clock stopped, `paused`; the menu takes the frame's presses,
+    // play_objectives.rs) the controls go to the menu: no press reaches the character, it stops
+    // firing and aiming, and a Tab held as the menu opened doesn't step the item when it's let go
+    // (its hold starts again); the rest held stays as it was (nothing moves meanwhile) and is
+    // read again once the menu has closed
     if paused() {
-        player.move_input = Vec2::ZERO;
-        (player.sprint, player.walk, player.jump_pressed, player.dodge_pressed, player.fire) = (false, false, false, false, false);
-        (player.switch_pressed, player.reload_pressed, player.use_held, player.throw_held, player.item_use) = (false, false, false, false, false);
-        player.next_surface = false;
+        (player.jump_pressed, player.dodge_pressed, player.switch_pressed, player.reload_pressed) = (false, false, false, false);
+        (player.item_use, player.next_surface, player.fire, player.aim) = (false, false, false, false);
+        player.tab_down = -1.0;
+        player.item_list = false;
         return;
     }
     // 1-4: hand control to that squad member (after their name shows, see squad_control); not

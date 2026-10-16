@@ -1,7 +1,8 @@
 //! The campaign's missions (common/campaign-bf.xmb, #221): its squad, the extra marines that
-//! stand in for missing members, and each mission's zones and objectives. bf_play's use of it is
-//! src/bin/play_flags.rs and viewer/docs/campaign.md. (The same file's level list for the front
-//! end is `character::CampaignLevel`.)
+//! stand in for missing members, and each mission's zones and objectives: what the game's flags
+//! and its squad need. bf_play's use of it is src/bin/play_flags.rs and viewer/docs/campaign.md.
+//! (The same file's level list for the front end and the briefings, with each level's name, id
+//! and movies, is `character::CampaignLevel`.)
 //!
 //!   <campaign gameflags-schema="gameflags" h_1a468238="default-gameflags" h_e9d108ea="Brute Force">
 //!     <squad-char char-id="tex" h_1b561f3f=..>               x4 (FUN_001a4640)

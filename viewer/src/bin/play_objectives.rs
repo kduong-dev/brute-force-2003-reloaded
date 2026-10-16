@@ -19,11 +19,14 @@
 //! which stays drawn.
 //!
 //! Controls: I (the demo's key for BACK) or the pad's Back opens it and closes it again; Enter /
-//! Space or the pad's A or B close it.
+//! Space or the pad's A or B close it. While it's up the keys and the mouse go to it: none of
+//! their presses reaches the game (not the one that closes it, nor Backspace).
 //!
-//! Test hook: BF_TEST_OBJECTIVES=<s>[,<open s>]: opens it at that time (the game's clock), for
-//! that long (2 s by default; counted in real time, or the capture's steps under BF_CAPTURE, as
-//! the game's clock stands still meanwhile).
+//! Test hook: BF_TEST_OBJECTIVES=<s>[,<open s>[,<key>]]: opens it at that time (the game's clock),
+//! for that long (2 s by default; counted in real time, or the capture's steps under BF_CAPTURE,
+//! as the game's clock stands still meanwhile); with a key (space, enter or i) that key's press
+//! closes it, put into the frame's input as the player's would be (the press must not reach the
+//! game).
 
 use super::flags::Campaign;
 use super::menu::{AtlasFont, BUTTONS, BUTTON_ROW};
@@ -106,6 +109,20 @@ pub struct ObjectivesMenu {
     /// BF_TEST_OBJECTIVES: (when, for how long), and whether it's been done
     test: Option<(f32, f32)>,
     test_done: bool,
+    /// BF_TEST_OBJECTIVES's closing key, pressed as the player would (None: it closes itself),
+    /// and that key while it's held down (let go the frame after)
+    test_key: Option<KeyCode>,
+    test_key_held: Option<KeyCode>,
+}
+
+/// BF_TEST_OBJECTIVES's closing key by its name: space, enter or i.
+fn test_key(name: &str) -> Option<KeyCode> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "space" => Some(KeyCode::Space),
+        "enter" => Some(KeyCode::Enter),
+        "i" => Some(KeyCode::KeyI),
+        _ => None,
+    }
 }
 
 /// The menu's root node (hidden while closed).
@@ -116,12 +133,15 @@ struct MenuRoot;
 #[derive(Component)]
 struct ObjectiveLine(usize, usize);
 
-/// The menu as a map starts: built hidden, the test hook read; and its controls each frame.
+/// The menu as a map starts: built hidden, the test hook read; its controls each frame as soon as
+/// the frame's input is in (PreUpdate, after Bevy's input systems), so that what it takes reaches
+/// no system of the game's (`toggle`); its texts in the frame.
 pub fn plugin(app: &mut App) {
     app.init_resource::<ObjectivesMenu>()
         .add_systems(OnEnter(AppState::Playing), build.after(setup))
         .add_systems(OnExit(AppState::Playing), close_on_exit)
-        .add_systems(Update, (toggle.before(read_input), fill).run_if(in_state(AppState::Playing)));
+        .add_systems(PreUpdate, toggle.after(bevy::input::InputSystem).run_if(in_state(AppState::Playing)))
+        .add_systems(Update, fill.run_if(in_state(AppState::Playing)));
 }
 
 /// A game texture as a UI image (None if it isn't found).
@@ -137,11 +157,11 @@ fn texture(game: &mut bf_viewer::bf::character::Game, images: &mut Assets<Image>
 /// Builds the menu, hidden (see the module notes). Game textures are stored bottom row first:
 /// drawn with flip_y, and the data's flipped piece (h_06712921) without.
 fn build(mut commands: Commands, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mut menu: ResMut<ObjectivesMenu>) {
+    let hook: Vec<String> = std::env::var("BF_TEST_OBJECTIVES").map(|v| v.split(',').map(|x| x.trim().to_string()).collect()).unwrap_or_default();
+    let num = |i: usize| hook.get(i).and_then(|x| x.parse::<f32>().ok());
     *menu = ObjectivesMenu {
-        test: std::env::var("BF_TEST_OBJECTIVES").ok().and_then(|v| {
-            let v: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            v.first().map(|&at| (at, v.get(1).copied().unwrap_or(TEST_OPEN)))
-        }),
+        test: num(0).map(|at| (at, num(1).unwrap_or(TEST_OPEN))),
+        test_key: hook.get(2).and_then(|k| test_key(k)),
         ..Default::default()
     };
     let game = &mut game.0;
@@ -253,24 +273,48 @@ fn fill(campaign: Res<Campaign>, game: Res<GameData>, font: Option<Res<GameFont>
 }
 
 /// The menu's controls (see the module notes) and the test hook: open, it shows and stops the
-/// game's clock; closed, the clock runs again.
+/// game's clock; closed, the clock runs again. A menu over the game takes the controls: the keys
+/// and mouse buttons pressed in a frame it's up (the one it opens in and the one it closes in
+/// too) are taken from the frame's input, so no system of the game's sees them (Space or Enter
+/// closing it doesn't make Tex jump or click a test tool's panel).
 #[allow(clippy::too_many_arguments)]
-fn toggle(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<Time>, player: Res<Player>, campaign: Res<Campaign>,
-          game: Res<GameData>, font: Option<Res<GameFont>>, mut menu: ResMut<ObjectivesMenu>, mut root: Query<&mut Visibility, With<MenuRoot>>,
-          editing: Option<Res<State<editor::EditorMode>>>) {
-    let pad = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
-    let back = keys.just_pressed(KeyCode::KeyI) || pad(GamepadButton::Select);
-    let close = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) || pad(GamepadButton::South) || pad(GamepadButton::East);
+fn toggle(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, pads: Query<&Gamepad>, time: Res<Time>,
+          player: Res<Player>, campaign: Res<Campaign>, game: Res<GameData>, font: Option<Res<GameFont>>, mut menu: ResMut<ObjectivesMenu>,
+          mut root: Query<&mut Visibility, With<MenuRoot>>, editing: Option<Res<State<editor::EditorMode>>>) {
+    // (the test hook's closing key, let go the frame after its press)
+    if let Some(k) = menu.test_key_held.take() {
+        keys.release(k);
+    }
     let real = if std::env::var("BF_CAPTURE").is_ok() { capture_step() } else { time.delta_secs() };
     if menu.open {
         menu.held += real;
     }
     let test_open = !menu.test_done && menu.test.is_some_and(|(at, _)| player.sim_time >= at);
     let test_close = menu.open && menu.test_done && menu.test.is_some_and(|(_, open)| menu.held >= open);
+    // the test hook's closing key, pressed now as the player's would be
+    let mut closes_itself = test_close;
+    if let (true, Some(k)) = (test_close, menu.test_key) {
+        keys.press(k);
+        menu.test_key_held = Some(k);
+        closes_itself = false;
+    }
+    let pad = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
+    let back = keys.just_pressed(KeyCode::KeyI) || pad(GamepadButton::Select);
+    let close = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) || pad(GamepadButton::South) || pad(GamepadButton::East);
     let playing = editing.is_none_or(|m| *m.get() != editor::EditorMode::Edit);
-    let want = if menu.open { !(back || close || test_close) } else { (back || test_open) && campaign.in_mission && playing };
+    let want = if menu.open { !(back || close || closes_itself) } else { (back || test_open) && campaign.in_mission && playing };
     if test_open {
         menu.test_done = true;
+    }
+    if menu.open || want {
+        let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
+        for k in pressed {
+            keys.clear_just_pressed(k);
+        }
+        let clicked: Vec<MouseButton> = mouse.get_just_pressed().copied().collect();
+        for b in clicked {
+            mouse.clear_just_pressed(b);
+        }
     }
     if want == menu.open {
         return;
@@ -281,9 +325,15 @@ fn toggle(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<Time
     if let Ok(mut v) = root.single_mut() {
         *v = if want { Visibility::Inherited } else { Visibility::Hidden };
     }
-    if let (true, true, Some(f)) = (want, std::env::var("BF_FLAG_LOG").is_ok(), font) {
-        let rows = rows(&campaign, &game.0, &f);
-        println!("t {:.2}: objectives menu: primary {:?}, secondary {:?}", player.sim_time, rows[0], rows[1]);
+    if std::env::var("BF_FLAG_LOG").is_ok() {
+        match (want, font) {
+            (true, Some(f)) => {
+                let rows = rows(&campaign, &game.0, &f);
+                println!("t {:.2}: objectives menu: primary {:?}, secondary {:?}", player.sim_time, rows[0], rows[1]);
+            }
+            (false, _) => println!("t {:.2}: objectives menu closed{}", player.sim_time, if closes_itself { " (the test hook's time)" } else { " by a press" }),
+            _ => {}
+        }
     }
 }
 
