@@ -141,6 +141,9 @@ pub struct PickupFeed(pub Vec<(String, i64, f32)>);
 struct Pickup {
     entity: Entity,
     kind: u32,
+    /// its placement's name: taking it is a PICKUP_OBJECT from it to the triggers listening to it
+    /// (play_triggers.rs); 0 for one the test tools put down
+    name: u32,
     at: Vec3,
     /// seconds until it's back (0: there)
     gone: f32,
@@ -261,7 +264,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
     pickups.list = placed.iter()
         .filter(|(_, p, _, _)| p.tag == h("inventory-object") && !game.0.idle_effects.contains_key(&p.kind)
             && game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT))
-        .map(|(entity, p, t, _)| Pickup { entity, kind: p.kind, at: t.translation, gone: 0.0, told: false })
+        .map(|(entity, p, t, _)| Pickup { entity, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false })
         .collect();
     // one glow over each group of medkits (it stays when they're taken: it marks where they are)
     let kits: Vec<usize> = (0..pickups.list.len())
@@ -405,7 +408,8 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
 
 #[allow(clippy::too_many_arguments)]
 fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
-                mut squad: ResMut<Squad>, mut status: ResMut<UsePanel>, mut feed: ResMut<PickupFeed>, mut vis: Query<&mut Visibility>) {
+                mut squad: ResMut<Squad>, mut status: ResMut<UsePanel>, mut feed: ResMut<PickupFeed>, mut vis: Query<&mut Visibility>,
+                mut events: ResMut<super::triggers::TriggerEvents>) {
     let dt = frame_dt(&time);
     for line in &mut feed.0 {
         line.2 -= dt;
@@ -477,6 +481,11 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
         };
         if taken {
             p.gone = RESPAWN;
+            // a placed one: PICKUP_OBJECT to the triggers listening to it (play_triggers.rs)
+            if p.name != 0 {
+                let by = if who == 0 { player.trigger_name } else { squad.0[who - 1].trigger_name };
+                events.0.push(super::triggers::ObjectEvent { from: p.name, signal: bf_viewer::bf::triggers::sig::PICKUP_OBJECT, subject: by, data: -1 });
+            }
             let n = item.amount.max(1);
             match feed.0.iter_mut().find(|l| l.0 == item.label) {
                 Some(l) => { l.1 += n; l.2 = FEED_TIME; }
@@ -1023,7 +1032,7 @@ fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut
             commands.entity(e).insert(body);
         }
         if game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT) && !game.0.idle_effects.contains_key(&p.kind) {
-            pickups.list.push(Pickup { entity: e, kind: p.kind, at: t.translation, gone: 0.0, told: false });
+            pickups.list.push(Pickup { entity: e, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false });
         }
     }
 }

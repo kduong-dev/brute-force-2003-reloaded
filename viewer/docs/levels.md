@@ -187,4 +187,6 @@ Known gaps:
   Static meshes carry no per-vertex lighting (24-byte vertices: position, normal, uv), so the
   game lights them some other way, not yet traced.
 * Mission maps (e01, m01_a, …) load their geometry but have no start points; missions place
-  the player with scripts.
+  the player with their triggers. bf_play starts the squad at its spawn-triggers or its
+  placements where the level has them (the tutorial, e40, m09_a: [triggers.md](triggers.md),
+  #102); the cutscenes and warps that move them next are #28's step 3.

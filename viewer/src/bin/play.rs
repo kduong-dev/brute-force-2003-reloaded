@@ -237,9 +237,13 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     }
     commands.insert_resource(difficulty);
     commands.insert_resource(CurrentMap(map));
-    let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % SQUAD;
-    commands.insert_resource(player_at_start(start));
-    commands.insert_resource(squad_at_start(start, deathmatch));
+    // a level whose squad its spawn-triggers spawn starts each member at its own (#102,
+    // play_triggers.rs), led by BF_CHARACTER's if the level has them
+    let spawns = level.as_ref().map(|l| triggers::squad_spawns(&game, l)).unwrap_or_default();
+    let start = spawns.leader(std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % SQUAD);
+    commands.insert_resource(player_at_start(start, &spawns));
+    commands.insert_resource(squad_at_start(start, deathmatch, &spawns));
+    commands.insert_resource(spawns);
     commands.insert_resource(GameData(game));
     commands.insert_resource(MapLevel(level));
     commands.insert_resource(Mode { deathmatch });
@@ -252,23 +256,38 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
 #[derive(Resource, Default)]
 struct TestDied(bool);
 
-/// The player at the map's start point (BF_START=<n> picks another), with the test hooks'
-/// starting camera and place.
-fn player_at_start(start: usize) -> Player {
+/// The player at the map's start: its squad spawn-trigger's transform where the level has one
+/// for it (`spawns`, #102: the feet there, in the air if the trigger is, as the game drops a
+/// farcast character), else the map's start point (BF_START=<n> picks another); with the test
+/// hooks' starting camera and place.
+fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     // test hooks: starting camera (yaw in radians, 0 = behind the character)
     let mut p = Player::new(start);
     let env = |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<f32>().ok());
     if let Some(v) = env("BF_CAMERA_YAW") { p.cam_yaw = v; }
     if let Some(v) = env("BF_CAMERA_PITCH") { p.cam_pitch = v; }
     if let Some(v) = env("BF_CAMERA_DISTANCE") { p.cam_distance = v; }
-    // on a map: at its first start point (BF_START=<n> picks another), facing its way
-    if let Some(a) = world::arena() {
+    // (the level's triggers know it by its spawn's copy name, wherever a test hook starts it)
+    p.trigger_name = spawns.of(start).map_or(0, |s| s.copy);
+    let spawn = spawns.of(start).filter(|_| test_goto().is_none());
+    if let Some(s) = spawn {
+        p.position = s.feet - Vec3::Y * GROUND;
+        p.fall_from = s.feet.y;
+        p.yaw = s.yaw;
+        p.cam_yaw = s.yaw;
+    } else if let Some(a) = world::arena() {
+        // on a map: at its first start point (BF_START=<n> picks another), facing its way
         let n = std::env::var("BF_START").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
         if let Some(&(at, yaw)) = a.starts.get(n % a.starts.len().max(1)) {
             p.position = Vec3::new(at.x, at.y + 1.0 - GROUND, at.z);
             p.yaw = yaw;
             p.cam_yaw = yaw;
         }
+    }
+    if spawn.is_some() {
+        p.prev_xz = Vec2::new(p.position.x, p.position.z);
+        p.cam_target = p.position + Vec3::new(0.0, 0.35, 0.0);
+        return p;
     }
     if let Some(g) = test_goto() {
         // a 5th value starts at that height (on the floor below it), e.g. on a roof
@@ -285,11 +304,28 @@ fn player_at_start(start: usize) -> Player {
     p
 }
 
-/// The rest of the squad, in formation behind the start character (none in deathmatch).
-fn squad_at_start(start: usize, deathmatch: bool) -> Squad {
+/// The rest of the squad (none in deathmatch): on a level whose spawn-triggers spawn its squad
+/// (`spawns`, #102), the members it has, each at its own spawn as `player_at_start` puts the
+/// leader (the tutorial has Tex alone); otherwise all four, in formation behind the start
+/// character.
+fn squad_at_start(start: usize, deathmatch: bool, spawns: &triggers::SquadSpawns) -> Squad {
+    if !spawns.0.is_empty() {
+        let members = spawns.0.iter().filter(|s| s.slot != start).map(|s| {
+            let mut m = Player::new(s.slot);
+            m.position = s.feet - Vec3::Y * GROUND;
+            m.fall_from = s.feet.y;
+            m.prev_xz = Vec2::new(m.position.x, m.position.z);
+            m.yaw = s.yaw;
+            m.cam_yaw = s.yaw;
+            m.surface = usize::MAX;
+            m.trigger_name = s.copy;
+            m
+        }).collect();
+        return Squad(if deathmatch { vec![] } else { members });
+    }
     // the rest of the squad, in formation behind the start character
     let origin = world::arena().and_then(|a| a.starts.get(std::env::var("BF_START").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) % a.starts.len().max(1)).copied());
-    squad_around(start, origin, deathmatch)
+    squad_around(start, origin, deathmatch, spawns)
 }
 
 /// The squad's leader `start` standing at `at` (its feet) facing `yaw`, the camera behind:
@@ -312,10 +348,13 @@ fn player_at(start: usize, at: Vec3, yaw: f32) -> Player {
 /// The squad but `start`, in formation round `origin` (a place and the way it faces; None: the
 /// flat floor's origin, facing -z), each on the floor and out of the walls there (none in
 /// deathmatch): the map's start (`squad_at_start`), or where the map editor's "play from here"
-/// puts the leader (play_editor.rs).
-fn squad_around(start: usize, origin: Option<(Vec3, f32)>, deathmatch: bool) -> Squad {
-    let members = (0..SQUAD).filter(|&c| c != start).enumerate().map(|(slot, c)| {
+/// puts the leader (play_editor.rs). On a level whose spawn-triggers spawn its squad (`spawns`)
+/// only the members it has come, keeping their spawns' names.
+fn squad_around(start: usize, origin: Option<(Vec3, f32)>, deathmatch: bool, spawns: &triggers::SquadSpawns) -> Squad {
+    let roster: Vec<usize> = if spawns.0.is_empty() { (0..SQUAD).collect() } else { spawns.0.iter().map(|s| s.slot).collect() };
+    let members = roster.into_iter().filter(|&c| c != start).enumerate().map(|(slot, c)| {
         let mut m = Player::new(c);
+        m.trigger_name = spawns.of(c).map_or(0, |s| s.copy);
         let f = FORMATION[slot % FORMATION.len()];
         let top = origin.map_or(GROUND, |(at, _)| at.y + 1.0);
         m.position = match origin {
@@ -525,6 +564,7 @@ fn main() {
         .add_plugins(enemies::plugin)
         .add_plugins(vengar::plugin)
         .add_plugins(stealth::plugin)
+        .add_plugins(triggers::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -599,26 +639,45 @@ mod enemies;
 mod vengar;
 #[path = "play_stealth.rs"]
 mod stealth;
+#[path = "play_triggers.rs"]
+mod triggers;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
 #[derive(Resource)]
 struct MapLevel(Option<Level>);
 
-/// The map's doors.
+/// The map's doors and its wall panels.
 #[derive(Resource)]
-struct Doors(Vec<DoorState>);
+struct Doors {
+    /// in level object order (`Arena::set_door_open`'s)
+    list: Vec<DoorState>,
+    panels: Vec<Panel>,
+}
 
+/// A door or gate as its anim-triggers play it (play_triggers.rs, #220): how far into its
+/// clip it is (s of the clip at its own speed), whether it's playing forward (opening) or
+/// backward (closing), and how fast (the playing anim entry's time-scale: the tutorial gate's
+/// 2.5 plays its 4.96 s clip in 2.0 s).
 struct DoorState {
     door: bf_viewer::level_scene::Door,
-    /// how far into its opening animation it is (s), and whether it's opening
     t: f32,
     opening: bool,
-    /// the wall panels that open it (world buttons whose signal reaches its anim-triggers):
-    /// each one's button and the way it faces (world); such a door opens only from them
-    panels: Vec<(Vec3, Vec3)>,
-    /// opened from a panel: its anim-triggers act once (h_f136d22d 1), so it stays open
-    latched: bool,
+    rate: f32,
+}
+
+/// A wall panel (world-button-object, reticule-action 1): its name, the event its use sends
+/// (its signal h_eaf8a35b and data h_f1660a0d, to its listeners: 0x163060), its button (the
+/// archetype's PANEL_BUTTON hardpoint, world) and the way that faces, the doors its signal
+/// reaches unchanged (`Level::button_opens`), and whether it's been used.
+struct Panel {
+    name: u32,
+    signal: i64,
+    data: i64,
+    at: Vec3,
+    facing: Vec3,
+    opens: Vec<usize>,
+    used: bool,
 }
 
 /// The use key (E) and what it would act on now (see `doors`), and the status message shown at
@@ -634,14 +693,15 @@ pub struct UsePanel {
     pub message: Option<(String, f32)>,
 }
 
-/// Doors open for anyone within DOOR_RANGE m (their animation: leaves slide along their joint's
-/// axis) and close again (the animation backwards); open doors stop blocking. The level's sound
-/// triggers beside them play as they start opening or closing, heard up to DOOR_HEARD m.
-/// Gates with wall panels (sdm_e34's big gate) open only when a panel is used: the player's feet
-/// within USE_REACH m of its button, looking within USE_ANGLE of it (the panels' reticule-action
-/// 1: the reticle on them), holding use for HOLD_TIME s (the game's prompt says "Hold"). The
-/// capture shows no progress bar and no gate message. Reach, angle and hold time are guesses.
-const DOOR_RANGE: f32 = 5.0;
+/// Doors and gates move only when the level's anim-triggers play their clips (play_triggers.rs,
+/// #220: on their detectors' signals, a panel's, a timer's ... or at the level's start): their
+/// leaves slide along their joint's axis forward (opening) or back (closing), and an open door
+/// stops blocking. The level's sound triggers beside them play as they start opening or closing,
+/// heard up to DOOR_HEARD m (play_triggers.rs). A wall panel is used with the player's feet
+/// within USE_REACH m of its button, looking within USE_ANGLE of it (the panels'
+/// reticule-action 1: the reticle on them), holding use for HOLD_TIME s (the game's prompt says
+/// "Hold"): its signal goes to its listeners. The capture shows no progress bar and no gate
+/// message. Reach, angle and hold time are guesses.
 const USE_REACH: f32 = 2.5;
 const USE_ANGLE: f32 = 0.8;
 const HOLD_TIME: f32 = 0.5;
@@ -653,8 +713,11 @@ const MUSIC_VOLUME: f32 = 0.5;
 const AMBIENCE_VOLUME: f32 = 0.8;
 const DOOR_HEARD: f32 = 15.0;
 
-fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: Option<ResMut<Doors>>,
-         mut use_panel: ResMut<UsePanel>, mut transforms: Query<&mut Transform>) {
+/// Each frame: the panel prompt and a panel's use (see USE_REACH's notes), whose event goes to
+/// the level's triggers (`triggers::TriggerEvents`); then each door's leaves where its
+/// anim-triggers send them, its collision open past 0.6 of its clip.
+fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut use_panel: ResMut<UsePanel>,
+         mut events: ResMut<triggers::TriggerEvents>, mut transforms: Query<&mut Transform>) {
     let dt = frame_dt(&time);
     // (the status message runs out on any map: the flat test floor has no doors)
     if let Some((_, left)) = &mut use_panel.message {
@@ -664,53 +727,43 @@ fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: 
         }
     }
     let Some(mut doors) = doors else { return };
-    // a panel's button in reach and in view (of a gate that isn't open yet)
+    let doors = &mut *doors;
+    // a panel's button in reach and in view: one not used yet, whose doors (those its signal
+    // reaches unchanged) aren't all open
     let look = Vec2::new(-player.cam_yaw.sin(), -player.cam_yaw.cos());
     let feet = player.position + Vec3::Y * GROUND;
     // (from in front of it: the button faces out of the wall)
-    let usable = |&(p, facing): &(Vec3, Vec3)| {
-        let to = Vec2::new(p.x - feet.x, p.z - feet.z);
-        !player.dead && to.length() < USE_REACH && (-0.5..2.5).contains(&(p.y - feet.y)) && to.normalize_or_zero().dot(look) > USE_ANGLE.cos()
-            && (feet - p).dot(facing) > 0.0
+    let usable = |p: &Panel| {
+        let to = Vec2::new(p.at.x - feet.x, p.at.z - feet.z);
+        !player.dead && to.length() < USE_REACH && (-0.5..2.5).contains(&(p.at.y - feet.y)) && to.normalize_or_zero().dot(look) > USE_ANGLE.cos()
+            && (feet - p.at).dot(p.facing) > 0.0
     };
-    let target = doors.0.iter().enumerate().filter(|(_, d)| !d.latched)
-        .find_map(|(i, d)| d.panels.iter().find(|p| usable(p)).map(|p| (i, p.0)));
+    let list = &doors.list;
+    let target = doors.panels.iter().position(|p| !p.used && !(!p.opens.is_empty() && p.opens.iter().all(|&d| list[d].opening)) && usable(p));
     use_panel.prompt = target.map(|_| "panel");
-    use_panel.target = target.map(|t| t.1);
+    use_panel.target = target.map(|i| doors.panels[i].at);
     use_panel.held = if target.is_some() && player.use_held { use_panel.held + dt } else { 0.0 };
-    if let (Some((i, _)), true) = (target, use_panel.held >= HOLD_TIME) {
-        doors.0[i].latched = true;
+    if let (Some(i), true) = (target, use_panel.held >= HOLD_TIME) {
+        // its event to its listeners (0x163060: {its signal, data}, the user as the subject)
+        let p = &mut doors.panels[i];
+        p.used = true;
+        events.0.push(triggers::ObjectEvent { from: p.name, signal: p.signal, subject: player.trigger_name, data: p.data });
         use_panel.held = 0.0;
     }
-    let mut sounds = vec![];
-    for (i, d) in doors.0.iter_mut().enumerate() {
-        let DoorState { door, t, opening, .. } = d;
-        let near = if d.panels.is_empty() {
-            std::iter::once(&*player).chain(squad.0.iter()).filter(|u| !u.dead)
-                .any(|u| Vec2::new(u.position.x - door.centre.x, u.position.z - door.centre.z).length() < DOOR_RANGE)
-        } else {
-            d.latched
-        };
-        if near != *opening {
-            *opening = near;
-            if let Some(id) = if near { door.open_sound } else { door.close_sound } {
-                let k = 1.0 - door.centre.distance(player.position) / DOOR_HEARD;
-                if k > 0.0 {
-                    sounds.push((id, k));
-                }
-            }
-        }
+    // the leaves, where their anim-triggers send them (play_triggers.rs)
+    for (i, d) in doors.list.iter_mut().enumerate() {
+        let DoorState { door, t, opening, rate } = d;
         let was = *t;
-        *t = if near { (*t + dt).min(door.duration) } else { (*t - dt).max(0.0) };
+        *t = if *opening { (*t + dt * *rate).min(door.duration) } else { (*t - dt * *rate).max(0.0) };
         if *t != was {
             for leaf in &door.leaves {
                 if let Ok(mut tr) = transforms.get_mut(leaf.entity) {
                     tr.translation = leaf.closed.translation + leaf.axis * leaf.slide(*t, door.duration);
                 }
             }
-            // BF_DOOR_LOG: a panel gate's leaves, each second of its opening
-            if !d.panels.is_empty() && (was == 0.0 || *t == door.duration || t.floor() != was.floor()) && std::env::var("BF_DOOR_LOG").is_ok() {
-                println!("gate h_{:08x} t {:.2}/{:.2} leaves slid {:?} m", door.name, *t, door.duration,
+            // BF_DOOR_LOG: a door's leaves, each second of its clip
+            if (was == 0.0 || *t == door.duration || *t == 0.0 || t.floor() != was.floor()) && std::env::var("BF_DOOR_LOG").is_ok() {
+                println!("t {:.2}: door h_{:08x} t {:.2}/{:.2} (x{rate}) leaves slid {:?} m", player.sim_time, door.name, *t, door.duration,
                          door.leaves.iter().map(|l| (l.slide(*t, door.duration) * 100.0).round() / 100.0).collect::<Vec<_>>());
             }
         }
@@ -718,7 +771,6 @@ fn doors(time: Res<Time>, mut player: ResMut<Player>, squad: Res<Squad>, doors: 
             a.set_door_open(i, *t > 0.6 * door.duration);
         }
     }
-    player.sound_queue.extend(sounds);
 }
 
 /// The level's point lights on the characters. The scenery takes them per surface (its
@@ -1839,6 +1891,11 @@ struct Player {
     /// the map editor's stand-in for the controlled character while editing (`Player::stand_in`,
     /// play_editor.rs, #191): no body, never given one (`spawn_player`)
     stand_in: bool,
+    /// its name as the level's triggers know it (play_triggers.rs): the name its spawn-trigger
+    /// gives its copy (h_14f15a34: "tex_1", "TUTORIAL_terrorist_5"), or one the runtime makes up
+    /// for a re-armable trigger's; 0 for a character no trigger spawned (the demo's own squad on a
+    /// map without squad spawns, the test map's NPCs). Its death is a DESTROYED from that name
+    trigger_name: u32,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -1892,6 +1949,7 @@ impl Player {
             lock_aim: None,
             enemy: Default::default(),
             stand_in: false,
+            trigger_name: 0,
         }
     }
 
@@ -2594,28 +2652,23 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             println!("door at {:.1}: {:.2} s, leaves slide {:?} m, sounds {:x?} / {:x?}", d.centre, d.duration,
                      d.leaves.iter().map(|l| l.slide(d.duration, d.duration)).collect::<Vec<_>>(), d.open_sound, d.close_sound);
         }
-        // the gates' wall panels: a button whose signal reaches the door's anim-triggers
-        // (where each one's button is: its archetype's PANEL_BUTTON hardpoint, else 1.4 m up)
-        let opens: Vec<((Vec3, Vec3), Vec<(u32, u32, i64)>)> = level.buttons.iter().map(|b| {
+        // the doors, closed until their anim-triggers play them (play_triggers.rs)
+        let list: Vec<DoorState> = doors.into_iter().map(|door| DoorState { door, t: 0.0, opening: false, rate: 1.0 }).collect();
+        // the wall panels (where each one's button is: its archetype's PANEL_BUTTON hardpoint,
+        // else 1.4 m up), and the doors their signal reaches unchanged, for the prompt
+        let panels: Vec<Panel> = level.buttons.iter().map(|b| {
             let button = game.0.object_meshes.get(&b.kind).and_then(|&a| bf_viewer::bf::weapon::WeaponModel::load(&game.0, a).ok())
                 .and_then(|m| m.hardpoints.get(&PANEL_BUTTON).map(|h| h.point)).unwrap_or(Vec3::Y * 1.4);
             // (its front: the button quad's normal, the model's +z)
             let facing = b.transform.transform_vector3(Vec3::Z).normalize_or_zero();
-            ((b.transform.transform_point3(button), facing), level.button_opens(b))
-        }).collect();
-        let doors: Vec<DoorState> = doors.into_iter().map(|door| {
-            let panels = opens.iter().filter(|(_, o)| o.iter().any(|x| x.0 == door.name)).map(|(at, _)| *at).collect();
-            DoorState { door, t: 0.0, opening: false, panels, latched: false }
-        }).collect();
-        if std::env::var("BF_DOOR_LOG").is_ok() {
-            for (b, (at, o)) in level.buttons.iter().zip(&opens) {
-                println!("panel h_{:08x} button at {:.1} facing {:.2} signal {}: opens {:x?}", b.name, at.0, at.1, b.signal, o);
+            let reach = level.button_opens(b);
+            let opens = list.iter().enumerate().filter(|(_, d)| reach.iter().any(|x| x.0 == d.door.name)).map(|(i, _)| i).collect();
+            if std::env::var("BF_DOOR_LOG").is_ok() {
+                println!("panel h_{:08x} button at {:.1} facing {:.2} signal {}: opens {:x?}", b.name, b.transform.transform_point3(button), facing, b.signal, reach);
             }
-            for d in doors.iter().filter(|d| !d.panels.is_empty()) {
-                println!("gate h_{:08x} at {:.1}: {} panels, {} leaves", d.door.name, d.door.centre, d.panels.len(), d.door.leaves.len());
-            }
-        }
-        commands.insert_resource(Doors(doors));
+            Panel { name: b.name, signal: b.signal, data: b.data, at: b.transform.transform_point3(button), facing, opens, used: false }
+        }).collect();
+        commands.insert_resource(Doors { list, panels });
         commands.insert_resource(UsePanel::default());
         // the power-ups' icons (their idle effects)
         let n = if std::env::var("BF_NO_IDLE_FX").is_ok() { 0 } else {

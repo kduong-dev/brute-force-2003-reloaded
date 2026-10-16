@@ -11,6 +11,8 @@
     alone when it's full, without the message), a Garo fruit for their own health (left alone
     at full health). `BF_TEST_TARGET=1` with a `BF_TEST_GOTO` start 8 m behind one stands the
     first squad member on it.
+  * A placed one taken sends PICKUP_OBJECT (15) to the level's triggers that listen to it
+    ([triggers.md](triggers.md), #220; none listens to a medkit in the levels played so far).
   * The item box (capture todo/medkits.mp4) shows one item at a time, a grenade type or the
     Medkit: its name at the bottom and the count top right, over its HUD icon (the grenade
     type's or Medkit's own h_e5ec3f1f: Frag fe20b919, Medkit f647bbef). A grenade's count sits

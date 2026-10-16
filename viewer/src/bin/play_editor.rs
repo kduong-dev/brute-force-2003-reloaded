@@ -459,7 +459,8 @@ fn to_edit(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut
 #[allow(clippy::too_many_arguments)]
 fn to_play(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut<Tools>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
            mut hits: ResMut<AiHits>, mut status: ResMut<UsePanel>, mode: Res<Mode>, placements: Res<Placements>,
-           cam: Query<&Transform, With<MainCamera>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+           cam: Query<&Transform, With<MainCamera>>, mut windows: Query<&mut Window, With<PrimaryWindow>>,
+           spawns: Option<Res<super::triggers::SquadSpawns>>) {
     let Some(Switch::ToPlay(spot)) = editor.switch.take() else { return };
     let from = cam.single().copied().unwrap_or_default();
     editor.camera = tools.freecam.take();
@@ -467,9 +468,16 @@ fn to_play(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut
     tools.edit = false;
     tools.pointer = None;
     let leader = player.character;
+    // (the level's squad spawns, play_triggers.rs: who comes and the names its triggers know)
+    let none = super::triggers::SquadSpawns::default();
+    let spawns = spawns.as_deref().unwrap_or(&none);
     let (mut p, mut members) = match spot {
-        Some((at, yaw)) => (super::player_at(leader, at, yaw), super::squad_around(leader, Some((at, yaw)), mode.deathmatch)),
-        None => (super::player_at_start(leader), super::squad_at_start(leader, mode.deathmatch)),
+        Some((at, yaw)) => {
+            let mut p = super::player_at(leader, at, yaw);
+            p.trigger_name = spawns.of(leader).map_or(0, |s| s.copy);
+            (p, super::squad_around(leader, Some((at, yaw)), mode.deathmatch, spawns))
+        }
+        None => (super::player_at_start(leader, spawns), super::squad_at_start(leader, mode.deathmatch, spawns)),
     };
     p.sim_time = player.sim_time;
     p.show_help = player.show_help;

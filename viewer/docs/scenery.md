@@ -46,6 +46,10 @@
 
     The object's collision and blocker stop blocking at once. What it leaves behind blocks from
     then on (`Arena::set_broken`; its triangles are in the arena from the start, switched off).
+    A named one that a level trigger listens to sends DESTROYED as it breaks; one a
+    destroyer-trigger removes is hidden and set broken the same way, without debris, and one
+    removed as the level starts (the tutorial's four h_0247aefb props) is gone from the list's
+    start ([triggers.md](triggers.md), #220).
     By the entry type's object-type:
     * 0, a compound: each part flies off as a loose tumbling body (play_pickups.rs' rigid
       body). A crate's go out from the hit, along it and up. An explosive object's go out from

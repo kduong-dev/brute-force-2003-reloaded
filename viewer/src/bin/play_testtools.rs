@@ -1264,7 +1264,7 @@ fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, pla
     let fall = || super::pickups::Thrown { velocity: Vec3::ZERO, spin: Vec3::ZERO };
     match e.kind {
         Kind::Pickup(kind) => {
-            commands.entity(root).insert((Placed { tag: h("inventory-object"), kind }, super::pickups::LatePickup));
+            commands.entity(root).insert((Placed { tag: h("inventory-object"), kind, name: 0 }, super::pickups::LatePickup));
             if air {
                 commands.entity(root).insert(super::pickups::DropIn);
             }

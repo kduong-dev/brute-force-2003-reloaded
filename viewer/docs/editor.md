@@ -75,7 +75,9 @@ the key asks for the switch (`edit_input`) and the state's change makes it (`to_
   the ground under the camera), facing the camera's way, pushed out of any wall there
   (`player_at`); the others in formation round them, on the floor and out of the walls, as at a
   map's start (`squad_around`, which `squad_at_start` now calls). Shift+F5 (`BF_TEST_PLAY=..,start`)
-  puts them at the map's start instead (`player_at_start`, `squad_at_start`). The NPCs stay after
+  puts them at the map's start instead (`player_at_start`, `squad_at_start`). On a level whose
+  triggers spawn or place the squad (the tutorial, e40, m09_a) only the members it has come, the
+  map's start being each one's spawn ([triggers.md](triggers.md), #220). The NPCs stay after
   them in `Squad`. The squad is fresh each time: full health and stamina, a full clip, the start's
   grenades (play_grenade.rs `stock_inventory`) and the reserve stocked again (play_ammo.rs
   `stock`); a weapon taken from the rack stays in its slot (it's the session's data). The mouse is

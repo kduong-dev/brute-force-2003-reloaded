@@ -330,6 +330,12 @@ impl Arena {
         }
     }
 
+    /// Whether breakable `b` is broken (the trigger runtime's DESTROYED from a level object,
+    /// play_triggers.rs).
+    pub fn is_broken(&self, b: usize) -> bool {
+        self.broken.get(b).is_some_and(|x| x.load(Ordering::Relaxed))
+    }
+
     /// The liquid at (x, z) whose surface is above `feet`: its surface height and type.
     pub fn liquid_at(&self, x: f32, z: f32, feet: f32) -> Option<(f32, LiquidType)> {
         let mut best: Option<(f32, LiquidType)> = None;

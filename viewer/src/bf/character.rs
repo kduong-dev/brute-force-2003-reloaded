@@ -279,6 +279,11 @@ pub struct Game {
     /// the AI personalities (common/ai/personality.xmb, #129) by name hash (see
     /// `personality::Personality`)
     pub personalities: HashMap<u32, Personality>,
+    /// names the loaded levels' cutscene scripts give their entities (scripts/*.gscr,
+    /// `entity_name = "..."`): the triggers they signal ("trigger_spawn8"), the spawn copies
+    /// ("tex_1", "TUTORIAL_terrorist_5"), cameras, by name hash. The level files name everything
+    /// by hash; the trigger runtime's log (play_triggers.rs) reads names from here
+    pub script_names: HashMap<u32, String>,
 }
 
 /// An object type's `<base object-type>`: 0 a compound of loose pieces (archetype-type 9, the
@@ -927,6 +932,7 @@ impl Game {
             motion_sets: HashMap::new(),
             placements: vec![],
             personalities: HashMap::new(),
+            script_names: HashMap::new(),
         }
     }
 
@@ -1559,9 +1565,17 @@ impl Game {
     pub fn load_level(&mut self, data_dir: &Path, level: &str) -> Result<(), String> {
         let ar = Archive::open(&data_dir.join(format!("{level}.tgz")), |n| {
             ["objects-", "materials-", "objecttypes-", "sounds-", "world-materials", "levels-", "animations-", "ms_"].iter().any(|p| n.starts_with(p))
-                || n.ends_with("_chatter.xmb")
+                || n.ends_with("_chatter.xmb") || n.ends_with(".gscr")
         })?;
         self.load_archive(&ar, level)?;
+        // the cutscene scripts' entity names (Lua 4 source: `entity_name = "trigger_spawn8",`)
+        for f in ar.find("", ".gscr") {
+            let text = String::from_utf8_lossy(ar.get(&f).unwrap_or(&[])).into_owned();
+            for part in text.split("entity_name").skip(1) {
+                let Some(name) = part.split('"').nth(1) else { continue };
+                self.script_names.entry(h(name)).or_insert_with(|| name.to_string());
+            }
+        }
         if let Some(root) = self.parse(&ar, "world-materials.xmb")? {
             self.surfaces = audio::surfaces(&root);
         }

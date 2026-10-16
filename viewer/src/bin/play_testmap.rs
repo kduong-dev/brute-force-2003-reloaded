@@ -265,7 +265,7 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
         let seed = |k: f32| ((placed as f32 + 1.0) * k).sin().fract().abs() * 2.0 - 1.0;
         let turn = Quat::from_euler(EulerRot::YXZ, seed(12.9898) * std::f32::consts::PI, seed(78.233) * DROP_TIP, seed(37.719) * DROP_TIP);
         let root = commands.spawn((Transform::from_translation(at).with_rotation(turn), Visibility::default(),
-                                   Placed { tag: h("inventory-object"), kind }, super::pickups::DropIn,
+                                   Placed { tag: h("inventory-object"), kind, name: 0 }, super::pickups::DropIn,
                                    Name::new("test pickup"))).id();
         for part in &model.parts {
             let pe = commands.spawn((Transform::from_translation(part.offset).with_rotation(part.rotation), Visibility::Inherited, ChildOf(root))).id();
