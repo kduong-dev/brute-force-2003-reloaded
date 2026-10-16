@@ -137,9 +137,10 @@ wider than its box wraps (the tutorial's primary does with " (completed)"): no t
   is set back to 0 by the tutorial's own first update.)
 * `BF_CASH_LOG=1`: every change to the cash: who, the amount and its scaling, the total and the
   record.
-* `BF_TEST_OBJECTIVES=<s>[,<open s>]`: opens the objectives menu at that time (the game's clock),
-  for that long (2 s by default, in real time, or the capture's steps under `BF_CAPTURE`: the
-  game's clock stands still meanwhile).
+* `BF_TEST_OBJECTIVES=<s>[,<open s>[,<key>]]`: opens the objectives menu at that time (the game's
+  clock), for that long (2 s by default, in real time, or the capture's steps under `BF_CAPTURE`:
+  the game's clock stands still meanwhile). With a key (`space`, `enter` or `i`), that key's press
+  closes it, put into the frame's input as a player's would be; the press must not reach the game.
 
 ```sh
 # the tutorial's start: the squad slots and the member flags (take03's 1|0|0|0)
