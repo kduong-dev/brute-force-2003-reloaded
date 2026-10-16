@@ -6,7 +6,8 @@ has 500 (58 routers, 54 timers, 47 spawn-triggers, 27 plates, 14 proximity detec
 is the runtime that runs them, the first step of the tutorial (#28, plan step 1); the later
 steps plug their classes into it (gamevar and score since step 2, #221, with the game flags and
 the cash they work on: [campaign.md](campaign.md); script, letterbox and warp: step 3, #222;
-sound and dialog: step 4, #223; message, input, menu and event: step 5, #224). Everything here is read from
+sound and dialog since step 4, #223, with the voices and the level's music they play; message,
+input, menu and event: step 5, #224). Everything here is read from
 default.xbe's trigger code (the addresses are in the code's comments and in
 [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
 
@@ -53,16 +54,18 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | spawn-trigger (47) | See "Spawn-triggers" | 0x209ac0, 0x209bd0 |
 | plate-detector (27), proximity-detector (14) | See "Detectors" | FUN_001f9680, FUN_001f8db0 |
 | anim-trigger (7) | OPERATE plays its entry's clip (`animation-archetype`) on its first object, forward or backward (`wwit-debugging`, AM_: 3-5 backward) at its `time-scale`; with AC_PLAY or AC_RESUME it sends ANIM_START when it starts forward after playing backward (its first forward play too), ANIM_BACK_START when it starts backward after playing forward (or ANIM_START for the other modes). The demo moves doors and gates with it ([maps.md](maps.md), "Doors and gates"); other animated objects (the tutorial's two looping props) are logged | 0x204d00, FUN_00204bb0 |
+| sound (73) | PLAY_SOUND plays its sound (alike everywhere, or at its place), PLAY_DIALOG queues it on the world's dialog queue, STOP / PAUSE / RESUME; FINISHED when its length has run (#223: see "Sound- and dialog-triggers") | 0x206450, 0x206690 |
+| dialog (4) | Its character says its line; FINISHED once it's said (#223) | 0x206d20, 0x206ee0 |
 | destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31), evaluate (6) | Their base actions only: a waypoint trigger marks AI route points; the evaluate-triggers' random tests pick ambient lines (both no-ops here) | |
 | gamevar (15) | See "Gamevar-triggers" | 0x1ffc40, FUN_001ffb80 |
 | score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
 
-Every other class (script, letterbox, warp, sound, dialog, menu, message h_e9b3ae8e, input
-h_e2b9c3a2, event, radar, level-over h_1f07be84, property h_14cccfaa, the damage plate
-h_130818c0) runs its base actions; each of its own actions is counted as used, as its handler
-counts it, and logged with the step that runs it ("trigger_sound439 (sound) PLAY_SOUND on
-FIRST_UPDATE: not run yet (step 4, #223)").
+Every other class (script, letterbox, warp, menu, message h_e9b3ae8e, input h_e2b9c3a2, event,
+radar, level-over h_1f07be84, property h_14cccfaa, the damage plate h_130818c0) runs its base
+actions; each of its own actions is counted as used, as its handler counts it, and logged with
+the step that runs it ("h_11313ffd (menu) OPERATE on USER_SIGNAL2: not run yet (step 5,
+#224)").
 
 ## Gamevar-triggers
 
@@ -209,6 +212,94 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   ENTER_DETECTOR at t 0.07 instead of after the farcast. That holds until step 3 (#222) plays the
   opening and fires the spawn.
 
+## Sound- and dialog-triggers
+
+#223, `play_sound_triggers.rs` (a child of play_triggers.rs: its classes are the runtime's).
+From the code: the sound-trigger's vtable 0x395d50 (its parser 0x205d00, handler 0x206450,
+update 0x206690, disable FUN_00206610 and the helpers FUN_00205fb0-FUN_00206b50), the
+dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog queue
+(world+0x208: FUN_00179d60, FUN_00179ec0, FUN_0017a0f0, FUN_0017a130) and the sound system
+(DAT_00469940, vtable 0x399c40).
+
+* **Attributes** (0x205d00; the constructor 0x1fce50's defaults): `sound-object` the sound
+  library entry; `enable-looping`; `Type` 0 (heard alike everywhere), 1 (at its place, 3D), 2-5
+  (below); `max-distance` and h_0269d394 its max and min distance (-1: the library entry's
+  `h_fd40e332` and `falloff`); `volume` (h_eff0deab, 0-100; -1: the entry's own h_eff0deab, 0-1,
+  or 1 without one); h_1f625953 / h_05cad875 its voice's fade-in / fade-out (s); h_15bc1769
+  "only near a player"; h_e725a1a5 the squad's chatter hushed while it plays (not modelled);
+  `HARDPOINT` and `priority` (h_e146dc86) aren't read by these paths.
+* **A sound's length** is the sound system's (its vtable +0x64, 0x17f620): the file's size over
+  its format's bytes a second (FUN_00183c30: Xbox ADPCM counts 36 bytes a channel for each whole
+  64 of the rate). The sound bank's own `time` attribute agrees (terminal_03: 12852 / 12384 =
+  1.0378 s, `time="1.037791"`).
+* **PLAY_SOUND, OPERATE**: it's on. Without h_15bc1769 it starts at once (FUN_002062a0): a
+  one-shot still playing isn't restarted, a looping one playing goes on; otherwise its time is
+  its sound's length and its voice starts (FUN_002060c0), 2D for Type 0 and for any sound whose
+  library entry's `falloff` is -1 (FUN_0017c170 makes a 3D voice only otherwise), else at its
+  first object's place (a spawn-trigger's copy, a placed object) or its own, under DirectSound's
+  distance law (FUN_0017eb90's buffer, rolloff 1): full within the min distance, min / d beyond
+  it, no quieter past the max.
+* **With h_15bc1769** its update starts it once the player's character is within its max
+  distance and stops it, fading out, once none is (FUN_00206b50); a one-shot that has played is
+  off.
+* **The end**: its update counts the time down by dt while it runs; when it's out (a one-shot)
+  FINISHED (25: its iD, no subject, data -1) goes to its targets, for Types 0 and 1
+  (FUN_001fcf00), and it's off and stopped. The count starts in the frame it plays, so FINISHED
+  comes on the frame the length has run since that frame's start.
+* **STOP_SOUND, STOP, STOP_DIALOG**: stopped and off; the voice fades out over its fade-out.
+  **PAUSE_SOUND / RESUME_SOUND** pause and resume the voice and the count (no tutorial trigger
+  has them).
+* **PLAY_DIALOG** queues its sound, once, on the world's dialog queue, which plays one line at a
+  time, each for its length, 2D at its library volume, the next as soon as one has ended
+  (FUN_00179ec0, the world update's last step); FINISHED once its line is done (FUN_0017a0f0),
+  on the next frame's update.
+* **DISABLE** is its own (its vtable +0x48, FUN_00206610): the voice plays out, but its count
+  and queued line are dropped, so no FINISHED comes; its update, which the world runs only while
+  +0x3d bit 6 is set, stops once the voice has ended. Its update sends its FIRST_UPDATE even when
+  it's disabled (0x2066a4).
+* **Types 2-5** run the same logic (their level ramping at 4 a second, FUN_00206a20) and send no
+  FINISHED. Their level follows flags of the sound system's listeners (+0xc8, also read for a
+  voice's filter by 0x17f390) that aren't traced, so their voices aren't played: none in the
+  tutorial; sdm_e34's wind bed h_fa8c83e7 is a Type 2 (39 of the game's 1417 sound-triggers).
+* **The dialog-trigger**: PLAY_DIALOG or OPERATE on its first object's character (the tutorial's
+  four name trigger_spawn8, whose copy tex_1 is the demo's Tex, and trigger_spawn76): a dead one
+  sends FINISHED at once; a living one says the line (FUN_001267b0) and the update sends
+  FINISHED once it's said (FUN_00126810). Here the line plays as a plain sound at the character
+  (full for the player's, quieter with distance for another's, as the demo's character sounds
+  are). With no such character in the world an entry does nothing, not even counted.
+* **Music**: a level's music bank's tracks are its sound-triggers' sounds (resource-type 2), played
+  through the music volume and marked as the level's music ([maps.md](maps.md), "Music").
+* **The tutorial's** (73 sound-triggers, 4 dialog-triggers):
+  * the gate: either panel's USE_OBJECT plays terminal_03 (h_144f3dbb, 1.04 s) at the panel; its
+    FINISHED opens the gate's two leaves (anim0, anim1: 2.0 s at time-scale 2.5) and plays
+    metal_gate_05 (h_12c4f1ee, 2.53 s) at each leaf; the second's FINISHED starts the gate music
+    (tutorial_02, a 3 s fade-in) and its 238 s stop timer (timer530);
+  * the opening: Bratton's four lines on the script's USER1s (step 3, #222, sends them):
+    baseisguarded (1.97 s) at 3.02 s, envhazards (4.59 s) at 6.18, goingtoguide (6.11 s) at 11.22,
+    refresher (6.75 s) at 19.55, whose FINISHED starts timer429 (0.1 s: the co-op hint) and
+    timer462 (5 s: BASIC CONTROLS; both step 5, #224);
+  * the hint chain's lines (dxud_ai_00047 "[BACK] to check mission objectives." ...) on its
+    timers, stopped and disabled by router400's plates; Bratton's PLAY_DIALOG lines (the radar
+    explanation, whose FINISHED opens the WEAPONS panel; first patrol, take cover ...) through the
+    queue;
+  * at the first update the start music tutorial_01 (stopped by timer525 at 168 s, a 3 s
+    fade-out), the beds amb_estu_01 and light_bird_bed_1 (within 60 m of the start), and the
+    lava's loops and bursts (3D, 30 to 40 m); the mine field's caspian_tut_mellow1 (72 s) and the
+    base's caspian_victory1;
+  * the save points' "chime" is the AI's voice line dxud_ai_00008 (h_f674fc4f), 2D.
+
+Test hooks: `BF_TRIGGER_LOG=1` lists every sound- and dialog-trigger at the start (its sound and
+length, how it plays) and logs what each does (plays, stops, queues, has played, says);
+`BF_SOUND_LOG=1` logs each of their voices as it starts and stops (its volume now and in full,
+where, its distances); `BF_MUTE=1` runs them without a voice; `BF_TRIGGER_FIRE` fires them.
+
+```sh
+# the tutorial's gate: the panel's sound, then the gate and its grind, then the gate music
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100 BF_TEST_USE=0.5 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# the opening's four lines at the script's times (until step 3 plays the script)
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 BF_TRIGGER_FIRE="trigger_sound_bratton_baseisguarded,USER1,3.02;trigger_sound_bratton_envhazards,USER1,6.176;trigger_sound_bratton_goingtoguide,USER1,11.217;trigger_sound_bratton_refresher,USER1,19.551" cargo run --bin bf_play
+```
+
 ## Object events
 
 * **DESTROYED**: a character with a trigger name dies (a spawn copy: its spawn-trigger's
@@ -275,9 +366,15 @@ the log read and the frames looked at:
   anim15 opens h_0f544611 27 m away (once: then it disables itself, h_137926ff) and spawns
   terrorist 17 inside at (38.3, 15.5, -88.8), on the floor, leads §7.6.
 * **The tutorial's gate panel** (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100
-  BF_TEST_USE=0.5`): USE_OBJECT -> router349 -> the panel's sound-trigger h_0309a1b9 (step 4:
-  its FINISHED opens the gate's two leaves, so the gate waits for it), router252 disables
-  Bratton's "use the panel" line, router6 -> the panels' property triggers.
+  BF_TEST_USE=0.5`): USE_OBJECT -> router349 -> the panel's sound-trigger h_0309a1b9, router252
+  disables Bratton's "use the panel" line, router6 -> the panels' property triggers. Since #223
+  (`BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_DOOR_LOG=1`, 15 fps): terminal_03 plays at 1.07 s at the
+  panel (5.3 m away); its FINISHED at 2.07 s opens both leaves (x2.5, open at 4.00 s) and plays
+  metal_gate_05 at each leaf; the second's FINISHED at 4.53 s starts the gate music (fading in
+  over 3 s) and timer530 (238 s). The frames show the gate shut while the panel sound plays
+  (frames 16-30) and rising from frame 31-33. take11 has the same chain: the panel sound's onset
+  at 718.60 s, the grind's 1.05 s later as the gate starts to rise (between 719.75 and 720.0 at
+  4 fps), the music from ~722.5 s rising over ~3 s (its audio envelope).
 * **sdm_e34 (regression)**: walking through door h_10616962 along its axis
   (`BF_TEST_GOTO=-76.26,-2.04,-62.34,5.64`): plate h_f214c88d -> router h_e09f6796 -> anim
   h_f12ff6e9: ENTER_DETECTOR_FIRST opens it, EMPTIED_DETECTOR closes it 0.2 s after Tex is off the
@@ -301,11 +398,41 @@ the log read and the frames looked at:
 * **Destroyers**: m09_a's trigger_destroyer556 (`BF_TRIGGER_FIRE=h_039f8930,USER1,2`) removes
   trigger_spawn2's Shrike; no level's destroyer lists a squad member, so the guard against
   removing one isn't exercised by the data.
+* **Sound- and dialog-triggers (#223)**, `BF_MUTE=1` with `BF_TRIGGER_LOG=1 BF_SOUND_LOG=1`
+  unless said:
+  * the tutorial's opening lines, fired at the script's times (the `BF_TRIGGER_FIRE` above, 10
+    fps): baseisguarded 3.10-5.00 s, envhazards 6.20-10.70, goingtoguide 11.30-17.40, refresher
+    19.60-26.30, whose FINISHED starts timer429 and timer462, which sends BASIC CONTROLS its USER2
+    at 31.30 (step 5). take03 matches: the lines' onsets (cross-correlated with their waves) 0.07
+    to 0.16 s after the script's times, as its pictures lag (the camera cuts 0.1-0.15 s), and the
+    co-op hint (FINISHED + 0.1 s) on screen by clk 26.46-26.56 s;
+  * at the first update (frame 0) the start music, amb_estu_01 and the east lava loop play, the
+    bird bed waits for a player within 60 m;
+  * `BF_TRIGGER_FIRE` on the cues: h_0378b249's TIMER_PULSE stops tutorial_01 fading over 3 s;
+    h_17ebe01b plays caspian_tut_mellow1 once (a second ENTER does nothing: its entry is once)
+    and its TIMER_PULSE stops it over 3 s; h_04a4176a's sting plays and its USER1 stops it over
+    0.5 s;
+  * the dialog queue: the radar explanation (ticket 0, 6.96 s) plays at once, first patrol
+    (ticket 1, queued at 1.53 s) at 8.00 when it has ended; their FINISHEDs at 8.07 (to the
+    WEAPONS panel's menu-trigger) and 10.60, the frame after each ends;
+  * trigger_dialog_tex_yeahyeah: tex_1 (the demo's Tex) says dxmi_tex_m00003 at 1.00 s, FINISHED
+    at 4.07; trigger_sound422 disabled while its burst plays: no FINISHED; h_e82b011b's ENTER
+    stops its line and disables it;
+  * h_15bc1769: walking north from (40.5, 0) the bird bed starts at 59.3 m from it; walking back
+    south it stops at 60.2 m;
+  * sdm_e34 (regression): the doors' sounds come from their sound-triggers (on at the
+    anim-trigger's ANIM_START / ANIM_BACK_START, playing once Tex is within their 7 m: door
+    h_196659f4's opening one at 0.33 s, its closing one at 1.47), the gate's metal_door_5 at the
+    panel's use; the doors and the gate move as before; its music caspian_action20 from its
+    FIRST_UPDATE trigger; its Type 2 wind bed not played. e40 and m09_a: their music from their
+    triggers (e40's h_0378b249, m09_a's trigger_sound_music41), no fault;
+  * unmuted (`BF_MUSIC_VOLUME=0.2 BF_AUDIO_LOG=1`, the gate run, ~6 s): five voices playing
+    (sinks) by 2 s, the three music-bank tracks decoded, the 3D gains as logged (the east lava
+    loop at its floor 30 / 40 = 0.75 at 56 m, a west burst 0.89 at 33.5 m).
 
 ## Not done here, or not known
 
-* The classes left to steps 3-9 (#222-#228, above). The tutorial's gate opens on its panel sound's
-  FINISHED: with step 4.
+* The classes left to steps 3 and 5-9 (#222, #224-#228, above).
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
 * The squad is in the world from the start, so the start area's detectors fire before the
@@ -329,3 +456,29 @@ the log read and the frames looked at:
   are read as forward or backward.
 * The start points' facing (+z, arena.rs) hasn't been checked against footage; spawn-triggers
   face -z (above).
+* Sound-triggers (#223):
+  * Until step 3 (#222) plays the opening script, its USER2s to router443 (6.58 s) and router441
+    (11.03 s), which silence the lava pits after the opening's lava shot, don't come: the west
+    pit's bursts (every 4 / 6 s) and the east pit's loop play on from the start, heard far off
+    (DirectSound keeps a sound at min / max past its max distance: 30 / 40, 75%, for the
+    lava's). `BF_TRIGGER_FIRE="trigger_router443,USER2,6.575;trigger_router441,USER2,11.025"`
+    sends them.
+  * The squad's chatter isn't hushed by an h_e725a1a5 line (FUN_00141100 / FUN_00141180 on the
+    chatter manager world+0xbe8: while its list isn't empty no chatter is said, and the first
+    line stops the chatter playing at priority 10 or under).
+  * Types 2-5's voices aren't played (above). A dialog-trigger's line is a plain sound, not the
+    character's voice (its priority 10 over chatter, its mouth); Bratton's lines have no radio
+    filter.
+  * 3D voices are a volume only (the demo's sounds have no left and right), the listener the
+    camera. h_15bc1769 measures from the player character's feet (which point the game's 0x8d660
+    takes isn't traced).
+  * The fades are linear (a guess at their shape); a stop's flag 0 (FUN_002063c0) is read as
+    "with the fade-out" from take04, where the start music fades over its 3 s as timer525 runs
+    out.
+  * The demo's ADPCM decoder makes 65 samples of a 36-byte block, where the game reckons 64 for a
+    sound's length: a voice runs ~1.5% past its FINISHED and is left to run out, not cut.
+  * The takes' timers run ~3-4% fast against their watch logs' app clock: timer525's 168 s stop
+    of the start music fades from clk ~163.2 s in take04, timer462's 5 s after the refresher
+    opens BASIC CONTROLS at clk 31.08-31.10 s (take03 / take04) where the code says 31.30, while
+    the script's and the sounds' times match the clock (Tex's spawn at 17.09, the co-op hint at
+    FINISHED + 0.1 s). Presumably the watcher's pauses; compare durations with that in mind.
