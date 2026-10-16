@@ -27,6 +27,7 @@ and how it was checked):
 | [docs/testtools.md](docs/testtools.md) | the test map's developer tools: free camera and teleport, NPCs (friend / enemy, dummy / fight), placing objects (on the ground or in the air), any level's buildings and static scenery (drawn and solid as in their levels), skies, music, switching levels |
 | [docs/editor.md](docs/editor.md) | the map editor (#190): its edit mode out of the gunplay (`--edit`, F5), the edit camera and controls, play from here and back, what carries over, the tool registry and the list of placed things the later editing tickets build on |
 | [docs/menu.md](docs/menu.md) | the front end: title, menus, mission select, movies |
+| [docs/briefing.md](docs/briefing.md) | a mission's briefing movies (#225): the zones' movie lists, the subtitles' timing, typing, layout, font and markup, skipping, the entry point for the mission flow, converting the movies; `BF_MOVIES` |
 | [docs/levels.md](docs/levels.md) | `bf_level` and how levels are drawn: terrain, materials, liquids, lights, sky, each map's quirks |
 | [docs/character-viewer.md](docs/character-viewer.md) | `bf_viewer`: the format readers, its keys and shading notes |
 | [docs/xemu.md](docs/xemu.md) | the original game in xemu: what the trainer and takes rely on in `default.xbe` |
