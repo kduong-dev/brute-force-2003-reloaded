@@ -103,7 +103,8 @@ worktree), beside the `Brute Force` folder.
 
 * `BF_MOVIES=<mission>[,<zone>[,post]]`: plays that zone's list straight after the boot (zone 0's
   pre-movies unless told), then the title; with `BF_CAPTURE`, quits after the list. It wins over
-  `BF_MAP` and the other hooks that start a map.
+  `BF_MAP` and the other hooks that start a map, but not over `--test` or `--edit`: the test map
+  or the editor starts as before and the list doesn't play.
 * `BF_MOVIES_AT=<s>`: starts the list s seconds in (the movies before that point left out, the
   sound from there).
 * `BF_MOVIES_SKIP=<s>[,<s>..]`: presses skip at those times on the list's clock.
@@ -114,13 +115,21 @@ worktree), beside the `Brute Force` folder.
 
 ## Not done
 
-* The "Saving Campaign..." card the game shows before the first movie of a new campaign (#27), and
-  the short black gaps between movies (0.35 s and 0.7 s in take01, 0.1 s after a skip in take02;
-  the next file opening, a guess): the next movie starts at once.
+* The "Saving Campaign..." card the game shows before the first movie of a new campaign (#27).
+* The short black gaps between movies: 0.35 s from Campaign_Intro to Tex_Intro_Final and 0.69 s
+  to mb01 in take01, about 0.1 s after a skip in take02. The code has no wait there: the movie
+  player closes a movie a frame after its last (0x1784e0), the movie item then asks for the next
+  (0x1024f0) and FUN_00178730, 0x1783e0 and FUN_001781c0 open it at once. What makes the gap
+  longer at a movie's end than after a skip isn't traced (the file's opening, the Bink sound's
+  end: guesses). The demo's next movie starts at once.
 * The blink's phase: the game's clock is the app's (FUN_000cd4c0), the demo's the list's; the rate
   and the half-on, half-off match.
 * The CAMPAIGN entry, the LOADING screen and the zone after the list, and the next mission's list
-  after the end screen: the mission flow (#226) calls `start`.
+  after the end screen: the mission flow (#226) calls `start`. Untested, a risk for it: `open`
+  spawns its own `Camera2d` and only the boot's and the menu's parts go as the briefing opens.
+  Called from a map (`AppState::Playing`, e.g. after the end screen), it relies on that state's
+  teardown (`end_play`, on leaving it) to remove the game's camera and HUD; anything left would
+  draw over or under the movie.
 * Post-movies (MB17, EndGame, credits, epilogue) play through the same path with their box at
   (60, 60), unchecked against footage.
 

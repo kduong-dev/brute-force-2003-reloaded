@@ -376,7 +376,7 @@ fn show_frame(p: &mut Playing, reel: &Reel, images: &mut Assets<Image>) {
 }
 
 /// A WAV's sound from `seconds` in: its header kept, the data chunk cut (the converted movies'
-/// sound is plain PCM).
+/// sound is plain PCM). A data chunk that claims more than the file holds is cut to what's there.
 fn wav_from(bytes: &[u8], seconds: f32) -> Vec<u8> {
     let u16_at = |i: usize| bytes.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize);
     let u32_at = |i: usize| bytes.get(i..i + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
@@ -386,15 +386,16 @@ fn wav_from(bytes: &[u8], seconds: f32) -> Vec<u8> {
             rate = u32_at(i + 12).unwrap_or(0);
             frame = u16_at(i + 20).unwrap_or(0);
         } else if id == b"data" && frame > 0 {
-            let cut = ((seconds * rate as f32) as usize * frame).min(size);
+            let end = (i + 8).saturating_add(size).min(bytes.len());
+            let start = (i + 8).saturating_add((seconds * rate as f32) as usize * frame).min(end);
             let mut out = bytes[..i + 8].to_vec();
-            out[i + 4..i + 8].copy_from_slice(&((size - cut) as u32).to_le_bytes());
-            out.extend_from_slice(&bytes[i + 8 + cut..(i + 8 + size).min(bytes.len())]);
+            out[i + 4..i + 8].copy_from_slice(&((end - start) as u32).to_le_bytes());
+            out.extend_from_slice(&bytes[start..end]);
             let riff = (out.len() - 8) as u32;
             out[4..8].copy_from_slice(&riff.to_le_bytes());
             return out;
         }
-        i += 8 + size + (size & 1);
+        i = i.saturating_add(8 + size + (size & 1));
     }
     bytes.to_vec()
 }
@@ -793,5 +794,11 @@ mod tests {
         assert_eq!(&cut[8..40], &w[8..40]);
         assert_eq!(u32::from_le_bytes([cut[40], cut[41], cut[42], cut[43]]), 200);
         assert_eq!(cut[44], 200);
+        // a data chunk claiming more than the file holds: cut to what's there, no panic
+        let short = &w[..44 + 100];
+        let cut = wav_from(short, 0.5);
+        assert_eq!(cut.len(), 44);
+        assert_eq!(u32::from_le_bytes([cut[40], cut[41], cut[42], cut[43]]), 0);
+        assert_eq!(wav_from(short, 0.1).len(), 44 + 60);
     }
 }

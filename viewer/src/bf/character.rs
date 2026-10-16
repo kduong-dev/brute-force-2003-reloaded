@@ -616,9 +616,10 @@ pub struct CampaignLevel {
     pub kind: u32,
     /// recommended players (dm-data h_0398b8bf min, max; 0 0 on the squad deathmatch maps)
     pub players: (i64, i64),
-    /// the level's id (`<level h_046391fd>`, read by the level parser FUN_001a4000): a mission's
-    /// name in the game flags, `h("m00")` for the tutorial and `h("m01")` for Rescue Brutus,
-    /// `h("e01")` for Cemetery Gates (the names recovered by hashing)
+    /// the level's id (`<level h_046391fd>`: the level parser FUN_001a4000 makes its holder,
+    /// FUN_001a3eb0 stores it): a mission's name in the game flags, `h("m00")` for the tutorial
+    /// and `h("m01")` for Rescue Brutus, `h("e01")` for Cemetery Gates (the names recovered by
+    /// hashing)
     pub id: u32,
     /// each zone's movie lists, in `zones` order (the zone parser FUN_001a3d40)
     pub movies: Vec<ZoneMovies>,
