@@ -28,6 +28,7 @@
 //!   Backspace   back to the map menu (in the same window)
 //!   1-4         Brutus / Flint / Hawk / Tex
 //!   V           the special skill on / off (the game's White button; play_skills.rs)
+//!   I           in a mission, the objectives menu (the game's BACK; play_objectives.rs)
 //!
 //! Movement is root motion: each frame the character moves by exactly what the playing clip's
 //! root channel moves. Clips are looked up by their real names (animation names are hashes of
@@ -569,6 +570,8 @@ fn main() {
         .add_plugins(enemies::plugin)
         .add_plugins(vengar::plugin)
         .add_plugins(stealth::plugin)
+        .add_plugins(flags::plugin)
+        .add_plugins(objectives::plugin)
         .add_plugins(triggers::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
@@ -646,6 +649,10 @@ mod vengar;
 mod stealth;
 #[path = "play_triggers.rs"]
 mod triggers;
+#[path = "play_flags.rs"]
+mod flags;
+#[path = "play_objectives.rs"]
+mod objectives;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -3210,6 +3217,15 @@ fn read_input(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut player: ResMut<Player>,
 ) {
+    // under a menu (the game's clock stopped, `paused`) the controls go to the menu: nothing held
+    // or pressed reaches the character
+    if paused() {
+        player.move_input = Vec2::ZERO;
+        (player.sprint, player.walk, player.jump_pressed, player.dodge_pressed, player.fire) = (false, false, false, false, false);
+        (player.switch_pressed, player.reload_pressed, player.use_held, player.throw_held, player.item_use) = (false, false, false, false, false);
+        player.next_surface = false;
+        return;
+    }
     // 1-4: hand control to that squad member (after their name shows, see squad_control); not
     // while dead: the death camera hands over when it ends (whether the game lets you cut it
     // short isn't recorded: a guess)
@@ -5598,7 +5614,26 @@ fn capture_step() -> f32 {
     1.0 / std::env::var("BF_CAPTURE_FPS").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(15.0).max(1.0)
 }
 
+/// The game's clock stopped under a menu: the objectives menu (play_objectives.rs). The game's
+/// app clock [[0x469b54]+0x38] stops while one is open (take04's watch log: clk 60275 from the
+/// press at 62.6 s to the B at 74.5 s). `frame_dt` is 0 meanwhile, so nothing in the world moves
+/// (the characters, the triggers' timers, the effects' clock), and `read_input` takes no input.
+static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Stops or restarts the game's clock (see PAUSED).
+fn set_paused(on: bool) {
+    PAUSED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the game's clock is stopped (see PAUSED).
+fn paused() -> bool {
+    PAUSED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn frame_dt(time: &Time) -> f32 {
+    if paused() {
+        return 0.0;
+    }
     if std::env::var("BF_CAPTURE").is_ok() {
         if WARMUP.load(std::sync::atomic::Ordering::Relaxed) > 0 { 0.0 } else { capture_step() }
     } else {

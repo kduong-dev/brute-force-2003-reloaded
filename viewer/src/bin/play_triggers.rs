@@ -31,10 +31,18 @@
 //!  * spawn-trigger (0x209ac0, 0x209bd0, FUN_002099e0): OPERATE spawns its template at its own
 //!    transform (after h_eab6952f s if set) while armed; it's armed once, SPAWN_RESET re-arms a
 //!    re-armable one (h_0f95f576). A character copy stands on the ground under the transform
-//!    (the position setter's ray, `on_ground`). A squad-type character's copy whose member flag
-//!    is off is taken away at once (FUN_00209900, `Triggers::member_kept`). The copy sends
-//!    SPAWNED to its listeners, the trigger OPERATED to its targets; the triggers that list the
-//!    spawn-trigger listen to its copies.
+//!    (the position setter's ray, `on_ground`). A squad-type character's copy the session
+//!    doesn't count in the squad is taken away at once (FUN_00209900, `Triggers::member_kept`,
+//!    reading the save-game slots of play_flags.rs). The copy sends SPAWNED to its listeners,
+//!    the trigger OPERATED to its targets; the triggers that list the spawn-trigger listen to its
+//!    copies.
+//!  * gamevar-trigger (0x1ffc40, #221): OPERATE works out its operation (h_015914ab: ==, <, <=,
+//!    >, >=, A, the out flag's default, +, -, x, /) of its operands (a game flag, a constant,
+//!    random, the event's data) and writes it to its out operand (a game flag: play_flags.rs's
+//!    `Campaign`), sending VALUE_CHANGED when that changed it, then TRUE (the result not 0) or
+//!    FALSE. The tutorial's set the objectives' `state` and test the squad's member flags.
+//!  * score-trigger (0x20ba00, #221): OPERATE adds its amount to the campaign squad's cash, x
+//!    1 + 0.1 x the difficulty (h_11819686).
 //!  * plate- and proximity-detector (FUN_001f9680, FUN_001f8db0): the characters its filter
 //!    admits (FUN_001fb980) in its volume; one inside 0.1 s sends ENTER_DETECTOR (and
 //!    ENTER_DETECTOR_FIRST if none was), one out of it 0.2 s EXIT_DETECTOR, the last gone
@@ -47,9 +55,9 @@
 //!  * destroyer (0x200d70, 0x200e40): OPERATE marks it, and its update removes its objects (a
 //!    spawn-trigger's copy for a spawn-trigger), then it disables itself. The update runs the
 //!    base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update.
-//!  * every other class (gamevar, script, letterbox, warp, sound, dialog, menu, message, input,
-//!    event, radar, level-over ...): its base actions; its own actions are logged as left to
-//!    their step (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
+//!  * every other class (script, letterbox, warp, sound, dialog, menu, message, input, event,
+//!    radar, level-over ...): its base actions; its own actions are logged as left to their step
+//!    (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
 //! copy's), a named breakable object broken (DESTROYED), a wall panel used (USE_OBJECT, play.rs
@@ -71,19 +79,20 @@ use std::collections::{HashMap, HashSet};
 use bf_viewer::bf::character::{Game, OBJECT_EFFECT};
 use bf_viewer::bf::hash::h;
 use bf_viewer::bf::level::Level;
-use bf_viewer::bf::triggers::{self as data, act, sig, Class, Filter, Trigger, Volume};
+use bf_viewer::bf::triggers::{self as data, act, op, operand, sig, Class, Filter, Operand, Trigger, Volume};
 use bf_viewer::level_scene::Placed;
 
+use super::flags::Campaign;
 use super::*;
 
 /// The triggers' state and the world's events for them, set up when a map starts (after
-/// play.rs `setup` has placed the level); their frame after the squad has moved (the
-/// detectors see where it is now) and before the doors move (an anim-trigger's clip starts in
-/// its frame).
+/// play.rs `setup` has placed the level, and the campaign's state its squad: play_flags.rs);
+/// their frame after the squad has moved (the detectors see where it is now) and before the
+/// doors move (an anim-trigger's clip starts in its frame).
 pub fn plugin(app: &mut App) {
     app.init_resource::<TriggerEvents>()
         .init_resource::<Triggers>()
-        .add_systems(OnEnter(AppState::Playing), start.after(setup))
+        .add_systems(OnEnter(AppState::Playing), start.after(setup).after(flags::begin_level))
         .add_systems(Update, run.after(squad_control).before(doors).run_if(in_state(AppState::Playing)));
 }
 
@@ -291,6 +300,11 @@ enum ClassState {
     Anim { backward: bool },
     /// +0x4c: OPERATE asked, done by its update (0x200e40)
     Destroyer { pending: bool },
+    /// +0x50 the operation, the operands out, A, B (+0x40 + 4i, +0x4c + i): `out`'s constant is
+    /// live (a CONSTANT out keeps the last result)
+    Gamevar { op: i64, operands: [Operand; 3] },
+    /// +0x40 the amount, +0x44 the key, +0x48 bit 2 keyed, bit 1 scaled
+    Score { amount: f32, key: u32, keyed: bool, scaled: bool },
 }
 
 /// Which class a trigger runs as (for `update` and `deliver`).
@@ -304,6 +318,8 @@ enum Kind {
     Detector,
     Anim,
     Destroyer,
+    Gamevar,
+    Score,
 }
 
 /// A trigger as the game keeps it: its data (the entries' use counts are live) and +0x3d's bits:
@@ -359,6 +375,16 @@ const MADE_UP_COPY: u32 = 0x7E00_0000;
 /// The first of the names the runtime makes up for characters no trigger named, so the
 /// detectors can tell them apart (see `actors`): + the squad slot, or + 100 + the NPC number.
 const MADE_UP_UNIT: u32 = 0x7F00_0000;
+/// A gamevar-trigger's == : |A - B| under this (0x3a4fd8, compared at 0x1ffd44).
+const GAMEVAR_EQUAL: f32 = 1e-5;
+/// A gamevar-trigger's result under this (absolute) sends FALSE, else TRUE (0x3a4fb8, 0x1fff8f).
+const GAMEVAR_ZERO: f32 = 1e-6;
+/// The random numbers' generator (FUN_00233b90): seed x 0x19660d + 0x3c6ef35f, its top 23 bits a
+/// mantissa in [1, 2), less 1. Its seed (DAT_0046cfd8) as the demo starts it: a guess (the
+/// game's isn't traced).
+const RANDOM_MUL: u32 = 0x0019_660D;
+const RANDOM_ADD: u32 = 0x3C6E_F35F;
+const RANDOM_SEED: u32 = 0x2210_0221;
 /// The numbers of the NPCs the triggers spawn (`testtools::Npc::id`), clear of the test tools'
 /// own (counted from 1), and small enough for the shots' seed (play.rs `step_player`: id x
 /// 104729 in a u32, under 41000).
@@ -418,16 +444,20 @@ pub struct Triggers {
     /// a mission, not a multiplayer map: the session's level kind 0x17506391, which
     /// FUN_00209900's member check needs
     mission: bool,
-    /// the squad member flags: the character types whose `<type>/h_03761692` game flag is true
-    /// (default-gameflags.xml's top-level `<tex>`, `<hawk>`, ..., the tutorial's three marine
-    /// types h_ef8787e4, h_f48ed65e, h_fd89e6c8; all false by default). The session's member
-    /// check (vtable +0xb8, 0x83ee0) reads them and its +0xbc (0x814b0) sets them. The game
-    /// flags themselves are step 2's (#221): until then the demo starts with its own squad's
-    /// types set (`SquadSpawns`, as a campaign that got to the level has them), the rest off
-    member_flags: HashSet<u32>,
     /// the controlled character's type (the player slots' check in 0x83ee0: a member a player
-    /// controls is kept whatever its flag)
+    /// controls is kept whatever its slot says)
     player_kind: u32,
+    /// the campaign's state (play_flags.rs: the game flags, the squad slots, the cash), held here
+    /// while `run` runs the triggers (the gamevar and score triggers and the member check use it)
+    /// and handed back after; an empty one between frames
+    campaign: Campaign,
+    /// each spawn template's count (the placement's +0x24 short, FUN_000dfe90): one per
+    /// spawn-trigger that names it, -1 once a re-armable one does; a spawn (FUN_000dfd90) clones
+    /// the template while the count, less one, isn't 0 (or it's -1), else takes the template
+    /// itself. Only the member flags tell the two apart here (a clone's set-up sets its flag)
+    template_uses: HashMap<u32, i32>,
+    /// the random numbers' seed (FUN_00233b90's DAT_0046cfd8): the gamevar's random operands
+    seed: u32,
 }
 
 /// A map starts: its triggers as the level file has them, the listeners linked (FUN_001febb0),
@@ -440,9 +470,7 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
     };
     let log = std::env::var("BF_TRIGGER_LOG").is_ok();
     let squad_spawns = spawns.as_deref().map_or(&[][..], |s| &s.0[..]);
-    let mut tr = Triggers { log, mission: !damage::multiplayer_map(&game.0, &current.0), ..Default::default() };
-    // (the demo's squad is the campaign's at this level: its members' flags on, step 2 aside)
-    tr.member_flags = squad_spawns.iter().map(|s| squad_type(s.slot)).collect();
+    let mut tr = Triggers { log, mission: !damage::multiplayer_map(&game.0, &current.0), seed: RANDOM_SEED, ..Default::default() };
     // a template that's a squad-type character the demo doesn't have in its squad: the member
     // FUN_00209900 checks
     let member_of = |template: u32| {
@@ -463,8 +491,18 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
                                                                                                 occupants: vec![] },
             Class::Anim => ClassState::Anim { backward: true },
             Class::Destroyer => ClassState::Destroyer { pending: false },
+            Class::Gamevar { op, operands } => ClassState::Gamevar { op: *op, operands: operands.clone() },
+            Class::Score { amount, key, keyed, scaled, .. } => ClassState::Score { amount: *amount, key: *key, keyed: *keyed, scaled: *scaled },
             Class::Other => ClassState::Other,
         };
+        // FUN_000dfe90 as the spawn-trigger links: its template counted once more, or -1 for
+        // good from a re-armable one
+        if let Class::Spawn { template, rearm, .. } = &t.class {
+            let uses = tr.template_uses.entry(*template).or_insert(0);
+            if *uses != -1 {
+                *uses = if *rearm { -1 } else { *uses + 1 };
+            }
+        }
         if t.name != 0 {
             tr.by_name.entry(t.name).or_insert(tr.live.len());
         }
@@ -511,12 +549,8 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             println!("squad spawn: {} as {} {from} at {:.2} (on the ground) facing {:.0} deg, weapons {weapons}", CHARACTERS[s.slot], tr.label(s.copy), s.feet,
                      s.yaw.to_degrees());
         }
-        let mut flags: Vec<String> = tr.member_flags.iter().map(|&k| tr.label(k)).collect();
-        flags.sort();
-        if tr.mission {
-            println!("squad member flags on: {} (the rest off until step 2, #221)", if flags.is_empty() { "none".into() } else { flags.join(", ") });
-        } else {
-            println!("squad member flags: not checked (a multiplayer map)");
+        if !tr.mission {
+            println!("squad member check: none (a multiplayer map)");
         }
         for l in &tr.live {
             if let (ClassState::Detector { volume, filter, .. }, Some(m)) = (&l.state, l.t.transform) {
@@ -530,6 +564,24 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
         }
     }
     commands.insert_resource(tr);
+}
+
+/// A gamevar-trigger's operation, for the log (`bf::triggers::op`).
+fn op_name(op: i64) -> &'static str {
+    match op {
+        op::EQUAL => "A == B",
+        op::LESS => "A < B",
+        op::LESS_EQUAL => "A <= B",
+        op::GREATER => "A > B",
+        op::GREATER_EQUAL => "A >= B",
+        op::ASSIGN => "A",
+        op::DEFAULT => "the default",
+        op::ADD => "A + B",
+        op::SUBTRACT => "A - B",
+        op::MULTIPLY => "A x B",
+        op::DIVIDE => "A / B",
+        _ => "an unknown operation",
+    }
 }
 
 /// A filter, for the log.
@@ -636,7 +688,7 @@ fn inside(volume: Volume, at: &Mat4, inv: &Mat4, a: &Actor) -> bool {
 fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut events: ResMut<TriggerEvents>, mut player: ResMut<Player>,
        mut squad: ResMut<Squad>, mut game: ResMut<GameData>, map: Res<MapLevel>, mut doors: Option<ResMut<Doors>>, spawns: Option<Res<SquadSpawns>>,
        mut fx: (Option<ResMut<bf_viewer::ale_fx::AleAssets>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-       mut placed: Query<(&Placed, &mut Visibility)>, mut hits: ResMut<AiHits>) {
+       mut placed: Query<(&Placed, &mut Visibility)>, mut hits: ResMut<AiHits>, mut campaign: ResMut<Campaign>) {
     let Some(level) = map.0.as_ref() else { return };
     if tr.live.is_empty() {
         events.0.clear();
@@ -645,6 +697,10 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
     let dt = frame_dt(&time);
     tr.clock = player.sim_time;
     tr.player_kind = player.kind;
+    // the campaign's state, held while the triggers run (handed back at the end of `run`: no
+    // return in between)
+    std::mem::swap(&mut tr.campaign, &mut *campaign);
+    tr.campaign.player_kind = player.kind;
     // the level's start: FIRST_UPDATE to every script-trigger, then its update (FUN_001fe260)
     if !tr.started {
         tr.started = true;
@@ -781,6 +837,7 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
             }
         }
     }
+    std::mem::swap(&mut tr.campaign, &mut *campaign);
 }
 
 /// A spawn-trigger's copy in the world (FUN_00209620): its template's kind decides what it is.
@@ -937,6 +994,8 @@ impl Triggers {
             ClassState::Detector { .. } => Kind::Detector,
             ClassState::Anim { .. } => Kind::Anim,
             ClassState::Destroyer { .. } => Kind::Destroyer,
+            ClassState::Gamevar { .. } => Kind::Gamevar,
+            ClassState::Score { .. } => Kind::Score,
         }
     }
 
@@ -1100,6 +1159,8 @@ impl Triggers {
             Kind::Detector => self.base_actions(i, &ev),
             Kind::Anim => self.anim(i, ev),
             Kind::Destroyer => self.destroyer(i, ev),
+            Kind::Gamevar => self.gamevar(i, ev),
+            Kind::Score => self.score(i, ev),
             Kind::Other => self.other(i, ev),
         }
         self.depth -= 1;
@@ -1268,27 +1329,53 @@ impl Triggers {
         }
     }
 
-    /// FUN_00209900, on a squad-type character's copy (`member`) in a mission (and on the
-    /// mission's roster, the world's +0xbec object's vtable +0x74, 0x8d430: taken to hold every
-    /// squad type, an inference): with h_0fa4f510 (`check`) it's kept if its type's member flag
-    /// is on or a player controls that type (the session's vtable +0xb8, 0x83ee0), else taken
-    /// away at once (its hit points to 0, FUN_0010f830, then out of the world, its vtable +0xa0)
-    /// and no SPAWNED goes out; without it the copy sets its type's flag (+0xbc, 0x814b0) and is
-    /// kept. So the tutorial's three marines, whose flags are off at the start (take03-09: never
-    /// seen there), don't come with Tex's farcast, and the V-squad (h_0fa4f510 false, take11)
-    /// does and sets theirs.
-    fn member_kept(&mut self, member: Option<u32>, check: bool) -> bool {
+    /// FUN_000dfd90's choice for a spawn of `template`: a clone (a new character, set up by
+    /// FUN_0012f440) while its count less one isn't 0, or always for a count of -1 (a re-armable
+    /// trigger's), else the template itself (`template_uses`).
+    fn takes_clone(&mut self, template: u32) -> bool {
+        match self.template_uses.get_mut(&template) {
+            Some(n) if *n == -1 => true,
+            Some(n) => {
+                *n -= 1;
+                *n != 0
+            }
+            None => true,
+        }
+    }
+
+    /// FUN_00209900, on spawn-trigger `i`'s copy of a squad-type character (`member`) in a
+    /// mission (and on the mission's roster, the world's +0xbec object's vtable +0x74, 0x8d430:
+    /// taken to hold every squad type, an inference; and with the session's +0xcc byte 0, as it
+    /// is in play). A clone has set its type's member flag on its set-up first (FUN_0012f440, the
+    /// session's +0xbc). With h_0fa4f510 (`check`) the copy is kept if the session counts it in
+    /// the squad (+0xb8, 0x83ee0: `Campaign::in_squad`, the save-game slots), else taken away at
+    /// once: its +0x144(1), a death (FUN_00112830 clears its type's flag), its hit points to 0
+    /// (FUN_0010f830), out of the world (its vtable +0xa0), and no SPAWNED goes out. Without
+    /// h_0fa4f510 its type's flag is set (+0xbc) and it's kept. So the tutorial's three start
+    /// marines (re-armable spawns: clones), whose save-game slots aren't alive, don't come with
+    /// Tex's farcast (take03-09: never seen) and leave their flags 0; the V-squad's (h_0fa4f510
+    /// false, take11) come and set theirs (take11's `1|0|1|1`).
+    fn member_kept(&mut self, i: usize, member: Option<u32>, check: bool, clone: bool) -> bool {
         let Some(kind) = member.filter(|_| self.mission) else { return true };
+        let (t, who) = (self.clock, self.label(self.live[i].t.name));
+        if clone {
+            self.campaign.set_member(kind, true, &format!("FUN_0012f440: {who}'s copy set up"), t);
+        }
         if !check {
-            self.member_flags.insert(kind);
+            self.campaign.set_member(kind, true, &format!("FUN_00209900: {who} has no h_0fa4f510"), t);
             return true;
         }
-        self.member_flags.contains(&kind) || kind == self.player_kind
+        let kept = self.campaign.in_squad(kind);
+        if !kept {
+            self.campaign.set_member(kind, false, &format!("FUN_00112830: {who}'s copy taken away"), t);
+        }
+        kept
     }
 
     /// FUN_002099e0: spawn-trigger `i` makes its copy: no longer armed; a template the level
-    /// has gives a copy, which sends SPAWNED to its listeners (FUN_002096e0) unless FUN_00209900
-    /// took it away (`member_kept`), and the trigger sends OPERATED with it to its targets.
+    /// has gives a copy (a clone or the template itself, `takes_clone`), which sends SPAWNED to
+    /// its listeners (FUN_002096e0) unless FUN_00209900 took it away (`member_kept`), and the
+    /// trigger sends OPERATED with it to its targets.
     fn spawn(&mut self, i: usize) {
         let (template, fade, rearm, copy_name, member, check) = match &mut self.live[i].state {
             ClassState::Spawn { armed, rearm, template, copy_name, fade, member, check, .. } => {
@@ -1303,6 +1390,7 @@ impl Triggers {
             }
             return;
         }
+        let clone = self.takes_clone(template);
         // (a re-armable trigger names its copies nothing, FUN_00209620; they get one here)
         let copy = if !rearm && copy_name != 0 { copy_name } else {
             self.copies_made += 1;
@@ -1313,12 +1401,12 @@ impl Triggers {
         }
         self.copy_of.insert(copy, i);
         let Some(at) = self.live[i].t.transform else { return };
-        if self.member_kept(member, check) {
+        if self.member_kept(i, member, check, clone) {
             self.acts.push(Act::Spawn { trigger: i, template, copy, at, fade });
             self.object_event(copy, Ev::new(sig::SPAWNED, 0));
         } else if self.log {
-            println!("t {:.2}: {}: its copy {} ({}) is taken away at once: that member's flag is off (FUN_00209900; the game flags are step 2, #221)",
-                     self.clock, self.who(i), self.label(copy), self.label(member.unwrap_or(0)));
+            println!("t {:.2}: {}: its copy {} ({}) is taken away at once: the session doesn't count it in the squad (FUN_00209900, 0x83ee0)",
+                     self.clock, self.who(i), self.label(copy), self.campaign.path_name(&[member.unwrap_or(0)]));
         }
         self.send(i, Ev { signal: sig::OPERATED, id: 0, subject: copy, data: -1 });
     }
@@ -1385,6 +1473,132 @@ impl Triggers {
             }
             if let ClassState::Destroyer { pending } = &mut self.live[i].state {
                 *pending = true;
+            }
+            self.entry_used(i, j, &ev);
+        }
+    }
+
+    /// FUN_00233b90: the next random float in [0, 1).
+    fn random(&mut self) -> f32 {
+        self.seed = self.seed.wrapping_mul(RANDOM_MUL).wrapping_add(RANDOM_ADD);
+        f32::from_bits((self.seed >> 9) | 0x3F80_0000) - 1.0
+    }
+
+    /// FUN_001ffb80: a gamevar operand's value, `data` the event's (its +0x10 read as a float):
+    /// a game flag's value as a float (0 without it), the constant, random x the constant, the
+    /// data, or floor(random x the constant); then 1 - it if inverted.
+    fn operand(&mut self, o: &Operand, data: f32) -> f32 {
+        let v = match o.kind {
+            operand::GAMEFLAG => self.campaign.flags.value(&o.path).map_or(0.0, |v| v.as_f32()),
+            operand::CONSTANT => o.constant,
+            operand::RANDOM => self.random() * o.constant,
+            operand::SIGNAL_DATA => data,
+            operand::RANDOM_INT => (self.random() * o.constant).floor(),
+            _ => 0.0,
+        };
+        if o.invert { 1.0 - v } else { v }
+    }
+
+    /// 0x1ffc40: a gamevar-trigger. OPERATE: its operation on A and B (evaluated in the handler's
+    /// order, which only random operands notice), the entry counted (FUN_001feac0: an entry that
+    /// disables the trigger silences the sends after it), the result turned over if `out` is
+    /// inverted, then written: to `out`'s flag (FUN_00077eb0; a path the flags lack writes
+    /// nothing), kept as `out`'s constant, or neither (the other kinds). VALUE_CHANGED goes to
+    /// the targets when the result isn't the value it replaced (always for those that keep
+    /// nothing), then TRUE when the result isn't 0 (|r| >= 1e-6), else FALSE; both with the
+    /// result as their data and the event's subject.
+    fn gamevar(&mut self, i: usize, ev: Ev) {
+        if !self.live[i].enabled {
+            return self.base_and_after(i, &ev);
+        }
+        if self.live[i].dead {
+            return;
+        }
+        let id = self.live[i].t.id;
+        let mut k = 0;
+        while let Some(j) = self.next_entry(i, &ev, k) {
+            k = j + 1;
+            if self.live[i].t.entries[j].action != act::OPERATE {
+                self.base_and_after(i, &ev);
+                continue;
+            }
+            let ClassState::Gamevar { op, operands } = &self.live[i].state else { return };
+            let (op, operands) = (*op, operands.clone());
+            let data = f32::from_bits(ev.data as u32);
+            let a = |tr: &mut Self| tr.operand(&operands[1], data);
+            let b = |tr: &mut Self| tr.operand(&operands[2], data);
+            let truth = |x: bool| if x { 1.0 } else { 0.0 };
+            let result = match op {
+                op::EQUAL => { let vb = b(self); let va = a(self); truth((va - vb).abs() < GAMEVAR_EQUAL) }
+                op::LESS => { let va = a(self); truth(va < b(self)) }
+                op::LESS_EQUAL => { let va = a(self); truth(va <= b(self)) }
+                op::GREATER => { let va = a(self); truth(va > b(self)) }
+                op::GREATER_EQUAL => { let va = a(self); truth(va >= b(self)) }
+                op::ASSIGN => a(self),
+                op::DEFAULT => match operands[0].kind {
+                    operand::GAMEFLAG => self.campaign.flags.get(&operands[0].path).map_or(0.0, |(_, d)| d.as_f32()),
+                    _ => 0.0,
+                },
+                op::ADD => { let vb = b(self); vb + a(self) }
+                op::SUBTRACT => { let va = a(self); va - b(self) }
+                op::MULTIPLY => { let vb = b(self); a(self) * vb }
+                op::DIVIDE => { let vb = b(self); if vb == 0.0 { f32::MAX } else { a(self) / vb } }
+                _ => 0.0,
+            };
+            self.entry_used(i, j, &ev);
+            let out = &operands[0];
+            let result = if out.invert { 1.0 - result } else { result };
+            let why = format!("{} {} on {}", self.who(i), op_name(op), sig::name(ev.signal));
+            let changed = match out.kind {
+                operand::GAMEFLAG => match self.campaign.write(&out.path, result, &why, self.clock) {
+                    Some((old, _)) => result != old.as_f32(),
+                    None => true,
+                },
+                operand::CONSTANT => match &mut self.live[i].state {
+                    ClassState::Gamevar { operands, .. } => {
+                        let old = std::mem::replace(&mut operands[0].constant, result);
+                        result != old
+                    }
+                    _ => true,
+                },
+                _ => true,
+            };
+            if self.log {
+                println!("t {:.2}: {why}: {result}{}", self.clock, if changed { " (changed)" } else { "" });
+            }
+            let ev_out = Ev { signal: sig::VALUE_CHANGED, id, subject: ev.subject, data: i64::from(result.to_bits() as i32) };
+            if changed {
+                self.send(i, ev_out);
+            }
+            self.send(i, Ev { signal: if result.abs() < GAMEVAR_ZERO { sig::FALSE } else { sig::TRUE }, ..ev_out });
+        }
+    }
+
+    /// 0x20ba00: a score-trigger. OPERATE, in a campaign (the campaign mode, world+0xc4c, with its
+    /// squad): its amount, x 1 + 0.1 x the difficulty with h_11819686 (0x20baaa-0x20bad5), to the
+    /// squad's cash under its key with h_08f457d8, else the null name (FUN_0005c5e0); then the
+    /// entry counted.
+    fn score(&mut self, i: usize, ev: Ev) {
+        if !self.live[i].enabled {
+            return self.base_and_after(i, &ev);
+        }
+        let mut k = 0;
+        while let Some(j) = self.next_entry(i, &ev, k) {
+            k = j + 1;
+            if self.live[i].t.entries[j].action != act::OPERATE {
+                self.base_and_after(i, &ev);
+                continue;
+            }
+            let ClassState::Score { amount, key, keyed, scaled } = self.live[i].state else { return };
+            if self.campaign.in_mission {
+                let scale = if scaled { self.campaign.cash_scale() } else { 1.0 };
+                let why = format!("{} on {}: {amount} x {scale:.2}", self.who(i), sig::name(ev.signal));
+                if self.log {
+                    println!("t {:.2}: {why}: {:+.0} to the squad's cash", self.clock, amount * scale);
+                }
+                self.campaign.add_cash(if keyed { key } else { 0 }, amount * scale, &why, self.clock);
+            } else if self.log {
+                println!("t {:.2}: {} on {}: no campaign, no cash", self.clock, self.who(i), sig::name(ev.signal));
             }
             self.entry_used(i, j, &ev);
         }

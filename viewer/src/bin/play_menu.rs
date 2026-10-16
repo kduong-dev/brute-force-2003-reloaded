@@ -138,9 +138,9 @@ const RING_QUARTERS: [(f32, f32, bool, bool); 4] = [(0.0, 0.0, false, true), (12
 const RING_FRAME: f32 = 0.1;
 const FONT_ATLAS: u32 = 0xE0AF_CD52;
 const BODY_FONT: u32 = 0xE4E4_D2F4;
-const BUTTONS: u32 = 0x0B63_0034;
+pub(crate) const BUTTONS: u32 = 0x0B63_0034;
 /// The button icons' row on BUTTONS (atlas y range): A, B, X, Y, L, R.
-const BUTTON_ROW: (u32, u32) = (66, 98);
+pub(crate) const BUTTON_ROW: (u32, u32) = (66, 98);
 /// The atlas's glyph rows (in ASCII order; row 6 goes on past `~`), and in each the glyph
 /// whose foot is the row's baseline.
 const FONT_ROWS: [(&str, usize); 7] = [("./0123456789:;", 2), ("<=>?@ABCDEF", 5), ("GHIJKLMNOPQ", 0), ("RSTUVWXYZ[", 0),
@@ -1184,7 +1184,7 @@ impl AtlasFont {
     }
 
     /// The ink runs (glyph columns) of the atlas rows y0..y1, each trimmed to its ink.
-    fn runs(w: u32, px: &[u8], y0: u32, y1: u32) -> Vec<Rect> {
+    pub(crate) fn runs(w: u32, px: &[u8], y0: u32, y1: u32) -> Vec<Rect> {
         let solid = |x: u32, y: u32| px[((y * w + x) * 4 + 3) as usize] > 40;
         let mut out = vec![];
         let mut x = 0;
