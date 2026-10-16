@@ -2674,8 +2674,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         // the map: its terrain, objects and sky, fog, background and light
         let doors = bf_viewer::level_scene::spawn_level(&mut commands, &mut game.0, level, &mut meshes, &mut level_materials, &mut liquids, &mut buffers, &mut images);
         for d in doors.iter().filter(|_| std::env::var("BF_LEVEL_DUMP").is_ok()) {
-            println!("door at {:.1}: {:.2} s, leaves slide {:?} m, sounds {:x?} / {:x?}", d.centre, d.duration,
-                     d.leaves.iter().map(|l| l.slide(d.duration, d.duration)).collect::<Vec<_>>(), d.open_sound, d.close_sound);
+            println!("door at {:.1}: {:.2} s, leaves slide {:?} m", d.centre, d.duration,
+                     d.leaves.iter().map(|l| l.slide(d.duration, d.duration)).collect::<Vec<_>>());
         }
         // the doors, closed until their anim-triggers play them (play_triggers.rs)
         let list: Vec<DoorState> = doors.into_iter().map(|door| DoorState { door, t: 0.0, opening: false, rate: 1.0 }).collect();
@@ -2719,7 +2719,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     commands.insert_resource(ale);
     // the level's music, looping (BF_MUTE / BF_NO_MUSIC: none; BF_MUSIC_VOLUME, default 0.5);
     // deathmatch plays without music. A level whose sound-triggers play its music bank's tracks
-    // (every level with a bank does) has them play it, cue by cue (play_sound_triggers.rs, #223)
+    // (every level with a bank does) has them play it, cue by cue, and its ambience beds, as the
+    // player stands outdoors or in (play_sound_triggers.rs, #223)
     let by_triggers = map.0.as_ref().is_some_and(|l| triggers::sounds::plays_music(l, &game.0.sounds));
     if by_triggers {
         println!("music: the level's sound-triggers play it");

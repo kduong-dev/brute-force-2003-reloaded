@@ -222,26 +222,38 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
 (DAT_00469940, vtable 0x399c40).
 
 * **Attributes** (0x205d00; the constructor 0x1fce50's defaults): `sound-object` the sound
-  library entry; `enable-looping`; `Type` 0 (heard alike everywhere), 1 (at its place, 3D), 2-5
-  (below); `max-distance` and h_0269d394 its max and min distance (-1: the library entry's
-  `h_fd40e332` and `falloff`); `volume` (h_eff0deab, 0-100; -1: the entry's own h_eff0deab, 0-1,
-  or 1 without one); h_1f625953 / h_05cad875 its voice's fade-in / fade-out (s); h_15bc1769
-  "only near a player"; h_e725a1a5 the squad's chatter hushed while it plays (not modelled);
-  `HARDPOINT` and `priority` (h_e146dc86) aren't read by these paths.
+  library entry; `enable-looping`; `Type` (the SND_IS_ names at 0x3bf200): 0 GLOBAL (heard alike
+  everywhere), 1 POSITIONAL (at its place, 3D), 2 AMBIENT_OUTDOOR, 3 AMBIENT_INDOOR,
+  4 POSITIONAL_INDOOR, 5 POSITIONAL_OUTDOOR (below); `max-distance` and h_0269d394 its max and min
+  distance (-1: the library entry's `h_fd40e332` and `falloff`); `volume` (h_eff0deab, 0-100; -1:
+  the entry's own h_eff0deab, 0-1, or 1 without one); h_1f625953 / h_05cad875 its voice's fade-in
+  / fade-out (s); h_15bc1769 "only while a player is within its `max-distance`"; h_e725a1a5 the
+  squad's chatter hushed while it plays (not modelled); `HARDPOINT` and `priority` (h_e146dc86)
+  aren't read by these paths.
 * **A sound's length** is the sound system's (its vtable +0x64, 0x17f620): the file's size over
   its format's bytes a second (FUN_00183c30: Xbox ADPCM counts 36 bytes a channel for each whole
   64 of the rate). The sound bank's own `time` attribute agrees (terminal_03: 12852 / 12384 =
   1.0378 s, `time="1.037791"`).
 * **PLAY_SOUND, OPERATE**: it's on. Without h_15bc1769 it starts at once (FUN_002062a0): a
   one-shot still playing isn't restarted, a looping one playing goes on; otherwise its time is
-  its sound's length and its voice starts (FUN_002060c0), 2D for Type 0 and for any sound whose
-  library entry's `falloff` is -1 (FUN_0017c170 makes a 3D voice only otherwise), else at its
-  first object's place (a spawn-trigger's copy, a placed object) or its own, under DirectSound's
-  distance law (FUN_0017eb90's buffer, rolloff 1): full within the min distance, min / d beyond
-  it, no quieter past the max.
-* **With h_15bc1769** its update starts it once the player's character is within its max
-  distance and stops it, fading out, once none is (FUN_00206b50); a one-shot that has played is
-  off.
+  its sound's length and its voice starts (FUN_002060c0), 2D for Types 0, 2 and 3 and for any
+  sound whose library entry's `falloff` is -1 (FUN_0017c170 makes a 3D voice only otherwise),
+  else at its first object's place (a spawn-trigger's copy, a placed object) or its own.
+* **A 3D voice's distance**: every one gets a rolloff curve as it's made (FUN_00181770 for a
+  buffer, 0x1836eb for a stream: IDirectSound*_SetRolloffCurve with the five gains at 0x38dae8,
+  1, 0.375, 0.125, 0.0625 and 0), which the dsound library's attenuation (FUN_00314e64) spreads
+  over five equal stretches from the min distance to the max, each linear from the last point
+  (1.0 at the min) to its next: full within the min, 0.375 two fifths of the way, nothing at the
+  max and beyond (the distance is held at the max). The buffers aren't made with
+  DSBCAPS_MUTE3DATMAXDISTANCE (their flags are DSBCAPS_CTRL3D alone, 0x1817c8), but the curve
+  ends at 0, so they're silent past it all the same. The listener is where the character the
+  camera follows stands (FUN_00178c10: the camera's facing, the character's place).
+* **With h_15bc1769** its update starts it once the player's character is within its
+  `max-distance` (its count, FUN_002062a0) and its voice once the listener is too (the same
+  character: both together), and stops it, fading out, once none is (FUN_00206b50); a one-shot
+  that has played is off. So a door's sound counts its length from the frame the player is within
+  range, its voice with it: sdm_e34's door sounds start 0.07 s after their ANIM_START, beside
+  the player, and have played their 0.93 s at 1.00 s.
 * **The end**: its update counts the time down by dt while it runs; when it's out (a one-shot)
   FINISHED (25: its iD, no subject, data -1) goes to its targets, for Types 0 and 1
   (FUN_001fcf00), and it's off and stopped. The count starts in the frame it plays, so FINISHED
@@ -249,6 +261,12 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
 * **STOP_SOUND, STOP, STOP_DIALOG**: stopped and off; the voice fades out over its fade-out.
   **PAUSE_SOUND / RESUME_SOUND** pause and resume the voice and the count (no tutorial trigger
   has them).
+* **The fades** are the voice's envelope (the sound system's +0x50, FUN_0017f330 -> the voice's
+  +0x2c, 0x181c90: IDirectSoundBuffer_SetEG with the fade-in as its attack and the fade-out as
+  its release, x 48000 / 512 samples, sustain 255); their shape is the sound chip's, not the
+  game's code. Measured: take04's tutorial_01 stop (a 3 s fade-out) falls linearly in dB, about
+  60 dB over the fade (its level at 0.25 s steps from 199.0 s: 0.65, 0.30, 0.25, 0.16, 0.09,
+  0.03), so the music is all but gone 1.3 s in; the fade-ins (take09, take11) rise linearly.
 * **PLAY_DIALOG** queues its sound, once, on the world's dialog queue, which plays one line at a
   time, each for its length, 2D at its library volume, the next as soon as one has ended
   (FUN_00179ec0, the world update's last step); FINISHED once its line is done (FUN_0017a0f0),
@@ -257,10 +275,23 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   and queued line are dropped, so no FINISHED comes; its update, which the world runs only while
   +0x3d bit 6 is set, stops once the voice has ended. Its update sends its FIRST_UPDATE even when
   it's disabled (0x2066a4).
-* **Types 2-5** run the same logic (their level ramping at 4 a second, FUN_00206a20) and send no
-  FINISHED. Their level follows flags of the sound system's listeners (+0xc8, also read for a
-  voice's filter by 0x17f390) that aren't traced, so their voices aren't played: none in the
-  tutorial; sdm_e34's wind bed h_fa8c83e7 is a Type 2 (39 of the game's 1417 sound-triggers).
+* **Types 2-5**, the outdoor and indoor ones, run the same logic and send no FINISHED; they play
+  at a level (+0xa0) that follows where the listener stands (FUN_00206880): their `volume` / 100
+  raised to 1 by the share of the listeners indoors (3 and 4) or outdoors (2 and 5), and 0 with
+  h_15bc1769 while the listener is beyond its `max-distance`; the level moves there at 4 a second,
+  a voice starting when it rises from 0, stopping at 0, its volume following (FUN_00206a20). A
+  listener is indoors (the sound system's +0xc8 byte for it) when the character its camera
+  follows stands on an indoor floor (FUN_00178c10 from the character's ground record bit 0,
+  FUN_0012dab0): on the terrain, or on static geometry (a game-object, OT_STATIC_GEOMETRY) or a
+  platform (OT_PLATFORM) of light-usage LU_GEOSET, the triangle's own bit (header bit 30,
+  `MATERIAL_INDOOR`; no terrain triangle has it); on one of LU_INDOOR always, of LU_OUTDOOR never
+  (`light-usage` h_1eb6a442, the LU_ names at 0x3bf954); on anything else it stays as it was.
+  39 of the game's 1417 sound-triggers; the levels' ambience beds are these:
+  amb_ferix_06 (m01_a, m01_b, m05_b, m05_y), amb_shrike_01 / _02 (m09_a, m09_x, m09_b),
+  light_bird_bed_1 (sdm_e40) and sdm_e34's wind are Type 2 at 15-35, so full outdoors and that
+  share indoors; amb_shrike_int_01 (m09_c) and m01_a's mechanical_amb_int_1 are Type 3. The
+  tutorial has none. The same flag picks a 3D voice's reverb send (0x17f390: the world's indoor
+  or outdoor amount, its +0xb58 / +0xb5c; not modelled).
 * **The dialog-trigger**: PLAY_DIALOG or OPERATE on its first object's character (the tutorial's
   four name trigger_spawn8, whose copy tex_1 is the demo's Tex, and trigger_spawn76): a dead one
   sends FINISHED at once; a living one says the line (FUN_001267b0) and the update sends
@@ -289,15 +320,18 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   * the save points' "chime" is the AI's voice line dxud_ai_00008 (h_f674fc4f), 2D.
 
 Test hooks: `BF_TRIGGER_LOG=1` lists every sound- and dialog-trigger at the start (its sound and
-length, how it plays) and logs what each does (plays, stops, queues, has played, says);
-`BF_SOUND_LOG=1` logs each of their voices as it starts and stops (its volume now and in full,
-where, its distances); `BF_MUTE=1` runs them without a voice; `BF_TRIGGER_FIRE` fires them.
+length, how it plays) and logs what each does (plays, stops, queues, has played, says, the level
+a Type 2-5 one heads to); `BF_SOUND_LOG=1` logs each of their voices as it starts and stops (its
+volume now and in full, where, its distances, also under `BF_MUTE`); either logs the listener
+going indoors or out; `BF_MUTE=1` runs them without a voice; `BF_TRIGGER_FIRE` fires them.
 
 ```sh
 # the tutorial's gate: the panel's sound, then the gate and its grind, then the gate music
 BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100 BF_TEST_USE=0.5 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # the opening's four lines at the script's times (until step 3 plays the script)
 BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 BF_TRIGGER_FIRE="trigger_sound_bratton_baseisguarded,USER1,3.02;trigger_sound_bratton_envhazards,USER1,6.176;trigger_sound_bratton_goingtoguide,USER1,11.217;trigger_sound_bratton_refresher,USER1,19.551" cargo run --bin bf_play
+# an outdoor and an indoor bed: m01_a's start into the lit hall (indoors at 6.8 s)
+BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7,132 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 ```
 
 ## Object events
@@ -421,14 +455,27 @@ the log read and the frames looked at:
   * h_15bc1769: walking north from (40.5, 0) the bird bed starts at 59.3 m from it; walking back
     south it stops at 60.2 m;
   * sdm_e34 (regression): the doors' sounds come from their sound-triggers (on at the
-    anim-trigger's ANIM_START / ANIM_BACK_START, playing once Tex is within their 7 m: door
-    h_196659f4's opening one at 0.33 s, its closing one at 1.47), the gate's metal_door_5 at the
-    panel's use; the doors and the gate move as before; its music caspian_action20 from its
-    FIRST_UPDATE trigger; its Type 2 wind bed not played. e40 and m09_a: their music from their
-    triggers (e40's h_0378b249, m09_a's trigger_sound_music41), no fault;
-  * unmuted (`BF_MUSIC_VOLUME=0.2 BF_AUDIO_LOG=1`, the gate run, ~6 s): five voices playing
-    (sinks) by 2 s, the three music-bank tracks decoded, the 3D gains as logged (the east lava
-    loop at its floor 30 / 40 = 0.75 at 56 m, a west burst 0.89 at 33.5 m).
+    anim-trigger's ANIM_START / ANIM_BACK_START, playing once Tex is within their 7 m
+    `max-distance`: door h_196659f4's opening one at 0.07 s with its count, played at 1.00, its
+    closing one at 1.47), the gate's metal_door_5 at the panel's use (within its 15 m); the
+    doors and the gate move as before; its music caspian_action20 from its FIRST_UPDATE trigger;
+    its Type 2 wind bed at 1.0 from the gate's start outdoors, 0.20 from the doors' start in the
+    barracks (`BF_TEST_GOTO=-76.26,-2.04,-62.34,5.64`: indoors, as the frames show). e40 and
+    m09_a: their music from their triggers (e40's h_0378b249, m09_a's trigger_sound_music41), no
+    fault;
+  * the beds (the fix round, each level muted for 30 frames): at the first update m01_a, m01_b,
+    m05_b and m05_y play amb_ferix_06, m09_a and m09_x amb_shrike_01, sdm_e40 light_bird_bed_1,
+    at 1.0 (the start is outdoors); m09_b starts indoors (a hive chamber), its amb_shrike_02 at
+    0.15, with strange_insect_bed_1 and the tunnel music; m09_c starts indoors, amb_shrike_int_01
+    at 1.0; m14_d plays shrike_distantspace_001a and shrike_tunnel_bed (its outriders' Type 5
+    engines wait for a player within 15 m). m01_a walking from its start
+    (`BF_TEST_GOTO=79.6,-100.5,90.1,-60.7,132`): mechanical_amb_int_1 (Type 3) starts at 0.05 when
+    Tex is within its 20 m (6.33 s), and as he steps through the doorway into the lit hall
+    (6.80 s, indoors) amb_ferix_06 heads down to 0.15 and the hum up to 1.0;
+  * the rolloff curve: the tutorial's east lava loop (max 40) is silent from the start, 92 m off;
+    a west burst at 33.5 m from its min 30 plays at 0.52, at 38.8 m at 0.04;
+  * unmuted (`BF_MUSIC_VOLUME=0.2 BF_AUDIO_LOG=1`, the gate run, ~6 s; before the fix round):
+    five voices playing (sinks) by 2 s, the three music-bank tracks decoded.
 
 ## Not done here, or not known
 
@@ -459,26 +506,30 @@ the log read and the frames looked at:
 * Sound-triggers (#223):
   * Until step 3 (#222) plays the opening script, its USER2s to router443 (6.58 s) and router441
     (11.03 s), which silence the lava pits after the opening's lava shot, don't come: the west
-    pit's bursts (every 4 / 6 s) and the east pit's loop play on from the start, heard far off
-    (DirectSound keeps a sound at min / max past its max distance: 30 / 40, 75%, for the
-    lava's). `BF_TRIGGER_FIRE="trigger_router443,USER2,6.575;trigger_router441,USER2,11.025"`
+    pit's bursts (every 4 / 6 s) and the east pit's loop play on from the start (heard only
+    within their 40 m: the rolloff curve). `BF_TRIGGER_FIRE="trigger_router443,USER2,6.575;trigger_router441,USER2,11.025"`
     sends them.
   * The squad's chatter isn't hushed by an h_e725a1a5 line (FUN_00141100 / FUN_00141180 on the
     chatter manager world+0xbe8: while its list isn't empty no chatter is said, and the first
     line stops the chatter playing at priority 10 or under).
-  * Types 2-5's voices aren't played (above). A dialog-trigger's line is a plain sound, not the
-    character's voice (its priority 10 over chatter, its mouth); Bratton's lines have no radio
-    filter.
-  * 3D voices are a volume only (the demo's sounds have no left and right), the listener the
-    camera. h_15bc1769 measures from the player character's feet (which point the game's 0x8d660
-    takes isn't traced).
-  * The fades are linear (a guess at their shape); a stop's flag 0 (FUN_002063c0) is read as
-    "with the fade-out" from take04, where the start music fades over its 3 s as timer525 runs
-    out.
+  * A dialog-trigger's line is a plain sound, not the character's voice (its priority 10 over
+    chatter, its mouth); Bratton's lines have no radio filter.
+  * 3D voices are a volume only (the demo's sounds have no left and right) and have no reverb:
+    the level's I3DL2 environment (the world's +0xb54, the sound system's +0x78) and each 3D
+    voice's send to it, the world's indoor or outdoor amount as its listener stands (0x17f390),
+    aren't modelled. The listener and h_15bc1769 measure from the player character's feet (which
+    point of the character FUN_00178c10 and 0x8d660 take isn't traced). The demo has the one
+    listener; the game counts a share of up to four (split screen) for Types 2-5.
+  * A stop's flag 0 (FUN_002063c0) is read as "with the fade-out" from take04, where the start
+    music fades over its 3 s as timer525 runs out. The fade-out's dB-linear shape and its 60 dB
+    are measured (above), not read from the code.
+  * Types 2-5's beds are checked only in the demo's logs and frames: no take covers a level
+    with them (the tutorial has none).
   * The demo's ADPCM decoder makes 65 samples of a 36-byte block, where the game reckons 64 for a
     sound's length: a voice runs ~1.5% past its FINISHED and is left to run out, not cut.
   * The takes' timers run ~3-4% fast against their watch logs' app clock: timer525's 168 s stop
     of the start music fades from clk ~163.2 s in take04, timer462's 5 s after the refresher
     opens BASIC CONTROLS at clk 31.08-31.10 s (take03 / take04) where the code says 31.30, while
     the script's and the sounds' times match the clock (Tex's spawn at 17.09, the co-op hint at
-    FINISHED + 0.1 s). Presumably the watcher's pauses; compare durations with that in mind.
+    FINISHED + 0.1 s). The tester reads it as the app clock running slow (0.94-0.96) through the
+    watcher's pauses: the code's 31.30 stands; compare durations with that in mind.

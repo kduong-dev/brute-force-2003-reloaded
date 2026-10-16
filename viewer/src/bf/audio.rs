@@ -137,19 +137,22 @@ pub struct SoundBank {
 
 /// A sound library entry's distances and volume: its `<Sound>` element's attributes, which the
 /// runtime entry FUN_0017beb0 finds keeps at +8 (the min distance), +0xc (the max) and +0x10 (the
-/// volume). A sound-trigger uses them where its own are -1 (FUN_002060c0). Which attribute lands
-/// in which field is inferred from their use: FUN_0017c170 makes a voice 3D only when +8 isn't
-/// -1, and `falloff` is -1 on exactly the 2D sounds (every voice line, the music).
+/// volume). A voice's play parameters left unset come from them (FUN_0017c0b0: its min distance
+/// +0x30 from +8, its max +0x38 from +0xc, its volume +0x48 from +0x10); a sound-trigger's own
+/// are used where they're over 0 (FUN_002060c0). FUN_0017c170 makes a voice 3D only when +8
+/// isn't -1. The attributes' order fits: in the tutorial's library `falloff` is below
+/// h_fd40e332 in 618 of the 619 entries that have both (equal in the other, 50 and 50), and -1 in
+/// 100 entries, the 2D sounds (the voice lines, the music, three ambiences).
 #[derive(Clone, Copy, Debug)]
 pub struct SoundParams {
     /// `falloff` (+8): the distance it's heard at full volume within (DirectSound's min
     /// distance); -1 a 2D sound
     pub min_distance: f32,
-    /// h_fd40e332 (+0xc): the distance it no longer quietens beyond (DirectSound's max distance;
-    /// every entry has one)
+    /// h_fd40e332 (+0xc): the distance its rolloff curve reaches nothing at (DirectSound's max
+    /// distance; every entry has one)
     pub max_distance: f32,
     /// h_eff0deab (+0x10): its volume, 0-1; 1 for the 28% of entries without one (the voice
-    /// lines among them): inferred
+    /// lines among them; the parser's default isn't traced: the 1 is a guess)
     pub volume: f32,
 }
 

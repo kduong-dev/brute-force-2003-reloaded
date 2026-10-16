@@ -12,9 +12,11 @@
 //!    (FUN_002062a0): a one-shot still playing isn't restarted, a looping one playing goes on; the
 //!    time left (+0xa4) becomes the sound's length (the sound system's vtable +0x64: the file's
 //!    size over its bytes a second) and the voice starts (FUN_002060c0): alike everywhere for
-//!    Type 0 (and for any sound whose library entry's falloff is -1), else at its place (its first
-//!    object's, else its transform's) with its min and max distance (its own, else the library
-//!    entry's), at its volume / 100 (else the entry's), with its fade-in and fade-out, looping or
+//!    Types 0, 2 and 3 (and for any sound whose library entry's falloff is -1), else at its place
+//!    (its first object's, else its transform's) with its min and max distance (its own, else the
+//!    library entry's: full within the min, then the rolloff curve every 3D voice gets, down to
+//!    nothing at the max, `distance_gain`), at its volume / 100 (else the entry's), with its
+//!    fade-in and fade-out (the voice's envelope: in linearly, out linearly in dB), looping or
 //!    once.
 //!  * Its update (0x206690), run while +0x3d bit 6 is set: FIRST_UPDATE to itself, enabled or
 //!    not; while it runs, the time left goes down by dt, and once it's gone (a one-shot)
@@ -26,9 +28,15 @@
 //!    its line has played (FUN_0017a0f0).
 //!  * Its DISABLE is its own (FUN_00206610): the voice plays out, its time and queued line are
 //!    dropped (so no FINISHED), and its update stops once the voice ends.
-//!  * Types 2-5 run all this (their level ramping, FUN_00206a20; no FINISHED), but their voices
-//!    aren't played: their level follows flags of the sound system's listeners (+0xc8) that
-//!    aren't traced (none in the tutorial; sdm_e34's wind bed is one).
+//!  * The Type (the SND_IS_ names at 0x3bf200): 0 GLOBAL, 1 POSITIONAL, 2 AMBIENT_OUTDOOR,
+//!    3 AMBIENT_INDOOR, 4 POSITIONAL_INDOOR, 5 POSITIONAL_OUTDOOR. Types 2-5 run all this but send
+//!    no FINISHED, and play at a level (+0xa0) that follows where the listener stands
+//!    (FUN_00206880, moving there at 4 a second, FUN_00206a20): full when it's indoors for 3 and
+//!    4, outdoors for 2 and 5, else their volume / 100. The listener is indoors when the
+//!    character its camera follows stands on an indoor floor (`indoors`). The levels' ambience
+//!    beds are these: amb_ferix_06 (m01_a, m01_b, m05_b, m05_y), amb_shrike_01 and _02 (m09_a,
+//!    m09_x, m09_b), light_bird_bed_1 (sdm_e40) and sdm_e34's wind are Type 2 at 15-35;
+//!    amb_shrike_int_01 (m09_c) and m01_a's mechanical_amb_int_1 Type 3. The tutorial has none.
 //!
 //! The dialog-trigger (vtable 0x3952a0): PLAY_DIALOG or OPERATE on its first object, a character
 //! (a spawn-trigger's copy): a dead one sends FINISHED at once, a living one says the line
@@ -41,13 +49,17 @@
 //!
 //! Test hooks: BF_TRIGGER_LOG=1 (play_triggers.rs) logs what each sound- and dialog-trigger does,
 //! the queue's lines and, at the start, every one's sound, length and how it plays; BF_SOUND_LOG=1
-//! the voices as they start and stop (volume, where, distances). BF_MUTE=1: the triggers run, no
-//! voice plays. BF_NO_MUSIC=1: no music-bank track.
+//! the voices as they start and stop (volume, where, distances); either, the listener going
+//! indoors or out. BF_MUTE=1: the triggers run, no voice plays. BF_NO_MUSIC=1: no music-bank
+//! track.
 
 use std::collections::VecDeque;
 
 use bevy::audio::Volume as AudioVolume;
 use bf_viewer::bf::audio::{self, SoundBank, SoundParams};
+use bf_viewer::bf::character::OBJECT_GAME;
+use bf_viewer::bf::collision::MATERIAL_INDOOR;
+use bf_viewer::bf::level::{LU_GEOSET, LU_INDOOR};
 use bf_viewer::bf::triggers::SoundTrigger;
 
 use super::*;
@@ -69,11 +81,46 @@ const SPEAKER_HEARD: f32 = 35.0;
 const SPEAKER_FLOOR: f32 = 0.15;
 /// Another character's line at most this share (play.rs `play_sounds`' 0.8).
 const SPEAKER_SHARE: f32 = 0.8;
+/// The rolloff curve every 3D voice gets as it's made (FUN_00181770 for a buffer, 0x1836eb for a
+/// stream: IDirectSound*_SetRolloffCurve with the five gains at 0x38dae8), spread evenly from
+/// the min distance to the max (see `distance_gain`).
+const ROLLOFF: [f32; 5] = [1.0, 0.375, 0.125, 0.0625, 0.0];
+/// How far a voice's fade-out takes it down by its end, in dB (it's then cut). The fades are the
+/// voice's envelope (FUN_0017f330 -> 0x181c90, IDirectSoundBuffer_SetEG: the fade-in its attack,
+/// the fade-out its release, x 48000 / 512) and their shape the sound chip's, not the game's
+/// code: take04's tutorial_01 stop (a 3 s fade-out) fits a fall linear in dB, about -60 dB over
+/// it (its music level at 0.25 s steps from 199.0 s: 0.65, 0.30, 0.25, 0.16, 0.09, 0.03; the
+/// tester's measure). The fade-in fits a linear rise (take09, take11).
+const FADE_OUT_DB: f32 = 60.0;
+/// OT_PLATFORM (the OT_ name table at 0x3be878; OT_STATIC_GEOMETRY is `OBJECT_GAME`, 2): the
+/// other kind of object whose floor sets a character's indoor bit (FUN_0012dab0).
+const OT_PLATFORM: i64 = 26;
 
-/// Types 2-5 (FUN_001fcf00): their level follows the share of the listeners that are flagged
-/// (FUN_00206880), and they send no FINISHED.
+/// Types 2-5, the indoor and outdoor ones: their level follows whether the listener is indoors
+/// (FUN_00206880), and they send no FINISHED (FUN_001fcf00).
 fn zone(kind: i64) -> bool {
     (2..=5).contains(&kind)
+}
+
+/// Whether the listener's character stands indoors, as FUN_0012dab0 keeps it in its ground
+/// record (char+0x43c bit 0) and FUN_00178c10 hands it to the sound system for the listener whose
+/// camera follows it (+0xc8): from the floor under its feet (`at`), on the terrain the
+/// triangle's indoor bit (`MATERIAL_INDOOR`), on static geometry (OBJECT_GAME) or a platform
+/// (OT_PLATFORM) its light-usage: LU_INDOOR indoors, LU_GEOSET the triangle's bit, any other
+/// outdoors. On anything else, or with no floor below, it stays as it `was`.
+fn indoors(arena: &world::Arena, level: &Level, game: &Game, at: Vec3, was: bool) -> bool {
+    let Some((material, terrain, object)) = arena.floor_kind(at.x, at.z, at.y + STEP_UP) else { return was };
+    if terrain {
+        return material & MATERIAL_INDOOR != 0;
+    }
+    let Some(o) = object.and_then(|i| level.objects.get(i as usize)) else { return was };
+    if !game.object_types.get(&o.kind).is_some_and(|t| matches!(t.object_type, OBJECT_GAME | OT_PLATFORM)) {
+        return was;
+    }
+    match o.light_usage {
+        LU_GEOSET => material & MATERIAL_INDOOR != 0,
+        usage => usage == LU_INDOOR,
+    }
 }
 
 /// Types 1, 4 and 5 play at a place (FUN_002060c0 sets the position for them; the update moves
@@ -127,6 +174,8 @@ pub(crate) struct Sound {
     queued: bool,
     /// +0xa0: a Type 2-5 trigger's level (1 for Types 0 and 1 as they start)
     level: f32,
+    /// the level a Type 2-5 trigger last headed to (`zone_ramp`), for the log
+    heading: f32,
     /// +0xa4: the time left of its sound (s)
     left: f32,
     /// +0x3d bit 6: in the world's update loop (FUN_000d99d0 calls a trigger's update only with it):
@@ -157,6 +206,7 @@ impl Sound {
             play_out: false,
             queued: false,
             level: 0.0,
+            heading: 0.0,
             left: 0.0,
             listed: true,
         }
@@ -202,7 +252,8 @@ impl Dialog {
 enum Heard {
     /// heard alike everywhere
     Everywhere,
-    /// a 3D voice: at a place, full within the min distance, no quieter beyond the max
+    /// a 3D voice: at a place, full within the min distance, then quieter along the rolloff
+    /// curve to nothing at the max (`distance_gain`)
     At { at: Vec3, min: f32, max: f32 },
     /// a character's line (its trigger name)
     Speaker(u32),
@@ -212,12 +263,13 @@ enum Heard {
 enum VoiceAct {
     /// a new voice (FUN_0017c170: vtable +0x1c; FUN_002060c0: +0x50 its fades, +0x28 its play):
     /// `volume` None plays it at its library entry's volume (FUN_002060c0 sets its own only up
-    /// to 1); `music` a music-bank track; `zone` a Type 2-5 trigger's, not played; `by` who, for
-    /// the log
-    Start { voice: u32, sound: u32, looping: bool, volume: Option<f32>, from: Heard, fade_in: f32, fade_out: f32, music: bool, zone: bool, by: String },
+    /// to 1); `music` a music-bank track; `by` who, for the log
+    Start { voice: u32, sound: u32, looping: bool, volume: Option<f32>, from: Heard, fade_in: f32, fade_out: f32, music: bool, by: String },
     /// vtable +0x20: stopped, at once (1) or with its fade-out (0: take04's start music fades
     /// over its 3 s as its stop timer runs out)
     Stop { voice: u32, at_once: bool },
+    /// vtable +0x34: its volume set (a Type 2-5 trigger's level as it moves, FUN_00206a20)
+    Volume { voice: u32, volume: f32 },
     /// vtable +0x54: paused or resumed
     Pause { voice: u32, on: bool },
     /// vtable +0x40: a positional voice moved with its object (0x20682f)
@@ -339,21 +391,26 @@ impl Radio {
                      if line.hush { "; it would hush the squad's chatter (FUN_00141100: not modelled)" } else { "" });
         }
         acts.push(VoiceAct::Start { voice: self.voice, sound: line.sound, looping: false, volume: None, from: Heard::Everywhere, fade_in: 0.0, fade_out: 0.0,
-                                    music: false, zone: false, by: "the dialog queue".into() });
+                                    music: false, by: "the dialog queue".into() });
     }
 }
 
 /// The triggers' sound side, one per level (`Triggers::sound`): the world's dialog queue, the
-/// voices the triggers asked for this frame, and where the listener and the characters were at
-/// the end of the last (`voices` keeps them; the handlers between frames read them).
+/// voices the triggers asked for this frame, where the listener is and whether it's indoors (the
+/// `listener` system's, before the triggers' frame), and where the characters were at the end of
+/// the last (`voices` keeps them; the handlers between frames read them).
 #[derive(Default)]
 pub(crate) struct SoundWorld {
     radio: Radio,
     acts: Vec<VoiceAct>,
     /// voice handles handed out so far (the sound system's, DAT_00469988 counting up)
     voices_made: u32,
-    /// the listener (the camera)
+    /// the listener: the character the camera follows (FUN_00178c10, `listener`); None before the
+    /// first frame's look
     listener: Option<Vec3>,
+    /// whether the listener is indoors (the sound system's +0xc8 for its one listener, `indoors`);
+    /// None before the first frame's look
+    indoors: Option<bool>,
     /// the characters in the world
     seen: Vec<Seen>,
 }
@@ -366,10 +423,32 @@ pub(crate) fn plays_music(level: &Level, sounds: &SoundBank) -> bool {
     level.triggers.iter().any(|t| matches!(&t.class, Class::Sound(s) if sounds.is_music(s.sound)))
 }
 
-/// The voices, after the triggers' frame (play_triggers.rs `run`), and the start's log.
+/// Where the listener stands, before the triggers' frame (play_triggers.rs `run`); the voices,
+/// after it; and the start's log.
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(AppState::Playing), log_sounds.after(super::start))
-        .add_systems(Update, voices.after(super::run).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (listener.before(super::run), voices.after(super::run)).run_if(in_state(AppState::Playing)));
+}
+
+/// Before the triggers' frame, the sound system's listener as FUN_00178c10 sets it each frame for
+/// a camera that follows a character (the demo's always does): at the character (the player's,
+/// its feet) and indoors when it stands indoors (`indoors`). So the indoor and outdoor
+/// sound-triggers' first update finds it as the game's does: a character's ground record is
+/// filled as it's placed (FUN_001154b0 -> FUN_0012dc00). BF_TRIGGER_LOG or BF_SOUND_LOG: each
+/// change indoors or out.
+fn listener(mut tr: ResMut<Triggers>, map: Res<MapLevel>, game: Res<GameData>, player: Res<Player>) {
+    if tr.live.is_empty() {
+        return;
+    }
+    let feet = player.position + Vec3::Y * (GROUND + player.height.max(0.0));
+    tr.sound.listener = Some(feet);
+    let (Some(a), Some(level)) = (world::arena(), map.0.as_ref()) else { return };
+    let was = tr.sound.indoors;
+    let now = indoors(&a, level, &game.0, feet, was.unwrap_or(false));
+    if was != Some(now) && (tr.log || std::env::var("BF_SOUND_LOG").is_ok()) {
+        println!("t {:.2}: the listener's character is {} (its feet at {feet:.1})", tr.clock, if now { "indoors" } else { "outdoors" });
+    }
+    tr.sound.indoors = Some(now);
 }
 
 /// BF_TRIGGER_LOG: at the start, each sound- and dialog-trigger's sound, its length and how it
@@ -465,12 +544,19 @@ impl Triggers {
                         }
                     } else {
                         // (+0xa0: a Type 2-5 one's level from FUN_00206880, else 1.0)
-                        let level = if zone(s.data.kind) { self.zone_level(i) } else { 1.0 };
+                        let zoned = zone(s.data.kind);
+                        let level = if zoned { self.zone_level(i) } else { 1.0 };
                         if let Some(s) = self.sound_of(i) {
                             s.level = level;
+                            s.heading = level;
                         }
                         if log {
-                            println!("t {clock:.2}: {who} {} on {}", act::name(action), sig::name(ev.signal));
+                            let at = if zoned {
+                                format!(" (level {level:.2}: the listener is {})", if self.sound.indoors == Some(true) { "indoors" } else { "outdoors" })
+                            } else {
+                                String::new()
+                            };
+                            println!("t {clock:.2}: {who} {} on {}{at}", act::name(action), sig::name(ev.signal));
                         }
                         self.sound_start(i, true);
                     }
@@ -533,14 +619,14 @@ impl Triggers {
     }
 
     /// FUN_00206880: where a Type 2-5 trigger's level should be: its volume / 100 (0 without),
-    /// raised toward 1 by the share of the listeners that are flagged (Types 3 and 4) or aren't
-    /// (2 and 5); 0 with h_15bc1769 and the listener beyond its max distance. The flags (the
-    /// sound system's +0xc8 bytes) aren't traced: taken as none, so 3 and 4 sit at their volume,
-    /// 2 and 5 at 1.
+    /// raised toward 1 by the share of the listeners indoors (the sound system's +0xc8 bytes;
+    /// Types 3 and 4, the indoor ones) or outdoors (2 and 5); 0 with h_15bc1769 and the listener
+    /// beyond its max distance. The demo has the one listener (`SoundWorld::indoors`): a share of
+    /// 0 or 1.
     fn zone_level(&self, i: usize) -> f32 {
         let ClassState::Sound(s) = &self.live[i].state else { return 0.0 };
         let vol = if s.data.volume >= 0.0 { s.data.volume * 0.01 } else { 0.0 };
-        let flagged = 0.0;
+        let flagged = if self.sound.indoors == Some(true) { 1.0 } else { 0.0 };
         let share = if matches!(s.data.kind, 3 | 4) { flagged } else { 1.0 - flagged };
         let mut level = share * (1.0 - vol) + vol;
         let max = s.max_distance();
@@ -616,7 +702,7 @@ impl Triggers {
             println!("t {clock:.2}: {who}: plays {} ({:.2} s){place}{}", s.name, s.length, if d.looping { ", looping" } else { "" });
         }
         self.sound.acts.push(VoiceAct::Start { voice: s.voice, sound: d.sound, looping: d.looping, volume: (vol <= 1.0).then_some(vol), from,
-                                               fade_in: d.fade_in, fade_out: d.fade_out, music: s.music, zone: zone(d.kind), by: who });
+                                               fade_in: d.fade_in, fade_out: d.fade_out, music: s.music, by: who });
     }
 
     /// FUN_002063c0: sound-trigger `i` stopped: its voice (`at_once`, or fading out) unless it's
@@ -744,13 +830,20 @@ impl Triggers {
     }
 
     /// FUN_00206a20: a Type 2-5 trigger's level moves to where it should be (`zone_level`) at
-    /// ZONE_RAMP a second; at 0 it stops, and above it starts again when it isn't playing.
+    /// ZONE_RAMP a second; at 0 it stops, and above it starts again when it isn't playing; its
+    /// voice's volume follows (the sound system's +0x34).
     fn zone_ramp(&mut self, i: usize, dt: f32) {
         let target = self.zone_level(i);
+        let (clock, log) = (self.clock, self.log);
+        let who = if log { self.who(i) } else { String::new() };
         let Some(s) = self.sound_of(i) else { return };
         if target == s.level {
             return;
         }
+        if log && target != s.heading {
+            println!("t {clock:.2}: {who}: {} heads to level {target:.2} (from {:.2})", s.name, s.level);
+        }
+        s.heading = target;
         s.level = if target > s.level { (s.level + dt * ZONE_RAMP).min(target) } else { (s.level - dt * ZONE_RAMP).max(target) };
         if s.level <= 0.0 {
             self.sound_stop(i, false);
@@ -760,6 +853,12 @@ impl Triggers {
             let level = s.level;
             self.sound_start(i, false);
             self.sound_voice(i, level);
+        }
+        if let Some(s) = self.sound_of(i) {
+            if s.voice != 0 {
+                let (voice, volume) = (s.voice, s.level);
+                self.sound.acts.push(VoiceAct::Volume { voice, volume });
+            }
         }
     }
 
@@ -859,7 +958,7 @@ impl Triggers {
                             println!("t {clock:.2}: {who} {} on {}: {speaker_name} says {} ({:.2} s)", act::name(action), sig::name(ev.signal), d.name, d.length);
                         }
                         self.sound.acts.push(VoiceAct::Start { voice: d.voice, sound: d.dialog, looping: false, volume: None, from: Heard::Speaker(speaker),
-                                                               fade_in: 0.0, fade_out: 0.0, music: false, zone: false, by: who });
+                                                               fade_in: 0.0, fade_out: 0.0, music: false, by: who });
                     }
                 }
                 act::STOP | act::STOP_DIALOG => {
@@ -913,8 +1012,11 @@ impl Triggers {
 struct TriggerVoice {
     /// the triggers' handle for it
     id: u32,
-    /// its volume before distance and fades (x the music volume for a music-bank track)
+    /// its volume before distance and fades (x `scale`)
     volume: f32,
+    /// the music volume for a music-bank track (`music_volume`), else 1: what its volume is
+    /// scaled by, also when it's set again (`VoiceAct::Volume`)
+    scale: f32,
     /// where it plays from
     from: Heard,
     /// its fades (s): in as it starts, out as a stop with them ends it
@@ -928,21 +1030,33 @@ struct TriggerVoice {
     paused: bool,
 }
 
-/// DirectSound's distance law with the rolloff factor of 1 the game's buffers keep (FUN_0017eb90
-/// fills the DS3DBUFFER's min and max distance and leaves the rest at its defaults): full within
-/// the min distance, min / d beyond it, and no quieter past the max distance.
+/// A 3D voice's gain `d` m from the listener, as the dsound library's distance attenuation
+/// (FUN_00314e64) works it out with the game's rolloff curve (ROLLOFF): full within `min`; from
+/// there to `max` five equal stretches, each linear from the curve's last point (1.0 at `min`) to
+/// its next: 1.0, 0.375, 0.125, 0.0625 and 0 at `max`. The distance is held at `max`, so it's
+/// silent there and beyond (the buffers aren't made with DSBCAPS_MUTE3DATMAXDISTANCE, 0x1817c8:
+/// their flags are DSBCAPS_CTRL3D alone, but the curve ends at 0). With `max` short of `min`
+/// (m07_c's h_133f6a6c: 100 and 50, the one of the levels' 504 positional sound-triggers) the
+/// library's sum gives 0 past `min`; with the two equal it divides 0 by 0, taken the same.
 fn distance_gain(d: f32, min: f32, max: f32) -> f32 {
-    if min <= 0.0 {
+    if d <= min {
         return 1.0;
     }
-    min / d.clamp(min, max.max(min))
+    if max <= min {
+        return 0.0;
+    }
+    let step = (max - min) / ROLLOFF.len() as f32;
+    let x = (d.min(max) - min) / step;
+    let k = (x as usize).min(ROLLOFF.len() - 1);
+    let from = if k == 0 { 1.0 } else { ROLLOFF[k - 1] };
+    from + (ROLLOFF[k] - from) * (x - k as f32)
 }
 
 impl TriggerVoice {
     /// Its volume now: its own, x its distance gain from the listener (`distance_gain`) or for a
-    /// line its speaker's share (SPEAKER_HEARD: 1 for the player's character), x its fades (in
-    /// over `fade_in` from its start, out over `fade_out` once stopped; linear: the shape is a
-    /// guess, take04's 3 s fade-out of the start music only shows its length).
+    /// line its speaker's share (SPEAKER_HEARD: 1 for the player's character), x its fades: in
+    /// over `fade_in` from its start, linearly; out over `fade_out` once stopped, linearly in dB
+    /// down FADE_OUT_DB (the envelope's attack and release, see FADE_OUT_DB).
     fn level(&self, listener: Vec3, player: Vec3, seen: &[Seen]) -> f32 {
         let place = match self.from {
             Heard::Everywhere => 1.0,
@@ -953,7 +1067,10 @@ impl TriggerVoice {
         };
         let fade_in = if self.fade_in > 0.0 { (self.age / self.fade_in).clamp(0.0, 1.0) } else { 1.0 };
         let fade_out = match self.stopping {
-            Some(left) if self.fade_out > 0.0 => (left / self.fade_out).clamp(0.0, 1.0),
+            Some(left) if self.fade_out > 0.0 => {
+                let gone = ((self.fade_out - left) / self.fade_out).clamp(0.0, 1.0);
+                10f32.powf(-FADE_OUT_DB / 20.0 * gone)
+            }
             _ => 1.0,
         };
         self.volume * place * fade_in * fade_out
@@ -997,14 +1114,15 @@ impl MusicBank {
 /// Each frame after the triggers' (play_triggers.rs `run`): the world's dialog queue (FUN_00179ec0,
 /// the world update's last step), then what the triggers asked of the sound system: voices
 /// started (the sound banks' sounds, the music bank's tracks through the music volume, marked
-/// LevelMusic), stopped, paused, moved; then each voice's volume (its distance from the
-/// listener, the camera; its fades). Where the listener and the characters are is kept for the
-/// triggers' next frame. BF_MUTE: nothing plays; BF_NO_MUSIC and deathmatch (which plays without
-/// music, play.rs `setup`): no music-bank track. BF_SOUND_LOG: each voice as it starts and stops.
+/// LevelMusic), stopped, their volume set, paused, moved; then each voice's volume (its distance
+/// from the listener, as `listener` found it; its fades). Where the characters are
+/// is kept for the triggers' next frame. BF_MUTE: nothing plays; BF_NO_MUSIC and deathmatch
+/// (which plays without music, play.rs `setup`): no music-bank track. BF_SOUND_LOG: each voice
+/// as it starts and stops.
 #[allow(clippy::too_many_arguments)]
 fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game: Res<GameData>, current: Res<CurrentMap>, mode: Res<Mode>,
           player: Res<Player>, squad: Res<Squad>, mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>, mut bank: Local<MusicBank>,
-          camera: Query<&GlobalTransform, With<MainCamera>>, mut playing: Query<(Entity, &mut TriggerVoice, Option<&mut AudioSink>)>) {
+          mut playing: Query<(Entity, &mut TriggerVoice, Option<&mut AudioSink>)>) {
     if tr.live.is_empty() {
         return;
     }
@@ -1016,26 +1134,34 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
     world.radio.update(dt, now, &mut world.acts, &mut world.voices_made, &game.0.sounds, tr.log);
     // where the listener and the characters are
     let here = player.position + Vec3::Y * GROUND;
-    let listener = camera.single().map(|c| c.translation()).unwrap_or(here);
+    let listener = tr.sound.listener.unwrap_or(here);
     // (the unnamed ones too: the player on a map whose squad no spawn-trigger names is still the
     // character h_15bc1769 measures from)
     let seen: Vec<Seen> = std::iter::once((&*player, true)).chain(squad.0.iter().map(|m| (m, false))).filter(|(u, _)| !u.stand_in)
         .map(|(u, human)| Seen { name: u.trigger_name, feet: u.position + Vec3::Y * GROUND, dead: u.dead, human }).collect();
-    tr.sound.listener = Some(listener);
     tr.sound.seen = seen.clone();
     let (mute, no_music, log) = (std::env::var("BF_MUTE").is_ok(), std::env::var("BF_NO_MUSIC").is_ok() || mode.deathmatch, std::env::var("BF_SOUND_LOG").is_ok());
     // the voices started in this batch, not in the query yet (a stop in the same frame ends them)
     let mut started: HashMap<u32, Entity> = HashMap::new();
     for a in std::mem::take(&mut tr.sound.acts) {
         match a {
-            VoiceAct::Start { voice, sound, looping, volume, from, fade_in, fade_out, music, zone, by } => {
-                let what = format!("t={now:6.2} trigger voice {voice}: {} for {by}", sound_name(&game.0.sounds, sound));
-                if zone {
-                    if log {
-                        println!("{what}: not played (a Type 2-5 trigger's: its level follows the listeners' flags, untraced)");
-                    }
-                    continue;
-                }
+            VoiceAct::Start { voice, sound, looping, volume, from, fade_in, fade_out, music, by } => {
+                let own = volume.unwrap_or_else(|| game.0.sounds.params(sound).map_or(1.0, |p| p.volume));
+                let scale = if music { music_volume() } else { 1.0 };
+                let v = TriggerVoice { id: voice, volume: own * scale, scale, from, fade_in, fade_out, age: 0.0, stopping: None, paused: false };
+                let start = v.level(listener, here, &seen);
+                let what = if log {
+                    let place = match from {
+                        Heard::At { at, min, max } => format!(" at {at:.1} ({min} to {max} m, {:.1} m away)", listener.distance(at)),
+                        Heard::Speaker(name) => format!(" said by {}", tr.label(name)),
+                        Heard::Everywhere => String::new(),
+                    };
+                    format!("t={now:6.2} trigger voice {voice}: {} for {by}: vol {:.2} (now {start:.2}){place}{}{}{}", sound_name(&game.0.sounds, sound), v.volume,
+                            if looping { ", looping" } else { "" }, if fade_in > 0.0 { format!(", fading in over {fade_in} s") } else { String::new() },
+                            if music { ", music" } else { "" })
+                } else {
+                    String::new()
+                };
                 if mute || (music && no_music) {
                     if log {
                         println!("{what}: not played ({})", if mute { "BF_MUTE" } else { "no music here" });
@@ -1053,18 +1179,8 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
                     }
                     continue;
                 };
-                let own = volume.unwrap_or_else(|| game.0.sounds.params(sound).map_or(1.0, |p| p.volume));
-                let v = TriggerVoice { id: voice, volume: own * if music { music_volume() } else { 1.0 }, from, fade_in, fade_out, age: 0.0, stopping: None,
-                                       paused: false };
-                let start = v.level(listener, here, &seen);
                 if log {
-                    let place = match from {
-                        Heard::At { at, min, max } => format!(" at {at:.1} ({min} to {max} m, {:.1} m away)", listener.distance(at)),
-                        Heard::Speaker(name) => format!(" said by {}", tr.label(name)),
-                        Heard::Everywhere => String::new(),
-                    };
-                    println!("{what}: vol {:.2} (now {start:.2}){place}{}{}{}", v.volume, if looping { ", looping" } else { "" },
-                             if fade_in > 0.0 { format!(", fading in over {fade_in} s") } else { String::new() }, if music { ", music" } else { "" });
+                    println!("{what}");
                 }
                 let settings = if looping { PlaybackSettings::LOOP } else { PlaybackSettings::DESPAWN };
                 let mut e = commands.spawn((AudioPlayer::new(handle), PlaybackSettings { volume: AudioVolume::Linear(start), ..settings }, v,
@@ -1093,6 +1209,14 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
                     }
                     if log {
                         println!("t={now:6.2} trigger voice {voice} stops{}", if at_once || v.fade_out <= 0.0 { String::new() } else { format!(", fading out over {} s", v.fade_out) });
+                    }
+                }
+            }
+            VoiceAct::Volume { voice, volume } => {
+                // (a voice started in this batch has it already)
+                for (_, mut v, _) in &mut playing {
+                    if v.id == voice {
+                        v.volume = volume * v.scale;
                     }
                 }
             }

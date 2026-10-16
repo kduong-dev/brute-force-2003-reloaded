@@ -7,7 +7,8 @@
 //!              32 m (x and z -128..128; mask v runs toward -z).
 //!  objects     every element with an object type (h_ff8051ee) and a <transform> (3 x 3,
 //!              then the position): game objects, weapon and inventory pickups, start points...
-//!              The type's objecttypes entry names its mesh archetype.
+//!              The type's objecttypes entry names its mesh archetype; light-usage says whether
+//!              it stands indoors (`Placement::light_usage`).
 //!  sky         <object mesh-name> at <position>, <background-color>
 //!  fog         h_1a467f02: <color> (0-255), start-distance, end-distance
 //!  cameras     camera-object transforms (the level's flyby cameras)
@@ -17,8 +18,6 @@
 //!              Ambient: Terrain <ambient>, <object-ambient>, <character-ambient>.
 //!  collision   the terrain blocks' collision surfaces (Terrain > blocks h_051ac63e) and the
 //!              invisible blockers (blocker h_051ac63e + transform), see bf::collision
-//!  sounds      sound-trigger: a sound id (sound-object) played on a signal (h_031cd9f5 > base
-//!              signal: 31 beside each door when it opens, 49 when it closes) at its position
 //!  buttons     world-button-object (h_16f22d4b, reticule-action 1): a wall panel that sends
 //!              its signal (h_eaf8a35b, 14 on every one) when used
 //!  triggers    every element built on the game's trigger base (routers, timers, calculators,
@@ -71,7 +70,21 @@ pub struct Placement {
     /// start (`Level::radar_triggers`). e34's five missile racks and three h_e8589e7e devices 4,
     /// its device h_00bc61ab 2 (as read live in #141); 0 on every squad deathmatch map
     pub radar_contact: u8,
+    /// its light-usage (the object's +0x44; the LU_ names at 0x3bf954): LU_INDOOR, LU_OUTDOOR,
+    /// LU_GEOSET (each triangle says, `collision::MATERIAL_INDOOR`), 0 (LU_NONE) without one.
+    /// Every game-object has one (m09_c: 52 indoor, 7 outdoor, 124 by geoset). It picks the light
+    /// pair the object is drawn with (0x9f3c0) and whether a character standing on it is indoors
+    /// (FUN_0012dab0), which the indoor and outdoor sound-triggers follow
+    pub light_usage: u8,
 }
+
+/// light-usage LU_INDOOR (the LU_ name table 0x3bf954: LU_NONE 0, LU_INDOOR 1, LU_OUTDOOR 2,
+/// LU_GEOSET 3).
+pub const LU_INDOOR: u8 = 1;
+/// light-usage LU_OUTDOOR.
+pub const LU_OUTDOOR: u8 = 2;
+/// light-usage LU_GEOSET: indoors where its triangles say so (`collision::MATERIAL_INDOOR`).
+pub const LU_GEOSET: u8 = 3;
 
 /// A radar-trigger (`<radar-trigger radar-contact=N h_e2145a6c=T h_12b33046=B>`): on
 /// TRIG_ACT_OPERATE its action handler (0x207230) sets radar-contact N, with a time T, on each
@@ -147,8 +160,6 @@ pub struct Level {
     pub fog: Option<([f32; 3], f32, f32)>,
     pub ambient: [f32; 3],
     pub cameras: Vec<Mat4>,
-    /// sound triggers: (sound id, signal, position)
-    pub sounds: Vec<(u32, i64, Vec3)>,
     /// collision: the terrain blocks' surfaces (world frame) and the invisible blockers
     /// (<blocker h_051ac63e=surface object-instance=owner><transform>): surface, placement and
     /// the placed object it belongs to (its name; 0 for none). A breakable object's blocker goes
@@ -307,8 +318,9 @@ impl Level {
             let kind = hash(e, H_TYPE);
             let radar_contact = e.attr(H_RADAR_CONTACT).and_then(|v| v.as_i64()).map(|v| v.clamp(0, 255) as u8)
                 .or_else(|| game.object_types.get(&kind).map(|t| t.radar_contact)).unwrap_or(0);
+            let light_usage = e.attr(h("light-usage")).and_then(|v| v.as_i64()).map_or(0, |v| v.clamp(0, 255) as u8);
             objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m,
-                                     radar_contact });
+                                     radar_contact, light_usage });
         }
         // the radar-triggers; those that operate on the level's start (an entry on
         // TRIG_SIG_FIRST_UPDATE with TRIG_ACT_OPERATE, enabled) set their objects' value now, in
@@ -341,11 +353,6 @@ impl Level {
         let ambient = if a.len() >= 3 { [a[0], a[1], a[2]] } else { [0.15; 3] };
         let cameras = all.iter().filter(|e| e.name == h("camera-object"))
             .filter_map(|c| transform(&floats(c.child(h("transform"))))).collect();
-        let sounds = all.iter().filter(|e| e.name == h("sound-trigger")).filter_map(|e| {
-            let signal = e.child(0x031C_D9F5).and_then(|s| s.child(h("base"))).and_then(|b| b.attr(h("signal"))).and_then(|v| v.as_i64())?;
-            let at = transform(&floats(e.child(h("transform"))))?.w_axis.truncate();
-            Some((hash(e, h("sound-object")), signal, at))
-        }).collect();
         let surface = |e: &Element| hash(e, H_PHYSICS_NAME);
         let terrain_collision = all.iter().filter(|e| e.name == h("blocks")).map(|e| surface(e))
             .filter(|&n| n != 0 && n != h("")).collect();
@@ -403,7 +410,7 @@ impl Level {
                 data: e.attr(H_BUTTON_DATA).and_then(|v| v.as_f32()).map_or(-1, |v| v as i64),
             })).collect();
         let triggers = triggers::read(&all);
-        Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, sounds, terrain_collision, blockers, lights, lamps, terrain_ambient,
+        Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, terrain_ambient,
                    terrain_half, terrain_light, buttons, triggers, radar_triggers })
     }
 

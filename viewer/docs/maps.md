@@ -52,8 +52,9 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Sound: a door's anim-trigger sends ANIM_START (31) as it starts opening and ANIM_BACK_START
     (49) as it starts closing to sound-triggers beside it, which play them (#223,
     [triggers.md](triggers.md)): on sdm_e34 h_1edc357e (0.93 s) opening, metal_gate_05_close
-    (h_f25b1597, 1.47 s) closing, each heard while the player is within its 7 m (or 3 m), and the
-    gate's metal_door_5 (h_e1b1f167, 8.5 s) within 15 m. These waves are streamed (resource-type
+    (h_f25b1597, 1.47 s) closing, each played while the player is within its `max-distance`, 7 m
+    (full within its min distance, 3 m, then quieter along the rolloff curve to nothing at 7), and
+    the gate's metal_door_5 (h_e1b1f167, 8.5 s) within its 15 m (7 m full). These waves are streamed (resource-type
     1) from the language wave bank `ml-sounds/en/<level>-en.tgz` at the offsets in the level's
     sound bank. (Before #223 the demo played the sound-trigger nearest the door itself.)
   * The gate's two leaves have a clip each in its set (h_10d3fde3 and h_0a48ec76, 4.96 s, one
@@ -143,8 +144,10 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   sound's own (the trigger's `volume`, else its library entry's: 0.8 for tutorial_01), with the
   trigger's fades ([triggers.md](triggers.md), "Sound- and dialog-triggers"). The table above
   is the bank's mix the test tools' music picker still plays. Deathmatch still plays no
-  music-bank track. sdm_e34's wind bed (h_fa8c83e7) is a Type 2 trigger's, not played (see
-  triggers.md).
+  music-bank track. The ambience beds are the levels' outdoor and indoor sound-triggers (Types 2
+  and 3): an outdoor bed (sdm_e40's light_bird_bed_1, sdm_e34's wind, m01_a's amb_ferix_06) is
+  full while the player stands outdoors and down at its `volume` (15-35%) indoors, an indoor one
+  (m09_c's amb_shrike_int_01) the other way (triggers.md, "Types 2-5").
 * **Shots.** Each weapon's bullet definition names its own effects, and they're played from
   the effect library: `effect-name` is the shot in flight, h_08d28037 is where it lands.
   | Weapon | Speed | In flight | Hit |

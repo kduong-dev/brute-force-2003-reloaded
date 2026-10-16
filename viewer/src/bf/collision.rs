@@ -18,13 +18,21 @@
 //!
 //! The material's low 5 bits are the world-material id (footstep / hit sounds); bit 5 marks a
 //! surface characters slide down (the game reads it as triangle header bit 29, see
-//! decompiled/xbe/ghidra/README.md "Player movement").
+//! decompiled/xbe/ghidra/README.md "Player movement"); bit 6 an indoor floor (header bit 30, see
+//! MATERIAL_INDOOR).
 
 use bevy::math::Vec3;
 
 /// A triangle's material: world-material id and the slide flag.
 pub const MATERIAL_ID: u8 = 0x1F;
 pub const MATERIAL_SLIDE: u8 = 0x20;
+/// An indoor floor: triangle header bit 30, which FUN_0012dab0 copies into a character's ground
+/// record (char+0x43c bit 0) when it stands on the terrain or on a LU_GEOSET object; the sound
+/// system's listeners take it from there (FUN_00178c10, the indoor and outdoor sound-triggers).
+/// None of the terrain's triangles has it in m01_a, m05_b, m09_a, m09_c, sdm_e34 or the tutorial;
+/// 25886 of the 46664 triangles of m09_c's other collision surfaces (its objects', its blockers')
+/// do.
+pub const MATERIAL_INDOOR: u8 = 0x40;
 
 fn i32_at(d: &[u8], o: usize) -> Option<i32> {
     d.get(o..o + 4).map(|b| i32::from_le_bytes(b.try_into().unwrap()))
