@@ -36,8 +36,6 @@ use super::testtools::{crosshair, spot_at, Hook, Panel, Script, Spot, Tools};
 use bf_viewer::bf::pieces::Piece;
 use bf_viewer::level_scene::{Lamps, LevelMaterial, ObjectPart};
 
-/// The menu's key (none of the game's controls, nor the demo's other keys, use it).
-const KEY: KeyCode = KeyCode::KeyP;
 /// How many pieces built but not placed are kept (their meshes, materials and collision), the
 /// least recently picked dropped first: what browsing holds beyond the one archive (the demo's).
 const KEEP_UNPLACED: usize = 6;
@@ -149,11 +147,13 @@ struct SceneAssets<'w> {
     buffers: ResMut<'w, Assets<bevy::render::storage::ShaderStorageBuffer>>,
 }
 
-/// The scenery menu: its list (the session's), its state on each map, and the menu's system.
+/// The scenery menu: its list (the session's), its state on each map, and the menu's system
+/// (after the tool registry's keys, `editor::open_tools`: P is its key there).
 pub fn plugin(app: &mut App) {
     app.init_resource::<Lists>().init_resource::<Menu>().init_resource::<SceneryText>()
         .add_systems(OnEnter(AppState::Playing), start_map.after(setup).run_if(resource_exists::<super::testmap::TestMap>))
-        .add_systems(Update, scenery_tool.after(read_input).before(squad_control).run_if(super::testtools::active));
+        .add_systems(Update, scenery_tool.after(read_input).after(super::editor::open_tools).before(squad_control)
+            .run_if(super::testtools::active));
 }
 
 /// A map starts: nothing built, held or waiting (what the last map built went with it).
@@ -219,10 +219,11 @@ fn see_through(materials: &mut Assets<LevelMaterial>, m: &Handle<LevelMaterial>)
     materials.add(x)
 }
 
-/// The scenery menu (P) and its hooks: the list, picking, the see-through copy, loading and
-/// building the pieces wanted, placing them.
+/// The scenery menu (P, the tool registry's key) and its hooks: the list, picking, the
+/// see-through copy, loading and building the pieces wanted, placing them (each listed in the
+/// editor's `Placements`).
 #[allow(clippy::too_many_arguments)]
-fn scenery_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
+fn scenery_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mut placements: ResMut<super::editor::Placements>,
                 scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, player: Res<Player>, game: Res<GameData>, map: Res<MapLevel>,
                 script: Res<Script>, mut status: ResMut<UsePanel>, (mut lists, mut menu, mut text): (ResMut<Lists>, ResMut<Menu>, ResMut<SceneryText>),
                 (mut ghosts, mut gizmos): (Query<(&mut Transform, &mut Visibility), With<SceneryGhost>>, Gizmos),
@@ -258,10 +259,7 @@ fn scenery_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: 
         println!("test tools: scenery of {} levels, {} pieces ({placements} placements of {} types), listed in {secs:.1} s{mb}",
                  lists.levels.len(), lists.entries.len(), kinds.len());
     }
-    // P and the hooks
-    if keys.just_pressed(KEY) {
-        tools.panel = if tools.panel == Panel::Scenery { Panel::None } else { Panel::Scenery };
-    }
+    // the hooks (P is the tool registry's)
     for hook in &script.now {
         match hook {
             Hook::SceneryMenu => tools.panel = Panel::Scenery,
@@ -350,7 +348,7 @@ fn scenery_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: 
         } else if scroll.delta.y != 0.0 {
             menu.yaw = wrap_angle(menu.yaw + super::testtools::TURN_STEP * scroll.delta.y.signum());
         }
-        if keys.just_pressed(KeyCode::Enter) || (mouse.just_pressed(MouseButton::Left) && tools.before.captured) {
+        if keys.just_pressed(KeyCode::Enter) || tools.click {
             match spot {
                 Some(s) => menu.pending.push(Pending { entry: menu.pick, at: Where::Spot(s), yaw: menu.yaw }),
                 None => status.message = Some(("Nothing under the crosshair".into(), super::testtools::MESSAGE_TIME)),
@@ -462,6 +460,9 @@ fn scenery_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: 
         let place = Transform::from_translation(at.at()).with_rotation(Quat::from_rotation_y(p.yaw));
         let root = commands.spawn((place, Visibility::default(), PlacedScenery { zone: zone.clone(), kind: piece.kind },
                                    Name::new(format!("scenery {zone} h_{:08x}", piece.kind)))).id();
+        let thing = super::editor::Thing::Scenery { zone: zone.clone(), kind: piece.kind, archetype: piece.archetype };
+        let id = placements.add(thing, at.at(), p.yaw, matches!(at, Spot::Air { .. }), Some(root));
+        commands.entity(root).insert(super::editor::PlacedId(id));
         let built = &mut menu.built[b];
         bf_viewer::level_scene::spawn_object_parts(&mut commands, &built.parts, root, |part| part.material.clone());
         // its collision into the map's (a piece with none leaves the arena as it is)
@@ -547,10 +548,11 @@ fn panel_text(lists: &Lists, menu: &Menu, tools: &Tools, placed: &Query<&PlacedS
     }
     s += &format!("  ({} of {n} pieces, level {} of {})\n", menu.pick + 1, lists.entries[menu.pick].0 + 1, lists.levels.len());
     s += &format!("Up / Down pick   Page Up / Down level   wheel turn ({:.0} deg)\n", menu.yaw.to_degrees());
+    let at = super::testtools::aim_word(tools);
     s += &if tools.freecam.is_some() {
-        format!("click / Enter: place IN THE AIR, {:.1} m along the crosshair (Shift + wheel); it hangs there\n", tools.air)
+        format!("click / Enter: place IN THE AIR, {:.1} m along {at} (Shift + wheel); it hangs there\n", tools.air)
     } else {
-        "click / Enter: place on the ground at the crosshair\n".to_string()
+        format!("click / Enter: place on the ground at {at}\n")
     };
     let (archive, _) = source(lists, menu.pick);
     if let Some((a, _)) = &menu.loading {

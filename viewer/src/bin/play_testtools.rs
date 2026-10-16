@@ -53,6 +53,10 @@
 //!  - P: the scenery menu (play_testscenery.rs, #185): any level's buildings and static scenery,
 //!    with the object menu's see-through copy, turn and air placement, drawn as its level draws
 //!    it and joining the map's collision.
+//!  - F5: the map editor's edit mode (play_editor.rs, #191): the squad leaves the world and the
+//!    camera flies free (the right mouse button held looks), the tools acting at the mouse
+//!    pointer; F5 again plays from where the pointer is. The menus' keys are the editor's tool
+//!    registry's (`editor::TOOLS`), and what they put down is listed in its `Placements`.
 //!
 //! Not done: the enemy species' own behaviour (#110's sub-issues: their reactions, blood, death
 //! clips), moving NPCs, removing placed objects, saving a layout.
@@ -66,7 +70,8 @@ use bf_viewer::bf::hash::h;
 use bf_viewer::level_scene::Placed;
 
 /// The tools' line in the controls panel (H).
-pub const HELP: &str = "tools:   F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
+pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a free camera, the tools at the mouse pointer; F5 again plays from there)\n\
+                        F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
                         P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level";
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
@@ -77,7 +82,7 @@ pub const ENEMY_TEAM: u8 = 1;
 /// squad's crosshair stays blue on one (#141 take08 2.7-5.6 s).
 pub const NEUTRAL_TEAM: u8 = 2;
 /// The free camera's speed (m/s), Shift's factor, and the mouse's turn (rad per pixel: the
-/// follow camera's, read_input).
+/// follow camera's, read_input). The editor's wheel changes the speed (`Tools::speed`).
 const FLY_SPEED: f32 = 6.0;
 const FLY_FAST: f32 = 4.0;
 const LOOK: f32 = 0.004;
@@ -133,24 +138,37 @@ pub struct Npc {
     pub face: f32,
 }
 
-/// The free camera: where it is and where it looks (yaw about +Y, 0 down -z; pitch up).
+/// The free camera: where it is and where it looks (yaw about +Y, 0 down -z; pitch up). The
+/// play mode's F and the map editor's edit camera (play_editor.rs).
 #[derive(Clone, Copy)]
 pub(super) struct FreeCam {
-    pos: Vec3,
-    yaw: f32,
-    pitch: f32,
+    pub(super) pos: Vec3,
+    pub(super) yaw: f32,
+    pub(super) pitch: f32,
 }
 
 impl FreeCam {
-    fn rotation(&self) -> Quat {
+    pub(super) fn rotation(&self) -> Quat {
         Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
     }
 
     /// The ray through the HUD's crosshair, which sits CROSSHAIR_UP above the middle (as
     /// `aim_ray`).
     fn ray(&self) -> Vec3 {
-        let r = self.rotation();
-        (r * Vec3::NEG_Z + r * Vec3::Y * CROSSHAIR_UP * (FOV_Y * 0.5).tan()).normalize()
+        self.ray_through(Vec2::new(0.0, CROSSHAIR_UP), 1.0)
+    }
+
+    /// The ray through a point of the view: `ndc` from -1 (left, bottom) to 1 (right, top), the
+    /// view `aspect` (width / height) wide, FOV_Y high (the editor's mouse pointer).
+    pub(super) fn ray_through(&self, ndc: Vec2, aspect: f32) -> Vec3 {
+        let t = (FOV_Y * 0.5).tan();
+        (self.rotation() * Vec3::new(ndc.x * t * aspect, ndc.y * t, -1.0)).normalize()
+    }
+
+    /// From where a camera is, looking its way (no roll).
+    pub(super) fn from_transform(t: &Transform) -> FreeCam {
+        let f = t.forward();
+        FreeCam { pos: t.translation, yaw: (-f.x).atan2(-f.z), pitch: f.y.clamp(-1.0, 1.0).asin() }
     }
 }
 
@@ -202,11 +220,24 @@ pub(super) struct Tools {
     pub(super) before: Before,
     /// BF_TEST_FLY: until when (sim time), the move (right, up, forward), fast
     fly: Option<(f32, Vec3, bool)>,
+    /// the map editor's edit mode is on (play_editor.rs `EditorMode::Edit`, set from it each
+    /// frame): `freecam` is the edit camera, and the tools act at the mouse pointer
+    pub(super) edit: bool,
+    /// in edit mode, where the mouse pointer is in the view (-1..1 across, left to right, and up,
+    /// bottom to top; None: no pointer, so the crosshair's place, as under BF_BACKGROUND), and
+    /// the view's width over its height
+    pub(super) pointer: Option<Vec2>,
+    pub(super) aspect: f32,
+    /// a click of the left button for the world this frame: in play, not the one that captures
+    /// the mouse; in edit mode, not one on the tools' panel (`before_input`)
+    pub(super) click: bool,
+    /// the free camera's speed (m/s; FLY_SPEED at first, the editor's wheel changes it)
+    pub(super) speed: f32,
 }
 
 /// What an object entry places (see the module's notes).
 #[derive(Clone, Copy, Debug)]
-enum Kind {
+pub(super) enum Kind {
     /// an inventory-object type (a `Game::items` key)
     Pickup(u32),
     /// a hand weapon (a `Game::weapons` key)
@@ -304,6 +335,14 @@ pub(super) enum Hook {
     Sky(String),
     Music(String),
     Level(String),
+    /// the map editor (play_editor.rs): edit mode, the edit camera put there (None: where it
+    /// last was, else where the camera is)
+    Edit(Option<FreeCam>),
+    /// play from where the pointer is; `start`: from the map's start
+    Play { start: bool },
+    /// the edit mode's mouse pointer put at this place of the window (0..1 across and down
+    /// from the top left), as if the mouse were there
+    Pointer(Vec2),
 }
 
 impl std::fmt::Debug for FreeCam {
@@ -375,6 +414,12 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_LEVEL=<s>,<level>[;<s>,<level>...]: switch to that level (`flat` or `test`: the
 ///    test map). Each entry is for one map in turn: the first is due on the first map, the second
 ///    on the map it went to, and so on, each on its own map's clock.
+///  - BF_TEST_EDIT=<s>[,<x>,<y>,<z>,<yaw>,<pitch>]: F5 in play, the map editor's edit mode
+///    (play_editor.rs), the edit camera put there (else where it last was, else where the camera
+///    is). BF_TEST_PLAY=<s>[,start]: F5 in edit mode, play from where the pointer is (`start`:
+///    Shift+F5, from the map's start). BF_TEST_POINTER=<s>,<x>,<y>: the edit mode's pointer at
+///    that place of the window (0..1 across and down from the top left), as if the mouse were
+///    there. In edit mode BF_TEST_FREECAM's pose moves the edit camera.
 ///
 /// Every hook but BF_TEST_LEVEL acts on one map of the session only (a switch would otherwise
 /// replay them on each map): the first, or the n-th with BF_TEST_ON_MAP=<n> (the tools on a map
@@ -395,11 +440,15 @@ pub(super) struct Session {
     pub(super) maps: usize,
 }
 
+/// The tools' systems: the hooks and the mouse first, then (after `read_input`) the menus' keys
+/// (the editor's tool registry, `editor::open_tools`) and the tools, and late the free camera
+/// and the panel.
 pub fn plugin(app: &mut App) {
     app.init_resource::<Tools>().init_resource::<Catalogue>().init_resource::<NpcList>().init_resource::<Script>().init_resource::<Session>()
         .add_systems(OnEnter(AppState::Playing), (reset, spawn_panel).after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (run_script, before_input).chain().before(read_input).run_if(active))
-        .add_systems(Update, (gate_input, camera_tool, npc_tool, object_tool).chain().after(read_input).before(squad_control).run_if(active))
+        .add_systems(Update, (gate_input, super::editor::open_tools, camera_tool, npc_tool, object_tool).chain().after(read_input).before(squad_control)
+            .run_if(active))
         .add_systems(Update, take_grenades.after(update_player).run_if(active))
         .add_systems(Update, (fly, show_panel).chain().after(deathcam::death_cam).before(update_hud).run_if(active));
 }
@@ -414,9 +463,9 @@ use super::testmap::TestMap;
 /// A new map: the tools closed, nothing spawned, the object and NPC lists to be built again (a
 /// level switch loads more data), the hooks read (all of them on the session's first map, else
 /// only its BF_TEST_LEVEL entry).
-fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<AiHits>, mut list: ResMut<Catalogue>,
-         mut npcs: ResMut<NpcList>, mut session: ResMut<Session>) {
-    *tools = Tools { npc_team: ENEMY_TEAM, air: AIR_DISTANCE, ..default() };
+pub(super) fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hits: ResMut<AiHits>, mut list: ResMut<Catalogue>,
+                    mut npcs: ResMut<NpcList>, mut session: ResMut<Session>) {
+    *tools = Tools { npc_team: ENEMY_TEAM, air: AIR_DISTANCE, speed: FLY_SPEED, aspect: 1.0, ..default() };
     // (built again once this map's grenade types are in: its entries index them)
     list.0.clear();
     npcs.0.clear();
@@ -479,9 +528,19 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
             add(t.parse().ok(), Some(Hook::Help));
         }
     }
+    // (a pose: x, y, z, yaw and pitch in degrees, from the entry's second value)
+    let pose = |e: &[String]| (|| Some(FreeCam { pos: Vec3::new(num(e, 1)?, num(e, 2)?, num(e, 3)?), yaw: num(e, 4)?.to_radians(), pitch: num(e, 5)?.to_radians() }))();
     for e in entries("BF_TEST_FREECAM") {
-        let pose = (|| Some(FreeCam { pos: Vec3::new(num(&e, 1)?, num(&e, 2)?, num(&e, 3)?), yaw: num(&e, 4)?.to_radians(), pitch: num(&e, 5)?.to_radians() }))();
-        add(num(&e, 0), Some(Hook::Freecam(pose)));
+        add(num(&e, 0), Some(Hook::Freecam(pose(&e))));
+    }
+    for e in entries("BF_TEST_EDIT") {
+        add(num(&e, 0), Some(Hook::Edit(pose(&e))));
+    }
+    for e in entries("BF_TEST_PLAY") {
+        add(num(&e, 0), Some(Hook::Play { start: e.get(1).is_some_and(|x| x.eq_ignore_ascii_case("start")) }));
+    }
+    for e in entries("BF_TEST_POINTER") {
+        add(num(&e, 0), num(&e, 1).zip(num(&e, 2)).map(|(x, y)| Hook::Pointer(Vec2::new(x, y))));
     }
     for e in entries("BF_TEST_FREECAM_OFF") {
         add(num(&e, 0), Some(Hook::FreecamOff));
@@ -584,7 +643,7 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
 }
 
 /// The hooks due this frame into `Script::now`.
-fn run_script(player: Res<Player>, mut script: ResMut<Script>) {
+pub(super) fn run_script(player: Res<Player>, mut script: ResMut<Script>) {
     script.now.clear();
     while let Some((at, hook)) = script.steps.get(script.next).cloned() {
         if player.sim_time < at {
@@ -598,22 +657,31 @@ fn run_script(player: Res<Player>, mut script: ResMut<Script>) {
     }
 }
 
-/// Keeps the player's camera, crouch and the mouse's capture as they are before `read_input`.
-fn before_input(mut tools: ResMut<Tools>, player: Res<Player>, windows: Query<&Window, With<PrimaryWindow>>) {
+/// Keeps the player's camera, crouch and the mouse's capture as they are before `read_input`,
+/// and whether the left button clicked in the world (`Tools::click`): in play, not the click
+/// that captures the mouse; in edit mode (the mouse free), not one on the tools' panel.
+pub(super) fn before_input(mut tools: ResMut<Tools>, player: Res<Player>, mouse: Res<ButtonInput<MouseButton>>,
+                           windows: Query<&Window, With<PrimaryWindow>>, panel: Query<&bevy::ui::RelativeCursorPosition, With<ToolPanel>>) {
+    let captured = windows.single().is_ok_and(|w| w.cursor_options.grab_mode != CursorGrabMode::None);
     tools.before = Before {
         yaw: player.cam_yaw,
         pitch: player.cam_pitch,
         distance: player.cam_distance,
         crouch: player.crouch_wanted,
-        captured: windows.single().is_ok_and(|w| w.cursor_options.grab_mode != CursorGrabMode::None),
+        captured,
     };
+    let on_panel = panel.single().is_ok_and(|p| p.mouse_over());
+    tools.click = mouse.just_pressed(MouseButton::Left) && if tools.edit { !on_panel } else { captured };
 }
 
 /// Undoes what `read_input` took that a tool has: in the free camera, the character stands
 /// still (no move, aim, fire, jump, item; its camera stays); with a menu open, the click doesn't
-/// fire and the wheel doesn't zoom.
+/// fire and the wheel doesn't zoom. (In edit mode `read_input` doesn't run: nothing to undo.)
 fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
     let b = tools.before;
+    if tools.edit {
+        return;
+    }
     if tools.freecam.is_some() {
         player.cam_yaw = b.yaw;
         player.cam_pitch = b.pitch;
@@ -638,17 +706,24 @@ fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
     }
 }
 
-/// The crosshair's ray: the free camera's, else the player's.
+/// The crosshair's ray: the free camera's (in edit mode, through the mouse pointer if there is
+/// one), else the player's.
 pub(super) fn crosshair(player: &Player, tools: &Tools) -> (Vec3, Vec3) {
-    match tools.freecam {
-        Some(c) => (c.pos, c.ray()),
-        None => aim_ray(player),
+    match (tools.freecam, tools.pointer.filter(|_| tools.edit)) {
+        (Some(c), Some(p)) => (c.pos, c.ray_through(p, tools.aspect)),
+        (Some(c), None) => (c.pos, c.ray()),
+        (None, _) => aim_ray(player),
     }
+}
+
+/// What the tools act at, for their panels: the mouse pointer in edit mode, else the crosshair.
+pub(super) fn aim_word(tools: &Tools) -> &'static str {
+    if tools.edit && tools.pointer.is_some() { "the pointer" } else { "the crosshair" }
 }
 
 /// The ground point under the crosshair (where its ray meets the world, dropped to the floor
 /// there), if the ray meets anything within PICK_RANGE.
-fn ground_point(origin: Vec3, dir: Vec3) -> Option<Vec3> {
+pub(super) fn ground_point(origin: Vec3, dir: Vec3) -> Option<Vec3> {
     let t = ray_hit(origin, dir, PICK_RANGE)?;
     let p = origin + dir * t;
     Some(Vec3::new(p.x, floor_y(p.x, p.z, p.y + 0.5), p.z))
@@ -676,15 +751,20 @@ fn teleport(player: &mut Player, to: Vec3, yaw: f32) {
 }
 
 /// F and the free camera's teleports (left click: the crosshair's ground; right click: the
-/// camera's), H's hook, and Esc closing a menu (the mouse stays captured).
+/// camera's), H's hook, and Esc closing a menu (the mouse stays captured). In the map editor's
+/// edit mode (play_editor.rs) the camera is the edit camera, always on, and there's no character
+/// to teleport: F and the clicks do nothing there, BF_TEST_FREECAM's pose moves the edit camera,
+/// and Esc only closes the menu (the mouse is free already).
+#[allow(clippy::too_many_arguments)]
 fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>, mut tools: ResMut<Tools>, mut player: ResMut<Player>,
                script: Res<Script>, mut status: ResMut<UsePanel>, cam: Query<&Transform, With<MainCamera>>,
                mut windows: Query<&mut Window, With<PrimaryWindow>>) {
-    let mut toggle = keys.just_pressed(KeyCode::KeyF);
+    let edit = tools.edit;
+    let mut toggle = keys.just_pressed(KeyCode::KeyF) && !edit;
     let mut set: Option<FreeCam> = None;
     let mut port = None;
     let mut close = false;
-    if tools.freecam.is_some() && tools.before.captured {
+    if tools.freecam.is_some() && tools.before.captured && !edit {
         if mouse.just_pressed(MouseButton::Left) {
             port = Some(false);
         } else if mouse.just_pressed(MouseButton::Right) {
@@ -693,14 +773,17 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
     }
     for hook in &script.now {
         match hook {
-            Hook::Help => player.show_help = !player.show_help,
-            Hook::Freecam(pose) => {
+            // (the edit mode's help is the editor's)
+            Hook::Help if !edit => player.show_help = !player.show_help,
+            Hook::Freecam(Some(pose)) if edit => tools.freecam = Some(*pose),
+            Hook::Freecam(pose) if !edit => {
                 toggle = tools.freecam.is_none();
                 set = *pose;
             }
-            Hook::FreecamOff => toggle = tools.freecam.is_some(),
+            Hook::FreecamOff if !edit => toggle = tools.freecam.is_some(),
             Hook::Fly(until, v, fast) => tools.fly = Some((*until, *v, *fast)),
-            Hook::Teleport { camera } => port = Some(*camera),
+            Hook::Teleport { camera } if !edit => port = Some(*camera),
+            Hook::Teleport { .. } => println!("test tools: no teleport in edit mode (no character to put there)"),
             Hook::Close => close = true,
             _ => {}
         }
@@ -708,8 +791,8 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
     if keys.just_pressed(KeyCode::Escape) && tools.panel != Panel::None {
         close = true;
         // (read_input let the mouse go: a menu's Esc only closes it. Never grabbed under
-        // BF_BACKGROUND, play_background.rs)
-        if let (false, Ok(mut w)) = (super::background::on(), windows.single_mut()) {
+        // BF_BACKGROUND, play_background.rs; nor in edit mode, where the mouse is free)
+        if let (false, false, Ok(mut w)) = (super::background::on(), edit, windows.single_mut()) {
             w.cursor_options.grab_mode = CursorGrabMode::Locked;
             w.cursor_options.visible = false;
         }
@@ -721,11 +804,7 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
         tools.freecam = match tools.freecam {
             Some(_) => None,
             // from where the camera is, looking its way
-            None => Some(set.unwrap_or_else(|| {
-                let t = cam.single().copied().unwrap_or_default();
-                let f = t.forward();
-                FreeCam { pos: t.translation, yaw: (-f.x).atan2(-f.z), pitch: f.y.clamp(-1.0, 1.0).asin() }
-            })),
+            None => Some(set.unwrap_or_else(|| FreeCam::from_transform(&cam.single().copied().unwrap_or_default()))),
         };
         status.message = Some((if tools.freecam.is_some() { "Free camera" } else { "Camera back" }.into(), MESSAGE_TIME));
     }
@@ -830,12 +909,15 @@ fn team_of(s: &str) -> Option<u8> {
     }
 }
 
-/// The NPC menu (N) and the NPC keys (J, B, Delete) and hooks: spawn, switch team or
-/// behaviour, remove.
+/// The NPC menu (N: its key is the tool registry's, `editor::open_tools`) and the NPC keys (J,
+/// B, Delete) and hooks: spawn, switch team or behaviour, remove. Each NPC spawned is listed in
+/// the editor's `Placements` (its team and behaviour kept up to date there), and one removed is
+/// struck off.
 #[allow(clippy::too_many_arguments)]
-fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
+fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
-            mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>, game: Res<GameData>, mut npcs: ResMut<NpcList>) {
+            mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>, game: Res<GameData>, mut npcs: ResMut<NpcList>,
+            mut placements: ResMut<super::editor::Placements>) {
     if npcs.0.is_empty() {
         npcs.0 = npc_list(&game.0);
         // BF_TOOLS_LOG: the menu's entries, once a map's list is made
@@ -850,7 +932,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
     let open = tools.panel == Panel::Npcs;
     let mut spawns: Vec<(u32, u8, bool, bool, Option<(Vec2, Option<f32>)>, Option<bf_viewer::bf::character_type::Placement>)> = vec![];
     let mut acts: Vec<Hook> = vec![];
-    if keys.just_pressed(KeyCode::KeyN) || script.now.iter().any(|h| matches!(h, Hook::NpcMenu)) {
+    if script.now.iter().any(|h| matches!(h, Hook::NpcMenu)) {
         tools.panel = if open { Panel::None } else { Panel::Npcs };
     }
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
@@ -865,7 +947,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
         if keys.just_pressed(KeyCode::KeyB) {
             tools.npc_fight = !tools.npc_fight;
         }
-        if keys.just_pressed(KeyCode::Enter) || (mouse.just_pressed(MouseButton::Left) && tools.before.captured) {
+        if keys.just_pressed(KeyCode::Enter) || tools.click {
             spawns.push((types[tools.npc_type].1, tools.npc_team, tools.npc_fight, false, None, None));
         }
     } else {
@@ -935,6 +1017,8 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
             println!("t {:.2}: NPC {id}: {label} at {ground:.2}, type h_{kind:08x}{from}", player.sim_time);
         }
         status.message = Some((format!("Spawned {label}"), MESSAGE_TIME));
+        let thing = super::editor::Thing::Npc { id, kind, team, fight, frozen, placement: placed.as_ref().map(|pl| pl.name) };
+        placements.add(thing, ground, m.yaw, false, None);
         squad.0.push(m);
     }
     let aimed = npc_at(&squad, origin, dir);
@@ -965,6 +1049,8 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
                         _ => npc.fight = !npc.fight,
                     }
                     m.npc = Some(npc);
+                    // (its listing keeps what it's set to: the edited map's)
+                    placements.set_npc(npc.id, m.team, npc.fight);
                     // (its radar-contact when a hook has changed it from every character's 1)
                     let radar = if m.radar_contact != 1 { format!(", radar-contact {}", m.radar_contact) } else { String::new() };
                     let hp = if matches!(act, Hook::Health(..)) { format!(", {:.0} HP", m.health) } else { String::new() };
@@ -991,6 +1077,10 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<
                         }
                         if let Some(e) = m.slide_fx.take() {
                             commands.entity(e).despawn();
+                        }
+                        // (taken off the map, not lost in play: struck off its listing)
+                        if let Some(n) = m.npc {
+                            placements.remove_npc(n.id);
                         }
                     }
                     !gone
@@ -1159,12 +1249,17 @@ pub(super) fn spot_at(origin: Vec3, dir: Vec3, freecam: bool, air: f32) -> Optio
     Some(if at.y - below.y < AIR_MIN_HEIGHT { Spot::Ground(below) } else { Spot::Air { at, below } })
 }
 
-/// Puts entry `i` at `spot` turned `yaw` (see the module's notes for each kind). In the air, a
-/// loose one drops from there (`DropIn`, or `Thrown` from rest: play_pickups.rs's physics) and
-/// scenery hangs.
-fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, list: &[Entry], i: usize, spot: Spot, yaw: f32) {
+/// Puts entry `i` at `spot` turned `yaw` (see the module's notes for each kind), and lists it in
+/// the editor's `Placements` (its root marked with its number). In the air, a loose one drops
+/// from there (`DropIn`, or `Thrown` from rest: play_pickups.rs's physics) and scenery hangs.
+#[allow(clippy::too_many_arguments)]
+fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, placements: &mut super::editor::Placements, list: &[Entry], i: usize,
+         spot: Spot, yaw: f32) {
     let e = &list[i];
     let root = commands.spawn((placed_at(e, spot.at(), yaw), Visibility::default(), Name::new(format!("placed {}", e.label)))).id();
+    let id = placements.add(super::editor::Thing::Object { label: e.label.clone(), kind: e.kind }, spot.at(), yaw, matches!(spot, Spot::Air { .. }),
+                            Some(root));
+    commands.entity(root).insert(super::editor::PlacedId(id));
     let air = matches!(spot, Spot::Air { .. });
     let fall = || super::pickups::Thrown { velocity: Vec3::ZERO, spin: Vec3::ZERO };
     match e.kind {
@@ -1193,15 +1288,15 @@ fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, lis
     spawn_parts(commands, game, assets, e, root, false);
 }
 
-/// The object menu (O): picking, the see-through copy at the crosshair, the wheel's turn, a
-/// click placing; and the placing hooks.
+/// The object menu (O: its key is the tool registry's, `editor::open_tools`): picking, the
+/// see-through copy at the crosshair, the wheel's turn, a click placing; and the placing hooks.
 #[allow(clippy::too_many_arguments)]
-fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
+fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, player: Res<Player>, mut game: ResMut<GameData>,
                kits: Option<Res<grenade::GrenadeKits>>, mut list: ResMut<Catalogue>, script: Res<Script>, mut status: ResMut<UsePanel>,
                (mut ghosts, mut gizmos): (Query<(&mut Transform, &mut Visibility), With<Ghost>>, Gizmos),
                mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
-               mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>) {
+               mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>, mut placements: ResMut<super::editor::Placements>) {
     if list.0.is_empty() {
         let Some(kits) = kits else { return };
         list.0 = catalogue(&game.0, &kits);
@@ -1210,9 +1305,6 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
     let n = list.0.len();
     let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
     let log = std::env::var("BF_TOOLS_LOG").is_ok();
-    if keys.just_pressed(KeyCode::KeyO) {
-        tools.panel = if tools.panel == Panel::Objects { Panel::None } else { Panel::Objects };
-    }
     let mut click = false;
     let mut direct: Vec<(usize, Spot, f32)> = vec![];
     for hook in &script.now {
@@ -1266,7 +1358,7 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         } else if scroll.delta.y != 0.0 {
             tools.yaw = wrap_angle(tools.yaw + TURN_STEP * scroll.delta.y.signum());
         }
-        click |= keys.just_pressed(KeyCode::Enter) || (mouse.just_pressed(MouseButton::Left) && tools.before.captured);
+        click |= keys.just_pressed(KeyCode::Enter) || tools.click;
     }
     let (origin, dir) = crosshair(&player, &tools);
     let spot = spot_at(origin, dir, tools.freecam.is_some(), tools.air);
@@ -1277,7 +1369,7 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         }
     }
     for (i, at, yaw) in direct {
-        place(&mut commands, &mut game.0, &mut assets, &list.0, i, at, yaw);
+        place(&mut commands, &mut game.0, &mut assets, &mut placements, &list.0, i, at, yaw);
         status.message = Some((format!("Placed {}", list.0[i].label), MESSAGE_TIME));
         if log {
             let how = match at {
@@ -1354,8 +1446,10 @@ fn take_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Optio
     }
 }
 
-/// The free camera: the mouse turns it (once captured), WASD / Space / Ctrl fly it (Shift
-/// faster; BF_TEST_FLY), and it's the view (after the follow and death cameras have put theirs).
+/// The free camera: the mouse turns it (once captured; in edit mode while the right button is
+/// held, play_editor.rs), WASD fly it, Space / E up and Ctrl / Q down (E / Q as the level
+/// viewer's, bf_level), Shift faster (BF_TEST_FLY), at `Tools::speed`; and it's the view (after
+/// the follow and death cameras have put theirs).
 #[allow(clippy::too_many_arguments)]
 fn fly(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, motion: Res<AccumulatedMouseMotion>, mut tools: ResMut<Tools>, player: Res<Player>,
        windows: Query<&Window, With<PrimaryWindow>>, mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>) {
@@ -1366,7 +1460,8 @@ fn fly(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, motion: Res<Accumulated
         c.pitch = (c.pitch - motion.delta.y * LOOK).clamp(-FLY_PITCH, FLY_PITCH);
     }
     let key = |k: KeyCode| keys.pressed(k) as i32 as f32;
-    let mut v = Vec3::new(key(KeyCode::KeyD) - key(KeyCode::KeyA), key(KeyCode::Space) - key(KeyCode::ControlLeft), key(KeyCode::KeyW) - key(KeyCode::KeyS));
+    let up = key(KeyCode::Space).max(key(KeyCode::KeyE)) - key(KeyCode::ControlLeft).max(key(KeyCode::KeyQ));
+    let mut v = Vec3::new(key(KeyCode::KeyD) - key(KeyCode::KeyA), up, key(KeyCode::KeyW) - key(KeyCode::KeyS));
     let mut fast = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if let Some((until, hv, hf)) = tools.fly {
         if player.sim_time < until {
@@ -1377,7 +1472,7 @@ fn fly(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, motion: Res<Accumulated
         }
     }
     let r = c.rotation();
-    let speed = FLY_SPEED * if fast { FLY_FAST } else { 1.0 };
+    let speed = tools.speed * if fast { FLY_FAST } else { 1.0 };
     c.pos += (r * Vec3::X * v.x + Vec3::Y * v.y + r * Vec3::NEG_Z * v.z) * speed * dt;
     tools.freecam = Some(c);
     if let Ok((mut t, mut p)) = cam.single_mut() {
@@ -1390,10 +1485,12 @@ fn fly(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, motion: Res<Accumulated
     }
 }
 
-/// The tools' panel, right of the middle (hidden with nothing open).
+/// The tools' panel, right of the middle (hidden with nothing open). It knows where the mouse
+/// is over it, so a click on it isn't one in the world (edit mode, `before_input`).
 fn spawn_panel(mut commands: Commands) {
     commands.spawn((
         ToolPanel,
+        bevy::ui::RelativeCursorPosition::default(),
         Text::new(""),
         TextFont { font_size: 13.0, ..default() },
         TextColor(Color::srgba(1.0, 1.0, 1.0, 0.92)),
@@ -1404,14 +1501,18 @@ fn spawn_panel(mut commands: Commands) {
 }
 
 /// What the panel shows: the free camera's keys, or the open menu (the sky, music and level
-/// menus' text from play_testworld.rs, the scenery menu's from play_testscenery.rs).
+/// menus' text from play_testworld.rs, the scenery menu's from play_testscenery.rs); in edit
+/// mode with no menu open, the editor's help (play_editor.rs).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcList>, squad: Res<Squad>, world: Res<super::testworld::WorldText>,
-              scenery: Res<super::testscenery::SceneryText>, mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
+              scenery: Res<super::testscenery::SceneryText>, help: Res<super::editor::EditText>,
+              mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
     let Ok((mut text, mut node)) = panel.single_mut() else { return };
     let mut s = String::new();
-    if tools.freecam.is_some() {
-        s += "FREE CAMERA   (F: back)\nmouse: look   WASD: fly\nSpace / Ctrl: up / down   Shift: faster\nleft click: teleport to the crosshair\nright click: teleport under the camera\n";
+    if tools.edit && tools.panel == Panel::None {
+        s += &help.0;
+    } else if tools.freecam.is_some() && !tools.edit {
+        s += "FREE CAMERA   (F: back)\nmouse: look   WASD: fly\nSpace / Ctrl (E / Q): up / down   Shift: faster\nleft click: teleport to the crosshair\nright click: teleport under the camera\n";
     }
     match tools.panel {
         Panel::Npcs => {
@@ -1426,10 +1527,11 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
                 s += &format!("{} {}\n", if i == tools.npc_type { ">" } else { " " }, npcs.0[i].0);
             }
             s += &format!("  ({} of {n} character types)\n", tools.npc_type + 1);
-            s += &format!("J team: {}   B: {}\nclick / Enter: spawn at the crosshair\n", side(tools.npc_team).to_uppercase(),
+            let at = aim_word(&tools);
+            s += &format!("J team: {}   B: {}\nclick / Enter: spawn at {at}\n", side(tools.npc_team).to_uppercase(),
                           if tools.npc_fight { "FIGHT" } else { "DUMMY" });
             let n = squad.0.iter().filter(|m| m.npc.is_some()).count();
-            s += &format!("{n} spawned   J / B / Del on the one under the crosshair, Shift+Del all");
+            s += &format!("{n} spawned   J / B / Del on the one under {at}, Shift+Del all");
         }
         Panel::Objects => {
             if !s.is_empty() {
@@ -1448,10 +1550,11 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
                 s += &format!("{} {}\n", if i == tools.object { ">" } else { " " }, e.label);
             }
             s += &format!("Up / Down pick   Page Up / Down group   wheel turn ({:.0} deg)\n", tools.yaw.to_degrees());
+            let at = aim_word(&tools);
             s += &if tools.freecam.is_some() {
-                format!("click / Enter: place IN THE AIR, {:.1} m along the crosshair\n(Shift + wheel); loose ones drop, scenery hangs", tools.air)
+                format!("click / Enter: place IN THE AIR, {:.1} m along {at}\n(Shift + wheel); loose ones drop, scenery hangs", tools.air)
             } else {
-                "click / Enter: place on the ground at the crosshair".to_string()
+                format!("click / Enter: place on the ground at {at}")
             };
         }
         Panel::Sky | Panel::Music | Panel::Levels => {

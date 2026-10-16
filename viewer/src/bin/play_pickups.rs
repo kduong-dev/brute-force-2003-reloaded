@@ -248,12 +248,14 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
                 children: Query<&Children>, parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>,
                 mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
                 mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
-    if pickups.ready || player.loaded.is_none() {
+    // (once the character is in; the map editor's stand-in, in edit mode, has no body to wait
+    // for: its map's pickups drop and lie as they will meanwhile, play_editor.rs)
+    if pickups.ready || (player.loaded.is_none() && !player.stand_in) {
         return;
     }
     pickups.ready = true;
-    // test hook: BF_TEST_HEALTH=<hp> starts the player hurt
-    if let Some(hp) = std::env::var("BF_TEST_HEALTH").ok().and_then(|v| v.parse::<f32>().ok()) {
+    // test hook: BF_TEST_HEALTH=<hp> starts the player hurt (a session started in play)
+    if let Some(hp) = std::env::var("BF_TEST_HEALTH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|_| !player.stand_in) {
         player.health = hp.min(player.max_health);
     }
     pickups.list = placed.iter()

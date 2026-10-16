@@ -23,12 +23,16 @@
 //!    and (play_testscenery.rs) any level's buildings and static scenery to place. On a level
 //!    the switch went to (or `--test` with BF_MAP) everything here but the rack and the grid
 //!    holds: the tools, instant kill, X, the grenade stacks, the help panel.
+//!  - The map editor (play_editor.rs, #191): F5 switches between editing (the squad out of the
+//!    world, a free camera, the tools at the mouse pointer) and playing. `--edit` in place of
+//!    `--test` starts the session editing.
 
 use super::*;
 use bf_viewer::bf::hash::h;
 use bf_viewer::level_scene::Placed;
 
-/// The command-line flag that opens the test map.
+/// The command-line flag that opens the test map; the map editor's flag opens it too, in edit
+/// mode (play_editor.rs `FLAG`).
 const FLAG: &str = "--test";
 /// The weapon rack: how many to a row, the spacing (m), where its first row is (z, ahead of
 /// the start), how high they float and how fast they turn (rad/s).
@@ -65,9 +69,10 @@ pub struct TestMap {
     pub instant_kill: bool,
 }
 
-/// Whether the test map was asked for on the command line.
+/// Whether the test map was asked for on the command line (`--test`, or the map editor's
+/// `--edit`).
 pub fn requested() -> bool {
-    std::env::args().any(|a| a == FLAG)
+    std::env::args().any(|a| a == FLAG) || super::editor::requested()
 }
 
 /// Every level's weapon definitions and models, on top of the first mission's (only the
@@ -161,6 +166,7 @@ pub fn plugin(app: &mut App) {
     super::testtools::plugin(app);
     super::testworld::plugin(app);
     super::testscenery::plugin(app);
+    super::editor::plugin(app);
     app.init_resource::<PendingSlot>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (toggle_instant_kill, suicide, take_weapons, spin_rack).chain().after(update_player)

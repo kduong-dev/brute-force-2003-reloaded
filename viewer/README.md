@@ -5,7 +5,7 @@ Four programs:
 | Binary | What | Run |
 |---|---|---|
 | `bf_viewer` (default) | character / animation viewer, reads the **original game files** (`../Brute Force/data/*.tgz`) | `cargo run` |
-| `bf_play` | **playable demo**: run around as Brutus, Flint, Hawk or Tex with the game's own locomotion | `cargo run --bin bf_play` (the test map: `cargo run --bin bf_play -- --test`) |
+| `bf_play` | **playable demo**: run around as Brutus, Flint, Hawk or Tex with the game's own locomotion | `cargo run --bin bf_play` (the test map: `cargo run --bin bf_play -- --test`; the map editor: `-- --edit`) |
 | `bf_level` | level viewer: terrain, placed objects, sky and fog of a level (default Battle of Bulgar) | `cargo run --bin bf_level -- [level]` |
 | `glb_viewer` | viewer for the exported `../decompiled/characters/*.glb` | `cargo run --bin glb_viewer` |
 
@@ -24,6 +24,7 @@ and how it was checked):
 | [docs/pickups.md](docs/pickups.md) | health pickups and the item box |
 | [docs/scenery.md](docs/scenery.md) | interactive scenery: barrels, racks and crates that break, explode and chain |
 | [docs/testtools.md](docs/testtools.md) | the test map's developer tools: free camera and teleport, NPCs (friend / enemy, dummy / fight), placing objects (on the ground or in the air), any level's buildings and static scenery (drawn and solid as in their levels), skies, music, switching levels |
+| [docs/editor.md](docs/editor.md) | the map editor (#190): its edit mode out of the gunplay (`--edit`, F5), the edit camera and controls, play from here and back, what carries over, the tool registry and the list of placed things the later editing tickets build on |
 | [docs/menu.md](docs/menu.md) | the front end: title, menus, mission select, movies |
 | [docs/levels.md](docs/levels.md) | `bf_level` and how levels are drawn: terrain, materials, liquids, lights, sky, each map's quirks |
 | [docs/character-viewer.md](docs/character-viewer.md) | `bf_viewer`: the format readers, its keys and shading notes |
