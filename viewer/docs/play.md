@@ -70,6 +70,13 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   switch (L), which takes the test session to any level and back. On a level the rack and the
   pickup grid aren't there; the rest of this list is. `--test` with `BF_MAP=<level>` starts on
   that level. See [testtools.md](testtools.md).
+* **The map editor** (#191): F5 switches to its edit mode, out of the gunplay (no character, gun
+  or HUD; a free camera, the right mouse button held looks; the tools at the mouse pointer), and
+  F5 again plays from where the pointer is, the camera flying down to the squad and back up after.
+  `cargo run --bin bf_play -- --edit` starts the session editing. See [editor.md](editor.md).
+* **Backspace** leaves for the front end only when pressed twice within 2 s in a test session (a
+  stray key doesn't throw away what was built); the first press says so. `BF_TEST_BACK` still goes
+  at once.
 
 ## Health, HUD, locomotion, weapons and sounds
 

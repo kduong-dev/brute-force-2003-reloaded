@@ -105,12 +105,13 @@ impl CameraShake {
 }
 
 /// The shake resource, run on the view after every camera has put it (PostUpdate, before the
-/// transforms are propagated: the follow, death and free cameras set the view each frame).
+/// transforms are propagated: the follow, death and free cameras set the view each frame). Not
+/// on the map editor's camera in edit mode (play_editor.rs, #191): an editor's view holds still.
 pub fn plugin(app: &mut App) {
     app.init_resource::<CameraShake>()
         .add_systems(OnEnter(AppState::Playing), |mut shake: ResMut<CameraShake>| *shake = CameraShake::default())
         .add_systems(PostUpdate, apply_shake.before(bevy::transform::TransformSystem::TransformPropagate)
-            .run_if(in_state(AppState::Playing)));
+            .run_if(in_state(AppState::Playing).and(not(in_state(super::editor::EditorMode::Edit)))));
 }
 
 /// The shake's turn on the view, its game frames run in SHAKE_TICK steps.

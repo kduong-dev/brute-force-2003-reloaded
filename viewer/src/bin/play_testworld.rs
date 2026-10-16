@@ -283,9 +283,10 @@ enum Pick {
     Level(usize),
 }
 
-/// The menus (Y, U, L) and their hooks: picking, and asking for a sky, a bank or a switch.
+/// The menus (Y, U, L: their keys are the tool registry's, `editor::open_tools`) and their
+/// hooks: picking, and asking for a sky, a bank or a switch.
 #[allow(clippy::too_many_arguments)]
-fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>,
+fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, mut world: ResMut<World>, mut lists: ResMut<Lists>,
                script: Res<Script>, current: Res<CurrentMap>, game: Res<GameData>, mut status: ResMut<UsePanel>,
                mut next: ResMut<NextState<AppState>>, mut clear: ResMut<ClearColor>, skies: Query<Entity, With<SkyLayer>>,
@@ -298,16 +299,6 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
         lists.scanned = true;
         lists.scan = None;
         println!("test tools: {} levels, {} with a sky, {} with a music bank (listed in {secs:.1} s)", lists.levels.len() - 1, lists.skies.len(), lists.banks.len());
-    }
-    let toggle = |p: Panel, tools: &mut Tools| tools.panel = if tools.panel == p { Panel::None } else { p };
-    if keys.just_pressed(KeyCode::KeyY) {
-        toggle(Panel::Sky, &mut *tools);
-    }
-    if keys.just_pressed(KeyCode::KeyU) {
-        toggle(Panel::Music, &mut *tools);
-    }
-    if keys.just_pressed(KeyCode::KeyL) {
-        toggle(Panel::Levels, &mut *tools);
     }
     let mut sky: Option<Pick> = None;
     let mut bank: Option<Pick> = None;
@@ -347,7 +338,7 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mouse: R
     let step = |k: KeyCode| keys.just_pressed(k) as i32;
     let wheel = if scroll.delta.y < 0.0 { 1 } else if scroll.delta.y > 0.0 { -1 } else { 0 };
     let d = step(KeyCode::ArrowDown) - step(KeyCode::ArrowUp) + wheel;
-    let take = keys.just_pressed(KeyCode::Enter) || (mouse.just_pressed(MouseButton::Left) && tools.before.captured);
+    let take = keys.just_pressed(KeyCode::Enter) || tools.click;
     let pick_of = |k: usize, list: &[usize]| match k {
         0 => Pick::None,
         1 => Pick::Own,
@@ -608,8 +599,9 @@ fn audit(mut world: ResMut<World>, mut notice: ResMut<Notice>, mut status: ResMu
          before: Option<Res<Before>>, all: Query<Entity>, players: Query<(), With<AudioPlayer>>, music: Query<(), With<super::LevelMusic>>,
          skies: Query<(), With<SkyLayer>>, squad: Res<Squad>, scenery: Res<super::scenery::Scenery>, player: Res<Player>,
          assets: AssetCounts) {
-    // (half a second in: the map's breakables and pickups are listed by then)
-    if world.audited || player.loaded.is_none() || player.sim_time < AUDIT_AT {
+    // (half a second in: the map's breakables and pickups are listed by then; in the map editor's
+    // edit mode, play_editor.rs, there's no body to wait for)
+    if world.audited || (player.loaded.is_none() && !player.stand_in) || player.sim_time < AUDIT_AT {
         return;
     }
     world.audited = true;

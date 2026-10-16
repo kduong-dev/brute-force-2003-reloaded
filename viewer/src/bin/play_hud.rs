@@ -731,6 +731,11 @@ pub fn plugin(app: &mut App) {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HudSetup;
 
+/// The node the whole HUD hangs under (the window, with the game's 4:3 screen in it): the map
+/// editor hides it in edit mode, where there's no character to show (play_editor.rs, #191).
+#[derive(Component)]
+pub(super) struct HudRoot;
+
 /// A game texture as a UI image (cached; None if the texture isn't found).
 fn texture(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, name: u32) -> Option<Handle<Image>> {
     cache.0.entry(name).or_insert_with(|| {
@@ -881,8 +886,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let image = |h: &Option<Handle<Image>>, color: Color| flipped(h.clone().unwrap_or_default()).with_color(color);
 
     // full window, with the game's 4:3 screen centred in it
-    let window = commands.spawn(Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0),
-                                       justify_content: JustifyContent::Center, ..default() }).id();
+    let window = commands.spawn((HudRoot, Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0),
+                                                 justify_content: JustifyContent::Center, ..default() })).id();
     let screen = commands.spawn((Node { height: Val::Percent(100.0), aspect_ratio: Some(4.0 / 3.0), ..default() }, ChildOf(window))).id();
 
     // ---- the scope (under the rest of the HUD): for most, the game's frame h_1807ec04, a

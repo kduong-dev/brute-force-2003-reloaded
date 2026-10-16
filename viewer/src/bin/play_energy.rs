@@ -138,7 +138,8 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
     for (kind, at, thrower) in requests.0.drain(..) {
         let Some(kit) = kits.0.get(kind) else { continue };
         let radius = kit.blast.blast_radius;
-        for u in std::iter::once(&*player).chain(squad.0.iter()) {
+        // (not to the map editor's stand-in: it has no body, play_editor.rs)
+        for u in std::iter::once(&*player).chain(squad.0.iter()).filter(|u| !u.stand_in) {
             let p = body_place(u);
             let flat = Vec3::new(p.x - at.x, 0.0, p.z - at.z);
             let dist = flat.length();

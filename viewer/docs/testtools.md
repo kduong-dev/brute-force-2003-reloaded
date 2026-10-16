@@ -6,9 +6,16 @@ game's controls. A panel on the right lists the open tool's keys; the controls p
 left) lists them all. They work on any map of a test session: `--test` starts on the test map
 (`BF_MAP=<level>` with `--test`: on that level), and L switches to any other.
 
+The map editor ([editor.md](editor.md), #191) is these tools' home: F5 switches to its edit mode
+(no character in the world, the edit camera, the tools at the mouse pointer) and back to play,
+and `--edit` starts the session there. The menus' keys below are its tool registry's (`TOOLS`,
+`open_tools`), the same in both modes; what the menus put down is listed in its `Placements`.
+In edit mode "the crosshair" below is the mouse pointer (the crosshair's place with no pointer),
+a click is any left click off the panel, and F and its teleports do nothing.
+
 | Key | Tool |
 |---|---|
-| F | **free camera** on / off. Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl: up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
+| F | **free camera** on / off (in play). Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl (or E / Q): up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
 | N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
 | J / B / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / remove it. Shift+Delete removes every NPC |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
@@ -183,6 +190,10 @@ left) lists them all. They work on any map of a test session: `--test` starts on
 * Not done: moving NPCs, moving and removing placed objects and scenery (#187), saving a layout
   (#188), the breakable types of the other levels (the scenery menu leaves them out; the object
   menu has sdm_e34's three), the enemy species' own behaviour (#110's sub-issues).
+* The clicks (#191): `Tools::click`, made once a frame in `before_input`, is the menus' click: in
+  play, a left click with the mouse already captured (not the one that captures it), as before;
+  in edit mode any left click off the tools' panel (the panel knows the mouse over it,
+  `RelativeCursorPosition`).
 
 ## Test hooks
 
@@ -215,7 +226,8 @@ the background (#163)".
 
 | Hook | Does |
 |---|---|
-| `BF_TEST_FREECAM=<s>[,<x>,<y>,<z>,<yaw>,<pitch>]` | F: the free camera from where the camera is, or put there. `BF_TEST_FREECAM_OFF=<s>`: F again |
+| `BF_TEST_FREECAM=<s>[,<x>,<y>,<z>,<yaw>,<pitch>]` | F: the free camera from where the camera is, or put there. `BF_TEST_FREECAM_OFF=<s>`: F again. In the editor's edit mode the pose moves the edit camera |
+| `BF_TEST_EDIT`, `BF_TEST_PLAY`, `BF_TEST_POINTER` | the map editor's F5 both ways and its mouse pointer ([editor.md](editor.md), "Test hooks") |
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |

@@ -289,6 +289,31 @@ fn player_at_start(start: usize) -> Player {
 fn squad_at_start(start: usize, deathmatch: bool) -> Squad {
     // the rest of the squad, in formation behind the start character
     let origin = world::arena().and_then(|a| a.starts.get(std::env::var("BF_START").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0) % a.starts.len().max(1)).copied());
+    squad_around(start, origin, deathmatch)
+}
+
+/// The squad's leader `start` standing at `at` (its feet) facing `yaw`, the camera behind:
+/// where the map editor's "play from here" puts it (play_editor.rs, #191). Out of any wall
+/// there, as `squad_around` puts the others.
+fn player_at(start: usize, at: Vec3, yaw: f32) -> Player {
+    let mut p = Player::new(start);
+    let xz = world::arena().map_or(at.xz(), |a| a.push_out(at.xz(), BODY_RADIUS, at.y, at.y + BODY_HEIGHT, STEP_UP));
+    let feet = floor_y(xz.x, xz.y, at.y + STEP_UP);
+    p.position = Vec3::new(xz.x, feet - GROUND, xz.y);
+    p.prev_xz = xz;
+    p.fall_from = feet;
+    p.yaw = yaw;
+    p.cam_yaw = yaw;
+    // (the follow camera starts on them, not swinging in from the origin)
+    p.cam_target = p.position + Vec3::new(0.0, 0.35, 0.0);
+    p
+}
+
+/// The squad but `start`, in formation round `origin` (a place and the way it faces; None: the
+/// flat floor's origin, facing -z), each on the floor and out of the walls there (none in
+/// deathmatch): the map's start (`squad_at_start`), or where the map editor's "play from here"
+/// puts the leader (play_editor.rs).
+fn squad_around(start: usize, origin: Option<(Vec3, f32)>, deathmatch: bool) -> Squad {
     let members = (0..SQUAD).filter(|&c| c != start).enumerate().map(|(slot, c)| {
         let mut m = Player::new(c);
         let f = FORMATION[slot % FORMATION.len()];
@@ -487,6 +512,8 @@ fn main() {
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
+    // (the map editor's edit mode has no character to drive or follow: play_editor.rs)
+    let editing = || in_state(editor::EditorMode::Edit);
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
@@ -502,8 +529,9 @@ fn main() {
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
-        .add_systems(Update, (spawn_player, read_input, squad_control, doors, update_player, play_sounds, follow_camera, update_weapons,
-                               move_tracers, projectiles, update_hud, slide_dust, capture).chain().run_if(playing.clone()))
+        .add_systems(Update, (spawn_player, read_input.run_if(not(editing())), squad_control, doors, update_player, play_sounds,
+                               follow_camera.run_if(not(editing())), update_weapons, move_tracers, projectiles, update_hud, slide_dust, capture)
+            .chain().run_if(playing.clone()))
         .add_systems(Update, lamp_characters.after(update_player).run_if(playing.clone()))
         .add_systems(Update, spawn_splashes.after(update_player).run_if(playing.clone()))
         .add_systems(Update, (back_to_menu, audio_probe).run_if(playing))
@@ -541,6 +569,8 @@ mod testtools;
 mod testworld;
 #[path = "play_testscenery.rs"]
 mod testscenery;
+#[path = "play_editor.rs"]
+mod editor;
 #[path = "play_menu.rs"]
 mod menu;
 #[path = "play_scenery.rs"]
@@ -780,13 +810,29 @@ fn audio_probe(time: Res<Time>, mut last: Local<f32>, sinks: Query<&AudioSink>, 
     }
 }
 
-/// Backspace: back to the map menu (bf_play starts again there).
+/// How long (s, real time) a first Backspace in a test session waits for the second that
+/// leaves (the demo's choice): leaving drops the map and what was built on it (#191).
+const LEAVE_CONFIRM: f32 = 2.0;
+
+/// Backspace: back to the map menu (bf_play starts again there). In a test session (the map
+/// editor's, play_editor.rs) only a second press within LEAVE_CONFIRM s leaves, so a stray key
+/// doesn't throw away what was built.
+#[allow(clippy::too_many_arguments)]
 fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>, mode: Res<Mode>, map: Res<CurrentMap>,
-                mut commands: Commands, mut frames: Local<u32>) {
+                mut commands: Commands, mut frames: Local<u32>, test_map: Option<Res<testmap::TestMap>>, time: Res<Time<Real>>,
+                mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>) {
     // test hook: BF_TEST_BACK=<n> goes back after n frames of the map
     *frames += 1;
     let test = std::env::var("BF_TEST_BACK").ok().and_then(|v| v.parse::<u32>().ok()) == Some(*frames);
-    if keys.just_pressed(KeyCode::Backspace) || test {
+    let now = time.elapsed_secs();
+    let mut leave = keys.just_pressed(KeyCode::Backspace);
+    if leave && test_map.is_some() && !armed.is_some_and(|at| now - at < LEAVE_CONFIRM) {
+        leave = false;
+        *armed = Some(now);
+        status.message = Some(("Backspace again to leave for the menu: the map isn't kept".into(), LEAVE_CONFIRM));
+    }
+    if leave || test {
+        *armed = None;
         *frames = 0;
         commands.insert_resource(menu::Return { map: Some(map.0.clone()), deathmatch: mode.deathmatch });
         next.set(AppState::Menu);
@@ -1790,6 +1836,9 @@ struct Player {
     /// an enemy's own state (#129, play_enemies.rs: its personality, reactions, the test hook's
     /// drive, its stamina shield); the squad's stays at its default
     enemy: enemies::State,
+    /// the map editor's stand-in for the controlled character while editing (`Player::stand_in`,
+    /// play_editor.rs, #191): no body, never given one (`spawn_player`)
+    stand_in: bool,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -1842,7 +1891,34 @@ impl Player {
             wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
             lock_aim: None,
             enemy: Default::default(),
+            stand_in: false,
         }
+    }
+
+    /// The map editor's stand-in for the controlled character while editing (play_editor.rs,
+    /// #191). In edit mode no character is in the world, but every system takes `Player` as the
+    /// one in control, so this takes its place: it has no body (`loaded` stays None, and
+    /// `spawn_player` gives it none) and counts as dead, so everything that acts on characters
+    /// passes it over (sight and the AI's targets, shots, blasts, gas, Sentries, pickups, doors,
+    /// the death camera's hand-over, the squad's AI); the marks of a death are counted as made
+    /// (`dead_for` past the death's frame, the blood pool, the memory chip). `character`: the
+    /// squad member who leads when play starts again; `sim_time`: the clock the test hooks run
+    /// on, carried on (the editor counts it on, as `step_player` counts a living one's); `at`:
+    /// where it stands in (the edit camera: the squad's and NPCs' sounds are heard from there,
+    /// `play_sounds`, and the NPC menu puts its NPCs facing it).
+    fn stand_in(character: usize, sim_time: f32, at: Vec3) -> Self {
+        let mut p = Player::new(character);
+        p.stand_in = true;
+        p.dead = true;
+        p.health = 0.0;
+        p.dead_for = 1.0;
+        p.thud = true;
+        p.pool_done = true;
+        p.dna_done = true;
+        p.sim_time = sim_time;
+        p.position = at;
+        p.prev_xz = at.xz();
+        p
     }
 
     /// (see `splashes`)
@@ -2867,7 +2943,8 @@ fn spawn_player(
 ) {
     let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
     for p in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        if p.loaded.as_ref().is_some_and(|l| l.index == p.character && l.kind == p.kind) {
+        // (the editor's stand-in has no body: play_editor.rs)
+        if p.stand_in || p.loaded.as_ref().is_some_and(|l| l.index == p.character && l.kind == p.kind) {
             continue;
         }
         if let Some(old) = p.loaded.take() {
@@ -5919,7 +5996,8 @@ fn move_tracers(mut commands: Commands, time: Res<Time>, fx: Res<Fx>,
 /// <dir>/frame_NNN.png, then quits.
 fn capture(mut commands: Commands, player: Res<Player>, mut frame: Local<usize>, mut exit: EventWriter<AppExit>) {
     let Ok(dir) = std::env::var("BF_CAPTURE") else { return };
-    if player.loaded.is_none() {
+    // (once the character is in; the map editor's stand-in never has a body to wait for)
+    if player.loaded.is_none() && !player.stand_in {
         return;
     }
     let left = WARMUP.load(std::sync::atomic::Ordering::Relaxed);
