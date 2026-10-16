@@ -320,12 +320,14 @@ pub fn is_glow_decal(game: &Game, g: &Geoset) -> bool {
     (hi - lo).min_element() < GLOW_DECAL_FLAT
 }
 
-/// A placed level object's root entity: its element (inventory-object, game-object, ...) and
-/// object type.
+/// A placed level object's root entity: its element (inventory-object, game-object, ...),
+/// object type and its own name (what the level's triggers call it; 0 for one put down by the
+/// test tools).
 #[derive(Component, Clone, Copy)]
 pub struct Placed {
     pub tag: u32,
     pub kind: u32,
+    pub name: u32,
 }
 
 /// A door or gate, in level object order (the same order as `Arena::doors`): its sliding
@@ -798,7 +800,7 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             }
         }
         let e = commands.spawn((Transform::from_matrix(o.transform), Visibility::default(), Name::new(format!("h_{:08x}", o.kind)),
-                                Placed { tag: o.tag, kind: o.kind })).id();
+                                Placed { tag: o.tag, kind: o.kind, name: o.name })).id();
         // the archetype's animation (archetype-set of the same name) moves the leaves: a
         // channel per part
         // a liquid's surface moves (see `LiquidMaterial`)

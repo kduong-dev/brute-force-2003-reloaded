@@ -303,7 +303,10 @@ fn find_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: 
         }
         debug_assert_eq!(b, list.len());
         let centre = place.transform_point(game.0.object_meshes.get(&o.kind).and_then(|&a| game.0.archetype_centre(a)).unwrap_or(Vec3::ZERO));
-        list.push(Breakable { name: o.name, kind: o.kind, place, centre, entity, hp: t.hitpoints, state: State::Intact,
+        // (one a destroyer-trigger removed as the level started is gone already: the tutorial's
+        // four h_0247aefb props, play_triggers.rs)
+        let state = if arena.is_broken(b) { State::Gone } else { State::Intact };
+        list.push(Breakable { name: o.name, kind: o.kind, place, centre, entity, hp: t.hitpoints, state,
                               push: Push { at: centre, dir: Vec3::ZERO }, explosive, bounds: None });
         let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
         prepare_debris(&mut commands, &mut scenery, &mut game.0, &mut assets, ale.as_deref_mut(), &t.debris);

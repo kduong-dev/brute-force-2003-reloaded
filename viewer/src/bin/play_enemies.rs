@@ -235,7 +235,8 @@ pub fn table_clips(clips: &mut Clips, m: &Motions, game: &Game, t: &CharacterTyp
     clips.loco.run_back = get(MT_BACKPEDAL, false).or(clips.loco.run_back);
 }
 
-/// An enemy's own state (`Player::enemy`; the squad's stays at its default).
+/// An enemy's own state (`Player::enemy`; the squad's stays at its default, but for the weapons
+/// of the placement a squad member starts from: play_triggers.rs `SquadSpawn::dress`).
 #[derive(Default)]
 pub struct State {
     /// its personality (a `Game::personalities` name): the placement's personality-freewill

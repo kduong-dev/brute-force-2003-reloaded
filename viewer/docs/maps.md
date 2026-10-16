@@ -11,7 +11,12 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
 `BF_NO_IDLE_FX=1` leaves out the power-ups' effects):
 
 * **Spawning.** You start at the level's start point. Points 0–3 are one squad's spawn on the
-  hill, 4–7 the other's, and 9 is in the base.
+  hill, 4–7 the other's, and 9 is in the base. A level whose spawn-triggers spawn the squad (the
+  tutorial, e40) starts each member on the ground under its own spawn-trigger, and one that
+  places the squad in the world (m09_a) at its placements, each with its template's weapons and
+  ammo ([triggers.md](triggers.md), "Spawn-triggers", #102).
+* **The level's triggers** run: detectors, routers, timers, calculators, spawn-triggers, the
+  doors' anim-triggers, destroyers ([triggers.md](triggers.md), #220).
 * **Collision.** It uses the game's own collision surfaces (`src/bf/collision.rs`,
   `src/arena.rs`). On sdm_e34 that's 43,348 triangles.
   * Where they come from: `objects-<level>.ipn` holds them in the Ipion physics engine's format.
@@ -21,11 +26,25 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Standing: characters stand on surfaces up to 65° (the game's ground limit) within a 0.5 m
     step; steeper surfaces are walls.
   * Not solid: grass, wires and other undrawn or cut-out parts have no collision surface, so
-    they don't block.
+    they don't block. Nor does a spawn-trigger's template, which the game takes out of the world
+    until it's spawned ([triggers.md](triggers.md), #220).
   * Fallback: a level without collision data uses the drawn triangles instead.
-* **Doors and gates.** Their leaves sit on sliding joints (joint type h_fd8f670c). Doors open
-  when anyone is within 5 m, close again afterwards (the opening played backwards), and stop
-  blocking while open. Gates with wall panels open from those instead (below).
+* **Doors and gates.** Their leaves sit on sliding joints (joint type h_fd8f670c). A door moves
+  only when one of the level's anim-triggers that lists it plays its clip (#220, #125:
+  [triggers.md](triggers.md)): forward opens it, backward closes it (the opening played back), at
+  the entry's time-scale; an open door stops blocking. There's no door flag: a door nothing
+  signals stays shut. What signals them, from the data:
+  * sdm_e34's eight doors: their plate (a box, `size` its half-extents: e.g. h_f214c88d, +-4 x 2
+    x 2 round the doorway) admits any character; its ENTER_DETECTOR_FIRST, through a router,
+    opens the door, its EMPTIED_DETECTOR closes it once the last one has been off it 0.2 s. The
+    5 m circle the demo used before is gone, and an enemy on a campaign map no longer opens a
+    door its plate doesn't admit (#125's e34 gate).
+  * the tutorial's two building doors: their plates (squad types), once: h_eefcb023 opens the
+    base's h_06537687, h_020415dc the second building's h_0f544611 27 m away; the door
+    h_fa29ecfd opens by itself at the level's start (FIRST_UPDATE); the gate h_14690535 from the
+    end of its panel's sound (FINISHED: step 4 of #28, #223 runs sound-triggers; until then it stays
+    shut).
+  * gates with wall panels (below).
   * Motion: the level's animations-<level>.xmb has an archetype-set named after each door's
     archetype, with one target per leaf (by part name) on a float channel: metres along the
     joint's axis per frame at 24 fps. Doors take 1.21 s (upper leaf 1.89 m, lower 1.70 m); the
@@ -36,28 +55,33 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     `ml-sounds/en/<level>-en.tgz` at the offsets in the level's sound bank.
   * The gate's two leaves have a clip each in its set (h_10d3fde3 and h_0a48ec76, 4.96 s, one
     target each); each leaf takes its channel from whichever clip names its part.
-* **Gates and their wall panels.** A gate with wall panels opens only from them:
-  * The panels are `world-button-object`s (h_16f22d4b, type h_ee4c83c9, `reticule-action` 1)
-    sending signal 14 (h_eaf8a35b).
+* **Gates and their wall panels.** A gate with wall panels opens from them:
+  * The panels are `world-button-object`s (h_16f22d4b, type h_ee4c83c9, `reticule-action` 1).
+    Used, a panel sends its signal (h_eaf8a35b: 14, USE_OBJECT) and data (h_f1660a0d) to the
+    triggers listening to it (0x163060; the trigger runtime, [triggers.md](triggers.md)).
   * A `router-trigger` lists the panels among its objects (h_0b6b92ba) and passes their signal
     on (h_e91cf6a8) to the gate's `anim-trigger`s. Those animate the gate object (their own
     h_0b6b92ba) with one clip per leaf on signal 14, once only (h_f136d22d 1, where the
     proximity doors' signal 50 / 42 entries say 2147483647), and send on to the gate's sound
     trigger. So a used gate opens and stays open. On sdm_e34: panels h_14643319 / h_1d63038f ->
-    router h_1c61561d -> anim-triggers h_f993d7ef / h_e8ad85ec -> gate h_14690535.
-    `Level::button_opens` follows that chain.
+    router h_1c61561d -> anim-triggers h_f993d7ef / h_e8ad85ec -> gate h_14690535. The
+    tutorial's panels go through their sound-triggers instead (the gate opens on the sound's
+    FINISHED: step 4 of #28, #223).
   * Using one (capture todo/gate button.mp4): from in front of its button (hardpoint
     h_10f81d34, facing the model's +z), within 2.5 m and looking within ~45° of it, hold E for
     0.5 s. Reach, angle and hold time are guesses; the capture shows no progress bar and no
     gate message. While it's usable, "Hold E to activate panel." shows under the health bar.
     That's the game's "Hold " + its X-button icon + "to activate %s." with "panel", and the
     key here in place of the icon. The blue target ring (the four-notch reticle texture
-    h_1d2a68d0, tinted) sits on the button.
+    h_1d2a68d0, tinted) sits on the button. The prompt goes once the panel is used, or once the
+    doors its signal reaches unchanged (`Level::button_opens`: sdm_e34's gate) are open (the
+    demo's choice: the game's panel stays usable until a property trigger says otherwise).
   * The button glows green: material h_f87dca06 is shader type h_1df292a1 (851 materials), a
     lit shader whose glow texture h_e01baa40 is tinted by its constant of the same name
     (0.276 0.914 0.220 here) and added as light.
-  * `BF_DOOR_LOG=1` lists the panels, what each opens, and the gates with panels.
-    `BF_TEST_USE=<s>` presses use at that time.
+  * `BF_DOOR_LOG=1` lists the doors and the panels (what each opens unchanged), and logs each
+    door the triggers open or close and its leaves each second. `BF_TEST_USE=<s>` holds use from
+    that time for a second.
 * **HUD text** (`play_text.rs`) is drawn in the game's own body font, atlas h_e4e4d2f4 (as the
   menu draws it), its glyphs 1 atlas pixel apart over a black outline and shadow, as in the
   captures. Colours sampled from them: messages and prompts pale blue (186 210 249), ammo and
