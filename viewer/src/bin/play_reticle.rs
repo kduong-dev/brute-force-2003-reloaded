@@ -26,7 +26,10 @@
 //!       skill's: 0.4 of the screen each way at s = 1 (its +0xc4 and +0x100, play_skills.rs
 //!       `lock_shares`, `lock_box`), 128 x 96 units;
 //!     - a ray from the camera to it (SIGHT_RANGE m) meets that character first, or nothing
-//!       (FUN_000becf0).
+//!       (FUN_000becf0);
+//!     - it's visible enough: its visibility (its skill's +0xe4, `skills::visibility`) at least
+//!       LOCK_VISIBILITY, 0.1 (FUN_000bf6d0): a stealthed Hawk on another team isn't locked,
+//!       nor under the centre (step 2).
 //!
 //!     Of the candidates, each has to beat the best "outer" score so far (`box_score`, over a box
 //!     OUTER_BOX times as big) and then the best score so far (FUN_000bf7a0); of those the
@@ -63,8 +66,7 @@
 //! `weapon_range`).
 //!
 //! Not in: the line-of-fire ray (0xc54d0: an obstacle between the gun and the locked target shows
-//! its own colour after two frames; not filmed), Hawk's stealth (a target below 0.1 visibility
-//! isn't a candidate: the demo's skills have no visibility yet), the alpha's blink (controller
+//! its own colour after two frames; not filmed), the alpha's blink (controller
 //! +0x94 bit 1: what sets it isn't traced), the scoped lock box (0x11cfb5: once the scope-in's
 //! 0.85 s timer, char+0x7c8, is out, FUN_000c5d20 takes the skill's +0x58, 0.2, Flint's 0.8,
 //! in place of 1.0: the demo's scope keeps the gun's box), the crosshair moving onto a lock
@@ -159,6 +161,12 @@ const CAPSULE_THICK: f32 = 0.15;
 /// The radar-contacts that turn the crosshair yellow (0xc59da, 0xc59df): RCONTACT_OBJECTIVE
 /// and RCONTACT_OBJECTIVE_SECONDARY (0x3beaac).
 const YELLOW_CONTACTS: [u8; 2] = [2, 4];
+/// FUN_000bf6d0: a character less visible than this (its combat target's slot 0, the skill's
+/// +0xe4: `skills::visibility`) isn't a candidate, for the selection nor the lock under the
+/// centre (FUN_000bf550 asks it too): 0.1 at 0x3a4ff0. A stealthed Hawk drops under it 0.9 s
+/// into her fade, and a shot puts her over it for about 0.22 s (her factor back from 0 at 4 a
+/// second).
+const LOCK_VISIBILITY: f32 = 0.1;
 
 /// The crosshair's tint this frame: the reticle sub-widget's style (+0x30), set by 0xc6380.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -430,6 +438,12 @@ fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option
     let mut lock = None;
     let along = view.through(centre);
     for u in squad.0.iter().filter(|u| !u.dead && damage::hostile(player.team, u.team)) {
+        if skills::visibility(u) < LOCK_VISIBILITY {
+            if let Some(n) = notes.as_deref_mut() {
+                n.push(format!("{} unseen: visibility {:.2}", name(u), skills::visibility(u)));
+            }
+            continue;
+        }
         let capsule = AimCapsule::of(u);
         // the crosshair's ray at the depth of the capsule's middle (FUN_000a0c60)
         let aim = capsule.nearest(view.at + along * view.depth(capsule.middle()));
@@ -522,10 +536,12 @@ pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<G
             Some((_, Under::Body(i))) => {
                 let u = &squad.0[i];
                 if damage::hostile(player.team, u.team) {
-                    // FUN_000bf550 holds: with no gun, in the scope (char+0x7a8) or when the lock's
-                    // reach is past the gun's range (FUN_00232590 > FUN_002324c0), it's locked
+                    // FUN_000bf550 holds (visible enough: it asks FUN_000bf6d0): with no gun, in the
+                    // scope (char+0x7a8) or when the lock's reach is past the gun's range
+                    // (FUN_00232590 > FUN_002324c0), it's locked
                     let scoped = player.scope > 0.5;
-                    if held.is_none_or(|w| scoped || options.lock_share * reach(&player, &w.def) > skills::weapon_range(&player, &w.def)) {
+                    let seen = skills::visibility(u) >= LOCK_VISIBILITY;
+                    if seen && held.is_none_or(|w| scoped || options.lock_share * reach(&player, &w.def) > skills::weapon_range(&player, &w.def)) {
                         direct = Some(u.who());
                     }
                 } else {

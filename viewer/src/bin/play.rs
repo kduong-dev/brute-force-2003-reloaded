@@ -497,6 +497,7 @@ fn main() {
         .add_plugins(targeting::plugin)
         .add_plugins(enemies::plugin)
         .add_plugins(vengar::plugin)
+        .add_plugins(stealth::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -566,6 +567,8 @@ mod targeting;
 mod enemies;
 #[path = "play_vengar.rs"]
 mod vengar;
+#[path = "play_stealth.rs"]
+mod stealth;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1426,6 +1429,9 @@ struct Loaded {
     foot_range: HashMap<usize, [(f32, f32); 2]>,
     footstep_type: i64,
     jump_sound: u32,
+    /// its type's `<ai vision-range>` (m; 0 without one): how far its AI sees a fully visible
+    /// character (`sight_reach`)
+    vision: f32,
     weapons: Vec<HeldWeapon>,
     /// switch clips by the slot being switched to (0: from the second weapon, 1: to it)
     switch_clips: [Option<SwitchClip>; 2],
@@ -1904,7 +1910,7 @@ struct Squad(Vec<Player>);
 
 /// A character's identity (`Player::who`): a squad member's character, or a test map NPC's
 /// number, with its character type (fixed for the NPC: for naming it, `who_name`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Who {
     Squad(usize),
     Npc(u32, u32),
@@ -2011,7 +2017,8 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     }
     // squadmates only aim and shoot at an enemy they can see (`hostile_in_sight`) - never just
     // because the player fires. The main game has no enemies yet, so they hold fire; the test
-    // map's enemy NPCs (play_testtools.rs) are the only targets.
+    // map's enemy NPCs (play_testtools.rs) are the only targets. (Nor while their skill says hold
+    // fire: `update_player` leaves the target out then)
     m.aim = target.is_some() || cautious;
     ai_fire(m, target, dt);
     m.switch_pressed = false;
@@ -2061,28 +2068,69 @@ const AI_AIM_HEIGHT: f32 = 1.1;
 /// own floor, `step_player`'s `range.max(20)`).
 const AI_MIN_RANGE: f32 = 20.0;
 
-/// Who each character can be seen as, for `hostile_in_sight`: team, chest point, and whether
-/// they're a target for the AI at all: alive, on their feet, not held by a test hook, and not a
-/// test map dummy (play_testtools.rs: a dummy is the player's target; one set to fight is
-/// everyone's).
-fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<(u8, Vec3, bool)> {
-    units.map(|u| (u.team, u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
-                   !u.dead && !knocked_down(u) && !u.test_hold && u.npc.is_none_or(|n| n.fight))).collect()
+/// How a character can be seen, for `hostile_in_sight` (`sight_list`).
+#[derive(Clone, Copy, Debug)]
+struct Seen {
+    /// its team
+    team: u8,
+    /// its chest point, where the AI aims (AI_AIM_HEIGHT above the feet)
+    chest: Vec3,
+    /// a target for the AI at all: alive, on its feet, not held by a test hook, and not a test
+    /// map dummy (play_testtools.rs: a dummy is the player's target; one set to fight is
+    /// everyone's)
+    target: bool,
+    /// how visible it is (the skill's +0xe4, which the stamina update pushes into its combat
+    /// target each frame, 0x11a934-0x11a94a: `skills::visibility`): 1, or a stealthed Hawk's
+    /// near 0
+    visibility: f32,
 }
 
-/// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) can see:
-/// on another team, within its held weapon's range (at least AI_MIN_RANGE), nothing of the
-/// world (or the test floor's pillars) between its eyes and their chest. They see all round
-/// (the demo's choice). Never anyone in the main game: everyone is on team 0; BF_TEST_HOSTILE's
+/// How each character can be seen (`Seen`), in the order `hostile_in_sight`'s `me` counts: the
+/// player, then the squad.
+fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
+    units.map(|u| Seen {
+        team: u.team,
+        chest: u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
+        target: !u.dead && !knocked_down(u) && !u.test_hold && u.npc.is_none_or(|n| n.fight),
+        visibility: skills::visibility(u),
+    }).collect()
+}
+
+/// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) can see,
+/// its place in `sight` and its distance: on another team, within its held weapon's range (at
+/// least AI_MIN_RANGE), within its sight (`sight_reach` x the target's visibility, FUN_0004d140:
+/// a stealthed Hawk drops out of it as she fades), nothing of the world (or the test floor's
+/// pillars) between its eyes and their chest. They see all round (the demo's choice; the game's
+/// type has a half-fov). Never anyone in the main game: everyone is on team 0; BF_TEST_HOSTILE's
 /// held squadmate isn't a target either.
-fn hostile_in_sight(m: &Player, me: usize, sight: &[(u8, Vec3, bool)]) -> Option<Vec3> {
+fn nearest_hostile(m: &Player, me: usize, sight: &[Seen]) -> Option<(usize, f32)> {
     let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+    let reach = sight_reach(m, range);
     let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
     sight.iter().enumerate()
-        .filter(|&(i, &(team, _, target))| i != me && target && team != m.team)
-        .map(|(_, &(_, at, _))| (at, eye.distance(at)))
-        .filter(|&(at, d)| d < range && ray_hit(eye, (at - eye) / d.max(1e-3), d - 0.3).is_none())
-        .min_by(|a, b| a.1.total_cmp(&b.1)).map(|(at, _)| at)
+        .filter(|&(i, s)| i != me && s.target && s.team != m.team)
+        .map(|(i, s)| (i, s.chest, eye.distance(s.chest), s.visibility))
+        .filter(|&(_, at, d, v)| d < range && d <= reach * v && ray_hit(eye, (at - eye) / d.max(1e-3), d - 0.3).is_none())
+        .min_by(|a, b| a.2.total_cmp(&b.2)).map(|(i, _, d, _)| (i, d))
+}
+
+/// The chest of the nearest hostile `m` can see (`nearest_hostile`).
+fn hostile_in_sight(m: &Player, me: usize, sight: &[Seen]) -> Option<Vec3> {
+    nearest_hostile(m, me, sight).map(|(i, _)| sight[i].chest)
+}
+
+/// How far (m) `m`'s AI sees a fully visible character: FUN_0004d140 takes the brain's sight
+/// distance (its vtable +0xa8) x FUN_000481c0's factor x the target's visibility (its combat
+/// target's slot 0, `Seen::visibility`) and tests the squared distance against it. The sight
+/// distance is read as the type's `<ai vision-range>` (the type parser stores it at +0x24 of the
+/// AI record, 0x1885cb; the getter isn't traced): 80 for Brutus, Hawk and Tex, 105 for Flint, 75
+/// for e40's Shrikes. FUN_000481c0's factor is 1, or 1.15 (0x3f933333) in a state not traced, x3
+/// with a gun whose data +0x16c is set: left at 1. #35 take14 fits it: e40's Shrike (vision-range
+/// 75) 15.7 m from Hawk lost her between her visibility 0.20 and 0.17 (5.72-5.77 s), where 75 x v
+/// passes 15.7 m at 0.21 (and 86 x v, with the 1.15, at 0.18). A type without a vision-range
+/// sees as far as `range`, the held weapon's (the demo's own reach).
+fn sight_reach(m: &Player, range: f32) -> f32 {
+    m.loaded.as_ref().map(|l| l.vision).filter(|&v| v > 0.0).unwrap_or(range)
 }
 
 /// Hand control to another squad member: their name shows over them for SELECT_TIME (as in the
@@ -3012,8 +3060,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     // an enemy's personality, stamina refill and shield (play_enemies.rs)
     enemies::spawned(p, ty.as_ref());
     p.name = label;
+    let vision = ty.as_ref().map_or(0.0, |t| t.ai.vision_range);
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
+                                  vision, weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
 }
 
 fn read_input(
@@ -3305,7 +3354,7 @@ struct AiHits(Vec<PendingHit>);
 
 #[allow(clippy::too_many_arguments)]
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-                 mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, test: Option<Res<testmap::TestMap>>,
+                 mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, mut saw: Local<HashMap<Who, bool>>, test: Option<Res<testmap::TestMap>>,
                  kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>, mut ai_hits: ResMut<AiHits>,
                  difficulty: Res<damage::Difficulty>, reticle: Res<reticle::Reticle>) {
     let dt = frame_dt(&time);
@@ -3327,13 +3376,30 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     // who can see whom (the squad AI and the test map's NPCs fire only at a hostile in sight)
     let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
+    let sight_log = std::env::var("BF_SIGHT_LOG").is_ok();
+    // (the log's clock: the controlled character's, as the skills' log uses)
+    let clock = player.sim_time;
     for (slot, m) in squad.0.iter_mut().enumerate() {
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
         if m.dead || knocked_down(m) {
             continue;
         }
-        let target = hostile_in_sight(m, slot + 1, &sight);
+        let seen = nearest_hostile(m, slot + 1, &sight);
+        let target = seen.map(|(i, _)| sight[i].chest);
+        // BF_SIGHT_LOG: an AI character finding or losing its target
+        if sight_log && saw.insert(m.who(), target.is_some()).is_none_or(|was| was != target.is_some()) {
+            let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+            let what = match seen {
+                Some((i, d)) => format!("sees unit {i} at {d:.1} m (its visibility {:.2}, reach {:.1} x it)", sight[i].visibility, sight_reach(m, range)),
+                None => format!("sees no hostile (reach {:.1} x their visibility)", sight_reach(m, range)),
+            };
+            println!("t={clock:.2} {}: {what}", unit_name(m));
+        }
+        // no target while the character's skill says hold fire: the AI's attack check
+        // FUN_00024f80 refuses at 0x2507a while the attacker's skill's +0x108 is true, a stealthed
+        // Hawk's (0x13d3f0), before it raises the gun (0x2509c)
+        let target = target.filter(|_| !skills::holds_fire(m));
         // (BF_TEST_TARGET's squadmate stands still in the line of fire; play_sentry.rs's test
         // hooks hold theirs where they put them; the test map's NPCs have their own)
         if m.npc.is_some() {
@@ -4822,6 +4888,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 p.sound_queue.push((kit.def.arm_sound, 0.8));
             }
             p.throwing = Some(Throw { power: 0.0, time: 0.0, slot, grabbed: false, released: false, kind: k, place: true });
+            // the item use's skill call (FUN_00121170 -> +0x104, IOU_PLACE_ON_GROUND): Hawk's cost
+            skills::used_item(p, kit.def.use_type);
         }
         p.charge = 0.0;
     } else if p.throw_held && can_throw {
@@ -4835,7 +4903,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         p.charge = (p.charge + dt / CHARGE_TIME).min(1.0);
     } else if p.charge > 0.0 {
         let slot = stance_of(l, p.weapon);
-        if let (true, true, Some((k, _))) = (can_throw, l.throw_clips[slot].is_some(), kind) {
+        if let (true, true, Some((k, kit))) = (can_throw, l.throw_clips[slot].is_some(), kind) {
             p.throwing = Some(Throw { power: p.charge.max(0.1), time: 0.0, slot, grabbed: false, released: false, kind: k,
                                       place: false });
             p.aim_hold = 0.0;
@@ -4843,6 +4911,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             // meter holds its level a moment
             p.grenades[k] -= 1;
             p.meter_after = (p.charge, METER_HOLD + METER_FADE);
+            // the item use's skill call (FUN_00121170 -> +0x104, IOU_THROW_TO_USE): Hawk's cost,
+            // with the count (#35 take13: 15.1 at 6.19-6.24 s, the count at 6.21)
+            skills::used_item(p, kit.def.use_type);
         }
         p.charge = 0.0;
     }
@@ -4913,6 +4984,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                     Some(s) => (s.recoil, s.flash) = (1.0, 0.05),
                     None => (p.recoil, p.flash) = (1.0, 0.05),
                 }
+                // the skill's +0xb0 for each round taken (FUN_0022f640 from the fire loop):
+                // Hawk's flash and cost while stealthed
+                skills::fired(p, g.def);
             }
         }
     }
@@ -5321,7 +5395,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- footsteps: a foot coming down to its planted height ----
     p.step_mute -= dt;
     let walking = !p.action.airborne() && p.step_mute <= 0.0 && !matches!(p.action, Action::JumpLand | Action::JumpCrouch) && (p.gait != Gait::Idle || matches!(p.action, Action::Dodge { .. }));
-    let volume = match p.gait { Gait::Walk | Gait::WalkBack | Gait::Side { .. } => 0.35, Gait::Sprint => 0.85, _ => 0.6 };
+    // (x the skill's +0xe8, FUN_00119020 at 0x11918e: a quarter for a stealthed Hawk)
+    let volume = skills::noise(p) * match p.gait { Gait::Walk | Gait::WalkBack | Gait::Side { .. } => 0.35, Gait::Sprint => 0.85, _ => 0.6 };
     let steps = surface.footsteps.get(&l.footstep_type).cloned().unwrap_or_default();
     for f in 0..2 {
         // planted level and swing height of the current clip blend (idle stance otherwise)

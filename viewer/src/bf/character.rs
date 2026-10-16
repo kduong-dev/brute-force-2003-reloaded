@@ -351,13 +351,43 @@ pub struct CombatSkills {
     pub berserk_empty_drain: f32,
     /// Brutus's block h_f5dc6aac (Spirit of Vengar, see `VengarSkill`)
     pub vengar: VengarSkill,
+    /// Hawk's block h_0ec919f1 (her Stealth, `StealthSkill`)
+    pub stealth: StealthSkill,
     /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
     pub tracking: Tracking,
 }
 
 impl Default for CombatSkills {
     fn default() -> Self {
-        CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), tracking: Tracking::default() }
+        CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), stealth: StealthSkill::default(), tracking: Tracking::default() }
+    }
+}
+
+/// Hawk's `<combat-skills>` block h_0ec919f1 (line 161 of the decoded game-options-en.xml: `<h_0ec919f1
+/// h_00894f2a="1" h_f726177e="4" h_1d194665="0.25" h_1883630e="h_f6b07f87"/>`): her skill's
+/// constructor FUN_0013cf10 copies the settings' +0x28c, +0x290 and +0x294 into the skill (the
+/// offsets below). Only stealth-level-recovery-rate (h_f726177e) is named, by hashing. The
+/// fourth, h_1883630e (settings +0x298, her vtable +0x134), names the Power Blade's item type
+/// h_f6b07f87, with which in hand her drain is x5 (0x13d030): the demo has no Power Blade. The
+/// defaults are the shipped file's.
+#[derive(Clone, Copy, Debug)]
+pub struct StealthSkill {
+    /// h_00894f2a, +0x28c -> skill+0x34: her drain's factor while the gun of the second weapon
+    /// slot is in hand (the inventory's +0x1cc at 2, 0x13d046; FUN_0014d090 reads 1 there as slot
+    /// 1 in hand): 1
+    pub second_slot_drain: f32,
+    /// stealth-level-recovery-rate, h_f726177e, +0x290 -> skill+0x2c: how fast a second the
+    /// stealth factor (skill+0x28) climbs back from the 0 a shot sets it to (FUN_0013d1a0): 4, so
+    /// a shot shows her to the AI for a quarter second (#35 takes 12, 13: 0 -> 1 in 0.25-0.3 s)
+    pub level_recovery: f32,
+    /// h_1d194665, +0x294 -> skill+0x30: the floor of her noise and footsteps' factor, `floor +
+    /// (1 - floor) x her visibility` (her +0xe8, 0x13d210): 0.25, a quarter as loud stealthed
+    pub noise_floor: f32,
+}
+
+impl Default for StealthSkill {
+    fn default() -> Self {
+        StealthSkill { second_slot_drain: 1.0, level_recovery: 4.0, noise_floor: 0.25 }
     }
 }
 
@@ -466,6 +496,12 @@ const H_VENGAR_CONE: u32 = 0xF3D8_2857;
 const H_VENGAR_DAMAGE: u32 = 0x1493_5EB6;
 const H_VENGAR_HIT_EFFECT: u32 = 0x0571_F62E;
 const H_VENGAR_KILL_EFFECT: u32 = 0xE541_7809;
+/// Hawk's block in `<combat-skills>` and its attributes (`StealthSkill`; stealth-level-recovery-rate
+/// recovered by hashing, the rest not).
+const H_STEALTH_BLOCK: u32 = 0x0EC9_19F1;
+const H_STEALTH_SECOND_SLOT: u32 = 0x0089_4F2A;
+const H_STEALTH_RECOVERY: u32 = 0xF726_177E;
+const H_STEALTH_NOISE: u32 = 0x1D19_4665;
 /// Flint's block in `<combat-skills>` and its attributes (`Tracking`; tracking-weapon-type and
 /// weapon-range-modifier recovered by hashing, the rest not).
 const H_TRACKING_BLOCK: u32 = 0x0725_CDB1;
@@ -1071,6 +1107,14 @@ impl Game {
                 v.damage = num(H_VENGAR_DAMAGE).unwrap_or(v.damage);
                 v.hit_effect = effect(H_VENGAR_HIT_EFFECT).unwrap_or(v.hit_effect);
                 v.kill_effect = effect(H_VENGAR_KILL_EFFECT).unwrap_or(v.kill_effect);
+            }
+            // Hawk's: <h_0ec919f1 h_00894f2a="1" h_f726177e="4" h_1d194665="0.25" ..> (StealthSkill)
+            if let Some(b) = skills.and_then(|c| c.child(H_STEALTH_BLOCK)) {
+                let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                let s = &mut self.combat_skills.stealth;
+                s.second_slot_drain = num(H_STEALTH_SECOND_SLOT).unwrap_or(s.second_slot_drain);
+                s.level_recovery = num(H_STEALTH_RECOVERY).unwrap_or(s.level_recovery);
+                s.noise_floor = num(H_STEALTH_NOISE).unwrap_or(s.noise_floor);
             }
             // Flint's: <h_0725cdb1 h_108b56f9="1" .. h_f82a974c="1.25"/> (Tracking)
             if let Some(b) = skills.and_then(|c| c.child(H_TRACKING_BLOCK)) {

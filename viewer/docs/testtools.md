@@ -34,7 +34,9 @@ left) lists them all. They work on any map of a test session: `--test` starts on
   * One set to **fight** stays put (but dives from a grenade landing near, as the squad
     does) and aims and fires at the nearest hostile in sight, and the squad AI fires at it. This is the squad AI's fire, which until now never had a target
     (`play.rs`: `hostile_in_sight`, `ai_fire`): an AI character sees anyone on another team
-    within its weapon's range (at least 20 m) with nothing of the world or the pillars between
+    within its weapon's range (at least 20 m) and its type's vision-range times their visibility
+    (a stealthed Hawk's falls to 0: `sight_reach`, skills.md § Hawk's Stealth; `BF_SIGHT_LOG=1`
+    prints each one finding or losing its target) with nothing of the world or the pillars between
     its eyes (1.6 m up) and their chest (1.1 m up), all round; it faces them, turns the gun onto
     them and fires in its bursts (the existing random delay, bursts and pauses); the aim is
     exact. Its shots stop at the first body on their line but its own, a teammate in the way
