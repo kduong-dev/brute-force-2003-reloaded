@@ -31,8 +31,13 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
   the switch and reload keys ending their skill; for Tex the top-up at the press and the second
   gun drawn; for Flint whether the rifle was marked (her sniper motions) and each doubled roll;
   for Hawk each shot's and item's cost while stealthed, her invisibility controller's state,
-  level and her visibility in the half-second line while it isn't off, her model's copies made
+  level, her visibility, her skin's alpha and the refraction's alpha and offset in the
+  half-second line while it isn't off, her model's copies and refraction twins made
   (play_stealth.rs) and each time her body goes see-through or whole again.
+* `BF_TEST_STEALTH_FLASH=<s>[,<s>...]`: gives every stealthed Hawk a round's flash at those times
+  (her factor to 0, as a shot, through her skill's +0xb0 with a gun of no damage: nothing fired,
+  nothing paid). An AI Hawk holds fire while stealthed, so this is how the flash is seen from a
+  squadmate's view (#198's take07; the shot list's H5).
 * `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]`: asks a squadmate's skill to toggle at those
   times (by name or 0-3), as the Squad Command menu's "Toggle Ability" will (#33). With
   `BF_TEST_HOSTILE=<character>` (grenades.md) it puts a stealthed Hawk on the other side, for the
@@ -490,7 +495,8 @@ shot shows her to them for a quarter second and costs stamina, as an item does. 
 body's look is `play_stealth.rs`; who sees her, play.rs (`nearest_hostile`, the AI) and
 play_reticle.rs (the crosshair). Her tuning is game-options' `<combat-skills>` block h_0ec919f1
 (`CombatSkills::stealth`: only stealth-level-recovery-rate, h_f726177e, is named, by hashing).
-Measured against takes 10-14, 18 and 19 (spec Part 4).
+Measured against takes 10-14, 18 and 19 (spec Part 4); her refraction (#198) against the takes
+and leads in `todo/198-hawk-invis/`.
 
 * **The press** (her toggle, FUN_0013cf90) is a request: refused unless she's free
   (FUN_00117210, 0x13cfd2: her clip under way among the rest), no request is pending (skill+0x20,
@@ -508,33 +514,62 @@ Measured against takes 10-14, 18 and 19 (spec Part 4).
   to 1.0 s; the takes: 0.05 a 50 ms log row), and her update reads it back each frame. Switched
   off while still fading in, it starts its fade-out from the top: the level jumps to 1 and comes
   down (the game's switch). The dead's runs on: the death's off fades her back in on the ground.
+* **Her skin's controller** (`Skill::skin`, `Skin`, #198): every character's model carries a
+  body controller (kind 1, vtable 0x394e18, the map's primary), on from the start
+  (FUN_00210840); its alpha (0x212cd0) is how much of her own skin is drawn. Each frame the
+  controller map (FUN_00210560) switches it off while the cloak fades in or is on and on
+  otherwise, with the same 1.0 s fades, so her skin fades out linearly as her level rises and
+  back as it falls (`skills::opacity`). Switched off mid fade-in (an off at once: stamina emptied
+  by a shot, or death), the cloak starts a full fade-out and her skin, still fading out, is on at
+  once (the switch takes a fade-out straight to on): her body snaps back while the refraction
+  dies. For everyone else it stays on.
 * **Visibility** (+0xe4, 0x13d200): 1 - the factor x the level. The factor (skill+0x28) is 1,
   0 after a shot, and climbs back at stealth-level-recovery-rate, 4 a second (FUN_0013d1a0). It's
   what the AI's sight and the crosshair read (the stamina update pushes it into her combat
   target each frame, 0x11a934). `BF_SKILL_LOG` prints the level and the visibility.
-* **Her look** (`play_stealth.rs`): her body, the guns she carries and what she holds (not the
-  muzzle flash) at 1 less the level, as a whole: the parts are blended over the picture and a
-  depth-only copy of each puts her nearest surface in the depth buffer first, so her arms and the
-  gun in front of her don't show through her back. That's a fit: on screen her presence falls
-  and rises with the level (take11, see `skills::opacity`) and she's gone from a level of about
-  0.95, where the game's controller fades the body in two halves under its refracting material
-  (FUN_00212430: the picture behind her, copied and drawn through her outline with a wobble, at
-  0xa1a40). The refraction isn't drawn: stealthed she's invisible here, where the takes keep a
-  faint ripple of the ground in her outline, hardly seen at their 3-10 m (take11 4.5-7.3 s). The
-  alpha is the console's blend in sRGB values (`srgb_alpha`), the parts' textures copied with
-  their alpha at 255 (it's a specular mask). Bevy builds a pipeline the first time it's drawn
-  with and skips the draw meanwhile, so as her model first shows each part gets an invisible
-  blended copy for a second. A part she takes up while stealthed (a grenade in her hand: its
-  type's material is every such grenade's) gets a see-through copy of its material, its own back
-  when it leaves her: the grenade's in flight is seen (take13 7.0-7.6 s, none in her hand
-  before).
+* **Her look** (`play_stealth.rs`): two layers, as the game draws her.
+  * **Her skin**: her body, the guns she carries and what she holds (not the muzzle flash) at her
+    skin controller's alpha, as a whole: the parts are blended over the picture and a depth-only
+    copy of each puts her nearest surface in the depth buffer first (the game's own pair of
+    passes, depth then colour, 0x394e18), so her arms and the gun in front of her don't show
+    through her back. On screen her presence falls and rises linearly with the level (take11,
+    see `skills::opacity`). The alpha is the console's blend in sRGB values (`srgb_alpha`), the
+    parts' textures copied with their alpha at 255 (it's a specular mask).
+  * **Her refraction** (#198): while her cloak is active the game copies the picture, after the
+    see-through things and the decals (FUN_000e81e0: FUN_000e4da0 at 0xe877a), and draws her
+    whole model and the guns she holds with BF_InvisMaterial over it (FUN_000e5240): each surface
+    shows the copy at its own place on screen shifted by the cloak's offset x n.z x (n.x, n.y) of
+    the screen, n its normal in world space (vertex program 0x3f), tinted (0.9 - 0.05 n.z, 1, 1)
+    (in the stored sRGB values) and blended at the cloak's alpha (pixel shader 0x26). The offset is
+    0.15 x her visibility + 0.1 x sin(2.5 t) while she's stealthed (FUN_00212430): a slow wobble of
+    the picture inside her outline, 2.51 s round, still twice a round, at most 2.5% of the
+    screen, which a shot strengthens for the quarter second her visibility takes to fall. Fading
+    in, the tinted copy comes in as (2x)^2 over her thinning skin with no shift, then at 1 with
+    a shift growing to 0.15 x her visibility; fading out, the shift dies as 1 - (2x)^2 from its
+    last value (no wobble), then the tint as (1 - y)^2. Here each of her parts gets a twin drawn
+    with `InvisMaterial` (src/invis.wgsl) while the cloak is active: bevy draws a material that
+    reads its view's transmission texture in its Transmissive3d phase and copies the picture into
+    that texture first, and `RefractionOrder` moves that phase after the see-through things, so
+    the copy holds the terrain's blended layers, the decals, her fading skin and any smoke, as the
+    game's does. The game's shift is a share of its 4:3 screen, 70 degrees across; the demo's
+    view is 45 degrees down, so the shift is turned into the same angle (`game_screen`: x1.69
+    across, x1.27 down, in the demo's half-heights), the same against her body and what's behind
+    her as in the takes. The streaky texture the material loads (h_ff43a70b) is never bound: the
+    wobble is the shift. Fully stealthed she's drawn by the refraction alone.
+  * Bevy builds a pipeline the first time it's drawn with and skips the draw meanwhile, so as her
+    model first shows each part gets an invisible blended copy, and its twin is drawn at alpha 0,
+    for a second. A part she takes up while stealthed (a grenade in her hand: its type's material
+    is every such grenade's) gets a see-through copy of its material and a twin, its own back and
+    the twin gone when it leaves her: the grenade's in flight is seen (take13 7.0-7.6 s, none in
+    her hand before).
 * **A shot** (+0xb0, 0x13d0a0; FUN_0022f640 calls it from the fire loop for each round, the
   demo's `skills::fired` in `step_player`): while she's stealthed the factor drops to 0, so the
   AI and the crosshair see her for about a quarter second, and her stamina loses 2 x the gun's
   Damage max (the Saryl-23's 13.5: 27; the Jax-iR's 34.125: 68.25). Her body stays invisible:
-  the controller's body fade doesn't read the visibility, only its refraction does (+0x1c), so
-  on screen a shot strengthens the ripple the demo doesn't draw. The skill stays on unless the
-  cost empties the bar.
+  her skin follows the cloak's state, not the visibility; only the refraction's offset reads it
+  (+0x1c), so on screen a shot makes the ripple jump by 0.15 (up to 2.5x) and settle over the
+  quarter second (#198 take07: no body at the shots). The skill stays on unless the cost
+  empties the bar.
 * **An item** (+0x104, 0x13d340; FUN_00121170 calls it as the use starts): while she's stealthed
   5 stamina, 15 for one placed or thrown (a grenade at the throw's release, a Roller or Sentry at
   the press, as the count drops), nothing for the Power Blade's melee. The medkit (IOU_USE_IN_HAND)
@@ -562,11 +597,14 @@ Measured against takes 10-14, 18 and 19 (spec Part 4).
 * **Not in**: what the enemies' goals do (take14's Shrike went RETURN_HOME when it lost her and
   INVESTIGATE at her shot, and didn't fire again: the demo's AI has no goals, so it stands and
   fires again once it sees her); the AI hearing her noise; the Power Blade (its x5 drain, the
-  silent kill); the refraction (shots H1, H2); the squad order's Toggle Ability (#33:
-  `BF_TEST_SQUAD_SKILL` stands in); the radar's RCONTACT_INVISIBLE (not traced). In the Vengar
-  view (play_vengar.rs) a stealthed Hawk shows as a dim heat figure: the game's heat pass draws
-  her with her kind-2 controller on (FUN_000e7d40's mask 0xfffffeff), and what that does isn't
-  filmed.
+  silent kill); the squad order's Toggle Ability (#33: `BF_TEST_SQUAD_SKILL` stands in); the
+  radar's RCONTACT_INVISIBLE (not traced); her shadow's own fade (the game's follows the cloak's
+  body alpha, FUN_002109b0: full for the first half of the fade-out, gone stealthed; the demo's
+  is her skin's, which bevy cuts once its alpha is under 0.05). In the Vengar view
+  (play_vengar.rs) a stealthed Hawk shows as a dim heat figure: the game's heat pass draws her
+  with her controllers on (FUN_000e7d40's mask 0xfffffeff), and in a vision mode her cloak draws
+  with the vision material (FUN_000e7320), not the refraction: the twins are hidden there. In her
+  own scope her model, and the twins with it, isn't drawn (#198 take05).
 
 ## Flint's Advanced Targeting (#124)
 
@@ -942,14 +980,63 @@ scratchpad):
   and an enemy Brutus with the Saryl-45) the same 19 hits, its frames the same but for the hit
   glow's particles in two.
 
-**Guessed or open (Hawk)**: her look is a fit (the presence curve of take11), the game's
-two-part fade and refracting material not drawn (shot H1, its shaders unread), so a shot's
-flash doesn't show on her (H2); the enemies' goals after they lose her (H3); the vision-range
-as the brain's sight distance (its +0xa8 getter not found; take14 fits it) and FUN_000481c0's
-1.15 and x3, left at 1; the sRGB alpha's 2.2 suits a dark body on a lighter picture (the demo's
-presence runs up to 0.05 over 1 - the level). During a fade a see-through thing between her and
-the camera (smoke, a liquid) is drawn under her, and her shadow stays until her alpha is under
-0.05 (bevy's blended shadow cut).
+**Her refraction (#198)**: Hawk at the same spot with a still camera (`BF_TEST_GOTO=-52.96,30.96,
+-55.57,40.61 BF_TEST_GO_AT=99`: the camera faces a goal 10 m off, which she doesn't walk to; with
+#123's goal 0.5 m away her idle's centimetres turned the camera by degrees), `BF_TEST_WEAPON=
+"Saryl-23;Rail RVR"`, `BF_SKILL_LOG`, captures at 15 and 30 fps, against takes 01, 03 and 07 in
+`todo/198-hawk-invis/` (scripts in the developer's scratchpad `t198dev/`):
+
+* **The wobble** (take01's view: `BF_CAMERA_DISTANCE=1.8 BF_CAMERA_PITCH=-0.05
+  BF_TEST_SKILL=2.0,14.0`): the gate's brace displaced inside her outline and changing shape, the
+  rifle on her back a displaced band, as in take01 6-9 s. Matching every pair of frames inside her
+  outline: the take's mirror-image pairs put its extremes at 4.7, 5.95, 7.25, 8.55, 9.8 and
+  11.1 s and its same-phase pairs 2.4-2.6 s apart, a period of 2.56 s (the code's 2.51, at the
+  take's 0.1 s steps), with the zero crossings between alike; the demo's extremes at 4.5, 5.75,
+  7.0 ... s (2.51 s).
+* **The strength**: block matching inside her outline against a zero-crossing frame: the take's
+  shift at its extremes 16-20 px (75th percentile, its 960-wide picture), the other sign's 10 px;
+  the demo's 23-28 and 13-15 px, with everything drawn 1.22-1.3x the take's size (her head 105 px
+  against 81, the gate's pillar 110 against 90): 21-26 and 13 px on the take's scale. The two
+  signs differ the same way in both (the shift follows her surfaces' world axes).
+* **take03's barrel** (the camera turned: `BF_TEST_GOTO=-52.96,30.96,-43.75,27.05`): the barrel and
+  the shed's machinery behind her seen torn and doubled through her outline, as in the take at
+  10-11 s.
+* **The fades** (frames each 0.2 s against take01's 3.0-4.2 and 15.0-16.2 s): her skin thinning
+  linearly as the tinted copy comes in, a faint ghost on the ground, gone by 4.0 s, and back the
+  same way, the take's about 0.1 s later (its picture lags its log). Her presence (the projection
+  of her outline's change onto her whole body's) at the default camera against main's
+  (#123's take11-matched fade) at 30 fps: within 0.022 through the fade-in and 0.01 through the
+  fade back: the tint and the second half's small shift are all the refraction adds there.
+* **The flash** (`BF_TEST_STEALTH_FLASH=5.44,6.07` at 1.8 m and at take07's 7 m,
+  `BF_CAMERA_DISTANCE=7`, 30 fps): no body; the ripple jumps in the flash's frame (at 1.8 m the
+  ground's copy pulled up into her shoulders) and settles over 0.25 s. take07 (a real burst seen
+  from Tex at 7 m): no body at the shots, the muzzle ball and bolt over a faint distortion.
+* **The cut-short fade** (`BF_TEST_DIE=3.35`, in the fade-in): her skin whole again in the frame
+  of death, the refraction dying over the second after. The code's case; not filmed.
+* **Unchanged**, against main (8457fa6), pixel for pixel but for the first 2-4 frames as the map
+  loads (two runs of main differ there too): Hawk with her skill off at the spot (45 frames, her
+  warm-up second among them), #122's e34 scene (`BF_MAP=e34 BF_TEST_GOTO=-53.56,30.81,-50.69,36.29`,
+  40 frames), Tex's shots at the gate (`BF_TEST_GOTO=-53.6,30.8,-53.71,31.49 BF_TEST_FIRE=hip
+  BF_CAMERA_PITCH=-0.12`, 60 frames). The Vengar view with a stealthed Hawk (`BF_MAP=flat
+  BF_CHARACTER=0 BF_CAMERA_DISTANCE=4 BF_TEST_SQUAD_SKILL=hawk,1.0 BF_TEST_SKILL=3.5`): her
+  refraction in the normal view, a dim heat figure in the Vengar view and nothing of the
+  refraction there. take13's sequence: the Sonic in her hand given a twin and its own material
+  back once thrown; its scorch seen through her outline, displaced with the ground.
+
+**Guessed or open (Hawk)**: the enemies' goals after they lose her (H3); the vision-range as the
+brain's sight distance (its +0xa8 getter not found; take14 fits it) and FUN_000481c0's 1.15 and
+x3, left at 1; the sRGB alpha's 2.2 suits a dark body on a lighter picture (the demo's presence
+runs up to 0.05 over 1 - the level). During a fade a see-through thing between her and the
+camera (smoke, a liquid) is drawn under her skin; her shadow stays until her skin's alpha is
+under 0.05 (bevy's blended shadow cut), where the game's follows the cloak's body alpha. The
+refraction: its depth write (off here; the pass's state isn't traced), the shift worked out per
+fragment from the interpolated normal (the game's per vertex), its blend in linear light (the
+console blends stored values: the same where the copy is like the picture), the fog (the levels'
+linear fog only), and the shift turned into the game's angle (`game_screen`) are the demo's;
+no plate of the picture without her was filmed (the shot list's A-C), so the tint and the shift's
+direction against her facing are the code's, not measured. On e34 the demo's ground is much
+lighter and greener than the takes' dark dirt, so the shift shows far more on the ground inside
+her outline (and the flash's ghost at 7 m) than in the game.
 
 ### Flint's Advanced Targeting (#124)
 

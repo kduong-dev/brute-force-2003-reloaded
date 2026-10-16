@@ -86,7 +86,8 @@ const SIZE_SCALE: f32 = 640.0;
 /// view is narrower (45 degrees down, play.rs FOV_Y), so the size is taken as that share of the
 /// sphere's projection in the demo's view: the box keeps its place round the body as in the takes
 /// (take15 3.0 s: the Shrike Heavy, its sphere 1.24 m, 7 m from Flint in a box 105 x 162 units).
-const GAME_TAN_ACROSS: f32 = 0.700_207_5;
+/// play_stealth.rs scales Hawk's refraction by it the same way.
+pub(super) const GAME_TAN_ACROSS: f32 = 0.700_207_5;
 /// Switched off, the corners head for the screen's middle less (the top left) or plus (the
 /// bottom right) OFF_X across (0x3a5290: 0xb4b7f, 0xb4d8d).
 const OFF_X: f32 = 64.0;
