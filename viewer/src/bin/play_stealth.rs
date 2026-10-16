@@ -1,67 +1,78 @@
-//! Hawk's Stealth beyond her own character (#123): how her body looks as it fades. Her skill's
-//! own part (the toggle, her invisibility controller, her visibility, the costs of a shot and an
-//! item) is play_skills.rs's `Stealth`; who sees her, play.rs's `nearest_hostile` (the AI) and
-//! play_reticle.rs (the crosshair). Sources: the spec and takes in `todo/35-special-skills/`
-//! (spec.md Part 4: takes 10-14, 18, 19) and the functions cited (viewer/docs/code-map.md,
-//! "Skills and stamina"); the page is viewer/docs/skills.md.
+//! Hawk's Stealth beyond her own character (#123, #198): how her body looks as it fades and
+//! while she's stealthed. Her skill's own part (the toggle, her material controllers, her
+//! visibility, the costs of a shot and an item) is play_skills.rs's `Stealth`; who sees her,
+//! play.rs's `nearest_hostile` (the AI) and play_reticle.rs (the crosshair). Sources: the spec and
+//! takes in `todo/35-special-skills/` (spec.md Part 4: takes 10-14, 18, 19), the leads and takes in
+//! `todo/198-hawk-invis/` and the functions cited (viewer/docs/code-map.md, "Skills and stamina");
+//! the page is viewer/docs/skills.md.
 //!
-//!  - **The game**: her model carries an invisibility material controller (kind 2, `Cloak`;
-//!    FUN_00210060 gives the type "hawk" one). While it's active the renderer draws her in the
-//!    see-through list (FUN_000e7850: the active controllers' kinds & 0xc2, or their body alpha
-//!    under 1, FUN_00210a20), at the controller's body alpha (+0x14), and its material
-//!    BF_InvisMaterial (class 0xf3bf04d1, set up at 0xa1a40 / 0xa1ba0) over her: a copy of the
-//!    picture (stage 0), alpha-blended (0x302 / 0x303) through her silhouette with an offset that
-//!    wobbles (FUN_00212430: 0.15 x her visibility + 0.1 x sin(2.5 t), and v x sin(5 t)), tinted
-//!    (0.9, 1, 1) at the material's alpha (+0x50). Fading out, the material's alpha rises as x^2
-//!    over the first half (x the share of the 1.0 s), the body's falls as (1 - x)^2 over the
-//!    second; fading in, the reverse.
-//!  - **Here**: her body (the model and the guns it carries, not the unlit muzzle flash) is
-//!    drawn at `skills::opacity`, 1 less the controller's level: a fit to the takes, where her
-//!    presence on screen falls and rises with the level (take11, see `skills::opacity`) and she's
-//!    gone from a level of about 0.95. As a whole: each part below 1 is blended over the picture
+//! The game draws her through two of her model's material controllers (play_skills.rs):
+//!  - **Her skin** (kind 1, `Skin`): her model with its own materials at the controller's alpha
+//!    (0x213120), which fades out linearly over the second her stealth fades in and back as it
+//!    fades out (`skills::opacity`; take11's presence). While it's under 1 she's drawn in the
+//!    sorted transparent pass (FUN_000e7850, FUN_000e7d40 case 6) twice, depth then colour, so
+//!    only her nearest surface is blended. Here each part below 1 is blended over the picture
 //!    (AlphaMode::Blend, with a copy of its texture whose alpha is 255: the squad's skins keep a
 //!    specular mask in theirs, scene.rs `material`), and a depth-only copy of each part (`Depth`)
-//!    puts her nearest surface in the depth buffer first, so only that surface is blended, not
-//!    the arms and the gun behind her back. The alpha is `srgb_alpha`'s, which gives the console's
-//!    blend in sRGB values where bevy blends in linear light. The refraction isn't drawn: fully
-//!    stealthed she's invisible here, where the game's picture keeps a faint ripple of the ground
-//!    in her outline (take11 4.5-7.3 s, hardly seen at 3-10 m; a shot, which shows her to the AI,
-//!    only strengthens it, by its offset's 0.15 x v). The close-up shot H1 and the material's
-//!    shaders are its follow-up.
+//!    puts her nearest surface in the depth buffer first, as the game's first pass does. The
+//!    alpha is `srgb_alpha`'s, which gives the console's blend in sRGB values where bevy blends
+//!    in linear light. Fully stealthed it's off and her skin isn't drawn at all.
+//!  - **Her refraction** (kind 2, `Cloak`): while it's active the renderer copies the back buffer,
+//!    after the sorted transparent pass and the decals (FUN_000e81e0: FUN_000e4da0 at 0xe877a), and
+//!    draws her whole model and the guns she holds with BF_InvisMaterial over the picture
+//!    (FUN_000e5240 at 0xe87ab): each surface shows the copy at its own place on screen, shifted
+//!    by the controller's offset x n.z x (n.x, n.y) of the screen (n its normal in world space),
+//!    tinted (0.9 - 0.05 n.z, 1, 1) and blended at the controller's alpha (src/invis.wgsl). Its
+//!    offset is 0.15 x her visibility + 0.1 x sin(2.5 t) while she's stealthed: the outline's
+//!    slow wobble, which a shot strengthens for a quarter second; it fades in under her skin and
+//!    out over it in two halves (`Cloak::update`). Here each part gets a twin (`Twin`) drawn with
+//!    `InvisMaterial` while the cloak is active: bevy draws a material that reads the view's
+//!    transmission texture in its Transmissive3d phase and copies the picture into that texture
+//!    first; `RefractionOrder` moves the phase after the see-through things, where the game makes
+//!    its copy, so the copy holds the terrain's blended layers, the decals, her fading skin and
+//!    any smoke, as the game's does. The streaky texture the material loads (h_ff43a70b) is never
+//!    bound, nor drawn here.
 //!  - **Warm-up**: bevy compiles a pipeline the first time something is drawn with it and skips
 //!    the draw until it's ready, so her first fade would lose her for a few frames. As her model
-//!    first shows, each part gets an invisible blended copy for WARM_UP s (alpha 0) and its depth
-//!    copy is drawn meanwhile (the depth her own body writes anyway): the pipelines are ready
-//!    before she ever fades.
+//!    first shows, each part gets an invisible blended copy for WARM_UP s (alpha 0), and its depth
+//!    copy and its twin (alpha 0) are drawn meanwhile: the pipelines are ready before she fades.
 //!  - Her fading parts and their depth copies are drawn after every other see-through thing
 //!    (FADE_SORT), so the copies take nothing from what lies behind her; one between her and the
 //!    camera (smoke, a liquid's surface) is drawn under her during a fade, not over: the demo's,
 //!    for the second each fade lasts.
 //!  - A part she takes up after her model shows (a grenade in her hand, whose material its type
 //!    shares with every such grenade) is faded with a copy of its material on its own entity
-//!    (`Faded::foreign`), its own put back once it leaves her (thrown) or she's whole.
+//!    (`Faded::foreign`), its own put back once it leaves her (thrown) or she's whole; it gets a
+//!    twin while it's hers.
 //!  - The Vengar view draws everyone as a heat figure (play_vengar.rs `heat_figures`), a
 //!    stealthed Hawk too: the game draws them with every controller but kind 0x100 on
-//!    (FUN_000e7d40's passes 9 and 10, the mask 0xfffffeff), so hers would apply there; what that
-//!    looks like isn't filmed.
+//!    (FUN_000e7d40's passes 9 and 10, the mask 0xfffffeff), and in that view kind 2 draws with the
+//!    vision material (FUN_000e7320), so there's no refraction there: the twins are hidden. In
+//!    the controlled character's scope her model is hidden, the twins with it (take05).
 //!
-//! Test hooks: play_skills.rs's (`BF_TEST_SKILL`, `BF_TEST_STAMINA`, `BF_SKILL_LOG`, which also
-//! prints each body going see-through and back, and its copies made).
+//! Test hooks: play_skills.rs's (`BF_TEST_SKILL`, `BF_TEST_STAMINA`, `BF_TEST_SQUAD_SKILL`,
+//! `BF_TEST_STEALTH_FLASH`, `BF_SKILL_LOG`, which also prints each body going see-through and
+//! back, and its copies and twins made).
 
 use super::*;
 use std::collections::HashSet;
 use bevy::{
-    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, MaterialPlugin, NotShadowCaster},
+    asset::weak_handle,
+    core_pipeline::core_3d::graph::{Core3d, Node3d},
+    pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, MaterialPipeline, MaterialPipelineKey, MaterialPlugin,
+          NotShadowCaster},
     render::{
         mesh::{skinning::SkinnedMesh, MeshVertexBufferLayoutRef},
-        render_resource::{AsBindGroup, ColorWrites, RenderPipelineDescriptor, SpecializedMeshPipelineError},
+        render_graph::{RenderGraph, RenderGraphError},
+        render_resource::{AsBindGroup, BlendState, ColorWrites, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError},
         view::NoFrustumCulling,
+        RenderApp,
     },
 };
 
-/// How long (s) a body's blended warm-up copies are drawn once its model shows (see the module's
-/// notes): long enough for bevy to build the pipelines on its worker threads (#122's heat
-/// figures took two frames at 60 fps).
+/// How long (s) a body's blended warm-up copies, and its refraction twins at alpha 0, are drawn
+/// once its model shows (see the module's notes): long enough for bevy to build the pipelines on
+/// its worker threads (#122's heat figures took two frames at 60 fps).
 const WARM_UP: f32 = 1.0;
 /// The power that turns the share of her shown (the console's blend in sRGB values) into bevy's
 /// alpha in linear light, for a dark body over a lighter picture: `srgb_alpha`. The HUD's fades
@@ -83,6 +94,101 @@ const FADE_SORT: f32 = 2000.0;
 /// hers, whose origins (the root at her feet, the guns at her hands and back) lie within this of
 /// each other.
 const DEPTH_AHEAD: f32 = 2.0;
+/// The red of the refraction's colour (FUN_00212430: 0.9 at 0x3a50b8 while the controller's byte
+/// +0x20 is set, which its factory sets and nothing clears; 1.0 without), the shader's c26.x.
+const INVIS_RED: f32 = 0.9;
+/// The refraction's shader (src/invis.wgsl).
+const INVIS_SHADER: Handle<Shader> = weak_handle!("3c9e1f47-8a2b-4d6c-b5e0-71f4a9d2c8e6");
+
+/// The game's invisibility material, BF_InvisMaterial (class 0xf3bf04d1, its draw 0xa1ba0;
+/// src/invis.wgsl), one for each cloaking body, set from its cloak each frame (`refract_bodies`).
+/// It reads the view's transmission texture, so bevy draws it in its Transmissive3d phase (its
+/// alpha mode left opaque: a blended one would go to Transparent3d), with a copy of the picture
+/// made just before (`RefractionOrder`).
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+struct InvisMaterial {
+    /// x the lookup's offset (c24.w: `Cloak::offset`), y the alpha (c26.w: `Cloak::alpha`), z the
+    /// colour's red (c26.x: INVIS_RED)
+    #[uniform(0)]
+    params: Vec4,
+    /// xy the game's screen in the demo's view (`game_screen`), which the shift is a share of
+    #[uniform(1)]
+    screen: Vec4,
+}
+
+/// The game's screen in the demo's view: the half-width and the half-height of the game's 4:3
+/// view at unit depth (its follow camera's 70 degrees across, play_targeting.rs
+/// `GAME_TAN_ACROSS`, and 3 / 4 of that down) over the demo's half-height (play.rs `FOV_Y`, 45
+/// degrees down), unzoomed (a zoom divides both views alike). The material shifts its lookup by a
+/// share of the game's screen (NDC); scaled by these, the copy moves by the same angle in the
+/// demo's narrower view, so by the same amount against her body and what's behind her as in the
+/// takes.
+fn game_screen() -> Vec2 {
+    Vec2::new(targeting::GAME_TAN_ACROSS, targeting::GAME_TAN_ACROSS * 0.75) / (FOV_Y * 0.5).tan()
+}
+
+impl Material for InvisMaterial {
+    fn fragment_shader() -> ShaderRef {
+        INVIS_SHADER.into()
+    }
+
+    /// The copy of the picture it samples, bevy's view transmission texture.
+    fn reads_view_transmission_texture(&self) -> bool {
+        true
+    }
+
+    /// Blended by its alpha (0xa1a40: SRCALPHA / INVSRCALPHA, the device's +0xc8 / +0xdc), tested
+    /// against the depth and culled as her skin is (the material sets no depth or cull state: the
+    /// pass's defaults), not writing depth (the pass's depth write isn't traced: a guess, which
+    /// only decides which of her overlapping surfaces' shifts shows).
+    fn specialize(_pipeline: &MaterialPipeline<Self>, descriptor: &mut RenderPipelineDescriptor, _layout: &MeshVertexBufferLayoutRef,
+                  _key: MaterialPipelineKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = Some(BlendState::ALPHA_BLENDING);
+            }
+        }
+        if let Some(depth) = descriptor.depth_stencil.as_mut() {
+            depth.depth_write_enabled = false;
+        }
+        Ok(())
+    }
+}
+
+/// Marks a part's refraction twin: a child of the part with its mesh (and skin), drawn with its
+/// body's `InvisMaterial`; and whose body it is (the model's root).
+#[derive(Component)]
+struct Twin {
+    root: Entity,
+}
+
+/// Bevy's Transmissive3d pass moved after its Transparent3d one in the 3D graph: the game copies
+/// the picture for the refraction after the sorted transparent pass and the decals (FUN_000e81e0:
+/// case 6 at 0xe86f6, the decals at 0xe873c, the copy FUN_000e4da0 at 0xe877a, the refraction list
+/// FUN_000e5240 at 0xe87ab), where bevy's order copies it before them, which would leave the
+/// terrain's blended layers, the decals and her fading skin out of the copy and draw them over
+/// her outline unshifted. Only `InvisMaterial` reads the copy in the demo, so nothing else moves.
+struct RefractionOrder;
+
+impl Plugin for RefractionOrder {
+    fn build(&self, app: &mut App) {
+        let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
+        let mut graph = render.world_mut().resource_mut::<RenderGraph>();
+        let Some(core) = graph.get_sub_graph_mut(Core3d) else { return };
+        if let Err(e) = transmissive_last(core) {
+            warn!("the refraction's pass isn't moved: {e}");
+        }
+    }
+}
+
+/// The 3D graph's main passes as opaque, transparent, transmissive (bevy's: opaque,
+/// transmissive, transparent).
+fn transmissive_last(core: &mut RenderGraph) -> Result<(), RenderGraphError> {
+    core.remove_node_edge(Node3d::MainTransmissivePass, Node3d::MainTransparentPass)?;
+    core.try_add_node_edge(Node3d::MainOpaquePass, Node3d::MainTransparentPass)?;
+    core.try_add_node_edge(Node3d::MainTransparentPass, Node3d::MainTransmissivePass)?;
+    core.try_add_node_edge(Node3d::MainTransmissivePass, Node3d::EndMainPass)
+}
 
 /// A part's depth-only copy: bevy's standard material, drawn among the see-through things
 /// (AlphaMode::Blend, sorted by FADE_SORT less DEPTH_AHEAD) with a pipeline that writes depth and
@@ -143,7 +249,9 @@ struct Kept {
 ///    material and the copy; their own is put back once the body is whole or they've left it
 ///    (the grenade thrown, which flies seen: #35 take13 7.0-7.6 s);
 ///  - the opaque copies of the textures, by the original's id; the bodies whose copies are made,
-///    and how long their warm-up has left (s); the one depth-only material.
+///    and how long their warm-up has left (s); the one depth-only material;
+///  - the refraction: each cloaking body's `InvisMaterial`, by its model's root, and the parts
+///    given a twin (`Twin`), with their twins.
 #[derive(Resource, Default)]
 struct Faded {
     own: HashSet<AssetId<StandardMaterial>>,
@@ -152,15 +260,20 @@ struct Faded {
     textures: HashMap<AssetId<Image>, Handle<Image>>,
     prepared: HashMap<Entity, f32>,
     depth: Option<Handle<DepthMaterial>>,
+    invis: HashMap<Entity, Handle<InvisMaterial>>,
+    twins: HashMap<Entity, Entity>,
 }
 
-/// The depth-only material, and the fade after the skills have stepped (so a switch shows in its
-/// frame).
+/// The depth-only and the invisibility materials (the latter in no prepass or shadow: its twins
+/// cast none), the refraction's pass order, and the fade and the refraction after the skills have
+/// stepped (so a switch shows in its frame).
 pub fn plugin(app: &mut App) {
-    app.add_plugins(MaterialPlugin::<DepthMaterial>::default())
+    app.world_mut().resource_mut::<Assets<Shader>>().insert(&INVIS_SHADER, Shader::from_wgsl(include_str!("../invis.wgsl"), file!()));
+    app.add_plugins((MaterialPlugin::<DepthMaterial>::default(),
+                     MaterialPlugin::<InvisMaterial> { prepass_enabled: false, shadows_enabled: false, ..default() }, RefractionOrder))
         .init_resource::<Faded>()
         .add_systems(OnEnter(AppState::Playing), |mut commands: Commands| commands.insert_resource(Faded::default()))
-        .add_systems(Update, (prepare_bodies, fade_bodies).chain().after(skills::update_skills).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (prepare_bodies, fade_bodies, refract_bodies).chain().after(skills::update_skills).run_if(in_state(AppState::Playing)));
 }
 
 /// The share of her shown, `p` (the console blends in sRGB values: the picture's value x (1 - p)
@@ -185,7 +298,8 @@ fn see_through(m: &mut StandardMaterial, images: &mut Assets<Image>, textures: &
 /// The copies of a cloaking character's parts (`skills::cloaks`), made once its model shows: a
 /// depth-only copy of each (`DepthCopy`, hidden but in the warm-up and the fades) and a blended
 /// warm-up copy (`WarmCopy`, alpha 0), each beside its part with the same mesh and skin. The
-/// warm-up copies go when their time is out.
+/// warm-up copies go when their time is out. (Its refraction twins come from `refract_bodies`,
+/// drawn at alpha 0 for the same warm-up.)
 #[allow(clippy::too_many_arguments)]
 fn prepare_bodies(mut commands: Commands, time: Res<Time>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
                   parts: Query<(&MeshMaterial3d<StandardMaterial>, &Mesh3d, &Transform, &ChildOf, Option<&SkinnedMesh>), (Without<WarmCopy>, Without<DepthCopy>)>,
@@ -354,6 +468,77 @@ fn fade_bodies(mut commands: Commands, player: Res<Player>, squad: Res<Squad>, c
         let want = if depth_on.contains(&copy.root) { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want {
             *vis = want;
+        }
+    }
+}
+
+/// Each cloaking body's refraction (see the module's notes): its material set from its cloak this
+/// frame (`skills::refraction`); its twins shown while the cloak is active, and in the warm-up at
+/// alpha 0, but not in the Vengar view (the controlled character's vision mode 2), whose heat pass
+/// draws her instead; a twin for each of its parts that hasn't one (those it takes up later too:
+/// a grenade in her hand), and none for a part that has left it (the grenade thrown).
+#[allow(clippy::too_many_arguments)]
+fn refract_bodies(mut commands: Commands, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>, parents: Query<&ChildOf>,
+                  parts: Query<(&Mesh3d, &MeshMaterial3d<StandardMaterial>, Option<&SkinnedMesh>), (Without<WarmCopy>, Without<DepthCopy>)>,
+                  mut twins: Query<(Entity, &Twin, &ChildOf, &mut Visibility)>, standard: Res<Assets<StandardMaterial>>,
+                  mut invis: ResMut<Assets<InvisMaterial>>, mut faded: ResMut<Faded>) {
+    let log = std::env::var("BF_SKILL_LOG").is_ok();
+    let vengar = skills::vengar_on(&player);
+    let Faded { prepared, invis: bodies, twins: given, .. } = &mut *faded;
+    // each body's material now, and the bodies whose twins are drawn
+    let mut drawn: Vec<(Entity, Handle<InvisMaterial>, &Player)> = vec![];
+    for u in std::iter::once(&*player).chain(squad.0.iter()) {
+        let Some(l) = &u.loaded else { continue };
+        let Some(&warm) = prepared.get(&l.root) else { continue };
+        let now = skills::refraction(u);
+        let (alpha, offset) = now.unwrap_or((0.0, 0.0));
+        let params = Vec4::new(offset, alpha, INVIS_RED, 0.0);
+        let handle = bodies.entry(l.root).or_insert_with(|| invis.add(InvisMaterial { params, screen: game_screen().extend(0.0).extend(0.0) })).clone();
+        // (only when it changes: a changed material is sent to the GPU again)
+        if invis.get(&handle).is_some_and(|m| m.params != params) {
+            if let Some(m) = invis.get_mut(&handle) {
+                m.params = params;
+            }
+        }
+        if (now.is_some() || warm > 0.0) && !vengar {
+            drawn.push((l.root, handle, u));
+        }
+    }
+    // the twins made: shown with their body; gone with their part, or once the part has left it
+    let mut kept = HashSet::new();
+    for (twin, t, part, mut vis) in &mut twins {
+        if !descends(part.parent(), t.root, &parents) {
+            commands.entity(twin).despawn();
+            continue;
+        }
+        kept.insert(twin);
+        let want = if drawn.iter().any(|(root, ..)| *root == t.root) { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    given.retain(|_, twin| kept.contains(twin));
+    // a twin for each part of a drawn body without one (not the muzzle flash: unlit, not hers)
+    for (root, handle, u) in drawn {
+        let mut new = 0;
+        for e in children.iter_descendants(root) {
+            if given.contains_key(&e) {
+                continue;
+            }
+            let Ok((mesh, material, skin)) = parts.get(e) else { continue };
+            if standard.get(&material.0).is_none_or(|m| m.unlit) {
+                continue;
+            }
+            let mut c = commands.spawn((Twin { root }, mesh.clone(), MeshMaterial3d(handle.clone()), Transform::IDENTITY, Visibility::Inherited,
+                                        NoFrustumCulling, NotShadowCaster, ChildOf(e)));
+            if let Some(s) = skin {
+                c.insert(s.clone());
+            }
+            given.insert(e, c.id());
+            new += 1;
+        }
+        if log && new > 0 {
+            println!("t={:.2} {}: refraction twins of {new} parts", u.sim_time, unit_name(u));
         }
     }
 }

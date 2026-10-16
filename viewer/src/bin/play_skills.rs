@@ -32,11 +32,11 @@
 //!    (`overlays_blocked`).
 //!  - **Hawk's Stealth** (#123, `Stealth`): her `Sc_w1/w2_activate_stealth` switches it at its
 //!    0.83 s event, and her invisibility controller (`Skill::cloak`, `Cloak`) fades her out over
-//!    1.0 s (her look, play_stealth.rs). Her visibility, 1 less her level, scaled by a factor a
-//!    shot drops to 0, is what the AI's sight (play.rs `nearest_hostile`) and the crosshair
-//!    (play_reticle.rs) read; while she's stealthed a round fired costs 2 x the gun's Damage max and
-//!    an item 5 or 15, her footsteps are a quarter as loud, and an AI Hawk holds fire. A press
-//!    mid-fade is refused.
+//!    1.0 s, her skin's (`Skill::skin`, `Skin`) following it (her look, play_stealth.rs, #198).
+//!    Her visibility, 1 less her level, scaled by a factor a shot drops to 0, is what the AI's
+//!    sight (play.rs `nearest_hostile`) and the crosshair (play_reticle.rs) read; while she's
+//!    stealthed a round fired costs 2 x the gun's Damage max and an item 5 or 15, her footsteps
+//!    are a quarter as loud, and an AI Hawk holds fire. A press mid-fade is refused.
 //!  - **Flint's Advanced Targeting** (#124, `Targeting`): on and off at the press (with a rifle
 //!    her motions become the sniper set, play.rs `SpecialClips`), while on the crosshair's lock box
 //!    grows to 0.4 of the screen (play_reticle.rs), so the guns, which aim at the lock, find the
@@ -55,9 +55,13 @@
 //! controlled character's stamina (at those times, at the start without one);
 //! `BF_SKILL_CHATTER=<percent>` sets the skill lines' chance (100: every time);
 //! `BF_TEST_DOUBLE=<percent>` sets the chance of Flint's doubled rolls (100: every one);
+//! `BF_TEST_STEALTH_FLASH=<s>[,<s>...]` gives every stealthed Hawk a round's flash at those times
+//! (her factor to 0, as a shot, without the shot or its cost: #198's check of the refraction's
+//! flash from a squadmate's view, where an AI Hawk holds fire);
 //! `BF_SKILL_LOG=1` logs each command, switch, sound and line, Tex's top-ups, refusals and second
 //! gun, Hawk's refusals and costs, Flint's refusals, rifle mark and doubled rolls, and every
-//! character's stamina each half second (with Hawk's level and visibility while it shows).
+//! character's stamina each half second (with Hawk's level, visibility, skin and refraction while
+//! it shows).
 
 use super::*;
 use bf_viewer::bf::character::{CombatSkills, SkillData, StealthSkill, Tracking, VengarSkill};
@@ -157,14 +161,29 @@ const STEALTH_THROW_COST: f32 = 10.0;
 /// 13.5: 27 (takes 12, 13: 27.1 a shot); the Jax-iR's 34.125: 68.25 (take14: her last 67.35 in
 /// one shot).
 const STEALTH_SHOT_COST: f32 = 2.0;
-/// The material controllers' ramps (s): BF_InvisMaterial's controller init (0x212380) sets both
-/// its fade-in time (+8, 0x212398) and its fade-out time (+0xc, 0x21239b) to 1.0. #35 takes 11-14,
-/// 18, 19: Hawk's level 0 -> 1 and 1 -> 0 in 1.0 s, linearly (0.05 a 50 ms log row).
-const CLOAK_IN: f32 = 1.0;
-const CLOAK_OUT: f32 = 1.0;
+/// The material controllers' ramps (s): the invisibility controller's init (0x212380) sets both
+/// its fade-in time (+8, 0x212398) and its fade-out time (+0xc, 0x21239b) to 1.0, and the body
+/// controller's (kind 1, 0x212cb0) its own two to 1.0 as well. #35 takes 11-14, 18, 19: Hawk's
+/// level 0 -> 1 and 1 -> 0 in 1.0 s, linearly (0.05 a 50 ms log row); take11 her body's presence
+/// falling linearly over the same second (todo/198 leads §6).
+const FADE_IN: f32 = 1.0;
+const FADE_OUT: f32 = 1.0;
 /// Where a controller switched off starts its fade-out (0x210ac1: its time set to 0x38d1b717,
 /// 1e-4 s), so its level reads just under 1 from the frame it's switched off.
-const CLOAK_OUT_START: f32 = 1e-4;
+const FADE_OUT_START: f32 = 1e-4;
+/// Where the invisibility controller's fades change halves (FUN_00212430), as a share of the
+/// fade: 0.5 for the fade-in (0x407070) and for the fade-out (0x40706c).
+const HALF_IN: f32 = 0.5;
+const HALF_OUT: f32 = 0.5;
+/// The material's lookup offset (FUN_00212430, state 1): 0.15 (0x40707c) x her visibility + 0.1
+/// (0x407078) x sin(2.5 t) (0x3a51f0, a double), t the seconds since the fade-in ended. Her
+/// visibility 0, the wobble alone: a period of 2.51 s (take01 4-14 s: the picture inside her
+/// outline repeats every 2.6-2.8 s, todo/198 leads §6).
+const OFFSET_SEEN: f32 = 0.15;
+const WOBBLE: f32 = 0.1;
+const WOBBLE_RATE: f32 = 2.5;
+/// The least change of her visibility that FUN_00210950 pushes into the controller (2e-05).
+const VIS_STEP: f32 = 2e-5;
 
 /// What a skill's toggle makes of the command (the skill's vtable +0x04). In the game the toggle
 /// switches the skill itself or not, and its return picks the motion (the command handler,
@@ -374,51 +393,52 @@ pub struct Skill {
     /// (`aim_shift`; take17: in by 2.27 s, out over 18.13-18.6 s)
     pub shift: f32,
     /// the character's invisibility material controller (its controllers of kind 2, char+0x54c),
-    /// which Hawk's on and off switch and whose level her update reads back (`Cloak`); her body's
-    /// look follows it (play_stealth.rs). Off for everyone else
+    /// which Hawk's on and off switch and whose level her update reads back (`Cloak`); her
+    /// refraction is drawn from it (play_stealth.rs). Off for everyone else
     pub cloak: Cloak,
+    /// the character's body controller (kind 1, the map's primary), whose alpha is how much of
+    /// her own skin is drawn (`Skin`, `opacity`): on for everyone, faded out while Hawk's cloak
+    /// fades in or is on
+    pub skin: Skin,
 }
 
-/// A character's material controller of kind 2: the BF_InvisMaterial controller (vtable
-/// 0x394e64, 0x54 bytes), which FUN_002101d0 makes for a type whose controller mask has bit 2:
-/// FUN_00210060 gives the type named "hawk" the mask 7 (kinds 1, 2, 4; mp_hawk 0x1f, Brutus 0x101,
-/// most 0x19), so Hawk's model alone carries it. Made off (state 3). Its init (0x212380) makes the
-/// material (class 0xf3bf04d1, texture h_ff43a70b) and sets both fades to 1.0 s; its update
-/// (FUN_00212430, after the base's FUN_00210b90) drives the body's fade and the material's
-/// screen-copy refraction from its state and level. Here the state machine and the level; the
-/// body's look is play_stealth.rs's.
+/// A material controller's fade: the base class of the controllers a character's model carries
+/// (the map at char+0x54c), its state (+4) and the seconds in it (+0x10), with the base's switch
+/// (+0x18, 0x210a90), frame (FUN_00210b90) and level (+0x20, 0x210b10). The demo has two of
+/// them: Hawk's invisibility controller (`Cloak`, kind 2) and every character's body (`Skin`,
+/// kind 1).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Cloak {
+pub struct Fade {
     /// its state (+4)
-    pub state: CloakState,
+    pub state: FadeState,
     /// seconds in it (+0x10)
     pub time: f32,
 }
 
 /// A material controller's states (+4, FUN_00210b90).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CloakState {
-    /// 0: switched on, fading in over CLOAK_IN, then 1
+pub enum FadeState {
+    /// 0: switched on, fading in over FADE_IN, then 1
     In,
     /// 1: on
     On,
-    /// 2: switched off, fading out over CLOAK_OUT, then 3
+    /// 2: switched off, fading out over FADE_OUT, then 3
     Out,
     /// 3: off, as made (0x210201: +4 = 3)
     #[default]
     Off,
 }
 
-impl Cloak {
+impl Fade {
     /// The switch (the controller's +0x18, 0x210a90, through FUN_002107d0): on, an off one starts
     /// its fade-in from 0 and one fading out is on at once (its jump table 0x210ae4: state 3 -> 0,
-    /// 2 -> 1); off, one on or fading in starts its fade-out (0 and 1 -> 2, at CLOAK_OUT_START), so
+    /// 2 -> 1); off, one on or fading in starts its fade-out (0 and 1 -> 2, at FADE_OUT_START), so
     /// a fade-in cut short jumps to the full level and fades from there (the game's).
     pub fn switch(&mut self, on: bool) {
         match (on, self.state) {
-            (true, CloakState::Off) => *self = Cloak { state: CloakState::In, time: 0.0 },
-            (true, CloakState::Out) => *self = Cloak { state: CloakState::On, time: 0.0 },
-            (false, CloakState::In | CloakState::On) => *self = Cloak { state: CloakState::Out, time: CLOAK_OUT_START },
+            (true, FadeState::Off) => *self = Fade { state: FadeState::In, time: 0.0 },
+            (true, FadeState::Out) => *self = Fade { state: FadeState::On, time: 0.0 },
+            (false, FadeState::In | FadeState::On) => *self = Fade { state: FadeState::Out, time: FADE_OUT_START },
             _ => {}
         }
     }
@@ -427,9 +447,9 @@ impl Cloak {
     /// moves on with its time back to 0 (in -> on, out -> off); then the time runs by the frame's.
     pub fn step(&mut self, dt: f32) {
         match self.state {
-            CloakState::Off => return,
-            CloakState::In if self.time >= CLOAK_IN => *self = Cloak { state: CloakState::On, time: 0.0 },
-            CloakState::Out if self.time >= CLOAK_OUT => *self = Cloak { state: CloakState::Off, time: 0.0 },
+            FadeState::Off => return,
+            FadeState::In if self.time >= FADE_IN => *self = Fade { state: FadeState::On, time: 0.0 },
+            FadeState::Out if self.time >= FADE_OUT => *self = Fade { state: FadeState::Off, time: 0.0 },
             _ => {}
         }
         self.time += dt;
@@ -441,11 +461,157 @@ impl Cloak {
     /// logs: 1.01-1.03 for a tick at the end of the fade-in).
     pub fn level(&self) -> f32 {
         match self.state {
-            CloakState::In => self.time / CLOAK_IN,
-            CloakState::On => 1.0,
-            CloakState::Out => 1.0 - self.time / CLOAK_OUT,
-            CloakState::Off => 0.0,
+            FadeState::In => self.time / FADE_IN,
+            FadeState::On => 1.0,
+            FadeState::Out => 1.0 - self.time / FADE_OUT,
+            FadeState::Off => 0.0,
         }
+    }
+}
+
+/// A character's material controller of kind 2: the BF_InvisMaterial controller (vtable
+/// 0x394e64, 0x54 bytes), which FUN_002101d0 makes for a type whose controller mask has bit 2:
+/// FUN_00210060 gives the type named "hawk" the mask 7 (kinds 1, 2, 4; mp_hawk 0x1f, Brutus 0x101,
+/// most 0x19), so Hawk's model alone carries it. Made off (state 3). Its init (0x212380) makes the
+/// material (class 0xf3bf04d1; its texture h_ff43a70b is loaded and never drawn) and sets both
+/// fades to 1.0 s; its update (`update`: FUN_00212430, after the base's FUN_00210b90) sets the
+/// material's alpha and lookup offset from its state, its fade's share and her visibility, which
+/// its +0x24 (0x2126e0) hands the material before each draw (the offset to +0x28, the colour to
+/// +0x2c..+0x38). The refraction is drawn by play_stealth.rs. Not here: its body alpha (+0x14 /
+/// +0x18: her shadow's strength, FUN_002109b0, and the Power Blade's, which the demo hasn't) and
+/// the second offset (+0x30 / +0x3c, 1.0 (0x407074) x her visibility x sin(5 t)), which the
+/// material gets at +0x20 and never reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cloak {
+    /// its fade (+4, +0x10)
+    pub fade: Fade,
+    /// her visibility as last pushed in (+0x1c, FUN_00210950 from her update)
+    vis: f32,
+    /// the offset the fade-in and the on state set (+0x2c), which the fade-out dies from
+    base: f32,
+    /// the material's lookup offset now (+0x38, the vertex shader's c24.w)
+    pub offset: f32,
+    /// the material's alpha now (+0x50, c26.w)
+    pub alpha: f32,
+}
+
+impl Default for Cloak {
+    /// As made (FUN_002101d0: off, its +0x1c 1.0) and set up (0x212380: the offsets 0, the colour
+    /// and alpha 1).
+    fn default() -> Self {
+        Cloak { fade: Fade::default(), vis: 1.0, base: 0.0, offset: 0.0, alpha: 1.0 }
+    }
+}
+
+impl Cloak {
+    /// Switched on or off (`Fade::switch`): Hawk's on and off (0x13c650 / 0x13c670).
+    pub fn switch(&mut self, on: bool) {
+        self.fade.switch(on);
+    }
+
+    /// Its level (`Fade::level`).
+    pub fn level(&self) -> f32 {
+        self.fade.level()
+    }
+
+    /// Whether it's switched on or fading (0x210b10's answer, states 0-2): the renderer draws its
+    /// material then (FUN_000e51e0 puts her on the refraction list).
+    pub fn active(&self) -> bool {
+        self.fade.state != FadeState::Off
+    }
+
+    /// Her visibility pushed in (FUN_00210950, from her update at 0x13d173): only a change of
+    /// VIS_STEP or more.
+    pub fn push_visibility(&mut self, v: f32) {
+        if (v - self.vis).abs() >= VIS_STEP {
+            self.vis = v;
+        }
+    }
+
+    /// One frame (its +0x14): the base's step (FUN_00210b90), then FUN_00212430 with x the share
+    /// of its fade done:
+    ///  - fading in: the alpha (x / 0.5)^2 and no offset over the first half; then the alpha 1
+    ///    and the offset (1 - (1 - y)^2) x her visibility x 0.15, y the second half's share;
+    ///  - on: the alpha 1, the offset 0.15 x her visibility + 0.1 x sin(2.5 t) (a shot, which
+    ///    shows her, strengthens it for the quarter second her visibility takes to fall back);
+    ///  - fading out: the alpha 1 and the offset dying as 1 - (x / 0.5)^2 from the last one the
+    ///    fade-in or the on state set (+0x2c, which this state doesn't write: no wobble); then no
+    ///    offset and the alpha (1 - y)^2.
+    pub fn update(&mut self, dt: f32) {
+        self.fade.step(dt);
+        match self.fade.state {
+            FadeState::In => {
+                let x = self.fade.time / FADE_IN;
+                if x >= HALF_IN {
+                    let y = ((x - HALF_IN) / (1.0 - HALF_IN)).min(1.0);
+                    self.alpha = 1.0;
+                    self.base = (1.0 - (1.0 - y) * (1.0 - y)) * self.vis * OFFSET_SEEN;
+                } else {
+                    let a = (x / HALF_IN).min(1.0);
+                    self.alpha = a * a;
+                    self.base = 0.0;
+                }
+                self.offset = self.base;
+            }
+            FadeState::On => {
+                self.alpha = 1.0;
+                self.base = OFFSET_SEEN * self.vis + WOBBLE * (WOBBLE_RATE * self.fade.time).sin();
+                self.offset = self.base;
+            }
+            FadeState::Out => {
+                // (the halves' split, 1 - 0x40706c, kept at 0x4a7120)
+                let x = self.fade.time / FADE_OUT;
+                let split = 1.0 - HALF_OUT;
+                if x >= split {
+                    let y = ((x - split) / HALF_OUT).min(1.0);
+                    self.alpha = (1.0 - y) * (1.0 - y);
+                    self.offset = 0.0;
+                } else {
+                    let s = (x / split).min(1.0);
+                    self.alpha = 1.0;
+                    self.offset = (1.0 - s * s) * self.base;
+                }
+            }
+            FadeState::Off => {}
+        }
+    }
+}
+
+/// A character's material controller of kind 1, its body (vtable 0x394e18, 0x28 bytes): the
+/// controller map's primary kind (map+0x14) for every type the demo has (FUN_00210060), switched
+/// straight to on as the map is made (FUN_00210840). It draws the model with its own materials at
+/// its alpha (0x213120: `ctx+0x90 *= +0x14`), so its alpha is how much of her skin shows. The
+/// map's frame switches it off while a controller of a kind in 0xc2 fades in or is on (Hawk's
+/// cloak), so her skin fades out linearly as she fades out (her presence in take11, todo/198
+/// leads §6) and back as the cloak goes off.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Skin(Fade);
+
+impl Default for Skin {
+    /// On, as made (FUN_00210840).
+    fn default() -> Self {
+        Skin(Fade { state: FadeState::On, time: 0.0 })
+    }
+}
+
+impl Skin {
+    /// The controller map's frame for it (FUN_00210560, from the character update at 0x11cc80),
+    /// after the cloak's own update: its update with the frame's time (0x212cd0, through the
+    /// base's FUN_00210b90); switched off if the cloak is fading in or on, on otherwise
+    /// (FUN_002107d0 with the primary kind); then its update again with no time, which moves a
+    /// fade at its end on. So switched off mid fade-in, the cloak starts its fade-out and her skin,
+    /// then fading out, is on at once (the switch takes state 2 to 1): her body snaps back while
+    /// the refraction dies.
+    pub fn update(&mut self, cloak: &Cloak, dt: f32) {
+        self.0.step(dt);
+        self.0.switch(!matches!(cloak.fade.state, FadeState::In | FadeState::On));
+        self.0.step(0.0);
+    }
+
+    /// Its alpha (+0x14 = +0x18, 0x212cd0): the fade-in's share done (+0x10 / +8), 1 on, the
+    /// fade-out's share left (1 - +0x10 / +0xc), 0 off: its level (0x3a4f78 1.0, 0x3a4f88 0).
+    pub fn alpha(&self) -> f32 {
+        self.0.level()
     }
 }
 
@@ -592,17 +758,22 @@ pub fn cloaks(u: &Player) -> bool {
     u.skill.name() == Some(NAME_STEALTH)
 }
 
-/// How opaque `u`'s body is drawn, 0 to 1 (play_stealth.rs): 1 less its invisibility
-/// controller's level (`Skill::cloak`). The game's controller fades the body in two halves and
-/// lays its refracting material over it (FUN_00212430: the body's alpha +0x14 is 1 for the first
-/// half of the fade-out, then (1 - x)^2; the material's alpha +0x50 rises as x^2 over that first
-/// half); on screen, the material's copy of the picture hiding her as it comes in, her presence
-/// falls as 1 - the level (#35 take11, her body's difference from the stealthed picture against
-/// the picture's switch, 0.13 s after the log's: 0.50 at 0.49 s, 0.33 at 0.64, 0.19 at 0.84 on;
-/// 0.16, 0.32, 0.50, 0.71, 0.91 at 0.17, 0.37, 0.57, 0.77, 0.97 s off): a fit, the material not
-/// drawn here (play_stealth.rs).
+/// How opaque `u`'s own skin is drawn, 0 to 1 (play_stealth.rs): its body controller's alpha
+/// (`Skill::skin`, kind 1's 0x212cd0), which the game draws the model with. Its fades are linear
+/// over 1.0 s, in step with the cloak's: out as Hawk's stealth fades in, back as it fades out (1
+/// less the cloak's level, but for a switch-off mid fade-in, which brings it back at once). The
+/// takes agree: #35 take11, her body's difference from the stealthed picture against the
+/// picture's switch, 0.13 s after the log's: 0.50 at 0.49 s, 0.33 at 0.64, 0.19 at 0.84 on; 0.16,
+/// 0.32, 0.50, 0.71, 0.91 at 0.17, 0.37, 0.57, 0.77, 0.97 s off.
 pub fn opacity(u: &Player) -> f32 {
-    (1.0 - u.skill.cloak.level()).clamp(0.0, 1.0)
+    u.skill.skin.alpha().clamp(0.0, 1.0)
+}
+
+/// The invisibility material over `u` this frame, while its controller is active (`Cloak`): its
+/// alpha and its lookup offset (play_stealth.rs draws it). None while it's off: everyone but a
+/// stealthed or fading Hawk.
+pub fn refraction(u: &Player) -> Option<(f32, f32)> {
+    u.skill.cloak.active().then_some((u.skill.cloak.alpha, u.skill.cloak.offset))
 }
 
 /// How far gun `def` reaches in `u`'s hands (FUN_002324c0: the bullet's range through the
@@ -931,7 +1102,8 @@ impl SkillKind for Vengar {
 ///    0.83 s event (FUN_00117660 at 0x118b8f; measured 0.89-0.97 s after the press was sent, less
 ///    the rig's input delay).
 ///  - **On / off** (0x13c650 / 0x13c670): her invisibility controller on or off (FUN_002107d0 on
-///    char+0x54c, kind 2: `Skill::cloak`), which fades her out or back in over 1.0 s.
+///    char+0x54c, kind 2: `Skill::cloak`), which fades its refraction in or out over 1.0 s; her
+///    skin's controller (`Skill::skin`) follows it the other way.
 ///  - **Update** (0x13d120), every frame: her level read back from the controller
 ///    (FUN_00210880), the request cleared, her visibility pushed into the controller
 ///    (FUN_00210950: it scales the material's refraction, play_stealth.rs), and the factor
@@ -943,8 +1115,9 @@ impl SkillKind for Vengar {
 ///    to them and back in 0.25 s (takes 12, 13: the factor 0 -> 1 in 0.25-0.3 s), and her stamina
 ///    less 2 x the gun's Damage max (the Saryl-23 27.0: 27.1 a shot). The skill stays on unless
 ///    that empties the bar (take13: the third shot of the burst did, off in that tick, the burst
-///    went on). Her body stays invisible: the controller's body fade doesn't read the visibility
-///    (FUN_00212430's state 1 holds it at 0), only its refraction does.
+///    went on). Her body stays invisible: her skin's controller follows the cloak's state, not the
+///    visibility (`Skin::update`); only the refraction's offset reads it (`Cloak::update`), so a
+///    shot strengthens the ripple for that quarter second (#198 take07).
 ///  - **An item** (+0x104, 0x13d340) while on: 5, and 10 more placed or thrown (take13: a Sonic
 ///    thrown, 15.1; she stays invisible and the skill on); nothing for the Power Blade's
 ///    IOU_SKILL_MELEE_ATTACK.
@@ -1019,6 +1192,10 @@ impl SkillKind for Stealth {
     fn update(&mut self, u: &mut Player, dt: f32) -> bool {
         self.level = u.skill.cloak.level();
         self.request = false;
+        // her visibility into the controller (FUN_00210950, 0x13d173), before the factor climbs
+        // (FUN_0013d1a0, 0x13d17e)
+        let v = self.visibility(u);
+        u.skill.cloak.push_visibility(v);
         self.factor = (self.factor + dt * self.cfg.level_recovery).clamp(0.0, 1.0);
         false
     }
@@ -1254,18 +1431,19 @@ impl SkillKind for Targeting {
     }
 }
 
-/// The test hooks' progress on this map: the last BF_TEST_SKILL press, BF_TEST_STAMINA poke and
-/// BF_TEST_SQUAD_SKILL press carried out (their times, s).
+/// The test hooks' progress on this map: the last BF_TEST_SKILL press, BF_TEST_STAMINA poke,
+/// BF_TEST_SQUAD_SKILL press and BF_TEST_STEALTH_FLASH flash carried out (their times, s).
 #[derive(Resource)]
 struct SkillHooks {
     last_press: f32,
     last_poke: f32,
     last_squad_press: f32,
+    last_flash: f32,
 }
 
 impl Default for SkillHooks {
     fn default() -> Self {
-        SkillHooks { last_press: -1.0, last_poke: -1.0, last_squad_press: -1.0 }
+        SkillHooks { last_press: -1.0, last_poke: -1.0, last_squad_press: -1.0, last_flash: -1.0 }
     }
 }
 
@@ -1296,7 +1474,8 @@ pub fn plugin(app: &mut App) {
 
 /// The skill key: V, the game's White button (VB_SPECIAL_ABILITY, game-options-en.xml line 151;
 /// the player controller sends CT_TOGGLE_SPECIAL at 0x134cff), for the controlled character,
-/// alive; and the test hooks BF_TEST_SKILL (presses) and BF_TEST_STAMINA (pokes).
+/// alive; and the test hooks BF_TEST_SKILL (presses), BF_TEST_STAMINA (pokes),
+/// BF_TEST_SQUAD_SKILL and BF_TEST_STEALTH_FLASH.
 ///
 /// With a skill on that they end (`ended_by_actions`: Tex's), the player controller sends the
 /// toggle instead of what two more keys do: the switch key, Q (the game's Y, VB 10, 0x134db4-
@@ -1328,6 +1507,23 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
                 m.skill.request = true;
                 if std::env::var("BF_SKILL_LOG").is_ok() {
                     println!("t={t:.2} {}: the squad order's toggle (BF_TEST_SQUAD_SKILL)", unit_name(m));
+                }
+            }
+        }
+    }
+    // test hook: BF_TEST_STEALTH_FLASH=<s>[,<s>...] gives every stealthed Hawk a round's flash at
+    // those times: her skill's +0xb0 with a gun of no damage, so her factor drops to 0 as a
+    // shot's does and nothing is fired or paid (the shot list's H5, done the trainer's way)
+    if let Ok(v) = std::env::var("BF_TEST_STEALTH_FLASH") {
+        let due = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).filter(|&s| t >= s && hooks.last_flash < s)
+            .fold(None, |a: Option<f32>, s| Some(a.map_or(s, |a| a.max(s))));
+        if let Some(s) = due {
+            hooks.last_flash = s;
+            let none = WeaponDef::default();
+            for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()).filter(|u| cloaks(u) && u.skill.on) {
+                fired(u, &none);
+                if std::env::var("BF_SKILL_LOG").is_ok() {
+                    println!("t={t:.2} {}: a flash (BF_TEST_STEALTH_FLASH)", unit_name(u));
                 }
             }
         }
@@ -1429,19 +1625,23 @@ pub fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: Res
     let at = player.position;
     let mut env = Env { game: &game.0, controlled: true, log, me: 0, sight: &sight, distance: 0.0, history: &mut *history, reserve: &mut *reserve };
     step(&mut player, &mut env, dt);
+    follow_cloak(&mut player, dt);
     for (k, m) in squad.0.iter_mut().enumerate().filter(|(_, m)| m.in_squad()) {
         let mut env = Env { game: &game.0, controlled: false, log, me: k + 1, sight: &sight, distance: m.position.distance(at), history: &mut *history,
                             reserve: &mut *reserve };
         step(m, &mut env, dt);
+        follow_cloak(m, dt);
     }
     // the stamina of each, every half second
     let t = player.sim_time;
     if log && (t * 2.0).floor() > (*last_log * 2.0).floor() {
         let list: Vec<String> = std::iter::once(&*player).chain(squad.0.iter().filter(|m| m.in_squad())).map(|u| {
             let state = if u.skill.on { "on".to_string() } else { format!("off x{}", refill_factor(u)) };
-            // (Hawk's stealth while it shows: her controller's level and her visibility)
-            let cloak = if u.skill.cloak.state != CloakState::Off || visibility(u) < 1.0 {
-                format!(" (cloak {:?} level {:.2}, visibility {:.2})", u.skill.cloak.state, u.skill.cloak.level(), visibility(u))
+            // (Hawk's stealth while it shows: her controller's level, her visibility, her skin's
+            // alpha and the refraction's alpha and offset)
+            let cloak = if u.skill.cloak.active() || visibility(u) < 1.0 {
+                format!(" (cloak {:?} level {:.2}, visibility {:.2}, skin {:.2}, refraction alpha {:.2} offset {:.3})", u.skill.cloak.fade.state,
+                        u.skill.cloak.level(), visibility(u), u.skill.skin.alpha(), u.skill.cloak.alpha, u.skill.cloak.offset)
             } else {
                 String::new()
             };
@@ -1450,6 +1650,15 @@ pub fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: Res
         println!("t={t:.2} stamina: {}", list.join(" | "));
     }
     *last_log = t;
+}
+
+/// `u`'s body controller's frame (`Skin::update`), after its skill step: so a switch of the cloak
+/// this frame (at the toggle clip's event, an off at 0 or at death) moves her skin in the same
+/// frame, the two fades in step. The game's order of the clip's event and the controller map's
+/// update isn't traced; this one keeps the skin at 1 less the cloak's level, as #123 measured.
+fn follow_cloak(u: &mut Player, dt: f32) {
+    let cloak = u.skill.cloak;
+    u.skill.skin.update(&cloak, dt);
 }
 
 /// The refill's factor for what `u` is doing (FUN_0011a840, by the motion state char+0x1f8):
@@ -1477,9 +1686,11 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
         *left -= dt;
         *left > 0.0
     });
-    // the invisibility controller's frame (FUN_00210b90), the dead's too: one switched off by
-    // the death fades back in
-    u.skill.cloak.step(dt);
+    // the material controllers' frame (FUN_00210560, from the character update at 0x11cc80,
+    // before the stamina update's skill update at 0x11cedb), the dead's too: one switched off by
+    // the death fades back in. The invisibility controller's here; the body's, which follows it,
+    // once the skill has switched it this frame (`follow_cloak`)
+    u.skill.cloak.update(dt);
     let Some(mut kind) = u.skill.kind.take() else { return };
     let k = kind.as_mut();
     if u.dead {
