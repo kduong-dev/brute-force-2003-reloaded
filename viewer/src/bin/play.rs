@@ -118,6 +118,8 @@ pub enum AppState {
     /// the test tools' level switch (play_testworld.rs): between one map and the next, the next
     /// one loading on a thread (no menu)
     Switching,
+    /// a mission's briefing movies with their subtitles (play_briefing.rs)
+    Briefing,
 }
 
 /// The game mode being played: deathmatch is alone, without the squad's radar.
@@ -380,7 +382,8 @@ fn main() {
     // the menu first: the window opens at once and the game data is read behind its loading
     // screen (AppState::Boot); a map straight away (BF_MAP, test hooks): read here first
     let test_map = testmap::requested();
-    let menu_first = !test_map && menu::wanted();
+    // (BF_MOVIES plays a briefing after the boot, whatever other hooks are set)
+    let menu_first = !test_map && (menu::wanted() || briefing::requested().is_some());
     // (--test with BF_MAP: the test tools on that map, play_testworld.rs)
     let map = std::env::var("BF_MAP").unwrap_or_else(|_| if test_map { "flat".into() } else { "sdm_e34".into() });
     let mut loaded = None;
@@ -498,9 +501,12 @@ fn main() {
     bf_viewer::level_scene::plugin(&mut app);
     // the front end; its pictures and sounds come from the game data
     menu::plugin(&mut app);
+    briefing::plugin(&mut app);
     if let Some(mut l) = loaded {
         let data = menu::gather(&mut l.game, &data_dir());
         menu::install(app.world_mut(), data);
+        let movies = briefing::gather(&mut l.game);
+        briefing::install(app.world_mut(), movies);
         // straight into the map (BF_MAP or a test hook)
         app.insert_state(AppState::Playing);
         if test_map {
@@ -573,6 +579,8 @@ mod testscenery;
 mod editor;
 #[path = "play_menu.rs"]
 mod menu;
+#[path = "play_briefing.rs"]
+mod briefing;
 #[path = "play_scenery.rs"]
 mod scenery;
 #[path = "play_ammo.rs"]

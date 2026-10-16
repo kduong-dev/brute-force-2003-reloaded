@@ -115,6 +115,33 @@ fn int_of(e: &Element, name: u32) -> i64 {
     e.attr(name).and_then(|v| v.as_i64()).unwrap_or(0)
 }
 
+/// A zone's movie list (`list`: its `pre-movies` or `post-movies` children), each movie with its
+/// subtitles (see `Subtitle`). A number stored as text is read as a number.
+fn campaign_movies(zone: &Element, list: u32) -> Vec<CampaignMovie> {
+    let num = |e: &Element, k: u32| e.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+    zone.children_named(list).map(|m| CampaignMovie {
+        file: m.attr(h("bink-file")).and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        subtitles: m.children_named(H_SUBTITLE).map(|s| {
+            let style = s.child(h("style"));
+            Subtitle {
+                text: hash_of(s.attr(h("text-string"))),
+                start: num(s, H_SUBTITLE_START).unwrap_or(0.0),
+                shown: num(s, h("display-time")).unwrap_or(0.0),
+                letter: style.and_then(|st| num(st, H_LETTER_TIME)).unwrap_or(0.0),
+                colours: style.map(|st| st.children_named(H_SUBTITLE_COLOUR).filter_map(|c| {
+                    let text = c.text.as_ref()?;
+                    let mut ints = text.ints();
+                    if ints.is_empty() {
+                        ints = text.as_str().map(|s| s.split_whitespace().filter_map(|x| x.parse().ok()).collect()).unwrap_or_default();
+                    }
+                    let v: Vec<u8> = ints.into_iter().map(|i| i.clamp(0, 255) as u8).collect();
+                    (v.len() >= 4).then(|| [v[0], v[1], v[2], v[3]])
+                }).collect()).unwrap_or_default(),
+            }
+        }).collect(),
+    }).collect()
+}
+
 pub struct Channel {
     pub data_type: u32,
     pub keyed: bool,
@@ -589,7 +616,61 @@ pub struct CampaignLevel {
     pub kind: u32,
     /// recommended players (dm-data h_0398b8bf min, max; 0 0 on the squad deathmatch maps)
     pub players: (i64, i64),
+    /// the level's id (`<level h_046391fd>`, read by the level parser FUN_001a4000): a mission's
+    /// name in the game flags, `h("m00")` for the tutorial and `h("m01")` for Rescue Brutus,
+    /// `h("e01")` for Cemetery Gates (the names recovered by hashing)
+    pub id: u32,
+    /// each zone's movie lists, in `zones` order (the zone parser FUN_001a3d40)
+    pub movies: Vec<ZoneMovies>,
 }
+
+/// A zone's movie lists (campaign-bf.xmb `<zone>`, its children read by FUN_001a3d40): the
+/// `pre-movies` the game plays before the zone loads and the `post-movies` after it, in order.
+#[derive(Clone, Debug, Default)]
+pub struct ZoneMovies {
+    /// before the zone loads (the zone's +0x40)
+    pub pre: Vec<CampaignMovie>,
+    /// after it (+0x44)
+    pub post: Vec<CampaignMovie>,
+}
+
+/// One movie of a zone's list: its Bink file in data/movies (`bink-file`, FUN_0018d750; the
+/// names as the list writes them, e.g. "mb01.bik" for data/movies/MB01.bik) and its subtitles in
+/// order (`<h_e5d32e85>`, FUN_0018d7b0).
+#[derive(Clone, Debug)]
+pub struct CampaignMovie {
+    pub file: String,
+    pub subtitles: Vec<Subtitle>,
+}
+
+/// A movie's subtitle: FUN_0018d690 reads its attributes into a 0x20-byte record, FUN_0018d610
+/// its `<style>`. The movie shows them one after another (the sequence FUN_0010c060 walks): each
+/// takes `start` + `shown` seconds from the end of the one before (the first from the movie's
+/// start) and is on screen for the last `shown` of them.
+#[derive(Clone, Debug)]
+pub struct Subtitle {
+    /// the text (`text-string`, a string table id; record +0)
+    pub text: u32,
+    /// h_f724cb8c (record +4): seconds from the end of the previous subtitle to this one
+    pub start: f32,
+    /// `display-time` (record +8): seconds on screen
+    pub shown: f32,
+    /// the style's h_1927c9d0 (record +0xc): seconds a letter takes as the text types out
+    pub letter: f32,
+    /// the style's h_05387560 colours, RGBA, in order (FUN_001a6e30 appends each): the text's
+    /// `^c1` picks the first, `^c2` the second
+    pub colours: Vec<[u8; 4]>,
+}
+
+/// campaign-bf.xmb's names (no string recovered) for a level's id, a subtitle element, its start
+/// and its style's seconds a letter and colour (FUN_001a4000, FUN_0018d7b0, FUN_0018d690,
+/// FUN_0018d610); the lists' other names are known strings (`pre-movies`, `bink-file`,
+/// `text-string`, `display-time`, `style`).
+const H_LEVEL_ID: u32 = 0x0463_91FD;
+const H_SUBTITLE: u32 = 0xE5D3_2E85;
+const H_SUBTITLE_START: u32 = 0xF724_CB8C;
+const H_LETTER_TIME: u32 = 0x1927_C9D0;
+const H_SUBTITLE_COLOUR: u32 = 0x0538_7560;
 
 /// Level list kinds (campaign-bf.xmb `Type`): the deathmatch arenas (mp*) and the squad
 /// deathmatch maps (sdm_*); missions are h_17506391.
@@ -1051,7 +1132,13 @@ impl Game {
                 let Some(file) = l.child(h("zone")).and_then(|z| z.attr(h("file-name"))).and_then(|v| v.as_str()) else { continue };
                 let head = l.children.first();
                 let id = |e: Option<&Element>, k: u32| e.and_then(|e| e.attr(k)).and_then(|v| v.as_hash()).unwrap_or(0);
+                let movies = l.children_named(h("zone")).map(|z| ZoneMovies {
+                    pre: campaign_movies(z, h("pre-movies")),
+                    post: campaign_movies(z, h("post-movies")),
+                }).collect();
                 self.campaign.push(CampaignLevel {
+                    id: id(Some(l), H_LEVEL_ID),
+                    movies,
                     file: file.to_lowercase(),
                     zones: l.children_named(h("zone")).filter_map(|z| z.attr(h("file-name")).and_then(|v| v.as_str())).map(|f| f.to_lowercase()).collect(),
                     name: id(head, 0x07F2_F670),

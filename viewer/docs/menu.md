@@ -70,12 +70,16 @@ greys as colours, opaque). The movies are converted once. Their sound is in seve
 plays them in surround): 0 front left / right, 1 a mono low channel, 2 the rear pair, and from 3
 on the centre, one track per language (the narration with the centre's share of the music: five
 on the intro, nearly alike but for the voice; 3 is English: the only one Windows' English speech
-recogniser follows, and the Xbox's language order). They are mixed down to stereo, the centre and
+recogniser follows, and the Xbox's language order). default.xbe's movie player opens tracks 0, 1,
+2 and the language's (FUN_001781c0; FUN_00178090: English 3) and sends them to the front pair, the
+low channel, the rear pair and the centre. They are mixed down to stereo, the centre and
 rears at -3 dB, the low channel at -6 dB, under a limiter (track 0 alone left out the intro's
-narration and most of the MGS logo's sound). The credits movie has one stereo track.
+narration and most of the MGS logo's sound). The credits movie has one stereo track. The tracks
+are taken by their Bink track id (`0:i:N`): these movies list them in that order, but some of the
+campaign's don't (briefing.md, which converts the campaign's briefing movies the same way).
 
 ```
-mix='[0:a:0]aresample=44100,aformat=channel_layouts=stereo[f];[0:a:3]aresample=44100,aformat=channel_layouts=stereo,volume=0.707[c];[0:a:1]aresample=44100,aformat=channel_layouts=stereo,volume=0.5[e];[0:a:2]aresample=44100,aformat=channel_layouts=stereo,volume=0.707[s];[f][c][e][s]amix=inputs=4:normalize=0,alimiter=limit=0.95:level=0[out]'
+mix='[0:i:0]aresample=44100,aformat=channel_layouts=stereo[f];[0:i:3]aresample=44100,aformat=channel_layouts=stereo,volume=0.707[c];[0:i:1]aresample=44100,aformat=channel_layouts=stereo,volume=0.5[e];[0:i:2]aresample=44100,aformat=channel_layouts=stereo,volume=0.707[s];[f][c][e][s]amix=inputs=4:normalize=0,alimiter=limit=0.95:level=0[out]'
 for m in MGS_Logo_Final DA_Logo_Final1 Intro_Montage credits; do
   ffmpeg -i "Brute Force/data/movies/$m.bik" -vf fps=30 -q:v 5 decompiled/movies/$m/%04d.jpg
 done
@@ -85,7 +89,9 @@ done
 ffmpeg -i "Brute Force/data/movies/credits.bik" -map 0:a:0 -ac 2 -ar 44100 decompiled/movies/credits/audio.wav
 ```
 
-(10 s, 15.7 s, 67 s and the credits 150 s, 163 MB; a movie without frames is left out.) The main
+(10 s, 15.7 s, 67 s and the credits 150 s, 163 MB; a movie without frames is left out. The
+demo finds `decompiled/` beside `viewer/`, in the working folder, or, with `BF_DATA_DIR` set as a
+git worktree needs it, beside the `Brute Force` folder.) The main
 menu's CREDITS plays the credits straight away, their frames read from disk as they're shown (any
 key, click or button stops them) and comes back to the main menu on CREDITS. Movies played on their own fit
 inside the window, whole (the menu's background covers it). `BF_MENU_SCREEN=credits` picks CREDITS. `BF_NO_INTRO=1` skips the movies;
@@ -97,6 +103,8 @@ set, or with `BF_NO_MENU=1`. Test hooks: `BF_MENU_SHOT=<file.png>` saves the men
 `BF_MENU_SCREEN=title|main|dm|sdm|loading` with `BF_MENU_PICK=<n>` picks the screen and entry;
 `BF_MENU_SHOT_FRAME=<n>` takes the shot at frame n (screenshots step a fixed 1/60 s a frame, to
 catch the animations); `BF_MENU_GO=1` plays the picked map (the screenshot hook runs on into it); `BF_TEST_BACK=<n>` goes back to the menu after n frames of a map.
+`BF_MOVIES=<mission>` plays that mission's briefing movies after the boot instead of the opening
+movies, then the title (briefing.md).
 
 The arenas Chamber (mp2), Ammo Depot (mp3) and Cavern of Fire (sdm_m07) are built from objects
 alone, with no terrain mesh. Their rooms are lit by the
