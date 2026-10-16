@@ -1,18 +1,16 @@
-# Special skills: stamina, the skill toggle (#120), Tex's Berserker (#121), Brutus's Spirit of Vengar (#122) and Flint's Advanced Targeting (#124)
+# Special skills: stamina, the skill toggle (#120), Tex's Berserker (#121), Brutus's Spirit of Vengar (#122), Hawk's Stealth (#123) and Flint's Advanced Targeting (#124)
 
 Each squad member has a special skill that stamina (the blue bar) pays for: Tex's Berserker,
 Brutus's Spirit of Vengar, Hawk's Stealth, Flint's Advanced Targeting. This page is the part the
 four share (`src/bin/play_skills.rs`, the HUD in `play_hud.rs`): stamina, the toggle, its sounds,
-chatter and HUD, and the interface each skill plugs into; and the skills done so far. Each
-skill's own effect is its own ticket: #121 Tex, #122 Brutus, #123 Hawk, #124 Flint. Tex's
-Berserker ([below](#texs-berserker-121)), Brutus's Spirit of Vengar
-([below](#brutuss-spirit-of-vengar-122)) and Flint's Advanced Targeting
-([below](#flints-advanced-targeting-124)) work; Hawk's skill switches on and off, drains and
-shows on the HUD, but does nothing else yet.
+chatter and HUD, and the interface each skill plugs into; and the four skills, each its own
+ticket: Tex's Berserker ([below](#texs-berserker-121)), Brutus's Spirit of Vengar
+([below](#brutuss-spirit-of-vengar-122)), Hawk's Stealth ([below](#hawks-stealth-123)) and
+Flint's Advanced Targeting ([below](#flints-advanced-targeting-124)).
 
 Everything here comes from default.xbe (the functions are in [code-map.md](code-map.md), "Skills
-and stamina", "HUD" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
-`todo/35-special-skills/` (the spec is `spec.md` there, Parts 1, 2, 3 and 5).
+and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
+`todo/35-special-skills/` (the spec is `spec.md` there, Parts 1 to 5).
 
 ## Keys and test hooks
 
@@ -28,10 +26,19 @@ and stamina", "HUD" and, for Brutus's view, "Effects / ALE") and the data, check
   chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each
   overlay and when it switches, each switch with its sound and line, and every squad member's
-  stamina each half second with its state (`on`, or `off x` its refill factor). For Tex and
+  stamina each half second with its state (`on`, or `off x` its refill factor). For Tex, Hawk and
   Flint also each refusal and why (not those of the command at 0, which comes every frame), and
   the switch and reload keys ending their skill; for Tex the top-up at the press and the second
-  gun drawn; for Flint whether the rifle was marked (her sniper motions) and each doubled roll.
+  gun drawn; for Flint whether the rifle was marked (her sniper motions) and each doubled roll;
+  for Hawk each shot's and item's cost while stealthed, her invisibility controller's state,
+  level and her visibility in the half-second line while it isn't off, her model's copies made
+  (play_stealth.rs) and each time her body goes see-through or whole again.
+* `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]`: asks a squadmate's skill to toggle at those
+  times (by name or 0-3), as the Squad Command menu's "Toggle Ability" will (#33). With
+  `BF_TEST_HOSTILE=<character>` (grenades.md) it puts a stealthed Hawk on the other side, for the
+  crosshair's rule.
+* `BF_SIGHT_LOG=1` (play.rs): each AI character finding or losing its target, with the distance,
+  the target's visibility and the reach (`sight_reach`): when an enemy loses a fading Hawk.
 * `BF_TEST_DOUBLE=<percent>`: the chance of Flint's doubled rolls while her targeting is on (100:
   every one), to see the x2 and its flash.
 * `BF_TARGETING_LOG=1`: Flint's targeting marker when it changes (on, the lock, the fill at 0 or
@@ -53,6 +60,12 @@ and stamina", "HUD" and, for Brutus's view, "Effects / ALE") and the data, check
   turn the crosshair off and back onto an enemy, `BF_TEST_INSTANT_KILL=0` so a test session's
   NPC outlives the first hit, `BF_TEST_AIM=1` for the scope (`BF_TEST_SCOPE` isn't read under
   `BF_TEST_GOTO`'s autopilot).
+* For Hawk's stealth (`BF_CHARACTER=2` is Hawk): the takes' loadout `BF_TEST_WEAPON="Saryl-23;Rail
+  RVR"` (take14's `Jax-iR`), `BF_TEST_GRENADE_TYPE=Sonic`, `BF_TEST_THROW=<s>,<hold>`,
+  `BF_TEST_TRIGGER`, `BF_TEST_MEDKIT`; a live enemy (take14's e40 Shrike, its `vision-range` 75)
+  on the test map: `-- --test BF_NO_SQUAD=1 BF_TEST_GOTO=4.5,20,4.5,20
+  BF_TEST_NPC="0.5,shrike soldier@e40,enemy,fight,4.5,4.3"` (15.7 m off, take14's distance), with
+  `BF_SIGHT_LOG` and `BF_COMBAT_LOG`.
 * For Brutus's charge (`BF_CHARACTER=0` is Brutus): on the test map (`-- --test`) a frozen enemy
   ahead, `BF_TEST_NPC=0.5,tex,enemy,frozen,4.5,14` with `BF_TEST_NPC_HP=1.0,1,300` (take08's
   300 HP; 125 for take22's kill) and `BF_TEST_INSTANT_KILL=0`, then the dash at it:
@@ -126,7 +139,7 @@ reload is, the whole body standing and the upper body on the move (`Loaded::skil
 |---|---|---|---|---|
 | Tex | 0x13d490 | 1 | `Sc_w1_bz_start` / `Sc_w1_bz_stop`, 1.0 s | at the clip's 0.50 s event (eaba3d48 on, 14ee2201 off). A 1.0 s timer from an accepted press refuses presses meanwhile; switching on also needs him free (FUN_00117210, 0x13d5c4), 10% (0x13d5d3) and the rest of [his refusals](#texs-berserker-121) |
 | Brutus | FUN_0013bfe0 | 0 (0x13c00e, both ways) | none: his motion set's `Sc_w1/w2_spirit` never plays from the button | at the press |
-| Hawk | FUN_0013cf90 | 1; 0 at stamina 0 or dead | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way counts); at stamina 0 or dead: off at once, no clip |
+| Hawk | FUN_0013cf90 | 1; 0 at stamina 0 or dead | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way counts), no request is pending and her fade isn't under way ([below](#hawks-stealth-123)); at stamina 0 or dead: off at once, no clip |
 | Flint | FUN_0013cad0 | 0, or 2 with a rifle (motion type 45: her sniper motions, whose motion state is still 19 or 47, so the takes' logs never showed 45) | none | at the press; refused unless her motion has a type 45 transition, and switching on without a gun with rounds in hand ([below](#flints-advanced-targeting-124)) |
 
 Brutus's and Flint's toggles don't ask FUN_00117210 (Flint's makes checks of its own).
@@ -274,6 +287,11 @@ class's; the skill is taken out of its character while they run, so they get the
 | `has_marker` | (+0xc4) | false | the skill shows the targeting marker for the controlled character (play_targeting.rs): Flint's |
 | `keeps_gun_up(u)` | (FUN_00123ea0) | false | the skill keeps the gun raised, holding its ready timer (`Skill::raised`: the ready pose, `gun_raised`) and the camera's aim shift after it (`Skill::shift`, `aim_shift`: the camera in): Flint's while on |
 | `bars_scope(u)` | | false | the demo's choice: no scope in Tex's berserk motions |
+| `fired(u, def)` | +0xb0 | nothing (0x2c60c0) | each round the character's gun fires (FUN_0022f640 from the fire loop; `skills::fired`, play.rs `step_player`): Hawk's flash and cost while stealthed |
+| `used_item(u, use_type)` | +0x104 | nothing (0x2c60c0) | an item used, by its IOU_ use type (FUN_00121170; `skills::used_item`: play.rs's throw and set-down, play_pickups.rs's medkit): Hawk's cost while stealthed |
+| `visibility(u)` | +0xe4 | 1.0 (0x10e3d0) | how visible the character is (`skills::visibility`): the AI's sight (play.rs `nearest_hostile`) and the crosshair's selection (play_reticle.rs) read it. Hawk's falls as she fades |
+| `noise(u)` | +0xe8 | 1.0 (0x10e3d0) | the factor on its footsteps (`skills::noise`, play.rs `step_player`): Hawk's a quarter stealthed |
+| `holds_fire(u)` | +0x108 | false (0x20e200) | an AI character holds fire (`skills::holds_fire`, play.rs `update_player`: no target for the squad AI or a test map NPC): Hawk while stealthed |
 
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
 `Reserve` (Tex's top-ups) and the log switch. The free functions of the same names in
@@ -286,16 +304,17 @@ flag, the start / end sound for the controlled character, the chatter line. `fre
 the reload (play_ammo.rs), the weapon switch and the grenade (play.rs) and the medkit
 (play_pickups.rs) ask on their own. A skill's effects outside the character (a
 material, the post-process, the HUD marker, the AI's view of Hawk) read `Player::skill`
-(`on`, `toggling`, `special_motions`, `double_hit`), the hooks above and the character (Tex's
-`Player::second`) from their own systems: Brutus's charge and Vengar view are play_vengar.rs's
-systems, which ask `skills::vengar_on`. The base-class hooks still to come (the game's fire
-hook +0xb0, item use +0x104, visibility +0xe4, noise +0xe8, the AI's hold fire +0x108) are added
-to the trait with the base class's answer as their default.
+(`on`, `toggling`, `special_motions`, `double_hit`, `cloak`), the hooks above and the character
+(Tex's `Player::second`) from their own systems: Brutus's charge and Vengar view are
+play_vengar.rs's systems, which ask `skills::vengar_on`; Hawk's body is play_stealth.rs's, which
+asks `skills::cloaks` and `skills::opacity`.
 
 A system outside the character can't reach a concrete skill's own state through `Box<dyn
 SkillKind>`: what others need is a hook (above) or kept on `Skill` / `Player` (Tex's second gun,
 `Player::second`; Flint's doubled-roll flag, `Skill::double_hit`; the stamina Brutus's charge
-hit takes, `Skill::pending`, which play_vengar.rs sets and his drain takes). Flint's marker is
+hit takes, `Skill::pending`, which play_vengar.rs sets and his drain takes; Hawk's invisibility
+controller, `Skill::cloak`, the character's in the game too, char+0x54c, which her on and off
+switch and play_stealth.rs draws by). Flint's marker is
 the HUD's own state (`targeting::Marker`), as the game's widget is.
 
 ## Tex's Berserker (#121)
@@ -461,6 +480,93 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
 * Not in the demo: his `spirit` overlay (never played from the button, #120); the ALE effects
   `vengar` and `vengar_heal` (who plays them for Brutus wasn't found, and the takes show neither);
   the health bar's brighten while he heals; his kind-0x100 material controllers.
+
+## Hawk's Stealth (#123)
+
+"Turns invisible." (h_e0282878). Hawk fades out over a second and stays invisible while her
+stamina lasts: the enemies lose her, the crosshair can't lock her, her footsteps go quiet; a
+shot shows her to them for a quarter second and costs stamina, as an item does. `Stealth` in
+`play_skills.rs` (skill vtable 0x39d190, constructor FUN_0013cf10) is her skill's own part; her
+body's look is `play_stealth.rs`; who sees her, play.rs (`nearest_hostile`, the AI) and
+play_reticle.rs (the crosshair). Her tuning is game-options' `<combat-skills>` block h_0ec919f1
+(`CombatSkills::stealth`: only stealth-level-recovery-rate, h_f726177e, is named, by hashing).
+Measured against takes 10-14, 18 and 19 (spec Part 4).
+
+* **The press** (her toggle, FUN_0013cf90) is a request: refused unless she's free
+  (FUN_00117210, 0x13cfd2: her clip under way among the rest), no request is pending (skill+0x20,
+  set by an accepted press and cleared by her next update), her level isn't mid-fade (skill+0x24
+  exactly 0 or 1: the second her body takes to come back after an off at stamina 0, which has no
+  clip, holds the key), and, switching on, at 10% (take11 52.0 s: nothing at 9.06). Accepted,
+  `Sc_w1/w2_activate_stealth` (2.0 s) plays, on and off, and switches at its 0.83 s event.
+  With the skill on at stamina 0 or dead: off at once, no clip (take11 15.26-15.31). Her start
+  and end sounds and lines are #120's.
+* **Her invisibility controller** (`Skill::cloak`, `Cloak`): her model carries the game's
+  BF_InvisMaterial controller, kind 2 (FUN_00210060 gives the character type named "hawk" one,
+  FUN_002101d0 makes it: the link leads.md had as likely is in the code). Her on and off switch
+  it (0x13c650 / 0x13c670 through FUN_002107d0, its switch 0x210a90); its level (0x210b10) goes 0
+  to 1 in 1.0 s after the on and back in 1.0 s after the off (its init 0x212380 sets both fades
+  to 1.0 s; the takes: 0.05 a 50 ms log row), and her update reads it back each frame. Switched
+  off while still fading in, it starts its fade-out from the top: the level jumps to 1 and comes
+  down (the game's switch). The dead's runs on: the death's off fades her back in on the ground.
+* **Visibility** (+0xe4, 0x13d200): 1 - the factor x the level. The factor (skill+0x28) is 1,
+  0 after a shot, and climbs back at stealth-level-recovery-rate, 4 a second (FUN_0013d1a0). It's
+  what the AI's sight and the crosshair read (the stamina update pushes it into her combat
+  target each frame, 0x11a934). `BF_SKILL_LOG` prints the level and the visibility.
+* **Her look** (`play_stealth.rs`): her body, the guns she carries and what she holds (not the
+  muzzle flash) at 1 less the level, as a whole: the parts are blended over the picture and a
+  depth-only copy of each puts her nearest surface in the depth buffer first, so her arms and the
+  gun in front of her don't show through her back. That's a fit: on screen her presence falls
+  and rises with the level (take11, see `skills::opacity`) and she's gone from a level of about
+  0.95, where the game's controller fades the body in two halves under its refracting material
+  (FUN_00212430: the picture behind her, copied and drawn through her outline with a wobble, at
+  0xa1a40). The refraction isn't drawn: stealthed she's invisible here, where the takes keep a
+  faint ripple of the ground in her outline, hardly seen at their 3-10 m (take11 4.5-7.3 s). The
+  alpha is the console's blend in sRGB values (`srgb_alpha`), the parts' textures copied with
+  their alpha at 255 (it's a specular mask). Bevy builds a pipeline the first time it's drawn
+  with and skips the draw meanwhile, so as her model first shows each part gets an invisible
+  blended copy for a second. A part she takes up while stealthed (a grenade in her hand: its
+  type's material is every such grenade's) gets a see-through copy of its material, its own back
+  when it leaves her: the grenade's in flight is seen (take13 7.0-7.6 s, none in her hand
+  before).
+* **A shot** (+0xb0, 0x13d0a0; FUN_0022f640 calls it from the fire loop for each round, the
+  demo's `skills::fired` in `step_player`): while she's stealthed the factor drops to 0, so the
+  AI and the crosshair see her for about a quarter second, and her stamina loses 2 x the gun's
+  Damage max (the Saryl-23's 13.5: 27; the Jax-iR's 34.125: 68.25). Her body stays invisible:
+  the controller's body fade doesn't read the visibility, only its refraction does (+0x1c), so
+  on screen a shot strengthens the ripple the demo doesn't draw. The skill stays on unless the
+  cost empties the bar.
+* **An item** (+0x104, 0x13d340; FUN_00121170 calls it as the use starts): while she's stealthed
+  5 stamina, 15 for one placed or thrown (a grenade at the throw's release, a Roller or Sentry at
+  the press, as the count drops), nothing for the Power Blade's melee. The medkit (IOU_USE_IN_HAND)
+  costs 5.
+* **Noise** (+0xe8, 0x13d210): her footsteps x (0.25 + 0.75 x her visibility), a quarter
+  stealthed (FUN_00119020 at 0x11918e; `step_player`). The game's movement noise that the AI
+  hears (FUN_0001aeb0) is scaled the same: the demo's AI doesn't hear.
+* **The AI's sight** (play.rs `nearest_hostile`): FUN_0004d140 gives a brain the reach of its
+  sight distance x the target's visibility; the sight distance is read as the type's
+  `<ai vision-range>` (75 for e40's Shrikes, 80 for Brutus, Hawk and Tex, 105 for Flint;
+  `sight_reach`). So an enemy loses her as she fades: take14's Shrike, 15.7 m off with a
+  vision-range of 75, stopped firing at her 0.81-0.86 s into her fade (visibility 0.20-0.17). It
+  sees her again in a shot's flash and as she comes back. A fully visible character is seen
+  out to the vision-range (and the held gun's reach, the demo's own).
+* **The crosshair** (play_reticle.rs): a character less visible than 0.1 (FUN_000bf6d0) isn't
+  locked, by the selection nor under the centre (FUN_000bf550): a stealthed Hawk on another
+  side leaves the crosshair blue from 0.9 s into her fade.
+* **An AI Hawk holds fire** (+0x108, 0x13d3f0): the AI's attack check (FUN_00024f80) refuses
+  while she's stealthed: under the squad AI she follows and doesn't aim or fire (play.rs
+  `update_player` gives her no target), and opens up once it's over.
+* **The drain** (FUN_0013d030): `stamina-cost` 2.5 x dt, x h_00894f2a (1) with her second weapon
+  slot's gun in hand; x5 with the Power Blade in hand, which the demo hasn't.
+* **Hand-over and death** (#120's rule): handed over, it stays on under the AI, drains and she
+  stays invisible (take19); dead, it goes off in the frame of death and her body fades back in.
+* **Not in**: what the enemies' goals do (take14's Shrike went RETURN_HOME when it lost her and
+  INVESTIGATE at her shot, and didn't fire again: the demo's AI has no goals, so it stands and
+  fires again once it sees her); the AI hearing her noise; the Power Blade (its x5 drain, the
+  silent kill); the refraction (shots H1, H2); the squad order's Toggle Ability (#33:
+  `BF_TEST_SQUAD_SKILL` stands in); the radar's RCONTACT_INVISIBLE (not traced). In the Vengar
+  view (play_vengar.rs) a stealthed Hawk shows as a dim heat figure: the game's heat pass draws
+  her with her kind-2 controller on (FUN_000e7d40's mask 0xfffffeff), and what that does isn't
+  filmed.
 
 ## Flint's Advanced Targeting (#124)
 
@@ -785,6 +891,65 @@ switch of a session the figures are missing for two frames at 60 fps (their pipe
 hidden by the red fade then. The spec's shots B6 (the cone, an enemy 45 degrees off), B7 (a
 grenade's blast on him, on and off) and B8 (a squadmate seen still at 3 and 15 m) weren't
 filmed: the cone and the 0.85 on blasts are the code's.
+
+### Hawk's Stealth (#123)
+
+Hawk (`BF_CHARACTER=2`) on campaign e34 at the takes' range spot (`BF_MAP=e34
+BF_TEST_GOTO=-52.96,30.96,-53.09,31.44`) and on the test map, `BF_SKILL_LOG`, captures at 30 fps
+(15 for the logs) set beside the takes' frames at the same scale (scripts in the developer's
+scratchpad):
+
+* **take10** (`BF_TEST_SKILL=2.0,22.0`): on at 2.90, 0.83 s after the press frame; "Stealth"
+  under the bars and the white bar; she fades out as one layer, no part showing through another,
+  and is gone by 3.9 s; invisible against the gate to 22.87 (off), back in 1.0 s. Her presence
+  (her outline's difference from the picture without her, 0 to 1) against the switch: 0.80,
+  0.53, 0.38, 0.26 and 0.14 at 0.25, 0.50, 0.62, 0.75 and 0.87 s, where 1 - the level is 0.75,
+  0.50, 0.38, 0.25, 0.13 and take11 measured 0.78 (at 0.24 s), 0.50 (0.49), 0.33 (0.64), 0.25
+  (0.74), 0.19 (0.84, with the ripple's 0.13 under it).
+* **take11** (`BF_TEST_STAMINA="12@1.9,50@8.1,9@17.9,11@19.9" BF_TEST_SKILL=2.0,8.3,9.5,14.0,18.0,20.0`):
+  at 0 (7.93) off at once with no clip, the line at 0 refused (no fight); the press at 8.40,
+  during the fade back, refused "mid-fade"; at 9.60 accepted; with 9 refused "under 10%", with
+  11 on.
+* **take13** (`BF_TEST_WEAPON="Saryl-23;Rail RVR" BF_TEST_GRENADE_TYPE=Sonic BF_TEST_SKILL=2.0
+  BF_TEST_THROW=6.0,0.15 BF_TEST_TRIGGER=10.0-12.0`): the throw at 6.20, 15 off (the take's 15.1
+  at 6.19-6.24), the grenade invisible in her hand and seen in flight; shots at 10.23, 10.67 and
+  11.10 (the take's 10.23, 10.68, 11.09), 27 each (27.1), the third emptying the bar and the
+  skill off in its frame, the burst going on; her head and shoulders back by 12.1, a Sonic's
+  scorch on the ground showing through her as she comes back.
+* **take14** (the test map's live Shrike, under [Keys and test hooks](#keys-and-test-hooks),
+  `BF_TEST_WEAPON=Jax-iR BF_TEST_SKILL=4.0 BF_TEST_TRIGGER=18.0-18.08 BF_TEST_INSTANT_KILL=0
+  BF_SIGHT_LOG=1 BF_COMBAT_LOG=1`): it shot her until the switch (5.00), then lost her about 0.8
+  s into her fade and landed nothing more; her shot (one Jax-iR round, 68.25: off at 0) showed
+  her for a moment, it lost her again and found her at a visibility of 0.27 as she came back,
+  and fired again (the take's went INVESTIGATE and didn't: not in, above).
+* **The AI's hold fire** (`-- --test BF_TEST_GOTO=4.5,20,4.5,20 BF_TEST_STAMINA=20@1.0
+  BF_TEST_SKILL=1.0 BF_TEST_SELECT=3,2.5 BF_TEST_NPC="5.0,shrike soldier@e40,enemy,fight,4.5,4.3"
+  BF_TEST_NPC_HP=5.5,1,999 BF_COMBAT_LOG=1`): Hawk handed over stealthed; with the Shrike in her
+  sight from 5.13 s she fired nothing while Brutus and Flint did; off at 0 at 10.13, her first hit
+  at 11.00. The Shrike shot only Tex.
+* **The crosshair** (`-- --test BF_CHARACTER=3 BF_TEST_SWEEP=9.6 BF_TEST_HOSTILE=hawk
+  BF_TEST_SQUAD_SKILL=hawk,2.0 BF_RETICLE_LOG=2`): the hostile Hawk red, under the centre and
+  locked, to 3.80 s; from 3.93 (0.94 s into her fade) blue, "hawk unseen: visibility 0.00", the
+  centre still on her.
+* **Footsteps** (`BF_MAP=flat BF_TEST_GOTO=0,0,0,-60 BF_TEST_SKILL=0.5 BF_SOUND_LOG=1`): her run's
+  0.6 down to 0.54, 0.39 and 0.21 through the fade, then 0.15.
+* **Hand-over** (`BF_TEST_SELECT=3,4.0`): on under the AI, draining 2.5/s, invisible (take19).
+  **Death** (`BF_TEST_DIE=4.0`): off in the frame of death, her body back on the ground a second
+  later. **The Vengar view** (`BF_MAP=flat BF_CHARACTER=0 BF_TEST_SWEEP=180
+  BF_TEST_SQUAD_SKILL=hawk,1.0 BF_TEST_SKILL=3.5`): the stealthed Hawk a dim heat figure.
+* **Regression**: against main (44e7780), Hawk at the e34 spot without stealth, 45 frames (her
+  warm-up copies' second among them), pixel for pixel the same; take27's test-map fight (Brutus
+  and an enemy Brutus with the Saryl-45) the same 19 hits, its frames the same but for the hit
+  glow's particles in two.
+
+**Guessed or open (Hawk)**: her look is a fit (the presence curve of take11), the game's
+two-part fade and refracting material not drawn (shot H1, its shaders unread), so a shot's
+flash doesn't show on her (H2); the enemies' goals after they lose her (H3); the vision-range
+as the brain's sight distance (its +0xa8 getter not found; take14 fits it) and FUN_000481c0's
+1.15 and x3, left at 1; the sRGB alpha's 2.2 suits a dark body on a lighter picture (the demo's
+presence runs up to 0.05 over 1 - the level). During a fade a see-through thing between her and
+the camera (smoke, a liquid) is drawn under her, and her shadow stays until her alpha is under
+0.05 (bevy's blended shadow cut).
 
 ### Flint's Advanced Targeting (#124)
 

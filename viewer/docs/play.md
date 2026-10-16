@@ -20,7 +20,7 @@
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
 | Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
-| V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Tex's Berserker draws his other gun into his left hand and fires both; in it Q and R end it instead of switching or reloading. Brutus's Vengar heals him, cuts the damage he takes, charges enemies down when he sprints into them, and turns the view grey with every living character a heat figure. Flint's Targeting widens the crosshair's lock. Hawk's has only the toggle, stamina and HUD so far: see [skills.md](skills.md) |
+| V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Tex's Berserker draws his other gun into his left hand and fires both; in it Q and R end it instead of switching or reloading. Brutus's Vengar heals him, cuts the damage he takes, charges enemies down when he sprints into them, and turns the view grey with every living character a heat figure. Flint's Targeting widens the crosshair's lock. Hawk's Stealth fades her out over a second: the enemies lose her, the crosshair can't lock her, a shot or an item costs stamina. See [skills.md](skills.md) |
 
 ## Test map (`cargo run --bin bf_play -- --test`)
 
@@ -369,9 +369,11 @@ result over a dark ground, as the grenade meter's orange is. The demo's own gree
   units round the crosshair; her +0xfc fades the crosshair's alpha (0.9 x (1 - her marker's
   fill), `Reticle::alpha`); her rifles' range is x1.25 (FUN_002324c0 through her +0x54), the
   centre ray's and the lock's reach with it.
+* **Hawk's stealth** (#123, skills.md): a character less visible than 0.1 (its skill's +0xe4,
+  `skills::visibility`; FUN_000bf6d0, `LOCK_VISIBILITY`) is neither a lock candidate nor locked
+  under the centre (FUN_000bf550): a stealthed Hawk on another side leaves the crosshair blue.
 * **Not in:** the line-of-fire ray (0xc54d0: an obstacle between the gun and a locked target
-  would show its own colour after two frames; never filmed); Hawk's stealth (an enemy below 0.1
-  visibility can't be locked: the demo's skills have no visibility); the alpha's blink; the
+  would show its own colour after two frames; never filmed); the alpha's blink; the
   scoped lock box (0x11cfb5: once the scope-in's 0.85 s timer, char+0x7c8, has run out, the box
   scale is the skill's +0x58 x the gun's, 0.2 for the squad, 0.8 for Flint, where the demo keeps
   the gun's); the crosshair moving onto a lock (0xc5a50, FUN_000c5e20 at the skill's +0xf8 speed:

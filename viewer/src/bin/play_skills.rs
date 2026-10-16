@@ -30,6 +30,13 @@
 //!    (Q, the game's Y) and the reload key (R, the game's X) end it instead of switching or
 //!    reloading. While it's on no other overlay starts: no reload, switch, throw or item use
 //!    (`overlays_blocked`).
+//!  - **Hawk's Stealth** (#123, `Stealth`): her `Sc_w1/w2_activate_stealth` switches it at its
+//!    0.83 s event, and her invisibility controller (`Skill::cloak`, `Cloak`) fades her out over
+//!    1.0 s (her look, play_stealth.rs). Her visibility, 1 less her level, scaled by a factor a
+//!    shot drops to 0, is what the AI's sight (play.rs `nearest_hostile`) and the crosshair
+//!    (play_reticle.rs) read; while she's stealthed a round fired costs 2 x the gun's Damage max and
+//!    an item 5 or 15, her footsteps are a quarter as loud, and an AI Hawk holds fire. A press
+//!    mid-fade is refused.
 //!  - **Flint's Advanced Targeting** (#124, `Targeting`): on and off at the press (with a rifle
 //!    her motions become the sniper set, play.rs `SpecialClips`), while on the crosshair's lock box
 //!    grows to 0.4 of the screen (play_reticle.rs), so the guns, which aim at the lock, find the
@@ -43,15 +50,17 @@
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
 //!
 //! Test hooks: `BF_TEST_SKILL=<s>[,<s>...]` presses the skill key at those times;
-//! `BF_TEST_STAMINA=<n>[@<s>][,...]` sets the controlled character's stamina (at those times,
-//! at the start without one); `BF_SKILL_CHATTER=<percent>` sets the skill lines' chance (100:
-//! every time); `BF_TEST_DOUBLE=<percent>` sets the chance of Flint's doubled rolls (100: every
-//! one); `BF_SKILL_LOG=1` logs each command, switch, sound and line, Tex's top-ups, refusals and
-//! second gun, Flint's refusals, rifle mark and doubled rolls, and every character's stamina each
-//! half second.
+//! `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]` asks a squadmate's skill to toggle at those
+//! times (the squad order's stand-in, #33); `BF_TEST_STAMINA=<n>[@<s>][,...]` sets the
+//! controlled character's stamina (at those times, at the start without one);
+//! `BF_SKILL_CHATTER=<percent>` sets the skill lines' chance (100: every time);
+//! `BF_TEST_DOUBLE=<percent>` sets the chance of Flint's doubled rolls (100: every one);
+//! `BF_SKILL_LOG=1` logs each command, switch, sound and line, Tex's top-ups, refusals and second
+//! gun, Hawk's refusals and costs, Flint's refusals, rifle mark and doubled rolls, and every
+//! character's stamina each half second (with Hawk's level and visibility while it shows).
 
 use super::*;
-use bf_viewer::bf::character::{CombatSkills, SkillData, Tracking, VengarSkill};
+use bf_viewer::bf::character::{CombatSkills, SkillData, StealthSkill, Tracking, VengarSkill};
 
 /// Squad deathmatch's Brute Force squad library (game-options-en.xml line 84, `<squad
 /// h_fed0689a="mp_tex mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`): the rates sdm maps
@@ -130,6 +139,32 @@ const AIM_SHIFT_DASH: f32 = 3.0;
 /// The lock box's scale Flint's +0x100 gives while on (0x13cd1d: 1.0 at 0x3a4f78), in place of
 /// the gun's own h_e1e41c2d (the L-Shot-75's 0.1, the Jax-iP's 0.6).
 const TARGETING_LOCK_BOX: f32 = 1.0;
+/// The item use types (the IOU_ name table 0x3be61c) that FUN_00121170 hands a skill's +0x104
+/// (at 0x12123b and the like): IOU_USE_IN_HAND 0 (the medkit, its h_1ee2f4ed in the level
+/// objecttypes), IOU_PLACE_ON_GROUND 2 (Rollers, Sentries), IOU_THROW_TO_USE 3 (thrown grenades),
+/// IOU_SKILL_MELEE_ATTACK 8 (the Power Blade). A grenade kit's own is its data's `use_type`.
+pub const IOU_USE_IN_HAND: i64 = 0;
+const IOU_PLACE_ON_GROUND: i64 = 2;
+const IOU_THROW_TO_USE: i64 = 3;
+const IOU_SKILL_MELEE_ATTACK: i64 = 8;
+/// What Hawk's +0x104 (0x13d340) takes from her stamina for an item used while stealthed: 5.0
+/// (0x3a4fd4) for any, and 10.0 (0x3a4fdc) more for one placed or thrown (#35 take13: a Sonic
+/// thrown, 15.1 in one step); nothing for IOU_SKILL_MELEE_ATTACK.
+const STEALTH_ITEM_COST: f32 = 5.0;
+const STEALTH_THROW_COST: f32 = 10.0;
+/// What Hawk's +0xb0 (0x13d0a0) takes from her stamina for each round fired while stealthed: the
+/// weapon data's +0x18, the `<Damage max>`, x 2 (`fadd st(0), st(0)`, 0x13d0d0). The Saryl-23's
+/// 13.5: 27 (takes 12, 13: 27.1 a shot); the Jax-iR's 34.125: 68.25 (take14: her last 67.35 in
+/// one shot).
+const STEALTH_SHOT_COST: f32 = 2.0;
+/// The material controllers' ramps (s): BF_InvisMaterial's controller init (0x212380) sets both
+/// its fade-in time (+8, 0x212398) and its fade-out time (+0xc, 0x21239b) to 1.0. #35 takes 11-14,
+/// 18, 19: Hawk's level 0 -> 1 and 1 -> 0 in 1.0 s, linearly (0.05 a 50 ms log row).
+const CLOAK_IN: f32 = 1.0;
+const CLOAK_OUT: f32 = 1.0;
+/// Where a controller switched off starts its fade-out (0x210ac1: its time set to 0x38d1b717,
+/// 1e-4 s), so its level reads just under 1 from the frame it's switched off.
+const CLOAK_OUT_START: f32 = 1e-4;
 
 /// What a skill's toggle makes of the command (the skill's vtable +0x04). In the game the toggle
 /// switches the skill itself or not, and its return picks the motion (the command handler,
@@ -263,6 +298,34 @@ pub trait SkillKind: Send + Sync {
     fn bars_scope(&self, _u: &Player) -> bool {
         false
     }
+    /// A round fired by the character's gun `def` (vtable +0xb0, which FUN_0022f640 calls from
+    /// the weapon's fire loop FUN_0022f2a0 at the end of each trigger cycle that takes a round:
+    /// a pellet burst once, play_shots.rs). The base does nothing (0x2c60c0); Hawk's (0x13d0a0)
+    /// shows her and takes stamina while she's stealthed.
+    fn fired(&mut self, _u: &mut Player, _def: &WeaponDef) {}
+    /// An item used, by its use type (IOU_*, vtable +0x104, which the item use FUN_00121170 calls
+    /// once the use starts: a throw, a placement, a medkit). The base does nothing (0x2c60c0);
+    /// Hawk's (0x13d340) takes stamina while she's stealthed.
+    fn used_item(&mut self, _u: &mut Player, _use_type: i64) {}
+    /// How visible the character is, 0 to 1 (vtable +0xe4): the stamina update pushes it into its
+    /// combat target every frame (0x11a934-0x11a94a), where the target selection
+    /// (FUN_000bf6d0) and the AI's sight (FUN_0004d140) read it. The base's 1.0 (0x10e3d0);
+    /// Hawk's (0x13d200) falls as she fades out.
+    fn visibility(&self, _u: &Player) -> f32 {
+        1.0
+    }
+    /// The factor on the character's footsteps' volume (FUN_00119020 at 0x11918e) and its
+    /// movement noise's radius (FUN_0001aeb0) (vtable +0xe8). The base's 1.0 (0x10e3d0); Hawk's
+    /// (0x13d210) a quarter stealthed.
+    fn noise(&self, _u: &Player) -> f32 {
+        1.0
+    }
+    /// Whether an AI-controlled character holds fire (vtable +0x108: the AI's attack check
+    /// FUN_00024f80 refuses at 0x2507a while it's true). The base says no (0x20e200); Hawk's
+    /// (0x13d3f0) while she's stealthed.
+    fn holds_fire(&self, _u: &Player) -> bool {
+        false
+    }
 }
 
 /// A character's special skill: what the game's skill base class holds (on, the toggle under
@@ -310,6 +373,80 @@ pub struct Skill {
     /// s (char+0x430, AIM_SHIFT_HOLD): the camera in, then out along the shift's ramp
     /// (`aim_shift`; take17: in by 2.27 s, out over 18.13-18.6 s)
     pub shift: f32,
+    /// the character's invisibility material controller (its controllers of kind 2, char+0x54c),
+    /// which Hawk's on and off switch and whose level her update reads back (`Cloak`); her body's
+    /// look follows it (play_stealth.rs). Off for everyone else
+    pub cloak: Cloak,
+}
+
+/// A character's material controller of kind 2: the BF_InvisMaterial controller (vtable
+/// 0x394e64, 0x54 bytes), which FUN_002101d0 makes for a type whose controller mask has bit 2:
+/// FUN_00210060 gives the type named "hawk" the mask 7 (kinds 1, 2, 4; mp_hawk 0x1f, Brutus 0x101,
+/// most 0x19), so Hawk's model alone carries it. Made off (state 3). Its init (0x212380) makes the
+/// material (class 0xf3bf04d1, texture h_ff43a70b) and sets both fades to 1.0 s; its update
+/// (FUN_00212430, after the base's FUN_00210b90) drives the body's fade and the material's
+/// screen-copy refraction from its state and level. Here the state machine and the level; the
+/// body's look is play_stealth.rs's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Cloak {
+    /// its state (+4)
+    pub state: CloakState,
+    /// seconds in it (+0x10)
+    pub time: f32,
+}
+
+/// A material controller's states (+4, FUN_00210b90).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CloakState {
+    /// 0: switched on, fading in over CLOAK_IN, then 1
+    In,
+    /// 1: on
+    On,
+    /// 2: switched off, fading out over CLOAK_OUT, then 3
+    Out,
+    /// 3: off, as made (0x210201: +4 = 3)
+    #[default]
+    Off,
+}
+
+impl Cloak {
+    /// The switch (the controller's +0x18, 0x210a90, through FUN_002107d0): on, an off one starts
+    /// its fade-in from 0 and one fading out is on at once (its jump table 0x210ae4: state 3 -> 0,
+    /// 2 -> 1); off, one on or fading in starts its fade-out (0 and 1 -> 2, at CLOAK_OUT_START), so
+    /// a fade-in cut short jumps to the full level and fades from there (the game's).
+    pub fn switch(&mut self, on: bool) {
+        match (on, self.state) {
+            (true, CloakState::Off) => *self = Cloak { state: CloakState::In, time: 0.0 },
+            (true, CloakState::Out) => *self = Cloak { state: CloakState::On, time: 0.0 },
+            (false, CloakState::In | CloakState::On) => *self = Cloak { state: CloakState::Out, time: CLOAK_OUT_START },
+            _ => {}
+        }
+    }
+
+    /// One frame (FUN_00210b90): off, nothing; a fade whose time is out (at or past its length)
+    /// moves on with its time back to 0 (in -> on, out -> off); then the time runs by the frame's.
+    pub fn step(&mut self, dt: f32) {
+        match self.state {
+            CloakState::Off => return,
+            CloakState::In if self.time >= CLOAK_IN => *self = Cloak { state: CloakState::On, time: 0.0 },
+            CloakState::Out if self.time >= CLOAK_OUT => *self = Cloak { state: CloakState::Off, time: 0.0 },
+            _ => {}
+        }
+        self.time += dt;
+    }
+
+    /// Its level (the controller's +0x20, 0x210b10, which FUN_00210880 reads for Hawk's
+    /// skill+0x24): the fade-in's share done, 1 on, the fade-out's share left, 0 off. Not clamped:
+    /// a fade's last frame reads a little past its end before the step moves it on (the takes'
+    /// logs: 1.01-1.03 for a tick at the end of the fade-in).
+    pub fn level(&self) -> f32 {
+        match self.state {
+            CloakState::In => self.time / CLOAK_IN,
+            CloakState::On => 1.0,
+            CloakState::Out => 1.0 - self.time / CLOAK_OUT,
+            CloakState::Off => 0.0,
+        }
+    }
 }
 
 impl Skill {
@@ -320,7 +457,7 @@ impl Skill {
         let kind: Option<Box<dyn SkillKind>> = match data.map(|d| d.skill_set) {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
             Some(CSKILL_BRUTUS) => Some(Box::new(Vengar { s: settings.vengar })),
-            Some(CSKILL_HAWK) => Some(Box::new(Stealth)),
+            Some(CSKILL_HAWK) => Some(Box::new(Stealth::new(settings.stealth))),
             Some(CSKILL_FLINT) => Some(Box::new(Targeting { rifle: false, cfg: settings.tracking })),
             _ => None,
         };
@@ -412,6 +549,60 @@ pub fn roll_factor(u: &mut Player) -> f32 {
     let f = k.roll_factor(u);
     u.skill.kind = Some(k);
     f
+}
+
+/// A round fired by `u`'s gun `def` (FUN_0022f640 -> the skill's +0xb0, once for each round
+/// the fire loop takes: play.rs `step_player`): Hawk's flash and cost while she's stealthed.
+pub fn fired(u: &mut Player, def: &WeaponDef) {
+    let Some(mut k) = u.skill.kind.take() else { return };
+    k.fired(u, def);
+    u.skill.kind = Some(k);
+}
+
+/// An item of use type `use_type` (IOU_*) used by `u` (FUN_00121170 -> the skill's +0x104, as
+/// the use starts: play.rs's throw and placement, play_pickups.rs's medkit): Hawk's cost while
+/// she's stealthed.
+pub fn used_item(u: &mut Player, use_type: i64) {
+    let Some(mut k) = u.skill.kind.take() else { return };
+    k.used_item(u, use_type);
+    u.skill.kind = Some(k);
+}
+
+/// How visible `u` is to the AI's sight and the crosshair's selection, 0 to 1 (the skill's +0xe4,
+/// pushed into the combat target each frame): Hawk's falls as she fades out; 1 without a skill.
+pub fn visibility(u: &Player) -> f32 {
+    u.skill.kind.as_ref().map_or(1.0, |k| k.visibility(u))
+}
+
+/// The factor on `u`'s footsteps (the skill's +0xe8, FUN_00119020 at 0x11918e): a quarter for a
+/// stealthed Hawk; 1 without a skill.
+pub fn noise(u: &Player) -> f32 {
+    u.skill.kind.as_ref().map_or(1.0, |k| k.noise(u))
+}
+
+/// Whether `u`, under the AI, holds fire (the skill's +0x108, which the AI's attack check
+/// FUN_00024f80 asks at 0x2507a): a stealthed Hawk does.
+pub fn holds_fire(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.holds_fire(u))
+}
+
+/// Whether `u`'s skill fades its body (Hawk's Stealth, which switches the invisibility
+/// controller her type has: `Cloak`), for play_stealth.rs to ready its copies.
+pub fn cloaks(u: &Player) -> bool {
+    u.skill.name() == Some(NAME_STEALTH)
+}
+
+/// How opaque `u`'s body is drawn, 0 to 1 (play_stealth.rs): 1 less its invisibility
+/// controller's level (`Skill::cloak`). The game's controller fades the body in two halves and
+/// lays its refracting material over it (FUN_00212430: the body's alpha +0x14 is 1 for the first
+/// half of the fade-out, then (1 - x)^2; the material's alpha +0x50 rises as x^2 over that first
+/// half); on screen, the material's copy of the picture hiding her as it comes in, her presence
+/// falls as 1 - the level (#35 take11, her body's difference from the stealthed picture against
+/// the picture's switch, 0.13 s after the log's: 0.50 at 0.49 s, 0.33 at 0.64, 0.19 at 0.84 on;
+/// 0.16, 0.32, 0.50, 0.71, 0.91 at 0.17, 0.37, 0.57, 0.77, 0.97 s off): a fit, the material not
+/// drawn here (play_stealth.rs).
+pub fn opacity(u: &Player) -> f32 {
+    (1.0 - u.skill.cloak.level()).clamp(0.0, 1.0)
 }
 
 /// How far gun `def` reaches in `u`'s hands (FUN_002324c0: the bullet's range through the
@@ -726,29 +917,149 @@ impl SkillKind for Vengar {
     }
 }
 
-/// Hawk's Stealth (CSKILL_HAWK; skill vtable 0x39d190, toggle FUN_0013cf90). At stamina 0 or
-/// dead it goes off at once, without a clip, returning 0 (take11 15.26-15.31); otherwise the
-/// press is a request: refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way
-/// counts as a request pending) and, switching on, at 10% (take11 52.0 s: nothing at 9.06);
-/// accepted, it returns 1 and her `Sc_w1/w2_activate_stealth` plays, on and off, and switches at
-/// its 0.83 s event (measured 0.89-0.97 s after the press was sent, less the rig's input delay).
-/// Her fade (and its mid-fade refusal), the firing and item costs and the AI's view of her are
-/// #123's.
-struct Stealth;
+/// Hawk's Stealth (CSKILL_HAWK; skill vtable 0x39d190, constructor FUN_0013cf10, the tuning
+/// `StealthSkill`, game-options' block h_0ec919f1): "Turns invisible." (h_e0282878). Takes 10-14,
+/// 18 and 19 (spec Part 4).
+///
+///  - **The toggle** (FUN_0013cf90): at stamina 0 or dead, with the skill on, off at once, no
+///    clip, returning 0 (take11 15.26-15.31). Otherwise the press is a request: refused unless
+///    she's free (FUN_00117210, 0x13cfd2: her clip under way among the rest), no request is
+///    pending (skill+0x20, which her update clears every frame), her level isn't mid-fade
+///    (skill+0x24 exactly 0 or 1: after an off at 0 the fade back holds the key for its second)
+///    and, switching on, at 10% (take11 52.0 s: nothing at 9.06). Accepted, it sets the request
+///    and returns 1: `Sc_w1/w2_activate_stealth` (2.00 s) plays, on and off, and switches at its
+///    0.83 s event (FUN_00117660 at 0x118b8f; measured 0.89-0.97 s after the press was sent, less
+///    the rig's input delay).
+///  - **On / off** (0x13c650 / 0x13c670): her invisibility controller on or off (FUN_002107d0 on
+///    char+0x54c, kind 2: `Skill::cloak`), which fades her out or back in over 1.0 s.
+///  - **Update** (0x13d120), every frame: her level read back from the controller
+///    (FUN_00210880), the request cleared, her visibility pushed into the controller
+///    (FUN_00210950: it scales the material's refraction, play_stealth.rs), and the factor
+///    (skill+0x28) climbing back toward 1 at stealth-level-recovery-rate, 4 a second
+///    (FUN_0013d1a0, clamped 0..1).
+///  - **Visibility** (+0xe4, 0x13d200): 1 - factor x level, what the AI's sight and the target
+///    selection read (play.rs `hostile_in_sight`, play_reticle.rs): 1 visible, about 0 stealthed.
+///  - **A shot** (+0xb0, 0x13d0a0), each round while on: the factor to 0, so she's fully visible
+///    to them and back in 0.25 s (takes 12, 13: the factor 0 -> 1 in 0.25-0.3 s), and her stamina
+///    less 2 x the gun's Damage max (the Saryl-23 27.0: 27.1 a shot). The skill stays on unless
+///    that empties the bar (take13: the third shot of the burst did, off in that tick, the burst
+///    went on). Her body stays invisible: the controller's body fade doesn't read the visibility
+///    (FUN_00212430's state 1 holds it at 0), only its refraction does.
+///  - **An item** (+0x104, 0x13d340) while on: 5, and 10 more placed or thrown (take13: a Sonic
+///    thrown, 15.1; she stays invisible and the skill on); nothing for the Power Blade's
+///    IOU_SKILL_MELEE_ATTACK.
+///  - **Noise** (+0xe8, 0x13d210): 0.25 + 0.75 x her visibility on her footsteps (play.rs
+///    `step_player`; and the movement noise the game's AI hears, FUN_0001aeb0, which the demo's
+///    AI doesn't).
+///  - **Hold fire** (+0x108, 0x13d3f0): while on, the AI's attack check refuses her (play.rs
+///    `update_player` gives her no target): an AI Hawk doesn't shoot while stealthed.
+///  - **Drain** (0x13d030): `stamina-cost` x dt, x h_00894f2a (1) with the second weapon slot's gun
+///    in hand. Not in: the x5 with the Power Blade in hand (the demo has no Power Blade).
+struct Stealth {
+    /// the request (skill+0x20): set by an accepted toggle, cleared by the next update
+    request: bool,
+    /// her level as her last update read it (skill+0x24): 0 visible, 1 stealthed
+    level: f32,
+    /// the stealth factor (skill+0x28): 1, dropped to 0 by a shot
+    factor: f32,
+    /// game-options' tuning, copied at the constructor
+    cfg: StealthSkill,
+}
+
+impl Stealth {
+    /// The skill as made (0x13cf10: the request 0, the level 0, the factor 1.0).
+    fn new(cfg: StealthSkill) -> Self {
+        Stealth { request: false, level: 0.0, factor: 1.0, cfg }
+    }
+
+    /// A refused toggle, with its reason in the log.
+    fn refused(u: &Player, out: &Outside, why: &str) -> Toggle {
+        if out.log {
+            println!("t={:.2} {}: stealth refused: {why}", u.sim_time, unit_name(u));
+        }
+        Toggle::Refused
+    }
+}
 
 impl SkillKind for Stealth {
     fn name(&self) -> u32 {
         NAME_STEALTH
     }
 
-    fn toggle(&mut self, u: &mut Player, _out: &mut Outside) -> Toggle {
+    fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
         if u.skill.on && (u.stamina <= 0.0 || u.dead) {
+            self.request = false;
             return Toggle::Now { overlay: false };
         }
-        if !free_to_act(u) || (!u.skill.on && !can_activate(u)) {
-            return Toggle::Refused;
+        let why = if !free_to_act(u) { "busy" }
+            else if self.request { "a request pending" }
+            else if self.level != 0.0 && self.level != 1.0 { "mid-fade" }
+            else if !u.skill.on && !can_activate(u) { "under 10%" }
+            else { "" };
+        if !why.is_empty() {
+            return Self::refused(u, out, why);
         }
+        self.request = true;
         Toggle::AtEvent(EV_STEALTH)
+    }
+
+    fn drain(&self, u: &Player, cost: f32, dt: f32) -> f32 {
+        // (the inventory's slot in hand, +0x1cc: 2, the second; the demo's weapon index 1)
+        cost * dt * if u.weapon == 1 { self.cfg.second_slot_drain } else { 1.0 }
+    }
+
+    fn on(&mut self, u: &mut Player, _out: &mut Outside) {
+        u.skill.cloak.switch(true);
+    }
+
+    fn off(&mut self, u: &mut Player) {
+        u.skill.cloak.switch(false);
+    }
+
+    fn update(&mut self, u: &mut Player, dt: f32) -> bool {
+        self.level = u.skill.cloak.level();
+        self.request = false;
+        self.factor = (self.factor + dt * self.cfg.level_recovery).clamp(0.0, 1.0);
+        false
+    }
+
+    fn fired(&mut self, u: &mut Player, def: &WeaponDef) {
+        if !u.skill.on {
+            return;
+        }
+        self.factor = 0.0;
+        let cost = STEALTH_SHOT_COST * def.damage;
+        let was = u.stamina;
+        u.stamina = (u.stamina - cost).clamp(0.0, u.max_stamina);
+        if std::env::var("BF_SKILL_LOG").is_ok() {
+            println!("t={:.2} {}: a shot while stealthed: seen (the factor 0), stamina {was:.2} - {cost:.2} -> {:.2}", u.sim_time,
+                     unit_name(u), u.stamina);
+        }
+    }
+
+    fn used_item(&mut self, u: &mut Player, use_type: i64) {
+        if !u.skill.on || use_type == IOU_SKILL_MELEE_ATTACK {
+            return;
+        }
+        let cost = STEALTH_ITEM_COST + if matches!(use_type, IOU_PLACE_ON_GROUND | IOU_THROW_TO_USE) { STEALTH_THROW_COST } else { 0.0 };
+        let was = u.stamina;
+        u.stamina = (u.stamina - cost).clamp(0.0, u.max_stamina);
+        if std::env::var("BF_SKILL_LOG").is_ok() {
+            println!("t={:.2} {}: an item used while stealthed (use type {use_type}): stamina {was:.2} - {cost:.0} -> {:.2}", u.sim_time,
+                     unit_name(u), u.stamina);
+        }
+    }
+
+    fn visibility(&self, _u: &Player) -> f32 {
+        1.0 - self.factor * self.level
+    }
+
+    fn noise(&self, u: &Player) -> f32 {
+        self.cfg.noise_floor + (1.0 - self.cfg.noise_floor) * self.visibility(u)
+    }
+
+    fn holds_fire(&self, u: &Player) -> bool {
+        u.skill.on
     }
 }
 
@@ -943,17 +1254,18 @@ impl SkillKind for Targeting {
     }
 }
 
-/// The test hooks' progress on this map: the last BF_TEST_SKILL press and BF_TEST_STAMINA poke
-/// carried out (their times, s).
+/// The test hooks' progress on this map: the last BF_TEST_SKILL press, BF_TEST_STAMINA poke and
+/// BF_TEST_SQUAD_SKILL press carried out (their times, s).
 #[derive(Resource)]
 struct SkillHooks {
     last_press: f32,
     last_poke: f32,
+    last_squad_press: f32,
 }
 
 impl Default for SkillHooks {
     fn default() -> Self {
-        SkillHooks { last_press: -1.0, last_poke: -1.0 }
+        SkillHooks { last_press: -1.0, last_poke: -1.0, last_squad_press: -1.0 }
     }
 }
 
@@ -996,11 +1308,30 @@ pub fn plugin(app: &mut App) {
 /// X does it on the release (take26: off about 0.6 s after X came up): the demo's choice, as its
 /// R reloads on the press. The black button (VB 63, 0x134367, the medkit shortcut) ends it the
 /// same way in the game; the demo has no key for it.
-fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut hooks: ResMut<SkillHooks>, reserve: Res<ammo::Reserve>) {
+fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut hooks: ResMut<SkillHooks>,
+               reserve: Res<ammo::Reserve>) {
     if player.loaded.is_none() {
         return;
     }
     let t = player.sim_time;
+    // test hook: BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...] asks that squadmate's skill to
+    // toggle at those times (once each; the character by name or 0-3), as the Squad Command
+    // menu's "Toggle Ability" will (#33: goal 127 on the chosen members, 0xc1591)
+    if let Ok(v) = std::env::var("BF_TEST_SQUAD_SKILL") {
+        let mut it = v.split(',').map(str::trim);
+        let who = it.next().and_then(|c| c.parse::<usize>().ok().or_else(|| CHARACTERS.iter().position(|n| n.eq_ignore_ascii_case(c))));
+        let due = it.filter_map(|x| x.parse::<f32>().ok()).filter(|&s| t >= s && hooks.last_squad_press < s)
+            .fold(None, |a: Option<f32>, s| Some(a.map_or(s, |a| a.max(s))));
+        if let (Some(c), Some(s)) = (who, due) {
+            hooks.last_squad_press = s;
+            if let Some(m) = squad.0.iter_mut().find(|m| m.character == c && m.in_squad() && !m.dead) {
+                m.skill.request = true;
+                if std::env::var("BF_SKILL_LOG").is_ok() {
+                    println!("t={t:.2} {}: the squad order's toggle (BF_TEST_SQUAD_SKILL)", unit_name(m));
+                }
+            }
+        }
+    }
     let mut press = keys.just_pressed(KeyCode::KeyV);
     // (once per time given, whatever the frame rate: the time it last pressed is kept)
     if let Ok(v) = std::env::var("BF_TEST_SKILL") {
@@ -1060,7 +1391,7 @@ struct Env<'a> {
     /// for its chatter lines: its place in `sight` (0 the player, then the squad's order), who can
     /// see whom (`sight_list`), its distance to the player's character, and the variants said
     me: usize,
-    sight: &'a [(u8, Vec3, bool)],
+    sight: &'a [Seen],
     distance: f32,
     history: &'a mut LineHistory,
     /// the squad's ammo (for the skill's own methods, `Outside`)
@@ -1080,7 +1411,7 @@ impl Env<'_> {
 /// of it, for the log.
 #[allow(clippy::too_many_arguments)]
 pub fn line(u: &mut Player, game: &Game, history: &mut LineHistory, reserve: &mut ammo::Reserve, me: usize,
-            sight: &[(u8, Vec3, bool)], distance: f32, tag: u32) -> String {
+            sight: &[Seen], distance: f32, tag: u32) -> String {
     let mut env = Env { game, controlled: me == 0, log: false, me, sight, distance, history, reserve };
     skill_line(u, &mut env, tag)
 }
@@ -1108,7 +1439,13 @@ pub fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: Res
     if log && (t * 2.0).floor() > (*last_log * 2.0).floor() {
         let list: Vec<String> = std::iter::once(&*player).chain(squad.0.iter().filter(|m| m.in_squad())).map(|u| {
             let state = if u.skill.on { "on".to_string() } else { format!("off x{}", refill_factor(u)) };
-            format!("{} {:.2} {state}", unit_name(u), u.stamina)
+            // (Hawk's stealth while it shows: her controller's level and her visibility)
+            let cloak = if u.skill.cloak.state != CloakState::Off || visibility(u) < 1.0 {
+                format!(" (cloak {:?} level {:.2}, visibility {:.2})", u.skill.cloak.state, u.skill.cloak.level(), visibility(u))
+            } else {
+                String::new()
+            };
+            format!("{} {:.2} {state}{cloak}", unit_name(u), u.stamina)
         }).collect();
         println!("t={t:.2} stamina: {}", list.join(" | "));
     }
@@ -1140,6 +1477,9 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
         *left -= dt;
         *left > 0.0
     });
+    // the invisibility controller's frame (FUN_00210b90), the dead's too: one switched off by
+    // the death fades back in
+    u.skill.cloak.step(dt);
     let Some(mut kind) = u.skill.kind.take() else { return };
     let k = kind.as_mut();
     if u.dead {

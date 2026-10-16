@@ -516,6 +516,9 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>) {
         // IOU_USE_IN_HAND, which FUN_001210c0 asks FUN_00117210 for, 0x121139, so not in Flint's
         // targeting, `skills::lets_act`; where the two lines above are posted isn't traced)
         player.using = Some(0.0);
+        // the item use's skill call as its overlay is queued (FUN_00121170 -> +0x104, the medkit's
+        // IOU_USE_IN_HAND): a stealthed Hawk's 5 stamina
+        super::skills::used_item(&mut player, super::skills::IOU_USE_IN_HAND);
     }
 }
 
