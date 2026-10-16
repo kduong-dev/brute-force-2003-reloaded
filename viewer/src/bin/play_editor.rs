@@ -474,7 +474,9 @@ fn to_play(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut
     let (mut p, mut members) = match spot {
         Some((at, yaw)) => {
             let mut p = super::player_at(leader, at, yaw);
-            p.trigger_name = spawns.of(leader).map_or(0, |s| s.copy);
+            if let Some(s) = spawns.of(leader) {
+                s.dress(&mut p);
+            }
             (p, super::squad_around(leader, Some((at, yaw)), mode.deathmatch, spawns))
         }
         None => (super::player_at_start(leader, spawns), super::squad_at_start(leader, mode.deathmatch, spawns)),

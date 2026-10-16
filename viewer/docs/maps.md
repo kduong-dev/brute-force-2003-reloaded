@@ -12,8 +12,9 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
 
 * **Spawning.** You start at the level's start point. Points 0–3 are one squad's spawn on the
   hill, 4–7 the other's, and 9 is in the base. A level whose spawn-triggers spawn the squad (the
-  tutorial, e40) starts each member at its own spawn-trigger, and one that places the squad in
-  the world (m09_a) at its placements ([triggers.md](triggers.md), "Spawn-triggers", #102).
+  tutorial, e40) starts each member on the ground under its own spawn-trigger, and one that
+  places the squad in the world (m09_a) at its placements, each with its template's weapons and
+  ammo ([triggers.md](triggers.md), "Spawn-triggers", #102).
 * **The level's triggers** run: detectors, routers, timers, calculators, spawn-triggers, the
   doors' anim-triggers, destroyers ([triggers.md](triggers.md), #220).
 * **Collision.** It uses the game's own collision surfaces (`src/bf/collision.rs`,
@@ -25,7 +26,8 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Standing: characters stand on surfaces up to 65° (the game's ground limit) within a 0.5 m
     step; steeper surfaces are walls.
   * Not solid: grass, wires and other undrawn or cut-out parts have no collision surface, so
-    they don't block.
+    they don't block. Nor does a spawn-trigger's template, which the game takes out of the world
+    until it's spawned ([triggers.md](triggers.md), #220).
   * Fallback: a level without collision data uses the drawn triangles instead.
 * **Doors and gates.** Their leaves sit on sliding joints (joint type h_fd8f670c). A door moves
   only when one of the level's anim-triggers that lists it plays its clip (#220, #125:

@@ -18,6 +18,10 @@
 //! until they're broken (`set_broken`), and the game objects they leave behind (the missile
 //! rack's stand) are put in from the start, blocking only once they're broken.
 //!
+//! A spawn-trigger's template (its h_1299668b) isn't in the world: the trigger takes it out as it
+//! links (FUN_000dfe90), so it adds nothing here. (The tutorial's Tex template put a surface
+//! 1.7 m above the ground where his spawn stands him, #220.)
+//!
 //! The test tools' scenery (#185, play_testscenery.rs) joins the map's collision as it's placed
 //! (`Arena::place`): a piece's own triangles, solid like a placed object's. The flat test floor
 //! has no arena until then; placing a solid one gives it an arena of its flat ground
@@ -173,6 +177,11 @@ impl Arena {
             }
         }
         let mut solid: HashMap<u32, Vec<([Vec3; 3], bool, u8)>> = HashMap::new();
+        // (the spawn-triggers' templates: out of the world until spawned, FUN_000dfe90)
+        let templates: HashSet<u32> = level.triggers.iter().filter_map(|t| match t.class {
+            crate::bf::triggers::Class::Spawn { template, .. } => Some(template),
+            _ => None,
+        }).filter(|&n| n != 0).collect();
         for (i, o) in level.objects.iter().enumerate() {
             if o.tag == h("start-point") {
                 let p = o.transform.w_axis.truncate();
@@ -180,7 +189,7 @@ impl Arena {
                 a.starts.push((p, (-f.x).atan2(-f.z)));
             }
             let Some(arch) = o.archetype else { continue };
-            if is_pickup(o.tag) {
+            if is_pickup(o.tag) || templates.contains(&o.name) {
                 continue;
             }
             let tris = solid.entry(arch).or_insert_with(|| if physics { physics_tris(game, arch) } else { model_tris(game, arch) });

@@ -257,9 +257,9 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
 struct TestDied(bool);
 
 /// The player at the map's start: its squad spawn-trigger's transform where the level has one
-/// for it (`spawns`, #102: the feet there, in the air if the trigger is, as the game drops a
-/// farcast character), else the map's start point (BF_START=<n> picks another); with the test
-/// hooks' starting camera and place.
+/// for it (`spawns`, #102: the feet on the ground under it, as the game's position setter puts
+/// a copy, and its template's inventory), else the map's start point (BF_START=<n> picks
+/// another); with the test hooks' starting camera and place.
 fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     // test hooks: starting camera (yaw in radians, 0 = behind the character)
     let mut p = Player::new(start);
@@ -267,8 +267,11 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     if let Some(v) = env("BF_CAMERA_YAW") { p.cam_yaw = v; }
     if let Some(v) = env("BF_CAMERA_PITCH") { p.cam_pitch = v; }
     if let Some(v) = env("BF_CAMERA_DISTANCE") { p.cam_distance = v; }
-    // (the level's triggers know it by its spawn's copy name, wherever a test hook starts it)
-    p.trigger_name = spawns.of(start).map_or(0, |s| s.copy);
+    // (the level's triggers know it by its spawn's copy name, and it carries its template's
+    // weapons, wherever a test hook starts it)
+    if let Some(s) = spawns.of(start) {
+        s.dress(&mut p);
+    }
     let spawn = spawns.of(start).filter(|_| test_goto().is_none());
     if let Some(s) = spawn {
         p.position = s.feet - Vec3::Y * GROUND;
@@ -318,7 +321,7 @@ fn squad_at_start(start: usize, deathmatch: bool, spawns: &triggers::SquadSpawns
             m.yaw = s.yaw;
             m.cam_yaw = s.yaw;
             m.surface = usize::MAX;
-            m.trigger_name = s.copy;
+            s.dress(&mut m);
             m
         }).collect();
         return Squad(if deathmatch { vec![] } else { members });
@@ -354,7 +357,9 @@ fn squad_around(start: usize, origin: Option<(Vec3, f32)>, deathmatch: bool, spa
     let roster: Vec<usize> = if spawns.0.is_empty() { (0..SQUAD).collect() } else { spawns.0.iter().map(|s| s.slot).collect() };
     let members = roster.into_iter().filter(|&c| c != start).enumerate().map(|(slot, c)| {
         let mut m = Player::new(c);
-        m.trigger_name = spawns.of(c).map_or(0, |s| s.copy);
+        if let Some(s) = spawns.of(c) {
+            s.dress(&mut m);
+        }
         let f = FORMATION[slot % FORMATION.len()];
         let top = origin.map_or(GROUND, |(at, _)| at.y + 1.0);
         m.position = match origin {
@@ -3068,7 +3073,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let flash_mat = assets.materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.4),
         emissive: LinearRgba::rgb(30.0, 18.0, 5.0), unlit: true, ..default() });
     let mut weapons = vec![];
-    // (an enemy spawned from a placement holds the placement's: play_enemies.rs)
+    // (a character from a placement holds the placement's: an enemy spawned from one,
+    // play_enemies.rs, or a squad member started at its spawn, play_triggers.rs `SquadSpawn::dress`)
     let inventory = p.enemy.weapons.clone().or(game.character_weapons.get(name).cloned()).or(ty.as_ref().map(|t| t.weapons.clone())).unwrap_or_default();
     let classes = game.character_weapon_classes.get(name).copied().or(ty.as_ref().map(|t| t.weapon_classes));
     for (slot, w) in inventory.into_iter().enumerate() {

@@ -117,15 +117,27 @@ fn stack_limits(game: &Game) -> HashMap<i64, i64> {
     out
 }
 
-/// Fill the reserve once the level's data is in: a full stack of every ammo-type. The game's
-/// counts are the campaign's (the takes start with full stacks of 11mm, Sonic and Shotgun, and
-/// half of High ROF and Cutter); a full stack is the demo's choice.
-fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>) {
+/// Fill the reserve once the level's data is in: a full stack of every ammo-type, but for the
+/// ammo the squad's own placements carry where the level starts the squad from them
+/// (play_triggers.rs `SquadSpawn::items`: the copy is the placement, with its inventory), which
+/// counts instead: the tutorial's Tex 500 rounds of type 2 (h_02735ad0), take03's 48 / 500. The
+/// game's other counts are the campaign's (the takes start with full stacks of 11mm, Sonic and
+/// Shotgun, and half of High ROF and Cutter); a full stack is the demo's choice.
+fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>, spawns: Option<Res<super::triggers::SquadSpawns>>) {
     if reserve.stocked || player.loaded.is_none() {
         return;
     }
     let test = std::env::var("BF_TEST_RESERVE").ok().and_then(|v| v.parse::<i64>().ok());
     reserve.rounds = stack_limits(&game.0).into_iter().map(|(t, n)| (t, test.unwrap_or(n))).collect();
+    let mut carried: HashMap<i64, i64> = HashMap::new();
+    for &(item, n) in spawns.iter().flat_map(|s| s.0.iter()).flat_map(|s| s.items.iter()) {
+        if let Some(i) = game.0.items.get(&item).filter(|i| i.function == AMMO_ITEM && i.kind > 0) {
+            *carried.entry(i.kind).or_default() += n;
+        }
+    }
+    if test.is_none() {
+        reserve.rounds.extend(carried);
+    }
     reserve.stocked = true;
     if std::env::var("BF_AMMO_LOG").is_ok() {
         let mut list: Vec<_> = reserve.rounds.iter().collect();

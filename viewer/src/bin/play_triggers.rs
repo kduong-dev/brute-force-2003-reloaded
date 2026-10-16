@@ -30,8 +30,11 @@
 //!    then its test against the target: CALCULATOR and TRUE, or FALSE, with the counter.
 //!  * spawn-trigger (0x209ac0, 0x209bd0, FUN_002099e0): OPERATE spawns its template at its own
 //!    transform (after h_eab6952f s if set) while armed; it's armed once, SPAWN_RESET re-arms a
-//!    re-armable one (h_0f95f576). The copy sends SPAWNED to its listeners, the trigger
-//!    OPERATED to its targets; the triggers that list the spawn-trigger listen to its copies.
+//!    re-armable one (h_0f95f576). A character copy stands on the ground under the transform
+//!    (the position setter's ray, `on_ground`). A squad-type character's copy whose member flag
+//!    is off is taken away at once (FUN_00209900, `Triggers::member_kept`). The copy sends
+//!    SPAWNED to its listeners, the trigger OPERATED to its targets; the triggers that list the
+//!    spawn-trigger listen to its copies.
 //!  * plate- and proximity-detector (FUN_001f9680, FUN_001f8db0): the characters its filter
 //!    admits (FUN_001fb980) in its volume; one inside 0.1 s sends ENTER_DETECTOR (and
 //!    ENTER_DETECTOR_FIRST if none was), one out of it 0.2 s EXIT_DETECTOR, the last gone
@@ -41,8 +44,9 @@
 //!  * anim-trigger (0x204d00, FUN_00204bb0): OPERATE plays its entry's clip on its first object,
 //!    forward or backward (wwit-debugging) at its time-scale, ANIM_START / ANIM_BACK_START to its
 //!    targets when the way it plays changes. The doors (play.rs `doors`) are what it moves.
-//!  * destroyer (0x200d70, 0x200e40): OPERATE removes its objects (a spawn-trigger's copy for a
-//!    spawn-trigger) on its next update, then it disables itself.
+//!  * destroyer (0x200d70, 0x200e40): OPERATE marks it, and its update removes its objects (a
+//!    spawn-trigger's copy for a spawn-trigger), then it disables itself. The update runs the
+//!    base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update.
 //!  * every other class (gamevar, script, letterbox, warp, sound, dialog, menu, message, input,
 //!    event, radar, level-over ...): its base actions; its own actions are logged as left to
 //!    their step (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
@@ -101,10 +105,15 @@ pub struct TriggerEvents(pub Vec<ObjectEvent>);
 /// A squad member's start from its spawn-trigger (#102: the squad is spawned by spawn-triggers
 /// at its start points; the tutorial's Tex by trigger_spawn8 at (65.5, 28.5, 74.0)): its squad
 /// slot, its template placement (h_1299668b), the trigger, its copy's name (h_14f15a34: "tex_1",
-/// what the level's triggers and scripts call it), where its feet go (the trigger's position)
-/// and the way it faces (the trigger's -z: `yaw_of`). A member placed in the world instead
+/// what the level's triggers and scripts call it), where its feet go (on the ground under the
+/// trigger's position: `on_ground`, the tutorial's Tex at y 25.25 as in take03), the way it
+/// faces (the trigger's -z: `yaw_of`) and the template's inventory: the copy is the placement,
+/// which carries it (the character's property handler 0x112eb0 reads it, FUN_001130e0). Its
+/// `<weapon>`s: the tutorial's Tex two MK-ASLTs (h_0c3db625, 48 a clip: take03's 48 / 500 and its
+/// icon); its `<h_10dd6db2 name count>` items: his 500 rounds of ammo-type 2 (h_02735ad0), the
+/// squad's reserve (play_ammo.rs `stock`), and grenades. A member placed in the world instead
 /// (m09_a's) has its placement for all of these, `trigger` 0.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct SquadSpawn {
     pub slot: usize,
     pub template: u32,
@@ -112,6 +121,18 @@ pub struct SquadSpawn {
     pub copy: u32,
     pub feet: Vec3,
     pub yaw: f32,
+    pub weapons: Option<Vec<u32>>,
+    pub items: Vec<(u32, i64)>,
+}
+
+impl SquadSpawn {
+    /// What a member started from this spawn carries: the name the level's triggers know it by
+    /// and its template's weapons (play.rs `spawn_player` arms a character with
+    /// `enemy.weapons` when it's set).
+    pub fn dress(&self, p: &mut Player) {
+        p.trigger_name = self.copy;
+        p.enemy.weapons = self.weapons.clone();
+    }
 }
 
 /// The level's squad spawns (`squad_spawns`), one per squad member it spawns or places; empty
@@ -142,15 +163,44 @@ fn yaw_of(m: &Mat4) -> f32 {
     (-f.x).atan2(-f.z)
 }
 
+/// How far below the point it's given the game looks for the ground to stand a character on:
+/// the position setter (character vtable +0x38, 0x1154b0) asks FUN_0012dc00 with 50.0 (pushed
+/// at 0x115567), which casts FUN_000dddd0's ray straight down from the point that far.
+const GROUND_PROBE: f32 = 50.0;
+
+/// Where a character put at `at` stands: on the highest floor below the point within
+/// GROUND_PROBE m, else at the point. Every character the game places goes through this: the
+/// place call (vtable +0x50, 0x1159c0) runs the position setter 0x1154b0 first, which puts the
+/// feet at the ray's hit (plus the type's height-offset, type+0x2ac: 0 on every character here)
+/// unless the world's +0xc50 bit 2 is set (not traced; not the case in the takes). So the
+/// tutorial's Tex, spawned at y 28.53, stands at 25.25 (take03: no fall, 69 ms from the spawn),
+/// and e40's Brutus 10.9 m below his trigger (xemu.md's live read). The demo's floor (the
+/// arena's floors no steeper than 65 degrees, as its movement stands on) stands for the ray's
+/// hit.
+pub fn on_ground(at: Vec3) -> Vec3 {
+    let y = world::arena().and_then(|a| a.floor_below(at.x, at.z, at.y)).map(|f| f.0).filter(|&y| at.y - y <= GROUND_PROBE);
+    Vec3::new(at.x, y.unwrap_or(at.y), at.z)
+}
+
+/// A level object's character placement (`Game::placements`, with its inventory and AI): the
+/// one of that name at that place.
+fn placement_of<'a>(game: &'a Game, o: &bf_viewer::bf::level::Placement) -> Option<&'a bf_viewer::bf::character_type::Placement> {
+    game.placements.iter().find(|p| p.name == o.name && p.transform.w_axis.distance(o.transform.w_axis) < 0.01)
+}
+
 /// The level's squad spawns: each spawn-trigger whose template is a character placement of a
 /// squad slot's type (brutus, flint, hawk, tex), the first per slot in the file's order (e40,
 /// the tutorial); then a squad placement no spawn-trigger takes as its template is in the world
 /// from the start, where it's placed (m09_a's four: its warp-triggers move them, step 3), named
 /// by its own name, `trigger` 0. A template stays out of the world until spawned (FUN_000dfe90
-/// takes it out as its spawn-trigger links).
-pub fn squad_spawns(_game: &Game, level: &Level) -> SquadSpawns {
+/// takes it out as its spawn-trigger links). Either way the feet go on the ground below
+/// (`on_ground`: a placed character goes through the same place call, FUN_0008b300).
+pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
     let mut out: Vec<SquadSpawn> = vec![];
     let slot_of = |kind: u32| (0..SQUAD).find(|&c| squad_type(c) == kind);
+    let weapons = |o: &bf_viewer::bf::level::Placement| placement_of(game, o).map(|p| p.weapons.iter().map(|w| w.0).collect::<Vec<_>>())
+        .filter(|w| !w.is_empty());
+    let items = |o: &bf_viewer::bf::level::Placement| placement_of(game, o).map_or(vec![], |p| p.items.clone());
     let mut templates = HashSet::new();
     for t in &level.triggers {
         let (Class::Spawn { template, copy_name, .. }, Some(m)) = (&t.class, t.transform) else { continue };
@@ -160,14 +210,16 @@ pub fn squad_spawns(_game: &Game, level: &Level) -> SquadSpawns {
         if out.iter().any(|s| s.slot == slot) {
             continue;
         }
-        out.push(SquadSpawn { slot, template: *template, trigger: t.name, copy: *copy_name, feet: m.w_axis.truncate(), yaw: yaw_of(&m) });
+        out.push(SquadSpawn { slot, template: *template, trigger: t.name, copy: *copy_name, feet: on_ground(m.w_axis.truncate()), yaw: yaw_of(&m),
+                              weapons: weapons(o), items: items(o) });
     }
     for o in level.objects.iter().filter(|o| o.tag == h("character-object") && o.name != 0 && !templates.contains(&o.name)) {
         let Some(slot) = slot_of(o.kind) else { continue };
         if out.iter().any(|s| s.slot == slot) {
             continue;
         }
-        out.push(SquadSpawn { slot, template: o.name, trigger: 0, copy: o.name, feet: o.transform.w_axis.truncate(), yaw: yaw_of(&o.transform) });
+        out.push(SquadSpawn { slot, template: o.name, trigger: 0, copy: o.name, feet: on_ground(o.transform.w_axis.truncate()),
+                              yaw: yaw_of(&o.transform), weapons: weapons(o), items: items(o) });
     }
     SquadSpawns(out)
 }
@@ -229,13 +281,15 @@ enum ClassState {
     Timer { running: bool, looping: bool, stops: bool, initial: f32, current: f32, subject: u32 },
     Calc { counter: i64, target: i64, test: i64 },
     /// armed (+0xe4 bit 3, set by its constructor, 0x1fd680-0x1fd6e7), the delay running (+0xec), its current
-    /// copy (+0xc4, by name)
-    Spawn { armed: bool, rearm: bool, pending: f32, delay: f32, template: u32, copy_name: u32, fade: f32, copy: u32 },
+    /// copy (+0xc4, by name); `member`: its template's character type when that's a squad type
+    /// (h_e78efbb2, type+0x1a8 bit 0) other than the demo's squad members' (whose spawns move the
+    /// member, `spawn_copy`), what FUN_00209900 checks; `check` its h_0fa4f510 (+0xe4 bit 5)
+    Spawn { armed: bool, rearm: bool, pending: f32, delay: f32, template: u32, copy_name: u32, fade: f32, copy: u32, member: Option<u32>, check: bool },
     Detector { volume: Volume, filter: Filter, keep: bool, occupants: Vec<Occupant> },
     /// +0x5c bit 0: its clip last played backward (set by its constructor 0x204db0: the first
     /// forward play sends ANIM_START)
     Anim { backward: bool },
-    /// +0x4c: OPERATE asked, done on its next update
+    /// +0x4c: OPERATE asked, done by its update (0x200e40)
     Destroyer { pending: bool },
 }
 
@@ -361,26 +415,50 @@ pub struct Triggers {
     effects: HashMap<u32, Vec<Entity>>,
     /// the MAX_DEPTH warning has been printed
     deep_told: bool,
+    /// a mission, not a multiplayer map: the session's level kind 0x17506391, which
+    /// FUN_00209900's member check needs
+    mission: bool,
+    /// the squad member flags: the character types whose `<type>/h_03761692` game flag is true
+    /// (default-gameflags.xml's top-level `<tex>`, `<hawk>`, ..., the tutorial's three marine
+    /// types h_ef8787e4, h_f48ed65e, h_fd89e6c8; all false by default). The session's member
+    /// check (vtable +0xb8, 0x83ee0) reads them and its +0xbc (0x814b0) sets them. The game
+    /// flags themselves are step 2's (#221): until then the demo starts with its own squad's
+    /// types set (`SquadSpawns`, as a campaign that got to the level has them), the rest off
+    member_flags: HashSet<u32>,
+    /// the controlled character's type (the player slots' check in 0x83ee0: a member a player
+    /// controls is kept whatever its flag)
+    player_kind: u32,
 }
 
 /// A map starts: its triggers as the level file has them, the listeners linked (FUN_001febb0),
-/// the test hooks read.
-fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns: Option<Res<SquadSpawns>>) {
+/// the squad member flags set up, the test hooks read.
+fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns: Option<Res<SquadSpawns>>, current: Res<CurrentMap>) {
     commands.insert_resource(TriggerEvents::default());
     let Some(level) = map.0.as_ref() else {
         commands.insert_resource(Triggers::default());
         return;
     };
     let log = std::env::var("BF_TRIGGER_LOG").is_ok();
-    let mut tr = Triggers { log, ..Default::default() };
+    let squad_spawns = spawns.as_deref().map_or(&[][..], |s| &s.0[..]);
+    let mut tr = Triggers { log, mission: !damage::multiplayer_map(&game.0, &current.0), ..Default::default() };
+    // (the demo's squad is the campaign's at this level: its members' flags on, step 2 aside)
+    tr.member_flags = squad_spawns.iter().map(|s| squad_type(s.slot)).collect();
+    // a template that's a squad-type character the demo doesn't have in its squad: the member
+    // FUN_00209900 checks
+    let member_of = |template: u32| {
+        let o = level.objects.iter().find(|o| o.name == template && o.tag == h("character-object"))?;
+        let squad = game.0.character_type(o.kind).is_some_and(|t| t.player_type);
+        (squad && !squad_spawns.iter().any(|s| s.template == template)).then_some(o.kind)
+    };
     for t in &level.triggers {
         let state = match &t.class {
             Class::Router { filters, out_signal } => ClassState::Router { filters: *filters, out_signal: *out_signal },
             Class::Timer { running, looping, stops, initial, current } => ClassState::Timer { running: *running, looping: *looping, stops: *stops,
                                                                                              initial: *initial, current: *current, subject: 0 },
             Class::Calculator { counter, target, test } => ClassState::Calc { counter: *counter, target: *target, test: *test },
-            Class::Spawn { template, copy_name, fade, delay, rearm, .. } => ClassState::Spawn { armed: true, rearm: *rearm, pending: 0.0, delay: *delay,
-                                                                                               template: *template, copy_name: *copy_name, fade: *fade, copy: 0 },
+            Class::Spawn { template, copy_name, fade, delay, rearm, member_check, .. } => ClassState::Spawn {
+                armed: true, rearm: *rearm, pending: 0.0, delay: *delay, template: *template, copy_name: *copy_name, fade: *fade, copy: 0,
+                member: member_of(*template), check: *member_check },
             Class::Detector { volume, filter, keep_when_disabled, .. } => ClassState::Detector { volume: *volume, filter: filter.clone(), keep: *keep_when_disabled,
                                                                                                 occupants: vec![] },
             Class::Anim => ClassState::Anim { backward: true },
@@ -426,9 +504,19 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
         let mut counts: Vec<_> = counts.into_iter().collect();
         counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         println!("triggers: {} ({})", tr.live.len(), counts.iter().map(|(k, n)| format!("{n} {k}")).collect::<Vec<_>>().join(", "));
-        for s in spawns.as_deref().map_or(&[][..], |s| &s.0[..]) {
+        for s in squad_spawns {
             let from = if s.trigger == 0 { "placed in the world".to_string() } else { format!("from {}", tr.label(s.trigger)) };
-            println!("squad spawn: {} as {} {from} at {:.2} facing {:.0} deg", CHARACTERS[s.slot], tr.label(s.copy), s.feet, s.yaw.to_degrees());
+            let weapons = s.weapons.as_ref().map_or("its type's".to_string(), |w| w.iter().map(|&k| game.0.weapons.get(&k).map_or(format!("h_{k:08x}"), |d| d.label.clone()))
+                .collect::<Vec<_>>().join(", "));
+            println!("squad spawn: {} as {} {from} at {:.2} (on the ground) facing {:.0} deg, weapons {weapons}", CHARACTERS[s.slot], tr.label(s.copy), s.feet,
+                     s.yaw.to_degrees());
+        }
+        let mut flags: Vec<String> = tr.member_flags.iter().map(|&k| tr.label(k)).collect();
+        flags.sort();
+        if tr.mission {
+            println!("squad member flags on: {} (the rest off until step 2, #221)", if flags.is_empty() { "none".into() } else { flags.join(", ") });
+        } else {
+            println!("squad member flags: not checked (a multiplayer map)");
         }
         for l in &tr.live {
             if let (ClassState::Detector { volume, filter, .. }, Some(m)) = (&l.state, l.t.transform) {
@@ -556,6 +644,7 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
     }
     let dt = frame_dt(&time);
     tr.clock = player.sim_time;
+    tr.player_kind = player.kind;
     // the level's start: FIRST_UPDATE to every script-trigger, then its update (FUN_001fe260)
     if !tr.started {
         tr.started = true;
@@ -645,7 +734,10 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
             }
             Act::Destroy { trigger, object } => {
                 let by = tr.label(tr.live[trigger].t.name);
-                if let Some(k) = squad.0.iter().position(|m| m.trigger_name == object) {
+                // (a character the triggers spawned; never a squad member the player can switch
+                // to: no level's destroyer lists one, and the demo's squad isn't the triggers' to
+                // take away)
+                if let Some(k) = squad.0.iter().position(|m| m.trigger_name == object && m.npc.is_some()) {
                     let mut m = squad.0.remove(k);
                     if let Some(l) = m.loaded.take() {
                         commands.entity(l.root).despawn();
@@ -665,6 +757,10 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                     }
                     if tr.log {
                         println!("t {now:.2}: {by} removes the effect {}", tr.label(object));
+                    }
+                } else if std::iter::once(&*player).chain(squad.0.iter()).any(|m| m.trigger_name == object) {
+                    if tr.log {
+                        println!("t {now:.2}: {by}: {} is a squad member: not removed", tr.label(object));
                     }
                 } else if let Some(i) = level.objects.iter().position(|o| o.name == object) {
                     // a placed object: no longer drawn; a breakable's collision goes with it
@@ -689,44 +785,54 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
 
 /// A spawn-trigger's copy in the world (FUN_00209620): its template's kind decides what it is.
 ///  * a squad member's template (`SquadSpawns`): that member, moved to the spawn (the demo has
-///    the squad in the world from the start: #102's start, see play.rs `player_at_start`);
+///    the squad in the world from the start: #102's start, see play.rs `player_at_start`); its
+///    weapons are already its template's (`SquadSpawn::dress`). When the member isn't there to
+///    move (the map editor's stand-in leads, or it was taken away) nothing is made: the squad
+///    isn't doubled with an NPC of its own;
 ///  * any other character placement: a character of its type with the placement's weapons,
 ///    personality and team (as BF_TEST_NPC spawns a placement, #129), set to fight, facing the
 ///    trigger's way;
 ///  * an effect object: its effect type's ALE effects at the transform, once each (a looping one
 ///    that the game keeps until a destroyer removes it plays its emitters once here);
 ///  * anything else: not made (logged).
-/// The character's fade-in over `fade` s (char+0x734..0x73c, FUN_0011bd00) isn't drawn: it
-/// appears at once.
+/// A character stands on the ground under the transform (`on_ground`: the place call's position
+/// setter, 0x1154b0); an effect stays at the transform (a game object's place, 0x159b70, has no
+/// such ray). The character's fade-in over `fade` s (char+0x734..0x73c, FUN_0011bd00) isn't
+/// drawn: it appears at once.
 #[allow(clippy::too_many_arguments)]
 fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, squad: &mut Squad, game: &mut Game, level: &Level, spawns: &SquadSpawns,
               fx: &mut (Option<ResMut<bf_viewer::ale_fx::AleAssets>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
               trigger: usize, template: u32, copy: u32, at: Mat4, fade: f32) {
     let now = tr.clock;
     let by = tr.label(tr.live[trigger].t.name);
-    let feet = at.w_axis.truncate();
+    let point = at.w_axis.truncate();
     let yaw = yaw_of(&at);
     // a squad member: moved there
     if let Some(s) = spawns.0.iter().find(|s| s.template == template) {
         let unit = if player.character == s.slot && player.in_squad() && !player.stand_in { Some(&mut *player) } else {
             squad.0.iter_mut().find(|m| m.character == s.slot && m.in_squad())
         };
-        if let Some(u) = unit {
-            u.position = feet - Vec3::Y * GROUND;
-            u.prev_xz = feet.xz();
-            u.fall_from = feet.y;
-            u.yaw = yaw;
-            u.cam_yaw = yaw;
-            u.vy = 0.0;
-            u.height = 0.0;
-            u.trigger_name = copy;
-            u.cam_target = u.position + Vec3::new(0.0, 0.35, 0.0);
+        let Some(u) = unit else {
             if tr.log {
-                println!("t {now:.2}: {by} spawns {} ({}) at {feet:.2} facing {:.0} deg (the squad member moved there; its {fade} s fade-in not drawn)",
-                         tr.label(copy), CHARACTERS[s.slot], yaw.to_degrees());
+                println!("t {now:.2}: {by} spawns {} ({}): that squad member isn't in the world to move: nothing made", tr.label(copy), CHARACTERS[s.slot]);
             }
             return;
+        };
+        let feet = on_ground(point);
+        u.position = feet - Vec3::Y * GROUND;
+        u.prev_xz = feet.xz();
+        u.fall_from = feet.y;
+        u.yaw = yaw;
+        u.cam_yaw = yaw;
+        u.vy = 0.0;
+        u.height = 0.0;
+        u.trigger_name = copy;
+        u.cam_target = u.position + Vec3::new(0.0, 0.35, 0.0);
+        if tr.log {
+            println!("t {now:.2}: {by} spawns {} ({}) at {feet:.2} (the trigger's {:.2} up) facing {:.0} deg (the squad member moved there; its {fade} s \
+                      fade-in not drawn)", tr.label(copy), CHARACTERS[s.slot], point.y - feet.y, yaw.to_degrees());
         }
+        return;
     }
     let Some(o) = level.objects.iter().find(|o| o.name == template) else {
         if tr.log {
@@ -742,7 +848,8 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
             }
             return;
         };
-        let placement = game.placements.iter().find(|p| p.name == template && p.transform.w_axis.distance(o.transform.w_axis) < 0.01).cloned();
+        let placement = placement_of(game, o).cloned();
+        let feet = on_ground(point);
         let mut m = Player::new((0..SQUAD).find(|&c| squad_type(c) == kind).unwrap_or(OTHER));
         m.kind = kind;
         m.position = feet - Vec3::Y * GROUND;
@@ -763,8 +870,8 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         m.surface = usize::MAX;
         m.trigger_name = copy;
         if tr.log {
-            println!("t {now:.2}: {by} spawns {} ({}, team {}) at {feet:.2} facing {:.0} deg{}", tr.label(copy), game.type_label(kind), m.team, yaw.to_degrees(),
-                     if fade > 0.0 { format!(" (its {fade} s fade-in not drawn)") } else { String::new() });
+            println!("t {now:.2}: {by} spawns {} ({}, team {}) at {feet:.2} (the trigger's {:.2} up) facing {:.0} deg{}", tr.label(copy), game.type_label(kind),
+                     m.team, point.y - feet.y, yaw.to_degrees(), if fade > 0.0 { format!(" (its {fade} s fade-in not drawn)") } else { String::new() });
         }
         squad.0.push(m);
         return;
@@ -776,13 +883,13 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
             for effect in list {
                 if let Some(e) = ale.load(game, &mut fx.1, &mut fx.2, effect) {
                     let life = e.duration();
-                    let seed = (feet.x * 977.0 + feet.z * 131.0) as u32 ^ copy;
+                    let seed = (point.x * 977.0 + point.z * 131.0) as u32 ^ copy;
                     made.push(commands.spawn((Transform::from_matrix(at), Visibility::default(), bf_viewer::ale_fx::AleEffect::once(e, 0.0, seed),
                                               AleExpire(life), Name::new(format!("trigger effect h_{effect:08x}")))).id());
                 }
             }
             if tr.log {
-                println!("t {now:.2}: {by} spawns {} (effect h_{:08x}: {} ALE effects) at {feet:.2}", tr.label(copy), o.kind, made.len());
+                println!("t {now:.2}: {by} spawns {} (effect h_{:08x}: {} ALE effects) at {point:.2}", tr.label(copy), o.kind, made.len());
             }
             tr.effects.entry(copy).or_default().extend(made);
         }
@@ -1161,14 +1268,32 @@ impl Triggers {
         }
     }
 
+    /// FUN_00209900, on a squad-type character's copy (`member`) in a mission (and on the
+    /// mission's roster, the world's +0xbec object's vtable +0x74, 0x8d430: taken to hold every
+    /// squad type, an inference): with h_0fa4f510 (`check`) it's kept if its type's member flag
+    /// is on or a player controls that type (the session's vtable +0xb8, 0x83ee0), else taken
+    /// away at once (its hit points to 0, FUN_0010f830, then out of the world, its vtable +0xa0)
+    /// and no SPAWNED goes out; without it the copy sets its type's flag (+0xbc, 0x814b0) and is
+    /// kept. So the tutorial's three marines, whose flags are off at the start (take03-09: never
+    /// seen there), don't come with Tex's farcast, and the V-squad (h_0fa4f510 false, take11)
+    /// does and sets theirs.
+    fn member_kept(&mut self, member: Option<u32>, check: bool) -> bool {
+        let Some(kind) = member.filter(|_| self.mission) else { return true };
+        if !check {
+            self.member_flags.insert(kind);
+            return true;
+        }
+        self.member_flags.contains(&kind) || kind == self.player_kind
+    }
+
     /// FUN_002099e0: spawn-trigger `i` makes its copy: no longer armed; a template the level
-    /// has gives a copy, which sends SPAWNED to its listeners (FUN_002096e0), and the trigger
-    /// sends OPERATED with it to its targets.
+    /// has gives a copy, which sends SPAWNED to its listeners (FUN_002096e0) unless FUN_00209900
+    /// took it away (`member_kept`), and the trigger sends OPERATED with it to its targets.
     fn spawn(&mut self, i: usize) {
-        let (template, fade, rearm, copy_name) = match &mut self.live[i].state {
-            ClassState::Spawn { armed, rearm, template, copy_name, fade, .. } => {
+        let (template, fade, rearm, copy_name, member, check) = match &mut self.live[i].state {
+            ClassState::Spawn { armed, rearm, template, copy_name, fade, member, check, .. } => {
                 *armed = false;
-                (*template, *fade, *rearm, *copy_name)
+                (*template, *fade, *rearm, *copy_name, *member, *check)
             }
             _ => return,
         };
@@ -1188,8 +1313,13 @@ impl Triggers {
         }
         self.copy_of.insert(copy, i);
         let Some(at) = self.live[i].t.transform else { return };
-        self.acts.push(Act::Spawn { trigger: i, template, copy, at, fade });
-        self.object_event(copy, Ev::new(sig::SPAWNED, 0));
+        if self.member_kept(member, check) {
+            self.acts.push(Act::Spawn { trigger: i, template, copy, at, fade });
+            self.object_event(copy, Ev::new(sig::SPAWNED, 0));
+        } else if self.log {
+            println!("t {:.2}: {}: its copy {} ({}) is taken away at once: that member's flag is off (FUN_00209900; the game flags are step 2, #221)",
+                     self.clock, self.who(i), self.label(copy), self.label(member.unwrap_or(0)));
+        }
         self.send(i, Ev { signal: sig::OPERATED, id: 0, subject: copy, data: -1 });
     }
 

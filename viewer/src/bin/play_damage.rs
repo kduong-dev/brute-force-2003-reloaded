@@ -110,6 +110,15 @@ pub struct Difficulty {
     pub name: &'static str,
 }
 
+/// Whether `map` is a multiplayer map: in the game's level list (campaign-bf.xmb) as a
+/// deathmatch arena (mp*) or a squad deathmatch map (sdm_*), by its file or one of its zones.
+/// Everything else (the missions, the tutorial) the session plays as a mission, level kind
+/// 0x17506391 (FUN_00131a10's test; FUN_00209900's in play_triggers.rs).
+pub fn multiplayer_map(game: &Game, map: &str) -> bool {
+    let map = map.to_lowercase();
+    game.campaign.iter().any(|l| (l.kind == LEVEL_DEATHMATCH || l.kind == LEVEL_SQUAD_DEATHMATCH) && (l.file == map || l.zones.contains(&map)))
+}
+
 impl Difficulty {
     /// The difficulty a map is played at:
     ///  - BF_DIFFICULTY=<standard|hard|brutal> (the menu's names, any case) or a number n, on any
@@ -144,10 +153,7 @@ impl Difficulty {
             }
             warn!("BF_DIFFICULTY: {want} isn't standard, hard, brutal or a number");
         }
-        let map = map.to_lowercase();
-        let multiplayer = game.campaign.iter().any(|l| (l.kind == LEVEL_DEATHMATCH || l.kind == LEVEL_SQUAD_DEATHMATCH)
-                                                     && (l.file == map || l.zones.contains(&map)));
-        if multiplayer {
+        if multiplayer_map(game, map) {
             return Difficulty { n: 0, name: "none" };
         }
         menu(FOOTAGE).unwrap_or_else(|| {

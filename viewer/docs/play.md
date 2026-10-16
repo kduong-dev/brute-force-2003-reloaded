@@ -206,6 +206,10 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
     120, Bio 200, Rocket 40, Energy 200. The same in every level that defines them, so a level
     without the item uses those. The game's counts are the campaign's (the takes start with full
     11mm, Sonic and Shotgun, half the High ROF and Cutter); the full stack is the demo's choice.
+    Where a level starts the squad from its own placements (a spawn-trigger's template, or the
+    squad placed in the world: [triggers.md](triggers.md), #220), the ammo they carry
+    (`<inventory><h_10dd6db2 name count>`) sets those types instead: the tutorial's Tex 500 High
+    ROF, take03's "48 / 500".
   * A respawn (the test map's rack) keeps the reserve; the new gun comes with a full clip. The
     test map's NPCs reload from a bottomless reserve of their own.
 * **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show

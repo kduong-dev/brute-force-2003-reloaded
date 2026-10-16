@@ -52,7 +52,7 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | spawn-trigger (47) | See "Spawn-triggers" | 0x209ac0, 0x209bd0 |
 | plate-detector (27), proximity-detector (14) | See "Detectors" | FUN_001f9680, FUN_001f8db0 |
 | anim-trigger (7) | OPERATE plays its entry's clip (`animation-archetype`) on its first object, forward or backward (`wwit-debugging`, AM_: 3-5 backward) at its `time-scale`; with AC_PLAY or AC_RESUME it sends ANIM_START when it starts forward after playing backward (its first forward play too), ANIM_BACK_START when it starts backward after playing forward (or ANIM_START for the other modes). The demo moves doors and gates with it ([maps.md](maps.md), "Doors and gates"); other animated objects (the tutorial's two looping props) are logged | 0x204d00, FUN_00204bb0 |
-| destroyer (5) | OPERATE: on its next update it removes its objects (a listed spawn-trigger's copy), then disables itself | 0x200d70, 0x200e40 |
+| destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31), evaluate (6) | Their base actions only: a waypoint trigger marks AI route points; the evaluate-triggers' random tests pick ambient lines (both no-ops here) | |
 
 Every other class (gamevar, score, script, letterbox, warp, sound, dialog, menu, message
@@ -95,16 +95,45 @@ PLAY_SOUND on FIRST_UPDATE: not run yet (step 4, #223)").
   spawn (FUN_000dfd90) clones it, and the last one of a counted template takes the template
   itself: that's how the tutorial's Tex (only trigger_spawn8 spawns him) seems to "move". So
   every placed character a spawn-trigger names (the tutorial's eight Red Hand, Tex and the five
-  marines) is absent until spawned.
+  marines) is absent until spawned, and its collision isn't in the demo's arena either (arena.rs:
+  Tex's template put a surface 1.7 m above the ground where his spawn stands him).
 * **Spawning.** OPERATE while armed spawns at once, or after `h_eab6952f` s (e40's delayed
   spawns); a trigger is armed once by its constructor (0x1fd680-0x1fd6e7), and SPAWN_RESET arms a
   re-armable one again (the tutorial's lava bursts: TIMER_PULSE -> SPAWN_RESET, then OPERATE).
+  Re-armable doesn't mean unarmed: the constructor arms every one ((+0xe4 & 0xe8) | 0x28 at
+  0x1fd6ba) and the parser only adds bit 2 for `h_0f95f576`.
   The copy goes to the trigger's own transform (FUN_00209620), named `h_14f15a34` ("tex_1",
   "TUTORIAL_terrorist_5": what the scripts and later triggers call it; a re-armable trigger's
   copies get no name, the runtime makes one up). It sends SPAWNED to its listeners, and the
   trigger OPERATED to its targets with the copy as the subject (FUN_002099e0). The triggers that
   list the spawn-trigger listen to its copies (FUN_001fe8a0, FUN_002096e0): router99's twelve,
   counting the base's kills.
+* **On the ground.** A character copy stands on the ground under the transform, at once: the
+  place call (vtable +0x50, 0x1159c0) runs the position setter 0x1154b0, which casts a ray
+  straight down from the point (FUN_0012dc00 -> FUN_000dddd0, up to 50 m) and puts the feet on
+  what it meets. take03's watch log has Tex at y 25.25 within 69 ms of his spawn at 28.53 (the
+  terrain there: 25.25 in the demo too), no fall. The demo takes the highest floor below the
+  point within 50 m (`on_ground`), for the copies and for the squad's start: e40's squad at 26.2,
+  10.9 m below its triggers (Brutus's live read, xemu.md); m09_a's two Shrikes 6.7 and 9.5 m
+  below theirs; the tutorial's sentry TUTORIAL_terrorist_5 on the wall walkway (27.25), 3.1 m
+  below his. An effect stays at the transform (a game object's place, 0x159b70, casts no ray).
+* **The squad member check** (FUN_00209900). A copy that's a character of a squad type (its type's
+  `h_e78efbb2`: the four, the tutorial's Confed marines) in a mission is checked against the
+  session's squad: from a trigger with `h_0fa4f510` (+0xe4 bit 5, set on nearly every one),
+  it's kept if its type's member flag is on or a player controls that type (the session's
+  vtable +0xb8, 0x83ee0), else taken away at once and no SPAWNED goes out (OPERATED still does);
+  from one without, it sets its type's flag (vtable +0xbc, 0x814b0). The flags are game flags,
+  `<type>/h_03761692` (default-gameflags.xml's top-level `<tex>`, `<hawk>`, ..., `<h_ef8787e4>`,
+  `<h_f48ed65e>`, `<h_fd89e6c8>`: all false by default). So the tutorial's three start marines
+  (Gonzales, Cogburn, Stout: spawn-triggers h_0d7313c9, h_167a4273, h_1f7d72e5, `h_0fa4f510`
+  true) never come with Tex's farcast: their flags are off at the start (take03-09's watch rows:
+  `1|0|0|0`) and Tex is kept as the player's. The V-squad's spawn64 and spawn76 (`h_0fa4f510`
+  false) do come, in take11, and set their types' flags. The game flags are step 2's (#221):
+  until then the runtime keeps the flags itself (`Triggers::member_flags`), starting with the
+  demo's squad's types on (as a campaign that got to the level has them: e40's four) and the rest
+  off; #221 should give them their real values (the campaign's, default-gameflags.xml's).
+  The roster check before it (0x8d430, the world's +0xbec) is taken to pass every squad type:
+  an inference.
 * **Which way it faces.** Down the trigger transform's -z, as the level's cameras look. Checked
   on Tex: after the opening (take03 at 32 s) the game's follow camera looks past him west, at the
   dark peak and the palms; the demo shows that facing -z, and the rock face east of the start
@@ -123,15 +152,25 @@ PLAY_SOUND on FIRST_UPDATE: not run yet (step 4, #223)").
   here); a pickup template (sdm_e34's 118 re-armable ones) isn't made: the demo keeps the placed
   pickups as before.
 * **The squad's start (#102).** A squad member (Brutus, Flint, Hawk, Tex) that a spawn-trigger
-  spawns starts at that trigger's transform, named as its copy (`SquadSpawns`, play.rs
-  `player_at_start`): the tutorial's Tex at (65.55, 28.53, 74.03), 3.1 m up, dropping to the
-  ground as the game's farcast does (the take's Tex lands at (65.55, 25.25, 74.03)); e40's Brutus
-  at (-14.0, 37.1, 160.7) (#102's live reading). A member placed in the world instead (m09_a's
-  four, whose warp-triggers move them: step 3) starts at its placement. The level's other squad
-  members aren't there: the tutorial has Tex alone (the marines are its own spawns). On a map
-  without either (the deathmatch maps) the start points and the formation are as before. When
-  the member's spawn-trigger fires later (the opening script at 17 s, step 3) it's moved there.
-  `BF_TEST_GOTO` still puts the leader where it says.
+  spawns starts on the ground under that trigger's transform, named as its copy (`SquadSpawns`,
+  play.rs `player_at_start`): the tutorial's Tex at (65.55, 25.25, 74.03), where take03 has him
+  after the farcast; e40's Brutus at (-14.0, 26.2, 160.7) (#102's live reading). A member placed
+  in the world instead (m09_a's four, whose warp-triggers move them: step 3) starts at its
+  placement. It carries its template's inventory, as the copy is the placement
+  (`SquadSpawn::dress`): its `<weapon>`s (the tutorial's Tex two MK-ASLTs, h_0c3db625, 48 a clip,
+  the icon take03 shows) and its ammo, which sets the squad's reserve of that type (play_ammo.rs:
+  his 500 of type 2, take03's 48 / 500). The level's other squad members aren't there: the
+  tutorial has Tex alone (the marines are its own spawns). On a map without either (the
+  deathmatch maps) the start points and the formation are as before. When the member's
+  spawn-trigger fires later (the opening script at ~17 s, step 3) it's moved there; if the member
+  isn't in the world to move (the map editor's stand-in leads), nothing is made. `BF_TEST_GOTO`
+  still puts the leader where it says.
+* **The squad is there from the start; the game's Tex isn't.** The game spawns Tex with the
+  opening cutscene's farcast, ~17 s in (take03's watch log: the template at its placement until
+  then). The demo has him (and any squad) in the world from t 0, so the detectors round the
+  start see him at once: the tutorial's proximity detectors h_ea082132 and h_e30f11a4 send
+  ENTER_DETECTOR at t 0.07 instead of after the farcast. That holds until step 3 (#222) plays the
+  opening and fires the spawn.
 
 ## Object events
 
@@ -171,28 +210,29 @@ BF_MAP=tutorial BF_TRIGGER_LOG=1 "BF_TRIGGER_FIRE=trigger_router_spawn_tex,USER1
 the log read and the frames looked at:
 
 * **Level start** (no hooks): FIRST_UPDATE opens the door h_fa29ecfd that starts open (anim3,
-  1.21 s), spawns the gate wall's sentry TUTORIAL_terrorist_5 at (-37.9, 30.3, -9.8)
-  (trigger_spawn46), removes the four editor leftovers h_0247aefb round (-98, 18, 44)
+  1.21 s), spawns the gate wall's sentry TUTORIAL_terrorist_5 on the wall walkway at
+  (-37.9, 27.25, -9.8), 3.07 m below trigger_spawn46, removes the four editor leftovers h_0247aefb round (-98, 18, 44)
   (destroyers 473, 498-500), starts timers 383 / 384 (the west lava pit's bursts every 4 / 6 s:
   trigger_spawn382 / 381 at (-23.0, 14.0, 9.3) / (-20.2, 14.0, 15.7)), 458, 525 and h_0279cdb2,
   and logs what steps 2-9 will run (the opening script, the gamevars, the music and ambience,
-  the first radar blip). Tex drops in at trigger_spawn8's (65.55, 28.53, 74.03) facing west; the
-  camera behind him shows what the game's does after the opening (take03 at 32 s: the dark peak,
-  the palms, the rock face right).
+  the first radar blip). Tex stands on the ground under trigger_spawn8 at (65.55, 25.25, 74.03),
+  take03's height, facing west; the camera behind him shows what the game's does after the
+  opening (take03 at 32 s: the dark peak, the palms, the rock face right), and the HUD his
+  template's MK-ASLT at 48 / 500, as take03's (frames 0-59, `BF_AMMO_LOG`: type 2 500).
 * **The base** (`BF_TEST_GOTO=-36.4,37.3,-57.3,22.9`): plate h_eefcb023 sends ENTER_DETECTOR ->
-  router103 -> terrorists 21, 13, 12, 9 at (-95.5, 18.1, 55.2), (-98.4, 18.1, 58.8),
-  (-95.0, 18.1, 58.1), (-61.7, 18.1, 19.3), and anim2 opens the door h_06537687 once (frames
+  router103 -> terrorists 21, 13, 12, 9 on the floor at (-95.5, 15.0, 55.2), (-98.4, 15.0, 58.8),
+  (-95.0, 15.0, 58.1), (-61.7, 15.6, 19.3) (their triggers 3.1 and 2.5 m up), and anim2 opens the door h_06537687 once (frames
   58-120: the door slides open as Tex walks up and in, the ammo and the DNA inside), leads §7.8.
 * **The lava yard** (`BF_TEST_GOTO=48.1,-1.5,48.1,-21.5`): the 18 m and 25 m circles at once
   (the chime, the blips, the east pit's burst sounds enabled: steps 4 and 9); plate h_0b18c4c8
-  (a human player's) -> router22 -> terrorists 16, 3, 1 at (33.0, 25.1, -69.8),
-  (33.5, 25.1, -64.7), (28.7, 19.2, -77.1); plate h_f42fa5b8 -> router473 -> terrorists 30, 29 at
-  (73.1, 20.7, -44.6), (69.9, 20.7, -40.8), leads §7.5. Seen from the test tools' free camera with
+  (a human player's) -> router22 -> terrorists 16, 3, 1 on the ground at (33.0, 20.1, -69.8),
+  (33.5, 20.1, -64.7), (28.7, 15.3, -77.1) (3.9-5.0 m below their triggers); plate h_f42fa5b8 ->
+  router473 -> terrorists 30, 29 at (73.1, 14.9, -44.6), (69.9, 15.3, -40.8), leads §7.5. Seen from the test tools' free camera with
   `BF_TRIGGER_FIRE=trigger_router473,ENTER_DETECTOR,1`: the two stand in the gully by the stone
   head.
 * **The second building** (`BF_TEST_GOTO=74.4,-104.1,64.4,-97.7`): plate h_020415dc ->
   anim15 opens h_0f544611 27 m away (once: then it disables itself, h_137926ff) and spawns
-  terrorist 17 inside at (38.3, 18.2, -88.8), leads §7.6.
+  terrorist 17 inside at (38.3, 15.5, -88.8), on the floor, leads §7.6.
 * **The tutorial's gate panel** (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100
   BF_TEST_USE=0.5`): USE_OBJECT -> router349 -> the panel's sound-trigger h_0309a1b9 (step 4:
   its FINISHED opens the gate's two leaves, so the gate waits for it), router252 disables
@@ -203,14 +243,35 @@ the log read and the frames looked at:
   plate; the gate from its panel (`BF_TEST_GOTO=-23.23,79.05,-23.7,80.8 BF_TEST_GO_AT=100
   BF_TEST_USE=0.5`): USE_OBJECT -> router h_1c61561d -> both leaves' anim-triggers, once, 4.96 s.
   Its 118 pickup spawn-triggers fire at the start and make nothing (the placed pickups stay).
-* **e40 / m09_a**: the squad starts at its spawn-triggers (Brutus at (-14.04, 37.10, 160.70))
-  / at its placements (Brutus at (-177.2, 62.2, -225.3)).
+* **e40 / m09_a**: the squad starts on the ground under its spawn-triggers (Brutus at
+  (-14.04, 26.20, 160.70), xemu.md's live read) with its placements' weapons, and `BF_SLIDE_LOG`
+  shows no fall in its first 6 s (it fell ~10 m before, with fall damage); m09_a's squad at its
+  placements (Brutus at (-177.2, 62.1, -225.3)), its two Shrikes from trigger_spawn2 / 749 on the
+  ground 6.75 / 9.46 m below their triggers. With `BF_DEATHMATCH=1` (no squad in the world) and
+  `BF_TRIGGER_FIRE=h_14640a2e,USER1,1` e40's Brutus spawn makes nothing (no NPC Brutus).
+* **The marines' member check** (`BF_TRIGGER_FIRE=trigger_router_spawn_tex,USER1,1;
+  trigger_router_confed_one_fx,USER1,1;...two_fx...;...three_fx...`): Tex is moved to his spawn;
+  the three marines' copies are taken away at once (flags off) and their farcast effect spawns
+  stay disabled (their gamevar-triggers, step 2). With `trigger_spawn64,USER1,1` first (the
+  V-squad's Stout, `h_0fa4f510` false: spawned, his type's flag set),
+  `trigger_router_confed_three_fx` at 2 s spawns a Stout on the ground at (70.38, 25.25, 73.27)
+  while confed_one's marine is still taken away.
+* **Destroyers**: m09_a's trigger_destroyer556 (`BF_TRIGGER_FIRE=h_039f8930,USER1,2`) removes
+  trigger_spawn2's Shrike; no level's destroyer lists a squad member, so the guard against
+  removing one isn't exercised by the data.
 
 ## Not done here, or not known
 
 * The classes left to steps 2-9 (#221-#228, above). The tutorial's gate opens on its panel sound's
   FINISHED: with step 4.
 * The character's spawn fade-in isn't drawn.
+* The squad member flags start from the demo's squad (#221 brings the game flags); the roster
+  check before them (0x8d430) is assumed to pass every squad type.
+* The squad is in the world from the start, so the start area's detectors fire before the
+  farcast (above); step 3 (#222).
+* Placed characters that no spawn-trigger names still add their bodies' collision to the arena
+  at their placements (arena.rs), which the game's characters don't; only the templates are left
+  out here.
 * A character's body in a detector is the demo's cylinder, not its Ipion body against the
   phantom; a dead character leaves a detector 0.2 s after it dies (the game's ragdoll may stay
   in the phantom: not known).

@@ -223,8 +223,14 @@ const H_FACE_POINT: u32 = 0x131D_E144;
 const H_SPAWN_FADE: u32 = 0xEEAE_96E7;
 /// A spawn-trigger's delay, h_eab6952f (+0xe0; 0x209b5e).
 const H_SPAWN_DELAY: u32 = 0xEAB6_952F;
-/// A spawn-trigger's re-armable flag, h_0f95f576 (+0xe4 bit 2; SPAWN_RESET re-arms it).
+/// A spawn-trigger's re-armable flag, h_0f95f576 (+0xe4 bit 2; SPAWN_RESET re-arms it). It
+/// doesn't leave the trigger unarmed: the constructor arms every one (+0xe4 = (+0xe4 & 0xe8) |
+/// 0x28 at 0x1fd6ba-0x1fd6d6) and the parser only sets bit 2 (0x209386-0x20939e).
 const H_REARM: u32 = 0x0F95_F576;
+/// A spawn-trigger's h_0fa4f510 (+0xe4 bit 5, set by the constructor too, cleared by the data's
+/// false): a squad-type character's copy is kept only if its member flag says it's in the
+/// squad (FUN_00209900); without it the copy sets that flag (the session's vtable +0xbc).
+const H_MEMBER_CHECK: u32 = 0x0FA4_F510;
 /// A detector's h_e25d95e3 (+0xf4, FUN_001f8c90): disabled, it still keeps its occupants and
 /// enables itself when one leaves (FUN_001f9680, FUN_001f8db0), sending nothing meanwhile.
 const H_KEEP_WHEN_DISABLED: u32 = 0xE25D_95E3;
@@ -351,7 +357,7 @@ pub enum Class {
     /// calculator-trigger (FUN_001ff560): `counter` (+0x40), `target` (+0x44), h_015914ab (+0x48)
     Calculator { counter: i64, target: i64, test: i64 },
     /// spawn-trigger (0x209250): see the H_ constants
-    Spawn { template: u32, copy_name: u32, face_point: u32, fade: f32, delay: f32, rearm: bool },
+    Spawn { template: u32, copy_name: u32, face_point: u32, fade: f32, delay: f32, rearm: bool, member_check: bool },
     /// plate-detector, proximity-detector (FUN_001f8c90 and their own parsers)
     Detector { volume: Volume, filter: Filter, keep_when_disabled: bool, phantom: u32 },
     /// anim-trigger (vtable 0x395ef0: the base's attributes only; its entries are `<anim>`)
@@ -391,22 +397,27 @@ pub struct Trigger {
     pub element: Element,
 }
 
+/// An element's text as numbers (a `<transform>`, a `<size>`), none without one.
 fn floats(e: Option<&Element>) -> Vec<f32> {
     e.and_then(|e| e.text.as_ref()).map(|t| t.floats()).unwrap_or_default()
 }
 
+/// A true / false attribute (true as any non-zero number); false when it isn't given.
 fn flag(e: &Element, k: u32) -> bool {
     e.attr(k).and_then(|v| v.as_i64()).is_some_and(|v| v != 0)
 }
 
+/// A whole-number attribute, `or` when it isn't given.
 fn int(e: &Element, k: u32, or: i64) -> i64 {
     e.attr(k).and_then(|v| v.as_i64()).unwrap_or(or)
 }
 
+/// A number attribute, `or` when it isn't given.
 fn float(e: &Element, k: u32, or: f32) -> f32 {
     e.attr(k).and_then(|v| v.as_f32()).unwrap_or(or)
 }
 
+/// A name attribute's hash, 0 when it's empty or not given.
 fn name_of(e: &Element, k: u32) -> u32 {
     e.attr(k).and_then(|v| v.as_hash()).filter(|&n| n != h("")).unwrap_or(0)
 }
@@ -448,6 +459,7 @@ fn entries(e: &Element) -> Vec<Entry> {
     }).collect()
 }
 
+/// A detector's `<filter>` (see `Filter`); without one it admits anything, any team.
 fn filter(e: &Element) -> Filter {
     let Some(f) = e.child(h("filter")) else { return Filter { alignment: -1, ..Default::default() } };
     Filter {
@@ -475,7 +487,8 @@ fn class(e: &Element) -> Class {
     } else if tag == h("spawn-trigger") {
         // (the constructor's spawn fade, +0xdc = 2.0 when the attribute isn't given: 0x1fd6e7)
         Class::Spawn { template: name_of(e, H_TEMPLATE), copy_name: name_of(e, H_COPY_NAME), face_point: name_of(e, H_FACE_POINT),
-                       fade: float(e, H_SPAWN_FADE, 2.0), delay: float(e, H_SPAWN_DELAY, 0.0), rearm: flag(e, H_REARM) }
+                       fade: float(e, H_SPAWN_FADE, 2.0), delay: float(e, H_SPAWN_DELAY, 0.0), rearm: flag(e, H_REARM),
+                       member_check: e.attr(H_MEMBER_CHECK).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
     } else if tag == h("plate-detector") || tag == h("proximity-detector") {
         let volume = if tag == h("plate-detector") {
             let s = floats(e.child(h("size")));
@@ -516,6 +529,7 @@ pub fn read(all: &[&Element]) -> Vec<Trigger> {
 /// A short name of a trigger class for logs: the element's name without "-trigger", or what the
 /// unnamed classes do (leads §5).
 pub fn class_name(tag: u32) -> String {
+    /// The class elements named in the data (their names hash to the tags).
     const NAMED: [&str; 22] = ["router-trigger", "timer-trigger", "calculator-trigger", "spawn-trigger", "plate-detector", "proximity-detector",
         "anim-trigger", "destroyer-trigger", "sound-trigger", "dialog-trigger", "script-trigger", "letterbox-trigger", "warp-trigger",
         "radar-trigger", "menu-trigger", "gamevar-trigger", "score-trigger", "evaluate-trigger", "event-trigger", "camera-trigger",
