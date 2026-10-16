@@ -409,15 +409,21 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (fit, play_movie, end_intro).chain().run_if(in_state(super::AppState::Intro)))
         .add_systems(OnEnter(super::AppState::Menu), (close_boot, open_menu).chain())
         .add_systems(OnExit(super::AppState::Loading), close_menu)
+        // (a briefing's movies take the screen: what the boot or the menu put up goes)
+        .add_systems(OnEnter(super::AppState::Briefing), (close_boot, close_menu))
         .add_systems(Update, (fit, play_movie, input, build, animate, finish_loading, finish_credits).chain().run_if(in_menu))
         // (the screenshot hook runs on into a map, to see it)
         .add_systems(Update, shot.after(finish_loading));
 }
 
-/// A path under ../decompiled (the extracted textures, the converted movies), if it's there.
-fn decompiled(sub: &str) -> Option<std::path::PathBuf> {
+/// A path under ../decompiled (the extracted textures, the converted movies), if it's there; or,
+/// with BF_DATA_DIR set (a git worktree has no decompiled/ of its own), beside the "Brute Force"
+/// folder that holds the data.
+pub(crate) fn decompiled(sub: &str) -> Option<std::path::PathBuf> {
     let here = std::env::var("CARGO_MANIFEST_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| ".".into());
-    [here.join("../decompiled"), "decompiled".into(), "../decompiled".into()].into_iter().map(|d| d.join(sub)).find(|d| d.exists())
+    let beside_data = std::env::var("BF_DATA_DIR").ok().map(|d| std::path::PathBuf::from(d).join("../../decompiled"));
+    [here.join("../decompiled"), "decompiled".into(), "../decompiled".into()].into_iter().chain(beside_data)
+        .map(|d| d.join(sub)).find(|d| d.exists())
 }
 
 /// A movie's frames (decompiled/movies/<name>/*.jpg), if they've been made (see docs/menu.md).
@@ -426,7 +432,7 @@ fn movie_frames(name: &str) -> Vec<Vec<u8>> {
 }
 
 /// A movie's frame files, in order.
-fn movie_files(name: &str) -> Vec<std::path::PathBuf> {
+pub(crate) fn movie_files(name: &str) -> Vec<std::path::PathBuf> {
     let Some(dir) = decompiled(&format!("movies/{name}")).filter(|d| d.is_dir()) else { return vec![] };
     let mut files: Vec<_> = std::fs::read_dir(dir).map(|r| r.flatten().map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("jpg"))).collect()).unwrap_or_default();
@@ -434,7 +440,8 @@ fn movie_files(name: &str) -> Vec<std::path::PathBuf> {
     files
 }
 
-fn decode_jpeg(bytes: &[u8]) -> Option<Image> {
+/// A converted movie's frame (JPEG) as an image.
+pub(crate) fn decode_jpeg(bytes: &[u8]) -> Option<Image> {
     Image::from_buffer(bytes, ImageType::Extension("jpg"), CompressedImageFormats::NONE, true, ImageSampler::Default,
                        RenderAssetUsages::default()).ok()
 }
@@ -640,6 +647,8 @@ struct Booting(std::sync::Mutex<std::sync::mpsc::Receiver<Result<Booted, String>
 struct Booted {
     menu: MenuData,
     movies: Vec<Clip>,
+    /// the campaign's movie lists (play_briefing.rs)
+    briefing: super::briefing::BriefingData,
 }
 
 /// An opening movie: its frames and its sound.
@@ -682,10 +691,11 @@ const BOOT_PULSE_KEYS: [(f32, f32); 7] = [(0.0, 0.29), (0.33, 0.12), (0.5, 0.36)
 const OPENING: [&str; 3] = ["MGS_Logo_Final", "DA_Logo_Final1", "Intro_Montage"];
 const OPENING_FPS: f32 = 30.0;
 
-/// Whether to play the opening movies: not with BF_NO_INTRO, nor under the menu's screenshot
-/// hooks (unless BF_SHOT_EARLY: they then count frames from the start, to see the boot and movies).
+/// Whether to play the opening movies: not with BF_NO_INTRO or BF_MOVIES (a briefing's list
+/// plays instead), nor under the menu's screenshot hooks (unless BF_SHOT_EARLY: they then count
+/// frames from the start, to see the boot and movies).
 fn intro_wanted() -> bool {
-    std::env::var("BF_NO_INTRO").is_err()
+    std::env::var("BF_NO_INTRO").is_err() && std::env::var("BF_MOVIES").is_err()
         && (std::env::var("BF_SHOT_EARLY").is_ok() || (std::env::var("BF_MENU_SHOT").is_err() && std::env::var("BF_MENU_GO").is_err()))
 }
 
@@ -724,6 +734,7 @@ fn start_boot(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         let dir = super::data_dir();
         let booted = Game::load(&dir).map(|mut game| {
             let menu = gather(&mut game, &dir);
+            let briefing = super::briefing::gather(&mut game);
             let movies = if intro_wanted() {
                 OPENING.iter().filter_map(|&name| {
                     let frames = movie_frames(name);
@@ -736,7 +747,7 @@ fn start_boot(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             } else {
                 vec![]
             };
-            Booted { menu, movies }
+            Booted { menu, movies, briefing }
         });
         let _ = tx.send(booted);
     });
@@ -753,6 +764,7 @@ fn finish_boot(world: &mut World) {
         std::process::exit(1)
     });
     install(world, booted.menu);
+    super::briefing::install(world, booted.briefing);
     world.insert_resource(Opening(booted.movies.into()));
     world.insert_resource(BootDone(0.0));
 }
@@ -786,6 +798,11 @@ fn leave_boot(mut commands: Commands, time: Res<Time>, done: Option<ResMut<BootD
     if let Some(s) = screen {
         commands.entity(s.0).despawn();
         commands.remove_resource::<BootScreen>();
+    }
+    // test hook BF_MOVIES: a briefing's list instead of the opening movies and the menu
+    if let Some(r) = super::briefing::requested() {
+        super::briefing::start(&mut commands, &mut next, r.mission, r.zone, r.list, r.then);
+        return;
     }
     let playing = next_movie(&mut commands, &mut opening, &mut images, &mut sources, &ui);
     next.set(if playing { super::AppState::Intro } else { super::AppState::Menu });
