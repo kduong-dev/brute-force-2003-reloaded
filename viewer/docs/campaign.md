@@ -20,8 +20,12 @@ true unless |v| < 1e-6. A path names a record folder by folder:
 `missions/m00/h_eaf792f4/state` (h_0630ae70 is "missions", h_e26b9b3e "m00").
 
 The demo makes the tree from the defaults the first time a level starts and keeps it as long as
-bf_play runs, level after level, as a campaign carries it (`flags::Campaign::flags`). Saving it
-is #27's; carrying it through the mission flow is #226's. Only a mission's triggers see it: on a
+bf_play runs, level after level, as a campaign carries it (`flags::Campaign::flags`), through
+the mission flow ([mission.md](mission.md)). A new campaign started from the front end (JOIN
+CAMPAIGN's START, #226) makes it anew as its first level starts and writes
+`campaign/difficulty-setting` (SELECT DIFFICULTY's -4, 0 or 4: the session's +0x230, 0x7c750); in
+a mission the difficulty is that flag (the session's +0x234, 0x7c720; `BF_DIFFICULTY` still
+overrides it). Saving it is #27's. Only a mission's triggers see it: on a
 multiplayer map the gamevars have no flags (they read 0 and write nothing) and the score-triggers
 no cash, so a match doesn't touch the campaign's (inferred: [triggers.md](triggers.md),
 "Gamevar-triggers").
@@ -91,7 +95,11 @@ mission's cash (`flags::Cash`): its own totals, what went in under the null name
   type's award is 0.
 
 take12's end screen, from those: Cash Awards +$5040 (3000 + 600 + 1440), Cash Penalties -$3000,
-Cash $2040. The end screen itself is #226's.
+Cash $2040. The record also counts the squad's members who die on the level (+0x20: FUN_00115d50
+at 0x115e10, unless a cutscene has the world), the end screen's "Operatives Lost". The end screen
+([mission.md](mission.md), #226) shows them: "Cash $x / $5040", 5040 being the zone's
+`max-score` (BRUTAL's 11760) back at STANDARD (11760 / 1.4 x 0.6), x the penalties plus the
+awards capped at it; take05's "$-1526" is a frame of the number counting to $-3000.
 
 ## The MISSION OBJECTIVES menu
 
@@ -185,6 +193,10 @@ the frames looked at:
   terrorist at their main base." / "(completed)" (wrapped) and "Investigate all terrorist
   buildings. (completed)". It's whole in its first frame; the world's frames while it's open are
   identical (the clock stopped), and a `BF_TRIGGER_FIRE` due at 7.5 s waited for it to close.
+* **A new campaign** (#226: the front end's path at HARD, `BF_FLAG_LOG=1`): the flags made anew
+  from default-gameflags.xmb (504), then `campaign/difficulty-setting -4 -> 0 (0x7c750: SELECT
+  DIFFICULTY)`. Tex's death counts "operatives lost 1" (take05's), not while a cutscene has the
+  world.
 * **Regressions**: sdm_e34 (a multiplayer map: no member check, the menu doesn't open; door
   h_10616962 opens and closes from its plate as before); e40 (the four slots alive, their flags
   1, its two objectives read; the squad spawns as before).
@@ -195,13 +207,12 @@ the frames looked at:
   "-%8.0f", accumulating while one is up; take12: "+ 180" in pale blue as three kills land, then
   "+ 3000" in green as the primary pays, rising above the radar). Not drawn yet: its widget's
   place, motion and colours aren't traced.
-* The end screen (MISSION SUCCESSFUL, SQUAD KILLED: objectives, cash, operatives lost) is #226's.
-  take05's SQUAD KILLED shows "Cash $-1526" after one death (-3000) and no kill: the other $1474
-  isn't explained; both screens' "/ $5040" isn't either.
 * **Carrying the flags to the next mission**: take12 shows Cogburn's and Stout's flags back to 0
   once Rescue Brutus (M01_a, no marines) has started (`1|0|1|1` -> `1|0|0|0`); what clears them
   isn't traced (the squad's save at a level's end, FUN_00082920, resets only Stout's, through
-  FUN_00082040). #226.
+  FUN_00082040). The demo carries the flags as they are into the next mission.
+* The mission's results (its score, max-score, the award bits) aren't written to the flags at
+  its end (FUN_00106d10: [mission.md](mission.md)).
 * The title's letters are spaced closer than the take's.
 * A wrapped objective line isn't in any take; nor are more lines than one per list.
 * The random operands' seed (FUN_00233b90's) is the demo's own; the data's random operands (13

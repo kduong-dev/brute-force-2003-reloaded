@@ -68,11 +68,13 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | letterbox (7) | OPERATE brings the letterbox in over its `show-duration`, STOP takes it out over its `hide-duration` (FUN_00073460 / FUN_000734b0); 0.5 s each without one (the constructor, 0x207599) | 0x207480, FUN_00207410 |
 | warp (18) | OPERATE moves its objects (a spawn-trigger's copy) to its `world-point`: on the ground under it, facing down a direction-point's -z or as it was for a world-point; a dead character stays, and one not spawned yet has no copy to move. Its fade-in h_0ede4719 is 2 s without one (0x200734; not drawn) | 0x200650, FUN_00200480, 0x200400 |
 | score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
+| level-over h_1f07be84 (1) | OPERATE with h_18f66101 (true by default) ends the mission (the game mode's "over" bit); without it ends the zone: a 0.5 s fade, the checkpoint save ("Saving Campaign..."), then the zone the last zone-trigger named (#226: `play_level_over.rs`, [mission.md](mission.md)). The tutorial's fires at 8.93 s of its ending script | 0x207fe0, 0x207f70 |
+| zone-trigger (0) | OPERATE names the zone (its h_14b0089f, an archive) the next zone's end goes to (#226) | 0x207de0 |
 
-Every other class (radar, level-over h_1f07be84, property h_14cccfaa, the damage plate
-h_130818c0) runs its base actions; each of its own actions is counted as used, as its handler
-counts it, and logged with the step that runs it ("h_11a8c558 (property) OPERATE on USE_OBJECT
-[tex_1]: not run yet (a later step (object properties))").
+Every other class (radar, property h_14cccfaa, the damage plate h_130818c0) runs its base
+actions; each of its own actions is counted as used, as its handler counts it, and logged with
+the step that runs it ("h_11a8c558 (property) OPERATE on USE_OBJECT [tex_1]: not run yet (a later
+step (object properties))").
 
 ## Gamevar-triggers
 
@@ -508,8 +510,8 @@ the log read and the frames looked at:
 
 ## Not done here, or not known
 
-* The classes left to later steps (level-over #226, radar and the damage plate #228, the object
-  properties: above).
+* The classes left to later steps (radar and the damage plate #228, the object properties:
+  above).
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
 * Placed characters that no spawn-trigger names still add their bodies' collision to the arena

@@ -137,6 +137,11 @@ pub struct Cash {
     pub penalties: f32,
     /// +0x38: the entries, in key order (a std::map)
     pub entries: Vec<CashEntry>,
+    /// +0x20: the squad's members who died on the level, the end screen's "Operatives Lost"
+    /// (FUN_00115d50 at 0x115e10 counts a character's death into its squad's record, char+0x59c,
+    /// unless a cutscene has the world; the session's +0x1d4 adds the save-game's count,
+    /// h_08b97eea, 0 on a new level: take12's 1, Tex's death in the lava)
+    pub lost: u32,
 }
 
 impl Cash {
@@ -197,9 +202,19 @@ pub struct Campaign {
     names: HashMap<u32, String>,
     /// the characters seen this level and whether each was dead (`deaths`)
     seen: HashMap<Who, bool>,
+    /// a new campaign asked for by the front end (JOIN CAMPAIGN's START, play_menu.rs), with the
+    /// difficulty SELECT DIFFICULTY gave it (n: -4, 0, 4): the next level makes its flags anew
+    /// from the defaults and writes `campaign/difficulty-setting` (the session's +0x230, 0x7c750)
+    new_campaign: Option<i64>,
 }
 
 impl Campaign {
+    /// A new campaign (the front end's JOIN CAMPAIGN, #226) at difficulty `n`: the next level
+    /// starts it (`begin_level`).
+    pub fn start_new(&mut self, n: i64) {
+        self.new_campaign = Some(n);
+    }
+
     /// A flag path for the logs: its parts' names joined by `/`.
     pub fn path_name(&self, path: &[u32]) -> String {
         path.iter().map(|n| self.names.get(n).cloned().unwrap_or_else(|| format!("h_{n:08x}"))).collect::<Vec<_>>().join("/")
@@ -346,7 +361,10 @@ impl Campaign {
 }
 
 /// A map starts (after `setup`, before the triggers' first update): the flags made from the
-/// defaults the first time, then in a mission, as the game goes about a level:
+/// defaults the first time (or for a new campaign the front end started, with its difficulty
+/// written), then in a mission, as the game goes about a level:
+///  * the difficulty the session's +0x234 reads, `campaign/difficulty-setting` (0x7c720: -4
+///    STANDARD by the defaults; BF_DIFFICULTY overrides it), into `damage::Difficulty`;
 ///  * another level than the last: the session's +0xb4 (see the module notes);
 ///  * the level's squad-type characters set up (FUN_0012f440: each placed one, and the demo's
 ///    squad members in the world), their member flags 1;
@@ -356,7 +374,7 @@ impl Campaign {
 ///  * the cash record new (the campaign mode is made with the level, FUN_000d6490).
 #[allow(clippy::too_many_arguments)]
 pub fn begin_level(mut campaign: ResMut<Campaign>, game: Res<GameData>, map: Res<MapLevel>, current: Res<CurrentMap>, player: Res<Player>,
-                   squad: Res<Squad>, difficulty: Res<damage::Difficulty>) {
+                   squad: Res<Squad>, mut difficulty: ResMut<damage::Difficulty>) {
     let c = &mut *campaign;
     let game = &game.0;
     c.log = std::env::var("BF_FLAG_LOG").is_ok();
@@ -364,14 +382,28 @@ pub fn begin_level(mut campaign: ResMut<Campaign>, game: Res<GameData>, map: Res
     if c.names.is_empty() {
         c.make_names(game);
     }
-    if !c.started {
+    let new_campaign = c.new_campaign.take();
+    if !c.started || new_campaign.is_some() {
         c.started = true;
         c.flags = game.default_flags.clone();
+        // (a new campaign's first level is another level than the last: its squad slots filled)
+        c.level.clear();
         if c.log {
             println!("flags: a new campaign's, from {}.xmb ({} flags)", game.missions.flags_file, c.flags.records(&[]).len());
         }
+        if let Some(n) = new_campaign {
+            // the session's +0x230 (0x7c750): SELECT DIFFICULTY's choice
+            c.write_int(&[h("campaign"), h("difficulty-setting")], n as i32, "0x7c750: SELECT DIFFICULTY");
+        }
     }
     c.in_mission = map.0.is_some() && !damage::multiplayer_map(game, &current.0) && !c.flags.is_empty();
+    // the session's +0x234 (0x7c720): the difficulty is the slot's flag, in a mission
+    if c.in_mission && std::env::var("BF_DIFFICULTY").is_err() {
+        if let Some(n) = c.flags.value(&[h("campaign"), h("difficulty-setting")]).map(|v| v.as_int() as i64).filter(|&n| n != difficulty.n) {
+            difficulty.n = n;
+            difficulty.name = match n { -4 => "STANDARD", 0 => "HARD", 4 => "BRUTAL", _ => "set" };
+        }
+    }
     c.cash = Cash::default();
     c.seen.clear();
     c.difficulty = difficulty.n;
@@ -500,6 +532,14 @@ fn deaths(mut campaign: ResMut<Campaign>, game: Res<GameData>, player: Res<Playe
             continue;
         }
         let t = player.sim_time;
+        // FUN_00115d50: a death of the campaign squad's (the demo's squad, not an NPC) counts in
+        // its record's +0x20, "Operatives Lost", unless a cutscene has the world
+        if u.dead && u.in_squad() && !script::in_cutscene() {
+            c.cash.lost += 1;
+            if c.cash_log {
+                println!("t {t:.2}: operatives lost {} ({} died)", c.cash.lost, unit_name(u));
+            }
+        }
         let Some(ty) = game.0.character_type(u.kind) else { continue };
         if ty.player_type {
             let why = format!("FUN_00112830: {} {}", unit_name(u), if u.dead { "died" } else { "came back" });

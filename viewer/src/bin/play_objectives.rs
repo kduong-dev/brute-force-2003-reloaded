@@ -115,6 +115,9 @@ pub struct ObjectivesMenu {
     /// and that key while it's held down (let go the frame after)
     test_key: Option<KeyCode>,
     test_key_held: Option<KeyCode>,
+    /// closed from outside (#226: the level's end closes every menu, the menu system's +0x1c in
+    /// FUN_000e0410): done by `toggle` in the next frame
+    pub close: bool,
 }
 
 /// BF_TEST_OBJECTIVES's closing key by its name: space, enter or i.
@@ -302,9 +305,12 @@ fn toggle(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<
     let back = keys.just_pressed(KeyCode::KeyI) || pad(GamepadButton::Select);
     let close = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) || pad(GamepadButton::South) || pad(GamepadButton::East);
     let playing = editing.is_none_or(|m| *m.get() != editor::EditorMode::Edit);
+    let forced = std::mem::take(&mut menu.close);
     // (not while a cutscene has the world: FUN_0008c8c0 opens no menu while its +0xc50 bit 4 is
     // set, play_script.rs; the press is lost, as take03's START in the opening)
-    let want = if menu.open { !(back || close || closes_itself) } else { (back || test_open) && campaign.in_mission && playing && !script::in_cutscene() };
+    let want = if menu.open { !(back || close || closes_itself || forced) } else {
+        (back || test_open) && campaign.in_mission && playing && !script::in_cutscene()
+    };
     if test_open {
         menu.test_done = true;
     }

@@ -29,8 +29,9 @@ and how it was checked):
 | [docs/scenery.md](docs/scenery.md) | interactive scenery: barrels, racks and crates that break, explode and chain |
 | [docs/testtools.md](docs/testtools.md) | the test map's developer tools: free camera and teleport, NPCs (friend / enemy, dummy / fight), placing objects (on the ground or in the air), any level's buildings and static scenery (drawn and solid as in their levels), skies, music, switching levels |
 | [docs/editor.md](docs/editor.md) | the map editor (#190): its edit mode out of the gunplay (`--edit`, F5), the edit camera and controls, play from here and back, what carries over, the tool registry and the list of placed things the later editing tickets build on |
-| [docs/menu.md](docs/menu.md) | the front end: title, menus, mission select, movies |
+| [docs/menu.md](docs/menu.md) | the front end: title, menus, mission select, the campaign path's screens, movies; `BF_MENU_SHOT`, `BF_MENU_SCREEN`, `BF_MENU_GO`, `BF_MENU_PRESS` |
 | [docs/briefing.md](docs/briefing.md) | a mission's briefing movies (#225): the zones' movie lists, the subtitles' timing, typing, layout, font and markup, skipping, the entry point for the mission flow, converting the movies; `BF_MOVIES` |
+| [docs/mission.md](docs/mission.md) | the mission flow (#226): a new campaign from the front end (CAMPAIGN TYPE to JOIN CAMPAIGN, its difficulty), the campaign mode (the level-over and zone triggers, the squad-dead countdown), the end fade, the end screen (MISSION SUCCESSFUL, SQUAD KILLED: pages, counting cash, the confirmation box), Continue, Clone Squad, Replay and Quit, the status line, the game's font records; `BF_MISSION_LOG`, `BF_END_PRESS`, `BF_MENU_PRESS` |
 | [docs/levels.md](docs/levels.md) | `bf_level` and how levels are drawn: terrain, materials, liquids, lights, sky, each map's quirks |
 | [docs/character-viewer.md](docs/character-viewer.md) | `bf_viewer`: the format readers, its keys and shading notes |
 | [docs/xemu.md](docs/xemu.md) | the original game in xemu: what the trainer and takes rely on in `default.xbe` |
