@@ -281,6 +281,10 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
         p.fall_from = s.feet.y;
         p.yaw = s.yaw;
         p.cam_yaw = s.yaw;
+        // out of the world until its spawn-trigger spawns it (the tutorial's opening at 17.1 s;
+        // not under BF_TEST_GOTO / BF_SCRIPT, whose runs skip the level's start scripts:
+        // play_script.rs, #222)
+        p.absent = s.trigger != 0 && script::spawns_wait();
     } else if let Some(a) = world::arena() {
         // on a map: at its first start point (BF_START=<n> picks another), facing its way
         let n = std::env::var("BF_START").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
@@ -340,6 +344,8 @@ fn squad_at_start(start: usize, deathmatch: bool, spawns: &triggers::SquadSpawns
             m.cam_yaw = s.yaw;
             m.surface = usize::MAX;
             s.dress(&mut m);
+            // (out of the world until its spawn-trigger spawns it, as the leader: #222)
+            m.absent = s.trigger != 0 && script::spawns_wait();
             m
         }).collect();
         return Squad(if deathmatch { vec![] } else { members });
@@ -595,6 +601,7 @@ fn main() {
         .add_plugins(objectives::plugin)
         .add_plugins(triggers::plugin)
         .add_plugins(triggers::sounds::plugin)
+        .add_plugins(script::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -677,6 +684,8 @@ mod triggers;
 mod flags;
 #[path = "play_objectives.rs"]
 mod objectives;
+#[path = "play_script.rs"]
+mod script;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1935,6 +1944,19 @@ struct Player {
     /// for a re-armable trigger's; 0 for a character no trigger spawned (the demo's own squad on a
     /// map without squad spawns, the test map's NPCs). Its death is a DESTROYED from that name
     trigger_name: u32,
+    /// held by a cutscene (char+0x834 bit 0: FUN_00129470, its script's start or a 119;
+    /// play_script.rs): its AI and its player's controls are off until the script releases it
+    held: bool,
+    /// a cutscene's walk order (code 105, play_script.rs): the world points it walks to in turn,
+    /// the script moving it (char+0x834 bits 0 and 1); the controlled one's ends as the script
+    /// lets it go, another's when it's there or stuck
+    script_walk: script::Walk,
+    /// not in the world yet: a squad member whose spawn-trigger hasn't spawned it (the game takes
+    /// the template out of the world as the trigger links, FUN_000dfe90, and the tutorial's Tex
+    /// comes with the opening's farcast at 17.1 s). Not drawn, not seen, no controls; a member
+    /// out of the world has no AI, step, sounds or hits and takes no hand-over (a leader steps:
+    /// its step runs the game's clock), until play_triggers.rs `spawn_copy` brings it (#222)
+    absent: bool,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -1989,6 +2011,9 @@ impl Player {
             enemy: Default::default(),
             stand_in: false,
             trigger_name: 0,
+            held: false,
+            script_walk: Default::default(),
+            absent: false,
         }
     }
 
@@ -2248,9 +2273,9 @@ struct Seen {
     team: u8,
     /// its chest point, where the AI aims (AI_AIM_HEIGHT above the feet)
     chest: Vec3,
-    /// a target for the AI at all: alive, on its feet, not held by a test hook, and not a test
-    /// map dummy (play_testtools.rs: a dummy is the player's target; one set to fight is
-    /// everyone's)
+    /// a target for the AI at all: alive, on its feet, not held by a test hook, in the world (a
+    /// squad member waiting for its spawn-trigger isn't: `Player::absent`), and not a test map
+    /// dummy (play_testtools.rs: a dummy is the player's target; one set to fight is everyone's)
     target: bool,
     /// how visible it is (the skill's +0xe4, which the stamina update pushes into its combat
     /// target each frame, 0x11a934-0x11a94a: `skills::visibility`): 1, or a stealthed Hawk's
@@ -2264,7 +2289,7 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
     units.map(|u| Seen {
         team: u.team,
         chest: u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
-        target: !u.dead && !knocked_down(u) && !u.test_hold && u.npc.is_none_or(|n| n.fight),
+        target: !u.dead && !knocked_down(u) && !u.test_hold && !u.absent && u.npc.is_none_or(|n| n.fight),
         visibility: skills::visibility(u),
     }).collect()
 }
@@ -2335,7 +2360,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     for (dead, tag) in answers {
         let mut alive: Vec<&mut Player> = std::iter::once(&mut *player).chain(squad.0.iter_mut())
-            .filter(|u| !u.dead && u.in_squad() && u.character != dead && u.speaking <= 0.0 && u.quote_in.is_none()).collect();
+            .filter(|u| !u.dead && !u.absent && u.in_squad() && u.character != dead && u.speaking <= 0.0 && u.quote_in.is_none()).collect();
         if !alive.is_empty() {
             let n = alive.len();
             let k = alive[0].random(n);
@@ -2365,7 +2390,9 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     // dead: the death camera (play_deathcam) picks the next living member near its end
     let Some((c, left)) = player.select else { return };
-    let Some(i) = squad.0.iter().position(|m| m.character == c && m.in_squad() && m.loaded.is_some() && !m.dead) else {
+    // (not to one out of the world yet, waiting for its spawn-trigger: the keys 1-4, BF_TEST_SELECT
+    // and the autopilot's pick all come here)
+    let Some(i) = squad.0.iter().position(|m| m.character == c && m.in_squad() && m.loaded.is_some() && !m.dead && !m.absent) else {
         player.select = None;
         return;
     };
@@ -2380,6 +2407,8 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.item, player.item_new);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new) = inventory;
+    // (a script's walk was its brain's goal: under the player's control it has none)
+    player.script_walk.clear();
     // the switch sound, at the cut (a capture: the same sound at every hand-over)
     player.sound_queue.push((SQUAD_SWITCH_SOUND, 0.8));
     squad.0[i].select = None;
@@ -3272,6 +3301,15 @@ fn read_input(
         player.item_list = false;
         return;
     }
+    // a cutscene has the world (its cutscene bit), a script holds the character, or it isn't in
+    // the world yet (play_script.rs, #222): no press reaches it, nor the test hooks' input (take03:
+    // the stick, A and START pushed through the opening moved nothing); a script's walk moves it
+    if script::blocks_input(&player) {
+        script::held_step(&mut player, frame_dt(&time));
+        player.tab_down = -1.0;
+        player.item_list = false;
+        return;
+    }
     // 1-4: hand control to that squad member (after their name shows, see squad_control); not
     // while dead: the death camera hands over when it ends (whether the game lets you cut it
     // short isn't recorded: a guess)
@@ -3564,7 +3602,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let h = heading.get_or_insert(player.yaw);
     *h = wrap_angle(*h + wrap_angle(player.yaw - *h) * (1.0 - (-1.5 * dt).exp()));
     let heading = *h;
-    // take the loaded character out so the step can borrow it and mutate the player freely
+    // take the loaded character out so the step can borrow it and mutate the player freely (one
+    // out of the world yet, `Player::absent`, steps too: its step runs the game's clock, and no
+    // input reaches it, play_script.rs `blocks_input`)
     if !player.dead && !knocked_down(&player) {
         if let Some(l) = player.loaded.take() {
             step_player(&mut player, &l, &game.0, kits, dt, &mut transforms);
@@ -3583,6 +3623,12 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if m.dead || knocked_down(m) {
             continue;
         }
+        // one out of the world yet, waiting for its spawn-trigger (#222): no AI and no step, its
+        // clock kept with the game's (control may pass to it once it's come)
+        if m.absent {
+            m.sim_time += dt;
+            continue;
+        }
         let seen = nearest_hostile(m, slot + 1, &sight);
         let target = seen.map(|(i, _)| sight[i].chest);
         // BF_SIGHT_LOG: an AI character finding or losing its target
@@ -3599,8 +3645,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // Hawk's (0x13d3f0), before it raises the gun (0x2509c)
         let target = target.filter(|_| !skills::holds_fire(m));
         // (BF_TEST_TARGET's squadmate stands still in the line of fire; play_sentry.rs's test
-        // hooks hold theirs where they put them; the test map's NPCs have their own)
-        if m.npc.is_some() {
+        // hooks hold theirs where they put them; the test map's NPCs have their own; a cutscene's
+        // hold or walk has its own too, play_script.rs)
+        if m.held || !m.script_walk.is_empty() {
+            script::held_step(m, dt);
+        } else if m.npc.is_some() {
             testtools::npc_ai(m, target, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             squad_ai(m, &player, slot, heading, dt, target);
@@ -3632,7 +3681,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             shot.dist = t;
             shot.hit = true;
         }
-        let hit = squad.0.iter().enumerate().filter(|(_, m)| !m.dead)
+        let hit = squad.0.iter().enumerate().filter(|(_, m)| !m.dead && !m.absent)
             .filter_map(|(i, m)| ray_body(shot.origin, shot.dir, m, shot.dist).map(|t| (i, t)))
             .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((i, t)) = hit {
@@ -3679,7 +3728,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         let mut shots = std::mem::take(&mut squad.0[k].shots);
         for shot in shots.iter_mut() {
             let ((lo, hi), ammo, damage_type) = (shot_rolls(shot), shot.ammo, shot.damage_type);
-            let hit = std::iter::once(&*player).chain(squad.0.iter()).enumerate().filter(|&(i, u)| i != k + 1 && !u.dead)
+            let hit = std::iter::once(&*player).chain(squad.0.iter()).enumerate().filter(|&(i, u)| i != k + 1 && !u.dead && !u.absent)
                 .filter_map(|(i, u)| ray_body(shot.origin, shot.dir, u, shot.dist).map(|t| (i, t, u.character, u.position)))
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((i, t, _, at)) = hit {
@@ -4138,7 +4187,9 @@ fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
 /// `push`, a surviving squadmate may answer); a hard hit can knock them down; otherwise they
 /// grunt or say a line of `tag` now and then.
 fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64) {
-    if u.dead || amount <= 0.0 {
+    // (nor while a cutscene has the world: the damage handler 0x125600 leaves at once while the
+    // world's +0xc50 bit 4 is set, play_script.rs; nor one not in the world yet)
+    if u.dead || amount <= 0.0 || script::in_cutscene() || u.absent {
         return;
     }
     let dir = push.normalize_or(Vec3::Y);
@@ -5632,9 +5683,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 /// Decode queued sound ids (cached as in-memory WAVs) and play them.
 fn play_sounds(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>) {
-    // squad members' sounds join the player's, quieter with distance
+    // squad members' sounds join the player's, quieter with distance (none from one not in the
+    // world yet, play_script.rs: its queue is dropped; the player's own queue carries the world's
+    // sounds to the listener too, so an absent leader's stays, its body making none: no step)
     let here = player.position;
     for m in squad.0.iter_mut() {
+        if m.absent {
+            m.sound_queue.clear();
+            continue;
+        }
         let k = (1.0 - m.position.distance(here) / 35.0).clamp(0.15, 1.0) * 0.8;
         let queued: Vec<(u32, f32)> = m.sound_queue.drain(..).map(|(id, v)| (id, v * k)).collect();
         player.sound_queue.extend(queued);

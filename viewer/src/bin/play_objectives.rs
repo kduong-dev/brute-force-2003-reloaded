@@ -309,7 +309,9 @@ fn toggle(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<
     let back = keys.just_pressed(KeyCode::KeyI) || pad(GamepadButton::Select);
     let close = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) || pad(GamepadButton::South) || pad(GamepadButton::East);
     let playing = editing.is_none_or(|m| *m.get() != editor::EditorMode::Edit);
-    let want = if menu.open { !(back || close || closes_itself) } else { (back || test_open) && campaign.in_mission && playing };
+    // (not while a cutscene has the world: FUN_0008c8c0 opens no menu while its +0xc50 bit 4 is
+    // set, play_script.rs; the press is lost, as take03's START in the opening)
+    let want = if menu.open { !(back || close || closes_itself) } else { (back || test_open) && campaign.in_mission && playing && !script::in_cutscene() };
     if test_open {
         menu.test_done = true;
     }

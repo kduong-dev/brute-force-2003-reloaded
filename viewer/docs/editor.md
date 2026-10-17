@@ -65,6 +65,9 @@ the key asks for the switch (`edit_input`) and the state's change makes it (`to_
   body.
 * **The world goes on** in edit mode: NPCs set to fight fight each other (a dummy is nobody's
   target), loose things fall, effects play, a medkit put in the air drops. Freezing it is #192's.
+  So do a level's triggers and the cutscenes they play (their pause in edit mode is #230's), but
+  a cutscene doesn't take the edit view: no letterbox, no cutscene camera, the HUD left hidden
+  ([cutscenes.md](cutscenes.md)); one still under way when play comes back has the view again.
 * **Play**: the test map as it always was.
 
 ## Play from here, and back
@@ -77,7 +80,9 @@ the key asks for the switch (`edit_input`) and the state's change makes it (`to_
   map's start (`squad_around`, which `squad_at_start` now calls). Shift+F5 (`BF_TEST_PLAY=..,start`)
   puts them at the map's start instead (`player_at_start`, `squad_at_start`). On a level whose
   triggers spawn or place the squad (the tutorial, e40, m09_a) only the members it has come, the
-  map's start being each one's spawn ([triggers.md](triggers.md), #220). The NPCs stay after
+  map's start being each one's spawn ([triggers.md](triggers.md), #220), in the world at once
+  once the level's start has run: they don't wait for a spawn-trigger that may have fired while
+  editing (#222, [cutscenes.md](cutscenes.md)). The NPCs stay after
   them in `Squad`. The squad is fresh each time: full health and stamina, a full clip, the start's
   grenades (play_grenade.rs `stock_inventory`) and the reserve stocked again (play_ammo.rs
   `stock`); a weapon taken from the rack stays in its slot (it's the session's data). The mouse is

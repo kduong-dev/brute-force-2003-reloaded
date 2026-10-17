@@ -148,7 +148,7 @@ pub mod act {
     /// DISABLE: the base's: off, its DISABLED lost (FUN_001ff0f0)
     pub const DISABLE: i64 = 3;
     /// STOP: a sound-trigger's stop (0x206450, as STOP_SOUND), a dialog-trigger's (0x206d20, as
-    /// STOP_DIALOG)
+    /// STOP_DIALOG), a letterbox-trigger's (the bars out over its hide-duration, 0x207480; #222)
     pub const STOP: i64 = 4;
     /// TOGGLE_ENABLE: the base's: ENABLE when off, DISABLE when on (FUN_001ff0f0)
     pub const TOGGLE_ENABLE: i64 = 5;
@@ -426,6 +426,12 @@ impl Entry {
     /// A `<calculator>` entry's value (+0x1c): MODIFY_COUNTER's step.
     pub fn value(&self) -> i64 {
         self.extra_i64(h("value")).unwrap_or(0)
+    }
+
+    /// A `<script>` entry's command (the script-trigger entry's +0x1c, FUN_00204ec0's switch): 0
+    /// or 1 play the script from its start, 2 pause it, 3 resume it, 4 stop it (#222).
+    pub fn script_command(&self) -> i64 {
+        self.extra_i64(h("command")).unwrap_or(0)
     }
 }
 
@@ -815,13 +821,12 @@ pub fn class_name(tag: u32) -> String {
 
 /// Which step of #28 runs a class the runtime doesn't run yet (plan.md §2; the steps' tickets
 /// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
-/// step 2, #221; the sound- and dialog-triggers since step 4, #223), and for those that do
-/// nothing a player sees (waypoint, evaluate: their base actions only).
+/// step 2, #221; the script, letterbox and warp triggers since step 3, #222; the sound- and
+/// dialog-triggers since step 4, #223), and for those that do nothing a player sees (waypoint,
+/// evaluate: their base actions only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
     let is = |n: &str| h(n) == tag;
-    Some(if is("script-trigger") || is("letterbox-trigger") || is("warp-trigger") {
-        "step 3, #222"
-    } else if is("menu-trigger") || is("event-trigger") || tag == 0xE9B3_AE8E || tag == 0xE2B9_C3A2 {
+    Some(if is("menu-trigger") || is("event-trigger") || tag == 0xE9B3_AE8E || tag == 0xE2B9_C3A2 {
         "step 5, #224"
     } else if tag == 0x1F07_BE84 {
         "step 7, #226"
