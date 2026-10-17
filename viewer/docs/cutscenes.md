@@ -84,11 +84,11 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
 | Code | On | What it does | Code |
 |---|---|---|---|
 | 103 | a trigger (MARKER `trig`) | its signal (the first argument) straight to the trigger's handler, from iD 0, no subject, data -1: the lines, the routers, the spawns, the warps, the letterbox | 0x1772b0 (the controller FUN_00176f70) |
-| 101 | a camera, argument 0 | the view cuts to it (FUN_00173270: the view's +0x8c camera, its cut flag +0xc8). Only in a mission (the world's +0xbec +0x18, 0x8cd30) | 0x1732c0 (FUN_00172f10's controller) |
-| 101 | the script or a camera, arguments 1-3 | back to the game's camera (FUN_00072f00: +0x8c cleared, the follow camera cut to its place) | 0x1761b0 (table 0x1764b4 / 0x176498) |
+| 101 | a camera, argument 0 | the view cuts to it (FUN_00173270: the view's +0x8c camera, its cut flag +0xc8). Only in a mission (the world's +0xbec +0x18, 0x8cd30). With 1 it hands the event to the script's (back), with 2 or 3 it does nothing | 0x1732c0 (FUN_00172f10's controller) |
+| 101 | the script, arguments 1-3 | back to the game's camera (FUN_00072f00: +0x8c cleared, the follow camera cut to its place) | 0x1761b0 (table 0x1764b4 / 0x176498) |
 | 122 / 123 | the script | the world's cutscene bit on / off (world+0xc50 bit 4, "The cutscene bit") | 0x176227 / 0x176258 |
-| 119 | a character | the cutscene flags: v0 without v1, or v9 without v10, hold it (FUN_00129470); v0 with v1 hand it to the script's movement (FUN_001294a0); v9 with v10 release it (FUN_001294c0). A held one joins the script's list (FUN_00174dc0), released at the end. All of the tutorial's 119s are `1,0,0,0,0,0,1,0,0,1,0,0`: hold | 0x17206d (fields FUN_001753f0 case 0x77) |
-| 105 | a character | hand it to the script's movement and send it to the world points listed after the `:` (FUN_001294a0, the goal FUN_00171710) | 0x171f7a |
+| 119 | a character | the cutscene flags: with v0 or v9 set it joins the script's list (FUN_00174dc0), released at the end; then v0 without v1, or v9 without v10, hold it (FUN_00129470), else v0 with v1 hand it to the script's movement (FUN_001294a0); and apart from those, v9 with v10 release it (FUN_001294c0), last (0x17214b-0x17218e). All of the tutorial's 119s are `1,0,0,0,0,0,1,0,0,1,0,0`: hold | 0x17206d (fields FUN_001753f0 case 0x77) |
+| 105 | a character | hand it to the script's movement and send it to the world points listed after the `:` (FUN_001294a0, the goal FUN_00171710). The demo walks it there in straight lines (`held_step`): a point is done within 0.6 m, or given up once the walker hasn't come 0.1 m closer for 1 s (stuck: a guess, for the brain's route round what's in the way). The controlled character's walk ends as the script lets it go; another's goes on to its points | 0x171f7a |
 
 * **START_PATH_ANIMATION** moves its first entity along its second (a path) over its `duration`
   (the event class at vtable 0x392520: FUN_00275180 builds it, 0x275290 updates it each frame).
@@ -155,7 +155,8 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   viewport by that: 70 of 480 lines). Take03's frames at 26.0 and 26.8 s have the same picture
   under the bars and without them, so the demo draws two black bars over the full view.
 * **The letterbox-trigger** (handler 0x207480): OPERATE brings them in over its `show-duration`,
-  STOP takes them out over its `hide-duration`. Its other call, the world's +0xbec +0x54 / +0x58,
+  STOP takes them out over its `hide-duration` (0.5 s each where the data has none: the
+  constructor's, 0x207599; the parser FUN_00207410). Its other call, the world's +0xbec +0x54 / +0x58,
   is the co-op join, not the HUD. The tutorial's seven: trigger_letterbox14 (the opening: in at
   once, out over 0.5 s), the patrol's, the lessons', the V-squad's (0.5 s each way) and the
   ending's (in at once). Every one is driven by its script's 103s.
@@ -167,7 +168,7 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
 
 ## Warps
 
-The warp-trigger (handler 0x200650, FUN_00200480) runs on OPERATE only. It moves each of its
+The warp-trigger (handler 0x200650, FUN_00200480; parser 0x200400) runs on OPERATE only. It moves each of its
 objects to its `world-point`: a spawn-trigger names its copy, and the squad's start stands for
 its spawn's copy (`Triggers::warp_object`). A point with an orientation of its own (a
 direction-point: a `<transform>`) gives the whole transform, so the character faces down its -z
@@ -195,9 +196,11 @@ While it's set:
 * the squad's chatter is quiet (FUN_00140a60) and the squad-dead countdown waits
   (FUN_00089d30). Neither is done here.
 
-A character a script holds (119, or bound at its start) has no controls and no AI: play.rs
-`read_input` and `update_player` hand it to `script::held_step`, which zeroes its inputs and
-walks it to its 105 points, if any, in straight lines at a walk.
+A character a script holds (119, or bound at its start, or walking for a 105) has no controls
+and no AI: play.rs `read_input` and `update_player` hand it to `script::held_step`, which zeroes
+its inputs and walks it to its 105 points, if any. The script's release (its end, or a 119's)
+gives the controls back: a walk the player's character hadn't finished ends there (m09_a's
+startup walks Brutus into a wall: before #222's fix round it held the controls for good).
 
 ## The squad's farcast
 
@@ -206,13 +209,28 @@ out as the trigger links (FUN_000dfe90), so the game's Tex appears with the open
 17.09 s (take03's watch log: clk 17102). The demo keeps it out (`Player::absent`, play.rs
 `player_at_start` / `squad_at_start`) until `spawn_copy` brings it in. Until then:
 * it isn't drawn (`view` hides its model);
+* it doesn't move, think or make a sound (play.rs `update_player` and `play_sounds` pass it
+  over, as the editor's stand-in), and no shot or blast hurts it (`hurt`);
 * the detectors don't see it, so the start area's proximity detectors h_ea082132 and h_e30f11a4
   send ENTER_DETECTOR at 17.27 s, not at 0.07 s as before;
-* nobody targets it;
+* nobody targets it, and control can't pass to it (`squad_control`: the keys 1-4,
+  `BF_TEST_SELECT`; the death camera's next member);
 * scripts and warps don't bind it.
 
 Under `BF_TEST_GOTO` or `BF_SCRIPT` the level's start scripts don't play (they'd hold the player
-for the opening's 26 s), and the squad is in the world from the start, as before #222.
+for the opening's 26 s), and the squad is in the world from the start, as before #222. A squad
+made once the level's start has run (the map editor's Shift+F5) is in the world at once too:
+the spawn-trigger it would wait for may have fired already, and a once-only one never fires
+again (`script::spawns_wait`).
+
+## In the map editor
+
+The editor's edit mode (`--edit`, [editor.md](editor.md)) lets the world go on, the level's
+triggers and their cutscenes with it (their pause in edit mode is #230's). A cutscene doesn't
+take the edit view: `view` draws no bars and moves no camera in edit mode, and leaves the HUD to
+the editor. The HUD is hidden under the bars each frame and shown again only once, as they go,
+so the editor's hiding it isn't undone. A cutscene still under way when play comes back (F5) has
+the view again.
 
 ## The tutorial's scripts
 
@@ -240,8 +258,9 @@ names.
   script that warps Tex onto its own plate (the V-squad's) plays again from it.
 * `BF_SCRIPT_LOG=1`: at the start, the map's scripts, cameras and paths. Then each script's
   start (what it holds) and end (what it releases), and every event as it runs: the cuts with
-  their angle, the paths, the holds, the signals sent, what isn't run. Also the letterbox and the
-  cutscene bit.
+  their angle, the paths, the holds, the signals sent, what isn't run. Also the letterbox, the
+  cutscene bit, a walk given up, and the player's controls going off (and why: the cutscene bit,
+  held, not in the world) and coming back.
 * `BF_SCRIPT_CHECK=1` (`bf_level`): reads every `.gscr` of every `data/*.tgz` and prints each
   script's length, entities and events by code, then the totals. It exits after.
 * With `BF_TRIGGER_LOG=1` the trigger runtime logs the script-, letterbox- and warp-triggers'
@@ -318,18 +337,38 @@ frames were compared side by side.
   before, the opening not played. The objectives menu (above). The briefing movies
   (`BF_MOVIES=m00 BF_MOVIES_SKIP=3,6,9`): the three movies play and skip as before. Unit tests:
   `cargo test --lib` (`gscr::reads_a_script`) and `cargo test --bin bf_play`.
+* **The controls come back** (the review's round; each level's start with no hooks,
+  `BF_SCRIPT_LOG=1`, its controls line):
+  * e40: off while Tex isn't in the world, back at his spawn (4.67 s) and held a frame later,
+    back at 24.20 s as e40_start ends; no shot from the members still out of the world
+    (`BF_COMBAT_LOG`);
+  * m09_a: back at 20.13 s as its startup ends. Two of its four 105 walks are given up stuck,
+    13.4 and 16.1 m short; before the fix one such walk held the controls for good;
+  * m09_b at 12.00 s, m05_b at 7.13 s and m02_b at 12.00 s (a 119's release, before their
+    scripts end), m01_b at 12.80 s, the tutorial at 26.27 s;
+  * m09_a with the tester's hooks (`BF_SCRIPT=m09_a_startup,0
+    BF_TEST_GOTO=-177.12,-223.64,-187.12,-223.64 BF_MOVE_LOG=1`): Tex walks his 105 from 14.0 s,
+    and once the script lets him go (20.13 s) the autopilot turns him (yaw 100 to -3) and takes
+    him to its goal by 21.5 s.
+* **The map editor** (`--edit`, `BF_MAP=tutorial BF_TEST_PLAY=30,start BF_TOOLS_LOG=1`): through
+  the opening the frames are the edit view (the help, no bars, no HUD, the edit camera); the
+  opening runs on and ends at 26.20 s; Shift+F5 at 30 s brings Tex to his spawn (65.55, 25.25,
+  74.03) in the world, with the HUD and his controls.
 
 ## Not done, or not known
 
 * The codes and event types the tutorial doesn't use (above, #232). LOOK_AT is read as "along
   the path" (FUN_0028b000 from `up` and `front`), unchecked: no tutorial path has it.
 * 105's walk is a straight line at a walk to each point, not the brain's goal (FUN_00171710:
-  the AI's routes, #227). No tutorial character it names is in the world at the time.
+  the AI's routes, #227), given up where it's stuck (a guess). Its pause field isn't read. No
+  tutorial character it names is in the world at the time.
+* A spawned squad member's controls can leak for one frame between its spawn and the 119 that
+  holds it, where the two come in different frames (e40).
 * Turning along a path of more than two keys slerps between the two keys either side. What
   the game does there (FUN_0016f080 with more keys; FUN_0016c5e0's eased segments on the keyed
   path) isn't read.
-* The spawn and warp fade-ins (h_eeae96e7, h_0ede4719: 2 s on Tex and the marines) aren't
-  drawn: they appear at once.
+* The spawn and warp fade-ins (h_eeae96e7, h_0ede4719: 2 s on Tex and the marines; a warp
+  without h_0ede4719 has 2 s, its constructor's, 0x200734) aren't drawn: they appear at once.
 * The HUD comes back at once as the bars fall below 0.25 (the fit). The game's fades in over
   them (take03 faint at 26.4 s, take09 half there at 39.95 s); its code wasn't found.
 * The level's start fades in from black over ~0.5-0.7 s in take01. That isn't in the scripts

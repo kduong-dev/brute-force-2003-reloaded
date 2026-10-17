@@ -94,18 +94,31 @@ pub fn in_cutscene() -> bool {
     CUTSCENE.load(Ordering::Relaxed)
 }
 
-/// Whether the player's controls reach `p` this frame: not during a cutscene, not while a script
-/// holds it (char+0x834 bit 0, FUN_00129530 turns its player's control off), not before it's in
-/// the world (`Player::absent`).
+/// Whether the player's controls don't reach `p` this frame: during a cutscene, while a script
+/// holds it (char+0x834 bit 0, FUN_00129530 turns its player's control off; a 105's walk holds
+/// it too, bits 0 and 1), before it's in the world (`Player::absent`). A walk left over once the
+/// script has let it go doesn't: its release clears both bits (FUN_00174e70, FUN_001294c0).
 pub fn blocks_input(p: &Player) -> bool {
-    in_cutscene() || p.held || p.absent || !p.script_walk.is_empty()
+    in_cutscene() || p.held || p.absent
 }
 
-/// Whether a squad member a spawn-trigger spawns waits out of the world until it does: yes, but
-/// not with BF_TEST_GOTO or BF_SCRIPT (whose runs don't play the level's start scripts, which
-/// would spawn it: see the module notes). play.rs `player_at_start` asks.
+/// Whether the level's start has run (play_triggers.rs `run`'s first frame: `level_started`);
+/// cleared as a map starts and as it ends.
+static LEVEL_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// The level's start has run: its first FIRST_UPDATEs are out (play_triggers.rs `run`).
+pub fn level_started() {
+    LEVEL_STARTED.store(true, Ordering::Relaxed);
+}
+
+/// Whether a squad member a spawn-trigger spawns waits out of the world until it does: yes at a
+/// map's start, but not with BF_TEST_GOTO or BF_SCRIPT (whose runs don't play the level's start
+/// scripts, which would spawn it: see the module notes), nor once the level's start has run (the
+/// map editor's Shift+F5 brings a fresh squad to the map's start after the triggers that spawn it
+/// may have fired, and a spent once-only spawn-trigger never fires again). play.rs
+/// `player_at_start` and `squad_at_start` ask.
 pub fn spawns_wait() -> bool {
-    std::env::var("BF_TEST_GOTO").is_err() && std::env::var("BF_SCRIPT").is_err()
+    !LEVEL_STARTED.load(Ordering::Relaxed) && std::env::var("BF_TEST_GOTO").is_err() && std::env::var("BF_SCRIPT").is_err()
 }
 
 /// The letterbox's bars at full, each of the top and the bottom: 145.8333 / 1000 of the screen's
@@ -136,6 +149,50 @@ const CURVE_END_OUT: f32 = 0.9;
 /// A scripted walker has reached its world point within this (m): a guess (the walk is the
 /// ticket's stub, a straight line).
 const WALK_ARRIVE: f32 = 0.6;
+/// A scripted walker that hasn't come WALK_PROGRESS m closer to its point for WALK_STALL s is
+/// taken as blocked and gives that point up (on to the next, or it stands): a guess, the straight
+/// walk's stand-in for the brain's route round what's in its way (FUN_00171710). m09_a's startup
+/// sends Brutus to cover_point413 through a wall.
+const WALK_PROGRESS: f32 = 0.1;
+const WALK_STALL: f32 = 1.0;
+
+/// A 105's walk (play.rs `Player::script_walk`): the world points left, in turn, and for the
+/// first the closest the walker has come and how long since it last came WALK_PROGRESS closer.
+#[derive(Clone, Debug)]
+pub struct Walk {
+    points: Vec<Vec3>,
+    best: f32,
+    stalled: f32,
+}
+
+impl Default for Walk {
+    fn default() -> Walk {
+        Walk { points: vec![], best: f32::INFINITY, stalled: 0.0 }
+    }
+}
+
+impl Walk {
+    /// A walk to these points.
+    fn to(points: Vec<Vec3>) -> Walk {
+        Walk { points, ..Default::default() }
+    }
+
+    /// Whether it has no point left.
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
+    /// The first point given up or reached: on to the next.
+    fn next(&mut self) {
+        self.points.remove(0);
+        (self.best, self.stalled) = (f32::INFINITY, 0.0);
+    }
+
+    /// No walk.
+    pub fn clear(&mut self) {
+        *self = Walk::default();
+    }
+}
 
 /// The cutscenes' state (see the module notes).
 #[derive(Resource, Default)]
@@ -172,6 +229,10 @@ pub struct Cutscenes {
     /// the script whose update this frame stopped after an event that asked something of the
     /// world (`step`), to go on from
     resume: Option<usize>,
+    /// whether the player's controls were off last frame (`blocks_input`), for the log
+    controls_off: Option<bool>,
+    /// whether `view` has hidden the HUD under the bars (it shows it again as they go, once)
+    hud_hidden: bool,
     /// a mission (101's cuts need one: the world's +0xbec +0x18)
     mission: bool,
     /// the sim time, for the log
@@ -221,6 +282,7 @@ pub enum Request {
 /// A map starts: the level's scripts, cameras, paths and points; the hooks read.
 fn start(mut commands: Commands, game: Res<GameData>, map: Res<MapLevel>, current: Res<CurrentMap>) {
     CUTSCENE.store(false, Ordering::Relaxed);
+    LEVEL_STARTED.store(false, Ordering::Relaxed);
     let mut cs = Cutscenes { log: std::env::var("BF_SCRIPT_LOG").is_ok(), bars_to: 0.0, ..Default::default() };
     let hook = std::env::var("BF_SCRIPT").ok();
     cs.off = hook.as_deref().is_some_and(|v| matches!(v.trim(), "off" | "none" | "0"));
@@ -256,9 +318,11 @@ fn start(mut commands: Commands, game: Res<GameData>, map: Res<MapLevel>, curren
     }
 }
 
-/// Leaving the map: the cutscene bit off (the next map starts without one).
+/// Leaving the map: the cutscene bit off and the level's start undone (the next map starts
+/// without either; its squad is made, `begin_play`, before it starts).
 fn finish() {
     CUTSCENE.store(false, Ordering::Relaxed);
+    LEVEL_STARTED.store(false, Ordering::Relaxed);
 }
 
 /// One of the letterbox's two bars (`start`).
@@ -343,6 +407,14 @@ pub(super) fn step(cs: &mut Cutscenes, tr: &mut Triggers, player: &mut Player, s
         (Pass::Resume, Some(k)) => (k, true),
         _ => {
             cs.clock = player.sim_time;
+            // BF_SCRIPT_LOG: the player's controls going off or coming back (last frame's)
+            let off = blocks_input(player);
+            if cs.log && cs.controls_off != Some(off) {
+                let why = [(in_cutscene(), "the cutscene bit"), (player.held, "held"), (player.absent, "not in the world")]
+                    .iter().filter(|w| w.0).map(|w| w.1).collect::<Vec<_>>().join(", ");
+                println!("t {:.2}: the player's controls {}", cs.clock, if off { format!("off ({why})") } else { "back".to_string() });
+            }
+            cs.controls_off = Some(off);
             // test hook: BF_SCRIPT=<name>[,<s>]
             if let Some((script, at, false)) = cs.hook {
                 if cs.clock >= at {
@@ -519,13 +591,24 @@ fn stop(cs: &mut Cutscenes, k: usize, player: &mut Player, squad: &mut Squad) {
     }
 }
 
-/// The characters a script held, released (FUN_00174e70). A walk under way goes on: it's the
-/// character's brain's goal (FUN_00171710), which the release lets it pursue.
+/// The characters a script held, released (FUN_00174e70: char+0x834 bits 0 and 1 cleared).
 fn release(held: &[u32], player: &mut Player, squad: &mut Squad) {
     for &n in held {
-        if let Some((u, _)) = unit(player, squad, n) {
-            u.held = false;
+        if let Some((u, controlled)) = unit(player, squad, n) {
+            let_go(u, controlled);
         }
+    }
+}
+
+/// One character let go (bits 0 and 1 cleared, FUN_00129530): the controlled one's walk ends
+/// with it, its player's controls back; another's goes on, the brain's goal (FUN_00171710) that
+/// the release lets it pursue (until there or blocked, `held_step`).
+fn let_go(u: &mut Player, controlled: bool) {
+    u.held = false;
+    if controlled {
+        // (and its walk's stride: the controls set it again from the next frame)
+        u.script_walk.clear();
+        (u.move_input, u.walk) = (Vec2::ZERO, false);
     }
 }
 
@@ -589,7 +672,9 @@ fn event(cs: &mut Cutscenes, k: usize, s: &Script, ev: &gscr::Event, tr: &mut Tr
                         }
                         cs.shown = Some(name);
                         say(cs, format!("101: the view cuts to it (FOV {:.0} across)", cs.cameras.get(&name).map_or(0.0, |c| c.1)));
-                    } else if (1..=3).contains(&arg) && (own || kind == EntityKind::Camera) {
+                    } else if (own && (1..=3).contains(&arg)) || (arg == 1 && kind == EntityKind::Camera) {
+                        // (the script's own 1-3, 0x1761b0; a camera's 1 hands it to the script's,
+                        // 0x1732c0, whose 2 and 3 do nothing)
                         cs.shown = None;
                         // the follow camera snaps (the view's cut flag, +0xc8)
                         player.cam_target = player.position + Vec3::new(0.0, 0.35 + player.height * 0.5, 0.0);
@@ -615,37 +700,39 @@ fn event(cs: &mut Cutscenes, k: usize, s: &Script, ev: &gscr::Event, tr: &mut Tr
 }
 
 /// 119 on a character (0x17206d; its twelve fields as FUN_001753f0 stores them, v0..v11 in the
-/// data's order): v0 without v1, or v9 without v10, hold it (FUN_00129470); v0 with v1 hand it to
-/// the script's movement (FUN_001294a0); v9 with v10 release it (FUN_001294c0). A held character
-/// joins the script's list, released at its end. The others (v6 an entity flag, v2 / v7 the
-/// character's FUN_001268b0, v8, v11 its brain reset) are logged. One not in the world gets
-/// nothing (`unit`).
+/// data's order). With v0 or v9 set (0x172121) it joins the script's list, released at its end
+/// (FUN_00174dc0), then (0x17214b-0x17218e) v0 without v1, or v9 without v10, hold it
+/// (FUN_00129470), else v0 with v1 hands it to the script's movement (FUN_001294a0); and apart
+/// from those, v9 with v10 release it (FUN_001294c0), last. The others (v6 an entity flag, v2 /
+/// v7 the character's FUN_001268b0, v8, v11 its brain reset) are logged. One not in the world
+/// gets nothing (`unit`).
 #[allow(clippy::too_many_arguments)]
 fn flags_119(cs: &mut Cutscenes, k: usize, name: u32, u: &UserEvent, player: &mut Player, squad: &mut Squad,
              say: &dyn Fn(&Cutscenes, String)) {
     let v: Vec<bool> = (0..12).map(|i| u.int(i) != 0).collect();
-    let hold = if (v[0] && !v[1]) || (v[9] && !v[10]) {
-        Some(true)
-    } else if v[9] && v[10] {
-        Some(false)
-    } else if v[0] && v[1] {
-        // (the scripted movement: held, its brain the script's; nothing moves it here but 105)
-        Some(true)
-    } else {
-        None
-    };
+    // (the scripted movement, v0 with v1, holds it as the hold does: its brain the script's, which
+    // nothing moves here but a 105)
+    let hold = (v[0] && !v[1]) || (v[9] && !v[10]) || (v[0] && v[1]);
+    let free = v[9] && v[10];
     let others: Vec<usize> = [2, 6, 7, 8, 11].into_iter().filter(|&i| v[i]).collect();
     let rest = if others.is_empty() { String::new() } else { format!("; v{others:?} not run") };
-    match (hold, unit(player, squad, name)) {
-        (Some(h), Some((u, _))) => {
-            u.held = h;
-            if h {
-                hold_list(&mut cs.players[k], name);
+    if !(v[0] || v[9]) {
+        say(cs, format!("119: no hold{rest}"));
+        return;
+    }
+    match unit(player, squad, name) {
+        Some((u, controlled)) => {
+            hold_list(&mut cs.players[k], name);
+            if hold {
+                u.held = true;
             }
-            say(cs, format!("119: {}{rest}", if h { "held" } else { "released" }));
+            if free {
+                let_go(u, controlled);
+            }
+            let what = match (hold, free) { (true, true) => "held, then released", (true, false) => "held", (false, true) => "released", _ => "on the list" };
+            say(cs, format!("119: {what}{rest}"));
         }
-        (Some(_), None) => say(cs, "119: not in the world (its entity isn't bound): nothing".into()),
-        (None, _) => say(cs, format!("119: no hold{rest}")),
+        None => say(cs, "119: not in the world (its entity isn't bound): nothing".into()),
     }
 }
 
@@ -664,7 +751,7 @@ fn walk_105(cs: &mut Cutscenes, k: usize, name: u32, u: &UserEvent, player: &mut
     }
     match unit(player, squad, name) {
         Some((u, _)) => {
-            u.script_walk = points;
+            u.script_walk = Walk::to(points);
             u.held = true;
             hold_list(&mut cs.players[k], name);
             say(cs, format!("105: walks to {}", list.trim()));
@@ -842,23 +929,34 @@ impl PathCurve {
     }
 }
 
-/// A held character's frame (from play.rs: `read_input` for the player, `update_player` for the
-/// others, in place of their controls or AI): nothing reaches it but a script's walk (105), which
-/// takes it to each of its points in turn at a walk, facing the way; at the last it stands.
-pub fn held_step(m: &mut Player) {
+/// A held or walking character's frame (from play.rs: `read_input` for the player, `update_player`
+/// for the others, in place of their controls or AI; dt the frame's): nothing reaches it but a
+/// script's walk (105), which takes it to each of its points in turn at a walk, facing the way,
+/// giving a point up once it's stuck (WALK_STALL); at the last it stands.
+pub fn held_step(m: &mut Player, dt: f32) {
     (m.jump_pressed, m.dodge_pressed, m.switch_pressed, m.reload_pressed) = (false, false, false, false);
     (m.item_use, m.next_surface, m.fire, m.aim, m.throw_held, m.sprint) = (false, false, false, false, false, false);
     m.ai_target = None;
-    while let Some(&goal) = m.script_walk.first() {
+    while let Some(&goal) = m.script_walk.points.first() {
         let to = Vec2::new(goal.x - m.position.x, goal.z - m.position.z);
-        if to.length() > WALK_ARRIVE {
+        let d = to.length();
+        let w = &mut m.script_walk;
+        if d < w.best - WALK_PROGRESS {
+            (w.best, w.stalled) = (d, 0.0);
+        } else {
+            w.stalled += dt;
+        }
+        if d > WALK_ARRIVE && w.stalled < WALK_STALL {
             m.cam_yaw = (-to.x).atan2(-to.y);
             m.face_yaw = Some(m.cam_yaw);
             m.move_input = Vec2::new(0.0, 1.0);
             m.walk = true;
             return;
         }
-        m.script_walk.remove(0);
+        if d > WALK_ARRIVE && std::env::var("BF_SCRIPT_LOG").is_ok() {
+            println!("t {:.2}: a script's walk is stuck {d:.1} m short of its point: given up", m.sim_time);
+        }
+        w.next();
     }
     m.move_input = Vec2::ZERO;
     m.walk = false;
@@ -866,28 +964,47 @@ pub fn held_step(m: &mut Player) {
 
 /// The view (after the follow camera and the HUD): the letterbox's step and bars, the HUD hidden
 /// under them, the shown cutscene camera in place of the follow camera, the squad members not
-/// yet in the world not drawn.
+/// yet in the world not drawn. In the map editor's edit mode the camera, the HUD and the screen
+/// are the editor's (play_editor.rs): no bars, no cutscene camera, the HUD left alone. The scripts
+/// run on meanwhile, as the triggers that start them do (their pause in edit mode is #230's), so
+/// a cutscene under way when play comes back has the view again. The HUD is shown again once,
+/// as the bars go, not every frame: other systems hide it too (the editor's view).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: Res<Squad>,
+        mode: Option<Res<State<super::editor::EditorMode>>>,
         mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
         mut bars: Query<&mut Node, With<LetterboxBar>>,
         mut hud: Query<&mut Visibility, (With<super::hud::HudRoot>, Without<LetterboxBar>)>,
         mut roots: Query<&mut Visibility, (Without<super::hud::HudRoot>, Without<LetterboxBar>, Without<MainCamera>)>) {
     let dt = frame_dt(&time);
+    let editing = mode.is_some_and(|m| *m.get() == super::editor::EditorMode::Edit);
     cs.letterbox_step(dt);
-    let height = Val::Percent(cs.bars * LETTERBOX_BAR * 100.0);
+    let height = Val::Percent(if editing { 0.0 } else { cs.bars * LETTERBOX_BAR * 100.0 });
     for mut n in &mut bars {
         if n.height != height {
             n.height = height;
         }
     }
-    let want = if cs.bars > HUD_HIDE_AT { Visibility::Hidden } else { Visibility::Inherited };
+    // the HUD: hidden while the bars are in (each frame: the editor's view shows it in play);
+    // shown again once as they go; in edit mode the editor's
+    let want = if editing {
+        cs.hud_hidden = false;
+        None
+    } else if cs.bars > HUD_HIDE_AT {
+        cs.hud_hidden = true;
+        Some(Visibility::Hidden)
+    } else if cs.hud_hidden {
+        cs.hud_hidden = false;
+        Some(Visibility::Inherited)
+    } else {
+        None
+    };
     for mut v in &mut hud {
-        if *v != want {
+        if let Some(want) = want.filter(|w| *v != *w) {
             *v = want;
         }
     }
-    if let Some((m, fov_across)) = cs.shown.and_then(|c| cs.cameras.get(&c)).copied() {
+    if let Some((m, fov_across)) = cs.shown.filter(|_| !editing).and_then(|c| cs.cameras.get(&c)).copied() {
         if let Ok((mut tr, mut projection)) = cam.single_mut() {
             *tr = Transform::from_matrix(m);
             if let Projection::Perspective(pp) = projection.as_mut() {

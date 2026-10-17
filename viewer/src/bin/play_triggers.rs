@@ -757,6 +757,9 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
     // the level's start: FIRST_UPDATE to every script-trigger, then its update (FUN_001fe260)
     if !tr.started {
         tr.started = true;
+        // (a squad made at the map's start from now on is in the world at once, play_script.rs
+        // `spawns_wait`: the map editor's Shift+F5)
+        script::level_started();
         for i in 0..tr.live.len() {
             if tr.live[i].t.tag == h("script-trigger") {
                 tr.deliver(i, Ev::new(sig::FIRST_UPDATE, 0));
@@ -1972,8 +1975,9 @@ impl Triggers {
 }
 
 /// The class state of a trigger the data reader leaves to its step (`Class::Other`): the
-/// cutscenes' three (#222) from their elements' own attributes; anything else runs its base
-/// actions alone.
+/// cutscenes' three (#222) from their elements' own attributes (the parsers FUN_00204e40,
+/// FUN_00207410, 0x200400), their constructors' values where one has none; anything else runs its
+/// base actions alone.
 fn cutscene_class(t: &Trigger) -> ClassState {
     let e = &t.element;
     let name = |k: u32| e.attr(k).and_then(|v| v.as_hash()).filter(|&n| n != h("")).unwrap_or(0);
@@ -1981,9 +1985,9 @@ fn cutscene_class(t: &Trigger) -> ClassState {
     if t.tag == h("script-trigger") {
         ClassState::Script { script: name(h("script-name")) }
     } else if t.tag == h("letterbox-trigger") {
-        ClassState::Letterbox { show: num(h("show-duration"), 0.0), hide: num(h("hide-duration"), 0.0) }
+        ClassState::Letterbox { show: num(h("show-duration"), LETTERBOX_TIME), hide: num(h("hide-duration"), LETTERBOX_TIME) }
     } else if t.tag == h("warp-trigger") {
-        ClassState::Warp { point: name(h("world-point")), fade: num(H_WARP_FADE, 0.0) }
+        ClassState::Warp { point: name(h("world-point")), fade: num(H_WARP_FADE, WARP_FADE) }
     } else {
         ClassState::Other
     }
@@ -1993,6 +1997,11 @@ fn cutscene_class(t: &Trigger) -> ClassState {
 /// it warps gets (FUN_00200480: char+0x73c, the fade state +0x734 = 0): 2 on the tutorial's
 /// squad warps, 0 on the rest. Not drawn (as a spawn's fade isn't).
 const H_WARP_FADE: u32 = 0x0EDE_4719;
+/// A warp-trigger's fade-in without an h_0ede4719 (s): its constructor's +0x48, 2.0 (0x200734).
+const WARP_FADE: f32 = 2.0;
+/// A letterbox-trigger's show- and hide-duration without one (s): its constructor's +0x40 and
+/// +0x44, 0.5 (0x207599).
+const LETTERBOX_TIME: f32 = 0.5;
 
 /// A warp-trigger's OPERATE in the world (FUN_00200480): each of its objects (a spawn-trigger's
 /// copy, `Triggers::warp_object`) to its world point. A character, if alive, stands on the ground
