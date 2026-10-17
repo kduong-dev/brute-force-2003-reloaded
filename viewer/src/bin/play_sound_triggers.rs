@@ -610,6 +610,16 @@ impl Triggers {
         }
     }
 
+    /// FUN_00179d60 for another class: `sound` queued on the world's dialog queue with its
+    /// `length` and no hush (a radar-trigger's cue, 0x20736a pushes 0; play_radar.rs), its ticket
+    /// kept by nobody. `by` names the sender for the log.
+    pub(super) fn queue_line(&mut self, sound: u32, length: f32, by: &str) {
+        let ticket = self.sound.radio.queue(sound, length, false);
+        if self.log {
+            println!("t {:.2}: {by} queues h_{sound:08x} on the dialog queue (ticket {ticket}, {length:.2} s)", self.clock);
+        }
+    }
+
     /// FUN_00206250: the volume sound-trigger `i` plays at: a Type 2-5 one's level, else its
     /// `volume` / 100, else 2.0, which FUN_002060c0 reads as its library entry's (it sets a
     /// volume only up to 1).

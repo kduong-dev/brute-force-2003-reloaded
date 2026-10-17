@@ -221,6 +221,28 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     −87.6° about x to stand its arcs up.
   * Each particle keeps the appearance's turn at the moment it's born (about 220°/s), so the
     particles fan out round the icon.
+* **ALE blends (#228).** An appearance's blend pair (h_1daea8c0) is the PC's D3DBLEND (src,
+  dest), which the game turns into the console's through the table at 0x4036b4 (0x2a6f00): 5,2
+  (SRCALPHA, ONE) on 518 appearances, 5,6 (SRCALPHA, INVSRCALPHA) on 207, 3,2 (SRCCOLOR, ONE) on
+  33 (the lava's eruptions slava-erupt*, its wading rings and splashes env_sl_*, the teleport and
+  ion beams), 2,2 (ONE, ONE) on 13 (slava-fuzz, the laser and flesh hits, campfire sparks), and
+  a few 3,6 / 6,6 / 2,6 / 4,6. Every pair with a dest of ONE adds the particle to the picture
+  (before #228 only 5,2 did: the others were alpha blends, and the tutorial's lava bursts came
+  out as brown balls). The particle's colour is the texel x its vertex colour and its alpha the
+  texel's x its vertex alpha, side by side (pixel shader 0x3b89e0, which FUN_0029f5d0 sets for
+  any pair whose dest isn't INVSRCALPHA; the vertex colour is the appearance's colour with its
+  alpha curve in the top byte, FUN_002a1a50, and the particle vertex shader 0x3b8bf8 passes the
+  colour through): so the alpha curve fades a SRCALPHA particle only. With ONE the particle adds
+  texel x colour whatever its alpha, with SRCCOLOR (texel x colour) squared: drawn here with the
+  alpha at 1, the texture's alpha opaque and, for SRCCOLOR, the texels and the colour squared
+  (`ale_fx.rs` `Source`). A beam's ribbon keeps its colour x alpha whatever its pair (its own
+  draw isn't read).
+* **Effects the triggers make** (the tutorial's lava bursts, its farcast flashes) are compiled
+  with the game's particle rules, the grenades' and the Therm Sweeper's (`load_recorded_facing`:
+  the shapes, the count once a game frame, the facing; [triggers.md](triggers.md),
+  "Spawn-triggers"). take08's lava burst (slava-erupt-jet: small-flare at 3,2, 100 a second for
+  0.6 s, 0.47 -> 1.7 m) is a bright fire column that rises and fades within a second; with the
+  demo's own rules (half-size quads, its count) it was a string of small blobs.
 * **Pickups.** They're stored at their spawn height in the level file; they now settle onto the
   floor below.
 * **Compound joints.** A compound object's joints carry a rotation (a w-x-y-z quaternion),

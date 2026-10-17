@@ -90,6 +90,15 @@ pub struct Placement {
     /// FUN_000ecdc0): the arrival radius a route's walk takes at it when it's over 0 (FUN_00026d80);
     /// -1 without one (the tutorial's world points: -1 765 times, 1 165 times, a few 0.3-0.6)
     pub radius: f32,
+    /// an item object's h_1cb7d5f2 (name not recovered): set down and live, as if placed by a
+    /// character (the item object's attribute handler 0x14a0a0 sets +0x1bc bit 1 and calls its
+    /// item set's +0x10: for a Sentry the mine is armed, play_sentry.rs). True on the tutorial's
+    /// three mines (`<h_1d1d4f05>` item spawns of the Sentry h_e5f1f063), false on its pickups
+    pub placed: bool,
+    /// an item object's `item-alignment` (0x14a0c4: +0x1c0, the team a mine counts as its own,
+    /// the ALIGN_ numbers): 1 (the enemies') on the tutorial's mines, -1 on its pickups; -1
+    /// without one
+    pub alignment: i64,
 }
 
 /// A level camera-object (`<camera-object name h_1435f288 h_19bc8fdf h_125978e4><transform>`,
@@ -295,6 +304,9 @@ const H_PATROL_POINT: u32 = 0xFFCF_1F13;
 const H_PATROL_HEAD: u32 = 0x0952_8BF8;
 /// A world point's h_e6564e8a (+0x20, FUN_000ecdc0): its own arrival radius (-1 none).
 const H_POINT_RADIUS: u32 = 0xE656_4E8A;
+/// An item object's h_1cb7d5f2 (its attribute handler 0x14a0a0 at 0x14a0f7): placed and live
+/// (`Placement::placed`).
+const H_ITEM_PLACED: u32 = 0x1CB7_D5F2;
 
 /// A level <transform>: the 3 x 3 rotation row by row (columns are the object's axes: the
 /// level's cameras come out level and looking down -z), then the position.
@@ -415,7 +427,9 @@ impl Level {
             let light_usage = e.attr(h("light-usage")).and_then(|v| v.as_i64()).map_or(0, |v| v.clamp(0, 255) as u8);
             objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m,
                                      radar_contact, light_usage, oriented,
-                                     radius: e.attr(H_POINT_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(-1.0) });
+                                     radius: e.attr(H_POINT_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(-1.0),
+                                     placed: e.attr(H_ITEM_PLACED).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
+                                     alignment: e.attr(h("item-alignment")).and_then(|v| v.as_i64()).unwrap_or(-1) });
         }
         // the radar-triggers; those that operate on the level's start (an entry on
         // TRIG_SIG_FIRST_UPDATE with TRIG_ACT_OPERATE, enabled) set their objects' value now, in

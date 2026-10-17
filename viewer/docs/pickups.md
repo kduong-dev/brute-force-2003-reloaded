@@ -78,8 +78,15 @@
     12c35d69, whose block's h_ea21ae4b is 30), with the sound. In todo/medic + intenvory use
     case.mp4 Tex says e707f108 at his use and Brutus nothing at his. `BF_TEST_HEALED=1` always
     says the line.
-  * Each pickup adds a line below the middle of the screen, "2x Medkit", counted up while more
-    of the same are taken and gone after 3 s. Status messages ("No need to heal") show just
+  * Each pickup adds a line below the middle of the screen (FUN_000ad790, one of the HUD's
+    three): the item's display name (h_1dd3a49d; its stringtable-name without one) alone for the
+    first, "<n>x <name>" (the format at 0x40d734) once more of the same are taken while it's up;
+    each pickup puts its time back to 4 s (the widget's +0x64, set by its constructor
+    FUN_000ad690, #228; it was 3 s). take08's two medkits: "Medkit", then "2x Medkit" for 4.25 s
+    after the second; take12's DNA line 295.4-300.0 s, fading out at its end. In the demo
+    (`BF_TEST_GOTO=51,14,51,20`) Tex takes the tutorial's two at (50.6, 17.2) and (51.0, 17.5) on
+    the same frame, so "2x Medkit" comes at once; the DNA canister's line (one) is its name alone.
+    Status messages ("No need to heal") show just
     above them. They stay put on the screen (the capture has them by the character).
   * What a medkit heals: an item's h_0a811e94 is the health it restores and h_11884f2e the
     stamina (STAMINA POWER has 0 / 50 where HEALTH POWER has 50 / 0), not a respawn time. The
@@ -93,3 +100,23 @@
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
     `BF_TEST_HEALTH=<hp>` starts hurt. `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds the item list open.
     `BF_TEST_CHIP=<x>,<z>[,<s>]` drops a memory chip there (see "Memory chip" in squad.md).
+
+## DNA canisters (#228)
+
+* An item of group-type 9 (IG_DNA_CANNISTER, the IG_ name table 0x3be594): the tutorial's Confed
+  Marine DNA h_f4933c12 (stringtable-name "Alien Technology Acquired!", display name
+  h_1dd3a49d "Confed Marine DNA unlocked!") in the base building at (-62.5, 15.6, 18.8). A squad
+  member whose feet come within 1.3 m of it across (and 1.5 m up or down) takes it: a fit to
+  take12, where the line came between Tex's feet at 1.41 m (295.30 s, no line at 295.25) and
+  1.25 m (295.44 s, the line fading in at 295.5); the game's test isn't traced. Its pickup sound
+  plays, the line shows its display name, and it's gone for good (an unlock is once).
+* Its PICKUP_OBJECT starts the tutorial's timer467 (4 s), whose pulse plays Bratton's
+  dxud_ai_00060 (4.22 s) ([triggers.md](triggers.md), "Object events").
+* What it unlocks (its gameflag-database 1: the global flags' h_1d604469/characters entry, a
+  deathmatch character) isn't kept: the demo doesn't load the global flags, and the end screen's
+  DNA count is #226's.
+* Verified (`BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_PICKUP_LOG=1 BF_TEST_GOTO=-58.9,21.26,-62.22,19.23
+  "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`, 120 frames at 15 fps): taken at 1.80 s, PICKUP_OBJECT ->
+  timer467 -> sound463 at 5.80 s; "Confed Marine DNA unlocked!" under Tex from frame 27 to 87
+  (4 s), as take12's line (its place on the screen: take12's is ~45 units lower and larger, a
+  layout the demo's pickup lines don't have yet).

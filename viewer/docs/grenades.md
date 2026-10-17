@@ -295,8 +295,13 @@ default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them)
   2.61 / 0.67; the 3 m sphere puts the point 0.81-1.01 m up). On flat ground that's 2.88 m
   across. The mine's point is its model's middle (the model is 0.14 m tall).
 * Characters whose type handles mines and that know of this one count only standing on it:
-  within 0.3 m across and 1.5 m up or down (0x147430). Which characters have the flag isn't
-  read yet (only the test hook's `wise` hostile has it).
+  within 0.3 m across and 1.5 m up or down (0x147430). A type handles mines when its
+  `<combat-skill>`'s hazard list (`<h_0c437951 action>`, the type's bytes +0x294 the filter reads
+  at +0x294 + 3) holds 3, the hazard kind a Sentry gives itself (0x147690): Tex's alone
+  (`SkillData::hazards`). It knows of every mine but his own squad's: his skill's +0x94 (Tex's
+  Berserker, 0x13d8f0) says no for a mine whose owner is in his squad, every other skill's
+  (0x280040) yes. So Tex steps round the level's mines (#228) and counts as anyone for the
+  squad's own; the test hook's `wise` hostile has the rule too.
 * It has 1 hitpoint: a shot (anyone's) whose line passes through its model's bounding sphere
   stops there and sets it off when it arrives. The shots are tested against the mines as they're
   made (play.rs's `update_player`, before friendly fire): the first thing on the line takes the
@@ -304,10 +309,20 @@ default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them)
   hit. Bodies on the ground don't stop shots in the demo (they're shoved and the shot goes on),
   so a mine behind one is still struck, and bodies beyond the mine aren't shoved. The loose
   pickups (play_pickups.rs, after `update_player`) see the shortened shots.
-* The demo has no enemies: the squad is one team, so the squad's mines never go off for the
-  squad (as recorded: Tex walking or running over his own, standing beside it, Flint stepping
-  onto it at 0.16 m). Only a test hook's hostile, the test map's enemy NPCs
-  ([testtools.md](testtools.md)), or a shot, sets one off. Nobody can pick one back up.
+* The squad is one team, so the squad's mines never go off for the squad (as recorded: Tex
+  walking or running over his own, standing beside it, Flint stepping onto it at 0.16 m). A
+  test hook's hostile, the test map's enemy NPCs ([testtools.md](testtools.md)), the levels'
+  terrorists, or a shot, sets one off. Nobody can pick one back up.
+* **The level's own mines** (#228): an item object of a Sentry type placed with h_1cb7d5f2
+  (`Placement::placed`; the tutorial's three `<h_1d1d4f05>` item spawns in the mine field, at
+  (92.6, -71.8), (95.3, -82.3), (98.2, -75.8)) is set down and armed as the level loads (its
+  attribute handler 0x14a0a0: +0x1bc bit 1, the item set's +0x10), on its `item-alignment`'s
+  team (+0x1c0: 1, the enemies') and owned by nobody; the level's own model of it is hidden and
+  the mine drawn in its place. It goes off for the squad's Confed marines within its 3 m, but
+  Tex only sets it off standing on it (above): take09 has him 0.84 m from the first for 8 s
+  (71-79 s) before the disarm. Going off it sends DESTROYED to the triggers that listen to it
+  (0x149520 at 0x1496fc): the tutorial's routers 446 and 470, and calculator471, which counts the
+  three to end the mine lesson.
 
 Its blast is the shared one (h_01f142eb: 62.5-88.5, type 10, radius 4; effect type h_0b69c2f2:
 exp-mine + light_explosion, 145f09e5; decal h_f5ccedb0). On sdm_e34 the squad's Sentry is still
@@ -372,6 +387,15 @@ BF_TEST_STRAFE=0,-1 BF_TEST_THROW=1.05,0.1` unless said):
 * Shot (`BF_TEST_SHOOT_MINE=0.7`): struck 2.3 m out, goes off the same frame; Tex 3.1 m from it
   takes 15.7 HP. From 10 m (`BF_TEST_SHOOT_MINE=2.2`, a laser bolt): goes off 0.07 s after the
   shot; Tex takes nothing (outside the radius, where the recording's Tex took ~15, above).
+* The level's mines (#228, `BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SENTRY_LOG=1
+  "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`): the three armed at the start, team 1. Tex walked up to the
+  first (`BF_TEST_GOTO=92.6,-62,92.6,-71.0`, after the mine lesson's cutscene) stops 1.08 m
+  across from it and it stays through every check; stood on it
+  (`BF_TEST_GOTO=92.75,-71.6,92.75,-71.6`) it goes off at the first check, 0.22 m across:
+  DESTROYED -> routers 446 and 470 -> calculator471 at 1 of 3; Tex takes 39.7 (115 -> 75.3).
+* Regression after #228 (the hazard rule): the trigger-distance and `wise` runs above give what
+  main's build gives (stays at 3.05 m, off at 2.99 m, Flint taking 31.0 in both: the roll's,
+  where this page's first run had 22; `wise` off at 0.20 m across).
 
 ## Light grenade
 

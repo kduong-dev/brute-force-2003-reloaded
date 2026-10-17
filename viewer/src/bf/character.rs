@@ -85,6 +85,12 @@ const STATIC_FACE: f32 = 0.1;
 /// game-options `<difficulty-settings>` (name recovered by hashing): the campaign's difficulty
 /// values (`Game::difficulty_settings`)
 const H_DIFFICULTY_SETTINGS: u32 = 0xFFC1_BECB;
+/// game-options `<radar>`'s h_14be5318 (settings +0x155, 0x19d6a0; name not recovered): see
+/// `RadarOptions::by_activity`.
+const H_RADAR_BY_ACTIVITY: u32 = 0x14BE_5318;
+/// game-options `<radar>`'s h_ee13e943 (settings +0x15c, 0x19d6a0; name not recovered): its sound,
+/// see `RadarOptions::sound`.
+const H_RADAR_SOUND: u32 = 0xEE13_E943;
 
 /// combat-target's damage-type factor list (h_142be76f; the shield holds an empty one of its own)
 /// and an entry's factor (`<h_1d403525 Type=4 h_04653d86=0.05>`: Flint's for the Gas, common
@@ -253,6 +259,8 @@ pub struct Game {
     pub difficulty_settings: Option<[i64; 3]>,
     /// game-options `<reticule>`: the crosshair's lock reach and box (see `ReticuleOptions`)
     pub reticule: ReticuleOptions,
+    /// game-options `<radar>`: the radar's range and the radar-triggers' cue (see `RadarOptions`)
+    pub radar: RadarOptions,
     /// game-options `<combat-skills>`: the skills' own tuning (see `CombatSkills`)
     pub combat_skills: CombatSkills,
     /// game-options' HUD `<main h_e72ec57a h_1d9f07c5>`: the screen's safe margins across and
@@ -382,6 +390,33 @@ pub struct ReticuleOptions {
     /// screen's height; 0xc50b0 puts it in the target selection's +0x30, and x 0.75 (0x3a510c, the
     /// 4:3 aspect) in its +0x2c for the width
     pub box_share: f32,
+}
+
+/// game-options `<radar enable h_14be5318 max-range h_ee13e943>` (line 123 of the decoded
+/// decompiled/xml/common/game-options-en.xml; its parser 0x19d6a0 fills the settings the app's
+/// vtable +0x48 returns: `enable` +0x154, h_14be5318 +0x155, `max-range` +0x158, h_ee13e943
+/// +0x15c). The radar (play_hud.rs) and the radar-triggers (play_radar.rs) read it; the defaults
+/// are the shipped file's.
+#[derive(Clone, Copy, Debug)]
+pub struct RadarOptions {
+    /// `enable` (+0x154): true
+    pub enable: bool,
+    /// h_14be5318 (+0x155; FUN_000adfb0 copies it to the radar's +0x2c bit 2): false, under which
+    /// a hostile shows on the radar once the squad knows of it, not while it fires or moves
+    pub by_activity: bool,
+    /// `max-range` (+0x158): 120 m, the distance across the radar's 39-unit radius (FUN_000adfb0
+    /// copies it to the radar's +0x90; FUN_000b0550 scales by 39 / it, FUN_000b0940 tests it)
+    pub max_range: f32,
+    /// h_ee13e943 (+0x15c): h_f674fc4f, the sound a radar-trigger with h_12b33046 queues on the
+    /// world's dialog queue when it sets a 2 or a 3 (0x207347-0x20736a)
+    pub sound: u32,
+}
+
+impl Default for RadarOptions {
+    /// The shipped game-options-en.xml's `<radar>`: on, not by activity, 120 m, h_f674fc4f.
+    fn default() -> Self {
+        RadarOptions { enable: true, by_activity: false, max_range: 120.0, sound: 0xF674_FC4F }
+    }
 }
 
 /// game-options `<combat-skills>` (h_f7bc2603, name recovered by hashing; line 158 of the decoded
@@ -768,7 +803,16 @@ pub struct SkillData {
     /// h_e78efbb2: the stamina update runs for the type at all (type+0x1a8 bit 0, tested at
     /// 0x11a8b8); true for the four
     pub stamina_update: bool,
+    /// the hazard kinds the type handles: `<combat-skill><h_0c437951 action="..">` (the element's
+    /// handler 0x18fd60 hands its `action` values to 0x18fc70, which lists them at the parse
+    /// record's +0x320 / +0x324; the type loader sets byte type+0x294 + kind for each kind under 5,
+    /// 0x12f049-0x12f078). Tex's "3", Hawk's "1 4", empty on every other type. Kind 3 is the mines:
+    /// the Sentry's target filter (0x147430) reads type+0x297 (play_sentry.rs)
+    pub hazards: Vec<i64>,
 }
+
+/// `<combat-skill>`'s hazard list element h_0c437951 (name not recovered; its handler 0x18fd60).
+const H_HAZARDS: u32 = 0x0C43_7951;
 
 /// The skill data on an objecttypes character entry `e` (see `SkillData`), if it has a
 /// `<combat-skill>` (every character type has one: `CharacterType::skill`).
@@ -777,7 +821,9 @@ pub(crate) fn skill_data(e: &Element) -> Option<SkillData> {
     let num = |x: &Element, k: u32| x.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
     let sound = |k: u32| c.child(h("sounds")).and_then(|s| s.attr(k)).and_then(|v| v.as_hash())
         .filter(|&x| x != 0 && x != h("")).unwrap_or(0);
+    let hazards = c.children_named(H_HAZARDS).flat_map(|x| x.attr(h("action")).map(|v| v.ints()).unwrap_or_default()).collect();
     Some(SkillData {
+        hazards,
         skill_set: int_of(c, h("skill-set")),
         max_stamina: num(e, h("max-stamina")),
         cost: num(c, h("stamina-cost")),
@@ -871,7 +917,16 @@ pub struct ItemType {
     /// the string shown when it's picked up (h_1dd3a49d on its <base>: the memory chip's
     /// h_091ce603 "Memory Chip Recovered!"), 0 if none
     pub message: u32,
+    /// group-type: the IG_ enum (its name table 0x3be594, IG_NO_GROUP 0 on): 9 IG_DNA_CANNISTER
+    /// (the 19 DNA canisters, e.g. the tutorial's Confed Marine DNA h_f4933c12), 8 IG_POWERUP, 7
+    /// IG_MISC, 6 IG_ENHANCEMENT, 5 IG_HEAL, the lower ones protection, explosives, grenades and
+    /// ammo
+    pub group: i64,
 }
+
+/// An item's group-type IG_DNA_CANNISTER (the IG_ name table 0x3be594, its last record: 9): a DNA
+/// canister, whose pickup unlocks a character (`ItemType::group`; play_pickups.rs).
+pub const IG_DNA_CANNISTER: i64 = 9;
 
 /// A liquid type: a pool's surface is its object's collision plane, which characters sink
 /// through. The game reads, besides these, five factors (h_049350bb .. h_e12e7b9d: 0.1 1 0.4
@@ -1020,6 +1075,7 @@ impl Game {
             character_damage_multiplier: HashMap::new(),
             difficulty_settings: None,
             reticule: ReticuleOptions::default(),
+            radar: RadarOptions::default(),
             combat_skills: CombatSkills::default(),
             hud_safe: [48.0, 36.0],
             menus: Default::default(),
@@ -1203,6 +1259,18 @@ impl Game {
                     box_share: num(0xF079_AEBD).unwrap_or(d.box_share),
                 };
             }
+            // the radar: <radar enable h_14be5318 max-range h_ee13e943> (RadarOptions)
+            if let Some(r) = root.walk().into_iter().find(|e| e.name == h("radar")) {
+                let num = |k: u32| r.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                let flag = |k: u32, or: bool| r.attr(k).and_then(|v| v.as_i64()).map_or(or, |v| v != 0);
+                let d = RadarOptions::default();
+                self.radar = RadarOptions {
+                    enable: flag(h("enable"), d.enable),
+                    by_activity: flag(H_RADAR_BY_ACTIVITY, d.by_activity),
+                    max_range: num(h("max-range")).filter(|&m| m > 0.0).unwrap_or(d.max_range),
+                    sound: r.attr(H_RADAR_SOUND).and_then(|v| v.as_hash()).filter(|&s| s != 0 && s != h("")).unwrap_or(d.sound),
+                };
+            }
             // the skills' tuning: <h_f7bc2603><h_04aa86aa h_1469a0df="0.5"/>.. (CombatSkills)
             let skills = root.walk().into_iter().find(|e| e.name == H_COMBAT_SKILLS);
             if let Some(tex) = skills.and_then(|c| c.child(H_BERSERKER_BLOCK)) {
@@ -1331,6 +1399,7 @@ impl Game {
                         label: self.strings.get(&hash_of(t.attr(h("stringtable-name")))).cloned().unwrap_or_default(),
                         icon: id(0xE5EC_3F1F),
                         message: t.child(h("base")).map(|b| hash_of(b.attr(0x1DD3_A49D))).filter(|&x| x != 0 && x != h("")).unwrap_or(0),
+                        group: int("group-type"),
                     });
                 }
             }

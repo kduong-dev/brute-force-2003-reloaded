@@ -102,7 +102,7 @@ appears beside the portrait while that member talks. The one you control is the 
 three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
 catch up, walking the last bit), look where you look, and
 reload on their own. They never fire just because you do - only at enemies they can see (none in the main game yet; the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
-yellow blips on the radar (turning with the camera, 40 m range). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
+yellow blips on the radar (turning with the camera, at the radar's scale: see **Radar** below). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
 
 HUD health / stamina frame: the original's own art, the tutorial's picture of it (`h_17f34cbe`,
 256 × 64, only in tutorial.tgz: loaded for it directly). It's cut in pieces: the + and bolt icons
@@ -194,6 +194,55 @@ f32 time + name hash per event): at `drop_weapon` the held gun goes to its stow 
 grab event the other one comes to the hand, each with the weapon's handling (`pickup-sound`)
 sound; no firing or aiming until the clip ends. Shots: muzzle flash and light,
 recoil, tracers that fly to what the crosshair is on (ground or pillars) and a spark there.
+
+### Radar (#228)
+
+`play_hud.rs` (`update_squad_hud`, `update_radar_marks`), from the radar widget's code
+(FUN_000ae580 and the functions below; [code-map.md](code-map.md), "HUD"):
+
+* **Its scale** (FUN_000b0550): a world offset from the viewer, turned by the view, x 39 units
+  (the max-range circle, the radar's +0x88 on a full screen) over the game options' `<radar>`
+  max-range (120 m): 0.325 units a metre, each point cut to whole units. take07 agrees: the
+  waypoint 17.4 m off drawn 5.4 units from the middle (5.65 by the code), the next, 55.5 m off,
+  17.0 (18.0). The demo's 40 m across 44 units before #228 had no source.
+* **The middle**: the viewer's dot, 180 180 180 (FUN_000ae7c0's colour for the HUD's character:
+  pale grey in take03 and take07; it was green).
+* **The squad**: its living members in the world as yellow blips at that scale, one beyond the
+  range on the circle (FUN_000ae7c0 through FUN_000b0ad0). The characters the triggers spawn
+  aren't squad blips (the tutorial's terrorists were, before #228); enemies on the radar are
+  #160's.
+* **The objectives**: the objects and characters with radar-contact 2, 3 or 7 (OBJECTIVE,
+  OBJECTIVE_NO_CURSOR, IMPORTANT_PICKUP: FUN_000ae580 hands those to FUN_000aece0), which the
+  level gives them or a radar-trigger sets ([triggers.md](triggers.md), "Radar-triggers"). Each
+  game frame (30 a second) each one within the max-range gets a record at its place (FUN_000aece0:
+  1.0 s of life when it wasn't seen in the last 3 s, FUN_000ae360, else 0.3 s); the records lose
+  the frame's time and grow by 8 units a second from 1 unit each way (FUN_000ae3f0), and each is
+  drawn as the dot texture h_ecea7a68 (an 8 x 8 soft disc) that many units each way round its
+  point, yellow (255 255 0; the important pickup's 30 90 30), its alpha x min(life / 0.25, 1)
+  (0xb01b0). So a dot is solid while its object is on the radar and fades over 0.2-0.3 s once it
+  isn't, and a new one comes in with a 1 s record. While its object's blink time (+0x10c, the
+  radar-trigger's, counted down by the object) is above 0, its records are drawn dim (alpha
+  255 >> 6) on the half of each 2 s where frac(t / 2) < 0.5 (0xaedd5): a dot set with time 2
+  shows for its first second (and the 0.3 s its last full records take to fade), is gone until
+  2 s, then stays. One beyond the range is a rim
+  marker: two lines from a point 5 units inside the circle to the circle on each side of its way
+  (FUN_000b0ad0, 0xafaa0), drawn a unit wide.
+* The dots and markers are drawn on the CPU into an image over the radar (256 x 256, two pixels a
+  unit), redrawn each frame while there's any.
+
+Verified (the tutorial, `BF_TEST_GOTO=10.64,44.15,22.28,34.31` into the first patrol's circle,
+[triggers.md](triggers.md) "Test hooks"; crops of the radar against take07 and take03): the first
+waypoint's dot is gone from ~1.3 s to 2 s (frame 24) and stays; at the circle (2.87 s) the new
+one comes ahead, holds ~1.1 s (frames 43-60), is gone ~0.75 s (frames 62-72) and is back for
+good at 4.93 s, and the old one fades in 0.2 s, as take07's (in 1.1 s, gone 0.8 s); their
+distances from the middle at take07's scale. sdm_e34 (regression, `BF_TEST_GOTO=0,0,0,0`
+against main's build): the squad's two blips behind Tex at half their old distance from the
+middle, the middle grey; the map has no objectives.
+
+Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
+radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower); the
+alignment and boss contacts (1, 6: #160); the squad's portraits for members not in the world
+(the tutorial's Tex alone still shows four).
 
 ### Ammo, reload and the crosshair (#114)
 
@@ -1081,7 +1130,8 @@ on a character goes:
   enemy team, x (1 + 0.1n) on the squad's, n the difficulty; then its skill's factor (Vengar's
   0.85 while on, `Hit::victim_skill`, skills.md); then FUN_002232d0's factor for the damage type. Every hit on a character
   reaches it: the guns' hits and blasts, the scenery's damage areas (FUN_0021ade0), falls
-  (FUN_0012b740, DTYPE_NORMAL), FUN_00223160 (Brutus's charge). Only the trainer's `!hit` skips
+  (FUN_0012b740, DTYPE_NORMAL), FUN_00223160 (Brutus's charge), the damage plate's frames
+  (FUN_001f8510, #228: [triggers.md](triggers.md), "The damage plate"). Only the trainer's `!hit` skips
   it (it calls FUN_002232d0 itself), so older xemu logs of `!hit` carry no step.
 
 The victim's values are its character type's (`Player::kind`, #128,

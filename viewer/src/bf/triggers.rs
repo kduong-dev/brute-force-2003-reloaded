@@ -456,6 +456,25 @@ pub struct Filter {
     pub object_types: Vec<u32>,
 }
 
+/// The damage plate's own fields (class h_130818c0, vtable 0x396530: a proximity detector that
+/// hurts what's in it; its parser 0x1fa740 after the proximity detector's 0x1fa520, its
+/// constructor 0x1fa680 the defaults): while it's enabled, its update (0x1fa7e0) hands every
+/// occupant to FUN_001f8510, which deals `amount` x the falloff (FUN_001f8420) x dt of
+/// `damage_type` a second, from the trigger's place. The tutorial's trigger_damage_plate524:
+/// BALLISTIC 20, flat (take15: Tex 115 -> 102.7 in its second).
+#[derive(Clone, Copy, Debug)]
+pub struct PlateDamage {
+    /// h_18499bb9 (+0x120; 0 by the constructor): the damage a second; a negative one heals
+    /// instead (+0x54 raised, at most to +0x50, FUN_001f8510)
+    pub amount: f32,
+    /// h_e022d922 (+0x124; 0): the falloff over the distance d from the trigger to the occupant,
+    /// against its radius r (vtable +0x64, 0x1f8890: +0x118), FUN_001f8420's jump table: 0 flat,
+    /// 1 (1 - d / r), 2 (1 - d / r)^2, 3 flat to r / 2 then 1 - 2 (d / r - 0.5); 0 beyond r
+    pub falloff: i64,
+    /// `damage-type` (+0x128; 1, DTYPE_BALLISTIC, by the constructor)
+    pub damage_type: i64,
+}
+
 /// What a detector watches: a plate's box or a proximity detector's sphere.
 #[derive(Clone, Copy, Debug)]
 pub enum Volume {
@@ -465,6 +484,21 @@ pub enum Volume {
     /// proximity-detector: a sphere of `radius` (the phantom FUN_001fa330 makes)
     Sphere(f32),
 }
+
+/// The damage plate's element, h_130818c0 (vtable 0x396530, #228; see `PlateDamage`).
+pub const H_DAMAGE_PLATE: u32 = 0x1308_18C0;
+/// The damage plate's radius without a `radius` (m): its constructor's +0x118, 5.0 (0x1fa68d).
+/// The tutorial's gives none: its sphere is 5 m round (27.9, 17.4, 67.6), its `size` 4 2 4 unread.
+const DAMAGE_PLATE_RADIUS: f32 = 5.0;
+/// The damage plate's h_18499bb9 (+0x120, 0x1fa7a8): `PlateDamage::amount`.
+const H_PLATE_AMOUNT: u32 = 0x1849_9BB9;
+/// The damage plate's h_e022d922 (+0x124, 0x1fa783): `PlateDamage::falloff`.
+const H_PLATE_FALLOFF: u32 = 0xE022_D922;
+/// A radar-trigger's h_e2145a6c (+0x44, its parser 0x2071dd): the time (s) its objects' contact
+/// blinks for (FUN_0015b310 keeps the larger at the object's +0x10c).
+const H_RADAR_TIME: u32 = 0xE214_5A6C;
+/// A radar-trigger's h_12b33046 (+0x48, 0x2071fc): queue the radar's sound with a 2 or a 3.
+const H_RADAR_CUE: u32 = 0x12B3_3046;
 
 /// A sound-trigger's h_15bc1769 (+0x8d bit 0; parser 0x205e7c): its sound plays only while a
 /// player's character is within its max-distance (FUN_00206b50).
@@ -578,8 +612,14 @@ pub enum Class {
     Calculator { counter: i64, target: i64, test: i64 },
     /// spawn-trigger (0x209250): see the H_ constants
     Spawn { template: u32, copy_name: u32, ai_point: u32, fade: f32, delay: f32, rearm: bool, member_check: bool },
-    /// plate-detector, proximity-detector (FUN_001f8c90 and their own parsers)
-    Detector { volume: Volume, filter: Filter, keep_when_disabled: bool, phantom: u32 },
+    /// plate-detector, proximity-detector (FUN_001f8c90 and their own parsers); and the damage
+    /// plate h_130818c0 (a proximity detector, 0x1fa740: its sphere, and `damage`)
+    Detector { volume: Volume, filter: Filter, keep_when_disabled: bool, phantom: u32, damage: Option<PlateDamage> },
+    /// radar-trigger (vtable 0x395168, parser 0x2071a0, handler 0x207230, #228): OPERATE gives its
+    /// objects `radar-contact` (+0x40) with its time h_e2145a6c (+0x44, s) through FUN_0015b310;
+    /// with h_12b33046 (+0x48, true by its constructor 0x2073b0) and a 2 or a 3, the game options'
+    /// radar sound is queued on the world's dialog queue
+    Radar { contact: u8, time: f32, cue: bool },
     /// anim-trigger (vtable 0x395ef0: the base's attributes only; its entries are `<anim>`)
     Anim,
     /// destroyer-trigger (vtable 0x396170, parser 0x200a10: duration, start, end)
@@ -747,14 +787,27 @@ fn class(e: &Element) -> Class {
         Class::Spawn { template: name_of(e, H_TEMPLATE), copy_name: name_of(e, H_COPY_NAME), ai_point: name_of(e, H_AI_POINT),
                        fade: float(e, H_SPAWN_FADE, 2.0), delay: float(e, H_SPAWN_DELAY, 0.0), rearm: flag(e, H_REARM),
                        member_check: e.attr(H_MEMBER_CHECK).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
-    } else if tag == h("plate-detector") || tag == h("proximity-detector") {
+    } else if tag == h("plate-detector") || tag == h("proximity-detector") || tag == H_DAMAGE_PLATE {
         let volume = if tag == h("plate-detector") {
             let s = floats(e.child(h("size")));
             Volume::Plate(if s.len() >= 3 { Vec3::new(s[0], s[1], s[2]) } else { Vec3::ONE })
+        } else if tag == H_DAMAGE_PLATE {
+            // (a proximity detector: its parser reads `radius` alone, the data's `size` unread;
+            // the constructor's +0x118 is 5 m)
+            Volume::Sphere(float(e, h("radius"), DAMAGE_PLATE_RADIUS))
         } else {
             Volume::Sphere(float(e, h("radius"), 1.0))
         };
-        Class::Detector { volume, filter: filter(e), keep_when_disabled: flag(e, H_KEEP_WHEN_DISABLED), phantom: name_of(e, H_PHANTOM) }
+        let damage = (tag == H_DAMAGE_PLATE).then(|| PlateDamage {
+            amount: float(e, H_PLATE_AMOUNT, 0.0),
+            falloff: int(e, H_PLATE_FALLOFF, 0),
+            damage_type: int(e, h("damage-type"), 1),
+        });
+        Class::Detector { volume, filter: filter(e), keep_when_disabled: flag(e, H_KEEP_WHEN_DISABLED), phantom: name_of(e, H_PHANTOM), damage }
+    } else if tag == h("radar-trigger") {
+        // (the constructor 0x2073b0: +0x40 0, +0x44 0, +0x48 1)
+        Class::Radar { contact: int(e, h("radar-contact"), 0).clamp(0, 255) as u8, time: float(e, H_RADAR_TIME, 0.0),
+                       cue: e.attr(H_RADAR_CUE).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
     } else if tag == h("anim-trigger") {
         Class::Anim
     } else if tag == h("destroyer-trigger") {
@@ -824,14 +877,11 @@ pub fn class_name(tag: u32) -> String {
 /// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
 /// step 2, #221; the script, letterbox and warp triggers since step 3, #222; the sound- and
 /// dialog-triggers since step 4, #223; the message, input, menu and event triggers since step 5,
-/// #224), and for those that do nothing a player sees (waypoint, evaluate: their base actions
-/// only).
+/// #224; the radar-trigger and the damage plate since step 9, #228), and for those that do
+/// nothing a player sees (waypoint, evaluate: their base actions only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
-    let is = |n: &str| h(n) == tag;
     Some(if tag == 0x1F07_BE84 {
         "step 7, #226"
-    } else if is("radar-trigger") || tag == 0x1308_18C0 {
-        "step 9, #228"
     } else if tag == 0x14CC_CFAA {
         "a later step (object properties)"
     } else {
