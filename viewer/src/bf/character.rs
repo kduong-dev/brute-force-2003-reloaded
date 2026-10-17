@@ -259,6 +259,9 @@ pub struct Game {
     /// down, 48 and 36 HUD units (7.5% of 640 x 480): the HUD keeps its widgets 3 units inside
     /// them (FUN_000b2770 and its three neighbours; Flint's targeting marker, play_targeting.rs)
     pub hud_safe: [f32; 2],
+    /// game-options' `<game-menus>`: its menus, menu styles and picture sets (#224: the tutorial's
+    /// panels, which its menu-triggers open; `menus::GameMenus`)
+    pub menus: super::menus::GameMenus,
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
     /// `ChatterBlock`; play_skills.rs's skill lines go through it)
     pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
@@ -1019,6 +1022,7 @@ impl Game {
             reticule: ReticuleOptions::default(),
             combat_skills: CombatSkills::default(),
             hud_safe: [48.0, 36.0],
+            menus: Default::default(),
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
             character_types: HashMap::new(),
@@ -1248,6 +1252,11 @@ impl Game {
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {
                 let num = |k: u32| m.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
                 self.hud_safe = [num(H_HUD_SAFE_X).unwrap_or(self.hud_safe[0]), num(H_HUD_SAFE_Y).unwrap_or(self.hud_safe[1])];
+            }
+            // the menus, their styles and picture sets: <game-menus> (Game::menus, #224); the
+            // first game-options file's
+            if self.menus.menus.is_empty() {
+                self.menus = super::menus::GameMenus::from_root(&root);
             }
         }
         if let Some(root) = self.parse(ar, "string-table-en.xmb")? {

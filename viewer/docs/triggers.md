@@ -7,9 +7,10 @@ is the runtime that runs them, the first step of the tutorial (#28, plan step 1)
 steps plug their classes into it (gamevar and score since step 2, #221, with the game flags and
 the cash they work on: [campaign.md](campaign.md); script, letterbox and warp since step 3,
 #222, with the cutscenes they drive: [cutscenes.md](cutscenes.md); sound and dialog since step
-4, #223, with the voices and the level's music they play; message, input, menu and event: step
-5, #224). Everything here is read from default.xbe's trigger code (the addresses are in the
-code's comments and in [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
+4, #223, with the voices and the level's music they play; message, input, menu and event since
+step 5, #224, with the hint lines, button gates and panels they show: [hints.md](hints.md)).
+Everything here is read from default.xbe's trigger code (the addresses are in the code's
+comments and in [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
 
 `bf/triggers.rs` reads them: every element of the level file that carries the trigger base's
 `h_137926ff` (FUN_001fedb0's attributes), with its entries, targets (`h_e91cf6a8`), objects
@@ -56,6 +57,10 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | anim-trigger (7) | OPERATE plays its entry's clip (`animation-archetype`) on its first object, forward or backward (`wwit-debugging`, AM_: 3-5 backward) at its `time-scale`; with AC_PLAY or AC_RESUME it sends ANIM_START when it starts forward after playing backward (its first forward play too), ANIM_BACK_START when it starts backward after playing forward (or ANIM_START for the other modes). The demo moves doors and gates with it ([maps.md](maps.md), "Doors and gates"); other animated objects (the tutorial's two looping props) are logged | 0x204d00, FUN_00204bb0 |
 | sound (73) | PLAY_SOUND plays its sound (alike everywhere, or at its place), PLAY_DIALOG queues it on the world's dialog queue, STOP / PAUSE / RESUME; FINISHED when its length has run (#223: see "Sound- and dialog-triggers") | 0x206450, 0x206690 |
 | dialog (4) | Its character says its line; FINISHED once it's said (#223) | 0x206d20, 0x206ee0 |
+| message h_e9b3ae8e (37) | OPERATE: OPERATED, then the HUD's two hint lines set from its own (shown ones blink in, the others hidden) (#224: see "Hints, button gates and panels") | 0x2078e0 |
+| input h_e2b9c3a2 (37) | Enabled, TRUE to its targets every frame its virtual button is held on any pad (#224) | 0x2008a0 |
+| menu (10) | OPERATE opens its game-options menu over the game (a tutorial panel) and sends OPERATED; the panel's A and Y send MENU_ACCEPT / MENU_Y_BUTTON, then FINISHED once it's closed (#224) | 0x2082d0, 0x208430 |
+| event (2) | An AI event about an object it listens to whose number is its `event-id`: EVENT_MATCH, then it disables itself (#224) | 0x202dd0 |
 | destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31), evaluate (6) | Their base actions only: a waypoint trigger marks AI route points; the evaluate-triggers' random tests pick ambient lines (both no-ops here) | |
 | gamevar (15) | See "Gamevar-triggers" | 0x1ffc40, FUN_001ffb80 |
@@ -64,10 +69,10 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | warp (18) | OPERATE moves its objects (a spawn-trigger's copy) to its `world-point`: on the ground under it, facing down a direction-point's -z or as it was for a world-point; a dead character stays, and one not spawned yet has no copy to move. Its fade-in h_0ede4719 is 2 s without one (0x200734; not drawn) | 0x200650, FUN_00200480, 0x200400 |
 | score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
 
-Every other class (menu, message h_e9b3ae8e, input h_e2b9c3a2, event, radar, level-over
-h_1f07be84, property h_14cccfaa, the damage plate h_130818c0) runs its base actions; each of its
-own actions is counted as used, as its handler counts it, and logged with the step that runs it
-("h_11313ffd (menu) OPERATE on USER_SIGNAL2: not run yet (step 5, #224)").
+Every other class (radar, level-over h_1f07be84, property h_14cccfaa, the damage plate
+h_130818c0) runs its base actions; each of its own actions is counted as used, as its handler
+counts it, and logged with the step that runs it ("h_11a8c558 (property) OPERATE on USE_OBJECT
+[tex_1]: not run yet (a later step (object properties))").
 
 ## Gamevar-triggers
 
@@ -312,7 +317,7 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   * the opening: Bratton's four lines on the script's USER1s (its 103s, #222):
     baseisguarded (1.97 s) at 3.02 s, envhazards (4.59 s) at 6.18, goingtoguide (6.11 s) at 11.22,
     refresher (6.75 s) at 19.55, whose FINISHED starts timer429 (0.1 s: the co-op hint) and
-    timer462 (5 s: BASIC CONTROLS; both step 5, #224);
+    timer462 (5 s: BASIC CONTROLS; both #224's: [hints.md](hints.md));
   * the hint chain's lines (dxud_ai_00047 "[BACK] to check mission objectives." ...) on its
     timers, stopped and disabled by router400's plates; Bratton's PLAY_DIALOG lines (the radar
     explanation, whose FINISHED opens the WEAPONS panel; first patrol, take cover ...) through the
@@ -351,6 +356,21 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
   (0x163060), the user as the subject.
 * **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs). The tutorial's listened ones (the
   DNA, the Sentry mines, the L-Shot-50) aren't takeable in the demo yet (step 9, #228).
+* **AI events** (RESERVE_4EVT, 17): a character's EVT_ events (its health under 75, 50 and 25
+  percent of its most; EVT_SOUND_ENEMY_NOISE as a stub) to the event-triggers listening to it
+  only (FUN_001fe440), with the character as the subject (#224, play_hints.rs `ai_events`).
+
+## Hints, button gates and panels
+
+The message, input, menu and event classes (#224) are the runtime's, dispatched from
+`Triggers::deliver` and `Triggers::update` like the rest; their code is in two child modules,
+`play_hints.rs` (the message trigger's hint lines, the input trigger's virtual buttons, the
+event-trigger's AI events) and `play_panels.rs` (the menu-trigger's panels), with their own page:
+[hints.md](hints.md). Their state lives in `Triggers::hints` (one per level). A menu-trigger
+whose menu game-options doesn't define (the tutorial's trigger_menu509) opens nothing and never
+sends FINISHED; a panel up stops the game's clock as the objectives menu does, so the timers
+wait under it. `BF_HINT_LOG=1` logs the lines, the gates' presses, the AI events and the
+panels; `BF_TEST_VB` presses a virtual button and `BF_TEST_PANEL` closes the panels.
 
 ## Test hooks
 
@@ -489,7 +509,8 @@ the log read and the frames looked at:
 
 ## Not done here, or not known
 
-* The classes left to steps 5-9 (#224-#228, above).
+* The classes left to later steps (level-over #226, radar and the damage plate #228, the object
+  properties: above).
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
 * Placed characters that no spawn-trigger names still add their bodies' collision to the arena

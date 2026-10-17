@@ -57,11 +57,13 @@ pub mod sig {
     pub const USE_OBJECT: i64 = 14;
     /// PICKUP_OBJECT: a pickup taken, to its listeners
     pub const PICKUP_OBJECT: i64 = 15;
-    /// EVENT_MATCH: an event-trigger's AI event seen (step 5)
+    /// EVENT_MATCH: an event-trigger's AI event seen (0x202dd0: the AI event passed on as this,
+    /// #224)
     pub const EVENT_MATCH: i64 = 16;
     /// SPAWNED: a spawn copy, to its listeners as it appears (FUN_002096e0)
     pub const SPAWNED: i64 = 24;
-    /// FINISHED: a sound-trigger's sound ended, a menu closed (steps 4, 5)
+    /// FINISHED: a sound-trigger's sound ended (#223), a menu-trigger's menu closed (its update
+    /// 0x208430, #224)
     pub const FINISHED: i64 = 25;
     /// ANIM_START: an anim-trigger starts its clip forward (FUN_00204bb0), to its targets (the
     /// door sounds)
@@ -80,10 +82,23 @@ pub mod sig {
     pub const VALUE_CHANGED: i64 = 41;
     /// EMPTIED_DETECTOR: a detector's last occupant gone
     pub const EMPTIED_DETECTOR: i64 = 42;
-    /// OPERATED: a spawn-trigger's copy made (FUN_002099e0), a menu opened
+    /// OPERATED: a spawn-trigger's copy made (FUN_002099e0), a menu-trigger's OPERATE (0x2082d0)
+    /// and a message trigger's (0x2078e0)
     pub const OPERATED: i64 = 46;
     /// ENTER_DETECTOR_FIRST: the first occupant of an empty detector, with its ENTER_DETECTOR
     pub const ENTER_FIRST: i64 = 50;
+    /// RESERVE_4EVT: an AI event (EVT_, the table 0x3bdb9c) about an object, to the event-triggers
+    /// listening to it and to no other class (FUN_001fe440 picks the listeners of kind 0x1a: {iD 0,
+    /// the object as the subject, data -1}, the event's number at +0x14)
+    pub const AI_EVENT: i64 = 17;
+    /// MENU_ACCEPT: a menu-trigger's menu taken with A (its callback's +0, 0x208530), #224
+    pub const MENU_ACCEPT: i64 = 51;
+    /// MENU_BACK_UP: the same menu's B (the callback's +4, 0x208570)
+    pub const MENU_BACK_UP: i64 = 52;
+    /// MENU_X_BUTTON: its X (the callback's +8, 0x2085b0)
+    pub const MENU_X_BUTTON: i64 = 53;
+    /// MENU_Y_BUTTON: its Y (the callback's +0xc, 0x2085f0, which then closes the menu)
+    pub const MENU_Y_BUTTON: i64 = 54;
 
     /// The game's name of a signal (the TRIG_SIG_ table without its prefix: -1 INVALID, the
     /// data's "any"), for logs.
@@ -497,6 +512,38 @@ pub struct SoundTrigger {
     pub priority: i64,
 }
 
+/// The message trigger's element, h_e9b3ae8e (vtable 0x395bf0; #224).
+pub const H_MESSAGE_TRIGGER: u32 = 0xE9B3_AE8E;
+/// The input trigger's element, h_e2b9c3a2 (vtable 0x3954a8; #224).
+pub const H_INPUT_TRIGGER: u32 = 0xE2B9_C3A2;
+/// A message trigger's two lines' attributes (its parser FUN_002077b0): shown (+0x40 / +0x50),
+/// kind (+0x44 / +0x54), virtual button (+0x48 / +0x58) and string id (+0x4c / +0x5c).
+const H_LINE_SHOW: [u32; 2] = [0xF69B_D9C8, 0x172C_4E2C];
+const H_LINE_KIND: [u32; 2] = [0x18C6_906A, 0xF39E_6B58];
+const H_LINE_VB: [u32; 2] = [0xEF8D_F28A, 0x04D5_09B8];
+const H_LINE_TEXT: [u32; 2] = [0x170F_888B, 0x0A22_EAD1];
+/// An input trigger's h_fa80f605 (+0x44, FUN_00200760): the pad input the editor bound its
+/// virtual button to (15 the left trigger for VB 7, 11 X for VB 6, 19 START for VB 17 ...); its
+/// update doesn't read it.
+const H_INPUT_PAD: u32 = 0xFA80_F605;
+/// An event-trigger's `event-filter` when none is given (its constructor 0x202ee0): h_fe4bc988,
+/// under which only the event's number counts (FUN_0004c800).
+pub const EVENT_FILTER_NONE: u32 = 0xFE4B_C988;
+
+/// One of a message trigger's two HUD hint lines (#224): what its OPERATE does to the line.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HintLine {
+    /// shown (else hidden: the line cleared)
+    pub show: bool,
+    /// 0 the text alone, 1 "Press " and the button's glyph before it, 2 "Hold " and the glyph
+    /// (FUN_000ca000)
+    pub kind: i64,
+    /// the virtual button (VB_) whose pad button's glyph goes before the text; 0 none
+    pub vb: i64,
+    /// the text's string id
+    pub text: u32,
+}
+
 /// A trigger's class-specific attributes, for the classes the runtime runs (the rest keep their
 /// element, `Trigger::element`, for the steps that run them).
 #[derive(Clone, Debug)]
@@ -509,6 +556,20 @@ pub enum Class {
     /// library entry) and h_e725a1a5 (+0x48, true unless the data says not: its constructor
     /// 0x1fd430)
     Dialog { dialog: u32, hush: bool },
+    /// message trigger h_e9b3ae8e (vtable 0x395bf0, parser FUN_002077b0, handler 0x2078e0, #224):
+    /// the HUD's two hint lines as its OPERATE sets them
+    Message { lines: [HintLine; 2] },
+    /// input trigger h_e2b9c3a2 (vtable 0x3954a8, parser FUN_00200760, update 0x2008a0, #224):
+    /// `controller` (+0x40; 4 by its constructor 0x2009b0), h_fa80f605 (+0x44, H_INPUT_PAD) and
+    /// `virtual-button` (+0x48), the only one its update reads
+    Input { controller: i64, pad_input: i64, vb: i64 },
+    /// menu-trigger (vtable 0x396108, parser FUN_00208140, handler 0x2082d0, #224): `menu` (+0x40,
+    /// a game-options menu's name), `Title` (+0x44) and `message` (+0x48), string ids the two
+    /// special menus 0xf3b06f04 / 0x0ec41ef2 take (FUN_002081d0)
+    Menu { menu: u32, title: u32, message: u32 },
+    /// event-trigger (vtable 0x395440, parser FUN_00202d60, handler 0x202dd0, #224): `event-id`
+    /// (+0x40, an EVT_ number) and `event-filter` (+0x44, EVENT_FILTER_NONE when not given)
+    Event { event: i64, filter: u32 },
     /// timer-trigger (FUN_00200080): `enable-timer` (+0x48 running), `enable-looping` (+0x49),
     /// h_f92b0b15 (+0x4a), `initial-value` (+0x40), `current-value` (+0x44)
     Timer { running: bool, looping: bool, stops: bool, initial: f32, current: f32 },
@@ -663,6 +724,18 @@ fn class(e: &Element) -> Class {
         })
     } else if tag == h("dialog-trigger") {
         Class::Dialog { dialog: name_of(e, h("dialog")), hush: e.attr(H_SOUND_HUSH).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
+    } else if tag == H_MESSAGE_TRIGGER {
+        // (the constructor leaves every field 0)
+        let line = |n: usize| HintLine { show: flag(e, H_LINE_SHOW[n]), kind: int(e, H_LINE_KIND[n], 0), vb: int(e, H_LINE_VB[n], 0),
+                                         text: name_of(e, H_LINE_TEXT[n]) };
+        Class::Message { lines: [line(0), line(1)] }
+    } else if tag == H_INPUT_TRIGGER {
+        Class::Input { controller: int(e, h("controller"), 4), pad_input: int(e, H_INPUT_PAD, 0), vb: int(e, h("virtual-button"), 0) }
+    } else if tag == h("menu-trigger") {
+        Class::Menu { menu: name_of(e, h("menu")), title: name_of(e, h("Title")), message: name_of(e, h("message")) }
+    } else if tag == h("event-trigger") {
+        let filter = e.attr(h("event-filter")).and_then(|v| v.as_hash()).filter(|&f| f != h("")).unwrap_or(EVENT_FILTER_NONE);
+        Class::Event { event: int(e, h("event-id"), 0), filter }
     } else if tag == h("timer-trigger") {
         Class::Timer { running: flag(e, h("enable-timer")), looping: flag(e, h("enable-looping")), stops: flag(e, H_TIMER_STOPS),
                        initial: float(e, h("initial-value"), 0.0), current: float(e, h("current-value"), 0.0) }
@@ -749,13 +822,12 @@ pub fn class_name(tag: u32) -> String {
 /// Which step of #28 runs a class the runtime doesn't run yet (plan.md §2; the steps' tickets
 /// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
 /// step 2, #221; the script, letterbox and warp triggers since step 3, #222; the sound- and
-/// dialog-triggers since step 4, #223), and for those that do nothing a player sees (waypoint,
-/// evaluate: their base actions only).
+/// dialog-triggers since step 4, #223; the message, input, menu and event triggers since step 5,
+/// #224), and for those that do nothing a player sees (waypoint, evaluate: their base actions
+/// only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
     let is = |n: &str| h(n) == tag;
-    Some(if is("menu-trigger") || is("event-trigger") || tag == 0xE9B3_AE8E || tag == 0xE2B9_C3A2 {
-        "step 5, #224"
-    } else if tag == 0x1F07_BE84 {
+    Some(if tag == 0x1F07_BE84 {
         "step 7, #226"
     } else if is("radar-trigger") || tag == 0x1308_18C0 {
         "step 9, #228"

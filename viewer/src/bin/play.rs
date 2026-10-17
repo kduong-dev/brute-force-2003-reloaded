@@ -5772,20 +5772,36 @@ fn capture_step() -> f32 {
     1.0 / std::env::var("BF_CAPTURE_FPS").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(15.0).max(1.0)
 }
 
-/// The game's clock stopped under a menu: the objectives menu (play_objectives.rs). The game's
-/// app clock [[0x469b54]+0x38] stops while one is open (take04's watch log: clk 60275 from the
-/// press at 62.6 s to the B at 74.5 s). `frame_dt` is 0 meanwhile, so nothing in the world moves
-/// (the characters, the triggers' timers, the effects' clock), and `read_input` takes no input.
-static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The game's clock stopped under a menu: the objectives menu (play_objectives.rs) or a tutorial
+/// panel (play_panels.rs). The game's app clock [[0x469b54]+0x38] stops while one is open
+/// (take04's watch log: clk 60275 from the press at 62.6 s to the B at 74.5 s). `frame_dt` is 0
+/// meanwhile, so nothing in the world moves (the characters, the triggers' timers, the effects'
+/// clock), and `read_input` takes no input. Each menu holds a bit of its own (PAUSE_OBJECTIVES,
+/// PAUSE_PANELS): the clock runs again once none holds it, so one closing doesn't restart it
+/// under the other.
+static PAUSED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// The objectives menu's hold on the clock (see PAUSED).
+const PAUSE_OBJECTIVES: u32 = 1;
+/// The tutorial panels' hold on the clock (see PAUSED).
+const PAUSE_PANELS: u32 = 2;
 
-/// Stops or restarts the game's clock (see PAUSED).
-fn set_paused(on: bool) {
-    PAUSED.store(on, std::sync::atomic::Ordering::Relaxed);
+/// Stops (`on`) or lets go of the game's clock for one of its holders (a PAUSE_ bit; see PAUSED).
+fn set_paused(by: u32, on: bool) {
+    if on {
+        PAUSED.fetch_or(by, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        PAUSED.fetch_and(!by, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Whether the game's clock is stopped (see PAUSED).
 fn paused() -> bool {
-    PAUSED.load(std::sync::atomic::Ordering::Relaxed)
+    PAUSED.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
+/// Whether a holder other than `by` (a PAUSE_ bit) has the game's clock stopped.
+fn paused_by_other(by: u32) -> bool {
+    PAUSED.load(std::sync::atomic::Ordering::Relaxed) & !by != 0
 }
 
 fn frame_dt(time: &Time) -> f32 {

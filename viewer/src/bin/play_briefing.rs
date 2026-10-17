@@ -64,7 +64,8 @@ const FONT_ATLAS: u32 = 0xE4E4_D2F4;
 /// The record's line height, 23, plus one: a glyph's cell is this tall (FUN_000ccd20 draws
 /// (23 + 1) units) and a line of the text is this far below the one before (the line's height
 /// FUN_000ccae0 measures; FUN_0010abb0 places line n at n x it). take01: lines 24 units apart.
-const LINE: f32 = 24.0;
+/// (The HUD's hint lines draw this record too: play_hints.rs.)
+pub(crate) const LINE: f32 = 24.0;
 /// The record's characters: 32 to 255 (its +0x14 and +0x16).
 const FIRST_CHAR: u32 = 32;
 /// (the last: see FIRST_CHAR)
@@ -175,9 +176,10 @@ pub struct Campaign {
     texts: HashMap<u32, String>,
 }
 
-/// The body font's atlas (FONT_ATLAS).
+/// The body font's atlas (FONT_ATLAS), installed at boot; the HUD's hint lines draw from it too
+/// (play_hints.rs).
 #[derive(Resource)]
-struct FontAtlas(Handle<Image>);
+pub(crate) struct FontAtlas(pub(crate) Handle<Image>);
 
 /// What the briefings need from the game data, gathered on the boot thread: the levels with
 /// movies, their subtitles' texts and the font's atlas (RGBA).
@@ -547,16 +549,24 @@ fn blink_visibility(rate: f32, clock: f32) -> Visibility {
 
 /// A character's glyph in the record (see GLYPHS) and how far it moves the pen, its offset plus
 /// its advance (FUN_000ccd20, FUN_000ccae0); a character out of the record's range is 0x82's.
-fn glyph(c: char) -> ((u8, u8, i8, u8, u8), f32) {
+pub(crate) fn glyph(c: char) -> ((u8, u8, i8, u8, u8), f32) {
     let code = if (FIRST_CHAR..=LAST_CHAR).contains(&(c as u32)) { c as u32 } else { MISSING_CHAR };
     let g = GLYPHS[(code - FIRST_CHAR) as usize];
     (g, (g.2 as i32 + g.4 as i32) as f32)
 }
 
-/// How wide a line is as the wrap measures it (FUN_000ccae0 on one line): the pen's furthest
-/// point after a glyph, tab stops from the line's start, the markup taking no room, the line's
-/// end at a line break.
+/// How wide a line is as the wrap measures it (FUN_000ccae0 on one line), in this record (the
+/// tests').
+#[cfg(test)]
 fn measure(line: &[char]) -> f32 {
+    measure_with(line, &|c| glyph(c).1)
+}
+
+/// How wide a line is as the wrap measures it (FUN_000ccae0 on one line) in a font whose
+/// characters move the pen by `advance` (their offset plus advance): the pen's furthest point
+/// after a glyph, tab stops from the line's start, the markup taking no room, the line's end at a
+/// line break.
+fn measure_with(line: &[char], advance: &dyn Fn(char) -> f32) -> f32 {
     let (mut x, mut width) = (0.0f32, 0.0f32);
     let mut i = 0;
     while i < line.len() {
@@ -587,7 +597,7 @@ fn measure(line: &[char]) -> f32 {
                 _ => i += 1,
             },
             c => {
-                x += glyph(c).1;
+                x += advance(c);
                 width = width.max(x);
                 i += 1;
             }
@@ -596,12 +606,19 @@ fn measure(line: &[char]) -> f32 {
     width
 }
 
-/// The static text's lines once it holds `text` (FUN_0010a880 takes the characters one at a time):
-/// each goes on the last line; a line break starts a new one; a character other than a space or
-/// a tab that makes the line wider than the box moves what follows the line's last space, hyphen
-/// or tab (looked for from the end back to its third character; none: just that character) to a
-/// new line. take01: mb01's text wraps after "procedure" and "Ship".
+/// The static text's lines once it holds `text`, in this record (`lay_out_with`).
 fn lay_out(text: &[char], width: f32) -> Vec<Vec<char>> {
+    lay_out_with(text, width, &|c| glyph(c).1)
+}
+
+/// The static text's lines once it holds `text` (FUN_0010a880 takes the characters one at a time)
+/// in a font whose characters move the pen by `advance`: each goes on the last line; a line break
+/// starts a new one; a character other than a space or a tab that makes the line wider than the
+/// box moves what follows the line's last space, hyphen or tab (looked for from the end back to
+/// its third character; none: just that character) to a new line. take01: mb01's text wraps
+/// after "procedure" and "Ship". (The tutorial's panels lay their texts out with it too, in their
+/// records' advances: play_panels.rs.)
+pub(crate) fn lay_out_with(text: &[char], width: f32, advance: &dyn Fn(char) -> f32) -> Vec<Vec<char>> {
     let mut lines: Vec<Vec<char>> = vec![];
     for &c in text {
         if lines.is_empty() {
@@ -613,7 +630,7 @@ fn lay_out(text: &[char], width: f32) -> Vec<Vec<char>> {
             lines.push(vec![]);
             continue;
         }
-        if c == ' ' || c == '\t' || measure(line) <= width {
+        if c == ' ' || c == '\t' || measure_with(line, advance) <= width {
             continue;
         }
         let mut cut = line.len() - 1;
