@@ -10,7 +10,9 @@
 //!              The type's objecttypes entry names its mesh archetype.
 //!  sky         <object mesh-name> at <position>, <background-color>
 //!  fog         h_1a467f02: <color> (0-255), start-distance, end-distance
-//!  cameras     camera-object transforms (the level's flyby cameras)
+//!  cameras     camera-object transforms (the level's flyby cameras); by name with their FOV,
+//!              the cutscenes' cameras (`LevelCamera`), and the path-objects their scripts move
+//!              them along (`LevelPath`, #222)
 //!  lights      light-object (types h_e1cac6f7 key, h_f5302dc6 fill: directional; h_ea460e64
 //!              point): colour h_f08eb2f3 (0-1), shining down the transform's -z; h_e02aba1c
 //!              marks the pair that lights the terrain (the others light objects and characters).
@@ -71,6 +73,37 @@ pub struct Placement {
     /// start (`Level::radar_triggers`). e34's five missile racks and three h_e8589e7e devices 4,
     /// its device h_00bc61ab 2 (as read live in #141); 0 on every squad deathmatch map
     pub radar_contact: u8,
+    /// it has an orientation of its own (a <transform>, or an <ORIENTATION> with its <position>):
+    /// a direction-point does, a world-point (a <position> alone) doesn't. A warp-trigger puts
+    /// what it moves at such a point's whole transform, else at its position only (FUN_00200480,
+    /// the point's +0xc interface asked for one)
+    pub oriented: bool,
+}
+
+/// A level camera-object (`<camera-object name h_1435f288 h_19bc8fdf h_125978e4><transform>`,
+/// its attribute handler 0x6cb90): what a cutscene script's CAMERA entity of that name is bound to
+/// (FUN_00175090 finds it among the world's objects by its name hash), looking down its -z.
+/// `half_fov` is h_1435f288, the horizontal half angle in degrees: the handler hands the camera
+/// twice it (FUN_0006e450 takes the whole horizontal angle; the aspect is 4:3); 30-45 on the
+/// tutorial's. `near` / `far`: h_19bc8fdf and h_125978e4 (0.005 and 500 on the tutorial's).
+#[derive(Clone, Debug)]
+pub struct LevelCamera {
+    pub name: u32,
+    pub transform: Mat4,
+    pub half_fov: f32,
+    pub near: f32,
+    pub far: f32,
+}
+
+/// A level path-object (`<path-object name><transform><points><points time><transform>..`, its
+/// attribute handler 0x16cca0): what a script's MOTION_PATH entity of that name is bound to. Its
+/// keys (time in s, the 3 x 3 and position in the path's own frame: `transform` places them) are
+/// what a START_PATH_ANIMATION follows (play_script.rs).
+#[derive(Clone, Debug)]
+pub struct LevelPath {
+    pub name: u32,
+    pub transform: Mat4,
+    pub keys: Vec<(f32, Mat4)>,
 }
 
 /// A radar-trigger (`<radar-trigger radar-contact=N h_e2145a6c=T h_12b33046=B>`): on
@@ -172,6 +205,11 @@ pub struct Level {
     /// the level's radar-triggers (see `RadarTrigger`); those acting at its start have set
     /// `Placement::radar_contact` already
     pub radar_triggers: Vec<RadarTrigger>,
+    /// the level's camera-objects by name (the cutscenes' cameras, `LevelCamera`; `cameras` has
+    /// their transforms alone, for the level viewer)
+    pub camera_objects: Vec<LevelCamera>,
+    /// the level's path-objects (the cutscenes' camera paths, `LevelPath`)
+    pub paths: Vec<LevelPath>,
 }
 
 fn floats(e: Option<&Element>) -> Vec<f32> {
@@ -192,6 +230,13 @@ const H_BUTTON_DATA: u32 = 0xF166_0A0D;
 const H_SIGNALS: u32 = triggers::H_ENTRIES;
 /// A trigger's objects (`bf::triggers::H_OBJECTS`), for the radar-triggers.
 const H_TRIGGER_OBJECTS: u32 = triggers::H_OBJECTS;
+/// A camera-object's h_1435f288: its horizontal half angle of view in degrees (the attribute
+/// handler 0x6cb90 passes twice it to FUN_0006e450, which takes the whole angle).
+const H_CAMERA_HALF_FOV: u32 = 0x1435_F288;
+/// A camera-object's h_19bc8fdf: its near plane (0x6cb90 -> FUN_0006ac90).
+const H_CAMERA_NEAR: u32 = 0x19BC_8FDF;
+/// A camera-object's h_125978e4: its far plane (0x6cb90, the view's +0x20).
+const H_CAMERA_FAR: u32 = 0x1259_78E4;
 
 /// A level <transform>: the 3 x 3 rotation row by row (columns are the object's axes: the
 /// level's cameras come out level and looking down -z), then the position.
@@ -296,9 +341,11 @@ impl Level {
         for e in all.iter().filter(|e| e.attr(H_TYPE).is_some() && e.name != h("camera-object")) {
             // a <transform>, or (start points, ...) an <ORIENTATION> and a <position>
             let mut t = floats(e.child(h("transform")));
+            let mut oriented = t.len() >= 12;
             if t.len() < 12 {
                 let (o, p) = (floats(e.child(h("ORIENTATION"))), floats(e.child(h("position"))));
                 if p.len() >= 3 {
+                    oriented = o.len() >= 9;
                     t = if o.len() >= 9 { o[..9].to_vec() } else { vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] };
                     t.extend_from_slice(&p[..3]);
                 }
@@ -308,7 +355,7 @@ impl Level {
             let radar_contact = e.attr(H_RADAR_CONTACT).and_then(|v| v.as_i64()).map(|v| v.clamp(0, 255) as u8)
                 .or_else(|| game.object_types.get(&kind).map(|t| t.radar_contact)).unwrap_or(0);
             objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m,
-                                     radar_contact });
+                                     radar_contact, oriented });
         }
         // the radar-triggers; those that operate on the level's start (an entry on
         // TRIG_SIG_FIRST_UPDATE with TRIG_ACT_OPERATE, enabled) set their objects' value now, in
@@ -341,6 +388,22 @@ impl Level {
         let ambient = if a.len() >= 3 { [a[0], a[1], a[2]] } else { [0.15; 3] };
         let cameras = all.iter().filter(|e| e.name == h("camera-object"))
             .filter_map(|c| transform(&floats(c.child(h("transform"))))).collect();
+        // the cameras by name with their FOV, and the path-objects with their keys (#222)
+        let number = |e: &Element, k: u32, or: f32| e.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(or);
+        let camera_objects = all.iter().filter(|e| e.name == h("camera-object")).filter_map(|c| Some(LevelCamera {
+            name: hash(c, h("name")),
+            transform: transform(&floats(c.child(h("transform"))))?,
+            half_fov: number(c, H_CAMERA_HALF_FOV, 35.0),
+            near: number(c, H_CAMERA_NEAR, 0.005),
+            far: number(c, H_CAMERA_FAR, 500.0),
+        })).collect();
+        let paths = all.iter().filter(|e| e.name == h("path-object")).filter_map(|p| Some(LevelPath {
+            name: hash(p, h("name")),
+            transform: transform(&floats(p.child(h("transform"))))?,
+            keys: p.child(h("points")).map(|list| list.children_named(h("points")).filter_map(|k| {
+                Some((number(k, h("time"), 0.0), transform(&floats(k.child(h("transform"))))?))
+            }).collect()).unwrap_or_default(),
+        })).collect();
         let sounds = all.iter().filter(|e| e.name == h("sound-trigger")).filter_map(|e| {
             let signal = e.child(0x031C_D9F5).and_then(|s| s.child(h("base"))).and_then(|b| b.attr(h("signal"))).and_then(|v| v.as_i64())?;
             let at = transform(&floats(e.child(h("transform"))))?.w_axis.truncate();
@@ -404,7 +467,7 @@ impl Level {
             })).collect();
         let triggers = triggers::read(&all);
         Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, sounds, terrain_collision, blockers, lights, lamps, terrain_ambient,
-                   terrain_half, terrain_light, buttons, triggers, radar_triggers })
+                   terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths })
     }
 
     /// What using a button does to the level's animated objects, read from the data alone: (object

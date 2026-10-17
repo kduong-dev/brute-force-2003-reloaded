@@ -132,6 +132,8 @@ pub mod act {
     pub const ENABLE: i64 = 2;
     /// DISABLE: the base's: off, its DISABLED lost (FUN_001ff0f0)
     pub const DISABLE: i64 = 3;
+    /// STOP: a letterbox-trigger's (the bars out over its hide-duration, 0x207480; #222)
+    pub const STOP: i64 = 4;
     /// TOGGLE_ENABLE: the base's: ENABLE when off, DISABLE when on (FUN_001ff0f0)
     pub const TOGGLE_ENABLE: i64 = 5;
     /// INC_COUNTER: a calculator's counter + 1 (0x1ff5f0)
@@ -391,6 +393,12 @@ impl Entry {
     /// A `<calculator>` entry's value (+0x1c): MODIFY_COUNTER's step.
     pub fn value(&self) -> i64 {
         self.extra_i64(h("value")).unwrap_or(0)
+    }
+
+    /// A `<script>` entry's command (the script-trigger entry's +0x1c, FUN_00204ec0's switch): 0
+    /// or 1 play the script from its start, 2 pause it, 3 resume it, 4 stop it (#222).
+    pub fn script_command(&self) -> i64 {
+        self.extra_i64(h("command")).unwrap_or(0)
     }
 }
 

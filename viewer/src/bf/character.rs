@@ -317,6 +317,10 @@ pub struct Game {
     /// ("tex_1", "TUTORIAL_terrorist_5"), cameras, by name hash. The level files name everything
     /// by hash; the trigger runtime's log (play_triggers.rs) reads names from here
     pub script_names: HashMap<u32, String>,
+    /// the loaded levels' cutscene scripts (scripts/<name>.gscr, `gscr::Script`) by the hash of
+    /// their name, what a script-trigger's `script-name` holds (FUN_00174180 registers each so);
+    /// a later level's replaces an earlier one's of the same name (#222)
+    pub scripts: HashMap<u32, super::gscr::Script>,
 }
 
 /// An object type's `<base object-type>`: 0 a compound of loose pieces (archetype-type 9, the
@@ -1023,6 +1027,7 @@ impl Game {
             placements: vec![],
             personalities: HashMap::new(),
             script_names: HashMap::new(),
+            scripts: HashMap::new(),
         }
     }
 
@@ -1672,12 +1677,21 @@ impl Game {
                 || n.ends_with("_chatter.xmb") || n.ends_with(".gscr")
         })?;
         self.load_archive(&ar, level)?;
-        // the cutscene scripts' entity names (Lua 4 source: `entity_name = "trigger_spawn8",`)
+        // the cutscene scripts' entity names (Lua 4 source: `entity_name = "trigger_spawn8",`),
+        // and the scripts themselves, by their names (the file's, without .gscr: #222)
         for f in ar.find("", ".gscr") {
             let text = String::from_utf8_lossy(ar.get(&f).unwrap_or(&[])).into_owned();
             for part in text.split("entity_name").skip(1) {
                 let Some(name) = part.split('"').nth(1) else { continue };
                 self.script_names.entry(h(name)).or_insert_with(|| name.to_string());
+            }
+            let stem = f.trim_end_matches(".gscr");
+            match super::gscr::Script::parse(stem, &text) {
+                Ok(s) => {
+                    self.script_names.entry(h(stem)).or_insert_with(|| stem.to_string());
+                    self.scripts.insert(h(stem), s);
+                }
+                Err(e) => eprintln!("{level}: script {f}: {e}"),
             }
         }
         if let Some(root) = self.parse(&ar, "world-materials.xmb")? {

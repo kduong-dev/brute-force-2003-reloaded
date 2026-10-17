@@ -281,6 +281,10 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
         p.fall_from = s.feet.y;
         p.yaw = s.yaw;
         p.cam_yaw = s.yaw;
+        // out of the world until its spawn-trigger spawns it (the tutorial's opening at 17.1 s;
+        // not under BF_TEST_GOTO / BF_SCRIPT, whose runs skip the level's start scripts:
+        // play_script.rs, #222)
+        p.absent = s.trigger != 0 && script::spawns_wait();
     } else if let Some(a) = world::arena() {
         // on a map: at its first start point (BF_START=<n> picks another), facing its way
         let n = std::env::var("BF_START").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
@@ -325,6 +329,8 @@ fn squad_at_start(start: usize, deathmatch: bool, spawns: &triggers::SquadSpawns
             m.cam_yaw = s.yaw;
             m.surface = usize::MAX;
             s.dress(&mut m);
+            // (out of the world until its spawn-trigger spawns it, as the leader: #222)
+            m.absent = s.trigger != 0 && script::spawns_wait();
             m
         }).collect();
         return Squad(if deathmatch { vec![] } else { members });
@@ -579,6 +585,7 @@ fn main() {
         .add_plugins(flags::plugin)
         .add_plugins(objectives::plugin)
         .add_plugins(triggers::plugin)
+        .add_plugins(script::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -661,6 +668,8 @@ mod triggers;
 mod flags;
 #[path = "play_objectives.rs"]
 mod objectives;
+#[path = "play_script.rs"]
+mod script;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1916,6 +1925,17 @@ struct Player {
     /// for a re-armable trigger's; 0 for a character no trigger spawned (the demo's own squad on a
     /// map without squad spawns, the test map's NPCs). Its death is a DESTROYED from that name
     trigger_name: u32,
+    /// held by a cutscene (char+0x834 bit 0: FUN_00129470, its script's start or a 119;
+    /// play_script.rs): its AI and its player's controls are off until the script releases it
+    held: bool,
+    /// a cutscene's walk order (code 105, play_script.rs): the world points it walks to in turn,
+    /// the script moving it (char+0x834 bits 0 and 1)
+    script_walk: Vec<Vec3>,
+    /// not in the world yet: a squad member whose spawn-trigger hasn't spawned it (the game takes
+    /// the template out of the world as the trigger links, FUN_000dfe90, and the tutorial's Tex
+    /// comes with the opening's farcast at 17.1 s). Not drawn, not seen, no controls, until
+    /// play_triggers.rs `spawn_copy` brings it (#222)
+    absent: bool,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -1970,6 +1990,9 @@ impl Player {
             enemy: Default::default(),
             stand_in: false,
             trigger_name: 0,
+            held: false,
+            script_walk: vec![],
+            absent: false,
         }
     }
 
@@ -2229,9 +2252,9 @@ struct Seen {
     team: u8,
     /// its chest point, where the AI aims (AI_AIM_HEIGHT above the feet)
     chest: Vec3,
-    /// a target for the AI at all: alive, on its feet, not held by a test hook, and not a test
-    /// map dummy (play_testtools.rs: a dummy is the player's target; one set to fight is
-    /// everyone's)
+    /// a target for the AI at all: alive, on its feet, not held by a test hook, in the world (a
+    /// squad member waiting for its spawn-trigger isn't: `Player::absent`), and not a test map
+    /// dummy (play_testtools.rs: a dummy is the player's target; one set to fight is everyone's)
     target: bool,
     /// how visible it is (the skill's +0xe4, which the stamina update pushes into its combat
     /// target each frame, 0x11a934-0x11a94a: `skills::visibility`): 1, or a stealthed Hawk's
@@ -2245,7 +2268,7 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
     units.map(|u| Seen {
         team: u.team,
         chest: u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
-        target: !u.dead && !knocked_down(u) && !u.test_hold && u.npc.is_none_or(|n| n.fight),
+        target: !u.dead && !knocked_down(u) && !u.test_hold && !u.absent && u.npc.is_none_or(|n| n.fight),
         visibility: skills::visibility(u),
     }).collect()
 }
@@ -3237,6 +3260,15 @@ fn read_input(
         player.item_list = false;
         return;
     }
+    // a cutscene has the world (its cutscene bit), a script holds the character, or it isn't in
+    // the world yet (play_script.rs, #222): no press reaches it, nor the test hooks' input (take03:
+    // the stick, A and START pushed through the opening moved nothing); a script's walk moves it
+    if script::blocks_input(&player) {
+        script::held_step(&mut player);
+        player.tab_down = -1.0;
+        player.item_list = false;
+        return;
+    }
     // 1-4: hand control to that squad member (after their name shows, see squad_control); not
     // while dead: the death camera hands over when it ends (whether the game lets you cut it
     // short isn't recorded: a guess)
@@ -3564,8 +3596,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // Hawk's (0x13d3f0), before it raises the gun (0x2509c)
         let target = target.filter(|_| !skills::holds_fire(m));
         // (BF_TEST_TARGET's squadmate stands still in the line of fire; play_sentry.rs's test
-        // hooks hold theirs where they put them; the test map's NPCs have their own)
-        if m.npc.is_some() {
+        // hooks hold theirs where they put them; the test map's NPCs have their own; a cutscene's
+        // hold or walk has its own too, play_script.rs)
+        if m.held || !m.script_walk.is_empty() {
+            script::held_step(m);
+        } else if m.npc.is_some() {
             testtools::npc_ai(m, target, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             squad_ai(m, &player, slot, heading, dt, target);
@@ -4102,7 +4137,9 @@ fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
 /// `push`, a surviving squadmate may answer); a hard hit can knock them down; otherwise they
 /// grunt or say a line of `tag` now and then.
 fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64) {
-    if u.dead || amount <= 0.0 {
+    // (nor while a cutscene has the world: the damage handler 0x125600 leaves at once while the
+    // world's +0xc50 bit 4 is set, play_script.rs)
+    if u.dead || amount <= 0.0 || script::in_cutscene() {
         return;
     }
     let dir = push.normalize_or(Vec3::Y);

@@ -53,7 +53,53 @@ struct Fly {
     frames: u32,
 }
 
+/// BF_SCRIPT_CHECK=1: every data/*.tgz archive's cutscene scripts (scripts/*.gscr) through the
+/// reader (bf/gscr.rs, #222): a line per script (its duration, entities, events, the USER_EVENT
+/// codes and other event types it has), the ones that don't read, and the totals. 179 scripts in
+/// the game's 50 archives with any.
+fn script_check(dir: &std::path::Path) {
+    use bf_viewer::bf::gscr::{EventKind, Script};
+    let mut archives: Vec<PathBuf> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "tgz")).collect()).unwrap_or_default();
+    archives.sort();
+    let (mut ok, mut bad) = (0, 0);
+    let mut codes: std::collections::BTreeMap<String, usize> = Default::default();
+    for path in archives {
+        let Ok(ar) = bf_viewer::bf::archive::Archive::open(&path, |n| n.ends_with(".gscr")) else { continue };
+        let level = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        for f in ar.find("", ".gscr") {
+            let text = String::from_utf8_lossy(ar.get(&f).unwrap_or(&[])).into_owned();
+            match Script::parse(f.trim_end_matches(".gscr"), &text) {
+                Ok(s) => {
+                    ok += 1;
+                    let mut mine: std::collections::BTreeMap<String, usize> = Default::default();
+                    for e in &s.events {
+                        let k = match &e.kind {
+                            EventKind::User(u) => u.code.to_string(),
+                            EventKind::Path(_) => "path".to_string(),
+                            EventKind::Other(k, _) => format!("type {k}"),
+                        };
+                        *mine.entry(k.clone()).or_default() += 1;
+                        *codes.entry(k).or_default() += 1;
+                    }
+                    println!("{level}/{f}: {:.3} s, {} entities, {} events: {}", s.duration, s.entities.len(), s.events.len(),
+                             mine.iter().map(|(k, n)| format!("{k} x{n}")).collect::<Vec<_>>().join(", "));
+                }
+                Err(e) => {
+                    bad += 1;
+                    println!("{level}/{f}: does not read: {e}");
+                }
+            }
+        }
+    }
+    println!("scripts: {ok} read, {bad} not; events by code / type: {}", codes.iter().map(|(k, n)| format!("{k} x{n}")).collect::<Vec<_>>().join(", "));
+}
+
 fn main() {
+    if std::env::var("BF_SCRIPT_CHECK").is_ok() {
+        script_check(&data_dir());
+        return;
+    }
     let name = std::env::args().nth(1).or_else(|| std::env::var("BF_LEVEL").ok()).unwrap_or_else(|| "sdm_e34".into());
     let mut game = Game::load(&data_dir()).unwrap_or_else(|e| {
         eprintln!("failed to load game data from {}: {e}", data_dir().display());

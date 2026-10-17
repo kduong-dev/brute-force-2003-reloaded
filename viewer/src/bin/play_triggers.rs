@@ -305,6 +305,13 @@ enum ClassState {
     Gamevar { op: i64, operands: [Operand; 3] },
     /// +0x40 the amount, +0x44 the key, +0x48 bit 2 keyed, bit 1 scaled
     Score { amount: f32, key: u32, keyed: bool, scaled: bool },
+    /// script-trigger (#222): +0x40 its `script-name` (the script's name hash, FUN_00204e40)
+    Script { script: u32 },
+    /// letterbox-trigger (#222): +0x40 `show-duration`, +0x44 `hide-duration` (FUN_00207410)
+    Letterbox { show: f32, hide: f32 },
+    /// warp-trigger (#222): its `world-point` (+0x40, the point linked at +0x44) and h_0ede4719
+    /// (+0x48: the fade-in a warped character gets, 0x200400)
+    Warp { point: u32, fade: f32 },
 }
 
 /// Which class a trigger runs as (for `update` and `deliver`).
@@ -320,6 +327,9 @@ enum Kind {
     Destroyer,
     Gamevar,
     Score,
+    Script,
+    Letterbox,
+    Warp,
 }
 
 /// A trigger as the game keeps it: its data (the entries' use counts are live) and +0x3d's bits:
@@ -345,6 +355,8 @@ enum Act {
     Spawn { trigger: usize, template: u32, copy: u32, at: Mat4, fade: f32 },
     /// a destroyer's object (FUN_00200d00 -> FUN_00200b70)
     Destroy { trigger: usize, object: u32 },
+    /// a warp-trigger's OPERATE (FUN_00200480): its objects to its world point (`warp`)
+    Warp { trigger: usize },
 }
 
 /// A BF_TRIGGER_FIRE entry: when (sim time), an object's event (`@`) or a trigger's, whose, the
@@ -459,6 +471,9 @@ pub struct Triggers {
     template_uses: HashMap<u32, i32>,
     /// the random numbers' seed (FUN_00233b90's DAT_0046cfd8): the gamevar's random operands
     seed: u32,
+    /// what the script and letterbox triggers ask of the cutscenes this frame (play_script.rs
+    /// `step` takes them)
+    cutscene: Vec<script::Request>,
 }
 
 /// A map starts: its triggers as the level file has them, the listeners linked (FUN_001febb0),
@@ -494,7 +509,7 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             Class::Destroyer => ClassState::Destroyer { pending: false },
             Class::Gamevar { op, operands } => ClassState::Gamevar { op: *op, operands: operands.clone() },
             Class::Score { amount, key, keyed, scaled, .. } => ClassState::Score { amount: *amount, key: *key, keyed: *keyed, scaled: *scaled },
-            Class::Other => ClassState::Other,
+            Class::Other => cutscene_class(t),
         };
         // FUN_000dfe90 as the spawn-trigger links: its template counted once more, or -1 for
         // good from a re-armable one
@@ -631,10 +646,11 @@ fn read_fires() -> Vec<Fire> {
 }
 
 /// The characters the detectors can see: the living player and squad (the test map's NPCs and
-/// the ones the triggers spawned among them). One no trigger named gets a name of its own for
-/// the detectors' occupant lists (MADE_UP_UNIT + its squad slot, or + 100 + its NPC number).
+/// the ones the triggers spawned among them) in the world (a squad member waiting for its
+/// spawn-trigger isn't yet: `Player::absent`, #222). One no trigger named gets a name of its own
+/// for the detectors' occupant lists (MADE_UP_UNIT + its squad slot, or + 100 + its NPC number).
 fn actors(player: &Player, squad: &Squad, game: &Game) -> Vec<Actor> {
-    std::iter::once((player, true)).chain(squad.0.iter().map(|m| (m, false))).filter(|(u, _)| !u.dead && !u.stand_in).map(|(u, human)| {
+    std::iter::once((player, true)).chain(squad.0.iter().map(|m| (m, false))).filter(|(u, _)| !u.dead && !u.stand_in && !u.absent).map(|(u, human)| {
         let name = if u.trigger_name != 0 { u.trigger_name } else {
             match u.who() {
                 Who::Squad(c) => MADE_UP_UNIT + c as u32,
@@ -689,7 +705,8 @@ fn inside(volume: Volume, at: &Mat4, inv: &Mat4, a: &Actor) -> bool {
 fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut events: ResMut<TriggerEvents>, mut player: ResMut<Player>,
        mut squad: ResMut<Squad>, mut game: ResMut<GameData>, map: Res<MapLevel>, mut doors: Option<ResMut<Doors>>, spawns: Option<Res<SquadSpawns>>,
        mut fx: (Option<ResMut<bf_viewer::ale_fx::AleAssets>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-       mut placed: Query<(&Placed, &mut Visibility)>, mut hits: ResMut<AiHits>, mut campaign: ResMut<Campaign>) {
+       mut placed: Query<(&Placed, &mut Visibility)>, mut hits: ResMut<AiHits>, mut campaign: ResMut<Campaign>,
+       mut cutscenes: ResMut<script::Cutscenes>) {
     let Some(level) = map.0.as_ref() else { return };
     if tr.live.is_empty() {
         events.0.clear();
@@ -759,6 +776,8 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
     for i in 0..tr.live.len() {
         tr.update(i, dt, &actors);
     }
+    // the cutscenes (#222, play_script.rs): the scripts the triggers started, their events due now
+    script::step(&mut cutscenes, &mut tr, &mut player, &mut squad, dt);
     // what they asked of the world
     let acts = std::mem::take(&mut tr.acts);
     let none = SquadSpawns::default();
@@ -845,6 +864,7 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                     println!("t {now:.2}: {by}: nothing called {} to remove", tr.label(object));
                 }
             }
+            Act::Warp { trigger } => warp(&mut tr, trigger, level, spawns, &mut player, &mut squad),
         }
     }
     if mission {
@@ -897,9 +917,12 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         u.height = 0.0;
         u.trigger_name = copy;
         u.cam_target = u.position + Vec3::new(0.0, 0.35, 0.0);
+        // (in the world now, if it was waiting for this: play.rs `player_at_start`, #222)
+        let came = std::mem::take(&mut u.absent);
         if tr.log {
-            println!("t {now:.2}: {by} spawns {} ({}) at {feet:.2} (the trigger's {:.2} up) facing {:.0} deg (the squad member moved there; its {fade} s \
-                      fade-in not drawn)", tr.label(copy), CHARACTERS[s.slot], point.y - feet.y, yaw.to_degrees());
+            println!("t {now:.2}: {by} spawns {} ({}) at {feet:.2} (the trigger's {:.2} up) facing {:.0} deg (the squad member {}; its {fade} s \
+                      fade-in not drawn)", tr.label(copy), CHARACTERS[s.slot], point.y - feet.y, yaw.to_degrees(),
+                     if came { "comes into the world there" } else { "moved there" });
         }
         return;
     }
@@ -1008,6 +1031,9 @@ impl Triggers {
             ClassState::Destroyer { .. } => Kind::Destroyer,
             ClassState::Gamevar { .. } => Kind::Gamevar,
             ClassState::Score { .. } => Kind::Score,
+            ClassState::Script { .. } => Kind::Script,
+            ClassState::Letterbox { .. } => Kind::Letterbox,
+            ClassState::Warp { .. } => Kind::Warp,
         }
     }
 
@@ -1173,6 +1199,7 @@ impl Triggers {
             Kind::Destroyer => self.destroyer(i, ev),
             Kind::Gamevar => self.gamevar(i, ev),
             Kind::Score => self.score(i, ev),
+            Kind::Script | Kind::Letterbox | Kind::Warp => self.cutscene_trigger(i, ev),
             Kind::Other => self.other(i, ev),
         }
         self.depth -= 1;
@@ -1822,6 +1849,156 @@ impl Triggers {
         }
         if had && empty {
             self.send(i, Ev { signal: sig::EMPTIED_DETECTOR, id, subject: 0, data: -1 });
+        }
+    }
+
+    // ---- the cutscenes' triggers (#222): script, letterbox and warp; the scripts' signals ----
+
+    /// A script-trigger (0x205000), a letterbox-trigger (0x207480) or a warp-trigger (0x200650):
+    /// disabled, its base actions; enabled, each entry that answers: OPERATE (and a letterbox's
+    /// STOP) its own, the rest the base's; the entry counted after (FUN_001feac0).
+    ///  * script: its script asked to play, by the entry's `<script command>` (FUN_00204ec0, for
+    ///    play_script.rs);
+    ///  * letterbox: OPERATE the bars in over its show-duration (FUN_00073460), STOP out over its
+    ///    hide-duration (FUN_000734b0);
+    ///  * warp: its objects to its world point (FUN_00200480, `warp` in `run`).
+    fn cutscene_trigger(&mut self, i: usize, ev: Ev) {
+        if !self.live[i].enabled {
+            return self.base_and_after(i, &ev);
+        }
+        let name = self.live[i].t.name;
+        let mut k = 0;
+        while let Some(j) = self.next_entry(i, &ev, k) {
+            k = j + 1;
+            let (action, command) = (self.live[i].t.entries[j].action, self.live[i].t.entries[j].script_command());
+            match (&self.live[i].state, action) {
+                (ClassState::Script { script }, act::OPERATE) => {
+                    self.cutscene.push(script::Request::Script { trigger: name, script: *script, command, signal: ev.signal });
+                }
+                (ClassState::Letterbox { show, .. }, act::OPERATE) => {
+                    self.cutscene.push(script::Request::Letterbox { trigger: name, show: true, secs: *show });
+                }
+                (ClassState::Letterbox { hide, .. }, act::STOP) => {
+                    self.cutscene.push(script::Request::Letterbox { trigger: name, show: false, secs: *hide });
+                }
+                (ClassState::Warp { .. }, act::OPERATE) => self.acts.push(Act::Warp { trigger: i }),
+                _ => {
+                    self.base_and_after(i, &ev);
+                    continue;
+                }
+            }
+            if self.log {
+                println!("t {:.2}: {} {} on {}", self.clock, self.who(i), act::name(action), sig::name(ev.signal));
+            }
+            self.entry_used(i, j, &ev);
+        }
+    }
+
+    /// A script's 103 (0x1772b0): the signal straight to the named trigger's handler, from iD 0,
+    /// with no subject and data -1. Whether the level has that trigger.
+    pub(super) fn script_signal(&mut self, name: u32, signal: i64) -> bool {
+        let Some(&i) = self.by_name.get(&name) else { return false };
+        if self.log {
+            println!("t {:.2}: a script sends {} to {}", self.clock, sig::name(signal), self.who(i));
+        }
+        self.deliver(i, Ev::new(signal, 0));
+        true
+    }
+
+    /// What the script and letterbox triggers asked of the cutscenes since last taken.
+    pub(super) fn take_cutscene(&mut self) -> Vec<script::Request> {
+        std::mem::take(&mut self.cutscene)
+    }
+
+    /// The name a warp-trigger's object is known by in the world: a spawn-trigger's copy (FUN_00200480
+    /// warps the copy; the squad's start stands for its spawn's copy, `SquadSpawns`), else the object.
+    fn warp_object(&self, o: u32, spawns: &SquadSpawns) -> u32 {
+        match self.by_name.get(&o).map(|&k| &self.live[k].state) {
+            Some(ClassState::Spawn { copy, .. }) if *copy != 0 => *copy,
+            Some(ClassState::Spawn { .. }) => spawns.0.iter().find(|s| s.trigger == o).map_or(0, |s| s.copy),
+            Some(_) => 0,
+            None => o,
+        }
+    }
+}
+
+/// The class state of a trigger the data reader leaves to its step (`Class::Other`): the
+/// cutscenes' three (#222) from their elements' own attributes; anything else runs its base
+/// actions alone.
+fn cutscene_class(t: &Trigger) -> ClassState {
+    let e = &t.element;
+    let name = |k: u32| e.attr(k).and_then(|v| v.as_hash()).filter(|&n| n != h("")).unwrap_or(0);
+    let num = |k: u32, or: f32| e.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(or);
+    if t.tag == h("script-trigger") {
+        ClassState::Script { script: name(h("script-name")) }
+    } else if t.tag == h("letterbox-trigger") {
+        ClassState::Letterbox { show: num(h("show-duration"), 0.0), hide: num(h("hide-duration"), 0.0) }
+    } else if t.tag == h("warp-trigger") {
+        ClassState::Warp { point: name(h("world-point")), fade: num(H_WARP_FADE, 0.0) }
+    } else {
+        ClassState::Other
+    }
+}
+
+/// A warp-trigger's h_0ede4719 (+0x48, its parser 0x200400): the fade-in (s) a living character
+/// it warps gets (FUN_00200480: char+0x73c, the fade state +0x734 = 0): 2 on the tutorial's
+/// squad warps, 0 on the rest. Not drawn (as a spawn's fade isn't).
+const H_WARP_FADE: u32 = 0x0EDE_4719;
+
+/// A warp-trigger's OPERATE in the world (FUN_00200480): each of its objects (a spawn-trigger's
+/// copy, `Triggers::warp_object`) to its world point. A character, if alive, stands on the ground
+/// under the point (the place call's ray, `on_ground`), facing down the point's -z when it has an
+/// orientation (a direction-point; the place call +0x50 with its whole transform, as a spawn's
+/// copy faces its trigger's -z) and as before when not (a world-point; the position setter +0x48);
+/// the controlled one's camera goes with it. A dead character isn't moved. The warp's fade-in
+/// (h_0ede4719), +0x264 = 5.0 and FUN_0004c5e0 (an AI reset) aren't done.
+#[allow(clippy::too_many_arguments)]
+fn warp(tr: &mut Triggers, i: usize, level: &Level, spawns: &SquadSpawns, player: &mut Player, squad: &mut Squad) {
+    let now = tr.clock;
+    let by = tr.label(tr.live[i].t.name);
+    let ClassState::Warp { point, fade } = tr.live[i].state else { return };
+    let Some(p) = level.objects.iter().find(|o| o.name == point && point != 0) else {
+        if tr.log {
+            println!("t {now:.2}: {by}: no world point {} on the level", tr.label(point));
+        }
+        return;
+    };
+    let at = p.transform.w_axis.truncate();
+    let yaw = p.oriented.then(|| yaw_of(&p.transform));
+    for o in tr.live[i].t.objects.clone() {
+        let name = tr.warp_object(o, spawns);
+        let unit = if player.trigger_name == name && name != 0 && !player.stand_in { Some((&mut *player, true)) } else {
+            squad.0.iter_mut().find(|m| m.trigger_name == name && name != 0).map(|m| (m, false))
+        };
+        let Some((u, controlled)) = unit else {
+            if tr.log {
+                println!("t {now:.2}: {by}: {} isn't in the world to warp", tr.label(if name != 0 { name } else { o }));
+            }
+            continue;
+        };
+        if u.dead {
+            continue;
+        }
+        let feet = on_ground(at);
+        u.position = feet - Vec3::Y * GROUND;
+        u.prev_xz = feet.xz();
+        u.fall_from = feet.y;
+        u.vy = 0.0;
+        u.height = 0.0;
+        if let Some(y) = yaw {
+            u.yaw = y;
+            u.face_yaw = Some(y);
+            if controlled || u.npc.is_some() {
+                u.cam_yaw = y;
+            }
+        }
+        if controlled {
+            u.cam_target = u.position + Vec3::new(0.0, 0.35, 0.0);
+        }
+        if tr.log {
+            println!("t {now:.2}: {by} warps {} to {} at {feet:.2}{}{}", tr.label(name), tr.label(point),
+                     yaw.map_or(" (keeping its facing)".to_string(), |y| format!(" facing {:.0} deg", y.to_degrees())),
+                     if fade > 0.0 { format!(" (its {fade} s fade-in not drawn)") } else { String::new() });
         }
     }
 }
