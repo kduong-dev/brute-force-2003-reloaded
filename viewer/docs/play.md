@@ -101,7 +101,7 @@ grenades go with control. Every portrait's tab shows the follow-order arrows; a 
 appears beside the portrait while that member talks. The one you control is the player; the other
 three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
 catch up, walking the last bit), look where you look, and
-reload on their own. They never fire just because you do - only at enemies they can see (none in the main game yet; the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
+reload on their own. They never fire just because you do - only at enemies they can see (by the AI's sensor: their vision-range, x1.15 for one they know, 90 degrees either way of their facing, a clear line; [brain.md](brain.md) "Sight and contacts", #197), within their gun's range (the level's characters on another side, and the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
 yellow blips on the radar (turning with the camera, 40 m range). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
 
 HUD health / stamina frame: the original's own art, the tutorial's picture of it (`h_17f34cbe`,

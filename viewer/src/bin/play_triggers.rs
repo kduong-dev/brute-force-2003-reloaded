@@ -153,15 +153,19 @@ pub struct SquadSpawn {
     pub yaw: f32,
     pub weapons: Option<Vec<u32>>,
     pub items: Vec<(u32, i64)>,
+    /// the template's `<ai>`: its AI's sight distance and field of view (#197, play_brain.rs
+    /// `Sensor`; 90 degrees on the squad's placements)
+    pub ai: Option<bf_viewer::bf::character_type::PlacementAi>,
 }
 
 impl SquadSpawn {
-    /// What a member started from this spawn carries: the name the level's triggers know it by
-    /// and its template's weapons (play.rs `spawn_player` arms a character with
-    /// `enemy.weapons` when it's set).
+    /// What a member started from this spawn carries: the name the level's triggers know it by,
+    /// its template's weapons (play.rs `spawn_player` arms a character with `enemy.weapons` when
+    /// it's set) and its `<ai>` (`spawn_unit` sets the sensor from it).
     pub fn dress(&self, p: &mut Player) {
         p.trigger_name = self.copy;
         p.enemy.weapons = self.weapons.clone();
+        p.enemy.ai = self.ai.clone();
     }
 }
 
@@ -231,6 +235,7 @@ pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
     let weapons = |o: &bf_viewer::bf::level::Placement| placement_of(game, o).map(|p| p.weapons.iter().map(|w| w.0).collect::<Vec<_>>())
         .filter(|w| !w.is_empty());
     let items = |o: &bf_viewer::bf::level::Placement| placement_of(game, o).map_or(vec![], |p| p.items.clone());
+    let ai = |o: &bf_viewer::bf::level::Placement| placement_of(game, o).map(|p| p.ai.clone());
     let mut templates = HashSet::new();
     for t in &level.triggers {
         let (Class::Spawn { template, copy_name, .. }, Some(m)) = (&t.class, t.transform) else { continue };
@@ -241,7 +246,7 @@ pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
             continue;
         }
         out.push(SquadSpawn { slot, template: *template, trigger: t.name, copy: *copy_name, feet: on_ground(m.w_axis.truncate()), yaw: yaw_of(&m),
-                              weapons: weapons(o), items: items(o) });
+                              weapons: weapons(o), items: items(o), ai: ai(o) });
     }
     for o in level.objects.iter().filter(|o| o.tag == h("character-object") && o.name != 0 && !templates.contains(&o.name)) {
         let Some(slot) = slot_of(o.kind) else { continue };
@@ -249,7 +254,7 @@ pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
             continue;
         }
         out.push(SquadSpawn { slot, template: o.name, trigger: 0, copy: o.name, feet: on_ground(o.transform.w_axis.truncate()),
-                              yaw: yaw_of(&o.transform), weapons: weapons(o), items: items(o) });
+                              yaw: yaw_of(&o.transform), weapons: weapons(o), items: items(o), ai: ai(o) });
     }
     SquadSpawns(out)
 }

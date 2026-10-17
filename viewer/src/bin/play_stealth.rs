@@ -1,7 +1,7 @@
 //! Hawk's Stealth beyond her own character (#123, #198): how her body looks as it fades and
 //! while she's stealthed. Her skill's own part (the toggle, her material controllers, her
 //! visibility, the costs of a shot and an item) is play_skills.rs's `Stealth`; who sees her,
-//! play.rs's `nearest_hostile` (the AI) and play_reticle.rs (the crosshair). Sources: the spec and
+//! play_brain.rs's `Sensor` (the AI) and play_reticle.rs (the crosshair). Sources: the spec and
 //! takes in `todo/35-special-skills/` (spec.md Part 4: takes 10-14, 18, 19), the leads and takes in
 //! `todo/198-hawk-invis/` and the functions cited (viewer/docs/code-map.md, "Skills and stamina");
 //! the page is viewer/docs/skills.md.
@@ -43,7 +43,9 @@
 //!  - A part she takes up after her model shows (a grenade in her hand, whose material its type
 //!    shares with every such grenade) is faded with a copy of its material on its own entity
 //!    (`Faded::foreign`), its own put back once it leaves her (thrown) or she's whole; it gets a
-//!    twin while it's hers.
+//!    twin while it's hers. The gun she drops at death gets its own material back in the frame
+//!    it leaves her hand (the game draws a held item through its holder's controller,
+//!    FUN_000e51e0, and a dropped one has none), while her body fades back in.
 //!  - The Vengar view draws everyone as a heat figure (play_vengar.rs `heat_figures`), a
 //!    stealthed Hawk too: the game draws them with every controller but kind 0x100 on
 //!    (FUN_000e7d40's passes 9 and 10, the mask 0xfffffeff), and in that view kind 2 draws with the
@@ -385,6 +387,32 @@ fn fade_bodies(mut commands: Commands, player: Res<Player>, squad: Res<Squad>, c
     let mut fading: Vec<Entity> = vec![];
     for u in std::iter::once(&*player).chain(squad.0.iter()) {
         let Some(l) = &u.loaded else { continue };
+        // a gun dropped at death (play.rs `update_weapons` takes it off the body) has its own
+        // material back at once: the game draws a held item through its holder's invisibility
+        // controller (FUN_000e7850 asks FUN_000e51e0 for one on the item or on the character
+        // holding it), and a dropped one has no holder, so it lies on the floor fully seen from
+        // the drop while her body fades back in (#197; todo/197-ai-sight/answer.md §5.1)
+        if l.weapon_dropped {
+            for w in l.weapons.iter().filter(|w| !descends(w.entity, l.root, &parents)) {
+                for e in std::iter::once(w.entity).chain(children.iter_descendants(w.entity)) {
+                    let Ok(part) = parts.get(e) else { continue };
+                    let id = part.0.id();
+                    if !made.get(&id).is_some_and(|k| k.root == l.root) {
+                        continue;
+                    }
+                    let Some(k) = made.remove(&id) else { continue };
+                    if let Some(m) = materials.get_mut(id) {
+                        m.base_color_texture = k.texture;
+                        m.alpha_mode = k.mode;
+                        m.depth_bias = k.bias;
+                        m.base_color.set_alpha(1.0);
+                    }
+                    if log {
+                        println!("t={:.2} {}: dropped gun's part opaque again", u.sim_time, unit_name(u));
+                    }
+                }
+            }
+        }
         let shown = skills::opacity(u);
         if shown >= 1.0 {
             let back: Vec<AssetId<StandardMaterial>> = made.iter().filter(|(_, k)| k.root == l.root).map(|(id, _)| *id).collect();

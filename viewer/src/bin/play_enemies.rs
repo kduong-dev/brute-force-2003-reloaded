@@ -236,7 +236,7 @@ pub fn table_clips(clips: &mut Clips, m: &Motions, game: &Game, t: &CharacterTyp
 }
 
 /// An enemy's own state (`Player::enemy`; the squad's stays at its default, but for the weapons
-/// of the placement a squad member starts from: play_triggers.rs `SquadSpawn::dress`).
+/// and `<ai>` of the placement a squad member starts from: play_triggers.rs `SquadSpawn::dress`).
 #[derive(Default)]
 pub struct State {
     /// its personality (a `Game::personalities` name): the placement's personality-freewill
@@ -246,6 +246,10 @@ pub struct State {
     /// slot empty on every enemy: e34's A50s, Saryl-45s, Rail RVRs); None: its type's (the
     /// character's property handler 0x112eb0 gives a placement's inventory, FUN_001130e0)
     pub weapons: Option<Vec<u32>>,
+    /// the `<ai>` of the placement it came from (FUN_00110cd0 copies it to char+0x1b8, the
+    /// sensor's): its sight distance and field of view (play_brain.rs `Sensor::set`, #197); None
+    /// from none (a squad member on a map that doesn't place it, a test map NPC of a type)
+    pub ai: Option<bf_viewer::bf::character_type::PlacementAi>,
     /// the motion playing in place of its gait (a reaction, or the hook's)
     pub motion: Option<Playing>,
     /// a damage event the brain takes in this many seconds (REACTION_DELAY), when its reaction
@@ -441,7 +445,7 @@ pub fn damaged(u: &mut Player, game: &Game, amount: f32, way: Vec3) {
     let personality = u.enemy.personality;
     // (a level character's brain knows an enemy when it has a contact, play_brain.rs; the test
     // map's NPCs when they have a hostile in sight)
-    let knows = u.ai_target.is_some() || u.brain.as_ref().is_some_and(|b| b.knows_enemy());
+    let knows = u.ai_target.is_some() || brain::knows_enemy(u);
     let (event, entry) = if knows {
         let sum: f32 = u.enemy.record.iter().map(|r| r.1).sum();
         let event = if sum > HEAVY_SHARE * u.max_health { EVT_DAMAGE_HEAVY } else { EVT_DAMAGE_LIGHT };

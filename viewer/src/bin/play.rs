@@ -1586,9 +1586,6 @@ struct Loaded {
     foot_range: HashMap<usize, [(f32, f32); 2]>,
     footstep_type: i64,
     jump_sound: u32,
-    /// its type's `<ai vision-range>` (m; 0 without one): how far its AI sees a fully visible
-    /// character (`sight_reach`)
-    vision: f32,
     weapons: Vec<HeldWeapon>,
     /// switch clips by the slot being switched to (0: from the second weapon, 1: to it)
     switch_clips: [Option<SwitchClip>; 2],
@@ -1970,8 +1967,11 @@ struct Player {
     /// its step runs the game's clock), until play_triggers.rs `spawn_copy` brings it (#222)
     absent: bool,
     /// the brain of a character a spawn-trigger made (#227, play_brain.rs: its home, patrol,
-    /// sight and contacts, aim); None for the squad and the test map's NPCs
+    /// target, aim); None for the squad and the test map's NPCs
     brain: Option<Box<brain::Brain>>,
+    /// its AI's sensor (char+0x1b4, play_brain.rs `Sensor`): its sight distance and field of view,
+    /// from its type and the placement it came from (#197), and the hostiles it knows
+    sensor: brain::Sensor,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2030,6 +2030,7 @@ impl Player {
             script_walk: Default::default(),
             absent: false,
             brain: None,
+            sensor: Default::default(),
         }
     }
 
@@ -2317,22 +2318,15 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
     }).collect()
 }
 
-/// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) can see,
-/// its place in `sight` and its distance: on another team, within its held weapon's range (at
-/// least AI_MIN_RANGE), within its sight (`sight_reach` x the target's visibility, FUN_0004d140:
-/// a stealthed Hawk drops out of it as she fades), nothing of the world (or the test floor's
-/// pillars) between its eyes and their chest. They see all round (the demo's choice; the game's
-/// type has a half-fov). Never anyone in the main game: everyone is on team 0; BF_TEST_HOSTILE's
-/// held squadmate isn't a target either.
+/// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) sees now,
+/// its place in `sight` and its distance, when it's within the held gun's reach (`ai_range`): by
+/// its sensor (play_brain.rs `Sensor::scan`, #197: its sight distance x 1.15 for a contact x
+/// the target's visibility, its field of view, the ray), without changing what it knows. For a
+/// skill line's "fighting" condition (play_skills.rs); the AI itself sees by `brain::glance` or
+/// `brain::sense`. Never anyone in the main game but the level's characters on another side;
+/// BF_TEST_HOSTILE's held squadmate isn't a target either.
 fn nearest_hostile(m: &Player, me: usize, sight: &[Seen]) -> Option<(usize, f32)> {
-    let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
-    let reach = sight_reach(m, range);
-    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
-    sight.iter().enumerate()
-        .filter(|&(i, s)| i != me && s.target && s.team != m.team)
-        .map(|(i, s)| (i, s.chest, eye.distance(s.chest), s.visibility))
-        .filter(|&(_, at, d, v)| d < range && d <= reach * v && ray_hit(eye, (at - eye) / d.max(1e-3), d - 0.3).is_none())
-        .min_by(|a, b| a.2.total_cmp(&b.2)).map(|(i, _, d, _)| (i, d))
+    brain::nearest_within(&m.sensor.scan(m, me, sight), ai_range(m))
 }
 
 /// The chest of the nearest hostile `m` can see (`nearest_hostile`).
@@ -2340,18 +2334,11 @@ fn hostile_in_sight(m: &Player, me: usize, sight: &[Seen]) -> Option<Vec3> {
     nearest_hostile(m, me, sight).map(|(i, _)| sight[i].chest)
 }
 
-/// How far (m) `m`'s AI sees a fully visible character: FUN_0004d140 takes the brain's sight
-/// distance (its vtable +0xa8) x FUN_000481c0's factor x the target's visibility (its combat
-/// target's slot 0, `Seen::visibility`) and tests the squared distance against it. The sight
-/// distance is read as the type's `<ai vision-range>` (the type parser stores it at +0x24 of the
-/// AI record, 0x1885cb; the getter isn't traced): 80 for Brutus, Hawk and Tex, 105 for Flint, 75
-/// for e40's Shrikes. FUN_000481c0's factor is 1, or 1.15 (0x3f933333) in a state not traced, x3
-/// with a gun whose data +0x16c is set: left at 1. #35 take14 fits it: e40's Shrike (vision-range
-/// 75) 15.7 m from Hawk lost her between her visibility 0.20 and 0.17 (5.72-5.77 s), where 75 x v
-/// passes 15.7 m at 0.21 (and 86 x v, with the 1.15, at 0.18). A type without a vision-range
-/// sees as far as `range`, the held weapon's (the demo's own reach).
-fn sight_reach(m: &Player, range: f32) -> f32 {
-    m.loaded.as_ref().map(|l| l.vision).filter(|&v| v > 0.0).unwrap_or(range)
+/// How far (m) `m`'s AI fires: its held weapon's range, at least AI_MIN_RANGE. The shot's own
+/// test, not sight's (FUN_00024f80 doesn't compare the distance with the gun's range;
+/// todo/197-ai-sight/answer.md §2); a type with no vision-range sees this far too (the demo's).
+fn ai_range(m: &Player) -> f32 {
+    m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE))
 }
 
 /// Hand control to another squad member: their name shows over them for SELECT_TIME (as in the
@@ -3298,9 +3285,12 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     // an enemy's personality, stamina refill and shield (play_enemies.rs)
     enemies::spawned(p, ty.as_ref());
     p.name = label;
-    let vision = ty.as_ref().map_or(0.0, |t| t.ai.vision_range);
+    // its AI's sensor: the sight distance and field of view of its type and the placement it came
+    // from (#197, play_brain.rs `Sensor`)
+    p.sensor.set(ty.as_ref(), p.enemy.ai.as_ref());
+    info!("{}: sight {} m, field of view {} deg", p.name, p.sensor.vision, p.sensor.fov);
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  vision, weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
+                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
 }
 
 fn read_input(
@@ -3625,6 +3615,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let h = heading.get_or_insert(player.yaw);
     *h = wrap_angle(*h + wrap_angle(player.yaw - *h) * (1.0 - (-1.5 * dt).exp()));
     let heading = *h;
+    // a player sees for the controlled character, so its sensor knows no one (#197: it starts
+    // afresh under the AI when control passes on)
+    player.sensor.clear();
     // take the loaded character out so the step can borrow it and mutate the player freely (one
     // out of the world yet, `Player::absent`, steps too: its step runs the game's clock, and no
     // input reaches it, play_script.rs `blocks_input`)
@@ -3656,16 +3649,17 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             m.sim_time += dt;
             continue;
         }
-        // (a level character's brain sees by its own sensor: its field of view, its contacts,
-        // play_brain.rs)
-        let seen = if m.brain.is_some() { brain::sense(m, slot + 1, &sight, dt) } else { nearest_hostile(m, slot + 1, &sight) };
+        // (its sensor, play_brain.rs: its sight distance, field of view and contacts, #197; a
+        // level character's brain keeps its target among them, the rest fire at the nearest seen)
+        let seen = if m.brain.is_some() { brain::sense(m, slot + 1, &sight, dt) } else { brain::glance(m, slot + 1, &sight, dt, clock) };
         let target = seen.map(|(i, _)| sight[i].chest);
         // BF_SIGHT_LOG: an AI character finding or losing its target
         if sight_log && saw.insert(m.who(), target.is_some()).is_none_or(|was| was != target.is_some()) {
-            let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+            let reach = m.sensor.reach(ai_range(m));
             let what = match seen {
-                Some((i, d)) => format!("sees unit {i} at {d:.1} m (its visibility {:.2}, reach {:.1} x it)", sight[i].visibility, sight_reach(m, range)),
-                None => format!("sees no hostile (reach {:.1} x their visibility)", sight_reach(m, range)),
+                Some((i, d)) => format!("sees unit {i} at {d:.1} m (its visibility {:.2}, reach {reach:.1} x it, x1.15 a contact; field of view {} deg)",
+                                        sight[i].visibility, m.sensor.fov),
+                None => format!("sees no hostile in its gun's reach {:.1} (sight {reach:.1} x their visibility, x1.15 a contact)", ai_range(m)),
             };
             println!("t={clock:.2} {}: {what}", unit_name(m));
         }
