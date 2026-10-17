@@ -56,6 +56,10 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | anim-trigger (7) | OPERATE plays its entry's clip (`animation-archetype`) on its first object, forward or backward (`wwit-debugging`, AM_: 3-5 backward) at its `time-scale`; with AC_PLAY or AC_RESUME it sends ANIM_START when it starts forward after playing backward (its first forward play too), ANIM_BACK_START when it starts backward after playing forward (or ANIM_START for the other modes). The demo moves doors and gates with it ([maps.md](maps.md), "Doors and gates"); other animated objects (the tutorial's two looping props) are logged | 0x204d00, FUN_00204bb0 |
 | sound (73) | PLAY_SOUND plays its sound (alike everywhere, or at its place), PLAY_DIALOG queues it on the world's dialog queue, STOP / PAUSE / RESUME; FINISHED when its length has run (#223: see "Sound- and dialog-triggers") | 0x206450, 0x206690 |
 | dialog (4) | Its character says its line; FINISHED once it's said (#223) | 0x206d20, 0x206ee0 |
+| message h_e9b3ae8e (37) | OPERATE: OPERATED, then the HUD's two hint lines set from its own (shown ones blink in, the others hidden) (#224: see "Hints, button gates and panels") | 0x2078e0 |
+| input h_e2b9c3a2 (37) | Enabled, TRUE to its targets every frame its virtual button is held on any pad (#224) | 0x2008a0 |
+| menu (10) | OPERATE opens its game-options menu over the game (a tutorial panel) and sends OPERATED; the panel's A and Y send MENU_ACCEPT / MENU_Y_BUTTON, then FINISHED once it's closed (#224) | 0x2082d0, 0x208430 |
+| event (2) | An AI event about an object it listens to whose number is its `event-id`: EVENT_MATCH, then it disables itself (#224) | 0x202dd0 |
 | destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31), evaluate (6) | Their base actions only: a waypoint trigger marks AI route points; the evaluate-triggers' random tests pick ambient lines (both no-ops here) | |
 | gamevar (15) | See "Gamevar-triggers" | 0x1ffc40, FUN_001ffb80 |
@@ -345,6 +349,21 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
   (0x163060), the user as the subject.
 * **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs). The tutorial's listened ones (the
   DNA, the Sentry mines, the L-Shot-50) aren't takeable in the demo yet (step 9, #228).
+* **AI events** (RESERVE_4EVT, 17): a character's EVT_ events (its health under 75, 50 and 25
+  percent of its most; EVT_SOUND_ENEMY_NOISE as a stub) to the event-triggers listening to it
+  only (FUN_001fe440), with the character as the subject (#224, play_hints.rs `ai_events`).
+
+## Hints, button gates and panels
+
+The message, input, menu and event classes (#224) are the runtime's, dispatched from
+`Triggers::deliver` and `Triggers::update` like the rest; their code is in two child modules,
+`play_hints.rs` (the message trigger's hint lines, the input trigger's virtual buttons, the
+event-trigger's AI events) and `play_panels.rs` (the menu-trigger's panels), with their own page:
+[hints.md](hints.md). Their state lives in `Triggers::hints` (one per level). A menu-trigger
+whose menu game-options doesn't define (the tutorial's trigger_menu509) opens nothing and never
+sends FINISHED; a panel up stops the game's clock as the objectives menu does, so the timers
+wait under it. `BF_HINT_LOG=1` logs the lines, the gates' presses, the AI events and the
+panels; `BF_TEST_VB` presses a virtual button and `BF_TEST_PANEL` closes the panels.
 
 ## Test hooks
 

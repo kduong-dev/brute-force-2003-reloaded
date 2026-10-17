@@ -129,6 +129,11 @@ fn test_key(name: &str) -> Option<KeyCode> {
 #[derive(Component)]
 struct MenuRoot;
 
+/// The menu's controls (`toggle`), for what must take a frame's presses before it: the tutorial's
+/// panels over the game and the hint lines' virtual buttons (play_panels.rs, play_hints.rs).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct ObjectivesControls;
+
 /// An objective line's text node: which list (0 primary, 1 secondary) and which line.
 #[derive(Component)]
 struct ObjectiveLine(usize, usize);
@@ -140,7 +145,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<ObjectivesMenu>()
         .add_systems(OnEnter(AppState::Playing), build.after(setup))
         .add_systems(OnExit(AppState::Playing), close_on_exit)
-        .add_systems(PreUpdate, toggle.after(bevy::input::InputSystem).run_if(in_state(AppState::Playing)))
+        .add_systems(PreUpdate, toggle.in_set(ObjectivesControls).after(bevy::input::InputSystem).run_if(in_state(AppState::Playing)))
         .add_systems(Update, fill.run_if(in_state(AppState::Playing)));
 }
 
@@ -276,7 +281,9 @@ fn fill(campaign: Res<Campaign>, game: Res<GameData>, font: Option<Res<GameFont>
 /// game's clock; closed, the clock runs again. A menu over the game takes the controls: the keys
 /// and mouse buttons pressed in a frame it's up (the one it opens in and the one it closes in
 /// too) are taken from the frame's input, so no system of the game's sees them (Space or Enter
-/// closing it doesn't make Tex jump or click a test tool's panel).
+/// closing it doesn't make Tex jump or click a test tool's panel). A tutorial panel over the game
+/// takes the frame's presses before this runs (play_panels.rs `input`, ordered by
+/// `ObjectivesControls`), so BACK on one opens nothing (take14).
 #[allow(clippy::too_many_arguments)]
 fn toggle(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, pads: Query<&Gamepad>, time: Res<Time>,
           player: Res<Player>, campaign: Res<Campaign>, game: Res<GameData>, font: Option<Res<GameFont>>, mut menu: ResMut<ObjectivesMenu>,

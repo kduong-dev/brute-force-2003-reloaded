@@ -595,8 +595,9 @@ const LABEL_X: f32 = 56.9;
 const LABEL_TOP: f32 = 85.5;
 const LABEL_CAP: f32 = 13.4;
 /// The label moves this much lower for each other message widget showing (0xc73b4-0xc73cb: 20
-/// units full screen). Here the switch hint, which sits in its place, counts: **a guess** (the
-/// takes never show the two together).
+/// units full screen): the player view's two hint lines (+0x3c, +0x40: play_hints.rs, #224).
+/// The switch hint, which sits in the first one's place, counts as it: **a guess** (the takes
+/// never show the two together).
 const LABEL_STACK: f32 = 20.0;
 /// After the off the label stays at full for LABEL_HOLD, then fades at LABEL_FADE a second (the
 /// widget's alpha, 3.0 at 0x39a848, 0xc7473). The hold is measured, 0.13-0.18 s after the bar
@@ -1209,7 +1210,7 @@ fn update_hud_widgets(
     player: Res<Player>,
     reserve: Res<super::ammo::Reserve>,
     held_name: Res<super::ammo::HeldName>,
-    switch_hint: Res<super::ammo::SwitchHint>,
+    (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
     squad: Res<Squad>,
     use_panel: Res<super::UsePanel>,
     feed: Res<super::pickups::PickupFeed>,
@@ -1422,8 +1423,9 @@ fn update_hud_widgets(
             Part::SkillLabel => {
                 let name = game.0.strings.get(&stamina.label).cloned().unwrap_or_default();
                 show(&mut vis, stamina.label_alpha > 0.0 && !name.is_empty());
-                // (lower with the switch hint up: LABEL_STACK)
-                let y = LABEL_TOP + if other.is_some() { LABEL_STACK } else { 0.0 };
+                // (lower for each hint line up, the switch hint as the first: LABEL_STACK)
+                let lines = (hint_lines.0[0] || other.is_some()) as usize + hint_lines.0[1] as usize;
+                let y = LABEL_TOP + lines as f32 * LABEL_STACK;
                 if let Some(t) = text.as_mut() {
                     if t.y != y {
                         t.y = y;

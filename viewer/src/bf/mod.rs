@@ -11,6 +11,7 @@ pub mod gameflags;
 pub mod hash;
 pub mod level;
 pub mod locomotion;
+pub mod menus;
 pub mod personality;
 pub mod pieces;
 pub mod texture;

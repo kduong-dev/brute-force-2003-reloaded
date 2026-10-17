@@ -58,6 +58,12 @@
 //!    the world's dialog queue (one line at a time), STOP / PAUSE / RESUME; when the sound's
 //!    length has run (the bank's size over its rate) it sends FINISHED to its targets. A
 //!    dialog-trigger's character says its line, FINISHED at its end.
+//!  * message, input, menu and event triggers (#224, play_hints.rs and play_panels.rs; 0x2078e0,
+//!    0x2008a0, 0x2082d0 / 0x208430, 0x202dd0): OPERATE shows or clears the HUD's two hint lines
+//!    ("Press [BACK] to check mission objectives.") and sends OPERATED; TRUE every frame a virtual
+//!    button is held; OPERATE opens a game-options panel over the game (the clock stopped),
+//!    OPERATED, then MENU_ACCEPT / MENU_Y_BUTTON from its buttons and FINISHED once it's closed;
+//!    an AI event about a listened object (EVT_HEALTH_PCT_25 ...) passed on as EVENT_MATCH.
 //!  * destroyer (0x200d70, 0x200e40): OPERATE marks it, and its update removes its objects (a
 //!    spawn-trigger's copy for a spawn-trigger), then it disables itself. The update runs the
 //!    base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update.
@@ -99,7 +105,9 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<TriggerEvents>()
         .init_resource::<Triggers>()
         .add_systems(OnEnter(AppState::Playing), start.after(setup).after(flags::begin_level))
-        .add_systems(Update, run.after(squad_control).before(doors).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, run.after(squad_control).before(doors).run_if(in_state(AppState::Playing)))
+        // (the hint lines, button gates, AI events and panels: #224)
+        .add_plugins((hints::plugin, panels::plugin));
 }
 
 /// An object's event from the world (the game's FUN_001fe3d0: to the triggers listening to the
@@ -244,6 +252,15 @@ pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
 #[path = "play_sound_triggers.rs"]
 pub(crate) mod sounds;
 
+/// The message, input and event triggers, the AI events they hear, the virtual buttons and the
+/// HUD's two hint lines (#224): a child of this module, as the sound side is.
+#[path = "play_hints.rs"]
+pub(crate) mod hints;
+
+/// The menu-triggers and the game-options panels they open over the game (#224).
+#[path = "play_panels.rs"]
+pub(crate) mod panels;
+
 /// An event as the game's triggers pass it (FUN_001fe660 builds one, vtable 0x3a3fb4): its
 /// signal (+4), its sender's iD (+8, what an entry's match-id answers), its subject (+0xc: who
 /// entered a detector, a spawn's copy ...; by name here, 0 none) and its data (+0x10: a
@@ -299,6 +316,14 @@ enum ClassState {
     Sound(Box<sounds::Sound>),
     /// a dialog-trigger's +0x40-+0x48 (play_sound_triggers.rs)
     Dialog(sounds::Dialog),
+    /// a message trigger's two hint lines, +0x40-+0x5c (play_hints.rs)
+    Message([data::HintLine; 2]),
+    /// an input trigger's virtual button, +0x48 (play_hints.rs)
+    Input { vb: i64 },
+    /// a menu-trigger's menu and whether it's open, +0x40-+0x4c (play_panels.rs)
+    Menu(panels::MenuTrigger),
+    /// an event-trigger's EVT_ number and filter, +0x40 / +0x44 (play_hints.rs)
+    Event { event: i64, filter: u32 },
     Router { filters: bool, out_signal: i64 },
     /// +0x48 running, +0x49 looping, +0x4a stops, +0x40 initial, +0x44 current, +0x50 the subject
     /// its OPERATE came with (its pulse's)
@@ -328,6 +353,10 @@ enum Kind {
     Other,
     Sound,
     Dialog,
+    Message,
+    Input,
+    Menu,
+    Event,
     Router,
     Timer,
     Calc,
@@ -435,6 +464,9 @@ pub struct Triggers {
     /// the sound side (play_sound_triggers.rs): the world's dialog queue, the voices asked for,
     /// where the listener and the characters were
     sound: sounds::SoundWorld,
+    /// the message, input, menu and event triggers' side (play_hints.rs, play_panels.rs): the
+    /// HUD's hint lines, the virtual buttons held this frame, this frame's AI events, the panels
+    hints: hints::HintWorld,
     /// the sim time (s), for the log and BF_TRIGGER_FIRE
     clock: f32,
     /// how deep the events in flight are nested (MAX_DEPTH)
@@ -504,6 +536,10 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             Class::Router { filters, out_signal } => ClassState::Router { filters: *filters, out_signal: *out_signal },
             Class::Sound(s) => ClassState::Sound(Box::new(sounds::Sound::new(t, s, level, &game.0))),
             Class::Dialog { dialog, hush } => ClassState::Dialog(sounds::Dialog::new(*dialog, *hush, &game.0)),
+            Class::Message { lines } => ClassState::Message(*lines),
+            Class::Input { vb, .. } => ClassState::Input { vb: *vb },
+            Class::Menu { menu, title, message } => ClassState::Menu(panels::MenuTrigger::new(*menu, *title, *message, &game.0)),
+            Class::Event { event, filter } => ClassState::Event { event: *event, filter: *filter },
             Class::Timer { running, looping, stops, initial, current } => ClassState::Timer { running: *running, looping: *looping, stops: *stops,
                                                                                              initial: *initial, current: *current, subject: 0 },
             Class::Calculator { counter, target, test } => ClassState::Calc { counter: *counter, target: *target, test: *test },
@@ -1016,6 +1052,10 @@ impl Triggers {
             ClassState::Other => Kind::Other,
             ClassState::Sound(_) => Kind::Sound,
             ClassState::Dialog(_) => Kind::Dialog,
+            ClassState::Message(_) => Kind::Message,
+            ClassState::Input { .. } => Kind::Input,
+            ClassState::Menu(_) => Kind::Menu,
+            ClassState::Event { .. } => Kind::Event,
             ClassState::Router { .. } => Kind::Router,
             ClassState::Timer { .. } => Kind::Timer,
             ClassState::Calc { .. } => Kind::Calc,
@@ -1190,6 +1230,9 @@ impl Triggers {
         match self.kind(i) {
             Kind::Sound => self.sound(i, ev),
             Kind::Dialog => self.dialog(i, ev),
+            Kind::Message => self.message(i, ev),
+            Kind::Input | Kind::Event => self.counts_operate(i, ev),
+            Kind::Menu => self.menu(i, ev),
             Kind::Router => self.router(i, ev),
             Kind::Timer => self.timer(i, ev),
             Kind::Calc => self.calculator(i, ev),
@@ -1688,6 +1731,9 @@ impl Triggers {
         match self.kind(i) {
             Kind::Sound => self.sound_update(i, dt),
             Kind::Dialog => self.dialog_update(i),
+            Kind::Input => self.input_update(i),
+            Kind::Menu => self.menu_update(i),
+            Kind::Event => self.event_update(i),
             Kind::Detector => self.detector_update(i, dt, actors),
             Kind::Timer => self.timer_update(i, dt),
             Kind::Spawn => self.spawn_update(i, dt),
