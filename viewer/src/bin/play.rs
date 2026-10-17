@@ -3044,7 +3044,8 @@ fn spawn_player(
         }
         spawn_unit(&mut commands, p, &mut game.0, &mut assets);
     }
-    // (the controlled character's first load: BF_TEST_FALL starts it in the air)
+    // (the controlled character's first load: BF_TEST_FALL starts it in the air; a BF_TEST_LEVEL
+    // switch makes a new Player with sim_time 0, so it drops again on each map)
     if player.sim_time == 0.0 && !player.stand_in {
         test_fall(&mut player);
     }

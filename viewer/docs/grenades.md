@@ -197,8 +197,9 @@ decal, and a throw called off.
   place (50 units at (535, 379), fitted to the medkit captures). The meter's fill is drawn as (226, 148,
   54) at 0.65: what the console's stored-value blend of (255, 160, 53) at 0.65 gives over the
   recording's ground (63, 63, 55), since the UI blends in linear light. The charge sound is
-  queued on the frame the meter first shows. The fade's alpha is drawn so its strength over
-  take01's ground (37, 27, 20) is the game's stored-value one (`METER_GROUND`, `METER_FULL`) (`BF_SOUND_LOG` and the capture agree). When the selected type runs out, the first type still carried is
+  queued on the frame the meter first shows (`BF_SOUND_LOG` and the capture agree). The fade's
+  alpha is drawn so its strength over take01's ground (37, 27, 20) is the game's stored-value
+  one (`METER_GROUND`, `METER_FULL`). When the selected type runs out, the first type still carried is
   selected (the Sentry recording: the last Sentry set down, the box shows Frag 10).
 
 * **The Gas's cloud** (`src/bin/play_gas.rs`; issue #76). The explosion h_0cc6cb8c is
