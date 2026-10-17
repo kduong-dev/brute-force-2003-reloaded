@@ -194,8 +194,8 @@ While it's set:
   play_objectives.rs);
 * the player's controls don't reach the game (play.rs `read_input`, `script::blocks_input`);
 * nobody takes damage (the damage handler 0x125600's early exit: play.rs `hurt`);
-* the squad's chatter is quiet (FUN_00140a60) and the squad-dead countdown waits
-  (FUN_00089d30). Neither is done here.
+* the squad's chatter is quiet (FUN_00140a60, not done here) and the squad-dead countdown waits
+  (FUN_00089d30: play_mission.rs, [mission.md](mission.md)).
 
 A character a script holds (119, or bound at its start, or walking for a 105) has no controls
 and no AI: play.rs `read_input` and `update_player` hand it to `script::held_step`, which zeroes
@@ -376,8 +376,7 @@ frames were compared side by side.
   and isn't done.
 * The opening's title card ("Brute Force" / "Welcome to the 23rd!", take03 from about 6 s to
   15 s) is the HUD's and isn't done.
-* The squad's chatter isn't hushed by the cutscene bit, and the squad-dead countdown doesn't
-  wait for it.
+* The squad's chatter isn't hushed by the cutscene bit.
 * The demo's characters are darker than the game's in the front-lit shots, and its follow
   camera is closer: both are the demo's own, not the cutscenes'.
 * Take01's last two cuts come 0.18 and 0.30 s after the script's times while the first two are

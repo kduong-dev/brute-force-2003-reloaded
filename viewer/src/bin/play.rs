@@ -568,11 +568,16 @@ fn main() {
     // the front end; its pictures and sounds come from the game data
     menu::plugin(&mut app);
     briefing::plugin(&mut app);
+    // the font records and the mission flow (#226: the status line shows in every state)
+    fonts::plugin(&mut app);
+    mission::plugin(&mut app);
     if let Some(mut l) = loaded {
         let data = menu::gather(&mut l.game, &data_dir());
         menu::install(app.world_mut(), data);
         let movies = briefing::gather(&mut l.game);
         briefing::install(app.world_mut(), movies);
+        let records = fonts::gather(&mut l.game);
+        fonts::install(app.world_mut(), records);
         // straight into the map (BF_MAP or a test hook)
         app.insert_state(AppState::Playing);
         if test_map {
@@ -653,6 +658,10 @@ mod editor;
 mod menu;
 #[path = "play_briefing.rs"]
 mod briefing;
+#[path = "play_fonts.rs"]
+mod fonts;
+#[path = "play_mission.rs"]
+mod mission;
 #[path = "play_scenery.rs"]
 mod scenery;
 #[path = "play_ammo.rs"]
@@ -933,7 +942,7 @@ fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppS
     if leave || test {
         *armed = None;
         *frames = 0;
-        commands.insert_resource(menu::Return { map: Some(map.0.clone()), deathmatch: mode.deathmatch });
+        commands.insert_resource(menu::Return { map: Some(map.0.clone()), deathmatch: mode.deathmatch, main: false });
         next.set(AppState::Menu);
     }
 }

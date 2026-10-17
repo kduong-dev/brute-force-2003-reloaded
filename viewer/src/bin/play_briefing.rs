@@ -125,10 +125,12 @@ pub enum List {
 pub enum Then {
     /// the front end, at its title (the test hook's)
     Menu,
-    /// another state of the app, which the caller has set up: the mission flow's (#226: the
-    /// zone loading), which doesn't call this yet
-    #[allow(dead_code)]
-    State(AppState),
+    /// the zone in that level archive, behind the LOADING screen (the mission flow's, #226:
+    /// play_menu.rs `load_next`)
+    Zone(String),
+    /// another list straight after (a zone's post-movies, then the next zone's pre-movies: the
+    /// mission flow's Continue)
+    List(Box<Request>),
     /// leave the app (a capture run)
     Quit,
 }
@@ -255,6 +257,9 @@ struct Playing {
     warm: usize,
     /// the text on screen: the movie's serial, its subtitle and how many of its characters
     text: Option<(usize, usize, usize)>,
+    /// part of the mission flow (it hands over to a zone or another list, not to the title or an
+    /// exit): under BF_CAPTURE its frames are brief_NNN.png and it doesn't quit (`capture`)
+    flow: bool,
 }
 
 /// Parts of the briefing's screen, gone when it closes.
@@ -297,23 +302,9 @@ fn open(mut commands: Commands, request: Option<Res<Request>>, campaign: Option<
                     ChildOf(screen)));
     commands.spawn((Node { position_type: PositionType::Absolute, width: Val::Px(SCREEN.x), height: Val::Px(SCREEN.y), ..default() },
                     TextLayer, ChildOf(screen)));
-    // the zone's list, its movies that were converted
-    let movies = campaign.as_ref().and_then(|c| c.levels.iter().find(|l| l.id == request.mission))
-        .and_then(|l| l.movies.get(request.zone))
-        .map(|z| if request.list == List::Pre { z.pre.clone() } else { z.post.clone() });
-    if movies.is_none() {
-        eprintln!("briefing: no movie list for mission h_{:08x} zone {} ({:?})", request.mission, request.zone, request.list);
-    }
-    let mut queue: VecDeque<Reel> = movies.unwrap_or_default().into_iter().filter_map(|m| {
-        let name = movie_name(&m.file);
-        let frames = super::menu::movie_files(&name);
-        if frames.is_empty() {
-            eprintln!("briefing: no frames in ../decompiled/movies/{name} (see docs/briefing.md)");
-            return None;
-        }
-        let audio = super::menu::decompiled(&format!("movies/{name}/audio.wav"));
-        Some(Reel { name, frames, audio, subtitles: m.subtitles })
-    }).collect();
+    // the zone's list, its movies that were converted (an empty one hands over to the list
+    // after it, if there is one)
+    let (mut queue, request) = first_list(campaign.as_deref(), request);
     // BF_MOVIES_AT: the movies it passes are left out
     let mut at = std::env::var("BF_MOVIES_AT").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0).max(0.0);
     while let Some(r) = queue.front() {
@@ -327,12 +318,49 @@ fn open(mut commands: Commands, request: Option<Res<Request>>, campaign: Option<
     let skips = std::env::var("BF_MOVIES_SKIP").ok().map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect()).unwrap_or_default();
     let text_box = if request.list == List::Pre { PRE_BOX } else { POST_BOX };
     let warm = if std::env::var("BF_CAPTURE").is_ok() { CAPTURE_WARMUP } else { 0 };
+    let flow = !matches!(request.then, Then::Menu | Then::Quit);
     let mut playing = Playing { queue, reel: None, serial: 0, clock: 0.0, shown: usize::MAX, image, total: 0.0, text_box, then: request.then,
-                                skips, log: std::env::var("BF_MOVIES_LOG").is_ok(), warm, text: None };
+                                skips, log: std::env::var("BF_MOVIES_LOG").is_ok(), warm, text: None, flow };
     if next_reel(&mut commands, &mut playing, &mut images, &mut sources, at) {
         commands.insert_resource(playing);
     } else {
-        hand_over(&playing.then, &mut next, &mut exit);
+        hand_over(&mut commands, &playing.then, &mut next, &mut exit);
+    }
+}
+
+/// A list's movies that were converted (see `open`).
+fn reels(campaign: Option<&Campaign>, request: &Request) -> VecDeque<Reel> {
+    let movies = campaign.and_then(|c| c.levels.iter().find(|l| l.id == request.mission))
+        .and_then(|l| l.movies.get(request.zone))
+        .map(|z| if request.list == List::Pre { z.pre.clone() } else { z.post.clone() });
+    if movies.is_none() {
+        eprintln!("briefing: no movie list for mission h_{:08x} zone {} ({:?})", request.mission, request.zone, request.list);
+    }
+    movies.unwrap_or_default().into_iter().filter_map(|m| {
+        let name = movie_name(&m.file);
+        let frames = super::menu::movie_files(&name);
+        if frames.is_empty() {
+            eprintln!("briefing: no frames in ../decompiled/movies/{name} (see docs/briefing.md)");
+            return None;
+        }
+        let audio = super::menu::decompiled(&format!("movies/{name}/audio.wav"));
+        Some(Reel { name, frames, audio, subtitles: m.subtitles })
+    }).collect()
+}
+
+/// The first list with a movie to play, from `request` on through its `Then::List`s (a zone
+/// with no post-movies goes straight on to the next zone's pre-movies), and the request it
+/// belongs to (its hand-over and its list's text box are the ones that apply).
+fn first_list(campaign: Option<&Campaign>, mut request: Request) -> (VecDeque<Reel>, Request) {
+    loop {
+        let queue = reels(campaign, &request);
+        if !queue.is_empty() {
+            return (queue, request);
+        }
+        match request.then {
+            Then::List(next) => request = *next,
+            _ => return (queue, request),
+        }
     }
 }
 
@@ -402,11 +430,11 @@ fn wav_from(bytes: &[u8], seconds: f32) -> Vec<u8> {
     bytes.to_vec()
 }
 
-/// After the last movie: the hand-over (see Then).
-fn hand_over(then: &Then, next: &mut NextState<AppState>, exit: &mut EventWriter<AppExit>) {
+/// After the last movie: the hand-over (see Then; a `Then::List` is played on by `advance`).
+fn hand_over(commands: &mut Commands, then: &Then, next: &mut NextState<AppState>, exit: &mut EventWriter<AppExit>) {
     match then {
-        Then::Menu => next.set(AppState::Menu),
-        Then::State(s) => next.set(*s),
+        Then::Menu | Then::List(_) => next.set(AppState::Menu),
+        Then::Zone(map) => super::menu::load_next(commands, next, map),
         Then::Quit => {
             exit.write(AppExit::Success);
         }
@@ -439,7 +467,8 @@ fn fit(window: Query<&Window, With<PrimaryWindow>>, mut scale: ResMut<UiScale>) 
 #[allow(clippy::too_many_arguments)]
 fn advance(mut commands: Commands, time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButton>>, pads: Query<&Gamepad>,
            playing: Option<ResMut<Playing>>, mut images: ResMut<Assets<Image>>, mut sources: ResMut<Assets<AudioSource>>,
-           sounds: Query<Entity, With<ReelSound>>, mut next: ResMut<NextState<AppState>>, mut exit: EventWriter<AppExit>) {
+           sounds: Query<Entity, With<ReelSound>>, mut next: ResMut<NextState<AppState>>, mut exit: EventWriter<AppExit>,
+           campaign: Option<Res<Campaign>>) {
     let Some(mut p) = playing else { return };
     let dt = if std::env::var("BF_CAPTURE").is_ok() {
         if p.warm > 0 { 0.0 } else { super::capture_step() }
@@ -467,11 +496,25 @@ fn advance(mut commands: Commands, time: Res<Time>, keys: Res<ButtonInput<KeyCod
     for e in &sounds {
         commands.entity(e).despawn();
     }
-    if !next_reel(&mut commands, &mut p, &mut images, &mut sources, 0.0) {
-        let then = p.then.clone();
-        commands.remove_resource::<Playing>();
-        hand_over(&then, &mut next, &mut exit);
+    if next_reel(&mut commands, &mut p, &mut images, &mut sources, 0.0) {
+        return;
     }
+    // the list is done: the next list (Then::List) plays on in the same menu, its text box its own
+    if let Then::List(request) = p.then.clone() {
+        let (queue, request) = first_list(campaign.as_deref(), *request);
+        p.queue = queue;
+        p.text_box = if request.list == List::Pre { PRE_BOX } else { POST_BOX };
+        p.then = request.then;
+        if p.log {
+            println!("briefing: t {:7.2}  the next list: mission h_{:08x} zone {} {:?}", p.total, request.mission, request.zone, request.list);
+        }
+        if next_reel(&mut commands, &mut p, &mut images, &mut sources, 0.0) {
+            return;
+        }
+    }
+    let then = p.then.clone();
+    commands.remove_resource::<Playing>();
+    hand_over(&mut commands, &then, &mut next, &mut exit);
 }
 
 /// The subtitle on screen `t` seconds into a movie, and how long it has been up: the list's
@@ -721,7 +764,9 @@ fn draw_line(commands: &mut Commands, layer: Entity, atlas: &Handle<Image>, line
 
 /// BF_CAPTURE=<dir> on a briefing (with BF_MOVIES): after a short warm-up, saves every frame as
 /// <dir>/frame_NNN.png while the clock steps a fixed 1/15 s a frame, then quits after
-/// BF_CAPTURE_FRAMES (200) frames (or when the list ends).
+/// BF_CAPTURE_FRAMES (200) frames (or when the list ends). A briefing of the mission flow (#226:
+/// the campaign's start, Continue, Replay Mission) saves brief_NNN.png, its numbers going on from
+/// list to list, and doesn't quit: the run goes on into the zone.
 fn capture(mut commands: Commands, playing: Option<ResMut<Playing>>, mut frame: Local<usize>, mut exit: EventWriter<AppExit>) {
     let Ok(dir) = std::env::var("BF_CAPTURE") else { return };
     let Some(mut p) = playing else { return };
@@ -730,9 +775,10 @@ fn capture(mut commands: Commands, playing: Option<ResMut<Playing>>, mut frame: 
         return;
     }
     let frames: usize = std::env::var("BF_CAPTURE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
-    if *frame < frames {
+    let name = if p.flow { "brief" } else { "frame" };
+    if *frame < frames || p.flow {
         commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-            .observe(bevy::render::view::screenshot::save_to_disk(format!("{dir}/frame_{:03}.png", *frame)));
+            .observe(bevy::render::view::screenshot::save_to_disk(format!("{dir}/{name}_{:03}.png", *frame)));
     } else if *frame > frames + 20 {
         exit.write(AppExit::Success);
     }

@@ -3,7 +3,9 @@
 Before a campaign mission's zone loads the game plays that zone's movies, each skippable, with
 subtitles typed over them (`play_briefing.rs`, #225). The tutorial (Welcome to the 23rd!, `m00`)
 plays `Campaign_Intro`, `Tex_Intro_Final` and `mb01`; Rescue Brutus (`m01`) plays `mb02` and
-`Brutus_Intro_Final`. The demo has no CAMPAIGN entry yet (#226): `BF_MOVIES` plays a list.
+`Brutus_Intro_Final`. The front end's CAMPAIGN path plays the tutorial's list as a new campaign
+starts, the end screen's Continue the next mission's ([mission.md](mission.md), #226);
+`BF_MOVIES` plays a list on its own.
 
 ```
 BF_MOVIES=m00 cargo run --bin bf_play
@@ -69,8 +71,11 @@ BF_MOVIES=m00 cargo run --bin bf_play
 
 * `AppState::Briefing`. The entry point is `briefing::start(commands, next, mission, zone, list,
   then)`: the mission's id (`h("m00")`), the zone's index, `List::Pre` or `List::Post`, and what
-  follows the last movie (`Then::Menu` the title, `Then::State(..)` a state the caller set up,
-  for the mission flow, `Then::Quit`). The front end's own parts go as the briefing opens.
+  follows the last movie (`Then::Menu` the title, `Then::Zone(archive)` that zone behind the
+  front end's LOADING screen, `Then::List(..)` another list straight after: a zone's
+  post-movies, then the next zone's pre-movies; `Then::Quit`). A list with no movie converted
+  hands over to the one after it at once. The front end's own parts go as the briefing opens;
+  from a map, the map's go as its state ends (`end_play`).
 * The movie fills the 640 x 480 screen, which is scaled to fit the window whole (black bars on a
   wide window, as the takes show it). The subtitles are glyph nodes over it, rebuilt when a
   character is typed; blinking glyphs are shown and hidden every frame.
@@ -111,11 +116,11 @@ worktree), beside the `Brute Force` folder.
 * `BF_MOVIES_LOG=1`: prints each movie's start, end or skip and each subtitle's showing and going,
   with the list's and the movie's clocks.
 * `BF_CAPTURE=<dir>` (`BF_CAPTURE_FRAMES`, `BF_CAPTURE_FPS`): after a short warm-up, the clock
-  steps a fixed 1/15 s a frame and every frame is saved as `frame_NNN.png`. `BF_MUTE=1`: no sound.
+  steps a fixed 1/15 s a frame and every frame is saved as `frame_NNN.png`; a list the mission
+  flow plays saves `brief_NNN.png` and goes on to what follows it. `BF_MUTE=1`: no sound.
 
 ## Not done
 
-* The "Saving Campaign..." card the game shows before the first movie of a new campaign (#27).
 * The short black gaps between movies: 0.35 s from Campaign_Intro to Tex_Intro_Final and 0.69 s
   to mb01 in take01, about 0.1 s after a skip in take02. The code has no wait there: the movie
   player closes a movie a frame after its last (0x1784e0), the movie item then asks for the next
@@ -124,12 +129,10 @@ worktree), beside the `Brute Force` folder.
   end: guesses). The demo's next movie starts at once.
 * The blink's phase: the game's clock is the app's (FUN_000cd4c0), the demo's the list's; the rate
   and the half-on, half-off match.
-* The CAMPAIGN entry, the LOADING screen and the zone after the list, and the next mission's list
-  after the end screen: the mission flow (#226) calls `start`. Untested, a risk for it: `open`
-  spawns its own `Camera2d` and only the boot's and the menu's parts go as the briefing opens.
-  Called from a map (`AppState::Playing`, e.g. after the end screen), it relies on that state's
-  teardown (`end_play`, on leaving it) to remove the game's camera and HUD; anything left would
-  draw over or under the movie.
+* The status line's "Saving..." / "Saving Campaign..." over the first movie of a new campaign is
+  the mission flow's ([mission.md](mission.md)); so are the LOADING screen and the zone after a
+  list. Called from a map (the end screen's Continue, a zone's end), the map's camera and HUD go
+  with its state (`end_play`): the movies showed clean in those runs.
 * Post-movies (MB17, EndGame, credits, epilogue) play through the same path with their box at
   (60, 60), unchecked against footage.
 

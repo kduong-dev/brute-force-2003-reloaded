@@ -94,6 +94,13 @@ pub fn in_cutscene() -> bool {
     CUTSCENE.load(Ordering::Relaxed)
 }
 
+/// Sets or clears the world's cutscene bit from outside a script (#226): the level's end sets it
+/// as its fade starts (FUN_000e0410, world+0xc50 |= 0x10) and the end screen as it opens
+/// (0x106ef0); a restart clears it (FUN_00089da0).
+pub fn set_cutscene(on: bool) {
+    CUTSCENE.store(on, Ordering::Relaxed);
+}
+
 /// Whether the player's controls don't reach `p` this frame: during a cutscene, while a script
 /// holds it (char+0x834 bit 0, FUN_00129530 turns its player's control off; a 105's walk holds
 /// it too, bits 0 and 1), before it's in the world (`Player::absent`). A walk left over once the
@@ -339,6 +346,16 @@ impl Cutscenes {
     /// there while it's shown (FUN_00178c10, play_sound_triggers.rs `listener`).
     pub fn camera_at(&self) -> Option<Vec3> {
         self.shown.and_then(|c| self.cameras.get(&c)).map(|c| c.0.w_axis.truncate())
+    }
+
+    /// The end screen's view (#226, FUN_001092e0 as the end screen opens): the view cut to the
+    /// level camera `camera` (one of the level's end cameras, play_mission.rs picks it; None
+    /// keeps the view) and the letterbox in at once (FUN_00073460 with 0 s).
+    pub fn end_view(&mut self, camera: Option<u32>) {
+        if let Some(c) = camera.filter(|c| self.cameras.contains_key(c)) {
+            self.shown = Some(c);
+        }
+        self.letterbox(true, 0.0);
     }
 
     /// The letterbox going in (FUN_00073460: toward 1 over the show time, scaled by what's left)
