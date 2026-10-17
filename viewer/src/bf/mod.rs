@@ -8,6 +8,7 @@ pub mod campaign;
 pub mod character;
 pub mod character_type;
 pub mod gameflags;
+pub mod gscr;
 pub mod hash;
 pub mod level;
 pub mod locomotion;

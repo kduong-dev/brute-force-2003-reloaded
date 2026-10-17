@@ -95,8 +95,10 @@ Cash $2040. The end screen itself is #226's.
 
 ## The MISSION OBJECTIVES menu
 
-The game's BACK (VB 62, OPEN_OBJECTIVES_MENU) opens it over the game in a mission; the demo's I
-key (or the pad's Back). I again, Enter, Space, or the pad's A or B close it. The game's clock
+The game's BACK (VB 62, OPEN_OBJECTIVES_MENU) opens it over the game in a mission, but not
+during a cutscene (FUN_0008c8c0 opens no menu while the world's cutscene bit is set, #222:
+[cutscenes.md](cutscenes.md)); the demo's I key (or the pad's Back). I again, Enter, Space, or
+the pad's A or B close it. The game's clock
 stops under it (take04: the clock held at 60275 from the press at 62.6 s to the B at 74.5 s), so
 the demo's does: `frame_dt` is 0 (nothing in the world moves: characters, triggers' timers,
 effects). The menu takes the controls: the keys and mouse buttons pressed in a frame it's up

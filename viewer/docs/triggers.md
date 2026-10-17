@@ -5,11 +5,11 @@ anim-triggers and some twenty more classes, wired to each other in the level fil
 has 500 (58 routers, 54 timers, 47 spawn-triggers, 27 plates, 14 proximity detectors ...). This
 is the runtime that runs them, the first step of the tutorial (#28, plan step 1); the later
 steps plug their classes into it (gamevar and score since step 2, #221, with the game flags and
-the cash they work on: [campaign.md](campaign.md); script, letterbox and warp: step 3, #222;
-sound and dialog since step 4, #223, with the voices and the level's music they play; message,
-input, menu and event: step 5, #224). Everything here is read from
-default.xbe's trigger code (the addresses are in the code's comments and in
-[code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
+the cash they work on: [campaign.md](campaign.md); script, letterbox and warp since step 3,
+#222, with the cutscenes they drive: [cutscenes.md](cutscenes.md); sound and dialog since step
+4, #223, with the voices and the level's music they play; message, input, menu and event: step
+5, #224). Everything here is read from default.xbe's trigger code (the addresses are in the
+code's comments and in [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
 
 `bf/triggers.rs` reads them: every element of the level file that carries the trigger base's
 `h_137926ff` (FUN_001fedb0's attributes), with its entries, targets (`h_e91cf6a8`), objects
@@ -42,7 +42,7 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
   once (FUN_001fe610 / FUN_001fe660); one disabled at the start gets it on its first update once
   enabled. Before that, the level's start sends it to every script-trigger and runs its update
   (FUN_001fe260), so an enabled script-trigger gets it twice (the tutorial's opening one logs two
-  OPERATEs; its script player is step 3's).
+  OPERATEs; its script starts once: [cutscenes.md](cutscenes.md)).
 
 ## The classes it runs
 
@@ -59,13 +59,15 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31), evaluate (6) | Their base actions only: a waypoint trigger marks AI route points; the evaluate-triggers' random tests pick ambient lines (both no-ops here) | |
 | gamevar (15) | See "Gamevar-triggers" | 0x1ffc40, FUN_001ffb80 |
+| script (10) | OPERATE asks its script's player (by `script-name`) to play it from the start, pause, resume or stop, by its entry's `<script command>`; the start waits for the player's update, so two in a frame start it once (#222: [cutscenes.md](cutscenes.md)) | 0x205000, FUN_00204ec0, FUN_00204e40 |
+| letterbox (7) | OPERATE brings the letterbox in over its `show-duration`, STOP takes it out over its `hide-duration` (FUN_00073460 / FUN_000734b0); 0.5 s each without one (the constructor, 0x207599) | 0x207480, FUN_00207410 |
+| warp (18) | OPERATE moves its objects (a spawn-trigger's copy) to its `world-point`: on the ground under it, facing down a direction-point's -z or as it was for a world-point; a dead character stays, and one not spawned yet has no copy to move. Its fade-in h_0ede4719 is 2 s without one (0x200734; not drawn) | 0x200650, FUN_00200480, 0x200400 |
 | score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
 
-Every other class (script, letterbox, warp, menu, message h_e9b3ae8e, input h_e2b9c3a2, event,
-radar, level-over h_1f07be84, property h_14cccfaa, the damage plate h_130818c0) runs its base
-actions; each of its own actions is counted as used, as its handler counts it, and logged with
-the step that runs it ("h_11313ffd (menu) OPERATE on USER_SIGNAL2: not run yet (step 5,
-#224)").
+Every other class (menu, message h_e9b3ae8e, input h_e2b9c3a2, event, radar, level-over
+h_1f07be84, property h_14cccfaa, the damage plate h_130818c0) runs its base actions; each of its
+own actions is counted as used, as its handler counts it, and logged with the step that runs it
+("h_11313ffd (menu) OPERATE on USER_SIGNAL2: not run yet (step 5, #224)").
 
 ## Gamevar-triggers
 
@@ -195,22 +197,23 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   spawns starts on the ground under that trigger's transform, named as its copy (`SquadSpawns`,
   play.rs `player_at_start`): the tutorial's Tex at (65.55, 25.25, 74.03), where take03 has him
   after the farcast; e40's Brutus at (-14.0, 26.2, 160.7) (#102's live reading). A member placed
-  in the world instead (m09_a's four, whose warp-triggers move them: step 3) starts at its
+  in the world instead (m09_a's four, whose warp-triggers move them: #222) starts at its
   placement. It carries its template's inventory, as the copy is the placement
   (`SquadSpawn::dress`): its `<weapon>`s (the tutorial's Tex two MK-ASLTs, h_0c3db625, 48 a clip,
   the icon take03 shows) and its ammo, which sets the squad's reserve of that type (play_ammo.rs:
   his 500 of type 2, take03's 48 / 500). The level's other squad members aren't there: the
   tutorial has Tex alone (the marines are its own spawns). On a map without either (the
   deathmatch maps) the start points and the formation are as before. When the member's
-  spawn-trigger fires later (the opening script at ~17 s, step 3) it's moved there; if the member
+  spawn-trigger fires later (the opening script at 17.09 s, #222) it's moved there; if the member
   isn't in the world to move (the map editor's stand-in leads), nothing is made. `BF_TEST_GOTO`
   still puts the leader where it says.
-* **The squad is there from the start; the game's Tex isn't.** The game spawns Tex with the
-  opening cutscene's farcast, ~17 s in (take03's watch log: the template at its placement until
-  then). The demo has him (and any squad) in the world from t 0, so the detectors round the
-  start see him at once: the tutorial's proximity detectors h_ea082132 and h_e30f11a4 send
-  ENTER_DETECTOR at t 0.07 instead of after the farcast. That holds until step 3 (#222) plays the
-  opening and fires the spawn.
+* **A member a spawn-trigger spawns is out of the world until then** (#222). The game spawns Tex
+  with the opening cutscene's farcast at 17.09 s (take03's watch log: the template at its
+  placement until then, clk 17102). The demo keeps him out (`Player::absent`: not drawn, not
+  seen by the detectors, nobody's target, no script or warp binds him) until `spawn_copy` brings
+  him in, so the start area's proximity detectors h_ea082132 and h_e30f11a4 send ENTER_DETECTOR
+  at 17.27 s, as he lands. Under `BF_TEST_GOTO` or `BF_SCRIPT` the level's start scripts don't
+  play and the squad is in the world from t 0, as before ([cutscenes.md](cutscenes.md)).
 
 ## Sound- and dialog-triggers
 
@@ -305,7 +308,7 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
     FINISHED opens the gate's two leaves (anim0, anim1: 2.0 s at time-scale 2.5) and plays
     metal_gate_05 (h_12c4f1ee, 2.53 s) at each leaf; the second's FINISHED starts the gate music
     (tutorial_02, a 3 s fade-in) and its 238 s stop timer (timer530);
-  * the opening: Bratton's four lines on the script's USER1s (step 3, #222, sends them):
+  * the opening: Bratton's four lines on the script's USER1s (its 103s, #222):
     baseisguarded (1.97 s) at 3.02 s, envhazards (4.59 s) at 6.18, goingtoguide (6.11 s) at 11.22,
     refresher (6.75 s) at 19.55, whose FINISHED starts timer429 (0.1 s: the co-op hint) and
     timer462 (5 s: BASIC CONTROLS; both step 5, #224);
@@ -328,8 +331,10 @@ going indoors or out; `BF_MUTE=1` runs them without a voice; `BF_TRIGGER_FIRE` f
 ```sh
 # the tutorial's gate: the panel's sound, then the gate and its grind, then the gate music
 BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100 BF_TEST_USE=0.5 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
-# the opening's four lines at the script's times (until step 3 plays the script)
-BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 BF_TRIGGER_FIRE="trigger_sound_bratton_baseisguarded,USER1,3.02;trigger_sound_bratton_envhazards,USER1,6.176;trigger_sound_bratton_goingtoguide,USER1,11.217;trigger_sound_bratton_refresher,USER1,19.551" cargo run --bin bf_play
+# the opening's four lines, from the opening script (#222)
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# the same lines fired by hand at the script's times, without it (#223's check, before #222)
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 BF_SCRIPT=off BF_TRIGGER_FIRE="trigger_sound_bratton_baseisguarded,USER1,3.02;trigger_sound_bratton_envhazards,USER1,6.176;trigger_sound_bratton_goingtoguide,USER1,11.217;trigger_sound_bratton_refresher,USER1,19.551" cargo run --bin bf_play
 # an outdoor and an indoor bed: m01_a's start into the lit hall (indoors at 6.8 s)
 BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7,132 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 ```
@@ -360,13 +365,16 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
   (`trigger_router_spawn_tex`) or `h_xxxxxxxx`. `@<object>,<signal>` sends it from an object to
   its listeners instead (`@TUTORIAL_terrorist_5,DESTROYED`).
 * The game flags, the cash and the objectives menu have their own (`BF_FLAG_LOG`,
-  `BF_FLAG_SET`, `BF_CASH_LOG`, `BF_TEST_OBJECTIVES`): [campaign.md](campaign.md).
+  `BF_FLAG_SET`, `BF_CASH_LOG`, `BF_TEST_OBJECTIVES`): [campaign.md](campaign.md). The
+  cutscenes' (`BF_SCRIPT`, `BF_SCRIPT_LOG`): [cutscenes.md](cutscenes.md).
 
 ```sh
 # the tutorial's base: the plate opens the door and spawns four terrorists
 BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_TEST_GOTO=-36.4,37.3,-57.3,22.9 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
-# the farcast: Tex spawned by the opening script's router
-BF_MAP=tutorial BF_TRIGGER_LOG=1 "BF_TRIGGER_FIRE=trigger_router_spawn_tex,USER1,1" cargo run --bin bf_play
+# the farcast: the opening script's router spawns Tex at 17.09 s (#222)
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SCRIPT_LOG=1 cargo run --bin bf_play
+# or by hand, without the script (the squad is then in the world from the start)
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SCRIPT=off "BF_TRIGGER_FIRE=trigger_router_spawn_tex,USER1,1" cargo run --bin bf_play
 ```
 
 ## Verified
@@ -374,9 +382,10 @@ BF_MAP=tutorial BF_TRIGGER_LOG=1 "BF_TRIGGER_FIRE=trigger_router_spawn_tex,USER1
 `BF_MAP=tutorial` (and sdm_e34, e40, m09_a), `BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps,
 the log read and the frames looked at:
 
-* **Level start** (no hooks): FIRST_UPDATE opens the door h_fa29ecfd that starts open (anim3,
-  1.21 s), spawns the gate wall's sentry TUTORIAL_terrorist_5 on the wall walkway at
-  (-37.9, 27.25, -9.8), 3.07 m below trigger_spawn46, removes the four editor leftovers h_0247aefb round (-98, 18, 44)
+* **Level start** (no hooks; #220's check, before the opening played: since #222 the level's
+  start plays it, and Tex comes at 17.09 s, [cutscenes.md](cutscenes.md)): FIRST_UPDATE opens
+  the door h_fa29ecfd that starts open (anim3, 1.21 s), spawns the gate wall's sentry
+  TUTORIAL_terrorist_5 on the wall walkway at (-37.9, 27.25, -9.8), 3.07 m below trigger_spawn46, removes the four editor leftovers h_0247aefb round (-98, 18, 44)
   (destroyers 473, 498-500), starts timers 383 / 384 (the west lava pit's bursts every 4 / 6 s:
   trigger_spawn382 / 381 at (-23.0, 14.0, 9.3) / (-20.2, 14.0, 15.7)), 458, 525 and h_0279cdb2,
   runs the gamevars (since #221: the objectives' states 0, the member tests, campaign.md) and
@@ -479,11 +488,9 @@ the log read and the frames looked at:
 
 ## Not done here, or not known
 
-* The classes left to steps 3 and 5-9 (#222, #224-#228, above).
+* The classes left to steps 5-9 (#224-#228, above).
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
-* The squad is in the world from the start, so the start area's detectors fire before the
-  farcast (above); step 3 (#222).
 * Placed characters that no spawn-trigger names still add their bodies' collision to the arena
   at their placements (arena.rs), which the game's characters don't; only the templates are left
   out here.
@@ -504,11 +511,11 @@ the log read and the frames looked at:
 * The start points' facing (+z, arena.rs) hasn't been checked against footage; spawn-triggers
   face -z (above).
 * Sound-triggers (#223):
-  * Until step 3 (#222) plays the opening script, its USER2s to router443 (6.58 s) and router441
-    (11.03 s), which silence the lava pits after the opening's lava shot, don't come: the west
-    pit's bursts (every 4 / 6 s) and the east pit's loop play on from the start (heard only
-    within their 40 m: the rolloff curve). `BF_TRIGGER_FIRE="trigger_router443,USER2,6.575;trigger_router441,USER2,11.025"`
-    sends them.
+  * The opening script's USER2s to router443 (6.575 s) and router441 (11.025 s) silence the lava
+    pits after its lava shot (#222). Runs that don't play it (`BF_TEST_GOTO`, `BF_SCRIPT`) have
+    the west pit's bursts (every 4 / 6 s) and the east pit's loop play on from the start (heard
+    only within their 40 m: the rolloff curve);
+    `BF_TRIGGER_FIRE="trigger_router443,USER2,6.575;trigger_router441,USER2,11.025"` sends them.
   * The squad's chatter isn't hushed by an h_e725a1a5 line (FUN_00141100 / FUN_00141180 on the
     chatter manager world+0xbe8: while its list isn't empty no chatter is said, and the first
     line stops the chatter playing at priority 10 or under).

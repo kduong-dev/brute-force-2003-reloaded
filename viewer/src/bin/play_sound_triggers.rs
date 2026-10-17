@@ -431,13 +431,19 @@ pub fn plugin(app: &mut App) {
 }
 
 /// Before the triggers' frame, the sound system's listener as FUN_00178c10 sets it each frame for
-/// a camera that follows a character (the demo's always does): at the character (the player's,
-/// its feet) and indoors when it stands indoors (`indoors`). So the indoor and outdoor
-/// sound-triggers' first update finds it as the game's does: a character's ground record is
-/// filled as it's placed (FUN_001154b0 -> FUN_0012dc00). BF_TRIGGER_LOG or BF_SOUND_LOG: each
-/// change indoors or out.
-fn listener(mut tr: ResMut<Triggers>, map: Res<MapLevel>, game: Res<GameData>, player: Res<Player>) {
+/// a camera that follows a character (the demo's follow camera always does): at the character
+/// (the player's, its feet) and indoors when it stands indoors (`indoors`). So the indoor and
+/// outdoor sound-triggers' first update finds it as the game's does: a character's ground record
+/// is filled as it's placed (FUN_001154b0 -> FUN_0012dc00). For any other camera, a cutscene's
+/// (play_script.rs, #222), FUN_00178c10 gives the listener the camera's own transform and leaves
+/// its indoors as it was: the cutscene's 3D sounds are heard from its camera (the opening's lava
+/// pit from its lava shot). BF_TRIGGER_LOG or BF_SOUND_LOG: each change indoors or out.
+fn listener(mut tr: ResMut<Triggers>, map: Res<MapLevel>, game: Res<GameData>, player: Res<Player>, cutscenes: Res<script::Cutscenes>) {
     if tr.live.is_empty() {
+        return;
+    }
+    if let Some(at) = cutscenes.camera_at() {
+        tr.sound.listener = Some(at);
         return;
     }
     let feet = player.position + Vec3::Y * (GROUND + player.height.max(0.0));
