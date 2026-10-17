@@ -112,8 +112,14 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
 The sensor is `play_brain.rs`'s `Sensor` (`Player::sensor`: its sight distance, field of view
 and contacts), and the squad's AI and the test map's NPCs, which have no brain, see by it too
 (#197, `glance`): the same reach, 1.15, field of view (the placement's, else the type's
-`half-fov`: 90 degrees for the squad) and ray; their contacts are dropped once unseen 3.75 s,
-and they fire at the nearest contact they see within the gun's reach.
+`half-fov`: 90 degrees for the squad) and ray; their contacts are forgotten as the brain's
+(unseen 15 s, gone, or stealthed to 0.2), and they fire at the nearest contact they see within
+the gun's reach. One that hits them becomes a contact at any range when it's over 0.1 visible
+(EVT_DAMAGED's registration, 0x3ea02; a near miss tells them nothing), and with nothing to fire
+at they turn to the last place of the nearest contact seen in the last 3.75 s (the target's
+EVT_TGT_LOST_SIGHT time), gun up, as a brain turns to its target's: so a squadmate shot from
+behind, outside his 90 degrees, turns and fires back, and one whose enemy steps behind cover
+keeps facing where it went.
 
 (`BF_SIGHT_LOG=1` still logs a brain finding or losing its target, as the squad's; for the squad
 and the NPCs it also logs each contact found and forgotten.)

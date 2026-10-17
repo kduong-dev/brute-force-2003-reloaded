@@ -46,8 +46,10 @@ a click is any left click off the panel, and F and its teleports do nothing.
     it's a contact x their visibility (a stealthed Hawk's falls to 0, skills.md § Hawk's
     Stealth), within its field of view (its placement's, else its type's `half-fov`: 60 or 90
     degrees either way of its facing, or of its aim while it fires), with nothing of the world or
-    the pillars between its eyes (1.6 m up) and their chest (1.1 m up). A contact unseen 3.75 s,
-    stealthed to 0.2 or gone is forgotten. It fires at the nearest contact it sees within its
+    the pillars between its eyes (1.6 m up) and their chest (1.1 m up). A contact unseen 15 s,
+    stealthed to 0.2 or gone is forgotten. One who hits it becomes a contact at any range, and
+    with nothing to fire at it turns to the last place of a contact seen in the last 3.75 s, so
+    one shot from behind turns and fires back. It fires at the nearest contact it sees within its
     weapon's range (at least 20 m; the shot's own limit, not sight's). `BF_SIGHT_LOG=1` prints
     each one finding or losing its target and its contacts. It faces them, turns the gun onto
     them and fires in its bursts (the existing random delay, bursts and pauses); the aim is

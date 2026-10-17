@@ -273,6 +273,13 @@ impl FireState {
         self.ready > 0.0
     }
 
+    /// The gun raised with the ready timer out (play.rs `raise`): FUN_00123f60 starts it at 4 +
+    /// the in-time (FUN_0010fce0), so it counts as up from then, a shot or not, and a target taken
+    /// up again within it raises nothing more.
+    pub fn raise(&mut self, in_time: f32) {
+        self.ready = self.ready.max(READY_HOLD + in_time);
+    }
+
     /// FUN_00123ea0 asked for besides a shot (Flint's targeting, every frame while it's on,
     /// play_skills.rs): the gun raised, its ready timer held at READY_HOLD or more.
     pub fn keep_raised(&mut self) {

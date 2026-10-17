@@ -99,8 +99,10 @@ fn ready_times(p: &Player, l: &Loaded) -> (f32, f32) {
 /// 0x11a636), where the demo's fire loop counts a cooldown down and then tests it in one game
 /// frame: so both hands' cooldowns are held at the in-time and one game frame (shots::TICK), and
 /// with 0.1 s the round comes on the 3rd or 4th 30 Hz frame after the press (as the frames' time
-/// wobbles), 0.10-0.13 s, as the game's timer gives it (todo/140 answer §1.1). BF_SHOT_LOG logs it.
+/// wobbles), 0.10-0.13 s, as the game's timer gives it (todo/140 answer §1.1). The ready timer
+/// runs from here (`FireState::raise`), shot or not. BF_SHOT_LOG logs it.
 fn raise(p: &mut Player, in_time: f32) {
+    p.fire_state.raise(in_time);
     let wait = in_time + shots::TICK;
     p.cooldown = p.cooldown.max(wait);
     if let Some(s) = p.second.as_mut() {
@@ -2209,7 +2211,7 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
 /// Squad AI: keep to a formation place round the leader (run / sprint to catch up, walk the
 /// last bit) and look where the leader looks. They shoot only at an enemy they can see
 /// (`target`, from `hostile_in_sight`). Reloads happen by themselves (empty clip).
-fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>) {
+fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
     let f = FORMATION[slot % FORMATION.len()];
     let mut goal = leader.position + Quat::from_rotation_y(heading) * Vec3::new(f.x, 0.0, f.y);
     // out of the leader's line of fire: a place in the lane moves to its side, and anyone
@@ -2290,7 +2292,11 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     // because the player fires. The main game has no enemies yet, so they hold fire; the test
     // map's enemy NPCs (play_testtools.rs) are the only targets. (Nor while their skill says hold
     // fire: `update_player` leaves the target out then)
-    m.aim = target.is_some() || cautious;
+    // a known enemy it doesn't see (it shot from behind, or went behind cover): turned to its last
+    // place with the gun up (`toward`: the brain's turn toward a known contact, FUN_0002f960), so
+    // its field of view finds it
+    let turned = target.is_none() && toward.is_some_and(|p| face_toward(m, p));
+    m.aim = target.is_some() || cautious || turned;
     ai_fire(m, target, dt);
     m.switch_pressed = false;
     m.reload_pressed = false;
@@ -2303,13 +2309,15 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
 /// in bursts and pauses of its own length. Without a target it holds fire. (The squad AI's
 /// existing burst timing; the aim is exact: the demo's choice, no spread is read.)
 fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
-    // a target taken up with the gun down: the attack check raises it (FUN_00024f80 ->
-    // FUN_00123ea0 at 0x2509c), the first round waiting its npc in-time (#140, `raise`), which
-    // runs alongside the demo's own opening delay (`ai_delay`). (No target before its model is
-    // in: it can't raise, step or fire yet)
+    // a target with the gun down (its ready timer out: none started by a raise or a shot in the
+    // last 4 s): the attack check raises it (FUN_00024f80 -> FUN_00123ea0 at 0x2509c), and its
+    // shots go through the fire command (FUN_0004dfb0: CT_FIRE_WEAPON, 0x1225d7), which fires
+    // nothing until the timer is down to 4: so its first round waits its npc in-time (#140,
+    // `raise`), alongside the demo's own opening delay (`ai_delay`). (No target before its model
+    // is in: it can't raise, step or fire yet)
     let up = m.loaded.as_ref().map(|l| ready_times(m, l).0);
     let target = target.filter(|_| up.is_some());
-    if let (None, Some(_), Some(in_time)) = (m.ai_target, target, up) {
+    if let (Some(_), Some(in_time)) = (target, up) {
         if !m.fire_state.raised() {
             raise(m, in_time);
         }
@@ -2340,6 +2348,20 @@ fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
         }
         m.fire = m.ai_burst;
     }
+}
+
+/// An AI character with nothing to fire at turns to `p` (a known contact's last place, play_brain.rs
+/// `Sensor::toward`): its "camera" and feet onto it, as `ai_fire` does onto a target. True once
+/// set (false for a point on top of it).
+fn face_toward(m: &mut Player, p: Vec3) -> bool {
+    let to = p - (m.position + Vec3::Y * (GROUND + m.height + AI_EYE));
+    if to.xz().length_squared() < 1e-4 {
+        return false;
+    }
+    m.cam_yaw = (-to.x).atan2(-to.z);
+    m.cam_pitch = (to.y / to.length().max(1e-3)).clamp(-1.0, 1.0).asin().clamp(-1.2, 0.5);
+    m.face_yaw = Some(m.cam_yaw);
+    true
 }
 
 /// Where an AI character looks from (m above the feet) and where it aims on a target (its
@@ -3726,7 +3748,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
         // (its sensor, play_brain.rs: its sight distance, field of view and contacts, #197; a
         // level character's brain keeps its target among them, the rest fire at the nearest seen)
-        let seen = if m.brain.is_some() { brain::sense(m, slot + 1, &sight, dt) } else { brain::glance(m, slot + 1, &sight, dt, clock) };
+        // (`toward`: with nothing to fire at, where a brainless AI turns to, a contact's last place)
+        let (seen, toward) = if m.brain.is_some() { (brain::sense(m, slot + 1, &sight, dt), None) } else { brain::glance(m, slot + 1, &sight, dt, clock) };
         let target = seen.map(|(i, _)| sight[i].chest);
         // BF_SIGHT_LOG: an AI character finding or losing its target
         if sight_log && saw.insert(m.who(), target.is_some()).is_none_or(|was| was != target.is_some()) {
@@ -3756,9 +3779,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         } else if m.brain.is_some() {
             brain::think(m, &player, place, heading, dt, target, patrols, &game.0, difficulty.n);
         } else if m.npc.is_some() {
-            testtools::npc_ai(m, target, dt);
+            testtools::npc_ai(m, target, toward, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
-            squad_ai(m, &player, slot, heading, dt, target);
+            squad_ai(m, &player, slot, heading, dt, target, toward);
         }
         let Some(l) = m.loaded.take() else { continue };
         step_player(m, &l, &game.0, kits, dt, &mut transforms);
