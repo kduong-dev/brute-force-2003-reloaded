@@ -27,8 +27,12 @@ decal, and a throw called off.
 * **Throwing** (thrown types): hold G to charge. The meter (the recordings, every grenade): a
   blue outlined bar at x 354.0-367.7, y 162.0-221.7 right of the crosshair, its fill
   x 355.3-365.7 growing linearly from y 218.7 to 164.3 in 0.6 s, sRGB 255 160 53 at 0.65, a
-  dark divider at y 179; let go, it holds its level 0.5 s and goes (the recordings' 0.1 s
-  fade is drawn as a cut halfway through it). A thrown grenade has no crosshair of its own:
+  dark divider at y 179, the box clear inside (only the fill and the frame are drawn, 0xadac0).
+  Its timer (the meter widget FUN_000ad8d0's +0x40) is set to 1 with the level every frame the
+  charge is above 0 (0x134823) and counts down after, so the meter stays full 0.5 s from the
+  last charging frame, thrown or not, then fades as clamp(2 x timer, 0, 1)^3 to nothing at 1 s
+  (its update 0xad950; #162). It sits beside the crosshair point (FUN_000ab390), so in the
+  scope it moves with the crosshair to the middle (corner (352, 208)). A thrown grenade has no crosshair of its own:
   the held gun's stays, unchanged, through the charge and the throw (#119: `todo/119` take01,
   the Therm Sweeper's crosshair in the same box on every frame of three full-charge Frag
   throws). h_0ef11ee8, the two-bracket texture the demo used to show here, is the Jax-iR's
@@ -193,7 +197,8 @@ decal, and a throw called off.
   place (50 units at (535, 379), fitted to the medkit captures). The meter's fill is drawn as (226, 148,
   54) at 0.65: what the console's stored-value blend of (255, 160, 53) at 0.65 gives over the
   recording's ground (63, 63, 55), since the UI blends in linear light. The charge sound is
-  queued on the frame the meter first shows (`BF_SOUND_LOG` and the capture agree). When the selected type runs out, the first type still carried is
+  queued on the frame the meter first shows. The fade's alpha is drawn so its strength over
+  take01's ground (37, 27, 20) is the game's stored-value one (`METER_GROUND`, `METER_FULL`) (`BF_SOUND_LOG` and the capture agree). When the selected type runs out, the first type still carried is
   selected (the Sentry recording: the last Sentry set down, the box shows Frag 10).
 
 * **The Gas's cloud** (`src/bin/play_gas.rs`; issue #76). The explosion h_0cc6cb8c is
@@ -653,6 +658,18 @@ recordings at 60 fps):
   from the drop to the grab; a Roller press shows no meter and keeps the crosshair. In the scope
   (`BF_TEST_WEAPON=L-Shot-75 BF_TEST_AIM=1`: the autopilot aims from `BF_TEST_AIM`, and a
   zooming gun scopes; `BF_TEST_SCOPE` isn't read under the autopilot) the crosshair stays at
-  (320, 239.7) through the charge and the throw, and the meter stays at its unscoped place
-  (x 354-368, y 162-222); the game's scoped throw isn't filmed. The Jax-iR
+  (320, 239.7) through the charge and the throw, and since #162 the meter beside it (the fill
+  x 355.3-366.0, y 212.0-266.7 at frame 40: the unscoped place + 48, the corner at (352, 208));
+  the game's scoped throw isn't filmed, and the demo's throw doesn't leave the scope as the
+  game's LT release does (a follow-up).
+* The meter's fade and inside (#162; `BF_CAPTURE_FPS=30 BF_MAP=sdm_e34
+  BF_TEST_GOTO=-44.4,15.5,-44.6,15.1 BF_TEST_THROW=1.5,2.0 BF_CAMERA_DISTANCE=12`, the meter
+  over the dark wall panel): the count drops at frame 106, the meter is full through 121 and its
+  fill's strength over the wall from 122 on is 0.80, 0.64, 0.50, 0.39, 0.28, 0.21, 0.15, 0.10,
+  0.05, 0.04, 0.02, then gone (the take, #119 spec §5.2: 0.80, 0.66, 0.51, 0.42, 0.33, 0.24,
+  0.15, 0.11, 0.07, 0.04, 0.02; the code's curve 0.81, 0.65, 0.51, 0.39, 0.30, 0.22, 0.15,
+  0.10, 0.06, 0.04, 0.02). The first faded frame is 0.533 s after the count drop (the take's
+  0.517). The ground (wall, Tex's arm) shows through the box above the fill while it charges,
+  as take01 f170's sand does. The outline keeps its colour (brighter and harder than the
+  take's, out of #162's scope). The Jax-iR
   (`BF_TEST_WEAPON=Jax-iR`) keeps its own crosshair (h_0ef11ee8) through a charge.

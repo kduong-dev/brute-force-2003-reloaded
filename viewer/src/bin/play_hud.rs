@@ -105,6 +105,19 @@ const METER_TICK_Y: f32 = 178.5;
 /// so it's drawn as the colour that gives the same result over that ground: (226, 148, 54) at
 /// 0.65 (fitted over that one ground colour; lighter or darker ground comes out a little off).
 const METER_ORANGE: Color = Color::srgba(226.0 / 255.0, 148.0 / 255.0, 54.0 / 255.0, 0.65);
+/// The dark bar across the meter at METER_TICK_Y (the frame texture h_e4d89656's grey-63 bar,
+/// 0xadac0; the demo's colour).
+const METER_TICK: Color = Color::srgb(0.08, 0.12, 0.25);
+/// The meter's fade, drawn in linear light. The game's widget alpha (0xad950: clamp(2 x timer,
+/// 0, 1)^3) blends in stored sRGB values, so the strength the take measures, the share of the
+/// change from the ground to the full meter, is that alpha; the UI blends in linear light, where
+/// the same alpha looks stronger. So the demo's alpha is the one that gives that strength over
+/// take01's ground inside the box (sRGB (37, 27, 20), #119 spec §5.3), as luminances with a 2.2
+/// gamma: METER_GROUND that ground's, METER_FULL the full fill's over it in the demo (188, 122,
+/// 45). Against the exact sRGB curves per channel it's within 0.007 (#162); over a lighter
+/// ground the demo's fade comes out a little fainter than the game's.
+const METER_GROUND: f32 = 28.0 / 255.0;
+const METER_FULL: f32 = 130.0 / 255.0;
 /// radar: centre of the disc, its radius in screen units and the range it shows (m)
 const RADAR_CENTRE: (f32, f32) = (121.5, 369.0);
 const RADAR_RADIUS: f32 = 44.0;
@@ -276,6 +289,16 @@ fn bar_length(max_health: f32) -> f32 {
 /// A bar's drawn length for its value (in hit points; FUN_000b7050).
 fn bar_fill(value: f32) -> f32 {
     if value > 0.0 { (value * BAR_PER_HP).max(BAR_MIN) } else { 0.0 }
+}
+
+/// The throw meter's strength (0-1, its parts' alpha over their full alpha) for the time left on
+/// its timer (`Player::meter_after`, METER_TIME): the meter's update (0xad950, 0xada4f-0xadaa0)
+/// sets the widget's alpha to clamp(2 x timer, 0, 1)^3, so it holds full 0.5 s and fades to
+/// nothing at 1.0 s, drawn in linear light as METER_GROUND says.
+fn meter_strength(left: f32) -> f32 {
+    let w = (2.0 * left).clamp(0.0, 1.0).powi(3);
+    let lin = |v: f32| v.powf(2.2);
+    (lin(METER_GROUND + w * (METER_FULL - METER_GROUND)) - lin(METER_GROUND)) / (lin(METER_FULL) - lin(METER_GROUND))
 }
 
 /// How far the frame's middle stretches and its right cap moves for a maximum health: the bars'
@@ -1064,11 +1087,12 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     // ---- grenade throw: the charge meter, right of the crosshair (capture: box 354..367 x 163..221,
     // orange fill from the bottom, dark tick at ~72%). A thrown grenade has no crosshair of its own:
     // the gun's crosshair stays as it is meanwhile (todo/119 take01) ----
-    commands.spawn((ChildOf(screen), SquadPart::MeterBox, Visibility::Hidden, BorderColor(HUD_BLUE), BackgroundColor(Color::srgba(0.0, 0.05, 0.15, 0.25)),
+    // (the inside of the box is clear: the game draws only the fill and the frame, 0xadac0)
+    commands.spawn((ChildOf(screen), SquadPart::MeterBox, Visibility::Hidden, BorderColor(HUD_BLUE),
                     Node { border: UiRect::all(Val::Px(1.5)), ..at(METER_BOX.0, METER_BOX.1, METER_BOX.2 - METER_BOX.0, METER_BOX.3 - METER_BOX.1) }));
     commands.spawn((ChildOf(screen), SquadPart::MeterFill, Visibility::Hidden, BackgroundColor(METER_ORANGE),
                     at(METER_FILL.0, METER_FILL.3, METER_FILL.1 - METER_FILL.0, 0.0)));
-    commands.spawn((ChildOf(screen), SquadPart::MeterTick, Visibility::Hidden, BackgroundColor(Color::srgb(0.08, 0.12, 0.25)),
+    commands.spawn((ChildOf(screen), SquadPart::MeterTick, Visibility::Hidden, BackgroundColor(METER_TICK),
                     at(METER_FILL.0, METER_TICK_Y, METER_FILL.1 - METER_FILL.0, 1.5)));
 
     // ---- squad: radar blips, selection marker, name over the chosen member ----
@@ -1477,7 +1501,8 @@ fn update_squad_hud(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
-    mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>)>,
+    mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>,
+                      Option<&mut BackgroundColor>, Option<&mut BorderColor>)>,
 ) {
     let dt = frame_dt(&time);
     let font_k = windows.single().map(|w| w.height() / 480.0).unwrap_or(1.5);
@@ -1509,15 +1534,17 @@ fn update_squad_hud(
     let fwd = Vec3::new(-player.cam_yaw.sin(), 0.0, -player.cam_yaw.cos());
     let right = Vec3::new(player.cam_yaw.cos(), 0.0, -player.cam_yaw.sin());
     let charging = player.charge > 0.0;
-    // the meter: while charging, then held at its level after the button (METER_HOLD) before it
-    // fades (METER_FADE)
+    // the meter (0xad950): shown while its timer runs (METER_TIME from the last charging frame),
+    // at its level, at clamp(2 x timer, 0, 1)^3 strength
     let (after, left) = player.meter_after;
-    // (the fade is drawn as a cut halfway through it: two to three frames)
-    let meter = charging || left > super::METER_FADE * 0.5;
+    let meter = charging || left > 0.0;
     let level = if charging { player.charge } else { after };
+    let strength = if charging { 1.0 } else { meter_strength(left) };
+    // beside the crosshair, which the scope moves to the middle (FUN_000ab390)
+    let meter_shift = super::reticle::crosshair_centre(&player).y - CROSSHAIR_Y;
     let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c && m.in_squad()).map(|m| (c, m.position)));
     let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
-    for (part, mut vis, mut node, _text, _font, _color, img, art) in &mut parts {
+    for (part, mut vis, mut node, _text, _font, _color, img, art, background, border) in &mut parts {
         match *part {
             SquadPart::Blip(slot) => {
                 let Some(m) = squad.0.get(slot).filter(|m| !m.dead) else { show(&mut vis, false); continue };
@@ -1634,12 +1661,31 @@ fn update_squad_hud(
             SquadPart::FrameRight => {
                 node.left = Val::Percent((TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + frame_stretch(player.max_health)) / 6.4);
             }
-            SquadPart::MeterBox | SquadPart::MeterTick => show(&mut vis, meter),
+            SquadPart::MeterBox => {
+                show(&mut vis, meter);
+                node.top = Val::Percent((METER_BOX.1 + meter_shift) / 4.8);
+                let want = HUD_BLUE.with_alpha(strength);
+                if let Some(mut c) = border.filter(|c| c.0 != want) {
+                    c.0 = want;
+                }
+            }
+            SquadPart::MeterTick => {
+                show(&mut vis, meter);
+                node.top = Val::Percent((METER_TICK_Y + meter_shift) / 4.8);
+                let want = METER_TICK.with_alpha(strength);
+                if let Some(mut c) = background.filter(|c| c.0 != want) {
+                    c.0 = want;
+                }
+            }
             SquadPart::MeterFill => {
                 show(&mut vis, meter);
                 let h = (METER_FILL.3 - METER_FILL.2) * level;
-                node.top = Val::Percent((METER_FILL.3 - h) / 4.8);
+                node.top = Val::Percent((METER_FILL.3 - h + meter_shift) / 4.8);
                 node.height = Val::Percent(h / 4.8);
+                let want = METER_ORANGE.with_alpha(METER_ORANGE.alpha() * strength);
+                if let Some(mut c) = background.filter(|c| c.0 != want) {
+                    c.0 = want;
+                }
             }
         }
     }
