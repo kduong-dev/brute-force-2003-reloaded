@@ -1689,7 +1689,7 @@ impl Game {
             match super::gscr::Script::parse(stem, &text) {
                 Ok(s) => {
                     self.script_names.entry(h(stem)).or_insert_with(|| stem.to_string());
-                    self.scripts.insert(h(stem), s);
+                    self.scripts.insert(h(stem), super::gscr::Script { level: level.to_string(), ..s });
                 }
                 Err(e) => eprintln!("{level}: script {f}: {e}"),
             }

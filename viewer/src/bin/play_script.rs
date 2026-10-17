@@ -11,12 +11,15 @@
 //! start it once. The start holds every character the script names (FUN_00174e10). Each update
 //! advances its clock by the frame's milliseconds (FUN_00174270) and runs the events that are due,
 //! in order; the running path animations follow (the list at +0x98); at `duration` it stops
-//! (FUN_00174bd0), releasing the characters it held (FUN_00174e70).
+//! (FUN_00174bd0), releasing the characters it held (FUN_00174e70). An event whose signal asks
+//! something of the world (a 103 to a spawn- or warp-trigger) has it done before the next event
+//! (`step`'s passes), as the game's signals act at once.
 //!
 //! The events (`gscr::EventKind`). USER_EVENT goes to its entity's controller (FUN_00175090 binds
 //! the entities by name: a MARKER "trig" to the level trigger, "script" to the script itself, a
 //! CAMERA to the level's camera-object, a COMPOUND to the character or spawn copy, a MOTION_PATH
-//! to the level's path-object; a spawn copy is bound as it appears, FUN_002096e0):
+//! to the level's path-object; a spawn copy is bound as it appears, FUN_002096e0; one not in the
+//! world isn't bound, and its events are lost):
 //!  * 103 on a trigger: its signal straight to the trigger's handler, from iD 0, no subject, data
 //!    -1 (0x1772b0);
 //!  * 101 on a camera with 0: the view cuts to it (FUN_00173270: the view's +0x8c, its cut flag);
@@ -30,7 +33,7 @@
 //!    here, the ticket's stub);
 //!  * 122 / 123 on the script: the world's cutscene bit on / off (0x176227 / 0x176258: world+0xc50
 //!    bit 4): while it's on no input reaches the game (no menu opens, FUN_0008c8c0; the player's
-//!    character doesn't move), nobody takes damage (the damage handler 0x125600) and the HUD's
+//!    character doesn't move), nobody takes damage (the damage handler 0x125600) and the squad's
 //!    chatter is quiet (FUN_00140a60, not done here);
 //!  * every other code (100, 104, 110, 111, 113-115, 120: #232) is logged, not run.
 //! START_PATH_ANIMATION moves its first entity (a camera here) along its second (a path) over its
@@ -67,9 +70,10 @@ use super::triggers::Triggers;
 use super::*;
 
 /// The cutscenes' state, a new one per map (`start`); their frame is the trigger runtime's
-/// (play_triggers.rs `run` calls `step` after the triggers' updates, so a script a trigger starts
-/// plays its first events in that frame, and what its events send reaches the triggers at once);
-/// the view (the camera, the bars, the HUD) after the follow camera (`view`).
+/// (play_triggers.rs `run` calls `step` after the triggers' updates and what they asked of the
+/// world, so a script a trigger starts plays its first events in that frame, and what its events
+/// send reaches the triggers at once); the view (the camera, the bars, the HUD) after the follow
+/// camera (`view`).
 pub fn plugin(app: &mut App) {
     app.init_resource::<Cutscenes>()
         .add_systems(OnEnter(AppState::Playing), start.after(setup))
@@ -83,9 +87,9 @@ pub fn plugin(app: &mut App) {
 /// (`in_cutscene`).
 static CUTSCENE: AtomicBool = AtomicBool::new(false);
 
-/// Whether a cutscene has the world (see CUTSCENE): no menu opens (FUN_0008c8c0 tests the bit
-/// before the pause and objectives menus), the player's controls are off, nobody is hurt (the
-/// damage handler 0x125600's early exit).
+/// Whether a cutscene has the world (see CUTSCENE): no menu opens (FUN_0008c8c0 opens none of the
+/// players' menus while the bit is set, the objectives menu among them), the player's controls
+/// are off, nobody is hurt (the damage handler 0x125600's early exit).
 pub fn in_cutscene() -> bool {
     CUTSCENE.load(Ordering::Relaxed)
 }
@@ -154,10 +158,6 @@ pub struct Cutscenes {
     bars: f32,
     bars_to: f32,
     bars_left: f32,
-    /// orders for characters not in the world yet (a hold, a walk), by name, for the script that
-    /// gave them: applied when one of that name appears while it plays (the game binds a spawn
-    /// copy as it's made, FUN_002096e0, and its spawn is at once where the demo's is a frame on)
-    pending: Vec<Pending>,
     /// requests of its own this frame (BF_SCRIPT's start; the triggers' come through
     /// `Triggers::take_cutscene`)
     requests: Vec<Request>,
@@ -169,6 +169,9 @@ pub struct Cutscenes {
     skip_start: bool,
     /// BF_SCRIPT=<name>[,<s>]: the script, when, and whether it's been asked
     hook: Option<(u32, f32, bool)>,
+    /// the script whose update this frame stopped after an event that asked something of the
+    /// world (`step`), to go on from
+    resume: Option<usize>,
     /// a mission (101's cuts need one: the world's +0xbec +0x18)
     mission: bool,
     /// the sim time, for the log
@@ -205,14 +208,6 @@ struct Running {
     anim: PathAnimation,
 }
 
-/// An order for a character not in the world yet (see `Cutscenes::pending`).
-struct Pending {
-    script: u32,
-    name: u32,
-    hold: Option<bool>,
-    walk: Vec<Vec3>,
-}
-
 /// What the triggers ask of the cutscenes (play_triggers.rs pushes them; `step` does them).
 pub enum Request {
     /// a script-trigger's OPERATE (FUN_00204ec0): its script (`script-name`), its entry's
@@ -238,7 +233,8 @@ fn start(mut commands: Commands, game: Res<GameData>, map: Res<MapLevel>, curren
     }
     cs.mission = map.0.is_some() && !damage::multiplayer_map(&game.0, &current.0);
     if let Some(level) = map.0.as_ref() {
-        cs.scripts = game.0.scripts.iter().map(|(k, s)| (*k, Arc::new(s.clone()))).collect();
+        // the map's own scripts (e01's are loaded too, with its archive's audio: `load_game`)
+        cs.scripts = game.0.scripts.iter().filter(|(_, s)| s.level == current.0).map(|(k, s)| (*k, Arc::new(s.clone()))).collect();
         cs.cameras = level.camera_objects.iter().map(|c| (c.name, (c.transform, 2.0 * c.half_fov))).collect();
         cs.paths = level.paths.iter().map(|p| (p.name, PathCurve::new(p))).collect();
         cs.points = level.objects.iter().filter(|o| o.name != 0)
@@ -275,6 +271,12 @@ impl Cutscenes {
         self.names.get(&n).cloned().unwrap_or_else(|| format!("h_{n:08x}"))
     }
 
+    /// Where the shown cutscene camera is, if one is (the view's +0x8c): the sound's listener is
+    /// there while it's shown (FUN_00178c10, play_sound_triggers.rs `listener`).
+    pub fn camera_at(&self) -> Option<Vec3> {
+        self.shown.and_then(|c| self.cameras.get(&c)).map(|c| c.0.w_axis.truncate())
+    }
+
     /// The letterbox going in (FUN_00073460: toward 1 over the show time, scaled by what's left)
     /// or out (FUN_000734b0: toward 0, scaled by what's in).
     fn letterbox(&mut self, show: bool, secs: f32) {
@@ -304,58 +306,70 @@ impl Cutscenes {
     }
 }
 
-/// A unit of the world by the name the level knows it by (`Player::trigger_name`: the spawn
-/// copy's), with whether it's the controlled one.
+/// The character a script's COMPOUND entity is bound to: the unit of the world by that name
+/// (`Player::trigger_name`: the spawn copy's), with whether it's the controlled one. None for one
+/// not in the world (`Player::absent`, a spawn's template): the game binds an entity only to an
+/// object of its name in the world (FUN_00175090 at the level's load) or to a spawn's copy as
+/// it's made (FUN_002096e0 -> FUN_00174fe0), so an event for one not yet there reaches no
+/// controller and is lost (the V-squad's 105s at 0.259 s, before its marines' spawns at 7.57 s).
 fn unit<'a>(player: &'a mut Player, squad: &'a mut Squad, name: u32) -> Option<(&'a mut Player, bool)> {
     if name == 0 {
         return None;
     }
     if player.trigger_name == name && !player.stand_in {
-        return Some((player, true));
+        return (!player.absent).then_some((player, true));
     }
-    squad.0.iter_mut().find(|m| m.trigger_name == name).map(|m| (m, false))
+    squad.0.iter_mut().find(|m| m.trigger_name == name && !m.absent).map(|m| (m, false))
 }
 
-/// The cutscenes' frame (from play_triggers.rs `run`, after the triggers' updates): the requests,
-/// then each script's update (FUN_00174930), then the requests its events made (a 103 to a
-/// letterbox-trigger).
-pub(super) fn step(cs: &mut Cutscenes, tr: &mut Triggers, player: &mut Player, squad: &mut Squad, dt: f32) {
-    cs.clock = player.sim_time;
-    // test hook: BF_SCRIPT=<name>[,<s>]
-    if let Some((script, at, false)) = cs.hook {
-        if cs.clock >= at {
-            cs.hook = Some((script, at, true));
-            cs.requests.push(Request::Script { trigger: 0, script, command: 0, signal: -1 });
+/// Where the cutscenes' frame is (`step`): to begin, to go on after an event whose signal asked
+/// something of the world (which play_triggers.rs `run` has done since), or done.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Pass {
+    First,
+    Resume,
+    Done,
+}
+
+/// The cutscenes' frame (from play_triggers.rs `run`, after the triggers' updates and what they
+/// asked of the world): the requests, then each script's update (FUN_00174930), each followed by
+/// the requests its events made (a 103 to a letterbox-trigger). A script's event whose signal
+/// asks something of the world (a 103 to a spawn- or warp-trigger) ends the pass there
+/// (Pass::Resume): `run` does it, then the next pass goes on from that script's next event, as
+/// the game's signals act at once (a spawn's copy is bound to the scripts as it's made,
+/// FUN_002096e0, for the events after it in the same frame).
+pub(super) fn step(cs: &mut Cutscenes, tr: &mut Triggers, player: &mut Player, squad: &mut Squad, dt: f32, pass: Pass) -> Pass {
+    let (from, resumed) = match (pass, cs.resume.take()) {
+        (Pass::Resume, Some(k)) => (k, true),
+        _ => {
+            cs.clock = player.sim_time;
+            // test hook: BF_SCRIPT=<name>[,<s>]
+            if let Some((script, at, false)) = cs.hook {
+                if cs.clock >= at {
+                    cs.hook = Some((script, at, true));
+                    cs.requests.push(Request::Script { trigger: 0, script, command: 0, signal: -1 });
+                }
+            }
+            take_requests(cs, tr, player, squad);
+            (0, false)
         }
-    }
-    take_requests(cs, tr, player, squad);
-    for k in 0..cs.players.len() {
-        update(cs, k, tr, player, squad, dt);
+    };
+    for k in from..cs.players.len() {
+        if update(cs, k, tr, player, squad, dt, resumed && k == from) {
+            cs.resume = Some(k);
+            return Pass::Resume;
+        }
         take_requests(cs, tr, player, squad);
     }
-    // the orders waiting for their characters
-    let mut left = vec![];
-    for p in std::mem::take(&mut cs.pending) {
-        let Some((u, _)) = unit(player, squad, p.name) else {
-            left.push(p);
-            continue;
-        };
-        if let Some(hold) = p.hold {
-            u.held = hold;
-        }
-        if !p.walk.is_empty() {
-            u.script_walk = p.walk.clone();
-            u.held = true;
-        }
-        if cs.log {
-            println!("t {:.2}: {}: {} is in the world: {}", cs.clock, cs.label(p.script), cs.label(p.name),
-                     if p.walk.is_empty() { "held (its order waited)" } else { "walks (its order waited)" });
-        }
-        if let Some(pl) = cs.players.iter_mut().find(|pl| pl.script == p.script) {
-            pl.held.push(p.name);
-        }
+    Pass::Done
+}
+
+/// A character a script holds, on its list (once) for its release at the end (FUN_00174dc0 ->
+/// FUN_0005eab0: the list at +0xc4).
+fn hold_list(p: &mut Playing, name: u32) {
+    if !p.held.contains(&name) {
+        p.held.push(name);
     }
-    cs.pending = left;
 }
 
 /// The triggers' requests (see `Request`): a script to play, pause, resume or stop (its start
@@ -415,26 +429,29 @@ fn take_requests(cs: &mut Cutscenes, tr: &mut Triggers, player: &mut Player, squ
 
 /// Script `k`'s update (FUN_00174930): its start if asked (FUN_00174b30: the characters it names
 /// held, FUN_00174e10), its clock on by the frame (not while paused), the events now due, its
-/// paths, and its end at `duration` (FUN_00174bd0).
-fn update(cs: &mut Cutscenes, k: usize, tr: &mut Triggers, player: &mut Player, squad: &mut Squad, dt: f32) {
+/// paths, and its end at `duration` (FUN_00174bd0). True when it stopped after an event that asked
+/// something of the world (`step`); `resumed`, it goes on from there (its start and clock done).
+fn update(cs: &mut Cutscenes, k: usize, tr: &mut Triggers, player: &mut Player, squad: &mut Squad, dt: f32, resumed: bool) -> bool {
     let script = cs.players[k].script;
-    if !cs.players[k].restart && (!cs.players[k].playing || cs.players[k].paused) {
-        return;
+    if !resumed && !cs.players[k].restart && (!cs.players[k].playing || cs.players[k].paused) {
+        return false;
     }
-    let Some(s) = cs.scripts.get(&script).cloned() else { return };
-    if cs.players[k].restart {
+    let Some(s) = cs.scripts.get(&script).cloned() else { return false };
+    if !resumed && cs.players[k].restart {
         let held = std::mem::take(&mut cs.players[k].held);
         release(&held, player, squad);
         let p = &mut cs.players[k];
         (p.restart, p.playing, p.paused, p.ms, p.secs, p.next) = (false, true, false, 0, 0.0, 0);
         p.paths.clear();
-        cs.pending.retain(|o| o.script != script);
-        // every character it names that's in the world, held (FUN_00174e10 -> FUN_00174cd0)
-        let mut held = vec![];
+        // every character it names that's in the world, held (FUN_00174e10 -> FUN_00174cd0; one
+        // not in the world yet isn't bound to it)
+        let mut held: Vec<u32> = vec![];
         for e in s.entities.iter().filter(|e| e.kind == EntityKind::Compound) {
             if let Some((u, _)) = unit(player, squad, e.hash) {
                 u.held = true;
-                held.push(e.hash);
+                if !held.contains(&e.hash) {
+                    held.push(e.hash);
+                }
             }
         }
         if cs.log {
@@ -444,12 +461,14 @@ fn update(cs: &mut Cutscenes, k: usize, tr: &mut Triggers, player: &mut Player, 
         cs.players[k].held = held;
     }
     if !cs.players[k].playing || cs.players[k].paused {
-        return;
+        return false;
     }
     // the clock in whole ms (FUN_00174270 carries the fraction over)
     let p = &mut cs.players[k];
-    p.secs += dt as f64;
-    p.ms = (p.secs * 1000.0) as i64;
+    if !resumed {
+        p.secs += dt as f64;
+        p.ms = (p.secs * 1000.0) as i64;
+    }
     let now = p.ms;
     while let Some(ev) = s.events.get(cs.players[k].next) {
         if ((ev.time as f64) * 1000.0).round() as i64 > now {
@@ -457,6 +476,10 @@ fn update(cs: &mut Cutscenes, k: usize, tr: &mut Triggers, player: &mut Player, 
         }
         cs.players[k].next += 1;
         event(cs, k, &s, ev, tr, player, squad);
+        // (a spawn, a warp asked: done before the next event)
+        if tr.has_acts() {
+            return true;
+        }
     }
     // the path animations under way (the list at +0x98: each one's update, 0x275290, until its end)
     let paths = std::mem::take(&mut cs.players[k].paths);
@@ -476,6 +499,7 @@ fn update(cs: &mut Cutscenes, k: usize, tr: &mut Triggers, player: &mut Player, 
     if now >= (s.duration as f64 * 1000.0).round() as i64 {
         stop(cs, k, player, squad);
     }
+    false
 }
 
 /// Script `k` stops (FUN_00174bd0): its paths dropped, the characters it held released
@@ -488,7 +512,6 @@ fn stop(cs: &mut Cutscenes, k: usize, player: &mut Player, squad: &mut Squad) {
     p.paths.clear();
     let held = std::mem::take(&mut p.held);
     let script = p.script;
-    cs.pending.retain(|o| o.script != script);
     release(&held, player, squad);
     if cs.log && was {
         println!("t {:.2}: {} ends{}", cs.clock, cs.label(script),
@@ -595,7 +618,8 @@ fn event(cs: &mut Cutscenes, k: usize, s: &Script, ev: &gscr::Event, tr: &mut Tr
 /// data's order): v0 without v1, or v9 without v10, hold it (FUN_00129470); v0 with v1 hand it to
 /// the script's movement (FUN_001294a0); v9 with v10 release it (FUN_001294c0). A held character
 /// joins the script's list, released at its end. The others (v6 an entity flag, v2 / v7 the
-/// character's FUN_001268b0, v8, v11 its brain reset) are logged.
+/// character's FUN_001268b0, v8, v11 its brain reset) are logged. One not in the world gets
+/// nothing (`unit`).
 #[allow(clippy::too_many_arguments)]
 fn flags_119(cs: &mut Cutscenes, k: usize, name: u32, u: &UserEvent, player: &mut Player, squad: &mut Squad,
              say: &dyn Fn(&Cutscenes, String)) {
@@ -616,21 +640,19 @@ fn flags_119(cs: &mut Cutscenes, k: usize, name: u32, u: &UserEvent, player: &mu
         (Some(h), Some((u, _))) => {
             u.held = h;
             if h {
-                cs.players[k].held.push(name);
+                hold_list(&mut cs.players[k], name);
             }
             say(cs, format!("119: {}{rest}", if h { "held" } else { "released" }));
         }
-        (Some(h), None) => {
-            cs.pending.push(Pending { script: cs.players[k].script, name, hold: Some(h), walk: vec![] });
-            say(cs, format!("119: {} when it's in the world{rest}", if h { "held" } else { "released" }));
-        }
+        (Some(_), None) => say(cs, "119: not in the world (its entity isn't bound): nothing".into()),
         (None, _) => say(cs, format!("119: no hold{rest}")),
     }
 }
 
 /// 105 on a character (0x171f7a): it's handed to the script's movement and walks to the world
 /// points listed after the ':' ("105, 4, 0, 1, 1, 0, 1:wpoint1380": one point), in turn: a
-/// straight walk (`held_step`), the ticket's stub for the brain's goal (FUN_00171710).
+/// straight walk (`held_step`), the ticket's stub for the brain's goal (FUN_00171710). One not in
+/// the world gets nothing (`unit`).
 #[allow(clippy::too_many_arguments)]
 fn walk_105(cs: &mut Cutscenes, k: usize, name: u32, u: &UserEvent, player: &mut Player, squad: &mut Squad,
             say: &dyn Fn(&Cutscenes, String)) {
@@ -642,15 +664,12 @@ fn walk_105(cs: &mut Cutscenes, k: usize, name: u32, u: &UserEvent, player: &mut
     }
     match unit(player, squad, name) {
         Some((u, _)) => {
-            u.script_walk = points.clone();
+            u.script_walk = points;
             u.held = true;
-            cs.players[k].held.push(name);
+            hold_list(&mut cs.players[k], name);
             say(cs, format!("105: walks to {}", list.trim()));
         }
-        None => {
-            cs.pending.push(Pending { script: cs.players[k].script, name, hold: Some(true), walk: points });
-            say(cs, format!("105: walks to {} when it's in the world", list.trim()));
-        }
+        None => say(cs, format!("105 to {}: not in the world (its entity isn't bound): nothing", list.trim())),
     }
 }
 

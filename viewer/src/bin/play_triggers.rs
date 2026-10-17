@@ -61,9 +61,13 @@
 //!  * destroyer (0x200d70, 0x200e40): OPERATE marks it, and its update removes its objects (a
 //!    spawn-trigger's copy for a spawn-trigger), then it disables itself. The update runs the
 //!    base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update.
-//!  * every other class (script, letterbox, warp, menu, message, input, event, radar, level-over
-//!    ...): its base actions; its own actions are logged as left to their step
-//!    (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
+//!  * script-, letterbox- and warp-trigger (#222, with play_script.rs; 0x205000, 0x207480,
+//!    0x200650): OPERATE asks for its script to play (by its entry's `<script command>`: play,
+//!    pause, resume, stop), brings the letterbox in (its STOP takes it out), warps its objects to
+//!    its world point. A script's 103 sends its signal straight to a trigger's handler.
+//!  * every other class (menu, message, input, event, radar, level-over ...): its base actions;
+//!    its own actions are logged as left to their step (`bf::triggers::later_step`). Waypoint and
+//!    evaluate triggers: base only.
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
 //! copy's), a named breakable object broken (DESTROYED), a wall panel used (USE_OBJECT, play.rs
@@ -798,89 +802,99 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
     for i in 0..tr.live.len() {
         tr.update(i, dt, &actors);
     }
-    // the cutscenes (#222, play_script.rs): the scripts the triggers started, their events due now
-    script::step(&mut cutscenes, &mut tr, &mut player, &mut squad, dt);
-    // what they asked of the world
-    let acts = std::mem::take(&mut tr.acts);
+    // what they asked of the world, then the cutscenes' frame (#222, play_script.rs: the scripts
+    // the triggers started, their events due now), which stops after an event whose signal asked
+    // something of the world (a 103 to a spawn- or warp-trigger) for that to be done before its
+    // next event: the game's signals act at once (a spawn's copy is in the world, and bound to
+    // the scripts, FUN_002096e0, as its 103 returns: the opening's 119 on tex_1 at 17.106 s holds
+    // the Tex its 103 at 17.091 s spawned, in the same frame)
     let none = SquadSpawns::default();
     let spawns = spawns.as_deref().unwrap_or(&none);
-    for a in acts {
-        match a {
-            Act::Anim { trigger, object, clip, backward, rate, command } => {
-                let Some(d) = doors.as_deref_mut().and_then(|d| d.list.iter_mut().find(|d| d.door.name == object)) else {
-                    if tr.log {
-                        println!("t {now:.2}: {}: clip h_{clip:08x} on {}: not an object the demo animates", tr.label(tr.live[trigger].t.name), tr.label(object));
-                    }
-                    continue;
-                };
-                if command != data::AC_PLAY && command != data::AC_RESUME {
-                    if tr.log {
-                        println!("t {now:.2}: {}: anim command {command} on {}: not run (AC_PLAY and AC_RESUME only)", tr.label(tr.live[trigger].t.name), tr.label(object));
-                    }
-                    continue;
-                }
-                // (its sound is its sound-trigger's, which the anim-trigger's ANIM_START /
-                // ANIM_BACK_START reaches: play_sound_triggers.rs)
-                let opening = !backward;
-                d.opening = opening;
-                d.rate = rate;
-                if tr.log || std::env::var("BF_DOOR_LOG").is_ok() {
-                    println!("t {now:.2}: door {} {} (clip h_{clip:08x} x{rate}) by {}", tr.label(object), if opening { "opens" } else { "closes" },
-                             tr.label(tr.live[trigger].t.name));
-                }
-            }
-            Act::Spawn { trigger, template, copy, at, fade } => {
-                spawn_copy(&mut commands, &mut tr, &mut player, &mut squad, &mut game.0, level, spawns, &mut fx, trigger, template, copy, at, fade);
-            }
-            Act::Destroy { trigger, object } => {
-                let by = tr.label(tr.live[trigger].t.name);
-                // (a character the triggers spawned; never a squad member the player can switch
-                // to: no level's destroyer lists one, and the demo's squad isn't the triggers' to
-                // take away)
-                if let Some(k) = squad.0.iter().position(|m| m.trigger_name == object && m.npc.is_some()) {
-                    let mut m = squad.0.remove(k);
-                    if let Some(l) = m.loaded.take() {
-                        commands.entity(l.root).despawn();
-                    }
-                    if let Some(e) = m.slide_fx.take() {
-                        commands.entity(e).despawn();
-                    }
-                    // (the shots on their way are counted by place in the squad)
-                    hits.0.clear();
-                    player.pending_hits.clear();
-                    if tr.log {
-                        println!("t {now:.2}: {by} removes {}", tr.label(object));
-                    }
-                } else if let Some(list) = tr.effects.remove(&object) {
-                    for e in list {
-                        commands.entity(e).try_despawn();
-                    }
-                    if tr.log {
-                        println!("t {now:.2}: {by} removes the effect {}", tr.label(object));
-                    }
-                } else if std::iter::once(&*player).chain(squad.0.iter()).any(|m| m.trigger_name == object) {
-                    if tr.log {
-                        println!("t {now:.2}: {by}: {} is a squad member: not removed", tr.label(object));
-                    }
-                } else if let Some(i) = level.objects.iter().position(|o| o.name == object) {
-                    // a placed object: no longer drawn; a breakable's collision goes with it
-                    for (p, mut v) in &mut placed {
-                        if p.name == object {
-                            *v = Visibility::Hidden;
+    let mut pass = script::Pass::First;
+    loop {
+        let acts = std::mem::take(&mut tr.acts);
+        for a in acts {
+            match a {
+                Act::Anim { trigger, object, clip, backward, rate, command } => {
+                    let Some(d) = doors.as_deref_mut().and_then(|d| d.list.iter_mut().find(|d| d.door.name == object)) else {
+                        if tr.log {
+                            println!("t {now:.2}: {}: clip h_{clip:08x} on {}: not an object the demo animates", tr.label(tr.live[trigger].t.name), tr.label(object));
                         }
+                        continue;
+                    };
+                    if command != data::AC_PLAY && command != data::AC_RESUME {
+                        if tr.log {
+                            println!("t {now:.2}: {}: anim command {command} on {}: not run (AC_PLAY and AC_RESUME only)", tr.label(tr.live[trigger].t.name), tr.label(object));
+                        }
+                        continue;
                     }
-                    if let Some(b) = bf_viewer::arena::arena().and_then(|a| a.breakable(i).map(|b| (a, b))) {
-                        b.0.set_broken(b.1, true);
+                    // (its sound is its sound-trigger's, which the anim-trigger's ANIM_START /
+                    // ANIM_BACK_START reaches: play_sound_triggers.rs)
+                    let opening = !backward;
+                    d.opening = opening;
+                    d.rate = rate;
+                    if tr.log || std::env::var("BF_DOOR_LOG").is_ok() {
+                        println!("t {now:.2}: door {} {} (clip h_{clip:08x} x{rate}) by {}", tr.label(object), if opening { "opens" } else { "closes" },
+                                 tr.label(tr.live[trigger].t.name));
                     }
-                    if tr.log {
-                        println!("t {now:.2}: {by} removes the placed {} (h_{:08x})", tr.label(object), level.objects[i].kind);
-                    }
-                } else if tr.log {
-                    println!("t {now:.2}: {by}: nothing called {} to remove", tr.label(object));
                 }
+                Act::Spawn { trigger, template, copy, at, fade } => {
+                    spawn_copy(&mut commands, &mut tr, &mut player, &mut squad, &mut game.0, level, spawns, &mut fx, trigger, template, copy, at, fade);
+                }
+                Act::Destroy { trigger, object } => {
+                    let by = tr.label(tr.live[trigger].t.name);
+                    // (a character the triggers spawned; never a squad member the player can
+                    // switch to: no level's destroyer lists one, and the demo's squad isn't the
+                    // triggers' to take away)
+                    if let Some(k) = squad.0.iter().position(|m| m.trigger_name == object && m.npc.is_some()) {
+                        let mut m = squad.0.remove(k);
+                        if let Some(l) = m.loaded.take() {
+                            commands.entity(l.root).despawn();
+                        }
+                        if let Some(e) = m.slide_fx.take() {
+                            commands.entity(e).despawn();
+                        }
+                        // (the shots on their way are counted by place in the squad)
+                        hits.0.clear();
+                        player.pending_hits.clear();
+                        if tr.log {
+                            println!("t {now:.2}: {by} removes {}", tr.label(object));
+                        }
+                    } else if let Some(list) = tr.effects.remove(&object) {
+                        for e in list {
+                            commands.entity(e).try_despawn();
+                        }
+                        if tr.log {
+                            println!("t {now:.2}: {by} removes the effect {}", tr.label(object));
+                        }
+                    } else if std::iter::once(&*player).chain(squad.0.iter()).any(|m| m.trigger_name == object) {
+                        if tr.log {
+                            println!("t {now:.2}: {by}: {} is a squad member: not removed", tr.label(object));
+                        }
+                    } else if let Some(i) = level.objects.iter().position(|o| o.name == object) {
+                        // a placed object: no longer drawn; a breakable's collision goes with it
+                        for (p, mut v) in &mut placed {
+                            if p.name == object {
+                                *v = Visibility::Hidden;
+                            }
+                        }
+                        if let Some(b) = bf_viewer::arena::arena().and_then(|a| a.breakable(i).map(|b| (a, b))) {
+                            b.0.set_broken(b.1, true);
+                        }
+                        if tr.log {
+                            println!("t {now:.2}: {by} removes the placed {} (h_{:08x})", tr.label(object), level.objects[i].kind);
+                        }
+                    } else if tr.log {
+                        println!("t {now:.2}: {by}: nothing called {} to remove", tr.label(object));
+                    }
+                }
+                Act::Warp { trigger } => warp(&mut tr, trigger, level, spawns, &mut player, &mut squad),
             }
-            Act::Warp { trigger } => warp(&mut tr, trigger, level, spawns, &mut player, &mut squad),
         }
+        if pass == script::Pass::Done {
+            break;
+        }
+        pass = script::step(&mut cutscenes, &mut tr, &mut player, &mut squad, dt, pass);
     }
     if mission {
         std::mem::swap(&mut tr.campaign, &mut *campaign);
@@ -1939,6 +1953,12 @@ impl Triggers {
         std::mem::take(&mut self.cutscene)
     }
 
+    /// Whether something has been asked of the world (a spawn, a warp, a door, a removal) that
+    /// `run` hasn't done yet: a script's event that asked it waits for it (play_script.rs `update`).
+    pub(super) fn has_acts(&self) -> bool {
+        !self.acts.is_empty()
+    }
+
     /// The name a warp-trigger's object is known by in the world: a spawn-trigger's copy (FUN_00200480
     /// warps the copy; the squad's start stands for its spawn's copy, `SquadSpawns`), else the object.
     fn warp_object(&self, o: u32, spawns: &SquadSpawns) -> u32 {
@@ -1996,8 +2016,11 @@ fn warp(tr: &mut Triggers, i: usize, level: &Level, spawns: &SquadSpawns, player
     let yaw = p.oriented.then(|| yaw_of(&p.transform));
     for o in tr.live[i].t.objects.clone() {
         let name = tr.warp_object(o, spawns);
-        let unit = if player.trigger_name == name && name != 0 && !player.stand_in { Some((&mut *player, true)) } else {
-            squad.0.iter_mut().find(|m| m.trigger_name == name && name != 0).map(|m| (m, false))
+        // (a squad member not spawned yet has no copy to warp)
+        let unit = if player.trigger_name == name && name != 0 && !player.stand_in {
+            (!player.absent).then_some((&mut *player, true))
+        } else {
+            squad.0.iter_mut().find(|m| m.trigger_name == name && name != 0 && !m.absent).map(|m| (m, false))
         };
         let Some((u, controlled)) = unit else {
             if tr.log {

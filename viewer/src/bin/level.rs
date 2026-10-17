@@ -55,8 +55,8 @@ struct Fly {
 
 /// BF_SCRIPT_CHECK=1: every data/*.tgz archive's cutscene scripts (scripts/*.gscr) through the
 /// reader (bf/gscr.rs, #222): a line per script (its duration, entities, events, the USER_EVENT
-/// codes and other event types it has), the ones that don't read, and the totals. 179 scripts in
-/// the game's 50 archives with any.
+/// codes and other event types it has), the ones that don't read, and the totals: 179 scripts in
+/// the 39 archives that have any, all read.
 fn script_check(dir: &std::path::Path) {
     use bf_viewer::bf::gscr::{EventKind, Script};
     let mut archives: Vec<PathBuf> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok().map(|e| e.path()))

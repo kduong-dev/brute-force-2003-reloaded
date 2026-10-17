@@ -440,6 +440,9 @@ pub struct Event {
 #[derive(Clone, Debug)]
 pub struct Script {
     pub name: String,
+    /// The level whose archive it came from (`Game::load_level` sets it; empty from `parse`):
+    /// the demo plays only the current map's (bf_play loads e01's archive too, for its audio).
+    pub level: String,
     pub duration: f32,
     pub entities: Vec<Entity>,
     pub events: Vec<Event>,
@@ -456,7 +459,7 @@ impl Script {
         let mut events = get("events").and_then(Lua::table).ok_or("no events")?.items.iter()
             .filter_map(Lua::table).map(event).collect::<Result<Vec<_>, _>>()?;
         events.sort_by(|a, b| a.time.total_cmp(&b.time));
-        Ok(Script { name: name.to_string(), duration, entities, events })
+        Ok(Script { name: name.to_string(), level: String::new(), duration, entities, events })
     }
 
     /// The entity named `name` (as events name them; case is the file's).
