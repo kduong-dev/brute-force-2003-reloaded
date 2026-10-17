@@ -138,6 +138,15 @@ pub struct Npc {
     pub face: f32,
 }
 
+/// The demo's yaw (0 faces -z, `Player::yaw`) for a facing given as the xemu watch logs give
+/// it: a bearing in degrees, atan2(dz, dx) of the way it faces, so 0 faces +x and 90 faces +z
+/// (xemu.md: the character's yaw +0x434 is 90 degrees less the bearing). BF_TEST_NPC's
+/// optional facing (#167).
+fn bearing_yaw(bearing: f32) -> f32 {
+    let (dz, dx) = bearing.to_radians().sin_cos();
+    (-dx).atan2(-dz)
+}
+
 /// The free camera: where it is and where it looks (yaw about +Y, 0 down -z; pitch up). The
 /// play mode's F and the map editor's edit camera (play_editor.rs).
 #[derive(Clone, Copy)]
@@ -299,10 +308,11 @@ pub(super) enum Hook {
     Teleport { camera: bool },
     NpcMenu,
     Close,
-    /// `character`: the type as the hook names it (see `npc_kind`); `at`: x, z, and the height
-    /// the ground is looked for under (None: 50 m over the controlled character); `frozen`: a dummy
-    /// whose brain is off (play_enemies.rs: no hit reactions)
-    Npc { character: String, team: u8, fight: bool, frozen: bool, at: Option<(Vec2, Option<f32>)> },
+    /// `character`: the type as the hook names it (see `npc_kind`); `at`: x, z, the height the
+    /// ground is looked for under (None: 50 m over the controlled character) and the yaw it faces
+    /// (the demo's, radians, from the hook's bearing: `bearing_yaw`; None: facing the controlled
+    /// character); `frozen`: a dummy whose brain is off (play_enemies.rs: no hit reactions)
+    Npc { character: String, team: u8, fight: bool, frozen: bool, at: Option<(Vec2, Option<f32>, Option<f32>)> },
     /// the team to put them on (None: switch friend <-> enemy, as J does)
     Team(Pick, Option<u8>),
     /// the radar-contact to give them (`Player::radar_contact`)
@@ -361,8 +371,10 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_TELEPORT=<s>[,camera]: the left click in the free camera (teleport to the ground
 ///    under the crosshair); `camera`: the right click (under the camera).
 ///  - BF_TEST_NPC_MENU=<s>: N (the menu opens). BF_TEST_TOOL_CLOSE=<s>: Esc (a menu closes).
-///  - BF_TEST_NPC=<s>,<character>,<friend|enemy|neutral|team>,<dummy|fight|frozen>[,<x>,<z>[,<y>]]: spawn
-///    one on the ground at x, z, or under the crosshair, facing the controlled character. Its team:
+///  - BF_TEST_NPC=<s>,<character>,<friend|enemy|neutral|team>,<dummy|fight|frozen>[,<x>,<z>[,<y>[,<bearing>]]]: spawn
+///    one on the ground at x, z, or under the crosshair, facing the controlled character, or
+///    `bearing` (degrees, the xemu watch logs' atan2(dz, dx): 0 faces +x, 90 faces +z; an empty y
+///    keeps its default: `x,z,,90`; #167) when given. Its team:
 ///    friend 0, enemy ENEMY_TEAM, neutral NEUTRAL_TEAM, or a number 0-9 (`team_of`). The character: a
 ///    squad name or 0-3, or any loaded character type (#128) by its display name (any case; the
 ///    first loaded of that name, e.g. `shrike soldier`), `name@archive` (`shrike soldier@m09_a`)
@@ -568,7 +580,7 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
             team: team_of(e.get(2)?).unwrap_or(0),
             fight: e.get(3)?.eq_ignore_ascii_case("fight"),
             frozen: e.get(3)?.eq_ignore_ascii_case("frozen"),
-            at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6))),
+            at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6), num(&e, 7).map(bearing_yaw))),
         }))();
         add(num(&e, 0), hook);
     }
@@ -930,7 +942,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
     }
     let types = &npcs.0;
     let open = tools.panel == Panel::Npcs;
-    let mut spawns: Vec<(u32, u8, bool, bool, Option<(Vec2, Option<f32>)>, Option<bf_viewer::bf::character_type::Placement>)> = vec![];
+    let mut spawns: Vec<(u32, u8, bool, bool, Option<(Vec2, Option<f32>, Option<f32>)>, Option<bf_viewer::bf::character_type::Placement>)> = vec![];
     let mut acts: Vec<Hook> = vec![];
     if script.now.iter().any(|h| matches!(h, Hook::NpcMenu)) {
         tools.panel = if open { Panel::None } else { Panel::Npcs };
@@ -979,7 +991,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
     let (origin, dir) = crosshair(&player, &tools);
     for (kind, team, fight, frozen, at, placed) in spawns {
         let ground = match at {
-            Some((p, from)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0)), p.y)),
+            Some((p, from, _)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0)), p.y)),
             None => ground_point(origin, dir),
         };
         let Some(ground) = ground else {
@@ -994,9 +1006,9 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         m.position = Vec3::new(ground.x, ground.y - GROUND, ground.z);
         m.prev_xz = Vec2::new(ground.x, ground.z);
         m.fall_from = ground.y;
-        // facing the controlled character
+        // facing the hook's bearing, else the controlled character
         let to = player.position - m.position;
-        m.yaw = (-to.x).atan2(-to.z);
+        m.yaw = at.and_then(|a| a.2).unwrap_or((-to.x).atan2(-to.z));
         m.cam_yaw = m.yaw;
         m.face_yaw = Some(m.yaw);
         m.team = team;

@@ -314,6 +314,21 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     p
 }
 
+/// Test hook: BF_TEST_FALL=<m> starts the controlled character that many metres above the
+/// floor it would stand on, falling from rest, so its landing takes a fall's damage from that
+/// drop (FALL_HURT, FUN_0012b740; #157: a 37 m drop deals 164). The drop is measured from the
+/// height it starts at, as the game's char+0x6e8 holds the height a fall began. Called once its
+/// body is loaded (`spawn_player`: loading stands a character on its feet).
+fn test_fall(p: &mut Player) {
+    let Some(m) = std::env::var("BF_TEST_FALL").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|&m| m > 0.0) else { return };
+    p.action = Action::JumpFall;
+    p.height = m;
+    p.vy = 0.0;
+    p.air_velocity = Vec3::ZERO;
+    p.fall_from = p.position.y + GROUND + m;
+    p.was_air = true;
+}
+
 /// The rest of the squad (none in deathmatch): on a level whose spawn-triggers spawn its squad
 /// (`spawns`, #102), the members it has, each at its own spawn as `player_at_start` puts the
 /// leader (the tutorial has Tex alone); otherwise all four, in formation behind the start
@@ -1326,7 +1341,9 @@ const LIQUID_UNDER: f32 = 1.6;
 /// through lava unhurt; this is the demo's choice: touching it hurts.)
 const LIQUID_TOUCH: f32 = 0.2;
 const LIQUID_TICK: f32 = 0.4;
-/// Falls (FUN_0012b740): from 5 m a landing hurts, 100 x ((drop - 5) / 25)^2, up to 100 at 30 m.
+/// Falls (FUN_0012b740): past 5 m a landing hurts, 100 x ((drop - 5) / 25)^2 with no upper
+/// clamp (5.0 at 0x3c0590, 30.0 at 0x3c0594, 100.0 at 0x3c0598): 100 at 30 m, 144 at 35 m, 164
+/// at 37 m (m09_a's waste pit), so a long fall kills Brutus (105) and Tex (115) too (#157).
 const FALL_HURT: (f32, f32, f32) = (5.0, 30.0, 100.0);
 /// A fall's damage type: FUN_0012b740 puts 0 (DTYPE_NORMAL) in its record's +4 and sends it to
 /// the character's own handler (char+0x48's vtable slot 0: 0x125600, the difficulty's step).
@@ -1335,10 +1352,11 @@ const FALL_DAMAGE_TYPE: i64 = 0;
 const SLIDE_EFFECT: u32 = 0x0151_3B0F;
 /// seconds to charge a throw fully (the recordings: a linear fill, full in 0.60 s, then held)
 const CHARGE_TIME: f32 = 0.6;
-/// After the button is let go the meter holds its level METER_HOLD s, then fades over
-/// METER_FADE s (the recordings: ~0.5 s and ~0.1 s).
-pub const METER_HOLD: f32 = 0.5;
-pub const METER_FADE: f32 = 0.1;
+/// The throw meter's timer (`Player::meter_after`'s second value): the player controller sets
+/// it to 1.0 with the level every frame the charge is above 0 (0x134823-0x13484e) and nothing
+/// after, so the meter's update (0xad950) counts it down from the last charging frame and draws
+/// the meter at clamp(2 x timer, 0, 1)^3 (play_hud.rs): full 0.5 s, gone at 1.0 s (#162).
+pub const METER_TIME: f32 = 1.0;
 /// seconds the chosen member's name shows before control passes to them
 const SELECT_TIME: f32 = 0.6;
 /// chatter line set the character you hand over from says as they drop back into the squad
@@ -1729,7 +1747,8 @@ struct Player {
     /// throw button held: charging (the HUD meter shows `charge`)
     throw_held: bool,
     charge: f32,
-    /// the meter after the button is let go: its level and how long it still shows (s)
+    /// the throw meter: its level and its timer (s; METER_TIME while charging, then counting
+    /// down: the meter's +0x3c and +0x40, 0xad950)
     meter_after: (f32, f32),
     /// a place-on-ground type was set down on this press (wait for the button to come up)
     place_latch: bool,
@@ -3059,6 +3078,11 @@ fn spawn_player(
         }
         spawn_unit(&mut commands, p, &mut game.0, &mut assets);
     }
+    // (the controlled character's first load: BF_TEST_FALL starts it in the air; a BF_TEST_LEVEL
+    // switch makes a new Player with sim_time 0, so it drops again on each map)
+    if player.sim_time == 0.0 && !player.stand_in {
+        test_fall(&mut player);
+    }
 }
 
 /// Load a character and spawn it with its weapons and clips into `p`: its type's model (#128),
@@ -3921,7 +3945,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     // a liquid breaks the fall
                     let wet = a.liquid_at(u.position.x, u.position.z, g + 0.5).is_some();
                     if drop > lo && !wet {
-                        let k = ((drop - lo) / (hi - lo)).min(1.0);
+                        // (no clamp: FUN_0012b740)
+                        let k = (drop - lo) / (hi - lo);
                         let at = u.position + Vec3::Y * 0.2;
                         // (DTYPE_NORMAL, through the character's handler: the step, play_damage.rs)
                         let amount = damage::Hit::new(most * k * k, "fall", FALL_DAMAGE_TYPE).land(u, &game.0, &difficulty, now);
@@ -4848,6 +4873,14 @@ fn collide(units: &mut [&mut Player], player_first: bool) {
     }
 }
 
+/// The seed of a shooter's fire loop (play_shots.rs `FireState::run`): the demo's own hash of
+/// its character and, for a test tool's or a trigger's NPC, its number (the primes 7919 and
+/// 104729 are the demo's). Wrapping, as a hash: a number above ~41,000 overflowed a u32 (#229);
+/// below that the seeds are what they were.
+fn shot_seed(character: usize, npc: Option<u32>) -> u32 {
+    (character as u32).wrapping_mul(7919).wrapping_add(npc.map_or(0, |id| id.wrapping_mul(104_729)))
+}
+
 fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, transforms: &mut Query<&mut Transform>) {
     p.sim_time += dt;
     if p.next_surface && !game.surfaces.is_empty() {
@@ -5112,16 +5145,19 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             }
         }
         p.charge = (p.charge + dt / CHARGE_TIME).min(1.0);
+        // the meter: its level and a full timer every frame the charge is above 0 (0x134823)
+        p.meter_after = (p.charge, METER_TIME);
     } else if p.charge > 0.0 {
+        // (and the frame it ends, thrown or not: nothing writes the meter after, so it holds and
+        // fades from this level, 0xad950)
+        p.meter_after = (p.charge, METER_TIME);
         let slot = stance_of(l, p.weapon);
         if let (true, true, Some((k, kit))) = (can_throw, l.throw_clips[slot].is_some(), kind) {
             p.throwing = Some(Throw { power: p.charge.max(0.1), time: 0.0, slot, grabbed: false, released: false, kind: k,
                                       place: false });
             p.aim_hold = 0.0;
-            // the count drops at the button (one game frame after it in the recordings), the
-            // meter holds its level a moment
+            // the count drops at the button (one game frame after it in the recordings)
             p.grenades[k] -= 1;
-            p.meter_after = (p.charge, METER_HOLD + METER_FADE);
             // the item use's skill call (FUN_00121170 -> +0x104, IOU_THROW_TO_USE): Hawk's cost,
             // with the count (#35 take13: 15.1 at 6.19-6.24 s, the count at 6.21)
             skills::used_item(p, kit.def.use_type);
@@ -5171,7 +5207,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         // as the game's request sets both guns' fire flags)
         let dry = (p.fire || pulled.contains(&true)) && gun_up && p.using.is_none();
         let trigger = |hand: usize, clip: i64| shots::Trigger { held: pulled[hand], dry, clip, scoped: p.scope > 0.5, crouched: crouch_wanted };
-        let seed = p.character as u32 * 7919 + p.npc.map_or(0, |n| n.id as u32 * 104_729);
+        let seed = shot_seed(p.character, p.npc.map(|n| n.id));
         let mut guns = vec![shots::Gun { hand: 0, weapon: p.weapon, def, trigger: trigger(0, clip_of(p, p.weapon)), cooldown: p.cooldown, rounds: 0 }];
         // (its cooldown as the raise above left it)
         if let Some(s) = second.and(p.second) {
@@ -6274,5 +6310,21 @@ fn dump_weapons(game: &Game) {
                 Err(e) => println!(" model error: {e}"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #229: the seed is the old product for the numbers that fitted, and a number past the old
+    /// limit (2^32 / 104729, about 41,010) wraps instead of overflowing.
+    #[test]
+    fn shot_seed_wraps_past_the_old_limit() {
+        for (c, id) in [(0usize, None), (3, None), (2, Some(1u32)), (1, Some(20_000)), (3, Some(41_000))] {
+            assert_eq!(shot_seed(c, id), c as u32 * 7919 + id.map_or(0, |n| n * 104_729));
+        }
+        assert_eq!(shot_seed(3, Some(41_011)), (3u64 * 7919 + 41_011 * 104_729) as u32);
+        assert_eq!(shot_seed(4, Some(u32::MAX)), (4u64 * 7919 + u32::MAX as u64 * 104_729) as u32);
     }
 }

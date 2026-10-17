@@ -214,8 +214,10 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
 
 ## Test hooks
 
-* `BF_TEST_NPC=<s>,<character>,<team>,<dummy|fight|frozen>[,<x>,<z>[,<y>]]`: the character may
-  be a placement name (above); `frozen` has no reactions ([testtools.md](testtools.md)).
+* `BF_TEST_NPC=<s>,<character>,<team>,<dummy|fight|frozen>[,<x>,<z>[,<y>[,<bearing>]]]`: the
+  character may be a placement name (above); `frozen` has no reactions; `bearing` turns it that
+  way instead of to the player (degrees as the xemu watch logs give them: 0 +x, 90 +z), as a
+  take's Shrike stood: the bone a shot strikes depends on it (#167) ([testtools.md](testtools.md)).
 * `BF_TEST_NPC_HP` (testtools.md) sets the maximum hit points too, and the heavy-hit threshold
   and both decal thresholds are shares of the maximum: at 999 a Shrike takes no heavy hit and
   lays almost no decals.

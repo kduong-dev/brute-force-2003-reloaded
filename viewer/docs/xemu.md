@@ -62,3 +62,44 @@ means checked in xemu 0.8.122 through QEMU's gdb stub (e40 and m09_a, Brutus, 20
   take's `notes.md` entry (snapshot, edits, each input's time from the first video frame, xemu
   version, A/V offset). First take: `todo/79-roller-grenade/take-dev01-…` (an enemy spawned
   and frozen 10 m ahead, the squad frozen; the Roller went off by it 2.75 s after LT).
+
+## Timing in the takes
+
+A take is a screen recording of xemu with the game's sound, plus a memory watch log in some
+takes. None of the three clocks is the game's own, and each is off in its own way. Measure
+from the right one:
+
+* **The picture lags the game by 0.12-0.15 s.** A value poked into memory shows on the HUD
+  0.12-0.15 s later (the playbook's "Confirmed live"); the #35 and #73 watch logs put the
+  picture 0.12-0.15 s behind the logged change. So a time from a pad input or a log row to
+  something seen on screen includes that lag, and must have it removed; a time from one
+  picture event to another doesn't.
+* **The pad's input delay is 0.02-0.06 s** (#35 spec: 19 presses): the game sees a command one
+  or two frames after it was sent. A time from an input to a log row includes only this.
+* **A watch log is late by up to one sample**: 0.1 s at 10 Hz (#73), 0.067 s at 15 Hz (#28),
+  0.05 s at 20 Hz (#35). Use the log for amounts and for log-to-log differences; an input to
+  a log row carries the input delay plus up to one sample.
+* **The sound is the better clock for shots.** With the A/V marker (2026-10-10 on) the sound
+  track sits within ~0.05 s of the log, i.e. 0-0.2 s ahead of the picture depending on the
+  take (#73 spec: take01 0-0.09 s, take06 0.07-0.17 s), and the code fires a shot's round,
+  report and muzzle effect in one frame (FUN_0022f2a0). Time a shot, a reload or a throw's
+  hiss from its sound onset, not from its first picture frame.
+* **The game runs slow under a watcher.** The gdb watcher pauses the VM for each sample
+  (~3 ms, 15 times a second), so the app clock `[[0x469b54]+0x38]` advances 0.94-0.96 s per
+  recorded second in a watched take (#28 take03 0.96, take04 0.93-0.95 where the clock runs
+  free) and about 0.985 in an unwatched one. Picture, sound and the game's timers stretch
+  together: a 4 s hold is ~4.2 s of video. Give rates and durations in game time: divide by
+  the take's ratio, or read the `clk` column (the `[game time]` column of the older takes
+  subtracts the pauses).
+* **Which takes have which sync.** Takes from 2026-10-10 on carry the A/V marker (a grey
+  square in the left bar and a 1500 Hz beep at the start and the end; residuals 0-20 ms, in
+  each take's "Recording" line). Takes before it, `todo/79-roller-grenade/`,
+  `todo/85-interactive-scenery/` and anything older, were aligned by wall clock and their sound
+  can sit 50-300 ms off the picture, drifting: don't time sound against picture in them.
+  #73's take03 has no markers either (audio dropouts). `todo/28-tutorial/` takes 01-02 were
+  unwatched; 03 on were watched at 15 Hz.
+* **What needs correcting.** A value fitted to an input-to-picture time is 0.14-0.21 s long
+  (lag plus input delay); to an input-to-log time, 0.02-0.16 s long (input delay plus the
+  sample). The gun's raise was such a fit: the game's is the motion set's
+  `pc-transition-ready in-time`, 0.1 s (#140; the demo still raises for 0.2 s until that change
+  lands). Picture-to-picture, log-to-log and sound-to-sound values need only the stretch above.
