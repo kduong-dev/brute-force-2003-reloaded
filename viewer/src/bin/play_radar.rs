@@ -10,7 +10,8 @@
 //! of its objects (a listed spawn-trigger's copy, +0xc4, for a spawn-trigger) that's in the world
 //! its `radar-contact` (+0x40) with its time h_e2145a6c (+0x44) through FUN_0015b310, and with
 //! h_12b33046 (+0x48, true unless the data says not) and a contact of 2 or 3 the game options'
-//! radar sound (h_f674fc4f) is queued on the world's dialog queue (FUN_00179d60, flag 0); any other
+//! radar sound (h_f674fc4f) is queued on the world's dialog queue (FUN_00179d60, flag 0) when an
+//! object in the world took the contact (the flag the loop sets, 0x20730a-0x20733a); any other
 //! action is the base's. The entry is counted after (FUN_001feac0).
 //!
 //! FUN_0015b310(object, value, time): the object's +0x7a = value (RCONTACT_: 0 NONE, 1 ALIGNMENT,
@@ -40,13 +41,21 @@ pub(crate) struct ContactSet {
     contact: u8,
     time: f32,
     by: String,
+    /// the OPERATE it came from (`RadarWorld::ops`), for its sound
+    op: u32,
 }
 
 /// The radar-triggers' side of the runtime (`Triggers::radar`): the contacts they set this frame,
-/// and the radar sound with its length (looked up as the map starts, `new`).
+/// the OPERATEs that would play the radar sound, and the sound with its length (looked up as the
+/// map starts, `new`).
 #[derive(Default)]
 pub(crate) struct RadarWorld {
     sets: Vec<ContactSet>,
+    /// the OPERATEs with h_12b33046 and a 2 or a 3 this frame: the sound plays for one once an
+    /// object in the world took its contact (0x20730a-0x20733a: the flag FUN_0015b310's loop sets)
+    cues: Vec<(u32, String)>,
+    /// the OPERATEs counted, to tell their sets apart
+    ops: u32,
     /// the game options' `<radar>` sound (h_ee13e943, settings +0x15c) and its length (the
     /// sound system's +0x64, as FUN_00179d60 queues it); 0 when the banks lack it
     cue: u32,
@@ -57,7 +66,7 @@ impl RadarWorld {
     /// As a map starts: the radar sound from the game options, its length from the loaded banks.
     pub(crate) fn new(game: &Game) -> RadarWorld {
         let cue = game.radar.sound;
-        RadarWorld { sets: vec![], cue, cue_length: game.sounds.length(cue).unwrap_or(0.0) }
+        RadarWorld { cue, cue_length: game.sounds.length(cue).unwrap_or(0.0), ..Default::default() }
     }
 }
 
@@ -113,8 +122,9 @@ pub fn plugin(app: &mut App) {
 impl Triggers {
     /// 0x207230: a radar-trigger. Disabled, its base actions (then FUN_001ff000). Enabled, each
     /// entry that answers: OPERATE sets its objects' contact (`ContactSet`, done by `apply`) and,
-    /// with h_12b33046 and a 2 or a 3, queues the radar's sound once an object took it; any other
-    /// action the base's (with FUN_001ff000). Then the entry is counted (FUN_001feac0).
+    /// with h_12b33046 and a 2 or a 3, the radar's sound is queued once an object in the world
+    /// took it (`apply`); any other action the base's (with FUN_001ff000). Then the entry is
+    /// counted (FUN_001feac0).
     pub(super) fn radar_trigger(&mut self, i: usize, ev: Ev) {
         if !self.live[i].enabled {
             return self.base_and_after(i, &ev);
@@ -128,7 +138,8 @@ impl Triggers {
             }
             let ClassState::Radar { contact, time, cue } = self.live[i].state else { return };
             let by = self.label(self.live[i].t.name);
-            let mut set_any = false;
+            self.radar.ops += 1;
+            let op = self.radar.ops;
             for o in self.live[i].t.objects.clone() {
                 // (a listed trigger: a spawn-trigger's copy, 0x2072e5-0x207304; any other
                 // trigger isn't an object and is skipped)
@@ -137,20 +148,18 @@ impl Triggers {
                     Some(_) => 0,
                     None => o,
                 };
-                if object == 0 {
-                    continue;
+                if object != 0 {
+                    self.radar.sets.push(ContactSet { object, contact, time, by: by.clone(), op });
                 }
-                set_any = true;
-                self.radar.sets.push(ContactSet { object, contact, time, by: by.clone() });
             }
             if self.log {
                 println!("t {:.2}: {} OPERATE on {}: radar-contact {contact}, time {time} to {}", self.clock, self.who(i), sig::name(ev.signal),
                          self.live[i].t.objects.iter().map(|&o| self.label(o)).collect::<Vec<_>>().join(", "));
             }
-            // the radar's sound on the dialog queue (0x207343-0x20736a; the flag 0: no hush)
-            if set_any && cue && (contact == 2 || contact == 3) && self.radar.cue != 0 {
-                let (sound, length) = (self.radar.cue, self.radar.cue_length);
-                self.queue_line(sound, length, &by);
+            // the radar's sound on the dialog queue (0x207343-0x20736a; the flag 0: no hush), once
+            // an object in the world has taken the contact (`apply`)
+            if cue && (contact == 2 || contact == 3) && self.radar.cue != 0 {
+                self.radar.cues.push((op, by));
             }
             self.entry_used(i, j, &ev);
         }
@@ -170,6 +179,7 @@ fn apply(time: Res<Time>, mut tr: ResMut<Triggers>, mut map: ResMut<MapLevel>, m
     let log = std::env::var("BF_RADAR_LOG").is_ok();
     let now = player.sim_time;
     let sets = std::mem::take(&mut tr.radar.sets);
+    let cues = std::mem::take(&mut tr.radar.cues);
     // the objects' updates first (this frame's dt), then the new times on top: FUN_0015b310 keeps
     // the larger, so a time set now is whole on this frame's radar
     let BlinkTimes { objects, characters } = &mut *blinks;
@@ -178,6 +188,8 @@ fn apply(time: Res<Time>, mut tr: ResMut<Triggers>, mut map: ResMut<MapLevel>, m
     }
     objects.retain(|_, t| *t > 0.0);
     characters.retain(|_, t| *t > 0.0);
+    // the OPERATEs whose contact an object in the world took (for the radar sound)
+    let mut took = vec![];
     for s in sets {
         let mut found = false;
         for (k, o) in map.0.iter_mut().flat_map(|l| l.objects.iter_mut()).enumerate().filter(|(_, o)| o.name == s.object) {
@@ -205,6 +217,16 @@ fn apply(time: Res<Time>, mut tr: ResMut<Triggers>, mut map: ResMut<MapLevel>, m
         }
         if !found && log {
             println!("t {now:.2}: {}: nothing called h_{:08x} in the world to take radar-contact {}", s.by, s.object, s.contact);
+        }
+        if found {
+            took.push(s.op);
+        }
+    }
+    // the radar's sound, for each OPERATE asking for it whose contact was taken (0x20730a-0x20733a)
+    for (op, by) in cues {
+        if took.contains(&op) {
+            let (sound, length) = (tr.radar.cue, tr.radar.cue_length);
+            tr.queue_line(sound, length, &by);
         }
     }
     // the radar's objective contacts (FUN_000ae580: 2, 3 and 7 to FUN_000aece0)

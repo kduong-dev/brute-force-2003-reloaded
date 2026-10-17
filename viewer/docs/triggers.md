@@ -401,11 +401,11 @@ and FUN_0015b310, which the handler calls for each object.
   it's 1, 2, 3, 6 or 7, and its +0x10c the larger of +0x10c and the time, which the object's
   update (0x157c40) counts down by dt to 0. With h_12b33046 and a contact of 2 or 3 the game
   options' radar sound (`<radar>` h_ee13e943: h_f674fc4f, dxud_ai_00008) goes on the world's
-  dialog queue (FUN_00179d60, flag 0). Any other action is the base's. The entry is counted
-  after.
+  dialog queue (FUN_00179d60, flag 0) when an object in the world took the contact (the flag its
+  loop sets, 0x20730a-0x20733a). Any other action is the base's. The entry is counted after.
 * **The radar** (play_hud.rs; [play.md](play.md), "Radar") draws the objects whose contact is
   2, 3 or 7 (FUN_000ae580 hands those to FUN_000aece0) as yellow dots, blinking while their
-  +0x10c is above 0, and as markers on its rim beyond its range.
+  +0x10c is above 0, and as "L" markers on its rim beyond its range.
 * **The tutorial's 18**: nine pairs along the route (leads §7.9), each a set (contact 3, time 2,
   once, h_12b33046 false: no sound) on the next route object (h_fe303e53 at (25.4, 34.6) on
   FIRST_UPDATE, h_e89e2471 at (56.8, -0.5) as the first patrol's circle h_ed8c0a43 is entered,
@@ -432,10 +432,13 @@ update 0x1fa7e0) and FUN_001f8510, FUN_001f8420.
   3 all of it to r / 2, then 1 - 2 (d / r - 0.5); none beyond r) x dt each frame, of its
   `damage-type` (+0x128), from the plate's middle, through the character's damage handler
   (0x125600: its difficulty step and its factor for the type; nobody is hurt during a cutscene).
-  A negative amount heals, up to the most.
+  A negative amount heals each occupant by it x dt, up to the most, with no falloff and no test
+  (FUN_001f8510's other branch).
 * **Not a weapon's hit**: no hit part, no damage-multiplier, no push, and no blood (take15 shows
-  none). The first hit on a character goes through the demo's `hurt` (its grunt); the rest come
-  off its hit points directly, unless one would kill it.
+  none). The first hit on a character since the plate was enabled goes through the demo's `hurt`
+  (its grunt); the rest come off its hit points directly, unless one would kill it. Enabled
+  again, it starts again (`BF_TRIGGER_FIRE=trigger_damage_plate524,USER1,2` after its second:
+  the first hit through `hurt` once more).
 * **The tutorial's** trigger_damage_plate524 at (27.9, 17.4, 67.6): BALLISTIC 20 a second,
   falloff 0, squad types. The show_patrol_2 script's 103s at 0.108 s start timer528 (1 s) and
   enable it; the timer's pulse disables it. Tex, warped to direction_point2 2.6 m from its middle,
@@ -621,8 +624,12 @@ the log read and the frames looked at:
   drawn. The 0.2 s an occupant stays in its list after leaving is the detector's (not checked
   for the plate on its own).
 * The lava bursts (#228) are a brighter yellow than take08's orange column, which is also
-  wider near the camera; the take's view from Tex's place (the valley and the sky beyond the
-  pit) isn't the demo's (rock walls): the level's, not the bursts'.
+  wider near the camera, and take08's orange embers scattered round them are missing. Their
+  effect type h_e8918da4 lists one ALE effect, h_011bcd96 (slava-erupt-jet: its cube emitter, its
+  one appearance, and a gravity and a turbulence field, slava-eruptgravity-jet and slava-turb-jet);
+  the demo's ALE doesn't run gravity and turbulence fields (ale_fx.rs, AIR_FIELDS), which would
+  scatter the particles and bring them down. The take's view from Tex's place (the valley and
+  the sky beyond the pit) isn't the demo's (rock walls): the level's, not the bursts'.
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
 * Placed characters that no spawn-trigger names still add their bodies' collision to the arena

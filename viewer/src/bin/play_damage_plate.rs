@@ -14,7 +14,8 @@
 //! distance from the trigger to the occupant against the radius) x dt, as a damage record
 //! (FUN_00222f60) of `damage-type` from the trigger's place to the character's handler (0x125600:
 //! its difficulty step and its factor for the type, play_damage.rs), with no attacker. A negative
-//! amount heals instead: the hit points raised by it x dt, at most to the most.
+//! amount heals instead: the hit points raised by it x dt, at most to the most, with no falloff and
+//! no test of the occupant (FUN_001f8510's other branch).
 //!
 //! The tutorial's one, trigger_damage_plate524 at (27.9, 17.4, 67.6): BALLISTIC 20 a second, flat,
 //! a 5 m sphere (its data's `size` 4 2 4 isn't read: a proximity detector's parser takes `radius`
@@ -39,17 +40,20 @@ use super::super::damage::{Difficulty, Hit};
 
 /// One frame's hit from a damage plate, waiting for the world (`deal`): the character by its
 /// detector name (`actor_name`), the amount this frame (negative: healing), its damage-type,
-/// where it came from (the trigger's place) and which trigger (for the log).
+/// where it came from (the trigger's place), which trigger (for the log), and whether the plate
+/// was enabled since its last frame (`fresh`: its victims start again).
 pub(crate) struct PlateHit {
     victim: u32,
     amount: f32,
     damage_type: i64,
     from: Vec3,
     by: String,
+    fresh: bool,
 }
 
-/// The characters a damage plate has hurt (by detector name and trigger), for the first-hit rule
-/// and the log: the amount dealt so far and when the last hit was. Reset as each map starts.
+/// The characters a damage plate has hurt since it was enabled (by detector name and trigger),
+/// for the first-hit rule and the log: the amount dealt so far and when the last hit was. A plate
+/// enabled again starts its list again (`PlateHit::fresh`); all of it is reset as each map starts.
 #[derive(Resource, Default)]
 struct PlateVictims(HashMap<(u32, String), (f32, f32)>);
 
@@ -87,16 +91,21 @@ impl Triggers {
         let middle = at.w_axis.truncate();
         // (+0x64: the proximity detector's radius; a plate's box has none, its half diagonal)
         let radius = match volume { Volume::Sphere(r) => *r, Volume::Plate(s) => s.length() };
+        // (enabled since its last frame: its victims' list starts again, `PlateVictims`)
+        let fresh = !self.plates_on.contains(&i);
         let mut hits = vec![];
         for o in occupants {
             let Some(a) = actors.iter().find(|a| a.name == o.name) else { continue };
-            // (the object's place, its transform's +0x24: a character's feet here)
-            let share = falloff(d.falloff, a.feet.distance(middle), radius);
-            let amount = d.amount * share * dt;
+            // FUN_001f8510's two branches: a negative amount heals each occupant by it x dt, with
+            // no falloff and no test (+0x54 raised, at most to +0x50); else the amount x the
+            // falloff at its distance (the object's place, its transform's +0x24: a character's
+            // feet here) x dt
+            let amount = if d.amount < 0.0 { d.amount * dt } else { d.amount * falloff(d.falloff, a.feet.distance(middle), radius) * dt };
             if amount != 0.0 {
-                hits.push(PlateHit { victim: o.name, amount, damage_type: d.damage_type, from: middle, by: self.label(self.live[i].t.name) });
+                hits.push(PlateHit { victim: o.name, amount, damage_type: d.damage_type, from: middle, by: self.label(self.live[i].t.name), fresh });
             }
         }
+        self.plates_on.insert(i);
         self.plate_hits.extend(hits);
     }
 }
@@ -114,6 +123,10 @@ fn deal(mut tr: ResMut<Triggers>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     let now = player.sim_time;
     let log = std::env::var("BF_COMBAT_LOG").is_ok();
+    // (a plate enabled again: its victims' list starts again)
+    for h in hits.iter().filter(|h| h.fresh) {
+        victims.0.retain(|(_, by), _| by != &h.by);
+    }
     for h in hits {
         let Some(u) = std::iter::once(&mut *player).chain(squad.0.iter_mut()).find(|u| actor_name(u) == h.victim && !u.dead && !u.absent) else { continue };
         if h.amount < 0.0 {

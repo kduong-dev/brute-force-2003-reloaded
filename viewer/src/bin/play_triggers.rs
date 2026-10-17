@@ -516,6 +516,9 @@ pub struct Triggers {
     radar: radar::RadarWorld,
     /// the damage plates' side (play_damage_plate.rs): this frame's hits, waiting for the world
     plate_hits: Vec<damage_plate::PlateHit>,
+    /// the damage plates enabled at their last update (a plate enabled again starts its victims'
+    /// list again: play_damage_plate.rs)
+    plates_on: HashSet<usize>,
     /// the sim time (s), for the log and BF_TRIGGER_FIRE
     clock: f32,
     /// how deep the events in flight are nested (MAX_DEPTH)
@@ -1919,6 +1922,10 @@ impl Triggers {
     /// (FUN_001f94e0: the actors its filter admits in its volume) and its occupancy
     /// (FUN_001f8db0). Disabled with h_e25d95e3: the occupancy alone, silent. Else nothing.
     fn detector_update(&mut self, i: usize, dt: f32, actors: &[Actor]) {
+        // (a damage plate off: enabled again, its victims start again, play_damage_plate.rs)
+        if !self.live[i].enabled {
+            self.plates_on.remove(&i);
+        }
         let silent = if self.live[i].enabled {
             self.first_update(i);
             false

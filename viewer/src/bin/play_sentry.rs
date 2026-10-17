@@ -128,6 +128,10 @@ pub(super) struct TestRig {
     held_at: Option<f32>,
 }
 
+/// How near (m, across) the level's own model of an unnamed placed mine is looked for round its
+/// placement's place (`place_mines`: the level's models stand where they're placed).
+const MODEL_REACH: f32 = 1.0;
+
 /// The level's own mines (see the module notes) once they're made (`place_mines`): each one's
 /// entity and its placement's name, for its DESTROYED when it goes off (`mines_gone`).
 #[derive(Resource, Default)]
@@ -151,9 +155,10 @@ pub fn plugin(app: &mut App) {
 /// then, as play_pickups.rs's `find_pickups` waits for): each item object of a Sentry type the
 /// level places with h_1cb7d5f2 (`Placement::placed`: set down and armed as it loads, 0x14a0a0) is
 /// a mine on the ground where it's placed, on its `item-alignment`'s team, owned by nobody; the
-/// level's own model of it is hidden (the mine is drawn in its place). BF_SENTRY_LOG=1 lists them.
+/// level's own model of it is hidden (the mine is drawn in its place): the one of its name, or for
+/// an unnamed one the nearest of its type within MODEL_REACH across. BF_SENTRY_LOG=1 lists them.
 fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<GrenadeKits>>, player: Res<Player>, mut mines: ResMut<PlacedMines>,
-               mut scenery: Query<(&bf_viewer::level_scene::Placed, &mut Visibility)>) {
+               mut scenery: Query<(&bf_viewer::level_scene::Placed, &Transform, &mut Visibility)>) {
     let Some(kits) = kits else { return };
     if mines.made || (player.loaded.is_none() && !player.stand_in) {
         return;
@@ -170,7 +175,12 @@ fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<Gren
         let team = o.alignment.clamp(0, 9) as u8;
         commands.entity(e).insert((Grenade::placed(kind, kit.def.fuse.max(0.0), player.sim_time), Mine { check: 0.0, team }));
         mines.list.push((e, o.name));
-        for (_, mut v) in scenery.iter_mut().filter(|(p, _)| p.tag == o.tag && p.name == o.name && o.name != 0) {
+        // the level's model of it: by its name, else (unnamed) the nearest of its type
+        let at = o.transform.w_axis.truncate();
+        let model = scenery.iter_mut().filter(|(p, t, _)| p.tag == o.tag && p.kind == o.kind
+                && if o.name != 0 { p.name == o.name } else { t.translation.xz().distance(at.xz()) < MODEL_REACH })
+            .min_by(|a, b| a.1.translation.distance_squared(at).total_cmp(&b.1.translation.distance_squared(at)));
+        if let Some((_, _, mut v)) = model {
             *v = Visibility::Hidden;
         }
         if log {

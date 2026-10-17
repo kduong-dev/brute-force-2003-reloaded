@@ -102,7 +102,7 @@ appears beside the portrait while that member talks. The one you control is the 
 three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
 catch up, walking the last bit), look where you look, and
 reload on their own. They never fire just because you do - only at enemies they can see (none in the main game yet; the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
-yellow blips on the radar (turning with the camera, at the radar's scale: see **Radar** below). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
+green blips on the radar (turning with the camera, at the radar's scale: see **Radar** below). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
 
 HUD health / stamina frame: the original's own art, the tutorial's picture of it (`h_17f34cbe`,
 256 × 64, only in tutorial.tgz: loaded for it directly). It's cut in pieces: the + and bolt icons
@@ -205,12 +205,20 @@ recoil, tracers that fly to what the crosshair is on (ground or pillars) and a s
   max-range (120 m): 0.325 units a metre, each point cut to whole units. take07 agrees: the
   waypoint 17.4 m off drawn 5.4 units from the middle (5.65 by the code), the next, 55.5 m off,
   17.0 (18.0). The demo's 40 m across 44 units before #228 had no source.
-* **The middle**: the viewer's dot, 180 180 180 (FUN_000ae7c0's colour for the HUD's character:
-  pale grey in take03 and take07; it was green).
-* **The squad**: its living members in the world as yellow blips at that scale, one beyond the
-  range on the circle (FUN_000ae7c0 through FUN_000b0ad0). The characters the triggers spawn
-  aren't squad blips (the tutorial's terrorists were, before #228); enemies on the radar are
-  #160's.
+* **The middle**: the viewer's dot, 180 180 180 (FUN_000ae7c0's colour for the HUD's own
+  character, 0xae7f0: pale grey in take03 and take07; it was green). The code has no mode test:
+  the squad deathmatch recordings' green middle is the squadmates' dots drawn over it, a few metres
+  off at 0.325 units a metre.
+* **The squad**: its living members in the world as green blips (FUN_000ae7c0's friend, 90 200 40;
+  take11's marines; they were yellow) at that scale, one beyond the range on the circle (the game
+  draws a rim marker for it: FUN_000ae7c0 through FUN_000b0ad0, not done).
+* **The other characters** (FUN_000ae7c0, radar-contact 1, or 6 for a boss): one within the range a
+  record as an objective's (below), a friend green 90 200 40 (40 100 20), one whose team the
+  viewer's is hostile to red 200 40 90 (100 20 40: take08's and take11's terrorists), anyone else
+  70 70 70. Not the game's yet (#160): a hostile shows only once the viewer or a squadmate knows of
+  it (FUN_000ae470, with h_14be5318 off as shipped), a character only within its type's +0x2a0 of a
+  viewer (FUN_000b0670), fading toward that edge (FUN_000b0770); the demo shows every one within the
+  range, at full alpha. (Before #228 the demo drew the first three of them as yellow squad blips.)
 * **The objectives**: the objects and characters with radar-contact 2, 3 or 7 (OBJECTIVE,
   OBJECTIVE_NO_CURSOR, IMPORTANT_PICKUP: FUN_000ae580 hands those to FUN_000aece0), which the
   level gives them or a radar-trigger sets ([triggers.md](triggers.md), "Radar-triggers"). Each
@@ -224,9 +232,11 @@ recoil, tracers that fly to what the crosshair is on (ground or pillars) and a s
   radar-trigger's, counted down by the object) is above 0, its records are drawn dim (alpha
   255 >> 6) on the half of each 2 s where frac(t / 2) < 0.5 (0xaedd5): a dot set with time 2
   shows for its first second (and the 0.3 s its last full records take to fade), is gone until
-  2 s, then stays. One beyond the range is a rim
-  marker: two lines from a point 5 units inside the circle to the circle on each side of its way
-  (FUN_000b0ad0, 0xafaa0), drawn a unit wide.
+  2 s, then stays. One beyond the range is a rim marker, an "L" with its corner on the circle:
+  FUN_000b0ad0 gives the point on the circle and one 5 units in, and the draw (0xafaa0) runs two
+  lines from the circle point to the inner one pushed out 5 units to each side, square to the way
+  in (arms 7.1 units long); 1.33 units wide here, the takes' ~2 px at 720p (the game's lines are a
+  pixel of its 640 x 480). It was drawn inverted, its corner inside, before the fix round.
 * The dots and markers are drawn on the CPU into an image over the radar (256 x 256, two pixels a
   unit), redrawn each frame while there's any.
 
@@ -237,12 +247,17 @@ one comes ahead, holds ~1.1 s (frames 43-60), is gone ~0.75 s (frames 62-72) and
 good at 4.93 s, and the old one fades in 0.2 s, as take07's (in 1.1 s, gone 0.8 s); their
 distances from the middle at take07's scale. sdm_e34 (regression, `BF_TEST_GOTO=0,0,0,0`
 against main's build): the squad's two blips behind Tex at half their old distance from the
-middle, the middle grey; the map has no objectives.
+middle, green, the middle grey; the map has no objectives. The base with a far objective
+(`BF_TEST_GOTO=-36.4,37.3,-57.3,22.9 "BF_TEST_RADAR=h_1d422d6d,3"`: a mine 184 m off): the
+terrorists red, the far mine's "L" on the circle with its corner out, its first record a growing
+dot on the circle.
 
 Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
-radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower); the
-alignment and boss contacts (1, 6: #160); the squad's portraits for members not in the world
-(the tutorial's Tex alone still shows four).
+radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
+dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); who
+knows of a hostile, and the characters' radius and fade (#160); contact 2's cursor on the screen
+(FUN_00052db0); the squad's portraits for members not in the world (the tutorial's Tex alone
+still shows four).
 
 ### Ammo, reload and the crosshair (#114)
 

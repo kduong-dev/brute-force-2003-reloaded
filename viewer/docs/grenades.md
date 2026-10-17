@@ -317,8 +317,9 @@ default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them)
   (`Placement::placed`; the tutorial's three `<h_1d1d4f05>` item spawns in the mine field, at
   (92.6, -71.8), (95.3, -82.3), (98.2, -75.8)) is set down and armed as the level loads (its
   attribute handler 0x14a0a0: +0x1bc bit 1, the item set's +0x10), on its `item-alignment`'s
-  team (+0x1c0: 1, the enemies') and owned by nobody; the level's own model of it is hidden and
-  the mine drawn in its place. It goes off for the squad's Confed marines within its 3 m, but
+  team (+0x1c0: 1, the enemies') and owned by nobody; the level's own model of it (the one of its
+  name, or for an unnamed one the nearest of its type within 1 m) is hidden and the mine drawn
+  in its place. It goes off for the squad's Confed marines within its 3 m, but
   Tex only sets it off standing on it (above): take09 has him 0.84 m from the first for 8 s
   (71-79 s) before the disarm. Going off it sends DESTROYED to the triggers that listen to it
   (0x149520 at 0x1496fc): the tutorial's routers 446 and 470, and calculator471, which counts the
