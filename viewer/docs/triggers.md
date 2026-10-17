@@ -194,8 +194,9 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   alpha by dt / that each frame. 2 s for Tex and the marines (the farcast), 0 for the Red Hand
   (at once). The demo doesn't draw the fade: a copy appears at once (logged).
 * **In the world** (`spawn_copy`): a character template becomes a character of its type with the
-  placement's weapons, personality and team (as `BF_TEST_NPC` spawns a placement, #129), set to
-  fight (stand and fire at what it sees: the patrols and covers are step 8, #227); an effect
+  placement's weapons, personality and team (as `BF_TEST_NPC` spawns a placement, #129), with a
+  brain from the trigger (its home-point, h_131de144 and `locomotion`: the walk home, the patrol,
+  sight and the fight, #227, [brain.md](brain.md)); an effect
   object plays its effect type's ALE effects once at the transform (the lava bursts, the farcast
   flashes; the farcast-out pad, which the game keeps until its destroyer, plays its emitters once
   here); a pickup template (sdm_e34's 118 re-armable ones) isn't made: the demo keeps the placed

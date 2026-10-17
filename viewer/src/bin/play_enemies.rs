@@ -417,7 +417,8 @@ pub fn drive(u: &mut Player, mt: i64, goal: Option<Vec2>, ready: bool) {
 /// world): the brain's damage message and event, its personality's draw (answers.md Q1; the brain's
 /// handler 0x3dce0, CBT_DAMAGED at 0x3e528 posting EVT_DAMAGED, handled at 0x3e756):
 ///  1. the hit goes on the damage record (FUN_0003dab0), which keeps the last DAMAGE_WINDOW s;
-///  2. a brain that knows an enemy (the demo: an NPC set to fight with a hostile in sight) posts
+///  2. a brain that knows an enemy (the demo: an NPC set to fight with a hostile in sight, or a
+///     level character's brain with a contact, play_brain.rs) posts
 ///     EVT_DAMAGE_HEAVY when the record's total is over HEAVY_SHARE of the max hit points (the
 ///     record emptied), else EVT_DAMAGE_LIGHT; an entry under FIGHT_PRIORITY never acts;
 ///  3. one that knows none (brain+0x3c4 bit 7; the demo's dummies) posts EVT_DAMAGED_NO_ENEMIES,
@@ -438,7 +439,10 @@ pub fn damaged(u: &mut Player, game: &Game, amount: f32, way: Vec3) {
     u.enemy.record.push((now, amount));
     let log = std::env::var("BF_ENEMY_LOG").is_ok();
     let personality = u.enemy.personality;
-    let (event, entry) = if u.ai_target.is_some() {
+    // (a level character's brain knows an enemy when it has a contact, play_brain.rs; the test
+    // map's NPCs when they have a hostile in sight)
+    let knows = u.ai_target.is_some() || u.brain.as_ref().is_some_and(|b| b.knows_enemy());
+    let (event, entry) = if knows {
         let sum: f32 = u.enemy.record.iter().map(|r| r.1).sum();
         let event = if sum > HEAVY_SHARE * u.max_health { EVT_DAMAGE_HEAVY } else { EVT_DAMAGE_LIGHT };
         if event == EVT_DAMAGE_HEAVY {
@@ -690,14 +694,24 @@ fn steer(u: &mut Player, l: &Loaded, t: Option<&CharacterType>, d: Drive, dt: f3
     // a walking clip at the speed over its own (FUN_0012c6c0: the clip record's +0x28)
     let own = l.model.anims[clip].move_speed.unwrap_or(0.0);
     let rate = if WALKING.contains(&d.mt) && own >= NO_CLIP_SPEED { (speed / own).min(MAX_WALK_RATE) } else { 1.0 };
+    // in scripted play (the world's cutscene bit, from a script's 122 to its 123: play_script.rs)
+    // every character moves by its clip's root instead, and FUN_0012c6c0, which sets the clip's
+    // rate, isn't run (FUN_0012cb40): the first patrol walks so through tutorial_show_patrol (#227)
+    let rooted = super::script::in_cutscene();
     match u.enemy.motion.as_mut() {
-        Some(m) if m.mt == d.mt && m.clip == clip => m.rate = rate,
+        Some(m) if m.mt == d.mt && m.clip == clip => {
+            if !rooted {
+                m.rate = rate;
+            }
+            m.by_root = rooted;
+        }
         _ => {
             if log {
-                println!("t={:.2} {}: drive {} clip {} ({:.2} s, own speed {own:.2}) at {speed:.2} m/s, rate {rate:.2}, heading {:?}", u.sim_time,
-                         unit_name(u), mt_name(d.mt), clip, l.model.anims[clip].duration, heading.map(|h| h.to_degrees().round()));
+                println!("t={:.2} {}: drive {} clip {} ({:.2} s, own speed {own:.2}) at {speed:.2} m/s, rate {rate:.2}, heading {:?}{}", u.sim_time,
+                         unit_name(u), mt_name(d.mt), clip, l.model.anims[clip].duration, heading.map(|h| h.to_degrees().round()),
+                         if rooted { " (scripted play: by the clip's root, rate 1)" } else { "" });
             }
-            u.enemy.motion = Some(Playing { mt: d.mt, clip, once: false, time: 0.0, hold: f32::INFINITY, by_root: false, rate });
+            u.enemy.motion = Some(Playing { mt: d.mt, clip, once: false, time: 0.0, hold: f32::INFINITY, by_root: rooted, rate: if rooted { 1.0 } else { rate } });
         }
     }
     if log && (u.sim_time * 2.0).floor() != ((u.sim_time - dt) * 2.0).floor() {

@@ -300,7 +300,10 @@ the rest: Tex's `99,4`); `BF_TEST_TRIGGER=<from>-<to>[,...]` holds the trigger o
 windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the weapon switch once
 at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_RELOAD=<s>[,...]`
 presses R once at each time (it owns R for the run); `BF_TEST_KNOCK=<s>` knocks the player down
-then, once; `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time;
+then, once; `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time. These run after the
+test tools' input gate, so they work under `BF_TEST_FREECAM` too (the gate drops the keyboard's
+and `BF_TEST_FIRE`'s input, which `read_input` takes; #227 made that order explicit after a
+new system flipped it);
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot (and the second hand's), recharged
 round and the hint.
 
@@ -507,7 +510,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   axes by uniform random angles within +-S degrees (FUN_002229b0), with
   S = (100 - clamp(A - 1, 0, 100)) x 0.03 (FUN_000c4e10; the -1 is the holder's script bonus,
   unset: the squad's `accuracy-bonus` h_072837bb flag h_ec5337fb is false in the levels; some
-  enemies have 75 or 90). So the MK's first shot spreads +-0.33 degrees and its 14th on in held
+  enemies have 75 or 90). A character a spawn-trigger made from a placement that sets
+  h_ec5337fb takes its h_072837bb instead (#227, `Trigger::bonus`: the tutorial's Red Hand +25,
+  S = (100 - clamp(A + 25, 0, 100)) x 0.03). So the MK's first shot spreads +-0.33 degrees and its 14th on in held
   fire +-2.3; the Minigun's +-1.2 to +-1.8 over a clip; the Bower's aim +-0.5 before its
   pellets' walk.
   * Against the takes: the clusters measured in screen units, read with a 45 degree vertical
@@ -609,7 +614,8 @@ Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
 map's data has it (the test map has every hand weapon); a list, `<a>;<b>`, fills the slots in
 order from the first (#35's Tex: `"Confed LZR-50;Jax-iC"`); `BF_SHOT_LOG=1` now also prints each
-pellet (its hand, frame, spread, walk, tracer) and the gun's accuracy; `BF_TEST_FIRE=hip` fires
+pellet (its hand, frame, spread, walk, tracer), the gun's accuracy and, last, who fired it (as
+the combat log names it, #227); `BF_TEST_FIRE=hip` fires
 without aiming (no scope on a gun that zooms).
 
 Verified on the test map (`-- --test`, `BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12

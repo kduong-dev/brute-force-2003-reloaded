@@ -29,6 +29,9 @@
 //!  radar       each placement's radar-contact (h_1905f381, else its type's), and the
 //!              radar-triggers (radar-contact N on their h_0b6b92ba objects); those that act at
 //!              the level's start (signal 13) are applied as it loads (`RadarTrigger`)
+//!  patrols     the patrol points (`<patrol-point>`, and `<patrol-first-point>` the head of a
+//!              chain), linked forward and back, grouped by their iD (`PatrolPoint`): the AI's
+//!              patrol routes (bf_play's play_brain.rs, #227)
 
 use bevy::math::{Mat4, Vec3};
 
@@ -83,6 +86,10 @@ pub struct Placement {
     /// what it moves at such a point's whole transform, else at its position only (FUN_00200480,
     /// the point's +0xc interface asked for one)
     pub oriented: bool,
+    /// a point's h_e6564e8a (H_POINT_RADIUS, a world point's +0x20 by its attribute handler
+    /// FUN_000ecdc0): the arrival radius a route's walk takes at it when it's over 0 (FUN_00026d80);
+    /// -1 without one (the tutorial's world points: -1 765 times, 1 165 times, a few 0.3-0.6)
+    pub radius: f32,
 }
 
 /// A level camera-object (`<camera-object name h_1435f288 h_19bc8fdf h_125978e4><transform>`,
@@ -119,6 +126,37 @@ pub struct LevelPath {
     pub name: u32,
     pub transform: Mat4,
     pub keys: Vec<(f32, Mat4)>,
+}
+
+/// A patrol point of the level: a `<patrol-point>` (type patrol_point, h_efd397a1: the world
+/// point factory FUN_000ee070 makes it with FUN_000ec180, vtable 0x39e608, kind 11 by its +0x3c
+/// slot 0x1031c0) or a `<patrol-first-point>` (h_09528bf8, type patrol_first_point h_0eef0757:
+/// FUN_000ec5a0, vtable 0x39eac0, kind 12, slot 0x1f88a0), the head of a chain. The world keeps
+/// both kinds, and only them, in one list (world+0x1d0: the add by kind at 0xdab13, jump table
+/// 0xdb374), which GOAL_PATROL's start walks (FUN_0002af70). The tutorial has two chains: iD 1, a
+/// head at (18.8, 35.2) and ten points north to (52.2, 76.9); iD 2, a head by the base's gate at
+/// (-37.7, 0.1) and thirteen points through the base to (-78.6, 47.6).
+#[derive(Clone, Debug)]
+pub struct PatrolPoint {
+    pub name: u32,
+    /// its `<position>`
+    pub at: Vec3,
+    /// a chain's head (kind 12), else a patrol point (kind 11)
+    pub head: bool,
+    /// `iD`: the low 12 bits of the object's +0x24 (the world point attribute handler
+    /// FUN_000ecdc0, h_f3dd6750): the chain it belongs to. GOAL_PATROL takes the head whose iD is
+    /// the nearest point's (FUN_0002af70 compares `(+0x24 ^ +0x24) & 0xfff`)
+    pub group: i64,
+    /// forward-object and backward-object (FUN_000eddd0: +0x3c / +0x44, the links of the chain;
+    /// 0 none) and trigger-object (+0x4c: a trigger sent an event as a patroller reaches the point,
+    /// FUN_00026940; none in the tutorial)
+    pub forward: u32,
+    pub backward: u32,
+    pub trigger: u32,
+    /// h_e6564e8a (+0x20, FUN_000ecdc0; -1 none, 0.3 at least when 0-0.25): the point's own
+    /// arrival radius, which replaces the walk's when it's above 0 (FUN_00026d80). The tutorial's
+    /// base chain has 1 on its four points by the gate, the rest -1
+    pub radius: f32,
 }
 
 /// light-usage LU_INDOOR (the LU_ name table 0x3bf954: LU_NONE 0, LU_INDOOR 1, LU_OUTDOOR 2,
@@ -236,6 +274,8 @@ pub struct Level {
     /// 1.4). The end screen shows it at the difficulty played ("Cash $x / $5040" on STANDARD,
     /// take05 and take12). 0 when the file has none
     pub max_score: f32,
+    /// the level's patrol points, both kinds, in the file's order (`PatrolPoint`)
+    pub patrols: Vec<PatrolPoint>,
 }
 
 fn floats(e: Option<&Element>) -> Vec<f32> {
@@ -263,6 +303,13 @@ const H_CAMERA_HALF_FOV: u32 = 0x1435_F288;
 const H_CAMERA_NEAR: u32 = 0x19BC_8FDF;
 /// A camera-object's h_125978e4: its far plane (0x6cb90, the view's +0x20).
 const H_CAMERA_FAR: u32 = 0x1259_78E4;
+/// The patrol points' elements: `patrol-point` (h_ffcf1f13) and `patrol-first-point`
+/// (h_09528bf8, names recovered by hashing; their types patrol_point h_efd397a1 and
+/// patrol_first_point h_0eef0757 are the strings at 0x40ceac and 0x40ce98).
+const H_PATROL_POINT: u32 = 0xFFCF_1F13;
+const H_PATROL_HEAD: u32 = 0x0952_8BF8;
+/// A world point's h_e6564e8a (+0x20, FUN_000ecdc0): its own arrival radius (-1 none).
+const H_POINT_RADIUS: u32 = 0xE656_4E8A;
 
 /// A level <transform>: the 3 x 3 rotation row by row (columns are the object's axes: the
 /// level's cameras come out level and looking down -z), then the position.
@@ -382,7 +429,8 @@ impl Level {
                 .or_else(|| game.object_types.get(&kind).map(|t| t.radar_contact)).unwrap_or(0);
             let light_usage = e.attr(h("light-usage")).and_then(|v| v.as_i64()).map_or(0, |v| v.clamp(0, 255) as u8);
             objects.push(Placement { tag: e.name, name: hash(e, h("name")), kind, archetype: game.object_meshes.get(&kind).copied(), transform: m,
-                                     radar_contact, light_usage, oriented });
+                                     radar_contact, light_usage, oriented,
+                                     radius: e.attr(H_POINT_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(-1.0) });
         }
         // the radar-triggers; those that operate on the level's start (an entry on
         // TRIG_SIG_FIRST_UPDATE with TRIG_ACT_OPERATE, enabled) set their objects' value now, in
@@ -491,8 +539,25 @@ impl Level {
         let triggers = triggers::read(&all);
         let max_score = all.iter().find(|e| e.name == h("compiled")).and_then(|e| e.attr(h("max-score")))
             .and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0);
+        // the patrol points (#227): both kinds, by their attribute handler's names (FUN_000ecdc0,
+        // FUN_000eddd0)
+        let patrols = all.iter().filter(|e| e.name == H_PATROL_POINT || e.name == H_PATROL_HEAD).filter_map(|e| {
+            let p = floats(e.child(h("position")));
+            // (an empty link is the empty name's hash: none)
+            let link = |k: u32| Some(hash(e, k)).filter(|&n| n != h("")).unwrap_or(0);
+            Some(PatrolPoint {
+                name: hash(e, h("name")),
+                at: (p.len() >= 3).then(|| Vec3::new(p[0], p[1], p[2]))?,
+                head: e.name == H_PATROL_HEAD,
+                group: e.attr(h("iD")).and_then(|v| v.as_i64()).unwrap_or(0) & 0xfff,
+                forward: link(h("forward-object")),
+                backward: link(h("backward-object")),
+                trigger: link(h("trigger-object")),
+                radius: number(e, H_POINT_RADIUS, -1.0),
+            })
+        }).collect();
         Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, terrain_ambient,
-                   terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths, max_score })
+                   terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths, max_score, patrols })
     }
 
     /// What using a button does to the level's animated objects, read from the data alone: (object

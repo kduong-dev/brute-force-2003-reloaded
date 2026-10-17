@@ -607,6 +607,7 @@ fn main() {
         .add_plugins(triggers::plugin)
         .add_plugins(triggers::sounds::plugin)
         .add_plugins(script::plugin)
+        .add_plugins(brain::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -695,6 +696,8 @@ mod flags;
 mod objectives;
 #[path = "play_script.rs"]
 mod script;
+#[path = "play_brain.rs"]
+mod brain;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1966,6 +1969,9 @@ struct Player {
     /// out of the world has no AI, step, sounds or hits and takes no hand-over (a leader steps:
     /// its step runs the game's clock), until play_triggers.rs `spawn_copy` brings it (#222)
     absent: bool,
+    /// the brain of a character a spawn-trigger made (#227, play_brain.rs: its home, patrol,
+    /// sight and contacts, aim); None for the squad and the test map's NPCs
+    brain: Option<Box<brain::Brain>>,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2023,6 +2029,7 @@ impl Player {
             held: false,
             script_walk: Default::default(),
             absent: false,
+            brain: None,
         }
     }
 
@@ -2278,6 +2285,8 @@ const AI_MIN_RANGE: f32 = 20.0;
 /// How a character can be seen, for `hostile_in_sight` (`sight_list`).
 #[derive(Clone, Copy, Debug)]
 struct Seen {
+    /// who it is (a level character's brain keeps its contacts by it: play_brain.rs)
+    who: Who,
     /// its team
     team: u8,
     /// its chest point, where the AI aims (AI_AIM_HEIGHT above the feet)
@@ -2286,6 +2295,9 @@ struct Seen {
     /// squad member waiting for its spawn-trigger isn't: `Player::absent`), and not a test map
     /// dummy (play_testtools.rs: a dummy is the player's target; one set to fight is everyone's)
     target: bool,
+    /// alive and in the world: a brain keeps it as a contact while it is, knocked down or not
+    /// (the scan drops a contact only when it's dead, FUN_00044140; play_brain.rs)
+    alive: bool,
     /// how visible it is (the skill's +0xe4, which the stamina update pushes into its combat
     /// target each frame, 0x11a934-0x11a94a: `skills::visibility`): 1, or a stealthed Hawk's
     /// near 0
@@ -2296,9 +2308,11 @@ struct Seen {
 /// player, then the squad.
 fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
     units.map(|u| Seen {
+        who: u.who(),
         team: u.team,
         chest: u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
         target: !u.dead && !knocked_down(u) && !u.test_hold && !u.absent && u.npc.is_none_or(|n| n.fight),
+        alive: !u.dead && !u.absent,
         visibility: skills::visibility(u),
     }).collect()
 }
@@ -3601,7 +3615,7 @@ struct AiHits(Vec<PendingHit>);
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                  mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, mut saw: Local<HashMap<Who, bool>>, test: Option<Res<testmap::TestMap>>,
                  kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>, mut ai_hits: ResMut<AiHits>,
-                 difficulty: Res<damage::Difficulty>, reticle: Res<reticle::Reticle>) {
+                 difficulty: Res<damage::Difficulty>, reticle: Res<reticle::Reticle>, map: Res<MapLevel>) {
     let dt = frame_dt(&time);
     let kits: &[grenade::GrenadeKit] = kits.as_ref().map_or(&[], |k| &k.0);
     // the controlled character's guns aim at the crosshair's lock (play_reticle.rs, last
@@ -3626,6 +3640,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let sight_log = std::env::var("BF_SIGHT_LOG").is_ok();
     // (the log's clock: the controlled character's, as the skills' log uses)
     let clock = player.sim_time;
+    // the level's patrol points, for the brains' patrols (#227, play_brain.rs)
+    let patrols = map.0.as_ref().map_or(&[][..], |l| &l.patrols[..]);
+    // a follower's formation place comes after the squad's own members' (play_brain.rs)
+    let mut follower = squad.0.iter().filter(|m| m.in_squad()).count();
     for (slot, m) in squad.0.iter_mut().enumerate() {
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
@@ -3638,7 +3656,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             m.sim_time += dt;
             continue;
         }
-        let seen = nearest_hostile(m, slot + 1, &sight);
+        // (a level character's brain sees by its own sensor: its field of view, its contacts,
+        // play_brain.rs)
+        let seen = if m.brain.is_some() { brain::sense(m, slot + 1, &sight, dt) } else { nearest_hostile(m, slot + 1, &sight) };
         let target = seen.map(|(i, _)| sight[i].chest);
         // BF_SIGHT_LOG: an AI character finding or losing its target
         if sight_log && saw.insert(m.who(), target.is_some()).is_none_or(|was| was != target.is_some()) {
@@ -3655,9 +3675,17 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         let target = target.filter(|_| !skills::holds_fire(m));
         // (BF_TEST_TARGET's squadmate stands still in the line of fire; play_sentry.rs's test
         // hooks hold theirs where they put them; the test map's NPCs have their own; a cutscene's
-        // hold or walk has its own too, play_script.rs)
+        // hold or walk has its own too, play_script.rs; a level character's its brain,
+        // play_brain.rs)
+        let place = follower;
+        if m.brain.as_ref().is_some_and(|b| b.follows()) {
+            follower += 1;
+        }
         if m.held || !m.script_walk.is_empty() {
+            brain::held(m);
             script::held_step(m, dt);
+        } else if m.brain.is_some() {
+            brain::think(m, &player, place, heading, dt, target, patrols, &game.0, difficulty.n);
         } else if m.npc.is_some() {
             testtools::npc_ai(m, target, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
@@ -3713,12 +3741,23 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
         // shot at: the others it passes close to may sidestep (see SHOT_AT_RADIUS)
         for (j, m) in squad.0.iter_mut().enumerate() {
-            if m.dead || hit.is_some_and(|(i, _)| i == j) || m.knock.is_some() || m.dodge_request.is_some() {
+            if m.dead || hit.is_some_and(|(i, _)| i == j) {
                 continue;
             }
             let chest = m.position + Vec3::Y * (GROUND + m.height + 1.0);
             let t = (chest - shot.origin).dot(shot.dir).clamp(0.0, shot.dist);
-            if (shot.origin + shot.dir * t).distance(chest) < SHOT_AT_RADIUS && m.random(SHOT_AT_DODGE_ODDS) == 0 {
+            if (shot.origin + shot.dir * t).distance(chest) >= SHOT_AT_RADIUS {
+                continue;
+            }
+            // (a level character shot at by another side knows its shooter if it knows no enemy:
+            // EVT_SHOT_AT_NO_ENEMIES, play_brain.rs)
+            if m.team != team {
+                brain::attacked(m, shooter, false);
+            }
+            if m.knock.is_some() || m.dodge_request.is_some() {
+                continue;
+            }
+            if m.random(SHOT_AT_DODGE_ODDS) == 0 {
                 m.dodge_request = Some(m.random(2) == 0);
                 if std::env::var("BF_AI_LOG").is_ok() {
                     println!("{} shot at: dodges", unit_name(m));
@@ -3759,6 +3798,19 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 }
                 ai_hits.0.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo });
             }
+            // a level character of another side the shot passes close to knows its shooter if it
+            // knows no enemy, as with the player's shots (EVT_SHOT_AT_NO_ENEMIES, play_brain.rs)
+            let (by, by_team, struck) = (squad.0[k].who(), squad.0[k].team, hit.map(|h| h.0));
+            for (j, m) in squad.0.iter_mut().enumerate() {
+                if j == k || struck == Some(j + 1) || m.dead || m.brain.is_none() || m.team == by_team {
+                    continue;
+                }
+                let chest = m.position + Vec3::Y * (GROUND + m.height + 1.0);
+                let t = (chest - shot.origin).dot(shot.dir).clamp(0.0, shot.dist);
+                if (shot.origin + shot.dir * t).distance(chest) < SHOT_AT_RADIUS {
+                    brain::attacked(m, by, false);
+                }
+            }
         }
         squad.0[k].shots = shots;
     }
@@ -3778,6 +3830,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         let mut hit = h.hit;
         let amount = hit.land(u, &game.0, &difficulty, now);
         hurt(u, &game.0, amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+        // (a level character hit by another side knows its shooter, play_brain.rs; a friend's hit
+        // posts no EVT_DAMAGED_NO_ENEMIES, 0x3e8fc)
+        if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
+            brain::attacked(u, by, true);
+        }
     }
     // shots arriving: the hit lands on the member (blood where the shot meets them)
     let mut due = vec![];
@@ -3799,6 +3856,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // the test map's instant kill: one hit is enough (a stamina shield's share too)
         let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { enemies::lethal(m).max(amount) } else { amount };
         hurt(m, &game.0, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+        // (a level character hit by another side knows its shooter, play_brain.rs; a friend's
+        // hit posts no EVT_DAMAGED_NO_ENEMIES, 0x3e8fc)
+        if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
+            brain::attacked(m, by, true);
+        }
         // shot by the player: sidestep one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
         if !m.dead && m.knock_request.is_none() && m.random(3) == 0 {
             m.dodge_request = Some(m.random(2) == 0);
@@ -5229,7 +5291,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         // (an empty gun's dry cycle: the button down, or a pull still owed the other gun's shot,
         // as the game's request sets both guns' fire flags)
         let dry = (p.fire || pulled.contains(&true)) && gun_up && p.using.is_none();
-        let trigger = |hand: usize, clip: i64| shots::Trigger { held: pulled[hand], dry, clip, scoped: p.scope > 0.5, crouched: crouch_wanted };
+        // (the accuracy object's bonus from the holder: a level character's placement's, #227,
+        // play_brain.rs; -1 for the rest)
+        let bonus = p.brain.as_ref().map_or(shots::ACCURACY_BONUS, |b| b.gun_bonus);
+        let trigger = |hand: usize, clip: i64| shots::Trigger { held: pulled[hand], dry, clip, scoped: p.scope > 0.5, crouched: crouch_wanted, bonus };
         let seed = shot_seed(p.character, p.npc.map(|n| n.id));
         let mut guns = vec![shots::Gun { hand: 0, weapon: p.weapon, def, trigger: trigger(0, clip_of(p, p.weapon)), cooldown: p.cooldown, rounds: 0 }];
         // (its cooldown as the raise above left it)
@@ -5650,11 +5715,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                                     // (the falloff runs over the bullet's range in the holder's
                                     // hands, FUN_00230040 at 0x2302ef)
                                     range: reach });
-                // (the pellet's hand: 0 the gun in hand, 1 the second hand's)
+                // (the pellet's hand: 0 the gun in hand, 1 the second hand's; the shooter last, as
+                // the combat log names it)
                 if std::env::var("BF_SHOT_LOG").is_ok() {
-                    println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?}",
+                    println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?} by {}{}",
                              p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),
-                             barrel, ray, dir, origin - p.position, hit.map_or(range, |h| h.0));
+                             barrel, ray, dir, origin - p.position, hit.map_or(range, |h| h.0), unit_name(p), p.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
                 }
             }
         }

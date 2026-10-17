@@ -689,7 +689,9 @@ pub(super) fn before_input(mut tools: ResMut<Tools>, player: Res<Player>, mouse:
 /// Undoes what `read_input` took that a tool has: in the free camera, the character stands
 /// still (no move, aim, fire, jump, item; its camera stays); with a menu open, the click doesn't
 /// fire and the wheel doesn't zoom. (In edit mode `read_input` doesn't run: nothing to undo.)
-fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
+/// The test hooks that act as input (play_ammo.rs `test_trigger`, play_brain.rs `aim_hostile`)
+/// run after it, so they drive the character under the free camera too.
+pub(super) fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
     let b = tools.before;
     if tools.edit {
         return;
