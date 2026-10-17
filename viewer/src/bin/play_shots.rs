@@ -168,8 +168,9 @@ pub struct FireState {
 /// keeps it raised, holding the character's ready timer +0x7dc at 4 (0x3c05fc) or more through
 /// FUN_00123f60 while it runs (and starting it otherwise).
 /// Read as the time the gun stays raised (medium confidence): within it a pull fires without the
-/// raise, as the takes' taps 2.2 s apart fire 0.07-0.11 s after the press, against 0.19-0.24 s
-/// from idle. #35 take17 shows it after Flint's targeting: off at 11.55 s, the rifle lowered at
+/// raise (play.rs `raise`: the motion set's in-time, #140), as the takes' taps 2.2 s apart
+/// logged 0.07-0.11 s after the input, against 0.19-0.24 s from idle (both input-to-log times,
+/// with the rig's delay and the log's lateness: todo/140 answer §2). #35 take17 shows it after Flint's targeting: off at 11.55 s, the rifle lowered at
 /// 15.5-15.8 (play_skills.rs `Skill::raised`).
 pub(super) const READY_HOLD: f32 = 4.0;
 
@@ -242,7 +243,8 @@ impl FireState {
     /// the button: the press sets the holder's +0x260 bit 3 (8), which sets the fire flag (+0x224
     /// bit 2) of the gun in hand and of the second hand's each frame (0x122614-0x122655) until an
     /// animation event clears it (0x0f8408d5, FUN_00117660 at 0x117b12, which clears both guns'
-    /// +0x224 bit 1 too), so an 80 ms tap fires 0.19-0.24 s later (the takes), both guns in Tex's
+    /// +0x224 bit 1 too), so an 80 ms tap fires once the gun is raised (the takes logged it 0.19-0.24
+    /// s after the input; the game's raise is 0.10-0.13 s, play.rs `raise`), both guns in Tex's
     /// berserk. The clip that clears it isn't placed; the demo keeps each hand's request until
     /// that gun's first shot, or until it can't fire.
     pub fn pull(&mut self, held: bool, can_fire: [bool; HANDS]) -> [bool; HANDS] {

@@ -385,7 +385,8 @@ and 26 (spec Part 2).
   0x134db4-0x134dde); R, the reload key (the game's X: 0x134c50, when a reload could start,
   FUN_00120c50; the reload asked for stays, +0xa1 bit 2, and follows berserk's end); death. The
   game's X ends it when let go (0x134c2b-0x134c4a: held, but less than its hold time; take26's
-  off came about 0.6 s after X came up), the demo's R on the press: the demo's choice (its R
+  off came about 0.6 s after X came up: whether to the log or the picture the notes don't say,
+  so it holds 0.02-0.06 s or 0.14-0.21 s of input delay and lag, #140), the demo's R on the press: the demo's choice (its R
   reloads on the press too). The black button (the medkit shortcut, 0x134367) ends it the same
   way in the game; the demo has no key for it. G (the game's LT) doesn't: it throws or uses
   nothing (take26 20.5 s).

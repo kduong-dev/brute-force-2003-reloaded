@@ -73,7 +73,44 @@ const SQUAD: usize = 4;
 /// name is empty: what's still looked up by slot name (chatter, skills, the scope and camera)
 /// finds nothing there, so it says nothing and has no skill.
 const OTHER: usize = 4;
+/// The crossfade between two gait or action clips (s): the demo's (the game's MOTION
+/// `transition`s aren't read here); a change between the carried and the ready set takes the
+/// ready times instead (`ready_times`, #140).
 const FADE: f32 = 0.2;
+/// The ready times (in-time, out-time; s) of a character whose type has no motion set loaded
+/// (every type in the data names one): the demo's raise before #140 (0.2 s, fitted to the takes'
+/// input-to-log times, which hold the rig's delay and the log's lateness: todo/140 answer §2) and
+/// the crossfade.
+const READY_FALLBACK: (f32, f32) = (0.2, FADE);
+
+/// `p`'s ready times (in-time, out-time; s), `l` its loaded character: its motion set's
+/// `pc-transition-ready` while a human player controls it, else its `npc-transition-ready`
+/// (FUN_0010fce0 for the raise: 4.0 + type+0x230 or +0x238; FUN_0011a440 by FUN_00112800 for the
+/// ready pose's blend). The squad's: pc 0.1 / 0.2, npc 0.2 / 0.2 (Brutus 0.3 / 0.2); e40's
+/// Shrikes pc 0.01 / 0.2, npc 0.4 / 0.3.
+fn ready_times(p: &Player, l: &Loaded) -> (f32, f32) {
+    if p.controlled { l.ready_pc } else { l.ready_npc }
+}
+
+/// Raise the gun before a first shot (FUN_00123ea0 with the ready timer out): FUN_00123f60 starts
+/// the timer at 4 + the in-time (FUN_0010fce0) and the fire command (CT_FIRE_WEAPON, 0x1225d7)
+/// fires nothing while it's over 4, so the first round waits the in-time. The game tests the
+/// timer in the command (0x1225d7) before the item update counts it down (FUN_0011a440,
+/// 0x11a636), where the demo's fire loop counts a cooldown down and then tests it in one game
+/// frame: so both hands' cooldowns are held at the in-time and one game frame (shots::TICK), and
+/// with 0.1 s the round comes on the 3rd or 4th 30 Hz frame after the press (as the frames' time
+/// wobbles), 0.10-0.13 s, as the game's timer gives it (todo/140 answer §1.1). BF_SHOT_LOG logs it.
+fn raise(p: &mut Player, in_time: f32) {
+    let wait = in_time + shots::TICK;
+    p.cooldown = p.cooldown.max(wait);
+    if let Some(s) = p.second.as_mut() {
+        s.cooldown = s.cooldown.max(wait);
+    }
+    if std::env::var("BF_SHOT_LOG").is_ok() {
+        println!("t={:.2} {}: raises the gun: the first round in {in_time} s ({}-transition-ready in-time)", p.sim_time, unit_name(p),
+                 if p.controlled { "pc" } else { "npc" });
+    }
+}
 const TURN_RATE: f32 = 9.0;
 /// yaw (radians) the spine takes when aiming standing; the feet turn for the rest
 const AIM_SPINE_YAW: f32 = 0.2;
@@ -971,6 +1008,9 @@ struct Layer {
     /// how fast it plays (1 but for an enemy's walking clip driven at its type's walk speed,
     /// play_enemies.rs)
     rate: f32,
+    /// how long (s) it takes to fade in over the others: FADE, or a ready time when it's the gun
+    /// going up or down (#140, `ready_times`)
+    fade: f32,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
@@ -1369,7 +1409,9 @@ const CHARGE_TIME: f32 = 0.6;
 /// after, so the meter's update (0xad950) counts it down from the last charging frame and draws
 /// the meter at clamp(2 x timer, 0, 1)^3 (play_hud.rs): full 0.5 s, gone at 1.0 s (#162).
 pub const METER_TIME: f32 = 1.0;
-/// seconds the chosen member's name shows before control passes to them
+/// seconds the chosen member's name shows before control passes to them. Where it was measured
+/// isn't recorded: if from the input to the picture, the game's is ~0.4-0.45 s (#140, todo/140
+/// answer §2), to be re-measured from a marker-synced take before it's changed
 const SELECT_TIME: f32 = 0.6;
 /// chatter line set the character you hand over from says as they drop back into the squad
 /// ("I'm right behind you", "Following at a distance", ...: line_tag f415ab02 in all four
@@ -1586,6 +1628,11 @@ struct Loaded {
     foot_range: HashMap<usize, [(f32, f32); 2]>,
     footstep_type: i64,
     jump_sound: u32,
+    /// its motion set's `pc-transition-ready` and `npc-transition-ready` (in-time, out-time), in
+    /// seconds (bf/character_type.rs `MotionSet`, #140): the gun's raise before a first shot and
+    /// the ready pose's blend in and out (`ready_times`); READY_FALLBACK for a type without a set
+    ready_pc: (f32, f32),
+    ready_npc: (f32, f32),
     weapons: Vec<HeldWeapon>,
     /// switch clips by the slot being switched to (0: from the second weapon, 1: to it)
     switch_clips: [Option<SwitchClip>; 2],
@@ -1972,6 +2019,13 @@ struct Player {
     /// its AI's sensor (char+0x1b4, play_brain.rs `Sensor`): its sight distance and field of view,
     /// from its type and the placement it came from (#197), and the hostiles it knows
     sensor: brain::Sensor,
+    /// a human player controls it (FUN_00112800's test, through FUN_0010fce0): its motion set's
+    /// `pc-transition-ready` times are its, else `npc-transition-ready` (#140, `ready_times`). Set
+    /// each frame by `update_player`: the controlled character's only
+    controlled: bool,
+    /// it stood in its ready set last frame (the gun up: `step_player`), so a change of set is
+    /// blended over the ready times (#140)
+    ready_pose: bool,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2031,6 +2085,8 @@ impl Player {
             absent: false,
             brain: None,
             sensor: Default::default(),
+            controlled: false,
+            ready_pose: false,
         }
     }
 
@@ -2247,6 +2303,17 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
 /// in bursts and pauses of its own length. Without a target it holds fire. (The squad AI's
 /// existing burst timing; the aim is exact: the demo's choice, no spread is read.)
 fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
+    // a target taken up with the gun down: the attack check raises it (FUN_00024f80 ->
+    // FUN_00123ea0 at 0x2509c), the first round waiting its npc in-time (#140, `raise`), which
+    // runs alongside the demo's own opening delay (`ai_delay`). (No target before its model is
+    // in: it can't raise, step or fire yet)
+    let up = m.loaded.as_ref().map(|l| ready_times(m, l).0);
+    let target = target.filter(|_| up.is_some());
+    if let (None, Some(_), Some(in_time)) = (m.ai_target, target, up) {
+        if !m.fire_state.raised() {
+            raise(m, in_time);
+        }
+    }
     m.ai_target = target;
     let Some(t) = target else {
         m.fire = false;
@@ -3288,9 +3355,12 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     // its AI's sensor: the sight distance and field of view of its type and the placement it came
     // from (#197, play_brain.rs `Sensor`)
     p.sensor.set(ty.as_ref(), p.enemy.ai.as_ref());
-    info!("{}: sight {} m, field of view {} deg", p.name, p.sensor.vision, p.sensor.fov);
+    // the gun's raise and the ready pose's blend (#140): its motion set's ready times
+    let set = ty.as_ref().and_then(|t| game.motion_sets.get(&t.motion_set));
+    let (ready_pc, ready_npc) = set.map_or((READY_FALLBACK, READY_FALLBACK), |s| (s.pc_ready, s.npc_ready));
+    info!("{}: sight {} m, field of view {} deg; ready times pc {ready_pc:?}, npc {ready_npc:?}", p.name, p.sensor.vision, p.sensor.fov);
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
+                                  ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
 }
 
 fn read_input(
@@ -3616,8 +3686,13 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     *h = wrap_angle(*h + wrap_angle(player.yaw - *h) * (1.0 - (-1.5 * dt).exp()));
     let heading = *h;
     // a player sees for the controlled character, so its sensor knows no one (#197: it starts
-    // afresh under the AI when control passes on)
+    // afresh under the AI when control passes on); its ready times are the pc ones, the rest's
+    // the npc ones (#140)
     player.sensor.clear();
+    player.controlled = true;
+    for m in squad.0.iter_mut() {
+        m.controlled = false;
+    }
     // take the loaded character out so the step can borrow it and mutate the player freely (one
     // out of the world yet, `Player::absent`, steps too: its step runs the game's clock, and no
     // input reaches it, play_script.rs `blocks_input`)
@@ -5269,12 +5344,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let pulled = p.fire_state.pull(p.fire, can_fire);
     if pulled.contains(&true) {
         if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
-            // raise the gun before the first shot (both guns: take04's first berserk shots went
-            // in one frame)
-            p.cooldown = p.cooldown.max(0.2);
-            if let Some(s) = p.second.as_mut() {
-                s.cooldown = s.cooldown.max(0.2);
-            }
+            // raise the gun before the first shot, for the character's own in-time (#140; both
+            // guns: take04's first berserk shots went in one frame). The AI aims before it fires:
+            // its raise is `ai_fire`'s
+            raise(p, ready_times(p, l).0);
         }
         p.aim_hold = 0.7;
     }
@@ -5412,11 +5485,21 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // while aiming or firing. During a switch the set changes when the new gun is grabbed.
     // (the berserk set carried and aimed alike: its script is its ready-script)
     let set = &c.slots[if armed { stance_of(l, p.weapon) } else { 0 }];
+    let ready_set = special.is_none() && upper_aim && armed && set.rp.idle.is_some() && set.rp.run.is_some();
     let lo = match special {
         Some(s) => &s.loco,
-        None if upper_aim && armed && set.rp.idle.is_some() && set.rp.run.is_some() => &set.rp,
+        None if ready_set => &set.rp,
         None => &set.carry,
     };
+    // the gun going up or down: the ready pose blended in over the in-time and out over the
+    // out-time (FUN_0011a440: FUN_00150420 with the ready times as the timer leaves 0 and as it
+    // reaches it), any other change over FADE
+    let fade = match (p.ready_pose, ready_set) {
+        (false, true) => ready_times(p, l).0,
+        (true, false) => ready_times(p, l).1,
+        _ => FADE,
+    };
+    p.ready_pose = ready_set;
     let sides = special.map_or(&set.rp_side, |s| &s.side);
     let gait_clip = match p.gait {
         Gait::Idle => lo.idle,
@@ -5459,13 +5542,13 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         let phase = p.layers.last().map(|x| x.time / l.model.anims[x.clip].duration.max(1e-3)).unwrap_or(0.0);
         let first = p.layers.is_empty();
         let time = if once { 0.0 } else { phase * l.model.anims[want].duration };
-        p.layers.push(Layer { clip: want, time, weight: if first { 1.0 } else { 0.0 }, once, rate: 1.0 });
+        p.layers.push(Layer { clip: want, time, weight: if first { 1.0 } else { 0.0 }, once, rate: 1.0, fade });
     }
     if let (Some(s), Some(top)) = (&scripted, p.layers.last_mut()) {
         top.rate = s.rate;
     }
     let n = p.layers.len();
-    let top = (p.layers[n - 1].weight + dt / FADE).min(1.0);
+    let top = (p.layers[n - 1].weight + dt / p.layers[n - 1].fade.max(1e-3)).min(1.0);
     let rest: f32 = p.layers[..n - 1].iter().map(|x| x.weight).sum();
     for (i, layer) in p.layers.iter_mut().enumerate() {
         layer.weight = if i == n - 1 { top } else if rest > 0.0 { layer.weight / rest * (1.0 - top) } else { 0.0 };
