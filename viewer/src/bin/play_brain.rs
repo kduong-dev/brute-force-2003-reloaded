@@ -50,11 +50,13 @@
 //!    EVT_ENEMY_SEEN draws an attack goal: GOAL_DEBUG1 for `default`'s line, ATTACK_GUARD /
 //!    ATTACK_COVER for the others): it faces the target and fires at it while it's seen and
 //!    within the gun's reach (play.rs `ai_fire`), the gun raised; unseen, it faces the target's
-//!    last place (the turn toward a known contact, FUN_0002f960). It holds its fire while one of
-//!    its own side stands in the line (the demo's choice: FRIEND_CLEARANCE). Its moves while it
-//!    fights (pursuit, strafes, cover: the attack goals' ATTACK_DATA draws) are #26's. Once it
-//!    knows no contact it goes back to its base goal (a patrol from the point nearest it), home
-//!    first if a shot sent it there.
+//!    last place (the turn toward a known contact, FUN_0002f960). As the game's, it fires through
+//!    one of its own side in the line, who takes the shot (the line-of-sight query leaves
+//!    characters out, FUN_00057730, and the attack check tests none, FUN_00024f80): a terrorist
+//!    behind its buddy keeps firing into it until one of them moves. Its moves while it fights
+//!    (pursuit, strafes, cover, and the game's EVT_SHOT_BLOCKED_BY_FRIEND reposition: the attack
+//!    goals' draws) are #26's. Once it knows no contact it goes back to its base goal (a patrol
+//!    from the point nearest it), home first if a shot sent it there.
 //!  - **Shot, or shot at, while it knows no enemy**: EVT_DAMAGED_NO_ENEMIES (a hit, 0x3e756) or
 //!    EVT_SHOT_AT_NO_ENEMIES (a shot passing close) posts, among others, EVT_USER1, whose
 //!    personality entry's quick goal h_f765fc45 adds the shooter to its contacts ("QUICK GOAL!!!
@@ -182,10 +184,6 @@ pub struct Brain {
     target: Option<Who>,
     /// who shot at it since the last frame (registered by the next `sense`)
     attacked: Option<Who>,
-    /// its own side about it this frame (who, chest: `sense`), and whether one of them stood in
-    /// its line of fire last frame (`hold_fire`)
-    friends: Vec<(Who, Vec3)>,
-    blocked: bool,
     /// its walk's progress: the nearest it has come to the point (m) and how long it hasn't
     /// come closer (s)
     best: f32,
@@ -268,7 +266,7 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
     let gun_bonus = bonus.map_or(shots::ACCURACY_BONUS, |b| b as f32);
     let b = Brain {
         label, personality, home, home_radius, go_home: home_point.is_some(), home_mt: home_motion(locomotion), base: None, refused: vec![], route: vec![], at: 0,
-        follows, vision, fov, accuracy, gun_bonus, contacts: vec![], target: None, attacked: None, friends: vec![], blocked: false, best: f32::MAX, stalled: 0.0,
+        follows, vision, fov, accuracy, gun_bonus, contacts: vec![], target: None, attacked: None, best: f32::MAX, stalled: 0.0,
     };
     if log_on() {
         println!("t={:.2} brain {}: home {}{} (locomotion {locomotion}: {}), sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, gun bonus {gun_bonus}, \
@@ -396,59 +394,13 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
     // what it fires at: the target, seen now, within the gun's reach (the shot's own; the attack
     // check doesn't test it, FUN_00024f80)
     let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+    // (nobody of its own side in the line stops it: the game's ray leaves characters out,
+    // FUN_00057730, and the attack check tests none, FUN_00024f80 / FUN_0004dc10; a friend in the
+    // way takes the shot, play.rs `update_player`)
     let out = b.target.and_then(|w| seen.iter().find(|(i, _)| sight[*i].who == w)).copied().filter(|&(_, d)| d < range);
-    // its own side about it, for the hold on its fire once the shot's aim is drawn (`hold_fire`)
-    b.friends = sight.iter().enumerate().filter(|&(j, s)| j != me && s.target && s.team == m.team).map(|(_, s)| (s.who, s.chest)).collect();
     m.brain = Some(b);
     out
 }
-
-/// Its fire is held this frame while one of its own side stands in the line from its eyes to
-/// where this frame's shots go (`Player::ai_target`: the chest, or the miss `aim` drew), within
-/// FRIEND_CLEARANCE of it; it keeps its aim on the target meanwhile.
-fn hold_fire(m: &mut Player, b: &mut Brain, log: bool) {
-    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
-    let blocked = m.ai_target.and_then(|t| b.friends.iter().find(|f| in_line(eye, t, f.1)).copied());
-    if blocked.is_some() {
-        m.fire = false;
-    }
-    if let (Some((who, at)), true) = (blocked, log && !b.blocked) {
-        println!("t={:.2} brain {}: holds fire: {who:?} at ({:.1}, {:.1}) in the line", m.sim_time, b.label, at.x, at.z);
-    }
-    b.blocked = blocked.is_some();
-}
-
-/// Whether the body whose chest is at `chest` (the demo's upright cylinder: play.rs BODY_RADIUS,
-/// BODY_HEIGHT, its chest AI_AIM_HEIGHT over the feet) stands in the line of fire from `from` to
-/// `to`: between them, the line within FRIEND_CLEARANCE of its axis across the ground and between
-/// its feet and its top.
-fn in_line(from: Vec3, to: Vec3, chest: Vec3) -> bool {
-    let line = to - from;
-    let flat = Vec2::new(line.x, line.z);
-    let d = flat.length();
-    if d < 1e-3 {
-        return false;
-    }
-    let rel = Vec2::new(chest.x - from.x, chest.z - from.z);
-    let t = rel.dot(flat / d);
-    if t <= 0.0 || t >= d {
-        return false;
-    }
-    let y = from.y + line.y * t / d;
-    let feet = chest.y - AI_AIM_HEIGHT;
-    (rel - flat / d * t).length() < FRIEND_CLEARANCE && y > feet && y < feet + BODY_HEIGHT
-}
-
-/// A character of its own side this close to the line of fire (m, across) holds an AI's fire: the
-/// demo's own addition, so a patroller doesn't shoot the one ahead of it in the back. The body's
-/// BODY_RADIUS (0.4), its arms and gun held out past it (with 0.6 here a marine 6 m down the line
-/// of fire was hit in the upper arm, t227dev vsquad1), and the shot leaving the muzzle rather
-/// than the eye (play.rs `step_player`). The game has no such hold: its AI fires when the target
-/// is seen with a clear ray and its gun is on it (FUN_00024f80, FUN_0004dc10), and that ray
-/// leaves characters out (FUN_00057730's object-type mask 0x415a1018 has bit 3), so it fires
-/// through a friend, whom the shot hits (x0.7, EVT_SHOT_BLOCKED_BY_FRIEND: FUN_0022c4d0); its
-/// moves for a clear line (GOAL_REPOSITION_LOS_TO_TGT, GOAL_ATTACK_REPOS) are #26's.
-const FRIEND_CLEARANCE: f32 = 0.9;
 
 /// One frame of `m`'s brain, in place of the squad's AI or the test map NPC's (see the module
 /// notes). `leader`, `slot` and `heading`: the squad AI's, for a follower; `target`: the chest it
@@ -469,7 +421,6 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
         stop_walk(m);
         squad_ai(m, leader, slot, heading, dt, target);
         aim(m, target, accuracy);
-        hold_fire(m, &mut b, log);
         m.brain = Some(b);
         return;
     }
@@ -494,7 +445,6 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
         // the gun stays raised while it knows the enemy (the attack goal's ready pose)
         m.aim = true;
         aim(m, target, accuracy);
-        hold_fire(m, &mut b, log);
         m.brain = Some(b);
         return;
     }

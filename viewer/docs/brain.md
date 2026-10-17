@@ -12,9 +12,8 @@ FUN_000377b0 and the goal table it calls (FUN_00012b40 fills a 0x40-byte record 
 its start, end and update, each a member function of the goal holder's vtable 0x3a47b8); every
 function cited is in [code-map.md](code-map.md), "AI" and "Levels and triggers". The sight rules
 are #197's answer (`todo/197-ai-sight/answer.md`). The personalities are
-`common/ai/personality.xmb` (`bf/personality.rs`). Two things are the demo's choices: a walk
-given up where it's stuck, and an AI holding fire while a friend stands in its line of fire
-(below).
+`common/ai/personality.xmb` (`bf/personality.rs`). One thing is the demo's choice: a walk given
+up where it's stuck (below).
 
 ## The spawn: its home
 
@@ -119,18 +118,16 @@ With a contact known the brain fights where it stands:
 * it faces the target and fires at it while the target is seen and within its gun's reach (the
   shot's own: the MK-ASLT's 75 m), in the AI's bursts (play.rs `ai_fire`); unseen, it faces the
   target's last place, the gun raised (the turn toward a known contact, FUN_0002f960);
-* **a friend in the line of fire** (the demo's own addition): it holds fire while one of its own
-  side stands within 0.9 m of the line from its eyes to where this frame's shots go (the chest,
-  or the miss its aim drew), between that one's feet and its top, and keeps its aim on the target
-  meanwhile. The game has no such hold. Its AI fires when the target is seen with a clear ray and
-  its gun is on it (FUN_00024f80, FUN_0004dc10), and that ray leaves characters out: the pair
-  table's query (FUN_00057730) skips the object types in its mask 0x415a1018, characters (type 3)
-  among them, so a friend in the line hides nothing. The shot then hits the friend: 0.7 of its
-  damage, and EVT_SHOT_BLOCKED_BY_FRIEND (34; FUN_0022c4d0 with FUN_0004b9c0), whose goals move
-  the AI. Without the hold the first patrol's second terrorist, stopped right behind the first,
-  shot it in the back; with it at 0.6 m one marine still hit the other, 6 m down his line of fire,
-  in the arm. Moving for a clear line (EVT_SHOT_BLOCKAGE's GOAL_REPOSITION_LOS_TO_TGT,
-  h_0bb586cf's GOAL_ATTACK_REPOS) is #26's;
+* **a friend in the line of fire** doesn't stop it, as in the game. The AI fires when the
+  target is seen with a clear ray and its gun is on it (FUN_00024f80, FUN_0004dc10, neither of
+  which tests anyone in the line), and that ray leaves characters out: the pair table's query
+  (FUN_00057730) skips the object types in its mask 0x415a1018, characters (type 3) among them.
+  So the friend takes the shot, at the own side's 0.7 of the damage (play_damage.rs, FUN_0004b9c0),
+  and doesn't take it as an attack (no EVT_DAMAGED_NO_ENEMIES from a friend, 0x3e8fc). A
+  terrorist stopped behind its buddy keeps firing into it until one of them moves: the game then
+  posts EVT_SHOT_BLOCKED_BY_FRIEND (34, FUN_0022c4d0), whose goals reposition the shooter, and
+  that move (with EVT_SHOT_BLOCKAGE's GOAL_REPOSITION_LOS_TO_TGT and h_0bb586cf's
+  GOAL_ATTACK_REPOS) is #26's;
 * once it knows no contact it takes up its base goal again, home first if a shot sent it there.
 
 Its personality's EVT_ENEMY_SEEN draws the attack goal (GOAL_DEBUG1 for `default`'s line,
@@ -201,8 +198,7 @@ let go. The grenade lesson holds the first patrol's two while it plays.
   accuracy, gun bonus, personality), its base goal and the draw, its patrol route (iD, points,
   where it starts), each point reached or stalled, home reached or stalled short of (and how
   far), each contact seen, its target, contacts forgotten (and why), a shooter it learns of,
-  holding fire for a friend, stopping to fight. The copies are named as the triggers' log names
-  them.
+  stopping to fight. The copies are named as the triggers' log names them.
 * `BF_TEST_AIM_HOSTILE=<s>`: from that time the controlled character's camera turns onto the
   nearest living hostile it can see (within 120 m, nothing of the world in between: its chest,
   else its head over cover) and it aims and fires at it: the takes' aim helper
@@ -231,19 +227,23 @@ todo/28-tutorial's takes:
 * **The first patrol** (`BF_TEST_GOTO=44,91,34.4,94.3`, take07): TUTORIAL_terrorist_2 and _18
   come with tutorial_show_patrol and patrol chain iD 1 from its head (2.5 and 6.6 m off it),
   through the shot at the walk clip's root speed, 1.86 m/s: the leader passes its second point
-  6.5 s into the script (take07: ~5.7 s). With Tex standing on the plate, the leader sees him at
-  35.5 m 15.3 s after the spawn, stops and fires (-1.3 to -1.6 HP a hit; take07 -1.1 to -1.8);
-  the second, stopped behind it, holds its fire. Take07's first hit came 14.2 s after the
-  script's start, the demo's 17.2 s. With the aim helper (`BF_TEST_AIM_HOSTILE=14`) Tex kills
-  both: +$60 each.
+  6.5 s into the script (take07: ~5.7 s). With Tex standing on the plate (`BF_TEST_PANEL=a,1
+  BF_COMBAT_LOG=1 BF_SHOT_LOG=1`), the leader sees him at 35.5 m 15.3 s after the spawn, stops
+  and fires: 10 of its 59 shots hit him (17%; 0.7 to 1.7 HP a hit; take07 1.1 to 1.8). Take07's
+  first hit came 14.2 s after the script's start, the demo's 17.2 s. The second stops right
+  behind it (its muzzle 0.1 m from the leader's body) and fires through it: of its 88 shots 5 hit
+  the leader (x0.7: 2.1, 1.4, a 16.6 head shot, 1.7, 2.0), killing it 13 s in, and 3 hit Tex once
+  the leader was down (3.4%). With the aim helper (`BF_TEST_AIM_HOSTILE=14`) Tex kills both:
+  +$60 each.
 * **The patrol walked out** (Tex away at the mine field, the router fired): the chain to
   patrol_point11 and back, turned round at each end, ~66 s a round trip, on and on.
 * **The marines** (`BF_TEST_GOTO=-15.6,-87.4,-60,-75 BF_TEST_GO_AT=14`, take11): they farcast
   in at 7.57 and 7.87 s of tutorial_farcast_vsquad_short, held until it ends, stand on their
   spawn points until Tex moves, then run with him (`squad_ai`) and, when he stops at
   (-60, -75), fight terrorists 31 and 32 at 20-40 m (they see and shoot the marines too): both
-  terrorists die to the marines' fire, 13 and 19 s after they spawn (+$60 each), without a hit
-  between the marines (the hold; before it, one marine hit the other in the arm twice).
+  terrorists die to the marines' fire 10 and 12 s after they spawn (+$60 each). Stout hit with 7
+  of his 11 shots, Cogburn with 8 of 10 (accuracy 0.6); one of Stout's went into Cogburn, in his
+  line (x0.7: 1.6 HP). The terrorists hit with 3 of 16 and 1 of 12.
 * **The lava yard** (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`, Tex on the plate
   h_f42fa5b8, take08): the plate's router spawns 29 and 30, who run home across the pit (1.5
   and 2.3 s); 30 sees Tex at 26.9 m on its way, stops and fires (-1.7 a hit), and dies to the aim

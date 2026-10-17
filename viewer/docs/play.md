@@ -614,7 +614,8 @@ Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
 map's data has it (the test map has every hand weapon); a list, `<a>;<b>`, fills the slots in
 order from the first (#35's Tex: `"Confed LZR-50;Jax-iC"`); `BF_SHOT_LOG=1` now also prints each
-pellet (its hand, frame, spread, walk, tracer) and the gun's accuracy; `BF_TEST_FIRE=hip` fires
+pellet (its hand, frame, spread, walk, tracer), the gun's accuracy and, last, who fired it (as
+the combat log names it, #227); `BF_TEST_FIRE=hip` fires
 without aiming (no scope on a gun that zooms).
 
 Verified on the test map (`-- --test`, `BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12

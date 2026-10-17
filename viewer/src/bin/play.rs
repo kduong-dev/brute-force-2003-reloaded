@@ -5706,11 +5706,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                                     // (the falloff runs over the bullet's range in the holder's
                                     // hands, FUN_00230040 at 0x2302ef)
                                     range: reach });
-                // (the pellet's hand: 0 the gun in hand, 1 the second hand's)
+                // (the pellet's hand: 0 the gun in hand, 1 the second hand's; the shooter last, as
+                // the combat log names it)
                 if std::env::var("BF_SHOT_LOG").is_ok() {
-                    println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?}",
+                    println!("t={:.2} yaw {:.0} aim {:.0} off {:.0} twist {:.0} residual {:.0}  barrel {:.2} ray {:.2} dir {:.3} origin {:.2} dist {:.1} {pellet:?} accuracy {accuracy:?} by {}{}",
                              p.sim_time, p.yaw.to_degrees(), p.cam_yaw.to_degrees(), p.muzzle_off.to_degrees(), p.twist.to_degrees(), p.aim_residual.to_degrees(),
-                             barrel, ray, dir, origin - p.position, hit.map_or(range, |h| h.0));
+                             barrel, ray, dir, origin - p.position, hit.map_or(range, |h| h.0), unit_name(p), p.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
                 }
             }
         }
