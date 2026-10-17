@@ -1,0 +1,726 @@
+//! The brains of the characters the level's triggers spawn (#227, the tutorial's step 8 of #28;
+//! viewer/docs/enemies.md, "The level's characters"): what such a character does on its own, read
+//! from default.xbe's AI (the brain at char+0x830 and its goal machine FUN_000377b0; every
+//! function cited is in viewer/docs/code-map.md, "AI"). The squad's own AI (play.rs `squad_ai`)
+//! and the test map's NPCs (play_testtools.rs `npc_ai`) are unchanged.
+//!
+//!  - **The spawn** gives the brain its home (FUN_000dfd90 -> FUN_00017b60, then FUN_002096e0 ->
+//!    FUN_00018510): the spawn-trigger's `home-point`; without one, its world point h_131de144,
+//!    kept when it's within 5 m of where the copy stands (FUN_0014f7a0; the game picks a nav
+//!    point near the copy otherwise, the demo the copy's own spot). With a home-point the brain is
+//!    sent home at once (FUN_00018510 posts EVT_RETURN_HOME, 31): GOAL_RETURN_HOME (its update
+//!    FUN_00034690) goes there at the pace of the trigger's h_f27d26c9 (`home_motion`), done
+//!    within the point's own h_e6564e8a when it has one, else 2 m (FUN_00026d80). The opening's
+//!    wall sentry, TUTORIAL_terrorist_5, walks 10.5 m west along the walkway to wpoint1493
+//!    (radius 1) through the opening's first shot (take03).
+//!  - **The base goal**: what its personality's EVT_BASE entry draws (FUN_00054c40) when nothing
+//!    else is on. GOAL_PATROL for h_e176c6ce, the first patrol's two (TUTORIAL_terrorist_2 and
+//!    _18) and the base's TUTORIAL_terrorist_6; GOAL_IDLE_VARY for the Red Hand's other
+//!    personalities, which stand where they are here (its pauses, cautious looks, crouches and
+//!    random walks home are #26's); GOAL_WINGMAN_FOLLOW for a squad-type character on the player's
+//!    side (the V-squad's Confed marines, through their wingman personality h_ebe6044c): the squad
+//!    AI's follow (play.rs `squad_ai`), from a formation place after the squad's own. A goal whose
+//!    start refuses (a patrol with no route) is struck out and the draw repeated (FUN_00054bc0).
+//!  - **Patrol** (GOAL_PATROL: start FUN_0002af70, update FUN_0002b490, the walk FUN_00026d80, a
+//!    point reached FUN_00026940): the route is the chain of the patrol point nearest the
+//!    character (3D, FUN_000394b0): the first head (`<patrol-first-point>`) of that point's iD,
+//!    then its forward links until there are none or they come back to the head; it starts at the
+//!    nearest point's place on it (the head when that isn't on it) and refuses a route under two
+//!    points. It walks there (FUN_0004d970 mode 2: the stick at half, a full walk by
+//!    FUN_0012c6c0, the relaxed walk clip, the type's turn-rate), each point reached within 2 m
+//!    across (FUN_0002b490 passes 2.0; a point's own h_e6564e8a above 0 instead), then the next;
+//!    at a point with no forward or no backward link (an end of the chain) the route is turned
+//!    round (FUN_00023320 -> FUN_00038d30) and it walks back. A chain whose last point links on to
+//!    the head is walked round and round (FUN_00012650); the tutorial's two are open, walked to
+//!    and fro. A point's trigger-object would get an event as it's reached (none in the data the
+//!    demo plays: logged).
+//!  - **Sight** (the sensor FUN_0004d140 with its fov test 0x3d300, the scan FUN_00044140, the
+//!    contact clock FUN_00054950; todo/197-ai-sight/answer.md): a hostile is seen within its
+//!    sight distance (the placement's `vision` when its h_11cddd9f says so, else its type's
+//!    vision-range: 75 m for the Red Hand, 80 the marines) x 1.15 once it's a contact
+//!    (FUN_000481c0) x its visibility, within the placement's field-of-view of the way it looks
+//!    (60 degrees either way for the Red Hand, 90 the marines: its aim while it fires, else its
+//!    facing), and with nothing of the world between its eyes and the chest (the squad's ray; the
+//!    world's pair table casts its own between the two characters' FUN_0004cea0 points,
+//!    FUN_00057a30, not matched here). A new sighting becomes a contact; a contact unseen 15 s is
+//!    forgotten (FUN_00054950), and one whose stealth visibility is 0.2 or under at once
+//!    (FUN_00044140). The target is the contact it fires at: kept until unseen 3.75 s
+//!    (EVT_TGT_LOST_SIGHT, FUN_0002e330) or 10 s (FUN_0004a780), then the nearest one seen.
+//!  - **Alert**: with a contact known it stops its walk and fights (its personality's
+//!    EVT_ENEMY_SEEN draws an attack goal: GOAL_DEBUG1 for `default`'s line, ATTACK_GUARD /
+//!    ATTACK_COVER for the others): it faces the target and fires at it while it's seen and
+//!    within the gun's reach (play.rs `ai_fire`), the gun raised; unseen, it faces the target's
+//!    last place (the turn toward a known contact, FUN_0002f960). It holds its fire while one of
+//!    its own side stands in the line (the demo's choice: FRIEND_CLEARANCE). Its moves while it
+//!    fights (pursuit, strafes, cover: the attack goals' ATTACK_DATA draws) are #26's. Once it
+//!    knows no contact it goes back to its base goal (a patrol from the point nearest it), home
+//!    first if a shot sent it there.
+//!  - **Shot, or shot at, while it knows no enemy**: EVT_DAMAGED_NO_ENEMIES (a hit, 0x3e756) or
+//!    EVT_SHOT_AT_NO_ENEMIES (a shot passing close) posts, among others, EVT_USER1, whose
+//!    personality entry's quick goal h_f765fc45 adds the shooter to its contacts ("QUICK GOAL!!!
+//!    QG ADD OBJ TO CONTACTS being set here", the data's note on every Red Hand line), and
+//!    EVT_RETURN_HOME. So a shot terrorist turns on its shooter, and after the fight goes home.
+//!    (A brain that knows an enemy registers its attacker itself, at 0x3ea02.) Its hit reaction
+//!    is play_enemies.rs's.
+//!  - **Aim** (FUN_00024f80's FUN_00024c00, with FUN_00024ae0): each time it fires at a character
+//!    the aim is on the chest with the probability of its accuracy, else off it by `up` turned
+//!    about the line of fire by up to 45 degrees either way, 1 m long (1.2 m when it points up
+//!    more than 0.7, as for a level shot it always does: a miss goes over the head), shrunk by the
+//!    distance under 10 m. The accuracy is the placement's h_072837bb (with h_ec5337fb) or the
+//!    type's h_12a04758, in percent, plus 0.05 a difficulty step (halved above 0), held within
+//!    half and one and a half of itself and at most 1: the Red Hand's 25 is 0.125 on STANDARD. A
+//!    character of a squad a player controls takes no difficulty step: the marines' 60 is 0.6.
+//!    The gun's own spread takes the placement's bonus too (play_shots.rs).
+//!
+//! Test hooks: `BF_BRAIN_LOG=1` (each brain at its spawn, its goals, routes and points reached,
+//! its contacts found, lost and forgotten, who shot at it); `BF_TEST_AIM_HOSTILE=<s>` (from that
+//! time the controlled character aims at the nearest hostile it can see and fires: the takes' aim
+//! helper, to stage a fight).
+
+use super::*;
+use bf_viewer::bf::character_type::{CharacterType, Placement};
+use bf_viewer::bf::level::PatrolPoint;
+use bf_viewer::bf::triggers::{Class, Trigger};
+
+/// EVT_BASE (3, the EVT_ name table 0x3bdb9c): the event every brain has, whose personality
+/// entry is its base goal.
+const EVT_BASE: i64 = 3;
+/// The base goals this module runs (the GOAL_ name table 0x3bcbb4): GOAL_IDLE_VARY (2),
+/// GOAL_PATROL (4), GOAL_WINGMAN_FOLLOW (75).
+const GOAL_IDLE_VARY: i64 = 2;
+const GOAL_PATROL: i64 = 4;
+const GOAL_WINGMAN_FOLLOW: i64 = 75;
+/// A contact is seen this much farther (FUN_000481c0: 1.15, 0x3f933333, when the brain has it in
+/// its contact map already).
+const ENGAGED: f32 = 1.15;
+/// The target is given up after this long unseen (s): EVT_TGT_LOST_SIGHT in the attack goals
+/// (FUN_0002e330, 3.75 s with no clear ray), and its entry's unseen time over 10 s (FUN_0004a780).
+const LOST_SIGHT: f32 = 3.75;
+/// A contact alive and unseen this long (s) is forgotten (FUN_00054950 returns 0 at 15 s).
+const FORGET: f32 = 15.0;
+/// A contact whose stealth visibility (its char+0x15c) is this or under is forgotten at once
+/// (FUN_00044140, 0x3a4f90).
+const STEALTH_FORGET: f32 = 0.2;
+/// A walk's point is reached within this (m, across: FUN_00026d80 tests x and z): the 2.0
+/// (0x40000000) GOAL_PATROL's update (FUN_0002b490) and GOAL_RETURN_HOME's (FUN_00034690) pass.
+const ARRIVE: f32 = 2.0;
+/// The h_131de144 point is the home only within this of the character (m; FUN_0014f7a0 tests 25,
+/// its square), else the game takes a nav point near it.
+const HOME_NEAR: f32 = 5.0;
+/// GOAL_RETURN_HOME's motion from its +0x94, the spawn-trigger's h_f27d26c9: FUN_00034690 asks
+/// FUN_0004d970 for that speed mode when it's over 2, else for mode 2, and FUN_0004d970 takes the
+/// goal's own +0x94 instead whenever it isn't 0. Mode 1 scales the stick to 0.01 (no step: it
+/// stays where it is, None), 2 halves it (a walk), 3 a run, 4 the dash (FUN_00047a40(1); a run
+/// with brain+0x3c4 bit 10, not read).
+fn home_motion(gait: i64) -> Option<i64> {
+    match gait {
+        1 => None,
+        3 => Some(enemies::MT_RUN),
+        g if g >= 4 => Some(enemies::MT_DASH),
+        _ => Some(enemies::MT_WALK),
+    }
+}
+/// FUN_00024c00: a miss turns `up` about the line of fire by up to this either way (degrees:
+/// FUN_00023900(-0.785, 0.785) x 57.2958), is MISS_LONG m long, MISS_HIGH when its y is over
+/// MISS_UP, and shrinks by the distance under MISS_NEAR m (x d / 10).
+const MISS_ANGLE: f32 = 45.0;
+const MISS_LONG: f32 = 1.0;
+const MISS_HIGH: f32 = 1.2;
+const MISS_UP: f32 = 0.7;
+const MISS_NEAR: f32 = 10.0;
+/// FUN_00024ae0: the accuracy moves 0.05 a difficulty step (halved above 0), within half and one
+/// and a half of itself, at most 1.
+const ACCURACY_STEP: f32 = 0.05;
+/// A walk is given up on (its point taken as reached) when the walker hasn't come this much closer
+/// (m) in STALL_TIME s: a guess, as play_script.rs's walk does, for the brain's route round what's
+/// in the way. The game routes over the level's world points (each `<world-point>` lists its
+/// neighbours in h_e3439383; a waypoint-trigger, h_10ecb459, marks one valid or not); its route
+/// search isn't traced, and the demo walks straight lines.
+const STALL_PROGRESS: f32 = 0.1;
+const STALL_TIME: f32 = 1.0;
+
+/// The brains run inside play.rs's `update_player` (`sense`, `think`, `attacked`, `held`); the
+/// plugin adds the aim helper hook, between the frame's input and the characters' step.
+pub fn plugin(app: &mut App) {
+    app.add_systems(Update, aim_hostile.after(read_input).before(update_player).run_if(in_state(AppState::Playing)));
+}
+
+/// A level character's brain (`Player::brain`): see the module notes.
+pub struct Brain {
+    /// its name for the log (the spawn's copy name)
+    label: String,
+    /// its personality: the placement's wingman one for a follower, else its freewill one
+    personality: u32,
+    /// its home (brain+0x1ec) and the radius it's reached within (the point's own, else ARRIVE),
+    /// whether it heads there first (an EVT_RETURN_HOME waiting: the spawn's home-point, or a
+    /// shot while it knew no enemy), and how (`home_motion`: None stays)
+    home: Option<Vec3>,
+    home_radius: f32,
+    go_home: bool,
+    home_mt: Option<i64>,
+    /// the base goal drawn from EVT_BASE (None: not drawn yet), and the goals refused
+    base: Option<i64>,
+    refused: Vec<i64>,
+    /// the patrol under way: its points (where, the arrival radius, the point's name, whether it
+    /// ends the chain) and the one it walks to
+    route: Vec<RoutePoint>,
+    at: usize,
+    /// a squad-type character on the player's side: follows the leader
+    follows: bool,
+    /// its sight distance (m), field of view (degrees either way)
+    vision: f32,
+    fov: f32,
+    /// its accuracy in percent (FUN_00024ae0's before the difficulty), and its gun's spread bonus
+    /// (FUN_00222b30)
+    accuracy: f32,
+    pub gun_bonus: f32,
+    /// the hostiles it knows, and the one it fires at
+    contacts: Vec<Contact>,
+    target: Option<Who>,
+    /// who shot at it since the last frame (registered by the next `sense`)
+    attacked: Option<Who>,
+    /// its own side about it this frame (who, chest: `sense`), and whether one of them stood in
+    /// its line of fire last frame (`hold_fire`)
+    friends: Vec<(Who, Vec3)>,
+    blocked: bool,
+    /// its walk's progress: the nearest it has come to the point (m) and how long it hasn't
+    /// come closer (s)
+    best: f32,
+    stalled: f32,
+}
+
+/// One point of a patrol route (FUN_00038320's 0x18-byte entry: the position and the point).
+#[derive(Clone, Copy, Debug)]
+struct RoutePoint {
+    at: Vec3,
+    radius: f32,
+    name: u32,
+    /// it has no forward or no backward link: the chain's end (FUN_00026940)
+    end: bool,
+    /// its trigger-object, 0 none
+    trigger: u32,
+}
+
+/// A contact (an entry of the brain's map brain+0x358: kind 1, a living enemy character): who,
+/// how long it's been unseen (+0x18), where it was last seen (+0x3c).
+#[derive(Clone, Copy, Debug)]
+struct Contact {
+    who: Who,
+    unseen: f32,
+    last: Vec3,
+}
+
+impl Brain {
+    /// Whether it knows an enemy (brain+0x3c4 bit 7 clear): play_enemies.rs's damage path posts
+    /// EVT_DAMAGE_LIGHT / HEAVY then, else EVT_DAMAGED_NO_ENEMIES.
+    pub fn knows_enemy(&self) -> bool {
+        !self.contacts.is_empty()
+    }
+
+    /// Whether it follows the leader (a squad-type character on the player's side): it takes a
+    /// formation place (play.rs `update_player`).
+    pub fn follows(&self) -> bool {
+        self.follows
+    }
+}
+
+/// Whether BF_BRAIN_LOG is set.
+fn log_on() -> bool {
+    std::env::var("BF_BRAIN_LOG").is_ok()
+}
+
+/// A spawn-trigger's copy `m` gets its brain (play_triggers.rs `spawn_copy`), from the trigger
+/// `t` (its home-point h_1b747c8d, h_131de144, h_f27d26c9), the level's points, the copy's type and
+/// placement, where its feet are and the player's side. `label` names it in the log.
+#[allow(clippy::too_many_arguments)]
+pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, placement: Option<&Placement>, feet: Vec3, player_team: u8,
+               label: String) {
+    // (a point: where, and its own arrival radius)
+    let point = |n: u32| (n != 0).then(|| level.objects.iter().find(|o| o.name == n)).flatten().map(|o| (o.transform.w_axis.truncate(), o.radius));
+    let attr = |k: u32| t.element.attr(k).and_then(|v| v.as_hash()).filter(|&n| n != bf_viewer::bf::hash::h("")).unwrap_or(0);
+    let home_point = point(attr(H_HOME_POINT));
+    let face_point = match &t.class { Class::Spawn { face_point, .. } => point(*face_point), _ => None };
+    let gait = t.element.attr(H_HOME_GAIT).and_then(|v| v.as_i64()).unwrap_or(0);
+    // FUN_00018510: a home-point is the home, and the brain is sent there; without one, the world
+    // point FUN_00017b60 was given, kept within HOME_NEAR of the copy (FUN_0014f7a0)
+    let home_at = home_point.or(face_point.filter(|p| p.0.xz().distance(feet.xz()) <= HOME_NEAR));
+    let home = home_at.map(|p| p.0).or(Some(feet));
+    // the walk home arrives within the point's own radius when it has one (FUN_00026d80: over 0,
+    // with GOAL_RETURN_HOME's 2.0 passed), else ARRIVE
+    let home_radius = home_at.map(|p| p.1).filter(|&r| r > 0.0).unwrap_or(ARRIVE);
+    let follows = ty.player_type && m.team == player_team;
+    let ai = placement.map(|p| &p.ai);
+    // (its freewill one: the placement's, else its type's, as play_enemies.rs `spawned` takes it)
+    let personality = if follows { ai.map(|a| a.personalities[4]).filter(|&p| p != 0).unwrap_or(ty.ai.personalities[4]) } else {
+        Some(m.enemy.personality).filter(|&p| p != 0).unwrap_or(ty.ai.personalities[0])
+    };
+    // the sensor's sight distance (0x10fb90) and field of view (0x3d300: the placement's alone)
+    let vision = ai.filter(|a| a.vision_own).map_or(ty.ai.vision_range, |a| a.vision);
+    let fov = ai.map_or(ty.ai.half_fov, |a| a.field_of_view);
+    // FUN_00024ae0's accuracy and FUN_00222b30's bonus: the placement's h_072837bb with its
+    // h_ec5337fb, else the type's h_12a04758 and -1
+    let bonus = placement.and_then(|p| p.accuracy_bonus);
+    let accuracy = bonus.filter(|&b| b >= 0).map_or(ty.ai.accuracy, |b| b as f32);
+    let gun_bonus = bonus.map_or(shots::ACCURACY_BONUS, |b| b as f32);
+    let b = Brain {
+        label, personality, home, home_radius, go_home: home_point.is_some(), home_mt: home_motion(gait), base: None, refused: vec![], route: vec![], at: 0,
+        follows, vision, fov, accuracy, gun_bonus, contacts: vec![], target: None, attacked: None, friends: vec![], blocked: false, best: f32::MAX, stalled: 0.0,
+    };
+    if log_on() {
+        println!("t={:.2} brain {}: home {}{} (h_f27d26c9 {gait}: {}), sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, gun bonus {gun_bonus}, \
+                  personality h_{personality:08x}{}", m.sim_time, b.label,
+                 home.map_or("none".to_string(), |h| format!("({:.1}, {:.1}, {:.1}) within {home_radius} m", h.x, h.y, h.z)),
+                 if home_point.is_some() { " from its home-point: goes there first" } else { "" },
+                 match b.home_mt { None => "stays", Some(enemies::MT_RUN) => "runs", Some(enemies::MT_DASH) => "dashes", _ => "walks" },
+                 if follows { ", follows the leader" } else { "" });
+    }
+    m.brain = Some(Box::new(b));
+}
+
+/// A spawn-trigger's home-point (h_1b747c8d, +0x80, FUN_002096e0 -> FUN_00018510) and its
+/// h_f27d26c9 (+0x84: GOAL_RETURN_HOME's +0x94, its speed).
+const H_HOME_POINT: u32 = 0x1B74_7C8D;
+const H_HOME_GAIT: u32 = 0xF27D_26C9;
+
+/// `u` was hit by `by`, or a shot of `by`'s passed close (play.rs `update_player`): its next
+/// sense knows the shooter (EVT_USER1's quick goal, or 0x3ea02), and with no enemy known before,
+/// it goes home after the fight (EVT_RETURN_HOME, posted with it).
+pub fn attacked(u: &mut Player, by: Who) {
+    if u.dead {
+        return;
+    }
+    let me = u.who();
+    let Some(b) = u.brain.as_mut() else { return };
+    if by == me {
+        return;
+    }
+    if b.contacts.is_empty() && b.home.is_some() && !b.follows {
+        b.go_home = true;
+    }
+    b.attacked = Some(by);
+}
+
+/// One frame of `m`'s sensor (the brain's sense step FUN_00044480, `m` being unit `me` of `sight`):
+/// the hostiles it sees, its contacts and their clocks, its target. The target's place in `sight`
+/// and distance when it's seen now and within the gun's reach (its fire may go), as
+/// `nearest_hostile` gives it for the squad.
+pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usize, f32)> {
+    let mut b = m.brain.take()?;
+    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+    // the way it looks: along its aim while it fires (its aim record char+0x3e8), else its
+    // facing (vtable +0x2c)
+    let facing = Vec3::new(-m.yaw.sin(), 0.0, -m.yaw.cos());
+    let look = m.ai_target.map(|t| t - eye).filter(|v| v.length_squared() > 1e-6).map_or(facing, |v| v.normalize());
+    let log = log_on();
+    let hostile = |s: &Seen| s.target && s.team != m.team;
+    // the shooter it was told of: a contact now (not one on its own side)
+    if let Some(who) = b.attacked.take() {
+        if let Some(s) = sight.iter().find(|s| s.who == who && hostile(s)) {
+            if !b.contacts.iter().any(|c| c.who == who) {
+                b.contacts.push(Contact { who, unseen: 0.0, last: s.chest });
+                if log {
+                    println!("t={:.2} brain {}: shot at by {who:?} {:.1} m off: a contact", m.sim_time, b.label, eye.distance(s.chest));
+                }
+            }
+        }
+    }
+    // who it sees (FUN_00043000: in reach, in the field of view, the ray clear)
+    let mut seen: Vec<(usize, f32)> = vec![];
+    for (i, s) in sight.iter().enumerate() {
+        if i == me || !hostile(s) {
+            continue;
+        }
+        let d = eye.distance(s.chest);
+        let known = b.contacts.iter().any(|c| c.who == s.who);
+        if d >= b.vision * if known { ENGAGED } else { 1.0 } * s.visibility {
+            continue;
+        }
+        let to = (s.chest - eye) / d.max(1e-3);
+        if look.dot(to).clamp(-1.0, 1.0).acos().to_degrees() > b.fov {
+            continue;
+        }
+        if ray_hit(eye, to, d - 0.3).is_none() {
+            seen.push((i, d));
+        }
+    }
+    // the contacts' clocks (FUN_00054950): forgotten unseen FORGET s, gone with the character
+    // (dead or out of the world: the scan's dead list, EVT_TGT_KILLED), at once when stealthed
+    for c in b.contacts.iter_mut() {
+        match seen.iter().find(|(i, _)| sight[*i].who == c.who) {
+            Some(&(i, _)) => (c.unseen, c.last) = (0.0, sight[i].chest),
+            None => c.unseen += dt,
+        }
+    }
+    let before = b.contacts.len();
+    let label = b.label.clone();
+    b.contacts.retain(|c| {
+        let s = sight.iter().find(|s| s.who == c.who);
+        let keep = c.unseen < FORGET && s.is_some_and(|s| hostile(s) && s.visibility > STEALTH_FORGET);
+        if !keep && log {
+            println!("t={:.2} brain {label}: forgets {:?} ({})", m.sim_time, c.who,
+                     if c.unseen >= FORGET { "unseen 15 s" } else if s.is_some_and(|s| s.target) { "stealthed" } else { "gone" });
+        }
+        keep
+    });
+    // new sightings: contacts (the scan's FUN_00039880)
+    for &(i, d) in &seen {
+        let who = sight[i].who;
+        if !b.contacts.iter().any(|c| c.who == who) {
+            b.contacts.push(Contact { who, unseen: 0.0, last: sight[i].chest });
+            if log {
+                println!("t={:.2} brain {}: sees {who:?} at {d:.1} m: a contact ({} known)", m.sim_time, b.label, b.contacts.len());
+            }
+        }
+    }
+    // the target: kept while it's been seen in the last LOST_SIGHT s, else the nearest seen
+    let kept = b.target.and_then(|w| b.contacts.iter().find(|c| c.who == w)).is_some_and(|c| c.unseen < LOST_SIGHT);
+    if !kept {
+        let was = b.target;
+        b.target = seen.iter().filter(|(i, _)| b.contacts.iter().any(|c| c.who == sight[*i].who)).min_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|&(i, _)| sight[i].who)
+            .or(b.contacts.iter().min_by(|x, y| x.unseen.total_cmp(&y.unseen)).map(|c| c.who));
+        if log && was != b.target {
+            println!("t={:.2} brain {}: target {:?}{}", m.sim_time, b.label, b.target,
+                     if was.is_some() && b.contacts.len() == before { " (lost sight of the last)" } else { "" });
+        }
+    }
+    // what it fires at: the target, seen now, within the gun's reach (the shot's own; the attack
+    // check doesn't test it, FUN_00024f80)
+    let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+    let out = b.target.and_then(|w| seen.iter().find(|(i, _)| sight[*i].who == w)).copied().filter(|&(_, d)| d < range);
+    // its own side about it, for the hold on its fire once the shot's aim is drawn (`hold_fire`)
+    b.friends = sight.iter().enumerate().filter(|&(j, s)| j != me && s.target && s.team == m.team).map(|(_, s)| (s.who, s.chest)).collect();
+    m.brain = Some(b);
+    out
+}
+
+/// Its fire is held this frame while one of its own side stands in the line from its eyes to
+/// where this frame's shots go (`Player::ai_target`: the chest, or the miss `aim` drew), within
+/// FRIEND_CLEARANCE of it; it keeps its aim on the target meanwhile.
+fn hold_fire(m: &mut Player, b: &mut Brain, log: bool) {
+    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+    let blocked = m.ai_target.and_then(|t| b.friends.iter().find(|f| in_line(eye, t, f.1)).copied());
+    if blocked.is_some() {
+        m.fire = false;
+    }
+    if let (Some((who, at)), true) = (blocked, log && !b.blocked) {
+        println!("t={:.2} brain {}: holds fire: {who:?} at ({:.1}, {:.1}) in the line", m.sim_time, b.label, at.x, at.z);
+    }
+    b.blocked = blocked.is_some();
+}
+
+/// Whether the body whose chest is at `chest` (the demo's upright cylinder: play.rs BODY_RADIUS,
+/// BODY_HEIGHT, its chest AI_AIM_HEIGHT over the feet) stands in the line of fire from `from` to
+/// `to`: between them, the line within FRIEND_CLEARANCE of its axis across the ground and between
+/// its feet and its top.
+fn in_line(from: Vec3, to: Vec3, chest: Vec3) -> bool {
+    let line = to - from;
+    let flat = Vec2::new(line.x, line.z);
+    let d = flat.length();
+    if d < 1e-3 {
+        return false;
+    }
+    let rel = Vec2::new(chest.x - from.x, chest.z - from.z);
+    let t = rel.dot(flat / d);
+    if t <= 0.0 || t >= d {
+        return false;
+    }
+    let y = from.y + line.y * t / d;
+    let feet = chest.y - AI_AIM_HEIGHT;
+    (rel - flat / d * t).length() < FRIEND_CLEARANCE && y > feet && y < feet + BODY_HEIGHT
+}
+
+/// A character of its own side this close to the line of fire (m, across) holds an AI's fire: the
+/// demo's choice, so a patroller doesn't shoot the one ahead of it in the back. The body's
+/// BODY_RADIUS (0.4), its arms and gun held out past it (with 0.6 here a marine 6 m down the line
+/// of fire was hit in the upper arm, t227dev vsquad1), and the shot leaving the muzzle rather
+/// than the eye (play.rs `step_player`). The game's AI fires when it sees its target and its gun
+/// is on it (FUN_00024f80, FUN_0004dc10: no test for friends found); its moves for a clear line
+/// (EVT_SHOT_BLOCKAGE's GOAL_REPOSITION_LOS_TO_TGT, GOAL_ATTACK_REPOS) are #26's.
+const FRIEND_CLEARANCE: f32 = 0.9;
+
+/// One frame of `m`'s brain, in place of the squad's AI or the test map NPC's (see the module
+/// notes). `leader`, `slot` and `heading`: the squad AI's, for a follower; `target`: the chest it
+/// may fire at (`sense`); `patrols`: the level's patrol points; `n`: the difficulty.
+#[allow(clippy::too_many_arguments)]
+pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, patrols: &[PatrolPoint], game: &Game, n: i64) {
+    let Some(mut b) = m.brain.take() else { return };
+    let log = log_on();
+    let accuracy = accuracy_at(b.accuracy, n, b.follows);
+    // a follower: the squad's wingman follow, firing at what it sees
+    if b.follows {
+        if b.base.is_none() {
+            b.base = Some(GOAL_WINGMAN_FOLLOW);
+            if log {
+                println!("t={:.2} brain {}: follows {} (GOAL_WINGMAN_FOLLOW), formation place {slot}", m.sim_time, b.label, unit_name(leader));
+            }
+        }
+        stop_walk(m);
+        squad_ai(m, leader, slot, heading, dt, target);
+        aim(m, target, accuracy);
+        hold_fire(m, &mut b, log);
+        m.brain = Some(b);
+        return;
+    }
+    let mut npc = m.npc.unwrap_or(testtools::Npc { id: 0, fight: true, face: m.yaw });
+    // alert: it fights where it stands (#26 moves it), facing the target, or its last place
+    if b.knows_enemy() {
+        if b.walking(m) {
+            stop_walk(m);
+            if log {
+                println!("t={:.2} brain {}: stops: {} contact{}", m.sim_time, b.label, b.contacts.len(), if b.contacts.len() == 1 { "" } else { "s" });
+            }
+        }
+        // (the patrol is started again, from the point nearest it, once it's over)
+        b.route.clear();
+        let toward = target.or(b.target.and_then(|w| b.contacts.iter().find(|c| c.who == w)).map(|c| c.last));
+        if let Some(p) = toward {
+            let to = p - m.position;
+            npc.face = (-to.x).atan2(-to.z);
+        }
+        m.npc = Some(npc);
+        testtools::npc_ai(m, target, dt);
+        // the gun stays raised while it knows the enemy (the attack goal's ready pose)
+        m.aim = true;
+        aim(m, target, accuracy);
+        hold_fire(m, &mut b, log);
+        m.brain = Some(b);
+        return;
+    }
+    // calm: standing, firing at nothing, facing the way it is
+    npc.face = m.yaw;
+    m.npc = Some(npc);
+    testtools::npc_ai(m, None, dt);
+    let here = m.position + Vec3::Y * GROUND;
+    // home first (EVT_RETURN_HOME, pri 1.5 over EVT_BASE's 1)
+    if b.go_home {
+        let home = b.home.filter(|h| h.xz().distance(here.xz()) > b.home_radius);
+        let stuck = home.is_some_and(|h| b.stuck(here, h, dt));
+        match (home, b.home_mt) {
+            (Some(h), Some(mt)) if !stuck => b.walk(m, h, mt),
+            _ => {
+                b.go_home = false;
+                stop_walk(m);
+                b.best = f32::MAX;
+                if log {
+                    match home {
+                        Some(h) => println!("t={:.2} brain {}: {} {:.1} m short of home, at ({:.1}, {:.1}): stays there", m.sim_time, b.label,
+                                            if b.home_mt.is_none() { "creeps (h_f27d26c9 1)" } else { "stalls" }, h.xz().distance(here.xz()), here.x, here.z),
+                        None => println!("t={:.2} brain {}: home at ({:.1}, {:.1})", m.sim_time, b.label, here.x, here.z),
+                    }
+                }
+            }
+        }
+        m.brain = Some(b);
+        return;
+    }
+    // the base goal: drawn once (FUN_00054c40), a refused one struck out (FUN_00054bc0)
+    if b.base.is_none() {
+        let entry = game.personality_entry(b.personality, EVT_BASE);
+        let u = m.random(1_000_000) as f32 / 1_000_000.0;
+        b.base = entry.and_then(|e| e.draw(u, &b.refused)).or(Some(GOAL_IDLE_VARY));
+        if log {
+            println!("t={:.2} brain {}: base goal {} (personality h_{:08x}'s EVT_BASE: {:?}, refused {:?})", m.sim_time, b.label, goal_name(b.base),
+                     b.personality, entry.map(|e| &e.goals), b.refused);
+        }
+    }
+    if b.base == Some(GOAL_PATROL) {
+        if b.route.is_empty() && !b.start_patrol(here, patrols, m.sim_time) {
+            // refused: struck out, the draw again next frame
+            b.refused.push(GOAL_PATROL);
+            b.base = None;
+            m.brain = Some(b);
+            return;
+        }
+        b.patrol(m, here, dt);
+    } else if b.walking(m) {
+        stop_walk(m);
+    }
+    m.brain = Some(b);
+}
+
+impl Brain {
+    /// Whether its walk is under way (the drive it set: play_enemies.rs).
+    fn walking(&self, m: &Player) -> bool {
+        m.enemy.drive.is_some()
+    }
+
+    /// Walk toward `to` in motion type `mt` (the drive, play_enemies.rs: the type's speed for it,
+    /// the relaxed clip, turning at the type's turn-rate), or keep walking there. Not while a hit
+    /// reaction is due or plays: it walks on after.
+    fn walk(&mut self, m: &mut Player, to: Vec3, mt: i64) {
+        if let Some(d) = m.enemy.drive.as_mut().filter(|d| d.mt == mt) {
+            d.goal = Some(to.xz());
+        } else if !enemies::reacting(m) {
+            enemies::drive(m, mt, Some(to.xz()), false);
+        }
+    }
+
+    /// Whether the walk toward `to` has stalled (STALL_PROGRESS in STALL_TIME s), counting.
+    fn stuck(&mut self, here: Vec3, to: Vec3, dt: f32) -> bool {
+        let d = here.xz().distance(to.xz());
+        if d < self.best - STALL_PROGRESS {
+            (self.best, self.stalled) = (d, 0.0);
+        } else {
+            self.stalled += dt;
+        }
+        self.stalled >= STALL_TIME
+    }
+
+    /// GOAL_PATROL's start (FUN_0002af70): the route from the patrol point nearest `here`, or
+    /// false (refused) without one of two points or more.
+    fn start_patrol(&mut self, here: Vec3, patrols: &[PatrolPoint], now: f32) -> bool {
+        let Some(nearest) = patrols.iter().min_by(|a, b| a.at.distance(here).total_cmp(&b.at.distance(here))) else { return false };
+        let Some(head) = patrols.iter().find(|p| p.head && p.group == nearest.group) else { return false };
+        let point = |p: &PatrolPoint| RoutePoint { at: p.at, radius: if p.radius > 0.0 { p.radius } else { ARRIVE }, name: p.name,
+                                                   end: p.forward == 0 || p.backward == 0, trigger: p.trigger };
+        let mut route = vec![point(head)];
+        let mut next = head.forward;
+        while let Some(p) = patrols.iter().find(|p| p.name == next && next != 0 && p.name != head.name) {
+            if route.len() > patrols.len() {
+                break;
+            }
+            route.push(point(p));
+            next = p.forward;
+        }
+        if route.len() < 2 {
+            return false;
+        }
+        self.at = route.iter().position(|r| r.name == nearest.name).unwrap_or(0);
+        self.route = route;
+        self.best = f32::MAX;
+        if log_on() {
+            println!("t={now:.2} brain {}: patrols iD {} ({} points, from point {}, ({:.1}, {:.1}), nearest of {} at {:.1} m)", self.label, head.group,
+                     self.route.len(), self.at, self.route[self.at].at.x, self.route[self.at].at.z, patrols.len(), nearest.at.distance(here));
+        }
+        true
+    }
+
+    /// GOAL_PATROL's update (FUN_0002b490 with FUN_00026d80 and FUN_00026940): walk to the route's
+    /// point; reached (or stalled), the next, the route turned round at an end of the chain.
+    fn patrol(&mut self, m: &mut Player, here: Vec3, dt: f32) {
+        let p = self.route[self.at];
+        let reached = here.xz().distance(p.at.xz()) < p.radius;
+        if reached || self.stuck(here, p.at, dt) {
+            let log = log_on();
+            if log {
+                println!("t={:.2} brain {}: {} patrol point {} ({:.1}, {:.1}){}", m.sim_time, self.label, if reached { "reaches" } else { "stalls short of" },
+                         self.at, p.at.x, p.at.z, if p.trigger != 0 { format!(": its trigger-object h_{:08x} not sent (#227)", p.trigger) } else { String::new() });
+            }
+            // the chain's end: turned round, walked back (FUN_00026940 -> FUN_00023320); a loop's
+            // end goes on to its start (FUN_00012650)
+            if self.at + 1 >= self.route.len() {
+                if p.end {
+                    self.route.reverse();
+                }
+                self.at = 0;
+            }
+            self.at = (self.at + 1).min(self.route.len() - 1);
+            self.best = f32::MAX;
+            self.stalled = 0.0;
+        }
+        let to = self.route[self.at].at;
+        self.walk(m, to, enemies::MT_WALK);
+    }
+}
+
+/// FUN_00024ae0: the accuracy (0-1) from its percent `a` at difficulty `n`: + 0.05 n (halved above
+/// 0), within half and one and a half of a / 100, at most 1. A character of a squad a player
+/// controls (`players`: the world's +0xbec object's vtable +0x7c, 0x8d9f0, counts the players
+/// whose squad it is) takes a / 100 as it is: the marines following Tex.
+fn accuracy_at(a: f32, n: i64, players: bool) -> f32 {
+    let a = a * 0.01;
+    if players {
+        return a;
+    }
+    let d = n as f32 * ACCURACY_STEP;
+    let d = if d > 0.0 { d * 0.5 } else { d };
+    (a + d).max(a * 0.5).min(a * 1.5).min(1.0)
+}
+
+/// FUN_00024c00: the aim of the shots it fires at `target` (a chest) this frame, `ai_fire` having
+/// faced it: on the chest with the probability `accuracy`, else off it (see the module notes).
+/// The gun and its shots go to it (`Player::ai_target`).
+fn aim(m: &mut Player, target: Option<Vec3>, accuracy: f32) {
+    let Some(chest) = target else { return };
+    let u = m.random(1_000_000) as f32 / 1_000_000.0;
+    if accuracy > u {
+        return;
+    }
+    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+    let line = chest - eye;
+    let d = line.length();
+    if d < 1e-3 {
+        return;
+    }
+    let turn = (m.random(1_000_000) as f32 / 1_000_000.0 * 2.0 - 1.0) * MISS_ANGLE.to_radians();
+    let off = Quat::from_axis_angle(line / d, turn) * Vec3::Y;
+    let long = if off.y > MISS_UP { MISS_HIGH } else { MISS_LONG };
+    let near = if d < MISS_NEAR { d / MISS_NEAR } else { 1.0 };
+    m.ai_target = Some(chest + off * long * near);
+}
+
+/// `u` is held by a script (119, its start, a 105 walk: play_script.rs): no brain meanwhile
+/// (char+0x834 bit 0), so the walk it had going stops; it takes its goal up again once let go.
+pub fn held(u: &mut Player) {
+    if u.brain.is_some() {
+        stop_walk(u);
+    }
+}
+
+/// Its walk stops: the drive let go and its walking motion with it (a hit reaction playing stays),
+/// the body sliding to a stop (play_enemies.rs `glide`), as the drive does at its goal.
+fn stop_walk(m: &mut Player) {
+    m.enemy.drive = None;
+    if m.enemy.motion.is_some_and(|p| !p.once) {
+        m.enemy.motion = None;
+    }
+}
+
+/// A base goal's name for the log.
+fn goal_name(g: Option<i64>) -> &'static str {
+    match g {
+        Some(GOAL_IDLE_VARY) => "GOAL_IDLE_VARY (stands)",
+        Some(GOAL_PATROL) => "GOAL_PATROL",
+        Some(GOAL_WINGMAN_FOLLOW) => "GOAL_WINGMAN_FOLLOW",
+        Some(1) => "GOAL_IDLE (stands)",
+        Some(_) => "a goal the demo doesn't run (stands)",
+        None => "none",
+    }
+}
+
+/// BF_TEST_AIM_HOSTILE=<s>: from that time the controlled character's camera turns onto the
+/// nearest living hostile it can see (within 120 m, nothing of the world in between: its chest,
+/// else its head over cover) and it aims and fires at it: the takes' aim helper
+/// (todo/28-tutorial/notes.md, "Aim helper"), to stage a fight. Run before the character's step
+/// (play.rs `update_player`), after the test hooks' input.
+fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>) {
+    let Some(from) = std::env::var("BF_TEST_AIM_HOSTILE").ok().and_then(|v| v.parse::<f32>().ok()) else { return };
+    let player = &mut *player;
+    if player.sim_time < from || player.dead || player.absent || script::blocks_input(player) {
+        return;
+    }
+    let eye = player.position + Vec3::Y * (GROUND + player.height + AI_EYE);
+    let clear = |p: Vec3| eye.distance(p) < AIM_HELPER_REACH && ray_hit(eye, (p - eye).normalize_or_zero(), eye.distance(p) - 0.3).is_none();
+    let Some(chest) = squad.0.iter().filter(|u| !u.dead && !u.absent && u.team != player.team && u.loaded.is_some())
+        .filter_map(|u| [AI_AIM_HEIGHT, AI_EYE].map(|h| u.position + Vec3::Y * (GROUND + u.height + h)).into_iter().find(|&p| clear(p)))
+        .min_by(|a, b| eye.distance(*a).total_cmp(&eye.distance(*b))) else {
+        player.fire = false;
+        return;
+    };
+    // turn the camera until the crosshair's ray (play.rs `aim_ray`) passes through the chest: a
+    // few steps of the angle between them
+    for _ in 0..4 {
+        let (cam, dir) = aim_ray(player);
+        let want = (chest - cam).normalize_or_zero();
+        let yaw = |v: Vec3| (-v.x).atan2(-v.z);
+        let pitch = |v: Vec3| v.y.clamp(-1.0, 1.0).asin();
+        player.cam_yaw = wrap_angle(player.cam_yaw + wrap_angle(yaw(want) - yaw(dir)));
+        player.cam_pitch = (player.cam_pitch + pitch(want) - pitch(dir)).clamp(-1.2, 0.5);
+    }
+    player.aim = true;
+    player.fire = true;
+}
+
+/// How far the aim helper looks for a hostile (m): beyond any of the tutorial's fights.
+const AIM_HELPER_REACH: f32 = 120.0;

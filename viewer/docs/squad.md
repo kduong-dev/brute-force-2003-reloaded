@@ -11,6 +11,11 @@ Squad movement and deaths follow the game's own data and the captures:
   down (EVT_SHOT_BLOCKED_BY_FRIEND), sidestep now and then when you shoot them
   (EVT_DAMAGED_BY_PC -> GOAL_DODGE) and dive away from a grenade that lands near them
   (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip).
+* **The tutorial's Confed marines** (#227, [brain.md](brain.md)): the V-squad's two follow Tex
+  with this follow, from the formation places after the squad's own, see by their sensor (80 m,
+  90 degrees either way) and fire with the AI's aim (accuracy 0.6). In take11 they trailed Tex
+  and stopped 9-10 m behind him; the game's wingman follow is a state machine of its own
+  (FUN_00020b10) the demo doesn't read. Switching to them (the d-pad) isn't done.
 * **Standing on the floor.** The floor is 1.05 m (`GROUND`) under each character's pelvis, but
   the four aren't the same height. So each is raised or lowered by how far the lowest
   skinned vertex of their idle pose is from it (`sole_lift`, up to 0.3 m either way):

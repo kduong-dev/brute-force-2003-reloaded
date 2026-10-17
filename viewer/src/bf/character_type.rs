@@ -63,6 +63,12 @@ const H_BLEND_IN: u32 = 0x1414_33F1;
 const H_CONTROLLABLE: u32 = 0x17A5_54BF;
 const H_ACCURACY_ON: u32 = 0xEC53_37FB;
 const H_ACCURACY: u32 = 0x0728_37BB;
+/// A placement `<ai>`'s h_11cddd9f (its own `vision` counts, `PlacementAi::vision_own`) and
+/// h_1b2327a0, field-of-view (`PlacementAi::field_of_view`); a type `<ai>`'s h_12a04758, its AI's
+/// accuracy (`TypeAi::accuracy`).
+const H_VISION_OWN: u32 = 0x11CD_DD9F;
+const H_FIELD_OF_VIEW: u32 = 0x1B23_27A0;
+const H_AI_ACCURACY: u32 = 0x12A0_4758;
 const H_DROPS: u32 = 0x0F77_963D;
 const H_AMMO_ITEM: u32 = 0x10DD_6DB2;
 /// A type's death award `<base><h_1edc28b5 ..>` and its attributes in the parse record's order
@@ -240,6 +246,11 @@ pub struct TypeAi {
     pub half_fov: f32,
     /// squad-leash-dist (h_1d50ffec): how far a squadmate strays from its leader (m)
     pub squad_leash: f32,
+    /// h_12a04758 (the type parser FUN_00188470 puts it at the record's +0x98, FUN_0001ff70 at
+    /// the AI settings' +0x7c): its AI's accuracy in percent, read by FUN_00024ae0 when the
+    /// placement gives none (h_ec5337fb false). Every type has one: 50 on 145 of the 198, the Red
+    /// Hand's 50, the Confed marines' 60
+    pub accuracy: f32,
 }
 
 /// A combat-target's `<shield>` (FUN_00189c40 and FUN_00189a90 parse it, FUN_00154780 copies it
@@ -385,6 +396,14 @@ pub struct PlacementAi {
     /// vision (m, char+0x1d8) and goal-id (char+0x1e4)
     pub vision: f32,
     pub goal_id: i64,
+    /// h_11cddd9f (char+0x1b9; name not recovered): its own `vision` is its sight distance, not its
+    /// type's vision-range (the sensor's getter 0x10fb90). True on 88 of the data's placements:
+    /// the tutorial's sniper-lesson target (vision 10) and one start marine (80)
+    pub vision_own: bool,
+    /// h_1b2327a0, field-of-view (name recovered by hashing; char+0x1e0): how far off its look
+    /// direction (degrees, either way) it sees (the sensor's fov test 0x3d300): 60 on the Red
+    /// Hand, 90 on the Confed marines and the squad
+    pub field_of_view: f32,
 }
 
 impl CharacterType {
@@ -544,6 +563,7 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
         vision_range: num(a, h("vision-range")).unwrap_or(0.0),
         half_fov: num(a, h("half-fov")).unwrap_or(0.0),
         squad_leash: num(a, h("squad-leash-dist")).unwrap_or(0.0),
+        accuracy: num(a, H_AI_ACCURACY).unwrap_or(0.0),
     }).unwrap_or(TypeAi { alignment: ALIGN_NONE, ..Default::default() });
     let inventory = e.child(h("inventory"));
     let limit = e.child(h("limit-weapon"));
@@ -661,6 +681,8 @@ pub fn parse_placements(root: &Element, archive: &str) -> Vec<Placement> {
                     .map(|k| ai.map_or(0, |a| name(a, h(k)))),
                 vision: ai.and_then(|a| num(a, h("vision"))).unwrap_or(0.0),
                 goal_id: ai.and_then(|a| int(a, h("goal-id"))).unwrap_or(0),
+                vision_own: ai.and_then(|a| int(a, H_VISION_OWN)).unwrap_or(0) != 0,
+                field_of_view: ai.and_then(|a| num(a, H_FIELD_OF_VIEW)).unwrap_or(0.0),
             },
             weapons: inventory.map(|i| counted(i.children_named(h("weapon")))).unwrap_or_default(),
             items: inventory.map(|i| counted(i.children_named(H_AMMO_ITEM))).unwrap_or_default(),

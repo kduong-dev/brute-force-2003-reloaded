@@ -504,7 +504,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   axes by uniform random angles within +-S degrees (FUN_002229b0), with
   S = (100 - clamp(A - 1, 0, 100)) x 0.03 (FUN_000c4e10; the -1 is the holder's script bonus,
   unset: the squad's `accuracy-bonus` h_072837bb flag h_ec5337fb is false in the levels; some
-  enemies have 75 or 90). So the MK's first shot spreads +-0.33 degrees and its 14th on in held
+  enemies have 75 or 90). A character a spawn-trigger made from a placement that sets
+  h_ec5337fb takes its h_072837bb instead (#227, `Trigger::bonus`: the tutorial's Red Hand +25,
+  S = (100 - clamp(A + 25, 0, 100)) x 0.03). So the MK's first shot spreads +-0.33 degrees and its 14th on in held
   fire +-2.3; the Minigun's +-1.2 to +-1.8 over a clip; the Bower's aim +-0.5 before its
   pellets' walk.
   * Against the takes: the clusters measured in screen units, read with a 45 degree vertical

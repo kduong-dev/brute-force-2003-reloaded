@@ -25,8 +25,10 @@
 //!    fire loop (FUN_0022ee30 -> FUN_0022e4c0): the aim from each muzzle (FUN_0022e5b0) is turned
 //!    about the three world axes by uniform random angles within +-S degrees (FUN_002229b0),
 //!    S = (100 - clamp(A + bonus, 0, 100)) x 0.03 (FUN_000c4e10). The bonus (accuracy object
-//!    +8) is -1 unless the holder's script property h_ec5337fb is set, then its h_072837bb
-//!    (-100..100, FUN_00112d90's neighbour at 0x11302c): -1 here.
+//!    +8, written each frame by FUN_00222b30 from the holder) is -1 unless the holder's script
+//!    property h_ec5337fb (char+0x498) is set, then its h_072837bb (char+0x49c, -100..100: the
+//!    property handler at 0x11302c): the placement's, for a character a spawn-trigger made from
+//!    one (#227: the tutorial's Red Hand +25, `Trigger::bonus`), -1 for everyone else.
 //!  - **Tracers**: an instant ray (bullet-type 4, FUN_002317e0) spawns its flight effect only
 //!    when the counter weapon+0x290 is 0, which then restarts at h_eeb9e75a: the first shot and
 //!    every (N+1)th after (MK every 3rd, Minigun every 4th). Other bullet types always fly theirs.
@@ -65,8 +67,9 @@ const TICK_JITTER: f32 = 1e-4;
 const DEG: f32 = 0.017444;
 /// FUN_000c4e10: degrees of spread per point of accuracy below 100.
 const SPREAD_PER_POINT: f32 = 0.03;
-/// The accuracy object's +8 bonus without the holder's script property (FUN_00222b30).
-const ACCURACY_BONUS: f32 = -1.0;
+/// The accuracy object's +8 bonus without the holder's script property (FUN_00222b30): every
+/// holder's but a placement's that sets h_ec5337fb (`Trigger::bonus`).
+pub const ACCURACY_BONUS: f32 = -1.0;
 /// Crouched (holder +0x1f8 == 6): the floor of the recoil is min + this (FUN_00222c10).
 const CROUCH_FLOOR: f32 = 15.0;
 /// FUN_00231b10: a casing starts this far (m) back along the hardpoint's z, leaves at
@@ -192,11 +195,15 @@ pub struct Trigger {
     /// the holder's +0x1f8 == 6: read as crouched (that state, with 7, takes the character's
     /// crouch-height at 0x14dd50 / 0x1098f0; a reading, not a name)
     pub crouched: bool,
+    /// the accuracy object's bonus from the holder (FUN_00222b30: its h_072837bb when its
+    /// h_ec5337fb is set, else ACCURACY_BONUS)
+    pub bonus: f32,
 }
 
-/// The spread (degrees either way, on each axis) at accuracy `a` (FUN_000c4e10).
-pub fn spread_at(a: f32) -> f32 {
-    (100.0 - (a + ACCURACY_BONUS).clamp(0.0, 100.0)) * SPREAD_PER_POINT
+/// The spread (degrees either way, on each axis) at accuracy `a` with the holder's bonus
+/// (FUN_000c4e10).
+pub fn spread_at(a: f32, bonus: f32) -> f32 {
+    (100.0 - (a + bonus).clamp(0.0, 100.0)) * SPREAD_PER_POINT
 }
 
 /// One gun for the fire loop this frame (`FireState::run`): the game's weapon object, which
@@ -310,7 +317,7 @@ impl FireState {
         // FUN_00222ac0: held within [min, cap]
         let mut a = self.weapon(weapon).accuracy.unwrap_or(cap).max(min).min(cap);
         // FUN_0022e4c0: the aim's turn this frame, from the accuracy before the shots
-        let spread = spread_at(a);
+        let spread = spread_at(a, t.bonus);
         // FUN_0022f2a0: an empty clip ends the loop (FUN_002327f0, play_ammo.rs). The clip
         // drops only after a shot for which FUN_0022fe00 returns 0: in a zero-delay burst
         // that's the last shot, once FUN_0022f0e0 has cleared the counter, so the clip stays
