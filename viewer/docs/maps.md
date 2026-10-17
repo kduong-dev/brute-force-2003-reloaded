@@ -77,9 +77,10 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Using one (capture todo/gate button.mp4): from in front of its button (hardpoint
     h_10f81d34, facing the model's +z), within 2.5 m and looking within ~45° of it, hold E for
     0.5 s. Reach, angle and hold time are guesses; the capture shows no progress bar and no
-    gate message. While it's usable, "Hold E to activate panel." shows under the health bar.
-    That's the game's "Hold " + its X-button icon + "to activate %s." with "panel", and the
-    key here in place of the icon. The blue target ring (the four-notch reticle texture
+    gate message. While it's usable, "Hold [X] to activate panel." shows under the health bar:
+    the game's use prompt, "Hold " + the X button's glyph + "to activate %s." with "panel", a
+    glyph line drawn as the hint lines are, at the first one's place ([hints.md](hints.md), "The
+    use prompt"; take11 matches it to a unit). E is the demo's X. The blue target ring (the four-notch reticle texture
     h_1d2a68d0, tinted) sits on the button. The prompt goes once the panel is used, or once the
     doors its signal reaches unchanged (`Level::button_opens`: sdm_e34's gate) are open (the
     demo's choice: the game's panel stays usable until a property trigger says otherwise).

@@ -60,17 +60,14 @@ const FEED_LINES: usize = 4;
 const MESSAGE_Y: f32 = 290.0;
 const FEED_FIRST: f32 = 29.0;
 const FEED_STEP: f32 = 16.5;
-/// Strings: "Hold ", "to activate %s.", "NEW", "switch to %s." (after the Y button's icon),
-/// "Regen".
-const S_HOLD: u32 = 0x1CC5_1F04;
-const S_TO_ACTIVATE: u32 = 0xF9D2_9692;
+/// Strings: "NEW", "switch to %s." (after the Y button's icon), "Regen".
 const S_NEW: u32 = 0x0BA4_1874;
 const S_SWITCH_TO: u32 = 0xFF01_7DF6;
 const S_REGEN: u32 = 0xE246_DE1D;
 /// "[Y] switch to %s." once the held gun's clip and the reserve are both empty (FUN_00120d40
 /// posts message 0x52): top left under the health bar, pale blue (todo/49 take02 19 s; the same
-/// line as the pickup prompt). Here the key (Q) stands for the button's icon, as E does in the
-/// panel prompt. Measured there: "switch"'s letters span y 90-104 (14 units; with CAP 11.5 ours
+/// line as the pickup prompt). Here the key (Q) stands for the button's icon (the wall panel's
+/// prompt draws the game's glyph line: play_hints.rs). Measured there: "switch"'s letters span y 90-104 (14 units; with CAP 11.5 ours
 /// spanned 12.5, so CAP is scaled to 13), and TOP (the text line's top) puts them at 90.
 const SWITCH_HINT_X: f32 = 53.0;
 const SWITCH_HINT_TOP: f32 = 85.8;
@@ -595,8 +592,9 @@ const LABEL_X: f32 = 56.9;
 const LABEL_TOP: f32 = 85.5;
 const LABEL_CAP: f32 = 13.4;
 /// The label moves this much lower for each other message widget showing (0xc73b4-0xc73cb: 20
-/// units full screen). Here the switch hint, which sits in its place, counts: **a guess** (the
-/// takes never show the two together).
+/// units full screen): the player view's two hint lines (+0x3c, +0x40: play_hints.rs, #224).
+/// The switch hint, which sits in the first one's place, counts as it: **a guess** (the takes
+/// never show the two together).
 const LABEL_STACK: f32 = 20.0;
 /// After the off the label stays at full for LABEL_HOLD, then fades at LABEL_FADE a second (the
 /// widget's alpha, 3.0 at 0x39a848, 0xc7473). The hold is measured, 0.13-0.18 s after the bar
@@ -608,7 +606,7 @@ const LABEL_FADE: f32 = 3.0;
 /// and the skill's name label. Control passing resets it to the new character's at once, no
 /// trail or brighten carried over and the label shown or hidden (FUN_000b7940; take19 4.867 s).
 #[derive(Resource, Default)]
-struct StaminaBar {
+pub(crate) struct StaminaBar {
     /// the character it shows
     who: Option<usize>,
     /// the value (+0x34) and the shown value (+0x38, the trail's end), in hit points
@@ -624,6 +622,14 @@ struct StaminaBar {
     label: u32,
     label_alpha: f32,
     label_hold: f32,
+}
+
+impl StaminaBar {
+    /// Whether the skill's name shows (the HUD's message widget hud+0xfc, which the use prompt
+    /// stands 20 lower for: play_hints.rs).
+    pub(crate) fn label_shown(&self) -> bool {
+        self.label_alpha > 0.0 && self.label != 0
+    }
 }
 
 /// weapon rows: the first at y 43, the next 45 below
@@ -649,8 +655,6 @@ enum Part {
     Ammo(usize),
     Tab(usize),
     Crosshair,
-    /// "Hold E to activate panel." while a gate's wall panel is in reach and in view
-    UsePrompt,
     /// "Q switch to <other weapon>." while the held gun and its reserve are empty
     SwitchHint,
     /// the special skill's name while it's on (and a moment after), under the bars
@@ -1061,10 +1065,9 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         commands.spawn((ChildOf(screen), game_text("", x + 58.0, y + 2.0, 12.0, MESSAGE_BLUE, Align::Right), Part::Slot(k, SlotPart::Count), Visibility::Hidden));
     }
 
-    // ---- a gate's wall panel in reach: "Hold E to activate panel." under the health bar (the
-    // game's "Hold " + its button icon + "to activate %s."; here the key), and the blue
-    // target ring (the reticle texture h_1d2a68d0) on the panel's button ----
-    commands.spawn((ChildOf(screen), game_text("", 52.0, 68.0, 11.5, MESSAGE_BLUE, Align::Left), Part::UsePrompt, Visibility::Hidden));
+    // ---- a gate's wall panel in reach: the blue target ring (the reticle texture h_1d2a68d0) on
+    // the panel's button; its prompt, "Hold [X] to activate panel.", is a glyph line drawn with
+    // the hint lines (play_hints.rs `draw_prompt`) ----
     commands.spawn((ChildOf(screen), game_text("", SWITCH_HINT_X, SWITCH_HINT_TOP, SWITCH_HINT_CAP, MESSAGE_BLUE, Align::Left), Part::SwitchHint, Visibility::Hidden));
     // the special skill's name, under the bars while it's on (see `StaminaBar`)
     commands.spawn((ChildOf(screen), game_text("", LABEL_X, LABEL_TOP, LABEL_CAP, MESSAGE_BLUE, Align::Left), Part::SkillLabel, Visibility::Hidden));
@@ -1209,7 +1212,7 @@ fn update_hud_widgets(
     player: Res<Player>,
     reserve: Res<super::ammo::Reserve>,
     held_name: Res<super::ammo::HeldName>,
-    switch_hint: Res<super::ammo::SwitchHint>,
+    (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
     squad: Res<Squad>,
     use_panel: Res<super::UsePanel>,
     feed: Res<super::pickups::PickupFeed>,
@@ -1272,8 +1275,6 @@ fn update_hud_widgets(
         Item::Medkit => game.0.items.get(&player.medkit_kind).map_or(MEDKIT_ICON, |t| if t.icon != 0 { t.icon } else { MEDKIT_ICON }),
     };
     let new_word = game.0.strings.get(&S_NEW).cloned().unwrap_or("NEW".into());
-    let hold = game.0.strings.get(&S_HOLD).cloned().unwrap_or("Hold ".into());
-    let to_activate = game.0.strings.get(&S_TO_ACTIVATE).cloned().unwrap_or("to activate %s.".into());
     let regen_word = game.0.strings.get(&S_REGEN).cloned().unwrap_or("Regen".into());
     // the switch hint (play_ammo.rs's SwitchHint) names the other weapon
     let other = (l.weapons.len() > 1).then(|| &l.weapons[(player.weapon + 1) % l.weapons.len()].def.label).filter(|_| switch_hint.0);
@@ -1407,12 +1408,6 @@ fn update_hud_widgets(
                     SlotPart::Count => set(text, &super::item_count(&player, i).to_string(), Some(if ok { MESSAGE_BLUE } else { ITEM_RED })),
                 }
             }
-            Part::UsePrompt => {
-                show(&mut vis, use_panel.prompt.is_some() && player.scope < 0.5);
-                if let Some(what) = use_panel.prompt {
-                    set(text, &format!("{hold}E {}", to_activate.replace("%s", what)), None);
-                }
-            }
             Part::SwitchHint => {
                 show(&mut vis, other.is_some());
                 if let Some(name) = other {
@@ -1422,8 +1417,9 @@ fn update_hud_widgets(
             Part::SkillLabel => {
                 let name = game.0.strings.get(&stamina.label).cloned().unwrap_or_default();
                 show(&mut vis, stamina.label_alpha > 0.0 && !name.is_empty());
-                // (lower with the switch hint up: LABEL_STACK)
-                let y = LABEL_TOP + if other.is_some() { LABEL_STACK } else { 0.0 };
+                // (lower for each hint line up, the switch hint as the first: LABEL_STACK)
+                let lines = (hint_lines.0[0] || other.is_some()) as usize + hint_lines.0[1] as usize;
+                let y = LABEL_TOP + lines as f32 * LABEL_STACK;
                 if let Some(t) = text.as_mut() {
                     if t.y != y {
                         t.y = y;
