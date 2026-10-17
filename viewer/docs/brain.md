@@ -29,18 +29,19 @@ FUN_002096e0 -> FUN_00018510):
   EVT_RETURN_HOME (31), whose personality entry (pri 1.5, over EVT_BASE's 1) is GOAL_RETURN_HOME
   (its update FUN_00034690), home within the point's own h_e6564e8a when it has one over 0
   (FUN_00026d80; the wall sentry's wpoint1493: 1 m), else 2 m. Its pace is the trigger's
-  h_f27d26c9 (the goal's +0x94), the speed mode FUN_0004d970 takes while the goal is on: 0 and 2
-  a walk (the stick at half), 3 a run, 4 the dash, and 1 the stick at 0.01, read as staying put
-  (the tutorial's 31 and 32, who spawn on their homes).
+  `locomotion` (h_f27d26c9, +0x84: FUN_00018510's 5th argument, stored as the goal's +0x94 at
+  0x18750), the speed mode FUN_0004d970 takes while the goal is on: 0 and 2 a walk (the stick at
+  half), 3 a run, 4 the dash, and 1 the stick at 0.01, read as staying put (the tutorial's 31 and
+  32, who spawn on their homes).
 * The trigger's h_f63b86a2 / h_062fbaf0 (the home area's radii, at least 7: brain+0x214 /
   +0x218, for EVT_PAST_HOME_AREA) are read by the game, not used here.
 
 The tutorial's: the opening's wall sentry, TUTORIAL_terrorist_5, walks 10.5 m west along the
 walkway to wpoint1493 as the level starts (its trigger at FIRST_UPDATE); the base's patroller,
 TUTORIAL_terrorist_6, is sent 55 m into the base to wpoint1123 before it patrols (the demo's
-straight walk stalls just inside the gate: "Not done"); the lava yard's
-29 and 30, the second building's 3 and 17, the base's 7, 9, 13 and 21 run home (h_f27d26c9 3);
-the rest walk or are home already.
+straight walk stalls just inside the gate: "Not done"); the lava yard's 29 and 30, the second
+building's 3 and 17, the base's 7, 9, 13 and 21 run home (locomotion 3); the rest walk or are
+home already.
 
 ## Its base goal
 
@@ -118,16 +119,18 @@ With a contact known the brain fights where it stands:
 * it faces the target and fires at it while the target is seen and within its gun's reach (the
   shot's own: the MK-ASLT's 75 m), in the AI's bursts (play.rs `ai_fire`); unseen, it faces the
   target's last place, the gun raised (the turn toward a known contact, FUN_0002f960);
-* **a friend in the line of fire** (the demo's choice): it holds fire while one of its own side
-  stands within 0.9 m of the line from its eyes to where this frame's shots go (the chest, or the
-  miss its aim drew), between that one's feet and its top, and keeps its aim on the target
-  meanwhile. The game's AI fires when it sees its target and its gun is on it (FUN_00024f80,
-  FUN_0004dc10: no test for friends found); a shot that hits one of the shooter's squad does 0.7
-  of its damage and posts EVT_SHOT_BLOCKED_BY_FRIEND (34; FUN_0022c4d0 with FUN_0004b9c0), whose
-  goals move the AI. Without the hold the first patrol's second terrorist, stopped right behind
-  the first, shot it in the back; with it at 0.6 m one marine still hit the other, 6 m down his
-  line of fire, in the arm. Moving for a clear line (EVT_SHOT_BLOCKAGE's
-  GOAL_REPOSITION_LOS_TO_TGT, h_0bb586cf's GOAL_ATTACK_REPOS) is #26's;
+* **a friend in the line of fire** (the demo's own addition): it holds fire while one of its own
+  side stands within 0.9 m of the line from its eyes to where this frame's shots go (the chest,
+  or the miss its aim drew), between that one's feet and its top, and keeps its aim on the target
+  meanwhile. The game has no such hold. Its AI fires when the target is seen with a clear ray and
+  its gun is on it (FUN_00024f80, FUN_0004dc10), and that ray leaves characters out: the pair
+  table's query (FUN_00057730) skips the object types in its mask 0x415a1018, characters (type 3)
+  among them, so a friend in the line hides nothing. The shot then hits the friend: 0.7 of its
+  damage, and EVT_SHOT_BLOCKED_BY_FRIEND (34; FUN_0022c4d0 with FUN_0004b9c0), whose goals move
+  the AI. Without the hold the first patrol's second terrorist, stopped right behind the first,
+  shot it in the back; with it at 0.6 m one marine still hit the other, 6 m down his line of fire,
+  in the arm. Moving for a clear line (EVT_SHOT_BLOCKAGE's GOAL_REPOSITION_LOS_TO_TGT,
+  h_0bb586cf's GOAL_ATTACK_REPOS) is #26's;
 * once it knows no contact it takes up its base goal again, home first if a shot sent it there.
 
 Its personality's EVT_ENEMY_SEEN draws the attack goal (GOAL_DEBUG1 for `default`'s line,
@@ -140,9 +143,12 @@ shot passing within 1.5 m (EVT_SHOT_AT_NO_ENEMIES; the radius is the squad's dod
 posts EVT_USER1, whose entry's quick goal h_f765fc45 adds the shooter to its contacts ("QUICK
 GOAL!!! QG ADD OBJ TO CONTACTS being set here", the data's note on every Red Hand
 personality), and EVT_RETURN_HOME. So a terrorist shot from behind turns on its shooter, fires
-once it sees it, and goes home after the fight. A brain that knows an enemy registers its
-attacker itself (0x3ea02). The hit's reaction (the involuntary KNOCKDOWN / STUN draw) is
-play_enemies.rs's, which now counts a contact as an enemy known.
+once it sees it, and goes home after the fight. A brain that knows an enemy registers the one
+who hits it itself (0x3ea02), but a near miss tells it nothing then. The player's shots and the
+AI's count alike; a hit from its own side posts nothing of this (0x3e8fc, FUN_0004b9c0). The
+hit's reaction (the involuntary KNOCKDOWN / STUN draw) is play_enemies.rs's, which now counts a
+contact as an enemy known. A contact knocked down stays a contact (the scan drops one only when
+it's dead, unseen 15 s or stealthed).
 
 ## Aim
 
@@ -201,11 +207,14 @@ let go. The grenade lesson holds the first patrol's two while it plays.
   nearest living hostile it can see (within 120 m, nothing of the world in between: its chest,
   else its head over cover) and it aims and fires at it: the takes' aim helper
   (todo/28-tutorial/notes.md), to stage a fight. With `BF_TEST_GOTO` it walks on meanwhile,
-  toward the hostile while it aims (the walk follows the camera).
+  toward the hostile while it aims (the walk follows the camera). It runs after the other input
+  hooks (its fire wins over `BF_TEST_TRIGGER`'s) and after the free camera's input gate.
+* The tutorial's panels (#224) stop the clock until closed: `BF_TEST_PANEL=a,1` closes each
+  after 1 s (in the first patrol's run below the WEAPONS panel comes up at ~17 s).
 
 ```sh
 # the first patrol from its plate: the script, the walk past the camera, the fight
-BF_MAP=tutorial BF_TEST_GOTO=44,91,34.4,94.3 BF_BRAIN_LOG=1 BF_COMBAT_LOG=1 BF_TEST_AIM_HOSTILE=14 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+BF_MAP=tutorial BF_TEST_GOTO=44,91,34.4,94.3 BF_TEST_PANEL=a,1 BF_BRAIN_LOG=1 BF_COMBAT_LOG=1 BF_TEST_AIM_HOSTILE=14 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # the first patrol walked to and fro, Tex far away at the mine field
 BF_MAP=tutorial BF_TEST_GOTO=89,-55,89,-55 "BF_TRIGGER_FIRE=trigger_router_spawn_first_patrol,USER1,1" BF_BRAIN_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 ```
@@ -250,13 +259,21 @@ todo/28-tutorial's takes:
   building's 12 and 21 (inside its walls) were out of the aim helper's sight from the spots
   tried, so no run cleared all twelve (take12's clear had the marines and healing).
 * **Every spawn at once** (Tex away, every router fired): who arrives home and who stalls, as
-  "Not done" lists; the paces from h_f27d26c9 as logged.
+  "Not done" lists; the paces from `locomotion` as logged.
 * **No regressions** (main's build, e5d2f74, against this one): e40's first 40 s (the same log,
   no frame differing by more than 24 levels), sdm_e34's autopilot (the same log, 296 of 300
   frames the same: the first four differ between two runs of one build too), the test map's NPC
   fight of testtools.md (the same combat log, 222 of 225 frames the same and the other three by
   1-2 pixels). m09_a's four Shrikes now run home at its start (two Hounds stall 23 and 29 m
   short, off their ledge): seen in the opening shot, where they stood before.
+* **After main's #224 merged in** (main 9686256's build against this one): the hooks under the
+  free camera, `-- --test` e40's take04 scene (`BF_TEST_TRIGGER=3.0-3.15` with
+  `BF_TEST_FREECAM`: 69 of 70 frames the same, the Therm Sweeper's 80 -> 79 on the same frame)
+  and the test map (`BF_TEST_TRIGGER=2.0-2.3`: 50 of 50; `BF_TEST_FIRE=1 BF_TEST_SWITCH=2.2`: 75
+  of 75, the fire held off by the gate in both, the switch at 2.2 s in both); sdm_e34's
+  autopilot (the same log, 297 of 300); the NPC fight (the same combat log, 221 of 225: one
+  tracer two frames earlier, where main had it before #224, and 1-2 pixels). The first patrol
+  (with `BF_TEST_PANEL=a,1`) and the marines' fight as above.
 
 ## Not done
 
@@ -276,10 +293,14 @@ todo/28-tutorial's takes:
 * The patrol's 4 s timers in FUN_0002b490 (brain+0x1e0 / +0x1e8, and a 0x1f / 0x20 call on the
   character for a type with type+0x1a8 bit 15) aren't read.
 * FUN_0004d970's speed mode can be lowered by FUN_0004d840 and the brain's +0x1a8 record: not
-  read; the demo walks a patrol at mode 2 and takes h_f27d26c9's mode home as it is.
+  read; the demo walks a patrol at mode 2 and takes `locomotion`'s mode home as it is.
 * A shot's EVT_SHOT_AT radius is the squad's 1.5 m (a guess); grenades and blasts don't tell a
   brain who threw them.
 * A warp's FUN_0004c5e0 for a living character (it checks the home point again, FUN_0014f7a0,
   and goes through a world list at [0x469ab0]+0x1348) isn't done.
-* The marines' follow is the squad's (`squad_ai`); the game's wingman follow (FUN_00020b10, a
-  state machine with its own distances) trailed Tex in take11 and stopped 9-10 m behind him.
+* The marines' follow is the squad's (`squad_ai`): they set off within 0.2 s of Tex and run
+  abreast or ahead of him. In take11 they set off 1.6-2.2 s after him, trailed him, and stopped
+  9.1 and 10.2 m behind him, opposite his heading. The game's wingman follow (FUN_00020b10) is a
+  state machine of 17 states with its own distances (8, 10, 7, 7, 4 m); its follow distance,
+  side and start delay aren't readable without tracing those states: the wingman follow's own
+  ticket.

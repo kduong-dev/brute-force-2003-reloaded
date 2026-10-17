@@ -9,7 +9,7 @@
 //!    kept when it's within 5 m of where the copy stands (FUN_0014f7a0; the game picks a nav
 //!    point near the copy otherwise, the demo the copy's own spot). With a home-point the brain is
 //!    sent home at once (FUN_00018510 posts EVT_RETURN_HOME, 31): GOAL_RETURN_HOME (its update
-//!    FUN_00034690) goes there at the pace of the trigger's h_f27d26c9 (`home_motion`), done
+//!    FUN_00034690) goes there at the pace of the trigger's `locomotion` (`home_motion`), done
 //!    within the point's own h_e6564e8a when it has one, else 2 m (FUN_00026d80). The opening's
 //!    wall sentry, TUTORIAL_terrorist_5, walks 10.5 m west along the walkway to wpoint1493
 //!    (radius 1) through the opening's first shot (take03).
@@ -60,8 +60,9 @@
 //!    personality entry's quick goal h_f765fc45 adds the shooter to its contacts ("QUICK GOAL!!!
 //!    QG ADD OBJ TO CONTACTS being set here", the data's note on every Red Hand line), and
 //!    EVT_RETURN_HOME. So a shot terrorist turns on its shooter, and after the fight goes home.
-//!    (A brain that knows an enemy registers its attacker itself, at 0x3ea02.) Its hit reaction
-//!    is play_enemies.rs's.
+//!    (A brain that knows an enemy registers the one who hits it itself, at 0x3ea02; a near miss
+//!    tells it nothing then.) The player's shots and the AI's alike; a hit from its own side
+//!    posts none of it (0x3e8fc). Its hit reaction is play_enemies.rs's.
 //!  - **Aim** (FUN_00024f80's FUN_00024c00, with FUN_00024ae0): each time it fires at a character
 //!    the aim is on the chest with the probability of its accuracy, else off it by `up` turned
 //!    about the line of fire by up to 45 degrees either way, 1 m long (1.2 m when it points up
@@ -107,13 +108,13 @@ const ARRIVE: f32 = 2.0;
 /// The h_131de144 point is the home only within this of the character (m; FUN_0014f7a0 tests 25,
 /// its square), else the game takes a nav point near it.
 const HOME_NEAR: f32 = 5.0;
-/// GOAL_RETURN_HOME's motion from its +0x94, the spawn-trigger's h_f27d26c9: FUN_00034690 asks
-/// FUN_0004d970 for that speed mode when it's over 2, else for mode 2, and FUN_0004d970 takes the
-/// goal's own +0x94 instead whenever it isn't 0. Mode 1 scales the stick to 0.01 (no step: it
-/// stays where it is, None), 2 halves it (a walk), 3 a run, 4 the dash (FUN_00047a40(1); a run
-/// with brain+0x3c4 bit 10, not read).
-fn home_motion(gait: i64) -> Option<i64> {
-    match gait {
+/// GOAL_RETURN_HOME's motion from its +0x94, the spawn-trigger's `locomotion` (h_f27d26c9):
+/// FUN_00034690 asks FUN_0004d970 for that speed mode when it's over 2, else for mode 2, and
+/// FUN_0004d970 takes the goal's own +0x94 instead whenever it isn't 0. Mode 1 scales the stick
+/// to 0.01 (no step: it stays where it is, None), 2 halves it (a walk), 3 a run, 4 the dash
+/// (FUN_00047a40(1); a run with brain+0x3c4 bit 10, not read).
+fn home_motion(locomotion: i64) -> Option<i64> {
+    match locomotion {
         1 => None,
         3 => Some(enemies::MT_RUN),
         g if g >= 4 => Some(enemies::MT_DASH),
@@ -142,7 +143,9 @@ const STALL_TIME: f32 = 1.0;
 /// The brains run inside play.rs's `update_player` (`sense`, `think`, `attacked`, `held`); the
 /// plugin adds the aim helper hook, between the frame's input and the characters' step.
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, aim_hostile.after(read_input).before(update_player).run_if(in_state(AppState::Playing)));
+    // (after the other input hooks, the free camera's input gate before them: it wins over
+    // BF_TEST_TRIGGER's fire, and drives the character under the free camera too)
+    app.add_systems(Update, aim_hostile.after(read_input).after(ammo::test_trigger).before(update_player).run_if(in_state(AppState::Playing)));
 }
 
 /// A level character's brain (`Player::brain`): see the module notes.
@@ -230,8 +233,9 @@ fn log_on() -> bool {
 }
 
 /// A spawn-trigger's copy `m` gets its brain (play_triggers.rs `spawn_copy`), from the trigger
-/// `t` (its home-point h_1b747c8d, h_131de144, h_f27d26c9), the level's points, the copy's type and
-/// placement, where its feet are and the player's side. `label` names it in the log.
+/// `t` (its home-point h_1b747c8d, its AI's world point h_131de144, its `locomotion`), the level's
+/// points, the copy's type and placement, where its feet are and the player's side. `label` names
+/// it in the log.
 #[allow(clippy::too_many_arguments)]
 pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, placement: Option<&Placement>, feet: Vec3, player_team: u8,
                label: String) {
@@ -239,11 +243,11 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
     let point = |n: u32| (n != 0).then(|| level.objects.iter().find(|o| o.name == n)).flatten().map(|o| (o.transform.w_axis.truncate(), o.radius));
     let attr = |k: u32| t.element.attr(k).and_then(|v| v.as_hash()).filter(|&n| n != bf_viewer::bf::hash::h("")).unwrap_or(0);
     let home_point = point(attr(H_HOME_POINT));
-    let face_point = match &t.class { Class::Spawn { face_point, .. } => point(*face_point), _ => None };
-    let gait = t.element.attr(H_HOME_GAIT).and_then(|v| v.as_i64()).unwrap_or(0);
+    let ai_point = match &t.class { Class::Spawn { ai_point, .. } => point(*ai_point), _ => None };
+    let locomotion = t.element.attr(H_LOCOMOTION).and_then(|v| v.as_i64()).unwrap_or(0);
     // FUN_00018510: a home-point is the home, and the brain is sent there; without one, the world
     // point FUN_00017b60 was given, kept within HOME_NEAR of the copy (FUN_0014f7a0)
-    let home_at = home_point.or(face_point.filter(|p| p.0.xz().distance(feet.xz()) <= HOME_NEAR));
+    let home_at = home_point.or(ai_point.filter(|p| p.0.xz().distance(feet.xz()) <= HOME_NEAR));
     let home = home_at.map(|p| p.0).or(Some(feet));
     // the walk home arrives within the point's own radius when it has one (FUN_00026d80: over 0,
     // with GOAL_RETURN_HOME's 2.0 passed), else ARRIVE
@@ -263,11 +267,11 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
     let accuracy = bonus.filter(|&b| b >= 0).map_or(ty.ai.accuracy, |b| b as f32);
     let gun_bonus = bonus.map_or(shots::ACCURACY_BONUS, |b| b as f32);
     let b = Brain {
-        label, personality, home, home_radius, go_home: home_point.is_some(), home_mt: home_motion(gait), base: None, refused: vec![], route: vec![], at: 0,
+        label, personality, home, home_radius, go_home: home_point.is_some(), home_mt: home_motion(locomotion), base: None, refused: vec![], route: vec![], at: 0,
         follows, vision, fov, accuracy, gun_bonus, contacts: vec![], target: None, attacked: None, friends: vec![], blocked: false, best: f32::MAX, stalled: 0.0,
     };
     if log_on() {
-        println!("t={:.2} brain {}: home {}{} (h_f27d26c9 {gait}: {}), sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, gun bonus {gun_bonus}, \
+        println!("t={:.2} brain {}: home {}{} (locomotion {locomotion}: {}), sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, gun bonus {gun_bonus}, \
                   personality h_{personality:08x}{}", m.sim_time, b.label,
                  home.map_or("none".to_string(), |h| format!("({:.1}, {:.1}, {:.1}) within {home_radius} m", h.x, h.y, h.z)),
                  if home_point.is_some() { " from its home-point: goes there first" } else { "" },
@@ -278,20 +282,24 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
 }
 
 /// A spawn-trigger's home-point (h_1b747c8d, +0x80, FUN_002096e0 -> FUN_00018510) and its
-/// h_f27d26c9 (+0x84: GOAL_RETURN_HOME's +0x94, its speed).
+/// `locomotion` (h_f27d26c9, named in xmb_names.txt; +0x84, FUN_00018510's 5th argument, which
+/// stores it as GOAL_RETURN_HOME's +0x94 at 0x18750: its speed mode).
 const H_HOME_POINT: u32 = 0x1B74_7C8D;
-const H_HOME_GAIT: u32 = 0xF27D_26C9;
+const H_LOCOMOTION: u32 = 0xF27D_26C9;
 
-/// `u` was hit by `by`, or a shot of `by`'s passed close (play.rs `update_player`): its next
-/// sense knows the shooter (EVT_USER1's quick goal, or 0x3ea02), and with no enemy known before,
-/// it goes home after the fight (EVT_RETURN_HOME, posted with it).
-pub fn attacked(u: &mut Player, by: Who) {
+/// `u` was hit by `by` (`hit`), or a shot of `by`'s passed close, the player's or an AI's (play.rs
+/// `update_player`). A hit always tells it the shooter: EVT_DAMAGED_NO_ENEMIES (30) with no enemy
+/// known, whose EVT_USER1 quick goal adds it, else the damage handler's own registration
+/// (0x3ea02). A near miss only with no enemy known (EVT_SHOT_AT_NO_ENEMIES, 87, the same
+/// EVT_USER1). With no enemy known before, it goes home after the fight (EVT_RETURN_HOME,
+/// posted with them). Its next sense makes the shooter a contact.
+pub fn attacked(u: &mut Player, by: Who, hit: bool) {
     if u.dead {
         return;
     }
     let me = u.who();
     let Some(b) = u.brain.as_mut() else { return };
-    if by == me {
+    if by == me || (!hit && !b.contacts.is_empty()) {
         return;
     }
     if b.contacts.is_empty() && b.home.is_some() && !b.follows {
@@ -344,7 +352,8 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
         }
     }
     // the contacts' clocks (FUN_00054950): forgotten unseen FORGET s, gone with the character
-    // (dead or out of the world: the scan's dead list, EVT_TGT_KILLED), at once when stealthed
+    // (dead or out of the world: the scan's dead list, EVT_TGT_KILLED), at once when stealthed;
+    // one knocked down stays (unseen meanwhile: no target of the AI's fire)
     for c in b.contacts.iter_mut() {
         match seen.iter().find(|(i, _)| sight[*i].who == c.who) {
             Some(&(i, _)) => (c.unseen, c.last) = (0.0, sight[i].chest),
@@ -355,10 +364,10 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
     let label = b.label.clone();
     b.contacts.retain(|c| {
         let s = sight.iter().find(|s| s.who == c.who);
-        let keep = c.unseen < FORGET && s.is_some_and(|s| hostile(s) && s.visibility > STEALTH_FORGET);
+        let keep = c.unseen < FORGET && s.is_some_and(|s| s.alive && s.team != m.team && s.visibility > STEALTH_FORGET);
         if !keep && log {
             println!("t={:.2} brain {label}: forgets {:?} ({})", m.sim_time, c.who,
-                     if c.unseen >= FORGET { "unseen 15 s" } else if s.is_some_and(|s| s.target) { "stealthed" } else { "gone" });
+                     if c.unseen >= FORGET { "unseen 15 s" } else if s.is_some_and(|s| s.alive) { "stealthed" } else { "gone" });
         }
         keep
     });
@@ -431,12 +440,14 @@ fn in_line(from: Vec3, to: Vec3, chest: Vec3) -> bool {
 }
 
 /// A character of its own side this close to the line of fire (m, across) holds an AI's fire: the
-/// demo's choice, so a patroller doesn't shoot the one ahead of it in the back. The body's
+/// demo's own addition, so a patroller doesn't shoot the one ahead of it in the back. The body's
 /// BODY_RADIUS (0.4), its arms and gun held out past it (with 0.6 here a marine 6 m down the line
 /// of fire was hit in the upper arm, t227dev vsquad1), and the shot leaving the muzzle rather
-/// than the eye (play.rs `step_player`). The game's AI fires when it sees its target and its gun
-/// is on it (FUN_00024f80, FUN_0004dc10: no test for friends found); its moves for a clear line
-/// (EVT_SHOT_BLOCKAGE's GOAL_REPOSITION_LOS_TO_TGT, GOAL_ATTACK_REPOS) are #26's.
+/// than the eye (play.rs `step_player`). The game has no such hold: its AI fires when the target
+/// is seen with a clear ray and its gun is on it (FUN_00024f80, FUN_0004dc10), and that ray
+/// leaves characters out (FUN_00057730's object-type mask 0x415a1018 has bit 3), so it fires
+/// through a friend, whom the shot hits (x0.7, EVT_SHOT_BLOCKED_BY_FRIEND: FUN_0022c4d0); its
+/// moves for a clear line (GOAL_REPOSITION_LOS_TO_TGT, GOAL_ATTACK_REPOS) are #26's.
 const FRIEND_CLEARANCE: f32 = 0.9;
 
 /// One frame of `m`'s brain, in place of the squad's AI or the test map NPC's (see the module
@@ -495,7 +506,7 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
     // home first (EVT_RETURN_HOME, pri 1.5 over EVT_BASE's 1)
     if b.go_home {
         let home = b.home.filter(|h| h.xz().distance(here.xz()) > b.home_radius);
-        let stuck = home.is_some_and(|h| b.stuck(here, h, dt));
+        let stuck = home.is_some_and(|h| b.stuck(m, here, h, dt));
         match (home, b.home_mt) {
             (Some(h), Some(mt)) if !stuck => b.walk(m, h, mt),
             _ => {
@@ -505,7 +516,7 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
                 if log {
                     match home {
                         Some(h) => println!("t={:.2} brain {}: {} {:.1} m short of home, at ({:.1}, {:.1}): stays there", m.sim_time, b.label,
-                                            if b.home_mt.is_none() { "creeps (h_f27d26c9 1)" } else { "stalls" }, h.xz().distance(here.xz()), here.x, here.z),
+                                            if b.home_mt.is_none() { "creeps (locomotion 1)" } else { "stalls" }, h.xz().distance(here.xz()), here.x, here.z),
                         None => println!("t={:.2} brain {}: home at ({:.1}, {:.1})", m.sim_time, b.label, here.x, here.z),
                     }
                 }
@@ -556,12 +567,13 @@ impl Brain {
         }
     }
 
-    /// Whether the walk toward `to` has stalled (STALL_PROGRESS in STALL_TIME s), counting.
-    fn stuck(&mut self, here: Vec3, to: Vec3, dt: f32) -> bool {
+    /// Whether `m`'s walk toward `to` has stalled (STALL_PROGRESS in STALL_TIME s), counting; not
+    /// while a hit reaction is due or plays (the walk waits for it: `walk`).
+    fn stuck(&mut self, m: &Player, here: Vec3, to: Vec3, dt: f32) -> bool {
         let d = here.xz().distance(to.xz());
         if d < self.best - STALL_PROGRESS {
             (self.best, self.stalled) = (d, 0.0);
-        } else {
+        } else if !enemies::reacting(m) {
             self.stalled += dt;
         }
         self.stalled >= STALL_TIME
@@ -601,7 +613,7 @@ impl Brain {
     fn patrol(&mut self, m: &mut Player, here: Vec3, dt: f32) {
         let p = self.route[self.at];
         let reached = here.xz().distance(p.at.xz()) < p.radius;
-        if reached || self.stuck(here, p.at, dt) {
+        if reached || self.stuck(m, here, p.at, dt) {
             let log = log_on();
             if log {
                 println!("t={:.2} brain {}: {} patrol point {} ({:.1}, {:.1}){}", m.sim_time, self.label, if reached { "reaches" } else { "stalls short of" },

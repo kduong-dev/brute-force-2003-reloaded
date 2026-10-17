@@ -2286,6 +2286,9 @@ struct Seen {
     /// squad member waiting for its spawn-trigger isn't: `Player::absent`), and not a test map
     /// dummy (play_testtools.rs: a dummy is the player's target; one set to fight is everyone's)
     target: bool,
+    /// alive and in the world: a brain keeps it as a contact while it is, knocked down or not
+    /// (the scan drops a contact only when it's dead, FUN_00044140; play_brain.rs)
+    alive: bool,
     /// how visible it is (the skill's +0xe4, which the stamina update pushes into its combat
     /// target each frame, 0x11a934-0x11a94a: `skills::visibility`): 1, or a stealthed Hawk's
     /// near 0
@@ -2300,6 +2303,7 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
         team: u.team,
         chest: u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
         target: !u.dead && !knocked_down(u) && !u.test_hold && !u.absent && u.npc.is_none_or(|n| n.fight),
+        alive: !u.dead && !u.absent,
         visibility: skills::visibility(u),
     }).collect()
 }
@@ -3736,8 +3740,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if (shot.origin + shot.dir * t).distance(chest) >= SHOT_AT_RADIUS {
                 continue;
             }
-            // (a level character shot at knows its shooter: EVT_SHOT_AT_NO_ENEMIES, play_brain.rs)
-            brain::attacked(m, shooter);
+            // (a level character shot at by another side knows its shooter if it knows no enemy:
+            // EVT_SHOT_AT_NO_ENEMIES, play_brain.rs)
+            if m.team != team {
+                brain::attacked(m, shooter, false);
+            }
             if m.knock.is_some() || m.dodge_request.is_some() {
                 continue;
             }
@@ -3782,6 +3789,19 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 }
                 ai_hits.0.push(PendingHit { delay: t / shot.speed.max(1.0), member: i, hit, dir: shot.dir, local, ammo });
             }
+            // a level character of another side the shot passes close to knows its shooter if it
+            // knows no enemy, as with the player's shots (EVT_SHOT_AT_NO_ENEMIES, play_brain.rs)
+            let (by, by_team, struck) = (squad.0[k].who(), squad.0[k].team, hit.map(|h| h.0));
+            for (j, m) in squad.0.iter_mut().enumerate() {
+                if j == k || struck == Some(j + 1) || m.dead || m.brain.is_none() || m.team == by_team {
+                    continue;
+                }
+                let chest = m.position + Vec3::Y * (GROUND + m.height + 1.0);
+                let t = (chest - shot.origin).dot(shot.dir).clamp(0.0, shot.dist);
+                if (shot.origin + shot.dir * t).distance(chest) < SHOT_AT_RADIUS {
+                    brain::attacked(m, by, false);
+                }
+            }
         }
         squad.0[k].shots = shots;
     }
@@ -3801,9 +3821,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         let mut hit = h.hit;
         let amount = hit.land(u, &game.0, &difficulty, now);
         hurt(u, &game.0, amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
-        // (a level character hit knows its shooter, play_brain.rs)
-        if let Some(by) = h.hit.by {
-            brain::attacked(u, by);
+        // (a level character hit by another side knows its shooter, play_brain.rs; a friend's hit
+        // posts no EVT_DAMAGED_NO_ENEMIES, 0x3e8fc)
+        if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
+            brain::attacked(u, by, true);
         }
     }
     // shots arriving: the hit lands on the member (blood where the shot meets them)
@@ -3826,9 +3847,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // the test map's instant kill: one hit is enough (a stamina shield's share too)
         let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { enemies::lethal(m).max(amount) } else { amount };
         hurt(m, &game.0, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
-        // (a level character hit knows its shooter, play_brain.rs)
-        if let Some(by) = h.hit.by {
-            brain::attacked(m, by);
+        // (a level character hit by another side knows its shooter, play_brain.rs; a friend's
+        // hit posts no EVT_DAMAGED_NO_ENEMIES, 0x3e8fc)
+        if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
+            brain::attacked(m, by, true);
         }
         // shot by the player: sidestep one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
         if !m.dead && m.knock_request.is_none() && m.random(3) == 0 {

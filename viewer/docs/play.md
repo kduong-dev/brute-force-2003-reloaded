@@ -300,7 +300,10 @@ the rest: Tex's `99,4`); `BF_TEST_TRIGGER=<from>-<to>[,...]` holds the trigger o
 windows (s; overrides `BF_TEST_FIRE`); `BF_TEST_SWITCH=<s>[,...]` presses the weapon switch once
 at each time (it owns the switch for the run: Q does nothing then); `BF_TEST_RELOAD=<s>[,...]`
 presses R once at each time (it owns R for the run); `BF_TEST_KNOCK=<s>` knocks the player down
-then, once; `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time;
+then, once; `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time. These run after the
+test tools' input gate, so they work under `BF_TEST_FREECAM` too (the gate drops the keyboard's
+and `BF_TEST_FIRE`'s input, which `read_input` takes; #227 made that order explicit after a
+new system flipped it);
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot (and the second hand's), recharged
 round and the hint.
 
