@@ -255,8 +255,9 @@ const H_CALC_TEST: u32 = 0x0159_14AB;
 const H_TEMPLATE: u32 = 0x1299_668B;
 /// A spawn-trigger's copy's name, h_14f15a34 (+0xd0).
 const H_COPY_NAME: u32 = 0x14F1_5A34;
-/// A spawn-trigger's world point, h_131de144 (+0xd4; not its facing, see `Class::Spawn`).
-const H_FACE_POINT: u32 = 0x131D_E144;
+/// A spawn-trigger's world point for its copy's AI, h_131de144 (+0xd4: FUN_00017b60 makes it the
+/// copy's home point, play_brain.rs; not its facing, see `Class::Spawn`).
+const H_AI_POINT: u32 = 0x131D_E144;
 /// A spawn-trigger's fade-in time, h_eeae96e7 (+0xdc; FUN_00209620 hands it to the copy).
 const H_SPAWN_FADE: u32 = 0xEEAE_96E7;
 /// A spawn-trigger's delay, h_eab6952f (+0xe0; 0x209b5e).
@@ -576,7 +577,7 @@ pub enum Class {
     /// calculator-trigger (FUN_001ff560): `counter` (+0x40), `target` (+0x44), h_015914ab (+0x48)
     Calculator { counter: i64, target: i64, test: i64 },
     /// spawn-trigger (0x209250): see the H_ constants
-    Spawn { template: u32, copy_name: u32, face_point: u32, fade: f32, delay: f32, rearm: bool, member_check: bool },
+    Spawn { template: u32, copy_name: u32, ai_point: u32, fade: f32, delay: f32, rearm: bool, member_check: bool },
     /// plate-detector, proximity-detector (FUN_001f8c90 and their own parsers)
     Detector { volume: Volume, filter: Filter, keep_when_disabled: bool, phantom: u32 },
     /// anim-trigger (vtable 0x395ef0: the base's attributes only; its entries are `<anim>`)
@@ -743,7 +744,7 @@ fn class(e: &Element) -> Class {
         Class::Calculator { counter: int(e, h("counter"), 0), target: int(e, h("target"), 0), test: int(e, H_CALC_TEST, 0) }
     } else if tag == h("spawn-trigger") {
         // (the constructor's spawn fade, +0xdc = 2.0 when the attribute isn't given: 0x1fd6e7)
-        Class::Spawn { template: name_of(e, H_TEMPLATE), copy_name: name_of(e, H_COPY_NAME), face_point: name_of(e, H_FACE_POINT),
+        Class::Spawn { template: name_of(e, H_TEMPLATE), copy_name: name_of(e, H_COPY_NAME), ai_point: name_of(e, H_AI_POINT),
                        fade: float(e, H_SPAWN_FADE, 2.0), delay: float(e, H_SPAWN_DELAY, 0.0), rearm: flag(e, H_REARM),
                        member_check: e.attr(H_MEMBER_CHECK).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
     } else if tag == h("plate-detector") || tag == h("proximity-detector") {

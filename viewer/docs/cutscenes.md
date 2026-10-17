@@ -95,10 +95,11 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   See "Cameras and paths".
 * **A character not in the world gets nothing.** Its entity isn't bound, so its events reach no
   controller. The V-squad's 105s at 0.259 s name the two marines its 103s spawn at 7.57 and
-  7.87 s, and do nothing. Take11 has the marines walk off their pads after the cutscene. That
-  walk is their AI's: each spawn-trigger gives its copy's AI the 105's own point (`h_131de144`:
-  trigger_spawn64 wpoint1380, trigger_spawn76 wpoint1006), and the demo has no such AI yet
-  (#227).
+  7.87 s, and do nothing. Each spawn-trigger gives its copy's AI the 105's own point
+  (`h_131de144`: trigger_spawn64 wpoint1380, trigger_spawn76 wpoint1006, 0.5 and 0.9 m from
+  their pads) as its home, but nothing sends them there: take11's watch log has the two on their
+  spawn points to 0.1 m until Tex moves off, then following him (#227, [brain.md](brain.md),
+  "The Confed marines").
 * **Not run** (logged, #232): codes 100, 104, 110 (another script by name), 111, 113, 114 (a
   camera shake), 115 and 120 (a fade, FUN_00069780), and ATTACH_ENTITY. The tutorial uses none
   of them. Of 119's other fields (v2 and v7 the character's FUN_001268b0, v6 an entity flag, v8,
@@ -383,5 +384,6 @@ frames were compared side by side.
   within 0.05 s. The demo cuts at the script's times.
 * What a script-trigger's command 1 does differently from 0 (the engine's +0x50 gets 0 or 1)
   isn't traced. The tutorial uses 0.
-* The terrorists' patrols in the patrol shots stand still (#227). The V-squad's marines stand
-  on their pads after the cutscene, where take11's walk to their AI's points (#227).
+* The patrols in the patrol shots walk their routes since #227 ([brain.md](brain.md)), by their
+  walk clip's root in scripted play (FUN_0012cb40): the first patrol's leader passes its third
+  point ~0.8 s later than in take07.

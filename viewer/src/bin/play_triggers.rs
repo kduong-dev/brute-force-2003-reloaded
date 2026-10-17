@@ -611,8 +611,11 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             .filter(|(i, o)| o.name != 0 && tr.listeners.contains_key(&o.name) && a.breakable(*i).is_some()).map(|(i, o)| (i, o.name)).collect();
     }
     tr.fires = read_fires();
-    if log {
+    // (the brains' log names the copies too, play_brain.rs)
+    if log || std::env::var("BF_BRAIN_LOG").is_ok() {
         tr.names = names(&game.0);
+    }
+    if log {
         let mut counts: HashMap<String, usize> = HashMap::new();
         for l in &tr.live {
             *counts.entry(data::class_name(l.t.tag)).or_default() += 1;
@@ -1033,6 +1036,9 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
             println!("t {now:.2}: {by} spawns {} ({}, team {}) at {feet:.2} (the trigger's {:.2} up) facing {:.0} deg{}", tr.label(copy), game.type_label(kind),
                      m.team, point.y - feet.y, yaw.to_degrees(), if fade > 0.0 { format!(" (its {fade} s fade-in not drawn)") } else { String::new() });
         }
+        // its brain: home, base goal, sight, aim (#227, play_brain.rs; FUN_002096e0)
+        m.sim_time = now;
+        brain::spawned(&mut m, &tr.live[trigger].t, level, &t, placement.as_ref(), feet, player.team, tr.label(copy));
         squad.0.push(m);
         return;
     }

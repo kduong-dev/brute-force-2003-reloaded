@@ -68,9 +68,12 @@ and the default.xbe functions in [code-map.md](code-map.md).
   7 slowing down (0x3c05b8, 0x3c05bc), so it slides to a stop when it lets go; a walking clip
   plays at the walk speed over its own (`AnimDef::move_speed`), at most x1.25 (0x3c05cc). The
   reactions, dodges, dives and surprise move by their clip's root (FUN_0012cb40's list).
-* **Who moves them.** The demo's enemies stand where they're put; the fighting AI that moves them
-  in the game (cover, strafing, attacking) is out of scope. `BF_TEST_NPC_MOTION` drives one in a
-  motion type to a point (below), to show the clips and speeds.
+* **Who moves them.** A character a level's spawn-trigger makes has a brain (#227,
+  [brain.md](brain.md)): it walks or runs home, patrols, sees, turns on what shoots it and fights
+  where it stands, through the drive below (its walk clip, the type's speeds and turn-rate). The
+  test map's enemies stand where they're put; the fighting AI's moves (cover, strafing,
+  pursuit) are #26's. `BF_TEST_NPC_MOTION` drives one in a motion type to a point (below), to
+  show the clips and speeds.
 
 ## Hit reactions
 
@@ -313,9 +316,8 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
 
 ## Not done
 
-* The fighting AI: moving, cover, strafing, attacking; when an enemy walks, runs or strafes. The
-  hook shows the motions it would play.
-* Spawning the level's enemies from their spawn triggers (#102).
+* The fighting AI's moves: cover, strafing, pursuit (#26). A level character's walk home, its
+  patrol and its fight where it stands are #227's ([brain.md](brain.md)).
 * The glow of their skins and their own capsules (#173): the hit cylinder is the squad's, also
   through a knock-down (a body lying on the ground is hit through the standing cylinder).
 * The kill reward text (#176); the placements' `inventory-drop`.

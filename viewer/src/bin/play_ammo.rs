@@ -103,7 +103,9 @@ pub fn plugin(app: &mut App) {
             commands.insert_resource(SwitchHint::default());
         })
         .add_systems(Update, (
-            (stock, test_clip, test_trigger).chain().after(read_input).before(update_player),
+            // (the hooks after the test tools' input gate: they drive the character under the free
+            // camera too, `testtools::gate_input`)
+            (stock, test_clip, test_trigger).chain().after(read_input).after(super::testtools::gate_input).before(update_player),
             (reload_and_dry_fire, recharge, tick_name).chain().after(update_player).before(play_sounds),
         ).run_if(in_state(AppState::Playing)));
 }
