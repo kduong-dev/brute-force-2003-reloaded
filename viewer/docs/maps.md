@@ -52,8 +52,10 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Sound: a door's anim-trigger sends ANIM_START (31) as it starts opening and ANIM_BACK_START
     (49) as it starts closing to sound-triggers beside it, which play them (#223,
     [triggers.md](triggers.md)): on sdm_e34 h_1edc357e (0.93 s) opening, metal_gate_05_close
-    (h_f25b1597, 1.47 s) closing, each played while the player is within its `max-distance`, 7 m
-    (full within its min distance, 3 m, then quieter along the rolloff curve to nothing at 7), and
+    (h_f25b1597, 1.47 s) closing, each played while the player is within its `max-distance`: 7 m
+    for three of the eight doors (h_196659f4, h_10616962, h_0b6838d8; full within the min distance,
+    3 m, then quieter along the rolloff curve to nothing at 7), 15 m for the other five (full
+    within 7 m), and
     the gate's metal_door_5 (h_e1b1f167, 8.5 s) within its 15 m (7 m full). These waves are streamed (resource-type
     1) from the language wave bank `ml-sounds/en/<level>-en.tgz` at the offsets in the level's
     sound bank. (Before #223 the demo played the sound-trigger nearest the door itself.)
