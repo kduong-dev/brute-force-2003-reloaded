@@ -16,7 +16,7 @@
 | wheel | zoom |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: **the demo's own key** (the game has no reload button; it reloads by itself on an empty clip, see **Ammo, reload and the crosshair**). The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
-| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
+| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold E to activate panel." shows and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
 | Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
@@ -481,6 +481,10 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   step (3.067 s), so that tap's shot logs at +0.30 from the window's start.
 * **The burst counter** is cleared by a reload starting (FUN_0022daf0), a dry click
   (FUN_002327f0) and a switch (FUN_0022dc00), as in the game.
+* **The seed** of a shooter's fire loop is the demo's own hash, character x 7919 + NPC number x
+  104729 (`play.rs` `shot_seed`), in wrapping arithmetic (#229): an NPC numbered above ~41,010
+  overflowed a u32 and panicked a debug build. The seeds below that are unchanged, so the shot
+  patterns are too. Checked by `cargo test --bin bf_play shot_seed`.
 * **Bursts and pellets**. A trigger cycle is h_e4076713 shots, h_e6c60892 s apart. At 0 s apart
   (the Bower 20's 6) they all go in the same frame for one round and one report, and each after
   the first is turned from the one before by up to h_e704fd69 degrees of yaw and of pitch
