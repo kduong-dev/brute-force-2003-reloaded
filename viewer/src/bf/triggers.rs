@@ -632,6 +632,15 @@ pub enum Class {
     /// `amount` (x 1 + 0.1 x the difficulty with h_11819686) to the campaign squad's cash, under
     /// `key` with h_08f457d8 (else the null name)
     Score { amount: f32, key: u32, keyed: bool, flag0: bool, scaled: bool },
+    /// level-over-trigger h_1f07be84 (vtable 0x395b20, parser FUN_00207f20, handler 0x207fe0,
+    /// update 0x207f70, #226): h_18f66101 (+0x40; 1 by its constructor 0x2080e0, so true when the
+    /// data doesn't say): OPERATE with it ends the mission (the game mode's +0x14), without it the
+    /// zone (a fade, the checkpoint save, then the zone a zone-trigger named)
+    LevelOver { ends_mission: bool },
+    /// zone-trigger (vtable 0x395648, parser FUN_00207d80, handler 0x207de0, #226): h_14b0089f
+    /// (+0x44, a std::string), the file name of the zone to go to: OPERATE hands it to the session
+    /// (its vtable +0x60, +0x64, then +0x5c(name, 0))
+    Zone { next: String },
     /// every other class: its base actions only, until its step runs it
     Other,
 }
@@ -826,10 +835,21 @@ fn class(e: &Element) -> Class {
         let on = |k: u32| e.attr(k).and_then(|v| v.as_i64()).is_none_or(|v| v != 0);
         Class::Score { amount: float(e, h("amount"), 0.0), key: name_of(e, H_SCORE_KEY), keyed: on(H_SCORE_KEYED), flag0: on(H_SCORE_FLAG0),
                        scaled: on(H_SCORE_SCALED) }
+    } else if tag == H_LEVEL_OVER_TRIGGER {
+        Class::LevelOver { ends_mission: e.attr(H_ENDS_MISSION).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
+    } else if tag == h("zone-trigger") {
+        Class::Zone { next: e.attr(H_NEXT_ZONE).and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase() }
     } else {
         Class::Other
     }
 }
+
+/// The level-over-trigger's element name: h_1f07be84, which "level-over-trigger" hashes to.
+pub const H_LEVEL_OVER_TRIGGER: u32 = 0x1F07_BE84;
+/// A level-over-trigger's h_18f66101 (+0x40, FUN_00207f20): the mission ends (else the zone).
+const H_ENDS_MISSION: u32 = 0x18F6_6101;
+/// A zone-trigger's h_14b0089f (+0x44, FUN_00207d80): the next zone's file name ("m01_b").
+const H_NEXT_ZONE: u32 = 0x14B0_089F;
 
 /// Every trigger of a level file's elements (`all`, its walk), in the file's order.
 pub fn read(all: &[&Element]) -> Vec<Trigger> {
@@ -855,10 +875,10 @@ pub fn read(all: &[&Element]) -> Vec<Trigger> {
 /// unnamed classes do (leads §5).
 pub fn class_name(tag: u32) -> String {
     /// The class elements named in the data (their names hash to the tags).
-    const NAMED: [&str; 22] = ["router-trigger", "timer-trigger", "calculator-trigger", "spawn-trigger", "plate-detector", "proximity-detector",
+    const NAMED: [&str; 24] = ["router-trigger", "timer-trigger", "calculator-trigger", "spawn-trigger", "plate-detector", "proximity-detector",
         "anim-trigger", "destroyer-trigger", "sound-trigger", "dialog-trigger", "script-trigger", "letterbox-trigger", "warp-trigger",
         "radar-trigger", "menu-trigger", "gamevar-trigger", "score-trigger", "evaluate-trigger", "event-trigger", "camera-trigger",
-        "effect-trigger", "ai-trigger"];
+        "effect-trigger", "ai-trigger", "level-over-trigger", "zone-trigger"];
     if let Some(n) = NAMED.iter().find(|n| h(n) == tag) {
         return n.trim_end_matches("-trigger").to_string();
     }
@@ -866,7 +886,6 @@ pub fn class_name(tag: u32) -> String {
         0xE9B3_AE8E => "message".into(),
         0xE2B9_C3A2 => "input".into(),
         0x10EC_B459 => "waypoint".into(),
-        0x1F07_BE84 => "level-over".into(),
         0x14CC_CFAA => "property".into(),
         0x1308_18C0 => "damage-plate".into(),
         t => format!("h_{t:08x}"),
@@ -877,14 +896,9 @@ pub fn class_name(tag: u32) -> String {
 /// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
 /// step 2, #221; the script, letterbox and warp triggers since step 3, #222; the sound- and
 /// dialog-triggers since step 4, #223; the message, input, menu and event triggers since step 5,
-/// #224; the radar-trigger and the damage plate since step 9, #228), and for those that do
-/// nothing a player sees (waypoint, evaluate: their base actions only).
+/// #224; the level-over and zone triggers since step 7, #226; the radar-trigger and the damage
+/// plate since step 9, #228), and for those that do nothing a player sees (waypoint, evaluate:
+/// their base actions only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
-    Some(if tag == 0x1F07_BE84 {
-        "step 7, #226"
-    } else if tag == 0x14CC_CFAA {
-        "a later step (object properties)"
-    } else {
-        return None;
-    })
+    (tag == 0x14CC_CFAA).then_some("a later step (object properties)")
 }

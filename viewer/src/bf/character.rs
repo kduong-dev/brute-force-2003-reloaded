@@ -121,6 +121,40 @@ fn int_of(e: &Element, name: u32) -> i64 {
     e.attr(name).and_then(|v| v.as_i64()).unwrap_or(0)
 }
 
+/// A path or list attribute's names (`gameflag-path="h_1d604469 characters h_048b8580"`): the
+/// attribute repeated, one name per entry, or a List value, or a string of words, each a name or
+/// a written hash.
+fn name_list(e: &Element, k: u32) -> Vec<u32> {
+    fn one(v: &Value) -> Vec<u32> {
+        match v {
+            Value::List(items) => items.iter().flat_map(one).collect(),
+            Value::Str(s) => s.split_whitespace().map(|w| w.strip_prefix("h_").and_then(|x| u32::from_str_radix(x, 16).ok()).unwrap_or_else(|| h(w))).collect(),
+            other => other.as_hash().into_iter().collect(),
+        }
+    }
+    e.attrs.iter().filter(|(n, _)| *n == k).flat_map(|(_, v)| one(v)).filter(|&x| x != 0).collect()
+}
+
+/// game-options' character list h_f5a42d61 (`<character h_07f2f670 h_f4db1dd4 archetype-name
+/// gameflag-path ..>`; its entries' parser FUN_00198b60) and an entry's name, h_07f2f670.
+const H_GAME_CHARACTERS: u32 = 0xF5A4_2D61;
+const H_CHARACTER_NAME: u32 = 0x07F2_F670;
+
+/// A character of game-options' list h_f5a42d61 (line 63 of the decoded
+/// decompiled/xml/common/game-options-en.xml): the deathmatch characters, each unlocked by its
+/// global flag. The end screen names the DNA found on a level by it (0x83110: the entry whose
+/// gameflag-path is the DNA item's campaign-gameflag, its first field, then " DNA").
+#[derive(Clone, Debug, Default)]
+pub struct GameCharacter {
+    /// h_07f2f670: its name's string (h_0ce3dafe "Confed Marine"); taken as the entry's first
+    /// field, the one 0x83110 hands the end screen (take12: "Confed Marine DNA")
+    pub name: u32,
+    /// `archetype-name` (the entry's +0x20): its character type (h_048b8580)
+    pub archetype: u32,
+    /// `gameflag-path`: the global flag that unlocks it (h_1d604469/characters/h_048b8580)
+    pub gameflag: Vec<u32>,
+}
+
 /// A zone's movie list (`list`: its `pre-movies` or `post-movies` children), each movie with its
 /// subtitles (see `Subtitle`). A number stored as text is read as a number.
 fn campaign_movies(zone: &Element, list: u32) -> Vec<CampaignMovie> {
@@ -261,6 +295,8 @@ pub struct Game {
     pub reticule: ReticuleOptions,
     /// game-options `<radar>`: the radar's range and the radar-triggers' cue (see `RadarOptions`)
     pub radar: RadarOptions,
+    /// game-options' characters (h_f5a42d61): the names the DNA is found by (see `GameCharacter`)
+    pub option_characters: Vec<GameCharacter>,
     /// game-options `<combat-skills>`: the skills' own tuning (see `CombatSkills`)
     pub combat_skills: CombatSkills,
     /// game-options' HUD `<main h_e72ec57a h_1d9f07c5>`: the screen's safe margins across and
@@ -922,6 +958,10 @@ pub struct ItemType {
     /// IG_MISC, 6 IG_ENHANCEMENT, 5 IG_HEAL, the lower ones protection, explosives, grenades and
     /// ammo
     pub group: i64,
+    /// its `<campaign-gameflag gameflag="..">` path: for a DNA canister the global flag of the
+    /// character it unlocks (the tutorial's h_1d604469/characters/h_048b8580, game-options'
+    /// "Confed Marine": `GameCharacter`); empty for none
+    pub gameflag: Vec<u32>,
 }
 
 /// An item's group-type IG_DNA_CANNISTER (the IG_ name table 0x3be594, its last record: 9): a DNA
@@ -1076,6 +1116,7 @@ impl Game {
             difficulty_settings: None,
             reticule: ReticuleOptions::default(),
             radar: RadarOptions::default(),
+            option_characters: vec![],
             combat_skills: CombatSkills::default(),
             hud_safe: [48.0, 36.0],
             menus: Default::default(),
@@ -1271,6 +1312,14 @@ impl Game {
                     sound: r.attr(H_RADAR_SOUND).and_then(|v| v.as_hash()).filter(|&s| s != 0 && s != h("")).unwrap_or(d.sound),
                 };
             }
+            // the characters: <h_f5a42d61><character h_07f2f670 archetype-name gameflag-path ..> (GameCharacter)
+            if let Some(list) = root.walk().into_iter().find(|e| e.name == H_GAME_CHARACTERS) {
+                self.option_characters = list.children_named(h("character")).map(|c| GameCharacter {
+                    name: hash_of(c.attr(H_CHARACTER_NAME)),
+                    archetype: hash_of(c.attr(h("archetype-name"))),
+                    gameflag: name_list(c, h("gameflag-path")),
+                }).collect();
+            }
             // the skills' tuning: <h_f7bc2603><h_04aa86aa h_1469a0df="0.5"/>.. (CombatSkills)
             let skills = root.walk().into_iter().find(|e| e.name == H_COMBAT_SKILLS);
             if let Some(tex) = skills.and_then(|c| c.child(H_BERSERKER_BLOCK)) {
@@ -1400,6 +1449,7 @@ impl Game {
                         icon: id(0xE5EC_3F1F),
                         message: t.child(h("base")).map(|b| hash_of(b.attr(0x1DD3_A49D))).filter(|&x| x != 0 && x != h("")).unwrap_or(0),
                         group: int("group-type"),
+                        gameflag: t.child(h("campaign-gameflag")).map(|g| name_list(g, h("gameflag"))).unwrap_or_default(),
                     });
                 }
             }

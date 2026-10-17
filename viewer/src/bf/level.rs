@@ -110,11 +110,21 @@ pub struct Placement {
 #[derive(Clone, Debug)]
 pub struct LevelCamera {
     pub name: u32,
+    /// its type (h_ff8051ee): `camera` for the scripts' cameras; END_CAMERA for the views the end
+    /// screen picks from (FUN_001092e0)
+    pub kind: u32,
     pub transform: Mat4,
     pub half_fov: f32,
     pub near: f32,
     pub far: f32,
 }
+
+/// The camera type the end screen cuts the view to: as the end screen opens, FUN_001092e0 picks
+/// one of the level's camera-objects whose type's name (+0xc, +8) is h_ee3b0d8c at random (the
+/// game's random state 0x46cfd8) and shows the world through it. The tutorial has one,
+/// h_046b169f at (-12.8, 27.4, -5.6): take12's view of the base behind MISSION SUCCESSFUL, its
+/// camera point (-12.82, -5.63) in the watch log from 359.6 s.
+pub const END_CAMERA: u32 = 0xEE3B_0D8C;
 
 /// A level path-object (`<path-object name><transform><points><points time><transform>..`, its
 /// attribute handler 0x16cca0): what a script's MOTION_PATH entity of that name is bound to. Its
@@ -268,6 +278,11 @@ pub struct Level {
     pub camera_objects: Vec<LevelCamera>,
     /// the level's path-objects (the cutscenes' camera paths, `LevelPath`)
     pub paths: Vec<LevelPath>,
+    /// `<compiled max-score>`: the most cash the zone can pay, at BRUTAL (its parser 0x1982a0
+    /// keeps it at the level record's +0x120; the tutorial's 11760 = (5000 + 1000 + 24 x 100) x
+    /// 1.4). The end screen shows it at the difficulty played ("Cash $x / $5040" on STANDARD,
+    /// take05 and take12). 0 when the file has none
+    pub max_score: f32,
     /// the level's patrol points, both kinds, in the file's order (`PatrolPoint`)
     pub patrols: Vec<PatrolPoint>,
 }
@@ -466,6 +481,7 @@ impl Level {
         let number = |e: &Element, k: u32, or: f32| e.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(or);
         let camera_objects = all.iter().filter(|e| e.name == h("camera-object")).filter_map(|c| Some(LevelCamera {
             name: hash(c, h("name")),
+            kind: hash(c, H_TYPE),
             transform: transform(&floats(c.child(h("transform"))))?,
             half_fov: number(c, H_CAMERA_HALF_FOV, 35.0),
             near: number(c, H_CAMERA_NEAR, 0.005),
@@ -535,6 +551,8 @@ impl Level {
                 data: e.attr(H_BUTTON_DATA).and_then(|v| v.as_f32()).map_or(-1, |v| v as i64),
             })).collect();
         let triggers = triggers::read(&all);
+        let max_score = all.iter().find(|e| e.name == h("compiled")).and_then(|e| e.attr(h("max-score")))
+            .and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0);
         // the patrol points (#227): both kinds, by their attribute handler's names (FUN_000ecdc0,
         // FUN_000eddd0)
         let patrols = all.iter().filter(|e| e.name == H_PATROL_POINT || e.name == H_PATROL_HEAD).filter_map(|e| {
@@ -553,7 +571,7 @@ impl Level {
             })
         }).collect();
         Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, terrain_ambient,
-                   terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths, patrols })
+                   terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths, max_score, patrols })
     }
 
     /// What using a button does to the level's animated objects, read from the data alone: (object

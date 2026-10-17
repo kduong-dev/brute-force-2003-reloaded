@@ -71,12 +71,14 @@
 //!    0x200650): OPERATE asks for its script to play (by its entry's `<script command>`: play,
 //!    pause, resume, stop), brings the letterbox in (its STOP takes it out), warps its objects to
 //!    its world point. A script's 103 sends its signal straight to a trigger's handler.
+//!  * level-over and zone triggers (#226, play_level_over.rs; 0x207fe0, 0x207de0): OPERATE ends
+//!    the mission (h_18f66101) or the zone, and names the zone to go to; the mission flow
+//!    (play_mission.rs) does the rest.
 //!  * radar-trigger and damage plate (#228, play_radar.rs and play_damage_plate.rs; 0x207230,
 //!    0x1fa7e0): OPERATE gives its objects a radar-contact and a blink time (the route's
 //!    waypoint blips); a proximity detector that hurts its occupants while it's enabled.
-//!  * every other class (level-over, property ...): its base actions; its own actions are logged
-//!    as left to their step (`bf::triggers::later_step`). Waypoint and evaluate triggers: base
-//!    only.
+//!  * every other class (property ...): its base actions; its own actions are logged as left to
+//!    their step (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
 //! copy's), a named breakable object broken (DESTROYED), a wall panel used (USE_OBJECT, play.rs
@@ -269,6 +271,10 @@ pub(crate) mod hints;
 #[path = "play_panels.rs"]
 pub(crate) mod panels;
 
+/// The level-over and zone triggers, what they ask of the mission flow (#226).
+#[path = "play_level_over.rs"]
+pub(crate) mod level_over;
+
 /// The radar-triggers and the radar-contacts they set on the level's objects (#228).
 #[path = "play_radar.rs"]
 pub(crate) mod radar;
@@ -372,6 +378,10 @@ enum ClassState {
     /// warp-trigger (#222): its `world-point` (+0x40, the point linked at +0x44) and h_0ede4719
     /// (+0x48: the fade-in a warped character gets, 0x200400)
     Warp { point: u32, fade: f32 },
+    /// level-over-trigger (#226): h_18f66101 (+0x40)
+    LevelOver { ends_mission: bool },
+    /// zone-trigger (#226): h_14b0089f (+0x44), the next zone's file name
+    Zone { next: String },
 }
 
 /// Which class a trigger runs as (for `update` and `deliver`).
@@ -396,6 +406,8 @@ enum Kind {
     Script,
     Letterbox,
     Warp,
+    LevelOver,
+    Zone,
     Radar,
 }
 
@@ -551,6 +563,9 @@ pub struct Triggers {
     /// what the script and letterbox triggers ask of the cutscenes this frame (play_script.rs
     /// `step` takes them)
     cutscene: Vec<script::Request>,
+    /// what the level-over and zone triggers ask of the mission flow (play_level_over.rs,
+    /// play_mission.rs takes it)
+    flow: level_over::Flow,
 }
 
 /// A map starts: its triggers as the level file has them, the listeners linked (FUN_001febb0),
@@ -594,6 +609,8 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             Class::Destroyer => ClassState::Destroyer { pending: false },
             Class::Gamevar { op, operands } => ClassState::Gamevar { op: *op, operands: operands.clone() },
             Class::Score { amount, key, keyed, scaled, .. } => ClassState::Score { amount: *amount, key: *key, keyed: *keyed, scaled: *scaled },
+            Class::LevelOver { ends_mission } => ClassState::LevelOver { ends_mission: *ends_mission },
+            Class::Zone { next } => ClassState::Zone { next: next.clone() },
             Class::Other => cutscene_class(t),
         };
         // FUN_000dfe90 as the spawn-trigger links: its template counted once more, or -1 for
@@ -1147,6 +1164,8 @@ impl Triggers {
             ClassState::Script { .. } => Kind::Script,
             ClassState::Letterbox { .. } => Kind::Letterbox,
             ClassState::Warp { .. } => Kind::Warp,
+            ClassState::LevelOver { .. } => Kind::LevelOver,
+            ClassState::Zone { .. } => Kind::Zone,
             ClassState::Radar { .. } => Kind::Radar,
         }
     }
@@ -1327,6 +1346,8 @@ impl Triggers {
             Kind::Gamevar => self.gamevar(i, ev),
             Kind::Score => self.score(i, ev),
             Kind::Script | Kind::Letterbox | Kind::Warp => self.cutscene_trigger(i, ev),
+            Kind::LevelOver => self.level_over(i, ev),
+            Kind::Zone => self.zone(i, ev),
             Kind::Radar => self.radar_trigger(i, ev),
             Kind::Other => self.other(i, ev),
         }

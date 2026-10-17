@@ -4,9 +4,15 @@
 capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to the window.
 
 * **Title.** START (DEMOS is shown but not here).
-* **Main menu.** CAMPAIGN, DEATHMATCH, SQUAD DEATHMATCH, OPTIONS, CREDITS, with the selected
-  word white over a faint, larger echo, and its description beside the logo. Only DEATHMATCH
-  and SQUAD DEATHMATCH lead on; the game's mode panel (split-screen / System Link) is skipped.
+* **Main menu.** CAMPAIGN, DEATHMATCH, SQUAD DEATHMATCH, OPTIONS, CREDITS, opening on CAMPAIGN
+  (take01 at 2 s), with the selected word white over a faint, larger echo, and its description
+  beside the logo. CAMPAIGN leads to the campaign path, DEATHMATCH and SQUAD DEATHMATCH to their
+  maps (the game's mode panel, split-screen / System Link, is skipped), CREDITS to the credits.
+* **The campaign path** (#226, `play_campaign_menus.rs`): CAMPAIGN TYPE, SELECT PROFILE, SELECT
+  CAMPAIGN, ENTER NAME, SELECT DIFFICULTY and JOIN CAMPAIGN, drawn from their game-options menus
+  in the game's font records with their own animations; START on JOIN CAMPAIGN starts a new
+  campaign on the tutorial at the difficulty chosen (its movies, LOADING, the zone). Each screen,
+  what it draws and what's stubbed (profiles and saves are #27): [mission.md](mission.md).
 * **SELECT MISSION.** A carousel of the mode's maps (previous, current outlined, next) with the
   map's name, planet and description. The level list (`common/campaign-bf.xmb`) gives each map
   its kind (`Type`): `h_120785ef` deathmatch (the 7 arenas, mp*), `h_efb18d28` squad deathmatch
@@ -19,7 +25,9 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
   and the menu comes back on SELECT MISSION with that map selected. Each map installs its own
   collision (`arena::Arena::install`, replacing the last one).
 * **Controls.** Arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back
-  (Esc at the title quits). The mouse points and clicks.
+  (Esc at the title quits); the pad's START selects too, but on JOIN CAMPAIGN, where it begins
+  (Enter or Space a second time does on the keyboard). The mouse points and clicks (not on the
+  campaign path's screens).
 
 All of it is the game's. The front end itself is defined by `common/game-options-en.xmb`: its
 menus, item positions, menu-style colours and fonts, music player and `global-sounds` (menu
@@ -99,10 +107,28 @@ the menu screenshot hooks skip them too and count frames from the menu, unless `
 (frames then count from the start: the boot screen, the movies).
 
 When the menu is skipped: whenever `BF_MAP` or a test hook (`BF_CAPTURE`, `BF_TEST_GOTO`, …) is
-set, or with `BF_NO_MENU=1`. Test hooks: `BF_MENU_SHOT=<file.png>` saves the menu and quits;
-`BF_MENU_SCREEN=title|main|dm|sdm|loading` with `BF_MENU_PICK=<n>` picks the screen and entry;
+set, or with `BF_NO_MENU=1` (`BF_MENU_PRESS` without `BF_MAP` shows it, with `BF_CAPTURE` too).
+Test hooks: `BF_MENU_SHOT=<file.png>` saves the menu and quits;
+`BF_MENU_SCREEN=title|main|dm|sdm|loading` (or the campaign path's
+`campaign|profile|slot|name|difficulty|join`) with `BF_MENU_PICK=<n>` picks the screen and entry;
 `BF_MENU_SHOT_FRAME=<n>` takes the shot at frame n (screenshots step a fixed 1/60 s a frame, to
 catch the animations); `BF_MENU_GO=1` plays the picked map (the screenshot hook runs on into it); `BF_TEST_BACK=<n>` goes back to the menu after n frames of a map.
+`BF_MENU_PRESS=<key>@<s>[;...]` presses keys (`a`, `b`, `x`, `y`, `up`, `down`, `left`, `right`,
+`start`) that many seconds after the menu first opens, one a frame (the opening movies are
+skipped); with `BF_CAPTURE=<dir>` each menu frame is saved as `menu_NNN.png`, a fixed 1/15 s a
+frame, and the run goes on through a briefing (`brief_NNN.png`) into the map (`frame_NNN.png`,
+`BF_CAPTURE_FRAMES` of them, then it quits); `BF_MENU_FRAMES=<n>` quits after n menu frames.
+
+```sh
+# the campaign path to JOIN CAMPAIGN on take01's timeline, 470 menu frames
+BF_MENU_PRESS="a@0.5;a@2.0;a@4.7;a@7.3;a@12.5;a@15.7;a@18.3;a@27.8" BF_MENU_FRAMES=470 BF_CAPTURE=cap \
+  BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+```
+
+Record texts (the campaign path's, the end screen's, the status line) are made before the UI's
+frame starts (`play_fonts.rs` runs before bevy_ui's Prepare and Stack sets and the visibility
+propagation): a glyph node made after them isn't drawn until the next frame, and a text made
+anew every frame (sliding or typing in) would never show.
 `BF_MOVIES=<mission>` plays that mission's briefing movies after the boot instead of the opening
 movies, then the title (briefing.md).
 

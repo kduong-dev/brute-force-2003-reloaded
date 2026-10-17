@@ -7,13 +7,20 @@
 //! strings, style colours (common/game-options-en.xmb), menu music (menu_dub1) and menu sounds
 //! (the global-sounds of game-options, played from the common sound bank).
 //!
-//! Only DEATHMATCH and SQUAD DEATHMATCH lead on; the game's mode panel (split-screen / System
-//! Link) is skipped. Choosing a map shows the LOADING screen while the map loads on a thread,
-//! then plays it in the same window (deathmatch alone, without the radar). In the game,
-//! Backspace comes back here, to the map it left.
+//! CAMPAIGN leads on to the campaign path (CAMPAIGN TYPE to JOIN CAMPAIGN, then a new campaign's
+//! first mission: play_campaign_menus.rs, #226); DEATHMATCH and SQUAD DEATHMATCH to their maps
+//! (the game's mode panel, split-screen / System Link, is skipped). Choosing a map shows the
+//! LOADING screen while the map loads on a thread, then plays it in the same window (deathmatch
+//! alone, without the radar). In the game, Backspace comes back here, to the map it left.
 //!
 //! Keys: arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back (Esc at
-//! the title quits); the mouse picks and clicks.
+//! the title quits), the pad's START is START (JOIN CAMPAIGN); the mouse picks and clicks.
+//!
+//! Test hook BF_MENU_PRESS=<key>@<s>[;...] presses keys (a, b, x, y, up, down, left, right, start)
+//! that many seconds after the menu first opens; with BF_CAPTURE=<dir> each menu frame is saved as
+//! menu_NNN.png (a fixed 1/15 s step a frame), and the run goes on through a briefing (its
+//! brief_NNN.png) into the map (its frame_NNN.png, BF_CAPTURE_FRAMES of them, then it quits);
+//! BF_MENU_FRAMES=<n> quits after n menu frames.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -50,7 +57,10 @@ const S_RECOMMENDED: u32 = 0x1512_A125;
 const S_LOADING: u32 = 0x0F28_682D;
 const S_SELECT: u32 = 0x15A0_733A;
 const S_BACK: u32 = 0xF1E0_6461;
-/// The main menu: label, description, and where it leads (a level kind; 0: not here).
+/// The main menu's CAMPAIGN (its words' string): the campaign path (play_campaign_menus.rs).
+const S_CAMPAIGN: u32 = 0xEA6C_B1B3;
+/// The main menu: label, description, and the map list it leads to (a level kind; 0: none:
+/// CAMPAIGN's path, OPTIONS (not here), CREDITS).
 const MAIN: [(u32, u32, u32); 5] = [
     (0xEA6C_B1B3, 0xF35A_957D, 0),                      // CAMPAIGN
     (0x1D31_7BBA, 0x163F_7C9D, LEVEL_DEATHMATCH),       // DEATHMATCH
@@ -191,22 +201,28 @@ struct Map {
     preview: Option<Handle<Image>>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The front end's screens.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum Screen {
+    #[default]
     Title,
     Main,
     Missions,
     /// the map is loading (bf_play starting on it): game-options' LOADING menu
     Loading,
+    /// a screen of the campaign path (play_campaign_menus.rs)
+    Campaign(campaign::Step),
 }
 
-#[derive(Resource)]
+/// The front end's state: the screen, the main menu's selection, SELECT MISSION's level kind and
+/// its map per kind, and the campaign path's choices.
+#[derive(Resource, Default)]
 struct Menu {
     screen: Screen,
-    /// selection on the main menu, the level kind of SELECT MISSION and its map per kind
     main: usize,
     kind: u32,
     pick: HashMap<u32, usize>,
+    path: campaign::Path,
 }
 
 #[derive(Resource)]
@@ -296,6 +312,8 @@ pub struct MenuData {
     waves: HashMap<u32, Vec<u8>>,
     music: Option<Vec<u8>>,
     frames: Vec<Vec<u8>>,
+    /// the campaign path's menus and pictures (play_campaign_menus.rs)
+    campaign: campaign::CampaignData,
 }
 type Rgba = (u32, u32, Vec<u8>);
 /// a map of the menu: file, title, players, planet, text, preview
@@ -338,12 +356,14 @@ pub fn gather(game: &mut Game, data_dir: &Path) -> MenuData {
     if frames.is_empty() {
         eprintln!("menu: no background movie frames in ../decompiled/movies/menuBack (see docs/menu.md)");
     }
-    MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, waves, music, frames }
+    let campaign = campaign::gather(game);
+    MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, waves, music, frames, campaign }
 }
 
 /// Put the front end's data in the world (its pictures and sounds as assets).
 pub fn install(world: &mut World, data: MenuData) {
-    let MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, mut waves, mut music, frames } = data;
+    let MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, mut waves, mut music, frames, campaign } = data;
+    campaign::install(world, campaign);
     let mut images = world.resource_mut::<Assets<Image>>();
     let image = |images: &mut Assets<Image>, (w, h, px): (u32, u32, Vec<u8>)| images.add(Image::new(
         Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, px,
@@ -397,12 +417,15 @@ pub fn plugin(app: &mut App) {
     let in_menu = in_state(super::AppState::Menu).or(in_state(super::AppState::Loading));
     app.init_resource::<Clock>()
         // screenshots (BF_MENU_SHOT) step a fixed 1/60 s a frame, so a frame number is a moment
-        // of the animations
+        // of the animations; a capture driven by BF_MENU_PRESS the capture's step (1/15 s)
         .insert_resource(if std::env::var("BF_MENU_SHOT").is_ok() {
             bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f32(1.0 / 60.0))
+        } else if menu_capture() {
+            bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f32(super::capture_step()))
         } else {
             bevy::time::TimeUpdateStrategy::Automatic
         })
+        .insert_resource(Presses::read())
         .add_systems(OnEnter(super::AppState::Boot), start_boot)
         .init_resource::<Opening>()
         .add_systems(Update, (fit, finish_boot, pulse_emblem, leave_boot).chain().run_if(in_state(super::AppState::Boot)))
@@ -411,9 +434,84 @@ pub fn plugin(app: &mut App) {
         .add_systems(OnExit(super::AppState::Loading), close_menu)
         // (a briefing's movies take the screen: what the boot or the menu put up goes)
         .add_systems(OnEnter(super::AppState::Briefing), (close_boot, close_menu))
-        .add_systems(Update, (fit, play_movie, input, build, animate, finish_loading, finish_credits).chain().run_if(in_menu))
+        .add_systems(Update, (fit, play_movie, input, build, animate, campaign::animate, finish_loading, finish_credits).chain().run_if(in_menu.clone()))
         // (the screenshot hook runs on into a map, to see it)
-        .add_systems(Update, shot.after(finish_loading));
+        .add_systems(Update, shot.after(finish_loading))
+        .add_systems(Update, capture.after(campaign::animate).run_if(in_menu));
+}
+
+/// BF_MENU_PRESS's presses (see the module notes): each key and when (s from the menu's first
+/// opening), and the clock since then (the menu's: real time, or the capture's steps).
+#[derive(Resource, Default)]
+struct Presses {
+    left: std::collections::VecDeque<(String, f32)>,
+    clock: Option<f32>,
+}
+
+impl Presses {
+    /// BF_MENU_PRESS read (none without it).
+    fn read() -> Presses {
+        let left = std::env::var("BF_MENU_PRESS").ok().map(|v| v.split([';', ',']).filter_map(|e| {
+            let (k, at) = e.trim().split_once('@')?;
+            Some((k.trim().to_ascii_lowercase(), at.trim().parse::<f32>().ok()?))
+        }).collect()).unwrap_or_default();
+        Presses { left, clock: None }
+    }
+
+    /// The presses due by the clock this frame, as the frame's asks.
+    fn due(&mut self, dt: f32, asked: &mut Asked) {
+        let Some(clock) = self.clock.as_mut() else {
+            self.clock = Some(0.0);
+            return;
+        };
+        *clock += dt;
+        let now = *clock;
+        while self.left.front().is_some_and(|p| p.1 <= now) {
+            let (k, _) = self.left.pop_front().unwrap_or_default();
+            match k.as_str() {
+                "a" => asked.select = true,
+                "b" => asked.back = true,
+                "up" => asked.up = true,
+                "down" => asked.down = true,
+                "left" => asked.left = true,
+                "right" => asked.right = true,
+                "start" => asked.start = true,
+                other => eprintln!("menu: BF_MENU_PRESS: no key \"{other}\""),
+            }
+            // (one a frame, as a pad's presses come)
+            break;
+        }
+    }
+}
+
+/// A capture of the front end (BF_CAPTURE with BF_MENU_PRESS): see the module notes.
+fn menu_capture() -> bool {
+    std::env::var("BF_CAPTURE").is_ok() && std::env::var("BF_MENU_PRESS").is_ok()
+}
+
+/// BF_CAPTURE with BF_MENU_PRESS: each menu frame saved as menu_NNN.png (numbered on through the
+/// menu's later visits: the LOADING screen after a briefing), after a few frames' warm-up; with
+/// BF_MENU_FRAMES=<n> the app quits after n of them.
+fn capture(mut commands: Commands, mut frame: Local<usize>, mut warm: Local<usize>, mut exit: EventWriter<AppExit>) {
+    if !menu_capture() {
+        return;
+    }
+    let Ok(dir) = std::env::var("BF_CAPTURE") else { return };
+    if *warm < 10 {
+        *warm += 1;
+        return;
+    }
+    let most: Option<usize> = std::env::var("BF_MENU_FRAMES").ok().and_then(|v| v.parse().ok());
+    if most.is_some_and(|m| *frame >= m) {
+        if *frame > most.unwrap_or(0) + 20 {
+            exit.write(AppExit::Success);
+        }
+        *frame += 1;
+        return;
+    }
+    commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+        .observe(bevy::render::view::screenshot::save_to_disk(format!("{dir}/menu_{:03}.png", *frame)));
+    *frame += 1;
 }
 
 /// A path under ../decompiled (the extracted textures, the converted movies), if it's there; or,
@@ -484,7 +582,8 @@ fn play_movie(time: Res<Time>, movie: Option<ResMut<Movie>>, mut images: ResMut<
     }
 }
 
-/// What the player asked for this frame.
+/// What the player asked for this frame (`start`: the pad's START, which JOIN CAMPAIGN tells from
+/// A; elsewhere it selects).
 #[derive(Default, PartialEq)]
 struct Asked {
     up: bool,
@@ -493,22 +592,34 @@ struct Asked {
     right: bool,
     select: bool,
     back: bool,
+    start: bool,
 }
 
+/// The frame's presses (keys, pads, the mouse, BF_MENU_PRESS) on the screen shown.
 #[allow(clippy::too_many_arguments)]
 fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, menu: Option<ResMut<Menu>>,
          assets: Option<Res<Assets2>>, sfx: Option<Res<Sfx>>, items: Query<(&Interaction, &Item), Changed<Interaction>>,
-         mut cursor: EventReader<CursorMoved>, mut exit: EventWriter<AppExit>, mut next: ResMut<NextState<super::AppState>>) {
+         mut cursor: EventReader<CursorMoved>, mut exit: EventWriter<AppExit>, mut next: ResMut<NextState<super::AppState>>,
+         time: Res<Time>, mut presses: ResMut<Presses>, mut path: campaign::PathParams) {
     let (Some(mut menu), Some(assets), Some(sfx)) = (menu, assets, sfx) else { return };
     let any = |k: &[KeyCode], b: &[GamepadButton]| keys.any_just_pressed(k.iter().copied()) || pads.iter().any(|p| p.any_just_pressed(b.iter().copied()));
+    // (START selects, as A does, but on JOIN CAMPAIGN, where it begins)
+    let start = any(&[], &[GamepadButton::Start]);
+    let join = menu.screen == Screen::Campaign(campaign::Step::Join);
     let mut asked = Asked {
         up: any(&[KeyCode::ArrowUp, KeyCode::KeyW], &[GamepadButton::DPadUp]),
         down: any(&[KeyCode::ArrowDown, KeyCode::KeyS], &[GamepadButton::DPadDown]),
         left: any(&[KeyCode::ArrowLeft, KeyCode::KeyA], &[GamepadButton::DPadLeft]),
         right: any(&[KeyCode::ArrowRight, KeyCode::KeyD], &[GamepadButton::DPadRight]),
-        select: any(&[KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space], &[GamepadButton::South, GamepadButton::Start]),
+        select: any(&[KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space], &[GamepadButton::South]),
         back: any(&[KeyCode::Escape, KeyCode::Backspace], &[GamepadButton::East]),
+        start,
     };
+    presses.due(time.delta_secs(), &mut asked);
+    if asked.start && !join {
+        asked.start = false;
+        asked.select = true;
+    }
     // the mouse: pointing picks (when it moves), clicking selects
     let moved = cursor.read().count() > 0;
     for (interaction, item) in &items {
@@ -556,6 +667,13 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
             } else if asked.select && MAIN[menu.main].0 == S_CREDITS {
                 play(&mut commands, &sfx, SND_SELECT);
                 start_credits(&mut commands);
+            } else if asked.select && MAIN[menu.main].0 == S_CAMPAIGN {
+                // the campaign path (play_campaign_menus.rs)
+                let (screen, p) = campaign::open();
+                menu.screen = screen;
+                menu.path = p;
+                play(&mut commands, &sfx, SND_SELECT);
+                play(&mut commands, &sfx, SND_OPEN);
             } else if asked.select {
                 let kind = MAIN[menu.main].2;
                 if assets.maps.get(&kind).is_some_and(|m| !m.is_empty()) {
@@ -590,6 +708,7 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
             }
         }
         Screen::Loading => {}
+        Screen::Campaign(_) => campaign::input(&mut commands, &mut menu, &asked, &sfx, &mut path, &assets.strings, &mut next),
     }
 }
 
@@ -608,11 +727,25 @@ struct MenuMedia {
     frames: Arc<Frames>,
 }
 
-/// Coming back from a map: which, so SELECT MISSION shows it.
+/// Coming back from a map: which, so SELECT MISSION shows it; or (`main`, the end screen's Quit,
+/// #226) the main menu, on CAMPAIGN (take10 at 228 s).
 #[derive(Resource, Default)]
 pub struct Return {
     pub map: Option<String>,
     pub deathmatch: bool,
+    pub main: bool,
+}
+
+/// A zone to load behind the LOADING screen as the menu opens (the mission flow's, #226: after a
+/// briefing's movies, a restart): the menu opens straight onto LOADING (`open_menu`).
+#[derive(Resource)]
+struct LoadNext(String);
+
+/// Load the zone in archive `map` behind the front end's LOADING screen and play it (from a
+/// briefing, or from a map: its state ends first).
+pub fn load_next(commands: &mut Commands, next: &mut NextState<super::AppState>, map: &str) {
+    commands.insert_resource(LoadNext(map.to_string()));
+    next.set(super::AppState::Menu);
 }
 
 /// The map loading on a thread (its result arrives here) and which it is.
@@ -649,6 +782,8 @@ struct Booted {
     movies: Vec<Clip>,
     /// the campaign's movie lists (play_briefing.rs)
     briefing: super::briefing::BriefingData,
+    /// the font records' atlases (play_fonts.rs)
+    fonts: super::fonts::FontData,
 }
 
 /// An opening movie: its frames and its sound.
@@ -692,11 +827,12 @@ const OPENING: [&str; 3] = ["MGS_Logo_Final", "DA_Logo_Final1", "Intro_Montage"]
 const OPENING_FPS: f32 = 30.0;
 
 /// Whether to play the opening movies: not with BF_NO_INTRO or BF_MOVIES (a briefing's list
-/// plays instead), nor under the menu's screenshot hooks (unless BF_SHOT_EARLY: they then count
-/// frames from the start, to see the boot and movies).
+/// plays instead), nor under the menu's screenshot and press hooks (unless BF_SHOT_EARLY: they
+/// then count frames from the start, to see the boot and movies).
 fn intro_wanted() -> bool {
     std::env::var("BF_NO_INTRO").is_err() && std::env::var("BF_MOVIES").is_err()
-        && (std::env::var("BF_SHOT_EARLY").is_ok() || (std::env::var("BF_MENU_SHOT").is_err() && std::env::var("BF_MENU_GO").is_err()))
+        && (std::env::var("BF_SHOT_EARLY").is_ok()
+            || (std::env::var("BF_MENU_SHOT").is_err() && std::env::var("BF_MENU_GO").is_err() && std::env::var("BF_MENU_PRESS").is_err()))
 }
 
 /// Start up: the boot screen straight away, and the game data, the menu's and the opening
@@ -735,6 +871,7 @@ fn start_boot(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         let booted = Game::load(&dir).map(|mut game| {
             let menu = gather(&mut game, &dir);
             let briefing = super::briefing::gather(&mut game);
+            let fonts = super::fonts::gather(&mut game);
             let movies = if intro_wanted() {
                 OPENING.iter().filter_map(|&name| {
                     let frames = movie_frames(name);
@@ -747,7 +884,7 @@ fn start_boot(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             } else {
                 vec![]
             };
-            Booted { menu, movies, briefing }
+            Booted { menu, movies, briefing, fonts }
         });
         let _ = tx.send(booted);
     });
@@ -765,6 +902,7 @@ fn finish_boot(world: &mut World) {
     });
     install(world, booted.menu);
     super::briefing::install(world, booted.briefing);
+    super::fonts::install(world, booted.fonts);
     world.insert_resource(Opening(booted.movies.into()));
     world.insert_resource(BootDone(0.0));
 }
@@ -918,18 +1056,20 @@ fn finish_loading(mut commands: Commands, pending: Option<Res<Pending>>, mut nex
         }
         Err(e) => {
             eprintln!("menu: couldn't load {}: {e}", pending.map);
-            commands.insert_resource(Return { map: Some(pending.map.clone()), deathmatch: pending.deathmatch });
+            commands.insert_resource(Return { map: Some(pending.map.clone()), deathmatch: pending.deathmatch, main: false });
             next.set(super::AppState::Menu);
         }
     }
 }
 
 /// Open the menu: its camera, the movie behind, the 640 x 480 screen in front, the music; the
-/// title, or (back from a map) that map's SELECT MISSION.
+/// title, or (back from a map) that map's SELECT MISSION, or the main menu; or, a zone to load
+/// (`LoadNext`), the LOADING screen at once, with no music.
+#[allow(clippy::too_many_arguments)]
 fn open_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>, media: Res<MenuMedia>, assets: Res<Assets2>,
-             ret: Option<Res<Return>>, credits: Option<Res<FromCredits>>) {
+             ret: Option<Res<Return>>, credits: Option<Res<FromCredits>>, load: Option<Res<LoadNext>>, mut next: ResMut<NextState<super::AppState>>) {
     commands.insert_resource(ClearColor(Color::BLACK));
-    if let Some(m) = &media.music {
+    if let (Some(m), None) = (&media.music, &load) {
         commands.spawn((AudioPlayer::new(m.clone()), PlaybackSettings { volume: Volume::Linear(MUSIC_VOLUME), ..PlaybackSettings::LOOP },
                         Music, MenuPart));
     }
@@ -946,19 +1086,31 @@ fn open_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>, media: R
     let screen = commands.spawn((Node { width: Val::Px(SCREEN.x), height: Val::Px(SCREEN.y), ..default() }, ChildOf(front))).id();
     commands.insert_resource(Ui { screen, movie });
     commands.insert_resource(Movie { frames: media.frames.clone(), clock: 0.0, shown: 0, image: movie_image, fps: MOVIE_FPS, looping: true });
-    let mut menu = Menu { screen: Screen::Title, main: 2, kind: LEVEL_SQUAD_DEATHMATCH, pick: HashMap::new() };
-    if let Some(Return { map: Some(map), deathmatch }) = ret.as_deref() {
+    // (the main menu opens on its first entry, CAMPAIGN: take01 at 2 s)
+    let mut menu = Menu { screen: Screen::Title, main: 0, kind: LEVEL_SQUAD_DEATHMATCH, pick: HashMap::new(), ..default() };
+    if let Some(Return { map: Some(map), deathmatch, .. }) = ret.as_deref() {
         menu.screen = Screen::Missions;
         menu.kind = if *deathmatch { LEVEL_DEATHMATCH } else { LEVEL_SQUAD_DEATHMATCH };
         menu.main = MAIN.iter().position(|m| m.2 == menu.kind).unwrap_or(2);
         let at = assets.maps.get(&menu.kind).and_then(|m| m.iter().position(|x| &x.file == map)).unwrap_or(0);
         menu.pick.insert(menu.kind, at);
     }
+    if ret.as_deref().is_some_and(|r| r.main) {
+        // the end screen's Quit: the main menu, on CAMPAIGN
+        commands.remove_resource::<Return>();
+        menu.screen = Screen::Main;
+        menu.main = 0;
+    }
     if credits.is_some() {
         // back from the credits: the main menu, on CREDITS
         commands.remove_resource::<FromCredits>();
         menu.screen = Screen::Main;
         menu.main = MAIN.iter().position(|m| m.0 == S_CREDITS).unwrap_or(0);
+    }
+    if let Some(LoadNext(map)) = load.as_deref() {
+        // a zone to load: LOADING at once
+        commands.remove_resource::<LoadNext>();
+        start_loading(&mut commands, &mut menu, &mut next, map, false);
     }
     commands.insert_resource(menu);
 }
@@ -980,7 +1132,8 @@ fn play(commands: &mut Commands, sfx: &Sfx, sound: u32) {
 /// Lay the current screen out again when the menu changes.
 #[allow(clippy::too_many_arguments)]
 fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Assets2>>, ui: Option<Res<Ui>>, sfx: Option<Res<Sfx>>,
-         time: Res<Time>, mut clock: ResMut<Clock>, mut last: Local<Option<(Screen, usize)>>, music: Query<Entity, With<Music>>) {
+         time: Res<Time>, mut clock: ResMut<Clock>, mut last: Local<Option<(Screen, usize)>>, music: Query<Entity, With<Music>>,
+         cm: Option<Res<campaign::CampaignMenus>>) {
     let (Some(menu), Some(assets), Some(ui), Some(sfx)) = (menu, assets, ui, sfx) else { return };
     if !menu.is_changed() {
         return;
@@ -998,6 +1151,11 @@ fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Ass
     let at = |x: f32, y: f32| Node { position_type: PositionType::Absolute, left: Val::Px(x), top: Val::Px(y), ..default() };
     let screen = ui.screen;
     match menu.screen {
+        Screen::Campaign(step) => {
+            if let Some(cm) = cm.as_deref() {
+                campaign::build(&mut commands, screen, cm, &assets.strings, &sfx, step, &menu.path, clock.now, opened);
+            }
+        }
         Screen::Title | Screen::Main => {
             let main = menu.screen == Screen::Main;
             if let Some(logo) = &assets.logo {
@@ -1454,10 +1612,12 @@ fn animate(mut commands: Commands, time: Res<Time>, clock: Res<Clock>, assets: O
 }
 
 /// Test hooks: BF_MENU_SHOT=<file.png> saves the menu and quits; BF_MENU_SCREEN=title | main |
-/// dm | sdm shows that screen and BF_MENU_PICK=<n> selects entry n of it first. BF_MENU_GO plays
-/// the selected map.
+/// dm | sdm (or the campaign path's campaign | profile | slot | name | difficulty | join) shows
+/// that screen and BF_MENU_PICK=<n> selects entry n of it first. BF_MENU_GO plays the selected map.
+#[allow(clippy::too_many_arguments)]
 fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu>>, assets: Option<Res<Assets2>>,
-        mut exit: EventWriter<AppExit>, mut next: ResMut<NextState<super::AppState>>, state: Res<State<super::AppState>>) {
+        mut exit: EventWriter<AppExit>, mut next: ResMut<NextState<super::AppState>>, state: Res<State<super::AppState>>,
+        cm: Option<Res<campaign::CampaignMenus>>) {
     let go = std::env::var("BF_MENU_GO").is_ok();
     let file = std::env::var("BF_MENU_SHOT").ok();
     if file.is_none() && !go {
@@ -1490,6 +1650,12 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                     let k = menu.kind;
                     menu.pick.insert(k, pick.unwrap_or(0));
                 }
+                // the campaign path's screens (play_campaign_menus.rs)
+                Ok(step @ ("campaign" | "profile" | "slot" | "name" | "difficulty" | "join")) => {
+                    let (screen, path) = campaign::for_shot(step, &assets.strings, cm.as_deref());
+                    menu.screen = screen;
+                    menu.path = path;
+                }
                 _ => {}
             }
         }
@@ -1515,9 +1681,14 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
     }
 }
 
-/// Whether to show the menu: no map chosen and no test hook running.
+/// Whether to show the menu: no map chosen and no test hook running, or BF_MENU_PRESS driving it
+/// (with BF_CAPTURE: the menu's capture).
 pub fn wanted() -> bool {
     const TESTS: [&str; 11] = ["BF_MAP", "BF_CAPTURE", "BF_SCREENSHOT", "BF_TEST_GOTO", "BF_AUTOPILOT", "BF_DUMP_SOUND_IDS",
                                "BF_DUMP_MUSIC", "BF_FIND_STEEP", "BF_ANIM_PROBE", "BF_DUMP_TEXTURE", "BF_NO_MENU"];
-    TESTS.iter().all(|k| std::env::var(k).is_err())
+    (std::env::var("BF_MENU_PRESS").is_ok() && std::env::var("BF_MAP").is_err()) || TESTS.iter().all(|k| std::env::var(k).is_err())
 }
+
+/// The campaign path's screens (CAMPAIGN TYPE to JOIN CAMPAIGN).
+#[path = "play_campaign_menus.rs"]
+mod campaign;

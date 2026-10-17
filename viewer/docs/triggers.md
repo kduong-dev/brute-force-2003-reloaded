@@ -9,6 +9,7 @@ the cash they work on: [campaign.md](campaign.md); script, letterbox and warp si
 #222, with the cutscenes they drive: [cutscenes.md](cutscenes.md); sound and dialog since step
 4, #223, with the voices and the level's music they play; message, input, menu and event since
 step 5, #224, with the hint lines, button gates and panels they show: [hints.md](hints.md);
+level-over and zone since step 7, #226, with the mission's end: [mission.md](mission.md);
 radar-triggers and the damage plate since step 9, #228, with the radar's objective dots they
 set: [play.md](play.md), "Radar").
 Everything here is read from default.xbe's trigger code (the addresses are in the code's
@@ -70,13 +71,14 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | letterbox (7) | OPERATE brings the letterbox in over its `show-duration`, STOP takes it out over its `hide-duration` (FUN_00073460 / FUN_000734b0); 0.5 s each without one (the constructor, 0x207599) | 0x207480, FUN_00207410 |
 | warp (18) | OPERATE moves its objects (a spawn-trigger's copy) to its `world-point`: on the ground under it, facing down a direction-point's -z or as it was for a world-point; a dead character stays, and one not spawned yet has no copy to move. Its fade-in h_0ede4719 is 2 s without one (0x200734; not drawn) | 0x200650, FUN_00200480, 0x200400 |
 | score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
+| level-over h_1f07be84 (1) | OPERATE with h_18f66101 (true by default) ends the mission (the game mode's "over" bit); without it ends the zone: a 0.5 s fade, the checkpoint save ("Saving Campaign..."), then the zone the last zone-trigger named (#226: `play_level_over.rs`, [mission.md](mission.md)). The tutorial's fires at 8.93 s of its ending script | 0x207fe0, 0x207f70 |
+| zone-trigger (0) | OPERATE names the zone (its h_14b0089f, an archive) the next zone's end goes to (#226) | 0x207de0 |
 | radar (18) | OPERATE gives its objects their `radar-contact` and a blink time (#228: see "Radar-triggers") | 0x207230 |
 | damage plate h_130818c0 (1) | A proximity detector that hurts what's in it while it's enabled (#228: see "The damage plate") | 0x1fa7e0, FUN_001f8510 |
 
-Every other class (level-over h_1f07be84, property h_14cccfaa) runs its base actions; each of
-its own actions is counted as used, as its handler counts it, and logged with the step that runs
-it ("h_11a8c558 (property) OPERATE on USE_OBJECT [tex_1]: not run yet (a later step (object
-properties))").
+Every other class (property h_14cccfaa) runs its base actions; each of its own actions is
+counted as used, as its handler counts it, and logged with the step that runs it ("h_11a8c558
+(property) OPERATE on USE_OBJECT [tex_1]: not run yet (a later step (object properties))").
 
 ## Gamevar-triggers
 
@@ -610,7 +612,7 @@ the log read and the frames looked at:
 
 ## Not done here, or not known
 
-* The classes left to later steps (level-over #226, the object properties: above).
+* The classes left to later steps (the object properties: above).
 * Radar-triggers (#228): the radar sound of a set with h_12b33046 (none of the tutorial's has
   it) isn't heard in any take; contacts 1, 4, 5 and 6 are kept on their objects but the radar
   draws only 2, 3 and 7 (the alignment and boss contacts are #160's enemies on the radar).

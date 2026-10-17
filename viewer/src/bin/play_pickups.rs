@@ -159,6 +159,24 @@ const NEW_TIME: f32 = 3.0;
 #[derive(Resource, Default)]
 pub struct PickupFeed(pub Vec<(String, i64, f32)>);
 
+/// The DNA canisters taken on this level, by item type, in order: the squad's inventory holds
+/// them in the game, where the end screen's DNA line finds one (0x83110, the game session's
+/// vtable +0x1d8: the first item whose campaign-gameflag is a game-options character's
+/// gameflag-path; play_endmenu.rs). Cleared as each map starts.
+#[derive(Resource, Default)]
+pub struct DnaFound(pub Vec<u32>);
+
+impl DnaFound {
+    /// The name (a string id) of the character the first DNA taken unlocks: game-options'
+    /// character entry whose gameflag-path is its campaign-gameflag (0x83110; the tutorial's
+    /// h_0ce3dafe "Confed Marine"). None without one.
+    pub fn name(&self, game: &Game) -> Option<u32> {
+        self.0.iter().filter_map(|k| game.items.get(k)).filter(|i| !i.gameflag.is_empty())
+            .find_map(|i| game.option_characters.iter().find(|c| c.gameflag == i.gameflag))
+            .map(|c| c.name).filter(|&n| n != 0)
+    }
+}
+
 struct Pickup {
     entity: Entity,
     kind: u32,
@@ -253,9 +271,11 @@ const USED_GLOW: Color = Color::srgb(0.9, 0.12, 0.08);
 pub fn plugin(app: &mut App) {
     app.init_resource::<PickupFeed>()
         .init_resource::<Blasts>()
+        .init_resource::<DnaFound>()
         .add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| {
             commands.insert_resource(Pickups::default());
             commands.insert_resource(PickupFeed::default());
+            commands.insert_resource(DnaFound::default());
             commands.insert_resource(UsedMedkit::default());
             commands.insert_resource(Blasts::default());
         }).after(setup))
@@ -430,7 +450,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
 #[allow(clippy::too_many_arguments)]
 fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
                 mut squad: ResMut<Squad>, mut status: ResMut<UsePanel>, mut feed: ResMut<PickupFeed>, mut vis: Query<&mut Visibility>,
-                mut events: ResMut<super::triggers::TriggerEvents>) {
+                mut events: ResMut<super::triggers::TriggerEvents>, mut found: ResMut<DnaFound>) {
     let dt = frame_dt(&time);
     for line in &mut feed.0 {
         line.2 -= dt;
@@ -505,8 +525,12 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             _ => false,
         };
         if taken {
-            // (a DNA canister is gone for good: the unlock is once)
+            // (a DNA canister is gone for good: the unlock is once; the end screen names it,
+            // `DnaFound`)
             p.gone = if dna { f32::INFINITY } else { RESPAWN };
+            if dna {
+                found.0.push(p.kind);
+            }
             // a placed one: PICKUP_OBJECT to the triggers listening to it (play_triggers.rs)
             if p.name != 0 {
                 let by = if who == 0 { player.trigger_name } else { squad.0[who - 1].trigger_name };
