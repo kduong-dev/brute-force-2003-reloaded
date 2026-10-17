@@ -23,7 +23,7 @@ BF_MAP=tutorial BF_HINT_LOG=1 BF_TRIGGER_FIRE="trigger_sound_bratton_refresher,U
 
 * **The trigger** (element h_e9b3ae8e, vtable 0x395bf0; parser FUN_002077b0) holds two lines,
   each shown or not, a kind, a virtual button and a text (h_f69bd9c8 / h_172c4e2c,
-  h_18c6906a / h_f39e6b58, h_ef8df28a / h_04d509b8, h_170f888b / h_0a22eaf1: +0x40-+0x5c). Its
+  h_18c6906a / h_f39e6b58, h_ef8df28a / h_04d509b8, h_170f888b / h_0a22ead1: +0x40-+0x5c). Its
   OPERATE (handler 0x2078e0) sends OPERATED (its iD, the event's subject and data) to its
   targets, then sets the player view's two hint lines (+0x3c, +0x40): a line it shows takes the
   kind, button and text and starts blinking; one it doesn't is hidden at once. So the tutorial
@@ -59,6 +59,19 @@ controller to play co-op." (h_ece8df23, 0.1 s after Bratton's last opening line 
 weapons." (h_fd019b39): the start area's chain; "[Black] to use Medkit." (h_e4bc535e, the
 event-trigger below); the grenade, mine, Berserker ("[White] to toggle Berserker Mode.") and
 sniper hints further on (todo/28-tutorial/leads.md §6.1).
+
+### The use prompt
+
+A world button in reach ("Hold [X] to activate panel.", the gate's wall panels) has a prompt of
+its own: a HUD widget (vtable 0x3a02b4, its update 0xaa130) built as a hint line is (the same
+three texts, 0xc9b50; the body font at 14 points full screen): for a use that takes a hold
+(0xaad20), "Hold " and the ACTION_BUTTON's glyph (VB 6, X: FUN_000ca290), then the target's text
+(FUN_000aa600: a world button's "to activate %s." h_f9d29692, with its name; the other targets'
+pick-up, swap and disarm prompts are its other cases). It stands at the first hint line's place,
+(51, 85), 20 lower while the skill's name shows (the HUD's message widget, hud+0xfc), and 20 lower
+again for each of two tests of the first hint line (the player view's +0x3c read twice at
+0xaa2cd-0xaa2e8, where the second line's +0x40 would be expected: 40 under a first line). It
+doesn't blink. take09 and take11 show it alone.
 
 ### The button gates (input triggers)
 
@@ -150,6 +163,9 @@ shows skips it: the plate disables timer464, starts timer391 and clears the co-o
   from the record), placed, coloured, shadowed and blinking as above, in a HUD root of their own
   (`HudRoot`: hidden with the HUD in the editor's edit mode and while the letterbox's bars are
   in, play_script.rs). `BF_HINT_LOG=1` logs each line shown and cleared.
+* **The use prompt** (`draw_prompt`) is the same glyph line: "Hold [X] to activate panel." while
+  play.rs `doors` has a wall panel usable (not while scoped), lowered as above, steady. The ring
+  on the panel's button stays play_hud.rs's.
 * **The virtual buttons** stand for the pad's: the demo's keys for the same actions, and a
   pad's buttons (none read under `BF_BACKGROUND`):
 
@@ -237,7 +253,9 @@ BF_MAP=tutorial BF_HINT_LOG=1 BF_TEST_GOTO=57.5,68.22,57.5,68.22 BF_TEST_FALL=37
   (OMT_PUSH_BUTTON) reaches its `push_button` animation event (FUN_00117660's case 0xf2cfbb92 at
   0x118b71: the use target at char+0x640, its vtable +0x138, 0x163060), but no clip in
   common.tgz, tutorial.tgz, mp_common.tgz or m01_a.tgz has that event: which clip plays and when
-  it fires isn't found. The prompt itself is still the demo's "Hold E ...", not the glyph line.
+  it fires isn't found. The prompt is the game's glyph line (above); the other targets' prompts
+  (FUN_000aa600's pick-up, swap and disarm cases, the mines' ring: #145) and the switch hint
+  ("[Y] switch to %s.", still play_hud.rs's text with Q) aren't.
 * The other hints of the tutorial (the grenade plate, the mines, the sniper rifle) need the
   pickups and plates of later steps to fire on their own (#228); fired directly they draw.
 
@@ -277,6 +295,13 @@ set beside the takes' (todo/28-tutorial):
 * **The legends** of a panel and of the objectives menu (`BF_TRIGGER_FIRE=h_0a3f40d3,2,1
   BF_TEST_PANEL=a,2 BF_TEST_OBJECTIVES=4,2`): the A, Y and B discs line up with take11's and
   take04's (63.0 s) to the pixel, the words' capitals at the takes' 396.0-408.0.
+* **The use prompt** (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100 BF_TEST_USE=1.5`):
+  "Hold" from x 52.0 to 86.7, the X glyph 96.0-123.3, "to activate panel." 123.3-250.7, as take11
+  at 716 s (52.7-86.7, 96.0-123.3, 123.3-250.7); the gate opens on the use as before.
+* **The clock under two menus** (the hooks only can cross them): a panel at 1 s
+  (`BF_TRIGGER_FIRE=h_0a3f40d3,2,1 BF_TEST_PANEL=a,3`) with the objectives menu opened over it
+  (`BF_TEST_OBJECTIVES=1.1,1`): the menu closing leaves the clock stopped under the panel (each
+  holds its own bit of play.rs `PAUSED`), which closes at the same 1.20 s.
 * **No regressions**: the objectives menu (`BF_TEST_OBJECTIVES=1,2` at take04's spot, against
   take04 63.0 s), the gate chain (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100
   BF_TEST_USE=0.5`: the panel's use, its sound, the gate opening, the prompt where it was),

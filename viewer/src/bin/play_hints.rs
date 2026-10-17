@@ -90,6 +90,20 @@ const SHADOW_SHARE: f32 = 0.5;
 /// "Press " and "Hold " (string ids h_ff43bc83 and h_1cc51f04: FUN_000ca000 for kinds 1 and 2).
 const S_PRESS: u32 = 0xFF43_BC83;
 const S_HOLD: u32 = 0x1CC5_1F04;
+/// The use prompt (a HUD widget of its own, vtable 0x3a02b4, its update 0xaa130): a glyph line as
+/// the hint lines are (the same three texts, 0xc9b50; the body font at 14 points full screen,
+/// FUN_000ca2f0): for a target in reach whose use takes a hold (0xaad20), "Hold " and the
+/// ACTION_BUTTON's glyph (VB 6, the X button: FUN_000ca290 at 0xaa19c), then its text
+/// (FUN_000aa600): a world button's "to activate %s." (h_f9d29692, 0xaa801) with its name. take09
+/// and take11 show it at the first hint line's place, steady.
+const PROMPT_KIND: i64 = 2;
+const PROMPT_VB: i64 = 6;
+const S_TO_ACTIVATE: u32 = 0xF9D2_9692;
+/// The use prompt stands at the first hint line's place, 20 lower while the HUD's message widget
+/// (hud+0xfc: the skill's name) shows, and 20 lower again for each of the update's two tests of
+/// the player view's +0x3c, the first hint line (0xaa292-0xaa2e8: the second test reads +0x3c again
+/// where +0x40, the second line, would be expected; so 40 under a first line, none for a second).
+const PROMPT_STEP: f32 = 20.0;
 /// The button icon font's atlas, h_0b630034 (256 x 512; FUN_000cd5d0 registers its 16-point
 /// record with v x 0.5 + 0.684).
 const ICON_ATLAS: u32 = 0x0B63_0034;
@@ -142,7 +156,9 @@ enum Glyph {
     Word(u32),
 }
 
-/// A virtual button (the VB_ table 0x3bf398) as the pad's default bindings give it and the
+/// A virtual button (the VB_ name table 0x3bf39c, its records from 0x3bf398: 5 VB_FIRE, 6
+/// VB_ACTION_BUTTON, 7 VB_USE_INV ... 62 VB_OPEN_OBJECTIVES_MENU, 63 VB_USE_HEALTHPACK) as the
+/// pad's default bindings give it and the
 /// demo's controls stand for it: its number, whether its binding counts the frame it goes down
 /// (mode 1) or every frame it's held (mode 0), what its hint shows, and the demo's keys, mouse
 /// button and pad buttons (a pad isn't read under BF_BACKGROUND).
@@ -246,13 +262,16 @@ pub(crate) struct HintWorld {
 pub(crate) struct HintLines(pub(crate) [bool; 2]);
 
 /// The hint lines' nodes and atlases (`build`): each line's node, the icon atlas, the safe
-/// area's corner, and the change each line was last drawn for.
+/// area's corner, and the change each line was last drawn for; the use prompt's node and the
+/// text and drop it was last drawn with.
 #[derive(Resource)]
 struct HintHud {
     lines: [Entity; 2],
     icons: Option<Handle<Image>>,
     corner: Vec2,
     drawn: [u32; 2],
+    prompt: Entity,
+    prompt_drawn: Option<(String, f32)>,
 }
 
 /// The frame's virtual buttons once a tutorial panel has taken the frame's presses (none reaches
@@ -286,8 +305,9 @@ fn build(mut commands: Commands, mut game: ResMut<GameData>, mut images: ResMut<
     let full = || Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0),
                          height: Val::Percent(100.0), ..default() };
     let lines = [commands.spawn((full(), Visibility::Hidden, ChildOf(screen))).id(), commands.spawn((full(), Visibility::Hidden, ChildOf(screen))).id()];
+    let prompt = commands.spawn((full(), Visibility::Hidden, ChildOf(screen))).id();
     let corner = Vec2::new(game.0.hud_safe[0] + SAFE_IN, game.0.hud_safe[1] + SAFE_IN + LINE_DOWN);
-    commands.insert_resource(HintHud { lines, icons, corner, drawn: [0; 2] });
+    commands.insert_resource(HintHud { lines, icons, corner, drawn: [0; 2], prompt, prompt_drawn: None });
     shown.0 = [false; 2];
 }
 
@@ -439,16 +459,17 @@ fn words(cells: &mut Vec<Cell>, text: &str, from: Vec2) -> f32 {
     width
 }
 
-/// A hint line's cells (see the module notes): "Press " or "Hold " and the glyph for kinds 1 and
-/// 2 (the glyph alone for kind 0), or the word of a stick or a d-pad direction, then the text 4
-/// units after them; the text alone for a line with no button.
-fn layout(line: &data::HintLine, strings: &HashMap<u32, String>) -> Vec<Cell> {
+/// A glyph line's cells (a hint line's or the use prompt's; see the module notes): "Press " or
+/// "Hold " and the glyph of virtual button `vb` for kinds 1 and 2 (the glyph alone for kind 0),
+/// or the word of a stick or a d-pad direction, then `words` 4 units after them; the words alone
+/// for a line with no button.
+fn layout(kind: i64, vb: i64, words_text: &str, strings: &HashMap<u32, String>) -> Vec<Cell> {
     let text = |id: u32| strings.get(&id).cloned().unwrap_or_default();
     let mut cells = vec![];
     let mut x = 0.0;
-    match binding(line.vb).map(|b| b.glyph) {
+    match binding(vb).map(|b| b.glyph) {
         Some(Glyph::Icon(c)) => {
-            let lead = match line.kind {
+            let lead = match kind {
                 1 => text(S_PRESS),
                 2 => text(S_HOLD),
                 _ => String::new(),
@@ -465,8 +486,22 @@ fn layout(line: &data::HintLine, strings: &HashMap<u32, String>) -> Vec<Cell> {
         }
         None => {}
     }
-    words(&mut cells, &text(line.text), Vec2::new(x, 0.0));
+    words(&mut cells, words_text, Vec2::new(x, 0.0));
     cells
+}
+
+/// A glyph line's cells as nodes under `parent`, from `corner` (units on the 640 x 480 screen):
+/// the icon font's from `icons`, the body font's from `font`.
+fn spawn_cells(commands: &mut Commands, parent: Entity, cells: Vec<Cell>, corner: Vec2, icons: &Option<Handle<Image>>, font: &Handle<Image>) {
+    for c in cells {
+        let image = if c.icon { icons.clone() } else { Some(font.clone()) };
+        let Some(image) = image else { continue };
+        let at = corner + c.at;
+        commands.spawn((ImageNode { rect: Some(c.rect), color: c.colour, ..ImageNode::new(image) },
+                        Node { position_type: PositionType::Absolute, left: Val::Percent(at.x / 6.4), top: Val::Percent(at.y / 4.8),
+                               width: Val::Percent(c.size.x / 6.4), height: Val::Percent(c.size.y / 4.8), ..default() },
+                        ChildOf(parent)));
+    }
 }
 
 /// Whether a line blinking with `timer` s left is drawn now (FUN_000cb410: the fraction of
@@ -477,10 +512,11 @@ fn blink_on(timer: f32) -> bool {
 
 /// After the triggers' frame: each line's blink counted down by the frame's time (the game's
 /// clock: still under a menu), its glyphs rebuilt when it changed, shown while it's up and its
-/// blink is on.
+/// blink is on; then the use prompt (`draw_prompt`).
 #[allow(clippy::too_many_arguments)]
 fn draw(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game: Res<GameData>, font: Option<Res<FontAtlas>>,
-        hud: Option<ResMut<HintHud>>, mut nodes: Query<&mut Visibility>, mut shown: ResMut<HintLines>) {
+        hud: Option<ResMut<HintHud>>, mut nodes: Query<&mut Visibility>, mut shown: ResMut<HintLines>,
+        (use_panel, player, stamina): (Res<UsePanel>, Res<Player>, Res<super::super::hud::StaminaBar>)) {
     let (Some(mut hud), Some(font)) = (hud, font) else { return };
     let dt = frame_dt(&time);
     for n in 0..2 {
@@ -493,21 +529,41 @@ fn draw(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game:
             let parent = hud.lines[n];
             commands.entity(parent).despawn_related::<Children>();
             let corner = hud.corner + Vec2::Y * LINE_STEP * n as f32;
-            for c in layout(&line, &game.0.strings) {
-                let image = if c.icon { hud.icons.clone() } else { Some(font.0.clone()) };
-                let Some(image) = image else { continue };
-                let at = corner + c.at;
-                commands.spawn((ImageNode { rect: Some(c.rect), color: c.colour, ..ImageNode::new(image) },
-                                Node { position_type: PositionType::Absolute, left: Val::Percent(at.x / 6.4), top: Val::Percent(at.y / 4.8),
-                                       width: Val::Percent(c.size.x / 6.4), height: Val::Percent(c.size.y / 4.8), ..default() },
-                                ChildOf(parent)));
-            }
+            let words_text = game.0.strings.get(&line.text).cloned().unwrap_or_default();
+            spawn_cells(&mut commands, parent, layout(line.kind, line.vb, &words_text, &game.0.strings), corner, &hud.icons, &font.0);
         }
         if let Ok(mut v) = nodes.get_mut(hud.lines[n]) {
             let want = if up && blink_on(timer) { Visibility::Inherited } else { Visibility::Hidden };
             if *v != want {
                 *v = want;
             }
+        }
+    }
+    draw_prompt(&mut commands, &mut hud, &font.0, &game.0.strings, &mut nodes, &use_panel, &player, &stamina, shown.0[0]);
+}
+
+/// The use prompt (see PROMPT_KIND): a gate's wall panel in reach and in view (play.rs `doors`;
+/// none while scoped, as before), "Hold [X] to activate panel." at the first hint line's place,
+/// lowered for the skill's name and a first hint line (PROMPT_STEP), steady; rebuilt when its text
+/// or place changes.
+#[allow(clippy::too_many_arguments)]
+fn draw_prompt(commands: &mut Commands, hud: &mut HintHud, font: &Handle<Image>, strings: &HashMap<u32, String>, nodes: &mut Query<&mut Visibility>,
+               use_panel: &UsePanel, player: &Player, stamina: &super::super::hud::StaminaBar, first_line: bool) {
+    let want = use_panel.prompt.filter(|_| player.scope < 0.5).map(|what| {
+        let text = strings.get(&S_TO_ACTIVATE).cloned().unwrap_or("to activate %s.".into()).replace("%s", what);
+        let drop = PROMPT_STEP * (stamina.label_shown() as u32 + 2 * first_line as u32) as f32;
+        (text, drop)
+    });
+    if let Some((text, drop)) = want.as_ref().filter(|w| hud.prompt_drawn.as_ref() != Some(*w)) {
+        let parent = hud.prompt;
+        commands.entity(parent).despawn_related::<Children>();
+        spawn_cells(commands, parent, layout(PROMPT_KIND, PROMPT_VB, text, strings), hud.corner + Vec2::Y * *drop, &hud.icons, font);
+        hud.prompt_drawn = Some((text.clone(), *drop));
+    }
+    if let Ok(mut v) = nodes.get_mut(hud.prompt) {
+        let vis = if want.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != vis {
+            *v = vis;
         }
     }
 }

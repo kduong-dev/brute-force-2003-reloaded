@@ -4,19 +4,19 @@
 //! tutorial's panels from it (src/bin/play_panels.rs, viewer/docs/hints.md); the objectives menu
 //! (play_objectives.rs) and the front end (play_menu.rs) still lay theirs out by hand.
 //!
-//!   <game-menus>
-//!     <menu-style iD="h_09ced527">                            a style (its parser near 0x19c186)
+//!   <game-menus>                                              its children by name: FUN_0019faf0
+//!     <menu-style iD="h_09ced527">                            a style (0x19fb0d)
 //!       <alignment h_fc9aaf63="0" h_0c9d2ce1="0"/>            across, down: 0 left / top, 2 centred
 //!       <color-normal>240 240 240 255</color-normal>          the text's colour
 //!       <h_ed70ff4f>0 0 0 255</h_ed70ff4f>                     its shadow's (an untextured picture's fill)
 //!       <h_0ee47ad4 h_f890a8bc="h_0c626fd5" point-size="16"/>  its font and size (h_15ed2b6e a second)
-//!     <h_1544c137 iD="h_0d0ce2e2">                            a picture set: pieces drawn together
+//!     <h_1544c137 iD="h_0d0ce2e2">                            a picture set: pieces drawn together (0x19fafb)
 //!       <h_1b74bf95 texture=.. h_06712921=.. alignment=..><color/><position/><size/>
-//!     <menus>
+//!     <menus>                                                 (0x19fdaa; its children FUN_0019c310)
 //!       <data name="h_f0ea44dc" controller=..><position>85 60</position><size>470 360</size></data>
-//!       <h_e275fb80>                                          its items, in order (the parser near 0x19bf17)
+//!       <h_e275fb80>                                          its items, in order (FUN_0019bf10, by name)
 //!         <static-text text="h_166f0785"><item-data name="Title" style-id=..><position/><size/>
-//!         <h_0ac3cc5c [h_0d802f88="h_0d0ce2e2"]><item-data ..><data texture=.. ../>   a picture
+//!         <picture [h_0d802f88="h_0d0ce2e2"]><item-data ..><data texture=.. ../>   (h_0ac3cc5c)
 //!         <h_09dc0d2f button-string="h_1d3f3cb3" h_eeb60269="h_18291278"><item-data ..>  a legend
 //!         <h_16a61c91 ..><item-data name="h_1966467f">       the panels' A target (0x100ea0 closes the menu on it)
 
@@ -29,15 +29,17 @@ use super::hash::h;
 
 /// A menu's items, h_e275fb80 (the `<menus>` element's second child).
 const H_ITEMS: u32 = 0xE275_FB80;
-/// A picture item, h_0ac3cc5c (one of the menu parser's item types, 0x19bf47).
+/// A picture item, `picture` (h_0ac3cc5c, the name recovered by hashing: FUN_0019bf10's case at
+/// 0x19bf47, its attributes FUN_0019bc00, its children FUN_0019bc40).
 const H_PICTURE: u32 = 0x0AC3_CC5C;
-/// A picture item's set, h_0d802f88: a `<h_1544c137>` picture set by its iD (the tutorial's
-/// panels' frame, h_0d0ce2e2).
+/// A picture item's set, h_0d802f88 (FUN_0019bc00): a `<h_1544c137>` picture set by its iD (the
+/// tutorial's panels' frame, h_0d0ce2e2).
 const H_PICTURE_SET_REF: u32 = 0x0D80_2F88;
-/// A button legend item, h_09dc0d2f (0x19bf40): `button-string` (the icon font's letter, a string
-/// id) and h_eeb60269 its label (a string id).
+/// A button legend item, h_09dc0d2f (FUN_0019bf10's case at 0x19bf40; its attributes
+/// FUN_0019bdb0): `button-string` (the icon font's letter, a string id) and h_eeb60269 its label
+/// (a string id).
 const H_LEGEND: u32 = 0x09DC_0D2F;
-/// A legend's label, h_eeb60269 (0x19bdb4).
+/// A legend's label, h_eeb60269 (FUN_0019bdb0 at 0x19bdb4).
 const H_LEGEND_LABEL: u32 = 0xEEB6_0269;
 /// A picture set, h_1544c137, and its pieces, h_1b74bf95.
 const H_PICTURE_SET: u32 = 0x1544_C137;

@@ -323,7 +323,7 @@ fn toggle(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<
     }
     menu.open = want;
     menu.held = 0.0;
-    set_paused(want);
+    set_paused(PAUSE_OBJECTIVES, want);
     if let Ok(mut v) = root.single_mut() {
         *v = if want { Visibility::Inherited } else { Visibility::Hidden };
     }
@@ -339,9 +339,9 @@ fn toggle(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<
     }
 }
 
-/// Leaving the map: the menu closed and the game's clock running (the menu's nodes go with the
-/// map's).
+/// Leaving the map: the menu closed and its hold on the game's clock let go (the menu's nodes go
+/// with the map's).
 fn close_on_exit(mut menu: ResMut<ObjectivesMenu>) {
     menu.open = false;
-    set_paused(false);
+    set_paused(PAUSE_OBJECTIVES, false);
 }

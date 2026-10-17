@@ -282,7 +282,7 @@ pub(super) fn input(mut commands: Commands, mut tr: ResMut<Triggers>, mut keys: 
     }
     if !p.paused {
         p.paused = true;
-        set_paused(true);
+        set_paused(PAUSE_PANELS, true);
     }
     let Some(top) = p.stack.last_mut() else { return };
     top.up += if std::env::var("BF_CAPTURE").is_ok() { capture_step() } else { time.delta_secs() };
@@ -326,7 +326,7 @@ pub(super) fn input(mut commands: Commands, mut tr: ResMut<Triggers>, mut keys: 
     p.closed.push((panel.trigger, button));
     if p.stack.is_empty() && p.paused {
         p.paused = false;
-        set_paused(false);
+        set_paused(PAUSE_PANELS, false);
     }
 }
 
@@ -342,7 +342,7 @@ pub(super) fn input(mut commands: Commands, mut tr: ResMut<Triggers>, mut keys: 
 fn show(mut commands: Commands, mut tr: ResMut<Triggers>, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>,
         mut cache: ResMut<PanelImages>, font: Option<Res<GameFont>>) {
     let Some(font) = font else { return };
-    if !tr.hints.panels.stack.iter().any(|p| p.root.is_none()) || (paused() && !tr.hints.panels.paused) {
+    if !tr.hints.panels.stack.iter().any(|p| p.root.is_none()) || paused_by_other(PAUSE_PANELS) {
         return;
     }
     let (clock, log) = (tr.clock, tr.hints.log);
@@ -361,11 +361,12 @@ fn show(mut commands: Commands, mut tr: ResMut<Triggers>, mut game: ResMut<GameD
     }
 }
 
-/// Leaving the map: the clock runs again if the panels stopped it (their nodes go with the map's).
+/// Leaving the map: the panels' hold on the clock let go if they had it (their nodes go with the
+/// map's).
 fn close_on_exit(mut tr: ResMut<Triggers>) {
     if tr.hints.panels.paused {
         tr.hints.panels.paused = false;
-        set_paused(false);
+        set_paused(PAUSE_PANELS, false);
     }
     tr.hints.panels.stack.clear();
 }
