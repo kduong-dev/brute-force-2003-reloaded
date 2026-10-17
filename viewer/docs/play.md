@@ -1023,6 +1023,10 @@ archetype names its jump grunt and footstep type (Tex 1, Flint 2, Brutus 3, Hawk
 sounds. Footsteps fire when a toe comes down into the lowest quarter of its swing in the clip
 being played. Surface sounds live in level archives: `BF_LEVEL=<name>` (default `e01`) picks the
 level; `mp1`'s bank is merged in too, since a mission only carries its own squad's footsteps.
+On a level, its sound-triggers play their own voices (#223: voice lines, door and gate sounds,
+ambience, the music cues; 3D ones by DirectSound's distance law from the camera): see
+[triggers.md](triggers.md), "Sound- and dialog-triggers", and their `BF_SOUND_LOG` lines
+("trigger voice ...").
 
 Test hooks: `BF_AUTOPILOT=1` plays a scripted run (idle, run, turn, sprint, aimed walk,
 backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing on the run); `BF_TEST_EXPLOSION=1` sets off the selected grenade type 6 m ahead every 1.5 s; with `BF_TEST_GOTO`, `BF_TEST_THROW=<s>[,<hold s>,...]` holds the grenade button (G) at those times (see **Grenades** for the rest of its hooks); `BF_ANIM_PROBE=<script>,...` prints each character's clips by script name (duration, root motion over a cycle, the clip's own speed h_f9628571, events); `BF_DUMP_TEXTURE=<file>:<hex id>` writes a decoded texture (raw RGBA after a u32 width and height). `BF_AUTOPILOT_SPIN=<rad/s>` makes it look down and turn the camera during the standing fire; with `BF_CAPTURE=<dir>` it saves every frame at a

@@ -579,6 +579,7 @@ fn main() {
         .add_plugins(flags::plugin)
         .add_plugins(objectives::plugin)
         .add_plugins(triggers::plugin)
+        .add_plugins(triggers::sounds::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -716,8 +717,8 @@ pub struct UsePanel {
 /// Doors and gates move only when the level's anim-triggers play their clips (play_triggers.rs,
 /// #220: on their detectors' signals, a panel's, a timer's ... or at the level's start): their
 /// leaves slide along their joint's axis forward (opening) or back (closing), and an open door
-/// stops blocking. The level's sound triggers beside them play as they start opening or closing,
-/// heard up to DOOR_HEARD m (play_triggers.rs). A wall panel is used with the player's feet
+/// stops blocking. Their sounds are the sound-triggers the anim-triggers send ANIM_START /
+/// ANIM_BACK_START to (play_sound_triggers.rs, #223). A wall panel is used with the player's feet
 /// within USE_REACH m of its button, looking within USE_ANGLE of it (the panels'
 /// reticule-action 1: the reticle on them), holding use for HOLD_TIME s (the game's prompt says
 /// "Hold"): its signal goes to its listeners. The capture shows no progress bar and no gate
@@ -731,7 +732,6 @@ const PANEL_BUTTON: u32 = 0x10F8_1D34;
 const MUSIC_VOLUME: f32 = 0.5;
 /// A level's ambience bed, under its music (of the music's volume).
 const AMBIENCE_VOLUME: f32 = 0.8;
-const DOOR_HEARD: f32 = 15.0;
 
 /// Each frame: the panel prompt and a panel's use (see USE_REACH's notes), whose event goes to
 /// the level's triggers (`triggers::TriggerEvents`); then each door's leaves where its
@@ -2642,12 +2642,17 @@ pub fn music_mix(tracks: Vec<(String, Vec<u8>)>, sounds: &bf_viewer::bf::audio::
         .chain(beds.into_iter().take(bed_count).map(|(n, w)| (n, w, "ambience", AMBIENCE_VOLUME))).collect()
 }
 
-/// Plays a level's track (`music_mix`) looping, at `k` of the music volume (BF_MUSIC_VOLUME,
-/// default MUSIC_VOLUME).
+/// The music's volume, linear: BF_MUSIC_VOLUME, default MUSIC_VOLUME. A level's tracks play at it
+/// times their own share (`music_mix`'s, or the sound's volume when a sound-trigger plays it:
+/// play_sound_triggers.rs).
+pub fn music_volume() -> f32 {
+    std::env::var("BF_MUSIC_VOLUME").ok().and_then(|v| v.parse().ok()).unwrap_or(MUSIC_VOLUME)
+}
+
+/// Plays a level's track (`music_mix`) looping, at `k` of the music volume (`music_volume`).
 pub fn spawn_music(commands: &mut Commands, sources: &mut Assets<AudioSource>, wav: Vec<u8>, label: &'static str, k: f32) -> Entity {
-    let volume = std::env::var("BF_MUSIC_VOLUME").ok().and_then(|v| v.parse().ok()).unwrap_or(MUSIC_VOLUME);
     let source = sources.add(AudioSource { bytes: Arc::from(wav.into_boxed_slice()) });
-    commands.spawn((AudioPlayer::new(source), PlaybackSettings { volume: Volume::Linear(volume * k), ..PlaybackSettings::LOOP },
+    commands.spawn((AudioPlayer::new(source), PlaybackSettings { volume: Volume::Linear(music_volume() * k), ..PlaybackSettings::LOOP },
                     Name::new(label), LevelMusic)).id()
 }
 
@@ -2669,8 +2674,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         // the map: its terrain, objects and sky, fog, background and light
         let doors = bf_viewer::level_scene::spawn_level(&mut commands, &mut game.0, level, &mut meshes, &mut level_materials, &mut liquids, &mut buffers, &mut images);
         for d in doors.iter().filter(|_| std::env::var("BF_LEVEL_DUMP").is_ok()) {
-            println!("door at {:.1}: {:.2} s, leaves slide {:?} m, sounds {:x?} / {:x?}", d.centre, d.duration,
-                     d.leaves.iter().map(|l| l.slide(d.duration, d.duration)).collect::<Vec<_>>(), d.open_sound, d.close_sound);
+            println!("door at {:.1}: {:.2} s, leaves slide {:?} m", d.centre, d.duration,
+                     d.leaves.iter().map(|l| l.slide(d.duration, d.duration)).collect::<Vec<_>>());
         }
         // the doors, closed until their anim-triggers play them (play_triggers.rs)
         let list: Vec<DoorState> = doors.into_iter().map(|door| DoorState { door, t: 0.0, opening: false, rate: 1.0 }).collect();
@@ -2713,8 +2718,14 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     }
     commands.insert_resource(ale);
     // the level's music, looping (BF_MUTE / BF_NO_MUSIC: none; BF_MUSIC_VOLUME, default 0.5);
-    // deathmatch plays without music
-    if map.0.is_some() && !mode.deathmatch && std::env::var("BF_MUTE").is_err() && std::env::var("BF_NO_MUSIC").is_err() {
+    // deathmatch plays without music. A level whose sound-triggers play its music bank's tracks
+    // (every level with a bank does) has them play it, cue by cue, and its ambience beds, as the
+    // player stands outdoors or in (play_sound_triggers.rs, #223)
+    let by_triggers = map.0.as_ref().is_some_and(|l| triggers::sounds::plays_music(l, &game.0.sounds));
+    if by_triggers {
+        println!("music: the level's sound-triggers play it");
+    }
+    if map.0.is_some() && !by_triggers && !mode.deathmatch && std::env::var("BF_MUTE").is_err() && std::env::var("BF_NO_MUSIC").is_err() {
         let name = current.0.clone();
         match Game::load_music(&data_dir(), &name) {
             Ok(tracks) => {

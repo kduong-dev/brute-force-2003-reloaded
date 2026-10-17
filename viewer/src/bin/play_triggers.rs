@@ -52,11 +52,17 @@
 //!  * anim-trigger (0x204d00, FUN_00204bb0): OPERATE plays its entry's clip on its first object,
 //!    forward or backward (wwit-debugging) at its time-scale, ANIM_START / ANIM_BACK_START to its
 //!    targets when the way it plays changes. The doors (play.rs `doors`) are what it moves.
+//!  * sound-trigger and dialog-trigger (#223, play_sound_triggers.rs; 0x206450 / 0x206690,
+//!    0x206d20 / 0x206ee0): PLAY_SOUND plays a sound library entry (alike everywhere, or at its
+//!    place with its distances; only near a player with h_15bc1769), PLAY_DIALOG queues it on
+//!    the world's dialog queue (one line at a time), STOP / PAUSE / RESUME; when the sound's
+//!    length has run (the bank's size over its rate) it sends FINISHED to its targets. A
+//!    dialog-trigger's character says its line, FINISHED at its end.
 //!  * destroyer (0x200d70, 0x200e40): OPERATE marks it, and its update removes its objects (a
 //!    spawn-trigger's copy for a spawn-trigger), then it disables itself. The update runs the
 //!    base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update.
-//!  * every other class (script, letterbox, warp, sound, dialog, menu, message, input, event,
-//!    radar, level-over ...): its base actions; its own actions are logged as left to their step
+//!  * every other class (script, letterbox, warp, menu, message, input, event, radar, level-over
+//!    ...): its base actions; its own actions are logged as left to their step
 //!    (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
@@ -233,6 +239,11 @@ pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
     SquadSpawns(out)
 }
 
+/// The sound- and dialog-triggers, the world's dialog queue and the voices they play (#223): a
+/// child of this module, so that its classes reach the runtime's own state and sends.
+#[path = "play_sound_triggers.rs"]
+pub(crate) mod sounds;
+
 /// An event as the game's triggers pass it (FUN_001fe660 builds one, vtable 0x3a3fb4): its
 /// signal (+4), its sender's iD (+8, what an entry's match-id answers), its subject (+0xc: who
 /// entered a detector, a spawn's copy ...; by name here, 0 none) and its data (+0x10: a
@@ -284,6 +295,10 @@ struct Occupant {
 /// What a class keeps besides the base (its object's own fields, see `data::Class`).
 enum ClassState {
     Other,
+    /// a sound-trigger's fields from +0x40 (play_sound_triggers.rs)
+    Sound(Box<sounds::Sound>),
+    /// a dialog-trigger's +0x40-+0x48 (play_sound_triggers.rs)
+    Dialog(sounds::Dialog),
     Router { filters: bool, out_signal: i64 },
     /// +0x48 running, +0x49 looping, +0x4a stops, +0x40 initial, +0x44 current, +0x50 the subject
     /// its OPERATE came with (its pulse's)
@@ -311,6 +326,8 @@ enum ClassState {
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Other,
+    Sound,
+    Dialog,
     Router,
     Timer,
     Calc,
@@ -415,6 +432,9 @@ pub struct Triggers {
     known: HashSet<u32>,
     /// what this frame's triggers asked of the world (`run` does it after their updates)
     acts: Vec<Act>,
+    /// the sound side (play_sound_triggers.rs): the world's dialog queue, the voices asked for,
+    /// where the listener and the characters were
+    sound: sounds::SoundWorld,
     /// the sim time (s), for the log and BF_TRIGGER_FIRE
     clock: f32,
     /// how deep the events in flight are nested (MAX_DEPTH)
@@ -482,6 +502,8 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
     for t in &level.triggers {
         let state = match &t.class {
             Class::Router { filters, out_signal } => ClassState::Router { filters: *filters, out_signal: *out_signal },
+            Class::Sound(s) => ClassState::Sound(Box::new(sounds::Sound::new(t, s, level, &game.0))),
+            Class::Dialog { dialog, hush } => ClassState::Dialog(sounds::Dialog::new(*dialog, *hush, &game.0)),
             Class::Timer { running, looping, stops, initial, current } => ClassState::Timer { running: *running, looping: *looping, stops: *stops,
                                                                                              initial: *initial, current: *current, subject: 0 },
             Class::Calculator { counter, target, test } => ClassState::Calc { counter: *counter, target: *target, test: *test },
@@ -778,16 +800,9 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                     }
                     continue;
                 }
+                // (its sound is its sound-trigger's, which the anim-trigger's ANIM_START /
+                // ANIM_BACK_START reaches: play_sound_triggers.rs)
                 let opening = !backward;
-                if opening != d.opening {
-                    // its sound beside it (the level's signal 31 / 49 sound-triggers)
-                    if let Some(id) = if opening { d.door.open_sound } else { d.door.close_sound } {
-                        let k = 1.0 - d.door.centre.distance(player.position) / DOOR_HEARD;
-                        if k > 0.0 {
-                            player.sound_queue.push((id, k));
-                        }
-                    }
-                }
                 d.opening = opening;
                 d.rate = rate;
                 if tr.log || std::env::var("BF_DOOR_LOG").is_ok() {
@@ -999,6 +1014,8 @@ impl Triggers {
     fn kind(&self, i: usize) -> Kind {
         match self.live[i].state {
             ClassState::Other => Kind::Other,
+            ClassState::Sound(_) => Kind::Sound,
+            ClassState::Dialog(_) => Kind::Dialog,
             ClassState::Router { .. } => Kind::Router,
             ClassState::Timer { .. } => Kind::Timer,
             ClassState::Calc { .. } => Kind::Calc,
@@ -1018,7 +1035,8 @@ impl Triggers {
             .find(|(_, e)| e.signal == ev.signal && e.match_id == ev.id && e.used < e.limit).map(|(j, _)| j)
     }
 
-    /// 0x1fefc0: on (unless dead), every entry's use count back to 0.
+    /// 0x1fefc0: on (unless dead), every entry's use count back to 0; +0x3d bit 6 too, which
+    /// puts a sound-trigger's update back in the world's loop (`sounds::Sound::listed`).
     fn enable(&mut self, i: usize) {
         let l = &mut self.live[i];
         if l.dead {
@@ -1028,11 +1046,18 @@ impl Triggers {
         for e in &mut l.t.entries {
             e.used = 0;
         }
+        if let ClassState::Sound(s) = &mut l.state {
+            s.listed = true;
+        }
     }
 
-    /// 0x1feff0: off.
+    /// 0x1feff0: off. A sound-trigger's own (its vtable +0x48, FUN_00206610) lets its voice play
+    /// out and drops what it was waiting for (`sound_disabled`).
     fn disable(&mut self, i: usize) {
         self.live[i].enabled = false;
+        if matches!(self.live[i].state, ClassState::Sound(_)) {
+            self.sound_disabled(i);
+        }
     }
 
     /// FUN_001ff0a0: `ev` to trigger `i`'s targets, while it's enabled and alive; then
@@ -1163,6 +1188,8 @@ impl Triggers {
         }
         self.depth += 1;
         match self.kind(i) {
+            Kind::Sound => self.sound(i, ev),
+            Kind::Dialog => self.dialog(i, ev),
             Kind::Router => self.router(i, ev),
             Kind::Timer => self.timer(i, ev),
             Kind::Calc => self.calculator(i, ev),
@@ -1659,6 +1686,8 @@ impl Triggers {
     /// Trigger `i`'s update (vtable +0x1c) over `dt` s.
     fn update(&mut self, i: usize, dt: f32, actors: &[Actor]) {
         match self.kind(i) {
+            Kind::Sound => self.sound_update(i, dt),
+            Kind::Dialog => self.dialog_update(i),
             Kind::Detector => self.detector_update(i, dt, actors),
             Kind::Timer => self.timer_update(i, dt),
             Kind::Spawn => self.spawn_update(i, dt),

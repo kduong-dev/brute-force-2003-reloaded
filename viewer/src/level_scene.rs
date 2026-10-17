@@ -331,16 +331,14 @@ pub struct Placed {
 }
 
 /// A door or gate, in level object order (the same order as `Arena::doors`): its sliding
-/// leaves, how long it takes to open (its archetype's animation: 1.21 s for doors, 4.96 s for
-/// the gate) and the sounds the level plays beside it as it opens and closes.
+/// leaves and how long it takes to open (its archetype's animation: 1.21 s for doors, 4.96 s for
+/// the gate). Its sounds are the level's sound-triggers' (bf_play's play_sound_triggers.rs).
 pub struct Door {
     /// the object's name (what the level's triggers call it)
     pub name: u32,
     pub centre: Vec3,
     pub leaves: Vec<Leaf>,
     pub duration: f32,
-    pub open_sound: Option<u32>,
-    pub close_sound: Option<u32>,
 }
 
 /// A door leaf: its entity, opening direction (object frame), closed placement and how far it
@@ -357,11 +355,6 @@ pub struct Leaf {
 
 /// Fallback opening time (s) of a door without an animation.
 const DOOR_TIME: f32 = 0.8;
-/// Level signals of the sound triggers beside each door (as it opens, as it closes), and how
-/// near the door a trigger sits.
-const SIGNAL_OPEN: i64 = 31;
-const SIGNAL_CLOSE: i64 = 49;
-const SOUND_NEAR: f32 = 6.0;
 
 impl Leaf {
     /// How far the leaf has slid `t` s into the opening.
@@ -831,13 +824,11 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         }
         if !leaves.is_empty() {
             let centre = o.transform.w_axis.truncate();
-            let sound = |signal: i64| level.sounds.iter().filter(|s| s.1 == signal && s.2.distance(centre) < SOUND_NEAR)
-                .min_by(|a, b| a.2.distance(centre).total_cmp(&b.2.distance(centre))).map(|s| s.0);
             if std::env::var("BF_DOOR_LOG").is_ok() {
                 println!("door {} type h_{:08x} arch h_{arch:08x} at {:.1} leaves {}", doors.len(), o.kind, centre, leaves.len());
             }
             let duration = clips.iter().map(|c| c.duration).reduce(f32::max).unwrap_or(DOOR_TIME);
-            doors.push(Door { name: o.name, centre, leaves, duration, open_sound: sound(SIGNAL_OPEN), close_sound: sound(SIGNAL_CLOSE) });
+            doors.push(Door { name: o.name, centre, leaves, duration });
         }
     }
     // BF_OVERLAP_LOG: large objects whose boxes overlap much (buildings through each other)
