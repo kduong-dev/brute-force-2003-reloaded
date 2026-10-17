@@ -310,6 +310,21 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     p
 }
 
+/// Test hook: BF_TEST_FALL=<m> starts the controlled character that many metres above the
+/// floor it would stand on, falling from rest, so its landing takes a fall's damage from that
+/// drop (FALL_HURT, FUN_0012b740; #157: a 37 m drop deals 164). The drop is measured from the
+/// height it starts at, as the game's char+0x6e8 holds the height a fall began. Called once its
+/// body is loaded (`spawn_player`: loading stands a character on its feet).
+fn test_fall(p: &mut Player) {
+    let Some(m) = std::env::var("BF_TEST_FALL").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|&m| m > 0.0) else { return };
+    p.action = Action::JumpFall;
+    p.height = m;
+    p.vy = 0.0;
+    p.air_velocity = Vec3::ZERO;
+    p.fall_from = p.position.y + GROUND + m;
+    p.was_air = true;
+}
+
 /// The rest of the squad (none in deathmatch): on a level whose spawn-triggers spawn its squad
 /// (`spawns`, #102), the members it has, each at its own spawn as `player_at_start` puts the
 /// leader (the tutorial has Tex alone); otherwise all four, in formation behind the start
@@ -1317,7 +1332,9 @@ const LIQUID_UNDER: f32 = 1.6;
 /// through lava unhurt; this is the demo's choice: touching it hurts.)
 const LIQUID_TOUCH: f32 = 0.2;
 const LIQUID_TICK: f32 = 0.4;
-/// Falls (FUN_0012b740): from 5 m a landing hurts, 100 x ((drop - 5) / 25)^2, up to 100 at 30 m.
+/// Falls (FUN_0012b740): past 5 m a landing hurts, 100 x ((drop - 5) / 25)^2 with no upper
+/// clamp (5.0 at 0x3c0590, 30.0 at 0x3c0594, 100.0 at 0x3c0598): 100 at 30 m, 144 at 35 m, 164
+/// at 37 m (m09_a's waste pit), so a long fall kills Brutus (105) and Tex (115) too (#157).
 const FALL_HURT: (f32, f32, f32) = (5.0, 30.0, 100.0);
 /// A fall's damage type: FUN_0012b740 puts 0 (DTYPE_NORMAL) in its record's +4 and sends it to
 /// the character's own handler (char+0x48's vtable slot 0: 0x125600, the difficulty's step).
@@ -3025,6 +3042,10 @@ fn spawn_player(
         }
         spawn_unit(&mut commands, p, &mut game.0, &mut assets);
     }
+    // (the controlled character's first load: BF_TEST_FALL starts it in the air)
+    if player.sim_time == 0.0 && !player.stand_in {
+        test_fall(&mut player);
+    }
 }
 
 /// Load a character and spawn it with its weapons and clips into `p`: its type's model (#128),
@@ -3875,7 +3896,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     // a liquid breaks the fall
                     let wet = a.liquid_at(u.position.x, u.position.z, g + 0.5).is_some();
                     if drop > lo && !wet {
-                        let k = ((drop - lo) / (hi - lo)).min(1.0);
+                        // (no clamp: FUN_0012b740)
+                        let k = (drop - lo) / (hi - lo);
                         let at = u.position + Vec3::Y * 0.2;
                         // (DTYPE_NORMAL, through the character's handler: the step, play_damage.rs)
                         let amount = damage::Hit::new(most * k * k, "fall", FALL_DAMAGE_TYPE).land(u, &game.0, &difficulty, now);

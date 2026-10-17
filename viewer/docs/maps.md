@@ -92,8 +92,17 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * Gravity is 18 m/s² and the jump takes off at 5.8 m/s. In the air, horizontal speed keeps
     0.99 of itself per game frame (taken as 30 Hz).
   * Walking off a drop of more than 0.5 m is a fall.
-  * Landing after a drop of 5 m to 30 m costs 100 × ((drop − 5) / 25)² health (a 10.6 m fall
-    cost 4.9).
+  * Landing after a drop of more than 5 m costs 100 × ((drop − 5) / 25)² health, with no upper
+    limit (FUN_0012b740; #157): 16 at 15 m, 100 at 30 m, 144 at 35 m, 164 at 37 m (m09_a's
+    waste pit), before the difficulty step. So a long fall kills Brutus (105) and Tex (115) too;
+    the demo stopped at 100 from 30 m before. A 10.6 m fall cost 4.9.
+    * `BF_TEST_FALL=<m>` starts the controlled character that many metres above the floor it
+      would stand on, falling from rest. Checked with `BF_MAP=sdm_e34
+      BF_TEST_GOTO=5.47,35.95,5.47,35.95 BF_TEST_FALL=37 BF_SLIDE_LOG=1 BF_COMBAT_LOG=1`: "tex
+      lands ... after a 37.0 m drop", "fall 163.84 x none (n 0) ... = 163.84" at 2.07 s, and
+      Tex dies (frames 0-30 show the fall onto the start's slope). With
+      `BF_DIFFICULTY=standard` and 35 m: "fall 144.00 x STANDARD (n -4) squad 0.60 ... = 86.40",
+      28.6 HP left.
 * **Sliding** works as the game does it, and only on collision triangles flagged as slide
   surfaces (the canyon walls).
   * Building up: a slide amount (0–1) grows while you move. On ground steeper than 50° it grows
