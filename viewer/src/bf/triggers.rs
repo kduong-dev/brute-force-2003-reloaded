@@ -822,13 +822,12 @@ pub fn class_name(tag: u32) -> String {
 /// Which step of #28 runs a class the runtime doesn't run yet (plan.md §2; the steps' tickets
 /// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
 /// step 2, #221; the script, letterbox and warp triggers since step 3, #222; the sound- and
-/// dialog-triggers since step 4, #223), and for those that do nothing a player sees (waypoint,
-/// evaluate: their base actions only).
+/// dialog-triggers since step 4, #223; the message, input, menu and event triggers since step 5,
+/// #224), and for those that do nothing a player sees (waypoint, evaluate: their base actions
+/// only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
     let is = |n: &str| h(n) == tag;
-    Some(if is("menu-trigger") || is("event-trigger") || tag == 0xE9B3_AE8E || tag == 0xE2B9_C3A2 {
-        "step 5, #224"
-    } else if tag == 0x1F07_BE84 {
+    Some(if tag == 0x1F07_BE84 {
         "step 7, #226"
     } else if is("radar-trigger") || tag == 0x1308_18C0 {
         "step 9, #228"

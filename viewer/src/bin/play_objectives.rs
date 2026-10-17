@@ -29,8 +29,8 @@
 //! game).
 
 use super::flags::Campaign;
-use super::menu::{AtlasFont, BUTTONS, BUTTON_ROW};
 use super::text::{game_text, Align, GameFont, GameText};
+use super::triggers::panels::{legend_icon, ICON12_ATLAS};
 use super::*;
 
 /// The menu's place and size on the 640 x 480 screen (game-options h_0cfeaf6f's `<data>`).
@@ -63,12 +63,13 @@ const HEADINGS: [Vec2; 2] = [Vec2::new(8.0, 40.0), Vec2::new(8.0, 182.0)];
 const LISTS: [(Vec2, Vec2); 2] = [(Vec2::new(33.0, 76.0), Vec2::new(400.0, 100.0)), (Vec2::new(33.0, 214.0), Vec2::new(400.0, 106.0))];
 /// The capitals' heights (units), measured on take04's frame at 63.0 s (1.5 px a unit): the
 /// headings' P and S 13.3 (14 pt), the lines' I 13.3 and E 14.0 (14 pt: taken as the
-/// headings'), the legends' B 10.0 (12 pt). The title (16 pt): its glyphs are 21 px tall in the
-/// take where the demo's font drew them 19 at 14.0, so 15.5 (a fit; the take spaces its letters
-/// wider still: 183 units across to the demo's 176).
+/// headings'), the legends' B 12.0 (12 pt, from 396.0 to 408.0: the tutorial panels' legends',
+/// the same style; 10.0 before #224 was a misreading). The title (16 pt): its glyphs are 21 px
+/// tall in the take where the demo's font drew them 19 at 14.0, so 15.5 (a fit; the take spaces
+/// its letters wider still: 183 units across to the demo's 176).
 const TITLE_CAP: f32 = 15.5;
 const TEXT_CAP: f32 = 13.3;
-const LEGEND_CAP: f32 = 10.0;
+const LEGEND_CAP: f32 = 12.0;
 /// Where a top-aligned line's capitals start below its box's top (take04: the headings' 105.3
 /// and 247.3 in boxes from 100 and 242): a fit.
 const CAP_BELOW: f32 = 5.3;
@@ -81,16 +82,17 @@ const LINE_PITCH: f32 = 24.0;
 /// boxes from 93, the lines' 121.3 and 120.7 in boxes from 118): measured.
 const HEADING_INSET: f32 = 2.3;
 const LINE_INSET: f32 = 3.3;
-/// The legends: the A item at (12, 332), the B item at (136, 332), each 110 x 20 (so from 392 on
-/// the screen); the icon's left 1 unit in and its top at 393.3 (the coloured disc 14.7 high:
-/// drawn 16 with its rim), the word's ink 19.5 in and its capitals from 397.3 (take04: A's disc
-/// x 100.0, "Accept" 116.0; B's disc 223.3, "Back" 240.7). Measured.
-const LEGENDS: [(f32, usize, u32); 2] = [(12.0, 0, S_ACCEPT), (136.0, 1, S_BACK)];
-const ICON_IN: f32 = 1.0;
-const ICON_TOP: f32 = 393.3;
-const ICON_HEIGHT: f32 = 16.0;
-const WORD_IN: f32 = 19.5;
-const WORD_CAP_TOP: f32 = 397.3;
+/// The legends (style h_e35bb628): the A item at (12, 332), the B item at (136, 332), each 110 x
+/// 20 (so from 392 on the screen), with the button's letter in the icon font at 12 points: its
+/// cell drawn as the tutorial panels' legends' (play_panels.rs `legend_icon`: take04's discs,
+/// outlined and cut flat on top). The word as the panels' (play_panels.rs WORD_IN): its node 18.3
+/// in, its capitals from 4.0 below the item's top (take04 at 63.0 s: "Accept" from 115.3, "Back"
+/// from 240.0, both capitals 396.0-408.0). Measured.
+const LEGENDS: [(f32, char, u32); 2] = [(12.0, 'A', S_ACCEPT), (136.0, 'B', S_BACK)];
+/// The legends' item top (MENU_AT's 60 + 332).
+const LEGEND_TOP: f32 = 392.0;
+const WORD_IN: f32 = 18.3;
+const WORD_CAP_TOP: f32 = LEGEND_TOP + 4.0;
 /// How many rows each list has nodes for (the most a mission has is m01's four primaries, some
 /// of which wrap).
 const MAX_LINES: usize = 10;
@@ -194,20 +196,11 @@ fn build(mut commands: Commands, mut game: ResMut<GameData>, mut images: ResMut<
             commands.spawn((ChildOf(screen), game_text("", MENU_AT.x + LISTS[k].0.x + LINE_INSET, 0.0, TEXT_CAP, TEAL, Align::Left), ObjectiveLine(k, n)));
         }
     }
-    // the legends: the button icon (the controller icons' atlas, as the front end's), the word
-    let icons = game.texture_rgba(BUTTONS).map(|(w, h, px)| {
-        let rects = AtlasFont::runs(w, &px, BUTTON_ROW.0, BUTTON_ROW.1);
-        let image = images.add(Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                                          bevy::render::render_resource::TextureDimension::D2, px,
-                                          bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-                                          bevy::asset::RenderAssetUsages::default()));
-        (image, rects)
-    });
-    for (k, &(x, button, _)) in LEGENDS.iter().enumerate() {
-        if let Some(r) = icons.as_ref().and_then(|(i, rects)| rects.get(button).map(|r| (i.clone(), *r))) {
-            let w = ICON_HEIGHT * r.1.width() / r.1.height();
-            commands.spawn((ChildOf(screen), hud::at(MENU_AT.x + x + ICON_IN, ICON_TOP, w, ICON_HEIGHT),
-                            ImageNode { rect: Some(r.1), ..ImageNode::new(r.0) }));
+    // the legends: the button's icon (the 12-point icon font's cell), the word
+    let icons = texture(game, &mut images, ICON12_ATLAS).map(|(image, ..)| image);
+    for (k, &(x, letter, _)) in LEGENDS.iter().enumerate() {
+        if let Some((node, image)) = icons.clone().and_then(|image| legend_icon(image, Vec2::new(MENU_AT.x + x, LEGEND_TOP), letter)) {
+            commands.spawn((ChildOf(screen), node, image));
         }
         commands.spawn((ChildOf(screen), game_text(&legends[k], MENU_AT.x + x + WORD_IN, 0.0, LEGEND_CAP, LIGHT, Align::Left), Heading(Some(2 + k))));
     }

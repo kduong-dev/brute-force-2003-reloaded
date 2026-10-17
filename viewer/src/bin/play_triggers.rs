@@ -71,7 +71,7 @@
 //!    0x200650): OPERATE asks for its script to play (by its entry's `<script command>`: play,
 //!    pause, resume, stop), brings the letterbox in (its STOP takes it out), warps its objects to
 //!    its world point. A script's 103 sends its signal straight to a trigger's handler.
-//!  * every other class (menu, message, input, event, radar, level-over ...): its base actions;
+//!  * every other class (radar, level-over, property, the damage plate ...): its base actions;
 //!    its own actions are logged as left to their step (`bf::triggers::later_step`). Waypoint and
 //!    evaluate triggers: base only.
 //!

@@ -124,8 +124,9 @@ const ADVANCE_16: [u8; 224] = [
 /// The legends' button icons (style h_e35bb628's first font: the icon font h_0e38a4ca at 12
 /// points): FUN_000cd5d0 registers that size's record, 0x3c5fe8, on an atlas of its own,
 /// h_0e233fad (128 x 256, v as stored), whose discs are smaller and outlined in black, as take04's
-/// and take11's legends are (not the front end's or the hint lines' 16-point discs).
-const ICON12_ATLAS: u32 = 0x0E23_3FAD;
+/// and take11's legends are (not the front end's or the hint lines' 16-point discs). The
+/// objectives menu's legends are the same style's (play_objectives.rs).
+pub(crate) const ICON12_ATLAS: u32 = 0x0E23_3FAD;
 /// The 12-point record's line height (its +4): a glyph's cell is one more tall (FUN_000ccd20).
 const ICON12_LINE: f32 = 16.0;
 /// The 12-point record's glyphs 'A' to 'J' (from its +0x1c, 0x18 bytes each, read from
@@ -159,6 +160,16 @@ const ICON12_GLYPHS: [(char, f32, f32, f32, f32, i8, u8, u8); 10] = [
 const ICON_PEN: Vec2 = Vec2::new(-0.5, 1.0);
 const WORD_IN: Vec2 = Vec2::new(18.3, 4.0);
 const LEGEND_CAP: f32 = 12.0;
+
+/// A legend's button icon (style h_e35bb628, see ICON12_GLYPHS): the node of `letter`'s cell on the
+/// 12-point atlas `image`, its pen at the legend item's `corner` (+ ICON_PEN, + the glyph's
+/// offset), (width + 1) x 17 units; None for a letter the font hasn't got. The panels' legends and
+/// the objectives menu's (play_objectives.rs) draw theirs so.
+pub(crate) fn legend_icon(image: Handle<Image>, corner: Vec2, letter: char) -> Option<(Node, ImageNode)> {
+    let &(_, u0, v0, u1, v1, offset, width, _) = ICON12_GLYPHS.iter().find(|g| g.0 == letter)?;
+    let at = corner + ICON_PEN + Vec2::new(offset as f32, 0.0);
+    Some((hud::at(at.x, at.y, width as f32 + 1.0, ICON12_LINE + 1.0), ImageNode { rect: Some(Rect::new(u0, v0, u1, v1)), ..ImageNode::new(image) }))
+}
 
 /// A menu-trigger's own fields (+0x40-+0x4c): its menu, Title and message (string ids), whether
 /// game-options defines the menu, and whether it's open (+0x4c holds the menu's id while it is).
@@ -323,12 +334,11 @@ pub(super) fn input(mut commands: Commands, mut tr: ResMut<Triggers>, mut keys: 
 /// clock stopped, the objectives menu: then it waits for that one to close); the clock stops at
 /// the next frame's start (`input`).
 ///
-/// CUTSCENE HOOK (#222): a panel isn't held back while a cutscene has the world. The menu-trigger
-/// opens its menu straight through the menu system (FUN_002081d0), without the cutscene bit test
-/// (+0xc50 & 0x10) that the player's own menus go through (FUN_0008c8c0, the objectives and pause
-/// menus: #222's `script::in_cutscene()`). No take shows one opening during a cutscene (WEAPONS
-/// opens at the end of a voice line, h_eb8d3d96's FINISHED, after the patrol's script: take05,
-/// take07). Should one need holding back, the test goes here.
+/// A panel isn't held back while a cutscene has the world: the menu-trigger opens its menu
+/// straight through the menu system (FUN_002081d0), without the cutscene bit test (+0xc50 & 0x10)
+/// that the players' own menus go through (FUN_0008c8c0, the objectives and pause menus:
+/// play_script.rs `in_cutscene`). No take shows one opening during a cutscene (WEAPONS opens at
+/// the end of a voice line, h_eb8d3d96's FINISHED, after the patrol's script: take05, take07).
 fn show(mut commands: Commands, mut tr: ResMut<Triggers>, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>,
         mut cache: ResMut<PanelImages>, font: Option<Res<GameFont>>) {
     let Some(font) = font else { return };
@@ -465,11 +475,8 @@ fn build(commands: &mut Commands, game: &mut Game, images: &mut Assets<Image>, c
         let ItemKind::Legend { button, label } = item.kind else { continue };
         let corner = menu.at + item.at;
         let letter = game.strings.get(&button).and_then(|s| s.chars().next()).unwrap_or(' ');
-        let glyph = ICON12_GLYPHS.iter().find(|g| g.0 == letter);
-        if let (Some(image), Some(&(_, u0, v0, u1, v1, offset, width, _))) = (icons.clone(), glyph) {
-            let at = corner + ICON_PEN + Vec2::new(offset as f32, 0.0);
-            let rect = Rect::new(u0, v0, u1, v1);
-            commands.spawn((place(at, Vec2::new(width as f32 + 1.0, ICON12_LINE + 1.0)), ImageNode { rect: Some(rect), ..ImageNode::new(image) }, ChildOf(screen)));
+        if let Some((node, image)) = icons.clone().and_then(|image| legend_icon(image, corner, letter)) {
+            commands.spawn((node, image, ChildOf(screen)));
         }
         let style = game.menus.styles.get(&item.style).cloned().unwrap_or_default();
         let rgba = style.color.unwrap_or([255; 4]);

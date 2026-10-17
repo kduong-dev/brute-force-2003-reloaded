@@ -116,7 +116,7 @@ It's game-options' menu h_0cfeaf6f, 470 x 360 at (85, 60) on the 640 x 480 scree
 | Title | "MISSION OBJECTIVES" (h_08300dcd), centred in (2, 2) 246 x 24, style h_e53b67a8: 153 209 251, outlined black, 16 pt |
 | Headings | "Primary Objectives:" (h_e7ba5b50) at (8, 40), "Secondary Objectives:" (h_e4ff251d) at (8, 182), h_0a959b2e: 153 209 251, 14 pt |
 | Lists | `primary-objectives` (33, 76) 400 x 100, `secondary-objectives` (33, 214) 400 x 106, h_ff54aaed: 30 110 150, outlined, 14 pt, centred up and down. Their lines (FUN_000f8480 / FUN_000f8540): each objective whose `enabled` flag is true (FUN_000f8310), its text, then " (completed)" (h_eb2ff8cb) for state 1 or " (failed)" (h_fdc04956) for -1, each followed by a "\n" |
-| Legends | "A Accept" (h_18291278) at (12, 332), "B Back" (h_f1e06461) at (136, 332), h_e35bb628: the button icon, then the word, 153 209 251, 12 pt |
+| Legends | "A Accept" (h_18291278) at (12, 332), "B Back" (h_f1e06461) at (136, 332), h_e35bb628: the button's letter in the icon font h_0e38a4ca at 12 points (its record 0x3c5fe8 on the atlas h_0e233fad, FUN_000cd5d0: outlined discs, cut flat on top; drawn as the tutorial panels' legends, [hints.md](hints.md)), then the word, 153 209 251, 12 pt |
 
 Measured on take04's frame at 63.0 s (1.5 px a unit), as the demo places them: the capitals
 13.3 units tall at 14 pt, 10.0 at 12 pt; the title's glyphs at 15.5 (a fit: the take's are 21 px
@@ -179,7 +179,8 @@ the frames looked at:
   set Stout's and Cogburn's: tex 1, Gonzales 0, Cogburn 1, Stout 1 (take11's `1|0|1|1`).
 * **The menu** (`BF_TEST_GOTO=57.5,68.22,56.8,68.22 BF_TEST_OBJECTIVES=1,2`, take04's spot, against
   take04's frame at 63.0 s): the panel, headings, lines and legends at the take's places within a
-  pixel or two; the title's 176 units across to the take's 183 (the take spaces its letters
+  pixel or two (the legends since #224: the 12-point icon discs line up to the pixel, the words'
+  capitals 396.0-408.0 as the take's); the title's 176 units across to the take's 183 (the take spaces its letters
   wider). With both objectives completed (the chains above, the menu at 7 s): "Eliminate every
   terrorist at their main base." / "(completed)" (wrapped) and "Investigate all terrorist
   buildings. (completed)". It's whole in its first frame; the world's frames while it's open are
@@ -201,9 +202,7 @@ the frames looked at:
   once Rescue Brutus (M01_a, no marines) has started (`1|0|1|1` -> `1|0|0|0`); what clears them
   isn't traced (the squad's save at a level's end, FUN_00082920, resets only Stout's, through
   FUN_00082040). #226.
-* The legends' icons are the front end's (atlas h_0b630034): the take's are darker discs
-  (the style's icon font h_0e38a4ca, looked up by the code's font manager, isn't traced). The
-  title's letters are spaced closer than the take's.
+* The title's letters are spaced closer than the take's.
 * A wrapped objective line isn't in any take; nor are more lines than one per list.
 * The random operands' seed (FUN_00233b90's) is the demo's own; the data's random operands (13
   gamevars, A kind 4) aren't in the tutorial.

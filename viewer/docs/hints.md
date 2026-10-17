@@ -148,8 +148,8 @@ shows skips it: the plate disables timer464, starts timer391 and clears the co-o
 * **The hint lines** are drawn as the game does: the body font's glyphs from its own atlas (the
   briefings' `FontAtlas`), the icon font's 16-point glyphs from h_0b630034 (`ICON_GLYPHS`, read
   from the record), placed, coloured, shadowed and blinking as above, in a HUD root of their own
-  (`HudRoot`: hidden with the HUD in the editor's edit mode and, with #222, under a cutscene's
-  letterbox). `BF_HINT_LOG=1` logs each line shown and cleared.
+  (`HudRoot`: hidden with the HUD in the editor's edit mode and while the letterbox's bars are
+  in, play_script.rs). `BF_HINT_LOG=1` logs each line shown and cleared.
 * **The virtual buttons** stand for the pad's: the demo's keys for the same actions, and a
   pad's buttons (none read under `BF_BACKGROUND`):
 
@@ -180,7 +180,8 @@ shows skips it: the plate disables timer464, starts timer391 and clears the co-o
   picture sets), their texts wrapped by the body font records' own advances, so the lines break
   where the takes' do. The words themselves are the demo's HUD font (play_text.rs) at capital
   heights measured on take04: a few percent wider than the game's 10 and 12-point glyphs. The
-  legends' icons are the 12-point icon glyphs (`ICON12_GLYPHS`). The clock stops from the frame
+  legends' icons are the 12-point icon glyphs (`ICON12_GLYPHS`, `legend_icon`, which the
+  objectives menu's legends use too: the same style). The clock stops from the frame
   after a panel opens to the frame it closes in (`set_paused`, as the objectives menu); no key,
   mouse or pad press reaches the game under it. Enter, Space or the pad's A accept; Q or the
   pad's Y skip; nothing else closes one.
@@ -226,8 +227,6 @@ BF_MAP=tutorial BF_HINT_LOG=1 BF_TEST_GOTO=57.5,68.22,57.5,68.22 BF_TEST_FALL=37
 * **MENU_ACCEPT** is sent whenever A closes a panel (the callback's +0 once the menu has closed on
   its accept item, as FUN_00100ea0 has it when the menu's controller takes the press: whether it
   does isn't traced); nothing in the tutorial acts on it.
-* **The objectives menu's legends** still draw the front end's icons (play_objectives.rs); its
-  style is the panels' h_e35bb628, so it should take the 12-point icon glyphs too (a follow-up).
 * **Black uses no Medkit** (B only clears the Medkit hint); START has no pause menu (Escape only
   opens its gate). The input triggers' `controller` isn't read, as in the code: player 1's A
   opens the co-op hint's gates too (no take shows it either way).
@@ -270,6 +269,14 @@ set beside the takes' (todo/28-tutorial):
   and 25 about tex_1, event486's EVENT_MATCH, "Press [Black] to use Medkit." (take08 171.3 s),
   the four Black gates enabled, timer510 clearing it 10 s later; with `BF_TEST_VB=63,5` the
   four gates' TRUE clears it at the first frame from 5 s.
+* **With the cutscenes** (#222): the tutorial's opening (`BF_MAP=tutorial BF_TEST_PANEL=a,1`, 10
+  frames a second): the bars out from 25.90 s, the cutscene bit off at 26.10, the script's end at
+  26.20, the co-op hint at 26.30, on screen with the HUD as the bars go (take03: by clk 26.46-26.56),
+  BASIC CONTROLS at 31.30. A hint up when a cutscene starts (`BF_SCRIPT=tutorial_grenade_lesson,4`
+  after the BACK hint at 1 s) goes with the HUD under the bars and is back, steady, as they go.
+* **The legends** of a panel and of the objectives menu (`BF_TRIGGER_FIRE=h_0a3f40d3,2,1
+  BF_TEST_PANEL=a,2 BF_TEST_OBJECTIVES=4,2`): the A, Y and B discs line up with take11's and
+  take04's (63.0 s) to the pixel, the words' capitals at the takes' 396.0-408.0.
 * **No regressions**: the objectives menu (`BF_TEST_OBJECTIVES=1,2` at take04's spot, against
   take04 63.0 s), the gate chain (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100
   BF_TEST_USE=0.5`: the panel's use, its sound, the gate opening, the prompt where it was),

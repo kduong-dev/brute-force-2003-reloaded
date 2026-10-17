@@ -7,9 +7,10 @@ is the runtime that runs them, the first step of the tutorial (#28, plan step 1)
 steps plug their classes into it (gamevar and score since step 2, #221, with the game flags and
 the cash they work on: [campaign.md](campaign.md); script, letterbox and warp since step 3,
 #222, with the cutscenes they drive: [cutscenes.md](cutscenes.md); sound and dialog since step
-4, #223, with the voices and the level's music they play; message, input, menu and event: step
-5, #224). Everything here is read from default.xbe's trigger code (the addresses are in the
-code's comments and in [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
+4, #223, with the voices and the level's music they play; message, input, menu and event since
+step 5, #224, with the hint lines, button gates and panels they show: [hints.md](hints.md)).
+Everything here is read from default.xbe's trigger code (the addresses are in the code's
+comments and in [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
 
 `bf/triggers.rs` reads them: every element of the level file that carries the trigger base's
 `h_137926ff` (FUN_001fedb0's attributes), with its entries, targets (`h_e91cf6a8`), objects
@@ -68,10 +69,10 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | warp (18) | OPERATE moves its objects (a spawn-trigger's copy) to its `world-point`: on the ground under it, facing down a direction-point's -z or as it was for a world-point; a dead character stays, and one not spawned yet has no copy to move. Its fade-in h_0ede4719 is 2 s without one (0x200734; not drawn) | 0x200650, FUN_00200480, 0x200400 |
 | score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
 
-Every other class (menu, message h_e9b3ae8e, input h_e2b9c3a2, event, radar, level-over
-h_1f07be84, property h_14cccfaa, the damage plate h_130818c0) runs its base actions; each of its
-own actions is counted as used, as its handler counts it, and logged with the step that runs it
-("h_11313ffd (menu) OPERATE on USER_SIGNAL2: not run yet (step 5, #224)").
+Every other class (radar, level-over h_1f07be84, property h_14cccfaa, the damage plate
+h_130818c0) runs its base actions; each of its own actions is counted as used, as its handler
+counts it, and logged with the step that runs it ("h_11a8c558 (property) OPERATE on USE_OBJECT
+[tex_1]: not run yet (a later step (object properties))").
 
 ## Gamevar-triggers
 
@@ -315,7 +316,7 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   * the opening: Bratton's four lines on the script's USER1s (its 103s, #222):
     baseisguarded (1.97 s) at 3.02 s, envhazards (4.59 s) at 6.18, goingtoguide (6.11 s) at 11.22,
     refresher (6.75 s) at 19.55, whose FINISHED starts timer429 (0.1 s: the co-op hint) and
-    timer462 (5 s: BASIC CONTROLS; both step 5, #224);
+    timer462 (5 s: BASIC CONTROLS; both #224's: [hints.md](hints.md));
   * the hint chain's lines (dxud_ai_00047 "[BACK] to check mission objectives." ...) on its
     timers, stopped and disabled by router400's plates; Bratton's PLAY_DIALOG lines (the radar
     explanation, whose FINISHED opens the WEAPONS panel; first patrol, take cover ...) through the
@@ -507,7 +508,8 @@ the log read and the frames looked at:
 
 ## Not done here, or not known
 
-* The classes left to steps 5-9 (#224-#228, above).
+* The classes left to later steps (level-over #226, radar and the damage plate #228, the object
+  properties: above).
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
 * Placed characters that no spawn-trigger names still add their bodies' collision to the arena
