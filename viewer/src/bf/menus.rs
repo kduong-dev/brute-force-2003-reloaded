@@ -254,9 +254,10 @@ fn font(e: &Element, k: u32) -> Option<(u32, f32)> {
     Some((name_of(f, H_FONT_NAME), f.attr(h("point-size")).and_then(|v| v.as_f32())?))
 }
 
-/// A list of names (`animation-id="h_e2027fa6 h_17494bb2 h_e150ead3"`): each one's hash. The
-/// decoder gives a list attribute as the attribute once per value (the first alone through
-/// `Element::attr`), or as a list.
+/// A list of names (`animation-id="h_e2027fa6 h_17494bb2 h_e150ead3"`): each one's hash. A list
+/// attribute is the attribute repeated, one value per name (campaign.md): this takes every one
+/// from the element's `attrs` (`Element::attr`, unchanged, gives the first alone), and a list
+/// value's items.
 fn names(e: &Element, k: u32) -> Vec<u32> {
     fn one(v: &super::bxml::Value) -> Vec<u32> {
         match v {

@@ -278,6 +278,24 @@ impl Campaign {
         (1..=SLOTS).find(|&n| self.flags.value(&Self::slot(n, h("archetype"))).is_some_and(|v| v.as_int() as u32 == kind))
     }
 
+    /// A character type's member flag `<type>/h_03761692` (the session's +0xbc writes it).
+    pub fn member(&self, kind: u32) -> bool {
+        self.flags.value(&[kind, H_MEMBER]).is_some_and(|v| v.as_bool())
+    }
+
+    /// Whether `u` is in the campaign squad's record (the mode's +0x1c: the members FUN_0005baf0
+    /// counts alive for the squad-dead countdown, FUN_00089d30; the deaths FUN_00115d50 counts as
+    /// operatives lost), in the world: the demo's own squad, or a squad type on its side that the
+    /// session counts as a member, its member flag set (the V-squad's marines once they spawn,
+    /// FUN_00209900: take11 hands the control to one of them with Tex alive, so they're the
+    /// squad's; the start marines are taken away at their spawn, the member check).
+    pub fn in_squad_record(&self, game: &Game, u: &Player) -> bool {
+        if u.stand_in || u.absent {
+            return false;
+        }
+        u.in_squad() || (u.team == SQUAD_SIDE && game.character_type(u.kind).is_some_and(|t| t.player_type) && self.member(u.kind))
+    }
+
     /// The session's +0xb8 (0x83ee0): whether a character of type `kind` counts as in the squad:
     /// true when no save-game slot holds its type (the session doesn't track it); else its slot's
     /// alive flag (h_03761692), or, that false, whether a player controls its type.
@@ -521,7 +539,7 @@ pub fn begin_level(mut campaign: ResMut<Campaign>, game: Res<GameData>, map: Res
 /// back to life (+0x144(0)): FUN_00112830 sets a squad type's member flag to whether it lives,
 /// and at a death FUN_00157070 pays its type's award. Characters are told apart by `Who`; one
 /// seen for the first time is only noted.
-fn deaths(mut campaign: ResMut<Campaign>, game: Res<GameData>, player: Res<Player>, squad: Res<Squad>) {
+pub(crate) fn deaths(mut campaign: ResMut<Campaign>, game: Res<GameData>, player: Res<Player>, squad: Res<Squad>) {
     let c = &mut *campaign;
     if !c.in_mission {
         return;
@@ -532,9 +550,10 @@ fn deaths(mut campaign: ResMut<Campaign>, game: Res<GameData>, player: Res<Playe
             continue;
         }
         let t = player.sim_time;
-        // FUN_00115d50: a death of the campaign squad's (the demo's squad, not an NPC) counts in
-        // its record's +0x20, "Operatives Lost", unless a cutscene has the world
-        if u.dead && u.in_squad() && !script::in_cutscene() {
+        // FUN_00115d50: a death of the campaign squad's (its record: the demo's squad and the
+        // marines that joined it) counts in the record's +0x20, "Operatives Lost", unless a
+        // cutscene has the world
+        if u.dead && c.in_squad_record(&game.0, u) && !script::in_cutscene() {
             c.cash.lost += 1;
             if c.cash_log {
                 println!("t {t:.2}: operatives lost {} ({} died)", c.cash.lost, unit_name(u));

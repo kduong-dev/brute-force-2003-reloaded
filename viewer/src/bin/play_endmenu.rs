@@ -377,10 +377,7 @@ fn build(mut commands: Commands, mode: Res<MissionMode>, mut menu: ResMut<EndMen
         return;
     };
     let game = &mut game.0;
-    let success = !mode.squad_dead && campaign.objectives.iter().filter(|o| o.primary).all(|o| {
-        let p = |k: &str| [o.path.as_slice(), &[h(k)]].concat();
-        !campaign.flags.value(&p("enabled")).is_some_and(|v| v.as_bool()) || campaign.flags.value(&p("state")).is_some_and(|v| v.as_int() > 0)
-    });
+    let success = succeeded(&mode, &campaign);
     let zones = game.campaign.iter().find(|l| l.id == mode.mission).map_or(1, |l| l.zones.len());
     let selector = if success { 0 } else if mode.squad_dead { 3 } else if zones > 1 { 2 } else { 1 };
     let n = numbers(&campaign, map.0.as_ref().map_or(0.0, |l| l.max_score));
@@ -431,6 +428,9 @@ fn build(mut commands: Commands, mode: Res<MissionMode>, mut menu: ResMut<EndMen
     // the icons (success only), in slot order
     let difficulty = campaign.difficulty;
     let variant = if difficulty < NORMAL_DIFFICULTY { 0 } else if difficulty > NORMAL_DIFFICULTY { 2 } else { 1 };
+    // the DNA found on the level (its name's string: take12's "Confed Marine" + " DNA"): a
+    // placeholder, none, until the DNA pickups are run (#228); the line reads "No DNA Found"
+    // meanwhile
     let dna: Option<u32> = None;
     let icon = |name: u32| -> Option<u32> {
         if !success {

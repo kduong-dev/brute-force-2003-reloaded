@@ -161,7 +161,8 @@ pub struct Path {
     /// SELECT CAMPAIGN's row
     slot: usize,
     /// ENTER NAME: the name, whether it's still the default (shown selected: the first key typed
-    /// replaces it), the key selected (its index in the data) and the EXTRA set on
+    /// replaces it, a guess: no take types), the key selected (its index in the data) and the
+    /// EXTRA set on
     name: String,
     fresh: bool,
     key: usize,
@@ -863,6 +864,8 @@ fn name_input(commands: &mut Commands, menu: &mut Menu, asked: &Asked, sfx: &Sfx
             go_to(commands, sfx, menu, Step::Difficulty);
         }
         KEY_BACK => {
+            // (a guess: BACK on the default name, standing selected, clears it all, as the
+            // first key typed replaces it; no take shows either)
             if path.fresh {
                 path.name.clear();
             } else {
@@ -952,7 +955,8 @@ pub fn animate(time: Res<Time>, clock: Res<Clock>, mut texts: Query<(&mut Record
             let [cr, cg, cb, ca] = ECHO_COLOR;
             let colour = Color::srgba_u8(cr, cg, cb, ca).with_alpha(ca as f32 / 255.0 * (1.0 - k));
             r.scale = scale;
-            r.y = e.centre.y - r.record.height() * scale * 0.5;            if r.colours.first() != Some(&colour) {
+            r.y = e.centre.y - r.record.height() * scale * 0.5;
+            if r.colours.first() != Some(&colour) {
                 r.colours = vec![colour];
                 r.redraw();
             }

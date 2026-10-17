@@ -54,6 +54,7 @@
 
 use std::collections::VecDeque;
 
+use bf_viewer::bf::hash::h;
 use bf_viewer::bf::level::END_CAMERA;
 
 use super::briefing::{self, List, Request, Then};
@@ -69,6 +70,30 @@ pub(crate) const LEVEL_MISSION: u32 = 0x1750_6391;
 const SQUAD_DEAD_COUNTDOWN: f32 = 3.0;
 /// The level's end fade to black (s): FUN_000e0410's FUN_00069780(0.5); take12: 357.42-357.90 s.
 const END_FADE: f32 = 0.5;
+/// The save's stall at a successful mission's end (the end screen's opening saves its results,
+/// FUN_00106d10, before the frame is drawn): the picture stays as the fade's last frame left it
+/// until the end screen comes. A fit to take12, no wait in the code: the fade linear from 39.8 to
+/// 3.56 mean luma by 357.90 s (0.91 of the way), held there until the end screen at 358.37 s.
+/// The demo holds its fade at SAVE_AT for SAVE_STALL s.
+const SAVE_AT: f32 = 0.92;
+const SAVE_STALL: f32 = 0.47;
+/// The game draws the fade's black over the picture's own (gamma) values, k of the way (its draw,
+/// FUN_000694f0: k x 255 as the quad's alpha): take12's luma falls linearly. Bevy blends in
+/// linear light, so the demo's black takes the alpha that darkens this grey (an sRGB value) by
+/// k in its own values (`linear_alpha`). A fit: on the tutorial's end view the frame's mean luma
+/// then falls within 1% of linear (a power law 1 - (1 - k)^2.2 left 2% at 0.92, the take 9%).
+const GREY: f32 = 0.3;
+
+/// An sRGB value in linear light.
+fn linear(v: f32) -> f32 {
+    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+}
+
+/// The alpha of a black blended in linear light that darkens GREY as the game's fade by `k`
+/// does (see GREY).
+fn linear_alpha(k: f32) -> f32 {
+    (1.0 - linear(GREY * (1.0 - k)) / linear(GREY)).clamp(0.0, 1.0)
+}
 /// A zone end's fade (s): the level-over's FUN_00069780(0.5) at 0x208092.
 const ZONE_FADE: f32 = 0.5;
 /// The status line's strings (the string table): "Saving..." and "Saving Campaign...".
@@ -94,7 +119,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn_console)
         .add_systems(Update, console)
         .add_systems(OnEnter(AppState::Playing), begin.after(flags::begin_level))
-        .add_systems(Update, frame.after(doors).run_if(in_state(AppState::Playing)))
+        .add_systems(Update, frame.after(doors).after(flags::deaths).run_if(in_state(AppState::Playing)))
         .add_systems(Update, fade.after(frame).run_if(in_state(AppState::Playing)))
         .add_plugins(endmenu::plugin);
 }
@@ -175,6 +200,9 @@ pub struct Fade {
     on: bool,
     /// the black node over the world
     node: Option<Entity>,
+    /// a save's stall to come (SAVE_AT, SAVE_STALL): the progress the picture stays at and for
+    /// how long (s)
+    stall: Option<(f32, f32)>,
 }
 
 impl Fade {
@@ -184,20 +212,48 @@ impl Fade {
         self.out = out;
         self.progress = 0.0;
         self.rate = if secs > 1.192_092_9e-7 { 1.0 / secs } else { 1.0 };
+        self.stall = None;
     }
 
-    /// FUN_00087d70: a fade is under way.
+    /// FUN_00069780(secs) with ECX `out`, then the game stalled by a save once it's `at` of the
+    /// way, for `secs_stalled` (SAVE_AT): the picture stays there, then the fade is over.
+    pub fn start_stalled(&mut self, secs: f32, out: bool, at: f32, secs_stalled: f32) {
+        self.start(secs, out);
+        self.stall = Some((at, secs_stalled));
+    }
+
+    /// FUN_00087d70: a fade is under way (through a stall too).
     pub fn running(&self) -> bool {
         self.on && self.progress < 1.0
     }
 
-    /// The black's alpha now.
+    /// The black's alpha now, as the game draws it over the picture's own values (see GREY).
     fn alpha(&self) -> f32 {
         if !self.on {
             return 0.0;
         }
         let k = self.progress.clamp(0.0, 1.0);
         if self.out { k } else { 1.0 - k }
+    }
+
+    /// One frame of the fade's clock: on to the end, or to its stall and through it.
+    fn step(&mut self, dt: f32) {
+        if !self.on || self.progress >= 1.0 {
+            return;
+        }
+        match self.stall {
+            Some((at, left)) if self.progress >= at => {
+                // (stalled: the picture stays, then the fade's time is past its end)
+                if left - dt <= 0.0 {
+                    self.stall = None;
+                    self.progress = 1.0;
+                } else {
+                    self.stall = Some((at, left - dt));
+                }
+            }
+            Some((at, _)) => self.progress = (self.progress + dt * self.rate).min(at),
+            None => self.progress += dt * self.rate,
+        }
     }
 }
 
@@ -255,13 +311,13 @@ fn begin(mut mode: ResMut<MissionMode>, mut fade: ResMut<Fade>, mut commands: Co
     }
 }
 
-/// The flow's frame (after the triggers' and the doors'): what the level-over and zone triggers
-/// asked, the campaign mode's update (the squad-dead countdown) and the world's end step (see
-/// the module notes).
+/// The flow's frame (after the triggers', the doors' and play_flags.rs's count of the deaths):
+/// what the level-over and zone triggers asked, the campaign mode's update (the squad-dead
+/// countdown) and the world's end step (see the module notes).
 #[allow(clippy::too_many_arguments)]
 fn frame(mut commands: Commands, time: Res<Time>, mut mode: ResMut<MissionMode>, mut tr: ResMut<triggers::Triggers>, player: Res<Player>,
          squad: Res<Squad>, mut fade: ResMut<Fade>, mut console: ResMut<Console>, mut objectives: ResMut<objectives::ObjectivesMenu>,
-         game: Res<GameData>, mut next: ResMut<NextState<AppState>>) {
+         game: Res<GameData>, mut next: ResMut<NextState<AppState>>, campaign: Res<flags::Campaign>) {
     if !mode.active {
         return;
     }
@@ -304,11 +360,12 @@ fn frame(mut commands: Commands, time: Res<Time>, mut mode: ResMut<MissionMode>,
         return;
     }
     if !mode.ended {
-        // the mode's update (FUN_00089c90): the squad-dead countdown (FUN_00089d30)
+        // the mode's update (FUN_00089c90): the squad-dead countdown (FUN_00089d30), while none
+        // of the squad record's members lives (FUN_0005baf0: the joined marines count) and its
+        // +0x20 has a death counted (outside a cutscene, `Cash::lost`)
         if !mode.over {
-            let members: Vec<&Player> = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| u.in_squad() && !u.absent && !u.stand_in).collect();
-            let living = members.iter().filter(|u| !u.dead).count();
-            if !members.is_empty() && living == 0 && !script::in_cutscene() {
+            let living = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| campaign.in_squad_record(&game.0, u) && !u.dead).count();
+            if living == 0 && campaign.cash.lost > 0 && !script::in_cutscene() {
                 if mode.fresh {
                     // (bit 4 cleared; its FUN_00179e10, the world's music stopped, isn't done)
                     mode.fresh = false;
@@ -326,14 +383,22 @@ fn frame(mut commands: Commands, time: Res<Time>, mut mode: ResMut<MissionMode>,
                 }
             }
         }
-        // FUN_000e0410: over, the end taken: the menus closed, the fade, the cutscene bit
+        // FUN_000e0410: over, the end taken: the menus closed, the fade, the cutscene bit; a
+        // successful mission's results are saved as the end screen opens (FUN_00106d10): the
+        // picture stalls near black first (SAVE_AT)
         if mode.over {
             mode.ended = true;
             objectives.close = true;
-            fade.start(END_FADE, true);
+            let saves = succeeded(&mode, &campaign);
+            if saves {
+                fade.start_stalled(END_FADE, true, SAVE_AT, SAVE_STALL);
+            } else {
+                fade.start(END_FADE, true);
+            }
             script::set_cutscene(true);
             if log {
-                println!("t {t:.2}: mission flow: the level's end: the menus closed, a {END_FADE} s fade to black, the cutscene bit (world+0xc50 bits 0 and 4)");
+                println!("t {t:.2}: mission flow: the level's end: the menus closed, a {END_FADE} s fade to black{}, the cutscene bit (world+0xc50 bits 0 and 4)",
+                         if saves { format!(", the save's stall at {SAVE_AT} of it for {SAVE_STALL} s") } else { String::new() });
             }
         }
     } else if !mode.menu_open && !fade.running() {
@@ -345,13 +410,21 @@ fn frame(mut commands: Commands, time: Res<Time>, mut mode: ResMut<MissionMode>,
     }
 }
 
-/// The fade's frame: its clock (the app's: real time, the capture's steps), its black's alpha.
+/// Whether the mission ended in success (FUN_00107e50's selector 0): not the squad's death, and
+/// every enabled primary objective complete (FUN_00107dd0: `state` > 0).
+pub(crate) fn succeeded(mode: &MissionMode, campaign: &flags::Campaign) -> bool {
+    !mode.squad_dead && campaign.objectives.iter().filter(|o| o.primary).all(|o| {
+        let p = |k: &str| [o.path.as_slice(), &[h(k)]].concat();
+        !campaign.flags.value(&p("enabled")).is_some_and(|v| v.as_bool()) || campaign.flags.value(&p("state")).is_some_and(|v| v.as_int() > 0)
+    })
+}
+
+/// The fade's frame: its clock (the app's: real time, the capture's steps), its black's alpha
+/// (in linear light, the game's darkening in the picture's own values: GREY).
 fn fade(time: Res<Time<Real>>, mut fade: ResMut<Fade>, mut nodes: Query<&mut BackgroundColor>) {
     let dt = if std::env::var("BF_CAPTURE").is_ok() { capture_step() } else { time.delta_secs().min(0.1) };
-    if fade.on && fade.progress < 1.0 {
-        fade.progress += dt * fade.rate;
-    }
-    let alpha = fade.alpha();
+    fade.step(dt);
+    let alpha = linear_alpha(fade.alpha());
     if let Some(mut c) = fade.node.and_then(|n| nodes.get_mut(n).ok()) {
         let want = Color::BLACK.with_alpha(alpha);
         if c.0 != want {

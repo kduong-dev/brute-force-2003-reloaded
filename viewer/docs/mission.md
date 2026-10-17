@@ -47,7 +47,7 @@ titles type out (style h_189b1ae9: 0.125 s a letter), the selected button or row
 | CAMPAIGN TYPE h_f9728897 | CAMPAIGN, QUICK CAMPAIGN, RESUME LAST under SINGLE XBOX CONSOLE; HOST SESSION, JOIN SESSION under SYSTEM LINK (headings: style h_e8b4c2d6, filled 100 100 160 at 160); the selected button's description (its buddy-control) at (314, 118) | CAMPAIGN runs the menu sequence h_0ff0b19d (its event-script, event 2 action 1); the others give the error sound (#27, System Link) |
 | SELECT PROFILE h_14761942 | a listbox (6 rows in 206 units, each centred; the arrows texture h_1cc0d333 above and below): DEFAULT, INVERTED (the profiles' profile-id strings), "New Profile"; legends A Select, B Back, Y New Profile, X Delete Profile (grey: a built-in profile) | a profile: SELECT CAMPAIGN; New Profile: the error sound (#27) |
 | SELECT CAMPAIGN h_e61ae053 | the campaigns saved (none: #27), then "New Campaign" (FUN_000f1430); X Delete Campaign grey | ENTER NAME |
-| ENTER NAME h_e37b5c35 | "Enter a name for your campaign"; the keyboard h_f1eabb1b: its keys from the data (ten 40-unit slots a row, five rows; BACK, EXTRA ALPHA, SPACE, DONE wider), the name "CAMP001" ("CAMP" and the first number not taken, 0x7e1f0) standing selected over a lavender box, DONE selected, its word pulsing once a second | a key types (the first replaces the selected name; 12 at most), BACK takes one back, EXTRA ALPHA switches to the keys' second set, DONE saves the campaign ("Saving..." on the status line, 1 s) and opens SELECT DIFFICULTY |
+| ENTER NAME h_e37b5c35 | "Enter a name for your campaign"; the keyboard h_f1eabb1b: its keys from the data (ten 40-unit slots a row, five rows; BACK, EXTRA ALPHA, SPACE, DONE wider), the name "CAMP001" ("CAMP" and the first number not taken, 0x7e1f0) standing selected over a lavender box, DONE selected, its word pulsing once a second | a key types (12 at most), BACK takes one back, EXTRA ALPHA switches to the keys' second set (guesses for the selected name: the first key replaces it, BACK clears it; no take types), DONE saves the campaign ("Saving..." on the status line, 1 s) and opens SELECT DIFFICULTY |
 | SELECT DIFFICULTY h_1a6884c5 | STANDARD, HARD, BRUTAL (heading 24, centred), the selected one's description; opens on STANDARD (FUN_000f1340: the session's, a new campaign's) | JOIN CAMPAIGN (SELECT MISSION, h_16ddaa42, is passed: a new campaign has one mission, as take01 shows) |
 | JOIN CAMPAIGN h_0130d4e8 | four quadrant menus 232 x 129 from (68, 114): the first controller's h_ebad668d (the profile's name, Tex's picture h_0f35d3d4, "Select Character", the spinner with "Tex" between the arrows h_158f87c1), the others' h_1ca7cb7b ("Press START to Join" and the pad h_e8047c6d in their disabled colours); their frames' texture isn't in the data: drawn as 1-unit borders in 153 209 251 at 100 | A: the ready line h_e3cb03c9 ("Controller 1 ready! / Press START to begin!"); START then begins |
 
@@ -64,9 +64,14 @@ saves (take01 20.56-20.97 s, 35.35-35.83 s): the demo saves nothing (#27) and go
 * **The campaign mode** (FUN_00089a50, vtable 0x3a21fc; made with each mission level,
   FUN_000d6490): its +0x24 flags (bit 0 the level is over, bit 1 the squad is dead, bit 2 a
   restart asked, bit 4 its countdown not run yet) and +0x20 the squad-dead countdown, 3.0 s. Its
-  update (FUN_00089c90) runs the countdown (FUN_00089d30): while the squad has members but none
-  alive and no cutscene has the world, down by the frame's time; at 0 bits 1 and 0. take05: Tex
-  dead at clk 324330, +0x24 48 -> 32 at once, 35 at clk 327269.
+  update (FUN_00089c90) runs the countdown (FUN_00089d30): while none of the squad record's
+  members lives (FUN_0005baf0), the record's +0x20 has a death counted (a death outside a
+  cutscene, the end screen's Operatives Lost) and no cutscene has the world, down by the frame's
+  time; at 0 bits 1 and 0. take05: Tex dead at clk 324330, +0x24 48 -> 32 at once, 35 at clk
+  327269. The record's members are the demo's squad and the squad types on its side that the
+  session counts as members (their member flags set): the V-squad's marines once they've
+  spawned, as take11 hands the control to one of them. With Tex dead and a marine alive there's
+  no countdown (the demo doesn't hand the control over to a marine: its squad is the four).
 * **The level-over trigger** (h_1f07be84, handler 0x207fe0): OPERATE with h_18f66101 (true by
   default) calls the mode's +0x14, its "over" bit: the mission's end (the tutorial's at 8.93 s of
   its ending script, [cutscenes.md](cutscenes.md)). Without it, the zone's end: a 0.5 s fade, the
@@ -76,9 +81,16 @@ saves (take01 20.56-20.97 s, 35.35-35.83 s): the demo saves nothing (#27) and go
   across the campaign it fires with a zone-trigger.
 * **The world's end step** (FUN_000e0410, every world update): once the mode says over, every
   menu closes, a 0.5 s fade to black starts (FUN_00069780) and the cutscene bit is set (no input,
-  no damage, no menus); once the fade is done (FUN_00087d70) the mode's end menu opens. take12:
-  the fade 357.42-357.90 s, MISSION SUCCESSFUL by 358.42 s (the half second between is the game
-  saving: no wait in the code, none in the demo).
+  no damage, no menus); once the fade is done (FUN_00087d70) the mode's end menu opens. The fade
+  darkens the picture's own (gamma) values linearly (its draw, FUN_000694f0: a black quad at
+  k x 255). The demo's black is blended in linear light, so its alpha is the one that darkens a
+  grey of 0.3 by k in sRGB values (a fit: the end view's mean luma then falls linearly, within
+  1%; a power law 1 - (1 - k)^2.2 crushed it to 2% at 0.92, against the take's 9%). take12:
+  the luma falls linearly from 39.8 at 357.43 s to 3.56 at 357.90 s, stays there until the end
+  screen at 358.37 s (the game saving the results as the screen opens, FUN_00106d10: the last
+  frame drawn stays up), then the screen's world fades in from black over 1 s. The demo holds its
+  fade at 0.92 for 0.47 s after a successful mission (a fit: the stall isn't in the code); after
+  SQUAD KILLED nothing is saved and the screen opens with the fade.
 
 ## The end screen (h_e8e14fcf)
 
@@ -97,8 +109,9 @@ name):
   (FUN_00106b50): take12's and take05's "/ $5040". The numbers count up for 10 s as it opens
   (FUN_00107e90: t / 10 x the greater of a step and the target): take05's "$-1526" is a frame of
   the count to $-3000 (one death: -5000 x 0.6).
-* **Operatives Lost**: the squad's members who died on the level (FUN_00115d50 counts a death
-  unless a cutscene has the world; take12's 1, Tex in the lava).
+* **Operatives Lost**: the squad record's members who died on the level, the joined marines
+  among them (FUN_00115d50 counts a death unless a cutscene has the world; take12's 1, Tex in the
+  lava).
 * The icons one every 0.5 s on success (objectives by the difficulty; cash when all of y was
   earned; DNA). The texts in their styles' disabled colours (FUN_000ef3a0), each after its shadow.
 * As it opens (0x106ef0): the status line's "Saving...", "Saving...", "Saving Campaign..." on
@@ -162,10 +175,15 @@ with the takes':
 ## Not done, or guessed
 
 * Saving (#27): nothing is written; the profiles' settings (INVERTED), New Profile, deletes,
-  QUICK CAMPAIGN and RESUME LAST give the error sound. The save stalls (half a second after DONE
-  and START, after the end fade) aren't reproduced.
-* Clone Squad restarts the zone (cash and flags as the level began), not the game's reclone at
-  the last save point (#41).
+  QUICK CAMPAIGN and RESUME LAST give the error sound. The front end's save stalls (half a
+  second after DONE and after START) aren't reproduced; the end screen's is, as a fitted wait.
+* Clone Squad restarts the zone: the flags carry on as they are, the cash and Operatives Lost
+  start again with the level's new record. The game reclones the squad at its last save point
+  in the same level, its record kept (#41).
+* The 1 s fade an end screen choice starts (FUN_00085200 -> FUN_00069780(1.0) at 0x852ea) isn't
+  run: take12 shows the end screen until 413.57 s (A at about 413.4 s), then black at once,
+  mb02's first frame at 413.77 s and the movie's own fade-in over 0.5 s; the demo cuts to the
+  movie (black, fading in) the frame after A.
 * The DNA line is always "No DNA Found" (the DNA pickup is #228's); the count's ticking and the
   icons' sounds aren't played; the end camera is the level's first (the game picks one with its
   random state); the mission's score isn't written to the flags; the music isn't stopped at the
