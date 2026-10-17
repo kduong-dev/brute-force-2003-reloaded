@@ -1762,16 +1762,7 @@ impl Game {
     }
 
     fn xwb_waves(d: &[u8]) -> Vec<(String, Vec<u8>)> {
-        audio::xwb_entries(d).into_iter().filter_map(|(name, fmt, range)| {
-            let (tag, channels, rate) = (fmt & 3, (fmt >> 2) & 7, (fmt >> 5) & 0x3ff_ffff);
-            let data = d.get(range)?;
-            let pcm = match tag {
-                1 => audio::adpcm_decode(data, channels as usize),
-                0 => data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect(),
-                _ => return None,
-            };
-            Some((name, audio::wav_bytes_channels(rate.max(8000), channels.max(1) as u16, &pcm)))
-        }).collect()
+        audio::xwb_entries(d).into_iter().filter_map(|(name, fmt, range)| Some((name, audio::xwb_wav(d, fmt, range)?))).collect()
     }
 
     /// The factor character `name` takes damage of `damage_type` by (its combat-target's list,

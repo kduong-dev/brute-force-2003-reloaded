@@ -132,10 +132,28 @@ pub mod act {
     pub const ENABLE: i64 = 2;
     /// DISABLE: the base's: off, its DISABLED lost (FUN_001ff0f0)
     pub const DISABLE: i64 = 3;
-    /// STOP: a letterbox-trigger's (the bars out over its hide-duration, 0x207480; #222)
+    /// STOP: a sound-trigger's stop (0x206450, as STOP_SOUND), a dialog-trigger's (0x206d20, as
+    /// STOP_DIALOG), a letterbox-trigger's (the bars out over its hide-duration, 0x207480; #222)
     pub const STOP: i64 = 4;
     /// TOGGLE_ENABLE: the base's: ENABLE when off, DISABLE when on (FUN_001ff0f0)
     pub const TOGGLE_ENABLE: i64 = 5;
+    /// PLAY_SOUND: a sound-trigger plays its sound (0x206450, as OPERATE)
+    pub const PLAY_SOUND: i64 = 6;
+    /// STOP_SOUND: a sound-trigger stops it (its voice fading out)
+    pub const STOP_SOUND: i64 = 7;
+    /// PAUSE_SOUND: a sound-trigger pauses its voice and its clock
+    pub const PAUSE_SOUND: i64 = 8;
+    /// RESUME_SOUND: a sound-trigger resumes them
+    pub const RESUME_SOUND: i64 = 9;
+    /// PLAY_DIALOG: a sound-trigger queues its sound on the world's dialog queue; a
+    /// dialog-trigger's character says its line (0x206d20, as OPERATE)
+    pub const PLAY_DIALOG: i64 = 10;
+    /// STOP_DIALOG: a sound-trigger's stop, a dialog-trigger's line stopped
+    pub const STOP_DIALOG: i64 = 11;
+    /// PAUSE_DIALOG: a dialog-trigger counts it and does nothing (0x206d20's table)
+    pub const PAUSE_DIALOG: i64 = 12;
+    /// RESUME_DIALOG: the same
+    pub const RESUME_DIALOG: i64 = 13;
     /// INC_COUNTER: a calculator's counter + 1 (0x1ff5f0)
     pub const INC_COUNTER: i64 = 14;
     /// DEC_COUNTER: a calculator's counter - 1
@@ -432,12 +450,65 @@ pub enum Volume {
     Sphere(f32),
 }
 
+/// A sound-trigger's h_15bc1769 (+0x8d bit 0; parser 0x205e7c): its sound plays only while a
+/// player's character is within its max-distance (FUN_00206b50).
+const H_SOUND_NEAR: u32 = 0x15BC_1769;
+/// A sound-trigger's h_e725a1a5 (+0x8c; 0x205f45), also the dialog-trigger's (+0x48): the
+/// squad's chatter is hushed while the line plays (FUN_00141100 on the chatter manager).
+const H_SOUND_HUSH: u32 = 0xE725_A1A5;
+/// A sound-trigger's h_1f625953 (+0x90; 0x205eb1): its voice's fade-in (s), to the sound
+/// system's vtable +0x50 (FUN_002060c0).
+const H_SOUND_FADE_IN: u32 = 0x1F62_5953;
+/// A sound-trigger's h_05cad875 (+0x94; 0x205ed9): its voice's fade-out (s), the same call.
+const H_SOUND_FADE_OUT: u32 = 0x05CA_D875;
+/// A sound-trigger's h_0269d394 (+0x9c; 0x205efd): its min distance (the DirectSound buffer's,
+/// FUN_0017eb90), -1 its library entry's.
+const H_SOUND_MIN_DISTANCE: u32 = 0x0269_D394;
+
+/// A sound-trigger's own attributes (vtable 0x395d50; its parser 0x205d00 after the base's,
+/// FUN_001fedb0), with its constructor's values where the data has none (0x1fce50).
+#[derive(Clone, Debug)]
+pub struct SoundTrigger {
+    /// `sound-object` (+0x40): the sound library entry it plays
+    pub sound: u32,
+    /// `enable-looping` (+0x4c): its voice loops, and it never ends by itself (no FINISHED)
+    pub looping: bool,
+    /// `Type` (+0x54): 0 heard alike everywhere (2D), 1 at its place (3D: its first object's,
+    /// else its transform's), 2-5 the four kinds whose volume follows the players' share of the
+    /// listeners (FUN_00206880) and that send no FINISHED (FUN_001fcf00); 4 and 5 at their place too
+    pub kind: i64,
+    /// `HARDPOINT` (+0x58): empty in the tutorial's; what reads it isn't traced
+    pub hardpoint: u32,
+    /// h_15bc1769 (+0x8d bit 0, H_SOUND_NEAR)
+    pub near: bool,
+    /// h_e725a1a5 (+0x8c, H_SOUND_HUSH)
+    pub hush: bool,
+    /// h_1f625953, h_05cad875 (+0x90, +0x94): its voice's fade-in and fade-out (s)
+    pub fade_in: f32,
+    pub fade_out: f32,
+    /// `max-distance` (+0x98): the voice's max distance, and the range of h_15bc1769's start and
+    /// stop; -1 its library entry's
+    pub max_distance: f32,
+    /// h_0269d394 (+0x9c): the voice's min distance; -1 its library entry's
+    pub min_distance: f32,
+    /// `volume` (h_eff0deab, +0xa8): 0-100, -1 its library entry's (FUN_00206250)
+    pub volume: f32,
+    /// `priority` (h_e146dc86, +0xac): -1 on every tutorial one; not read by the paths here
+    pub priority: i64,
+}
+
 /// A trigger's class-specific attributes, for the classes the runtime runs (the rest keep their
 /// element, `Trigger::element`, for the steps that run them).
 #[derive(Clone, Debug)]
 pub enum Class {
     /// router-trigger (parser FUN_00208f50): h_f0d6857f, `out-signal` (+0x44; -1 the same)
     Router { filters: bool, out_signal: i64 },
+    /// sound-trigger (vtable 0x395d50, parser 0x205d00): see `SoundTrigger`
+    Sound(SoundTrigger),
+    /// dialog-trigger (vtable 0x3952a0, parser FUN_00206cb0): `dialog` (+0x40, the line: a sound
+    /// library entry) and h_e725a1a5 (+0x48, true unless the data says not: its constructor
+    /// 0x1fd430)
+    Dialog { dialog: u32, hush: bool },
     /// timer-trigger (FUN_00200080): `enable-timer` (+0x48 running), `enable-looping` (+0x49),
     /// h_f92b0b15 (+0x4a), `initial-value` (+0x40), `current-value` (+0x44)
     Timer { running: bool, looping: bool, stops: bool, initial: f32, current: f32 },
@@ -574,6 +645,24 @@ fn class(e: &Element) -> Class {
     let tag = e.name;
     if tag == h("router-trigger") {
         Class::Router { filters: flag(e, H_ROUTER_FILTERS), out_signal: int(e, h("out-signal"), -1) }
+    } else if tag == h("sound-trigger") {
+        // (the constructor 0x1fce50: volume, priority and both distances -1, the rest 0)
+        Class::Sound(SoundTrigger {
+            sound: name_of(e, h("sound-object")),
+            looping: flag(e, h("enable-looping")),
+            kind: int(e, h("Type"), 0),
+            hardpoint: name_of(e, h("HARDPOINT")),
+            near: flag(e, H_SOUND_NEAR),
+            hush: flag(e, H_SOUND_HUSH),
+            fade_in: float(e, H_SOUND_FADE_IN, 0.0),
+            fade_out: float(e, H_SOUND_FADE_OUT, 0.0),
+            max_distance: float(e, h("max-distance"), -1.0),
+            min_distance: float(e, H_SOUND_MIN_DISTANCE, -1.0),
+            volume: float(e, h("volume"), -1.0),
+            priority: int(e, h("priority"), -1),
+        })
+    } else if tag == h("dialog-trigger") {
+        Class::Dialog { dialog: name_of(e, h("dialog")), hush: e.attr(H_SOUND_HUSH).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
     } else if tag == h("timer-trigger") {
         Class::Timer { running: flag(e, h("enable-timer")), looping: flag(e, h("enable-looping")), stops: flag(e, H_TIMER_STOPS),
                        initial: float(e, h("initial-value"), 0.0), current: float(e, h("current-value"), 0.0) }
@@ -659,14 +748,12 @@ pub fn class_name(tag: u32) -> String {
 
 /// Which step of #28 runs a class the runtime doesn't run yet (plan.md §2; the steps' tickets
 /// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
-/// step 2, #221), and for those that do nothing a player sees (waypoint, evaluate: their base
-/// actions only).
+/// step 2, #221; the sound- and dialog-triggers since step 4, #223), and for those that do
+/// nothing a player sees (waypoint, evaluate: their base actions only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
     let is = |n: &str| h(n) == tag;
     Some(if is("script-trigger") || is("letterbox-trigger") || is("warp-trigger") {
         "step 3, #222"
-    } else if is("sound-trigger") || is("dialog-trigger") {
-        "step 4, #223"
     } else if is("menu-trigger") || is("event-trigger") || tag == 0xE9B3_AE8E || tag == 0xE2B9_C3A2 {
         "step 5, #224"
     } else if tag == 0x1F07_BE84 {

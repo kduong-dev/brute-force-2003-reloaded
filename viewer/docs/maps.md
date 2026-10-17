@@ -42,17 +42,23 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   * the tutorial's two building doors: their plates (squad types), once: h_eefcb023 opens the
     base's h_06537687, h_020415dc the second building's h_0f544611 27 m away; the door
     h_fa29ecfd opens by itself at the level's start (FIRST_UPDATE); the gate h_14690535 from the
-    end of its panel's sound (FINISHED: step 4 of #28, #223 runs sound-triggers; until then it stays
-    shut).
+    end of its panel's sound (its sound-trigger's FINISHED, #223: [triggers.md](triggers.md),
+    "Sound- and dialog-triggers").
   * gates with wall panels (below).
   * Motion: the level's animations-<level>.xmb has an archetype-set named after each door's
     archetype, with one target per leaf (by part name) on a float channel: metres along the
     joint's axis per frame at 24 fps. Doors take 1.21 s (upper leaf 1.89 m, lower 1.70 m); the
     gate takes 4.96 s (3.92 m).
-  * Sound: a sound-trigger stands beside each door (within 6 m). Signal 31 plays as it opens
-    (h_1edc357e, metal_door_1a; the gate's h_e1b1f167, an 8.6 s grind) and signal 49 as it
-    closes (h_f25b1597). These waves are streamed (resource-type 1) from the language wave bank
-    `ml-sounds/en/<level>-en.tgz` at the offsets in the level's sound bank.
+  * Sound: a door's anim-trigger sends ANIM_START (31) as it starts opening and ANIM_BACK_START
+    (49) as it starts closing to sound-triggers beside it, which play them (#223,
+    [triggers.md](triggers.md)): on sdm_e34 h_1edc357e (0.93 s) opening, metal_gate_05_close
+    (h_f25b1597, 1.47 s) closing, each played while the player is within its `max-distance`: 7 m
+    for three of the eight doors (h_196659f4, h_10616962, h_0b6838d8; full within the min distance,
+    3 m, then quieter along the rolloff curve to nothing at 7), 15 m for the other five (full
+    within 7 m), and
+    the gate's metal_door_5 (h_e1b1f167, 8.5 s) within its 15 m (7 m full). These waves are streamed (resource-type
+    1) from the language wave bank `ml-sounds/en/<level>-en.tgz` at the offsets in the level's
+    sound bank. (Before #223 the demo played the sound-trigger nearest the door itself.)
   * The gate's two leaves have a clip each in its set (h_10d3fde3 and h_0a48ec76, 4.96 s, one
     target each); each leaf takes its channel from whichever clip names its part.
 * **Gates and their wall panels.** A gate with wall panels opens from them:
@@ -65,8 +71,9 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
     proximity doors' signal 50 / 42 entries say 2147483647), and send on to the gate's sound
     trigger. So a used gate opens and stays open. On sdm_e34: panels h_14643319 / h_1d63038f ->
     router h_1c61561d -> anim-triggers h_f993d7ef / h_e8ad85ec -> gate h_14690535. The
-    tutorial's panels go through their sound-triggers instead (the gate opens on the sound's
-    FINISHED: step 4 of #28, #223).
+    tutorial's panels go through their sound-triggers instead: the panel's terminal_03 plays
+    (1.04 s), and its end (FINISHED) opens the gate's two leaves (2.0 s at time-scale 2.5) and
+    plays the gate's grind (#223, take11).
   * Using one (capture todo/gate button.mp4): from in front of its button (hardpoint
     h_10f81d34, facing the model's +z), within 2.5 m and looking within ~45° of it, hold E for
     0.5 s. Reach, angle and hold time are guesses; the capture shows no progress bar and no
@@ -127,6 +134,22 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
 
   `BF_NO_MUSIC=1` turns it off, `BF_MUSIC_VOLUME=<0-1>` sets the level, and
   `BF_DUMP_MUSIC=<file.wav>` writes the track and exits.
+
+  **Since #223 the level's sound-triggers play it.** The bank's tracks are sounds of the level's
+  sound bank (resource-type 2; a track's name hashes to its sound id: tutorial_01 is
+  h_f5862d3f), and every level with a bank has sound-triggers that play them, most at
+  FIRST_UPDATE (sdm_e34's h_1844a2b7: caspian_action20, looping, a 1 s fade-in), some as cues
+  (the tutorial's: tutorial_01 from the start, stopped by a 168 s timer with a 3 s fade-out;
+  caspian_tut_mellow1 in the mine field for 72 s; tutorial_02 when the gate has opened, for 238
+  s; caspian_victory1 when the base is cleared). For such a level (`play_sound_triggers.rs`
+  `plays_music`) `setup` plays nothing itself: the triggers do, at the music volume times the
+  sound's own (the trigger's `volume`, else its library entry's: 0.8 for tutorial_01), with the
+  trigger's fades ([triggers.md](triggers.md), "Sound- and dialog-triggers"). The table above
+  is the bank's mix the test tools' music picker still plays. Deathmatch still plays no
+  music-bank track. The ambience beds are the levels' outdoor and indoor sound-triggers (Types 2
+  and 3): an outdoor bed (sdm_e40's light_bird_bed_1, sdm_e34's wind, m01_a's amb_ferix_06) is
+  full while the player stands outdoors and down at its `volume` (15-35%) indoors, an indoor one
+  (m09_c's amb_shrike_int_01) the other way (triggers.md, "Types 2-5").
 * **Shots.** Each weapon's bullet definition names its own effects, and they're played from
   the effect library: `effect-name` is the shot in flight, h_08d28037 is where it lands.
   | Weapon | Speed | In flight | Hit |

@@ -1,10 +1,14 @@
 //! Sound banks: sounds-<lvl>.xmb (index) + sounds-<lvl>.mem (in-memory Xbox ADPCM data).
 //!
-//!   <Sound h_1d70db35=FILE ...><h_1b8535f0 iD=SOUND_ID Type=.../></Sound>   sound id -> file
-//!   <h_0f6056c9 file-name=FILE resource-type=0|1 offset=.. size=.. format=..>  file -> data
+//!   <Sound h_1d70db35=FILE falloff=.. h_fd40e332=.. h_eff0deab=..><h_1b8535f0 iD=SOUND_ID Type=.../></Sound>
+//!   <h_0f6056c9 file-name=FILE resource-type=0|1|2 offset=.. size=.. time=.. format=..>  file -> data
 //! resource-type 0 lives in the .mem blob (one offset); type 1 are streamed from the level's
 //! language wave bank (ml-sounds/<lang>/<lvl>-<lang>.xwb, absolute offsets, one per language
-//! slot, all equal), see `SoundBank::add_stream`. format = sample_rate * 32 + codec (5 = Xbox ADPCM).
+//! slot, all equal), see `SoundBank::add_stream`; type 2 are the tracks of the level's music bank
+//! (data/sounds/<lvl>.xwb: its music and ambience beds, whose entry names hash to the sound ids:
+//! "tutorial_01" is h_f5862d3f), kept apart (`SoundBank::is_music`). format = sample_rate * 32 +
+//! codec (5 = Xbox ADPCM mono, 9 stereo). A sound id is the hash of its wave's name in the wave
+//! banks (the tutorial's h_e759c574 is dxmi_bratton_m00049).
 //! Xbox ADPCM: 36-byte blocks per channel = 4-byte header (i16 sample, u8 step index, pad) plus
 //! 64 nibbles -> 65 samples (port of xwb_tool.adpcm_decode).
 
@@ -120,8 +124,52 @@ pub struct SoundBank {
     voices: HashMap<u32, (u32, Arc<Vec<u8>>, std::ops::Range<usize>)>,
     /// streamed files (resource-type 1) not yet attached to their wave bank: (offset, size, format)
     streamed: HashMap<u32, (usize, usize, u32)>,
+    /// the music bank's files (resource-type 2, data/sounds/<lvl>.xwb): file name -> (size,
+    /// format), for their length; their data is the music bank's (play_sound_triggers.rs)
+    music: HashMap<u32, (usize, u32)>,
     /// sound id -> its Type (MUSIC_TYPE, h("ambient"), ...)
     types: HashMap<u32, u32>,
+    /// sound id -> its library entry's distances and volume (`SoundParams`)
+    params: HashMap<u32, SoundParams>,
+    /// sound id -> its wave's name in the wave banks added (`add_voices`, `add_stream`), for logs
+    names: HashMap<u32, String>,
+}
+
+/// A sound library entry's distances and volume: its `<Sound>` element's attributes, which the
+/// runtime entry FUN_0017beb0 finds keeps at +8 (the min distance), +0xc (the max) and +0x10 (the
+/// volume). A voice's play parameters left unset come from them (FUN_0017c0b0: its min distance
+/// +0x30 from +8, its max +0x38 from +0xc, its volume +0x48 from +0x10); a sound-trigger's own
+/// are used where they're over 0 (FUN_002060c0). FUN_0017c170 makes a voice 3D only when +8
+/// isn't -1. The attributes' order fits: in the tutorial's library `falloff` is below
+/// h_fd40e332 in 618 of the 619 entries that have both (equal in the other, 50 and 50), and -1 in
+/// 100 entries, the 2D sounds (the voice lines, the music, three ambiences).
+#[derive(Clone, Copy, Debug)]
+pub struct SoundParams {
+    /// `falloff` (+8): the distance it's heard at full volume within (DirectSound's min
+    /// distance); -1 a 2D sound
+    pub min_distance: f32,
+    /// h_fd40e332 (+0xc): the distance its rolloff curve reaches nothing at (DirectSound's max
+    /// distance; every entry has one)
+    pub max_distance: f32,
+    /// h_eff0deab (+0x10): its volume, 0-1; 1 for the 28% of entries without one (the voice
+    /// lines among them; the parser's default isn't traced: the 1 is a guess)
+    pub volume: f32,
+}
+
+/// A library entry's h_fd40e332, its max distance (see `SoundParams`).
+const H_MAX_DISTANCE: u32 = 0xFD40_E332;
+/// A library entry's h_eff0deab (`volume`, recovered by hashing), its volume 0-1.
+const H_VOLUME: u32 = 0xEFF0_DEAB;
+
+/// A format's bytes a second, FUN_00183c30's nAvgBytesPerSec: `format` packs the codec (bits 0-1:
+/// 1 Xbox ADPCM, else PCM), the channels (bits 2-4), the sample rate (bits 5-30) and, for PCM,
+/// 16-bit samples (bit 31; else 8). Xbox ADPCM counts 36 bytes a channel for each whole 64 of the
+/// rate ((rate >> 6) x 36 x channels: 12384 at 22050 Hz mono, 24768 stereo); PCM rate x channels x
+/// bytes a sample.
+pub fn bytes_per_second(format: u32) -> f32 {
+    let (tag, channels, rate) = (format & 3, (format >> 2) & 7, (format >> 5) & 0x3ff_ffff);
+    let n = if tag == 1 { (rate >> 6) * 36 * channels } else { rate * channels * if format & 0x8000_0000 != 0 { 2 } else { 1 } };
+    n.max(1) as f32
 }
 
 /// A sound's Type for a music track (a level's sound-triggers play them); ambience beds are
@@ -175,6 +223,20 @@ pub fn xwb_entries(d: &[u8]) -> Vec<(String, u32, std::ops::Range<usize>)> {
     }).collect()
 }
 
+/// One entry of a wave bank (`d` the .xwb's bytes; its MINIWAVEFORMAT `fmt` and data `range` from
+/// `xwb_entries`) as WAV file bytes: Xbox ADPCM decoded, any channel count (the music banks'
+/// tracks are stereo), or PCM taken as 16-bit.
+pub fn xwb_wav(d: &[u8], fmt: u32, range: std::ops::Range<usize>) -> Option<Vec<u8>> {
+    let (tag, channels, rate) = (fmt & 3, (fmt >> 2) & 7, (fmt >> 5) & 0x3ff_ffff);
+    let data = d.get(range)?;
+    let pcm = match tag {
+        1 => adpcm_decode(data, channels as usize),
+        0 => data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect(),
+        _ => return None,
+    };
+    Some(wav_bytes_channels(rate.max(8000), channels.max(1) as u16, &pcm))
+}
+
 impl SoundBank {
     /// Add a bank: decoded sounds-<lvl>.xmb and its .mem blob.
     pub fn add(&mut self, index: &Element, mem: Arc<Vec<u8>>) {
@@ -192,15 +254,32 @@ impl SoundBank {
                 if let (Some(id), Some(k)) = (id, kind) {
                     self.types.entry(id).or_insert(k);
                 }
+                let float = |k: u32| e.attr(k).and_then(|v| v.as_f32());
+                if let Some(id) = id {
+                    self.params.entry(id).or_insert(SoundParams {
+                        min_distance: float(h("falloff")).unwrap_or(-1.0),
+                        max_distance: float(H_MAX_DISTANCE).unwrap_or(-1.0),
+                        volume: float(H_VOLUME).unwrap_or(1.0),
+                    });
+                }
             }
             if e.name == 0x0F60_56C9 {
                 let Some(name) = e.attr(h("file-name")).and_then(|v| v.as_hash()) else { continue };
                 let get = |n: &str| e.attr(h(n)).map(first).unwrap_or(0);
                 let format = get("format") as u32;
-                if e.attr(h("resource-type")).map(first) != Some(0) {
+                match e.attr(h("resource-type")).map(first) {
+                    Some(0) => {}
+                    // a track of the level's music bank (its offsets are into that file, not the
+                    // language wave bank's)
+                    Some(2) => {
+                        self.music.entry(name).or_insert((get("size") as usize, format));
+                        continue;
+                    }
                     // streamed from the language wave bank
-                    self.streamed.entry(name).or_insert((get("offset") as usize, get("size") as usize, format));
-                    continue;
+                    _ => {
+                        self.streamed.entry(name).or_insert((get("offset") as usize, get("size") as usize, format));
+                        continue;
+                    }
                 }
                 self.files.entry(name).or_insert(FileRec {
                     offset: get("offset") as usize,
@@ -218,6 +297,34 @@ impl SoundBank {
         self.types.get(&id).copied()
     }
 
+    /// A sound's library entry (`SoundParams`), if the loaded banks define it.
+    pub fn params(&self, id: u32) -> Option<SoundParams> {
+        self.params.get(&id).copied()
+    }
+
+    /// Whether a sound is a track of the level's music bank (its file's resource-type 2: the
+    /// music cues and ambience beds the level's sound-triggers play, data/sounds/<lvl>.xwb).
+    pub fn is_music(&self, id: u32) -> bool {
+        self.sounds.get(&id).is_some_and(|f| self.music.contains_key(f))
+    }
+
+    /// How long a sound plays as the game reckons it, the sound system's vtable +0x64
+    /// (0x17f620): its file's size over its format's bytes a second (`bytes_per_second`), for the
+    /// slot the banks keep (the first: English). The file records' own `time` agrees (the
+    /// tutorial's terminal_03: 12852 / 12384 = 1.0378 s, time="1.037791"). A sound-trigger's
+    /// FINISHED comes that long after it starts (FUN_002062a0). None for a sound the loaded banks
+    /// don't have.
+    pub fn length(&self, id: u32) -> Option<f32> {
+        if let Some(f) = self.sounds.get(&id).and_then(|f| self.files.get(f)) {
+            return Some(f.size as f32 / bytes_per_second((f.rate << 5) | f.codec));
+        }
+        if let Some(&(size, format)) = self.sounds.get(&id).and_then(|f| self.music.get(f)) {
+            return Some(size as f32 / bytes_per_second(format));
+        }
+        let (fmt, _, range) = self.voices.get(&id)?;
+        Some(range.len() as f32 / bytes_per_second(*fmt))
+    }
+
     /// Every sound id that has in-memory sample data.
     pub fn ids(&self) -> Vec<u32> {
         let mut v: Vec<u32> = self.sounds.keys().copied().filter(|&id| self.has(id)).collect();
@@ -232,13 +339,23 @@ impl SoundBank {
         let n = entries.len();
         for (name, fmt, range) in entries {
             self.voices.entry(h(&name)).or_insert((fmt, xwb.clone(), range));
+            self.names.entry(h(&name)).or_insert(name);
         }
         n
+    }
+
+    /// The name of a sound's wave in the wave banks added (dxmi_bratton_m00049 for the
+    /// tutorial's h_e759c574), if one had it.
+    pub fn name(&self, id: u32) -> Option<&str> {
+        self.names.get(&id).map(String::as_str)
     }
 
     /// Attach a level's language wave bank (.xwb bytes) to the streamed files of its sound bank
     /// (resource-type 1: door and gate sounds, music stings). Returns how many were attached.
     pub fn add_stream(&mut self, xwb: Arc<Vec<u8>>) -> usize {
+        for (name, _, _) in xwb_entries(&xwb) {
+            self.names.entry(h(&name)).or_insert(name);
+        }
         let mut n = 0;
         for (name, (offset, size, format)) in std::mem::take(&mut self.streamed) {
             if offset + size <= xwb.len() {
@@ -261,6 +378,9 @@ impl SoundBank {
             if let Some(&t) = self.types.get(&id) {
                 out.types.insert(id, t);
             }
+            if let Some(&p) = self.params.get(&id) {
+                out.params.insert(id, p);
+            }
             out.files.entry(file).or_insert(FileRec { offset: 0, size: rec.size, rate: rec.rate, codec: rec.codec, blob: Arc::new(data.to_vec()) });
         }
         out
@@ -279,6 +399,9 @@ impl SoundBank {
             let name = *self.sounds.entry(id).or_insert(file);
             if let Some(&t) = other.types.get(&id) {
                 self.types.entry(id).or_insert(t);
+            }
+            if let Some(&p) = other.params.get(&id) {
+                self.params.entry(id).or_insert(p);
             }
             if !self.files.contains_key(&name) {
                 self.files.insert(name, FileRec { offset: rec.offset, size: rec.size, rate: rec.rate, codec: rec.codec, blob: rec.blob.clone() });

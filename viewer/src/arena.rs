@@ -1,8 +1,9 @@
 //! A level as solid ground and walls, indexed by 2 m cell: the game's own collision surfaces
 //! (objects-<lvl>.ipn, see bf::collision) of the terrain blocks, the invisible blockers and the
 //! placed objects' parts (door leaves switch off while open). Each triangle keeps its material:
-//! the world-material id and the slide flag; and the placed object it's part of, if any (what
-//! the crosshair's centre ray is on, `ray_object`). A level without collision data falls back to the
+//! the world-material id, the slide flag and the indoor flag; and the placed object it's part
+//! of, if any (what the crosshair's centre ray is on, `ray_object`; whether the floor is indoors,
+//! `floor_kind`). A level without collision data falls back to the
 //! drawn triangles (cut-outs left out). Used to stand characters on the ground (or on objects'
 //! floors), push them out of walls, cast shots and settle pickups.
 //!
@@ -57,7 +58,7 @@ struct Tri {
     /// facing up (floors), or sideways for walls
     n: Vec3,
     terrain: bool,
-    /// collision material: world-material id (low 5 bits) and MATERIAL_SLIDE
+    /// collision material: world-material id (low 5 bits), MATERIAL_SLIDE and MATERIAL_INDOOR
     material: u8,
     /// a door leaf's: the door's index (its triangles don't count while it's open)
     door: Option<u32>,
@@ -404,15 +405,27 @@ impl Arena {
     /// `floor_below` with the floor's collision material (world-material id | MATERIAL_SLIDE).
     /// The flat floor's ground is level, of material 0.
     pub fn floor_at(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3, u8)> {
-        let mut best: Option<(f32, Vec3, u8)> = self.flat.filter(|&g| g <= top).map(|g| (g, Vec3::Y, 0));
+        self.floor_tri(x, z, top).map(|(y, t)| t.map_or((y, Vec3::Y, 0), |t| (y, t.n, t.material)))
+    }
+
+    /// The floor `floor_at` finds as a character's ground record keeps it (FUN_0012dab0): its
+    /// collision material, whether it's the terrain's, and the level object it's part of (an
+    /// index into `Level::objects`). The flat floor counts as terrain, of material 0.
+    pub fn floor_kind(&self, x: f32, z: f32, top: f32) -> Option<(u8, bool, Option<u32>)> {
+        self.floor_tri(x, z, top).map(|(_, t)| t.map_or((0, true, None), |t| (t.material, t.terrain, t.object)))
+    }
+
+    /// The highest floor at (x, z) no higher than `top` and its triangle (None: the flat floor).
+    fn floor_tri(&self, x: f32, z: f32, top: f32) -> Option<(f32, Option<&Tri>)> {
+        let mut best: Option<(f32, Option<&Tri>)> = self.flat.filter(|&g| g <= top).map(|g| (g, None));
         for &i in self.near(x, z) {
             let t = &self.tris[i as usize];
             if t.n.y < FLOOR_NORMAL || !self.solid(t) {
                 continue;
             }
             if let Some(y) = Self::height_on(t, x, z).filter(|y| *y <= top) {
-                if best.is_none_or(|(b, _, _)| y > b) {
-                    best = Some((y, t.n, t.material));
+                if best.is_none_or(|(b, _)| y > b) {
+                    best = Some((y, Some(t)));
                 }
             }
         }
