@@ -770,9 +770,12 @@ squad's LZRs and cutter go this way.
   until the sweep that finds it (the Jax-iR's ball gone into the wall before its burst,
   todo/59 take01); one that meets nothing ends at its range (life = range / speed; a sweep
   due after the life isn't modelled, the demo's line runs the whole range). Its flight effect
-  rides it (`start_flight`, compiled by `load_flight`): the effect's root emitters ride with the
-  bolt and their particles go with it when it ends (the ball, its halo), and the emitters under
-  the library's world node (h_ee223b51, node flag 1) leave theirs in the world (the trails).
+  rides it (`start_flight`, compiled by `load_flight`): the effect's emitters ride with the
+  bolt and their particles go with it when it ends (the ball, its halo), except an emitter
+  under the library's world node (h_ee223b51, node flag 1) whose appearance hangs at the root,
+  which leaves its particles in the world (the trails). The Jax-iR's ball hangs under the node
+  with its appearance and rides (#59: read as a trail it lay a violet band along the whole way,
+  where take01 shows nothing between the gun and the wall).
   Where an emitter has the demo's ATTACHED (h_e2999ffd: the LZRs' bolts) it still decides,
   though code-map's 0x64e30 reads that parameter as the cube emitter's offset height. The rule
   is inferred from the effects' trees and the takes (the balls gone the frame their bolt ends,
@@ -858,6 +861,22 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   hit), the crosshair blue there and red at 25 m (the 28 m lock reach). The test map's own
   "shrike heavy" is the dm Heavy, whose SONIC is x1 and whose stamina shield takes the first
   40: use `@e40` (or `@e34`) for the campaign's x2.
+* **The Jax-iR** (#59, todo/59-jax-ir): at the pillar, held fire every 25-26 game frames (the
+  take 24.8), the reload 0.83 s after the last round (the take 0.81; reserve 200 -> 176), the
+  hits 8.9 m out 0.2 s after their shots. At e34's gate as take01 (Brutus carries it there:
+  `BF_CHARACTER=0` with the gate recipe above; e34's squad keeps its own loadout, so
+  `BF_TEST_WEAPON` isn't read): the ball goes into the ground at the gate's foot a frame or two
+  before the burst at +0.2 s and nothing is left along its way, as the take shows (`ride`, the
+  trail rule above; before it a violet band lay from Brutus to the wall for 0.6 s). On the
+  frozen e34 Shrike Heavy 7 m out (the take03 recipe above, `BF_CHARACTER=0
+  BF_CAMERA_PITCH=-0.12`): every hit 0.1 s after its shot, 88.9-95.1 on the body (roll x 1.4 x
+  SONIC 2: take03 86.4-88.2, the range 86.1-95.5), wmat_fleshit_sonic at 0.90 (the cap), dead on
+  the 4th. On the test map's clear line (the Jax-iP's recipe with `BF_TEST_WEAPON=Jax-iR`): 25 m
+  out 0.3 s (the rifle's muzzle 0.4 m further out puts the body at 23.8 m, inside tick 9's 24 m:
+  take08 0.4 s, the takes' 25 m at 80 m/s 0.3 s in 6 of 24), 86.8-90.6 on the body; 45 m out
+  0.6 s, on the calves at `BF_CAMERA_PITCH=-0.115`.
+  * Not reproduced: take07's glow at 65 m lasting to T0 + 1.50-1.55 s, 0.4 s past the bolt's
+    1.125 s life; the demo's ball goes when the bolt does.
 * Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
   Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
   free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of

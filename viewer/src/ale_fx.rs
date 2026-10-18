@@ -123,12 +123,13 @@ const CLASS_CONE: u32 = 0xE1F4_0411;
 const CLASS_SPHERE: u32 = 0xF940_F7F3;
 const ATTACHED: u32 = 0xE299_9FFD;
 /// A node ref's flag (ALEffectLib's first word of a ref) for the builtin node h_ee223b51, the one
-/// node the library doesn't hold: every trail's emitter hangs under it (grenade_trail, mtrail,
-/// the exp-*-trail, plasma_bullet_trail, bio_bullet_*_trail, cuttertrail_ribbon), as do the
-/// static hits' (sminigun_hit, sonic_proj_can_hit) and the Jax-iR's bolt
-/// (sonic_proj_rifle_bullet), while the bolts' heads (sonic_proj_can_bullet, plasma_bullet,
-/// bio_bullet_rifle) and the missiles' flares hang at the root (parent 0x8000). Read as the
-/// world: see `Compiled::ride`.
+/// node the library doesn't hold: every trail's emitter hangs under it with its appearance at
+/// the root (grenade_trail, mtrail, the exp-*-trail, plasma_bullet_trail, bio_bullet_*_trail,
+/// cuttertrail_ribbon, the MIRV grenade's ribbon), while the bolts' heads hang at the root
+/// (sonic_proj_can_bullet, plasma_bullet, bio_bullet_rifle) or under it with their appearance
+/// (sonic_proj_rifle_bullet; the Seer fireball's ball and the MIRV and gravrider grenades'
+/// flares beside their trails), as do the static hits (sonic_proj_can_hit). An emitter under it
+/// whose appearance hangs at the root is read as the world: see `Compiled::ride`.
 const WORLD_NODE_FLAG: u32 = 1;
 /// A ref's parent when it has none (ALEffectLib).
 const ROOT_PARENT: u32 = 0x8000;
@@ -439,22 +440,25 @@ pub struct Compiled {
     /// effect keeps the demo's count (a rate's fraction carried over each render frame, an emit
     /// count's burst at the start) and no LOD, until checked against its own captures.
     pub counted: bool,
-    /// Its emitters at the root of the effect's node tree keep their particles in the effect's
-    /// frame, so they travel with it, and those under the builtin node (WORLD_NODE_FLAG) leave
-    /// them in the world, unless the emitter's own h_e2999ffd (ATTACHED) says either way: the
-    /// bolts' flight effects (`load_flight`). Read from the data's structure (every trail's
-    /// emitter hangs under that node, the bolts' heads at the root) and the takes, not from the
-    /// runtime's code (not traced): the Jax-iC's ball (sonic_proj_can_bullet, a root emitter
-    /// throwing its particles back at 3.6 m/s for 0.72 s) is a ball at the bolt with nothing left
-    /// along its path, its glow gone with the bolt at 25 m (todo/57 take05 +0.30 s); the
-    /// Saryl-45's head (plasma_bullet: 8 at its start, growing to 1.8 m) leaves no blob at the
-    /// muzzle (todo/70 take01); the A10's head (bio_bullet_rifle, 0.4 s lives) no 0.4 s line
-    /// along its way, its streak (bio_bullet_rifle_trail, under the node, 0.175 s) gone at
-    /// +0.167 s (todo/47 take01); while the Jax-iR's (sonic_proj_rifle_bullet, under the node)
-    /// lingers in the crosshair box 0.4 s past the bolt's 1.125 s life at 65 m (todo/59 take07).
-    /// Left in the world, the heads' particles piled up and grew along the path: the demo's
-    /// Jax-iC bolt was a purple haze metres wide. Every other effect keeps ATTACHED alone (absent:
-    /// in the world), as checked before.
+    /// Its emitters keep their particles in the effect's frame, so they travel with it, except
+    /// an emitter under the builtin node (WORLD_NODE_FLAG) whose appearance hangs at the root,
+    /// which leaves them in the world (a trail), unless the emitter's own h_e2999ffd (ATTACHED)
+    /// says either way: the bolts' flight effects (`load_flight`). Read from the data's structure
+    /// (every trail is such an emitter; the heads hang at the root, or under the node with their
+    /// appearance) and the takes, not from the runtime's code (not traced): the Jax-iC's ball
+    /// (sonic_proj_can_bullet, a root emitter throwing its particles back at 3.6 m/s for 0.72 s)
+    /// is a ball at the bolt with nothing left along its path, its glow gone with the bolt at
+    /// 25 m (todo/57 take05 +0.30 s); the Saryl-45's head (plasma_bullet: 8 at its start, growing
+    /// to 1.8 m) leaves no blob at the muzzle (todo/70 take01); the A10's head (bio_bullet_rifle,
+    /// 0.4 s lives) no 0.4 s line along its way, its streak (bio_bullet_rifle_trail, a trail,
+    /// 0.175 s) gone at +0.167 s (todo/47 take01); the Jax-iR's (sonic_proj_rifle_bullet, its
+    /// emitter and appearance both under the node, 0.28-0.72 s lives growing to 1.4 m) leaves
+    /// nothing between the gun and the wall 10 m out, the ball gone into the wall from +0.117 to
+    /// +0.183 s before the burst (todo/59 take01; read as a trail it lay a violet band along the
+    /// whole way). Left in the world, the heads' particles piled up and grew along the path: the
+    /// demo's Jax-iC bolt was a purple haze metres wide. Not reproduced: the Jax-iR's glow at
+    /// 65 m lasting 0.4 s past the bolt's 1.125 s life (todo/59 take07), where the demo's ends
+    /// with it. Every other effect keeps ATTACHED alone (absent: in the world), as checked before.
     pub ride: bool,
 }
 
@@ -727,10 +731,11 @@ impl AleAssets {
                 None => continue,
             };
             // its particles kept in the effect's frame: its h_e2999ffd where it has one, else
-            // (with `ride`) an emitter at the root of the effect's tree (see `Compiled::ride`)
+            // (with `ride`) any but a trail, an emitter under the world node with its appearance
+            // at the root (see `Compiled::ride`)
             let attached = match emitter.params.get(&ATTACHED) {
                 Some(crate::bf::ale::Value::Bool(b)) => *b,
-                _ => ride && !under_world_node(&e, em),
+                _ => ride && !(under_world_node(&e, em) && !under_world_node(&e, ap)),
             };
             if app.class == CLASS_SPAWNER {
                 if !recorded {

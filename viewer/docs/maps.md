@@ -260,9 +260,10 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   | L-Shot | instant | tracer_snipe, a white beam drawn 200 m down the line in 0.38 s, smoke, rings | sminigun_hit |
 
   * Bolts carry their effect with them: the emitters flagged "attached" (h_e2999ffd, the
-    demo's reading) and, since #57, every root emitter of a bolt's flight effect have their
-    particles move with the shot and go with it; the emitters under the library's world node
-    (h_ee223b51) leave theirs in the world (the trails). See play.md, **Bolts and their hits**.
+    demo's reading) and, since #57, every emitter of a bolt's flight effect but its trails
+    have their particles move with the shot and go with it; a trail (an emitter under the
+    library's world node h_ee223b51 with its appearance at the root) leaves its particles in
+    the world. See play.md, **Bolts and their hits**.
   * Hit effects play on world hits with the struck material's debris, hit sound and the
     effect's light, each turned by its alignment-type; on bodies the flesh row's effect plays
     (made by hand for the squad's ballistic, cutter and laser rows, from the data for the rest)
