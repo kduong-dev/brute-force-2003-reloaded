@@ -877,6 +877,20 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   0.6 s, on the calves at `BF_CAMERA_PITCH=-0.115`.
   * Not reproduced: take07's glow at 65 m lasting to T0 + 1.50-1.55 s, 0.4 s past the bolt's
     1.125 s life; the demo's ball goes when the bolt does.
+* **The Saryl-45** (#70, todo/70-saryl-45; the particle family's look): at the pillar, held fire
+  every 12-13 game frames (the take 12.1), the reload 0.40 s after the last round (the take
+  0.40; reserve 200 -> 170), the hits 8.9 m out 0.1 s after their shots (100 m/s: 10 m a
+  step). From behind Tex (`BF_TEST_FREECAM=0.5,0.6,2.2,-4.5,0,-8`) the comet's white head rises
+  from the gun with its pale-blue tail down to the muzzle (plasma_bullet riding, its trail left
+  in the world) and ends in plasma_hit's white star with blue shards out of the face and
+  light_hit_particle's wash, the muzzle's blue glow at Tex's hand meanwhile, as take01 shows.
+  Seen from 4.5 m the star's core is ~0.5 m and the shards ~1.4 m across (take01's 16-unit
+  core at ~13 m is ~0.65 m), so the data's 3.74 m end size (the spec's open point) reads right:
+  the quads fade out as they grow. On a frozen e40 Shrike Heavy (the Jax-iP's recipe, the
+  Saryl-45): 7 m out 0.1 s, 25 m out 0.3 s (take08's 10 of 10), 45 m out 0.5 s; 18.1-20.8 on the
+  body, 15.1-17.4 on an upper arm, 96.8 and 103.8 on the head, 9.0-10.7 on the calves (PARTICLE
+  x1: take08 18.1-22.0, take09 106.8 on the head, take03 8.9-11.0 on the hovering Shrike's
+  calves); each hit plays wmat_fleshit_particle (h_ed6363bd) with light_hit_particle.
 * Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
   Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
   free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of
