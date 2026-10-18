@@ -154,7 +154,13 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   s; caspian_victory1 when the base is cleared). For such a level (`play_sound_triggers.rs`
   `plays_music`) `setup` plays nothing itself: the triggers do, at the music volume times the
   sound's own (the trigger's `volume`, else its library entry's: 0.8 for tutorial_01), with the
-  trigger's fades ([triggers.md](triggers.md), "Sound- and dialog-triggers"). The table above
+  trigger's fades ([triggers.md](triggers.md), "Sound- and dialog-triggers"). **One music
+  track at a time** (#254, the game's 0x17eff0): a track (Type h_f92fb2b9) that starts while
+  another still plays fades that one out over its fade-out as it fades in, and its own trigger
+  loses hold of it, so its stop timer does nothing. In a fast tutorial run (the mine field
+  before 168 s) mellow plays on past its 72 s until tutorial_02 replaces it at the gate, and
+  tutorial_02 then past its 238 s until the victory sting replaces it. That is the game's own
+  behaviour as its code reads; no take shows it (triggers.md, "One music voice"). The table above
   is the bank's mix the test tools' music picker still plays. Deathmatch still plays no
   music-bank track. The ambience beds are the levels' outdoor and indoor sound-triggers (Types 2
   and 3): an outdoor bed (sdm_e40's light_bird_bed_1, sdm_e34's wind, m01_a's amb_ferix_06) is

@@ -281,7 +281,9 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
 * **The fades** are the voice's envelope (the sound system's +0x50, FUN_0017f330 -> the voice's
   +0x2c, 0x181c90: IDirectSoundBuffer_SetEG with the fade-in as its attack and the fade-out as
   its release, x 48000 / 512 samples, sustain 255); their shape is the sound chip's, not the
-  game's code. Measured: take04's tutorial_01 stop (a 3 s fade-out) falls linearly in dB, about
+  game's code. A stop with its fade-out is StopEx(0): for a stream (the music) 0x182f30 calls
+  IDirectSoundStream_FlushEx with ASYNC | ENVELOPE (5), and CMcpxStream_Stop runs the
+  envelope's release for flag 4; StopEx(1) is ASYNC alone, at once. Measured: take04's tutorial_01 stop (a 3 s fade-out) falls linearly in dB, about
   60 dB over the fade (its level at 0.25 s steps from 199.0 s: 0.65, 0.30, 0.25, 0.16, 0.09,
   0.03), so the music is all but gone 1.3 s in; the fade-ins (take09, take11) rise linearly.
 * **PLAY_DIALOG** queues its sound, once, on the world's dialog queue, which plays one line at a
@@ -317,6 +319,31 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   are). With no such character in the world an entry does nothing, not even counted.
 * **Music**: a level's music bank's tracks are its sound-triggers' sounds (resource-type 2), played
   through the music volume and marked as the level's music ([maps.md](maps.md), "Music").
+* **One music voice** (#254): a sound of Type h_f92fb2b9 is class 1 (the library loader,
+  0x17bbe9: FUN_0017aa00 maps h_f92fb2b9 to 1, h_e34c5f66 2, h_012ed199 3, anything else 0, into
+  the entry's +0x18, which FUN_0017c170 gives the voice through the system's +0x4c). As a voice
+  plays (the system's +0x28, 0x17f070), 0x17eff0 runs before its Play: for a class-1 voice, when
+  the current one (the system's +0x1a4) is still playing (0x17efb0), that one is stopped with
+  StopEx(0), its fade-out (a stream's 0x182f30: IDirectSoundStream_FlushEx, ASYNC | ENVELOPE),
+  and the handle-map node of the **new** voice is erased; then the new voice is the current one.
+  So a track that starts while another plays crossfades with it (the old one's fade-out, the
+  new one's fade-in), and **its own trigger loses it**: its later STOP, volume, pause and move
+  find no voice and do nothing. The tracks don't share a stream (the pool has 8, FUN_00182120 at
+  0x17f999; FUN_001822d0 takes a free one): this is the only rule that keeps two from playing.
+  The beds (Type "ambient", class 0) play under the music untouched. This is the game's own
+  behaviour read from the code; no take has a track starting while another plays. In the
+  tutorial:
+  * the mine field's circle before timer525's 168 s: tutorial_01 fades out over its 3 s as
+    caspian_tut_mellow1 fades in over its 3 s, and then **mellow plays on past timer527's 72 s**
+    (its stop does nothing), looping until the gate;
+  * the circle after 168 s: tutorial_01 has stopped, mellow keeps its handle and timer527 stops
+    it at 72 s (take09: mellow from ~29.5 s to ~100.5 s, cross-correlated with its wave);
+  * the gate: tutorial_02 replaces mellow if mellow still plays (then **tutorial_02 plays on
+    past timer530's 238 s**), else it starts alone;
+  * the victory sting caspian_victory1 (Type h_f92fb2b9 too) replaces tutorial_02 if it still
+    plays (tutorial_02's 3 s fade-out, the sting's 0.5 s fade-in): it doesn't layer;
+  * how long the old voice counts as playing after a stop isn't traced (a stream's +0xa8, which an
+    envelope stop leaves set): the demo takes it to the end of its fade-out.
 * **The tutorial's** (73 sound-triggers, 4 dialog-triggers):
   * the gate: either panel's USE_OBJECT plays terminal_03 (h_144f3dbb, 1.04 s) at the panel; its
     FINISHED opens the gate's two leaves (anim0, anim1: 2.0 s at time-scale 2.5) and plays
@@ -340,7 +367,8 @@ Test hooks: `BF_TRIGGER_LOG=1` lists every sound- and dialog-trigger at the star
 length, how it plays) and logs what each does (plays, stops, queues, has played, says, the level
 a Type 2-5 one heads to); `BF_SOUND_LOG=1` logs each of their voices as it starts and stops (its
 volume now and in full, where, its distances, also under `BF_MUTE`); either logs the listener
-going indoors or out; `BF_MUTE=1` runs them without a voice; `BF_TRIGGER_FIRE` fires them.
+going indoors or out, a music voice replacing another ("replaces the music voice N") and each
+act on a handle the replace erased ("stop dropped"); `BF_MUTE=1` runs them without a voice; `BF_TRIGGER_FIRE` fires them.
 
 ```sh
 # the tutorial's gate: the panel's sound, then the gate and its grind, then the gate music
@@ -562,7 +590,24 @@ the log read and the frames looked at:
   * `BF_TRIGGER_FIRE` on the cues: h_0378b249's TIMER_PULSE stops tutorial_01 fading over 3 s;
     h_17ebe01b plays caspian_tut_mellow1 once (a second ENTER does nothing: its entry is once)
     and its TIMER_PULSE stops it over 3 s; h_04a4176a's sting plays and its USER1 stops it over
-    0.5 s;
+    0.5 s (since #254 those stops reach the voice only when it replaced no playing track);
+  * the one music voice (#254, `BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_MUTE=1`):
+    * the mine field before 168 s (`BF_TEST_GOTO=70,-48,92.4,-63.9 BF_TEST_GO_AT=30`): the circle
+      at 32.55 s plays mellow, which "replaces the music voice 3" (tutorial_01, fading out over
+      3 s) as it fades in; the mine plate's script at 34.32 s sends nothing to the music;
+      timer527's TIMER_PULSE at 104.55 s: "stop dropped", mellow plays on;
+    * after 168 s (the same with `BF_TEST_GO_AT=175`): timer525 stops tutorial_01 at 168.00 s,
+      the circle at 177.51 s plays mellow alone, timer527 stops it at 249.51 s;
+    * the gate (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100 BF_TEST_USE=180
+      BF_TRIGGER_FIRE="h_17ebe01b,ENTER_DETECTOR,175;h_04a4176a,TIMER_PULSE,205"`): mellow at
+      175 s alone, tutorial_02 at 184.07 s replaces it, the sting at 205.01 s replaces
+      tutorial_02 (fading out over 3 s, the sting in over 0.5 s); with the panel at once and
+      mellow fired at 50 s the replace reaches a voice whose own handle was erased (tutorial_02's)
+      all the same;
+    * m01_a (its music and the two beds into the hall), sdm_e40 and sdm_e34 (the bed and the
+      music at the first update): no replace, the beds' levels as before;
+    * muted runs only (the user may be at the PC): the crossfade is checked in the logs, not by
+      ear;
   * the dialog queue: the radar explanation (ticket 0, 6.96 s) plays at once, first patrol
     (ticket 1, queued at 1.53 s) at 8.00 when it has ended; their FINISHEDs at 8.07 (to the
     WEAPONS panel's menu-trigger) and 10.60, the frame after each ends;
@@ -668,9 +713,13 @@ the log read and the frames looked at:
     aren't modelled. The listener and h_15bc1769 measure from the player character's feet (which
     point of the character FUN_00178c10 and 0x8d660 take isn't traced). The demo has the one
     listener; the game counts a share of up to four (split screen) for Types 2-5.
-  * A stop's flag 0 (FUN_002063c0) is read as "with the fade-out" from take04, where the start
-    music fades over its 3 s as timer525 runs out. The fade-out's dB-linear shape and its 60 dB
-    are measured (above), not read from the code.
+  * The fade-out's dB-linear shape and its 60 dB are measured (above), not read from the code
+    (the envelope is the sound chip's). That a stop's flag 0 (FUN_002063c0) is the fade-out is
+    read from the code since #254 (a stream's StopEx 0x182f30: FlushEx with ENVELOPE).
+  * After a music replace the old voice's handle stays in the sound system's map (0x17eff0
+    clears only its +0x1c bit 0), so its trigger's later stop reaches that stream, whatever it
+    plays by then if the pool (8 streams) has handed it out again: tutorial_01's timer525 at
+    168 s could fade out another stream. Not modelled: the demo's old voice is gone.
   * Types 2-5's beds are checked only in the demo's logs and frames: no take covers a level
     with them (the tutorial has none).
   * The demo's ADPCM decoder makes 65 samples of a 36-byte block, where the game reckons 64 for a
