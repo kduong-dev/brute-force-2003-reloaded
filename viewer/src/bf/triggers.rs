@@ -216,6 +216,8 @@ pub const SH_ANIM: i64 = 1;
 /// An `<anim>` entry's play modes (wwit-debugging, the AM_ table 0x3bd41c): 3-5 play backward
 /// (AM_BACKWARD, _LOOP, _OSCILLATE), 0-2 forward.
 pub const AM_BACKWARD: i64 = 3;
+/// AM_FORWARD (0): forward once; 1 and 2 are its loop and oscillate.
+pub const AM_FORWARD: i64 = 0;
 /// An `<anim>` entry's command AC_PLAY (the AC_ table 0x3bd3c4), one of the two FUN_00204bb0
 /// sends ANIM_START / ANIM_BACK_START for.
 pub const AC_PLAY: i64 = 0;

@@ -65,7 +65,16 @@ impl Address {
 }
 const DT_QUAT: u32 = 0x0667_7BCB;
 const DT_VEC: u32 = 0xF36D_8810;
-const DT_XFORM: u32 = 0x0690_1441;
+/// A channel's data type: a transform, a translation then a rotation (FUN_00290810 makes its
+/// readers; FUN_002340f0 plays it only on a transform joint, weapon.rs `TRANSFORM_JOINT`, or a
+/// node with no joint). Every one in the data is compressed (`Game::channel_xform_keys`).
+pub const DT_XFORM: u32 = 0x0690_1441;
+/// A channel's data type h_fed99c09: an angle, radians, one f32 a frame. FUN_002340f0 plays it
+/// only on a hinge joint (weapon.rs `HINGE_JOINT`), and its readers (vtables 0x391490 keyed,
+/// 0x3911ec sampled) go between two frames the short way round (0x292230: a step of more than
+/// pi wraps by 2 pi), where the float type h_e0b5650b's go straight (0x2920b0). e10's door
+/// h_1e50b5e0 turns 0.279 rad over 1.47 s on one; the fans of e05 and e40 run on them.
+pub const DT_ANGLE: u32 = 0xFED9_9C09;
 const FT_KEYED: u32 = 0x00AD_833C;
 const LIST_PRIM: u32 = 0x0E7A_B726;
 const H_INVBIND: u32 = 0xE4B8_22AF;
@@ -1952,6 +1961,50 @@ impl Game {
         let d = c.blob.get(c.offset..c.offset + c.size)?;
         let v: Vec<f32> = d.chunks_exact(4).take(c.frames.max(1)).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
         (!c.keyed && !v.is_empty()).then_some((c.interval, v))
+    }
+
+    /// A channel's data type (h_e0b5650b float, `DT_XFORM`, `DT_ANGLE` ...), if it's loaded.
+    pub fn channel_type(&self, channel: u32) -> Option<u32> {
+        self.channels.get(&channel).map(|c| c.data_type)
+    }
+
+    /// A channel's frames of `size` bytes each with their times (s from the clip's start): a
+    /// sampled channel's are `interval` apart from 0; a keyed one's (frame-type h_00ad833c) carry
+    /// theirs, a float before the frame (the keyed readers take frame k at its +4: 0x2915d0 for a
+    /// transform). None when the channel's frames aren't that size (its `size` / `num-frames`).
+    fn channel_frames(&self, channel: u32, size: usize) -> Option<Vec<(f32, &[u8])>> {
+        let c = self.channels.get(&channel)?;
+        let d = c.blob.get(c.offset..c.offset + c.size)?;
+        let per = if c.keyed { size + 4 } else { size };
+        if c.frames == 0 || c.size != per * c.frames {
+            return None;
+        }
+        Some(d.chunks_exact(per).enumerate().map(|(k, f)| if c.keyed {
+            (f32::from_le_bytes(f[..4].try_into().unwrap()), &f[4..])
+        } else {
+            (k as f32 * c.interval, f)
+        }).collect())
+    }
+
+    /// A transform channel's (`DT_XFORM`) keys: (time s, translation, rotation). Each in the data
+    /// is compressed, 18 bytes a frame: the translation's three floats, then the rotation's x y z
+    /// as 16-bit fractions of 32767 with w made up to a unit quaternion (FUN_00290690, `sample`
+    /// reads skeletons' alike). m09's Shrike doors carry theirs keyed (43 keys over 3.29 s), m08's
+    /// 8-part doors sampled (92 frames at 24 a second).
+    pub fn channel_xform_keys(&self, channel: u32) -> Option<Vec<(f32, Vec3, Quat)>> {
+        if self.channel_type(channel)? != DT_XFORM {
+            return None;
+        }
+        // (normalised: three rounded int16s can make it a hair longer than 1)
+        Some(self.channel_frames(channel, 18)?.into_iter().map(|(t, f)| (t, vec_at(f), quat_at(&f[12..]).normalize())).collect())
+    }
+
+    /// An angle channel's (`DT_ANGLE`) keys: (time s, radians).
+    pub fn channel_angle_keys(&self, channel: u32) -> Option<Vec<(f32, f32)>> {
+        if self.channel_type(channel)? != DT_ANGLE {
+            return None;
+        }
+        Some(self.channel_frames(channel, 4)?.into_iter().map(|(t, f)| (t, f32::from_le_bytes(f[..4].try_into().unwrap()))).collect())
     }
 
     /// Merge another level's sound bank only (sound ids are shared between levels; entries
