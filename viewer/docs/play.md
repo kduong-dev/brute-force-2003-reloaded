@@ -805,6 +805,20 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   * Not done: the tracer and the beam as the game draws them (one effect stretched to the hit, the
     analyst's draft B, the ray path); the Foley's silence (its noise radius 10: no AI hearing
     yet); the LZR bolts flying (#136); the MK's scoped held rate (no take).
+* **The Kman Auto** (#60; `todo/60-kman-auto/spec.md`), Hawk (`BF_CHARACTER=2`) with it: nothing of
+  its own to build. Held fire 5-6 game frames a round, 5.38 a second (the takes 5.18-5.62: 6 a
+  second is exactly 5 frames, so the frame-time wobble splits 5 and 6), the same scoped (its
+  scoped rate is also 6); the accuracy from 90 down 10 a round to its floor of 40; a tracer on
+  the first round and every 3rd. From a clip of 3 (`BF_TEST_CLIP=3`, e40's take05 spot) the
+  reserve drops 600 -> 565 0.2 s after the last round (take02: +0.2), the clip is full at her
+  light reload clip's magazine-in 1.0 s later (the Foley's run above times it by its reload sound;
+  take02: +1.0 s), and she fires again 1.33 s after the drop, at the clip's end. Its scope (§ The
+  scope): one level for Hawk's skill, 2x, the frame with the gun's 32.7-unit crosshair in the
+  middle, in in 0.15 s; an exit press 0.3 s after entering waits for the lockout; the shared
+  in / out sounds 135ec2ce / f9ffc972. On e40's Shrike Soldier frozen 20 m out (frozen, 300 HP)
+  14 hits of 22 rounds: x1 parts 2.73-5.53 (the rule 2.45-6.65), forearms and calves 1.33-2.99
+  (1.22-3.32); take08's at 25 m were 2.0-6.3, none on a forearm. Not done: the tracer's look
+  (draft B); hits at its 50 m range and scoped hits (no take with the aim verified).
 
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
