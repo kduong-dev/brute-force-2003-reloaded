@@ -14,10 +14,13 @@
 //!  cameras     camera-object transforms (the level's flyby cameras); by name with their FOV,
 //!              the cutscenes' cameras (`LevelCamera`), and the path-objects their scripts move
 //!              them along (`LevelPath`, #222)
-//!  lights      light-object (types h_e1cac6f7 key, h_f5302dc6 fill: directional; h_ea460e64
-//!              point): colour h_f08eb2f3 (0-1), shining down the transform's -z; h_e02aba1c
-//!              marks the pair that lights the terrain (the others light objects and characters).
-//!              Ambient: Terrain <ambient>, <object-ambient>, <character-ambient>.
+//!  lights      light-object, by its type's `light-type` (objecttypes `<light>`,
+//!              `Game::light_types`): directional (3) or point (1); colour h_f08eb2f3 (0-1), a
+//!              directional one shining down the transform's -z. h_e02aba1c puts a light in the
+//!              indoor pair, h_1f416687 in the outdoor pair (`LevelLight`); an object takes the
+//!              pair its light-usage says (`Placement::light_usage`, `Geoset::indoor`), its lamps
+//!              too (`LevelLamp`). Ambient: Terrain <ambient>, <object-ambient>,
+//!              <character-ambient>.
 //!  collision   the terrain blocks' collision surfaces (Terrain > blocks h_051ac63e) and the
 //!              invisible blockers (blocker h_051ac63e + transform), see bf::collision
 //!  buttons     world-button-object (h_16f22d4b, reticule-action 1): a wall panel that sends
@@ -36,7 +39,7 @@
 use bevy::math::{Mat4, Vec3};
 
 use super::bxml::Element;
-use super::character::{Game, Geoset, H_PHYSICS_NAME, H_RADAR_CONTACT};
+use super::character::{Game, Geoset, H_PHYSICS_NAME, H_RADAR_CONTACT, LT_DIRECTIONAL, LT_POINT, LT_SPOT};
 use super::hash::h;
 use super::triggers;
 use super::weapon;
@@ -53,11 +56,14 @@ const H_FOG: u32 = 0x1A46_7F02;
 const H_BAKED_LIGHT: u32 = 0xE2D7_9BAD;
 /// Terrain cell size in metres (1, 2 or 4).
 const H_TERRAIN_CELL: u32 = 0xE023_CDC9;
-const H_KEY_LIGHT: u32 = 0xE1CA_C6F7;
-const H_FILL_LIGHT: u32 = 0xF530_2DC6;
-const H_POINT_LIGHT: u32 = 0xEA46_0E64;
+/// A light-object's colour (h_f08eb2f3, 0-1: the light's +0xf0..+0xf8, by its placement's
+/// parser 0x14e700-0x14e8b0).
 const H_LIGHT_COLOR: u32 = 0xF08E_B2F3;
-const H_LIGHTS_TERRAIN: u32 = 0xE02A_BA1C;
+/// A light-object's h_e02aba1c: the light's +0x94 bit 1 (0x14e7b4), what puts it in the indoor
+/// pair (`LevelLight::indoor`).
+const H_LIGHT_INDOOR: u32 = 0xE02A_BA1C;
+/// A light-object's h_1f416687: +0x94 bit 2 (0x14e7f0), the outdoor pair (`LevelLight::outdoor`).
+const H_LIGHT_OUTDOOR: u32 = 0x1F41_6687;
 
 pub struct Placement {
     /// the element's name hash (game-object, start-point, ...)
@@ -202,28 +208,90 @@ pub const TRIG_SIG_FIRST_UPDATE: i64 = 13;
 /// TRIG_ACT_OPERATE (the TRIG_ACT_ name table 0x3bed0c): what a radar-trigger sets its value on.
 pub const TRIG_ACT_OPERATE: i64 = 1;
 
-/// A directional light of the level (see the module notes).
+/// A directional light of the level: a light-object whose type's `light-type` is
+/// LT_DIRECTIONAL (h_e1cac6f7, h_f5302dc6, h_157b3160, h_e8d6efe4 in the game's data; 146 + 15
+/// placements). The game lights an object with two of them, a pair (FUN_000dcc10): its
+/// light-usage picks the pair (the wrapper material's draw 0x9f3c0: LU_INDOOR the indoor one,
+/// LU_OUTDOOR the outdoor one, LU_GEOSET each geoset's own flag), and a light belongs to the pair
+/// its flags say, either or both (the tutorial's fill lights both). The three types' records are
+/// alike field for field: nothing in them says key or fill.
 #[derive(Clone, Copy, Debug)]
 pub struct LevelLight {
+    /// its type (h_ff8051ee) and its own name
+    pub kind: u32,
+    pub name: u32,
     pub color: [f32; 3],
-    /// the way the light shines (world)
+    /// the way the light shines (world, unit length): minus the third column of its transform,
+    /// which FUN_000dcc10 hands the shaders as the way toward the light (the matrix's bytes 8,
+    /// 0x14 and 0x20)
     pub dir: Vec3,
-    /// the key light (else a fill)
-    pub key: bool,
-    /// lights the terrain (else objects and characters)
-    pub terrain: bool,
+    /// that column's length: the shaders take N.L against the column as it is (vertex program
+    /// 0x19's `max(0, n . c16)`; FUN_000dcc10 copies it unnormalised), so a hand-made transform
+    /// whose column is short lights that much less (e40's key 0.944, its outdoor fill 0.834; 34
+    /// of the 161 placements are off by over 2%)
+    pub strength: f32,
+    /// h_e02aba1c: one of the indoor pair
+    pub indoor: bool,
+    /// h_1f416687: one of the outdoor pair
+    pub outdoor: bool,
 }
 
-/// A point light (light-object h_ea460e64): its place, colour (0-1), the distance it reaches
-/// (`range`, m) and its `falloff` (an enum: 3 or 4 on every one; unnamed in the schema).
+impl LevelLight {
+    /// Its colour as it lights a surface facing it: `color` x `strength` (0-1, gamma terms).
+    pub fn lit_color(&self) -> [f32; 3] {
+        self.color.map(|c| c * self.strength)
+    }
+}
+
+/// A point light: a light-object whose type's `light-type` is LT_POINT (h_ea460e64, h_e81ba579,
+/// h_087ae059, h_09020c30, h_f1557cc8, h_ff66877a: 1290 + 959 placements). Its place, colour
+/// (0-1), the distance it reaches (`range`, m) and its `falloff` (an enum: 3 or 4 on every one;
+/// unnamed in the schema). An object takes the lamps of its pair only: FUN_0009f0b0 gathers a
+/// block's lamps from those with the light's +0x94 bit 2 (h_1f416687) for the outdoor pair, bit
+/// 1 (h_e02aba1c) for the indoor one (its fourth argument, the pair 0x9f3c0 picked, 0x9f688); one
+/// with neither lights nothing (32 on m09_c).
 pub struct LevelLamp {
+    /// its type (h_ff8051ee) and its own name
+    pub kind: u32,
+    pub name: u32,
     pub at: Vec3,
     pub color: [f32; 3],
     pub range: f32,
     pub falloff: i64,
-    /// lights the terrain too
-    pub terrain: bool,
+    /// h_e02aba1c: lights what the indoor pair lights
+    pub indoor: bool,
+    /// h_1f416687: lights what the outdoor pair lights (characters, LU_OUTDOOR on 535 of the
+    /// 542 placed ones)
+    pub outdoor: bool,
 }
+
+/// A light-object the demo doesn't draw: its type, its name and why.
+pub struct OtherLight {
+    pub kind: u32,
+    pub name: u32,
+    pub why: &'static str,
+}
+
+/// Why a light-object isn't drawn (`OtherLight`): an effect object's light. 373 point lights
+/// (all 159 h_09020c30, 214 h_e81ba579) are `<parent Type="1">` of an effect-object, at its
+/// origin: the effect types that carry one name its type (their h_f8c6a8b4) and an ALE
+/// light-effect, which drives it (an inference, as `ale_fx` reads the effects' light; their
+/// colour is 1 1 1 and range 10 on every one). The demo doesn't run placed effect objects (#258),
+/// so their lights wait for that.
+pub const EFFECT_LIGHT: &str = "its effect object's light (run by its light-effect; #258)";
+/// Why a light-object isn't drawn: a spot light (LT_SPOT; none in the game's data).
+pub const SPOT_LIGHT: &str = "a spot light";
+/// Why a light-object isn't drawn: its type isn't a light type the loaded objecttypes know.
+pub const NO_LIGHT_TYPE: &str = "no light type of that name";
+/// Why a light-object isn't drawn: its parent (`<parent Type="1">`) isn't among the level's
+/// placements.
+pub const NO_PARENT: &str = "its parent isn't placed";
+
+/// A light-object's `<parent Type>` (the object link FUN_0015f0b0 reads into the light's +0xa4,
+/// updated by FUN_0015ed30): 1 sits at its parent object, its transform the parent's times the
+/// link's offset, identity when the `<parent>` names none (none does); 2 a named node of its
+/// parent, and with no node named (none is) the light keeps its own transform; 0 none.
+const PARENT_OBJECT: i64 = 1;
 
 /// A wall panel (world-button-object): its name, placement and the event it sends when used:
 /// its signal h_eaf8a35b (+0x1b0) and data h_f1660a0d (+0x1b4; -1 when not given, its
@@ -256,11 +324,18 @@ pub struct Level {
     /// with it (sdm_e34's missile rack h_128f3de2: blocker h_e1a3f88e, physics-id 4)
     pub terrain_collision: Vec<u32>,
     pub blockers: Vec<(u32, Mat4, u32)>,
-    /// directional lights and the terrain's ambient (`ambient` is the objects')
+    /// directional lights (`LevelLight`), in the level file's order, and the terrain's ambient
+    /// (`ambient` is the objects')
     pub lights: Vec<LevelLight>,
-    /// point lights (light-object h_ea460e64)
+    /// point lights (`LevelLamp`), in the file's order
     pub lamps: Vec<LevelLamp>,
+    /// the light-objects that aren't drawn, and why (`OtherLight`)
+    pub other_lights: Vec<OtherLight>,
     pub terrain_ambient: [f32; 3],
+    /// `<character-ambient>` (h_e36353c3, the level settings' +0x44, parser 0x198690): the skinned
+    /// meshes' ambient, c15 (0xda19b), where the static meshes take `ambient` (c14). Read, not
+    /// drawn: characters take `ambient` here
+    pub character_ambient: [f32; 3],
     /// half the terrain's width (m): its grid is width blocks x 16 cells of h_e023cdc9 m,
     /// centred on the origin; the layer masks span it
     pub terrain_half: f32,
@@ -500,32 +575,53 @@ impl Level {
         let blockers = all.iter().filter(|e| e.name == h("blocker"))
             .filter_map(|e| Some((surface(e), transform(&floats(e.child(h("transform"))))?, hash(e, h("object-instance")))))
             .filter(|(n, _, _)| *n != 0 && *n != h("")).collect();
-        let lights = all.iter().filter(|e| e.name == h("light-object")).filter_map(|e| {
-            let kind = hash(e, H_TYPE);
-            let key = kind == H_KEY_LIGHT;
-            if !key && kind != H_FILL_LIGHT {
-                return None;
+        // the light-objects, each by its type's light-type (`Game::light_types`)
+        let (mut lights, mut lamps, mut other_lights) = (vec![], vec![], vec![]);
+        for e in all.iter().filter(|e| e.name == h("light-object")) {
+            let (kind, name) = (hash(e, H_TYPE), hash(e, h("name")));
+            let other = |why| OtherLight { kind, name, why };
+            let c = floats(e.child(H_LIGHT_COLOR));
+            let color = if c.len() >= 3 { [c[0], c[1], c[2]] } else { [1.0; 3] };
+            let flag = |k: u32| e.attr(k).and_then(|v| v.as_i64()).is_some_and(|v| v != 0);
+            let (indoor, outdoor) = (flag(H_LIGHT_INDOOR), flag(H_LIGHT_OUTDOOR));
+            // where it sits: on a `<parent Type="1">` its parent's transform times the link's
+            // offset (the `<parent>`'s own `<transform>`), else its own (PARENT_OBJECT)
+            let parent = e.child(h("parent")).filter(|p| p.attr(h("Type")).and_then(|v| v.as_i64()) == Some(PARENT_OBJECT))
+                .map(|p| (hash(p, h("parent")), transform(&floats(p.child(h("transform")))).unwrap_or(Mat4::IDENTITY)))
+                .filter(|(n, _)| *n != 0 && *n != h(""));
+            let placed = match parent {
+                Some((p, offset)) => match objects.iter().find(|o| o.name == p) {
+                    // (an effect's light is the effect's to run: EFFECT_LIGHT)
+                    Some(o) if o.tag == h("effect-object") => { other_lights.push(other(EFFECT_LIGHT)); continue; }
+                    Some(o) => o.transform * offset,
+                    None => { other_lights.push(other(NO_PARENT)); continue; }
+                },
+                None => match transform(&floats(e.child(h("transform")))) {
+                    Some(m) => m,
+                    None => continue,
+                },
+            };
+            match game.light_types.get(&kind).copied() {
+                Some(LT_DIRECTIONAL) => lights.push(LevelLight {
+                    kind, name, color, indoor, outdoor,
+                    dir: -placed.z_axis.truncate().normalize_or_zero(),
+                    strength: placed.z_axis.truncate().length(),
+                }),
+                Some(LT_POINT) => {
+                    let num = |n: &str| e.attr(h(n)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+                    lamps.push(LevelLamp {
+                        kind, name, color, indoor, outdoor,
+                        at: placed.w_axis.truncate(),
+                        range: num("range").unwrap_or(10.0),
+                        falloff: num("falloff").map_or(3, |f| f as i64),
+                    });
+                }
+                Some(LT_SPOT) => other_lights.push(other(SPOT_LIGHT)),
+                _ => other_lights.push(other(NO_LIGHT_TYPE)),
             }
-            let c = floats(e.child(H_LIGHT_COLOR));
-            let m = transform(&floats(e.child(h("transform"))))?;
-            Some(LevelLight {
-                color: if c.len() >= 3 { [c[0], c[1], c[2]] } else { [1.0; 3] },
-                dir: -m.z_axis.truncate().normalize_or_zero(),
-                key,
-                terrain: e.attr(H_LIGHTS_TERRAIN).and_then(|v| v.as_i64()) == Some(1),
-            })
-        }).collect();
-        let lamps = all.iter().filter(|e| e.name == h("light-object") && hash(e, H_TYPE) == H_POINT_LIGHT).filter_map(|e| {
-            let c = floats(e.child(H_LIGHT_COLOR));
-            let num = |n: &str| e.attr(h(n)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
-            Some(LevelLamp {
-                at: transform(&floats(e.child(h("transform"))))?.w_axis.truncate(),
-                color: if c.len() >= 3 { [c[0], c[1], c[2]] } else { [1.0; 3] },
-                range: num("range").unwrap_or(10.0),
-                falloff: num("falloff").map_or(3, |f| f as i64),
-                terrain: e.attr(H_LIGHTS_TERRAIN).and_then(|v| v.as_i64()) == Some(1),
-            })
-        }).collect();
+        }
+        let ca = floats(all.iter().find(|e| e.name == h("character-ambient")).copied());
+        let character_ambient = if ca.len() >= 3 { [ca[0], ca[1], ca[2]] } else { ambient };
         let ta = floats(all.iter().find(|e| e.name == h("Terrain")).and_then(|t| t.child(h("ambient"))));
         let terrain_ambient = if ta.len() >= 3 { [ta[0], ta[1], ta[2]] } else { ambient };
         let terrain_light = all.iter().find(|e| e.name == h("Terrain")).map(|t| {
@@ -570,8 +666,18 @@ impl Level {
                 radius: number(e, H_POINT_RADIUS, -1.0),
             })
         }).collect();
-        Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, terrain_ambient,
-                   terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths, max_score, patrols })
+        Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, other_lights,
+                   terrain_ambient, character_ambient, terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths,
+                   max_score, patrols })
+    }
+
+    /// The directional lights FUN_000dcc10 puts in the indoor pair (`indoor`) or the outdoor one:
+    /// those with the pair's flag (`LevelLight::indoor`, `outdoor`), two at most. It walks the
+    /// world's lights (+0x22c) and fills the pair's two slots in the list's order (a slot rule on
+    /// the type's +0x50 bit 3 never applies: that byte is the parsed bool h_ee2faf73, 0 or 1); no
+    /// level of the game has more than two lights in either pair, so the order never decides.
+    pub fn pair(&self, indoor: bool) -> Vec<&LevelLight> {
+        self.lights.iter().filter(|l| if indoor { l.indoor } else { l.outdoor }).take(2).collect()
     }
 
     /// What using a button does to the level's animated objects, read from the data alone: (object

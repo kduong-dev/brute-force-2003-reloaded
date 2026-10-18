@@ -151,11 +151,13 @@ fn main() {
                      g.positions.len(), g.indices.len(), level.sky_at);
         }
         for l in &level.lights {
-            println!("light {} {} colour {:.2?} dir {:.2}", if l.key { "key " } else { "fill" }, if l.terrain { "terrain" } else { "objects" }, l.color, l.dir);
+            println!("light h_{:08x} type h_{:08x}{}{} colour {:.2?} dir {:.2}", l.name, l.kind, if l.indoor { " indoor" } else { "" },
+                     if l.outdoor { " outdoor" } else { "" }, l.color, l.dir);
         }
-        println!("ambient objects {:.2?} terrain {:.2?}", level.ambient, level.terrain_ambient);
-        // which way the baked light map lies: correlate it with the terrain's own slope light
-        if let (Some((g, _)), Some(key)) = (level.terrain.first(), level.lights.iter().find(|l| l.key && l.terrain).or(level.lights.first())) {
+        println!("ambient objects {:.2?} characters {:.2?} terrain {:.2?}", level.ambient, level.character_ambient, level.terrain_ambient);
+        // which way the baked light map lies: correlate it with the slope light of a light marked
+        // h_e02aba1c (read as the terrain's before #143; any of the level's would do)
+        if let (Some((g, _)), Some(key)) = (level.terrain.first(), level.lights.iter().find(|l| l.indoor).or(level.lights.first())) {
             for o in 0..8u8 {
                 let (mut sx, mut sy, mut sxx, mut syy, mut sxy, mut n) = (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
                 for (p, nn) in g.positions.iter().zip(&g.normals) {

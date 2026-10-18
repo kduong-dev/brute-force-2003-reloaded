@@ -17,18 +17,21 @@ use bevy::{
 
 use crate::bf::character::{Address, Game, Geoset, H_WRAP_ALPHA};
 use crate::bf::hash::h;
-use crate::bf::level::Level;
+use crate::bf::level::{Level, LevelLight, LU_GEOSET, LU_INDOOR};
 use crate::bf::triggers::{act, Class, AC_PLAY, AC_RESUME, AM_BACKWARD, AM_FORWARD};
 use crate::bf::weapon::{PartJoint, WeaponModel, HINGE_JOINT, TRANSFORM_JOINT};
 
-/// A level's material: bevy's standard one, lit also by the level's point lights (light-object
-/// h_ea460e64) as the game lights its scenery: colour x (1 - distance / range) x N.L, per pixel
-/// here (per vertex there), unshadowed, nothing past the range (src/lamps.wgsl). Bevy's own point
-/// lights fall off as 1 / d^2 and couldn't follow that: a light matched at mid range was far too
-/// bright beside it and too dim towards its edge.
+/// A level's material: bevy's standard one, lit also by the level's point lights (light-objects
+/// of a point type, `LevelLamp`) as the game lights its scenery: colour x (1 - distance / range)
+/// x N.L, per pixel here (per vertex there), unshadowed, nothing past the range (src/lamps.wgsl).
+/// Bevy's own point lights fall off as 1 / d^2 and couldn't follow that: a light matched at mid
+/// range was far too bright beside it and too dim towards its edge. It takes the lamps of its
+/// light pair only, and an indoor one (`Lamps::indoor`) the level's indoor pair in place of
+/// bevy's directional lights, which are the outdoor pair (`spawn_lighting`).
 pub type LevelMaterial = ExtendedMaterial<StandardMaterial, Lamps>;
 
-/// The level's point lights, for `LevelMaterial`: one buffer shared by all its materials.
+/// The level's lights, for `LevelMaterial`: one buffer shared by all its materials
+/// (`light_buffer`: the indoor pair, then the point lights).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 #[bind_group_data(LampsKey)]
 pub struct Lamps {
@@ -38,17 +41,23 @@ pub struct Lamps {
     /// material's `depth_bias` is used to sort it (see TERRAIN_LAYER_SORT): bevy takes both
     /// from that one field.
     pub layer_bias: Option<i32>,
+    /// Lit by the level's indoor pair and its lamps (the shader def INDOOR_PAIR), where the others
+    /// take the outdoor pair and its lamps: what the game's wrapper material picks by the object's
+    /// light-usage (`indoor_lit`).
+    pub indoor: bool,
 }
 
-/// What a `Lamps` material's pipeline depends on: the layer's own depth-test bias, if any.
+/// What a `Lamps` material's pipeline depends on: the layer's own depth-test bias, if any, and
+/// whether it takes the indoor pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LampsKey {
     layer_bias: Option<i32>,
+    indoor: bool,
 }
 
 impl From<&Lamps> for LampsKey {
     fn from(lamps: &Lamps) -> Self {
-        LampsKey { layer_bias: lamps.layer_bias }
+        LampsKey { layer_bias: lamps.layer_bias, indoor: lamps.indoor }
     }
 }
 
@@ -60,11 +69,14 @@ impl MaterialExtension for Lamps {
     }
 
     /// A terrain layer keeps its own depth-test bias (the base material set it from the sort
-    /// bias, see TERRAIN_LAYER_SORT).
+    /// bias, see TERRAIN_LAYER_SORT); an indoor material takes the indoor pair (INDOOR_PAIR).
     fn specialize(_pipeline: &MaterialExtensionPipeline, descriptor: &mut RenderPipelineDescriptor, _layout: &MeshVertexBufferLayoutRef,
                   key: MaterialExtensionKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
         if let (Some(bias), Some(depth)) = (key.bind_group_data.layer_bias, descriptor.depth_stencil.as_mut()) {
             depth.bias.constant = bias;
+        }
+        if let (true, Some(fragment)) = (key.bind_group_data.indoor, descriptor.fragment.as_mut()) {
+            fragment.shader_defs.push("INDOOR_PAIR".into());
         }
         Ok(())
     }
@@ -256,40 +268,92 @@ fn liquid_material(game: &mut Game, images: &mut Assets<Image>, liquids: &mut As
 }
 
 /// The level's point light at `p` from every direction (linear colour: each lamp's colour x
-/// (1 - distance / range)), for what isn't a `LevelMaterial` (the characters).
+/// (1 - distance / range)), for what isn't a `LevelMaterial` (the characters): the outdoor pair's
+/// lamps, as a character's light-usage is LU_OUTDOOR (535 of the 542 placed ones; FUN_0009f0b0
+/// takes the lamps of its pair, `LevelLamp`).
 pub fn lamp_light_at(level: &Level, p: Vec3) -> Vec3 {
     if std::env::var("BF_NO_LAMPS").is_ok() {
         return Vec3::ZERO;
     }
-    level.lamps.iter().filter_map(|l| {
+    level.lamps.iter().filter(|l| l.outdoor).filter_map(|l| {
         let d = l.at.distance(p);
         (d < l.range).then(|| Vec3::from(l.color.map(|c| Color::srgb(c, c, c).to_linear().red)) * (1.0 - d / l.range))
     }).sum()
 }
 
-/// The level materials' lamps (`Lamps`): `level`'s point lights, or none (the flat test floor).
-/// What a map's scenery is lit by, the test tools' placed scenery too (#185).
+/// The level materials' lights (`Lamps`): `level`'s indoor pair and point lights, or none (the
+/// flat test floor). What a map's scenery is lit by, the test tools' placed scenery too (#185).
 pub fn lamps_of(level: Option<&Level>, buffers: &mut Assets<ShaderStorageBuffer>) -> Lamps {
     let buffer = match level {
-        Some(l) => lamp_buffer(l),
-        None => ShaderStorageBuffer::new(&[0u8; 32], RenderAssetUsages::default()),
+        Some(l) => light_buffer(l, true),
+        None => no_lights(),
     };
-    Lamps { lamps: buffers.add(buffer), layer_bias: None }
+    Lamps { lamps: buffers.add(buffer), layer_bias: None, indoor: false }
 }
 
-/// The point lights' buffer: per lamp its place, range, linear colour and falloff kind (8
-/// floats); one that reaches nowhere when there are none (a buffer can't be empty).
-fn lamp_buffer(level: &Level) -> ShaderStorageBuffer {
+/// The level's lights' buffer shared by all its materials (`spawn_level` keeps its handle):
+/// changed while the Vengar view is on (`set_indoor_pair`).
+#[derive(Resource, Clone)]
+pub struct LevelLights(pub Handle<ShaderStorageBuffer>);
+
+/// A light buffer with no lights in it (`light_buffer`'s layout: its indoor pair empty, one
+/// lamp that reaches nowhere, as a buffer can't be empty).
+fn no_lights() -> ShaderStorageBuffer {
+    ShaderStorageBuffer::new(&[0u8; LIGHTS_HEADER + LAMP_SIZE], RenderAssetUsages::default())
+}
+
+/// `light_buffer`'s indoor pair (lamps.wgsl `IndoorPair`): two directions and two colours (vec4
+/// each) and the swap flag, padded to 16 bytes: 80 bytes.
+const LIGHTS_HEADER: usize = 80;
+/// A lamp in `light_buffer` (lamps.wgsl `Lamp`): its place and range, its linear colour and
+/// falloff kind, its pairs and padding: 48 bytes.
+const LAMP_SIZE: usize = 48;
+/// A lamp's pairs in `light_buffer`, as the game's light keeps them in its +0x94: bit 1 the
+/// indoor pair's (h_e02aba1c), bit 2 the outdoor pair's (h_1f416687).
+const LAMP_INDOOR: u32 = 2;
+const LAMP_OUTDOOR: u32 = 4;
+
+/// The level's lights for `LevelMaterial`s (lamps.wgsl's `LevelLights`): first the indoor pair
+/// (`Level::pair`; each slot the way toward its light, w 1 when there's one, then its linear
+/// colour) and `swap`, whether an indoor material takes it in place of bevy's directional lights
+/// (false in the Vengar view, whose vision pair lights both pairs' objects); then per lamp its
+/// place, range, linear colour, falloff kind and pairs (`LAMP_INDOOR`, `LAMP_OUTDOOR`). One lamp
+/// that reaches nowhere when there are none (or BF_NO_LAMPS).
+pub fn light_buffer(level: &Level, swap: bool) -> ShaderStorageBuffer {
     let linear = |c: f32| Color::srgb(c, c, c).to_linear().red;
-    let mut data: Vec<[f32; 8]> = level.lamps.iter().map(|l| {
-        let [r, g, b] = l.color.map(linear);
-        [l.at.x, l.at.y, l.at.z, l.range, r, g, b, l.falloff as f32]
-    }).collect();
-    if data.is_empty() || std::env::var("BF_NO_LAMPS").is_ok() {
-        data = vec![[0.0; 8]];
+    let mut bytes: Vec<u8> = Vec::with_capacity(LIGHTS_HEADER + LAMP_SIZE * level.lamps.len().max(1));
+    let floats = |b: &mut Vec<u8>, v: &[f32]| v.iter().for_each(|f| b.extend(f.to_le_bytes()));
+    let pair = level.pair(true);
+    for k in 0..2 {
+        let d = pair.get(k).map_or([0.0; 4], |l| { let to = -l.dir; [to.x, to.y, to.z, 1.0] });
+        floats(&mut bytes, &d);
     }
-    let bytes: Vec<u8> = data.iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+    for k in 0..2 {
+        let c = pair.get(k).map_or([0.0; 4], |l| { let [r, g, b] = l.lit_color().map(linear); [r, g, b, 0.0] });
+        floats(&mut bytes, &c);
+    }
+    bytes.extend((swap as u32).to_le_bytes());
+    bytes.resize(LIGHTS_HEADER, 0);
+    let mut n = 0;
+    for l in level.lamps.iter().filter(|_| std::env::var("BF_NO_LAMPS").is_err()) {
+        let [r, g, b] = l.color.map(linear);
+        floats(&mut bytes, &[l.at.x, l.at.y, l.at.z, l.range, r, g, b, l.falloff as f32]);
+        let pairs = (if l.indoor { LAMP_INDOOR } else { 0 }) | (if l.outdoor { LAMP_OUTDOOR } else { 0 });
+        bytes.extend(pairs.to_le_bytes());
+        bytes.resize(LIGHTS_HEADER + LAMP_SIZE * (n + 1), 0);
+        n += 1;
+    }
+    if n == 0 {
+        bytes.resize(LIGHTS_HEADER + LAMP_SIZE, 0);
+    }
     ShaderStorageBuffer::new(&bytes, RenderAssetUsages::default())
+}
+
+/// The Vengar view's switch for the level materials' indoor pair (`light_buffer`'s `swap`): off
+/// while the view is on, as its vision pair takes both pairs' place (FUN_000dcc10's second
+/// argument) and bevy's directional lights are that pair meanwhile (play_vengar.rs).
+pub fn set_indoor_pair(buffers: &mut Assets<ShaderStorageBuffer>, lights: &LevelLights, level: &Level, on: bool) {
+    buffers.insert(&lights.0, light_buffer(level, on));
 }
 
 /// Material types that are alpha-tested (grass, fences, grates, signs, cables); the others use
@@ -548,34 +612,74 @@ pub const POINT_LIGHT_SCALE: f32 = 1.0 / 997.0;
 /// in `spawn_level`).
 const SKY_LAYER_STEP: f32 = 1000.0;
 
-/// The level's own lighting (instead of a made-up sun): the object key light (shadows) and fill
-/// as directional lights, the object ambient. The game lights each surface texture x (ambient
-/// + key x N.L + fill x N.L) with those colours in gamma space, so they're given as sRGB colours
-/// (Bevy works in linear light) at an illuminance of PI (see `console_look`). Terrain has its
-/// own, dimmer pair: `terrain_tint` scales its materials to match.
+/// The level's own lighting (instead of a made-up sun): the outdoor pair (`Level::pair`) as
+/// directional lights, and the object ambient. The game lights each surface texture x (ambient
+/// + one light's colour x N.L + the other's) in gamma space (vertex program 0x19: oD0 = the
+/// material's ambient x c14 + (max(0, n.c16) c17 + max(0, n.c18) c19) x its colour, with oB0 the
+/// same for the back face), so the colours (x the lights' strength, `LevelLight::lit_color`) are
+/// given as sRGB (Bevy works in linear light) at an illuminance of PI (see `console_look`). The
+/// outdoor pair lights characters (LU_OUTDOOR) and the
+/// scenery placed outdoors; the scenery placed indoors takes the indoor pair in its own shader
+/// (`Lamps::indoor`). The game's lights cast no shadow; here the brightest of the pair (by its
+/// colour's luma) casts the characters' (`luma`). A level with no directional light at all gets
+/// a made-up sun; one with no outdoor pair (mp2: both its lights are indoor) none.
 pub fn spawn_lighting(commands: &mut Commands, level: &Level) {
-    let mut any = false;
-    for l in level.lights.iter().filter(|l| !l.terrain) {
-        let [r, g, b] = l.color;
+    let pair = level.pair(false);
+    let shadow = pair.iter().enumerate().max_by(|a, b| luma(a.1.lit_color()).total_cmp(&luma(b.1.lit_color()))).map(|(i, _)| i);
+    for (i, l) in pair.iter().enumerate() {
+        let [r, g, b] = l.lit_color();
         let at = Transform::default().looking_to(l.dir.normalize_or(Vec3::NEG_Y), Vec3::Y);
-        commands.spawn((DirectionalLight { illuminance: std::f32::consts::PI, color: Color::srgb(r, g, b), shadows_enabled: l.key, ..default() },
-                        at, Name::new(if l.key { "key light" } else { "fill light" })));
-        any = true;
+        commands.spawn((DirectionalLight { illuminance: std::f32::consts::PI, color: Color::srgb(r, g, b), shadows_enabled: shadow == Some(i), ..default() },
+                        at, Name::new(format!("outdoor light h_{:08x}", l.name))));
     }
-    if !any {
+    if level.lights.is_empty() {
         commands.spawn((DirectionalLight { illuminance: std::f32::consts::PI, color: Color::srgb(0.85, 0.85, 0.8), shadows_enabled: true, ..default() },
                         Transform::default().looking_to(Vec3::new(-0.45, -0.75, -0.35), Vec3::Y)));
     }
     let [r, g, b] = level.ambient;
     commands.insert_resource(AmbientLight { color: Color::srgb(r, g, b), brightness: 1.0, ..default() });
     if std::env::var("BF_LIGHT_LOG").is_ok() {
-        eprintln!("lights: {} directional, {} point", level.lights.len(), level.lamps.len());
-        for l in &level.lamps {
-            eprintln!("  point at {:7.1} {:6.1} {:7.1}  colour {:.2} {:.2} {:.2}  range {:4.1}  falloff {}  terrain {}",
-                      l.at.x, l.at.y, l.at.z, l.color[0], l.color[1], l.color[2], l.range, l.falloff, l.terrain);
-        }
+        log_lights(level, shadow.and_then(|i| pair.get(i)).map(|l| l.name));
     }
     // (the point lights are the level materials' own: see `LevelMaterial`)
+}
+
+/// Which light casts the characters' shadows (`spawn_lighting`): the brightest of the outdoor
+/// pair, by this luma of its colour (Rec. 601, as the game's glare measures a picture's,
+/// FUN_000e5f60). The game's own lights cast none (FUN_000dcc10 hands the shaders a direction and
+/// a colour, nothing else): the demo keeps one for the characters, a choice.
+fn luma(c: [f32; 3]) -> f32 {
+    0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+}
+
+/// BF_LIGHT_LOG: every light-object of the level with its type and kind, the two pairs, the
+/// ambients, and the light-objects that aren't drawn.
+fn log_lights(level: &Level, shadow: Option<u32>) {
+    let flags = |indoor: bool, outdoor: bool| match (indoor, outdoor) {
+        (true, true) => "indoor+outdoor",
+        (true, false) => "indoor",
+        (false, true) => "outdoor",
+        (false, false) => "no pair",
+    };
+    eprintln!("lights: {} directional, {} point, {} not drawn", level.lights.len(), level.lamps.len(), level.other_lights.len());
+    for l in &level.lights {
+        let to = -l.dir;
+        eprintln!("  directional h_{:08x} type h_{:08x}  {:14}  colour {:.2} {:.2} {:.2} x {:.3}  toward {:5.2} {:5.2} {:5.2}{}", l.name, l.kind,
+                  flags(l.indoor, l.outdoor), l.color[0], l.color[1], l.color[2], l.strength, to.x, to.y, to.z,
+                  if shadow == Some(l.name) { "  (casts the characters' shadow)" } else { "" });
+    }
+    for l in &level.lamps {
+        eprintln!("  point h_{:08x} type h_{:08x}  {:14}  at {:7.1} {:6.1} {:7.1}  colour {:.2} {:.2} {:.2}  range {:4.1}  falloff {}",
+                  l.name, l.kind, flags(l.indoor, l.outdoor), l.at.x, l.at.y, l.at.z, l.color[0], l.color[1], l.color[2], l.range, l.falloff);
+    }
+    for l in &level.other_lights {
+        eprintln!("  not drawn h_{:08x} type h_{:08x}: {}", l.name, l.kind, l.why);
+    }
+    let names = |indoor: bool| level.pair(indoor).iter().map(|l| format!("h_{:08x}", l.name)).collect::<Vec<_>>().join(" ");
+    eprintln!("  outdoor pair: [{}]  indoor pair: [{}]", names(false), names(true));
+    let [o, c, t] = [level.ambient, level.character_ambient, level.terrain_ambient];
+    eprintln!("  ambient: object {:.3} {:.3} {:.3}, character {:.3} {:.3} {:.3} (not drawn: characters take the object's), terrain {:.3} {:.3} {:.3}",
+              o[0], o[1], o[2], c[0], c[1], c[2], t[0], t[1], t[2]);
 }
 
 /// How the baked terrain light map lies on the grid (see `Level::baked_light`): blocks row by
@@ -583,23 +687,28 @@ pub fn spawn_lighting(commands: &mut Commands, level: &Level) {
 /// slope lighting (sdm_e34 0.26, sdm_m03 0.39; every other orientation near 0).
 const TERRAIN_LIGHT_ORIENTATION: u8 = 0;
 
-/// How much dimmer the terrain's key light is than the objects' (per channel, at most 1): the
-/// terrain's materials are tinted by it, since every light here lights everything.
+/// How much dimmer the terrain's lights are than the objects' (per channel, at most 1), for a
+/// terrain without a baked light map (none of the game's 54 levels): its materials are tinted by
+/// it, as bevy's directional lights light everything. Read as before #143: the terrain's light is
+/// the brightest of the lights marked h_e02aba1c, the objects' the brightest of the outdoor pair
+/// (the code shows h_e02aba1c is the indoor pair's mark; what lights the terrain is #181's).
 fn terrain_tint(level: &Level) -> Color {
-    let key = |terrain: bool| level.lights.iter().find(|l| l.key && l.terrain == terrain).map(|l| l.color);
-    match (key(true), key(false)) {
+    let brightest = |l: &mut dyn Iterator<Item = &LevelLight>| l.max_by(|a, b| luma(a.color).total_cmp(&luma(b.color))).map(|l| l.color);
+    match (brightest(&mut level.lights.iter().filter(|l| l.indoor)), brightest(&mut level.pair(false).into_iter())) {
         (Some(t), Some(o)) => Color::srgb((t[0] / o[0].max(0.01)).min(1.0), (t[1] / o[1].max(0.01)).min(1.0), (t[2] / o[2].max(0.01)).min(1.0)),
         _ => Color::WHITE,
     }
 }
 
-/// The colour of the terrain's own lights (its ambient + key + fill, the pair marked
-/// h_e02aba1c), scaled to unit brightness and given in linear terms: the baked light map says how
-/// bright the ground is; these lights give it their hue. (Bulgar's terrain lights are blue-grey:
-/// key 0.44 0.57 0.65, ambient 0.13 0.16 0.24 - the captures' ground is grey, not sand-brown.)
+/// The colour of the lights marked h_e02aba1c with the terrain's ambient (read as the terrain's
+/// own lights before #143; the code shows they're the indoor pair, and the terrain's light is
+/// #181's), scaled to unit brightness and given in linear terms: the baked light map says how
+/// bright the ground is; these lights give it their hue. (Bulgar's are blue-grey: 0.44 0.57
+/// 0.65, ambient 0.13 0.16 0.24 - the captures' ground is grey, not sand-brown.) Kept as it was
+/// calibrated (TERRAIN_HUE).
 fn terrain_hue(level: &Level) -> [f32; 3] {
     let mut c = level.terrain_ambient;
-    for l in level.lights.iter().filter(|l| l.terrain) {
+    for l in level.lights.iter().filter(|l| l.indoor) {
         for k in 0..3 {
             c[k] += l.color[k];
         }
@@ -734,7 +843,7 @@ const GRASS_KEY: u32 = 0x6752_A55E;
 
 fn upright_normals(g: &Geoset) -> Geoset {
     Geoset { normals: vec![[0.0, 1.0, 0.0]; g.normals.len()], positions: g.positions.clone(), uvs: g.uvs.clone(), joints: g.joints.clone(),
-             weights: g.weights.clone(), indices: g.indices.clone(), material: g.material }
+             weights: g.weights.clone(), indices: g.indices.clone(), material: g.material, indoor: g.indoor }
 }
 
 /// `flip`: reverse the winding (terrain triangles face the other way from objects'). Otherwise
@@ -784,7 +893,8 @@ fn mask_at(mask: &(u32, u32, Vec<u8>), x: f32, z: f32, half: f32) -> f32 {
 
 /// One drawn geoset of a placed object, made ready as `spawn_level` draws a level's objects: its
 /// mesh and material, its part's placement in the object, the part's slide (a door leaf's axis
-/// and travel), the part's name (what animation targets name) and the geoset's material id.
+/// and travel), the part's name (what animation targets name), the geoset's material id and its
+/// indoor flag (`Geoset::indoor`).
 #[derive(Clone)]
 pub struct ObjectPart {
     pub mesh: Handle<Mesh>,
@@ -793,6 +903,35 @@ pub struct ObjectPart {
     pub slide: Option<(Vec3, f32)>,
     pub name: u32,
     pub material_id: u32,
+    pub indoor: bool,
+}
+
+/// Whether a placed object's geoset is lit by the level's indoor pair: the wrapper material's
+/// draw 0x9f3c0 picks the pair by the object's light-usage (its +0x44, 0x9f3ff-0x9f42f): LU_INDOOR
+/// the indoor one, LU_OUTDOOR the outdoor one, LU_GEOSET the geoset's own flag (`indoor`). An
+/// object without one (LU_NONE: 294 of m09_a's placements, 165 of m09_x's, 20 of m14_b's) uploads
+/// no pair and keeps the last one drawn's; here the outdoor pair, the one a view's draw starts
+/// with (FUN_000dcc10(0, ..) at 0xda2aa).
+pub fn indoor_lit(light_usage: u8, indoor: bool) -> bool {
+    match light_usage {
+        LU_INDOOR => true,
+        LU_GEOSET => indoor,
+        _ => false,
+    }
+}
+
+/// The indoor-lit variant of a level material (`Lamps::indoor`), made once per material
+/// (`cache`, by the material's asset id).
+fn indoor_material(materials: &mut Assets<LevelMaterial>, cache: &mut HashMap<AssetId<LevelMaterial>, Handle<LevelMaterial>>,
+                   material: &Handle<LevelMaterial>) -> Handle<LevelMaterial> {
+    if let Some(m) = cache.get(&material.id()) {
+        return m.clone();
+    }
+    let Some(mut m) = materials.get(material).cloned() else { return material.clone() };
+    m.extension.indoor = true;
+    let h = materials.add(m);
+    cache.insert(material.id(), h.clone());
+    h
 }
 
 /// An archetype's drawn geosets, each part's most detailed mesh, as a level draws its placed
@@ -847,7 +986,7 @@ pub fn object_parts(game: &mut Game, arch: u32, meshes: &mut Assets<Mesh>, mater
             }
             let mesh = if grass { mesh_of(&upright_normals(g), None, 0.0, false) } else { mesh_of(g, None, 0.0, false) };
             parts.push(ObjectPart { mesh: meshes.add(mesh), material: mat, at: Transform::from_translation(p.offset).with_rotation(p.rotation),
-                                    slide, name: p.name, material_id: g.material });
+                                    slide, name: p.name, material_id: g.material, indoor: g.indoor });
         }
     }
     parts
@@ -864,14 +1003,19 @@ pub fn spawn_object_parts(commands: &mut Commands, parts: &[ObjectPart], root: E
     }
 }
 
-/// Spawn the level's terrain, placed objects and sky; returns the doors (closed).
+/// Spawn the level's terrain, placed objects and sky; returns the doors (closed). Its lights'
+/// buffer (`light_buffer`) is kept as the `LevelLights` resource.
 pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, meshes: &mut Assets<Mesh>,
                    materials: &mut Assets<LevelMaterial>, liquids: &mut Assets<LiquidMaterial>, buffers: &mut Assets<ShaderStorageBuffer>,
                    images: &mut Assets<Image>) -> Vec<Door> {
     let mut doors = vec![];
     let mut cache = HashMap::new();
     let mut liquid_cache = HashMap::new();
-    let lamps = Lamps { lamps: buffers.add(lamp_buffer(level)), layer_bias: None };
+    let lamps = Lamps { lamps: buffers.add(light_buffer(level, true)), layer_bias: None, indoor: false };
+    commands.insert_resource(LevelLights(lamps.lamps.clone()));
+    // (the placed objects' indoor-lit materials, `indoor_material`)
+    let mut indoor_cache = HashMap::new();
+    let mut indoor_parts = 0;
     // terrain: the ground, then each layer blended over it by its mask (baked into vertex alpha)
     for (k, (g, mask)) in level.terrain.iter().enumerate() {
         let base = material(game, images, materials, &lamps, &mut cache, g.material, false, false);
@@ -968,6 +1112,14 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         let moving = &animated[&arch];
         let animate = animates(moving, &played, o.name);
         let mut leaves = vec![];
+        if std::env::var("BF_LIGHT_LOG").is_ok() {
+            let n = models[&arch].iter().filter(|p| indoor_lit(o.light_usage, p.indoor)).count();
+            if n > 0 {
+                let at = o.transform.w_axis;
+                eprintln!("lights: h_{:08x} (arch h_{arch:08x}, light-usage {}) at {:.1} {:.1} {:.1}: {n} of {} parts lit by the indoor pair",
+                          o.kind, o.light_usage, at.x, at.y, at.z, models[&arch].len());
+            }
+        }
         for (p, surface) in models[&arch].iter().zip(surfaces) {
             let at = p.at;
             // (the scenery casts no shadow: see `spawn_object_parts`)
@@ -975,6 +1127,11 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             let part = commands.spawn((Mesh3d(p.mesh.clone()), place, NotShadowCaster, ChildOf(e))).id();
             match surface {
                 Some(l) => { commands.entity(part).insert(MeshMaterial3d(l)); }
+                // (lit by the pair its light-usage picks: `indoor_lit`)
+                None if indoor_lit(o.light_usage, p.indoor) => {
+                    indoor_parts += 1;
+                    commands.entity(part).insert(MeshMaterial3d(indoor_material(materials, &mut indoor_cache, &p.material)));
+                }
                 None => { commands.entity(part).insert(MeshMaterial3d(p.material.clone())); }
             }
             if let Some((axis, travel)) = p.slide {
@@ -1033,6 +1190,9 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             }
         }
     }
+    if std::env::var("BF_LIGHT_LOG").is_ok() {
+        eprintln!("lights: {indoor_parts} placed parts lit by the indoor pair ({} indoor materials)", indoor_cache.len());
+    }
     let layers = make_sky(game, &level.sky, level.sky_at, meshes, materials, images, &lamps, &mut cache);
     spawn_sky(commands, &layers);
     doors
@@ -1046,8 +1206,7 @@ pub type SkyLayers = Vec<(Handle<Mesh>, Handle<LevelMaterial>, Vec3)>;
 /// meshes and textures. Self-lit, so no lamps.
 pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
                   buffers: &mut Assets<ShaderStorageBuffer>, images: &mut Assets<Image>) -> SkyLayers {
-    let none = vec![0u8; 32];
-    let lamps = Lamps { lamps: buffers.add(ShaderStorageBuffer::new(&none, RenderAssetUsages::default())), layer_bias: None };
+    let lamps = Lamps { lamps: buffers.add(no_lights()), layer_bias: None, indoor: false };
     make_sky(game, sky, at, meshes, materials, images, &lamps, &mut HashMap::new())
 }
 
