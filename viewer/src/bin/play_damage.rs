@@ -519,6 +519,14 @@ impl Hit {
         self.amount()
     }
 
+    /// The hit record's damage (FUN_0022c4d0's, before the victim's own factors): the roll x the
+    /// shooter's skill x the falloff x FUN_00125940's hit part x the own side's share. The damage
+    /// handler 0x22d0b0 hands it (the record's +8) to FUN_0022cd80, whose hit effect takes 0.036
+    /// of it as its user parameter (play_fx.rs `flesh_sp`).
+    pub fn record(&self) -> f32 {
+        self.base * self.skill * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly
+    }
+
     /// The amount: every factor's product.
     pub fn amount(&self) -> f32 {
         self.base * self.skill * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly * self.step * self.victim_skill

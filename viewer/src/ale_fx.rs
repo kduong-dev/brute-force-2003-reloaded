@@ -147,7 +147,8 @@ const CLASS_CUBE: u32 = 0xE0CA_2222;
 /// 169 true) the parameter table at 0x40e394 names it CubeEmitter_OffsetHeight, and the spawn
 /// (0x64ee2) runs the box's height from the emitter up when it's set. The demo reads it as
 /// "attached" everywhere but under the placed rules, where no particle is attached (#168 is the
-/// rest).
+/// rest); where it's absent a bolt's flight effect goes by where the emitter hangs
+/// (`Compiled::ride`).
 const ATTACHED: u32 = 0xE299_9FFD;
 /// How far a cube emitter's box reaches to either side of the emitter, in its Width, Height and
 /// Depth (h_fd22a11c x, h_efb0f8cf y, h_14b74eb2 z), under the placed rules
@@ -180,6 +181,17 @@ const TURB_MAGNITUDE: u32 = 0x1CEA_C6D1;
 const TURB_APPROACH: u32 = 0x1B97_0B9A;
 /// The turbulence's pull per second for an Approach of 1: 4.0 (0x3a4fd0, read at 0x2a94a4).
 const TURB_RATE: f32 = 4.0;
+/// A node ref's flag (ALEffectLib's first word of a ref) for the builtin node h_ee223b51, the one
+/// node the library doesn't hold: every trail's emitter hangs under it with its appearance at
+/// the root (grenade_trail, mtrail, the exp-*-trail, plasma_bullet_trail, bio_bullet_*_trail,
+/// cuttertrail_ribbon, the MIRV grenade's ribbon), while the bolts' heads hang at the root
+/// (sonic_proj_can_bullet, plasma_bullet, bio_bullet_rifle) or under it with their appearance
+/// (sonic_proj_rifle_bullet; the Seer fireball's ball and the MIRV and gravrider grenades'
+/// flares beside their trails), as do the static hits (sonic_proj_can_hit). An emitter under it
+/// whose appearance hangs at the root is read as the world: see `Compiled::ride`.
+const WORLD_NODE_FLAG: u32 = 1;
+/// A ref's parent when it has none (ALEffectLib).
+const ROOT_PARENT: u32 = 0x8000;
 const MOTION_BLUR: u32 = 0xFE7C_2071;
 /// The basic particle appearance (billboard / perp quad).
 const CLASS_APPEARANCE: u32 = 0x1110_35AA;
@@ -492,6 +504,27 @@ pub struct Compiled {
     /// effect keeps the demo's count (a rate's fraction carried over each render frame, an emit
     /// count's burst at the start) and no LOD, until checked against its own captures.
     pub counted: bool,
+    /// Its emitters keep their particles in the effect's frame, so they travel with it, except
+    /// an emitter under the builtin node (WORLD_NODE_FLAG) whose appearance hangs at the root,
+    /// which leaves them in the world (a trail), unless the emitter's own h_e2999ffd (ATTACHED)
+    /// says either way: the bolts' flight effects (`load_flight`). Read from the data's structure
+    /// (every trail is such an emitter; the heads hang at the root, or under the node with their
+    /// appearance) and the takes, not from the runtime's code (not traced): the Jax-iC's ball
+    /// (sonic_proj_can_bullet, a root emitter throwing its particles back at 3.6 m/s for 0.72 s)
+    /// is a ball at the bolt with nothing left along its path, its glow gone with the bolt at
+    /// 25 m (todo/57 take05 +0.30 s); the Saryl-45's head (plasma_bullet: 8 at its start, growing
+    /// to 1.8 m) leaves no blob at the muzzle (todo/70 take01); the A10's head (bio_bullet_rifle,
+    /// 0.4 s lives) no 0.4 s line along its way, its streak (bio_bullet_rifle_trail, a trail,
+    /// 0.175 s) gone at +0.167 s (todo/47 take01); the Jax-iR's (sonic_proj_rifle_bullet, its
+    /// emitter and appearance both under the node, 0.28-0.72 s lives growing to 1.4 m) leaves
+    /// nothing between the gun and the wall 10 m out, the ball gone into the wall from +0.117 to
+    /// +0.183 s before the burst (todo/59 take01; read as a trail it lay a violet band along the
+    /// whole way). Left in the world, the heads' particles piled up and grew along the path: the
+    /// demo's Jax-iC bolt was a purple haze metres wide. Not reproduced: the Jax-iR's glow at
+    /// 65 m lasting 0.4 s past the bolt's 1.125 s life (todo/59 take07), where the demo's ends
+    /// with it. Every other effect keeps ATTACHED alone (absent: in the world), as checked before,
+    /// but the placed ones, none of whose particles is attached (`Compiled::placed`).
+    pub ride: bool,
     /// Compiled for the level's placed effect objects (`load_placed`, `spawn_placed_effects`):
     /// the game's particle rules above, and more read from its code for these: each particle
     /// starts where the game's spawn for its emitter's shape puts it (the box, CUBE_REACH; the
@@ -541,8 +574,8 @@ pub struct AleAssets {
     quad: Handle<Mesh>,
     /// a unit quad standing on its middle-bottom (y 0..1): the game's shape 3 (see SHAPE)
     quad_base: Handle<Mesh>,
-    /// by (name hash, `recorded`, `facing`, `placed`)
-    effects: HashMap<(u32, bool, bool, bool), Option<Arc<Compiled>>>,
+    /// by (name hash, `recorded`, `facing`, `ride`, `placed`)
+    effects: HashMap<(u32, bool, bool, bool, bool), Option<Arc<Compiled>>>,
     /// by (texture name hash, linear, the source factor: see `texture`)
     textures: HashMap<(u32, bool, Source), Option<Handle<Image>>>,
 }
@@ -762,73 +795,85 @@ impl AleAssets {
 
     /// An effect compiled already (`load`).
     pub fn cached(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, false, false, false)).cloned().flatten()
+        self.effects.get(&(effect, false, false, false, false)).cloned().flatten()
     }
 
     /// An effect compiled already with the recorded rules (`load_recorded`).
     pub fn cached_recorded(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, true, false, false)).cloned().flatten()
+        self.effects.get(&(effect, true, false, false, false)).cloned().flatten()
     }
 
     /// An effect compiled already with the recorded rules and the game's facing
     /// (`load_recorded_facing`).
     pub fn cached_recorded_facing(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, true, true, false)).cloned().flatten()
+        self.effects.get(&(effect, true, true, false, false)).cloned().flatten()
     }
 
     /// Compile an effect of the library by name hash (cached); None if the library lacks it.
     pub fn load(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                 effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, false, false, false)
+        self.load_as(game, images, materials, effect, false, false, false, false)
     }
 
     /// `load`, with the rules checked against the Frag recording only (see `Compiled::recorded`):
     /// for the grenades' blast and trail effects.
     pub fn load_recorded(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                          effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, true, false, false)
+        self.load_as(game, images, materials, effect, true, false, false, false)
     }
 
     /// `load`, with the game's facing 3 (see `Compiled::facing`): for the muzzle effects.
     pub fn load_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                        effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, false, true, false)
+        self.load_as(game, images, materials, effect, false, true, false, false)
     }
 
     /// `load_recorded`, with the game's facing 3 (see `Compiled::facing`): for the Therm
-    /// Sweeper's trail, explosion and launch dust (its muzzle effect, play_shots.rs) and the
-    /// effects triggers make (play_triggers.rs).
+    /// Sweeper's trail, explosion and launch dust (its muzzle effect, play_shots.rs), the effects
+    /// triggers make (play_triggers.rs), and a shot's hit: its hit effect, the struck material's
+    /// debris and their lights (play.rs `projectiles`, play_fx.rs, #57).
     pub fn load_recorded_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                                 effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, true, true, false)
+        self.load_as(game, images, materials, effect, true, true, false, false)
     }
 
     /// `load_recorded_facing`, with the placed rules (see `Compiled::placed`): for the level's
     /// placed effect objects (`spawn_placed_effects`).
     pub fn load_placed(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                        effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, true, true, true)
+        self.load_as(game, images, materials, effect, true, true, false, true)
+    }
+
+    /// `load_facing`, with the root emitters' particles riding on the effect (see
+    /// `Compiled::ride`): for a bolt's flight effect (play.rs `projectiles`, #57). Without the
+    /// recorded rules (the game's count, shapes, flipbook beams), which would change the LZRs'
+    /// bolts (their side streaks are shape 3) and the cutters' ribbon, not checked against their
+    /// takes; the heads this is for (sonic, plasma, bio) are shape 5 with no emit-count keys.
+    pub fn load_flight(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
+                       effect: u32) -> Option<Arc<Compiled>> {
+        self.load_as(game, images, materials, effect, false, true, true, false)
     }
 
     #[allow(clippy::too_many_arguments)]
     fn load_as(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
-               effect: u32, recorded: bool, facing: bool, placed: bool) -> Option<Arc<Compiled>> {
-        if let Some(c) = self.effects.get(&(effect, recorded, facing, placed)) {
+               effect: u32, recorded: bool, facing: bool, ride: bool, placed: bool) -> Option<Arc<Compiled>> {
+        let key = (effect, recorded, facing, ride, placed);
+        if let Some(c) = self.effects.get(&key) {
             return c.clone();
         }
         // (an effect that carries itself, through its effect appearances, carries nothing)
-        self.effects.insert((effect, recorded, facing, placed), None);
-        let compiled = self.compile(game, images, materials, effect, recorded, facing, placed).map(Arc::new);
+        self.effects.insert(key, None);
+        let compiled = self.compile(game, images, materials, effect, recorded, facing, ride, placed).map(Arc::new);
         if compiled.is_none() {
             warn!("ALE effect h_{effect:08x}: not in the library, or nothing it draws is supported");
         }
-        self.effects.insert((effect, recorded, facing, placed), compiled.clone());
+        self.effects.insert(key, compiled.clone());
         compiled
     }
 
     #[allow(clippy::too_many_arguments)]
     fn compile(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
-               effect: u32, recorded: bool, facing: bool, placed: bool) -> Option<Compiled> {
+               effect: u32, recorded: bool, facing: bool, ride: bool, placed: bool) -> Option<Compiled> {
         // the game's particle shapes (see SHAPE, `Compiled::shapes`)
         let shapes = recorded && facing;
         let e = game.effects.effects.get(&effect)?.clone();
@@ -842,15 +887,20 @@ impl AleAssets {
                 None if recorded && STAND_IN_EMITTERS.contains(&node_name(em)) => missing_emitter(&app),
                 None => continue,
             };
-            // (under the placed rules no particle is attached: ATTACHED is a game cube's
-            // OffsetHeight there, see CUBE_REACH)
-            let attached = !placed && emitter.flag(ATTACHED);
+            // its particles kept in the effect's frame: its h_e2999ffd where it has one, else
+            // (with `ride`) any but a trail, an emitter under the world node with its appearance
+            // at the root (see `Compiled::ride`); under the placed rules none (ATTACHED is a
+            // game cube's OffsetHeight there, see CUBE_REACH)
+            let attached = !placed && match emitter.params.get(&ATTACHED) {
+                Some(crate::bf::ale::Value::Bool(b)) => *b,
+                _ => ride && !(under_world_node(&e, em) && !under_world_node(&e, ap)),
+            };
             if app.class == CLASS_SPAWNER {
                 if !recorded {
                     continue;
                 }
                 let child = app.string(SPAWN_EFFECT).filter(|n| !n.is_empty())
-                    .and_then(|n| self.load_as(game, images, materials, h(n), recorded, facing, placed));
+                    .and_then(|n| self.load_as(game, images, materials, h(n), recorded, facing, ride, placed));
                 if let Some(child) = child {
                     pairs.push(Pair { perp: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fps: 0.0,
                                       frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None, vertical: false });
@@ -948,7 +998,7 @@ impl AleAssets {
             pairs.push(Pair { perp, axial, shape, attached, streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false, fields, child: None, rise, vertical });
         }
-        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted: shapes, placed })
+        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted: shapes, ride, placed })
     }
 
     /// A particle texture: as sRGB for a blended appearance, as linear amounts for an added one
@@ -1037,6 +1087,25 @@ fn varies_with_user(node: &Node) -> bool {
         Value::Transform(cs) => cs.iter().any(|c| several(c.0.iter().map(|i| i.0).collect())),
         _ => false,
     })
+}
+
+/// Whether node ref `index` of effect `e` hangs under the builtin node (a ref flagged
+/// WORLD_NODE_FLAG) somewhere up its parents, rather than at the root (see `Compiled::ride`).
+fn under_world_node(e: &crate::bf::ale::Effect, index: u32) -> bool {
+    let parent_of = |i: u32| e.refs.iter().find(|r| r.3 == i).map(|r| r.2);
+    let mut at = parent_of(index);
+    // (a few steps: the library's trees are two deep; a loop in bad data ends here too)
+    for _ in 0..8 {
+        match at {
+            None | Some(ROOT_PARENT) => return false,
+            Some(p) => match e.refs.iter().find(|r| r.3 == p) {
+                Some(r) if r.0 & WORLD_NODE_FLAG != 0 => return true,
+                Some(r) => at = Some(r.2),
+                None => return false,
+            },
+        }
+    }
+    false
 }
 
 /// Every key value of a float animation (all its sparam items).
@@ -1174,6 +1243,11 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
             match parent.map(|p| parents.get(p.parent())) {
                 None => *at = GlobalTransform::from(*local),
                 Some(Ok((g, _, _))) if !g.is_added() => *at = g.mul_transform(*local),
+                // a bolt's flight effect (`Compiled::ride`) on its new shot at the top: from the
+                // shot's own transform, emitting from its first frame as the bolt moves from its
+                // first (play.rs `projectiles`); waiting a frame, its 0.1 s alpha ramp left the
+                // Jax-iC's ball a faint smudge 2 frames out where the take's is bright
+                Some(Ok((_, t, false))) if fx.fx.ride => *at = GlobalTransform::from(*t).mul_transform(*local),
                 Some(_) => {
                     fx.placed = true;
                     continue;
@@ -1187,8 +1261,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
         // update runs the physics step, which moves the missile (FUN_00169e20 at 0xd9ad4),
         // before the objects' ticks (FUN_000d9840 at 0xd9d0b), where the trail's (0x21b7a0)
         // follows the missile (FUN_0021a700) and births along its move since the last frame
+        // (and a bolt's flight effect, `Compiled::ride`: its head where the bolt is this frame,
+        // not where it was the last, 2.7 m behind at 80 m/s and 30 fps)
         if let Some(Ok((_, t, false))) = parent.map(|p| parents.get(p.parent())) {
-            if fx.fx.counted {
+            if fx.fx.counted || fx.fx.ride {
                 *at = GlobalTransform::from(*t).mul_transform(*local);
             }
         }
@@ -1484,6 +1560,14 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
                 tr.translation = o.translation + o.rotation * p.local;
                 turn = o.rotation;
                 p.turn = turn;
+            }
+            // a bolt's head (`Compiled::ride`): gone with its bolt. Left in the world, the
+            // Jax-iC's (thrown out at 3.6 m/s, growing to 1.4 x 3.8 m) flew apart over the hit as
+            // lavender sheets metres wide; the takes show none after a hit, the head's glow ending
+            // with the bolt (todo/57 take05 +0.30 s)
+            Some(Err(_)) if p.fx.ride => {
+                commands.entity(e).despawn();
+                continue;
             }
             Some(Err(_)) => {
                 // the effect is gone: go on in the world from its last frame
