@@ -845,6 +845,14 @@ pub struct SkillData {
     /// 0x12f049-0x12f078). Tex's "3", Hawk's "1 4", empty on every other type. Kind 3 is the mines:
     /// the Sentry's target filter (0x147430) reads type+0x297 (play_sentry.rs)
     pub hazards: Vec<i64>,
+    /// `radar-range` (m; h_1925c008 of the block h_12501487 beside `<combat-skill>`, parse+0x32c ->
+    /// type+0x2a0, 0x12eee0): how far round a player's character the radar shows the others
+    /// (FUN_000b0670, FUN_000b0770: play_hud.rs). 60 for the four and the marines, 30 for the
+    /// tutorial's Red Hand; 0 without the block
+    pub radar_range: f32,
+    /// its h_f0245e27 (parse+0x330 -> type+0x2a4, 0x12eeec): the reach it eases to as the
+    /// character's +0x57c goes from 0 to 1 (0 for Tex and Flint, 50 for Brutus and Hawk)
+    pub radar_range_low: f32,
 }
 
 /// `<combat-skill>`'s hazard list element h_0c437951 (name not recovered; its handler 0x18fd60).
@@ -858,8 +866,11 @@ pub(crate) fn skill_data(e: &Element) -> Option<SkillData> {
     let sound = |k: u32| c.child(h("sounds")).and_then(|s| s.attr(k)).and_then(|v| v.as_hash())
         .filter(|&x| x != 0 && x != h("")).unwrap_or(0);
     let hazards = c.children_named(H_HAZARDS).flat_map(|x| x.attr(h("action")).map(|v| v.ints()).unwrap_or_default()).collect();
+    let radar = e.child(H_RADAR_BLOCK);
     Some(SkillData {
         hazards,
+        radar_range: radar.map_or(0.0, |r| num(r, h("radar-range"))),
+        radar_range_low: radar.map_or(0.0, |r| num(r, H_RADAR_RANGE_LOW)),
         skill_set: int_of(c, h("skill-set")),
         max_stamina: num(e, h("max-stamina")),
         cost: num(c, h("stamina-cost")),
@@ -873,6 +884,10 @@ pub(crate) fn skill_data(e: &Element) -> Option<SkillData> {
 
 /// The character type's flag that turns its stamina update on (name not recovered).
 const H_STAMINA_UPDATE: u32 = 0xE78E_FBB2;
+/// The character entry's block beside `<combat-skill>` holding `radar-range` (name not
+/// recovered; its attribute handler FUN_0018fde0, with the snipe sounds), and its h_f0245e27.
+const H_RADAR_BLOCK: u32 = 0x1250_1487;
+const H_RADAR_RANGE_LOW: u32 = 0xF024_5E27;
 /// `<combat-skill><sounds>`'s fourth sound (name not recovered; `SkillData::hit_sound`).
 const H_SKILL_HIT_SOUND: u32 = 0x1629_A90A;
 

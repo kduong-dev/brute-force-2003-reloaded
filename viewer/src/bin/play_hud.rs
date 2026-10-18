@@ -1625,10 +1625,14 @@ fn update_squad_hud(
                 let Some(m) = members.get(slot) else { show(&mut vis, false); continue };
                 let rel = m.position - player.position;
                 // (beyond the max-range the game pins the squad to the rim, FUN_000ae7c0 through
-                // FUN_000b0ad0: here on the circle)
+                // FUN_000b0ad0: here on the circle; within it a member shows only within the
+                // player's reach, FUN_000b0670)
                 let mut v = Vec2::new(rel.dot(right), rel.dot(fwd)) * scale;
                 if v.length() > RADAR_UNITS {
                     v = v.normalize() * RADAR_UNITS;
+                } else if radar_reach(&player, &game.0, m.position, game.0.radar.max_range.max(1.0)) <= 0.0 {
+                    show(&mut vis, false);
+                    continue;
                 }
                 show(&mut vis, true);
                 pct(RADAR_CENTRE.0 + v.x - 2.0, RADAR_CENTRE.1 - v.y - 2.0, &mut node);
@@ -1809,6 +1813,47 @@ struct RadarMarks {
     drawn: bool,
     /// the dot texture h_ecea7a68: width, height and its alpha (the texels are white)
     dot: Option<(usize, usize, Vec<f32>)>,
+    /// the hostiles the viewer knows of by its own sight (FUN_000ae470's FUN_000572a0 for the
+    /// viewer: the controlled character's sensor keeps none, #197), each with how long it's been
+    /// unseen: kept brain::FORGET s, as a contact is (`radar_knowledge`)
+    viewer_known: HashMap<Who, f32>,
+}
+
+/// FUN_000ae470 with h_14be5318 off (as shipped): whether the radar shows a hostile, `who`: the
+/// viewer knows of it (`RadarMarks::viewer_known`, from its own sight: `Sensor::scan` from the
+/// controlled character, kept FORGET s unseen as a contact is) or a living squadmate does (one
+/// with a squad record: the squad's members and the marines following, `Sensor::knows`; the
+/// squad's broadcast tells them of each other's targets, play_brain.rs).
+fn radar_knows(marks: &RadarMarks, squad: &Squad, who: Who) -> bool {
+    marks.viewer_known.contains_key(&who)
+        || squad.0.iter().any(|m| !m.dead && !m.absent && (m.in_squad() || m.brain.as_ref().is_some_and(|b| b.follows())) && m.sensor.knows(who))
+}
+
+/// The viewer's own knowledge for the radar (see `RadarMarks::viewer_known`): this frame's
+/// sightings from the controlled character (none while it's dead) renewed, the rest a frame
+/// older, the ones unseen brain::FORGET s or gone from the world dropped.
+fn radar_knowledge(marks: &mut RadarMarks, player: &Player, squad: &Squad, dt: f32) {
+    let sight = super::sight_list(std::iter::once(player).chain(squad.0.iter()));
+    for t in marks.viewer_known.values_mut() {
+        *t += dt;
+    }
+    if !player.dead && !player.absent {
+        for (i, _) in player.sensor.scan(player, 0, &sight) {
+            marks.viewer_known.insert(sight[i].who, 0.0);
+        }
+    }
+    marks.viewer_known.retain(|w, t| *t < super::brain::FORGET && sight.iter().any(|s| s.who == *w && s.alive && s.team != player.team));
+}
+
+/// FUN_000b0670 / FUN_000b0770: how much a character `at` shows on the radar by its distance
+/// across from the player's character: its type's `radar-range` (type+0x2a0, eased toward
+/// +0x2a4 by char+0x57c, taken as 0: its writers aren't traced beyond the character's set-up and
+/// the radar's own reset), and none beyond; within it full but for the last 2 m, (reach - d) / 2.
+/// A type with no `radar-range` shows to the radar's max-range.
+fn radar_reach(player: &Player, game: &Game, at: Vec3, max_range: f32) -> f32 {
+    let reach = game.character_type(player.kind).and_then(|t| t.skill.as_ref()).map(|s| s.radar_range).filter(|&r| r > 0.0).unwrap_or(max_range);
+    let d = Vec2::new(at.x - player.position.x, at.z - player.position.z).length();
+    ((reach - d) * 0.5).clamp(0.0, 1.0)
 }
 
 /// FUN_000b0550: a world offset `rel` (from the viewer) on the radar, in screen units from its
@@ -1837,10 +1882,9 @@ fn radar_point(rel: Vec3, fwd: Vec3, scale: f32) -> Vec2 {
 /// The other characters (FUN_000ae7c0, for radar-contact 1 and 6): one within the max-range a
 /// record as an objective's, coloured by its side (CHARACTER_FRIEND, CHARACTER_HOSTILE,
 /// CHARACTER_NEUTRAL); the squad's own members are play_hud.rs's blips (`update_squad_hud`).
-/// Not the game's yet (#160): it shows a hostile only once the viewer or a squadmate knows of it
-/// (FUN_000ae470, h_14be5318 off), a character only within its type's +0x2a0 of a viewer
-/// (FUN_000b0670) and fades it toward that edge (FUN_000b0770); here every one within the range
-/// shows, at full alpha.
+/// A hostile shows only once the viewer or a squadmate knows of it (FUN_000ae470, h_14be5318 off:
+/// `radar_knows`), and every one only within the player's reach, fading over its edge
+/// (FUN_000b0670, FUN_000b0770: `radar_reach`).
 /// Then the records and markers are drawn into the overlay: each record a quad of the dot texture
 /// 2 x its scale units across round its point, its alpha x min(life / PING_FADE, 1); each marker
 /// an "L" with its corner on the circle (RIM_DEPTH, RIM_LINE). take07 shows the result: the new
@@ -1862,7 +1906,9 @@ fn update_radar_marks(time: Res<Time>, contacts: Res<super::triggers::radar::Rad
     // the other characters FUN_000ae7c0 makes records of (see the notes above): each one's key in
     // the seen map (a trigger copy's name, else its NPC number, top bits set apart from the
     // objectives'), where it is and its colour
-    let characters: Vec<(u32, Vec3, [f32; 3])> = squad.0.iter().enumerate()
+    // (the viewer's own knowledge, this frame's sight in it, FUN_000ae470)
+    radar_knowledge(&mut marks, &player, &squad, dt);
+    let characters: Vec<(u32, Vec3, [f32; 3], f32)> = squad.0.iter().enumerate()
         .filter(|(_, u)| !u.dead && !u.absent && !u.stand_in && !u.in_squad() && matches!(u.radar_contact, 1 | 6))
         .filter_map(|(k, u)| {
             let rel = Vec3::new(u.position.x - viewer.x, 0.0, u.position.z - viewer.z);
@@ -1870,12 +1916,21 @@ fn update_radar_marks(time: Res<Time>, contacts: Res<super::triggers::radar::Rad
             if rel.length() >= max_range {
                 return None;
             }
+            // FUN_000b0670: within the player's reach; FUN_000b0770: fading over its last 2 m
+            let show = radar_reach(&player, &game.0, u.position, max_range);
+            if show <= 0.0 {
+                return None;
+            }
             let boss = usize::from(u.radar_contact == 6);
             // FUN_0004b960 (friends: the same team, one not hostile to itself), else FUN_000a8520
-            // (the viewer's team hostile to its)
+            // (the viewer's team hostile to its); a hostile only once the viewer or a squadmate
+            // knows of it (FUN_000ae580 -> FUN_000ae470)
             let rgb = if u.team == player.team && !super::damage::hostile(u.team, u.team) {
                 CHARACTER_FRIEND[boss]
             } else if super::damage::hostile(player.team, u.team) {
+                if !radar_knows(&marks, &squad, u.who()) {
+                    return None;
+                }
                 CHARACTER_HOSTILE[boss]
             } else {
                 CHARACTER_NEUTRAL
@@ -1885,7 +1940,7 @@ fn update_radar_marks(time: Res<Time>, contacts: Res<super::triggers::radar::Rad
                 (0, None) => 0x2000_0000 | k as u32,
                 (name, _) => 0x8000_0000 | name,
             };
-            Some((key, rel, rgb))
+            Some((key, rel, rgb, 255.0 * show))
         }).collect();
     // a contact's record for FUN_000aece0: where (pulled onto the circle beyond the range), its
     // colour and alpha (the blink), whether it's within the range
@@ -1911,10 +1966,10 @@ fn update_radar_marks(time: Res<Time>, contacts: Res<super::triggers::radar::Rad
         let p = radar_point(on_circle, fwd, scale);
         marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha, life: PING_NEW_LIFE, scale: 1.0 });
     }
-    for &(key, rel, rgb) in &characters {
+    for &(key, rel, rgb, alpha) in &characters {
         if marks.seen.insert(key, SEEN_TIME).is_none() {
             let p = radar_point(rel, fwd, scale);
-            marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha: 255.0, life: PING_NEW_LIFE, scale: 1.0 });
+            marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha, life: PING_NEW_LIFE, scale: 1.0 });
         }
     }
     marks.tick += dt;
@@ -1946,10 +2001,10 @@ fn update_radar_marks(time: Res<Time>, contacts: Res<super::triggers::radar::Rad
             }
         }
         // FUN_000ae7c0: the other characters within the range (FUN_000ae360 as for the objectives)
-        for &(key, rel, rgb) in &characters {
+        for &(key, rel, rgb, alpha) in &characters {
             let new = marks.seen.insert(key, SEEN_TIME).is_none();
             let p = radar_point(rel, fwd, scale);
-            marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha: 255.0, life: if new { PING_NEW_LIFE } else { PING_LIFE }, scale: 1.0 });
+            marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha, life: if new { PING_NEW_LIFE } else { PING_LIFE }, scale: 1.0 });
         }
     }
     // the overlay: nothing to draw and nothing drawn before, the image is left alone

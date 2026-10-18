@@ -215,10 +215,17 @@ recoil, tracers that fly to what the crosshair is on (ground or pillars) and a s
 * **The other characters** (FUN_000ae7c0, radar-contact 1, or 6 for a boss): one within the range a
   record as an objective's (below), a friend green 90 200 40 (40 100 20), one whose team the
   viewer's is hostile to red 200 40 90 (100 20 40: take08's and take11's terrorists), anyone else
-  70 70 70. Not the game's yet (#160): a hostile shows only once the viewer or a squadmate knows of
-  it (FUN_000ae470, with h_14be5318 off as shipped), a character only within its type's +0x2a0 of a
-  viewer (FUN_000b0670), fading toward that edge (FUN_000b0770); the demo shows every one within the
-  range, at full alpha. (Before #228 the demo drew the first three of them as yellow squad blips.)
+  70 70 70. A hostile shows only once the viewer or a living squadmate knows of it (FUN_000ae580 ->
+  FUN_000ae470, with h_14be5318 off as shipped; `radar_knows`): the controlled character's own
+  sight (`Sensor::scan` from it, each one seen kept 15 s unseen, as a contact is: its sensor keeps
+  none, #197) or a squadmate's contacts (the squad's members and the marines following; the
+  squad's broadcast tells them each other's targets). Every character shows only within the
+  player's character type's `radar-range` (type+0x2a0, 60 m for the four and the marines: the block
+  h_12501487 beside `<combat-skill>`, FUN_0018fde0), across (FUN_000b0670), fading over its last
+  2 m, (reach - d) / 2 (FUN_000b0770); its easing toward h_f0245e27 by char+0x57c isn't done
+  (char+0x57c taken as 0: its writers aren't traced beyond the character's set-up). The squad's
+  own blips within the max-range show only within that reach too. (Before #228 the demo drew the
+  first three of them as yellow squad blips.)
 * **The objectives**: the objects and characters with radar-contact 2, 3 or 7 (OBJECTIVE,
   OBJECTIVE_NO_CURSOR, IMPORTANT_PICKUP: FUN_000ae580 hands those to FUN_000aece0), which the
   level gives them or a radar-trigger sets ([triggers.md](triggers.md), "Radar-triggers"). Each
@@ -248,16 +255,23 @@ good at 4.93 s, and the old one fades in 0.2 s, as take07's (in 1.1 s, gone 0.8 
 distances from the middle at take07's scale. sdm_e34 (regression, `BF_TEST_GOTO=0,0,0,0`
 against main's build): the squad's two blips behind Tex at half their old distance from the
 middle, green, the middle grey; the map has no objectives. The base with a far objective
-(`BF_TEST_GOTO=-36.4,37.3,-57.3,22.9 "BF_TEST_RADAR=h_1d422d6d,3"`: a mine 184 m off): the
-terrorists red, the far mine's "L" on the circle with its corner out, its first record a growing
-dot on the circle.
+(`BF_TEST_GOTO=-36.4,37.3,-57.3,22.9 "BF_TEST_RADAR=h_1d422d6d,3"`: a mine 184 m off): the far
+mine's "L" on the circle with its corner out, its first record a growing dot on the circle. The
+knowledge gate and reach, against the takes: at the first save circle (the walk above) no red
+dot, the gate sentry being 74 m off and unseen (take07 has none); at the lava pit
+(`BF_TEST_GOTO=48.1,-1.5,46.26,-25.92`) one red dot near the middle from frame 90, the second
+building's guards (beyond the 60 m) and the other groups not (take08: one or two near the
+middle); in the base walk one (terrorist_9 beside Tex), the base's other three, inside and unseen,
+not (take12: one to three at a time). sdm_e34 with the test tools' NPCs (`--test BF_MAP=sdm_e34
+BF_TEST_GOTO=-44.4,15.5,-44.6,15.1 "BF_TEST_NPC=0.5,brutus,enemy,fight,-44.5,5;0.5,flint,enemy,fight,-44.5,-55;0.5,flint,friend,dummy,-52,15;0.5,hawk,neutral,dummy,-38,22"`):
+the near enemy, known to Flint, red; the far one (75 m) none; the friend green; the neutral 70 70 70.
 
 Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
 radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
-dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); who
-knows of a hostile, and the characters' radius and fade (#160); contact 2's cursor on the screen
-(FUN_00052db0); the squad's portraits for members not in the world (the tutorial's Tex alone
-still shows four).
+dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); the
+reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); the
+squad's portraits for members not in the world (the tutorial's Tex alone still shows four). A
+test map dummy is no AI target, so nobody knows of a hostile dummy and it never shows.
 
 ### Ammo, reload and the crosshair (#114)
 
