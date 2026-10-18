@@ -78,7 +78,7 @@ const CHIP_SORT_BIAS: f32 = 1000.0;
 /// read from the game's memory: 0.50 m both times), its middle at the character's CHIP_HEIGHT
 /// over its feet, and it stays there (it doesn't follow the falling body). Measured, not found in
 /// the code: the drop's spawn code wasn't traced (its <h_0f77963d inventory-drop> is read at
-/// 0x156666 of the character type's parser).
+/// 0x156666 of FUN_00156390, every game object's attribute parser, placements included).
 const CHIP_AHEAD: f32 = 0.5;
 /// The chip's middle over the dead character's feet (m), by CHARACTERS index (brutus, flint,
 /// hawk, tex). Tex 1.098 (take01 standing, take02 kneeling: the same) and Hawk 0.925 (0.92-0.93,

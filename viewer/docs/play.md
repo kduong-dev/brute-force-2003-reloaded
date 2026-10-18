@@ -15,7 +15,7 @@
 | click, then mouse | look around (Esc releases the mouse, in cutscenes too: cutscenes.md) |
 | wheel | zoom |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
-| R | reload early: **the demo's own key** (the game has no reload button; it reloads by itself on an empty clip, see **Ammo, reload and the crosshair**). The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
+| R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
 | G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold [X] to activate panel." shows (the game's glyph line, X's glyph: E is the demo's X; [hints.md](hints.md)) and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
@@ -92,7 +92,7 @@ game. For whoever you control, health also shows in the top-left bar. Grenade bl
 off to nothing at its radius; the thrower takes a flat share, see **Grenades**) and the hurt give a pain grunt (chatter e856009f). Friendly
 fire: your shots hit squadmates in the way (the weapon's damage, x0.7 on your own side, by the hit part struck and the difficulty: see **Damage**; they say "I'm hit" or "Careful!"
 / "Stop shooting at me!"), and the crosshair turns green while its centre is on one (see **The crosshair's colours**). At 0 health a
-character dies: death cry (chatter ef32191d), the body goes limp as a ragdoll (verlet point
+character dies: death cry (chatter e1213623, `DEATH_CHATTER`: the game's CBT_DEAD handler FUN_00115f90 says it through FUN_00125f40 (0x125fb4) and the chatter gate (FUN_00140a60, 0x125fc9), or ed35ffae when the dying character's movement state +0x1f0 is 4, the state a landing leaves, FUN_0012b740: a death from a fall, inferred; the demo always says e1213623), the body goes limp as a ragdoll (verlet point
 masses on the skeleton, pushed by the hit or blast; its limb bones are 0.09 m spheres that don't pass through each other, and every bone lies on the level's own floors, kept as far above them as the body is thick round it (`flesh`: of the skin each bone moves most, the distance from the bone's line that 80% of it is within, 0.04-0.2 m; a flat 5 cm let a thigh or the chest sink into the floor), and is kept out of its walls - `BF_RAGDOLL_LOG=1` prints the closest limb pair and the lowest bone; the pose takes only the bones' turns from the simulation and keeps their rest offsets, so limbs don't stretch or twist; the ragdoll starts where the body is drawn, sole lift included (see "Standing on the floor"); the torso moves as two solid pieces (hips; chest with shoulders), stiffly joined at the waist, with the head held to the chest; knees and elbows (found by their Bip01 names) bend but don't fold past about 120 degrees or straighten past straight, and only one way: each joint keeps to its side of the line from the upper bone to the end, in the torso's own frame (hips for knees, chest for elbows), the side it was bent at death; a nearly straight limb uses knees forward, elbows back (forward from the toes); bodies keep 98.5% of their speed per substep, lose 60% of their sliding on the ground, and rest once still - but not on their side: a body come to rest propped on a shoulder and a hip (its chest's left-right axis more than 0.6 upright) is rolled on, its upper shoulder pushed 2 m/s toward its back (or front, if it leans that way), up to 3 times (the demo's choice). Shots hitting a body on the ground (dead or knocked down) push it: the first bone the shot passes within its thickness of is brought up to 3 m/s along the shot, and bones within 0.6 m less, so it jolts and rolls (a burst doesn't add up past that speed, so it doesn't drive the body across the ground); it wakes the body to settle again and it bleeds where it's hit, as the living do (blood effects, hit sound, a splat on the ground) (`BF_RAGDOLL_LOG` prints each body hit and the pelvis's position); an enemy of a type of its own (#129) has the game's ragdoll instead: bodies for its hit parts only, the rest rigid as posed at death, and the game's knee, elbow and hip limits ([enemies.md](enemies.md), "Death"); `BF_TEST_DIE=<s>` drops the player dead at that time, once; `BF_TEST_DIE=1` at 1 s). Both their guns drop, the one in hand and the one on their back (the ragdoll can't feel a stowed gun, so it propped bodies on their side): each falls from where it was, thrown by half of what killed them plus a 1.5 m/s hop, and tumbles as a loose object (see "Pickups are loose"). Then the portrait greys out and the blip leaves
 the radar; if you die, the death camera circles your body and control passes to the next
 living member after 4 s (see **Death camera** below; `BF_TEST_KILL=<character>` makes the
@@ -131,7 +131,12 @@ fills its channel exactly, and its icon is level with it. The bar fills (`h_e801
 rows are drawn. (Placed by hand, the bars sat over their channels' lines and left gaps at both
 ends; drawn whole, the clear rows put the colour off-centre.) The grenade's panel is
 `h_10891a71` (64 × 32, glossy, cut top-left corner), 9-sliced. Neither is referenced in the
-data; both were found by shape. (The tutorial's `h_17f34cbe` is only a baked picture of the
+data, and the demo picked both by shape; the HUD code names both, for split screen. h_0cdf5876
+is the health bar's split-screen frame's left piece (0xb79f0 at 0xb7a53, with h_e0b02233 and
+h_06a1d26e; full screen h_e5634eaf, h_eee38815, h_17470408). h_10891a71 is the split-screen
+frame (a viewport under 600 wide or 400 tall) of a HUD widget of type 0xfa7c2b10, whose full
+screen frame is the 64 × 64 h_e16927fb (FUN_000ab580, 0xab614 and 0xab71f); FUN_000abe30 makes
+five of them, one bright and four dimmed (alpha 153). Which panel those five are isn't traced. (The tutorial's `h_17f34cbe` is only a baked picture of the
 whole bar.) Radar health channels are filled as bands (distance from the centre and extent
 along the diagonal, from the dark texels found), so the channels' highlight lines no longer
 leave gaps.
@@ -305,7 +310,7 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
   with Y at 21.83; LZR-23 21.512 → 23.419 with Y at 21.7). The demo's own 0.1 s after a switch
   and 0.2 s gun raise don't touch it. This rule came in ahead of the LZR batch so an emptied
   LZR refills.
-* **Automatic reload**, as in the game, which has no reload button: on an empty clip the reload
+* **Automatic reload**, as in the game: on an empty clip the reload
   starts when the fire cooldown runs out with the trigger held (FUN_0022f2a0 → FUN_002327f0 →
   the character's FUN_00120d40), or when the trigger is let go (measured: Brutus's Bower tapped
   dry reloads 0.13 s after its last shot, not at its 1 s cooldown; the game's L-Shot 0.07 s after
@@ -314,8 +319,10 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
   Tex 1.1-1.2 s; the takes 1.0-1.3 s). Not while knocked down (lying limp): it starts as they
   begin to get up. A reload drops out of the scope (FUN_00120d40 calls
   FUN_001249b0 first; medium confidence that its flag is the scope).
-  * **R reloads early: the demo's own key** (the product owner's choice), from a partial clip,
-    once the character isn't busy.
+  * **R reloads early**, from a partial clip, once the character isn't busy. The game's X does
+    it too: tapped (let go before its hold time, or with nothing to hold it for), the player
+    controller (0x1332a0) calls the reload FUN_00120d40 at 0x134c9d, which starts one only when
+    a reload is possible. R acts on the press, X on the release.
 * **Dry fire.** An empty clip with nothing to reload clicks on each trigger cycle, once per
   1 / rate while held (FUN_002327f0 sets the cooldown): the weapon's empty-fire sound
   (`h_e6acaff7`): `f740ecdd` for the ballistic guns (spectrogram-matched in the takes),

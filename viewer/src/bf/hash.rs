@@ -1,5 +1,5 @@
 //! Brute Force name hash: a CRC32 variant over the ASCII-lower-cased name.
-//! The table is thvvwae game's own (default.xbe @0x3bc150); it differs from the standard CRC32
+//! The table is the game's own (default.xbe @0x3bc150); it differs from the standard CRC32
 //! table in the top byte of most entries, so a stock crc32 does NOT match.
 
 pub const fn name_hash_bytes(s: &[u8]) -> u32 {
