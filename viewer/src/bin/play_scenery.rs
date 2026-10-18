@@ -47,7 +47,8 @@
 //! `range` of the effect's place (3D, to the target's place), takes amount x dt, x (1 - d /
 //! range) for falloff 1, (1 - d / range)^2 x (amount x dt)^2 for 2, in full for 0 and 3 (the
 //! rack's HALF_LIFE: the takes' flat damage at 4 and 7 m agrees; see `falloff`). It sends no
-//! ray: no line of sight (the weapons' damage areas, FUN_00224a90, test one). h_ed582b3c is
+//! ray: no line of sight (the weapons' blasts, FUN_00224a90, ray-test characters only, and take
+//! other game objects with no ray, at distance 0). h_ed582b3c is
 //! the push its message carries, scaled by ((1 - w) x 0.4 + 0.6), w the world's load measure at
 //! +0xc58 (recomputed every second from counts of active characters and such, FUN_000d9090,
 //! and 0 in multiplayer): a push, not the damage. A character takes the area's amount through
@@ -741,7 +742,8 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
         let value = a.damage.amount * inside;
         s.reach.push((a.at, a.damage.range, a.damage.damage_type));
         // the characters in range (FUN_0021ade0 measures each target's place to the effect's,
-        // with no ray test: the weapons' blast areas test one, FUN_00224a90, not these)
+        // with no ray test; the weapons' blasts, FUN_00224a90, ray-test characters only, and not
+        // these)
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if u.dead {
                 continue;
