@@ -1,7 +1,7 @@
 //! A decoded `Level` as Bevy entities: terrain layers (blended by their masks), the placed
 //! objects and the sky. Shared by the level viewer (bf_level) and the playable demo.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{
     asset::{weak_handle, RenderAssetUsages},
@@ -16,8 +16,10 @@ use bevy::{
 };
 
 use crate::bf::character::{Address, Game, Geoset, H_WRAP_ALPHA};
+use crate::bf::hash::h;
 use crate::bf::level::Level;
-use crate::bf::weapon::WeaponModel;
+use crate::bf::triggers::{act, Class, AC_PLAY, AC_RESUME, AM_BACKWARD, AM_FORWARD};
+use crate::bf::weapon::{PartJoint, WeaponModel, HINGE_JOINT, TRANSFORM_JOINT};
 
 /// A level's material: bevy's standard one, lit also by the level's point lights (light-object
 /// h_ea460e64) as the game lights its scenery: colour x (1 - distance / range) x N.L, per pixel
@@ -330,9 +332,10 @@ pub struct Placed {
     pub name: u32,
 }
 
-/// A door or gate, in level object order (the same order as `Arena::doors`): its sliding
-/// leaves and how long it takes to open (its archetype's animation: 1.21 s for doors, 4.96 s for
-/// the gate). Its sounds are the level's sound-triggers' (bf_play's play_sound_triggers.rs).
+/// A door or gate, in level object order (the same order as `Arena::doors`): its leaves and how
+/// long it takes to open (its archetype's animation: 1.21 s for sdm_e34's doors, 4.96 s for the
+/// gate, 3.29 s for m09's Shrike doors). Its sounds are the level's sound-triggers' (bf_play's
+/// play_sound_triggers.rs).
 pub struct Door {
     /// the object's name (what the level's triggers call it)
     pub name: u32,
@@ -341,33 +344,181 @@ pub struct Door {
     pub duration: f32,
 }
 
-/// A door leaf: its entity, opening direction (object frame), closed placement and how far it
-/// slides; `curve` is its animation channel (metres along the axis per frame of `interval` s),
-/// else it slides `travel` m eased.
+/// A door leaf: its entity, its place with its joint at rest (the door shut, as the level places
+/// it: the joint's parent-point + child-point and ORIENTATION, where the game's part sits until
+/// a clip sets its joint: FUN_00235c00 gives a new joint a zero value) and how its clip moves it.
 pub struct Leaf {
     pub entity: Entity,
-    pub axis: Vec3,
     pub closed: Transform,
-    pub travel: f32,
-    pub curve: Vec<f32>,
-    pub interval: f32,
+    pub motion: LeafMotion,
+}
+
+/// How a door leaf moves. Its archetype's animation set (named as the archetype) has a clip per
+/// door, or per leaf (the gates), with a target per moving part naming the channel that sets
+/// its joint (FUN_00234dc0); FUN_00234f90 places the part from its joint by the joint's type.
+pub enum LeafMotion {
+    /// A sliding joint (h_fd8f670c): `axis` (object frame) times its float channel, metres a
+    /// frame of `interval` s (sdm_e34's doors and gates, the tutorial's); or `travel` m eased
+    /// without one.
+    Slide { axis: Vec3, travel: f32, curve: Vec<f32>, interval: f32 },
+    /// A transform joint or a hinge, moved by its channel (`Animated`): m09's and m14's Shrike
+    /// doors, m05's, m08's and e10's doors, m01's hatches, e10's ramp (a hinge).
+    Animated(Animated),
 }
 
 /// Fallback opening time (s) of a door without an animation.
 const DOOR_TIME: f32 = 0.8;
 
 impl Leaf {
-    /// How far the leaf has slid `t` s into the opening.
+    /// How far a sliding leaf has slid `t` s into the opening (0 for the others).
     pub fn slide(&self, t: f32, duration: f32) -> f32 {
-        if self.curve.is_empty() {
+        let LeafMotion::Slide { travel, curve, interval, .. } = &self.motion else { return 0.0 };
+        if curve.is_empty() {
             let k = (t / duration).clamp(0.0, 1.0);
-            return self.travel * k * k * (3.0 - 2.0 * k);
+            return travel * k * k * (3.0 - 2.0 * k);
         }
-        let f = (t / self.interval.max(1e-3)).max(0.0);
-        let i = (f as usize).min(self.curve.len() - 1);
-        let j = (i + 1).min(self.curve.len() - 1);
-        self.curve[i] + (self.curve[j] - self.curve[i]) * (f - i as f32).min(1.0)
+        let f = (t / interval.max(1e-3)).max(0.0);
+        let i = (f as usize).min(curve.len() - 1);
+        let j = (i + 1).min(curve.len() - 1);
+        curve[i] + (curve[j] - curve[i]) * (f - i as f32).min(1.0)
     }
+
+    /// The leaf's place in its object `t` s into the opening (`duration` s long): a sliding leaf
+    /// slid along its axis, the others where their channel puts them (`Animated::pose`).
+    pub fn pose(&self, t: f32, duration: f32) -> Transform {
+        match &self.motion {
+            LeafMotion::Slide { axis, .. } => Transform { translation: self.closed.translation + *axis * self.slide(t, duration), ..self.closed },
+            LeafMotion::Animated(a) => {
+                let (translation, rotation) = a.pose(t);
+                Transform { translation, rotation, ..self.closed }
+            }
+        }
+    }
+
+    /// How far the leaf is from its closed place `t` s into the opening (m) and how far it's
+    /// turned (degrees), for the log.
+    pub fn moved(&self, t: f32, duration: f32) -> (f32, f32) {
+        let p = self.pose(t, duration);
+        (p.translation.distance(self.closed.translation), p.rotation.angle_between(self.closed.rotation).to_degrees())
+    }
+}
+
+/// A part on a transform joint or a hinge that a clip of its archetype moves
+/// (`animated_parts`): its joint and the keys of the channel that moves it.
+#[derive(Clone)]
+pub struct Animated {
+    pub joint: PartJoint,
+    pub keys: AnimKeys,
+}
+
+/// A channel's keys, (time s from the clip's start, value), a sampled channel's frames alike
+/// (character.rs `channel_xform_keys`, `channel_angle_keys`).
+#[derive(Clone)]
+pub enum AnimKeys {
+    /// a transform joint's: translation and rotation
+    Xform(Vec<(f32, Vec3, Quat)>),
+    /// a hinge's: the angle, radians
+    Angle(Vec<(f32, f32)>),
+}
+
+/// Where `t` falls among `n` keys at `time(k)`: the keys either side and how far from the first
+/// to the second, as the channel readers find them (0x291630 keyed, FUN_00291060 sampled): the
+/// first key before the first, the last from the last on.
+fn key_span(n: usize, time: impl Fn(usize) -> f32, t: f32) -> (usize, usize, f32) {
+    if n == 0 || t <= time(0) {
+        return (0, 0, 0.0);
+    }
+    if t >= time(n - 1) {
+        return (n - 1, n - 1, 0.0);
+    }
+    let i = (0..n).take_while(|&k| time(k) <= t).last().unwrap_or(0).min(n - 2);
+    let (a, b) = (time(i), time(i + 1));
+    (i, i + 1, ((t - a) / (b - a).max(1e-9)).clamp(0.0, 1.0))
+}
+
+impl Animated {
+    /// The part's place in its object `t` s into the clip (FUN_00234f90, by the joint's type):
+    /// - a transform joint (h_f35d5b3c): at its child-point plus the channel's translation,
+    ///   turned by the channel's rotation after the joint's ORIENTATION. Between keys the
+    ///   translation goes straight and the rotation by a normalised blend (0x2914d0 ->
+    ///   FUN_00290720; FUN_00233b10, as glam's `Quat::lerp`).
+    /// - a hinge (h_e94eb66a): turned by the channel's angle (between keys the short way round,
+    ///   0x292230; then clamped to the joint's limits, FUN_00234dc0) about its axis
+    ///   (FUN_0001fc70) after the ORIENTATION, with its child-point on its parent-point.
+    ///
+    /// The object's root part is the object's frame (every part this moves hangs from it:
+    /// `animated_parts`).
+    pub fn pose(&self, t: f32) -> (Vec3, Quat) {
+        let j = &self.joint;
+        match &self.keys {
+            AnimKeys::Xform(k) => {
+                let (a, b, f) = key_span(k.len(), |i| k[i].0, t);
+                let Some((ka, kb)) = k.get(a).zip(k.get(b)) else { return (j.child_point, j.orientation) };
+                (j.child_point + ka.1.lerp(kb.1, f), ka.2.lerp(kb.2, f) * j.orientation)
+            }
+            AnimKeys::Angle(k) => {
+                let (a, b, f) = key_span(k.len(), |i| k[i].0, t);
+                let Some((&(_, va), &(_, vb))) = k.get(a).zip(k.get(b)) else { return (j.parent_point - j.orientation * j.child_point, j.orientation) };
+                let d = vb - va;
+                let vb = if d < -std::f32::consts::PI { vb + std::f32::consts::TAU } else if d > std::f32::consts::PI { vb - std::f32::consts::TAU } else { vb };
+                // (up to the min, then down to the max, as FUN_00234dc0 takes them)
+                let angle = (va + (vb - va) * f).max(j.limits.0).min(j.limits.1);
+                // (FUN_0001fc70 divides by the axis' length: a hinge without one doesn't turn)
+                let turn = j.axis.try_normalize().map_or(Quat::IDENTITY, |axis| Quat::from_axis_angle(axis, angle));
+                let rotation = turn * j.orientation;
+                (j.parent_point - rotation * j.child_point, rotation)
+            }
+        }
+    }
+}
+
+/// The parts of archetype `arch` its clips move on transform joints and hinges, by part name:
+/// each part on a joint of either type that a clip of its animation set (named as the archetype)
+/// names with a channel of the joint's kind, a transform channel for a transform joint, an angle
+/// one for a hinge (FUN_002340f0 plays no other on them), the first such clip's channel. Empty
+/// when one of them hangs from another part than the root: the demo places a compound's parts
+/// one level deep (weapon.rs), so a part on a moving part (m09_b's AA gun h_0849d1d8: its gun on
+/// its turning mount) couldn't follow it, and the object stays as placed.
+pub fn animated_parts(game: &Game, arch: u32) -> HashMap<u32, Animated> {
+    let clips = game.anim_sets.get(&arch).map(|a| a.as_slice()).unwrap_or_default();
+    let mut out = HashMap::new();
+    if clips.is_empty() {
+        return out;
+    }
+    for (name, joint) in WeaponModel::joints(game, arch) {
+        let Some(joint) = joint.filter(|j| j.kind == TRANSFORM_JOINT || j.kind == HINGE_JOINT) else { continue };
+        let keys = clips.iter().flat_map(|c| c.targets.iter()).filter(|t| t.0 == name).find_map(|t| match joint.kind {
+            TRANSFORM_JOINT => game.channel_xform_keys(t.1).filter(|k| !k.is_empty()).map(AnimKeys::Xform),
+            _ => game.channel_angle_keys(t.1).filter(|k| !k.is_empty()).map(AnimKeys::Angle),
+        });
+        let Some(keys) = keys else { continue };
+        if joint.parent != h("root") {
+            return HashMap::new();
+        }
+        out.insert(name, Animated { joint, keys });
+    }
+    out
+}
+
+/// The placed objects an anim-trigger of the level plays once (the trigger's first object,
+/// FUN_00204bb0; an OPERATE entry with AC_PLAY or AC_RESUME, AM_FORWARD or AM_BACKWARD): the
+/// doors among the objects with parts on transform joints or hinges (`animated_parts`). The
+/// others only loop (AM_FORWARD_LOOP: the fans and other props of e01, e16, e23, m03_a and the
+/// tutorial, m08_b's dish; the door survey's 217 looping props), which the demo's runtime doesn't
+/// run yet (it plays a loop once: triggers.md "Not done"), so they stay as placed, as they did.
+pub fn played_once(level: &Level) -> HashSet<u32> {
+    level.triggers.iter().filter(|t| matches!(t.class, Class::Anim))
+        .filter(|t| t.entries.iter().any(|e| e.action == act::OPERATE && [AC_PLAY, AC_RESUME].contains(&e.anim_command())
+            && [AM_FORWARD, AM_BACKWARD].contains(&e.anim_mode())))
+        .filter_map(|t| t.objects.first().copied()).collect()
+}
+
+/// Whether a placed object named `name` is a door by its transform and hinge parts (`moving`:
+/// its archetype's `animated_parts`): it has some, and an anim-trigger plays it once
+/// (`played`: `played_once`). `spawn_level` and `Arena::new` both number the doors by this and
+/// by the sliding parts, so their lists line up.
+pub fn animates(moving: &HashMap<u32, Animated>, played: &HashSet<u32>, name: u32) -> bool {
+    !moving.is_empty() && played.contains(&name)
 }
 
 /// The camera's look, as the console drew it: no tone mapping, and an exposure at which a
@@ -770,13 +921,19 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::default(), Name::new(format!("terrain layer {k}"))));
     }
     // placed objects
-    // per archetype: its geosets with their part placement, and the part's slide (axis, travel)
+    // per archetype: its geosets with their part placement, and the part's slide (axis, travel);
+    // and its parts on transform joints and hinges that its clips move
     let mut models: HashMap<u32, Vec<ObjectPart>> = HashMap::new();
+    let mut animated: HashMap<u32, HashMap<u32, Animated>> = HashMap::new();
+    // (the objects the level's anim-triggers play once: those of them with animated parts are
+    // doors, see `played_once`)
+    let played = played_once(level);
     for o in &level.objects {
         let Some(arch) = o.archetype else { continue };
         if !models.contains_key(&arch) {
             let parts = object_parts(game, arch, meshes, materials, images, &lamps, &mut cache);
             models.insert(arch, parts);
+            animated.insert(arch, animated_parts(game, arch));
         }
         if std::env::var("BF_LIQUID_LOG").is_ok() && o.tag == crate::bf::character::H_LIQUID_OBJECT {
             if let Ok(m) = WeaponModel::load(game, arch) {
@@ -806,6 +963,10 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             .map(|p| liquid_kind.and_then(|k| liquid_material(game, images, liquids, &mut liquid_cache, p.material_id, k, level.background))).collect();
         // (the gate's set has a clip per leaf: h_10d3fde3 moves one, h_0a48ec76 the other)
         let clips = game.anim_sets.get(&arch).map(|a| a.as_slice()).unwrap_or_default();
+        // its transform and hinge parts are leaves when an anim-trigger plays it once (the same
+        // test `Arena::new` numbers the doors by: `animates`)
+        let moving = &animated[&arch];
+        let animate = animates(moving, &played, o.name);
         let mut leaves = vec![];
         for (p, surface) in models[&arch].iter().zip(surfaces) {
             let at = p.at;
@@ -819,13 +980,20 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             if let Some((axis, travel)) = p.slide {
                 let channel = clips.iter().find_map(|c| c.targets.iter().find(|t| t.0 == p.name)).and_then(|t| game.channel_floats(t.1));
                 let (interval, curve) = channel.unwrap_or((1.0, vec![]));
-                leaves.push(Leaf { entity: part, axis, closed: at, travel, curve, interval });
+                leaves.push(Leaf { entity: part, closed: at, motion: LeafMotion::Slide { axis, travel, curve, interval } });
+            } else if let Some(a) = moving.get(&p.name).filter(|_| animate) {
+                leaves.push(Leaf { entity: part, closed: at, motion: LeafMotion::Animated(a.clone()) });
             }
         }
-        if !leaves.is_empty() {
+        // (an animated door is one even if none of its moving parts draws, so that the door
+        // lists line up)
+        if !leaves.is_empty() || animate {
             let centre = o.transform.w_axis.truncate();
             if std::env::var("BF_DOOR_LOG").is_ok() {
-                println!("door {} type h_{:08x} arch h_{arch:08x} at {:.1} leaves {}", doors.len(), o.kind, centre, leaves.len());
+                // (an animated door's leaves: how many on transform joints, how many on hinges)
+                let count = |hinge: bool| leaves.iter().filter(|l| matches!(&l.motion, LeafMotion::Animated(a) if matches!(a.keys, AnimKeys::Angle(_)) == hinge)).count();
+                let kinds = if animate { format!(" ({} on transform joints, {} on hinges)", count(false), count(true)) } else { String::new() };
+                println!("door {} type h_{:08x} arch h_{arch:08x} at {:.1} leaves {}{kinds}", doors.len(), o.kind, centre, leaves.len());
             }
             let duration = clips.iter().map(|c| c.duration).reduce(f32::max).unwrap_or(DOOR_TIME);
             doors.push(Door { name: o.name, centre, leaves, duration });
