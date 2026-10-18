@@ -143,6 +143,15 @@ const AIM_SHIFT_DASH: f32 = 3.0;
 /// The lock box's scale Flint's +0x100 gives while on (0x13cd1d: 1.0 at 0x3a4f78), in place of
 /// the gun's own h_e1e41c2d (the L-Shot-75's 0.1, the Jax-iP's 0.6).
 const TARGETING_LOCK_BOX: f32 = 1.0;
+/// Flint's scope past its first level (her +0x2c, 0x13c930, for a gun's zoom over 1): the zoom
+/// plus the larger of this (the 10.0 stored at 0x13c94f) and the zoom + SECOND_ZOOM_MORE. So her
+/// second level is 25 with the L-Shot-75 (zoom 10: x2.5 the first), 15 with the L-Shot-50 (5:
+/// x3), 13 with the Foley (3), 12 with the MK-ASLT and the Kman Auto (2). The takes measure the
+/// second level against the first at x2.45-2.52 (the L-Shot-75, todo/62 takes 01, 06, 08, 10) and
+/// x2.97 (the L-Shot-50, todo/61 take01).
+const SECOND_ZOOM_LEAST: f32 = 10.0;
+/// ... (0x13c957 adds [0x3a4fd4] = 5.0 to the zoom)
+const SECOND_ZOOM_MORE: f32 = 5.0;
 /// The item use types (the IOU_ name table 0x3be61c) that FUN_00121170 hands a skill's +0x104
 /// (at 0x12123b and the like): IOU_USE_IN_HAND 0 (the medkit, its h_1ee2f4ed in the level
 /// objecttypes), IOU_PLACE_ON_GROUND 2 (Rollers, Sentries), IOU_THROW_TO_USE 3 (thrown grenades),
@@ -274,6 +283,26 @@ pub trait SkillKind: Send + Sync {
     /// reach). The base leaves it (0x10e3a0); Flint's lengthens her rifles' (0x13ce80).
     fn range(&self, _u: &Player, _def: &WeaponDef, range: f32) -> f32 {
         range
+    }
+    /// The scope's level count, `n` the count asked about (vtable +0x28: the scope's level count
+    /// FUN_00124840 asks it with 1 for a gun that zooms, and the way out of the scope FUN_0011af10
+    /// for the top level). The base returns it (0x262a40): one level for everyone's skill but
+    /// Flint's (0x13c910).
+    fn scope_levels(&self, n: i64) -> i64 {
+        n
+    }
+    /// The zoom at scope level `level` of a gun whose zoom is `zoom` (vtable +0x2c, asked by
+    /// FUN_00124920 for a level above 0). The base gives the gun's zoom (0x222cf0); Flint's
+    /// (0x13c930) more past her first level.
+    fn scope_zoom(&self, zoom: f32, _level: i64) -> f32 {
+        zoom
+    }
+    /// The scope view's flags (vtable +0xa8): with bit 0 set the scope frame isn't shown (the HUD
+    /// widget FUN_000b4010, texture h_1807ec04: its update FUN_000b4070 shows it only while the
+    /// character is scoped and this has bit 0 clear; play_hud.rs `update_scope`). The base gives
+    /// 0 (0x20e200, and the other skills' 0x2bf0a0): the frame; Flint's 1, Tex's 8 (below).
+    fn scope_view(&self) -> u32 {
+        0
     }
     /// The most of the move stick's length the character goes by, `m` the length (vtable +0x38,
     /// asked by the movement FUN_001195c0 at 0x119668, which keeps the smaller). The base passes
@@ -783,6 +812,24 @@ pub fn weapon_range(u: &Player, def: &WeaponDef) -> f32 {
     u.skill.kind.as_ref().map_or(def.range, |k| k.range(u, def, def.range))
 }
 
+/// `u`'s scope's level count for `n` (the skill's +0x28, `SkillKind::scope_levels`): one for
+/// `n` 1, two for Flint's (play.rs `scope_levels`); a character without a skill keeps `n`.
+pub fn scope_levels(u: &Player, n: i64) -> i64 {
+    u.skill.kind.as_ref().map_or(n, |k| k.scope_levels(n))
+}
+
+/// The zoom at `u`'s scope level `level` for a gun of zoom `zoom` (the skill's +0x2c,
+/// `SkillKind::scope_zoom`; play.rs `level_zoom`).
+pub fn scope_zoom(u: &Player, zoom: f32, level: i64) -> f32 {
+    u.skill.kind.as_ref().map_or(zoom, |k| k.scope_zoom(zoom, level))
+}
+
+/// Whether `u`'s scope view is the frame (the skill's +0xa8 with bit 0 clear, `SkillKind::
+/// scope_view`: everyone's but Flint's, whose view is the full screen; play_hud.rs).
+pub fn scope_frame(u: &Player) -> bool {
+    u.skill.kind.as_ref().map_or(0, |k| k.scope_view()) & 1 == 0
+}
+
 /// Whether `u`'s skill holds the move stick under the run (FUN_001195c0 takes the smaller of the
 /// stick and the skill's +0x38; under RUN_FROM the character walks): the demo's walk then, and
 /// no sprint, as in the scope.
@@ -943,6 +990,11 @@ impl Berserker {
 impl SkillKind for Berserker {
     fn name(&self) -> u32 {
         NAME_BERSERKER
+    }
+
+    fn scope_view(&self) -> u32 {
+        // 0x13d3d0: 8, bit 0 clear: the frame (what bit 3 does isn't traced)
+        8
     }
 
     fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
@@ -1404,6 +1456,22 @@ impl SkillKind for Targeting {
 
     fn range(&self, _u: &Player, def: &WeaponDef, range: f32) -> f32 {
         if def.weapon_type == self.cfg.range_weapon_type { range * self.cfg.range_factor } else { range }
+    }
+
+    fn scope_levels(&self, n: i64) -> i64 {
+        // 0x13c910: one more than asked, none for none
+        if n != 0 { n + 1 } else { 0 }
+    }
+
+    fn scope_zoom(&self, zoom: f32, level: i64) -> f32 {
+        // 0x13c930: past the first level of a gun that zooms, its zoom plus the larger of
+        // SECOND_ZOOM_LEAST and its zoom + SECOND_ZOOM_MORE
+        if zoom > 1.0 && level > 1 { zoom + SECOND_ZOOM_LEAST.max(zoom + SECOND_ZOOM_MORE) } else { zoom }
+    }
+
+    fn scope_view(&self) -> u32 {
+        // 0x2d5e40: no frame (her full-screen view)
+        1
     }
 
     fn move_cap(&self, u: &Player, m: f32) -> f32 {

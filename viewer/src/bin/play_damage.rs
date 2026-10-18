@@ -314,6 +314,60 @@ fn posed_parts<'a>(u: &'a Player, game: &'a Game) -> Vec<(u32, f32, Mat4, &'a [[
     }).collect()
 }
 
+/// How near `p` comes to each of `u`'s hit parts standing (their collision surfaces as drawn,
+/// `posed_parts`), nearest first, each with its bone's place (its frame's origin): what a
+/// weapon blast's physics ball meets of a character (FUN_00224a90 takes the character when one
+/// of its collision-bone bodies overlaps the ball, the ray from the centre to that bone body's
+/// position; play_missile.rs `deal_blasts`). Empty without a model or hit parts, or knocked down
+/// (the ragdoll keeps no turn of its bones to pose the surfaces with).
+pub fn part_distances(u: &Player, game: &Game, p: Vec3) -> Vec<(f32, Vec3)> {
+    if u.knock.is_some() {
+        return vec![];
+    }
+    let mut out: Vec<(f32, Vec3)> = posed_parts(u, game).into_iter().filter_map(|(_, _, frame, surface)| {
+        let local = frame.inverse().transform_point3(p);
+        let near = surface.iter().map(|&[a, b, c]| closest_on_triangle(local, a, b, c))
+            .min_by(|x, y| x.distance_squared(local).total_cmp(&y.distance_squared(local)))?;
+        Some((frame.transform_point3(near).distance(p), frame.w_axis.truncate()))
+    }).collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
+}
+
+/// The point of triangle (a, b, c) nearest `p` (by the triangle's regions: its corners, its edges,
+/// its face; the textbook construction).
+fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let (ab, ac, ap) = (b - a, c - a, p - a);
+    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+    let bp = p - b;
+    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        return a + ab * (d1 / (d1 - d3));
+    }
+    let cp = p - c;
+    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        return a + ac * (d2 / (d2 - d6));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0 {
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    }
+    let denom = 1.0 / (va + vb + vc);
+    a + ab * (vb * denom) + ac * (vc * denom)
+}
+
 /// The test hook's drawing (BF_HIT_PARTS), once the characters have moved.
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, draw_hit_parts.after(update_player).run_if(in_state(AppState::Playing)));

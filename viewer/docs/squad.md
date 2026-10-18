@@ -30,16 +30,19 @@ Squad movement and deaths follow the game's own data and the captures:
   The model is lifted by the weighted mix of what's playing, so a kneel or a crouch walk
   stands on the floor too. With the standing lift alone, Hawk and Flint knelt in the air. This
   covers the squad's kneels as well.
-* **Scopes.** With a weapon that zooms, right mouse toggles its scope (click in, click out;
-  other weapons still aim while it's held). Flint steps in twice: in, closer (the weapon's zoom
-  doubled: the L-Shot-50's 5x, then 10x), out. The doubling is a choice; the data has one zoom
-  per weapon. Switching weapons or reloading drops out of the scope, and Tex's berserk keeps him
-  out of it ([skills.md](skills.md)). `BF_TEST_SCOPE=<step>[,<from s>]` holds a step (from that
-  time on). A scoped shot leaves from the eye along the crosshair's ray (from the
+* **Scopes.** With a weapon that zooms, right mouse is the scope button (in, out; other weapons
+  still aim while it's held). How many levels is the holder's skill's: one for Tex, Hawk and
+  Brutus, two for Flint, who steps in, closer, out, with any gun that zooms; her second level is
+  z + max(10, z + 5) (the L-Shot-75 10 then 25, the L-Shot-50 5 then 15), the code's rule, which
+  the takes confirm (play.md, "The scope"). The zoom ramps linearly, 0.15 s a level, and the
+  button waits out a short lockout after going in or out. Switching weapons or reloading drops
+  out of the scope, and Tex's berserk keeps him out of it ([skills.md](skills.md)).
+  `BF_TEST_SCOPE=<level>[,<from s>]` holds a level (from that time on), `BF_TEST_SCOPE_PRESS`
+  presses the button (play.md). A scoped shot leaves from the eye along the crosshair's ray (from the
   muzzle, a little lower, it would land low through the zoom). In the scope the camera
   moves to the character's eyes: the characters' `offset-snipe` camera offset is 0.001 0 0,
   against 3.2–3.4 m behind for walking, running and ready. The field of view narrows by the
-  weapon's zoom (`h_efce7f77` on its definition: MK-ASLT 2, Kman Auto 2, Psionic Blast 2,
+  level's zoom (`h_efce7f77` on the weapon's definition: MK-ASLT 2, Kman Auto 2, Psionic Blast 2,
   Foley 356 Tact 3, L-Shot-50 5, L-Shot-75 10; 0 on the rest), the model is hidden, and mouse
   look slows by the same factor. Shots still go through the crosshair. While scoped, the
   character's own breathing loops: each character's `snipe-sound` (`h_12501487`, beside its
@@ -47,7 +50,9 @@ Squad movement and deaths follow the game's own data and the captures:
   0.7 s, Hawk `h_1ca2a830` 1.7 s, Tex `h_0ce9616b` 1.8 s), with 0.6 s between breaths.
   `BF_TEST_AIM=1` holds aim.
 
-  Two kinds of scope view, as in a capture:
+  Two kinds of scope view, as in a capture. Which one is the character's skill's (its +0xa8: the
+  frame shows only while its bit 0 is clear, FUN_000b4070; Flint's skill sets it), so it
+  follows her skill whatever gun she scopes with (#62):
 
   | Who | View |
   |---|---|
@@ -60,9 +65,10 @@ Squad movement and deaths follow the game's own data and the captures:
   reload and the crosshair**). The eye stays
   0.25 m off whatever is in front (by the collision), so a close wall can't be looked through.
 
-  Going in and out plays the character's two scope sounds. They're stored beside its
-  snipe-sound: `h_00dd1fe0` and `h_02c94d34`, about 0.3 s each, taken as in / out. Flint has
-  her own pair (`h_1fd08ea5`, `h_03e0936d`); the others share `h_135ec2ce`, `h_f9ffc972`.
+  Each level gone up plays the character's in sound and leaving the scope its out sound. They're
+  stored beside its snipe-sound: `h_00dd1fe0` (the type's +0x260, which the press plays,
+  FUN_00124340) and `h_02c94d34` (+0x264, FUN_001249b0's), about 0.3 s each. Flint has her own
+  pair (`h_1fd08ea5`, `h_03e0936d`); the others share `h_135ec2ce`, `h_f9ffc972`.
 * **Squad hand-over.** It plays one sound as the camera cuts: `h_07949f0d` (common bank,
   0.18 s), found in a capture at all five hand-overs. It replaced the weapon-switch pair used
   before. The name is drawn 1.6x the capture's size, pops in from nearly double that, and at

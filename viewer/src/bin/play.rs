@@ -633,6 +633,7 @@ fn main() {
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
+        .add_plugins(minigun::plugin)
         .add_plugins(shake::plugin)
         .add_plugins(skills::plugin)
         .add_plugins(damage::plugin)
@@ -709,6 +710,8 @@ mod ammo;
 mod shots;
 #[path = "play_missile.rs"]
 mod missile;
+#[path = "play_minigun.rs"]
+mod minigun;
 #[path = "play_shake.rs"]
 mod shake;
 #[path = "play_skills.rs"]
@@ -1568,22 +1571,37 @@ const RELOAD_TIME: f32 = 0.7;
 /// measured in every weapon's take01), i.e. this fraction of the half-height above the middle;
 /// shots and aiming go through it
 const CROSSHAIR_UP: f32 = (240.0 - 192.0) / 240.0;
-/// Aiming a weapon that zooms (WeaponDef::zoom > 1) goes into the scope: the camera moves to the
-/// character's eyes (this far above and in front of the camera target, m), the field of view
-/// narrows by the weapon's zoom, the character's model is hidden, and its snipe-sound breathing
-/// plays in a loop (BREATH_GAP between breaths) while it stays there.
+/// A weapon that zooms (WeaponDef::zoom, h_efce7f77, above 0: its scope has levels) has a scope:
+/// in it the camera moves to the character's eyes (this far above and in front of the camera
+/// target, m), the field of view narrows by the level's zoom, the character's model is hidden,
+/// and its snipe-sound breathing plays in a loop (BREATH_GAP between breaths) while it stays
+/// there.
 const EYE_ABOVE_TARGET: f32 = 0.45;
 const EYE_FORWARD: f32 = 0.35;
-const SCOPE_RATE: f32 = 10.0;
+/// FUN_0011aa20, which runs the scope's ramp (its zoom +0x7ac and its progress +0x7cc) and the
+/// scope button's lockout (+0x7c8), is called twice a game frame for a character a player
+/// controls: by the character's own tick (FUN_0011caa0, its vtable's +0x6c at 0x39de44; the call
+/// at 0x11cf03) and by its follow camera's (FUN_000702a0, the camera's +0x6c, through
+/// FUN_0011c0b0 at 0x70728 / 0x718c4). So game-options' 0.3 s zoom times (`ScopeOptions`) run
+/// in 0.15 s, and the lockouts in half theirs: the takes measure 0.17 +- 0.03 s a level, and the
+/// L-Shot-50's second level grew 2.0-2.3 zoom units a game frame (todo/61 take01) against 2.22 at
+/// two calls (1.11 at one). Medium confidence on the double call (read from the code; the timing
+/// from the takes).
+const SCOPE_CALLS: f32 = 2.0;
+/// CT_AIM_SNIPE (0x12241a): entering the scope sets its button's lockout (+0x7c8) to this, and a
+/// press that would leave it waits for it to run out (0.425 s with SCOPE_CALLS). Medium
+/// confidence: read from the code; no take presses that fast.
+const SCOPE_IN_LOCK: f32 = 0.85;
+/// FUN_001249b0 (0x124a1c): leaving the scope sets the lockout to this, and a press to enter it
+/// again waits for it to run out (0.45 s). Medium confidence, as SCOPE_IN_LOCK.
+const SCOPE_OUT_LOCK: f32 = 0.9;
 const BREATH_GAP: f32 = 0.6;
 const BREATH_VOLUME: f32 = 0.6;
 const SCOPE_SOUND_VOLUME: f32 = 0.8;
 /// Flint, the squad's sniper (a synthetic), holds her scope dead still (a capture); the others'
-/// aim wanders while they look through one: a slow drift of up to SWAY radians.
+/// aim wanders while they look through one: a slow drift of up to SWAY radians. (Her scope's
+/// second level is her skill's: play_skills.rs `scope_levels`, `scope_zoom`.)
 const STILL_SNIPER: usize = 1;
-/// Flint's scope has a second step: the weapon's zoom doubled (L-Shot-50: 5x, then 10x - the
-/// L-Shot-75's). The data has one zoom per weapon; the doubling is a choice.
-const SNIPER_SECOND_STEP: f32 = 2.0;
 const SWAY: f32 = 0.012;
 /// In the scope the eye keeps this far off walls (it sits in front of the head otherwise and
 /// would look through a barrier close by).
@@ -1935,7 +1953,8 @@ struct Player {
     spin_angle: f32,
     shots: Vec<Shot>,
     /// this frame's shots of a mesh-projectile gun (bullet-type 2 steered at a steady speed: the
-    /// Therm Sweeper), launched as missiles by play_missile.rs instead of flying as `shots`
+    /// Therm Sweeper, the Sweeper V), launched as missiles by play_missile.rs instead of flying
+    /// as `shots`
     launches: Vec<missile::Launch>,
     /// the player's shots still flying toward squad members
     pending_hits: Vec<PendingHit>,
@@ -1957,18 +1976,26 @@ struct Player {
     /// 0..1 blend of the over-the-shoulder aiming camera
     shoulder: f32,
     /// the scope: 0..1 blend into the sniping view (the character's `offset-snipe`, at its
-    /// eyes) and the zoom it gives (the held weapon's, 1 none)
+    /// eyes; the game's char+0x7cc) and the zoom it gives (+0x7ac: 1 none, the level's zoom in
+    /// it), both ramped linearly (`follow_camera`)
     scope: f32,
     zoom: f32,
     /// the character's breathing in the scope (its snipe-sound, how long it lasts) and when it's
     /// next due
     snipe_sound: Option<(u32, f32)>,
     breath_in: f32,
-    /// the scope's zoom in / out sounds, and whether the scope was up last frame
+    /// the scope's in / out sounds (the type's +0x260 / +0x264: the character's h_00dd1fe0 /
+    /// h_02c94d34), and the level they were last played for (`follow_camera`)
     scope_sounds: (u32, u32),
-    was_scoped: bool,
-    /// the scope's step (0 out; 1 in; 2 closer, Flint only), toggled by right mouse
+    scope_heard: u8,
+    /// the scope's level (char+0x7a8: 0 out; 1 in; 2 closer, for Flint's skill only), stepped by
+    /// the scope button (right mouse, `press_scope`)
     scope_level: u8,
+    /// the scope button's lockout (char+0x7c8, s): set as the scope is entered (SCOPE_IN_LOCK) and
+    /// left (SCOPE_OUT_LOCK); the press that would leave or enter it again waits for it
+    scope_lock: f32,
+    /// (BF_TEST_SCOPE_PRESS presses done)
+    test_scope_presses: usize,
     /// (BF_TEST_SELECT done)
     test_selected: bool,
     /// the scoped aim's wander (yaw, pitch; radians)
@@ -2086,7 +2113,7 @@ impl Player {
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
-            shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), was_scoped: false, scope_level: 0, test_selected: false, sway: Vec2::ZERO,
+            shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), scope_heard: 0, scope_level: 0, scope_lock: 0.0, test_scope_presses: 0, test_selected: false, sway: Vec2::ZERO,
             wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
             lock_aim: None,
             enemy: Default::default(),
@@ -2513,6 +2540,11 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // the squad shares one inventory: the grenades and medkits go with control (a throw under
     // way is called off, its grenade back in the inventory)
     player.cancel_throw();
+    // (the scope ends with control: the character left behind isn't left looking through it, its
+    // shots from the eye at the scoped rate, nor its button locked out for a hand-back soon after;
+    // the demo's choice, the game's hand-over isn't traced)
+    player.leave_scope();
+    (player.scope, player.zoom, player.scope_heard, player.scope_lock) = (0.0, 1.0, 0, 0.0);
     let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.item, player.item_new);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new) = inventory;
@@ -2704,9 +2736,106 @@ fn clear_follow_yaw(target: Vec3, facing: f32, pitch: f32, distance: f32) -> f32
     best.0
 }
 
-/// The vertical field of view at a zoom.
+/// The vertical field of view at a zoom: FUN_0006c720's 2 atan(tan(FOV / 2) / zoom), from the
+/// demo's FOV_Y where the game's follow camera has 70 degrees across its 4:3 picture (#126). The
+/// levels' zooms against each other are the game's either way.
 fn fov_at(zoom: f32) -> f32 {
     2.0 * ((FOV_Y * 0.5).tan() / zoom.max(1.0)).atan()
+}
+
+/// FUN_00124840: how many levels `p`'s scope has: none without a gun in hand, with one whose zoom
+/// (its data +0x16c, h_efce7f77) isn't above 0, or with a gun in the second hand (Tex's
+/// berserk); else its skill's count for 1 (+0x28: one, or two for Flint's skill).
+fn scope_levels(p: &Player) -> u8 {
+    let zoom = p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon)).map_or(0.0, |w| w.def.zoom);
+    if zoom <= 0.0 || p.second.is_some() {
+        return 0;
+    }
+    skills::scope_levels(p, 1).clamp(0, u8::MAX as i64) as u8
+}
+
+/// FUN_00124920: the zoom at scope level `level` of `p`'s gun: 1 at level 0 (and with no gun in
+/// hand, or one in the second hand), else the gun's zoom through the skill (+0x2c: the zoom, or
+/// for Flint's second level `z + max(10, z + 5)`: the L-Shot-75's 10 then 25, the L-Shot-50's 5
+/// then 15).
+fn level_zoom(p: &Player, level: u8) -> f32 {
+    match p.loaded.as_ref().and_then(|l| l.weapons.get(p.weapon)) {
+        Some(w) if level > 0 && p.second.is_none() => skills::scope_zoom(p, w.def.zoom, level as i64),
+        _ => 1.0,
+    }
+}
+
+/// CT_AIM_SNIPE, the scope button (0x122399-0x122479): out of the scope, into its first level if
+/// it has levels (`scope_levels`) and the button's lockout (+0x7c8) is out, which entering sets to
+/// SCOPE_IN_LOCK; in it below the top level, up one, with no lockout test; at the top, out of it
+/// (`leave_scope`) once the lockout is out. The in sound with each level gone up (FUN_00124340)
+/// plays in `follow_camera`.
+fn press_scope(p: &mut Player) {
+    let levels = scope_levels(p);
+    if p.scope_level == 0 {
+        if levels > 0 && p.scope_lock <= 0.0 {
+            p.scope_level = 1;
+            p.scope_lock = SCOPE_IN_LOCK;
+        }
+    } else if p.scope_level < levels {
+        p.scope_level += 1;
+    } else if p.scope_lock <= 0.0 {
+        p.leave_scope();
+    }
+}
+
+impl Player {
+    /// FUN_001249b0: out of the scope (char+0x7a8 to 0) if in it, its button's lockout set to
+    /// SCOPE_OUT_LOCK (for a character with a camera: the player's); the out sound plays in
+    /// `follow_camera`. A reload (FUN_00120d40) and an item's use (FUN_00121170) call it first;
+    /// the demo's switch, death and Tex's berserk too (`follow_camera`).
+    fn leave_scope(&mut self) {
+        if self.scope_level != 0 {
+            self.scope_level = 0;
+            self.scope_lock = SCOPE_OUT_LOCK;
+        }
+    }
+}
+
+/// The scope's input this frame: the scope button (`pressed`, the right mouse in play;
+/// `press_scope`), then the test hooks', under BF_TEST_GOTO's autopilot too:
+/// BF_TEST_SCOPE_PRESS=<s>[,<s>...] presses the button at those times (with its lockouts;
+/// BF_SCOPE_LOG=1 prints each); BF_TEST_SCOPE=<level>[,<from s>] holds that level (at most the
+/// scope's top; from that time on, from the start by default); without either, an aim a hook
+/// holds (`p.aim` coming in: BF_TEST_AIM, BF_TEST_FIRE; never the scope's own) with a gun that
+/// has a scope is its first level, as it was before the levels. With a scope, `aim` is then
+/// whether the character is in it.
+fn scope_input(p: &mut Player, pressed: bool) {
+    if pressed {
+        press_scope(p);
+    }
+    let presses: Option<Vec<f32>> = std::env::var("BF_TEST_SCOPE_PRESS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect());
+    if let Some(times) = &presses {
+        while times.get(p.test_scope_presses).is_some_and(|&s| p.sim_time >= s) {
+            p.test_scope_presses += 1;
+            press_scope(p);
+            if std::env::var("BF_SCOPE_LOG").is_ok() {
+                println!("t={:.2} scope press: level {} (lockout {:.3} s)", p.sim_time, p.scope_level, p.scope_lock);
+            }
+        }
+    }
+    let levels = scope_levels(p);
+    let held = std::env::var("BF_TEST_SCOPE").ok().and_then(|v| {
+        let mut it = v.split(',').map(str::trim);
+        let level = it.next().and_then(|x| x.parse::<u8>().ok())?;
+        let from = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(0.0);
+        Some((level, from))
+    });
+    if let Some((level, from)) = held {
+        if p.sim_time >= from {
+            p.scope_level = level.min(levels);
+        }
+    } else if presses.is_none() && p.aim && levels > 0 && p.scope_level == 0 {
+        p.scope_level = 1;
+    }
+    if levels > 0 {
+        p.aim = p.scope_level > 0;
+    }
 }
 
 /// Camera position and direction of the ray through the crosshair.
@@ -3464,6 +3593,9 @@ fn read_input(
         }
     }
     if autopilot(&mut player) {
+        // (the scope's test hooks; the autopilot's aim with a gun that has a scope is its first
+        // level)
+        scope_input(&mut player, false);
         return;
     }
     let (was_captured, captured) = mouse_capture(&mut windows, &keys, &mouse, player.sim_time);
@@ -3476,26 +3608,12 @@ fn read_input(
     let look = if captured { motion.delta * 0.004 / player.zoom.max(1.0) } else { Vec2::ZERO };
     let sprint = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let walk = keys.pressed(KeyCode::ControlLeft);
-    // right mouse: aim while held; with a weapon that zooms it toggles the scope instead (Flint
-    // steps in twice: in, closer, out)
-    let zoomable = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).is_some_and(|w| w.def.zoom > 1.0);
-    if !zoomable {
-        player.scope_level = 0;
-    } else if was_captured && mouse.just_pressed(MouseButton::Right) {
-        let steps = if player.character == STILL_SNIPER { 2 } else { 1 };
-        player.scope_level = (player.scope_level + 1) % (steps + 1);
-    }
-    // BF_TEST_SCOPE=<step>[,<from s>]: hold that scope step (from that time on; from the start
-    // by default)
-    if let Ok(v) = std::env::var("BF_TEST_SCOPE") {
-        let mut it = v.split(',').map(str::trim);
-        let step = it.next().and_then(|x| x.parse().ok());
-        let from = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(0.0);
-        if let Some(l) = step.filter(|_| player.sim_time >= from) {
-            player.scope_level = l;
-        }
-    }
-    let aim = if zoomable { player.scope_level > 0 } else { mouse.pressed(MouseButton::Right) };
+    // right mouse: with a gun whose scope has levels it's the scope button (`press_scope`: in,
+    // up a level for Flint's skill, out), applied with the aim below; with any other, aim while
+    // held
+    let zoomable = scope_levels(&player) > 0;
+    let scope_pressed = zoomable && was_captured && mouse.just_pressed(MouseButton::Right);
+    let aim = !zoomable && mouse.pressed(MouseButton::Right);
     let jump = keys.just_pressed(KeyCode::Space);
     let dodge = keys.just_pressed(KeyCode::KeyC);
     // the click that captures the mouse doesn't fire
@@ -3543,8 +3661,9 @@ fn read_input(
     player.move_input = if mv.length() > 1.0 { mv.normalize() } else { mv };
     player.sprint = sprint;
     player.walk = walk;
-    // test hook: BF_TEST_AIM=1 holds aim
+    // test hook: BF_TEST_AIM=1 holds aim (with a scope, its first level: `scope_input`)
     player.aim = aim || std::env::var("BF_TEST_AIM").is_ok();
+    scope_input(&mut player, scope_pressed);
     // in the scope one can still move, slowly: a walk, no sprint
     if player.scope > 0.5 {
         player.sprint = false;
@@ -5827,9 +5946,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             // the others' instant hits; the rest fly at the bullet's speed
             let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
             let accuracy = p.fire_state.accuracy(index);
-            // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper) is
-            // a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50, play_missile.rs): it
-            // leaves the muzzle along the shot with the aim point and the shooter's line
+            // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper, the
+            // Sweeper V) is a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50,
+            // play_missile.rs): it leaves the muzzle along the shot with the aim point and the
+            // shooter's line
             let missile = missile::flies(&w.def);
             let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
             for (pellet, dir) in p.fire_state.directions(side, dir, w.def.shots.burst_spread) {
@@ -5980,46 +6100,79 @@ fn frame_dt(time: &Time) -> f32 {
     }
 }
 
-fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
+fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, game: Res<GameData>, mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
                  mut vis: Query<&mut Visibility>) {
     let dt = frame_dt(&time);
-    // the scope: aiming (held, not just after firing) a weapon that zooms
-    let held_zoom = player.loaded.as_ref().and_then(|l| l.weapons.get(player.weapon)).map_or(0.0, |w| w.def.zoom);
-    // none in Tex's berserk either, from the accepted press to the second gun's stowing (his
-    // toggle only refuses a press made scoped, 0x13d490): the demo's choice until a take shows
-    // whether the game lets him (#35's shot T2). Scoped, the second gun's muzzle effect washes the
-    // view, and a shot in the start clip leaves from behind his shoulder. (Flint scopes in her
-    // sniper motions: take15 14.5 s)
+    // the scope: none in Tex's berserk either, from the accepted press to the second gun's
+    // stowing (his toggle only refuses a press made scoped, 0x13d490): the demo's choice until a
+    // take shows whether the game lets him (#35's shot T2). Scoped, the second gun's muzzle effect
+    // washes the view, and a shot in the start clip leaves from behind his shoulder. (Flint scopes
+    // in her sniper motions: take15 14.5 s.) Out of it while busy (FUN_001249b0: a reload, the
+    // switch, death) and once the gun in hand has fewer levels (none: no gun that zooms)
     let berserk = skills::bars_scope(&player) || player.second.is_some();
     let busy = player.switching.is_some() || player.reloading.is_some() || player.dead || berserk;
-    if busy {
-        player.scope_level = 0;
+    if busy || player.scope_level > scope_levels(&player) {
+        player.leave_scope();
     }
-    let scoped = player.aim && held_zoom > 1.0 && !busy;
-    // Flint's second step doubles the weapon's zoom
-    let held_zoom = if player.scope_level >= 2 { held_zoom * SNIPER_SECOND_STEP } else { held_zoom };
-
-    let want = if scoped { 1.0 } else { 0.0 };
-    player.scope += (want - player.scope) * (1.0 - (-SCOPE_RATE * dt).exp());
-    if (player.scope - want).abs() < 0.01 {
-        player.scope = want;
+    let level = player.scope_level;
+    // the ramp (FUN_0011aa20 at 0x11acc6-0x11ae79), SCOPE_CALLS steps a frame: in the scope the
+    // progress (+0x7cc) gains dt / the in time and the zoom (+0x7ac) climbs at (the level's zoom
+    // - the level below's) / the in time (FUN_0011ae80) to the level's, never past it; out of it
+    // the progress loses dt / the out time and the zoom falls at the top level's / the out time
+    // (FUN_0011af10: the skill's count, +0x28 with 1, through FUN_00124920) to 1; a time of 0
+    // snaps. Linear in the zoom (the takes: the zoom's steps a game frame even, the last one cut
+    // short), so the view's angle narrows fastest at first
+    let step = dt * SCOPE_CALLS;
+    let times = game.0.scope;
+    let was = (player.zoom, player.scope);
+    if level > 0 {
+        let (z, below) = (level_zoom(&player, level), level_zoom(&player, level - 1));
+        if times.zoom_in > 0.0 {
+            player.scope = (player.scope + step / times.zoom_in).min(1.0);
+            if z > player.zoom {
+                player.zoom += ((z - below) / times.zoom_in * step).min(z - player.zoom);
+            }
+        } else {
+            (player.scope, player.zoom) = (1.0, z);
+        }
+    } else {
+        // (the game's FUN_0011af10 never meets a gun without a scope in hand here: its swap comes
+        // at the switch clip's event, after the scope was left and its zoom fell, and with that
+        // gun's zoom of 0 the fall would stop. The demo's gun can change at once (its test hooks,
+        // a squad hand-back) with the zoom still up: then the zoom falls at its own rate. A gun in
+        // the second hand or none in hand keeps the game's top of 1, FUN_00124920's)
+        let top = level_zoom(&player, skills::scope_levels(&player, 1).clamp(0, u8::MAX as i64) as u8);
+        let top = if top > 0.0 { top } else { player.zoom };
+        if times.zoom_out > 0.0 {
+            player.scope = (player.scope - step / times.zoom_out).max(0.0);
+            if player.zoom > 1.0 {
+                player.zoom -= (top / times.zoom_out * step).min(player.zoom - 1.0);
+            }
+        } else {
+            (player.scope, player.zoom) = (0.0, 1.0);
+        }
     }
-    // (eased, also between Flint's steps)
-    let target = 1.0 + (held_zoom.max(1.0) - 1.0) * player.scope;
-    player.zoom += (target - player.zoom) * (1.0 - (-SCOPE_RATE * dt).exp());
-    if (player.zoom - target).abs() < 0.01 {
-        player.zoom = target;
+    // the scope button's lockout (+0x7c8) runs down in the same calls (0x11ae42-0x11ae70)
+    player.scope_lock = (player.scope_lock - step).max(0.0);
+    // BF_SCOPE_LOG=1: the ramp's zoom and progress on each frame they move (and each level change
+    // and hook press, below and in `scope_input`)
+    if std::env::var("BF_SCOPE_LOG").is_ok() && (player.zoom, player.scope) != was {
+        println!("t={:.3} scope ramp: zoom {:.3}, progress {:.3}, level {level}", player.sim_time, player.zoom, player.scope);
     }
     // the aim's wander in the scope (none for Flint)
     let t = player.sim_time;
     let wander = Vec2::new((0.9 * t).sin() + 0.45 * (2.3 * t + 0.7).sin(), 0.8 * (1.3 * t + 1.1).sin() + 0.35 * (2.9 * t).sin());
     player.sway = if player.character == STILL_SNIPER { Vec2::ZERO } else { wander * SWAY * player.scope };
-    // going in and out: the character's scope sounds
-    if scoped != player.was_scoped {
-        player.was_scoped = scoped;
-        let id = if scoped { player.scope_sounds.0 } else { player.scope_sounds.1 };
+    // the character's scope sounds: the in sound with each level gone up (FUN_00124340 at the
+    // press: the type's +0x260), the out sound as it leaves (FUN_001249b0: +0x264)
+    if level != player.scope_heard {
+        let id = if level > player.scope_heard { player.scope_sounds.0 } else if level == 0 { player.scope_sounds.1 } else { 0 };
+        player.scope_heard = level;
         if id != 0 {
             player.sound_queue.push((id, SCOPE_SOUND_VOLUME));
+        }
+        if std::env::var("BF_SCOPE_LOG").is_ok() {
+            println!("t={:.2} scope level {level}: zoom {:.2} -> {:.2} (lockout {:.3} s)", player.sim_time, player.zoom, level_zoom(&player, level), player.scope_lock);
         }
     }
     // its breathing, in a loop while scoped
@@ -6232,9 +6385,13 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             tr.translation = t - r * w.fire_dir * (0.04 * p.recoil);
             tr.rotation = r;
         }
-        // minigun barrel spins up while firing
-        let target = if firing { 28.0 } else { 0.0 };
-        p.spin += (target - p.spin) * (1.0 - (-(if firing { 6.0 } else { 1.5 }) * dt).exp());
+        // the barrel's turn: a Minigun's (IFSET_MINIGUN) by its spin level, which
+        // play_minigun.rs sets `spin` from (1 at once while firing, falling over 1 s); any other
+        // gun's spinning parts by the demo's own ease while firing
+        if !minigun::spins(&w.def) {
+            let target = if firing { minigun::BARREL_TURN } else { 0.0 };
+            p.spin += (target - p.spin) * (1.0 - (-(if firing { 6.0 } else { 1.5 }) * dt).exp());
+        }
         p.spin_angle = (p.spin_angle + p.spin * dt) % std::f32::consts::TAU;
         for (e, axis, offset) in &w.spinners {
             if let Ok(mut tr) = transforms.get_mut(*e) {

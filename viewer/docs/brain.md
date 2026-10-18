@@ -231,7 +231,9 @@ let go. The grenade lesson holds the first patrol's two while it plays.
   else its head over cover) and it aims and fires at it: the takes' aim helper
   (todo/28-tutorial/notes.md), to stage a fight. With `BF_TEST_GOTO` it walks on meanwhile,
   toward the hostile while it aims (the walk follows the camera). It runs after the other input
-  hooks (its fire wins over `BF_TEST_TRIGGER`'s) and after the free camera's input gate.
+  hooks (its fire wins over `BF_TEST_TRIGGER`'s) and after the free camera's input gate. With a
+  gun that has a scope it aims through the scope's first level, as the other hooks' aim does
+  (play.md, The scope), and leaves the scope it went into once no hostile is in sight.
 * The tutorial's panels (#224) stop the clock until closed: `BF_TEST_PANEL=a,1` closes each
   after 1 s (in the first patrol's run below the WEAPONS panel comes up at ~17 s).
 

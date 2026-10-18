@@ -916,8 +916,11 @@ fn goal_name(g: Option<i64>) -> &'static str {
 /// nearest living hostile it can see (within 120 m, nothing of the world in between: its chest,
 /// else its head over cover) and it aims and fires at it: the takes' aim helper
 /// (todo/28-tutorial/notes.md, "Aim helper"), to stage a fight. Run before the character's step
-/// (play.rs `update_player`), after the test hooks' input.
-fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>) {
+/// (play.rs `update_player`), after the test hooks' input. With a gun that has a scope its aim is
+/// the scope's first level, as the other hooks' aim (play.rs `scope_input`, which ran before this
+/// and made the aim whether the character is in the scope); `scoped` says the hook went in, so it
+/// comes out once no hostile is left in sight, as the aim it held fell before the levels.
+fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>, mut scoped: Local<bool>) {
     let Some(from) = std::env::var("BF_TEST_AIM_HOSTILE").ok().and_then(|v| v.parse::<f32>().ok()) else { return };
     let player = &mut *player;
     if player.sim_time < from || player.dead || player.absent || script::blocks_input(player) {
@@ -929,6 +932,10 @@ fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>) {
         .filter_map(|u| [AI_AIM_HEIGHT, AI_EYE].map(|h| u.position + Vec3::Y * (GROUND + u.height + h)).into_iter().find(|&p| clear(p)))
         .min_by(|a, b| eye.distance(*a).total_cmp(&eye.distance(*b))) else {
         player.fire = false;
+        if std::mem::take(&mut *scoped) && player.scope_level > 0 {
+            player.leave_scope();
+            player.aim = false;
+        }
         return;
     };
     // turn the camera until the crosshair's ray (play.rs `aim_ray`) passes through the chest: a
@@ -943,6 +950,10 @@ fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>) {
     }
     player.aim = true;
     player.fire = true;
+    if player.scope_level == 0 && scope_levels(player) > 0 {
+        player.scope_level = 1;
+        *scoped = true;
+    }
 }
 
 /// How far the aim helper looks for a hostile (m): beyond any of the tutorial's fights.

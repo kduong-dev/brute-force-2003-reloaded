@@ -1,7 +1,8 @@
-//! Mesh projectiles (bullet-type 2, BTYPE_MESH_PROJECTILE; issue #73, the Therm Sweeper): a
-//! missile that flies, steers, splits in two (MIRV) and explodes, from default.xbe's projectile
-//! class (0x226000-0x229000) and its weapon type's damage handler (0x22d0b0), checked against
-//! the xemu takes in todo/73-therm-sweeper/ (the tester's spec there has the measurements).
+//! Mesh projectiles (bullet-type 2, BTYPE_MESH_PROJECTILE; issue #73, the Therm Sweeper, and
+//! #72, the Sweeper V): a missile that flies, steers, splits in two (MIRV) and explodes, from
+//! default.xbe's projectile class (0x226000-0x229000) and its weapon type's damage handler
+//! (0x22d0b0), checked against the xemu takes in todo/73-therm-sweeper/ and todo/72-sweeper-v/
+//! (the tester's specs there have the measurements).
 //!
 //!  - **Launch** (FUN_0022f1d0 case 2 -> FUN_0022fb50): one projectile object, the bullet's
 //!    mesh-name (h_e9327576: model h_07d84a52, attached effect h_194dc78e with its sound
@@ -29,18 +30,24 @@
 //!    timer runs out, or whose fuse fires, goes off the same way where it is, with no direct hit
 //!    (FUN_00227760).
 //!  - **The blast** (FUN_0022bfc0, dealt once by FUN_00224770 -> FUN_0022c4d0): its own roll,
-//!    after 0.05-0.25 s, to every body it reaches with nothing of the world in between (a body
-//!    behind cover isn't touched at all, FUN_00224a90): half of it anywhere inside (Damage
+//!    after 0.05-0.25 s, to every body its physics ball meets (a hit part within its radius and
+//!    `BLAST_PART_REACH` more) with nothing of the world in between (a body behind cover isn't
+//!    touched at all, FUN_00224a90): half of it anywhere inside (Damage
 //!    h_011cb154 false), x 0.7 for the shooter's own side (FUN_0004b9c0), x the body's
 //!    difficulty step and damage-type factor (play_damage.rs); the scenery's share is the same,
 //!    flat, with no step. Its pass lays the scorch (bullet h_06a27365) under the blast point,
 //!    and every blast shakes the player's view (FUN_00228c70, play_shake.rs). No hit or blast
 //!    knocks its victim down (`hurt_still`).
 //!
-//! Only mesh projectiles steered at a steady speed that split (h_0b03ece5 and a `<mirv>`: the
-//! Therm Sweeper) fly here. The Sweeper V's (steady, no MIRV) keeps play.rs's plain `Shot` until
-//! #72 checks it against its own takes; the others (the iKhan-GPL's lobbed cluster, the
-//! creatures' weapons) fly under their physics body's gravity, which isn't traced.
+//! Only mesh projectiles steered at a steady speed (h_0b03ece5) fly here: the Therm Sweeper and
+//! the Sweeper V, the only two bullet-type 2 weapons with it in every level's data (#72 spec §2).
+//! The Sweeper V's has no `<mirv>` (count and mode 0), no homing or seeking and no second timer,
+//! so the same tick makes it the first missile that doesn't split: it flies straight along its
+//! launch at 60 m/s (FUN_002266d0 steering it along its own velocity, flag 4 alone) and goes off
+//! where it strikes, at its fuse, or where it is when its life (range / speed: 200 / 60 = 3.33 s)
+//! runs out (h_0976a9dc, FUN_00227760). The others (the iKhan-GPL's lobbed cluster, the
+//! creatures' weapons) fly under their physics body's gravity, which isn't traced, and keep
+//! play.rs's plain `Shot`.
 //!
 //! `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (with its children
 //! and their targets), fuse and end (where, how far from its launch, how long after, what it
@@ -101,8 +108,10 @@ const SPREAD_TURN: f32 = 90.0;
 /// past its straight phase. (No mesh projectile that flies here has that mode: the iKhan-GPL's
 /// does, and it's lobbed. Kept as the code has it.)
 const APOGEE_VY: f32 = 0.5;
-/// FUN_00226cc0: the proximity fuse looks every FUSE_EVERY s (+0x218), within the Damage radius
-/// x FUSE_REACH (FUN_00227dd0 -> +0x214: 1.69 m for the Therm Sweeper's 4.5).
+/// FUN_00226cc0: the proximity fuse's clock (+0x218) gains each tick's time while it's under
+/// FUSE_EVERY s; on the tick it's at least that, it's cleared and the fuse looks, within the
+/// Damage radius x FUSE_REACH (FUN_00227dd0 -> +0x214: 1.69 m for the Therm Sweeper's 4.5, 3.375
+/// m for the Sweeper V's 9). At 30 Hz that's every 9th tick, 0.3 s (18 m of a Sweeper V's flight).
 const FUSE_EVERY: f32 = 0.25;
 /// FUN_00227dd0: the fuse's reach as a share of the Damage radius (+0x214).
 const FUSE_REACH: f32 = 0.375;
@@ -124,14 +133,24 @@ const STRUCK_BACK: f32 = 0.5;
 /// is hostile only to PC_NO_TEAM (7), a side no character of the demo is on: a child's own
 /// searches find nobody, and its fuse needs the split's target (0x22731c-0x22732d).
 const NEUTRAL: u8 = 2;
-/// A body's reach for the blast: the blast's physics query (FUN_00224a90) gathers bodies whose
-/// collision is inside its sphere, a character's being its parts (the motion set's
-/// `<collision>` bones, each with its own radius). The demo's body is a standing cylinder this
-/// round (m) and BODY_HEIGHT tall from the feet, and a blast reaches it when the cylinder's
-/// nearest point is within the radius. Fitted to the takes, not traced: Tex was hurt by his own
-/// blast on the wall 5 m from his feet and not at 6 m (takes 12, 13, 15; the arms holding the
-/// launcher reach out toward it), so at least 0.44 m; play.rs's BODY_RADIUS (0.4) missed at 5 m.
-const BLAST_BODY_REACH: f32 = 0.6;
+/// How far past the Damage radius a body's hit part is still met by a blast (m). The game tests
+/// no distance: the blast is a physics ball of the Damage radius (FUN_0022c2e0, made the tick
+/// its delay runs out by FUN_00225c40), and FUN_00224a90 walks the bodies the physics engine
+/// lists as overlapping it; a character is gathered when one of its collision-bone bodies is
+/// among them (todo/weapons-plan answers-batch1 §9). The demo meets the ball with the hit parts'
+/// collision surfaces as drawn (`damage::part_distances`); the engine's own overlap rule isn't in
+/// the game's code, so this margin is a fit to three self-damage takes: the Sweeper V's blast hurt
+/// Tex six times in six at the gate 10.2 m away for a 9 m radius (todo/72 take01), the Therm
+/// Sweeper's didn't at 6 m for 4.5 m (todo/73 take13) and did at 5 m (take15). In the demo's
+/// geometry for those spots, Tex aiming at the blast with his arms out, his nearest part is 9.50-
+/// 9.57, 5.18-5.20 and ~4.2 m from it: a margin in [0.57, 0.68), of which this is the middle.
+const BLAST_PART_REACH: f32 = 0.62;
+/// A body without hit parts to meet (no model or hit-part list) is met as a standing cylinder this
+/// round (m) and BODY_HEIGHT tall from the feet, when its nearest point is within the radius: the
+/// same three takes measured from the feet axis (10.30, 5.94 and 4.94 m in the demo's geometry,
+/// the takes' 10.17, 5.9 and 4.9) want [1.30, 1.44); this is the middle. A fit, as
+/// BLAST_PART_REACH.
+const BLAST_BODY_REACH: f32 = 1.35;
 /// Its line of sight is to the body's middle, this high (m): the demo's.
 const BODY_MIDDLE: f32 = 1.0;
 /// The blast's line of sight leaves from this far (m) off the surface the missile struck (along
@@ -323,11 +342,11 @@ pub fn plugin(app: &mut App) {
             .after(update_player).before(super::grenade::GrenadeSystems).run_if(in_state(AppState::Playing)));
 }
 
-/// Whether a weapon's shots fly here: a mesh projectile steered at a steady speed that splits
-/// (see the module notes). The Sweeper V's (steady, no MIRV) keeps play.rs's plain shot until
-/// #72: its own takes (todo/72-sweeper-v) don't match this path's blast and damage yet.
+/// Whether a weapon's shots fly here: a mesh projectile steered at a steady speed (h_0b03ece5,
+/// flag 4: see the module notes), with a `<mirv>` (the Therm Sweeper) or without (the Sweeper
+/// V, #72). In every level's data no other bullet-type 2 weapon has the flag (#72 spec §2).
 pub fn flies(def: &WeaponDef) -> bool {
-    def.mesh_bullet.as_ref().is_some_and(|b| b.steady && b.mirv_mode != 0 && b.mirv_count > 0)
+    def.mesh_bullet.as_ref().is_some_and(|b| b.steady)
 }
 
 /// The projectile objects of the weapons whose shots fly here (and their MIRV children's), their
@@ -625,6 +644,20 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
 fn blow(m: &Missile, struck: Option<Who>, surface: Option<Vec3>, mine: Option<Entity>, collision: bool, cause: &'static str) -> Blow {
     Blow { id: m.id, weapon: m.weapon, owner: m.owner, team: m.team, human: m.human, at: m.pos, dir: m.vel.normalize_or(m.heading), struck, surface, mine,
            breakable: None, collision, cause, from: m.from, age: m.age }
+}
+
+/// A body lying knocked down as a blast's ball meets it: its ragdoll's bones as balls of
+/// LYING_RADIUS (as `ray_lying` strikes them), each one's distance from `at` and its place,
+/// nearest first (the game's ball meets the ragdoll's own bodies; the shape is the demo's).
+fn lying_parts(u: &Player, at: Vec3) -> Vec<(f32, Vec3)> {
+    let Some(k) = &u.knock else { return vec![] };
+    let turn = Quat::from_rotation_y(k.ragdoll.yaw);
+    let mut out: Vec<(f32, Vec3)> = k.ragdoll.pos.iter().map(|&p| {
+        let bone = k.ragdoll.origin + turn * p;
+        ((bone.distance(at) - LYING_RADIUS).max(0.0), bone)
+    }).collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
 }
 
 /// Where along a ray (within `max`) it meets a body lying knocked down: its ragdoll's bones,
@@ -1055,12 +1088,15 @@ fn shake(shake: &mut CameraShake, at: Vec3, eye: Vec3, def: &WeaponDef) {
     shake.kick(strength * falloff, SHAKE_HOLD, falloff * SHAKE_FALL);
 }
 
-/// The blasts whose delay is out (FUN_00224770 -> FUN_0022c4d0): every living body within the
-/// Damage radius of the blast with nothing of the world between it and the body's middle takes
-/// the share (half the roll, flat; Damage h_011cb154 true: the whole roll to half the radius,
-/// then (1 - 2 (d / r - 0.5))^2 of it), with no hit part (FUN_00224a90 passes 0), x 0.7 on the
-/// shooter's own side (the shooter too), x the victim's step and damage-type factor
-/// (play_damage.rs); the player's view goes red. Then the scorches and sounds due.
+/// The blasts whose delay is out (FUN_00224770 -> FUN_0022c4d0): every living body the blast's
+/// ball meets (one of its hit parts within the Damage radius and BLAST_PART_REACH more), with
+/// nothing of the world between the blast and the bone of a part it meets, takes the share (half
+/// the roll, flat; Damage h_011cb154 true: the whole roll to half the radius, then (1 - 2 (d / r -
+/// 0.5))^2 of it, d to its root), with no hit part (FUN_00224a90 passes 0), x 0.7 on the shooter's
+/// own side (the shooter too), x the victim's step and damage-type factor (play_damage.rs); the
+/// player's view goes red. No living body is moved (FUN_00224a90 pushes only loose objects; the
+/// push given to `hurt_still` only aims the blood and throws a body it kills). Then the scorches
+/// and sounds due.
 #[allow(clippy::too_many_arguments)]
 fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut state: ResMut<MissileState>,
                mut tint: ResMut<ScreenTint>, mut decals: ResMut<super::fx::DecalRequests>, test: Option<Res<super::testmap::TestMap>>,
@@ -1085,26 +1121,49 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             if u.dead {
                 continue;
             }
-            // the nearest point of the body's cylinder
+            // what of the body the blast's ball meets (FUN_00224a90: one of its collision-bone
+            // bodies overlapping the ball): its hit parts' surfaces as drawn
+            // (`damage::part_distances`; lying knocked down, its ragdoll's bones, `lying_parts`),
+            // each within the radius and BLAST_PART_REACH more; a body without them (no model or
+            // hit-part list) by its standing cylinder, BLAST_BODY_REACH round and BODY_HEIGHT tall
+            // from the feet
             let f = feet(u);
-            let across = (Vec2::new(b.at.x - f.x, b.at.z - f.z).length() - BLAST_BODY_REACH).max(0.0);
-            let up = b.at.y - b.at.y.clamp(f.y, f.y + BODY_HEIGHT);
-            let d = across.hypot(up);
-            if d > radius {
+            let middle = f + Vec3::Y * BODY_MIDDLE;
+            let parts = if knocked_down(u) { lying_parts(u, b.at) } else { damage::part_distances(u, &game.0, b.at) };
+            let reach: Vec<(f32, Vec3)> = if parts.is_empty() {
+                let across = (Vec2::new(b.at.x - f.x, b.at.z - f.z).length() - BLAST_BODY_REACH).max(0.0);
+                let up = b.at.y - b.at.y.clamp(f.y, f.y + BODY_HEIGHT);
+                vec![(across.hypot(up), middle)]
+            } else {
+                parts.iter().map(|&(d, bone)| ((d - BLAST_PART_REACH).max(0.0), bone)).collect()
+            };
+            let near = parts.first().map_or(reach[0].0, |p| p.0);
+            let by = if parts.is_empty() { "its cylinder" } else { "its nearest part" };
+            if reach[0].0 > radius {
+                if log && reach[0].0 <= radius + 1.0 {
+                    println!("t {now:.2}: missile {} blast: {} out of reach ({by} {near:.2} m away)", b.id, name(u));
+                }
                 continue;
             }
-            let middle = f + Vec3::Y * BODY_MIDDLE;
-            let to = middle - b.eye;
-            if to.length() > 0.05 && ray_hit(b.eye, to.normalize(), to.length()).is_some() {
+            // its line of sight: from the blast to the bone of a part in reach, the nearest first
+            // (the game's ray goes from the centre to each listed bone body's position,
+            // FUN_002b3970; one clear is enough, and a character behind cover isn't gathered)
+            let clear = reach.iter().take_while(|r| r.0 <= radius).find(|r| {
+                let to = r.1 - b.eye;
+                to.length() <= 0.05 || ray_hit(b.eye, to.normalize(), to.length()).is_none()
+            });
+            if clear.is_none() {
                 if log {
-                    println!("t {now:.2}: missile {} blast: {} {d:.1} m away, behind cover (from {:.2} to {middle:.2}: met at {:.2} m)", b.id, name(u), b.eye,
-                             ray_hit(b.eye, to.normalize(), to.length()).unwrap_or(0.0));
+                    let to = reach[0].1 - b.eye;
+                    println!("t {now:.2}: missile {} blast: {} {near:.1} m away, behind cover (from {:.2} to {:.2}: met at {:.2} m)", b.id, name(u), b.eye,
+                             reach[0].1, ray_hit(b.eye, to.normalize_or(Vec3::Y), to.length()).unwrap_or(0.0));
                 }
                 continue;
             }
             let share = if def.blast_core {
-                // (the character's size term, its skill's vtable +0xe0, is 0 for the squad)
-                let x = d / radius;
+                // (the character's size term, its skill's vtable +0xe0, is 0 for the squad; the
+                // entry's point is the character's position, vtable +0x40: its root, FUN_00224a90)
+                let x = root_point(u).distance(b.at) / radius;
                 if x <= 0.5 { b.roll } else { (1.0 - 2.0 * (x - 0.5)).clamp(0.0, 1.0).powi(2) * b.roll }
             } else {
                 b.roll * BLAST_SHARE
@@ -1120,7 +1179,7 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
                 tint.0 = 0.0;
             }
             if log {
-                println!("t {now:.2}: missile {} blast: {} {d:.1} m away takes {amount:.1} ({kind}{}, x{:.2} the step) -> {:.1} / {:.0}", b.id, name(u),
+                println!("t {now:.2}: missile {} blast: {} ({by} {near:.2} m away) takes {amount:.1} ({kind}{}, x{:.2} the step) -> {:.1} / {:.0}", b.id, name(u),
                          if hit.friendly < 1.0 { ", own side x0.7" } else { "" }, hit.step, u.health, u.max_health);
             }
         }

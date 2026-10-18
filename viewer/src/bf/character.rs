@@ -304,6 +304,8 @@ pub struct Game {
     pub reticule: ReticuleOptions,
     /// game-options `<radar>`: the radar's range and the radar-triggers' cue (see `RadarOptions`)
     pub radar: RadarOptions,
+    /// game-options `<character-options>`: the scope's zoom times (see `ScopeOptions`)
+    pub scope: ScopeOptions,
     /// game-options' characters (h_f5a42d61): the names the DNA is found by (see `GameCharacter`)
     pub option_characters: Vec<GameCharacter>,
     /// game-options `<combat-skills>`: the skills' own tuning (see `CombatSkills`)
@@ -463,6 +465,37 @@ impl Default for RadarOptions {
         RadarOptions { enable: true, by_activity: false, max_range: 120.0, sound: 0xF674_FC4F }
     }
 }
+
+/// game-options `<character-options><h_ebe93276 zoom-level h_1858b846 h_03a75ca9>` (line 194 of
+/// the decoded decompiled/xml/common/game-options-en.xml): its attribute handler 0x19f640 stores
+/// h_1858b846 at settings +0x4e4 and h_03a75ca9 at +0x4e8 (`zoom-level`, h_0c4b1791 by hashing,
+/// "5 15 35", goes elsewhere through +0x54 and isn't read by the scope), the settings the app's
+/// vtable +0x48 returns; 0x12e2c7-0x12e2eb copies the two to the globals 0x4699d0 / 0x4699d4,
+/// which the character's scope ramp (FUN_0011aa20 at 0x11acc6) reads as the time a level takes
+/// to zoom in and out (play.rs `follow_camera`). The defaults are the shipped file's.
+#[derive(Clone, Copy, Debug)]
+pub struct ScopeOptions {
+    /// h_1858b846 (+0x4e4 -> 0x4699d0): 0.3 s, the time from one level's zoom to the next's
+    /// (FUN_0011ae80) and the progress into the scope (char+0x7cc)
+    pub zoom_in: f32,
+    /// h_03a75ca9 (+0x4e8 -> 0x4699d4): 0.3 s, the time the top level's zoom takes to fall to
+    /// nothing on the way out (FUN_0011af10) and the progress out
+    pub zoom_out: f32,
+}
+
+impl Default for ScopeOptions {
+    /// The shipped game-options-en.xml's: 0.3 s in, 0.3 s out.
+    fn default() -> Self {
+        ScopeOptions { zoom_in: 0.3, zoom_out: 0.3 }
+    }
+}
+
+/// game-options `<character-options>` (h_04a05d81 by hashing) and its zoom element h_ebe93276
+/// (`ScopeOptions`), and that element's two times.
+const H_CHARACTER_OPTIONS: u32 = 0x04A0_5D81;
+const H_ZOOM_OPTIONS: u32 = 0xEBE9_3276;
+const H_ZOOM_IN_TIME: u32 = 0x1858_B846;
+const H_ZOOM_OUT_TIME: u32 = 0x03A7_5CA9;
 
 /// game-options `<combat-skills>` (h_f7bc2603, name recovered by hashing; line 158 of the decoded
 /// decompiled/xml/common/game-options-en.xml): one block per skill, parsed by FUN_0019e1f0 into
@@ -1140,6 +1173,7 @@ impl Game {
             difficulty_settings: None,
             reticule: ReticuleOptions::default(),
             radar: RadarOptions::default(),
+            scope: ScopeOptions::default(),
             option_characters: vec![],
             combat_skills: CombatSkills::default(),
             hud_safe: [48.0, 36.0],
@@ -1335,6 +1369,13 @@ impl Game {
                     max_range: num(h("max-range")).filter(|&m| m > 0.0).unwrap_or(d.max_range),
                     sound: r.attr(H_RADAR_SOUND).and_then(|v| v.as_hash()).filter(|&s| s != 0 && s != h("")).unwrap_or(d.sound),
                 };
+            }
+            // the scope's zoom times: <character-options><h_ebe93276 zoom-level h_1858b846
+            // h_03a75ca9> (ScopeOptions)
+            if let Some(z) = root.walk().into_iter().find(|e| e.name == H_CHARACTER_OPTIONS).and_then(|c| c.child(H_ZOOM_OPTIONS)) {
+                let num = |k: u32| z.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+                let d = ScopeOptions::default();
+                self.scope = ScopeOptions { zoom_in: num(H_ZOOM_IN_TIME).unwrap_or(d.zoom_in), zoom_out: num(H_ZOOM_OUT_TIME).unwrap_or(d.zoom_out) };
             }
             // the characters: <h_f5a42d61><character h_07f2f670 archetype-name gameflag-path ..> (GameCharacter)
             if let Some(list) = root.walk().into_iter().find(|e| e.name == H_GAME_CHARACTERS) {
