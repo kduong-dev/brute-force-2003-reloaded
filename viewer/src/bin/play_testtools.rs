@@ -1019,11 +1019,15 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         m.rng ^= id.wrapping_mul(0x9E37_79B9) | 1;
         // its brain off (no hit reactions: play_enemies.rs)
         m.enemy.frozen = frozen;
-        // a placement's: its weapons and personality (play_enemies.rs; its type's otherwise)
+        // a placement's: its weapons and personality (play_enemies.rs; its type's otherwise), and
+        // its sight (its `<ai>`'s vision and field-of-view, play_brain.rs `Sensor`)
         if let Some(pl) = &placed {
             m.enemy.weapons = Some(pl.weapons.iter().map(|w| w.0).collect());
             m.enemy.personality = pl.ai.personalities[0];
+            m.enemy.ai = Some(pl.ai.clone());
         }
+        // (its sensor from the spawn on: the model's load sets it again, play.rs `spawn_unit`)
+        m.sensor.set(game.0.character_type(kind), m.enemy.ai.as_ref());
         let label = format!("{} {} ({})", side(team), npc_name(&game.0, &m), if fight { "fight" } else if frozen { "frozen" } else { "dummy" });
         if log {
             let from = placed.as_ref().map_or(String::new(), |pl| format!(", placement h_{:08x} [{}] weapons {:?} personality h_{:08x}", pl.name, pl.archive,
@@ -1114,8 +1118,10 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
 
 /// The test map's NPC "AI" (see the module's notes), in place of the squad AI: it stands where
 /// it was put; a dummy faces the way it was put and holds fire; one set to fight aims and fires
-/// at `target` (a hostile in sight, from `hostile_in_sight`) with the squad AI's `ai_fire`.
-pub(super) fn npc_ai(m: &mut Player, target: Option<Vec3>, dt: f32) {
+/// at `target` (a hostile in sight, from play_brain.rs `glance`: its type's sight distance and
+/// field of view, or its placement's) with the squad AI's `ai_fire`; with nothing to fire at,
+/// one set to fight turns to `toward` (a known enemy's last place: one that shot it from behind).
+pub(super) fn npc_ai(m: &mut Player, target: Option<Vec3>, toward: Option<Vec3>, dt: f32) {
     let Some(npc) = m.npc else { return };
     m.move_input = Vec2::ZERO;
     m.sprint = false;
@@ -1133,7 +1139,10 @@ pub(super) fn npc_ai(m: &mut Player, target: Option<Vec3>, dt: f32) {
     m.cam_yaw = npc.face;
     m.face_yaw = Some(npc.face);
     let target = target.filter(|_| npc.fight);
-    m.aim = target.is_some();
+    // (one set to fight, with nothing to fire at, turns to a known enemy's last place, gun up:
+    // `toward`, play_brain.rs `glance`)
+    let turned = npc.fight && target.is_none() && toward.is_some_and(|p| super::face_toward(m, p));
+    m.aim = target.is_some() || turned;
     ai_fire(m, target, dt);
 }
 

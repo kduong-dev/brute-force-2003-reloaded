@@ -101,7 +101,7 @@ grenades go with control. Every portrait's tab shows the follow-order arrows; a 
 appears beside the portrait while that member talks. The one you control is the player; the other
 three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
 catch up, walking the last bit), look where you look, and
-reload on their own. They never fire just because you do - only at enemies they can see (none in the main game yet; the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
+reload on their own. They never fire just because you do - only at enemies they can see (by the AI's sensor: their vision-range, x1.15 for one they know, 90 degrees either way of their facing, a clear line; [brain.md](brain.md) "Sight and contacts", #197), within their gun's range (the level's characters on another side, and the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
 green blips on the radar (turning with the camera, at the radar's scale: see **Radar** below). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
 
 HUD health / stamina frame: the original's own art, the tutorial's picture of it (`h_17f34cbe`,
@@ -320,7 +320,13 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
 * **The crosshair** is the held weapon's 64 × 64 texture drawn 1:1, centred at (320, 192), the
   same standing, firing and moving; in the scope it moves to (320, 240) at the same size. It's
   hidden during a weapon switch, from the old gun's drop to the new one's grab (the takes: gone
-  ~0.5 s after Y, back at ~0.95 s). It stays, unchanged, while a grenade throw charges and
+  ~0.5 s after Y, back at ~0.95 s, measured from the input to the picture; less xemu's picture
+  lag and the rig's input delay, 0.14-0.21 s, the game's are about 0.33 and 0.78 s: #140,
+  xemu.md "Timing in the takes"). The demo keys them on the switch clip's drop and grab events,
+  which for Tex's clip fall at 0.50 and 1.13 s (`-- --test BF_TEST_SWITCH=2.0`, the log's
+  "switch to weapon 1: ... drop 0.50s, grab 1.13s"; the crosshair gone and back on those frames):
+  0.17 and 0.35 s later than the corrected figures, a difference to re-check from a marker-synced
+  take timed by the switch's sounds before anything is changed. It stays, unchanged, while a grenade throw charges and
   through the throw: a thrown grenade has no crosshair of its own (#119; `todo/119` take01).
   Aiming and shots go through it (play.rs `CROSSHAIR_UP`). The
   game also hides it during its pickup motion; the test map's rack has none.
@@ -541,14 +547,34 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   is owed its shot an empty one runs its dry cycle (the request sets both flags), but the demo
   clicks and syncs the LZR recharge only while the button is down (`u.fire`, play_ammo.rs); the
   game's FUN_002327f0 clicks on every such cycle, so an empty gun after a short tap stays silent
-  in the demo. From idle the gun is raised first (the demo's 0.2 s, which the takes' 0.19-0.24 s
-  press-to-shot fits); after a shot it stays up 4 s
-  (`READY_HOLD`: FUN_00123f60 keeps +0x7dc at 4 or more, medium confidence), so the takes' taps
-  2.2 s apart fire at once (0.07-0.11 s). Checked: 80 ms Bower taps at 2, 4 and 6 s fire at
-  +0.20, +0.13 and +0.13 s (15 fps capture steps); at `BF_CAPTURE_FPS=60`, +0.20 and +0.03 s.
-  The shot comes 0.20-0.23 s after the frame that sees the press; at 15 fps a
+  in the demo. From idle the gun is raised first, for the character's own ready time (#140;
+  todo/140-footage-timing/answer.md §1): FUN_00123ea0 starts the ready timer at 4 + its motion
+  set's `pc-transition-ready in-time` while a player controls it, else its
+  `npc-transition-ready in-time` (FUN_0010fce0; `characters/ms_<name>.xml`, h_f599b114 /
+  h_170db5cd), and the fire command fires nothing while the timer is over 4. The squad's pc
+  in-time is 0.1 s, so a tap's round comes on the 3rd or 4th 30 Hz game frame after the press,
+  0.10-0.13 s (`raise`: the in-time and one game frame, as the game tests the timer before it
+  counts it down); as AI the squad's is 0.2 s (Brutus 0.3), e40's Shrike Soldier 0.3 and Heavy
+  0.4. The demo's 0.2 s before was fitted to the takes' 0.19-0.24 s press-to-shot, which ran
+  from the pad input to the 10 Hz watch log, so it held the rig's 0.02-0.06 s input delay and
+  the log's 0-0.1 s lateness on top of the game's 0.10-0.13 (xemu.md, "Timing in the takes").
+  The ready pose blends in over the same in-time and out over the out-time (FUN_0011a440: 0.2 s
+  for the squad), where other clip changes take the demo's 0.2 s. An AI character raises its gun
+  as it takes up a target (the attack check's FUN_00123ea0, 0x2509c; play.rs `ai_fire`), so its
+  first round waits its npc in-time, which runs alongside the demo's own opening delay (0.2-0.8
+  s, `ai_delay`) and is mostly hidden by it. After a shot the gun stays up 4 s
+  (`READY_HOLD`: FUN_00123f60 keeps +0x7dc at 4 or more, medium confidence), so a tap within it
+  fires in the frame the press is seen (the takes' taps 2.2 s apart logged 0.07-0.11 s after the
+  input: the same two delays). Checked (`-- --test BF_NO_SQUAD=1 BF_TEST_GOTO=0,4,0,4
+  BF_TEST_WEAPON="Bower 20" BF_TEST_TRIGGER=2.0-2.08,4.0-4.08,6.0-6.08 BF_SHOT_LOG=1`): at
+  `BF_CAPTURE_FPS=60` the press is seen at 2.03 ("raises the gun: the first round in 0.1 s
+  (pc-transition-ready in-time)") and the round goes at 2.13, +0.10; the taps at 4 and 6 s fire
+  in their own frame (4.03, 6.03). At 15 fps steps the first is seen at 2.07 and fires at 2.13
+  (the next step); before #140 these were +0.20 and +0.03 at 60 fps. At 15 fps a
   `BF_TEST_TRIGGER` window starting on a frame's time (e.g. 3.0 s) can be seen only on the next
-  step (3.067 s), so that tap's shot logs at +0.30 from the window's start.
+  step (3.067 s). An e40 Shrike Soldier on the test map (`BF_TEST_NPC=...,fight`) logs "raises
+  the gun: the first round in 0.3 s (npc-transition-ready in-time)" as it takes Tex up, and fires
+  0.87 s later (its opening delay).
 * **The burst counter** is cleared by a reload starting (FUN_0022daf0), a dry click
   (FUN_002327f0) and a switch (FUN_0022dc00), as in the game.
 * **The seed** of a shooter's fire loop is the demo's own hash, character x 7919 + NPC number x

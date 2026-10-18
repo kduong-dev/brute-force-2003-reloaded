@@ -73,7 +73,46 @@ const SQUAD: usize = 4;
 /// name is empty: what's still looked up by slot name (chatter, skills, the scope and camera)
 /// finds nothing there, so it says nothing and has no skill.
 const OTHER: usize = 4;
+/// The crossfade between two gait or action clips (s): the demo's (the game's MOTION
+/// `transition`s aren't read here); a change between the carried and the ready set takes the
+/// ready times instead (`ready_times`, #140).
 const FADE: f32 = 0.2;
+/// The ready times (in-time, out-time; s) of a character whose type has no motion set loaded
+/// (every type in the data names one): the demo's raise before #140 (0.2 s, fitted to the takes'
+/// input-to-log times, which hold the rig's delay and the log's lateness: todo/140 answer §2) and
+/// the crossfade.
+const READY_FALLBACK: (f32, f32) = (0.2, FADE);
+
+/// `p`'s ready times (in-time, out-time; s), `l` its loaded character: its motion set's
+/// `pc-transition-ready` while a human player controls it, else its `npc-transition-ready`
+/// (FUN_0010fce0 for the raise: 4.0 + type+0x230 or +0x238; FUN_0011a440 by FUN_00112800 for the
+/// ready pose's blend). The squad's: pc 0.1 / 0.2, npc 0.2 / 0.2 (Brutus 0.3 / 0.2); e40's
+/// Shrikes pc 0.01 / 0.2, npc 0.4 / 0.3.
+fn ready_times(p: &Player, l: &Loaded) -> (f32, f32) {
+    if p.controlled { l.ready_pc } else { l.ready_npc }
+}
+
+/// Raise the gun before a first shot (FUN_00123ea0 with the ready timer out): FUN_00123f60 starts
+/// the timer at 4 + the in-time (FUN_0010fce0) and the fire command (CT_FIRE_WEAPON, 0x1225d7)
+/// fires nothing while it's over 4, so the first round waits the in-time. The game tests the
+/// timer in the command (0x1225d7) before the item update counts it down (FUN_0011a440,
+/// 0x11a636), where the demo's fire loop counts a cooldown down and then tests it in one game
+/// frame: so both hands' cooldowns are held at the in-time and one game frame (shots::TICK), and
+/// with 0.1 s the round comes on the 3rd or 4th 30 Hz frame after the press (as the frames' time
+/// wobbles), 0.10-0.13 s, as the game's timer gives it (todo/140 answer §1.1). The ready timer
+/// runs from here (`FireState::raise`), shot or not. BF_SHOT_LOG logs it.
+fn raise(p: &mut Player, in_time: f32) {
+    p.fire_state.raise(in_time);
+    let wait = in_time + shots::TICK;
+    p.cooldown = p.cooldown.max(wait);
+    if let Some(s) = p.second.as_mut() {
+        s.cooldown = s.cooldown.max(wait);
+    }
+    if std::env::var("BF_SHOT_LOG").is_ok() {
+        println!("t={:.2} {}: raises the gun: the first round in {in_time} s ({}-transition-ready in-time)", p.sim_time, unit_name(p),
+                 if p.controlled { "pc" } else { "npc" });
+    }
+}
 const TURN_RATE: f32 = 9.0;
 /// yaw (radians) the spine takes when aiming standing; the feet turn for the rest
 const AIM_SPINE_YAW: f32 = 0.2;
@@ -971,6 +1010,9 @@ struct Layer {
     /// how fast it plays (1 but for an enemy's walking clip driven at its type's walk speed,
     /// play_enemies.rs)
     rate: f32,
+    /// how long (s) it takes to fade in over the others: FADE, or a ready time when it's the gun
+    /// going up or down (#140, `ready_times`)
+    fade: f32,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
@@ -1369,7 +1411,9 @@ const CHARGE_TIME: f32 = 0.6;
 /// after, so the meter's update (0xad950) counts it down from the last charging frame and draws
 /// the meter at clamp(2 x timer, 0, 1)^3 (play_hud.rs): full 0.5 s, gone at 1.0 s (#162).
 pub const METER_TIME: f32 = 1.0;
-/// seconds the chosen member's name shows before control passes to them
+/// seconds the chosen member's name shows before control passes to them. Where it was measured
+/// isn't recorded: if from the input to the picture, the game's is ~0.4-0.45 s (#140, todo/140
+/// answer §2), to be re-measured from a marker-synced take before it's changed
 const SELECT_TIME: f32 = 0.6;
 /// chatter line set the character you hand over from says as they drop back into the squad
 /// ("I'm right behind you", "Following at a distance", ...: line_tag f415ab02 in all four
@@ -1586,9 +1630,11 @@ struct Loaded {
     foot_range: HashMap<usize, [(f32, f32); 2]>,
     footstep_type: i64,
     jump_sound: u32,
-    /// its type's `<ai vision-range>` (m; 0 without one): how far its AI sees a fully visible
-    /// character (`sight_reach`)
-    vision: f32,
+    /// its motion set's `pc-transition-ready` and `npc-transition-ready` (in-time, out-time), in
+    /// seconds (bf/character_type.rs `MotionSet`, #140): the gun's raise before a first shot and
+    /// the ready pose's blend in and out (`ready_times`); READY_FALLBACK for a type without a set
+    ready_pc: (f32, f32),
+    ready_npc: (f32, f32),
     weapons: Vec<HeldWeapon>,
     /// switch clips by the slot being switched to (0: from the second weapon, 1: to it)
     switch_clips: [Option<SwitchClip>; 2],
@@ -1970,8 +2016,18 @@ struct Player {
     /// its step runs the game's clock), until play_triggers.rs `spawn_copy` brings it (#222)
     absent: bool,
     /// the brain of a character a spawn-trigger made (#227, play_brain.rs: its home, patrol,
-    /// sight and contacts, aim); None for the squad and the test map's NPCs
+    /// target, aim); None for the squad and the test map's NPCs
     brain: Option<Box<brain::Brain>>,
+    /// its AI's sensor (char+0x1b4, play_brain.rs `Sensor`): its sight distance and field of view,
+    /// from its type and the placement it came from (#197), and the hostiles it knows
+    sensor: brain::Sensor,
+    /// a human player controls it (FUN_00112800's test, through FUN_0010fce0): its motion set's
+    /// `pc-transition-ready` times are its, else `npc-transition-ready` (#140, `ready_times`). Set
+    /// each frame by `update_player`: the controlled character's only
+    controlled: bool,
+    /// it stood in its ready set last frame (the gun up: `step_player`), so a change of set is
+    /// blended over the ready times (#140)
+    ready_pose: bool,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2030,6 +2086,9 @@ impl Player {
             script_walk: Default::default(),
             absent: false,
             brain: None,
+            sensor: Default::default(),
+            controlled: false,
+            ready_pose: false,
         }
     }
 
@@ -2152,7 +2211,7 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
 /// Squad AI: keep to a formation place round the leader (run / sprint to catch up, walk the
 /// last bit) and look where the leader looks. They shoot only at an enemy they can see
 /// (`target`, from `hostile_in_sight`). Reloads happen by themselves (empty clip).
-fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>) {
+fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
     let f = FORMATION[slot % FORMATION.len()];
     let mut goal = leader.position + Quat::from_rotation_y(heading) * Vec3::new(f.x, 0.0, f.y);
     // out of the leader's line of fire: a place in the lane moves to its side, and anyone
@@ -2233,7 +2292,11 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     // because the player fires. The main game has no enemies yet, so they hold fire; the test
     // map's enemy NPCs (play_testtools.rs) are the only targets. (Nor while their skill says hold
     // fire: `update_player` leaves the target out then)
-    m.aim = target.is_some() || cautious;
+    // a known enemy it doesn't see (it shot from behind, or went behind cover): turned to its last
+    // place with the gun up (`toward`: the brain's turn toward a known contact, FUN_0002f960), so
+    // its field of view finds it
+    let turned = target.is_none() && toward.is_some_and(|p| face_toward(m, p));
+    m.aim = target.is_some() || cautious || turned;
     ai_fire(m, target, dt);
     m.switch_pressed = false;
     m.reload_pressed = false;
@@ -2246,6 +2309,19 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
 /// in bursts and pauses of its own length. Without a target it holds fire. (The squad AI's
 /// existing burst timing; the aim is exact: the demo's choice, no spread is read.)
 fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
+    // a target with the gun down (its ready timer out: none started by a raise or a shot in the
+    // last 4 s): the attack check raises it (FUN_00024f80 -> FUN_00123ea0 at 0x2509c), and its
+    // shots go through the fire command (FUN_0004dfb0: CT_FIRE_WEAPON, 0x1225d7), which fires
+    // nothing until the timer is down to 4: so its first round waits its npc in-time (#140,
+    // `raise`), alongside the demo's own opening delay (`ai_delay`). (No target before its model
+    // is in: it can't raise, step or fire yet)
+    let up = m.loaded.as_ref().map(|l| ready_times(m, l).0);
+    let target = target.filter(|_| up.is_some());
+    if let (Some(_), Some(in_time)) = (target, up) {
+        if !m.fire_state.raised() {
+            raise(m, in_time);
+        }
+    }
     m.ai_target = target;
     let Some(t) = target else {
         m.fire = false;
@@ -2272,6 +2348,20 @@ fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
         }
         m.fire = m.ai_burst;
     }
+}
+
+/// An AI character with nothing to fire at turns to `p` (a known contact's last place, play_brain.rs
+/// `Sensor::toward`): its "camera" and feet onto it, as `ai_fire` does onto a target. True once
+/// set (false for a point on top of it).
+fn face_toward(m: &mut Player, p: Vec3) -> bool {
+    let to = p - (m.position + Vec3::Y * (GROUND + m.height + AI_EYE));
+    if to.xz().length_squared() < 1e-4 {
+        return false;
+    }
+    m.cam_yaw = (-to.x).atan2(-to.z);
+    m.cam_pitch = (to.y / to.length().max(1e-3)).clamp(-1.0, 1.0).asin().clamp(-1.2, 0.5);
+    m.face_yaw = Some(m.cam_yaw);
+    true
 }
 
 /// Where an AI character looks from (m above the feet) and where it aims on a target (its
@@ -2317,22 +2407,15 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
     }).collect()
 }
 
-/// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) can see,
-/// its place in `sight` and its distance: on another team, within its held weapon's range (at
-/// least AI_MIN_RANGE), within its sight (`sight_reach` x the target's visibility, FUN_0004d140:
-/// a stealthed Hawk drops out of it as she fades), nothing of the world (or the test floor's
-/// pillars) between its eyes and their chest. They see all round (the demo's choice; the game's
-/// type has a half-fov). Never anyone in the main game: everyone is on team 0; BF_TEST_HOSTILE's
-/// held squadmate isn't a target either.
+/// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) sees now,
+/// its place in `sight` and its distance, when it's within the held gun's reach (`ai_range`): by
+/// its sensor (play_brain.rs `Sensor::scan`, #197: its sight distance x 1.15 for a contact x
+/// the target's visibility, its field of view, the ray), without changing what it knows. For a
+/// skill line's "fighting" condition (play_skills.rs); the AI itself sees by `brain::glance` or
+/// `brain::sense`. Never anyone in the main game but the level's characters on another side;
+/// BF_TEST_HOSTILE's held squadmate isn't a target either.
 fn nearest_hostile(m: &Player, me: usize, sight: &[Seen]) -> Option<(usize, f32)> {
-    let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
-    let reach = sight_reach(m, range);
-    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
-    sight.iter().enumerate()
-        .filter(|&(i, s)| i != me && s.target && s.team != m.team)
-        .map(|(i, s)| (i, s.chest, eye.distance(s.chest), s.visibility))
-        .filter(|&(_, at, d, v)| d < range && d <= reach * v && ray_hit(eye, (at - eye) / d.max(1e-3), d - 0.3).is_none())
-        .min_by(|a, b| a.2.total_cmp(&b.2)).map(|(i, _, d, _)| (i, d))
+    brain::nearest_within(&m.sensor.scan(m, me, sight), ai_range(m))
 }
 
 /// The chest of the nearest hostile `m` can see (`nearest_hostile`).
@@ -2340,18 +2423,11 @@ fn hostile_in_sight(m: &Player, me: usize, sight: &[Seen]) -> Option<Vec3> {
     nearest_hostile(m, me, sight).map(|(i, _)| sight[i].chest)
 }
 
-/// How far (m) `m`'s AI sees a fully visible character: FUN_0004d140 takes the brain's sight
-/// distance (its vtable +0xa8) x FUN_000481c0's factor x the target's visibility (its combat
-/// target's slot 0, `Seen::visibility`) and tests the squared distance against it. The sight
-/// distance is read as the type's `<ai vision-range>` (the type parser stores it at +0x24 of the
-/// AI record, 0x1885cb; the getter isn't traced): 80 for Brutus, Hawk and Tex, 105 for Flint, 75
-/// for e40's Shrikes. FUN_000481c0's factor is 1, or 1.15 (0x3f933333) in a state not traced, x3
-/// with a gun whose data +0x16c is set: left at 1. #35 take14 fits it: e40's Shrike (vision-range
-/// 75) 15.7 m from Hawk lost her between her visibility 0.20 and 0.17 (5.72-5.77 s), where 75 x v
-/// passes 15.7 m at 0.21 (and 86 x v, with the 1.15, at 0.18). A type without a vision-range
-/// sees as far as `range`, the held weapon's (the demo's own reach).
-fn sight_reach(m: &Player, range: f32) -> f32 {
-    m.loaded.as_ref().map(|l| l.vision).filter(|&v| v > 0.0).unwrap_or(range)
+/// How far (m) `m`'s AI fires: its held weapon's range, at least AI_MIN_RANGE. The shot's own
+/// test, not sight's (FUN_00024f80 doesn't compare the distance with the gun's range;
+/// todo/197-ai-sight/answer.md §2); a type with no vision-range sees this far too (the demo's).
+fn ai_range(m: &Player) -> f32 {
+    m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE))
 }
 
 /// Hand control to another squad member: their name shows over them for SELECT_TIME (as in the
@@ -3298,9 +3374,15 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     // an enemy's personality, stamina refill and shield (play_enemies.rs)
     enemies::spawned(p, ty.as_ref());
     p.name = label;
-    let vision = ty.as_ref().map_or(0.0, |t| t.ai.vision_range);
+    // its AI's sensor: the sight distance and field of view of its type and the placement it came
+    // from (#197, play_brain.rs `Sensor`)
+    p.sensor.set(ty.as_ref(), p.enemy.ai.as_ref());
+    // the gun's raise and the ready pose's blend (#140): its motion set's ready times
+    let set = ty.as_ref().and_then(|t| game.motion_sets.get(&t.motion_set));
+    let (ready_pc, ready_npc) = set.map_or((READY_FALLBACK, READY_FALLBACK), |s| (s.pc_ready, s.npc_ready));
+    info!("{}: sight {} m, field of view {} deg; ready times pc {ready_pc:?}, npc {ready_npc:?}", p.name, p.sensor.vision, p.sensor.fov);
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  vision, weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
+                                  ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
 }
 
 fn read_input(
@@ -3625,6 +3707,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let h = heading.get_or_insert(player.yaw);
     *h = wrap_angle(*h + wrap_angle(player.yaw - *h) * (1.0 - (-1.5 * dt).exp()));
     let heading = *h;
+    // a player sees for the controlled character, so its sensor knows no one (#197: it starts
+    // afresh under the AI when control passes on); its ready times are the pc ones, the rest's
+    // the npc ones (#140)
+    player.sensor.clear();
+    player.controlled = true;
+    for m in squad.0.iter_mut() {
+        m.controlled = false;
+    }
     // take the loaded character out so the step can borrow it and mutate the player freely (one
     // out of the world yet, `Player::absent`, steps too: its step runs the game's clock, and no
     // input reaches it, play_script.rs `blocks_input`)
@@ -3644,6 +3734,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let patrols = map.0.as_ref().map_or(&[][..], |l| &l.patrols[..]);
     // a follower's formation place comes after the squad's own members' (play_brain.rs)
     let mut follower = squad.0.iter().filter(|m| m.in_squad()).count();
+    // each one's target this frame, for the squad's broadcast (play_brain.rs `broadcast`): the
+    // controlled character's the nearest hostile it sees
+    let mut held = vec![(0, (!player.dead).then(|| nearest_hostile(&player, 0, &sight)).flatten().map(|(i, _)| sight[i].who))];
     for (slot, m) in squad.0.iter_mut().enumerate() {
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
@@ -3656,16 +3749,19 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             m.sim_time += dt;
             continue;
         }
-        // (a level character's brain sees by its own sensor: its field of view, its contacts,
-        // play_brain.rs)
-        let seen = if m.brain.is_some() { brain::sense(m, slot + 1, &sight, dt) } else { nearest_hostile(m, slot + 1, &sight) };
+        // (its sensor, play_brain.rs: its sight distance, field of view and contacts, #197; a
+        // level character's brain keeps its target among them, the rest fire at the nearest seen)
+        // (`toward`: with nothing to fire at, where a brainless AI turns to, a contact's last place)
+        let (seen, toward) = if m.brain.is_some() { (brain::sense(m, slot + 1, &sight, dt), None) } else { brain::glance(m, slot + 1, &sight, dt, clock) };
         let target = seen.map(|(i, _)| sight[i].chest);
+        held.push((slot + 1, if m.brain.is_some() { brain::target(m) } else { seen.map(|(i, _)| sight[i].who) }));
         // BF_SIGHT_LOG: an AI character finding or losing its target
         if sight_log && saw.insert(m.who(), target.is_some()).is_none_or(|was| was != target.is_some()) {
-            let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+            let reach = m.sensor.reach(ai_range(m));
             let what = match seen {
-                Some((i, d)) => format!("sees unit {i} at {d:.1} m (its visibility {:.2}, reach {:.1} x it)", sight[i].visibility, sight_reach(m, range)),
-                None => format!("sees no hostile (reach {:.1} x their visibility)", sight_reach(m, range)),
+                Some((i, d)) => format!("sees unit {i} at {d:.1} m (its visibility {:.2}, reach {reach:.1} x it, x1.15 a contact; field of view {} deg)",
+                                        sight[i].visibility, m.sensor.fov),
+                None => format!("sees no hostile in its gun's reach {:.1} (sight {reach:.1} x their visibility, x1.15 a contact)", ai_range(m)),
             };
             println!("t={clock:.2} {}: {what}", unit_name(m));
         }
@@ -3687,9 +3783,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         } else if m.brain.is_some() {
             brain::think(m, &player, place, heading, dt, target, patrols, &game.0, difficulty.n);
         } else if m.npc.is_some() {
-            testtools::npc_ai(m, target, dt);
+            testtools::npc_ai(m, target, toward, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
-            squad_ai(m, &player, slot, heading, dt, target);
+            squad_ai(m, &player, slot, heading, dt, target, toward);
         }
         let Some(l) = m.loaded.take() else { continue };
         step_player(m, &l, &game.0, kits, dt, &mut transforms);
@@ -3697,6 +3793,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         m.thrown.clear();
         m.loaded = Some(l);
     }
+    // the squad tells each other of its targets (FUN_00045090, after the sense step)
+    brain::broadcast(&mut player, &mut squad.0, &held, &sight, dt, clock);
     // friendly fire: the player's shots this frame stop at the first teammate in their way
     let (shooter, team) = (player.who(), player.team);
     let now = player.sim_time;
@@ -5275,12 +5373,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let pulled = p.fire_state.pull(p.fire, can_fire);
     if pulled.contains(&true) {
         if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
-            // raise the gun before the first shot (both guns: take04's first berserk shots went
-            // in one frame)
-            p.cooldown = p.cooldown.max(0.2);
-            if let Some(s) = p.second.as_mut() {
-                s.cooldown = s.cooldown.max(0.2);
-            }
+            // raise the gun before the first shot, for the character's own in-time (#140; both
+            // guns: take04's first berserk shots went in one frame). The AI aims before it fires:
+            // its raise is `ai_fire`'s
+            raise(p, ready_times(p, l).0);
         }
         p.aim_hold = 0.7;
     }
@@ -5418,11 +5514,21 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // while aiming or firing. During a switch the set changes when the new gun is grabbed.
     // (the berserk set carried and aimed alike: its script is its ready-script)
     let set = &c.slots[if armed { stance_of(l, p.weapon) } else { 0 }];
+    let ready_set = special.is_none() && upper_aim && armed && set.rp.idle.is_some() && set.rp.run.is_some();
     let lo = match special {
         Some(s) => &s.loco,
-        None if upper_aim && armed && set.rp.idle.is_some() && set.rp.run.is_some() => &set.rp,
+        None if ready_set => &set.rp,
         None => &set.carry,
     };
+    // the gun going up or down: the ready pose blended in over the in-time and out over the
+    // out-time (FUN_0011a440: FUN_00150420 with the ready times as the timer leaves 0 and as it
+    // reaches it), any other change over FADE
+    let fade = match (p.ready_pose, ready_set) {
+        (false, true) => ready_times(p, l).0,
+        (true, false) => ready_times(p, l).1,
+        _ => FADE,
+    };
+    p.ready_pose = ready_set;
     let sides = special.map_or(&set.rp_side, |s| &s.side);
     let gait_clip = match p.gait {
         Gait::Idle => lo.idle,
@@ -5465,13 +5571,13 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         let phase = p.layers.last().map(|x| x.time / l.model.anims[x.clip].duration.max(1e-3)).unwrap_or(0.0);
         let first = p.layers.is_empty();
         let time = if once { 0.0 } else { phase * l.model.anims[want].duration };
-        p.layers.push(Layer { clip: want, time, weight: if first { 1.0 } else { 0.0 }, once, rate: 1.0 });
+        p.layers.push(Layer { clip: want, time, weight: if first { 1.0 } else { 0.0 }, once, rate: 1.0, fade });
     }
     if let (Some(s), Some(top)) = (&scripted, p.layers.last_mut()) {
         top.rate = s.rate;
     }
     let n = p.layers.len();
-    let top = (p.layers[n - 1].weight + dt / FADE).min(1.0);
+    let top = (p.layers[n - 1].weight + dt / p.layers[n - 1].fade.max(1e-3)).min(1.0);
     let rest: f32 = p.layers[..n - 1].iter().map(|x| x.weight).sum();
     for (i, layer) in p.layers.iter_mut().enumerate() {
         layer.weight = if i == n - 1 { top } else if rest > 0.0 { layer.weight / rest * (1.0 - top) } else { 0.0 };

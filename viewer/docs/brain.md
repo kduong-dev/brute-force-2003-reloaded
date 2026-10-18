@@ -97,18 +97,45 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
 * **Seen**: a living hostile (another team) within its sight distance x 1.15 once it's a contact
   (FUN_000481c0) x the hostile's visibility (a stealthed Hawk's near 0); within the placement's
   `field-of-view` (h_1b2327a0) either way of the way it looks (its aim while it fires, else its
-  facing); with nothing of the world between its eyes and the chest (the squad's ray, as
-  play.rs `nearest_hostile` casts it; the game's pair table casts its ray between the two
-  characters' FUN_0004cea0 points, FUN_00057a30, not matched here). The sight distance is the
+  facing); with nothing of the world between its eyes and the chest (the demo's eye-to-chest
+  ray; the game's pair table casts its ray between the two characters' FUN_0004cea0 points,
+  FUN_00057a30, not matched here: #244). The sight distance is the
   type's `vision-range` (the Red Hand 75 m, the marines 80), or the placement's own `vision` when
   its h_11cddd9f says so (the sniper lesson's target: 10 m). The field of view: 60 degrees the Red
   Hand, 90 the marines. The gun's range plays no part in sight.
 * **Contacts**: a new sighting becomes one; one unseen 15 s is forgotten, a dead or vanished one
-  at once, a stealthed one (visibility 0.2 or under) at once.
+  at once, a stealthed one (visibility 0.2 or under) at once, after the step's sightings as the
+  scan's tail does (0x443f1): so a stealthed Hawk never keeps the 1.15 (#197).
 * **The target**: the contact it fires at, kept while it's been seen in the last 3.75 s
   (EVT_TGT_LOST_SIGHT, FUN_0002e330; 10 s, FUN_0004a780), then the nearest seen.
 
-(`BF_SIGHT_LOG=1` still logs a brain finding or losing its target, as the squad's.)
+The sensor is `play_brain.rs`'s `Sensor` (`Player::sensor`: its sight distance, field of view
+and contacts), and the squad's AI and the test map's NPCs, which have no brain, see by it too
+(#197, `glance`): the same reach, 1.15, field of view (the placement's, else the type's
+`half-fov`: 90 degrees for the squad) and ray; their contacts are forgotten as the brain's
+(unseen 15 s, gone, or stealthed to 0.2), and they fire at the nearest contact they see within
+the gun's reach. One that hits them becomes a contact at any range when it's over 0.1 visible
+(EVT_DAMAGED's registration, 0x3ea02; a near miss tells them nothing), and with nothing to fire
+at they turn to the last place of the nearest contact seen in the last 3.75 s (the target's
+EVT_TGT_LOST_SIGHT time), gun up, as a brain turns to its target's: so a squadmate shot from
+behind, outside his 90 degrees, turns and fires back, and one whose enemy steps behind cover
+keeps facing where it went.
+
+The squad tells each other of its targets (FUN_00045090 after every sense step, FUN_00045250:
+EVT_ENEMY_BROADCAST, 39): a member holding a target (a brainless one's, a following brain's,
+the controlled character's nearest hostile in sight) tells every other living member at once
+and then every 2 s while it holds it (a look every 1 s without one). The wingmen's personality
+maps it to GOAL_WINGMAN_PURSUE and the quick goal "ADD OBJ TO CONTACTS": the demo makes it a
+contact of each (its last place renewed), so they turn to it and fire once they see it
+(`broadcast`; the pursuit is #26's). A wingman that knows no enemy and is hit gets
+EVT_DAMAGED_NO_ENEMIES, GOAL_INVESTIGATE_GUARD in its personality, which registers no one: the
+demo's registering and turning to the shooter stands in for that goal. With `sqbehind`'s
+staging (a Shrike behind Brutus's left on the test map, out of the squad's 90 degrees) Brutus is
+hit at 6.27 s and turns, Flint and Hawk are told at 6.40 and see it at 6.53 and 6.93: 24, 8 and
+23 shots (main, which saw all round: 29, 9, 24).
+
+(`BF_SIGHT_LOG=1` still logs a brain finding or losing its target, as the squad's; for the squad
+and the NPCs it also logs each contact found and forgotten.)
 
 ## Alert and the fight
 
@@ -274,6 +301,15 @@ todo/28-tutorial's takes:
   autopilot (the same log, 297 of 300); the NPC fight (the same combat log, 221 of 225: one
   tracer two frames earlier, where main had it before #224, and 1-2 pixels). The first patrol
   (with `BF_TEST_PANEL=a,1`) and the marines' fight as above.
+* **The shared sensor** (#197; main 403630b's build against this one): the first patrol's run
+  above, 40 s, gives the same brain and combat log line for line. The squad's and the NPCs'
+  sight on the test map (an e40 Shrike set to fight at (4.5, 4.3), Tex at z = 84.3 / 114.3, i.e.
+  80 / 110 m): no sighting, no shot, as main since #123; Tex walking in from 95 m: a contact at
+  74.8 m and fire; walking out from 70 m: fired on out to 81.6 m, lost at ~86 m (75 x 1.15,
+  7.53 s), forgotten 3.75 s later (11.27). take14's recipe (skills.md): lost at 5.87 as main,
+  "forgets Squad(2) (stealthed)". testtools.md's NPC fight: the same story (enemy Brutus fights
+  the squad and dies, Flint set to fight fires back, set to friend stops), the hits' order
+  shifted by the squad's field of view.
 
 ## Not done
 

@@ -39,19 +39,25 @@ decal, and a throw called off.
   crosshair (its `reticule-prefix`), and no grenade definition has one. The count drops at
   the button (the recordings: one game frame after it). The stance's throw clip takes the grenade in hand at its reach
   event - its trail (grenade_trail's smoke, riding on it) and the trail effect type's sound
-  (the Frag's hiss, ~0.33 s after the button in the recordings) start then - and lets go at
-  its release event (0.60 s after the button for Tex, as recorded). It flies at 12-20 m/s over
+  (the Frag's hiss, ~0.33 s after the button in the recordings, input to sound: ~0.27-0.31 s
+  less the rig's input delay, #140) start then - and lets go at its release event (0.60 s after
+  the button for Tex, as recorded: if that was the picture, the game's own release is ~0.40-0.46
+  s, the picture lagging 0.12-0.15 s and the input 0.02-0.06; which one the recording timed is
+  open, to be re-measured from a marker-synced take by the hiss onset, #140). It flies at 12-20 m/s over
   the charge, aimed 0.25 rad below the crosshair (at most 0.8 rad down), and keeps 0.3 of its
   speed along the ground per bounce: values fitted to the Frag recording (leaves the hand
-  0.60-0.63 s after the button, goes off 1.65-1.78 s later, so down 0.13-0.28 s after leaving
+  0.60-0.63 s after the button, input to picture, so with the 0.14-0.21 s of lag and input delay
+  in it, goes off 1.65-1.78 s later, so down 0.13-0.28 s after leaving
   the hand, a few metres ahead with the camera looking down, and resting near there), not
   from the data. Bounces are
   silent; the trail keeps puffing where it lies until the blast.
 * **Placing** (Roller, Sentry): the press drops the count and plays the event sound; the
   stance's `Sc_w1/w2_place_hi` clip takes it in hand at its reach event (0.23-0.47 s over the
-  squad's clips: the recordings' "in hand 0.38-0.47 s") and lets go at its 19f8311b event
-  (0.50-0.60 s); it drops from the hand at the feet (Tex's Roller is down 0.97 s after the
-  press; recorded ~1.05 s). Squadmates don't dive from one set down. The Roller then rolls
+  squad's clips: the recordings' "in hand 0.38-0.47 s", input to picture, so ~0.2-0.3 s in the
+  game's time, #140) and lets go at its 19f8311b event (0.50-0.60 s); it drops from the hand at
+  the feet (Tex's Roller is down 0.97 s after the press; recorded ~1.05 s input to picture, ~0.85-0.9
+  s in the game's time: so the demo's, from the clip's events, is probably 0.1-0.15 s late, not
+  0.08 s early; to be re-checked from a marker-synced take, #140). Squadmates don't dive from one set down. The Roller then rolls
   straight ahead at 4.7 m/s (4.4-5.0 measured), its object sound h_19dbc65d again every 0.97 s
   while it rolls (the recording's loop), full within 5 m and silent at 25 m (the sound's own
   `falloff 5` / `h_fd40e332 25`, sounds-mp1.xml); the fuse (25 s; the Sentry's 9999 s) runs
@@ -631,8 +637,10 @@ Verified (captures at 15 fps in the scratchpad; the reference frames are the use
 recordings at 60 fps):
 * Frag, test map (`--test BF_TEST_GOTO=0,4,0,4 BF_TEST_THROW=1.5,0.3 BF_CAMERA_PITCH=-0.5
   BF_CAMERA_DISTANCE=9 BF_VIEW_YAW=0.2`): button-up 1.8 s, leaves the hand 2.40 s, down 0.13 s
-  later 3.2 m ahead, blast 4.07 s: 2.27 s after the button (recorded 2.28-2.38), 1.67 s after
-  leaving the hand (recorded 1.65-1.78). Side by side with frag/a from its flash (frame 693) at
+  later 3.2 m ahead, blast 4.07 s: 2.27 s after the button (recorded 2.28-2.38, input to
+  picture: the game's ~2.1-2.2 s once the lag and input delay are taken off, #140, so the demo's
+  is likely ~0.1 s late, by the release above; the fuse itself fits), 1.67 s after leaving the
+  hand (recorded 1.65-1.78, picture to picture). Side by side with frag/a from its flash (frame 693) at
   matching times, 0-1 s: a white haze on the blast frame; the red tint two capture frames later
   (the recording's 701), as Tex 6.6 m away takes 12.6 of 115; the fireball turns orange at
   ~0.4-0.5 s and brown after, with no second white flash; a dark 6 m scorch after. The demo's
