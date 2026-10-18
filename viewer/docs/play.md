@@ -871,6 +871,16 @@ squad's LZRs and cutter go this way.
   * one of the row's four hit sounds at random (FUN_0022b5b0: the random state's low 2 bits),
     from the hit by the bank's distances (`distance_gain`: the sonic rows full within 9 m,
     silent beyond 20 m). Before, a world hit had no sound and no debris.
+  * The roll and the sound's pick are draws of the demo's copy of the game's one random state
+    (`GameRandom`: the LCG at 0x46cfd8, FUN_0022c940's roll from its bits 9-31), drawn per hit;
+    the hit effects' and each shot's flight effects' seeds are draws of it too (the demo's). The
+    game picks the sound by the state's low 2 bits, which such an LCG steps through with a
+    period of 4; there the rest of the game's draws mix them, here each shot draws the same count
+    and the low bits would pick one sound for good, so the demo picks by the top 2 of a draw
+    stirred by an integer hash (`GameRandom::stirred`; the raw top bits clustered too: a lone
+    shooter's first five hits drew one sound). A seed from the muzzle's place stood in at first
+    and saturated to 0 wherever its sum was negative: every hit at e34's gate had one sound, one
+    roll and one burst.
   * Each effect in its alignment's frame (`hit_frame`; the effect type's `alignment-type` per
     alchemy effect, FUN_0021a850, the ALIGN_TO_ table at 0x3bd298): 0 the shot's way (the frame
     FUN_0001d0c0 builds: its -z along the way), 1 that way reflected off the surface, 2 the
@@ -895,7 +905,8 @@ squad's LZRs and cutter go this way.
 Test hooks: `BF_SHOT_LOG=1` also prints the map's world materials as it loads ("world
 materials (id: triangles) 0: 15482 terrain + 4596, ..."), each world hit ("t=2.37 hit on world
 material 5 at [...] 8.4 m out (ammo-type 3): effect h_fed64261 sp 1.00 light h_eb110330 (the
-weapon's), debris h_fe578f8f sp 0.79, sound h_0655c729 vol 0.57") and each hole's life;
+weapon's), debris h_fe578f8f sp 0.79, sound h_0655c729 vol 0.57 (slot 1)": which of the row's
+four sounds the random state picked) and each hole's life;
 `BF_COMBAT_LOG=1` each flesh hit effect played from the data ("flesh hit effect h_177a62d8 at
 [...] sp 0.41 light h_eb110330").
 

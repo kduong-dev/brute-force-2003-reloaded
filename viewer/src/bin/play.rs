@@ -656,6 +656,7 @@ fn main() {
         .add_plugins(brain::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
+        .init_resource::<GameRandom>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
         .add_systems(OnExit(AppState::Playing), end_play)
         .add_systems(Update, (spawn_player, read_input.run_if(not(editing())), squad_control, doors, update_player, play_sounds,
@@ -6555,6 +6556,46 @@ impl Shot {
     }
 }
 
+/// default.xbe's one random state, the LCG at 0x46cfd8 (x 0x19660d + 0x3c6ef35f a draw, from the
+/// .bss's 0): a weapon hit takes its damage roll from it (FUN_0022c940: the new state's bits 9-31
+/// as a [0, 1) fraction) and its hit sound (FUN_0022b5b0: one of the struck material's four, by
+/// its low 2 bits; the demo's by a stirred draw, see `world_hit`). In the game every random
+/// choice draws from it, so its draws vary from hit to hit; the demo's copy is drawn by its shots
+/// only: each shot's flight effect's seed, and at a hit on the world the roll, the hit effects'
+/// seed and the sound (`projectiles`, `world_hit`; the seeds are the demo's draws). It replaces a
+/// seed from the muzzle's place, which saturated to 0 wherever x 977 + z 131 was negative (every
+/// shot at e34's gate: one sound, one roll, one burst).
+#[derive(Resource, Default)]
+struct GameRandom(u32);
+
+impl GameRandom {
+    /// The next state (FUN_0022c940's and FUN_0022b5b0's step).
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(0x0019_660D).wrapping_add(0x3C6E_F35F);
+        self.0
+    }
+
+    /// A fraction in [0, 1) as FUN_0022c940 makes it: the next state's bits 9-31 under a float's
+    /// exponent of 1 (1.0 to 2.0), less 1.
+    fn unit(&mut self) -> f32 {
+        f32::from_bits((self.next() >> 9) | 0x3F80_0000) - 1.0
+    }
+
+    /// The next state stirred by a 32-bit integer hash (the "lowbias32" shifts and multipliers,
+    /// the demo's choice) for the demo's own uses, the effects' seeds and the hit sound's pick: a
+    /// run of the LCG's states drawn the same number of times a shot repeats itself in its low
+    /// bits (a period of 4: x 0x19660d is 1 mod 4, + 0x3c6ef35f is 3) and clusters in its top
+    /// ones (a lone shooter's first five gate hits drew one sound of the four).
+    fn stirred(&mut self) -> u32 {
+        let mut x = self.next();
+        x ^= x >> 16;
+        x = x.wrapping_mul(0x7FEB_352D);
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x846C_A68B);
+        x ^ (x >> 16)
+    }
+}
+
 /// The ALE effects of an effect type, compiled.
 fn effects_of(game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &mut Assets<Image>,
               materials: &mut Assets<StandardMaterial>, effect_type: u32) -> Vec<std::sync::Arc<bf_viewer::ale_fx::Compiled>> {
@@ -6575,9 +6616,11 @@ fn hit_sp(record: f32, killed: bool) -> f32 {
 /// A shot's hit effect frame for an alignment-type (EffectType::aligns, FUN_0021a850): a frame
 /// FUN_0001d0c0 builds from a direction d, its z axis -d and its x up x z (Bevy's `looking_to`),
 /// from the shot's way (0, ALIGN_TO_EFFECT: FUN_0022cbe0 turns the effect by the hit's velocity),
-/// that way reflected about the struck surface (1), the surface's normal (2, the hit record's
-/// +0x10, stored as it is, outward: answers-batch1.md §2) or the world's axes (3). The hits'
-/// emitters are turned -90 degrees about x (sonic_can_hit.emt, plasma_hit_green_spark.emt,
+/// that way reflected about the struck surface (1, inferred: FUN_0021a850 reflects the effect
+/// frame's own axis, FUN_0001fdd0, about what isn't read; the data's three alchemy entries with
+/// it name no effect), the surface's normal (2, the hit record's +0x10, stored as it is, outward:
+/// answers-batch1.md §2, the sign inferred) or the world's axes (3). The hits' emitters are
+/// turned -90 degrees about x (sonic_can_hit.emt, plasma_hit_green_spark.emt,
 /// sminigun_hit.emt ...), so they fire along d: out of the surface for 2, on along the shot for
 /// 0. (The demo turned every hit's +y back along the shot before, so those emitters fired across
 /// it.)
@@ -6630,7 +6673,8 @@ fn start_flight(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::a
 fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameData>, ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
                mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<StandardMaterial>>,
                mut shots: Query<(Entity, &mut Projectile, &mut Transform)>, mut expiring: Query<(Entity, &mut AleExpire)>,
-               mut holes: ResMut<fx::HoleRequests>, mut player: ResMut<Player>, camera: Query<&GlobalTransform, With<MainCamera>>) {
+               mut holes: ResMut<fx::HoleRequests>, mut player: ResMut<Player>, camera: Query<&GlobalTransform, With<MainCamera>>,
+               mut chance: ResMut<GameRandom>) {
     let dt = frame_dt(&time);
     for (e, mut x) in &mut expiring {
         x.0 -= dt;
@@ -6643,14 +6687,16 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
     for (e, mut p, mut tr) in &mut shots {
         let s = p.shot;
         let instant = s.speed >= INSTANT_SHOT;
-        let seed = (s.origin.x * 977.0 + s.origin.z * 131.0) as u32;
         if !p.started {
             p.started = true;
+            // (its flight effect's seed: a draw of the shots' random state)
+            let seed = chance.stirred();
             if s.bolt {
                 // the bolt's flight effect rides on the shot (`start_flight`)
                 start_flight(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, s.flight, e, seed);
             }
-            for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight).into_iter().filter(|_| !s.bolt) {
+            let others = if s.bolt { vec![] } else { effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight) };
+            for fx in others {
                 if instant {
                     // the tracer: fired once from the muzzle, flying on its own along the
                     // emitter's +y (ale_fx.rs; turned along the shot's -z it flew straight up, the
@@ -6702,7 +6748,7 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             if s.decal != 0 {
                 holes.0.push((s.decal, at, s.normal));
             }
-            world_hit(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, &s, at, seed, listener, &mut player);
+            world_hit(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, &s, at, &mut chance, listener, &mut player);
         }
     }
 }
@@ -6717,24 +6763,25 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
 ///    grey dust ...), the record's user parameter (`hit_sp`, the roll x the falloff: no kill);
 ///  - each with its light-effect (the hit lights: light_hit_sonic's cyan wash, #57; the debris
 ///    have none) and in its alignment's frame (`hit_effect_at`);
-///  - one of the material row's four hit sounds at random (FUN_0022b5b0: the row's +0x28 entries,
-///    picked by the random state's low 2 bits), heard from the hit by the library's distances
+///  - one of the material row's four hit sounds (FUN_0022b5b0: the row's +0x28 entries, picked
+///    by the random state's low 2 bits), heard from the hit by the library's distances
 ///    (`distance_gain`: the sonic rows' full within 9 m, silent beyond 20 m).
+///
+/// The roll, the effects' seed and the sound's pick are three draws of `chance` (GameRandom), in
+/// the handler's order: the record's roll, the effects, the sound.
 #[allow(clippy::too_many_arguments)]
 fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &mut Assets<Image>,
-             materials: &mut Assets<StandardMaterial>, s: &Shot, at: Vec3, seed: u32, listener: Option<Vec3>, player: &mut Player) {
+             materials: &mut Assets<StandardMaterial>, s: &Shot, at: Vec3, chance: &mut GameRandom, listener: Option<Vec3>,
+             player: &mut Player) {
     let material = world::arena().and_then(|a| a.ray_material(s.origin, s.dir, s.dist + 0.1)).map_or(0, |(_, m)| m as i64);
     let surface = game.surfaces.iter().find(|x| x.id == material).cloned();
-    // (the roll the record carries: Damage min..max x an instant ray's falloff, at random from
-    // the shot's place; the world takes no hit part)
-    let mut rng = seed | 1;
-    let mut random = || {
-        rng = rng.wrapping_mul(0x0019_660D).wrapping_add(0x3C6E_F35F);
-        (rng >> 8) as f32 / (1u32 << 24) as f32
-    };
+    // (the roll the record carries, FUN_0022c940: Damage min..max x an instant ray's falloff;
+    // the world takes no hit part)
     let [lo, hi] = s.damage;
-    let roll = (lo + (hi - lo) * random()) * s.falloff_at(s.dist);
+    let roll = (lo + (hi - lo) * chance.unit()) * s.falloff_at(s.dist);
     let sp = hit_sp(roll, false);
+    // (the hit effects' particles: the demo's draw)
+    let seed = chance.stirred();
     let row = surface.as_ref().and_then(|x| x.hit_effect.get(&s.ammo)).copied();
     let (main, main_sp) = match row {
         Some(kind) => (kind, sp),
@@ -6749,10 +6796,17 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
     if let Some(d) = debris {
         hit_effect_at(commands, game, ale, images, materials, d, place, s.dir, s.normal, sp, seed ^ 0x5DEE_CE66);
     }
-    let sounds: Vec<u32> = surface.as_ref().and_then(|x| x.hit_sounds.get(&s.ammo)).map_or(vec![], |v| v.iter().copied().filter(|&id| game.sounds.has(id)).collect());
+    // (FUN_0022b5b0: one of the row's four slots for a draw. The game takes the state's low 2
+    // bits, which an LCG of this kind steps through with a period of 4: there the rest of the
+    // game's draws between two hits mix them, here a shot draws the same number every time and
+    // the low bits would pick one slot for good, so the demo takes the top 2 of a stirred draw
+    // (`GameRandom::stirred`). The row as loaded keeps its ids in order and drops empty ones, and
+    // every hit row in the data has all four or none; a missing slot, or an id the level's banks
+    // don't hold, is silent.)
+    let sounds = surface.as_ref().and_then(|x| x.hit_sounds.get(&s.ammo)).cloned().unwrap_or_default();
+    let slot = (chance.stirred() >> 30) as usize;
     let mut heard = None;
-    if !sounds.is_empty() {
-        let id = sounds[((random() * sounds.len() as f32) as usize).min(sounds.len() - 1)];
+    if let Some(id) = sounds.get(slot).copied().filter(|&id| game.sounds.has(id)) {
         let p = game.sounds.params(id);
         let volume = match (p, listener) {
             (Some(p), Some(l)) if p.min_distance >= 0.0 => triggers::sounds::distance_gain(l.distance(at), p.min_distance, p.max_distance) * p.volume,
@@ -6769,7 +6823,7 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
         println!("t={:.2} hit on world material {material} at {at:.2} {:.1} m out (ammo-type {}): effect h_{main:08x} sp {main_sp:.2} light h_{:08x}{}, debris {}, sound {}",
                  player.sim_time, s.dist, s.ammo, light(main), if row.is_some() { " (the material's)" } else { " (the weapon's)" },
                  debris.map_or("none".into(), |d| format!("h_{d:08x} sp {sp:.2}")),
-                 heard.map_or("none".into(), |(id, v)| format!("h_{id:08x} vol {v:.2}")));
+                 heard.map_or("none".into(), |(id, v)| format!("h_{id:08x} vol {v:.2} (slot {slot})")));
     }
 }
 
