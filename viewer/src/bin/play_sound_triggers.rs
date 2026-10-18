@@ -45,7 +45,11 @@
 //!
 //! The music: a level's music bank (data/sounds/<level>.xwb) holds its music cues and ambience
 //! beds, and its sound-triggers play them (resource-type 2: the tutorial's three cues with their
-//! stop timers, its two beds); the demo plays them through the music volume.
+//! stop timers, its two beds); the demo plays them through the music volume. The sound system
+//! keeps one music voice (class 1, a sound of Type h_f92fb2b9; 0x17eff0, `MusicSlot`): a music
+//! track that starts while another still plays fades that one out over its fade-out, and its own
+//! trigger loses its handle (its later stop does nothing). The beds (Type "ambient") aren't
+//! music and play under it.
 //!
 //! Test hooks: BF_TRIGGER_LOG=1 (play_triggers.rs) logs what each sound- and dialog-trigger does,
 //! the queue's lines and, at the start, every one's sound, length and how it plays; BF_SOUND_LOG=1
@@ -95,6 +99,24 @@ const FADE_OUT_DB: f32 = 60.0;
 /// OT_PLATFORM (the OT_ name table at 0x3be878; OT_STATIC_GEOMETRY is `OBJECT_GAME`, 2): the
 /// other kind of object whose floor sets a character's indoor bit (FUN_0012dab0).
 const OT_PLATFORM: i64 = 26;
+
+/// The class of a music voice (FUN_0017aa00's 1): the one class the sound system keeps a single
+/// voice of (0x17eff0, see `MusicSlot`).
+const CLASS_MUSIC: u32 = 1;
+
+/// A sound's class, as the library loader works it out from its `Type` (0x17bbe9: FUN_0017aa00
+/// into the runtime entry's +0x18, which FUN_0017c170 hands the new voice through the sound
+/// system's +0x4c, 0x17f300, into its +0x2c): h_f92fb2b9 (`MUSIC_TYPE`) 1, h_e34c5f66 2,
+/// h_012ed199 3, any other 0 (the ambience beds' "ambient" among them). None for a sound the
+/// loaded banks don't define.
+fn voice_class(sounds: &SoundBank, id: u32) -> u32 {
+    match sounds.sound_type(id) {
+        Some(audio::MUSIC_TYPE) => CLASS_MUSIC,
+        Some(0xE34C_5F66) => 2,
+        Some(0x012E_D199) => 3,
+        _ => 0,
+    }
+}
 
 /// Types 2-5, the indoor and outdoor ones: their level follows whether the listener is indoors
 /// (FUN_00206880), and they send no FINISHED (FUN_001fcf00).
@@ -265,8 +287,10 @@ enum VoiceAct {
     /// `volume` None plays it at its library entry's volume (FUN_002060c0 sets its own only up
     /// to 1); `music` a music-bank track; `by` who, for the log
     Start { voice: u32, sound: u32, looping: bool, volume: Option<f32>, from: Heard, fade_in: f32, fade_out: f32, music: bool, by: String },
-    /// vtable +0x20: stopped, at once (1) or with its fade-out (0: take04's start music fades
-    /// over its 3 s as its stop timer runs out)
+    /// vtable +0x20: stopped, at once (1) or with its fade-out (0): the voice's StopEx, for a
+    /// stream 0x182f30's IDirectSoundStream_FlushEx with ASYNC alone (1) or ASYNC | ENVELOPE
+    /// (0: CMcpxStream_Stop runs the envelope's release for flag 4), as take04's start music
+    /// fades over its 3 s when its stop timer runs out
     Stop { voice: u32, at_once: bool },
     /// vtable +0x34: its volume set (a Type 2-5 trigger's level as it moves, FUN_00206a20)
     Volume { voice: u32, volume: f32 },
@@ -274,6 +298,33 @@ enum VoiceAct {
     Pause { voice: u32, on: bool },
     /// vtable +0x40: a positional voice moved with its object (0x20682f)
     Move { voice: u32, at: Vec3 },
+    /// the sound system's own stop of the music voice a new one replaces (0x17eff0: StopEx(0),
+    /// its fade-out), which goes by its pointer, not its handle (`MusicSlot`)
+    Replaced { voice: u32 },
+}
+
+impl VoiceAct {
+    /// The handle an act on a voice looks its voice up by (the sound system's map, 0x17ee90);
+    /// None for a start, which makes one, and for the system's own stop.
+    fn handle(&self) -> Option<u32> {
+        match *self {
+            VoiceAct::Stop { voice, .. } | VoiceAct::Volume { voice, .. } | VoiceAct::Pause { voice, .. } | VoiceAct::Move { voice, .. } => Some(voice),
+            VoiceAct::Start { .. } | VoiceAct::Replaced { .. } => None,
+        }
+    }
+
+    /// What the act does, for the log of one dropped.
+    fn what(&self) -> &'static str {
+        match self {
+            VoiceAct::Start { .. } => "start",
+            VoiceAct::Stop { .. } => "stop",
+            VoiceAct::Volume { .. } => "volume",
+            VoiceAct::Pause { on: true, .. } => "pause",
+            VoiceAct::Pause { .. } => "resume",
+            VoiceAct::Move { .. } => "move",
+            VoiceAct::Replaced { .. } => "replace",
+        }
+    }
 }
 
 /// A character in the world, as of the end of the last frame (`voices` notes them): its trigger
@@ -413,6 +464,47 @@ pub(crate) struct SoundWorld {
     indoors: Option<bool>,
     /// the characters in the world
     seen: Vec<Seen>,
+    /// the sound system's one music voice and the handles it took away (`MusicSlot`)
+    music: MusicSlot,
+}
+
+/// The sound system's music voice (DAT_00469940 +0x1a4, 0 as FUN_0017e7c0 makes it): the last
+/// class-1 voice (`CLASS_MUSIC`) played. As a voice plays (the system's +0x28, 0x17f070),
+/// 0x17eff0 runs before the voice's own Play: for a class-1 one, when the current music voice
+/// is still sounding (0x17efb0: there's one, its +0x38 set, its status playing, its class 1),
+/// that one is stopped with StopEx(0) (a stream's 0x182f30: IDirectSoundStream_FlushEx with
+/// ASYNC | ENVELOPE, so it fades out through its envelope's release, its own fade-out) and its
+/// +0x1c bit 0 cleared; then the node of the handle map (+0xcc) whose voice is the *new* one is
+/// erased, so the new voice's handle finds nothing from then on: its trigger's stop (+0x20),
+/// volume (+0x34), pause (+0x54), position (+0x40) and "still playing" (+0x2c) do nothing. Then
+/// the new voice is the current one. With none sounding the new one just becomes current, its
+/// handle kept. The tracks themselves have a stream each (8, FUN_00182120(8) at 0x17f999;
+/// FUN_001822d0 picks a free one), so this is the only thing that keeps two from playing.
+/// Code only: no take has a track starting while another plays.
+///
+/// Not modelled: the old voice's handle stays in the map (only its bit 0 is cleared), so its
+/// trigger's later stop reaches whatever that stream plays by then, should it have been reused
+/// (tutorial_01's timer525 at 168 s after a replace).
+#[derive(Default)]
+struct MusicSlot {
+    /// the current music voice
+    current: Option<MusicVoice>,
+    /// the handles 0x17eff0 erased: every act on them is dropped
+    orphans: HashSet<u32>,
+}
+
+/// The current music voice (`MusicSlot`): its handle, and when it stops sounding.
+#[derive(Clone, Copy)]
+struct MusicVoice {
+    voice: u32,
+    /// when it's no longer playing (the sim clock): never for a looping one until it's stopped,
+    /// a one-shot's end, a stop's end of its release. The stream's "playing" (its +0xa8, set by
+    /// its Play 0x182f00) isn't cleared by an envelope stop (0x182f30 with 0), so it's taken to
+    /// last until the release has run (a guess: in take09 mellow, which started long after
+    /// tutorial_01's stop, still ends on its own timer, so by then it's cleared)
+    until: f32,
+    /// its fade-out (s), what a stop and a replace fade it over
+    fade_out: f32,
 }
 
 /// Whether a level's sound-triggers play tracks of its music bank (resource-type 2): every level
@@ -1159,9 +1251,42 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
     let (mute, no_music, log) = (std::env::var("BF_MUTE").is_ok(), std::env::var("BF_NO_MUSIC").is_ok() || mode.deathmatch, std::env::var("BF_SOUND_LOG").is_ok());
     // the voices started in this batch, not in the query yet (a stop in the same frame ends them)
     let mut started: HashMap<u32, Entity> = HashMap::new();
-    for a in std::mem::take(&mut tr.sound.acts) {
+    // (the music voice's replaces and the acts they leave without a voice: either log)
+    let music_log = log || tr.log;
+    let mut acts: VecDeque<VoiceAct> = std::mem::take(&mut tr.sound.acts).into();
+    while let Some(a) = acts.pop_front() {
+        // a handle 0x17eff0 took away finds no voice (0x17ee90): the act does nothing
+        if let Some(voice) = a.handle().filter(|v| tr.sound.music.orphans.contains(v)) {
+            if music_log {
+                println!("t={now:6.2} trigger voice {voice}: {} dropped: its handle was erased as it replaced the music voice (0x17eff0)", a.what());
+            }
+            continue;
+        }
         match a {
             VoiceAct::Start { voice, sound, looping, volume, from, fade_in, fade_out, music, by } => {
+                // the one music voice (0x17eff0, `MusicSlot`), before the voice plays
+                if voice_class(&game.0.sounds, sound) == CLASS_MUSIC {
+                    let slot = &mut tr.sound.music;
+                    if let Some(old) = slot.current.filter(|c| now < c.until) {
+                        if music_log {
+                            println!("t={now:6.2} trigger voice {voice}: {} for {by} replaces the music voice {}{}; its own handle is erased (0x17eff0): \
+                                      its trigger can no longer stop, set or move it", sound_name(&game.0.sounds, sound), old.voice,
+                                     if old.fade_out > 0.0 { format!(", which fades out over {} s", old.fade_out) } else { ", which stops".to_string() });
+                        }
+                        slot.orphans.insert(voice);
+                        acts.push_front(VoiceAct::Replaced { voice: old.voice });
+                        // (its "still playing", +0x2c, finds nothing either)
+                        for l in &mut tr.live {
+                            if let ClassState::Sound(s) = &mut l.state {
+                                if s.voice == voice {
+                                    s.voice_end = now;
+                                }
+                            }
+                        }
+                    }
+                    let length = game.0.sounds.length(sound).unwrap_or(0.0);
+                    tr.sound.music.current = Some(MusicVoice { voice, until: if looping { f32::INFINITY } else { now + length }, fade_out });
+                }
                 let own = volume.unwrap_or_else(|| game.0.sounds.params(sound).map_or(1.0, |p| p.volume));
                 let scale = if music { music_volume() } else { 1.0 };
                 let v = TriggerVoice { id: voice, volume: own * scale, scale, from, fade_in, fade_out, age: 0.0, stopping: None, paused: false };
@@ -1206,7 +1331,16 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
                 }
                 started.insert(voice, e.id());
             }
-            VoiceAct::Stop { voice, at_once } => {
+            VoiceAct::Stop { .. } | VoiceAct::Replaced { .. } => {
+                let (voice, at_once) = match a {
+                    VoiceAct::Stop { voice, at_once } => (voice, at_once),
+                    VoiceAct::Replaced { voice } => (voice, false),
+                    _ => unreachable!(),
+                };
+                // the music voice stops sounding once its release has run
+                if let Some(c) = tr.sound.music.current.as_mut().filter(|c| c.voice == voice) {
+                    c.until = c.until.min(now + if at_once { 0.0 } else { c.fade_out });
+                }
                 if let Some(e) = started.remove(&voice) {
                     commands.entity(e).try_despawn();
                     if log {
