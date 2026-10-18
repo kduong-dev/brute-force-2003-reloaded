@@ -3734,6 +3734,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let patrols = map.0.as_ref().map_or(&[][..], |l| &l.patrols[..]);
     // a follower's formation place comes after the squad's own members' (play_brain.rs)
     let mut follower = squad.0.iter().filter(|m| m.in_squad()).count();
+    // each one's target this frame, for the squad's broadcast (play_brain.rs `broadcast`): the
+    // controlled character's the nearest hostile it sees
+    let mut held = vec![(0, (!player.dead).then(|| nearest_hostile(&player, 0, &sight)).flatten().map(|(i, _)| sight[i].who))];
     for (slot, m) in squad.0.iter_mut().enumerate() {
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
@@ -3751,6 +3754,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // (`toward`: with nothing to fire at, where a brainless AI turns to, a contact's last place)
         let (seen, toward) = if m.brain.is_some() { (brain::sense(m, slot + 1, &sight, dt), None) } else { brain::glance(m, slot + 1, &sight, dt, clock) };
         let target = seen.map(|(i, _)| sight[i].chest);
+        held.push((slot + 1, if m.brain.is_some() { brain::target(m) } else { seen.map(|(i, _)| sight[i].who) }));
         // BF_SIGHT_LOG: an AI character finding or losing its target
         if sight_log && saw.insert(m.who(), target.is_some()).is_none_or(|was| was != target.is_some()) {
             let reach = m.sensor.reach(ai_range(m));
@@ -3789,6 +3793,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         m.thrown.clear();
         m.loaded = Some(l);
     }
+    // the squad tells each other of its targets (FUN_00045090, after the sense step)
+    brain::broadcast(&mut player, &mut squad.0, &held, &sight, dt, clock);
     // friendly fire: the player's shots this frame stop at the first teammate in their way
     let (shooter, team) = (player.who(), player.team);
     let now = player.sim_time;

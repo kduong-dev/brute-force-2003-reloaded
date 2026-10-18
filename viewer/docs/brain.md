@@ -121,6 +121,19 @@ EVT_TGT_LOST_SIGHT time), gun up, as a brain turns to its target's: so a squadma
 behind, outside his 90 degrees, turns and fires back, and one whose enemy steps behind cover
 keeps facing where it went.
 
+The squad tells each other of its targets (FUN_00045090 after every sense step, FUN_00045250:
+EVT_ENEMY_BROADCAST, 39): a member holding a target (a brainless one's, a following brain's,
+the controlled character's nearest hostile in sight) tells every other living member at once
+and then every 2 s while it holds it (a look every 1 s without one). The wingmen's personality
+maps it to GOAL_WINGMAN_PURSUE and the quick goal "ADD OBJ TO CONTACTS": the demo makes it a
+contact of each (its last place renewed), so they turn to it and fire once they see it
+(`broadcast`; the pursuit is #26's). A wingman that knows no enemy and is hit gets
+EVT_DAMAGED_NO_ENEMIES, GOAL_INVESTIGATE_GUARD in its personality, which registers no one: the
+demo's registering and turning to the shooter stands in for that goal. With `sqbehind`'s
+staging (a Shrike behind Brutus's left on the test map, out of the squad's 90 degrees) Brutus is
+hit at 6.27 s and turns, Flint and Hawk are told at 6.40 and see it at 6.53 and 6.93: 24, 8 and
+23 shots (main, which saw all round: 29, 9, 24).
+
 (`BF_SIGHT_LOG=1` still logs a brain finding or losing its target, as the squad's; for the squad
 and the NPCs it also logs each contact found and forgotten.)
 
