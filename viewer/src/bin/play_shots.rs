@@ -14,9 +14,9 @@
 //!  - **Bursts and pellets**: each shot counts weapon+0x28c; below the burst count the next
 //!    cooldown is the burst-delay instead (FUN_0022f0e0). With a delay of 0 the loop goes on in
 //!    the same frame and only the last takes a round (FUN_0022fe00): the Bower's 6
-//!    pellets a shell for one round. Each after the first is turned by a uniform random yaw and
-//!    pitch within the burst-spread (FUN_0022e1d0), in place, so the pellets walk away from the
-//!    first.
+//!    pellets a shell for one round. Each after the first is turned from the one before, in place,
+//!    by uniform random angles within the burst-spread about the world's x axis and then its
+//!    vertical (FUN_0022e1d0; `directions`), so the pellets walk away from the first.
 //!  - **Accuracy** (the object at weapon+0x1d0: current +0xc = weapon+0x1dc, cap +0x10): the cap
 //!    is the data's max, or its scoped cap while the holder's +0x7a8 is set (FUN_001241b0 ->
 //!    FUN_00222ac0); each trigger cycle takes recoil-per-shot off (FUN_00222c10; halved, and the
@@ -399,7 +399,16 @@ impl FireState {
     /// The directions of the shots of the gun in `hand` waiting, from its aim `base`: each game
     /// frame's turned once by the accuracy (FUN_002229b0, each weapon object's own turn,
     /// FUN_0022e4c0), a zero-delay burst's later shots each turned again from the one before by
-    /// the burst-spread (FUN_0022e1d0). The other hand's shots stay waiting.
+    /// the burst-spread (FUN_0022e1d0, the pellet walk). The walk is in the world's frame: the
+    /// aim d becomes Ry(a2) Rx(a1) d, a1 then a2 drawn uniform in +-the burst-spread about the
+    /// world's x and then its vertical axis (the routine builds Rx(a1) with FUN_0013e800, turns it
+    /// by Ry(a2) with FUN_0001fa20, multiplies the aim's frame by it, FUN_002334b0 as B x A, and
+    /// takes the frame's -z, FUN_0001f9c0). So a heading along x keeps its pellets nearly level
+    /// (the x turn spins the aim about itself) and one along z scatters them up and down as much as
+    /// across: the Bower's take09 at -170 degrees, 10.3 degrees across and 0.8 up and down (the
+    /// rule's 9.3 and 1.7), where a turn about the gun's own right gave 9.3 up and down at any
+    /// heading (todo/49-bower-20/spec.md §4). The MNR-7's darts walk by the same rule. The other
+    /// hand's shots stay waiting.
     pub fn directions(&mut self, hand: usize, base: Vec3, burst_spread: f32) -> Vec<(Pellet, Vec3)> {
         let (pellets, rest): (Vec<Pellet>, Vec<Pellet>) = std::mem::take(&mut self.pellets).into_iter().partition(|p| p.hand == hand);
         self.pellets = rest;
@@ -414,11 +423,12 @@ impl FireState {
                 dir = (Quat::from_rotation_z(z) * Quat::from_rotation_y(y) * Quat::from_rotation_x(x) * base).normalize();
             }
             if p.walk && burst_spread > 0.0 {
+                // FUN_0022e1d0: a1 (the first draw) about the world's x, then a2 about its
+                // vertical, applied to the world direction
                 let s = burst_spread * DEG;
-                let yaw = (random(&mut self.seed) * 2.0 - 1.0) * s;
-                let pitch = (random(&mut self.seed) * 2.0 - 1.0) * s;
-                let right = dir.cross(Vec3::Y).normalize_or(Vec3::X);
-                dir = (Quat::from_axis_angle(right, pitch) * Quat::from_rotation_y(yaw) * dir).normalize();
+                let a1 = (random(&mut self.seed) * 2.0 - 1.0) * s;
+                let a2 = (random(&mut self.seed) * 2.0 - 1.0) * s;
+                dir = (Quat::from_rotation_y(a2) * Quat::from_rotation_x(a1) * dir).normalize();
             }
             out.push((p, dir));
         }

@@ -597,8 +597,15 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   patterns are too. Checked by `cargo test --bin bf_play shot_seed`.
 * **Bursts and pellets**. A trigger cycle is h_e4076713 shots, h_e6c60892 s apart. At 0 s apart
   (the Bower 20's 6) they all go in the same frame for one round and one report, and each after
-  the first is turned from the one before by up to h_e704fd69 degrees of yaw and of pitch
-  (FUN_0022e1d0: the pellets walk away from the first; medium confidence on the walk).
+  the first is turned from the one before (FUN_0022e1d0: the pellets walk away from the first)
+  **in the world's frame** (#49): the aim d becomes Ry(a2) Rx(a1) d, a1 then a2 drawn uniform in
+  +-h_e704fd69 degrees (6 for the Bower, 3.5 for the MNR-7's darts), about the world's x axis and
+  then its vertical (FUN_0013e800 builds Rx, FUN_0001fa20 turns it by Ry, FUN_002334b0 multiplies
+  the aim's frame by it, FUN_0001f9c0 takes the frame's -z: every instruction read for #49's spec,
+  §4). So a heading along x keeps a shell's pellets nearly level (the x turn spins the aim about
+  itself) and one along z scatters them up and down as much as across; across, every heading
+  spreads the same. The demo turned the pitch about the gun's own right before: up and down as
+  much as across at every heading.
   The round is taken on the cycle's last shot: FUN_0022fe00 excuses every shot while the
   counter is running, and only once FUN_0022f0e0 has cleared it (the 6th) does the clip drop.
   So the clip stays put through a burst and every shell is 6 pellets, the last of a clip too;
@@ -624,9 +631,11 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     (objecttypes-common `<camera> fov="90"`; a debug dump labels a camera's field "fovh", so
     horizontal) give ~74 degrees vertical at 4:3, and under that the MK, Minigun and Foley match
     the takes within about 10%: the likely explanation, pending xemu's read of the game's FOV.
-  * The Bower is still ~2x too wide horizontally at 74 degrees (its vertical matches). Open
-    question: the pellet walk (FUN_0022e1d0, read as each pellet turned from the one before);
-    xemu's Bower pellet shot is queued.
+  * The Bower's "~2x too wide horizontally" (read from the tank's holes, where the pellets past
+    ~+-7 degrees miss the 2.6 m cylinder and leave none) is settled by the walk's frame (#49, above):
+    its takes' sparks at the 25 m cliff (take09, heading -170) spread 10.3 degrees across (sd 3.8)
+    and 0.8 up and down, the world-frame rule's 9.3 (sd 3.5) and 1.7 (0.7-2.9), where the old
+    gun-frame turn gave 9.3 up and down.
 * **Damage falloff** (FUN_00230040 -> FUN_00223780). An instant hit's damage is scaled by the
   Damage's h_fb124e6c mode at x = 1 - distance / range: 1 x, 2 x^2, 3 full to half range then
   2x, else none. Only the Bower has one (2): 0.60 at 9 m of its 40 m range. It's applied to the
@@ -733,7 +742,13 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   frames (5.6/s). The game's MK holes after the take (63_zoom) spread ~+-26 x +-18 units, about
   the +-2.3 degrees the code reaches in held fire.
 * Bower 20 (`BF_CHARACTER=0 BF_START_WEAPON=1`): one round and one report per shell, 6 pellets
-  walking up to ~15 degrees from the first; holes on the pillar and on sdm_e34's walls. (Its
+  walking up to ~15 degrees from the first; holes on the pillar and on sdm_e34's walls. The
+  world-frame walk (#49; `BF_TEST_WEAPON="Bower 20" BF_SHOT_LOG=1`, the trigger held, each shell's
+  six directions from the log): across, 9.3 degrees at every heading (24 shells each way; over 77
+  facing +x 9.45, sd 4.1, the quantiles p10-p75 within 0.3 degree of the rule's 5.3 / 6.5 / 8.7 /
+  11.2); up and down 0.8-0.9 facing +x (the rule 0.7), 9.6 facing +z (9.2), 2.2 at e40's 25 m spot
+  (take09's, `BF_MAP=e40 BF_TEST_GOTO=-15.2,152.3,-15.69,152.21`, heading -167: the rule 1.7 at
+  -170, the take 0.8); the cadence, the round per shell and the reload as before. (Its
   muzzle effect along the barrel in a side view, `BF_CAMERA_DISTANCE=2.5 BF_VIEW_YAW=1.3`, was
   #115's check, before #73 put the muzzle effects in the hardpoint's frame: see **Muzzle
   effects**.)
