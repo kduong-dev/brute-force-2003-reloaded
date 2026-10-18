@@ -34,7 +34,9 @@
     footprint plus 30% so none overlap (the png's four in
     two rows; the levels place them up to ~3 m apart). No ring: the blue ring is for gate panels only. The
     effect-objects levels place beside pickups (type h_117c1805, ALE powerup_spawn) aren't
-    shown.
+    shown. The multiplayer maps' soft green glows where power-ups appear
+    (powerup_spawn_location, h_04ad9a0e: 21 on sdm_e34) are placed effect objects, drawn since
+    #258 (maps.md "Placed effect objects").
   * Using a medkit (G) plays the stance's use_item overlay (Sc_w1_/Sc_w2_use_item, ~1 s; events
     1a6b4920 reach, 0a6e8f79 in hand, 19f8311b used). The used medkit (the carried type's model,
     h_192d5337's archetype) with its cross turned red (its texture's blue texels, and its

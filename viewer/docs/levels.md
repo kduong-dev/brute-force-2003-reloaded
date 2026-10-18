@@ -2,11 +2,14 @@
 
 `cargo run --release --bin bf_level -- [level]` draws a level from the original archives:
 terrain, every placed object (game objects, pickups) at its transform, the sky, and the level's
-fog. The default is `sdm_e34`, the squad deathmatch map "Battle of Bulgar" (SDM Level 5 in
+fog, with the power-ups' icons and the level's placed effect objects running (its flies,
+embers, fires, steam and dust: maps.md "Placed effect objects", #258). The default is `sdm_e34`,
+the squad deathmatch map "Battle of Bulgar" (SDM Level 5 in
 campaign-bf.xml). Right-drag looks around, W/A/S/D/Q/E fly (Shift for faster), 1-9 jump to the
 level's own flyby cameras and 0 to an overview, F toggles fog, P prints the view. Test hooks:
 `BF_LEVEL_CAMERA=<n>`, `BF_VIEW=x,y,z,yaw,pitch`, `BF_NO_FOG=1`, `BF_SCREENSHOT=<file.png>`,
-`BF_LEVEL_DUMP=1` (placements, untextured materials, idle effects), `BF_PART_DUMP=<hex
+`BF_LEVEL_DUMP=1` (placements, untextured materials, idle effects, placed effect objects),
+`BF_NO_PLACED_FX=1` (no placed effect objects), `BF_PART_DUMP=<hex
 archetype>` (each part's geosets: offset, bounds, normals, winding, UV direction; then exits).
 
 * Terrain vertices (type h_ef44f398) carry no float position. Slot 8 of the game's vertex

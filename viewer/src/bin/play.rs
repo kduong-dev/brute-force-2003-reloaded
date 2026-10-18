@@ -648,6 +648,7 @@ fn main() {
         .add_plugins(triggers::sounds::plugin)
         .add_plugins(script::plugin)
         .add_plugins(brain::plugin)
+        .add_plugins(placed_fx::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .add_systems(OnEnter(AppState::Playing), (snapshot_entities, setup).chain())
@@ -740,6 +741,8 @@ mod objectives;
 mod script;
 #[path = "play_brain.rs"]
 mod brain;
+#[path = "play_placed_fx.rs"]
+mod placed_fx;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -2990,6 +2993,13 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             bf_viewer::ale_fx::spawn_idle_effects(&mut commands, &mut game.0, level, &mut ale, &mut images, &mut materials)
         };
         println!("{n} idle effects (power-up icons)");
+        // the level's placed effect objects: its flies, embers, fires, dust (#258,
+        // play_placed_fx.rs)
+        let placed = placed_fx::spawn(&mut commands, &mut game.0, level, &mut ale, &mut images, &mut materials);
+        println!("{} placed effect objects ({} ALE effects; {} of the level's {} are spawn-trigger templates)", placed.0.len(),
+                 placed.0.iter().map(|p| p.entities.len()).sum::<usize>(), level.spawn_templates().iter()
+                     .filter(|t| level.effect_objects.iter().any(|o| o.name == **t)).count(), level.effect_objects.len());
+        commands.insert_resource(placed);
         let fog = level.fog.map(|(c, start, end)| DistanceFog { color: Color::srgb(c[0], c[1], c[2]), falloff: FogFalloff::Linear { start, end }, ..default() });
         let mut cam = commands.spawn((MainCamera, Camera3d::default(), Projection::Perspective(PerspectiveProjection { far: 5000.0, ..default() }),
                                       Transform::default(), bf_viewer::level_scene::console_look()));
@@ -3002,9 +3012,11 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         bf_viewer::level_scene::spawn_lighting(&mut commands, level);
     } else {
         test_floor(&mut commands, &mut meshes, &mut materials, &mut images);
-        // (no doors: none of a level played before, after the test tools' level switch)
+        // (no doors: none of a level played before, after the test tools' level switch; nor its
+        // placed effects)
         commands.remove_resource::<Doors>();
         commands.insert_resource(UsePanel::default());
+        commands.insert_resource(placed_fx::PlacedEffects::default());
     }
     commands.insert_resource(ale);
     // the level's music, looping (BF_MUTE / BF_NO_MUSIC: none; BF_MUSIC_VOLUME, default 0.5);

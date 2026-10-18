@@ -546,7 +546,8 @@ pub struct Triggers {
     copies_made: u32,
     /// NPCs spawned so far (NPC_IDS + n)
     npcs_made: u32,
-    /// the effect copies spawned, by copy name (a destroyer removes them)
+    /// the effect copies spawned, by copy name, and the level's placed effect objects by their
+    /// own (play_placed_fx.rs): a destroyer removes them
     effects: HashMap<u32, Vec<Entity>>,
     /// the MAX_DEPTH warning has been printed
     deep_told: bool,
@@ -577,8 +578,10 @@ pub struct Triggers {
 }
 
 /// A map starts: its triggers as the level file has them, the listeners linked (FUN_001febb0),
-/// the squad member flags set up, the test hooks read.
-fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns: Option<Res<SquadSpawns>>, current: Res<CurrentMap>) {
+/// the squad member flags set up, the test hooks read, the level's placed effect objects
+/// (play_placed_fx.rs) taken in with the copies a destroyer removes (`effects`).
+fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns: Option<Res<SquadSpawns>>, current: Res<CurrentMap>,
+         placed: Option<Res<placed_fx::PlacedEffects>>) {
     commands.insert_resource(TriggerEvents::default());
     let Some(level) = map.0.as_ref() else {
         commands.insert_resource(Triggers::default());
@@ -647,6 +650,11 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
         }
     }
     tr.known = level.objects.iter().map(|o| o.name).filter(|&n| n != 0).collect();
+    // the placed effect objects, by name: a destroyer that names one removes it as it does a
+    // copy (e34's six, e40's one; the game's destroyer takes any listed object out, 0x200e40)
+    for p in placed.as_deref().map_or(&[][..], |p| &p.0[..]).iter().filter(|p| p.name != 0) {
+        tr.effects.entry(p.name).or_default().extend(p.entities.iter().copied());
+    }
     // the squad started at its spawns (play.rs `player_at_start`): their copies are those
     // spawn-triggers', so their deaths reach the triggers listening to them
     for s in spawns.as_deref().map_or(&[][..], |s| &s.0[..]) {

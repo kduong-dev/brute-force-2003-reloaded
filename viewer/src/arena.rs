@@ -183,10 +183,7 @@ impl Arena {
         let mut animated: HashMap<u32, HashMap<u32, crate::level_scene::Animated>> = HashMap::new();
         let played = crate::level_scene::played_once(level);
         // (the spawn-triggers' templates: out of the world until spawned, FUN_000dfe90)
-        let templates: HashSet<u32> = level.triggers.iter().filter_map(|t| match t.class {
-            crate::bf::triggers::Class::Spawn { template, .. } => Some(template),
-            _ => None,
-        }).filter(|&n| n != 0).collect();
+        let templates = level.spawn_templates();
         for (i, o) in level.objects.iter().enumerate() {
             if o.tag == h("start-point") {
                 let p = o.transform.w_axis.truncate();
