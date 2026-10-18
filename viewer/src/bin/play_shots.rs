@@ -61,8 +61,15 @@ pub const TICK: f32 = 1.0 / 30.0;
 /// This is the demo's model of the frame clock's jitter, not anything in the code: small enough
 /// not to move any period that isn't a tie. The takes ran in xemu at 27-29 fps, whose uneven
 /// frames may be all there is to it; on hardware at a steady 30 fps the Minigun may well fire at
-/// 15/s.
+/// 15/s. Its random numbers are the frame clock's own (`FireState::clock_seed`): drawn from the
+/// gun's stream between its shots' draws, a cycle of a fixed number of draws sampled the LCG at a
+/// fixed stride, and at a power of two (the Foley's 16: a shot's 3 accuracy draws and 2 effect
+/// seeds, then 11 frames) the frames of one cycle ran short or long together every cycle, so its
+/// shots came 11 frames apart every time (#54's check: 2.73 a second against the takes' 2.79-2.93)
+/// where the jitter splits 10 and 11.
 const TICK_JITTER: f32 = 1e-4;
+/// Mixed into the gun's seed for the frame clock's own (any odd constant: the demo's).
+const CLOCK_SEED: u32 = 0x7C10_C4E5;
 /// The game's degrees-to-radians factor in FUN_002229b0 and FUN_0022e1d0 (0x3a52e0).
 const DEG: f32 = 0.017444;
 /// FUN_000c4e10: degrees of spread per point of accuracy below 100.
@@ -157,6 +164,8 @@ pub struct FireState {
     /// empty trigger cycles since play_ammo.rs last took them (FUN_002327f0), by hand
     empty: [u32; HANDS],
     seed: u32,
+    /// the frame clock's random numbers (`TICK_JITTER`), apart from the gun's stream
+    clock_seed: u32,
     /// a trigger pull still owed its first shot, by hand (see `pull`), and the trigger last frame
     latched: [bool; HANDS],
     was_held: bool,
@@ -299,13 +308,16 @@ impl FireState {
         if self.seed == 0 {
             self.seed = seed | 1;
         }
+        if self.clock_seed == 0 {
+            self.clock_seed = (seed ^ CLOCK_SEED) | 1;
+        }
         self.ready -= dt;
         self.clock += dt;
         while self.clock >= TICK {
             self.clock -= TICK;
             self.tick = self.tick.wrapping_add(1);
             // FUN_0022ec90 (with the frame time's wobble, TICK_JITTER: one frame time for both)
-            let frame = TICK * (1.0 + (random(&mut self.seed) * 2.0 - 1.0) * TICK_JITTER);
+            let frame = TICK * (1.0 + (random(&mut self.clock_seed) * 2.0 - 1.0) * TICK_JITTER);
             for g in guns.iter_mut() {
                 self.tick_gun(g, frame);
             }

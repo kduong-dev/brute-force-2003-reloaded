@@ -633,6 +633,7 @@ fn main() {
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
+        .add_plugins(minigun::plugin)
         .add_plugins(shake::plugin)
         .add_plugins(skills::plugin)
         .add_plugins(damage::plugin)
@@ -709,6 +710,8 @@ mod ammo;
 mod shots;
 #[path = "play_missile.rs"]
 mod missile;
+#[path = "play_minigun.rs"]
+mod minigun;
 #[path = "play_shake.rs"]
 mod shake;
 #[path = "play_skills.rs"]
@@ -6375,9 +6378,13 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             tr.translation = t - r * w.fire_dir * (0.04 * p.recoil);
             tr.rotation = r;
         }
-        // minigun barrel spins up while firing
-        let target = if firing { 28.0 } else { 0.0 };
-        p.spin += (target - p.spin) * (1.0 - (-(if firing { 6.0 } else { 1.5 }) * dt).exp());
+        // the barrel's turn: a Minigun's (IFSET_MINIGUN) by its spin level, which
+        // play_minigun.rs sets `spin` from (1 at once while firing, falling over 1 s); any other
+        // gun's spinning parts by the demo's own ease while firing
+        if !minigun::spins(&w.def) {
+            let target = if firing { minigun::BARREL_TURN } else { 0.0 };
+            p.spin += (target - p.spin) * (1.0 - (-(if firing { 6.0 } else { 1.5 }) * dt).exp());
+        }
         p.spin_angle = (p.spin_angle + p.spin * dt) % std::f32::consts::TAU;
         for (e, axis, offset) in &w.spinners {
             if let Ok(mut tr) = transforms.get_mut(*e) {

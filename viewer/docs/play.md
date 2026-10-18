@@ -547,7 +547,13 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   LZR-50 8, Jax-iC 15): the cooldown lands on 0 and the frame time's wobble decides between
   that frame and the next, about half each, which the takes show (Minigun 0.086 s a round =
   2.5 frames, ~12/s; Foley 0.352 = 10.5; LZR-50 0.284 = 8.5). The demo models that wobble as
-  +-0.01% on each 30 Hz frame (`TICK_JITTER`), which moves no other period. In
+  +-0.01% on each 30 Hz frame (`TICK_JITTER`), which moves no other period. Its random numbers
+  are the frame clock's own (`FireState::clock_seed`, #54): drawn from the gun's stream between
+  its shots' draws, a cycle of a fixed number of draws sampled the LCG at a fixed stride, and at
+  the Foley's 16 (a shot's 3 accuracy draws and 2 effect seeds, then 11 frames) a cycle's frames
+  ran short together every cycle: 11 frames every round, 2.73 a second against the takes'
+  2.79-2.93; now 10-11, 2.89 a second. (Every gun's random patterns moved with it, not their
+  spread.) In
   the scope the rate is h_019c314a (the MK's 6/s; medium confidence that the holder's +0x7a8 is
   the scope); a dry click (`play_ammo.rs`) and the Charge's shot cooldown use the same
   `shots::period` (FUN_002327f0, FUN_0022dc00).
@@ -706,6 +712,20 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   0, which then restarts at h_eeb9e75a: the MK every 3rd shot, the Minigun every 4th, the rest
   every shot. The tracer is now turned along the shot (ALE emitters fire along their +y): it
   flew straight up before, the thin vertical line over the Minigun.
+* **The Minigun's spin** (#68; `src/bin/play_minigun.rs`): its item set is IFSET_MINIGUN
+  (function-type 16), whose per-frame hook FUN_00147f90 (vtable 0x39b8f8, the item-set factory
+  0x146920; the analyst's reading, todo/weapons-plan/answers-batch1.md §12) keeps a spin level:
+  1 at once while the gun's cooldown runs with its fire flag set, else falling 1.0 a second
+  (FUN_00147e50). At 1 the loop h_0e8038d2 starts, once, fading in over 0.1 s (FUN_00147bc0,
+  FUN_00147c20: 2D for the player's holder, at the gun for another's); below 1 the spin-down
+  h_f00b38e4 plays once in its place (FUN_00147d70), and the loop can't start again until that
+  ends (its flags clear then, FUN_00147b90: a reading). Both are in the common bank. The item's
+  attached effect while it spins (FUN_00147ed0) is empty for the Minigun. Holstered, switched or
+  dropped, it all stops (FUN_00148030). The barrel turns at 28 rad/s x the level (the demo's
+  rate; the game's barrel turn isn't traced), where the demo eased it up and down on its own
+  before; the spin starts with the first round (the demo's raise before it is held in the gun's
+  cooldown, which the game's isn't). Nothing changes the rate: 15 a second from the first round,
+  no spin-up (#68 take01).
 * **Casings** (FUN_0022eee0 -> FUN_00231b10). Each trigger cycle owes h_fdc93b33 casings; each
   whole one throws the h_19b21bf5 object (the casing h_16415157's model) from the h_ea1abbbe
   hardpoint, 5 cm back along its z, at 2-3 m/s along its z turned a quarter turn about the
@@ -759,6 +779,32 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   second instead.
 * The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel the same as
   before until the autopilot's first shot.
+* **The compare round** (#63 MK-ASLT, #54 Foley 356 Tact, #68 RVG50 Minigun, #50 / #51 / #52 the
+  Confed LZRs; their combined spec `todo/63-mk-aslt/spec.md`), on the test map (`-- --test
+  BF_NO_SQUAD=1 BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12`, held fire from `BF_TEST_CLIP`;
+  `BF_SHOT_LOG`, `BF_AMMO_LOG`, `BF_SOUND_LOG`):
+  * Cadence: the MK 4 frames a round (7.5 a second; the takes 6.9-7.3, xemu's slower frames),
+    the Foley 10-11 (2.89; the takes 2.79-2.93), the Minigun 2-3 (12.3; the takes 11.1-11.8), the
+    LZR-10 16 (1.88; 1.76-1.90), the LZR-23 12-13 (2.45; 2.34-2.49) with one shot a cycle (its
+    burst count 1, the delay 5 unused), the LZR-50 8-9 (3.53; the takes' mean 3.53). A tracer on
+    the MK's every 3rd round, the Minigun's every 4th, the Foley's every round; a bolt on every
+    LZR shot.
+  * Reload (the clip set small, the trigger held): the reserve drops 0.07-0.14 s after the last
+    round (the cooldown's end; the takes 0.1) for the MK and the Minigun, 0.33 s for the Foley
+    (0.4), and the clip is full 1.00 s after that, the magazine-in of Tex's and Hawk's reload
+    clips (the takes: Hawk 1.0; Tex 1.1 and 1.2, within the 10 Hz log's 0.1 s).
+  * The LZRs recharge a round every 2.00, 1.27 and 1.00 s (the takes 2.006, 1.266, 1.0: 1.25 s
+    lands on the 30 Hz frame after it).
+  * Damage, on e40's Shrike Soldier frozen 9 m out (`BF_MAP=e40 BF_TEST_GOTO=-17.21,152.02,-17.70,151.93
+    BF_TEST_NPC='0.5,shrike soldier@e40,enemy,frozen,-26.08,150.46' BF_TEST_NPC_HP=1.0,1,300`,
+    `BF_COMBAT_LOG`): every hit of the six guns (78) inside the roll x the part's factor x 1.4.
+    The takes' m03_a trooper (BALLISTIC x0.8) isn't loadable on the test map.
+  * The Minigun's spin (`BF_SOUND_LOG`): the loop with the first round, the spin-down 0.1 s after
+    the release, a tap's round spinning it too.
+  * The scopes (the MK's 2, the Foley's 3: one level each for everyone but Flint): § The scope.
+  * Not done: the tracer and the beam as the game draws them (one effect stretched to the hit, the
+    analyst's draft B, the ray path); the Foley's silence (its noise radius 10: no AI hearing
+    yet); the LZR bolts flying (#136); the MK's scoped held rate (no take).
 
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
