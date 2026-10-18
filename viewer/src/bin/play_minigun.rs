@@ -94,7 +94,6 @@ fn spin_miniguns(mut commands: Commands, time: Res<Time>, mut player: ResMut<Pla
     let log = std::env::var("BF_SOUND_LOG").is_ok();
     let loop_volume = game.0.sounds.params(SPIN_LOOP).map_or(1.0, |p| p.volume);
     let down_volume = game.0.sounds.params(SPIN_DOWN).map_or(1.0, |p| p.volume);
-    let down_length = game.0.sounds.pcm(SPIN_DOWN).map_or(0.0, |(rate, s)| s.len() as f32 / rate as f32);
     let mut held = vec![];
     for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
         let who = u.who();
@@ -143,7 +142,8 @@ fn spin_miniguns(mut commands: Commands, time: Res<Time>, mut player: ResMut<Pla
                     println!("t={now:6.2} sound {SPIN_LOOP:08x} stops (the Minigun's spin, {})", unit_name(u));
                 }
                 u.sound_queue.push((SPIN_DOWN, down_volume));
-                st.down_left = down_length;
+                // (the sample's length, decoded only here: a spin-down is rare, a frame isn't)
+                st.down_left = game.0.sounds.pcm(SPIN_DOWN).map_or(0.0, |(rate, s)| s.len() as f32 / rate as f32);
             }
             st.down_left = (st.down_left - dt).max(0.0);
             if let Some(mut sink) = st.voice.and_then(|v| sinks.get_mut(v).ok()) {

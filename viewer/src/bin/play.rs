@@ -2541,9 +2541,10 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // way is called off, its grenade back in the inventory)
     player.cancel_throw();
     // (the scope ends with control: the character left behind isn't left looking through it, its
-    // shots from the eye at the scoped rate; the demo's choice, the game's hand-over isn't traced)
+    // shots from the eye at the scoped rate, nor its button locked out for a hand-back soon after;
+    // the demo's choice, the game's hand-over isn't traced)
     player.leave_scope();
-    (player.scope, player.zoom, player.scope_heard) = (0.0, 1.0, 0);
+    (player.scope, player.zoom, player.scope_heard, player.scope_lock) = (0.0, 1.0, 0, 0.0);
     let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.item, player.item_new);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new) = inventory;
@@ -6135,7 +6136,13 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, game: Res<GameData
             (player.scope, player.zoom) = (1.0, z);
         }
     } else {
+        // (the game's FUN_0011af10 never meets a gun without a scope in hand here: its swap comes
+        // at the switch clip's event, after the scope was left and its zoom fell, and with that
+        // gun's zoom of 0 the fall would stop. The demo's gun can change at once (its test hooks,
+        // a squad hand-back) with the zoom still up: then the zoom falls at its own rate. A gun in
+        // the second hand or none in hand keeps the game's top of 1, FUN_00124920's)
         let top = level_zoom(&player, skills::scope_levels(&player, 1).clamp(0, u8::MAX as i64) as u8);
+        let top = if top > 0.0 { top } else { player.zoom };
         if times.zoom_out > 0.0 {
             player.scope = (player.scope - step / times.zoom_out).max(0.0);
             if player.zoom > 1.0 {

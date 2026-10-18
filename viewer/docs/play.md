@@ -857,7 +857,11 @@ spec (`todo/62-l-shot-75/spec.md` §3) and the analyst's answers
   follow camera's FUN_000702a0 through FUN_0011c0b0), so a level takes 0.15 s and the lockouts
   0.425 and 0.45 s (`SCOPE_CALLS`; medium confidence on the double call). The takes: 0.17 +-
   0.03 s a level, the L-Shot-50's second level growing 2.0-2.3 zoom units a game frame against
-  2.22. The demo's eased ramp (`SCOPE_RATE`, exponential, ~0.3 s) is gone.
+  2.22. The demo's eased ramp (`SCOPE_RATE`, exponential, ~0.3 s) is gone. The game's
+  FUN_0011af10 never meets a gun without a scope in hand: its switch swaps the gun at the clip's
+  event, after the scope was left and its zoom fell (that gun's top of 0 would stop the fall). The
+  demo's gun can change at once (a test hook, a squad hand-back) with the zoom still up: then it
+  falls at its own zoom / T_out. A gun in the second hand, or none, keeps the game's top of 1.
 * **The view** is the skill's (+0xa8: FUN_000b4070 shows the scope frame h_1807ec04 only while
   its bit 0 is clear): Flint's (0x2d5e40) 1, no frame, her full-screen glow; everyone else's 0
   (Tex's 8), the frame.
@@ -876,8 +880,9 @@ spec (`todo/62-l-shot-75/spec.md` §3) and the analyst's answers
 Test hooks: `BF_TEST_SCOPE=<level>[,<from s>]` holds that level (at most the scope's top) from
 that time on, under `BF_TEST_GOTO` too; `BF_TEST_SCOPE_PRESS=<s>[,<s>...]` presses the scope
 button at those times, with its lockouts; without either, a hook's aim (`BF_TEST_AIM`,
-`BF_TEST_FIRE`) with a gun that has a scope is its first level, as before; `BF_SCOPE_LOG=1` prints
-each press, each level change and the ramp's zoom and progress on every frame they move.
+`BF_TEST_FIRE`, `BF_TEST_AIM_HOSTILE`, brain.md) with a gun that has a scope is its first level, as
+before; `BF_SCOPE_LOG=1` prints each press, each level change and the ramp's zoom and progress on
+every frame they move.
 
 Verified (`BF_SCOPE_LOG`, `BF_SOUND_LOG`; e40's cliff at take05's spot, `--test BF_MAP=e40
 BF_TEST_GOTO=-17.21,152.02,-17.70,151.93 BF_CAMERA_PITCH=-0.10 BF_NO_SQUAD=1`, the scope on the
