@@ -16,10 +16,11 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 
 | Key | |
 |---|---|
-| V | the controlled character's skill on / off: the game's White button (VB_SPECIAL_ABILITY, `game-options-en.xml` line 151, which sends CT_TOGGLE_SPECIAL at 0x134cff). Not while dead |
+| V | the controlled character's skill on / off: the game's White button (VB_SPECIAL_ABILITY, `game-options-en.xml` line 151, which sends CT_TOGGLE_SPECIAL at 0x134cff). Not while dead, nor while the controls don't reach the character: a cutscene, a script's hold, out of the world (play_script.rs `blocks_input`, #256) |
 | Q, R | in Tex's berserk and Flint's targeting: end it, instead of switching weapons (Q, the game's Y) or reloading (R, the game's X; only when a reload could start, which then follows the skill's end; on R's press, where the game's X ends it when let go). See [Tex's Berserker](#texs-berserker-121) |
 
-* `BF_TEST_SKILL=<s>[,<s>...]`: presses V at those times (once each).
+* `BF_TEST_SKILL=<s>[,<s>...]`: presses V at those times (once each); a press while the controls
+  are off (a cutscene, #256) is lost, as the key's is.
 * `BF_TEST_STAMINA=<n>[@<s>][,...]`: sets the controlled character's stamina to n at those times
   (at the start without one), as the takes' pokes: `30@1.9` with `BF_TEST_SKILL=2.0` is take02.
 * `BF_SKILL_CHATTER=<percent>`: the skill lines' `probability` (100: every line the rest of the
@@ -120,7 +121,11 @@ Each frame, for every squad member with a skill, the controlled one and the AI a
 ## The toggle
 
 V asks the controlled character's skill to toggle (`Skill::request`, read after the hand-over so
-a press in that frame goes to the new character); a squad order will too (#33's "Toggle
+a press in that frame goes to the new character), unless its controls are off (#256): the toggle
+is the player controller's command (0x134cff), which a script's hold switches off
+(FUN_00129530), and in a cutscene no control reaches the character (`read_input`, play_script.rs
+`blocks_input`), so V or `BF_TEST_SKILL` then is lost, not kept for later. Before #256 V toggled
+the skill under the letterbox; a squad order will too (#33's "Toggle
 Ability"). The command handler (0x1224a5) calls the skill's own toggle, which switches the skill
 itself or not, and whose return picks the motion (0x1224e4): 0 none, 1 the type's overlay, 2
 MT_TOGGLE_SPECIAL. In the demo (`Toggle`):
@@ -765,6 +770,16 @@ hand-over: his stop clip, off 0.53 s later, no sound, its line heard (`BF_SKILL_
 Death with Vengar on: off in the frame of death, the end sound, the stamina frozen. V while a
 grenade charges (`BF_TEST_THROW=1.0,1.0 BF_TEST_SKILL=1.5`): refused, the grenade thrown. A
 knock-down mid-sprint (`BF_TEST_SPRINT`, `BF_TEST_KNOCK`): x1 while down.
+
+**In a cutscene** (#256): the tutorial's opening (`BF_MAP=tutorial BF_SKILL_LOG=1
+BF_SCRIPT_LOG=1`) with V tapped once a second from its start, by WM_KEYDOWN / WM_KEYUP posted to
+the demo's window (it works under `BF_BACKGROUND`): no toggle from the 26 taps through 25.1 s,
+the controls back at 26.26 s, then a toggle on each tap from 26.82 s. The same with
+`BF_TEST_SKILL=2,10,20,25.9,27,30` and `BF_CAPTURE`: the first toggle at 27.07, Berserker on
+screen from then; e40's opening with `BF_TEST_SKILL=2,5,12,20,23.5,26,28`: the controls back at
+24.20 s, toggles at 26.07 and 28.07 only. Regressions: each character's skill (`BF_CHARACTER=0..3
+BF_TEST_SKILL=1.0,3.0`) on the test map (`-- --test BF_NO_SQUAD=1 BF_TEST_GOTO=0,4,0,4`) and on
+e40 with the squad (`BF_TEST_GOTO=-16,152.32,-16,152.32`): on at 1.07, off at 3.13, as before.
 
 **Chatter** (`BF_SKILL_CHATTER=100`, presses at 1, 6 and 9 s, `BF_TEST_STAMINA=2@13`): each
 character said the on line at 1 s and was refused it at 9 s (its replay delay, 1.9 s left); the off

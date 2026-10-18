@@ -193,6 +193,7 @@ While it's set:
 * no menu opens on a player's button (FUN_0008c8c0, the objectives menu among them:
   play_objectives.rs);
 * the player's controls don't reach the game (play.rs `read_input`, `script::blocks_input`);
+  the skill key (V) too, which play_skills.rs `skill_input` reads itself (#256);
 * nobody takes damage (the damage handler 0x125600's early exit: play.rs `hurt`);
 * the squad's chatter is quiet (FUN_00140a60, not done here) and the squad-dead countdown waits
   (FUN_00089d30: play_mission.rs, [mission.md](mission.md)).
@@ -202,6 +203,16 @@ and no AI: play.rs `read_input` and `update_player` hand it to `script::held_ste
 its inputs and walks it to its 105 points, if any. The script's release (its end, or a 119's)
 gives the controls back: a walk the player's character hadn't finished ends there (m09_a's
 startup walks Brutus into a wall: before #222's fix round it held the controls for good).
+
+Every player-facing key goes through `read_input` but the skill key, read by play_skills.rs
+`skill_input`, which checks `blocks_input` too (#256). Its audit found nothing else leaking: the
+keys 1-4 (the hand-over), Tab and T (the item box, the grenade type), G (use, throw), Z, H, M,
+the move and fire keys and the mouse's look are all read past `read_input`'s early return. Not
+blocked, on purpose: the input triggers' virtual buttons (play_hints.rs `buttons`: the game's
+0x2008a0 reads the input objects, not the player controller), a tutorial panel's buttons (it
+pauses the game), the end screen, the briefing, Backspace (back to the front end), Escape
+(frees the mouse) and the test tools' keys. The demo reads no pad in game, so there is no d-pad
+to block.
 
 ## The squad's farcast
 
@@ -351,6 +362,9 @@ frames were compared side by side.
     BF_TEST_GOTO=-177.12,-223.64,-187.12,-223.64 BF_MOVE_LOG=1`): Tex walks his 105 from 14.0 s,
     and once the script lets him go (20.13 s) the autopilot turns him (yaw 100 to -3) and takes
     him to its goal by 21.5 s.
+* **The skill key** (#256; skills.md, "How it was checked"): V tapped once a second through
+  the tutorial's opening, posted to the demo's window: no toggle until the controls come back
+  at 26.26 s, a toggle on each tap from 26.82 s; e40's opening likewise, back at 24.20 s.
 * **The map editor** (`--edit`, `BF_MAP=tutorial BF_TEST_PLAY=30,start BF_TOOLS_LOG=1`): through
   the opening the frames are the edit view (the help, no bars, no HUD, the edit camera); the
   opening runs on and ends at 26.20 s; Shift+F5 at 30 s brings Tex to his spawn (65.55, 25.25,
