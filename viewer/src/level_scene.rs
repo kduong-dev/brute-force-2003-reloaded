@@ -281,30 +281,25 @@ pub fn lamp_light_at(level: &Level, p: Vec3) -> Vec3 {
     }).sum()
 }
 
-/// The level materials' lights (`Lamps`): `level`'s indoor pair and point lights, or none (the
-/// flat test floor). What a map's scenery is lit by, the test tools' placed scenery too (#185).
+/// The level materials' lights (`Lamps`): `level`'s pairs and point lights, or none (the flat
+/// test floor). What a map's scenery is lit by, the test tools' placed scenery too (#185).
 pub fn lamps_of(level: Option<&Level>, buffers: &mut Assets<ShaderStorageBuffer>) -> Lamps {
     let buffer = match level {
-        Some(l) => light_buffer(l, true),
+        Some(l) => light_buffer(l),
         None => no_lights(),
     };
     Lamps { lamps: buffers.add(buffer), layer_bias: None, indoor: false }
 }
 
-/// The level's lights' buffer shared by all its materials (`spawn_level` keeps its handle):
-/// changed while the Vengar view is on (`set_indoor_pair`).
-#[derive(Resource, Clone)]
-pub struct LevelLights(pub Handle<ShaderStorageBuffer>);
-
-/// A light buffer with no lights in it (`light_buffer`'s layout: its indoor pair empty, one
-/// lamp that reaches nowhere, as a buffer can't be empty).
+/// A light buffer with no lights in it (`light_buffer`'s layout: its pairs empty, one lamp that
+/// reaches nowhere, as a buffer can't be empty).
 fn no_lights() -> ShaderStorageBuffer {
     ShaderStorageBuffer::new(&[0u8; LIGHTS_HEADER + LAMP_SIZE], RenderAssetUsages::default())
 }
 
-/// `light_buffer`'s indoor pair (lamps.wgsl `IndoorPair`): two directions and two colours (vec4
-/// each) and the swap flag, padded to 16 bytes: 80 bytes.
-const LIGHTS_HEADER: usize = 80;
+/// `light_buffer`'s pairs (lamps.wgsl `Pairs`): the indoor pair's two directions and two colours
+/// and the outdoor pair's two directions, a vec4 each: 96 bytes.
+const LIGHTS_HEADER: usize = 96;
 /// A lamp in `light_buffer` (lamps.wgsl `Lamp`): its place and range, its linear colour and
 /// falloff kind, its pairs and padding: 48 bytes.
 const LAMP_SIZE: usize = 48;
@@ -313,27 +308,29 @@ const LAMP_SIZE: usize = 48;
 const LAMP_INDOOR: u32 = 2;
 const LAMP_OUTDOOR: u32 = 4;
 
-/// The level's lights for `LevelMaterial`s (lamps.wgsl's `LevelLights`): first the indoor pair
-/// (`Level::pair`; each slot the way toward its light, w 1 when there's one, then its linear
-/// colour) and `swap`, whether an indoor material takes it in place of bevy's directional lights
-/// (false in the Vengar view, whose vision pair lights both pairs' objects); then per lamp its
-/// place, range, linear colour, falloff kind and pairs (`LAMP_INDOOR`, `LAMP_OUTDOOR`). One lamp
-/// that reaches nowhere when there are none (or BF_NO_LAMPS).
-pub fn light_buffer(level: &Level, swap: bool) -> ShaderStorageBuffer {
+/// The level's lights for `LevelMaterial`s (lamps.wgsl's `LevelLights`): first the pairs
+/// (`Level::pair`): the indoor pair, each slot the way toward its light (w 1 when there's one)
+/// then its linear colour, and the way toward each light of the outdoor pair, which are bevy's
+/// directional lights (`spawn_lighting`): an indoor material swaps those for the indoor pair
+/// (lamps.wgsl `indoor_swap`). Then per lamp its place, range, linear colour, falloff kind and
+/// pairs (`LAMP_INDOOR`, `LAMP_OUTDOOR`); one lamp that reaches nowhere when there are none (or
+/// BF_NO_LAMPS).
+pub fn light_buffer(level: &Level) -> ShaderStorageBuffer {
     let linear = |c: f32| Color::srgb(c, c, c).to_linear().red;
     let mut bytes: Vec<u8> = Vec::with_capacity(LIGHTS_HEADER + LAMP_SIZE * level.lamps.len().max(1));
     let floats = |b: &mut Vec<u8>, v: &[f32]| v.iter().for_each(|f| b.extend(f.to_le_bytes()));
-    let pair = level.pair(true);
+    let toward = |l: Option<&&LevelLight>| l.map_or([0.0; 4], |l| { let to = -l.dir; [to.x, to.y, to.z, 1.0] });
+    let (indoor, outdoor) = (level.pair(true), level.pair(false));
     for k in 0..2 {
-        let d = pair.get(k).map_or([0.0; 4], |l| { let to = -l.dir; [to.x, to.y, to.z, 1.0] });
-        floats(&mut bytes, &d);
+        floats(&mut bytes, &toward(indoor.get(k)));
     }
     for k in 0..2 {
-        let c = pair.get(k).map_or([0.0; 4], |l| { let [r, g, b] = l.lit_color().map(linear); [r, g, b, 0.0] });
+        let c = indoor.get(k).map_or([0.0; 4], |l| { let [r, g, b] = l.lit_color().map(linear); [r, g, b, 0.0] });
         floats(&mut bytes, &c);
     }
-    bytes.extend((swap as u32).to_le_bytes());
-    bytes.resize(LIGHTS_HEADER, 0);
+    for k in 0..2 {
+        floats(&mut bytes, &toward(outdoor.get(k)));
+    }
     let mut n = 0;
     for l in level.lamps.iter().filter(|_| std::env::var("BF_NO_LAMPS").is_err()) {
         let [r, g, b] = l.color.map(linear);
@@ -347,13 +344,6 @@ pub fn light_buffer(level: &Level, swap: bool) -> ShaderStorageBuffer {
         bytes.resize(LIGHTS_HEADER + LAMP_SIZE, 0);
     }
     ShaderStorageBuffer::new(&bytes, RenderAssetUsages::default())
-}
-
-/// The Vengar view's switch for the level materials' indoor pair (`light_buffer`'s `swap`): off
-/// while the view is on, as its vision pair takes both pairs' place (FUN_000dcc10's second
-/// argument) and bevy's directional lights are that pair meanwhile (play_vengar.rs).
-pub fn set_indoor_pair(buffers: &mut Assets<ShaderStorageBuffer>, lights: &LevelLights, level: &Level, on: bool) {
-    buffers.insert(&lights.0, light_buffer(level, on));
 }
 
 /// Material types that are alpha-tested (grass, fences, grates, signs, cables); the others use
@@ -1003,16 +993,14 @@ pub fn spawn_object_parts(commands: &mut Commands, parts: &[ObjectPart], root: E
     }
 }
 
-/// Spawn the level's terrain, placed objects and sky; returns the doors (closed). Its lights'
-/// buffer (`light_buffer`) is kept as the `LevelLights` resource.
+/// Spawn the level's terrain, placed objects and sky; returns the doors (closed).
 pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, meshes: &mut Assets<Mesh>,
                    materials: &mut Assets<LevelMaterial>, liquids: &mut Assets<LiquidMaterial>, buffers: &mut Assets<ShaderStorageBuffer>,
                    images: &mut Assets<Image>) -> Vec<Door> {
     let mut doors = vec![];
     let mut cache = HashMap::new();
     let mut liquid_cache = HashMap::new();
-    let lamps = Lamps { lamps: buffers.add(light_buffer(level, true)), layer_bias: None, indoor: false };
-    commands.insert_resource(LevelLights(lamps.lamps.clone()));
+    let lamps = Lamps { lamps: buffers.add(light_buffer(level)), layer_bias: None, indoor: false };
     // (the placed objects' indoor-lit materials, `indoor_material`)
     let mut indoor_cache = HashMap::new();
     let mut indoor_parts = 0;

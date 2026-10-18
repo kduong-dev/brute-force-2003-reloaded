@@ -39,17 +39,17 @@ struct Lamp {
     pairs: u32,
 }
 
-// The level's indoor pair (level_scene::light_buffer): the way toward each of its two lights (w 1
-// when the slot holds one) and its linear colour; `swap` 1 while indoor materials take it (0 in the
-// Vengar view, whose vision pair lights both pairs' objects)
-struct IndoorPair {
-    dir: array<vec4<f32>, 2>,
-    color: array<vec4<f32>, 2>,
-    swap: u32,
+// The level's pairs (level_scene::light_buffer): the way toward each of the indoor pair's two
+// lights (w 1 when the slot holds one) and its linear colour, and the way toward each light of the
+// outdoor pair, which are bevy's directional lights (level_scene::spawn_lighting)
+struct Pairs {
+    indoor_dir: array<vec4<f32>, 2>,
+    indoor_color: array<vec4<f32>, 2>,
+    outdoor_dir: array<vec4<f32>, 2>,
 }
 
 struct LevelLights {
-    indoor: IndoorPair,
+    pairs: Pairs,
     lamps: array<Lamp>,
 }
 
@@ -57,12 +57,26 @@ struct LevelLights {
 
 #ifndef PREPASS_PIPELINE
 #ifdef INDOOR_PAIR
+// Whether one of bevy's directional lights, by the way toward it, is a light of the level's outdoor
+// pair (and not, say, the Vengar view's vision pair, play_vengar.rs `vision_lights`).
+fn outdoor_light(to: vec3<f32>) -> bool {
+    for (var k = 0u; k < 2u; k++) {
+        let o = level_lights.pairs.outdoor_dir[k];
+        if o.w != 0.0 && dot(to, normalize(o.xyz)) > 0.9999 {
+            return true;
+        }
+    }
+    return false;
+}
+
 // What an indoor surface's light differs by from what apply_pbr_lighting gave it: bevy's
-// directional lights (the outdoor pair, with the shadow its brightest casts) taken out, exactly as
-// apply_pbr_lighting put them in, and the indoor pair put in by the same diffuse and specular, at
-// an illuminance of PI (a light of 1.0 shows the texture as it is). The game has a surface take
-// one pair or the other (FUN_000dcc10 by the light-usage the wrapper material's draw 0x9f3c0
-// reads), not both.
+// directional lights that are the outdoor pair (with the shadow its brightest casts) taken out,
+// exactly as apply_pbr_lighting put them in, and the indoor pair put in by the same diffuse and
+// specular, at an illuminance of PI (a light of 1.0 shows the texture as it is). The game has a
+// surface take one pair or the other (FUN_000dcc10 by the light-usage the wrapper material's draw
+// 0x9f3c0 reads), not both. While the outdoor pair is put out (the Vengar view, whose vision pair
+// takes both pairs' place: FUN_000dcc10's second argument) nothing is swapped; a level with no
+// outdoor pair (mp2) takes the indoor pair always.
 fn indoor_swap(in: PbrInput) -> vec3<f32> {
     // (the lighting input apply_pbr_lighting builds, for the base layer)
     let NdotV = max(dot(in.N, in.V), 0.0001);
@@ -85,22 +99,28 @@ fn indoor_swap(in: PbrInput) -> vec3<f32> {
         view_bindings::view.view_from_world[3].z
     ), in.world_position);
     var light = vec3<f32>(0.0);
+    var lit = level_lights.pairs.outdoor_dir[0].w == 0.0 && level_lights.pairs.outdoor_dir[1].w == 0.0;
     for (var i = 0u; i < view_bindings::lights.n_directional_lights; i++) {
+        let l = &view_bindings::lights.directional_lights[i];
+        if !outdoor_light((*l).direction_to_light) {
+            continue;
+        }
+        lit = lit || max((*l).color.r, max((*l).color.g, (*l).color.b)) > 0.0;
         var shadow = 1.0;
         if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
-                && (view_bindings::lights.directional_lights[i].flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
+                && ((*l).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
             shadow = shadows::fetch_directional_shadow(i, in.world_position, in.world_normal, view_z);
         }
         light -= lighting::directional_light(i, &input, true) * shadow;
     }
     for (var k = 0u; k < 2u; k++) {
-        if level_lights.indoor.dir[k].w == 0.0 {
+        if !lit || level_lights.pairs.indoor_dir[k].w == 0.0 {
             continue;
         }
-        var derived = lighting::derive_lighting_input(in.N, in.V, normalize(level_lights.indoor.dir[k].xyz));
+        var derived = lighting::derive_lighting_input(in.N, in.V, normalize(level_lights.pairs.indoor_dir[k].xyz));
         let diffuse = input.diffuse_color * lighting::Fd_Burley(&input, &derived);
         let specular = lighting::specular(&input, &derived, 1.0);
-        light += (diffuse + specular) * derived.NdotL * level_lights.indoor.color[k].rgb * PI;
+        light += (diffuse + specular) * derived.NdotL * level_lights.pairs.indoor_color[k].rgb * PI;
     }
     return light * view_bindings::view.exposure;
 }
@@ -119,9 +139,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         out.color = apply_pbr_lighting(pbr_input);
 #ifdef INDOOR_PAIR
         let pair = 2u;
-        if level_lights.indoor.swap != 0u {
-            out.color = vec4<f32>(max(out.color.rgb + indoor_swap(pbr_input), vec3<f32>(0.0)), out.color.a);
-        }
+        out.color = vec4<f32>(max(out.color.rgb + indoor_swap(pbr_input), vec3<f32>(0.0)), out.color.a);
 #else
         let pair = 4u;
 #endif

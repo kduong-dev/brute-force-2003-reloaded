@@ -451,17 +451,12 @@ struct VisionLight;
 /// alone: take08's sunlit tower goes dark and its shaded sand light, take06's blue-lit gate dark.
 /// Here the level's directional lights are put out and the pair takes their place, at VISION_LIGHT
 /// (play.rs's lighting: PI lux is the console's 1.0, in linear terms), without shadows; the level's
-/// own come back at the off. The terrain takes the same pair per vertex (`vision_terrain`), and
-/// the scenery lit by the level's indoor pair keeps bevy's lights meanwhile (`set_indoor_pair`).
-#[allow(clippy::too_many_arguments)]
+/// own come back at the off. The terrain takes the same pair per vertex (`vision_terrain`); the
+/// scenery lit by the level's indoor pair takes it too, as its shader swaps only the level's own
+/// lights while they're lit (lamps.wgsl `indoor_swap`).
 fn vision_lights(mut commands: Commands, view: Res<VengarView>,
                  mut lights: Query<(Entity, &mut DirectionalLight, Option<&LevelLight>), Without<VisionLight>>,
-                 pair: Query<Entity, With<VisionLight>>, map: Res<MapLevel>, level_lights: Option<Res<bf_viewer::level_scene::LevelLights>>,
-                 mut buffers: ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>, mut indoor_off: Local<bool>) {
-    if let (true, Some(level), Some(level_lights)) = (view.on != *indoor_off, map.0.as_ref(), level_lights) {
-        bf_viewer::level_scene::set_indoor_pair(&mut buffers, &level_lights, level, !view.on);
-        *indoor_off = view.on;
-    }
+                 pair: Query<Entity, With<VisionLight>>) {
     for (e, mut light, own) in &mut lights {
         match (view.on, own) {
             (true, None) => {
