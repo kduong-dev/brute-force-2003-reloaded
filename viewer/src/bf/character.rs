@@ -114,6 +114,12 @@ const H_DEBRIS_MAIN: u32 = 0x1C1E_17FE;
 const H_DEBRIS_DELAY: u32 = 0x1B6A_0EDE;
 const H_DEBRIS_LIFE: u32 = 0xF2E4_E1A3;
 const H_EFFECT_DAMAGE: u32 = 0xFB0A_5F1D;
+/// An effect type's user parameter (`EffectType::user`; the type parser 0x1915b0 -> +0xc4).
+const H_EFFECT_USER: u32 = 0x0C88_C46C;
+/// An effect type's camera-attached flag (`EffectType::camera`; 0x1915b0 -> +0xc0).
+const H_EFFECT_CAMERA: u32 = 0x1E40_FD68;
+/// An effect type's distance in front of the camera (`EffectType::distance`; 0x1915b0 -> +0xbc).
+const H_EFFECT_DISTANCE: u32 = 0xF639_899A;
 /// An archetype's centre point (`<h_e99750a9>x y z</h_e99750a9>`), see `Game::archetype_centre`.
 const H_ARCHETYPE_CENTRE: u32 = 0xE997_50A9;
 /// Collision: the objects file's surface table, its entries (name, h_e9e44859 = offset in the
@@ -1071,6 +1077,12 @@ pub struct EffectType {
     /// Vengar hit's (h_0dcd4fc7) is 6.9e28, so its `vengar_hit` never shows (#35 takes 08, 22: no
     /// effect at the hit)
     pub starts: Vec<f32>,
+    /// each effect's `alignment-type`, by `effects`' order: the ALIGN_TO_ enum (its table at
+    /// 0x3bd298): 0 ALIGN_TO_EFFECT, the frame the effect was placed with; 1 REFLECTED_VECTOR;
+    /// 2 NORMAL_VECTOR, a frame built from the struck surface's normal (FUN_0021a850, by
+    /// FUN_0001d0c0); 3 WORLD_UP_VECTOR. The hits' are 2 (sonic_proj_can_hit, plasma_hit,
+    /// bio-flash_hit, the materials' debris), some flesh hits' 0 (wmat_fleshit_particle, _bio)
+    pub aligns: Vec<i64>,
     /// the light effect (an ALE effect name hash), 0 if none
     pub light: u32,
     /// sounds: (sound id, h_f724cb8c, play-length s, enable-looping). h_f724cb8c is read as a
@@ -1084,6 +1096,27 @@ pub struct EffectType {
     /// Therm Sweeper's explosion h_173132f0: (-1.99, -3.21, -1.67), 25 m; its trail h_194dc78e
     /// radius 0. None if the type has neither
     pub bounds: Option<(Vec3, f32)>,
+    /// its user parameter, h_0c88c46c (the type's +0x20 by its loader 0x219950): an object of the
+    /// type starts with it (FUN_0021c380 at 0x21a1fc sets the object's +0xbc), and its ALE
+    /// curves pick their variant by it. 1 on 5501 of the 5645 effect types in the levels' and
+    /// common's object types, 0 on 139, 1.002869 on 3, 1.1e-05 on 2; 1 on all 85 of
+    /// mp_common's. 1 without one is a guess, never used: every type carries it
+    pub user: f32,
+    /// h_1e40fd68 (the type's +0x128 bit 0, 0x219950): its objects stay in front of the camera,
+    /// placed there each tick (the object takes the bit into its +0x10c at 0x21a1d6, which
+    /// FUN_0021a700 tests). True on 8 types, one in each of e01, m03_a/b/c, m09_b/c and
+    /// m14_a/b's object types, each placed once: 8 placements, all at distance 0. m09_b/c's are
+    /// spawn-trigger templates, so 6 start with their level (dust storms, the meteor rain)
+    pub camera: bool,
+    /// h_f639899a (the type's +0x124, 0x219950): how far in front of the camera a
+    /// camera-attached object sits (into the object's +0xac at 0x21a1ea; a placement's
+    /// h_0e528ccb replaces it). 0 without one is a guess, never used: every type carries it
+    pub distance: f32,
+    /// `max-life` (h_1967d1cb, the type's +0xc8): the seconds an object of it runs (into the
+    /// object's +0xa4 at 0x21a1ca; a placement's `lifetime` replaces it). 3.402823e+38 (FLT_MAX)
+    /// on 5456 of the 5730 types. FLT_MAX without one is a guess, never used: every type
+    /// carries it
+    pub max_life: f32,
 }
 
 /// A ground decal (objecttypes `<decal>`): one of its textures at random (white shapes), tinted
@@ -1677,8 +1710,19 @@ impl Game {
                 let starts: Vec<f32> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
                     .filter(|e| { let x = hash_of(e.attr(h("effect-name"))); x != 0 && x != h("") })
                     .map(|e| e.attr(h("creation-time")).and_then(|v| v.as_f32()).unwrap_or(0.0)).collect()).unwrap_or_default();
+                // and its alignment-type (`EffectType::aligns`), likewise
+                let aligns: Vec<i64> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
+                    .filter(|e| { let x = hash_of(e.attr(h("effect-name"))); x != 0 && x != h("") })
+                    .map(|e| e.attr(h("alignment-type")).and_then(|v| v.as_i64()).unwrap_or(0)).collect()).unwrap_or_default();
+                let num = |k: u32| t.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
                 self.effect_type_defs.entry(name).or_insert(EffectType {
-                    effects: list, starts, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
+                    effects: list, starts, aligns, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
+                    // the defaults are guesses that never apply: all 5730 effect types carry
+                    // these four attributes (the parser 0x1915b0 only stores what is there)
+                    user: num(H_EFFECT_USER).unwrap_or(1.0),
+                    camera: t.attr(H_EFFECT_CAMERA).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
+                    distance: num(H_EFFECT_DISTANCE).unwrap_or(0.0),
+                    max_life: num(h("max-life")).unwrap_or(f32::MAX),
                 });
             }
         }

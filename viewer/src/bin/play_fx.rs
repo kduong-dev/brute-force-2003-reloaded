@@ -521,7 +521,9 @@ static BLOOD_B: [&Effect; 3] = [&BLOOD_DROPS_B, &GIBLET_B, &BLOOD_MIST_B];
 static BLOOD_1: [&Effect; 3] = [&BLOOD_DROPS_1, &GIBLET_1, &BLOOD_MIST_1];
 
 /// A flesh material's hit effect for an ammo type: the squad's three (ballistic, cutter, laser)
-/// and their lights.
+/// and their lights, made by hand here. Any other row's effect type (the sonic h_177a62d8, the
+/// particle h_ed6363bd, the bio h_f8d4e76d, the rail's, the energy's) is played from the data
+/// instead (`spawn_fx`, play.rs `hit_effect_at`).
 fn hit_effect(surface: Option<&Surface>, ammo: i64) -> (Option<&'static Effect>, Option<&'static Glow>) {
     match surface.and_then(|s| s.hit_effect.get(&ammo)) {
         Some(0x1D25_07AB) => (Some(&FLESH_SPARKS), None),       // wmat_fleshit_standard
@@ -529,6 +531,13 @@ fn hit_effect(surface: Option<&Surface>, ammo: i64) -> (Option<&'static Effect>,
         Some(0xFCBB_F2B9) => (Some(&FLESH_LASER), Some(&LASER_LIGHT)),
         _ => (None, None),
     }
+}
+
+/// The user parameter of a shot's flesh hit effect played from the data (FUN_0022cd80,
+/// play.rs `hit_sp`): from the hit record's damage (`Bleed::record`), 1.0 for a killing hit; 0
+/// for a hit without a record. (The hand-made effects keep their random pick.)
+fn flesh_sp(b: &Bleed) -> f32 {
+    b.record.map_or(0.0, |r| super::hit_sp(r, b.hp_left <= 0.0))
 }
 
 fn ease(kind: u8, f: f32) -> f32 {
@@ -716,6 +725,11 @@ fn requested_holes(mut commands: Commands, mut game: ResMut<GameData>, fx: Optio
         let Some(def) = game.0.decals.get(&name).cloned() else { continue };
         if def.textures.is_empty() {
             continue;
+        }
+        // (BF_SHOT_LOG: its data life and fade, h_199870ec / h_fe4e1d82: 25 / 5 s for most, the
+        // bio guns' green h_1ce6db03 60 / 5)
+        if std::env::var("BF_SHOT_LOG").is_ok() {
+            println!("hole h_{name:08x} at {at:.2}: life {} s, fading over its last {} s", def.life, def.fade);
         }
         let texture = def.textures[(state.random() * def.textures.len() as f32) as usize % def.textures.len()];
         if !fx.decal_textures.contains_key(&texture) {
@@ -1028,13 +1042,18 @@ fn spawn_fx(
     time: Res<Time>,
     mut player: ResMut<Player>,
     mut squad: ResMut<Squad>,
-    game: Res<GameData>,
+    mut game: ResMut<GameData>,
     fx: Option<Res<FxAssets>>,
     mut state: ResMut<FxState>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
 ) {
     let Some(fx) = fx else { return };
     let dt = frame_dt(&time);
+    // the flesh hit effects played from the data, once the characters are done with (effect
+    // type, where, the shot's way, the struck surface's normal, user parameter, seed)
+    let mut from_data: Vec<(u32, Vec3, Vec3, Vec3, f32, u32)> = vec![];
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         let [hit_decals, pool_decals] = blood_decals(&game.0, u);
         // what they're made of (their parts' world material): its hit sounds and effects, and
@@ -1070,6 +1089,15 @@ fn spawn_fx(
                     state.lights += 1;
                     spawn_light(&mut commands, g, at + back * 0.3);
                 }
+            }
+            // a row's effect type the demo hasn't made by hand: from the data, with its light
+            // (the sonic, particle and bio flesh hits, #57 #70 #47), aligned by its type: the
+            // shot's way (0), or the body's surface there (2: out from the hit cylinder's axis,
+            // the demo's stand-in for the struck part's collision)
+            let row = surface.and_then(|s| s.hit_effect.get(&ammo)).copied();
+            if let (None, Some(kind)) = (effect, row.filter(|&k| k != 0)) {
+                let normal = Vec3::new(b.at.x - u.position.x, 0.0, b.at.z - u.position.z).normalize_or(back);
+                from_data.push((kind, at, -back, normal, flesh_sp(&b), state.rng));
             }
             if let Some(sounds) = surface.and_then(|s| s.hit_sounds.get(&ammo)) {
                 let sounds: Vec<u32> = sounds.iter().copied().filter(|&id| game.0.sounds.has(id)).collect();
@@ -1124,6 +1152,14 @@ fn spawn_fx(
                 }
                 spawn_decal(&mut commands, &mut state, &fx, &mut materials, def, body, DECAL_SCALE);
             }
+        }
+    }
+    if let Some(mut ale) = ale {
+        for (kind, at, way, normal, sp, seed) in from_data {
+            if std::env::var("BF_COMBAT_LOG").is_ok() {
+                println!("  flesh hit effect h_{kind:08x} at {at:.2} sp {sp:.2} light h_{:08x}", game.0.effect_type_defs.get(&kind).map_or(0, |t| t.light));
+            }
+            super::hit_effect_at(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, kind, at, way, normal, sp, seed);
         }
     }
 }

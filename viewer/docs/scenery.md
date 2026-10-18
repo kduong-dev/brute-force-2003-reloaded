@@ -49,7 +49,9 @@
     A named one that a level trigger listens to sends DESTROYED as it breaks; one a
     destroyer-trigger removes is hidden and set broken the same way, without debris, and one
     removed as the level starts (the tutorial's four h_0247aefb props) is gone from the list's
-    start ([triggers.md](triggers.md), #220).
+    start ([triggers.md](triggers.md), #220). A placed effect object attached to it (a
+    `<parent Type="1">` link: e01's barrel fires on their barrels) goes as it breaks
+    (FUN_0021a700; maps.md "Placed effect objects", #258).
     By the entry type's object-type:
     * 0, a compound: each part flies off as a loose tumbling body (play_pickups.rs' rigid
       body). A crate's go out from the hit, along it and up. An explosive object's go out from

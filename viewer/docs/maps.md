@@ -8,7 +8,9 @@ that time instead: #35 take08's dash after standing 4 s, skills.md), or stands s
 points are the same;
 `BF_FIND_STEEP=1` lists slide surfaces steeper than 50° and ledges with a drop of more than 6 m,
 then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` prints particle emission;
-`BF_NO_IDLE_FX=1` leaves out the power-ups' effects):
+`BF_NO_IDLE_FX=1` leaves out the power-ups' effects; `BF_NO_PLACED_FX=1` the level's placed
+effect objects, `BF_PLACED_FX_VARIANTS=1` starts the ones held out, `BF_LEVEL_DUMP=1` lists
+them):
 
 * **Spawning.** You start at the level's start point. Points 0–3 are one squad's spawn on the
   hill, 4–7 the other's, and 9 is in the base. A level whose spawn-triggers spawn the squad (the
@@ -259,14 +261,22 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   | Minigun, ballistic guns (bullet-type 4) | instant | `tracer`, one particle shot from the muzzle at 113.6 m/s along the shot, on every (h_eeb9e75a + 1)th shot (MK every 3rd, Minigun every 4th) | sminigun_hit |
   | L-Shot | instant | tracer_snipe, a white beam drawn 200 m down the line in 0.38 s, smoke, rings | sminigun_hit |
 
-  * Bolts carry their effect with them: the emitters are flagged "attached" (h_e2999ffd), so
-    their particles move with the shot.
-  * Hit effects play on world hits; hits on bodies bleed instead (play_fx).
+  * Bolts carry their effect with them: the emitters flagged "attached" (h_e2999ffd, the
+    demo's reading) and, since #57, every emitter of a bolt's flight effect but its trails
+    have their particles move with the shot and go with it; a trail (an emitter under the
+    library's world node h_ee223b51 with its appearance at the root) leaves its particles in
+    the world. See play.md, **Bolts and their hits**.
+  * Hit effects play on world hits with the struck material's debris, hit sound and the
+    effect's light, each turned by its alignment-type; on bodies the flesh row's effect plays
+    (made by hand for the squad's ballistic, cutter and laser rows, from the data for the rest)
+    with the blood (play_fx).
   * World hits also leave the bullet's h_06a27365 hole or scorch on the collision triangle they
     meet, and each gun has its own muzzle effect and casings; the fire timing, pellets and
     accuracy spread are in [play.md](play.md), "Shots".
-  * A shot's damage (friendly fire) lands when it reaches the body: distance / speed later
-    (its factors: the hit part struck, x0.7 on the own side, the difficulty step, none on the
+  * A shot's damage (friendly fire) lands when it reaches the body: an instant ray's at the
+    distance / the demo's 400 m/s, a bolt's on the sweep that finds it, k x 0.1 s later
+    (play.md, **Bolts and their hits**; its
+    factors: the hit part struck, x0.7 on the own side, the difficulty step, none on the
     multiplayer maps as read live in a match, STANDARD on the missions: play.md **Damage**).
   * Beam appearances (class h_1f55f13e) are ribbons through their emitter's live particles in
     birth order, facing the camera. They have their own colour, alpha and width parameters, and
@@ -340,6 +350,130 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   "Spawn-triggers"). take08's lava burst (slava-erupt-jet: small-flare at 3,2, 100 a second for
   0.6 s, 0.47 -> 1.7 m) is a bright fire column that rises and fades within a second; with the
   demo's own rules (half-size quads, its count) it was a string of small blobs.
+* **Placed effect objects (#258)** (`ale_fx.rs` `spawn_placed_effects`, `play_placed_fx.rs`;
+  `bf/level.rs` `EffectObject`). The air particles a level places: the tutorial's 18 swarms of
+  flies (xfly), 7 of butterflies (xbfly) and the lava yard's 3 clouds of embers (slava-fuzz),
+  and other levels' fires, torches, sconces, steam, dust storms and power-up spot glows (1453
+  placements over the levels; m01_a has 65).
+  * **What the game does.** An `<effect-object>` (object-type 17) is an object of an effect type
+    (objecttypes `<effect>`). The world ticks it from the level's start (0x21b7a0), and it made
+    its ALE effects as it was set up from its type (0x21a180, FUN_00219fc0): it runs its effect
+    type's ALE effects and its light effect where it's placed. A spawn-trigger's template isn't
+    in the world (FUN_000dfe90): only its copies run (the tutorial's lava jet and farcast pads,
+    "Effects the triggers make"). Nothing else starts these: no trigger names the tutorial's
+    flies, and their `lifetime` is FLT_MAX.
+  * **The object.** Its life is the placement's `lifetime`, else its type's `max-life`: a 0 is
+    taken away at the first tick (e01's exp_gasmain, never seen); every other placed life is 90
+    days or more. Its type's h_0c88c46c is the user parameter it starts with (FUN_0021c380, 1
+    on nearly every type), its type's bounding sphere its distance LOD. Each emitter runs once,
+    for its lifespan (0x2a5b10): the ambient ones for 1e10 s, the few explosions levels place go
+    off once at the start. An alchemy entry with a creation-time starts that much later (m14_c's
+    meteor strike, 2 s).
+  * **Camera-attached types** (h_1e40fd68, the type's flag: the placement's own isn't read,
+    0x21c000) are kept at the camera each frame, h_0e528ccb m along its view (FUN_0021a700). The
+    levels place eight, all at 0 m: six start with their level (e01's dust storm, m03_a/b/c's,
+    m14_a/b's meteor rain), and m09_b/c's two are spawn-trigger templates the demo doesn't
+    spawn yet. Their particles stay where they're born.
+  * **Taken away** by a destroyer-trigger that names one (play_triggers.rs takes them in with
+    its copies: e34's six tutorial pointers, e40's io tablet glow ...), or with the breakable
+    object it's attached to (`<parent Type="1">`, FUN_0021a700: e01's barrel fires go when
+    their barrels break). A hardpoint link (Type 2: the torches) doesn't take it away.
+  * **Drawn** with the game's particle rules (the triggers' effects' shapes, count once a game
+    frame, facing and LOD; the shapes are the table at 0x402a4c, where a shape-2 quad spans -1 to
+    +1 of its Scale, twice the demo's own quad, and a shape-3 one stands on its particle) and
+    more read from the game's code for these (`Compiled::placed`):
+    * every particle starts in its emitter's box, which reaches its Width / Height / Depth to
+      either side (both cube classes' spawns draw [-1, 1) of each: 0x2b17c0, 0x64e30; a game
+      cube's OffsetHeight h_e2999ffd from the emitter up), and none is attached; FxCubeEmitter's
+      polar spread is MinSpread + r x (MaxSpread - MinSpread) with r in [-1, 1). So xfly's flies
+      start anywhere in 39 x 18 x 39 m, centred 12 m above their object;
+    * a sphere emitter's particles start MinRadius + r x (MaxRadius - MinRadius) out along their
+      direction (0x2a8a90) and a cone's the same out along their own way, its polar angle
+      MinSpread + r x (MaxSpread - MinSpread) (0x2aa190), each r in [-1, 1). So a smoke
+      column's puffs (0.04-0.21 m, spread up to 30 degrees) start within 21 cm of their emitter
+      along their rise, where the demo's own reading (the other effects') puts them out flat
+      from the cone's axis;
+    * every facing-3 appearance is drawn stretched along its motion and turned about it to face
+      the camera (`Pair::axial`): the draw picks the shader's facing by GeneralApp_FacingType
+      alone (0x2a1de6), where the other effects do so only for their AngleFadeOut ones. So
+      e01's barrel and trash fires, its campfires and m01_a's braziers are flame tongues rising
+      from their coals (spun at random about their foot they were a flat star of flame), and
+      the godrays (e06, m01_a/b: 4 m quads up to 70 times as tall, falling at 0.06 m/s from 171
+      m up) hang as pale shafts;
+    * turbulence fields run (FxTurbulenceField, 0x2a9440 / 0x2a9590): once a game frame each
+      particle's velocity is pulled by dt x Approach x 4 of the way toward a new random
+      velocity, a random direction x r x Magnitude with r in [-1, 1). xfly's 96.8 and 0.73
+      keep the flies darting about at ~13 m/s (the root mean square in the demo), turning
+      within a few tenths of a second; the butterflies' 24-35 and 0.20 at ~1-2 m/s.
+
+    The other effects (the grenades', the guns', the triggers') keep their own checked rules:
+    the box and the spawns for all of them are #164, the fields #101.
+  * **Held out:** the five placed effects whose curves vary with the user parameter
+    (s-lavalight, s-lavapool: the lava pools' glows; slava-cavern-splash, duststorm_med,
+    env_fl_mdsplash). The game draws them at the parameter their objects start with, 1:
+    FUN_0021c380 sets it before FUN_00219fc0 makes the slots, FUN_0008f5d0 hands it to each ALE
+    effect (the effect's +0x18, 0x2abaa0), which sets it on each node (0x66a00, the +0x88 its
+    curves are read at). There s-lavalight is 14 a second 4.9 m sheets of sidedistortion2 up
+    to 21 m tall over a 23 x 22 m box, added at an alpha of 0.108: a faint sheet. The demo draws
+    it far too strongly, an orange curtain over the whole view of the tutorial's lava yard that
+    take08 doesn't show (100-134 s: the far hills stay clear behind it); the likely cause is the
+    faint added sheet taken as linear light (`Source`, #165's blend). They stay out until that's
+    drawn as the console does (`BF_PLACED_FX_VARIANTS=1` runs them anyway).
+  * **Budget:** the placed effects' particles have their own cap (4000; m01_a keeps ~2000
+    alive, the tutorial ~300, e40 ~600, sdm_e34 ~430), so they never crowd out a fight's
+    (3000). Both are counted afresh each frame from the particles there: a count kept from frame
+    to frame missed a map's end, which takes them all at once, so m01_a loaded a second time
+    drew half its torches and a third time none. Frame time (bf_play, 40 s, mean): the tutorial
+    5.5 ms against 5.2 without them, m01_a 5.6 against 5.1, e40 5.3 against 5.1.
+  * **Not done:** their sounds (the fires' and torches' loops) and damage areas (e34's exp-oxy),
+    a finite life's end and the start over of a type flagged h_0d5e990b (FUN_0021c500: none
+    is placed with a life under 90 days), each alchemy entry's own max-life (the slot's +8,
+    which FUN_0021a850 reads: FLT_MAX on nearly every entry, 10 s on h_f90c728a's in m01_a/b
+    and m05_b/y, 207 and 600 s on a few in e01, m01_a and sdm_e01; the demo runs them on), the
+    lights levels hang on them (`<parent>` light objects of type h_09020c30: #143's).
+  * **Checked** (scratchpad t258dev):
+    * The tutorial's landing spot (take03 30-33 s: `BF_MAP=tutorial
+      BF_TEST_GOTO=65.55,74.03,55.6,73.05 BF_TEST_GO_AT=999`): dark winged flies dart about the
+      sky over the hill and the palms, one to a few in view at once, as in take03.
+    * The lava yard (take08 45 s: `BF_TEST_GOTO=50.68,17.53,55.8,8.9 BF_TEST_GO_AT=999
+      BF_CAMERA_PITCH=0.25`): the sky above the pits full of drifting light specks, the embers,
+      with flies and butterflies; take08's are as many by a dot count through the takes'
+      encoding (the demo's frames scaled to 480 lines, x264 crf 16: ~80 specks of contrast 25
+      or more in the same region, take08 ~80), but the demo's are warmer and crisper.
+    * The pool at 120 s (`BF_TEST_GOTO=46.26,-25.92,51.4,-34.5 BF_CAMERA_PITCH=0.12`): no
+      curtain, as take08 (the orange light on the hill there is #143's).
+    * e34: `BF_TRIGGER_FIRE=h_f211fe52,6,4.0` removes the tutorial pointer by (69.2, -92.5)
+      ("removes the effect h_f3bee12f"). e01: `BF_TEST_HIT=5.0 BF_TEST_HIT_NEAR=-110.96,51.77`
+      breaks the fire barrel, and its fire goes with it.
+    * The tutorial's opening: the lava bursts and the farcast come once each, as before (the
+      templates are left to the triggers); e40, sdm_e34 and the test map play as before.
+    * m01_a loaded three times in one test session (`--test` with
+      `BF_TEST_LEVEL=1,m01_a;30,m01_a;30,m01_a BF_ALE_LOG=1`): each load starts from 0
+      particles and keeps ~1950 alive, the same each time; so does a map played after
+      `BF_TEST_BACK` has gone back to the menu.
+    * e01's fire barrel (`BF_MAP=e01 BF_TEST_GOTO=-110.96,64,-114,50`, frames 100-140): flame
+      tongues stand up out of the coals and over the rim. The bright flat disc over the barrel's
+      mouth is its light (light_barrelfire: several point lights 0.3 m up inside the barrel,
+      4.7-7.3 m reach), see below.
+    * m01_a (`BF_TEST_GOTO=30.6,29,30.6,32`, frame 89): the godrays hang as pale shafts in the
+      mist beyond the trees.
+  * **Doesn't match yet:**
+    * The flies look about 1.65 times as big as take03's and take08's and cross the picture
+      about twice as fast; their speed for their size on screen matches within 25%, so the
+      turbulence (read from the code: ~12.6 m/s root mean square) is likely right and their size
+      is off. 1.27 of it is the demo's narrower view (#126); the rest wants a shot of a fly at a
+      known distance in xemu. Their size is xfly-basic's Scale x 2 (shape 2, 0x402a4c).
+    * The embers are warmer and crisper (the demo's additive blend in linear light at 720
+      lines, #165), and they come and go in waves of 5-10 s (1 to 42 specks within 6 s).
+      Nothing in slava-fuzz is periodic: its rate (4.68 a second), life (7.97 s), speed and
+      transform are constants, and each particle fades in over its first quarter and out over
+      its last fifth. It keeps ~37 alive, each a 14-35 m sheet of noise2's dots; the waves are
+      the few sheets in front of the camera coming and going. Not checked against a take's
+      steadiness.
+    * e01's fire barrels' light (light_barrelfire, ~7 point lights at once 0.3 m up inside the
+      barrel, 4.7-7.3 m reach) burns the coals at the barrel's mouth out to a flat bright
+      yellow disc: the demo's point lights (inverse-square, `LIGHT_LUMENS`) against the game's
+      light falloff, not traced. Every effect's light is drawn so; not this ticket's.
 * **Pickups.** They're stored at their spawn height in the level file; they now settle onto the
   floor below.
 * **Compound joints.** A compound object's joints carry a rotation (a w-x-y-z quaternion),

@@ -35,11 +35,15 @@ use std::sync::{Arc, RwLock};
 
 /// How finely a shot's path is looked along for a liquid's surface (m).
 const LIQUID_STEP: f32 = 0.25;
+/// How much farther (m) than the first face a ray meets a face met from its front may be and
+/// still count as the one struck (`Arena::ray_material`): the twins' distances differ by their
+/// rounding only. The demo's.
+const FRONT_SLACK: f32 = 0.01;
 
 use bevy::math::{Mat4, Vec2, Vec3};
 
 use crate::bf::character::{Game, LiquidType, H_LIQUID_OBJECT, OBJECT_GAME};
-use crate::bf::collision::MATERIAL_SLIDE;
+use crate::bf::collision::{MATERIAL_ID, MATERIAL_SLIDE};
 use crate::bf::hash::h;
 use crate::bf::level::Level;
 use crate::bf::weapon::WeaponModel;
@@ -183,10 +187,7 @@ impl Arena {
         let mut animated: HashMap<u32, HashMap<u32, crate::level_scene::Animated>> = HashMap::new();
         let played = crate::level_scene::played_once(level);
         // (the spawn-triggers' templates: out of the world until spawned, FUN_000dfe90)
-        let templates: HashSet<u32> = level.triggers.iter().filter_map(|t| match t.class {
-            crate::bf::triggers::Class::Spawn { template, .. } => Some(template),
-            _ => None,
-        }).filter(|&n| n != 0).collect();
+        let templates = level.spawn_templates();
         for (i, o) in level.objects.iter().enumerate() {
             if o.tag == h("start-point") {
                 let p = o.transform.w_axis.truncate();
@@ -438,6 +439,22 @@ impl Arena {
         best
     }
 
+    /// How many triangles of each world-material id (MATERIAL_ID) the terrain has and the rest
+    /// (the placed objects' and blockers'), by id, for the log (BF_SHOT_LOG: what a shot's hit
+    /// takes its sounds and debris from, play.rs `world_hit`).
+    pub fn material_counts(&self) -> Vec<(u8, usize, usize)> {
+        let mut out: Vec<(u8, usize, usize)> = vec![];
+        for t in &self.tris {
+            let id = t.material & MATERIAL_ID;
+            match out.iter_mut().find(|e| e.0 == id) {
+                Some(e) => if t.terrain { e.1 += 1 } else { e.2 += 1 },
+                None => out.push((id, t.terrain as usize, !t.terrain as usize)),
+            }
+        }
+        out.sort();
+        out
+    }
+
     /// (triangles, of them terrain, slide-flagged, door leaves), for the log.
     pub fn stats(&self) -> (usize, usize, usize, usize) {
         let n = |f: &dyn Fn(&Tri) -> bool| self.tris.iter().filter(|t| f(t)).count();
@@ -502,6 +519,23 @@ impl Arena {
             let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or(Vec3::Y);
             (t, if n.dot(dir) > 0.0 { -n } else { n })
         })
+    }
+
+    /// `ray`, with the world-material id (the collision material's low bits, MATERIAL_ID) of the
+    /// triangle met from its front: what a shot's hit takes its effect, debris and sounds from
+    /// (FUN_0022cd80, FUN_0022b5b0: the hit record's +0x54). The terrain's triangles come in
+    /// twins with the same corners: the one facing up by its winding ((v1 - v0) x (v2 - v0))
+    /// carries the material and the flags, its back 0 and none (e34: all 15480 pairs DIRT 5 over
+    /// 0, the slide flag on 10462 of the fronts; e40's 20278 the same), and the ray, testing
+    /// both sides, met either. A face met from its front within FRONT_SLACK of the first face
+    /// met is taken; else that first face (a lone triangle wound the other way). The flat
+    /// floor's ground is material 0.
+    pub fn ray_material(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, u8)> {
+        let id = |i: Option<usize>| i.map_or(0, |i| self.tris[i].material & MATERIAL_ID);
+        let first = self.ray_tri(origin, dir, max)?;
+        let front = self.ray_tri_where(origin, dir, max, |t| (t.v[1] - t.v[0]).cross(t.v[2] - t.v[0]).dot(dir) < 0.0)
+            .filter(|(t, _)| *t <= first.0 + FRONT_SLACK);
+        Some(front.map_or((first.0, id(first.1)), |(t, i)| (t, id(i))))
     }
 
     /// `ray`, with the breakable object it meets first (its index, see `breakable`), if the
