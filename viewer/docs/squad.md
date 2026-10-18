@@ -163,10 +163,10 @@ Squad movement and deaths follow the game's own data and the captures:
     alpha alike, c0 being the h_e01baa40 colour with `alpha` as its fourth component
     (FUN_0008fa50 maps the names to +0x70 / +0x7c; FUN_000a4d80 packs them), then a final
     combiner that fogs the colour. No vertex colour, lighting or second texture. So it's drawn
-    as Bevy's alpha blend of that, fogged, with a box-filtered mip chain made for its texture:
-    the file's own five levels (64 down to 4) are box averages too (mean alpha 39, 49, 52, 43,
-    40 of 255), but the format reader decodes the top level only. Without mips the one-texel
-    traces break up a few metres off.
+    as Bevy's alpha blend of that, fogged, with its texture's own mip levels (five, 64 down to
+    4: box averages, mean alpha 39, 49, 52, 43, 40 of 255; since #257 the format reader decodes
+    them, where this module used to rebuild the chain). Without mips the one-texel traces break
+    up a few metres off.
   * Not used: `time-scale` (h_01590d7a, 0.4) is mapped to +0x58, but none of the shader's own
     functions read it (and it couldn't move where the scroll stops). The wrapper's h_e59d69a0
     (60) goes to render state +0x294 of the state cache (FUN_0009e960, flagging the material
