@@ -49,12 +49,13 @@ use bevy::{
     math::Affine2,
     pbr::NotShadowCaster,
     prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    render::render_resource::TextureFormat,
 };
 
 use crate::bf::ale::Node;
-use crate::bf::character::Game;
+use crate::bf::character::{Address, Game};
 use crate::bf::hash::h;
+use crate::scene::mip_image;
 
 // emitter parameters
 const LIFESPAN: u32 = 0xF27F_DE7D;
@@ -1003,23 +1004,24 @@ impl AleAssets {
 
     /// A particle texture: as sRGB for a blended appearance, as linear amounts for an added one
     /// (`linear`). For one added by ONE or SRCCOLOR (`source`) its alpha is made opaque, as the
-    /// blend doesn't read it, and for SRCCOLOR its colour squared. Cached by all three.
+    /// blend doesn't read it, and for SRCCOLOR its colour squared. Cached by all three. With the
+    /// mip levels its archive ships (most particle textures in common.tgz have one), clamped at
+    /// its edges as before.
     fn texture(&mut self, game: &mut Game, images: &mut Assets<Image>, id: u32, linear: bool, source: Source) -> Option<Handle<Image>> {
         self.textures.entry((id, linear, source)).or_insert_with(|| {
-            let (w, hgt, mut px) = game.texture_rgba(id)?;
+            let mut mips = game.texture_mips(id)?;
             if source != Source::Alpha {
-                for p in px.chunks_exact_mut(4) {
+                mips.map_texels(|p| {
                     if source == Source::Colour {
                         for c in &mut p[..3] {
                             *c = ((*c as u32 * *c as u32 + 127) / 255) as u8;
                         }
                     }
                     p[3] = 255;
-                }
+                });
             }
             let format = if linear { TextureFormat::Rgba8Unorm } else { TextureFormat::Rgba8UnormSrgb };
-            Some(images.add(Image::new(Extent3d { width: w, height: hgt, depth_or_array_layers: 1 }, TextureDimension::D2, px,
-                                       format, RenderAssetUsages::default())))
+            Some(images.add(mip_image(&mips, format, [Address::Clamp; 2])))
         }).clone()
     }
 }

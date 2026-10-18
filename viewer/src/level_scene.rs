@@ -5,12 +5,11 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::{
     asset::{weak_handle, RenderAssetUsages},
-    image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, NotShadowCaster},
     prelude::*,
     render::{
         mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues},
-        render_resource::{AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError, TextureDimension, TextureFormat},
+        render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError, TextureFormat},
         storage::ShaderStorageBuffer,
     },
 };
@@ -18,8 +17,10 @@ use bevy::{
 use crate::bf::character::{Address, Game, Geoset, H_WRAP_ALPHA};
 use crate::bf::hash::h;
 use crate::bf::level::Level;
+use crate::bf::texture::Mips;
 use crate::bf::triggers::{act, Class, AC_PLAY, AC_RESUME, AM_BACKWARD, AM_FORWARD};
 use crate::bf::weapon::{PartJoint, WeaponModel, HINGE_JOINT, TRANSFORM_JOINT};
+use crate::scene::mip_image;
 
 /// A level's material: bevy's standard one, lit also by the level's point lights (light-object
 /// h_ea460e64) as the game lights its scenery: colour x (1 - distance / range) x N.L, per pixel
@@ -28,7 +29,8 @@ use crate::bf::weapon::{PartJoint, WeaponModel, HINGE_JOINT, TRANSFORM_JOINT};
 /// bright beside it and too dim towards its edge.
 pub type LevelMaterial = ExtendedMaterial<StandardMaterial, Lamps>;
 
-/// The level's point lights, for `LevelMaterial`: one buffer shared by all its materials.
+/// The level's point lights, for `LevelMaterial`: one buffer shared by all its materials. A
+/// terrain layer's material also carries its colour and detail textures (`terrain_detail`).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 #[bind_group_data(LampsKey)]
 pub struct Lamps {
@@ -38,17 +40,32 @@ pub struct Lamps {
     /// material's `depth_bias` is used to sort it (see TERRAIN_LAYER_SORT): bevy takes both
     /// from that one field.
     pub layer_bias: Option<i32>,
+    /// A terrain layer's detail constants, the game's c20 (`terrain_detail`); zero for the
+    /// other materials.
+    #[uniform(101)]
+    pub detail: Vec4,
+    /// A terrain layer's colour texture, sampled here in place of the standard material's
+    /// (which a terrain layer leaves without one): see `terrain_detail`.
+    #[texture(102)]
+    #[sampler(103)]
+    pub colour: Option<Handle<Image>>,
+    /// A terrain layer's detail texture (its colour texture where it names none).
+    #[texture(104)]
+    #[sampler(105)]
+    pub detail_texture: Option<Handle<Image>>,
 }
 
-/// What a `Lamps` material's pipeline depends on: the layer's own depth-test bias, if any.
+/// What a `Lamps` material's pipeline depends on: the layer's own depth-test bias, if any, and
+/// whether it mixes in a detail texture (a terrain layer: the shader def TERRAIN_DETAIL).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LampsKey {
     layer_bias: Option<i32>,
+    detail: bool,
 }
 
 impl From<&Lamps> for LampsKey {
     fn from(lamps: &Lamps) -> Self {
-        LampsKey { layer_bias: lamps.layer_bias }
+        LampsKey { layer_bias: lamps.layer_bias, detail: lamps.colour.is_some() }
     }
 }
 
@@ -60,14 +77,67 @@ impl MaterialExtension for Lamps {
     }
 
     /// A terrain layer keeps its own depth-test bias (the base material set it from the sort
-    /// bias, see TERRAIN_LAYER_SORT).
+    /// bias, see TERRAIN_LAYER_SORT) and samples its textures as the game's terrain pass does
+    /// (TERRAIN_DETAIL, see `terrain_detail`).
     fn specialize(_pipeline: &MaterialExtensionPipeline, descriptor: &mut RenderPipelineDescriptor, _layout: &MeshVertexBufferLayoutRef,
                   key: MaterialExtensionKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
         if let (Some(bias), Some(depth)) = (key.bind_group_data.layer_bias, descriptor.depth_stencil.as_mut()) {
             depth.bias.constant = bias;
         }
+        if let (true, Some(fragment)) = (key.bind_group_data.detail, descriptor.fragment.as_mut()) {
+            fragment.shader_defs.push("TERRAIN_DETAIL".into());
+        }
         Ok(())
     }
+}
+
+/// The terrain material class (h_0ec4edf0, factory 0x91330; every terrain layer's material).
+const TERRAIN_MATERIAL: u32 = 0x0EC4_EDF0;
+/// Its texture slots past `color` and `alpha` (0x90b10): the detail texture (h_17fc684a,
+/// "detail" by its hash) and a P8 bump map (h_ed0b519d, not drawn here). On all 141 terrain
+/// materials of the game's levels the detail texture is the colour texture.
+const TERRAIN_DETAIL_TEXTURE: u32 = 0x17FC_684A;
+/// Its constants (the table at 0x90e40) that the detail reads, over the 141 terrain materials of
+/// the game's levels: the detail's tiling over the colour's uv (h_08e8e4c3, +0x54; 0-16, 112 of
+/// them 3-5, the others 1 (2), 2 (4), 2.4, 2.5 (3), 2.8, 6 (8), 7 (5), 9 (2) and 16 (2); 3.5 / 3
+/// / 2.5 on the tutorial's three layers), how far from the eye it reaches (h_fe22cc04, +0x5c, m;
+/// 0-35, 117 of them 15-25, two 1 m; the tutorial's 20, 20, 15) and its share at the eye
+/// (h_153264c6, +0x50; 0-1, 105 of them 0.8-0.9, 0.4 on three, 0.7 on one). e05's h_fa6eaf30
+/// has 0 for all three: no detail. Without them the class's factory defaults (0x90ee0): 0.8, 16
+/// and 0 (no detail).
+const DETAIL_SCALE: u32 = 0x08E8_E4C3;
+const DETAIL_FADE: u32 = 0xFE22_CC04;
+const DETAIL_SHARE: u32 = 0x1532_64C6;
+const DETAIL_DEFAULTS: (f32, f32, f32) = (0.8, 16.0, 0.0);
+
+/// A terrain layer's detail, as the game draws its terrain (#257): material `id`'s constants
+/// as the game's c20, with its detail texture; None for a material of another class, one whose
+/// detail has no share (w 0) or with BF_NO_DETAIL=1 (to compare).
+///
+/// The terrain material's begin (FUN_00090f50) binds its detail texture (else its colour) at
+/// stage 2 and sets c20 = (1 / s^2, s^2, k, w) from the constants above: s the fade distance, k
+/// the scale, w the share. The terrain's base pass, vertex program 0x38 (0x3d8bf8; it reads c20
+/// and c23.w = 1/16, the height scale the begin writes), passes the colour's uv as it is
+/// (oT0 = v9), the mask's (oT1 = v10), the detail's and the bump map's at k times it
+/// (oT2 = oT3 = v9 x c20.z), and the detail's share in oD1.w = w (1 - d^2 / s^2), d the vertex's
+/// distance from c24, 0 past s (c24: the point the draw item's +0x34 points at, FUN_00091070;
+/// the eye, by this use). Its pixel shaders 0x1a (a layer: its alpha the mask's) and 0x1b (the
+/// ground) mix the two by that share, lerp(t0, t2, v1.a), before lighting it. So within s of the
+/// eye the ground shows its texture k times finer, fading to the colour's own tiling at s; the
+/// demo drew the colour's tiling everywhere. (The bump map, lit through oD1.rgb, isn't drawn.)
+/// No code was found that selects 0x38 / 0x1a / 0x1b; the rest of the data and the takes fit
+/// them (levels.md, Terrain layers). Drawn by lamps.wgsl under TERRAIN_DETAIL, per pixel (the
+/// console's share is per vertex, 2 m apart).
+pub fn terrain_detail(game: &Game, id: u32) -> Option<(Vec4, u32)> {
+    if game.material_type(id) != TERRAIN_MATERIAL || std::env::var("BF_NO_DETAIL").is_ok() {
+        return None;
+    }
+    let num = |n: u32, or: f32| game.material_constant(id, n).and_then(|v| v.first().copied()).unwrap_or(or);
+    let (k, s, w) = (num(DETAIL_SCALE, DETAIL_DEFAULTS.0), num(DETAIL_FADE, DETAIL_DEFAULTS.1), num(DETAIL_SHARE, DETAIL_DEFAULTS.2));
+    let texture = game.material_param_texture(id, TERRAIN_DETAIL_TEXTURE).or_else(|| game.material_texture(id))?;
+    // (FUN_00090f50: 1 / s^2 is 0 when s^2 is no more than FLT_EPSILON, 0x3a4ffc)
+    let s2 = s * s;
+    (w > 0.0).then_some((Vec4::new(if s2 > f32::EPSILON { 1.0 / s2 } else { 0.0 }, s2, k, w), texture))
 }
 
 /// Added to a terrain layer's sort distance: bevy sorts transparent meshes back to front by
@@ -200,8 +270,8 @@ fn liquid_material(game: &mut Game, images: &mut Assets<Image>, liquids: &mut As
     let col = |game: &Game, n: &str| game.material_constant(id, h(n)).filter(|v| v.len() >= 3)
         .map_or(Vec4::ONE, |v| Color::srgb(v[0], v[1], v[2]).to_linear().to_vec4());
     let mut tex = |game: &mut Game, param: u32| game.material_param_texture(id, param)
-        .map(|t| std::env::var("BF_LIQUID_TEX").ok().and_then(|v| u32::from_str_radix(&v, 16).ok()).unwrap_or(t)).and_then(|t| game.texture_rgba(t))
-        .map(|(w, h, px)| image(images, w, h, px));
+        .map(|t| std::env::var("BF_LIQUID_TEX").ok().and_then(|v| u32::from_str_radix(&v, 16).ok()).unwrap_or(t)).and_then(|t| game.texture_mips(t))
+        .map(|mips| image(images, &mips));
     let water = ty == LIQUID_WATER;
     let (scale0, scale1) = if water {
         (Vec2::new(num(game, h("scale-u"), 1.0), num(game, h("scale-v"), 1.0)), Vec2::new(num(game, h("scale-u-1"), 1.0), num(game, h("scale-v-1"), 1.0)))
@@ -274,7 +344,7 @@ pub fn lamps_of(level: Option<&Level>, buffers: &mut Assets<ShaderStorageBuffer>
         Some(l) => lamp_buffer(l),
         None => ShaderStorageBuffer::new(&[0u8; 32], RenderAssetUsages::default()),
     };
-    Lamps { lamps: buffers.add(buffer), layer_bias: None }
+    Lamps { lamps: buffers.add(buffer), ..default() }
 }
 
 /// The point lights' buffer: per lamp its place, range, linear colour and falloff kind (8
@@ -621,25 +691,15 @@ pub fn visible(game: &Game, g: &Geoset) -> bool {
     game.has_material(g.material)
 }
 
-fn image(images: &mut Assets<Image>, w: u32, h: u32, px: Vec<u8>) -> Handle<Image> {
-    image_with(images, w, h, px, [Address::Wrap; 2])
+/// A texture repeating past its edges, with its mip levels (`scene::mip_image`).
+fn image(images: &mut Assets<Image>, mips: &Mips) -> Handle<Image> {
+    image_with(images, mips, [Address::Wrap; 2])
 }
 
-/// A texture sampled past its edges as its material says (`Game::texture_address`).
-fn image_with(images: &mut Assets<Image>, w: u32, h: u32, px: Vec<u8>, address: [Address; 2]) -> Handle<Image> {
-    let mut img = Image::new(Extent3d { width: w, height: h, depth_or_array_layers: 1 }, TextureDimension::D2, px,
-                             TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());
-    let mode = |a: Address| match a {
-        Address::Wrap => ImageAddressMode::Repeat,
-        Address::Clamp => ImageAddressMode::ClampToEdge,
-        Address::Mirror => ImageAddressMode::MirrorRepeat,
-    };
-    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: mode(address[0]),
-        address_mode_v: mode(address[1]),
-        ..ImageSamplerDescriptor::linear()
-    });
-    images.add(img)
+/// A texture sampled past its edges as its material says (`Game::texture_address`), with its
+/// mip levels (`scene::mip_image`).
+fn image_with(images: &mut Assets<Image>, mips: &Mips, address: [Address; 2]) -> Handle<Image> {
+    images.add(mip_image(mips, TextureFormat::Rgba8UnormSrgb, address))
 }
 
 /// A level material: its colour texture; for the cut-out types (and `cutout`) the texture's
@@ -669,9 +729,9 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
                     .map_or(LinearRgba::WHITE, |c| Color::srgb(c[0], c[1], c[2]).into()),
                 _ => LinearRgba::WHITE,
             };
-            if let Some((w, h, px)) = game.texture_rgba(t) {
+            if let Some(mips) = game.texture_mips(t) {
                 mat.emissive = tint;
-                mat.emissive_texture = Some(image_with(images, w, h, px, address));
+                mat.emissive_texture = Some(image_with(images, &mips, address));
             }
         }
     }
@@ -686,24 +746,19 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
                   game.material_alpha_texture(id), avg, game.material_constant(id, GLOW_TEXTURE), game.material_constant(id, H_WRAP_ALPHA));
     }
     let address = game.material_texture(id).map_or_else(Default::default, |t| game.texture_address(id, t));
-    if let Some((w, h, mut px)) = game.material_texture(id).and_then(|t| game.texture_rgba(t)) {
+    if let Some(mut mips) = game.material_texture(id).and_then(|t| game.texture_mips(t)) {
         if cutout && CUTOUT_TYPES.contains(&game.material_type(id)) {
-            if let Some((aw, ah, apx)) = game.material_alpha_texture(id).and_then(|a| game.texture_rgba(a)) {
-                for y in 0..h {
-                    for x in 0..w {
-                        let (sx, sy) = (x * aw / w, y * ah / h);
-                        px[((y * w + x) * 4 + 3) as usize] = apx[((sy * aw + sx) * 4 + 3) as usize];
-                    }
-                }
+            if let Some(alpha) = game.material_alpha_texture(id).and_then(|a| game.texture_mips(a)) {
+                mips.take_alpha(&alpha);
             }
             mat.alpha_mode = AlphaMode::Mask(0.5);
             mat.double_sided = true;
             mat.cull_mode = None;
         } else {
-            px.chunks_exact_mut(4).for_each(|p| p[3] = 255);
+            mips.map_texels(|p| p[3] = 255);
         }
         mat.base_color = Color::WHITE;
-        mat.base_color_texture = Some(image_with(images, w, h, px, address));
+        mat.base_color_texture = Some(image_with(images, &mips, address));
         // a self-lit shell with a picture (its h_e01baa40): added to the scene, like the
         // untextured ones
         if game.material_type(id) == GLOW_SHELL {
@@ -871,7 +926,7 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     let mut doors = vec![];
     let mut cache = HashMap::new();
     let mut liquid_cache = HashMap::new();
-    let lamps = Lamps { lamps: buffers.add(lamp_buffer(level)), layer_bias: None };
+    let lamps = Lamps { lamps: buffers.add(lamp_buffer(level)), ..default() };
     // terrain: the ground, then each layer blended over it by its mask (baked into vertex alpha)
     for (k, (g, mask)) in level.terrain.iter().enumerate() {
         let base = material(game, images, materials, &lamps, &mut cache, g.material, false, false);
@@ -885,6 +940,23 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                     m.base.fog_enabled = true;
                 } else {
                     m.base.base_color = terrain_tint(level);
+                }
+                // its colour and its detail, mixed by the eye's distance (`terrain_detail`):
+                // sampled by the layer's own shader in place of the standard material's texture
+                if let Some((c20, detail)) = terrain_detail(game, g.material) {
+                    let colour = m.base.base_color_texture.take();
+                    let same = game.material_texture(g.material) == Some(detail);
+                    let detail_image = if same { colour.clone() } else {
+                        let address = game.texture_address(g.material, detail);
+                        game.texture_mips(detail).map(|mips| image_with(images, &mips, address))
+                    };
+                    if colour.is_some() && detail_image.is_some() {
+                        m.extension.detail = c20;
+                        m.extension.colour = colour;
+                        m.extension.detail_texture = detail_image;
+                    } else {
+                        m.base.base_color_texture = colour;
+                    }
                 }
                 materials.add(m)
             }
@@ -1047,7 +1119,7 @@ pub type SkyLayers = Vec<(Handle<Mesh>, Handle<LevelMaterial>, Vec3)>;
 pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
                   buffers: &mut Assets<ShaderStorageBuffer>, images: &mut Assets<Image>) -> SkyLayers {
     let none = vec![0u8; 32];
-    let lamps = Lamps { lamps: buffers.add(ShaderStorageBuffer::new(&none, RenderAssetUsages::default())), layer_bias: None };
+    let lamps = Lamps { lamps: buffers.add(ShaderStorageBuffer::new(&none, RenderAssetUsages::default())), ..default() };
     make_sky(game, sky, at, meshes, materials, images, &lamps, &mut HashMap::new())
 }
 
@@ -1067,11 +1139,11 @@ fn make_sky(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>
             m.double_sided = true;
             m.cull_mode = None;
             m.fog_enabled = false;
-            let (w, h, px) = game.material_texture(g.material).and_then(|t| game.texture_rgba(t)).unwrap_or((1, 1, vec![160, 170, 180, 255]));
-            let clear = px.chunks_exact(4).any(|p| p[3] < 250);
+            let mips = game.material_texture(g.material).and_then(|t| game.texture_mips(t)).unwrap_or_else(|| Mips::single(1, 1, vec![160, 170, 180, 255]));
+            let clear = mips.top().px.chunks_exact(4).any(|p| p[3] < 250);
             m.alpha_mode = if clear { AlphaMode::Blend } else { AlphaMode::Opaque };
             m.base_color = Color::WHITE;
-            m.base_color_texture = Some(image(images, w, h, px));
+            m.base_color_texture = Some(image(images, &mips));
         }
         let mut layer = mesh_of(g, None, 0.0, false);
         if let Some(VertexAttributeValues::Float32x3(ps)) = layer.attribute_mut(Mesh::ATTRIBUTE_POSITION) {

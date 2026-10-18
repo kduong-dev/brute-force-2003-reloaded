@@ -40,7 +40,7 @@
 //! too; up close in front of a lit wall (DNA + Weapon Pickups, 12.4-12.6 s) it's whitish cyan,
 //! red 165 over 60, with a soft halo. The pixel program can't raise red past the background
 //! (texture red 45 x 0.36), and the texture's own five mip levels (box averages, alpha about
-//! 0.16-0.2 at every level, like the chain built here) don't fill it, so that light comes from
+//! 0.16-0.2 at every level; the chain it's drawn with) don't fill it, so that light comes from
 //! something outside this material: not found (in the DNA footage the Light grenades' beams are
 //! nearby; at 9.4 s a soldier walking through the chip is lit the same whitish cyan).
 //!
@@ -48,8 +48,9 @@
 //! canister's (mesh h_e3e4caad, "Alien Technology Acquired!"), not this.
 
 use super::*;
-use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Affine2;
+use bf_viewer::bf::character::Address;
+use bf_viewer::bf::texture::Mips;
 
 /// The item a squad character-object drops (its h_0f77963d inventory-drop; 130 of the levels'
 /// drops name it, the others are enemies' medkits and ammo).
@@ -153,8 +154,9 @@ fn load_chip(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
                 .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, g.normals.clone())
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, g.uvs.clone())
                 .with_inserted_indices(bevy::render::mesh::Indices::U32(g.indices.clone()));
-            // the texture as it is (its alpha is the trace mask), repeating, with mip levels
-            let texture = game.0.material_texture(id).and_then(|t| game.0.texture_rgba(t)).map(|(w, h, px)| images.add(mipmapped(w, h, px)));
+            // the texture as it is (its alpha is the trace mask), repeating, with the mip levels
+            // it ships (`chip_texture`)
+            let texture = game.0.material_texture(id).and_then(|t| game.0.texture_mips(t)).map(|mips| images.add(chip_texture(&mips)));
             // the scroll's resting offset: rate x how long it scrolls (FUN_0008fca0). Without
             // h_08c2d2ee the game's time left is FLT_MAX (FUN_0008fb90 sets +0x54), so such a
             // material would scroll for good; the chip's has it (0.12 s), and a material without
@@ -196,40 +198,14 @@ fn load_chip(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
     commands.insert_resource(chip);
 }
 
-/// A repeating sRGB texture with its mip levels, each a 2 x 2 box average of the one above.
-/// Without them the 64 x 64 traces, a pixel or two wide, break up into scattered lines once the
-/// chip is a few metres off; the console samples mip levels, and the footage's distant chip
-/// (todo/Friendly Fire 2 + Death Cam.mp4, 33.3 s) is an even soft green. The file carries five
-/// levels of its own (textures-*.xmb: 64 x 64 down to 4 x 4, 5456 bytes); exported, they're box
-/// averages too (mean alpha 39, 49, 52, 43, 40 of 255 against this chain's about 39 at each), but
-/// the format reader decodes the top level only, so the chain is rebuilt here.
-fn mipmapped(w: u32, h: u32, px: Vec<u8>) -> Image {
-    let mut data = px.clone();
-    let (mut level, mut lw, mut lh, mut levels) = (px, w, h, 1);
-    while lw > 1 || lh > 1 {
-        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
-        let mut next = vec![0u8; (nw * nh * 4) as usize];
-        for y in 0..nh {
-            for x in 0..nw {
-                for c in 0..4 {
-                    let at = |sx: u32, sy: u32| level[((sy.min(lh - 1) * lw + sx.min(lw - 1)) * 4 + c) as usize] as u32;
-                    let sum = at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1);
-                    next[((y * nw + x) * 4 + c) as usize] = ((sum + 2) / 4) as u8;
-                }
-            }
-        }
-        data.extend_from_slice(&next);
-        (level, lw, lh, levels) = (next, nw, nh, levels + 1);
-    }
-    let mut img = Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                             bevy::render::render_resource::TextureDimension::D2, vec![0; (w * h * 4) as usize],
-                             bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default());
-    img.texture_descriptor.mip_level_count = levels;
-    img.data = Some(data);
-    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat, address_mode_v: ImageAddressMode::Repeat, ..ImageSamplerDescriptor::linear()
-    });
-    img
+/// The chip's texture, repeating, sRGB, with the mip levels its archive ships (five: 64 x 64
+/// down to 4 x 4, 5456 bytes; box averages, mean alpha 39, 49, 52, 43, 40 of 255). Without them
+/// the 64 x 64 traces, a pixel or two wide, break up into scattered lines once the chip is a few
+/// metres off; the console samples mip levels, and the footage's distant chip (todo/Friendly
+/// Fire 2 + Death Cam.mp4, 33.3 s) is an even soft green. (Before #257 the format reader decoded
+/// the top level only and this module rebuilt the chain by box averages, to 1 x 1.)
+fn chip_texture(mips: &Mips) -> Image {
+    bf_viewer::scene::mip_image(mips, bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, [Address::Wrap; 2])
 }
 
 /// A chip in front of each squad member as they die (`dna_done`: once per death). On the death's
