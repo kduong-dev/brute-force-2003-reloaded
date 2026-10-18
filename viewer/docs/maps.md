@@ -259,14 +259,21 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
   | Minigun, ballistic guns (bullet-type 4) | instant | `tracer`, one particle shot from the muzzle at 113.6 m/s along the shot, on every (h_eeb9e75a + 1)th shot (MK every 3rd, Minigun every 4th) | sminigun_hit |
   | L-Shot | instant | tracer_snipe, a white beam drawn 200 m down the line in 0.38 s, smoke, rings | sminigun_hit |
 
-  * Bolts carry their effect with them: the emitters are flagged "attached" (h_e2999ffd), so
-    their particles move with the shot.
-  * Hit effects play on world hits; hits on bodies bleed instead (play_fx).
+  * Bolts carry their effect with them: the emitters flagged "attached" (h_e2999ffd, the
+    demo's reading) and, since #57, every root emitter of a bolt's flight effect have their
+    particles move with the shot and go with it; the emitters under the library's world node
+    (h_ee223b51) leave theirs in the world (the trails). See play.md, **Bolts and their hits**.
+  * Hit effects play on world hits with the struck material's debris, hit sound and the
+    effect's light, each turned by its alignment-type; on bodies the flesh row's effect plays
+    (made by hand for the squad's ballistic, cutter and laser rows, from the data for the rest)
+    with the blood (play_fx).
   * World hits also leave the bullet's h_06a27365 hole or scorch on the collision triangle they
     meet, and each gun has its own muzzle effect and casings; the fire timing, pellets and
     accuracy spread are in [play.md](play.md), "Shots".
-  * A shot's damage (friendly fire) lands when it reaches the body: distance / speed later
-    (its factors: the hit part struck, x0.7 on the own side, the difficulty step, none on the
+  * A shot's damage (friendly fire) lands when it reaches the body: an instant ray's at the
+    distance / the demo's 400 m/s, a bolt's on the sweep that finds it, k x 0.1 s later
+    (play.md, **Bolts and their hits**; its
+    factors: the hit part struck, x0.7 on the own side, the difficulty step, none on the
     multiplayer maps as read live in a match, STANDARD on the missions: play.md **Damage**).
   * Beam appearances (class h_1f55f13e) are ribbons through their emitter's live particles in
     birth order, facing the camera. They have their own colour, alpha and width parameters, and

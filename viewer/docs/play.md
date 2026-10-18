@@ -637,10 +637,11 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   (WTYPE_RIFLE, on or off; #124, `skills::weapon_range`): the L-Shot-75's 180 m is 225 m in
   her hands.
 * **Holes** (`play_fx.rs`, `HoleRequests`). Every gun shot that meets the world leaves its
-  bullet's h_06a27365 decal (0.3 x 0.3 m holes and scorches, read as full sizes; 25 s, fading
-  over the last 5) laid on the surface it met: the map's collision triangle
-  (`Arena::ray_normal`) or, on the flat test floor, the ground or a pillar's side. Up to 160 stay
-  (a guess).
+  bullet's h_06a27365 decal (0.3 x 0.3 m holes and scorches, read as full sizes; the decal's
+  life and fade, h_199870ec / h_fe4e1d82: 25 s fading over the last 5 for most) laid on the
+  surface it met: the map's collision triangle (`Arena::ray_normal`) or, on the flat test floor,
+  the ground or a pillar's side. Up to 160 stay (a guess). A bolt's hole comes with its hit, on
+  its sweep (**Bolts and their hits** below).
 * **Muzzle effects**. The weapon's h_fd88830d effect type plays at its muzzle hardpoint once a
   frame in which it fired (the MK's orange flash and grey smoke); it replaces the plain flash
   quad on guns that have one. It takes the hardpoint's own frame (#73): FUN_00232060 attaches
@@ -742,6 +743,116 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   second instead.
 * The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel the same as
   before until the autopilot's first shot.
+
+### Bolts and their hits: the sweep, hit effects, lights and sounds (#57)
+
+`src/bin/play.rs` (`Shot::delay`, `projectiles`, `world_hit`, `hit_effect_at`, `start_flight`),
+`src/bin/play_fx.rs` (`spawn_fx`), `src/ale_fx.rs` (`load_flight`) and `src/arena.rs`
+(`ray_material`), from default.xbe's bolt pool (FUN_0022bac0, FUN_00225440) and the damage
+handler's tail (0x22d0b0 -> FUN_0022cd80, FUN_0022b5b0); the analyst's answers are
+todo/weapons-plan/answers-batch1.md (group A), the takes and their measures todo/57-jax-ic/.
+The bolt guns of weapons batch 1 (the Jax-iC, -iP, -iR, the Saryls, the Bioreactives) and the
+squad's LZRs and cutter go this way.
+
+* **The sweep.** A flying shot of bullet-type 0 or 3 (under the demo's `INSTANT_SHOT` speed) is a
+  bolt (`Shot::bolt`), FUN_0022bac0's pooled object. FUN_00225440 counts its byte +3 down from 3
+  each 30 Hz game frame and at 0 casts the ray for a hit over the way since the last cast, so a
+  hit lands k x 0.1 s after the shot, k = ceil(distance / (speed x 0.1 s)) (`Shot::delay`,
+  `SWEEP`): 8 m a step at 80 m/s, 10 m at 100 m/s. The damage, the hole, the hit effect and
+  its sound come in that frame (FUN_00224770 -> 0x22d0b0). The demo still picks what the shot
+  meets at the shot (the body or the world on its line); the countdown starts the frame after
+  the shot's frame (`Shot::countdown`), as the takes count it (the code would count the launch
+  frame as the first, a frame sooner: answers-batch1.md §1 leaves it to the takes). It times a
+  bolt's hit on the squad and the NPCs, a mine (play_sentry.rs) and breakable scenery
+  (play_scenery.rs). Before, a hit landed at distance / speed.
+* **The flight.** A bolt moves from its first frame (before, it waited two at the muzzle): at
+  the muzzle in the shot's frame, then speed x its age along the shot, on into what it struck
+  until the sweep that finds it (the Jax-iR's ball gone into the wall before its burst,
+  todo/59 take01); one that meets nothing ends at its range (life = range / speed; a sweep
+  due after the life isn't modelled, the demo's line runs the whole range). Its flight effect
+  rides it (`start_flight`, compiled by `load_flight`): the effect's root emitters ride with the
+  bolt and their particles go with it when it ends (the ball, its halo), and the emitters under
+  the library's world node (h_ee223b51, node flag 1) leave theirs in the world (the trails).
+  Where an emitter has the demo's ATTACHED (h_e2999ffd: the LZRs' bolts) it still decides,
+  though code-map's 0x64e30 reads that parameter as the cube emitter's offset height. The rule
+  is inferred from the effects' trees and the takes (the balls gone the frame their bolt ends,
+  trails fading where they were laid), not from code. Before, a root emitter without the flag
+  left its particles in the world, and a bolt's effect began emitting a frame after it.
+* **A hit on the world** (`world_hit`): the struck triangle's world material
+  (`Arena::ray_material`: the collision's terrain comes as twin triangles, and the one whose
+  front faces the shot carries the material and flags, the back twin 0) and the shot's ammo-type
+  pick from world-materials, as FUN_0022cd80 and FUN_0022b5b0 do:
+  * the hit effect: the material row's for the ammo-type (h_f6f08598; only the flesh materials
+    have one), else the weapon's own (h_08d28037) at user parameter 1.0;
+  * the material's debris effect (`debris-effect`: wmat_dirtpuff's tan puff on e34's ground,
+    wmat_concrete's grey dust ...) at user parameter 0.036 x the hit record's damage, at most 0.9,
+    1.0 for a killing hit (`hit_sp`; the record's damage is the roll x the falloff here);
+  * one of the row's four hit sounds at random (FUN_0022b5b0: the random state's low 2 bits),
+    from the hit by the bank's distances (`distance_gain`: the sonic rows full within 9 m,
+    silent beyond 20 m). Before, a world hit had no sound and no debris.
+  * Each effect in its alignment's frame (`hit_frame`; the effect type's `alignment-type` per
+    alchemy effect, FUN_0021a850, the ALIGN_TO_ table at 0x3bd298): 0 the shot's way (the frame
+    FUN_0001d0c0 builds: its -z along the way), 1 that way reflected off the surface, 2 the
+    surface's normal, outward, 3 the world's axes. The hits' emitters fire along their -z (they
+    are turned -90 degrees about x), so an alignment-2 burst (the sonic's, the particles')
+    comes out of the surface and an alignment-0 one goes on along the shot. Before, every hit
+    effect had its +y turned back along the shot, which threw those emitters across it.
+  * Each effect type's light-effect is a point light at the hit (the hit lights:
+    light_hit_sonic's cyan wash, #57), as the muzzle lights and the blasts' are played. The
+    debris types have none.
+  * The effects are compiled with the game's emission count, shapes and facing 3
+    (`load_recorded_facing`), with the type's bounding sphere for the distance LOD.
+* **A hit on a body** (play_fx.rs `spawn_fx`): the flesh row's effect for the ammo-type, when the
+  demo doesn't make it by hand (the squad's ballistic, cutter and laser ones), is played from
+  the data with its light: the sonic h_177a62d8 (wmat_fleshit_sonic), the particle h_ed6363bd,
+  the bio h_f8d4e76d, the rail's and the energy's. Its user parameter is the hit record's
+  (`damage::Hit::record`: the roll x the skill's factor x the falloff x the part struck x the own
+  side's 0.7, which 0x22d0b0 hands to FUN_0022cd80; the victim's step and type factor come
+  after), 1.0 for a killing hit; aligned as above, the body's normal taken out from the hit
+  cylinder's axis (the demo's stand-in for the struck part's collision).
+
+Test hooks: `BF_SHOT_LOG=1` also prints the map's world materials as it loads ("world
+materials (id: triangles) 0: 15482 terrain + 4596, ..."), each world hit ("t=2.37 hit on world
+material 5 at [...] 8.4 m out (ammo-type 3): effect h_fed64261 sp 1.00 light h_eb110330 (the
+weapon's), debris h_fe578f8f sp 0.79, sound h_0655c729 vol 0.57") and each hole's life;
+`BF_COMBAT_LOG=1` each flesh hit effect played from the data ("flesh hit effect h_177a62d8 at
+[...] sp 0.41 light h_eb110330").
+
+Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec):
+* **The Jax-iC at the test map's pillar** (`-- --test BF_TEST_WEAPON=Jax-iC BF_TEST_GOTO=0,-8,0,-8
+  BF_CAMERA_PITCH=-0.12 BF_TEST_FREECAM=0.5,1.5,1.2,-13.5,18.3,-10
+  BF_TEST_TRIGGER=2.0-2.08,3.6-3.68,5.0-9.0 BF_TEST_CLIP=3 BF_SHOT_LOG=1 BF_AMMO_LOG=1`): held fire
+  every 15-16 game frames (the take 15.5); the reload 0.50 s after the last round (reserve 200 ->
+  164) and the next round 1.30 s later (the take 0.50 and 1.30 s); each hit 0.2 s after its shot
+  8.5 m out, the weapon's sonic burst with its light washing the pillar, the default material's
+  debris, the hole.
+* **The gate's foot on e34** (take01: `-- --test BF_MAP=e34 BF_TEST_WEAPON=Jax-iC
+  BF_TEST_GOTO=-55.2,31.3,-55.2,31.8 BF_CAMERA_PITCH=-0.26
+  BF_TEST_TRIGGER=2.0-2.08,4.2-4.28,6.4-6.48 BF_SHOT_LOG=1`): the ground is material 5 (DIRT):
+  the hits 8.4 m out land 0.2 s after the shot and the ones 7.2-7.4 m out 0.1 s after (the take
+  T0 + 0.2 s at ~10 m), with wmat_dirtpuff's tan puff after the burst and one of the row's
+  sounds (h_0655c729; the take's h_0f52f7bf and h_1d5c9693 are two of the same four).
+* **A frozen e34 Shrike Heavy 7 m out** (take03: the same with `BF_TEST_INSTANT_KILL=0
+  BF_TEST_NPC="0.3,shrike heavy,enemy,frozen,-55.39,38.3" BF_TEST_NPC_HP=1.0,1,300
+  BF_TEST_TRIGGER=2.0-2.08,4.2-4.28,6.0-12.0 BF_COMBAT_LOG=1`): every hit 0.1 s after its shot;
+  29.6-35.1 on its right calf (roll x0.5 x STANDARD 1.4 x SONIC 2: the take 30.5-34.9 on its
+  hovering legs), dead on the 10th hit as in the take; each hit plays wmat_fleshit_sonic with
+  light_hit_sonic at user parameter 0.38-0.45 (0.036 x the record's 10.6-12.5), 1.00 on the
+  kill. At `BF_CAMERA_PITCH=-0.12` the hits go to a thigh: 61.0-68.3 (the takes' standing
+  Shrike 59.5-68.8).
+* Against the takes' pictures the burst's core is about the take's (14-16 units at ~10 m) but
+  paler, and the take's violet wash of the light over the gate's foot (80-140 units wide) is
+  missing on e34's lit surfaces; on the test map's pillar the light shows. The light's reach on
+  the level's own surfaces is #143's.
+* Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
+  Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
+  free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of
+  the surface where it lay as a thin streak across the shot, with the default material's
+  debrishit dust; the LZRs' and the cutter's hits land on the sweep and their bursts come out of
+  the surface (the LZR-23's ~1.5 m burst, as its take01 shows); the LZRs' bolts show their red
+  streak in flight in this side view, where main's showed almost nothing between the muzzle and
+  the hit (no take shows a bolt from the side). The test map's NPC fights (testtools.md), the
+  tutorial's first patrol (brain.md) and the Therm Sweeper at the pillar play as before.
 
 ### Missiles: the Therm Sweeper (#73)
 
@@ -1130,8 +1241,8 @@ Not matching or not done:
   stones draw black (main too): not this ticket's.
 * The other effects keep the demo's quads, perp rules and count, and have no LOD: the shape 2
   appearances elsewhere (half the game's size), facing 3 on non-perp appearances (the Psionic
-  Blast's muzzle ball), the Frag's facing 3 quads. Hit lights (an effect type's light on a
-  bullet's hit) aren't played.
+  Blast's muzzle ball), the Frag's facing 3 quads. A gun's hit lights (an effect type's light
+  on a bullet's hit) are played since #57 (**Bolts and their hits**).
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's

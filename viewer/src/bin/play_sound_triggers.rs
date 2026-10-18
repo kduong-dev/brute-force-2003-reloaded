@@ -1146,7 +1146,7 @@ struct TriggerVoice {
 /// their flags are DSBCAPS_CTRL3D alone, but the curve ends at 0). With `max` short of `min`
 /// (m07_c's h_133f6a6c: 100 and 50, the one of the levels' 504 positional sound-triggers) the
 /// library's sum gives 0 past `min`; with the two equal it divides 0 by 0, taken the same.
-fn distance_gain(d: f32, min: f32, max: f32) -> f32 {
+pub(crate) fn distance_gain(d: f32, min: f32, max: f32) -> f32 {
     if d <= min {
         return 1.0;
     }

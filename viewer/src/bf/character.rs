@@ -1038,6 +1038,12 @@ pub struct EffectType {
     /// Vengar hit's (h_0dcd4fc7) is 6.9e28, so its `vengar_hit` never shows (#35 takes 08, 22: no
     /// effect at the hit)
     pub starts: Vec<f32>,
+    /// each effect's `alignment-type`, by `effects`' order: the ALIGN_TO_ enum (its table at
+    /// 0x3bd298): 0 ALIGN_TO_EFFECT, the frame the effect was placed with; 1 REFLECTED_VECTOR;
+    /// 2 NORMAL_VECTOR, a frame built from the struck surface's normal (FUN_0021a850, by
+    /// FUN_0001d0c0); 3 WORLD_UP_VECTOR. The hits' are 2 (sonic_proj_can_hit, plasma_hit,
+    /// bio-flash_hit, the materials' debris), some flesh hits' 0 (wmat_fleshit_particle, _bio)
+    pub aligns: Vec<i64>,
     /// the light effect (an ALE effect name hash), 0 if none
     pub light: u32,
     /// sounds: (sound id, h_f724cb8c, play-length s, enable-looping). h_f724cb8c is read as a
@@ -1636,8 +1642,12 @@ impl Game {
                 let starts: Vec<f32> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
                     .filter(|e| { let x = hash_of(e.attr(h("effect-name"))); x != 0 && x != h("") })
                     .map(|e| e.attr(h("creation-time")).and_then(|v| v.as_f32()).unwrap_or(0.0)).collect()).unwrap_or_default();
+                // and its alignment-type (`EffectType::aligns`), likewise
+                let aligns: Vec<i64> = t.child(h("alchemy-effects")).map(|a| a.children_named(h("effect"))
+                    .filter(|e| { let x = hash_of(e.attr(h("effect-name"))); x != 0 && x != h("") })
+                    .map(|e| e.attr(h("alignment-type")).and_then(|v| v.as_i64()).unwrap_or(0)).collect()).unwrap_or_default();
                 self.effect_type_defs.entry(name).or_insert(EffectType {
-                    effects: list, starts, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
+                    effects: list, starts, aligns, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
                 });
             }
         }
