@@ -923,6 +923,15 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   only at the hits (no damage over time, as take06's log), wmat_fleshit_bio (h_f8d4e76d) with
   light_hit_bio on each. The bioreactive kill ("massive cellular deterioration") is #147's: the
   demo's BIO kills are plain.
+* **The A50 Bioreactive** (#48, todo/48-a50-bioreactive; thin footage, no enemy or reload take):
+  at the pillar (`BF_TEST_WEAPON="A50 Bioreactive"`) held fire every 10-11 game frames (take01
+  10.4), the hits 8.5 m out 0.2 s after their shots with its hit type h_fe10809d and
+  light_hit_bio, the green hole; its two-arc crosshair blue on the pillar, red on a Shrike 7 m
+  out. On the frozen e40 Shrike Heavy 7 m out (the Jax-iP's recipe with the A50): every hit 0.1
+  s after its shot, 16.9-18.5 on the body (the rules' 16.1-18.9, no take to check), 14.1-14.8 on
+  an upper arm, 90.2 on the head, wmat_fleshit_bio with light_hit_bio. Not checked: the reload
+  (none filmed: take02's reserve was written where the game reloads from nothing) and any
+  damage against a take; the bioreactive kill is #147's.
 * Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
   Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
   free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of
