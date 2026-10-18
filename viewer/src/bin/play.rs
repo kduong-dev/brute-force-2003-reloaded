@@ -3410,6 +3410,9 @@ fn read_input(
     // the world yet (play_script.rs, #222): no press reaches it, nor the test hooks' input (take03:
     // the stick, A and START pushed through the opening moved nothing); a script's walk moves it
     if script::blocks_input(&player) {
+        // (the mouse's capture isn't a control: Escape frees it here too, #256, and a click
+        // takes it again by the same rule as in play; a pause menu would open here, #40)
+        mouse_capture(&mut windows, &keys, &mouse, player.sim_time);
         script::held_step(&mut player, frame_dt(&time));
         player.tab_down = -1.0;
         player.item_list = false;
@@ -3449,21 +3452,7 @@ fn read_input(
     if autopilot(&mut player) {
         return;
     }
-    let mut captured = false;
-    let mut was_captured = false;
-    if let Ok(mut win) = windows.single_mut() {
-        was_captured = win.cursor_options.grab_mode != CursorGrabMode::None;
-        // (never under BF_BACKGROUND, play_background.rs, whose mouse events are dropped too)
-        if mouse.just_pressed(MouseButton::Left) && !background::on() {
-            win.cursor_options.grab_mode = CursorGrabMode::Locked;
-            win.cursor_options.visible = false;
-        }
-        if keys.just_pressed(KeyCode::Escape) {
-            win.cursor_options.grab_mode = CursorGrabMode::None;
-            win.cursor_options.visible = true;
-        }
-        captured = win.cursor_options.grab_mode != CursorGrabMode::None;
-    }
+    let (was_captured, captured) = mouse_capture(&mut windows, &keys, &mouse, player.sim_time);
     let mut mv = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) { mv.y += 1.0; }
     if keys.pressed(KeyCode::KeyS) { mv.y -= 1.0; }
@@ -3559,6 +3548,30 @@ fn read_input(
     if scroll.delta.y != 0.0 && !player.item_list {
         player.cam_distance = (player.cam_distance * (1.0 - scroll.delta.y * 0.1)).clamp(1.5, 12.0);
     }
+}
+
+/// The mouse's capture, the demo's own (the game has no mouse): a left click captures it (never
+/// under BF_BACKGROUND, play_background.rs, whose mouse events are dropped too), Escape frees it.
+/// Read in play and while the controls are off (a cutscene, a script's hold, out of the world:
+/// #256), not under a menu. Returns whether it was captured before this frame and is now. With
+/// BF_SCRIPT_LOG=1 Escape's press is logged (under BF_BACKGROUND, where the mouse is never
+/// captured, the only sign the key was read).
+fn mouse_capture(windows: &mut Query<&mut Window, With<PrimaryWindow>>, keys: &ButtonInput<KeyCode>,
+                 mouse: &ButtonInput<MouseButton>, t: f32) -> (bool, bool) {
+    let Ok(mut win) = windows.single_mut() else { return (false, false) };
+    let was = win.cursor_options.grab_mode != CursorGrabMode::None;
+    if mouse.just_pressed(MouseButton::Left) && !background::on() {
+        win.cursor_options.grab_mode = CursorGrabMode::Locked;
+        win.cursor_options.visible = false;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        win.cursor_options.grab_mode = CursorGrabMode::None;
+        win.cursor_options.visible = true;
+        if std::env::var("BF_SCRIPT_LOG").is_ok() {
+            println!("t {t:.2}: Escape: the mouse freed (it was {})", if was { "captured" } else { "free" });
+        }
+    }
+    (was, win.cursor_options.grab_mode != CursorGrabMode::None)
 }
 
 /// BF_AUTOPILOT=1: scripted input for automated captures. Returns true while it is driving.
