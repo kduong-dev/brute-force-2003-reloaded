@@ -298,8 +298,9 @@ them):
   the level's own light colours, in gamma space, with no tone mapping. The demo does the same
   (`level_scene::spawn_lighting` and `console_look`):
   * Lights: the level's outdoor pair of directional lights (the brightest casting the
-    characters' shadow) and its object ambient, given as sRGB colours; scenery placed indoors
-    takes the indoor pair instead ([levels.md](levels.md), "Light objects", #143).
+    characters' shadow; the scenery and the terrain cast none) and its object ambient, given as
+    sRGB colours; scenery placed indoors takes the indoor pair instead ([levels.md](levels.md),
+    "Light objects", #143).
   * Camera: tone mapping off, and an exposure where a light of 1.0 leaves a texture as it is.
   * Terrain: tinted by the hue of the lights marked h_e02aba1c (a bluish 0.44, 0.57, 0.65 on
     sdm_e34), read as the terrain's own before #143; the game's code has them as the indoor

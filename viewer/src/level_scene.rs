@@ -1123,7 +1123,11 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 (mesh_of(g, colors, 0.0, true), base)
             }
         };
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::default(), Name::new(format!("terrain layer {k}"))));
+        // it casts no shadow, as the scenery doesn't (`spawn_object_parts`): the game's lights
+        // cast none, so its characters are lit by the outdoor pair wherever they stand, on ground
+        // the baked light map has in shade too (todo/73 take17: Tex lit on e40's dark beach, where
+        // the terrain's shadow drew him black)
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::default(), NotShadowCaster, Name::new(format!("terrain layer {k}"))));
     }
     // placed objects
     // per archetype: its geosets with their part placement, and the part's slide (axis, travel);
