@@ -7,13 +7,15 @@
 //!    (type 1), the MK-ASLT and the Minigun High ROF Ammo (type 2). The counts start at the stack
 //!    limit of the level's ammo item of that type (objecttypes `<inventory>` entries with
 //!    function-type 14 = IFSET_AMMO_BOX, whose h_e5f51266 is the ammo-type; see `stack_limits`).
-//!  - **Automatic reload.** The game has no reload button. When the fire loop (FUN_0022f2a0)
+//!  - **Automatic reload.** When the fire loop (FUN_0022f2a0)
 //!    finds the clip empty as the cooldown runs out with the trigger held, FUN_002327f0 calls the
 //!    character's FUN_00120d40, which moves the rounds out of the reserve (FUN_0022daf0) and
 //!    starts the reload motion; letting go of the trigger on an empty clip starts it too
 //!    (measured: the L-Shot's reserve drops 0.07 s after the release, todo/61 take01 and take03).
 //!    play.rs's `step_player` plays the reload clip and fills the clip at its magazine-in event.
-//!    R reloads early: **the demo's own** (the product owner's choice), not the game's.
+//!    R reloads early, as the game's X does when tapped (let go before its hold time, or with
+//!    nothing to hold it for: the player controller 0x1332a0 calls FUN_00120d40 at 0x134c9d); R
+//!    acts on the press, X on the release.
 //!  - **Dry fire.** On an empty clip with nothing to reload, each trigger cycle (once per
 //!    1 / rate while held, FUN_002327f0 setting the cooldown) plays the weapon's empty-fire sound
 //!    (h_e6acaff7: f740ecdd for ballistic guns, matched in the takes; 16bbf95c for energy guns).

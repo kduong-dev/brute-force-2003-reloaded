@@ -344,7 +344,8 @@ pub fn new_world() {
 }
 
 /// `u`'s death line (chatter tag `tag`, e1213623), started now: the game says it in the death
-/// frame (FUN_00115d50 -> FUN_00125f40 at 0x116028, through the chatter gate FUN_00140a60; no
+/// frame (the CBT_DEAD handler FUN_00115f90, after the death FUN_00115d50, calls FUN_00125f40 at
+/// 0x116028, which says it through the chatter gate FUN_00140a60; no
 /// delay, answers.md Q8: the takes' 0.15-0.35 s was the capture's audio latency). From its type's
 /// chatter-library (#129: `shrike_light_chatter`, `dm_shrike_heavy_chatter`...; the entry's flag
 /// h_eb640008 lets the dead speak), picked the game's way (FUN_001371f0): at random among the

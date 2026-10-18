@@ -308,6 +308,15 @@ them):
   Before this, an invented 9000 lux sun, a strong ambient and Bevy's default tone mapper (which
   desaturates) made everything pale. Point lights (muzzle flash, hit glows, explosions) are
   scaled to the new exposure by `POINT_LIGHT_SCALE`.
+  * Textures (#257): every world texture (terrain, scenery, sky, liquids, characters, weapons,
+    effects, decals) is drawn with the mip levels its archive ships, linear within and between
+    levels and with no anisotropy, as the console samples them; before, each was its top level
+    alone, so the ground sparkled past a few metres and showed raw texels close up. The HUD and
+    the menus are unchanged. The terrain also mixes in its detail texture near the camera: the
+    same texture mostly 3-5 times finer (0-16 over the data), fading out mostly 15-25 m away
+    (0-35). Both are in
+    [levels.md](levels.md) (Terrain layers), with their hooks (`BF_NO_DETAIL=1`,
+    `BF_ANISOTROPY=<1-16>`).
 * **Power-ups.** Each power-up type's idle event (`<events><event state="1" h_ed0c9fac=…>`)
   names an effect type. Its objecttypes `<effect>` entry lists the ALE effects:
   | Power-up | Effect | What it draws |

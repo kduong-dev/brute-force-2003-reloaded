@@ -285,7 +285,9 @@ a volume.
 
 The proximity mine (h_e5f1f063, function-type 8 IFSET_PROXIMITY_EXPLOSIVE): set down as the
 Roller is, its `timer` 9999 s never runs out; what sets it off is the item set's handlers in
-default.xbe (vtable 0x39bc50; read in the disassembly, Ghidra has no C for them):
+default.xbe (vtable 0x39bc50; the range test FUN_00146cb0, the check FUN_00146e00 and the
+on-placed FUN_00147570 have Ghidra's C; the per-frame 0x147620 and the target filter 0x147430
+have none and were read in the disassembly):
 * Once it's down (on-placed 0x147570; there is no arming delay in the code), it checks every
   0.05-0.15 s (0x147620: a timer passing 0.15 s, restarted at a random 0-0.1 s); the first
   check comes 0.15 s after it's down. A check that says so sets it off at once.

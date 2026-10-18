@@ -30,7 +30,7 @@ const LIQUID_SHADER: u32 = 0xF124_A774;
 /// the name of its colour constant).
 const GLOW_TEXTURE: u32 = 0xE01B_AA40;
 /// Terrain vertices (h_ef44f398; the game's vertex format table, slot 8: SHORT2 position, packed
-/// normal, two float2 uvs, NORMSHORT3, 2 bytes). Its vertex shader (default.xbe 0x3d50f8) splits
+/// normal, two float2 uvs, NORMSHORT3, 2 bytes). Its vertex shader (default.xbe 0x3d8bf8) splits
 /// the first short into row and column (row * 65 + column) and scales both and the height
 /// from shader constants that are set at run time; these values were fitted against the
 /// level: the second uv set is exactly the 2 m grid / 10, heights land on 26-54 m (the level's
@@ -2173,8 +2173,6 @@ impl Game {
         Ok(())
     }
 
-    /// RGBA8 of a texture; squad skins live in every level archive rather than common, so
-    /// missing textures are searched for in level archives (texture files only) on demand.
     /// Load one level archive's textures now (e.g. the tutorial's, for a HUD picture only it
     /// holds), instead of waiting for `texture_rgba` to reach it: the pending archives go in name
     /// order, and the tutorial's is last. Nothing if `name` is already known.
@@ -2189,15 +2187,32 @@ impl Game {
         }
     }
 
+    /// RGBA8 of a texture's top level; squad skins live in every level archive rather than
+    /// common, so missing textures are searched for in level archives (texture files only) on
+    /// demand.
     pub fn texture_rgba(&mut self, name: u32) -> Option<(u32, u32, Vec<u8>)> {
+        let (t, blob) = self.texture_entry(name)?;
+        texture::decode(t, blob).map(|px| (t.w, t.h, px))
+    }
+
+    /// A texture's whole mip chain as its archive ships it (`texture::decode_mips`), searched for
+    /// as `texture_rgba` does: what the world's textures are drawn with (`scene::mip_image`).
+    /// The HUD and the menus keep `texture_rgba`'s top level.
+    pub fn texture_mips(&mut self, name: u32) -> Option<texture::Mips> {
+        let (t, blob) = self.texture_entry(name)?;
+        texture::decode_mips(t, blob)
+    }
+
+    /// A texture's index entry and its library's data, the pending level archives searched in
+    /// turn until one holds it.
+    fn texture_entry(&mut self, name: u32) -> Option<&(TexInfo, Arc<Vec<u8>>)> {
         while !self.textures.contains_key(&name) && !self.pending_texture_archives.is_empty() {
             let p = self.pending_texture_archives.remove(0);
             if let Ok(ar) = Archive::open(&p, |n| n.starts_with("textures-")) {
                 let _ = self.load_textures(&ar);
             }
         }
-        let (t, blob) = self.textures.get(&name)?;
-        texture::decode(t, blob).map(|px| (t.w, t.h, px))
+        self.textures.get(&name)
     }
 
     /// A material's colour texture: its "color" parameter, or for shaders without one their

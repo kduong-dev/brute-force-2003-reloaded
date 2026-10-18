@@ -2,7 +2,9 @@
 // lights its scenery: each lamp's colour x (1 - distance / range) x N.L, nothing past its range,
 // no shadows (see level_scene::LevelMaterial). It takes the lamps of its light pair only, and an
 // indoor material (INDOOR_PAIR) the level's indoor pair in place of bevy's directional lights, which
-// are the outdoor pair (level_scene::spawn_lighting, `indoor_lit`).
+// are the outdoor pair (level_scene::spawn_lighting, `indoor_lit`). A terrain layer (TERRAIN_DETAIL)
+// samples its colour and detail textures here, as the game's terrain pass does
+// (level_scene::terrain_detail).
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -54,6 +56,14 @@ struct LevelLights {
 }
 
 @group(2) @binding(100) var<storage, read> level_lights: LevelLights;
+// a terrain layer's detail: the game's c20 = (1 / s^2, s^2, the detail's scale, its share at the
+// eye), s the distance it fades out at (FUN_00090f50); zero for the other materials
+@group(2) @binding(101) var<uniform> detail: vec4<f32>;
+// a terrain layer's colour texture and its detail texture (the colour's where it names none)
+@group(2) @binding(102) var colour_texture: texture_2d<f32>;
+@group(2) @binding(103) var colour_sampler: sampler;
+@group(2) @binding(104) var detail_texture: texture_2d<f32>;
+@group(2) @binding(105) var detail_sampler: sampler;
 
 #ifndef PREPASS_PIPELINE
 #ifdef INDOOR_PAIR
@@ -130,6 +140,26 @@ fn indoor_swap(in: PbrInput) -> vec3<f32> {
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
+#ifdef TERRAIN_DETAIL
+#ifdef VERTEX_UVS_A
+#ifndef PREPASS_PIPELINE
+    // the terrain's base pass (vertex program 0x38, pixel shaders 0x1a / 0x1b): the colour at the
+    // vertex uv and the detail at that uv x its scale, mixed by the detail's share, which falls
+    // from the eye as 1 - d^2 / s^2 and is 0 past s; the mix is lit as the colour was (the
+    // material's own colour is the vertex colour, its alpha the layer's mask). The console works
+    // out the share per vertex; here it's per pixel.
+    let to_eye = in.world_position.xyz - view_bindings::view.world_position;
+    let d2 = dot(to_eye, to_eye);
+    let share = select(0.0, detail.w * (1.0 - d2 * detail.x), d2 <= detail.y);
+    let near = textureSample(detail_texture, detail_sampler, in.uv * detail.z);
+    let far = textureSample(colour_texture, colour_sampler, in.uv);
+    // (the console's 8-bit combiner mixes the two in gamma terms, as stored; this mixes their
+    // linear values: a small difference between two samples of one texture)
+    let texel = mix(far.rgb, near.rgb, share);
+    pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * texel, pbr_input.material.base_color.a);
+#endif
+#endif
+#endif
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 #ifdef PREPASS_PIPELINE
     let out = deferred_output(in, pbr_input);

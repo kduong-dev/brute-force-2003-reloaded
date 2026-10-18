@@ -29,7 +29,8 @@
 
 use super::*;
 use bf_viewer::bf::audio::Surface;
-use bf_viewer::bf::character::DecalDef;
+use bf_viewer::bf::character::{Address, DecalDef};
+use bf_viewer::bf::texture::Mips;
 
 /// keys (time, value)
 type Keys = &'static [(f32, f32)];
@@ -704,8 +705,8 @@ fn requested_decals(mut commands: Commands, mut game: ResMut<GameData>, fx: Opti
         }
         for &id in &def.textures {
             if !fx.decal_textures.contains_key(&id) {
-                if let Some((w, h, px)) = game.0.texture_rgba(id) {
-                    fx.decal_textures.insert(id, images.add(rgba(w, h, px, false)));
+                if let Some(mips) = game.0.texture_mips(id) {
+                    fx.decal_textures.insert(id, images.add(rgba(&mips, false)));
                 }
             }
         }
@@ -732,8 +733,8 @@ fn requested_holes(mut commands: Commands, mut game: ResMut<GameData>, fx: Optio
         }
         let texture = def.textures[(state.random() * def.textures.len() as f32) as usize % def.textures.len()];
         if !fx.decal_textures.contains_key(&texture) {
-            if let Some((w, h, px)) = game.0.texture_rgba(texture) {
-                fx.decal_textures.insert(texture, images.add(rgba(w, h, px, false)));
+            if let Some(mips) = game.0.texture_mips(texture) {
+                fx.decal_textures.insert(texture, images.add(rgba(&mips, false)));
             }
         }
         let [r, g, b, a] = def.color;
@@ -758,13 +759,12 @@ fn requested_holes(mut commands: Commands, mut game: ResMut<GameData>, fx: Optio
     }
 }
 
-/// `linear`: the texels as they are (for sprites added to the picture, see `setup_fx`).
-fn rgba(w: u32, h: u32, px: Vec<u8>, linear: bool) -> Image {
+/// A sprite's or a decal's texture with the mip levels its archive ships (`scene::mip_image`),
+/// clamped at its edges as before. `linear`: the texels as they are (for sprites added to the
+/// picture, see `setup_fx`).
+fn rgba(mips: &Mips, linear: bool) -> Image {
     use bevy::render::render_resource::TextureFormat;
-    Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-               bevy::render::render_resource::TextureDimension::D2, px,
-               if linear { TextureFormat::Rgba8Unorm } else { TextureFormat::Rgba8UnormSrgb },
-               bevy::asset::RenderAssetUsages::default())
+    bf_viewer::scene::mip_image(mips, if linear { TextureFormat::Rgba8Unorm } else { TextureFormat::Rgba8UnormSrgb }, [Address::Clamp; 2])
 }
 
 fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
@@ -779,7 +779,7 @@ fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResM
     let flesh = game.0.surfaces.iter().find(|s| s.id == FLESH).cloned();
     let synthetic = game.0.surfaces.iter().find(|s| s.id == SYNTHETIC).cloned();
     let shrike = game.0.surfaces.iter().find(|s| s.id == SHRIKE).cloned();
-    let mut tex = |id: u32, linear: bool| game.0.texture_rgba(id).map(|(w, h, px)| images.add(rgba(w, h, px, linear)));
+    let mut tex = |id: u32, linear: bool| game.0.texture_mips(id).map(|mips| images.add(rgba(&mips, linear)));
     let mut steps = vec![];
     for fx in EFFECTS {
         // The Xbox adds sprites to the picture's stored (gamma) values; Bevy adds light. Taking
@@ -818,8 +818,9 @@ fn setup_fx(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResM
             if decal_factors.contains_key(&(id, tint)) {
                 continue;
             }
-            if let Some((w, h, px)) = game.0.texture_rgba(id) {
-                decal_factors.insert((id, tint), images.add(rgba(w, h, decal_factor(&px, tint), false)));
+            if let Some(mut mips) = game.0.texture_mips(id) {
+                mips.map_levels(|_, _, px| decal_factor(px, tint));
+                decal_factors.insert((id, tint), images.add(rgba(&mips, false)));
             }
         }
     }
