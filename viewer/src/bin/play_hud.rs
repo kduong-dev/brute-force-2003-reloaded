@@ -455,10 +455,13 @@ fn sniper_rim() -> Image {
                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
 }
 
-/// Show the scope's overlay while the scope is up: Flint's rim for her, the frame for the others.
+/// Show the scope's overlay while the scope is up: the frame for a character whose skill shows it
+/// (its +0xa8 with bit 0 clear: everyone's but Flint's, FUN_000b4070; `skills::scope_frame`),
+/// else Flint's rim (the game's full-screen smear is the camera's screen effect, its switch not
+/// traced to her skill: the analyst's likely reading).
 fn update_scope(player: Res<Player>, mut overlays: Query<(&ScopeOverlay, &mut Visibility)>) {
     let up = player.scope > 0.6;
-    let flint = player.character == STILL_SNIPER;
+    let flint = !skills::scope_frame(&player);
     for (o, mut v) in &mut overlays {
         let want = if up && o.0 == flint { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
