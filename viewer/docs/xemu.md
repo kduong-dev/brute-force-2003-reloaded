@@ -61,7 +61,8 @@ means checked in xemu 0.8.122 through QEMU's gdb stub (e40 and m09_a, Brutus, 20
   record picture and sound with `record.py` while a timed pad sequence plays, and append the
   take's `notes.md` entry (snapshot, edits, each input's time from the first video frame, xemu
   version, A/V offset). First take: `todo/79-roller-grenade/take-dev01-…` (an enemy spawned
-  and frozen 10 m ahead, the squad frozen; the Roller went off by it 2.75 s after LT).
+  and frozen 10 m ahead, the squad frozen; the Roller went off by it 2.75 s after LT, input to
+  picture: ~2.55-2.6 s in the game's time, #140).
 
 ## Timing in the takes
 
@@ -101,5 +102,7 @@ from the right one:
 * **What needs correcting.** A value fitted to an input-to-picture time is 0.14-0.21 s long
   (lag plus input delay); to an input-to-log time, 0.02-0.16 s long (input delay plus the
   sample). The gun's raise was such a fit: the game's is the motion set's
-  `pc-transition-ready in-time`, 0.1 s (#140; the demo still raises for 0.2 s until that change
-  lands). Picture-to-picture, log-to-log and sound-to-sound values need only the stretch above.
+  `pc-transition-ready in-time`, 0.1 s, which the demo now reads (#140, play.md § Shots). The
+  values corrected with these rules, and those left to re-measure from a marker-synced take
+  (the throw's release, the Roller set down, the switch's crosshair), are in play.md and
+  grenades.md, marked #140. Picture-to-picture, log-to-log and sound-to-sound values need only the stretch above.

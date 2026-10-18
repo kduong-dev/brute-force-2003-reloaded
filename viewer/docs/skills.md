@@ -43,7 +43,8 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
   `BF_TEST_HOSTILE=<character>` (grenades.md) it puts a stealthed Hawk on the other side, for the
   crosshair's rule.
 * `BF_SIGHT_LOG=1` (play.rs): each AI character finding or losing its target, with the distance,
-  the target's visibility and the reach (`sight_reach`): when an enemy loses a fading Hawk.
+  the target's visibility and the reach (play_brain.rs `Sensor::reach`), and for the squad and
+  the test map's NPCs each contact found and forgotten: when an enemy loses a fading Hawk.
 * `BF_TEST_DOUBLE=<percent>`: the chance of Flint's doubled rolls while her targeting is on (100:
   every one), to see the x2 and its flash.
 * `BF_TARGETING_LOG=1`: Flint's targeting marker when it changes (on, the lock, the fill at 0 or
@@ -207,7 +208,7 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
     which only ever holds 0 in default.xbe: Tex's and Brutus's variants need 2..100, Hawk's
     1..100, so only Flint (no ranges) says it. The line at 0 tests FUN_0001b460, read as the
     enemies the character is fighting (inferred): Hawk's variants need 1..100, so she says it only
-    in a fight. The demo counts 1 while a hostile is in the speaker's sight (`hostile_in_sight`):
+    in a fight. The demo counts 1 while a hostile is in the speaker's sight (`hostile_in_sight`, by its sensor):
     **a guess**; the main game has no enemies yet, so she never says it there.
   * **Roll**: `probability` % (FUN_001374c0): 50. `BF_SKILL_CHATTER=<percent>` sets it.
   * **Variant**: picked at random among those that fit and haven't been said yet; when all have,
@@ -294,7 +295,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | `bars_scope(u)` | | false | the demo's choice: no scope in Tex's berserk motions |
 | `fired(u, def)` | +0xb0 | nothing (0x2c60c0) | each round the character's gun fires (FUN_0022f640 from the fire loop; `skills::fired`, play.rs `step_player`): Hawk's flash and cost while stealthed |
 | `used_item(u, use_type)` | +0x104 | nothing (0x2c60c0) | an item used, by its IOU_ use type (FUN_00121170; `skills::used_item`: play.rs's throw and set-down, play_pickups.rs's medkit): Hawk's cost while stealthed |
-| `visibility(u)` | +0xe4 | 1.0 (0x10e3d0) | how visible the character is (`skills::visibility`): the AI's sight (play.rs `nearest_hostile`) and the crosshair's selection (play_reticle.rs) read it. Hawk's falls as she fades |
+| `visibility(u)` | +0xe4 | 1.0 (0x10e3d0) | how visible the character is (`skills::visibility`): the AI's sight (play_brain.rs `Sensor`) and the crosshair's selection (play_reticle.rs) read it. Hawk's falls as she fades |
 | `noise(u)` | +0xe8 | 1.0 (0x10e3d0) | the factor on its footsteps (`skills::noise`, play.rs `step_player`): Hawk's a quarter stealthed |
 | `holds_fire(u)` | +0x108 | false (0x20e200) | an AI character holds fire (`skills::holds_fire`, play.rs `update_player`: no target for the squad AI or a test map NPC): Hawk while stealthed |
 
@@ -384,7 +385,8 @@ and 26 (spec Part 2).
   0x134db4-0x134dde); R, the reload key (the game's X: 0x134c50, when a reload could start,
   FUN_00120c50; the reload asked for stays, +0xa1 bit 2, and follows berserk's end); death. The
   game's X ends it when let go (0x134c2b-0x134c4a: held, but less than its hold time; take26's
-  off came about 0.6 s after X came up), the demo's R on the press: the demo's choice (its R
+  off came about 0.6 s after X came up: whether to the log or the picture the notes don't say,
+  so it holds 0.02-0.06 s or 0.14-0.21 s of input delay and lag, #140), the demo's R on the press: the demo's choice (its R
   reloads on the press too). The black button (the medkit shortcut, 0x134367) ends it the same
   way in the game; the demo has no key for it. G (the game's LT) doesn't: it throws or uses
   nothing (take26 20.5 s).
@@ -492,7 +494,7 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
 stamina lasts: the enemies lose her, the crosshair can't lock her, her footsteps go quiet; a
 shot shows her to them for a quarter second and costs stamina, as an item does. `Stealth` in
 `play_skills.rs` (skill vtable 0x39d190, constructor FUN_0013cf10) is her skill's own part; her
-body's look is `play_stealth.rs`; who sees her, play.rs (`nearest_hostile`, the AI) and
+body's look is `play_stealth.rs`; who sees her, play_brain.rs (`Sensor`, the AI) and
 play_reticle.rs (the crosshair). Her tuning is game-options' `<combat-skills>` block h_0ec919f1
 (`CombatSkills::stealth`: only stealth-level-recovery-rate, h_f726177e, is named, by hashing).
 Measured against takes 10-14, 18 and 19 (spec Part 4); her refraction (#198) against the takes
@@ -577,13 +579,17 @@ and leads in `todo/198-hawk-invis/`.
 * **Noise** (+0xe8, 0x13d210): her footsteps x (0.25 + 0.75 x her visibility), a quarter
   stealthed (FUN_00119020 at 0x11918e; `step_player`). The game's movement noise that the AI
   hears (FUN_0001aeb0) is scaled the same: the demo's AI doesn't hear.
-* **The AI's sight** (play.rs `nearest_hostile`): FUN_0004d140 gives a brain the reach of its
-  sight distance x the target's visibility; the sight distance is read as the type's
-  `<ai vision-range>` (75 for e40's Shrikes, 80 for Brutus, Hawk and Tex, 105 for Flint;
-  `sight_reach`). So an enemy loses her as she fades: take14's Shrike, 15.7 m off with a
-  vision-range of 75, stopped firing at her 0.81-0.86 s into her fade (visibility 0.20-0.17). It
-  sees her again in a shot's flash and as she comes back. A fully visible character is seen
-  out to the vision-range (and the held gun's reach, the demo's own).
+* **The AI's sight** (play_brain.rs `Sensor`, #197; todo/197-ai-sight/answer.md): FUN_0004d140
+  gives the AI the reach of its sight distance (the sensor's +0xa8, 0x10fb90: the type's
+  `<ai vision-range>`, 75 for e40's Shrikes, 80 for Brutus, Hawk and Tex, 105 for Flint, or the
+  placement's `vision` when its h_11cddd9f is set) x 1.15 for a target it already knows
+  (FUN_000481c0) x the target's visibility, then its field of view and the ray. And the scan
+  forgets a contact whose stealth visibility is 0.2 or under at once (FUN_00044140), after the
+  step's sightings, so the 1.15 never holds her. So an enemy loses her as she fades: take14's
+  Shrike, 15.7 m off with a vision-range of 75, stopped firing at her 0.81-0.86 s into her fade
+  (visibility 0.20-0.17); the demo's at 0.87 s (5.87). It sees her again in a shot's flash and
+  as she comes back. A fully visible character is seen out to the vision-range, and kept out to
+  1.15 x it once known; the held gun's range limits only the shot.
 * **The crosshair** (play_reticle.rs): a character less visible than 0.1 (FUN_000bf6d0) isn't
   locked, by the selection nor under the centre (FUN_000bf550): a stealthed Hawk on another
   side leaves the crosshair blue from 0.9 s into her fade.
@@ -594,6 +600,11 @@ and leads in `todo/198-hawk-invis/`.
   slot's gun in hand; x5 with the Power Blade in hand, which the demo hasn't.
 * **Hand-over and death** (#120's rule): handed over, it stays on under the AI, drains and she
   stays invisible (take19); dead, it goes off in the frame of death and her body fades back in.
+  The gun she drops is fully seen from the frame it leaves her hand (#197): the game draws a
+  held item through its holder's invisibility controller (FUN_000e7850 asks FUN_000e51e0 for one
+  on the item or the character holding it), and a dropped gun has no holder
+  (play_stealth.rs `fade_bodies` gives it its own material back at once; before, it stayed
+  invisible through her fade and then popped in).
 * **Not in**: what the enemies' goals do (take14's Shrike went RETURN_HOME when it lost her and
   INVESTIGATE at her shot, and didn't fire again: the demo's AI has no goals, so it stands and
   fires again once it sees her); the AI hearing her noise; the Power Blade (its x5 drain, the
@@ -957,9 +968,15 @@ scratchpad):
 * **take14** (the test map's live Shrike, under [Keys and test hooks](#keys-and-test-hooks),
   `BF_TEST_WEAPON=Jax-iR BF_TEST_SKILL=4.0 BF_TEST_TRIGGER=18.0-18.08 BF_TEST_INSTANT_KILL=0
   BF_SIGHT_LOG=1 BF_COMBAT_LOG=1`): it shot her until the switch (5.00), then lost her about 0.8
-  s into her fade and landed nothing more; her shot (one Jax-iR round, 68.25: off at 0) showed
-  her for a moment, it lost her again and found her at a visibility of 0.27 as she came back,
-  and fired again (the take's went INVESTIGATE and didn't: not in, above).
+  s into her fade (5.87, "forgets Squad(2) (stealthed)") and landed nothing more; her shot (one
+  Jax-iR round, 68.25: off at 0) showed her (18.27, a contact again), and with the 1.15 for a
+  known target it kept her as she came back (before #197 it lost her at 18.53 and found her at a
+  visibility of 0.27 at 18.60), and fired again (the take's went INVESTIGATE and didn't: not in,
+  above).
+* **The dropped gun** (#197; `-- --test BF_CHARACTER=2 BF_NO_SQUAD=1 BF_TEST_GOTO=0,4,0,4
+  BF_TEST_SKILL=1.0 BF_TEST_DIE=3.5 BF_CAMERA_PITCH=-0.35 BF_SKILL_LOG=1`): she dies stealthed at
+  3.53 ("dropped gun's part opaque again" for both parts); her guns are seen falling from the
+  capture's first frame of the death on, where main's showed nothing of them while she faded.
 * **The AI's hold fire** (`-- --test BF_TEST_GOTO=4.5,20,4.5,20 BF_TEST_STAMINA=20@1.0
   BF_TEST_SKILL=1.0 BF_TEST_SELECT=3,2.5 BF_TEST_NPC="5.0,shrike soldier@e40,enemy,fight,4.5,4.3"
   BF_TEST_NPC_HP=5.5,1,999 BF_COMBAT_LOG=1`): Hawk handed over stealthed; with the Shrike in her
@@ -1024,8 +1041,7 @@ scratchpad):
   back once thrown; its scorch seen through her outline, displaced with the ground.
 
 **Guessed or open (Hawk)**: the enemies' goals after they lose her (H3); the vision-range as the
-brain's sight distance (its +0xa8 getter not found; take14 fits it) and FUN_000481c0's 1.15 and
-x3, left at 1; the sRGB alpha's 2.2 suits a dark body on a lighter picture (the demo's presence
+x3 of FUN_000481c0 (the gun's weapon-data +0x16c, not identified), left out; the sRGB alpha's 2.2 suits a dark body on a lighter picture (the demo's presence
 runs up to 0.05 over 1 - the level). During a fade a see-through thing between her and the
 camera (smoke, a liquid) is drawn under her skin; her shadow stays until her skin's alpha is
 under 0.05 (bevy's blended shadow cut), where the game's follows the cloak's body alpha. The

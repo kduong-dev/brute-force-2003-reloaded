@@ -53,10 +53,12 @@ const H_ATTACHED_EFFECT: u32 = 0x0813_98D6;
 /// A shield's `<recharge>` values (FUN_00189a90): `delay` (h_f0a56297, name recovered by
 /// hashing), h_1cf65a16 and h_fe14a5b7 (unrecovered); the m09_c Hunter Lord's 5, 30, 100.
 const H_SHIELD_RECHARGE: [u32; 3] = [0xF0A5_6297, 0x1CF6_5A16, 0xFE14_A5B7];
-/// The motion set's two (in, out) pairs `<h_170db5cd h_141433f1 out-time>` and `<h_f599b114 ..>`
-/// (names unrecovered but out-time's).
-const H_BLEND: [u32; 2] = [0x170D_B5CD, 0xF599_B114];
-const H_BLEND_IN: u32 = 0x1414_33F1;
+/// The motion set's two ready blocks, `<npc-transition-ready in-time out-time>` (h_170db5cd) and
+/// `<pc-transition-ready ..>` (h_f599b114), the `<motion-sequence>` dispatcher 0x195be0's (its
+/// handlers 0x194880 / 0x1948c0); `in-time` is h_141433f1. Names recovered by hashing (#140).
+const H_NPC_READY: u32 = 0x170D_B5CD;
+const H_PC_READY: u32 = 0xF599_B114;
+const H_IN_TIME: u32 = 0x1414_33F1;
 /// A placement's attributes: h_17a554bf (a character a player can take control of), h_ec5337fb
 /// (whether h_072837bb, the accuracy bonus, applies), and its drops `<h_0f77963d inventory-drop>`
 /// and ammo and grenades `<inventory><h_10dd6db2 name count>`.
@@ -295,9 +297,14 @@ pub struct MotionSet {
     /// play another's: ms_feral_colonist brutus, ms_mutant2 mutant, ms_mctavish militia, the
     /// four ms_dm_* their campaign set
     pub anim_set: u32,
-    /// the two (in, out) pairs h_170db5cd and h_f599b114 (type+0x238 / +0x23c, +0x230 / +0x234;
-    /// FUN_00123f60 reads +0x230 or +0x238 as the gun's ready time)
-    pub blends: [(f32, f32); 2],
+    /// `<npc-transition-ready>` and `<pc-transition-ready>`, each (in-time, out-time) in seconds
+    /// (FUN_00131a10 puts them at type+0x238 / +0x23c and +0x230 / +0x234): the gun's raise before
+    /// a first shot (FUN_0010fce0: the ready timer starts at 4 + the in-time, and the fire command
+    /// shoots once it's at 4) and the ready pose's blend in and out (FUN_0011a440), the pc pair
+    /// for a character a human player controls, the npc pair for the AI. The squad's are pc 0.1 /
+    /// 0.2 and npc 0.2 / 0.2 (Brutus's npc in-time 0.3); e40's Shrikes pc 0.01 / 0.2, npc 0.4 / 0.3
+    pub npc_ready: (f32, f32),
+    pub pc_ready: (f32, f32),
     /// `<sequence default-motion general-idle cautious-idle>`: MOTION names
     pub default_motion: u32,
     pub general_idle: u32,
@@ -628,12 +635,13 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
 pub fn parse_motion_set(root: &Element, file: &str) -> MotionSet {
     let all = root.walk();
     let seq = all.iter().find(|e| e.name == h("sequence"));
-    let blend = |k: u32| root.child(k).map_or((0.0, 0.0), |b| (num(b, H_BLEND_IN).unwrap_or(0.0), num(b, h("out-time")).unwrap_or(0.0)));
+    let ready = |k: u32| root.child(k).map_or((0.0, 0.0), |b| (num(b, H_IN_TIME).unwrap_or(0.0), num(b, h("out-time")).unwrap_or(0.0)));
     MotionSet {
         file: file.to_string(),
         name: name(root, h("name")),
         anim_set: name(root, h("animation-set-name")),
-        blends: H_BLEND.map(blend),
+        npc_ready: ready(H_NPC_READY),
+        pc_ready: ready(H_PC_READY),
         default_motion: seq.map_or(0, |s| name(s, h("default-motion"))),
         general_idle: seq.map_or(0, |s| name(s, h("general-idle"))),
         cautious_idle: seq.map_or(0, |s| name(s, h("cautious-idle"))),

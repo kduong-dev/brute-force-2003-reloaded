@@ -2,7 +2,8 @@
 //! viewer/docs/enemies.md, "The level's characters"): what such a character does on its own, read
 //! from default.xbe's AI (the brain at char+0x830 and its goal machine FUN_000377b0; every
 //! function cited is in viewer/docs/code-map.md, "AI"). The squad's own AI (play.rs `squad_ai`)
-//! and the test map's NPCs (play_testtools.rs `npc_ai`) are unchanged.
+//! and the test map's NPCs (play_testtools.rs `npc_ai`) have no brain, but see by the same sensor
+//! (`Sensor`, `glance`; #197).
 //!
 //!  - **The spawn** gives the brain its home (FUN_000dfd90 -> FUN_00017b60, then FUN_002096e0 ->
 //!    FUN_00018510): the spawn-trigger's `home-point`; without one, its world point h_131de144,
@@ -42,10 +43,15 @@
 //!    (60 degrees either way for the Red Hand, 90 the marines: its aim while it fires, else its
 //!    facing), and with nothing of the world between its eyes and the chest (the squad's ray; the
 //!    world's pair table casts its own between the two characters' FUN_0004cea0 points,
-//!    FUN_00057a30, not matched here). A new sighting becomes a contact; a contact unseen 15 s is
-//!    forgotten (FUN_00054950), and one whose stealth visibility is 0.2 or under at once
-//!    (FUN_00044140). The target is the contact it fires at: kept until unseen 3.75 s
-//!    (EVT_TGT_LOST_SIGHT, FUN_0002e330) or 10 s (FUN_0004a780), then the nearest one seen.
+//!    FUN_00057a30, not matched here: #244). The gun's range plays no part in it (`Sensor`). A
+//!    new sighting becomes a contact; a contact unseen 15 s is forgotten (FUN_00054950), and one
+//!    whose stealth visibility is 0.2 or under at once (FUN_00044140). The target is the contact
+//!    it fires at: kept until unseen 3.75 s (EVT_TGT_LOST_SIGHT, FUN_0002e330) or 10 s
+//!    (FUN_0004a780), then the nearest one seen. The squad's AI and the test map's NPCs see by the
+//!    same rule (`glance`): their contacts are forgotten as the brain's, one who hits them is a
+//!    contact at once (the stand-in for a wingman's GOAL_INVESTIGATE_GUARD), the squad tells
+//!    each other of its targets (`broadcast`, FUN_00045090), and with nothing to fire at they
+//!    turn to the last place of one seen in the last 3.75 s, gun up (the goals after it: #26).
 //!  - **Alert**: with a contact known it stops its walk and fights (its personality's
 //!    EVT_ENEMY_SEEN draws an attack goal: GOAL_DEBUG1 for `default`'s line, ATTACK_GUARD /
 //!    ATTACK_COVER for the others): it faces the target and fires at it while it's seen and
@@ -81,7 +87,7 @@
 //! helper, to stage a fight).
 
 use super::*;
-use bf_viewer::bf::character_type::{CharacterType, Placement};
+use bf_viewer::bf::character_type::{CharacterType, Placement, PlacementAi};
 use bf_viewer::bf::level::PatrolPoint;
 use bf_viewer::bf::triggers::{Class, Trigger};
 
@@ -172,15 +178,11 @@ pub struct Brain {
     at: usize,
     /// a squad-type character on the player's side: follows the leader
     follows: bool,
-    /// its sight distance (m), field of view (degrees either way)
-    vision: f32,
-    fov: f32,
     /// its accuracy in percent (FUN_00024ae0's before the difficulty), and its gun's spread bonus
     /// (FUN_00222b30)
     accuracy: f32,
     pub gun_bonus: f32,
-    /// the hostiles it knows, and the one it fires at
-    contacts: Vec<Contact>,
+    /// the contact it fires at (the hostiles it knows are its character's, `Player::sensor`)
     target: Option<Who>,
     /// who shot at it since the last frame (registered by the next `sense`)
     attacked: Option<Who>,
@@ -211,13 +213,297 @@ struct Contact {
     last: Vec3,
 }
 
-impl Brain {
-    /// Whether it knows an enemy (brain+0x3c4 bit 7 clear): play_enemies.rs's damage path posts
-    /// EVT_DAMAGE_LIGHT / HEAVY then, else EVT_DAMAGED_NO_ENEMIES.
-    pub fn knows_enemy(&self) -> bool {
-        !self.contacts.is_empty()
+/// An AI's sensor (`Player::sensor`: the object at char+0x1b4, vtable 0x39dce8, which holds the
+/// placement's `<ai>` record) and the hostiles it knows (a brain's contact map brain+0x358, kind 1;
+/// the squad's AI and the test map's NPCs, which have no brain, keep theirs here too). See the
+/// module notes, "Sight", and todo/197-ai-sight/answer.md.
+#[derive(Clone, Debug, Default)]
+pub struct Sensor {
+    /// its sight distance (m; the sensor's +0xa8, 0x10fb90): the placement's `vision` when its
+    /// h_11cddd9f is set, else the type's vision-range (75 for e40's Shrikes and the Red Hand, 80
+    /// for Brutus, Hawk, Tex and the marines, 105 for Flint); 0 without a type, when the held
+    /// gun's range stands in (`reach`: the demo's own)
+    pub vision: f32,
+    /// its field of view (degrees either way of the way it looks; the fov test 0x3d300): the
+    /// placement's field-of-view (char+0x1e0, h_1b2327a0; 60 on the Red Hand, 90 on the marines),
+    /// the type's half-fov for a character with no placement (the squad on a map that doesn't
+    /// place it, the test map's NPCs of a type: 90 for the squad, 60 or 90 for the rest; the
+    /// lead's call for #197, as the game's characters all come from a placement); 0 without a
+    /// type: all round (the demo's)
+    pub fov: f32,
+    /// the hostiles it knows
+    contacts: Vec<Contact>,
+    /// who hit it since the last frame, for an AI with no brain (`attacked`; registered by the
+    /// next `glance`, as a brain's `sense` does its own)
+    shot_by: Option<Who>,
+    /// the squad broadcast's timer (brain+0x158, `broadcast`): s to its next look
+    broadcast: f32,
+}
+
+impl Sensor {
+    /// Its sight distance and field of view for a character of type `ty` from a placement whose
+    /// `<ai>` is `ai` (None: from none), its contacts kept. A spawn's `spawned` sets it, and
+    /// play.rs `spawn_unit` again as the model loads (`enemies::State::ai` keeps the placement's).
+    pub fn set(&mut self, ty: Option<&CharacterType>, ai: Option<&PlacementAi>) {
+        self.vision = ai.filter(|a| a.vision_own).map(|a| a.vision).or(ty.map(|t| t.ai.vision_range)).unwrap_or(0.0);
+        self.fov = ai.map(|a| a.field_of_view).or(ty.map(|t| t.ai.half_fov)).unwrap_or(0.0);
     }
 
+    /// How far (m) it sees a fully visible character it doesn't know yet: its sight distance, or
+    /// `range` (the held gun's) without one.
+    pub fn reach(&self, range: f32) -> f32 {
+        if self.vision > 0.0 { self.vision } else { range }
+    }
+
+    /// Whether it knows `who`.
+    fn knows(&self, who: Who) -> bool {
+        self.contacts.iter().any(|c| c.who == who)
+    }
+
+    /// The contact `who`, if it knows them.
+    fn contact(&self, who: Who) -> Option<&Contact> {
+        self.contacts.iter().find(|c| c.who == who)
+    }
+
+    /// `who` becomes a contact, seen last at `at` (FUN_00039880: a new sighting, or a shooter
+    /// registered); false when it knew them already.
+    fn remember(&mut self, who: Who, at: Vec3) -> bool {
+        if self.knows(who) {
+            return false;
+        }
+        self.contacts.push(Contact { who, unseen: 0.0, last: at });
+        true
+    }
+
+    /// A squadmate's broadcast of `who`, last at `at` (EVT_ENEMY_BROADCAST, `broadcast`): a
+    /// contact if it wasn't one (the wingman personality's quick goal h_f765fc45, "ADD OBJ TO
+    /// CONTACTS"), its last place and unseen time renewed if it was (the demo's stand-in for the
+    /// GOAL_WINGMAN_PURSUE the event draws, which heads for it: #26). True when it's new.
+    fn told(&mut self, who: Who, at: Vec3) -> bool {
+        match self.contacts.iter_mut().find(|c| c.who == who) {
+            Some(c) => {
+                (c.last, c.unseen) = (at, 0.0);
+                false
+            }
+            None => self.remember(who, at),
+        }
+    }
+
+    /// Forget every contact: the controlled character's (a player sees for it; it starts afresh
+    /// when control passes on).
+    pub fn clear(&mut self) {
+        self.contacts.clear();
+        self.shot_by = None;
+    }
+
+    /// Where it turns to with nothing to fire at (`glance`, `think`'s follower): the last place
+    /// of the nearest contact seen within the last LOST_SIGHT s from `eye` (the brain's turn
+    /// toward a known contact, FUN_0002f960, while the target lives: EVT_TGT_LOST_SIGHT gives it
+    /// up after LOST_SIGHT, FUN_0002e330). One shot from behind, or gone behind cover a moment,
+    /// is faced so.
+    pub fn toward(&self, eye: Vec3) -> Option<Vec3> {
+        self.contacts.iter().filter(|c| c.unseen < LOST_SIGHT).map(|c| c.last).min_by(|a, b| a.distance(eye).total_cmp(&b.distance(eye)))
+    }
+
+    /// The hostiles `m` (unit `me` of `sight`, whose sensor this is) sees now, their places in
+    /// `sight` and distances: FUN_00043000's "in reach, not refused, ray clear". In reach is
+    /// FUN_0004d140's: under its sight distance x FUN_000481c0's factor (ENGAGED for a contact,
+    /// else 1; its x3 with the gun's weapon-data +0x16c is left out: the field isn't identified) x
+    /// the target's visibility. Then the fov test (0x3d300) from its eyes, along its aim while it
+    /// fires (its aim record char+0x3e8) or else its facing (vtable +0x2c). Then nothing of the
+    /// world (or the test floor's pillars) between its eyes and the chest. The gun's range plays
+    /// no part.
+    pub fn scan(&self, m: &Player, me: usize, sight: &[Seen]) -> Vec<(usize, f32)> {
+        let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+        let facing = Vec3::new(-m.yaw.sin(), 0.0, -m.yaw.cos());
+        let look = m.ai_target.map(|t| t - eye).filter(|v| v.length_squared() > 1e-6).map_or(facing, |v| v.normalize());
+        let reach = self.reach(ai_range(m));
+        let mut seen = vec![];
+        for (i, s) in sight.iter().enumerate() {
+            if i == me || !s.target || s.team == m.team {
+                continue;
+            }
+            let d = eye.distance(s.chest);
+            if d >= reach * if self.knows(s.who) { ENGAGED } else { 1.0 } * s.visibility {
+                continue;
+            }
+            let to = (s.chest - eye) / d.max(1e-3);
+            if self.fov > 0.0 && look.dot(to).clamp(-1.0, 1.0).acos().to_degrees() > self.fov {
+                continue;
+            }
+            if ray_hit(eye, to, d - 0.3).is_none() {
+                seen.push((i, d));
+            }
+        }
+        seen
+    }
+
+    /// The contacts' clocks for this frame's sightings `seen` (FUN_00054950): one seen has its
+    /// unseen time and last place renewed, the rest count up `dt`, and the new sightings become
+    /// contacts (the scan's FUN_00039880). Then, as the scan's tail does after them, the forgotten
+    /// ones are dropped and returned with why: unseen `forget` s ("unseen"), dead or out of the
+    /// world or no longer of another side than `team` ("gone": the scan's dead list,
+    /// EVT_TGT_KILLED), or stealthed to STEALTH_FORGET or under ("stealthed", FUN_00044140 at
+    /// 0x443f1, every step: so a stealthed Hawk never keeps the 1.15). One knocked down stays
+    /// (unseen meanwhile). The new contacts that stay are returned with their distances.
+    fn update(&mut self, seen: &[(usize, f32)], sight: &[Seen], team: u8, dt: f32, forget: f32) -> (Vec<(Who, &'static str)>, Vec<(Who, f32)>) {
+        for c in self.contacts.iter_mut() {
+            match seen.iter().find(|(i, _)| sight[*i].who == c.who) {
+                Some(&(i, _)) => (c.unseen, c.last) = (0.0, sight[i].chest),
+                None => c.unseen += dt,
+            }
+        }
+        let mut found = vec![];
+        for &(i, d) in seen {
+            if self.remember(sight[i].who, sight[i].chest) {
+                found.push((sight[i].who, d));
+            }
+        }
+        let mut forgot = vec![];
+        self.contacts.retain(|c| {
+            let s = sight.iter().find(|s| s.who == c.who);
+            let why = if c.unseen >= forget {
+                "unseen"
+            } else if !s.is_some_and(|s| s.alive && s.team != team) {
+                "gone"
+            } else if s.is_some_and(|s| s.visibility <= STEALTH_FORGET) {
+                "stealthed"
+            } else {
+                return true;
+            };
+            // (one found this step and forgotten at once isn't news)
+            match found.iter().position(|f: &(Who, f32)| f.0 == c.who) {
+                Some(k) => _ = found.remove(k),
+                None => forgot.push((c.who, why)),
+            }
+            false
+        });
+        (forgot, found)
+    }
+}
+
+/// Whether `u`'s brain knows an enemy (brain+0x3c4 bit 7 clear; false without a brain):
+/// play_enemies.rs's damage path posts EVT_DAMAGE_LIGHT / HEAVY then, else
+/// EVT_DAMAGED_NO_ENEMIES.
+pub fn knows_enemy(u: &Player) -> bool {
+    u.brain.is_some() && !u.sensor.contacts.is_empty()
+}
+
+/// The nearest of `seen` (places in `sight` and distances) within `range` (m, the held gun's: the
+/// shot's own test; the attack check doesn't test it, FUN_00024f80).
+pub fn nearest_within(seen: &[(usize, f32)], range: f32) -> Option<(usize, f32)> {
+    seen.iter().copied().filter(|&(_, d)| d < range).min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// A shooter at least this visible is registered as a contact by its hit, whatever the range
+/// (EVT_DAMAGED at 0x3ea02: its visibility, slot 0, over 0.1, 0x3a4ff0); a fainter one only as
+/// FUN_0004d140 lets it (left out: a stealthed Hawk's shot shows her at 1 anyway).
+const SHOOTER_SEEN: f32 = 0.1;
+
+/// One frame of the sensor of an AI with no brain (the squad's AI, play.rs `squad_ai`, and the
+/// test map's NPCs, play_testtools.rs `npc_ai`; `m` being unit `me` of `sight`). First the one who
+/// hit it since the last frame becomes a contact, at any range, if it's at least SHOOTER_SEEN
+/// visible. That is the game's registration (0x3ea02) only for a brain that knows an enemy
+/// already; a wingman that knows none gets EVT_DAMAGED_NO_ENEMIES (30), which its personality
+/// h_ea20a17d maps to GOAL_INVESTIGATE_GUARD (13) and no registration. The demo has no such
+/// goal: registering the shooter and turning to it (`toward`) is its stand-in (#26's ground).
+/// Then who it sees
+/// (`Sensor::scan`, the brain's rule), and its contacts' clocks, forgotten as the brain's are
+/// (`Sensor::update`: unseen FORGET s). Returns what it fires at, the nearest contact it sees
+/// within the held gun's reach (its place in `sight` and distance; one just forgotten,
+/// stealthed, isn't: the game's fire needs the target's entry, FUN_00024f80), and with none,
+/// where it turns to (`Sensor::toward`: a contact unseen under LOST_SIGHT s, the target's
+/// EVT_TGT_LOST_SIGHT; what the goals do after it is #26's). BF_SIGHT_LOG logs its contacts
+/// found and forgotten, at `now` (the log's clock, the controlled character's).
+pub fn glance(m: &mut Player, me: usize, sight: &[Seen], dt: f32, now: f32) -> (Option<(usize, f32)>, Option<Vec3>) {
+    let log = std::env::var("BF_SIGHT_LOG").is_ok();
+    let team = m.team;
+    if let Some(who) = m.sensor.shot_by.take() {
+        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && s.team != team && s.visibility > SHOOTER_SEEN) {
+            if m.sensor.remember(who, s.chest) && log {
+                println!("t={now:.2} {}: shot by {who:?}: a contact", unit_name(m));
+            }
+        }
+    }
+    let seen = m.sensor.scan(m, me, sight);
+    let (forgot, found) = m.sensor.update(&seen, sight, team, dt, FORGET);
+    if log {
+        for (who, d) in found {
+            println!("t={now:.2} {}: a contact: {who:?} at {d:.1} m", unit_name(m));
+        }
+        for (who, why) in forgot {
+            println!("t={now:.2} {}: forgets {who:?} ({})", unit_name(m), if why == "unseen" { "unseen 15 s" } else { why });
+        }
+    }
+    let known: Vec<(usize, f32)> = seen.into_iter().filter(|(i, _)| m.sensor.knows(sight[*i].who)).collect();
+    let target = nearest_within(&known, ai_range(m));
+    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+    (target, if target.is_none() { m.sensor.toward(eye) } else { None })
+}
+
+/// Whether `u` has a squad record (char+0x59c): the squad's own members, and a level character
+/// following the leader (the marines, `Brain::follows`).
+fn in_squad_record(u: &Player) -> bool {
+    u.in_squad() || u.brain.as_ref().is_some_and(|b| b.follows)
+}
+
+/// The contact `u`'s brain fires at (FUN_0004ab70's pick, `Brain::target`), if it has a brain.
+pub fn target(u: &Player) -> Option<Who> {
+    u.brain.as_ref().and_then(|b| b.target)
+}
+
+/// How often (s) a squad member holding a target tells the others of it, and looks again
+/// without one: FUN_00045090 sets brain+0x158 to 2.0 (0x40000000) after a broadcast, 1.0
+/// (0x3f800000) after a look with no target, and looks once it's run out (its countdown by the
+/// frame's time: inferred, the writer isn't read).
+const BROADCAST_EVERY: f32 = 2.0;
+const BROADCAST_LOOK: f32 = 1.0;
+
+/// The squad's broadcast of its targets (FUN_00045090, at the tail of every brain's entry walk
+/// FUN_000447b0, after the sense step): a member with a squad record whose target pick
+/// (FUN_0004ab70) gives one tells every other living member (FUN_00045250 ->
+/// FUN_0004dff0: EVT_ENEMY_BROADCAST, 39), which the wingman personality h_ea20a17d maps to
+/// GOAL_WINGMAN_PURSUE and the quick goal h_f765fc45 "ADD OBJ TO CONTACTS": `Sensor::told`, so
+/// they turn to it (`toward`) and fire once they see it. Its timer: BROADCAST_EVERY while it
+/// holds one, BROADCAST_LOOK without. `held`: each unit's target this frame, by its place in
+/// `sight` (0 the controlled character, whose "target" is the nearest hostile it sees, as the
+/// game's UI character sends these on ENEMY_SEEN; k the squad's k - 1). The controlled character
+/// isn't told (a player sees for it). The pursuit itself is #26's. BF_SIGHT_LOG logs each one, at
+/// `now`.
+pub fn broadcast(player: &mut Player, squad: &mut [Player], held: &[(usize, Option<Who>)], sight: &[Seen], dt: f32, now: f32) {
+    let mut posts = vec![];
+    for &(k, target) in held {
+        let u = if k == 0 { &mut *player } else { &mut squad[k - 1] };
+        if !in_squad_record(u) || u.dead {
+            continue;
+        }
+        u.sensor.broadcast -= dt;
+        if u.sensor.broadcast > 0.0 {
+            continue;
+        }
+        match target.and_then(|w| sight.iter().find(|s| s.who == w)) {
+            Some(s) => {
+                posts.push((k, s.who, s.chest));
+                u.sensor.broadcast = BROADCAST_EVERY;
+            }
+            None => u.sensor.broadcast = BROADCAST_LOOK,
+        }
+    }
+    let log = std::env::var("BF_SIGHT_LOG").is_ok();
+    for (k, who, at) in posts {
+        let from = unit_name(if k == 0 { &*player } else { &squad[k - 1] }).to_string();
+        for (j, u) in squad.iter_mut().enumerate() {
+            if j + 1 == k || u.dead || u.absent || !in_squad_record(u) {
+                continue;
+            }
+            if u.sensor.told(who, at) && log {
+                println!("t={now:.2} {}: told of {who:?} by {from}: a contact", unit_name(u));
+            }
+        }
+    }
+}
+
+impl Brain {
     /// Whether it follows the leader (a squad-type character on the player's side): it takes a
     /// formation place (play.rs `update_player`).
     pub fn follows(&self) -> bool {
@@ -256,9 +542,11 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
     let personality = if follows { ai.map(|a| a.personalities[4]).filter(|&p| p != 0).unwrap_or(ty.ai.personalities[4]) } else {
         Some(m.enemy.personality).filter(|&p| p != 0).unwrap_or(ty.ai.personalities[0])
     };
-    // the sensor's sight distance (0x10fb90) and field of view (0x3d300: the placement's alone)
-    let vision = ai.filter(|a| a.vision_own).map_or(ty.ai.vision_range, |a| a.vision);
-    let fov = ai.map_or(ty.ai.half_fov, |a| a.field_of_view);
+    // the sensor's sight distance (0x10fb90) and field of view (0x3d300: the placement's), the
+    // placement's `<ai>` kept for the model's load (play.rs `spawn_unit` sets them again)
+    m.enemy.ai = ai.cloned();
+    m.sensor.set(Some(ty), ai);
+    let (vision, fov) = (m.sensor.vision, m.sensor.fov);
     // FUN_00024ae0's accuracy and FUN_00222b30's bonus: the placement's h_072837bb with its
     // h_ec5337fb, else the type's h_12a04758 and -1
     let bonus = placement.and_then(|p| p.accuracy_bonus);
@@ -266,7 +554,7 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
     let gun_bonus = bonus.map_or(shots::ACCURACY_BONUS, |b| b as f32);
     let b = Brain {
         label, personality, home, home_radius, go_home: home_point.is_some(), home_mt: home_motion(locomotion), base: None, refused: vec![], route: vec![], at: 0,
-        follows, vision, fov, accuracy, gun_bonus, contacts: vec![], target: None, attacked: None, best: f32::MAX, stalled: 0.0,
+        follows, accuracy, gun_bonus, target: None, attacked: None, best: f32::MAX, stalled: 0.0,
     };
     if log_on() {
         println!("t={:.2} brain {}: home {}{} (locomotion {locomotion}: {}), sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, gun bonus {gun_bonus}, \
@@ -290,17 +578,26 @@ const H_LOCOMOTION: u32 = 0xF27D_26C9;
 /// known, whose EVT_USER1 quick goal adds it, else the damage handler's own registration
 /// (0x3ea02). A near miss only with no enemy known (EVT_SHOT_AT_NO_ENEMIES, 87, the same
 /// EVT_USER1). With no enemy known before, it goes home after the fight (EVT_RETURN_HOME,
-/// posted with them). Its next sense makes the shooter a contact.
+/// posted with them). Its next sense makes the shooter a contact. An AI with no brain (the
+/// squad's, the test map's NPCs) learns its shooter from a hit only, EVT_DAMAGED's 0x3ea02 path
+/// (`glance`): a near miss tells it nothing.
 pub fn attacked(u: &mut Player, by: Who, hit: bool) {
     if u.dead {
         return;
     }
     let me = u.who();
-    let Some(b) = u.brain.as_mut() else { return };
-    if by == me || (!hit && !b.contacts.is_empty()) {
+    let knows = !u.sensor.contacts.is_empty();
+    if u.brain.is_none() {
+        if hit && by != me {
+            u.sensor.shot_by = Some(by);
+        }
         return;
     }
-    if b.contacts.is_empty() && b.home.is_some() && !b.follows {
+    let Some(b) = u.brain.as_mut() else { return };
+    if by == me || (!hit && knows) {
+        return;
+    }
+    if !knows && b.home.is_some() && !b.follows {
         b.go_home = true;
     }
     b.attacked = Some(by);
@@ -308,92 +605,51 @@ pub fn attacked(u: &mut Player, by: Who, hit: bool) {
 
 /// One frame of `m`'s sensor (the brain's sense step FUN_00044480, `m` being unit `me` of `sight`):
 /// the hostiles it sees, its contacts and their clocks, its target. The target's place in `sight`
-/// and distance when it's seen now and within the gun's reach (its fire may go), as
-/// `nearest_hostile` gives it for the squad.
+/// and distance when it's seen now and within the gun's reach (its fire may go), as `glance`
+/// gives it for the squad.
 pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usize, f32)> {
     let mut b = m.brain.take()?;
     let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
-    // the way it looks: along its aim while it fires (its aim record char+0x3e8), else its
-    // facing (vtable +0x2c)
-    let facing = Vec3::new(-m.yaw.sin(), 0.0, -m.yaw.cos());
-    let look = m.ai_target.map(|t| t - eye).filter(|v| v.length_squared() > 1e-6).map_or(facing, |v| v.normalize());
     let log = log_on();
-    let hostile = |s: &Seen| s.target && s.team != m.team;
+    let team = m.team;
     // the shooter it was told of: a contact now (not one on its own side)
     if let Some(who) = b.attacked.take() {
-        if let Some(s) = sight.iter().find(|s| s.who == who && hostile(s)) {
-            if !b.contacts.iter().any(|c| c.who == who) {
-                b.contacts.push(Contact { who, unseen: 0.0, last: s.chest });
-                if log {
-                    println!("t={:.2} brain {}: shot at by {who:?} {:.1} m off: a contact", m.sim_time, b.label, eye.distance(s.chest));
-                }
+        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && s.team != team) {
+            if m.sensor.remember(who, s.chest) && log {
+                println!("t={:.2} brain {}: shot at by {who:?} {:.1} m off: a contact", m.sim_time, b.label, eye.distance(s.chest));
             }
         }
     }
-    // who it sees (FUN_00043000: in reach, in the field of view, the ray clear)
-    let mut seen: Vec<(usize, f32)> = vec![];
-    for (i, s) in sight.iter().enumerate() {
-        if i == me || !hostile(s) {
-            continue;
+    // who it sees (FUN_00043000: in reach, in the field of view, the ray clear), the contacts'
+    // clocks (forgotten unseen FORGET s, gone with the character, at once when stealthed) and the
+    // new sightings (`Sensor`)
+    let seen = m.sensor.scan(m, me, sight);
+    let before = m.sensor.contacts.len();
+    let (forgot, found) = m.sensor.update(&seen, sight, team, dt, FORGET);
+    if log {
+        for (who, why) in forgot {
+            println!("t={:.2} brain {}: forgets {who:?} ({})", m.sim_time, b.label, if why == "unseen" { "unseen 15 s" } else { why });
         }
-        let d = eye.distance(s.chest);
-        let known = b.contacts.iter().any(|c| c.who == s.who);
-        if d >= b.vision * if known { ENGAGED } else { 1.0 } * s.visibility {
-            continue;
-        }
-        let to = (s.chest - eye) / d.max(1e-3);
-        if look.dot(to).clamp(-1.0, 1.0).acos().to_degrees() > b.fov {
-            continue;
-        }
-        if ray_hit(eye, to, d - 0.3).is_none() {
-            seen.push((i, d));
-        }
-    }
-    // the contacts' clocks (FUN_00054950): forgotten unseen FORGET s, gone with the character
-    // (dead or out of the world: the scan's dead list, EVT_TGT_KILLED), at once when stealthed;
-    // one knocked down stays (unseen meanwhile: no target of the AI's fire)
-    for c in b.contacts.iter_mut() {
-        match seen.iter().find(|(i, _)| sight[*i].who == c.who) {
-            Some(&(i, _)) => (c.unseen, c.last) = (0.0, sight[i].chest),
-            None => c.unseen += dt,
-        }
-    }
-    let before = b.contacts.len();
-    let label = b.label.clone();
-    b.contacts.retain(|c| {
-        let s = sight.iter().find(|s| s.who == c.who);
-        let keep = c.unseen < FORGET && s.is_some_and(|s| s.alive && s.team != m.team && s.visibility > STEALTH_FORGET);
-        if !keep && log {
-            println!("t={:.2} brain {label}: forgets {:?} ({})", m.sim_time, c.who,
-                     if c.unseen >= FORGET { "unseen 15 s" } else if s.is_some_and(|s| s.alive) { "stealthed" } else { "gone" });
-        }
-        keep
-    });
-    // new sightings: contacts (the scan's FUN_00039880)
-    for &(i, d) in &seen {
-        let who = sight[i].who;
-        if !b.contacts.iter().any(|c| c.who == who) {
-            b.contacts.push(Contact { who, unseen: 0.0, last: sight[i].chest });
-            if log {
-                println!("t={:.2} brain {}: sees {who:?} at {d:.1} m: a contact ({} known)", m.sim_time, b.label, b.contacts.len());
-            }
+        let known = m.sensor.contacts.len() - found.len();
+        for (k, (who, d)) in found.iter().enumerate() {
+            println!("t={:.2} brain {}: sees {who:?} at {d:.1} m: a contact ({} known)", m.sim_time, b.label, known + k + 1);
         }
     }
     // the target: kept while it's been seen in the last LOST_SIGHT s, else the nearest seen
-    let kept = b.target.and_then(|w| b.contacts.iter().find(|c| c.who == w)).is_some_and(|c| c.unseen < LOST_SIGHT);
+    let kept = b.target.and_then(|w| m.sensor.contact(w)).is_some_and(|c| c.unseen < LOST_SIGHT);
     if !kept {
         let was = b.target;
-        b.target = seen.iter().filter(|(i, _)| b.contacts.iter().any(|c| c.who == sight[*i].who)).min_by(|x, y| x.1.total_cmp(&y.1))
+        b.target = seen.iter().filter(|(i, _)| m.sensor.knows(sight[*i].who)).min_by(|x, y| x.1.total_cmp(&y.1))
             .map(|&(i, _)| sight[i].who)
-            .or(b.contacts.iter().min_by(|x, y| x.unseen.total_cmp(&y.unseen)).map(|c| c.who));
+            .or(m.sensor.contacts.iter().min_by(|x, y| x.unseen.total_cmp(&y.unseen)).map(|c| c.who));
         if log && was != b.target {
             println!("t={:.2} brain {}: target {:?}{}", m.sim_time, b.label, b.target,
-                     if was.is_some() && b.contacts.len() == before { " (lost sight of the last)" } else { "" });
+                     if was.is_some() && m.sensor.contacts.len() == before { " (lost sight of the last)" } else { "" });
         }
     }
     // what it fires at: the target, seen now, within the gun's reach (the shot's own; the attack
     // check doesn't test it, FUN_00024f80)
-    let range = m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(AI_MIN_RANGE, |w| w.def.range.max(AI_MIN_RANGE));
+    let range = ai_range(m);
     // (nobody of its own side in the line stops it: the game's ray leaves characters out,
     // FUN_00057730, and the attack check tests none, FUN_00024f80 / FUN_0004dc10; a friend in the
     // way takes the shot, play.rs `update_player`)
@@ -419,29 +675,33 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
             }
         }
         stop_walk(m);
-        squad_ai(m, leader, slot, heading, dt, target);
+        // (with nothing to fire at, turned to a contact's last place, as the alert below)
+        let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+        let toward = if target.is_none() { m.sensor.toward(eye) } else { None };
+        squad_ai(m, leader, slot, heading, dt, target, toward);
         aim(m, target, accuracy);
         m.brain = Some(b);
         return;
     }
     let mut npc = m.npc.unwrap_or(testtools::Npc { id: 0, fight: true, face: m.yaw });
     // alert: it fights where it stands (#26 moves it), facing the target, or its last place
-    if b.knows_enemy() {
+    let known = m.sensor.contacts.len();
+    if known > 0 {
         if b.walking(m) {
             stop_walk(m);
             if log {
-                println!("t={:.2} brain {}: stops: {} contact{}", m.sim_time, b.label, b.contacts.len(), if b.contacts.len() == 1 { "" } else { "s" });
+                println!("t={:.2} brain {}: stops: {known} contact{}", m.sim_time, b.label, if known == 1 { "" } else { "s" });
             }
         }
         // (the patrol is started again, from the point nearest it, once it's over)
         b.route.clear();
-        let toward = target.or(b.target.and_then(|w| b.contacts.iter().find(|c| c.who == w)).map(|c| c.last));
+        let toward = target.or(b.target.and_then(|w| m.sensor.contact(w)).map(|c| c.last));
         if let Some(p) = toward {
             let to = p - m.position;
             npc.face = (-to.x).atan2(-to.z);
         }
         m.npc = Some(npc);
-        testtools::npc_ai(m, target, dt);
+        testtools::npc_ai(m, target, None, dt);
         // the gun stays raised while it knows the enemy (the attack goal's ready pose)
         m.aim = true;
         aim(m, target, accuracy);
@@ -451,7 +711,7 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
     // calm: standing, firing at nothing, facing the way it is
     npc.face = m.yaw;
     m.npc = Some(npc);
-    testtools::npc_ai(m, None, dt);
+    testtools::npc_ai(m, None, None, dt);
     let here = m.position + Vec3::Y * GROUND;
     // home first (EVT_RETURN_HOME, pri 1.5 over EVT_BASE's 1)
     if b.go_home {

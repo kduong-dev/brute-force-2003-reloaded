@@ -330,8 +330,8 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
 
 /// A weapon's own recharge state (the game's weapon object): the timer toward the next round
 /// (+0x220), its own fire cooldown (+0x218: the demo's `Player::cooldown` is the character's,
-/// and also holds the demo's own 0.2 s raise and 0.1 s after a switch, which the game's weapon
-/// doesn't have), and the clip last seen (a drop is a shot) and whether a switch was under way.
+/// and also holds the raise before a first shot, the character's ready timer's in the game
+/// (play.rs `raise`, #140), and 0.1 s after a switch, which the game's weapon doesn't have), and the clip last seen (a drop is a shot) and whether a switch was under way.
 #[derive(Clone, Copy, Default)]
 pub struct Charge {
     timer: f32,

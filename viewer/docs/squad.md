@@ -67,7 +67,8 @@ Squad movement and deaths follow the game's own data and the captures:
   0.18 s), found in a capture at all five hand-overs. It replaced the weapon-switch pair used
   before. The name is drawn 1.6x the capture's size, pops in from nearly double that, and at
   the cut swells to 6x while it fades over 0.4 s; the game's swell is about 3x, exaggerated
-  here as asked. `BF_TEST_SELECT=<character>[,<s>]` picks that member at 1 s (or s; control passes 0.6 s later), also together with `BF_TEST_GOTO`.
+  here as asked. `BF_TEST_SELECT=<character>[,<s>]` picks that member at 1 s (or s; control passes 0.6 s later: `SELECT_TIME`, whose source isn't recorded; if it was timed from
+  the input to the picture, the game's is ~0.4-0.45 s, #140), also together with `BF_TEST_GOTO`.
 * **The squad's AI table.** Squadmates follow you as wingmen. Their personality
   (`common/ai/personality.xmb`; each character's own `personality-wingman` is empty and
   inherits `h_ea20a17d`) maps events to goals, with priorities and weights. Its events and goals
