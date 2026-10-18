@@ -8,7 +8,10 @@ steps plug their classes into it (gamevar and score since step 2, #221, with the
 the cash they work on: [campaign.md](campaign.md); script, letterbox and warp since step 3,
 #222, with the cutscenes they drive: [cutscenes.md](cutscenes.md); sound and dialog since step
 4, #223, with the voices and the level's music they play; message, input, menu and event since
-step 5, #224, with the hint lines, button gates and panels they show: [hints.md](hints.md)).
+step 5, #224, with the hint lines, button gates and panels they show: [hints.md](hints.md);
+level-over and zone since step 7, #226, with the mission's end: [mission.md](mission.md);
+radar-triggers and the damage plate since step 9, #228, with the radar's objective dots they
+set: [play.md](play.md), "Radar").
 Everything here is read from default.xbe's trigger code (the addresses are in the code's
 comments and in [code-map.md](code-map.md), "Levels and triggers"); nothing is fitted.
 
@@ -70,11 +73,12 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | score (2) | OPERATE: its `amount` x (1 + 0.1 x the difficulty, with h_11819686) to the campaign squad's cash, under its key h_19ca8cf3 with h_08f457d8, else the null name (every score-trigger's is the null name: the cash's own totals). The tutorial's: score510 5000 on the primary's timer pulse, score509 1000 on the secondary's calculator: $3000 and $600 on STANDARD ([campaign.md](campaign.md), "The cash") | 0x20ba00, FUN_0005c5e0 |
 | level-over h_1f07be84 (1) | OPERATE with h_18f66101 (true by default) ends the mission (the game mode's "over" bit); without it ends the zone: a 0.5 s fade, the checkpoint save ("Saving Campaign..."), then the zone the last zone-trigger named (#226: `play_level_over.rs`, [mission.md](mission.md)). The tutorial's fires at 8.93 s of its ending script | 0x207fe0, 0x207f70 |
 | zone-trigger (0) | OPERATE names the zone (its h_14b0089f, an archive) the next zone's end goes to (#226) | 0x207de0 |
+| radar (18) | OPERATE gives its objects their `radar-contact` and a blink time (#228: see "Radar-triggers") | 0x207230 |
+| damage plate h_130818c0 (1) | A proximity detector that hurts what's in it while it's enabled (#228: see "The damage plate") | 0x1fa7e0, FUN_001f8510 |
 
-Every other class (radar, property h_14cccfaa, the damage plate h_130818c0) runs its base
-actions; each of its own actions is counted as used, as its handler counts it, and logged with
-the step that runs it ("h_11a8c558 (property) OPERATE on USE_OBJECT [tex_1]: not run yet (a later
-step (object properties))").
+Every other class (property h_14cccfaa) runs its base actions; each of its own actions is
+counted as used, as its handler counts it, and logged with the step that runs it ("h_11a8c558
+(property) OPERATE on USE_OBJECT [tex_1]: not run yet (a later step (object properties))").
 
 ## Gamevar-triggers
 
@@ -199,8 +203,10 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   sight and the fight, #227, [brain.md](brain.md)); an effect
   object plays its effect type's ALE effects once at the transform (the lava bursts, the farcast
   flashes; the farcast-out pad, which the game keeps until its destroyer, plays its emitters once
-  here); a pickup template (sdm_e34's 118 re-armable ones) isn't made: the demo keeps the placed
-  pickups as before.
+  here), with the game's particle rules (`load_recorded_facing`: its shapes, its count once a
+  game frame, its facing; #228, checked against take08's lava bursts, which the demo's half-size
+  quads drew as a string of small blobs); a pickup template (sdm_e34's 118 re-armable ones) isn't
+  made: the demo keeps the placed pickups as before.
 * **The squad's start (#102).** A squad member (Brutus, Flint, Hawk, Tex) that a spawn-trigger
   spawns starts on the ground under that trigger's transform, named as its copy (`SquadSpawns`,
   play.rs `player_at_start`): the tutorial's Tex at (65.55, 25.25, 74.03), where take03 has him
@@ -351,13 +357,18 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
 
 * **DESTROYED**: a character with a trigger name dies (a spawn copy: its spawn-trigger's
   listeners hear it; the squad started at its spawns counts as those copies); a named breakable
-  object that a trigger listens to breaks (play_scenery.rs). Its id 0 and data -1 are the game's
+  object that a trigger listens to breaks (play_scenery.rs); a level's own Sentry mine goes off
+  (#228, play_sentry.rs: 0x149520's send at 0x1496fc; the tutorial's calculator471 counts the
+  mine field's three). Its id 0 and data -1 are the game's
   (the death's send: the object's +0x144(1), FUN_00157260, #221); the demo's subject is the dead
   object, the game's a character from the dead one's (see "Not done").
 * **USE_OBJECT**: a wall panel used (play.rs `doors`): its signal h_eaf8a35b and data h_f1660a0d
   (0x163060), the user as the subject.
-* **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs). The tutorial's listened ones (the
-  DNA, the Sentry mines, the L-Shot-50) aren't takeable in the demo yet (step 9, #228).
+* **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs): since #228 the tutorial's DNA
+  canister h_ef649b0f, whose PICKUP_OBJECT starts timer467 (4 s) and then Bratton's line
+  ([pickups.md](pickups.md), "DNA canisters"). Its other listened ones aren't takeable: the
+  Sentry mines are armed instead (their disarm, #145, would take them) and the L-Shot-50 is a
+  weapon pickup, which the demo doesn't have yet.
 * **AI events** (RESERVE_4EVT, 17): a character's EVT_ events (its health under 75, 50 and 25
   percent of its most; EVT_SOUND_ENEMY_NOISE as a stub) to the event-triggers listening to it
   only (FUN_001fe440), with the character as the subject (#224, play_hints.rs `ai_events`).
@@ -373,6 +384,69 @@ whose menu game-options doesn't define (the tutorial's trigger_menu509) opens no
 sends FINISHED; a panel up stops the game's clock as the objectives menu does, so the timers
 wait under it. `BF_HINT_LOG=1` logs the lines, the gates' presses, the AI events and the
 panels; `BF_TEST_VB` presses a virtual button and `BF_TEST_PANEL` closes the panels.
+
+## Radar-triggers
+
+#228, `play_radar.rs` (a child of play_triggers.rs: its class is the runtime's). From the code:
+the radar-trigger's vtable 0x395168 (its parser 0x2071a0, handler 0x207230, constructor 0x2073b0)
+and FUN_0015b310, which the handler calls for each object.
+
+* **Attributes** (0x2071a0): `radar-contact` (+0x40, the RCONTACT_ names at 0x3beaac: 0 NONE,
+  1 ALIGNMENT, 2 OBJECTIVE, 3 OBJECTIVE_NO_CURSOR, 4 OBJECTIVE_SECONDARY, 5 INVISIBLE,
+  6 BOSS_ALIGNMENT, 7 IMPORTANT_PICKUP), h_e2145a6c its blink time (+0x44, s) and h_12b33046
+  (+0x48) the radar's sound, true unless the data says not (the constructor's).
+* **OPERATE** (enabled; disabled it runs its base actions only): each of its objects that's in
+  the world (a listed spawn-trigger's copy; any other trigger is skipped) takes the contact
+  through FUN_0015b310: the object's +0x7a is the value, kept in the world's contact list while
+  it's 1, 2, 3, 6 or 7, and its +0x10c the larger of +0x10c and the time, which the object's
+  update (0x157c40) counts down by dt to 0. With h_12b33046 and a contact of 2 or 3 the game
+  options' radar sound (`<radar>` h_ee13e943: h_f674fc4f, dxud_ai_00008) goes on the world's
+  dialog queue (FUN_00179d60, flag 0) when an object in the world took the contact (the flag its
+  loop sets, 0x20730a-0x20733a). Any other action is the base's. The entry is counted after.
+* **The radar** (play_hud.rs; [play.md](play.md), "Radar") draws the objects whose contact is
+  2, 3 or 7 (FUN_000ae580 hands those to FUN_000aece0) as yellow dots, blinking while their
+  +0x10c is above 0, and as "L" markers on its rim beyond its range.
+* **The tutorial's 18**: nine pairs along the route (leads §7.9), each a set (contact 3, time 2,
+  once, h_12b33046 false: no sound) on the next route object (h_fe303e53 at (25.4, 34.6) on
+  FIRST_UPDATE, h_e89e2471 at (56.8, -0.5) as the first patrol's circle h_ed8c0a43 is entered,
+  ...) and a clear of the last (contact 0, time 0, h_12b33046 true, but no sound for a 0). The
+  circles and plates that drive them also play the save points' chime, sound-triggers of
+  dxud_ai_00008 (trigger_sound452 ..., 1.51 s, 2D: "Sound- and dialog-triggers"). What a save
+  point saves (the restart there) is #27's.
+
+`BF_RADAR_LOG=1` logs each contact set on an object (its name, type, place, value and time) and
+each name a radar-trigger sets that's in the world under no object.
+
+## The damage plate
+
+#228, `play_damage_plate.rs` (a child of play_triggers.rs: its detector is the runtime's). From
+the code: the class h_130818c0 (vtable 0x396530; its parser 0x1fa740, constructor 0x1fa680,
+update 0x1fa7e0) and FUN_001f8510, FUN_001f8420.
+
+* **A proximity detector**: its sphere of `radius` (5 by the constructor: the tutorial's plate's
+  `size` 4 2 4 isn't read, a proximity detector's parser takes `radius` alone), its occupants and
+  their ENTER / EXIT as any detector's ("Detectors").
+* **While it's enabled** each occupant (from its first frame in the sphere until 0.2 s after it
+  leaves) that's a living character in the world takes `amount` (h_18499bb9, +0x120) x the
+  falloff (h_e022d922, +0x124, FUN_001f8420: 0 all of it; 1 (1 - d / r) and 2 (1 - d / r)^2;
+  3 all of it to r / 2, then 1 - 2 (d / r - 0.5); none beyond r) x dt each frame, of its
+  `damage-type` (+0x128), from the plate's middle, through the character's damage handler
+  (0x125600: its difficulty step and its factor for the type; nobody is hurt during a cutscene).
+  A negative amount heals each occupant by it x dt, up to the most, with no falloff and no test
+  (FUN_001f8510's other branch).
+* **Not a weapon's hit**: no hit part, no damage-multiplier, no push, and no blood (take15 shows
+  none). The first hit on a character since the plate was enabled goes through the demo's `hurt`
+  (its grunt); the rest come off its hit points directly, unless one would kill it. Enabled
+  again, it starts again (`BF_TRIGGER_FIRE=trigger_damage_plate524,USER1,2` after its second:
+  the first hit through `hurt` once more).
+* **The tutorial's** trigger_damage_plate524 at (27.9, 17.4, 67.6): BALLISTIC 20 a second,
+  falloff 0, squad types. The show_patrol_2 script's 103s at 0.108 s start timer528 (1 s) and
+  enable it; the timer's pulse disables it. Tex, warped to direction_point2 2.6 m from its middle,
+  takes 20 x 0.6 (STANDARD's step on the squad) = 12 a second for that second: take15's 115 ->
+  102.7.
+
+`BF_COMBAT_LOG=1` prints each hit from a plate (this frame's, the total so far and the hit
+points left), the first with its factors.
 
 ## Test hooks
 
@@ -390,10 +464,21 @@ panels; `BF_TEST_VB` presses a virtual button and `BF_TEST_PANEL` closes the pan
 * The game flags, the cash and the objectives menu have their own (`BF_FLAG_LOG`,
   `BF_FLAG_SET`, `BF_CASH_LOG`, `BF_TEST_OBJECTIVES`): [campaign.md](campaign.md). The
   cutscenes' (`BF_SCRIPT`, `BF_SCRIPT_LOG`): [cutscenes.md](cutscenes.md).
+* `BF_RADAR_LOG=1`: the radar-triggers' contacts (above). The damage plate's hits:
+  `BF_COMBAT_LOG=1`. The level's mines: `BF_SENTRY_LOG=1` ([grenades.md](grenades.md),
+  "Sentry"); the DNA canister: `BF_PICKUP_LOG=1` ([pickups.md](pickups.md)).
 
 ```sh
 # the tutorial's base: the plate opens the door and spawns four terrorists
 BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_TEST_GOTO=-36.4,37.3,-57.3,22.9 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# step 9 (#228; BF_TEST_PANEL closes the panels that would stop the clock): the first patrol's
+# circle moves the radar's blip and chimes
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_RADAR_LOG=1 BF_TEST_GOTO=10.64,44.15,22.28,34.31 "BF_TEST_PANEL=a,1;a,1;a,1;a,1" BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# the damage plate: on plate h_e8c8e32a (the start's height 32 puts Tex on its slab) the
+# show_patrol_2 script starts, warps Tex beside the damage plate and enables it for its second
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_COMBAT_LOG=1 BF_TEST_GOTO=37,67.5,37,67.5,32 "BF_TEST_PANEL=a,1;a,1;a,1;a,1" BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# the east pit's lava bursts, turned on as the opening script does at 7.2 s, from take08's place
+BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_TEST_GOTO=43.69,-21.63,46.26,-25.92 "BF_TRIGGER_FIRE=trigger_router_turn_on_lava,USER1,0.5" "BF_TEST_PANEL=a,1;a,1;a,1;a,1" BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # the farcast: the opening script's router spawns Tex at 17.09 s (#222)
 BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SCRIPT_LOG=1 cargo run --bin bf_play
 # or by hand, without the script (the squad is then in the world from the start)
@@ -508,11 +593,43 @@ the log read and the frames looked at:
     a west burst at 33.5 m from its min 30 plays at 0.52, at 38.8 m at 0.04;
   * unmuted (`BF_MUSIC_VOLUME=0.2 BF_AUDIO_LOG=1`, the gate run, ~6 s; before the fix round):
     five voices playing (sinks) by 2 s, the three music-bank tracks decoded.
+* **Step 9 (#228)**, the commands under "Test hooks", 15 fps, against the tutorial's takes:
+  * radar-triggers: h_eaec0c5a gives h_fe303e53 (25.4, 34.6) contact 3 and a 2 s blink on
+    FIRST_UPDATE; entering circle h_ed8c0a43 at 2.87 s, h_165b8f36 moves it to h_e89e2471 (56.8,
+    -0.5) and h_ebaef50e clears the first, as trigger_sound452's chime (1.51 s) plays. On the
+    radar the first dot is gone from ~1.3 s to 2 s; the new one, ahead from 2.87 s, holds ~1.1 s,
+    is gone ~0.75 s, then stays (frames 0-90), as take07's does when its circle is entered
+    ([play.md](play.md), "Radar");
+  * the damage plate: enabled at 0.13 s, Tex hit 0.80 a frame (20 x 1/15 x 0.6) from 0.20 s,
+    disabled by timer528's pulse at 1.20 s: 115 -> 102.2 (take15: 115 -> 102.7 over 1.07 s; the
+    15 fps frames make it a frame more), no blood on him (the grunt of the first hit not
+    listened to: the runs are muted);
+  * the lava bursts: the east pit's three spawn-triggers at 1.53 / 2.47 / 3.00 s after their
+    timers' 1 / 2 / 2.5 s, then every 3.53 / 6.07 / 5.07 s (their loops' 3.5, 6 and 5 s plus a
+    frame for the re-arm); take08's near one (trigger_spawn356, (50.9, -26.8)) bursts every
+    5.9 s of its watch log's clock (109.2, 115.4, 123.4 and 129.6 s of its video, with a 1.7 s
+    stall between the second and the third). Each a bright fire column that rises over ~0.5 s
+    and fades by ~1 s, as take08's (more orange there: see "Not done");
+  * the level's mines and the DNA canister: [grenades.md](grenades.md) "Sentry",
+    [pickups.md](pickups.md) "DNA canisters".
 
 ## Not done here, or not known
 
-* The classes left to later steps (radar and the damage plate #228, the object properties:
-  above).
+* The classes left to later steps (the object properties: above).
+* Radar-triggers (#228): the radar sound of a set with h_12b33046 (none of the tutorial's has
+  it) isn't heard in any take; contacts 1, 4, 5 and 6 are kept on their objects but the radar
+  draws only 2, 3 and 7 (the alignment and boss contacts are #160's enemies on the radar).
+* The damage plate (#228): the HUD's damage direction indicator (take15 shows it on all four
+  sides while the plate hurts Tex: FUN_000b3010 / FUN_000b2ef0) and the health bar's flash aren't
+  drawn. The 0.2 s an occupant stays in its list after leaving is the detector's (not checked
+  for the plate on its own).
+* The lava bursts (#228) are a brighter yellow than take08's orange column, which is also
+  wider near the camera, and take08's orange embers scattered round them are missing. Their
+  effect type h_e8918da4 lists one ALE effect, h_011bcd96 (slava-erupt-jet: its cube emitter, its
+  one appearance, and a gravity and a turbulence field, slava-eruptgravity-jet and slava-turb-jet);
+  the demo's ALE doesn't run gravity and turbulence fields (ale_fx.rs, AIR_FIELDS), which would
+  scatter the particles and bring them down. The take's view from Tex's place (the valley and
+  the sky beyond the pit) isn't the demo's (rock walls): the level's, not the bursts'.
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
 * Placed characters that no spawn-trigger names still add their bodies' collision to the arena

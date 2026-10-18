@@ -115,11 +115,64 @@ const METER_TICK: Color = Color::srgb(0.08, 0.12, 0.25);
 /// ground the demo's fade comes out a little fainter than the game's.
 const METER_GROUND: f32 = 28.0 / 255.0;
 const METER_FULL: f32 = 130.0 / 255.0;
-/// radar: centre of the disc, its radius in screen units and the range it shows (m)
+/// radar: centre of the disc (screen units; the radar widget's place + 64, its +0xd4 / +0xd8)
 const RADAR_CENTRE: (f32, f32) = (121.5, 369.0);
-const RADAR_RADIUS: f32 = 44.0;
-const RADAR_RANGE: f32 = 40.0;
-const SQUAD_YELLOW: Color = Color::srgb(1.0, 0.88, 0.2);
+/// The radar's max-range circle in screen units: its +0x88, 39 on a full screen (set at 0xadc70
+/// and by FUN_000adf20; 29 on a small or split one). FUN_000b0550 turns a world offset by the view
+/// and scales it by this over the game options' max-range (+0x94 = +0x88 / +0x90,
+/// 0xae255-0xae26a): 120 m across 39 units, 0.325 a metre. take07 agrees: the waypoint 17.4 m off
+/// drawn 5.4 units from the middle (5.65 by the code), the next, 55.5 m off, 17.0 (18.0). (The
+/// demo's 40 m across 44 units before #228 had no source.)
+const RADAR_UNITS: f32 = 39.0;
+/// The squad's blips: FUN_000ae7c0's colour for a friend (a character on the viewer's team, a team
+/// not hostile to itself: FUN_0004b960), 90 200 40 (0xae9a9-0xae9b9); take11's marines are green.
+/// (The demo's yellow before #228 had no source.)
+const SQUAD_GREEN: Color = Color::srgb(90.0 / 255.0, 200.0 / 255.0, 40.0 / 255.0);
+/// The viewer's own dot in the radar's middle: 180 180 180 (FUN_000ae7c0's colour for the HUD's
+/// own character, 0xae7f0 / 0xae934, in every mode; take03 and take07 show it pale grey). The
+/// squad deathmatch recordings' green middle is its squadmates' dots over it: within a few metres
+/// of the viewer at 0.325 units a metre (the demo draws its squad's blips over it too).
+const VIEWER_GREY: Color = Color::srgb(180.0 / 255.0, 180.0 / 255.0, 180.0 / 255.0);
+/// FUN_000ae7c0's colours for the other characters on the radar (radar-contact 1, or 6 for a
+/// boss: the second of each pair): a friend 90 200 40 / 40 100 20 (0xae992-0xae9b9); one whose
+/// team the viewer's is hostile to (FUN_000a8520) 200 40 90 / 100 20 40 (0xaea3d-0xaea84: take08
+/// and take11's terrorists are red); anyone else 70 70 70 (0xaea9d).
+const CHARACTER_FRIEND: [[f32; 3]; 2] = [[90.0 / 255.0, 200.0 / 255.0, 40.0 / 255.0], [40.0 / 255.0, 100.0 / 255.0, 20.0 / 255.0]];
+const CHARACTER_HOSTILE: [[f32; 3]; 2] = [[200.0 / 255.0, 40.0 / 255.0, 90.0 / 255.0], [100.0 / 255.0, 20.0 / 255.0, 40.0 / 255.0]];
+const CHARACTER_NEUTRAL: [f32; 3] = [70.0 / 255.0; 3];
+/// The radar's dot texture h_ecea7a68 (the radar's +0x34, looked up at 0xadd15): an 8 x 8 soft
+/// white disc (A8), what each of its contact records is drawn with (0xb01b0).
+const RADAR_DOT: u32 = 0xECEA_7A68;
+/// An objective's record lives this long when its object wasn't seen in the last SEEN_TIME s (the
+/// radar's +0xa4, 1.0) and PING_LIFE (+0xa0, 0.3) otherwise (FUN_000aece0 picks by FUN_000ae360).
+const PING_NEW_LIFE: f32 = 1.0;
+const PING_LIFE: f32 = 0.3;
+/// How long an object counts as seen after its last record (the radar's +0xa8, 3.0: FUN_000ae360
+/// sets it, FUN_000ae300 counts it down).
+const SEEN_TIME: f32 = 3.0;
+/// A record's alpha x min(life / PING_FADE, 1) (+0x98, 0.25: 0xb02bd); it grows by PING_GROWTH
+/// a second (+0x9c, 8.0 on a full screen: FUN_000ae3f0) from a half-size of 1 unit (+0xdc).
+const PING_FADE: f32 = 0.25;
+const PING_GROWTH: f32 = 8.0;
+/// An objective beyond the max-range: its rim marker. FUN_000aece0 hands FUN_000b0ad0 its point on
+/// the circle (A) and 5.0 x +0xac (1.0 on a full screen): B, this far in from A on the way to the
+/// object. FUN_000af840 draws the record (type 1, 0xafaa0) as a line list from A to B pushed out
+/// to each side by as much, square to A-B (0xaf9a5-0xaf9c5): an "L" with its corner on the circle,
+/// its arms 5 in and 5 across (7.1 units long). take11 at 330 s and the squad deathmatch recordings
+/// show it so.
+const RIM_DEPTH: f32 = 5.0;
+/// The rim marker's line width (units): the game's is a line list, a pixel of its 640 x 480;
+/// take11's and the recordings' are ~2 px of their 1280 x 720 frames, 1.33 units (a fit).
+const RIM_LINE: f32 = 1.33;
+/// The blink's dim alpha: 255 >> 6 (0xaedd5), on the half of each 2 s where frac(t / 2) < 0.5.
+const BLINK_DIM: f32 = 3.0;
+/// The objectives' colour, 255 255 0, and the important pickup's (7: the memory chip), 30 90 30
+/// (FUN_000aece0's record +0x10 / +0x14 / +0x18, which the draw packs as D3DCOLOR ARGB with them
+/// as R G B, 0xb033c-0xb0374; take07's dot is pure yellow).
+const OBJECTIVE_YELLOW: [f32; 3] = [1.0, 1.0, 0.0];
+const PICKUP_GREEN: [f32; 3] = [30.0 / 255.0, 90.0 / 255.0, 30.0 / 255.0];
+/// The radar overlay's pixels per screen unit (its image is 128 units square).
+const OVERLAY_PX: usize = 2;
 /// Squad health bars fill the radar frame's own dark channels on its diagonals (texels of the
 /// frame texture, display rows, darker than HEALTH_DARK). By character (Brutus, Flint, Hawk,
 /// Tex): the channel's quadrant (x right, y down) and the portrait notch it's anchored at (frame
@@ -741,6 +794,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
         .init_resource::<NameLabel>()
         .init_resource::<StaminaBar>()
+        .init_resource::<RadarMarks>()
         .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities).in_set(HudSetup),
             (|mut commands: Commands| {
                 commands.insert_resource(NameLabel::default());
@@ -750,7 +804,9 @@ pub fn plugin(app: &mut App) {
         // (after the death camera: its label and reticle show the frame it decides them)
         .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
                               update_hud_widgets, update_squad_hud, update_scope).after(update_weapons).after(deathcam::death_cam)
-            .run_if(in_state(AppState::Playing)));
+            .run_if(in_state(AppState::Playing)))
+        // the radar's objective dots, once the radar-triggers' contacts are in (#228)
+        .add_systems(Update, update_radar_marks.after(super::triggers::radar::RadarApply).after(update_player).run_if(in_state(AppState::Playing)));
 }
 
 /// The HUD's set-up as a map starts: what draws over the HUD (Flint's targeting marker,
@@ -838,6 +894,8 @@ fn radar_cone() -> Image {
 
 fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mut cache: ResMut<HudImages>,
              mut gen: ResMut<HudGen>, mode: Res<Mode>) {
+    // (no radar overlay until the radar is made below)
+    commands.insert_resource(RadarMarks::default());
     if std::env::var("BF_NO_HUD").is_ok() {
         return;
     }
@@ -1005,8 +1063,21 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         commands.spawn((ChildOf(screen), at(51.0, 298.5, 141.0, 141.0), image(&disc, Color::srgba(1.0, 1.0, 1.0, 0.85))));
         commands.spawn((ChildOf(screen), at(75.0, 322.5, 93.0, 93.0), ImageNode::new(cone)));
         commands.spawn((ChildOf(screen), at(57.5, 305.0, 128.0, 128.0), image(&frame, Color::WHITE)));
-        commands.spawn((ChildOf(screen), at(119.5, 367.0, 4.0, 4.0), BackgroundColor(Color::srgb(0.55, 1.0, 0.35)),
+        commands.spawn((ChildOf(screen), at(119.5, 367.0, 4.0, 4.0), BackgroundColor(VIEWER_GREY),
                                   BorderRadius::all(Val::Percent(50.0))));
+        // the objectives' dots and rim markers (#228): drawn into an image over the radar each
+        // frame (`update_radar_marks`)
+        let n = (128 * OVERLAY_PX) as u32;
+        let overlay = images.add(Image::new(bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                                            bevy::render::render_resource::TextureDimension::D2, vec![0; (n * n * 4) as usize],
+                                            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                                            bevy::asset::RenderAssetUsages::default()));
+        let dot = game.texture_rgba(RADAR_DOT).map(|(w, h, px)| (w as usize, h as usize, px.chunks_exact(4).map(|p| p[3] as f32 / 255.0).collect()));
+        if dot.is_none() {
+            warn!("radar dot texture h_{RADAR_DOT:08x} not found: the objectives' dots are drawn as squares");
+        }
+        commands.insert_resource(RadarMarks { image: overlay.clone(), dot, ..default() });
+        commands.spawn((ChildOf(screen), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0), ImageNode::new(overlay), ZIndex(2)));
         // the frame's four portrait notches are open in its texture; the game fills them dark behind
         // the faces (texel boxes in the frame texture: top, right, bottom, left)
         for (x0, y0, x1, y1) in [(50.0, 8.0, 80.0, 17.0), (110.0, 50.0, 119.0, 80.0), (48.0, 110.0, 78.0, 119.0), (8.0, 48.0, 17.0, 78.0)] {
@@ -1103,7 +1174,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         return;
     }
     for slot in 0..3 {
-        commands.spawn((ChildOf(screen), SquadPart::Blip(slot), Visibility::Hidden, BackgroundColor(SQUAD_YELLOW),
+        commands.spawn((ChildOf(screen), SquadPart::Blip(slot), Visibility::Hidden, BackgroundColor(SQUAD_GREEN),
                         BorderRadius::all(Val::Percent(50.0)), ZIndex(2), at(0.0, 0.0, 4.0, 4.0)));
     }
     // three red chevrons on the radar pointing at the portrait of the member being given control
@@ -1284,7 +1355,8 @@ fn update_hud_widgets(
     // its fade at the end (1: full), and the icon faint under it meanwhile, coming back as it
     // fades
     let name_alpha = (held_name.0 / super::ammo::NAME_FADE).min(1.0);
-    let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| if *n > 0 { format!("{n}x {name}") } else { name.clone() }).collect();
+    // (FUN_000ad790: "%dx %s" from two in a row, the name alone for one, 0x40d734)
+    let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| if *n > 1 { format!("{n}x {name}") } else { name.clone() }).collect();
 
     for (part, mut vis, img, mut text, node) in &mut parts {
         let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
@@ -1485,13 +1557,15 @@ fn update_hud_widgets(
     }
 }
 
-/// Squad blips on the radar (turning with the camera), the selection marker and the name (centre
-/// of the screen) while control passes to another member, and the grenade meter while a throw charges.
+/// Squad blips on the radar (turning with the camera, at the radar's scale: RADAR_UNITS), the
+/// selection marker and the name (centre of the screen) while control passes to another member,
+/// and the grenade meter while a throw charges.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_squad_hud(
     time: Res<Time>,
     player: Res<Player>,
     squad: Res<Squad>,
+    game: Res<GameData>,
     mut gen: ResMut<HudGen>,
     mut images: ResMut<Assets<Image>>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -1540,14 +1614,25 @@ fn update_squad_hud(
     let meter_shift = super::reticle::crosshair_centre(&player).y - CROSSHAIR_Y;
     let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c && m.in_squad()).map(|m| (c, m.position)));
     let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
+    // the squad's blips: its living members in the world, not the NPCs the triggers or the test
+    // tools spawned (the tutorial's terrorists showed as squad blips before #228)
+    let members: Vec<&Player> = squad.0.iter().filter(|m| m.in_squad() && !m.dead && !m.absent && !m.stand_in).collect();
+    // (the radar's scale, FUN_000b0550: see RADAR_UNITS)
+    let scale = RADAR_UNITS / game.0.radar.max_range.max(1.0);
     for (part, mut vis, mut node, _text, _font, _color, img, art, background, border) in &mut parts {
         match *part {
             SquadPart::Blip(slot) => {
-                let Some(m) = squad.0.get(slot).filter(|m| !m.dead) else { show(&mut vis, false); continue };
+                let Some(m) = members.get(slot) else { show(&mut vis, false); continue };
                 let rel = m.position - player.position;
-                let mut v = Vec2::new(rel.dot(right), rel.dot(fwd)) * (RADAR_RADIUS / RADAR_RANGE);
-                if v.length() > RADAR_RADIUS {
-                    v = v.normalize() * RADAR_RADIUS;
+                // (beyond the max-range the game pins the squad to the rim, FUN_000ae7c0 through
+                // FUN_000b0ad0: here on the circle; within it a member shows only within the
+                // player's reach, FUN_000b0670)
+                let mut v = Vec2::new(rel.dot(right), rel.dot(fwd)) * scale;
+                if v.length() > RADAR_UNITS {
+                    v = v.normalize() * RADAR_UNITS;
+                } else if radar_reach(&player, &game.0, m.position, game.0.radar.max_range.max(1.0)) <= 0.0 {
+                    show(&mut vis, false);
+                    continue;
                 }
                 show(&mut vis, true);
                 pct(RADAR_CENTRE.0 + v.x - 2.0, RADAR_CENTRE.1 - v.y - 2.0, &mut node);
@@ -1685,5 +1770,340 @@ fn update_squad_hud(
             }
         }
     }
+}
+
+// ---- the radar's objectives (#228): FUN_000ae580 -> FUN_000aece0, drawn by 0xb01b0 / 0xaf840 ----
+
+/// One of the radar's contact records (the list at the radar's +0x3c, made by FUN_000aece0, aged
+/// by FUN_000ae3f0, drawn by 0xb01b0): where (screen units from the radar's middle, whole numbers:
+/// FUN_000b0550 casts them), its colour, its alpha byte, the time it has left and its scale.
+struct Ping {
+    x: f32,
+    y: f32,
+    rgb: [f32; 3],
+    alpha: f32,
+    life: f32,
+    scale: f32,
+}
+
+/// An objective beyond the max-range this update (the list at +0x48, refilled by FUN_000aece0
+/// each update): its marker's inner point and its point on the circle (screen units from the
+/// middle), its colour and alpha byte. Drawn as two lines from the circle point, the corner, to
+/// the inner point pushed out as far to each side (0xafaa0, record type 1; see RIM_DEPTH).
+struct Rim {
+    inner: Vec2,
+    outer: Vec2,
+    rgb: [f32; 3],
+    alpha: f32,
+}
+
+/// The radar's objective dots and rim markers (#228) and the image they're drawn into, over the
+/// radar (set up with the HUD, `setup_hud`; a default one where there's no radar).
+#[derive(Resource, Default)]
+struct RadarMarks {
+    pings: Vec<Ping>,
+    rims: Vec<Rim>,
+    /// the objects seen in the last SEEN_TIME s (the radar's map at +0x78: FUN_000ae360,
+    /// FUN_000ae300), by `radar::Contact::key`
+    seen: HashMap<u32, f32>,
+    /// time towards the radar's next update (one a game frame: `shots::TICK`)
+    tick: f32,
+    /// the overlay's image (128 x 128 units at OVERLAY_PX), and whether it holds anything
+    image: Handle<Image>,
+    drawn: bool,
+    /// the dot texture h_ecea7a68: width, height and its alpha (the texels are white)
+    dot: Option<(usize, usize, Vec<f32>)>,
+    /// the hostiles the viewer knows of by its own sight (FUN_000ae470's FUN_000572a0 for the
+    /// viewer: the controlled character's sensor keeps none, #197), each with how long it's been
+    /// unseen: kept brain::FORGET s, as a contact is (`radar_knowledge`)
+    viewer_known: HashMap<Who, f32>,
+}
+
+/// FUN_000ae470 with h_14be5318 off (as shipped): whether the radar shows a hostile, `who`: the
+/// viewer knows of it (`RadarMarks::viewer_known`, from its own sight: `Sensor::scan` from the
+/// controlled character, kept FORGET s unseen as a contact is) or a living squadmate does (one
+/// with a squad record: the squad's members and the marines following, `Sensor::knows`; the
+/// squad's broadcast tells them of each other's targets, play_brain.rs).
+fn radar_knows(marks: &RadarMarks, squad: &Squad, who: Who) -> bool {
+    marks.viewer_known.contains_key(&who)
+        || squad.0.iter().any(|m| !m.dead && !m.absent && (m.in_squad() || m.brain.as_ref().is_some_and(|b| b.follows())) && m.sensor.knows(who))
+}
+
+/// The viewer's own knowledge for the radar (see `RadarMarks::viewer_known`): this frame's
+/// sightings from the controlled character (none while it's dead) renewed, the rest a frame
+/// older, the ones unseen brain::FORGET s or gone from the world dropped.
+fn radar_knowledge(marks: &mut RadarMarks, player: &Player, squad: &Squad, dt: f32) {
+    let sight = super::sight_list(std::iter::once(player).chain(squad.0.iter()));
+    for t in marks.viewer_known.values_mut() {
+        *t += dt;
+    }
+    if !player.dead && !player.absent {
+        for (i, _) in player.sensor.scan(player, 0, &sight) {
+            marks.viewer_known.insert(sight[i].who, 0.0);
+        }
+    }
+    marks.viewer_known.retain(|w, t| *t < super::brain::FORGET && sight.iter().any(|s| s.who == *w && s.alive && s.team != player.team));
+}
+
+/// FUN_000b0670 / FUN_000b0770: how much a character `at` shows on the radar by its distance
+/// across from the player's character: its type's `radar-range` (type+0x2a0, eased toward
+/// +0x2a4 by char+0x57c, taken as 0: its writers aren't traced beyond the character's set-up and
+/// the radar's own reset), and none beyond; within it full but for the last 2 m, (reach - d) / 2.
+/// A type with no `radar-range` shows to the radar's max-range.
+fn radar_reach(player: &Player, game: &Game, at: Vec3, max_range: f32) -> f32 {
+    let reach = game.character_type(player.kind).and_then(|t| t.skill.as_ref()).map(|s| s.radar_range).filter(|&r| r > 0.0).unwrap_or(max_range);
+    let d = Vec2::new(at.x - player.position.x, at.z - player.position.z).length();
+    ((reach - d) * 0.5).clamp(0.0, 1.0)
+}
+
+/// FUN_000b0550: a world offset `rel` (from the viewer) on the radar, in screen units from its
+/// middle (x right, y down), turned by the view (`fwd`, the demo's camera heading: the squad's
+/// blips use the same) and scaled by `scale`; each cut to a whole number as the game's int casts do.
+fn radar_point(rel: Vec3, fwd: Vec3, scale: f32) -> Vec2 {
+    let x = (rel.z * fwd.x - rel.x * fwd.z) * scale;
+    let y = -(rel.x * fwd.x + rel.z * fwd.z) * scale;
+    Vec2::new(x.trunc(), y.trunc())
+}
+
+/// The radar's objectives each frame (#228). The radar's update runs a game frame at a time
+/// (`shots::TICK`: the records' count, and so how solid a dot looks, follows the game's 30 frames
+/// a second whatever the demo's), cutscene or not (take03: the first waypoint's dot is whole the
+/// frame the HUD comes back after the opening); a contact it hasn't seen gets its first record on
+/// the frame it shows, as the game's update would in that frame:
+///  * FUN_000ae300 ages the seen map and FUN_000ae3f0 the records: one whose life is out goes,
+///    the others lose the frame's time and grow by PING_GROWTH a second;
+///  * FUN_000ae580 / FUN_000aece0, for each objective contact (`radar::RadarContacts`: the
+///    level's objects and the characters with 2, 3 or 7): a new record where it is when it's
+///    within the max-range (FUN_000b0940: across, from the viewer), living PING_NEW_LIFE if it
+///    wasn't seen in the last SEEN_TIME s (FUN_000ae360) and PING_LIFE if it was; one that's beyond
+///    gets a rim marker (and, new, a record at its point on the circle). Yellow, the important
+///    pickup green; its alpha 255, or BLINK_DIM on the off half of its blink (its time t above 0
+///    and frac(t / 2) < 0.5).
+/// The other characters (FUN_000ae7c0, for radar-contact 1 and 6): one within the max-range a
+/// record as an objective's, coloured by its side (CHARACTER_FRIEND, CHARACTER_HOSTILE,
+/// CHARACTER_NEUTRAL); the squad's own members are play_hud.rs's blips (`update_squad_hud`).
+/// A hostile shows only once the viewer or a squadmate knows of it (FUN_000ae470, h_14be5318 off:
+/// `radar_knows`), and every one only within the player's reach, fading over its edge
+/// (FUN_000b0670, FUN_000b0770: `radar_reach`).
+/// Then the records and markers are drawn into the overlay: each record a quad of the dot texture
+/// 2 x its scale units across round its point, its alpha x min(life / PING_FADE, 1); each marker
+/// an "L" with its corner on the circle (RIM_DEPTH, RIM_LINE). take07 shows the result: the new
+/// waypoint's dot comes in full on its first frames (the new record's alpha was the blink's dim
+/// one: set with time 2, t / 2 = 1 is on the off half), holds 1.1 s, is gone 0.8 s, then stays
+/// (its records fading over their last 0.25 s); the old one goes over 0.2 s as its records run
+/// out.
+#[allow(clippy::too_many_arguments)]
+fn update_radar_marks(time: Res<Time>, contacts: Res<super::triggers::radar::RadarContacts>, player: Res<Player>, squad: Res<Squad>,
+                      game: Res<GameData>, mut marks: ResMut<RadarMarks>, mut images: ResMut<Assets<Image>>) {
+    if marks.image == Handle::default() {
+        return;
+    }
+    let dt = frame_dt(&time);
+    let max_range = game.0.radar.max_range.max(1.0);
+    let scale = RADAR_UNITS / max_range;
+    let fwd = Vec3::new(-player.cam_yaw.sin(), 0.0, -player.cam_yaw.cos());
+    let viewer = player.position;
+    // the other characters FUN_000ae7c0 makes records of (see the notes above): each one's key in
+    // the seen map (a trigger copy's name, else its NPC number, top bits set apart from the
+    // objectives'), where it is and its colour
+    // (the viewer's own knowledge, this frame's sight in it, FUN_000ae470)
+    radar_knowledge(&mut marks, &player, &squad, dt);
+    let characters: Vec<(u32, Vec3, [f32; 3], f32)> = squad.0.iter().enumerate()
+        .filter(|(_, u)| !u.dead && !u.absent && !u.stand_in && !u.in_squad() && matches!(u.radar_contact, 1 | 6))
+        .filter_map(|(k, u)| {
+            let rel = Vec3::new(u.position.x - viewer.x, 0.0, u.position.z - viewer.z);
+            // (FUN_000b0940: one beyond the range makes no record)
+            if rel.length() >= max_range {
+                return None;
+            }
+            // FUN_000b0670: within the player's reach; FUN_000b0770: fading over its last 2 m
+            let show = radar_reach(&player, &game.0, u.position, max_range);
+            if show <= 0.0 {
+                return None;
+            }
+            let boss = usize::from(u.radar_contact == 6);
+            // FUN_0004b960 (friends: the same team, one not hostile to itself), else FUN_000a8520
+            // (the viewer's team hostile to its); a hostile only once the viewer or a squadmate
+            // knows of it (FUN_000ae580 -> FUN_000ae470)
+            let rgb = if u.team == player.team && !super::damage::hostile(u.team, u.team) {
+                CHARACTER_FRIEND[boss]
+            } else if super::damage::hostile(player.team, u.team) {
+                if !radar_knows(&marks, &squad, u.who()) {
+                    return None;
+                }
+                CHARACTER_HOSTILE[boss]
+            } else {
+                CHARACTER_NEUTRAL
+            };
+            let key = match (u.trigger_name, u.npc.as_ref()) {
+                (0, Some(n)) => 0x4000_0000 | n.id,
+                (0, None) => 0x2000_0000 | k as u32,
+                (name, _) => 0x8000_0000 | name,
+            };
+            Some((key, rel, rgb, 255.0 * show))
+        }).collect();
+    // a contact's record for FUN_000aece0: where (pulled onto the circle beyond the range), its
+    // colour and alpha (the blink), whether it's within the range
+    let record = |c: &super::triggers::radar::Contact| {
+        let rel = Vec3::new(c.at.x - viewer.x, 0.0, c.at.z - viewer.z);
+        let inside = rel.length() < max_range;
+        let rgb = if c.contact == 7 { PICKUP_GREEN } else { OBJECTIVE_YELLOW };
+        let half = 0.5 * c.time;
+        let alpha = if half > 0.0 && half.fract() < 0.5 { BLINK_DIM } else { 255.0 };
+        // FUN_000b0940 pulls one beyond the range onto the circle
+        let on_circle = if inside { rel } else { rel.normalize_or_zero() * max_range };
+        (rel, on_circle, inside, rgb, alpha)
+    };
+    // a contact the radar hasn't seen lately gets its record on the frame it first shows (the
+    // game's radar update runs every game frame, the frame a radar-trigger sets it too: take07's
+    // new waypoint, set with time 2, starts on the blink's off half and its first record is dim)
+    for c in &contacts.0 {
+        if marks.seen.contains_key(&c.key) {
+            continue;
+        }
+        marks.seen.insert(c.key, SEEN_TIME);
+        let (_, on_circle, _, rgb, alpha) = record(c);
+        let p = radar_point(on_circle, fwd, scale);
+        marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha, life: PING_NEW_LIFE, scale: 1.0 });
+    }
+    for &(key, rel, rgb, alpha) in &characters {
+        if marks.seen.insert(key, SEEN_TIME).is_none() {
+            let p = radar_point(rel, fwd, scale);
+            marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha, life: PING_NEW_LIFE, scale: 1.0 });
+        }
+    }
+    marks.tick += dt;
+    while marks.tick >= super::shots::TICK {
+        marks.tick -= super::shots::TICK;
+        let step = super::shots::TICK;
+        // FUN_000ae300: kept while its time is above the frame's
+        marks.seen.retain(|_, t| { let keep = *t > step; *t -= step; keep });
+        // FUN_000ae3f0: kept while its life is above the frame's; it grows meanwhile
+        marks.pings.retain_mut(|p| {
+            let keep = p.life > step;
+            p.life -= step;
+            p.scale += step * PING_GROWTH;
+            keep
+        });
+        marks.rims.clear();
+        for c in &contacts.0 {
+            // FUN_000ae360: seen lately (its time set back to SEEN_TIME), or new again
+            let new = marks.seen.insert(c.key, SEEN_TIME).is_none();
+            let (rel, on_circle, inside, rgb, alpha) = record(c);
+            if inside || new {
+                let p = radar_point(on_circle, fwd, scale);
+                marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha, life: if new { PING_NEW_LIFE } else { PING_LIFE }, scale: 1.0 });
+            }
+            if !inside {
+                // FUN_000b0ad0: the inner point RIM_DEPTH units in along the way to it
+                let inner = on_circle - rel.normalize_or_zero() * (RIM_DEPTH / scale);
+                marks.rims.push(Rim { inner: radar_point(inner, fwd, scale), outer: radar_point(on_circle, fwd, scale), rgb, alpha });
+            }
+        }
+        // FUN_000ae7c0: the other characters within the range (FUN_000ae360 as for the objectives)
+        for &(key, rel, rgb, alpha) in &characters {
+            let new = marks.seen.insert(key, SEEN_TIME).is_none();
+            let p = radar_point(rel, fwd, scale);
+            marks.pings.push(Ping { x: p.x, y: p.y, rgb, alpha, life: if new { PING_NEW_LIFE } else { PING_LIFE }, scale: 1.0 });
+        }
+    }
+    // the overlay: nothing to draw and nothing drawn before, the image is left alone
+    if marks.pings.is_empty() && marks.rims.is_empty() && !marks.drawn {
+        return;
+    }
+    let n = 128 * OVERLAY_PX;
+    let mut px = vec![[0.0f32; 4]; n * n];
+    for p in &marks.pings {
+        let a = p.alpha / 255.0 * (p.life / PING_FADE).min(1.0);
+        let s = 1.0 * p.scale;
+        draw_dot(&mut px, n, marks.dot.as_ref(), 64.0 + p.x, 64.0 + p.y, s, p.rgb, a);
+    }
+    for r in &marks.rims {
+        // (0xafaa0: the corner A on the circle, its arms to B pushed out to each side, square to
+        // A-B by as much)
+        let d = r.inner - r.outer;
+        let side = Vec2::new(-d.y, d.x);
+        let corner = Vec2::splat(64.0) + r.outer;
+        for end in [r.inner + side, r.inner - side] {
+            draw_line(&mut px, n, corner, Vec2::splat(64.0) + end, RIM_LINE, r.rgb, r.alpha / 255.0);
+        }
+    }
+    marks.drawn = !marks.pings.is_empty() || !marks.rims.is_empty();
+    if let Some(image) = images.get_mut(&marks.image) {
+        image.data = Some(px.iter().flat_map(|p| [p[0], p[1], p[2], p[3]].map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)).collect());
+    }
+}
+
+/// One of the radar's records drawn into the overlay `px` (n x n, OVERLAY_PX a screen unit, straight
+/// alpha): a quad `s` units each way round (`cx`, `cy`) (screen units from the radar's top left) of
+/// the dot texture `dot` (its alpha, sampled bilinearly; a plain square without it), in `rgb` at
+/// alpha `a`, laid over what's there (0xb01b0 draws them in the list's order, the newest last).
+#[allow(clippy::too_many_arguments)]
+fn draw_dot(px: &mut [[f32; 4]], n: usize, dot: Option<&(usize, usize, Vec<f32>)>, cx: f32, cy: f32, s: f32, rgb: [f32; 3], a: f32) {
+    if a <= 0.0 || s <= 0.0 {
+        return;
+    }
+    let k = OVERLAY_PX as f32;
+    let (x0, x1, y0, y1) = ((cx - s) * k, (cx + s) * k, (cy - s) * k, (cy + s) * k);
+    let (lo_x, hi_x) = (x0.floor().max(0.0) as usize, (x1.ceil().max(0.0) as usize).min(n));
+    let (lo_y, hi_y) = (y0.floor().max(0.0) as usize, (y1.ceil().max(0.0) as usize).min(n));
+    for y in lo_y..hi_y {
+        for x in lo_x..hi_x {
+            let (u, v) = ((x as f32 + 0.5 - x0) / (x1 - x0), (y as f32 + 0.5 - y0) / (y1 - y0));
+            if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+                continue;
+            }
+            let t = match dot {
+                Some((w, h, alpha)) => {
+                    // bilinear, texel centres at (i + 0.5) / w, clamped at the edges
+                    let fx = (u * *w as f32 - 0.5).clamp(0.0, (*w - 1) as f32);
+                    let fy = (v * *h as f32 - 0.5).clamp(0.0, (*h - 1) as f32);
+                    let (ix, iy) = (fx.floor() as usize, fy.floor() as usize);
+                    let (jx, jy) = ((ix + 1).min(*w - 1), (iy + 1).min(*h - 1));
+                    let (tx, ty) = (fx - ix as f32, fy - iy as f32);
+                    let at = |x: usize, y: usize| alpha[y * *w + x];
+                    (at(ix, iy) * (1.0 - tx) + at(jx, iy) * tx) * (1.0 - ty) + (at(ix, jy) * (1.0 - tx) + at(jx, jy) * tx) * ty
+                }
+                None => 1.0,
+            };
+            blend(&mut px[y * n + x], rgb, a * t);
+        }
+    }
+}
+
+/// A rim marker's line, `width` screen units wide (the game draws them as a line list, 0xaf8d6),
+/// from `from` to `to` (screen units from the radar's top left) into the overlay, edges smoothed.
+#[allow(clippy::too_many_arguments)]
+fn draw_line(px: &mut [[f32; 4]], n: usize, from: Vec2, to: Vec2, width: f32, rgb: [f32; 3], a: f32) {
+    let k = OVERLAY_PX as f32;
+    let (p0, p1) = (from * k, to * k);
+    let half = 0.5 * width * k;
+    let (lo, hi) = (p0.min(p1) - Vec2::splat(half + 1.0), p0.max(p1) + Vec2::splat(half + 1.0));
+    let along = p1 - p0;
+    let len2 = along.length_squared().max(1e-6);
+    for y in (lo.y.max(0.0) as usize)..(hi.y.max(0.0) as usize).min(n) {
+        for x in (lo.x.max(0.0) as usize)..(hi.x.max(0.0) as usize).min(n) {
+            let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+            let t = ((p - p0).dot(along) / len2).clamp(0.0, 1.0);
+            let d = p.distance(p0 + along * t);
+            let cover = (half + 0.5 - d).clamp(0.0, 1.0);
+            if cover > 0.0 {
+                blend(&mut px[y * n + x], rgb, a * cover);
+            }
+        }
+    }
+}
+
+/// `rgb` at alpha `a` laid over the overlay's pixel `dst` (straight alpha both).
+fn blend(dst: &mut [f32; 4], rgb: [f32; 3], a: f32) {
+    let a = a.clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return;
+    }
+    let out = a + dst[3] * (1.0 - a);
+    for c in 0..3 {
+        dst[c] = (rgb[c] * a + dst[c] * dst[3] * (1.0 - a)) / out;
+    }
+    dst[3] = out;
 }
 

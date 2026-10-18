@@ -34,8 +34,21 @@
 //! the placed one's own 60 is for isn't known.) Taking one plays its pickup-sound; it comes back
 //! after RESPAWN s (the game's respawn time isn't found). Squad members running over one take it
 //! too: a medkit into the squad's shared inventory (the player's), a fruit for their own health.
+//!
+//! A DNA canister (#228; group-type 9, IG_DNA_CANNISTER: the tutorial's Confed Marine DNA
+//! h_f4933c12 in the base building) is taken as a squad member's feet come within DNA_REACH: its
+//! pickup sound plays, the line shows its display name ("Confed Marine DNA unlocked!", h_1dd3a49d)
+//! and it's gone for good; its PICKUP_OBJECT starts the tutorial's timer467 (4 s) and Bratton's
+//! line. What it unlocks (its gameflag-database 1: the global flags' h_1d604469/characters entry,
+//! a deathmatch character) isn't kept: the demo doesn't load the global flags.
+//!
+//! The pickup line (FUN_000ad790, one of the HUD's three): "<n>x <name>" while more than one of
+//! the same have been taken in a row, the name alone for one (the format strings "%dx %s" at
+//! 0x40d734, the name alone below 2), shown FEED_TIME s from the last; the name is the item's
+//! display name (h_1dd3a49d: the Frag's "Frag Grenades" where its stringtable-name is "Bio Ammo").
 
 use super::*;
+use bf_viewer::bf::character::IG_DNA_CANNISTER;
 use bf_viewer::bf::hash::h;
 use bf_viewer::level_scene::Placed;
 use bf_viewer::scene::ModelAssets;
@@ -57,6 +70,11 @@ const RESPAWN: f32 = 30.0;
 /// How near (m) the player's feet must come: across, and up or down.
 const REACH: f32 = 1.0;
 const REACH_UP: f32 = 1.5;
+/// How near (m, across) a squad member's feet must come to a DNA canister to take it: a fit to
+/// take12, where the line came between Tex's feet at 1.41 m (295.30 s, no line in the frame at
+/// 295.25) and 1.25 m (295.44 s, the line fading in at 295.5). The game's test isn't traced (the
+/// memory chip's, play_dna.rs, measures sqrt(3) in 3D to its middle).
+const DNA_REACH: f32 = 1.3;
 /// The medkit spots' glow (todo/medkits glow.png): one per group (medkits within GLOW_GROUP m
 /// across of another, and less than a metre up or down), a soft green halo over the group's middle, GLOW_UP m above the ground, facing
 /// the camera (added to the picture, unlit), GLOW_SIZE m across. It's drawn up to GLOW_NEAR m
@@ -128,15 +146,36 @@ const TOPPLE_PUSH: f32 = 1.5;
 /// of the way in about 0.25 s), so it doesn't snap flat on the frame it stops.
 const SETTLE_TURN: f32 = 12.0;
 /// The used medkit's cross: its texture's blue (the cross) turned red; the case keeps its colour.
-/// How long a pickup message shows (s), a pickup's line stays, and an item stays NEW.
+/// How long a pickup message shows (s), a pickup's line stays, and an item stays NEW. The line's
+/// is the HUD widget's +0x64, 4.0 (its constructor FUN_000ad690), which each pickup puts back in its
+/// time left (+0x60, FUN_000ad790); take12's DNA line shows 295.4-300.0 s, fading out at its end.
 const MESSAGE_TIME: f32 = 2.0;
-pub const FEED_TIME: f32 = 3.0;
+pub const FEED_TIME: f32 = 4.0;
 const NEW_TIME: f32 = 3.0;
 
 /// The pickup lines under the character: (item name, how many taken, seconds left). A count of 0
-/// is a line of its own without one (the memory chip's message, play_dna.rs).
+/// or 1 shows the name alone (FUN_000ad790; the memory chip's message, play_dna.rs, is pushed
+/// with 0), from 2 "<n>x <name>".
 #[derive(Resource, Default)]
 pub struct PickupFeed(pub Vec<(String, i64, f32)>);
+
+/// The DNA canisters taken on this level, by item type, in order: the squad's inventory holds
+/// them in the game, where the end screen's DNA line finds one (0x83110, the game session's
+/// vtable +0x1d8: the first item whose campaign-gameflag is a game-options character's
+/// gameflag-path; play_endmenu.rs). Cleared as each map starts.
+#[derive(Resource, Default)]
+pub struct DnaFound(pub Vec<u32>);
+
+impl DnaFound {
+    /// The name (a string id) of the character the first DNA taken unlocks: game-options'
+    /// character entry whose gameflag-path is its campaign-gameflag (0x83110; the tutorial's
+    /// h_0ce3dafe "Confed Marine"). None without one.
+    pub fn name(&self, game: &Game) -> Option<u32> {
+        self.0.iter().filter_map(|k| game.items.get(k)).filter(|i| !i.gameflag.is_empty())
+            .find_map(|i| game.option_characters.iter().find(|c| c.gameflag == i.gameflag))
+            .map(|c| c.name).filter(|&n| n != 0)
+    }
+}
 
 struct Pickup {
     entity: Entity,
@@ -232,9 +271,11 @@ const USED_GLOW: Color = Color::srgb(0.9, 0.12, 0.08);
 pub fn plugin(app: &mut App) {
     app.init_resource::<PickupFeed>()
         .init_resource::<Blasts>()
+        .init_resource::<DnaFound>()
         .add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| {
             commands.insert_resource(Pickups::default());
             commands.insert_resource(PickupFeed::default());
+            commands.insert_resource(DnaFound::default());
             commands.insert_resource(UsedMedkit::default());
             commands.insert_resource(Blasts::default());
         }).after(setup))
@@ -263,7 +304,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
     }
     pickups.list = placed.iter()
         .filter(|(_, p, _, _)| p.tag == h("inventory-object") && !game.0.idle_effects.contains_key(&p.kind)
-            && game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT))
+            && game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT || i.group == IG_DNA_CANNISTER))
         .map(|(entity, p, t, _)| Pickup { entity, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false })
         .collect();
     // one glow over each group of medkits (it stays when they're taken: it marks where they are)
@@ -409,7 +450,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
 #[allow(clippy::too_many_arguments)]
 fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
                 mut squad: ResMut<Squad>, mut status: ResMut<UsePanel>, mut feed: ResMut<PickupFeed>, mut vis: Query<&mut Visibility>,
-                mut events: ResMut<super::triggers::TriggerEvents>) {
+                mut events: ResMut<super::triggers::TriggerEvents>, mut found: ResMut<DnaFound>) {
     let dt = frame_dt(&time);
     for line in &mut feed.0 {
         line.2 -= dt;
@@ -434,13 +475,17 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             }
             continue;
         }
-        let near = |f: &Option<Vec3>| f.is_some_and(|f| Vec2::new(p.at.x - f.x, p.at.z - f.z).length() < REACH && (p.at.y - f.y).abs() < REACH_UP);
+        let Some(item) = game.0.items.get(&p.kind) else { continue };
+        let dna = item.group == IG_DNA_CANNISTER;
+        let reach = if dna { DNA_REACH } else { REACH };
+        let near = |f: &Option<Vec3>| f.is_some_and(|f| Vec2::new(p.at.x - f.x, p.at.z - f.z).length() < reach && (p.at.y - f.y).abs() < REACH_UP);
         let Some(who) = feet.iter().position(near) else {
             p.told = false;
             continue;
         };
-        let Some(item) = game.0.items.get(&p.kind) else { continue };
         let taken = match item.function {
+            // a DNA canister: whoever of the squad comes to it
+            _ if dna => true,
             // a fruit, eaten by a squad member: their own health
             FRUIT if who > 0 => {
                 let m = &mut squad.0[who - 1];
@@ -480,16 +525,23 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             _ => false,
         };
         if taken {
-            p.gone = RESPAWN;
+            // (a DNA canister is gone for good: the unlock is once; the end screen names it,
+            // `DnaFound`)
+            p.gone = if dna { f32::INFINITY } else { RESPAWN };
+            if dna {
+                found.0.push(p.kind);
+            }
             // a placed one: PICKUP_OBJECT to the triggers listening to it (play_triggers.rs)
             if p.name != 0 {
                 let by = if who == 0 { player.trigger_name } else { squad.0[who - 1].trigger_name };
                 events.0.push(super::triggers::ObjectEvent { from: p.name, signal: bf_viewer::bf::triggers::sig::PICKUP_OBJECT, subject: by, data: -1 });
             }
+            // the line: its display name (h_1dd3a49d), else its stringtable-name
+            let name = game.0.strings.get(&item.message).cloned().filter(|_| item.message != 0).unwrap_or_else(|| item.label.clone());
             let n = item.amount.max(1);
-            match feed.0.iter_mut().find(|l| l.0 == item.label) {
+            match feed.0.iter_mut().find(|l| l.0 == name) {
                 Some(l) => { l.1 += n; l.2 = FEED_TIME; }
-                None => feed.0.push((item.label.clone(), n, FEED_TIME)),
+                None => feed.0.push((name, n, FEED_TIME)),
             }
             if let Ok(mut v) = vis.get_mut(p.entity) { *v = Visibility::Hidden; }
             if item.sound != 0 {

@@ -7,7 +7,9 @@
 //!              cube (width / height / depth, spread about +y), cone (radius and spread about
 //!              +y), sphere (radius, outward)
 //!  appearance  colour, alpha, size, width factor, aspect and rotation over a particle's life;
-//!              a texture, its blend (5,2 added to the picture, 5,6 alpha), and "perp": the
+//!              a texture, its blend (D3DBLEND src, dest: a dest of ONE added to the picture,
+//!              5,2 by its alpha, 2,2 and 3,2 whatever their alpha, 3,2 by its own colour; the
+//!              rest blended by their alpha, 5,6), and "perp": the
 //!              quad lies flat in the emitter's frame (normal +y), turned by the appearance's
 //!              transform at the effect's time it was born (the icons' particles fan out round
 //!              the turn); otherwise it faces the camera. The game turns quads by the
@@ -149,7 +151,55 @@ const BLEND: u32 = 0x1DAE_A8C0;
 /// and wrapped, exp-lrg-add went back to its bright first frames half a second into the Frag's
 /// blast, which the recording doesn't show. Other effects keep the 30 fps loop.
 const TEX_FRAME: u32 = 0x1865_7E4A;
+/// The pair an appearance without one (h_1daea8c0) is drawn with: SRCALPHA, ONE, the most common
+/// (the demo's default; the appearance constructor's isn't read).
 const BLEND_ADD: (u32, u32) = (5, 2);
+/// The blend pair's numbers are the PC's D3DBLEND (src, dest): 2 ONE, 3 SRCCOLOR, 5 SRCALPHA, 6
+/// INVSRCALPHA (0x2a6f00 turns them into the console's through the table at 0x4036b4: 1, 0x300,
+/// 0x302, 0x303). 5,2 is on 518 appearances, 5,6 on 207. A dest of ONE adds the particle to the
+/// picture whatever its source factor: 3,2 on 33 (the lava's eruptions slava-erupt*, its wading
+/// rings and splashes env_sl_*, the teleport and ion beams) and 2,2 on 13 (slava-fuzz, the laser
+/// hits). Drawn as alpha blends before #228, they were dark smudges (the tutorial's lava bursts,
+/// slava-erupt-jet, came out as brown balls where take08 shows a bright fire column).
+const D3DBLEND_ONE: u32 = 2;
+/// D3DBLEND_SRCCOLOR: the particle's colour is its own factor (see `Source`).
+const D3DBLEND_SRCCOLOR: u32 = 3;
+
+/// Whether an appearance's blend pair adds it to the picture (its dest factor is ONE).
+fn adds(blend: (u32, u32)) -> bool {
+    blend.1 == D3DBLEND_ONE
+}
+
+/// What an added appearance's source factor weighs its colour by. The console draws a particle as
+/// the texel x its vertex colour, with the texel's alpha x the vertex alpha beside it (pixel shader
+/// 0x3b89e0, which FUN_0029f5d0 sets for any pair whose dest isn't INVSRCALPHA, then the pair as
+/// it's stored); the vertex colour is the appearance's colour and the vertex alpha its alpha curve
+/// (x the angle fade), never one folded into the other (FUN_002a1a50 packs them side by side, the
+/// particle vertex shader 0x3b8bf8 passes the colour through). So the alpha curve fades a SRCALPHA
+/// particle only: with ONE the particle adds texel x colour whatever its alpha, with SRCCOLOR
+/// (texel x colour) squared. take08's lava bursts (slava-erupt-jet, 3,2, alpha 0 at birth and at
+/// most 0.59) show a bright fire column from their first frames, as that reading gives.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Source {
+    /// SRCALPHA (5): weighed by its alpha (the alpha curve x the texel's); the blended pairs too
+    Alpha,
+    /// ONE (2): its colour as it is
+    One,
+    /// SRCCOLOR (3): its colour by itself
+    Colour,
+}
+
+impl Source {
+    /// The source factor of an added appearance's blend pair (`adds`); any other than ONE and
+    /// SRCCOLOR is drawn by its alpha.
+    fn of(blend: (u32, u32)) -> Source {
+        match blend.0 {
+            D3DBLEND_ONE => Source::One,
+            D3DBLEND_SRCCOLOR => Source::Colour,
+            _ => Source::Alpha,
+        }
+    }
+}
 /// The effect appearance (class h_0ec77ea0): each particle of its emitter carries an effect of
 /// its own, named by h_0ec7a290 (stun_grenade_master's node "stun_grenade_master" -> the
 /// effect "stun_grenade": the Energy grenade's bolts). Only for the grenades' effects
@@ -353,25 +403,29 @@ pub struct Compiled {
     pairs: Vec<Pair>,
     /// Compiled with the rules first checked against the Frag recording (the grenades' blast and
     /// trail effects, `load_recorded`; and, with the game's facing, the Therm Sweeper's trail,
-    /// explosion and launch dust, `load_recorded_facing`): the flipbook frame curve
+    /// explosion and launch dust and the effects triggers make, `load_recorded_facing`, the
+    /// latter checked against the tutorial's lava bursts, take08 of #228): the flipbook frame curve
     /// (TEX_FRAME), the opening burst (BURST) and outward-facing perp quads
     /// (PERP_RADIAL_SPEED). Every other effect plays as before them; they may hold for those
     /// too, once checked against their own captures.
     pub recorded: bool,
     /// Compiled with the game's facing 3 (see FACING, `Pair::axial`): the muzzle effects, which
     /// play in the muzzle hardpoint's frame (play_shots.rs; compared with main's, not with each
-    /// gun's take), and the Therm Sweeper's trail, explosion and launch dust (its muzzle
-    /// effect; play_missile.rs, play_shots.rs; checked against its takes). Other effects keep
-    /// the demo's perp rules until checked against their own captures.
+    /// gun's take), the Therm Sweeper's trail, explosion and launch dust (its muzzle
+    /// effect; play_missile.rs, play_shots.rs; checked against its takes) and the effects
+    /// triggers make (play_triggers.rs; the tutorial's lava bursts, take08 of #228). Other
+    /// effects keep the demo's perp rules until checked against their own captures.
     pub facing: bool,
     /// Drawn with the game's particle shapes (see SHAPE): the effects compiled with both the
     /// recorded rules and the game's facing, the Therm Sweeper's trail, explosion and launch
-    /// dust (`load_recorded_facing`), checked against their takes. Every other effect keeps the
+    /// dust and the effects triggers make (`load_recorded_facing`), checked against their takes
+    /// (the triggers' with the tutorial's lava bursts, #228). Every other effect keeps the
     /// demo's quad, half the size of the game's for its shape-2 appearances.
     pub shapes: bool,
     /// Emitted by the game's count, once a game frame (FUN_00065800, `game_count`,
     /// GAME_FRAME), and drawn at the effect's distance LOD (see LOD_TAN, EMIT_LOD, APP_LOD):
-    /// the same effects, the Therm Sweeper's trail, explosion and launch dust. Every other
+    /// the same effects, the Therm Sweeper's trail, explosion and launch dust and the triggers'
+    /// effects. Every other
     /// effect keeps the demo's count (a rate's fraction carried over each render frame, an emit
     /// count's burst at the start) and no LOD, until checked against its own captures.
     pub counted: bool,
@@ -410,7 +464,8 @@ pub struct AleAssets {
     quad_base: Handle<Mesh>,
     /// by (name hash, `recorded`, `facing`)
     effects: HashMap<(u32, bool, bool), Option<Arc<Compiled>>>,
-    textures: HashMap<(u32, bool), Option<Handle<Image>>>,
+    /// by (texture name hash, linear, the source factor: see `texture`)
+    textures: HashMap<(u32, bool, Source), Option<Handle<Image>>>,
 }
 
 /// Seconds the effects advance this frame, if the app steps time itself (fixed-step captures);
@@ -593,7 +648,8 @@ impl AleAssets {
     }
 
     /// `load_recorded`, with the game's facing 3 (see `Compiled::facing`): for the Therm
-    /// Sweeper's trail, explosion and launch dust (its muzzle effect, play_shots.rs).
+    /// Sweeper's trail, explosion and launch dust (its muzzle effect, play_shots.rs) and the
+    /// effects triggers make (play_triggers.rs).
     pub fn load_recorded_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                                 effect: u32) -> Option<Arc<Compiled>> {
         self.load_as(game, images, materials, effect, true, true)
@@ -642,14 +698,16 @@ impl AleAssets {
                 continue;
             }
             if app.class == CLASS_BEAM {
-                let additive = app.pair(BEAM_BLEND).unwrap_or(BLEND_ADD) == BLEND_ADD;
+                let additive = adds(app.pair(BEAM_BLEND).unwrap_or(BLEND_ADD));
                 let name = app.string(BEAM_TEXTURE).map(h).unwrap_or(0);
                 // an animated texture (the Energy's bolts: "ARCb", a 4 x 4 sheet of arcs running
                 // down its cells at 30 fps): one material per frame, the ribbon stepping through
                 // them over its life (`beams`). Grenade effects only; elsewhere a beam's
                 // flipbook name finds no texture, as before
                 let book = if recorded { game.flipbooks.get(&name).cloned().filter(|b| !b.frames.is_empty()) } else { None };
-                let texture = self.texture(game, images, book.as_ref().map_or(name, |b| b.texture), additive);
+                // (a ribbon's colour carries its alpha whatever its pair: the beam's own draw
+                // isn't read, so `Source` isn't applied to it)
+                let texture = self.texture(game, images, book.as_ref().map_or(name, |b| b.texture), additive, Source::Alpha);
                 let frames: Vec<Affine2> = match &book {
                     Some(b) => b.frames.iter()
                         .map(|&[u0, v0, u1, v1]| Affine2::from_scale_angle_translation(Vec2::new(u1 - u0, v1 - v0), 0.0, Vec2::new(u0, v0))).collect(),
@@ -674,11 +732,13 @@ impl AleAssets {
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
-            let additive = blend == BLEND_ADD;
+            let additive = adds(blend);
+            // an added particle's source factor (a blended one is drawn by its alpha)
+            let source = if additive { Source::of(blend) } else { Source::Alpha };
             // a texture, or an animated one ("arcb": a 4 x 4 sheet at 30 fps)
             let name = app.string(TEXTURE).map(h).unwrap_or(0);
             let book = game.flipbooks.get(&name).cloned();
-            let texture = self.texture(game, images, book.as_ref().map_or(name, |b| b.texture), additive);
+            let texture = self.texture(game, images, book.as_ref().map_or(name, |b| b.texture), additive, source);
             if texture.is_none() {
                 warn!("{}: texture {:?} missing", e.name, app.string(TEXTURE));
             }
@@ -692,8 +752,10 @@ impl AleAssets {
             // (see play_fx.rs).
             let steps = (0..STEPS).map(|i| {
                 let k = (i as f32 + 0.5) / STEPS as f32;
-                let [r, g, b] = app.color(COLOR, 0.0, k).unwrap_or([1.0; 3]);
-                let a = app.floats(ALPHA, 0.0, k).unwrap_or(1.0).clamp(0.0, 1.0);
+                // (SRCCOLOR: the colour squared, the texture's texels too; ONE and SRCCOLOR don't
+                // read the alpha)
+                let [r, g, b] = app.color(COLOR, 0.0, k).unwrap_or([1.0; 3]).map(|c| if source == Source::Colour { c * c } else { c });
+                let a = if source == Source::Alpha { app.floats(ALPHA, 0.0, k).unwrap_or(1.0).clamp(0.0, 1.0) } else { 1.0 };
                 frames.iter().map(|&uv| materials.add(StandardMaterial {
                     base_color: if additive { Color::linear_rgba(r, g, b, a) } else { Color::srgba(r, g, b, a) },
                     base_color_texture: texture.clone(), uv_transform: uv, unlit: true, double_sided: true, cull_mode: None,
@@ -726,9 +788,22 @@ impl AleAssets {
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted: shapes })
     }
 
-    fn texture(&mut self, game: &mut Game, images: &mut Assets<Image>, id: u32, linear: bool) -> Option<Handle<Image>> {
-        self.textures.entry((id, linear)).or_insert_with(|| {
-            let (w, hgt, px) = game.texture_rgba(id)?;
+    /// A particle texture: as sRGB for a blended appearance, as linear amounts for an added one
+    /// (`linear`). For one added by ONE or SRCCOLOR (`source`) its alpha is made opaque, as the
+    /// blend doesn't read it, and for SRCCOLOR its colour squared. Cached by all three.
+    fn texture(&mut self, game: &mut Game, images: &mut Assets<Image>, id: u32, linear: bool, source: Source) -> Option<Handle<Image>> {
+        self.textures.entry((id, linear, source)).or_insert_with(|| {
+            let (w, hgt, mut px) = game.texture_rgba(id)?;
+            if source != Source::Alpha {
+                for p in px.chunks_exact_mut(4) {
+                    if source == Source::Colour {
+                        for c in &mut p[..3] {
+                            *c = ((*c as u32 * *c as u32 + 127) / 255) as u8;
+                        }
+                    }
+                    p[3] = 255;
+                }
+            }
             let format = if linear { TextureFormat::Rgba8Unorm } else { TextureFormat::Rgba8UnormSrgb };
             Some(images.add(Image::new(Extent3d { width: w, height: hgt, depth_or_array_layers: 1 }, TextureDimension::D2, px,
                                        format, RenderAssetUsages::default())))

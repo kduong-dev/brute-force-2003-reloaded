@@ -367,7 +367,7 @@ fn numbers(campaign: &flags::Campaign, max_score: f32) -> Numbers {
 #[allow(clippy::too_many_arguments)]
 fn build(mut commands: Commands, mode: Res<MissionMode>, mut menu: ResMut<EndMenu>, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>,
          campaign: Res<flags::Campaign>, map: Res<MapLevel>, mut cutscenes: ResMut<script::Cutscenes>, mut fade: ResMut<Fade>,
-         mut console: ResMut<Console>) {
+         mut console: ResMut<Console>, found: Res<super::super::pickups::DnaFound>) {
     if !mode.menu_open || menu.open {
         return;
     }
@@ -428,10 +428,10 @@ fn build(mut commands: Commands, mode: Res<MissionMode>, mut menu: ResMut<EndMen
     // the icons (success only), in slot order
     let difficulty = campaign.difficulty;
     let variant = if difficulty < NORMAL_DIFFICULTY { 0 } else if difficulty > NORMAL_DIFFICULTY { 2 } else { 1 };
-    // the DNA found on the level (its name's string: take12's "Confed Marine" + " DNA"): a
-    // placeholder, none, until the DNA pickups are run (#228); the line reads "No DNA Found"
-    // meanwhile
-    let dna: Option<u32> = None;
+    // the DNA found on the level (FUN_00108360 through 0x83110: its character's name, take12's
+    // "Confed Marine", + " DNA"; the DNA canisters the squad took, play_pickups.rs `DnaFound`),
+    // else "No DNA Found"
+    let dna: Option<u32> = found.name(game);
     let icon = |name: u32| -> Option<u32> {
         if !success {
             return None;

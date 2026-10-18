@@ -74,9 +74,11 @@
 //!  * level-over and zone triggers (#226, play_level_over.rs; 0x207fe0, 0x207de0): OPERATE ends
 //!    the mission (h_18f66101) or the zone, and names the zone to go to; the mission flow
 //!    (play_mission.rs) does the rest.
-//!  * every other class (radar, property, the damage plate ...): its base actions; its own
-//!    actions are logged as left to their step (`bf::triggers::later_step`). Waypoint and
-//!    evaluate triggers: base only.
+//!  * radar-trigger and damage plate (#228, play_radar.rs and play_damage_plate.rs; 0x207230,
+//!    0x1fa7e0): OPERATE gives its objects a radar-contact and a blink time (the route's
+//!    waypoint blips); a proximity detector that hurts its occupants while it's enabled.
+//!  * every other class (property ...): its base actions; its own actions are logged as left to
+//!    their step (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
 //! copy's), a named breakable object broken (DESTROYED), a wall panel used (USE_OBJECT, play.rs
@@ -113,8 +115,9 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Triggers>()
         .add_systems(OnEnter(AppState::Playing), start.after(setup).after(flags::begin_level))
         .add_systems(Update, run.after(squad_control).before(doors).run_if(in_state(AppState::Playing)))
-        // (the hint lines, button gates, AI events and panels: #224)
-        .add_plugins((hints::plugin, panels::plugin));
+        // (the hint lines, button gates, AI events and panels: #224; the radar's contacts and the
+        // damage plate's hits: #228)
+        .add_plugins((hints::plugin, panels::plugin, radar::plugin, damage_plate::plugin));
 }
 
 /// An object's event from the world (the game's FUN_001fe3d0: to the triggers listening to the
@@ -277,6 +280,14 @@ pub(crate) mod panels;
 #[path = "play_level_over.rs"]
 pub(crate) mod level_over;
 
+/// The radar-triggers and the radar-contacts they set on the level's objects (#228).
+#[path = "play_radar.rs"]
+pub(crate) mod radar;
+
+/// The damage plate and the hits it deals (#228).
+#[path = "play_damage_plate.rs"]
+pub(crate) mod damage_plate;
+
 /// An event as the game's triggers pass it (FUN_001fe660 builds one, vtable 0x3a3fb4): its
 /// signal (+4), its sender's iD (+8, what an entry's match-id answers), its subject (+0xc: who
 /// entered a detector, a spawn's copy ...; by name here, 0 none) and its data (+0x10: a
@@ -350,7 +361,11 @@ enum ClassState {
     /// (h_e78efbb2, type+0x1a8 bit 0) other than the demo's squad members' (whose spawns move the
     /// member, `spawn_copy`), what FUN_00209900 checks; `check` its h_0fa4f510 (+0xe4 bit 5)
     Spawn { armed: bool, rearm: bool, pending: f32, delay: f32, template: u32, copy_name: u32, fade: f32, copy: u32, member: Option<u32>, check: bool },
-    Detector { volume: Volume, filter: Filter, keep: bool, occupants: Vec<Occupant> },
+    /// `damage`: a damage plate's amount, falloff and damage-type (+0x120-+0x128;
+    /// play_damage_plate.rs)
+    Detector { volume: Volume, filter: Filter, keep: bool, occupants: Vec<Occupant>, damage: Option<data::PlateDamage> },
+    /// radar-trigger (#228): +0x40 the contact, +0x44 its time, +0x48 the cue (play_radar.rs)
+    Radar { contact: u8, time: f32, cue: bool },
     /// +0x5c bit 0: its clip last played backward (set by its constructor 0x204db0: the first
     /// forward play sends ANIM_START)
     Anim { backward: bool },
@@ -398,6 +413,7 @@ enum Kind {
     Warp,
     LevelOver,
     Zone,
+    Radar,
 }
 
 /// A trigger as the game keeps it: its data (the entries' use counts are live) and +0x3d's bits:
@@ -501,6 +517,13 @@ pub struct Triggers {
     /// the message, input, menu and event triggers' side (play_hints.rs, play_panels.rs): the
     /// HUD's hint lines, the virtual buttons held this frame, this frame's AI events, the panels
     hints: hints::HintWorld,
+    /// the radar-triggers' side (play_radar.rs): the contacts they set, waiting for the world
+    radar: radar::RadarWorld,
+    /// the damage plates' side (play_damage_plate.rs): this frame's hits, waiting for the world
+    plate_hits: Vec<damage_plate::PlateHit>,
+    /// the damage plates enabled at their last update (a plate enabled again starts its victims'
+    /// list again: play_damage_plate.rs)
+    plates_on: HashSet<usize>,
     /// the sim time (s), for the log and BF_TRIGGER_FIRE
     clock: f32,
     /// how deep the events in flight are nested (MAX_DEPTH)
@@ -563,7 +586,8 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
     };
     let log = std::env::var("BF_TRIGGER_LOG").is_ok();
     let squad_spawns = spawns.as_deref().map_or(&[][..], |s| &s.0[..]);
-    let mut tr = Triggers { log, mission: !damage::multiplayer_map(&game.0, &current.0), seed: RANDOM_SEED, ..Default::default() };
+    let mut tr = Triggers { log, mission: !damage::multiplayer_map(&game.0, &current.0), seed: RANDOM_SEED, radar: radar::RadarWorld::new(&game.0),
+                            ..Default::default() };
     // a template that's a squad-type character the demo doesn't have in its squad: the member
     // FUN_00209900 checks
     let member_of = |template: u32| {
@@ -586,8 +610,9 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             Class::Spawn { template, copy_name, fade, delay, rearm, member_check, .. } => ClassState::Spawn {
                 armed: true, rearm: *rearm, pending: 0.0, delay: *delay, template: *template, copy_name: *copy_name, fade: *fade, copy: 0,
                 member: member_of(*template), check: *member_check },
-            Class::Detector { volume, filter, keep_when_disabled, .. } => ClassState::Detector { volume: *volume, filter: filter.clone(), keep: *keep_when_disabled,
-                                                                                                occupants: vec![] },
+            Class::Detector { volume, filter, keep_when_disabled, damage, .. } => ClassState::Detector { volume: *volume, filter: filter.clone(),
+                                                                                                        keep: *keep_when_disabled, occupants: vec![], damage: *damage },
+            Class::Radar { contact, time, cue } => ClassState::Radar { contact: *contact, time: *time, cue: *cue },
             Class::Anim => ClassState::Anim { backward: true },
             Class::Destroyer => ClassState::Destroyer { pending: false },
             Class::Gamevar { op, operands } => ClassState::Gamevar { op: *op, operands: operands.clone() },
@@ -739,15 +764,21 @@ fn read_fires() -> Vec<Fire> {
 /// for the detectors' occupant lists (MADE_UP_UNIT + its squad slot, or + 100 + its NPC number).
 fn actors(player: &Player, squad: &Squad, game: &Game) -> Vec<Actor> {
     std::iter::once((player, true)).chain(squad.0.iter().map(|m| (m, false))).filter(|(u, _)| !u.dead && !u.stand_in && !u.absent).map(|(u, human)| {
-        let name = if u.trigger_name != 0 { u.trigger_name } else {
-            match u.who() {
-                Who::Squad(c) => MADE_UP_UNIT + c as u32,
-                Who::Npc(n, _) => MADE_UP_UNIT + 100 + n,
-            }
-        };
-        Actor { name, kind: u.kind, squad_type: game.character_type(u.kind).is_some_and(|t| t.player_type), human, team: i64::from(u.team),
+        Actor { name: actor_name(u), kind: u.kind, squad_type: game.character_type(u.kind).is_some_and(|t| t.player_type), human, team: i64::from(u.team),
                 feet: u.position + Vec3::Y * GROUND, height: BODY_HEIGHT, radius: BODY_RADIUS }
     }).collect()
+}
+
+/// The name a character goes by in the detectors' occupant lists (see `actors`): its trigger
+/// name, else MADE_UP_UNIT + its squad slot, or + 100 + its NPC number.
+fn actor_name(u: &Player) -> u32 {
+    if u.trigger_name != 0 {
+        return u.trigger_name;
+    }
+    match u.who() {
+        Who::Squad(c) => MADE_UP_UNIT + c as u32,
+        Who::Npc(n, _) => MADE_UP_UNIT + 100 + n,
+    }
 }
 
 /// FUN_001fb980: every part of a detector's filter passes (each as its function has it, all
@@ -1070,7 +1101,11 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         (Some(list), Some(ale)) => {
             let mut made = vec![];
             for effect in list {
-                if let Some(e) = ale.load(game, &mut fx.1, &mut fx.2, effect) {
+                // with the game's particle rules (its shapes, its count once a game frame and its
+                // facing: `Compiled::shapes`, `counted`, `facing`), as checked against take08's
+                // lava bursts (#228: the tutorial's only effects made by triggers), which the
+                // demo's half-size quads drew as a string of small blobs
+                if let Some(e) = ale.load_recorded_facing(game, &mut fx.1, &mut fx.2, effect) {
                     let life = e.duration();
                     let seed = (point.x * 977.0 + point.z * 131.0) as u32 ^ copy;
                     made.push(commands.spawn((Transform::from_matrix(at), Visibility::default(), bf_viewer::ale_fx::AleEffect::once(e, 0.0, seed),
@@ -1139,6 +1174,7 @@ impl Triggers {
             ClassState::Warp { .. } => Kind::Warp,
             ClassState::LevelOver { .. } => Kind::LevelOver,
             ClassState::Zone { .. } => Kind::Zone,
+            ClassState::Radar { .. } => Kind::Radar,
         }
     }
 
@@ -1320,6 +1356,7 @@ impl Triggers {
             Kind::Script | Kind::Letterbox | Kind::Warp => self.cutscene_trigger(i, ev),
             Kind::LevelOver => self.level_over(i, ev),
             Kind::Zone => self.zone(i, ev),
+            Kind::Radar => self.radar_trigger(i, ev),
             Kind::Other => self.other(i, ev),
         }
         self.depth -= 1;
@@ -1890,6 +1927,10 @@ impl Triggers {
     /// (FUN_001f94e0: the actors its filter admits in its volume) and its occupancy
     /// (FUN_001f8db0). Disabled with h_e25d95e3: the occupancy alone, silent. Else nothing.
     fn detector_update(&mut self, i: usize, dt: f32, actors: &[Actor]) {
+        // (a damage plate off: enabled again, its victims start again, play_damage_plate.rs)
+        if !self.live[i].enabled {
+            self.plates_on.remove(&i);
+        }
         let silent = if self.live[i].enabled {
             self.first_update(i);
             false
@@ -1904,6 +1945,10 @@ impl Triggers {
         let inv = at.inverse();
         let now: Vec<u32> = actors.iter().filter(|a| passes(filter, a) && inside(*volume, &at, &inv, a)).map(|a| a.name).collect();
         self.occupancy(i, dt, &now, silent);
+        // a damage plate, enabled: its occupants hurt (0x1fa7e0 -> FUN_001f8510)
+        if self.live[i].enabled {
+            self.plate_damage(i, dt, actors);
+        }
     }
 
     /// FUN_001f8db0: a detector's occupants against who's in it `now`: one in for 0.1 s sends

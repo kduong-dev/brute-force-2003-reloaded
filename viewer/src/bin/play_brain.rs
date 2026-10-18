@@ -106,7 +106,7 @@ const ENGAGED: f32 = 1.15;
 /// (FUN_0002e330, 3.75 s with no clear ray), and its entry's unseen time over 10 s (FUN_0004a780).
 const LOST_SIGHT: f32 = 3.75;
 /// A contact alive and unseen this long (s) is forgotten (FUN_00054950 returns 0 at 15 s).
-const FORGET: f32 = 15.0;
+pub(crate) const FORGET: f32 = 15.0;
 /// A contact whose stealth visibility (its char+0x15c) is this or under is forgotten at once
 /// (FUN_00044140, 0x3a4f90).
 const STEALTH_FORGET: f32 = 0.2;
@@ -255,8 +255,9 @@ impl Sensor {
         if self.vision > 0.0 { self.vision } else { range }
     }
 
-    /// Whether it knows `who`.
-    fn knows(&self, who: Who) -> bool {
+    /// Whether it knows `who` (also the radar's test for a squadmate's knowledge, FUN_000ae470:
+    /// play_hud.rs).
+    pub fn knows(&self, who: Who) -> bool {
         self.contacts.iter().any(|c| c.who == who)
     }
 

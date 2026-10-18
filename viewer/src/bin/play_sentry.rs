@@ -16,17 +16,30 @@
 //!    there's a target and no friend within the radius. The radius is the item's h_0a811e94
 //!    (3 m, every Sentry), the test 0x146cb0 a 3D sphere round the mine's node.
 //!  - characters whose type handles mines and that know of this one only count standing on it
-//!    (filter 0x147430, `WISE_REACH`);
+//!    (filter 0x147430, `WISE_REACH`): a type whose `<combat-skill>` hazard list holds 3 (Tex's
+//!    alone; `SkillData::hazards`), for any mine but its own squad's (his skill's +0x94,
+//!    0x13d8f0, says no for a mine whose owner is in his squad; every other skill's, 0x280040,
+//!    yes);
 //!  - it has 1 hitpoint: a shot that strikes it sets it off.
 //!
-//! The demo has no enemies: the squad is one team, so its mines only go off for a test hook's
-//! hostile (BF_TEST_HOSTILE), the test map's enemy NPCs (play_testtools.rs) or a shot. Measured (todo/80-sentry-mine, the tester's spec): never
-//! set off by Tex (the thrower) walking or running over it or standing beside it, nor by Flint
-//! stepping onto it (0.16 m); an enemy brought up a slope set it off at 2.51 m across / 0.63 m
-//! above the mine's feet, not at 2.61 / 0.67; gone <= 0.1 s after; a shot sets it off.
+//! The level's own mines (#228): an item object of a Sentry type with h_1cb7d5f2 (the tutorial's
+//! three `<h_1d1d4f05>` item spawns in the mine field) is set down and armed as it loads (its
+//! attribute handler 0x14a0a0: +0x1bc bit 1, the item set's +0x10), its team its
+//! `item-alignment` (+0x1c0: 1, the enemies'), owned by nobody. So it goes off for the squad's
+//! Confed marines within its 3 m, but Tex, who handles mines, only sets it off stepping on it:
+//! take09 has him 0.84 m from the first for 8 s (71-79 s) before the disarm. Going off it sends
+//! DESTROYED to the triggers that listen to it (0x149520 at 0x1496fc: the tutorial's calculator471
+//! counts the three, which ends the mine lesson).
+//!
+//! The demo has no enemies in the deathmatch: the squad is one team, so its mines only go off for
+//! a test hook's hostile (BF_TEST_HOSTILE), the test map's enemy NPCs (play_testtools.rs) or a
+//! shot. Measured (todo/80-sentry-mine, the tester's spec): never set off by Tex (the thrower)
+//! walking or running over it or standing beside it, nor by Flint stepping onto it (0.16 m); an
+//! enemy brought up a slope set it off at 2.51 m across / 0.63 m above the mine's feet, not at
+//! 2.61 / 0.67; gone <= 0.1 s after; a shot sets it off.
 //! Not done: disarming an enemy's mine (the tutorial's "Hold [X] to disarm": 0x14a410 state 6,
-//! FUN_00121860), the AI's avoidance of it (hazard kind 3 at +0x110, 2 m then 5 m at +0x114),
-//! one blast setting off another (needs blasts to hurt objects).
+//! FUN_00121860; #145), the AI's avoidance of it (hazard kind 3 at +0x110, 2 m then 5 m at
+//! +0x114), one blast setting off another (needs blasts to hurt objects).
 
 use super::*;
 use super::grenade::{Grenade, GrenadeKits};
@@ -115,12 +128,90 @@ pub(super) struct TestRig {
     held_at: Option<f32>,
 }
 
+/// How near (m, across) the level's own model of an unnamed placed mine is looked for round its
+/// placement's place (`place_mines`: the level's models stand where they're placed).
+const MODEL_REACH: f32 = 1.0;
+
+/// The level's own mines (see the module notes) once they're made (`place_mines`): each one's
+/// entity and its placement's name, for its DESTROYED when it goes off (`mines_gone`).
+#[derive(Resource, Default)]
+struct PlacedMines {
+    made: bool,
+    /// made this frame: their entities may not be in the world's queries yet
+    fresh: bool,
+    list: Vec<(Entity, u32)>,
+}
+
 pub fn plugin(app: &mut App) {
-    app.init_resource::<MineTargets>().init_resource::<TestRig>()
+    app.init_resource::<MineTargets>().init_resource::<TestRig>().init_resource::<PlacedMines>()
         .add_systems(OnEnter(AppState::Playing), reset)
         .add_systems(Update, test_rig.after(squad_control).before(update_player).run_if(in_state(AppState::Playing)))
-        .add_systems(Update, publish_targets.after(super::grenade::GrenadeSystems).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (place_mines.before(super::grenade::GrenadeSystems),
+                              (publish_targets, mines_gone).after(super::grenade::GrenadeSystems)).run_if(in_state(AppState::Playing)));
     // (`trip` runs in play_grenade.rs's chain, right before the grenades' fuses)
+}
+
+/// The level's own mines (#228), once the character is in (the level's objects are spawned by
+/// then, as play_pickups.rs's `find_pickups` waits for): each item object of a Sentry type the
+/// level places with h_1cb7d5f2 (`Placement::placed`: set down and armed as it loads, 0x14a0a0) is
+/// a mine on the ground where it's placed, on its `item-alignment`'s team, owned by nobody; the
+/// level's own model of it is hidden (the mine is drawn in its place): the one of its name, or for
+/// an unnamed one the nearest of its type within MODEL_REACH across. BF_SENTRY_LOG=1 lists them.
+fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<GrenadeKits>>, player: Res<Player>, mut mines: ResMut<PlacedMines>,
+               mut scenery: Query<(&bf_viewer::level_scene::Placed, &Transform, &mut Visibility)>) {
+    let Some(kits) = kits else { return };
+    if mines.made || (player.loaded.is_none() && !player.stand_in) {
+        return;
+    }
+    mines.made = true;
+    mines.fresh = true;
+    let Some(level) = map.0.as_ref() else { return };
+    let log = std::env::var("BF_SENTRY_LOG").is_ok();
+    for o in level.objects.iter().filter(|o| o.placed) {
+        let Some(kind) = kits.0.iter().position(|k| k.def.name == o.kind && k.def.function_type == PROXIMITY_EXPLOSIVE) else { continue };
+        let kit = &kits.0[kind];
+        let e = kit.spawn_model(&mut commands, Transform::from_matrix(o.transform), None);
+        // (its team: item-alignment, +0x1c0; the ALIGN_ numbers are the demo's team numbers)
+        let team = o.alignment.clamp(0, 9) as u8;
+        commands.entity(e).insert((Grenade::placed(kind, kit.def.fuse.max(0.0), player.sim_time), Mine { check: 0.0, team }));
+        mines.list.push((e, o.name));
+        // the level's model of it: by its name, else (unnamed) the nearest of its type
+        let at = o.transform.w_axis.truncate();
+        let model = scenery.iter_mut().filter(|(p, t, _)| p.tag == o.tag && p.kind == o.kind
+                && if o.name != 0 { p.name == o.name } else { t.translation.xz().distance(at.xz()) < MODEL_REACH })
+            .min_by(|a, b| a.1.translation.distance_squared(at).total_cmp(&b.1.translation.distance_squared(at)));
+        if let Some((_, _, mut v)) = model {
+            *v = Visibility::Hidden;
+        }
+        if log {
+            println!("t {:.2}: the level's mine h_{:08x} ({}) armed at {:.2}, team {team}", player.sim_time, o.name, kit.def.label, o.transform.w_axis.truncate());
+        }
+    }
+}
+
+/// A level mine that has gone off (its grenade gone: play_grenade.rs's `fly_grenades` despawns
+/// it): DESTROYED to the triggers that listen to it (0x149520 sends it from the grenade, at
+/// 0x1496fc: iD 0, the grenade the subject, data -1).
+fn mines_gone(mut mines: ResMut<PlacedMines>, live: Query<(), With<Grenade>>, mut events: ResMut<super::triggers::TriggerEvents>, player: Res<Player>) {
+    if std::mem::take(&mut mines.fresh) {
+        return;
+    }
+    let mut gone = vec![];
+    mines.list.retain(|&(e, name)| {
+        let alive = live.contains(e);
+        if !alive {
+            gone.push(name);
+        }
+        alive
+    });
+    for name in gone {
+        if std::env::var("BF_SENTRY_LOG").is_ok() {
+            println!("t {:.2}: the level's mine h_{name:08x} went off", player.sim_time);
+        }
+        if name != 0 {
+            events.0.push(super::triggers::ObjectEvent { from: name, signal: bf_viewer::bf::triggers::sig::DESTROYED, subject: name, data: -1 });
+        }
+    }
 }
 
 /// A squad member by name (brutus, flint, hawk, tex) or squad slot (0-3).
@@ -143,9 +234,11 @@ fn character(s: &str) -> Option<usize> {
 ///    let go to the squad AI; until the mine is down it follows the squad as usual.
 ///  - BF_TEST_SHOOT_MINE=<s>: <s> s after the first mine is down, the player (under
 ///    BF_TEST_GOTO's autopilot) aims at it and fires until it's gone.
-fn reset(mut targets: ResMut<MineTargets>, mut rig: ResMut<TestRig>) {
+fn reset(mut targets: ResMut<MineTargets>, mut rig: ResMut<TestRig>, mut mines: ResMut<PlacedMines>) {
     targets.targets.clear();
     targets.struck.clear();
+    // (the level's own mines are made again for the new map, `place_mines`)
+    *mines = PlacedMines::default();
     let list = |k: &str| std::env::var(k).ok().map(|v| v.split(',').map(|x| x.trim().to_string()).collect::<Vec<_>>());
     let num = |v: &[String], i: usize, d: f32| v.get(i).and_then(|x| x.parse::<f32>().ok()).unwrap_or(d);
     *rig = TestRig {
@@ -171,6 +264,26 @@ const BODY_CENTRE: f32 = 0.9;
 /// the root, -GROUND above them), raised with a jump.
 fn body_point(u: &Player) -> Vec3 {
     u.position + Vec3::Y * (u.height + GROUND + BODY_CENTRE)
+}
+
+/// The hazard kind of mines (the object's +0x110 a Sentry sets at 0x147690; the type's byte
+/// +0x294 + 3 the filter 0x147430 reads).
+const HAZARD_MINES: i64 = 3;
+/// The skill whose +0x94 lets its own squad's mines count as usual: CSKILL 3, Tex's Berserker
+/// (0x13d8f0; every other skill's is the default 0x280040).
+const SKILL_BERSERKER: i64 = 3;
+
+/// The filter 0x147430's question for character `u` and a mine set down by squad slot `thrower`
+/// (OTHER: by nobody, a level's own): it counts only standing on the mine (WISE_REACH) when its
+/// type handles mines (`SkillData::hazards` holds HAZARD_MINES: Tex) and its skill doesn't let the
+/// mine pass as its own squad's (Tex's Berserker, 0x13d8f0: a mine whose owner is in his squad).
+fn handles_mine(u: &Player, game: &Game, thrower: usize) -> bool {
+    let Some(skill) = game.character_type(u.kind).and_then(|t| t.skill.as_ref()) else { return false };
+    if !skill.hazards.contains(&HAZARD_MINES) {
+        return false;
+    }
+    let own_squads = thrower < SQUAD && u.in_squad();
+    !(skill.skill_set == SKILL_BERSERKER && own_squads)
 }
 
 /// The team the game's team table (0x3ffd80, 10 x 10 bytes) makes hostile to itself: its
@@ -219,7 +332,7 @@ fn check(at: Vec3, radius: f32, thrower: usize, team: u8, units: &[&Player], wis
 /// standing are handed to the next frame's shots by `publish_targets`. BF_SENTRY_LOG=1 prints
 /// each check with a target about, and what set one off.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>, squad: Res<Squad>,
+pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>, squad: Res<Squad>, game: Res<GameData>,
                    kits: Option<Res<GrenadeKits>>, mut targets: ResMut<MineTargets>, rig: Res<TestRig>,
                    mut mines: Query<(Entity, &mut Grenade, &Transform, Option<&mut Mine>)>, mut rng: Local<u32>) {
     let Some(kits) = kits else { return };
@@ -267,7 +380,9 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>,
         let def = &kits.0[g.kind].def;
         let radius = if def.proximity_radius > 0.0 { def.proximity_radius } else { DEFAULT_RADIUS };
         let at = tr.translation;
-        let go = check(at, radius, g.thrower, m.team, &units, |u| hostile_wise == Some(u.character) && u.team != 0);
+        let thrower = g.thrower;
+        let go = check(at, radius, thrower, m.team, &units,
+                       |u| (hostile_wise == Some(u.character) && u.team != 0) || handles_mine(u, &game.0, thrower));
         if log {
             // the nearest target and friend (3D to the body point, and across)
             let nearest = |friends: bool| units.iter().filter(|u| !u.dead && friend(u, g.thrower, m.team) == friends)

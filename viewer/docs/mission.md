@@ -184,7 +184,9 @@ with the takes':
   run: take12 shows the end screen until 413.57 s (A at about 413.4 s), then black at once,
   mb02's first frame at 413.77 s and the movie's own fade-in over 0.5 s; the demo cuts to the
   movie (black, fading in) the frame after A.
-* The DNA line is always "No DNA Found" (the DNA pickup is #228's); the count's ticking and the
+* The DNA line names the DNA canister the squad took on the level (#228: "Confed Marine DNA" and
+  its icon, as take12; [pickups.md](pickups.md), "DNA canisters"), not the save's
+  campaign/save-game/dna-archetype, which isn't kept (#27); the count's ticking and the
   icons' sounds aren't played; the end camera is the level's first (the game picks one with its
   random state); the mission's score isn't written to the flags; the music isn't stopped at the
   countdown (FUN_00179e10).

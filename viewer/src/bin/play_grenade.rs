@@ -230,6 +230,16 @@ pub(super) struct Grenade {
     launched: f32,
 }
 
+impl Grenade {
+    /// A grenade of type `kind` that's down where the level placed it (an item object with
+    /// h_1cb7d5f2, play_sentry.rs: the tutorial's enemy Sentries), its fuse the type's (the
+    /// Sentry's 9999 s: what sets it off is its check), thrown by no one (OTHER: no squad member's
+    /// own, so no thrower's share of its blast).
+    pub(super) fn placed(kind: usize, fuse: f32, now: f32) -> Grenade {
+        Grenade { kind, velocity: Vec3::ZERO, fuse, landed: true, spin: Vec3::ZERO, thrower: OTHER, rolling: None, roll_sound: 0.0, launched: now }
+    }
+}
+
 /// The red damage tint: seconds since the player was hurt by a blast (TINT_TIME or more: none).
 /// (play_energy.rs sets it when a bolt strikes the player.)
 #[derive(Resource)]
