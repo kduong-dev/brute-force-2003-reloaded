@@ -679,11 +679,11 @@ const SKY_LAYER_STEP: f32 = 1000.0;
 /// material's ambient x c14 + (max(0, n.c16) c17 + max(0, n.c18) c19) x its colour, with oB0 the
 /// same for the back face), so the colours (x the lights' strength, `LevelLight::lit_color`) are
 /// given as sRGB (Bevy works in linear light) at an illuminance of PI (see `console_look`). The
-/// outdoor pair lights characters (LU_OUTDOOR) and the
-/// scenery placed outdoors; the scenery placed indoors takes the indoor pair in its own shader
-/// (`Lamps::indoor`). The game's lights cast no shadow; here the brightest of the pair (by its
-/// colour's luma) casts the characters' (`luma`). A level with no directional light at all gets
-/// a made-up sun; one with no outdoor pair (mp2: both its lights are indoor) none.
+/// outdoor pair lights characters (LU_OUTDOOR) and the scenery placed outdoors; the scenery
+/// placed indoors takes the indoor pair in its own shader (`Lamps::indoor`). The game's lights
+/// cast no shadow; here the brightest of the pair (by its colour's luma) casts the characters'
+/// (`luma`). A level with no directional light at all gets a made-up sun; one with no outdoor
+/// pair (mp2: both its lights are indoor) none.
 pub fn spawn_lighting(commands: &mut Commands, level: &Level) {
     let pair = level.pair(false);
     let shadow = pair.iter().enumerate().max_by(|a, b| luma(a.1.lit_color()).total_cmp(&luma(b.1.lit_color()))).map(|(i, _)| i);

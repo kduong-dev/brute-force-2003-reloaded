@@ -244,7 +244,12 @@ or `cargo run --bin bf_level -- <map>`). What it took:
 * **Terrain hue.** The baked light map gives the ground's brightness. Its hue comes from the
   lights marked `h_e02aba1c` with the terrain's ambient, at 60% strength. Before #143 those were
   read as the terrain's own pair; the game's code has them as the indoor pair (see **Light
-  objects**), and what lights its terrain is #181's, so the hue is kept as it was calibrated.
+  objects**), and what lights its terrain is #181's, so the hue is kept as it was calibrated. If
+  vertex program 0x38 is the terrain's base pass (see **The detail**: no code was found loading
+  it), its vertex light is the Terrain `<ambient>` plus the second light of whichever pair was
+  uploaded last (c18 / c19, x the material's colour): each view's draw starts with the outdoor
+  pair (FUN_000dcc10(0, ..) at 0xda2aa), and the bump takes the first light's direction (c16).
+  So the outdoor pair, not the `h_e02aba1c` lights, would reach the ground.
   On Bulgar those lights are blue-grey, and the captures show grey ground and hills, not sand.
   The 60% is calibrated on a capture of the gate: the ground there measures 73 81 79; ours was
   79 74 64 and is now 68 77 74. `BF_DOOR_LOG=1` lists the doors (type, place, leaves); Bulgar's
@@ -328,10 +333,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     1.66 s): Tex lit as the take has him (vest 146-161 luma against the take's 133-138, his
     shaded arm 50 against 52; main 1-12). The second building (`BF_TEST_GOTO=37.22,-88.80,36.9,
     -88.55` against take11 2.5 s) and the base building (`-62.22,19.23,-62.40,19.47` against
-    take12 300 s): their insides take the bluish indoor pair as the takes show (wall 33 54 74
-    against 34 39 51; main black and white); the gate wall (`-43.76,-13.46,-43.81,-13.16`, take11
-    715 s) shows its dark blue panels where main drew it black; the sniper crate and the base's
-    containers are lit (take11 297 s, take12 50 and 120 s).
+    take12 300 s): their insides take the bluish indoor pair as the takes show (the base
+    building's wall 33 54 74 against take12's 34 39 51; main black and white); the gate wall
+    (`-43.76,-13.46,-43.81,-13.16`, take11 715 s) shows its dark blue panels where main drew it
+    black; the sniper crate and the base's containers are lit (take11 297 s, take12 50 and
+    120 s).
   * Bulgar's interiors: inside sdm_e34's building at (-51.2, 10.9) (`BF_MAP=sdm_e34
     BF_TEST_GOTO=-51.2,10.9,-48.2,10.9 BF_TEST_GO_AT=99`) the walls measure 34-42 47-57 55-65,
     where main had 17-28 20-33 24-37: #2's capture measured 40 55 60 and the demo 23 27 32.

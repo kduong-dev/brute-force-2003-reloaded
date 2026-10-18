@@ -1,9 +1,9 @@
 // A level material (bevy's standard one) lit also by the level's point lights the way the game
 // lights its scenery: each lamp's colour x (1 - distance / range) x N.L, nothing past its range,
 // no shadows (see level_scene::LevelMaterial). It takes the lamps of its light pair only, and an
-// indoor material (INDOOR_PAIR) the level's indoor pair in place of bevy's directional lights, which
-// are the outdoor pair (level_scene::spawn_lighting, `indoor_lit`). A terrain layer (TERRAIN_DETAIL)
-// samples its colour and detail textures here, as the game's terrain pass does
+// indoor material (INDOOR_PAIR) the level's indoor pair in place of bevy's directional lights,
+// which are the outdoor pair (level_scene::spawn_lighting, `indoor_lit`). A terrain layer
+// (TERRAIN_DETAIL) samples its colour and detail textures here, as the game's terrain pass does
 // (level_scene::terrain_detail).
 
 #import bevy_pbr::{
