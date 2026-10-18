@@ -227,6 +227,12 @@ fn setup(mut commands: Commands, mut world: ResMut<World>, mut fly: ResMut<Fly>,
     let mut fx = bf_viewer::ale_fx::AleAssets::new(&mut meshes);
     let n = bf_viewer::ale_fx::spawn_idle_effects(&mut commands, game, level, &mut fx, &mut images, &mut materials);
     println!("{n} idle effects");
+    // the level's placed effect objects: its flies, embers, fires, dust (#258); BF_NO_PLACED_FX
+    // leaves them out
+    if std::env::var("BF_NO_PLACED_FX").is_err() {
+        let placed = bf_viewer::ale_fx::spawn_placed_effects(&mut commands, game, level, &mut fx, &mut images, &mut materials);
+        println!("{} placed effect objects", placed.len());
+    }
     let test_fx = std::env::var("BF_FX_TEST").ok().and_then(|name| fx.load(game, &mut images, &mut materials, bf_viewer::bf::hash::h(&name)));
     commands.insert_resource(fx);
     // the level's own lights (key, fill, ambient) as the console used them

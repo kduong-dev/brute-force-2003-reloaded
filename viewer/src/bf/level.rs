@@ -35,6 +35,10 @@
 //!  patrols     the patrol points (`<patrol-point>`, and `<patrol-first-point>` the head of a
 //!              chain), linked forward and back, grouped by their iD (`PatrolPoint`): the AI's
 //!              patrol routes (bf_play's play_brain.rs, #227)
+//!  effects     the effect objects (`<effect-object>`, object-type 17) with their own
+//!              attributes: lifetime, distance from the camera, the object they're attached to
+//!              (`EffectObject`); started where they're placed (ale_fx `spawn_placed_effects`,
+//!              #258) unless a spawn-trigger takes them as its template (`spawn_templates`)
 
 use bevy::math::{Mat4, Vec3};
 
@@ -174,6 +178,39 @@ pub struct PatrolPoint {
     pub radius: f32,
 }
 
+/// A placed effect object (`<effect-object h_ff8051ee=TYPE name lifetime h_0e528ccb ..>
+/// <transform><parent Type parent>`): an object of an effect type (objecttypes `<effect>`,
+/// `character::EffectType`) that runs from the level's start, as the world ticks every object it
+/// holds (the effect object's tick 0x21b7a0). The tutorial has 34: 18 xfly, 7 xbfly, 3
+/// slava-fuzz, the lava's lights and pools, and the three spawn-triggers' templates (the lava
+/// jet, the farcast pads), which aren't in the world until spawned (`Level::spawn_templates`).
+#[derive(Clone, Debug)]
+pub struct EffectObject {
+    pub name: u32,
+    /// its effect type (h_ff8051ee)
+    pub kind: u32,
+    pub transform: Mat4,
+    /// `lifetime` (h_0f85824e): the seconds it runs. The placement's handler (0x21c000) stores it
+    /// at the object's +0xa4 over the type's max-life the object took first (0x21a1ca); the tick
+    /// takes the object away once its age (+0xa8, the placement's h_f12204b2) reaches it, at its
+    /// first tick for a 0 (0x21b8e0). FLT_MAX on 1146 of the 1453 placements no spawn-trigger
+    /// takes, 7837787 (90 days) on 259, 0 on one (e01's exp_gasmain). None without one
+    pub lifetime: Option<f32>,
+    /// h_0e528ccb: how far in front of the camera a camera-attached one sits (the object's +0xac,
+    /// 0x21c000; FUN_0021a700 reads it), over its type's h_f639899a. 0 on every placement of a
+    /// camera-attached type. The placement's own h_1e40fd68 isn't read on loading: 0x21c000 only
+    /// writes the object's flag out when it's saved, so the type's flag decides
+    /// (`EffectType::camera`). None without one
+    pub distance: Option<f32>,
+    /// the object it's attached to by a `<parent Type="1" parent=NAME>` link (0 for none, or for
+    /// the other link types): FUN_0015ed30 moves it with that object, and FUN_0021a700 takes it
+    /// away once that object is gone (its link's object pointer cleared, the object's +0x10c bit
+    /// 1 clear). e01's barrel fires sit on its breakable barrels so (118 placements have such a
+    /// link). A Type 2 link (a hardpoint of an object: 328 placements, the torches and sconces)
+    /// doesn't take it away
+    pub parent: u32,
+}
+
 /// light-usage LU_INDOOR (the LU_ name table 0x3bf954: LU_NONE 0, LU_INDOOR 1, LU_OUTDOOR 2,
 /// LU_GEOSET 3).
 pub const LU_INDOOR: u8 = 1;
@@ -273,12 +310,12 @@ pub struct OtherLight {
 }
 
 /// Why a light-object isn't drawn (`OtherLight`): an effect object's light. 373 point lights
-/// (all 159 h_09020c30, 214 h_e81ba579) are `<parent Type="1">` of an effect-object, at its
-/// origin: the effect types that carry one name its type (their h_f8c6a8b4) and an ALE
-/// light-effect, which drives it (an inference, as `ale_fx` reads the effects' light; their
-/// colour is 1 1 1 and range 10 on every one). The demo doesn't run placed effect objects (#258),
-/// so their lights wait for that.
-pub const EFFECT_LIGHT: &str = "its effect object's light (run by its light-effect; #258)";
+/// (all 159 h_09020c30, 214 h_e81ba579) hang on an effect-object (`<parent Type="1">`, at its
+/// origin): the effect types that carry one name its type (their h_f8c6a8b4) and an ALE
+/// light-effect, which drives it (an inference, as `ale_fx` reads the effects' light; their own
+/// colour is 1 1 1 and range 10 on every one). The placed effect objects run their light-effect
+/// as lights of their own (ale_fx `spawn_placed_effects`, #258), so these aren't drawn again.
+pub const EFFECT_LIGHT: &str = "its effect object's light (drawn by the effect's light-effect, #258)";
 /// Why a light-object isn't drawn: a spot light (LT_SPOT; none in the game's data).
 pub const SPOT_LIGHT: &str = "a spot light";
 /// Why a light-object isn't drawn: its type isn't a light type the loaded objecttypes know.
@@ -286,12 +323,6 @@ pub const NO_LIGHT_TYPE: &str = "no light type of that name";
 /// Why a light-object isn't drawn: its parent (`<parent Type="1">`) isn't among the level's
 /// placements.
 pub const NO_PARENT: &str = "its parent isn't placed";
-
-/// A light-object's `<parent Type>` (the object link FUN_0015f0b0 reads into the light's +0xa4,
-/// updated by FUN_0015ed30): 1 sits at its parent object, its transform the parent's times the
-/// link's offset, identity when the `<parent>` names none (none does); 2 a named node of its
-/// parent, and with no node named (none is) the light keeps its own transform; 0 none.
-const PARENT_OBJECT: i64 = 1;
 
 /// A wall panel (world-button-object): its name, placement and the event it sends when used:
 /// its signal h_eaf8a35b (+0x1b0) and data h_f1660a0d (+0x1b4; -1 when not given, its
@@ -360,6 +391,9 @@ pub struct Level {
     pub max_score: f32,
     /// the level's patrol points, both kinds, in the file's order (`PatrolPoint`)
     pub patrols: Vec<PatrolPoint>,
+    /// the level's effect objects, in the file's order (`EffectObject`; they're in `objects`
+    /// too, with no mesh archetype)
+    pub effect_objects: Vec<EffectObject>,
 }
 
 fn floats(e: Option<&Element>) -> Vec<f32> {
@@ -397,6 +431,22 @@ const H_POINT_RADIUS: u32 = 0xE656_4E8A;
 /// An item object's h_1cb7d5f2 (its attribute handler 0x14a0a0 at 0x14a0f7): placed and live
 /// (`Placement::placed`).
 const H_ITEM_PLACED: u32 = 0x1CB7_D5F2;
+/// `effect-object` (h_ec0c86f6, name recovered by hashing): a placed effect object
+/// (`EffectObject`).
+const H_EFFECT_OBJECT: u32 = h("effect-object");
+/// An effect object's `lifetime` (h_0f85824e, name recovered by hashing; 0x21c000 -> +0xa4).
+const H_EFFECT_LIFETIME: u32 = h("lifetime");
+/// An effect object's h_0e528ccb (0x21c000 -> +0xac): metres in front of the camera.
+const H_EFFECT_DISTANCE: u32 = 0x0E52_8CCB;
+/// An object's `<parent Type parent>` link (h_1aa18c8c, name recovered by hashing; 0x21c000 hands
+/// it to FUN_0015f0b0): `Type` 0 none, 1 an object, 2 a hardpoint of one (FUN_0015ed30).
+const H_PARENT: u32 = h("parent");
+/// A `<parent>` link to an object (FUN_0015ed30's type 1): FUN_0015f0b0 keeps the link's
+/// `<transform>` as its offset (identity without one), and the update puts the object at its
+/// parent's transform times that offset. A light-object's link sits so (`Level::load`); a type 2
+/// link (a `<HARDPOINT name>` of the parent) moves it to that node, where its own transform
+/// already has it (e05's light 1.5 m over its parent's origin), so it keeps that.
+const PARENT_OBJECT: i64 = 1;
 
 /// A level <transform>: the 3 x 3 rotation row by row (columns are the object's axes: the
 /// level's cameras come out level and looking down -z), then the position.
@@ -586,7 +636,7 @@ impl Level {
             let (indoor, outdoor) = (flag(H_LIGHT_INDOOR), flag(H_LIGHT_OUTDOOR));
             // where it sits: on a `<parent Type="1">` its parent's transform times the link's
             // offset (the `<parent>`'s own `<transform>`), else its own (PARENT_OBJECT)
-            let parent = e.child(h("parent")).filter(|p| p.attr(h("Type")).and_then(|v| v.as_i64()) == Some(PARENT_OBJECT))
+            let parent = e.child(H_PARENT).filter(|p| p.attr(h("Type")).and_then(|v| v.as_i64()) == Some(PARENT_OBJECT))
                 .map(|p| (hash(p, h("parent")), transform(&floats(p.child(h("transform")))).unwrap_or(Mat4::IDENTITY)))
                 .filter(|(n, _)| *n != 0 && *n != h(""));
             let placed = match parent {
@@ -666,9 +716,23 @@ impl Level {
                 radius: number(e, H_POINT_RADIUS, -1.0),
             })
         }).collect();
+        // the effect objects with their own attributes (0x21c000) and their link (an empty
+        // parent is the empty name's hash: none)
+        let effect_objects = all.iter().filter(|e| e.name == H_EFFECT_OBJECT).filter_map(|e| {
+            let link = e.child(H_PARENT).filter(|p| p.attr(h("Type")).and_then(|v| v.as_i64()) == Some(PARENT_OBJECT));
+            let num = |k: u32| e.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+            Some(EffectObject {
+                name: hash(e, h("name")),
+                kind: hash(e, H_TYPE),
+                transform: transform(&floats(e.child(h("transform"))))?,
+                lifetime: num(H_EFFECT_LIFETIME),
+                distance: num(H_EFFECT_DISTANCE),
+                parent: link.map(|p| hash(p, h("parent"))).filter(|&n| n != h("")).unwrap_or(0),
+            })
+        }).collect();
         Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, other_lights,
                    terrain_ambient, character_ambient, terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths,
-                   max_score, patrols })
+                   max_score, patrols, effect_objects })
     }
 
     /// The directional lights FUN_000dcc10 puts in the indoor pair (`indoor`) or the outdoor one:
@@ -678,6 +742,16 @@ impl Level {
     /// level of the game has more than two lights in either pair, so the order never decides.
     pub fn pair(&self, indoor: bool) -> Vec<&LevelLight> {
         self.lights.iter().filter(|l| if indoor { l.indoor } else { l.outdoor }).take(2).collect()
+    }
+
+    /// The placements the level's spawn-triggers take as their templates (h_1299668b): out of the
+    /// world until spawned, as FUN_000dfe90 takes each out when its spawn-trigger links. A
+    /// template is drawn, made solid or started only as a copy (play_triggers.rs `spawn_copy`).
+    pub fn spawn_templates(&self) -> std::collections::HashSet<u32> {
+        self.triggers.iter().filter_map(|t| match t.class {
+            triggers::Class::Spawn { template, .. } => Some(template),
+            _ => None,
+        }).filter(|&n| n != 0).collect()
     }
 
     /// What using a button does to the level's animated objects, read from the data alone: (object
