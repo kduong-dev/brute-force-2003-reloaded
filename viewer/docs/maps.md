@@ -127,7 +127,7 @@ then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` p
       -62.33,26.71,11.24,75.8,-2.6): rolls up from 2.00 to 3.87 s, its 3.79 s clip at x2.
     * e10's ramp h_f3d6c977 (trigger h_120ddb37; the camera at 76,24,18,80,-10): lowers from
       the hull to the ground between 2.00 and 3.40 s.
-    * m01_a's hatch h_06b98a8e (h_f62e3e2c; from above at 80.3,111.5,-9.5,0,-70) turns its ring;
+    * m01_a's hatch h_06b98a8e (h_f62e3e2c; a round mosaic door in a circular hut's wall, seen at 80.3,108,-16.6,0,-3, the #261 tester's camera) slides about 2.9 m along the wall in 1.47 s;
       its gate h_fa445160 (h_1267e76e and h_15c8b4ad, signal 50; from under it at
       59.5,133,-49.5,105,-12) slides its leaves apart; m05_y's hut h_f0ce0274 (h_ff133988)
       swings its doors open in 0.8 s; m05_a's gate h_fcb796db (h_0f77a93c) rises 5.86 m.
