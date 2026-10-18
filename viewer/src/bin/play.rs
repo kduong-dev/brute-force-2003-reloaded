@@ -1925,7 +1925,8 @@ struct Player {
     spin_angle: f32,
     shots: Vec<Shot>,
     /// this frame's shots of a mesh-projectile gun (bullet-type 2 steered at a steady speed: the
-    /// Therm Sweeper), launched as missiles by play_missile.rs instead of flying as `shots`
+    /// Therm Sweeper, the Sweeper V), launched as missiles by play_missile.rs instead of flying
+    /// as `shots`
     launches: Vec<missile::Launch>,
     /// the player's shots still flying toward squad members
     pending_hits: Vec<PendingHit>,
@@ -5813,9 +5814,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             // the others' instant hits; the rest fly at the bullet's speed
             let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
             let accuracy = p.fire_state.accuracy(index);
-            // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper) is
-            // a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50, play_missile.rs): it
-            // leaves the muzzle along the shot with the aim point and the shooter's line
+            // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper, the
+            // Sweeper V) is a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50,
+            // play_missile.rs): it leaves the muzzle along the shot with the aim point and the
+            // shooter's line
             let missile = missile::flies(&w.def);
             let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
             for (pellet, dir) in p.fire_state.directions(side, dir, w.def.shots.burst_spread) {

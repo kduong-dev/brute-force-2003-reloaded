@@ -717,7 +717,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
 Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"`, `0c3db625`)
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
 map's data has it (the test map has every hand weapon); a list, `<a>;<b>`, fills the slots in
-order from the first (#35's Tex: `"Confed LZR-50;Jax-iC"`); `BF_SHOT_LOG=1` now also prints each
+order from the first (#35's Tex: `"Confed LZR-50;Jax-iC"`). On a level whose spawn-triggers start
+the squad (e34, e40, the tutorial: #220) the character carries its spawn's template weapons, and
+the hook now sets those too (#72): it did nothing there before. `BF_SHOT_LOG=1` now also prints each
 pellet (its hand, frame, spread, walk, tracer), the gun's accuracy and, last, who fired it (as
 the combat log names it, #227); `BF_TEST_FIRE=hip` fires
 without aiming (no scope on a gun that zooms).
@@ -743,22 +745,41 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
 * The main game on sdm_e34 (`BF_AUTOPILOT=1`, 340 frames) is pixel for pixel the same as
   before until the autopilot's first shot.
 
-### Missiles: the Therm Sweeper (#73)
+### Missiles: the Therm Sweeper (#73) and the Sweeper V (#72)
 
 `src/bin/play_missile.rs` (the camera shake in `src/bin/play_shake.rs`), the bullet's data in
 `weapon::MeshBullet` (`src/bf/weapon.rs`), from default.xbe's projectile class
 (0x226000-0x229000) and the weapon type's damage handler (0x22d0b0); every function cited here
-is in [code-map.md](code-map.md). The measurements are the tester's spec,
-`todo/73-therm-sweeper/spec.md`, from takes 01-07 there; takes 08-23 (a real reload,
-self-damage at a wall, homing on two enemies and an off-line one, the open air, a side view,
-cover) came after it and are compared under **Verified**.
+is in [code-map.md](code-map.md). The measurements are the tester's specs,
+`todo/73-therm-sweeper/spec.md`, from takes 01-07 there, and `todo/72-sweeper-v/spec.md`; #73's
+takes 08-23 (a real reload, self-damage at a wall, homing on two enemies and an off-line one, the
+open air, a side view, cover) came after its spec and are compared under **Verified**.
 
 * **Which guns.** bullet-type 2 is BTYPE_MESH_PROJECTILE (the enum at 0x3bd63c): FUN_0022f1d0
   launches the bullet's mesh-name object (FUN_0022fb50). Those steered at a steady speed
-  (h_0b03ece5) that split (a `<mirv>`) fly here: the Therm Sweeper. The Sweeper V (steady, no
-  MIRV) keeps the plain shot until #72 checks this path against its own takes
-  (`todo/72-sweeper-v`); the other bullet-type 2 weapons (the iKhan-GPL's lobbed cluster, the
-  creatures') fly under their physics body's gravity, which isn't traced, and keep it too.
+  (h_0b03ece5, flag 4) fly here (`missile::flies`): the Therm Sweeper, which splits (a
+  `<mirv>`), and since #72 the Sweeper V, which doesn't; no other weapon in any level's data has
+  the flag. The other bullet-type 2 weapons (the iKhan-GPL's lobbed cluster, the creatures') fly
+  under their physics body's gravity, which isn't traced, and keep the plain shot.
+* **The Sweeper V** (#72; `h_ed3f6b0c`, the same machinery with other numbers, spec §2): one
+  rocket a trigger cycle, 0.5 a second (60 game frames), clip 8 of the squad's AMMO_10 rockets.
+  Its missile object h_fa69b507 is the Therm's model h_07d84a52 with its own attached effect
+  h_fb438237 (the same mtrail, mtrail#1, mtrail-flare and hiss 0021996c); its explosion type
+  h_e2a10c7d holds the Therm's six effects, light and sound; its muzzle effect (h_002779c8, the
+  launch dust and light_muzzle) and scorch (h_e6868a8d) are the Therm's. It leaves at 60 m/s
+  along the shot after the accuracy turn (accuracy 90 throughout: +-0.33 degrees) and flies
+  **straight**: with h_07cdf040 and h_f69b7d4c false nothing steers it to a target or an aim
+  point, so FUN_002266d0 steers it along its own velocity (flag 4) and holds it at 60 m/s, and
+  with `<mirv>` count and mode 0 it never splits. It goes off where it strikes the world, a body
+  or an object (a body struck takes a roll of 27-37 first), at its proximity fuse (Damage radius 9
+  x 0.375 = 3.375 m), or where it is when its life runs out (range / speed = 200 / 60 = 3.33 s;
+  h_f0a56297 0, so no second timer; h_0976a9dc). Its blast is 9 m: half a roll flat to every
+  body it reaches (h_011cb154 false), x0.7 on the shooter's side; its centre is the bullet's
+  radius, 0.3 m, off what it struck. The shake is 37 x 0.00769 = 0.285 within 31.5 m, to nothing
+  at 63 m. Its impact sound h_f55abaf3 is in no level's bank: it plays nothing (the game's does
+  the same: it asks and finds nothing). The Shrike Heavies that carry it (e40's placement
+  h_17bc6519, 8 rockets) launch the same rockets at the squad, with no fuse (the fuse is a human
+  player's missile's, FUN_00112800).
 * **Launch**, on the fire loop's frame: the shot, the clip drop, the fire sound ed761bae and the
   muzzle effect in one game frame, as FUN_0022f2a0 does them (take21's side view: the clip digit
   and the missile at the muzzle on the same frame). The missile object h_e9327576 (model
@@ -807,11 +828,16 @@ cover) came after it and are compared under **Verified**.
   through a world query (FUN_000df0a0, flags 0xfffffffa) that takes the terrain and some
   dynamic objects but none of the level's placed geometry: the demo's ray meets only the
   terrain (`Arena::ray_terrain`); at the hips the ground they stand on isn't in the way.
-* **Proximity fuse** (h_0bafbd6f): every 0.25 s, for a player's missile (FUN_00112800, read as
-  "a human player's": medium confidence) with a target or a side other than NEUTRAL
+* **Proximity fuse** (h_0bafbd6f): for a player's missile (FUN_00112800, read as "a human
+  player's": medium confidence) with a target or a side other than NEUTRAL
   (0x22731c-0x22732d), a hostile (only its target, if it has one) within Damage radius x 0.375
-  = 1.69 m of it, to their root, that it has passed. It runs after the give-up and the timers.
-  The parent then splits; a child (only while it holds the split's target) goes off.
+  (1.69 m for the Therm, 3.375 m for the Sweeper V) of it, to their root, that it has passed.
+  Its clock (+0x218) gains each tick's time while it's under 0.25 s and looks (and is cleared) on
+  the tick it's 0.25 or more (the C of FUN_00226cc0's fuse block): every 9th tick at 30 Hz, 0.3
+  s, which for the Sweeper V is every 18 m of flight, so a rocket passing a body is seen only if
+  a check falls while it's within 3.375 m past it. It runs after the give-up and the timers.
+  The parent then splits; a child (only while it holds the split's target) goes off; a Sweeper
+  V's rocket goes off.
 * **The heading stays the launch's** (a child's, the split's). The 60-degree test and the
   seek's cone read the node's -z (FUN_0001fdd0 at 0x226fdc), and each physics step
   (FUN_00169e20 -> 0x159eb0) sets the node back from the missile's body, whose turn is set only
@@ -844,11 +870,24 @@ cover) came after it and are compared under **Verified**.
   isn't gathered at all (FUN_00224a90), so it takes nothing and isn't pushed (take22). With
   Damage h_011cb154 false (the Therm Sweeper's) that's half the roll at any distance
   (FUN_0022c4d0), x 0.7 on the shooter's side (the shooter too), x the damage-type factor. So a
-  body struck directly takes a roll, then half another. A body is reached when its standing
-  cylinder, 0.6 m round (`BLAST_BODY_REACH`), is within the Damage radius (4.5 m): a fit, not
-  traced (the game gathers the character's collision bones, each with its own radius): Tex was
-  hurt by his own blast on a wall 5 m from his feet and not at 6 m (takes 12, 13, 15), which
-  play.rs's 0.4 m body missed at 5 m. Loose pickups are thrown. The scenery takes the same
+  body struck directly takes a roll, then half another. **What it reaches** (#72): the game tests
+  no distance. The blast is a physics ball of the Damage radius (FUN_0022c2e0, made as its delay
+  runs out) and FUN_00224a90 walks the bodies the engine lists as overlapping it: a character
+  is gathered when one of its collision-bone bodies is among them, its ray going from the centre
+  to that bone, one entry per character (the analyst, todo/weapons-plan/answers-batch1.md §9).
+  The demo meets the ball with the hit parts' collision surfaces as drawn
+  (`damage::part_distances`, the same surfaces the shots strike), a part counting within the
+  radius and 0.62 m more (`BLAST_PART_REACH`), and the line of sight goes to that part's bone;
+  lying knocked down, the ragdoll's bones (`lying_parts`); a body without parts, its standing
+  cylinder 1.35 m round (`BLAST_BODY_REACH`). The engine's own overlap rule isn't in the game's
+  code, so both margins are fits to three takes: Tex was hurt by the Sweeper V's blast at the gate
+  10.2 m away six times in six for a 9 m radius (#72 take01), and by the Therm's at 5 m but not at
+  6 m for 4.5 m (#73 takes 15, 13). With Tex aiming at the blast, his arms out, the demo puts his
+  nearest part 9.50-9.57, ~4.2 and 5.18-5.20 m from those blasts (his feet axis 10.30, 4.94, 5.94):
+  a margin in [0.57, 0.68) for the parts, [1.30, 1.44) for the cylinder, of which these are the
+  middles. #73's 0.6 m cylinder, fitted to the Therm's takes alone, fell short at the Sweeper V's
+  10 m. The analyst's live test (a frozen enemy facing the blast against side-on, at r + 0.8 and
+  r + 1.2 m) would tell whether the arms decide. Loose pickups are thrown. The scenery takes the same
   share, flat (`ObjectBlast::flat`): the blast's entry for an object other than a character is
   its own centre (FUN_00224a90), so FUN_0022c4d0 sees it at distance 0: half the roll here
   (h_011cb154 false), the whole roll when true, no falloff. (The grenades' scenery keeps its
@@ -1002,6 +1041,18 @@ The takes' places, with
 * The reload (08): `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5 BF_TEST_RESERVE=32 BF_AMMO_LOG=1
   BF_START_WEAPON=1 BF_TEST_TRIGGER=2.5-11.9,15.5-15.65,...`; the open air (20): the same spot,
   `BF_CAMERA_PITCH=0.17`, one tap.
+* The Sweeper V's takes (#72), with `BF_TEST_WEAPON="Sweeper V" BF_NO_SQUAD=1` and taps
+  `BF_TEST_TRIGGER=3.0-3.15,5.7-5.85,...`: take05's cliff `BF_MAP=e40
+  BF_TEST_GOTO=-17.21,152.02,-17.70,151.93 BF_CAMERA_PITCH=-0.10` (the goal 0.5 m ahead: he
+  turns to it and stands; the take's view `-- --test BF_TEST_FREECAM=0.5,-14.48,28.9,152.66,77,-7.5`);
+  take01's gate `BF_MAP=e34 BF_TEST_GOTO=-53.64,31.07,-53.76,31.56`, and 1.5 m back
+  `-53.31,29.62,-53.43,30.11`; take03's enemy at the gate spot, `-- --test BF_TEST_INSTANT_KILL=0
+  BF_TEST_NPC=0.5,h_1c5780f8,enemy,frozen,-55.61,37.79 BF_TEST_NPC_HP=1.0,1,300`; the open air
+  `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5 BF_CAMERA_PITCH=0.17` (to see it,
+  `BF_TEST_FREECAM=0.5,4.5,1.3,23.5,0,14`); the fuse, the same spot with `BF_CAMERA_PITCH=-0.115
+  BF_TEST_NPC=0.5,brutus,enemy,dummy,6.2,-15.5` (33 m out and 1.5 m off the line, where the
+  second check, 36 m out, finds him just passed); an enemy's launches, e40's Shrike Heavy
+  placement `BF_TEST_NPC=0.5,h_17bc6519,enemy,fight,2.15,168.43` with take06's spot.
 
 Verified (15 fps captures and the logs; the takes' damage x1.4 or x0.6, see the difficulty
 step):
@@ -1096,6 +1147,35 @@ step):
   muzzle effect type's light (light_muz_laser): a reddish light, as the LZR-23's take01 shows on
   the ground at Hawk's feet (f196-f200), where main's demo light was orange-white and brighter.
   Not measured.
+* **The Sweeper V** (#72, the recipes above; `BF_MISSILE_LOG`):
+  * take05's cliff (three taps): each rocket strikes it 22.4-22.6 m from the muzzle, 0.367 s
+    after the launch (11 game frames; the take's fire-to-blast on the sound 0.356-0.413 s, mean
+    0.378). From the take's view the glow sits over the reticle from the frame after the launch,
+    the blast is at the cliff's foot on the reticle, and the scorch shows there from ~1 s, a
+    little left of and below the take's. The blast is the Therm's, with its known excess (below).
+  * Self-damage at the gate (take01's spot, three taps): Tex takes 7.4, 5.9 and 6.0 from blasts
+    whose ball meets his nearest part 9.50-9.57 m away (the take: 6.5-7.3 per blast, six of six;
+    the rule 0.21 x the roll, 5.7-7.8); from 1.5 m further back nothing. The Therm at the gate
+    (the part reach, the same runs): 5 m from the panel 19.7, 17.9, 18.0 (takes 10-16: 18.6-20.1),
+    6 m nothing (his nearest part 5.18-5.20 m away); take14's Flint 1 m to his left the same as him
+    (19.7, 17.9, 18.0); take22's enemy behind the panel never reached (behind cover), take23's in
+    front of it 65.5 and 59.6 (the take 65.9, 62.0, x1.4); take06's dummy one share per shot
+    (65.2, 62.7; the take 61.6-64.6).
+  * take03's enemy at 7 m (the e34 Shrike Heavy frozen, 300 HP, four taps): the direct hit at an x1
+    bone, 46.9-49.3, then the share 0.07-0.25 s later, 19.7-25.0: 67-74 a rocket. take03 logged
+    two half-roll drops (19-26 each, 41-47 a rocket): its Shrike was frozen 1.2 m off the floor (y
+    30.24 against Tex's feet at 29.04), so its rockets met the legs (x0.5) where the demo's frozen
+    NPC stands on the floor and is met at the hips. Every drop is inside the rule. Tex, 6.4 m
+    from each blast, takes his own share (5.9-7.5); the take didn't log his health.
+  * The open air: the rocket goes off where it is, 202.0 m out, 3.37 s after the launch (101 game
+    frames: the 101st from the float sum of the 1/30 s steps; the code's 3.33 s and 200 m), a small
+    orange burst with no white flash (LOD 0) and no shake (the camera beyond 63 m).
+  * The fuse: three rockets past a dummy 33 m out and 1.5 m off the line each go off at their fuse's
+    second check, 36.0 m and 0.600 s after the launch, 0.8-1.5 m from him; he takes a share each
+    (19.5-24.5). Not filmed (the spec's shot list).
+  * An enemy's (e40's Shrike Heavy placement, 15 m away, fighting): a rocket every 2.0 s at Tex's
+    hips, each a direct hit (12.5-13.1: the roll x0.62, his type's multiplier, x0.6) and its share
+    (8.5-10.7).
 
 Not matching or not done:
 * The explosion is too big: 1.5x the take's bright area on take04's cliff (two fireballs) and
@@ -1103,7 +1183,11 @@ Not matching or not done:
   the surface (the analyst's Q2: placement, frame, slots and LOD are the same on both), and no
   exp-rocket appearance uses shape 3 (Q4). Left for a ticket of its own; its leads: the angle
   fade of the facing-3 quads near edge-on (exp-rocket-add's, up to 13.6 m), which the demo
-  doesn't do, and the added sprites summed in linear light (#104). take20's open-air flame is
+  doesn't do, and the added sprites summed in linear light (#104). A third (#72, not tried): the
+  demo's view, free camera included, is 45 degrees down (`FOV_Y`), where the game's 4:3 picture is
+  70 degrees across, 55.4 down (FUN_0006a9f0, #126): the same scene is drawn tan(27.7) /
+  tan(22.5) = 1.27x larger across the 640 x 480 units, 1.61x in area, which is about the excess
+  measured (1.5x, 1.6x). take20's open-air flame is
   ~2x the take's. take04's late fire column (the take's at +1.4 s) is missing. The curves'
   easing (the demo reads easing bytes 0, 5 and 6 as linear, `bf/ale.rs`'s ease; no exp-rocket
   curve uses them) stays open.
@@ -1132,6 +1216,15 @@ Not matching or not done:
   appearances elsewhere (half the game's size), facing 3 on non-perp appearances (the Psionic
   Blast's muzzle ball), the Frag's facing 3 quads. Hit lights (an effect type's light on a
   bullet's hit) aren't played.
+* The Sweeper V (#72): no real reload was filmed (the takes' reserve edit; #73's takes 08 / 09
+  stand in: Tex's heavy reload clip); nor its fuse, its end in open air or a side view of a launch
+  (the spec's shot list). The blast's margin past its radius is a fit (`BLAST_PART_REACH`: the
+  engine's overlap rule isn't in the game's code). The shove of a frozen enemy with no damage after
+  a rocket (take08 / 09, 3-9.5 m) isn't matched: the blast never pushes a character (FUN_00224a90
+  pushes loose objects only, and deals what it pushes), so it's something else of the physics
+  (the analyst, answers-batch1 §13). Its 0.3 m ball strikes a body where the demo's ray meets the
+  cylinder: a pass within 0.3 m of the body misses here (the hit part's back-off, `STRUCK_BACK`, is
+  #73's 0.5 m).
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's

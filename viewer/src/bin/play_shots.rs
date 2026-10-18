@@ -562,9 +562,9 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                 // shows what the game's light does there, so the scope keeps the demo's old rule of
                 // no light
                 let kind = game.0.effect_type_defs.get(&d.muzzle_effect).cloned().unwrap_or_default();
-                // (a missile launcher's, the Therm Sweeper's launch dust: with its trail's and its
-                // explosion's rules, so the game's count makes it one card, see ale_fx's
-                // `Compiled::counted`)
+                // (a missile launcher's, the Therm Sweeper's and the Sweeper V's launch dust, the
+                // same h_002779c8: with its trail's and its explosion's rules, so the game's count
+                // makes it one card, see ale_fx's `Compiled::counted`)
                 let missile = super::missile::flies(&w.def);
                 let fxs: Vec<_> = kind.effects.iter().filter_map(|&e| match scoped {
                     Some(_) => ale.load(&mut game.0, &mut images, &mut materials, e),
@@ -640,8 +640,11 @@ impl FireState {
 /// controlled character starts with that weapon in the slot BF_START_WEAPON picks (the first by
 /// default), if the map's data (or the test map's, `-- --test`) defines it. For trying a gun
 /// the character doesn't carry. A list, `<a>;<b>`, fills the slots in order from the first
-/// instead (#35's Tex: `Confed LZR-50;Jax-iC`, the takes' loadout).
-fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, player: Res<Player>) {
+/// instead (#35's Tex: `Confed LZR-50;Jax-iC`, the takes' loadout). On a level whose
+/// spawn-triggers start the squad (e34, e40, the tutorial: #220) the character carries its
+/// spawn's template weapons (`SquadSpawn::dress`, set before this runs), so the slot is set in
+/// those too: without it the hook did nothing there.
+fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, mut player: ResMut<Player>) {
     if std::mem::replace(&mut *done, true) {
         return;
     }
@@ -657,6 +660,9 @@ fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, player: Res<Pl
         let slot = first + k;
         let list = game.0.character_weapons.entry(CHARACTERS[player.character].to_string()).or_default();
         if slot < list.len() { list[slot] = key } else { list.push(key) }
+        if let Some(list) = player.enemy.weapons.as_mut() {
+            if slot < list.len() { list[slot] = key } else { list.push(key) }
+        }
     }
 }
 
