@@ -57,7 +57,7 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | calculator (12) | INC / DEC / MODIFY_COUNTER (by the `<calculator value>`) / SET_COUNTER_FROM_SIG_DATA, then its test h_015914ab (0 ==, 1 <, 2 >, 3 <=, 4 >= its `target`, unsigned): CALCULATOR then TRUE, or FALSE, with the counter as data | 0x1ff5f0 |
 | spawn-trigger (47) | See "Spawn-triggers" | 0x209ac0, 0x209bd0 |
 | plate-detector (27), proximity-detector (14) | See "Detectors" | FUN_001f9680, FUN_001f8db0 |
-| anim-trigger (7) | OPERATE plays its entry's clip (`animation-archetype`) on its first object, forward or backward (`wwit-debugging`, AM_: 3-5 backward) at its `time-scale`; with AC_PLAY or AC_RESUME it sends ANIM_START when it starts forward after playing backward (its first forward play too), ANIM_BACK_START when it starts backward after playing forward (or ANIM_START for the other modes). The demo moves doors and gates with it ([maps.md](maps.md), "Doors and gates"); other animated objects (the tutorial's two looping props) are logged | 0x204d00, FUN_00204bb0 |
+| anim-trigger (7) | OPERATE plays its entry's clip (`animation-archetype`) on its first object, forward or backward (`wwit-debugging`, AM_: 3-5 backward) at its `time-scale`; with AC_PLAY or AC_RESUME it sends ANIM_START when it starts forward after playing backward (its first forward play too), ANIM_BACK_START when it starts backward after playing forward (or ANIM_START for the other modes). The demo moves doors and gates with it, their leaves on sliding, transform or hinge joints ([maps.md](maps.md), "Doors and gates", #261); other animated objects (the tutorial's two looping props) are logged | 0x204d00, FUN_00204bb0 |
 | sound (73) | PLAY_SOUND plays its sound (alike everywhere, or at its place), PLAY_DIALOG queues it on the world's dialog queue, STOP / PAUSE / RESUME; FINISHED when its length has run (#223: see "Sound- and dialog-triggers") | 0x206450, 0x206690 |
 | dialog (4) | Its character says its line; FINISHED once it's said (#223) | 0x206d20, 0x206ee0 |
 | message h_e9b3ae8e (37) | OPERATE: OPERATED, then the HUD's two hint lines set from its own (shown ones blink in, the others hidden) (#224: see "Hints, button gates and panels") | 0x2078e0 |
@@ -691,9 +691,12 @@ the log read and the frames looked at:
   PICKUP_OBJECT's id and data are guesses (0, -1).
 * Usable game objects (`reticule-action` 1 consoles, e34's) don't send USE_OBJECT yet: only
   world buttons have the panel prompt.
-* Animated objects other than doors (the tutorial's looping props h_e5b1f2c8, h_0cbffd71) aren't
-  moved; an anim-trigger's AC_PAUSE / STOP / RESET_TIME and the looping and oscillating modes
-  are read as forward or backward.
+* Animated objects only looped (the tutorial's looping props h_e5b1f2c8, h_0cbffd71, the fans
+  and other props of e01, e16, e23 and m03_a, m08_b's dish) aren't moved: an object on transform
+  joints or hinges is moved, as a door, only when an anim-trigger plays it once (#261,
+  [maps.md](maps.md), "Doors and gates"). An anim-trigger's AC_PAUSE / STOP / RESET_TIME and the
+  looping and oscillating modes are read as forward or backward, and a door's clips run on one
+  clock (the last entry's time-scale: m01_a's gate plays its two leaves at x5.5 and x1).
 * The start points' facing (+z, arena.rs) hasn't been checked against footage; spawn-triggers
   face -z (above).
 * Sound-triggers (#223):

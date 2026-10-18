@@ -178,6 +178,10 @@ impl Arena {
             }
         }
         let mut solid: HashMap<u32, Vec<([Vec3; 3], bool, u8)>> = HashMap::new();
+        // (per archetype: its parts on transform joints and hinges that its clips move; an
+        // object of it is a door when an anim-trigger plays it once: level_scene `animates`)
+        let mut animated: HashMap<u32, HashMap<u32, crate::level_scene::Animated>> = HashMap::new();
+        let played = crate::level_scene::played_once(level);
         // (the spawn-triggers' templates: out of the world until spawned, FUN_000dfe90)
         let templates: HashSet<u32> = level.triggers.iter().filter_map(|t| match t.class {
             crate::bf::triggers::Class::Spawn { template, .. } => Some(template),
@@ -194,9 +198,11 @@ impl Arena {
                 continue;
             }
             let tris = solid.entry(arch).or_insert_with(|| if physics { physics_tris(game, arch) } else { model_tris(game, arch) });
-            // doors in level_scene's order: any object with a sliding leaf part
+            // doors in level_scene's order: any object with a sliding leaf part, or with parts
+            // its clips move that an anim-trigger plays once (`spawn_level`'s test)
             let has_leaf = WeaponModel::load(game, arch).is_ok_and(|m| m.parts.iter().any(|p| p.slide_axis.is_some()));
-            let door = has_leaf.then(|| {
+            let moving = animated.entry(arch).or_insert_with(|| crate::level_scene::animated_parts(game, arch));
+            let door = (has_leaf || crate::level_scene::animates(moving, &played, o.name)).then(|| {
                 a.doors.push(AtomicBool::new(false));
                 a.doors.len() as u32 - 1
             });
@@ -602,32 +608,43 @@ impl Arena {
 }
 
 /// An archetype's collision triangles in its own frame (each part's surface, placed as the
-/// part), flagged if they belong to a sliding door leaf, with their material.
+/// part), flagged if they belong to a part that moves as a door leaf (`leaf_part`), with their
+/// material.
 pub fn physics_tris(game: &Game, arch: u32) -> Vec<([Vec3; 3], bool, u8)> {
     let Ok(m) = WeaponModel::load(game, arch) else { return vec![] };
+    let moving = crate::level_scene::animated_parts(game, arch);
     let mut out = vec![];
     for p in &m.parts {
         let Some(s) = p.physics else { continue };
         let place = Mat4::from_rotation_translation(p.rotation, p.offset);
         for (t, mat) in game.collision(s) {
-            out.push((t.map(|v| place.transform_point3(v)), p.slide_axis.is_some(), mat));
+            out.push((t.map(|v| place.transform_point3(v)), leaf_part(p, &moving), mat));
         }
     }
     out
 }
 
 /// An archetype's drawn triangles in its own frame (cut-out and undrawn materials left out),
-/// for levels without collision data, flagged if they belong to a sliding door leaf.
+/// for levels without collision data, flagged if they belong to a part that moves as a door leaf
+/// (`leaf_part`).
 fn model_tris(game: &Game, arch: u32) -> Vec<([Vec3; 3], bool, u8)> {
     let Ok(m) = WeaponModel::load(game, arch) else { return vec![] };
+    let moving = crate::level_scene::animated_parts(game, arch);
     let mut out = vec![];
     for p in &m.parts {
         let place = Mat4::from_rotation_translation(p.rotation, p.offset);
         for g in p.geosets.iter().filter(|g| !CUTOUT_TYPES.contains(&game.material_type(g.material)) && visible(game, g)) {
             for t in g.indices.chunks_exact(3) {
-                out.push(([0, 1, 2].map(|k| place.transform_point3(Vec3::from(g.positions[t[k] as usize]))), p.slide_axis.is_some(), 0));
+                out.push(([0, 1, 2].map(|k| place.transform_point3(Vec3::from(g.positions[t[k] as usize]))), leaf_part(p, &moving), 0));
             }
         }
     }
     out
+}
+
+/// Whether a part moves as a door's leaf: a sliding one, or one its archetype's clips move on a
+/// transform joint or a hinge (`moving`: level_scene `animated_parts`). Its triangles stop
+/// blocking while its door is open (an object that isn't a door has no door to open).
+fn leaf_part(p: &crate::bf::weapon::WeaponPart, moving: &HashMap<u32, crate::level_scene::Animated>) -> bool {
+    p.slide_axis.is_some() || moving.contains_key(&p.name)
 }

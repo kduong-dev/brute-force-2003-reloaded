@@ -791,8 +791,9 @@ pub struct UsePanel {
 
 /// Doors and gates move only when the level's anim-triggers play their clips (play_triggers.rs,
 /// #220: on their detectors' signals, a panel's, a timer's ... or at the level's start): their
-/// leaves slide along their joint's axis forward (opening) or back (closing), and an open door
-/// stops blocking. Their sounds are the sound-triggers the anim-triggers send ANIM_START /
+/// leaves move by their clips forward (opening) or back (closing), along a sliding joint's axis
+/// or as a transform or hinge joint's channel sets them (#261, level_scene.rs `Leaf::pose`), and
+/// an open door stops blocking. Their sounds are the sound-triggers the anim-triggers send ANIM_START /
 /// ANIM_BACK_START to (play_sound_triggers.rs, #223). A wall panel is used with the player's feet
 /// within USE_REACH m of its button, looking within USE_ANGLE of it (the panels'
 /// reticule-action 1: the reticle on them), holding use for HOLD_TIME s (the game's prompt says
@@ -853,13 +854,22 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
         if *t != was {
             for leaf in &door.leaves {
                 if let Ok(mut tr) = transforms.get_mut(leaf.entity) {
-                    tr.translation = leaf.closed.translation + leaf.axis * leaf.slide(*t, door.duration);
+                    *tr = leaf.pose(*t, door.duration);
                 }
             }
-            // BF_DOOR_LOG: a door's leaves, each second of its clip
+            // BF_DOOR_LOG: a door's leaves, each second of its clip (how far each sliding one has
+            // slid; how far each other one has moved and turned)
             if (was == 0.0 || *t == door.duration || *t == 0.0 || t.floor() != was.floor()) && std::env::var("BF_DOOR_LOG").is_ok() {
-                println!("t {:.2}: door h_{:08x} t {:.2}/{:.2} (x{rate}) leaves slid {:?} m", player.sim_time, door.name, *t, door.duration,
-                         door.leaves.iter().map(|l| (l.slide(*t, door.duration) * 100.0).round() / 100.0).collect::<Vec<_>>());
+                let round = |x: f32| (x * 100.0).round() / 100.0;
+                let animated = door.leaves.iter().any(|l| matches!(l.motion, bf_viewer::level_scene::LeafMotion::Animated(_)));
+                if animated {
+                    let moved: Vec<(f32, f32)> = door.leaves.iter().map(|l| l.moved(*t, door.duration)).collect();
+                    println!("t {:.2}: door h_{:08x} t {:.2}/{:.2} (x{rate}) leaves moved {:?} m, turned {:?} deg", player.sim_time, door.name, *t, door.duration,
+                             moved.iter().map(|m| round(m.0)).collect::<Vec<_>>(), moved.iter().map(|m| (m.1 * 10.0).round() / 10.0).collect::<Vec<_>>());
+                } else {
+                    println!("t {:.2}: door h_{:08x} t {:.2}/{:.2} (x{rate}) leaves slid {:?} m", player.sim_time, door.name, *t, door.duration,
+                             door.leaves.iter().map(|l| round(l.slide(*t, door.duration))).collect::<Vec<_>>());
+                }
             }
         }
         if let Some(a) = world::arena() {
@@ -2946,8 +2956,12 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         // the map: its terrain, objects and sky, fog, background and light
         let doors = bf_viewer::level_scene::spawn_level(&mut commands, &mut game.0, level, &mut meshes, &mut level_materials, &mut liquids, &mut buffers, &mut images);
         for d in doors.iter().filter(|_| std::env::var("BF_LEVEL_DUMP").is_ok()) {
+            // (a leaf on a transform joint or a hinge: how far it ends from its closed place, m)
             println!("door at {:.1}: {:.2} s, leaves slide {:?} m", d.centre, d.duration,
-                     d.leaves.iter().map(|l| l.slide(d.duration, d.duration)).collect::<Vec<_>>());
+                     d.leaves.iter().map(|l| match l.motion {
+                         bf_viewer::level_scene::LeafMotion::Slide { .. } => l.slide(d.duration, d.duration),
+                         bf_viewer::level_scene::LeafMotion::Animated(_) => l.moved(d.duration, d.duration).0,
+                     }).collect::<Vec<_>>());
         }
         // the doors, closed until their anim-triggers play them (play_triggers.rs)
         let list: Vec<DoorState> = doors.into_iter().map(|door| DoorState { door, t: 0.0, opening: false, rate: 1.0 }).collect();

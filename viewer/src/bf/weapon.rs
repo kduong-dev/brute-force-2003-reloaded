@@ -78,6 +78,10 @@ const H_LOCK_BOX: u32 = 0xE1E4_1C2D;
 const H_PARTS: u32 = 0xE487_418A;
 const H_MESHES: u32 = 0xEA78_3362;
 const H_JOINT: u32 = 0x151A_CE78;
+/// A joint's limits, `<h_fab3703e min max>` (parser FUN_0023e3a0: the joint record's +0x3c
+/// pair). Sliding and hinge joints carry one (sdm_e34's doors -3.4e38..3.4e38, e10's hinged
+/// door -2 pi..2 pi).
+const H_JOINT_LIMITS: u32 = 0xFAB3_703E;
 
 /// Weapon hardpoints (names are hashes).
 pub const TRIGGER_GRIP: u32 = 0x1F34_55A8;
@@ -456,10 +460,42 @@ pub struct WeaponPart {
     /// sliding parts (door leaves: joint type h_fd8f670c): the direction they open, in the
     /// compound's frame
     pub slide_axis: Option<Vec3>,
+    /// its joint to the part it hangs from, as the archetype gives it (None for the root part and
+    /// a model of one part)
+    pub joint: Option<PartJoint>,
+}
+
+/// A part's joint: `<h_151ace78 parent-part child-part><h_002cbac5 Type>` with its
+/// `parent-point`, `child-point`, `ORIENTATION` (w x y z), `axis` and limits (the joint record's
+/// +0, +4, +0x10, +0x1c, +0x2c and its +0x3c pair: parsers FUN_0023e3e0 and FUN_0023e3a0).
+/// FUN_00234f90 places the part from these by the joint's type and the joint's value, which a
+/// clip's channel sets (FUN_00234dc0); level_scene.rs `Leaf` moves door leaves so.
+#[derive(Clone, Copy, Debug)]
+pub struct PartJoint {
+    /// the joint type: SLIDING_JOINT, TRANSFORM_JOINT, HINGE_JOINT, the fixed h_0fb850ce ...
+    pub kind: u32,
+    /// the part it hangs from (h("root") for the compound's root part)
+    pub parent: u32,
+    pub parent_point: Vec3,
+    pub child_point: Vec3,
+    pub orientation: Quat,
+    /// as written (a sliding or hinge joint's direction, in the parent part's frame)
+    pub axis: Vec3,
+    /// the range FUN_00234dc0 clamps a sliding or hinge joint's value to; the whole float range
+    /// for a joint without `<h_fab3703e>`
+    pub limits: (f32, f32),
 }
 
 /// Joint type of a sliding (prismatic) joint: door and gate leaves.
-const SLIDING_JOINT: u32 = 0xFD8F_670C;
+pub const SLIDING_JOINT: u32 = 0xFD8F_670C;
+/// Joint type of a transform joint: a clip's transform channel (DT_XFORM) sets the part's
+/// translation and rotation (FUN_00234f90's 0xf35d5b3c; FUN_002340f0 lets only that data type
+/// play on it). The Shrike doors' segments, m05's and m08's doors, m01's hatches.
+pub const TRANSFORM_JOINT: u32 = 0xF35D_5B3C;
+/// Joint type of a hinge: a clip's angle channel (character.rs `DT_ANGLE`, radians) turns the
+/// part about the joint's axis at its parent-point (FUN_00234f90's 0xe94eb66a). e10's door
+/// h_1e50b5e0, the fans of e05 and e40.
+pub const HINGE_JOINT: u32 = 0xE94E_B66A;
 
 pub struct WeaponModel {
     pub parts: Vec<WeaponPart>,
@@ -471,11 +507,10 @@ impl WeaponModel {
         let (arch, _) = game.archetype(archetype).ok_or_else(|| format!("weapon archetype h_{archetype:08x} not found"))?;
         let mut hardpoints = parse_hardpoints(arch);
         let mut parts = vec![];
-        let part_list: Vec<(u32, u32)> = arch.child(H_PARTS).map(|p| p.children_named(h("PART"))
-            .map(|e| (e.attr(h("part-name")).map(part_hash).unwrap_or(0), e.attr(h("archetype-name")).and_then(|v| v.as_hash()).unwrap_or(0)))
-            .collect()).unwrap_or_default();
+        let part_list = part_list(arch);
         if part_list.is_empty() {
-            parts.push(WeaponPart { name: 0, physics: game.archetype_physics(archetype), geosets: meshes(game, arch)?, offset: Vec3::ZERO, rotation: Quat::IDENTITY, spin_axis: None, slide_axis: None });
+            parts.push(WeaponPart { name: 0, physics: game.archetype_physics(archetype), geosets: meshes(game, arch)?, offset: Vec3::ZERO, rotation: Quat::IDENTITY, spin_axis: None,
+                                    slide_axis: None, joint: None });
         } else {
             for (part, part_arch) in part_list {
                 let Some((pa, _)) = game.archetype(part_arch) else { continue };
@@ -483,12 +518,8 @@ impl WeaponModel {
                     hardpoints.entry(k).or_insert(v);
                 }
                 // joint to the parent (compounds here are one level deep: root + children)
-                let joint = arch.walk().into_iter().filter(|e| e.name == H_JOINT)
-                    .find(|j| j.attr(h("child-part")).map(part_hash) == Some(part));
-                let (mut offset, mut rotation, mut spin_axis, mut slide_axis) = (Vec3::ZERO, Quat::IDENTITY, None, None);
-                if let Some(d) = joint.and_then(|j| j.children.first()) {
-                    let v = |n: &str| d.child(h(n)).and_then(|e| e.text.as_ref()).map(|t| t.floats())
-                        .filter(|f| f.len() >= 3).map(|f| Vec3::new(f[0], f[1], f[2])).unwrap_or(Vec3::ZERO);
+                let joint = part_joint(arch, part);
+                let (offset, rotation, spin_axis, slide_axis) = match &joint {
                     // the part sits at parent-point + child-point, both in the parent's frame (a
                     // building set lays its pieces out by the child-point: a hangar's roof bays
                     // 5 m apart, its bunks in pairs), and the joint's ORIENTATION (w x y z; e.g. a
@@ -496,24 +527,59 @@ impl WeaponModel {
                     // as parent-point - ORIENTATION * child-point, Bulgar's compound h_0baf091a
                     // came out jumbled: roof bays outside the building, bunks through the walls
                     // (issue #12). Each of its 19 pieces lies inside the building only this way.
-                    if let Some(q) = d.child(h("ORIENTATION")).and_then(|e| e.text.as_ref()).map(|t| t.floats()).filter(|q| q.len() >= 4) {
-                        rotation = Quat::from_xyzw(q[1], q[2], q[3], q[0]).normalize();
-                    }
-                    offset = v("parent-point") + v("child-point");
-                    let axis = v("axis");
-                    if axis.length_squared() > 0.5 {
-                        if d.attr(h("Type")).and_then(|t| t.as_hash()) == Some(SLIDING_JOINT) {
-                            slide_axis = Some(rotation * axis.normalize());
+                    Some(j) => {
+                        let (spin, slide) = if j.axis.length_squared() > 0.5 {
+                            if j.kind == SLIDING_JOINT { (None, Some(j.orientation * j.axis.normalize())) } else { (Some(j.axis.normalize()), None) }
                         } else {
-                            spin_axis = Some(axis.normalize());
-                        }
+                            (None, None)
+                        };
+                        (j.parent_point + j.child_point, j.orientation, spin, slide)
                     }
-                }
-                parts.push(WeaponPart { name: part, physics: game.archetype_physics(part_arch), geosets: meshes(game, pa)?, offset, rotation, spin_axis, slide_axis });
+                    None => (Vec3::ZERO, Quat::IDENTITY, None, None),
+                };
+                parts.push(WeaponPart { name: part, physics: game.archetype_physics(part_arch), geosets: meshes(game, pa)?, offset, rotation, spin_axis, slide_axis, joint });
             }
         }
         Ok(WeaponModel { parts, hardpoints })
     }
+
+    /// A compound archetype's parts as `load` lists them, each with its joint, without reading
+    /// their meshes: what moves when its clips play (level_scene.rs `animated_parts`). Empty for
+    /// a model of one part.
+    pub fn joints(game: &Game, archetype: u32) -> Vec<(u32, Option<PartJoint>)> {
+        let Some((arch, _)) = game.archetype(archetype) else { return vec![] };
+        part_list(arch).into_iter().filter(|&(_, pa)| game.archetype(pa).is_some()).map(|(part, _)| (part, part_joint(arch, part))).collect()
+    }
+}
+
+/// A compound archetype's parts (`<h_e487418a><PART part-name archetype-name>`): (part name,
+/// its archetype). Empty for a model of one part.
+fn part_list(arch: &Element) -> Vec<(u32, u32)> {
+    arch.child(H_PARTS).map(|p| p.children_named(h("PART"))
+        .map(|e| (e.attr(h("part-name")).map(part_hash).unwrap_or(0), e.attr(h("archetype-name")).and_then(|v| v.as_hash()).unwrap_or(0)))
+        .collect()).unwrap_or_default()
+}
+
+/// Part `part`'s joint in compound `arch` (`PartJoint`; the joint whose child-part it is), None
+/// without one (the root part) or with an empty one.
+fn part_joint(arch: &Element, part: u32) -> Option<PartJoint> {
+    let joint = arch.walk().into_iter().filter(|e| e.name == H_JOINT).find(|j| j.attr(h("child-part")).map(part_hash) == Some(part))?;
+    let d = joint.children.first()?;
+    let v = |n: &str| d.child(h(n)).and_then(|e| e.text.as_ref()).map(|t| t.floats())
+        .filter(|f| f.len() >= 3).map(|f| Vec3::new(f[0], f[1], f[2])).unwrap_or(Vec3::ZERO);
+    let orientation = d.child(h("ORIENTATION")).and_then(|e| e.text.as_ref()).map(|t| t.floats()).filter(|q| q.len() >= 4)
+        .map_or(Quat::IDENTITY, |q| Quat::from_xyzw(q[1], q[2], q[3], q[0]).normalize());
+    let num = |l: &Element, k: &str| l.attr(h(k)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+    let limits = d.child(H_JOINT_LIMITS).map_or((f32::MIN, f32::MAX), |l| (num(l, "min").unwrap_or(f32::MIN), num(l, "max").unwrap_or(f32::MAX)));
+    Some(PartJoint {
+        kind: d.attr(h("Type")).and_then(|t| t.as_hash()).unwrap_or(0),
+        parent: joint.attr(h("parent-part")).map(part_hash).unwrap_or(0),
+        parent_point: v("parent-point"),
+        child_point: v("child-point"),
+        orientation,
+        axis: v("axis"),
+        limits,
+    })
 }
 
 /// part-name values are hashes, except the literal "root"
