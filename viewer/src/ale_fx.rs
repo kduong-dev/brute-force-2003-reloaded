@@ -121,12 +121,20 @@ const LOD_FAR: f32 = 60.0;
 const GAME_FRAME: f32 = 1.0 / 30.0;
 const LIFE: u32 = 0x0A63_5880;
 const SPEED: u32 = 0x0AB1_80C5;
+/// CubeEmitter_Width / Height / Depth (the case-kept hashes of Freelancer's names; both cube
+/// classes' updates read them, 0x64d60 and 0x2b16f0).
 const CUBE: [u32; 3] = [0xFD22_A11C, 0xEFB0_F8CF, 0x14B7_4EB2];
+/// CubeEmitter_MinSpread / MaxSpread, degrees from the emitter's +y (0x64d60, 0x2b16f0).
 const CUBE_SPREAD: [u32; 2] = [0xE282_006B, 0x08C7_217F];
+/// ConeEmitter_MinRadius / MaxRadius (the cone node's +0x4c / +0x50 by its getter 0x2a9ea0).
 const CONE_RADIUS: [u32; 2] = [0x1C73_D16B, 0xF636_F07F];
+/// ConeEmitter_MinSpread / MaxSpread, degrees from the emitter's +y (its +0x54 / +0x58).
 const CONE_SPREAD: [u32; 2] = [0x100E_7F55, 0xFA4B_5E41];
+/// SphereEmitter_MinRadius / MaxRadius (the sphere node's +0x4c / +0x50 by its getter 0x2a8860).
 const SPHERE_RADIUS: [u32; 2] = [0xF231_FF60, 0x1874_DE74];
+/// The cone emitter class (update 0x2aa0d0, spawn 0x2aa190).
 const CLASS_CONE: u32 = 0xE1F4_0411;
+/// The sphere emitter class (update 0x2a8a20, spawn 0x2a8a90).
 const CLASS_SPHERE: u32 = 0xF940_F7F3;
 /// Freelancer's FxCubeEmitter (the game's hash of the name: xfly_cube.emt, xbfly.emt; 223 of the
 /// library's emitters; its spawn 0x2b17c0). The demo draws it and the game's own cube class
@@ -289,7 +297,8 @@ const PERP_OUT_CONES: [&str; 1] = ["sonic_grenade.emt"];
 /// edge-on, to nothing at 5 (cosines 0.342 and 0.087, set at 0x2a1c9d), and doesn't turn it
 /// (that fade isn't drawn: the demo's materials are shared per life step). The demo's perp rules
 /// (flat across the emitter's y, PERP_RADIAL_SPEED) stand in for these elsewhere; facing 3 is
-/// drawn as the shader does only for the effects compiled with `Compiled::facing` (see `Pair::axial`).
+/// drawn as the shader does only for the effects compiled with `Compiled::facing`, on their
+/// AngleFadeOut appearances (all of them under `Compiled::placed`, see `Pair::axial`).
 const FACING: u32 = 0xE354_2300;
 /// GeneralApp_ShapeType (the appearance's +0x48): which of the game's particle shapes the quad
 /// is. The table at 0x402a4c lists them (FUN_002b1bb0 registers each with FUN_002b1bf0, into
@@ -397,8 +406,8 @@ pub struct Pair {
     shape: u32,
     /// a facing-3 appearance drawn as the game's shader does (see FACING): stretched along the
     /// particle's motion and turned about it to face the camera. Its perp (AngleFadeOut)
-    /// appearances in the effects compiled with `Compiled::facing` only; every other quad keeps
-    /// the demo's rules
+    /// appearances in the effects compiled with `Compiled::facing`, and all its facing-3 ones in
+    /// those compiled with `Compiled::placed`; every other quad keeps the demo's rules
     axial: bool,
     /// particles stay in the emitter's frame (move with it)
     attached: bool,
@@ -484,11 +493,13 @@ pub struct Compiled {
     /// count's burst at the start) and no LOD, until checked against its own captures.
     pub counted: bool,
     /// Compiled for the level's placed effect objects (`load_placed`, `spawn_placed_effects`):
-    /// the game's particle rules above, and two more read from its code for these: each
-    /// particle starts in its emitter's box and none is attached (CUBE_REACH), and the
-    /// turbulence fields run (CLASS_TURBULENCE). Checked against the tutorial's flies (take03)
-    /// and lava embers (take08); the other effects, the triggers' among them, keep their own
-    /// checked rules until they're checked with these (#164, #101)
+    /// the game's particle rules above, and more read from its code for these: each particle
+    /// starts where the game's spawn for its emitter's shape puts it (the box, CUBE_REACH; the
+    /// sphere's 0x2a8a90 and the cone's 0x2aa190, `emit`) and none is attached, the turbulence
+    /// fields run (CLASS_TURBULENCE), and every facing-3 appearance is drawn so (`Pair::axial`).
+    /// Checked against the tutorial's flies (take03) and lava embers (take08); the other
+    /// effects, the triggers' among them, keep their own checked rules until they're checked
+    /// with these (#164, #101)
     pub placed: bool,
 }
 
@@ -643,8 +654,11 @@ struct BeamStrip {
 struct Seq(u64);
 
 /// Particles alive now: the level's placed effects' and every other effect's, each under its own
-/// cap (MAX_PLACED_PARTICLES, MAX_PARTICLES).
-#[derive(Resource, Default)]
+/// cap (MAX_PLACED_PARTICLES, MAX_PARTICLES). Counted afresh each frame from the particles that
+/// are there (`emit`): a map's end despawns them all at once, which a running tally kept by
+/// `animate` didn't see, so the next map started with the last one's count (m01_a played a
+/// second time drew half its torches, a third time none).
+#[derive(Default)]
 struct Count {
     others: usize,
     placed: usize,
@@ -656,15 +670,14 @@ impl Count {
         if placed { self.placed < MAX_PLACED_PARTICLES } else { self.others < MAX_PARTICLES }
     }
 
-    /// One more alive (`up`) or one fewer, of an effect compiled so.
-    fn add(&mut self, placed: bool, up: bool) {
-        let n = if placed { &mut self.placed } else { &mut self.others };
-        *n = if up { *n + 1 } else { n.saturating_sub(1) };
+    /// One more alive, of an effect compiled so.
+    fn add(&mut self, placed: bool) {
+        if placed { self.placed += 1 } else { self.others += 1 }
     }
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Count>().init_resource::<Seq>()
+    app.init_resource::<Seq>()
         .add_systems(PostUpdate, (follow_camera, start_late, emit, animate, beams).chain().before(TransformSystem::TransformPropagate))
         .add_systems(Update, end_warm_up);
 }
@@ -672,9 +685,10 @@ pub fn plugin(app: &mut App) {
 /// A camera-attached effect object (its type's h_1e40fd68, `EffectType::camera`): kept this many
 /// metres in front of the camera, placed there each frame before its particles are made, which
 /// stay where they're born (FUN_0021a700 sets the object's position from the camera's and the
-/// object's +0xac through its position setter; its turn stays its own). The 6 placed ones (e01's
-/// dust storm, m03_a/b/c's, m14_a/b's meteor rain) are at 0 m, at the camera, so the sign of the
-/// way (in front, as code-map.md reads it) isn't seen.
+/// object's +0xac through its position setter; its turn stays its own). The levels place eight,
+/// all at 0 m, at the camera, so the sign of the way (in front, as code-map.md reads it) isn't
+/// seen: six start with their level (e01's dust storm, m03_a/b/c's, m14_a/b's meteor rain) and
+/// m09_b/c's two are spawn-trigger templates, which the demo doesn't spawn yet.
 #[derive(Component)]
 pub struct FollowCamera(pub f32);
 
@@ -921,8 +935,10 @@ impl AleAssets {
             let spark = recorded && app.flag(PERP) && emitter.class == CLASS_CONE
                 && emitter.curve(SPEED, 0.0, 0.0).unwrap_or(0.0) >= PERP_RADIAL_SPEED && app.floats(ASPECT, 0.0, 0.0).unwrap_or(1.0) > SPARK_ASPECT;
             // the game's facing 3, where the effect is compiled with it (see FACING; stored as a
-            // u32, parameter type 4)
-            let axial = facing && app.flag(PERP) && matches!(app.params.get(&FACING), Some(crate::bf::ale::Value::U32(3)));
+            // u32, parameter type 4): on its AngleFadeOut appearances, and under the placed rules
+            // on all of them, as the draw reads it (0x2a1de6 picks the shader's selector by the
+            // facing alone): e01's barrel and trash fires, m01_a's braziers
+            let axial = facing && (placed || app.flag(PERP)) && matches!(app.params.get(&FACING), Some(crate::bf::ale::Value::U32(3)));
             let (perp, streak) = if axial { (false, false) } else if spark { (false, true) } else { (app.flag(PERP), streak) };
             let vertical = recorded && VERTICAL_STREAKS.contains(&app.name.as_str());
             let shape = match app.params.get(&SHAPE) {
@@ -1131,13 +1147,18 @@ fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
 
 #[allow(clippy::too_many_arguments)]
 fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, assets: Option<Res<AleAssets>>,
-        mut count: ResMut<Count>, mut seq: ResMut<Seq>, mut meshes: ResMut<Assets<Mesh>>,
+        mut seq: ResMut<Seq>, mut meshes: ResMut<Assets<Mesh>>,
         mut effects: Query<(Entity, &mut AleEffect, &mut GlobalTransform, &Transform, Option<&ChildOf>)>,
         parents: Query<(Ref<GlobalTransform>, &Transform, Has<ChildOf>), Without<AleEffect>>,
-        camera: Query<&GlobalTransform, (With<Camera3d>, Without<AleEffect>)>) {
+        camera: Query<&GlobalTransform, (With<Camera3d>, Without<AleEffect>)>, alive: Query<&AleParticle>) {
     let Some(assets) = assets else { return };
     let dt = clock(&time, fixed);
     let eye = camera.iter().next().map(|c| c.translation());
+    // the particles there now, by budget (see Count)
+    let mut count = Count::default();
+    for p in &alive {
+        count.add(p.fx.placed);
+    }
     for (fx_entity, mut fx, mut at, local, parent) in &mut effects {
         let owner = fx_entity;
         // a new effect's world placement, set now (transforms propagate after this runs): one
@@ -1274,6 +1295,28 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     let speed = em.curve(SPEED, sp, t).unwrap_or(0.0);
                     let c = |p: u32| em.curve(p, sp, t).unwrap_or(0.0);
                     let (local, dir) = match em.class {
+                        CLASS_SPHERE if compiled.placed => {
+                            // the game's sphere spawn (0x2a8a90): a direction of three draws in
+                            // [-1, 1) normalised (0x2a8ce0), out MinRadius + r x (MaxRadius -
+                            // MinRadius) along it, r in [-1, 1) (the node's +0x4c and +0x50,
+                            // read each update into +0xec and +0xf0 at 0x2a8a20)
+                            let d = (Vec3::new(fx.random(), fx.random(), fx.random()) * 2.0 - Vec3::ONE).normalize_or(Vec3::Y);
+                            let (r0, r1) = (c(SPHERE_RADIUS[0]), c(SPHERE_RADIUS[1]));
+                            (d * (r0 + (r1 - r0) * (fx.random() * 2.0 - 1.0)), d)
+                        }
+                        CLASS_CONE if compiled.placed => {
+                            // the game's cone spawn (0x2aa190): the polar angle from +y MinSpread
+                            // + r x (MaxSpread - MinSpread) and out MinRadius + r x (MaxRadius -
+                            // MinRadius) along that way, each r in [-1, 1) (the node's +0x54 /
+                            // +0x58 and +0x4c / +0x50, read each update at 0x2aa0d0)
+                            let (lo, hi) = (c(CONE_SPREAD[0]), c(CONE_SPREAD[1]));
+                            let d = spread(&mut fx, lo - (hi - lo), hi);
+                            let (r0, r1) = (c(CONE_RADIUS[0]), c(CONE_RADIUS[1]));
+                            (d * (r0 + (r1 - r0) * (fx.random() * 2.0 - 1.0)), d)
+                        }
+                        // (elsewhere the demo's own reading, which only attached particles start
+                        // at: a sphere's radius [MinRadius, MaxRadius), a cone's out flat from its
+                        // axis; #164)
                         CLASS_SPHERE => {
                             let d = spread(&mut fx, 0.0, 180.0);
                             let (r0, r1) = (c(SPHERE_RADIUS[0]), c(SPHERE_RADIUS[1]));
@@ -1321,15 +1364,16 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     if fx.hide_flat && pair.perp && (lie * Vec3::Z).dot(rot * Vec3::Y).abs() < 0.5 {
                         continue;
                     }
-                    count.add(compiled.placed, true);
+                    count.add(compiled.placed);
                     // attached: kept in the effect's frame (offset and turn without the
                     // effect's own)
                     let (owner, local, vel, lie) = if pair.attached {
                         let inv = place.rotation.inverse();
                         (Some(owner), inv * (origin - place.translation) + inv * frame * local, inv * frame * dir * speed, inv * lie)
                     } else {
-                        // (it starts at the emitter, or under the placed rules in the
-                        // emitter's shape: CUBE_REACH)
+                        // (it starts at the emitter, or under the placed rules where the
+                        // game's spawn for the emitter's shape puts it: the box (CUBE_REACH),
+                        // the sphere 0x2a8a90 or the cone 0x2aa190 above)
                         (None, if compiled.placed { local } else { Vec3::ZERO }, frame * dir * speed, lie)
                     };
                     seq.0 += 1;
@@ -1383,7 +1427,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
 }
 
 #[allow(clippy::type_complexity)]
-fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, mut count: ResMut<Count>,
+fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>,
            camera: Query<&GlobalTransform, With<Camera3d>>, owners: Query<&GlobalTransform, (With<AleEffect>, Without<AleParticle>)>,
            mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>, Option<&mut PointLight>)>) {
     let dt = clock(&time, fixed);
@@ -1393,7 +1437,6 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         p.age += dt;
         if p.age >= p.life {
             commands.entity(e).despawn();
-            count.add(p.fx.placed, false);
             continue;
         }
         let k = p.age / p.life;
@@ -1628,14 +1671,17 @@ pub fn spawn_idle_effects(commands: &mut Commands, game: &mut Game, level: &crat
 /// whose curves vary with the user parameter too (`Compiled::varies_with_user`), which it holds
 /// out otherwise. Five of the effects levels place do: s-lavalight and s-lavapool (34
 /// placements each, the lava pools' glows), slava-cavern-splash (50), duststorm_med (19) and
-/// env_fl_mdsplash (2). An object starts with its type's user parameter, 1 on nearly every type
-/// (FUN_0021c380 at 0x21a1fc, handed to each ALE effect as it's made: FUN_0008f5d0 calls its
-/// +0x18 with it), which picks their large variants: s-lavalight's 14 a second 4.9 m sheets,
-/// up to 21 m tall, over a 23 x 22 m box. Run so, they hang an orange curtain over the
-/// tutorial's lava yard (its pool at (41.5, -32.3)) that take08 doesn't show at 100-134 s,
-/// where the far hills stay clear behind it; at 0 they're a small flicker. How the effect
-/// hands the parameter to its nodes' curves (their +0x88, set by the node's +0x60, 0x66a00)
-/// isn't traced, so which variant the game draws isn't settled: they're left out.
+/// env_fl_mdsplash (2). An object starts with its type's user parameter, 1 on nearly every type,
+/// and the game draws them with it: FUN_0021c380 sets the object's +0xbc before FUN_00219fc0
+/// makes its slots (0x21a1fc), FUN_0008f5d0 hands it to each ALE effect it makes (the effect's
+/// +0x18, 0x2abaa0), which sets each of its nodes' (their +0x60, 0x66a00: the +0x88 their curves
+/// are read at). So the tutorial's s-lavalight runs its large variant: 14 a second 4.9 m sheets
+/// of sidedistortion2.tga up to 21 m tall over a 23 x 22 m box, added at an alpha of 0.108.
+/// The demo draws them far too strongly: an orange curtain over the whole view of the lava yard
+/// (its pool at (41.5, -32.3)) that take08 doesn't show at 100-134 s, where the far hills stay
+/// clear behind it. A faint added sheet taken as linear light by the demo (`Source`; #165, the
+/// effects' brightness) is the likely cause: they're left out until that's drawn as the
+/// console does.
 pub const PLACED_VARIANTS: &str = "BF_PLACED_FX_VARIANTS";
 
 /// A placed effect object started (`spawn_placed_effects`): its name (what a destroyer-trigger
@@ -1671,7 +1717,9 @@ pub struct PlacedEffect {
 ///
 /// Not run: their sounds and damage areas (exp-oxy's), a finite life's end (no placement's life
 /// is under 90 days) and the restart at its end of a type flagged h_0d5e990b (its +0x24: the
-/// tick calls FUN_0021c500 instead of taking it away, 0x21b9bb). An object attached to another
+/// tick calls FUN_0021c500 instead of taking it away, 0x21b9bb), and each alchemy entry's own
+/// max-life (the slot's +8, which FUN_0021a850 reads: FLT_MAX on nearly every entry, 10 s on
+/// h_f90c728a's in m01_a/b and m05_b/y; they run on). An object attached to another
 /// (`PlacedEffect::parent`) is left to the caller to take away with it (bf_play's
 /// play_placed_fx.rs). BF_LEVEL_DUMP lists them.
 pub fn spawn_placed_effects(commands: &mut Commands, game: &mut Game, level: &crate::bf::level::Level, assets: &mut AleAssets,
@@ -1699,7 +1747,7 @@ pub fn spawn_placed_effects(commands: &mut Commands, game: &mut Game, level: &cr
                 continue;
             }
             let Some(fx) = assets.load_placed(game, images, materials, effect) else { continue };
-            // (held out: which variant the game draws isn't settled, see PLACED_VARIANTS)
+            // (held out: the demo draws their variant far too strongly, see PLACED_VARIANTS)
             if fx.varies_with_user() && !variants {
                 if dump {
                     println!("placed effect {} (type h_{:08x}, object h_{:08x}) held out: its curves vary with the user parameter", fx.name, o.kind, o.name);
