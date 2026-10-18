@@ -29,12 +29,14 @@ pub struct ModelAssets<'a> {
 }
 
 /// The anisotropy the world's textures are sampled with (wgpu's clamp, 1 = none). The game
-/// asks for none: the texture-stage states' MAGFILTER and MINFILTER (the render-state cache's
-/// slots +0x77c / +0x794 for stage 0, 0x2b8 on for each next stage, set through FUN_0006a610)
-/// are written POINT (1), LINEAR (2) or, for FUN_000a54f0's multiply pass (kind 3, 0xa5df5),
-/// GAUSSIANCUBIC (5), never D3DTEXF_ANISOTROPIC (3), the only filter that reads MAXANISOTROPY;
-/// and no stage's MAXANISOTROPY slot (+0x7f4, +0xaac, +0xd64, +0x101c) is ever set.
-/// `BF_ANISOTROPY=<1-16>` overrides it (to compare).
+/// asks for none. Every MAGFILTER / MINFILTER write to the render-state cache (0x4698e0: stage
+/// 0's slots +0x77c / +0x794, each next stage 0x2b8 on, written through FUN_0006a610) is POINT
+/// (1), LINEAR (2) or, in FUN_000a54f0's multiply pass (kind 3, 0xa5df5), GAUSSIANCUBIC (5), so
+/// no stage is ever D3DTEXF_ANISOTROPIC (3), the only filter that reads MAXANISOTROPY. And no
+/// call of FUN_0006a610, or of FUN_000907a0 (a stage state by its index), targets a
+/// MAXANISOTROPY slot (+0x7f4, +0xaac, +0xd64, +0x101c); the raw stores to a +0x7f4 at
+/// 0x16c50, 0x174cd, 0x27df7 and 0x43cfc are other objects' fields. `BF_ANISOTROPY=<1-16>`
+/// overrides it (to compare).
 pub const ANISOTROPY: u16 = 1;
 
 /// The sampler of a world texture (terrain, scenery, characters, effects), sampled past its
@@ -42,8 +44,8 @@ pub const ANISOTROPY: u16 = 1;
 /// levels, as the console's materials sample: MAGFILTER / MINFILTER LINEAR, and MIPFILTER the
 /// draw context's +0x998 (written into the stages by the material classes, e.g. 0xa5fc3, and
 /// for all four stages at 0xe5811-0xe5871), which its constructor FUN_000e6ef0 sets to 2,
-/// D3DTEXF_LINEAR (0xe7300), the only value it's given; no LOD bias (that slot, +0x7c4, is never
-/// written). Anisotropy: `ANISOTROPY`.
+/// D3DTEXF_LINEAR (0xe7300), the only value it's given; no LOD bias (no call of FUN_0006a610 or
+/// FUN_000907a0 targets a MIPMAPLODBIAS slot, +0x7c4 for stage 0). Anisotropy: `ANISOTROPY`.
 pub fn world_sampler(address: [Address; 2]) -> ImageSamplerDescriptor {
     let mode = |a: Address| match a {
         Address::Wrap => ImageAddressMode::Repeat,

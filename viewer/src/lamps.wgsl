@@ -57,6 +57,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let share = select(0.0, detail.w * (1.0 - d2 * detail.x), d2 <= detail.y);
     let near = textureSample(detail_texture, detail_sampler, in.uv * detail.z);
     let far = textureSample(colour_texture, colour_sampler, in.uv);
+    // (the console's 8-bit combiner mixes the two in gamma terms, as stored; this mixes their
+    // linear values: a small difference between two samples of one texture)
     let texel = mix(far.rgb, near.rgb, share);
     pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * texel, pbr_input.material.base_color.a);
 #endif

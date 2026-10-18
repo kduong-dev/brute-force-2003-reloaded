@@ -311,7 +311,8 @@ them):
     levels and with no anisotropy, as the console samples them; before, each was its top level
     alone, so the ground sparkled past a few metres and showed raw texels close up. The HUD and
     the menus are unchanged. The terrain also mixes in its detail texture near the camera: the
-    same texture 2.5-7 times finer, fading out 10-35 m away. Both are in
+    same texture mostly 3-5 times finer (0-16 over the data), fading out mostly 15-25 m away
+    (0-35). Both are in
     [levels.md](levels.md) (Terrain layers), with their hooks (`BF_NO_DETAIL=1`,
     `BF_ANISOTROPY=<1-16>`).
 * **Power-ups.** Each power-up type's idle event (`<events><event state="1" h_ed0c9fac=…>`)

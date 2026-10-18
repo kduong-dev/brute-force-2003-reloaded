@@ -97,11 +97,14 @@ const TERRAIN_MATERIAL: u32 = 0x0EC4_EDF0;
 /// "detail" by its hash) and a P8 bump map (h_ed0b519d, not drawn here). On all 141 terrain
 /// materials of the game's levels the detail texture is the colour texture.
 const TERRAIN_DETAIL_TEXTURE: u32 = 0x17FC_684A;
-/// Its constants (the table at 0x90e40) that the detail reads: the detail's tiling over the
-/// colour's uv (h_08e8e4c3, +0x54; 2.5-7 in the data, 3.5 / 3 / 2.5 on the tutorial's three
-/// layers), how far from the eye it reaches (h_fe22cc04, +0x5c, m; 10-35, the tutorial's 20,
-/// 20, 15) and its share at the eye (h_153264c6, +0x50; 0.8-1). Without them the class's
-/// factory defaults (0x90ee0): 0.8, 16 and 0 (no detail).
+/// Its constants (the table at 0x90e40) that the detail reads, over the 141 terrain materials of
+/// the game's levels: the detail's tiling over the colour's uv (h_08e8e4c3, +0x54; 0-16, 108 of
+/// them 3-5, the others 1 (2), 2 (4), 2.4, 2.5 (3), 2.8, 6 (8), 7 (5), 9 (2) and 16 (2); 3.5 / 3
+/// / 2.5 on the tutorial's three layers), how far from the eye it reaches (h_fe22cc04, +0x5c, m;
+/// 0-35, 117 of them 15-25, two 1 m; the tutorial's 20, 20, 15) and its share at the eye
+/// (h_153264c6, +0x50; 0-1, 105 of them 0.8-0.9, 0.4 on three, 0.7 on one). e05's h_fa6eaf30
+/// has 0 for all three: no detail. Without them the class's factory defaults (0x90ee0): 0.8, 16
+/// and 0 (no detail).
 const DETAIL_SCALE: u32 = 0x08E8_E4C3;
 const DETAIL_FADE: u32 = 0xFE22_CC04;
 const DETAIL_SHARE: u32 = 0x1532_64C6;

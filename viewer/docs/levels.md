@@ -52,10 +52,16 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
     (`h_0ec4edf0`), whose texture slots are `color`, `detail` (`h_17fc684a`), a P8 bump map
     (`h_ed0b519d`) and `alpha` (0x90bf0). On all 141 terrain materials of the game's levels the
     detail is the colour texture itself. Three constants place it (0x90e40; the tutorial's three
-    layers in brackets):
-    * `h_08e8e4c3`, the detail's tiling over the colour's uv (3.5, 3, 2.5; 2.5-7 in the data);
-    * `h_fe22cc04`, the distance from the eye it fades out at (20, 20, 15 m; 10-35);
-    * `h_153264c6`, its share at the eye (0.9, 1, 0.99; 0.8-1).
+    layers, then the range over the 141 materials):
+    * `h_08e8e4c3`, the detail's tiling over the colour's uv (3.5, 3, 2.5; 0-16, 108 of them
+      3-5, the others 1 on two, 2 on four, 2.4, 2.5 on three, 2.8, 6 on eight, 7 on five, 9 on
+      two and 16 on two);
+    * `h_fe22cc04`, the distance from the eye it fades out at (20, 20, 15 m; 0-35, 117 of them
+      15-25, 10-14 on nineteen, 1 on two);
+    * `h_153264c6`, its share at the eye (0.9, 1, 0.99; 0-1, 105 of them 0.8-0.9, 0.95-1 on
+      31, 0.4 on three, 0.7 on one).
+
+    e05's `h_fa6eaf30` has 0 for all three: no detail, its colour alone.
 
     The material's begin (FUN_00090f50) binds the detail at stage 2 and hands these to the
     vertex shader as c20 = (1 / s², s², k, w). The base pass that reads them, vertex program
@@ -66,14 +72,19 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
     a few metres of the camera a 256-texel texture over 8 m (the tutorial's grass) to 18 m (its
     rock ground), magnified to blurry blotches.
     A layer's shader now does the mix (`level_scene::terrain_detail`, `src/lamps.wgsl` under
-    `TERRAIN_DETAIL`), per pixel where the console's share is per vertex. The colour's own uv is
-    the vertex uv, as before: the programs read the first uv set as it is (the vertex
-    declaration at 0x3c9860 puts it at v9), and take03's wall-gate shot, where the cliff is past
-    20 m, shows the same rock features at the same size as the demo.
-  * Not done: the bump map. Pixel shaders 0x1a / 0x1b light it per pixel by the key light,
-    (2 t3 - 1) . (2 v1 - 1), at the detail's tiling, unfaded: on e40's beach the sand's ripples
-    (`todo/49-bower-20/take06`, 1.0 s) come from it, where the demo's sand is smooth. It belongs
-    with the terrain's own lighting.
+    `TERRAIN_DETAIL`), per pixel where the console's share is per vertex, and on linear values
+    where the console's 8-bit combiner mixes the gamma ones (a small difference between two
+    samples of one texture). The colour's own uv is the vertex uv, as before: the programs read
+    the first uv set as it is (the vertex declaration at 0x3c9860 puts it at v9), and take03's
+    wall-gate shot, where the cliff is past 20 m, shows the same rock features at the same size
+    as the demo.
+  * Not done: the bump map. Pixel shaders 0x1a / 0x1b give final = (vertex light + bump) x
+    lerp(colour, detail, share), the bump being the P8 normal map lit per pixel by the key light,
+    (2 t3 - 1) . (2 v1 - 1), at the detail's tiling and unfaded. Without it the near ground has
+    less contrast than the takes: the hillsides and rock 1-5 m off have a fine band of 5.7
+    against 10.3 on take03's 21 s hillside, and e40's sand ripples (`todo/49-bower-20/take06`,
+    1.0 s) are 3-4 times weaker (the tester's measures). It belongs with the terrain's own
+    lighting.
   * The layers' masks: program 0x38 samples a layer's mask at the second uv set (oT1 = v10,
     pixel shader 0x1a's alpha), which on every masked layer's vertex is its place across the
     terrain, 0 to 1 with v toward -z: the orientation the demo bakes into the vertex alpha (2 m
@@ -82,9 +93,11 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
   * Not found in the code: what selects vertex program 0x38 and pixel shaders 0x1a / 0x1b. No
     call of the program setter (FUN_000a4a60, 72 sites) or the pixel shader setter
     (FUN_000a4d00) passes those indices, and the program tables hold their only references. The
-    rest fits them: the begin computes c20's 1 / s², s² and w, which only 0x38 reads; the masked
-    layers' second uv set is the mask's coordinate; the terrain lights are `enable-bump`; and the
-    takes show the finer tiling near the camera (take03 at 25 s, take08 at 45 s, the e40 beach).
+    rest fits them: the begin computes c20's 1 / s², s² and w, which of the terrain's
+    (declaration-8) programs only 0x38 reads (c20 is the world matrix's first row in programs
+    0x2-0x19, 0x27, 0x3f, 0x50 and others); the masked layers' second uv set is the mask's
+    coordinate; the terrain lights are `enable-bump`; and the takes show the finer tiling near
+    the camera (take03 at 25 s, take08 at 45 s, the e40 beach).
     A live read of the current program (0x3f7c58, set by FUN_000a4a60) while a terrain block
     draws would settle it.
   * Test hooks: `BF_NO_DETAIL=1` draws the colour's tiling alone, as before.
@@ -97,9 +110,12 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
   noise (take03's wall-gate shot: the valley floor) and close up it showed raw texels.
   * The sampler is linear within a level and between levels: the game's material classes set
     MIPFILTER from the draw context's +0x998, which its constructor (FUN_000e6ef0) sets to 2,
-    D3DTEXF_LINEAR (0xe7300), and MAG / MINFILTER LINEAR. No LOD bias is written.
-  * No anisotropy: no MAGFILTER or MINFILTER write in the game is D3DTEXF_ANISOTROPIC (the
-    values are POINT, LINEAR and one GAUSSIANCUBIC), and no MAXANISOTROPY slot is ever set. The
+    D3DTEXF_LINEAR (0xe7300), and MAG / MINFILTER LINEAR. No call sets an LOD bias.
+  * No anisotropy: every MAGFILTER / MINFILTER write to the render-state cache (0x4698e0) is
+    POINT, LINEAR or, in one pass, GAUSSIANCUBIC, so no stage is ever ANISOTROPIC, the only
+    filter that reads MAXANISOTROPY; and no call of the state setters (FUN_0006a610,
+    FUN_000907a0) targets a MAXANISOTROPY slot (+0x7f4, +0xaac, +0xd64, +0x101c). The raw
+    stores to a +0x7f4 at 0x16c50, 0x174cd, 0x27df7 and 0x43cfc are other objects' fields. The
     takes' distant ground is soft, as the demo's is now; at 16x it was crisper than the takes.
     `BF_ANISOTROPY=<1-16>` sets it (to compare).
   * A texture that ships one level keeps one, as on the console.
@@ -123,7 +139,12 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
       its shore's lava veins sharp underfoot;
     * unchanged: the HUD (the flat floor's bars, ammo and radar the same to the pixel), the
       main menu (the same to the pixel but the highlighted entry's glow, which differs from run
-      to run on main's build too), the characters (smoother at a distance, the same up close).
+      to run on main's build too), the characters (smoother at a distance, the same up close);
+    * the tester's check against the takes: the far ground as soft as take03's, the near grain
+      the takes' size, 1x anisotropy right, no regressions. Short of the takes: the near
+      hillsides and rock 1-5 m off have less contrast (a fine band of 5.7 against 10.3 on
+      take03's 21 s hillside) and e40's sand ripples are 3-4 times weaker, both the missing bump
+      map ("Not done" above).
 * A level `<transform>` is a 3 × 3 rotation followed by the position. The rotation's columns are
   the object's axes; read that way, the level's cameras come out level and looking down −z.
 * Object types map to mesh archetypes through objecttypes (`mesh-name` beside the type's
