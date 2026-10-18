@@ -901,6 +901,13 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   after its shot, 12.9-18.9 on the body (PARTICLE x1: the range 11.9-18.9; take03 12.8 and 16.9
   on the body, the rest on the hovering Shrike's calves), wmat_fleshit_particle with
   light_hit_particle on each.
+* **The Saryl-99** (#71, todo/71-saryl-99; the Saryl-45's effects): Brutus's second gun on e34
+  (`BF_CHARACTER=0 BF_START_WEAPON=1`). On the frozen e34 Shrike Heavy 7 m out (the take03
+  recipe, `BF_CAMERA_PITCH=-0.12`): held fire every 10-11 game frames (the take 10.1), every hit
+  0.1 s after its shot (take03's 17 of 17), 11.0-16.4 on the body (PARTICLE x1: take03
+  11.2-15.7), wmat_fleshit_particle with light_hit_particle. On the test map's clear line (the
+  Jax-iP's recipe with `BF_TEST_WEAPON=Saryl-99`) 25 m out every hit 0.3 s after its shot
+  (take08's 2 of 2), 11.2-15.0 on the body, 64.3 on the head.
 * Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
   Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
   free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of
