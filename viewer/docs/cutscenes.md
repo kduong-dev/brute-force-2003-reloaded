@@ -193,6 +193,7 @@ While it's set:
 * no menu opens on a player's button (FUN_0008c8c0, the objectives menu among them:
   play_objectives.rs);
 * the player's controls don't reach the game (play.rs `read_input`, `script::blocks_input`);
+  the skill key (V) too, which play_skills.rs `skill_input` reads itself (#256);
 * nobody takes damage (the damage handler 0x125600's early exit: play.rs `hurt`);
 * the squad's chatter is quiet (FUN_00140a60, not done here) and the squad-dead countdown waits
   (FUN_00089d30: play_mission.rs, [mission.md](mission.md)).
@@ -202,6 +203,21 @@ and no AI: play.rs `read_input` and `update_player` hand it to `script::held_ste
 its inputs and walks it to its 105 points, if any. The script's release (its end, or a 119's)
 gives the controls back: a walk the player's character hadn't finished ends there (m09_a's
 startup walks Brutus into a wall: before #222's fix round it held the controls for good).
+
+Every player-facing key goes through `read_input` but the skill key, read by play_skills.rs
+`skill_input`, which checks `blocks_input` too (#256). Its audit found nothing else leaking: the
+keys 1-4 (the hand-over), Tab and T (the item box, the grenade type), G (use, throw), Z, H, M,
+the move and fire keys and the mouse's look are all read past `read_input`'s early return.
+
+Escape isn't blocked, deliberately (#256): `read_input` reads the mouse's capture
+(`mouse_capture`) above the gate too, so Escape frees the mouse in a cutscene, while held and out
+of the world, and a click takes it again by the same rule as in play (the click itself reaches
+no control). It's the demo's convenience, and where a pause menu would open (#40: the game's
+START pauses in play). Backspace (back to the front end, `back_to_menu`) isn't blocked either.
+Also not blocked, on purpose: the input triggers' virtual buttons (play_hints.rs `buttons`: the
+game's 0x2008a0 reads the input objects, not the player controller), a tutorial panel's buttons
+(it pauses the game), the end screen, the briefing and the test tools' keys. The demo reads no
+pad in game, so there is no d-pad to block.
 
 ## The squad's farcast
 
@@ -261,7 +277,8 @@ names.
   start (what it holds) and end (what it releases), and every event as it runs: the cuts with
   their angle, the paths, the holds, the signals sent, what isn't run. Also the letterbox, the
   cutscene bit, a walk given up, and the player's controls going off (and why: the cutscene bit,
-  held, not in the world) and coming back.
+  held, not in the world) and coming back, and Escape's press (`mouse_capture`, #256: whether
+  the mouse was captured).
 * `BF_SCRIPT_CHECK=1` (`bf_level`): reads every `.gscr` of every `data/*.tgz` and prints each
   script's length, entities and events by code, then the totals. It exits after.
 * With `BF_TRIGGER_LOG=1` the trigger runtime logs the script-, letterbox- and warp-triggers'
@@ -351,6 +368,13 @@ frames were compared side by side.
     BF_TEST_GOTO=-177.12,-223.64,-187.12,-223.64 BF_MOVE_LOG=1`): Tex walks his 105 from 14.0 s,
     and once the script lets him go (20.13 s) the autopilot turns him (yaw 100 to -3) and takes
     him to its goal by 21.5 s.
+* **The skill key** (#256; skills.md, "How it was checked"): V tapped once a second through
+  the tutorial's opening, posted to the demo's window: no toggle until the controls come back
+  at 26.26 s, a toggle on each tap from 26.82 s; e40's opening likewise, back at 24.20 s.
+  Escape posted at 5.2 s (wall) with the V taps: "Escape: the mouse freed" at 4.78 s, under the
+  letterbox, and again at 30.80 s in play; the skill still toggled only from 26.68 s. Under
+  `BF_BACKGROUND` the mouse is never captured, so the freeing itself (a captured mouse let go
+  in a cutscene) wasn't seen, only the key read.
 * **The map editor** (`--edit`, `BF_MAP=tutorial BF_TEST_PLAY=30,start BF_TOOLS_LOG=1`): through
   the opening the frames are the edit view (the help, no bars, no HUD, the edit camera); the
   opening runs on and ends at 26.20 s; Shift+F5 at 30 s brings Tex to his spawn (65.55, 25.25,

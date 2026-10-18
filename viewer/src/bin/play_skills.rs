@@ -1474,8 +1474,9 @@ pub fn plugin(app: &mut App) {
 
 /// The skill key: V, the game's White button (VB_SPECIAL_ABILITY, game-options-en.xml line 151;
 /// the player controller sends CT_TOGGLE_SPECIAL at 0x134cff), for the controlled character,
-/// alive; and the test hooks BF_TEST_SKILL (presses), BF_TEST_STAMINA (pokes),
-/// BF_TEST_SQUAD_SKILL and BF_TEST_STEALTH_FLASH.
+/// alive, with its controls on (not in a cutscene, held by a script or out of the world:
+/// play_script.rs `blocks_input`, #256); and the test hooks BF_TEST_SKILL (presses, blocked the
+/// same way), BF_TEST_STAMINA (pokes), BF_TEST_SQUAD_SKILL and BF_TEST_STEALTH_FLASH.
 ///
 /// With a skill on that they end (`ended_by_actions`: Tex's), the player controller sends the
 /// toggle instead of what two more keys do: the switch key, Q (the game's Y, VB 10, 0x134db4-
@@ -1559,7 +1560,11 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
             }
         }
     }
-    if press && !player.dead {
+    // not while the player's controls don't reach the character (#256): the toggle is the player
+    // controller's command (0x134cff), and a script's hold switches that controller off
+    // (FUN_00129530), as a cutscene does for every control (`read_input`, play_script.rs
+    // `blocks_input`); a press then, the key's or BF_TEST_SKILL's, is lost, not kept for later
+    if press && !player.dead && !script::blocks_input(&player) {
         player.skill.request = true;
     }
     if let Ok(v) = std::env::var("BF_TEST_STAMINA") {
