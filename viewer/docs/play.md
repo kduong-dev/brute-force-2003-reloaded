@@ -844,6 +844,20 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   paler, and the take's violet wash of the light over the gate's foot (80-140 units wide) is
   missing on e34's lit surfaces; on the test map's pillar the light shows. The light's reach on
   the level's own surfaces is #143's.
+* **The Jax-iP** (#58, todo/58-jax-ip): at the pillar (`BF_NO_SQUAD=1` and the recipe above with
+  `BF_TEST_WEAPON=Jax-iP`): held fire every 20-21 game frames (the take 19.8), the reload 0.67 s
+  after the last round (the take 0.71), the hits 9.4 m out 0.2 s after their shots, sonic_proj_hit's
+  white core with light_hit_sonic. On a frozen e40 Shrike Heavy (`-- --test BF_NO_SQUAD=1
+  BF_TEST_INSTANT_KILL=0 BF_TEST_WEAPON=Jax-iP BF_TEST_GOTO=4.5,20,4.5,20 BF_CAMERA_PITCH=-0.08
+  BF_TEST_NPC="0.3,shrike heavy@e40,enemy,frozen,4.5,-5" BF_TEST_NPC_HP=1.0,1,300
+  BF_TEST_TRIGGER=2.0-2.08,3.6-3.68,5.0-9.0 BF_COMBAT_LOG=1`): 25 m out every hit lands 0.4 s
+  after its shot (take07 0.4, 0.4, 0.4), 37.0-39.0 on the body and 208.0 on the head (roll x
+  SONIC 2 x 1.4: take07 35.1-38.5); 9 m out (`...,4.5,11`) 0.2 s (take03's 0.2 in 5 of 8),
+  34.4-39.0 on the body, 208.0 on the head, 30.3 on an upper arm; 45 m out (`...,4.5,-25`,
+  `BF_CAMERA_PITCH=-0.115`) nothing is hit, the bolt ending in the air at its 40 m (take08: no
+  hit), the crosshair blue there and red at 25 m (the 28 m lock reach). The test map's own
+  "shrike heavy" is the dm Heavy, whose SONIC is x1 and whose stamina shield takes the first
+  40: use `@e40` (or `@e34`) for the campaign's x2.
 * Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
   Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
   free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of
