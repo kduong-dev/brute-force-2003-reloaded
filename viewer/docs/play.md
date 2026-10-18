@@ -638,7 +638,8 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   her hands.
 * **Holes** (`play_fx.rs`, `HoleRequests`). Every gun shot that meets the world leaves its
   bullet's h_06a27365 decal (0.3 x 0.3 m holes and scorches, read as full sizes; the decal's
-  life and fade, h_199870ec / h_fe4e1d82: 25 s fading over the last 5 for most) laid on the
+  life and fade, h_199870ec / h_fe4e1d82: 25 s fading over the last 5 for most, 60 s for the
+  bio guns' green h_1ce6db03) laid on the
   surface it met: the map's collision triangle (`Arena::ray_normal`) or, on the flat test floor,
   the ground or a pillar's side. Up to 160 stay (a guess). A bolt's hole comes with its hit, on
   its sweep (**Bolts and their hits** below).
@@ -908,6 +909,20 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   11.2-15.7), wmat_fleshit_particle with light_hit_particle. On the test map's clear line (the
   Jax-iP's recipe with `BF_TEST_WEAPON=Saryl-99`) 25 m out every hit 0.3 s after its shot
   (take08's 2 of 2), 11.2-15.0 on the body, 64.3 on the head.
+* **The A10 Bioreactive** (#47, todo/47-a10-bioreactive; the bio family's look): at the pillar
+  (`BF_TEST_WEAPON="A10 Bioreactive"`), the hits 8.8 m out 0.2 s after their shots (take01's
+  burst at T0 + 0.20 s), the weapon's own bio-flash_hit and bio-shrap_hit out of the face with
+  light_hit_bio, and its green hole h_1ce6db03 living 60 s (`BF_SHOT_LOG`'s "hole ... life 60
+  s, fading over its last 5 s"); the reload 0.40 s after the last round. Seen from where the
+  take's camera would see it (the demo's 45-degree view 23.7 m back for the game's ~74 degrees
+  at 13 m: `BF_TEST_FREECAM=0.5,2.5,2.0,6.0,5.5,-3.9`) the flash's white-green core is ~17 units
+  (take01 12-14) and its green haze thins over ~0.8 s (take01: to 10% at +1.3 s); the green
+  bolt and the muzzle's green glow at Tex's gun as the take's. On a frozen e40 Shrike Heavy 7 m
+  out (the Jax-iP's recipe with the A10): every hit 0.1 s after its shot, 11.0-12.8 on the body
+  (BIO x1: take03 11.0-13.7), 9.0-9.6 on an upper arm, 63.6 on the head, the hit points moving
+  only at the hits (no damage over time, as take06's log), wmat_fleshit_bio (h_f8d4e76d) with
+  light_hit_bio on each. The bioreactive kill ("massive cellular deterioration") is #147's: the
+  demo's BIO kills are plain.
 * Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
   Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
   free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of
