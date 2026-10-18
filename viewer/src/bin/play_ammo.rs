@@ -285,9 +285,10 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
         u.fire_state.reset_burst(0);                        // FUN_0022daf0
         u.reloading = Some(Reload { weapon: w, time: 0.0, fill: clip + took, filled: false });
         u.aim_hold = u.aim_hold.min(0.3);
-        // FUN_00120d40 calls FUN_001249b0 (out of the scope, with its sound) first when the
-        // holder's +0x7a8 is set: read as the scope (medium confidence, weapons spec section 0)
-        u.scope_level = 0;
+        // FUN_00120d40 calls FUN_001249b0 (out of the scope, with its sound and its button's
+        // lockout) first when the holder's +0x7a8 is set: read as the scope (medium confidence,
+        // weapons spec section 0)
+        u.leave_scope();
         if log {
             println!("t={:.2} {} reloads {}: {took} rounds, reserve type {} now {}", u.sim_time, unit_name(u),
                      def.label, def.ammo_type, reserve.get(def.ammo_type));

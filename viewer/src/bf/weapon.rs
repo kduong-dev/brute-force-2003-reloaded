@@ -274,7 +274,7 @@ pub struct ShotData {
     /// h_e4076713 (data+0xdc, int): shots per trigger cycle (FUN_0022f0e0). Bower 6, others 1
     pub burst_count: i64,
     /// h_e704fd69 (data+0x130): degrees each shot after a zero-delay burst's first is turned
-    /// by, in yaw and in pitch (FUN_0022e1d0)
+    /// by from the one before, about the world's x axis and then its vertical (FUN_0022e1d0)
     pub burst_spread: f32,
     /// h_fd88830d (data+0x12c): muzzle effect type, one per muzzle hardpoint (FUN_00232060),
     /// set off on each shot (FUN_0022f170). 0 if none

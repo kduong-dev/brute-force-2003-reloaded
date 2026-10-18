@@ -14,9 +14,9 @@
 //!  - **Bursts and pellets**: each shot counts weapon+0x28c; below the burst count the next
 //!    cooldown is the burst-delay instead (FUN_0022f0e0). With a delay of 0 the loop goes on in
 //!    the same frame and only the last takes a round (FUN_0022fe00): the Bower's 6
-//!    pellets a shell for one round. Each after the first is turned by a uniform random yaw and
-//!    pitch within the burst-spread (FUN_0022e1d0), in place, so the pellets walk away from the
-//!    first.
+//!    pellets a shell for one round. Each after the first is turned from the one before, in place,
+//!    by uniform random angles within the burst-spread about the world's x axis and then its
+//!    vertical (FUN_0022e1d0; `directions`), so the pellets walk away from the first.
 //!  - **Accuracy** (the object at weapon+0x1d0: current +0xc = weapon+0x1dc, cap +0x10): the cap
 //!    is the data's max, or its scoped cap while the holder's +0x7a8 is set (FUN_001241b0 ->
 //!    FUN_00222ac0); each trigger cycle takes recoil-per-shot off (FUN_00222c10; halved, and the
@@ -61,8 +61,15 @@ pub const TICK: f32 = 1.0 / 30.0;
 /// This is the demo's model of the frame clock's jitter, not anything in the code: small enough
 /// not to move any period that isn't a tie. The takes ran in xemu at 27-29 fps, whose uneven
 /// frames may be all there is to it; on hardware at a steady 30 fps the Minigun may well fire at
-/// 15/s.
+/// 15/s. Its random numbers are the frame clock's own (`FireState::clock_seed`): drawn from the
+/// gun's stream between its shots' draws, a cycle of a fixed number of draws sampled the LCG at a
+/// fixed stride, and at a power of two (the Foley's 16: a shot's 3 accuracy draws and 2 effect
+/// seeds, then 11 frames) the frames of one cycle ran short or long together every cycle, so its
+/// shots came 11 frames apart every time (#54's check: 2.73 a second against the takes' 2.79-2.93)
+/// where the jitter splits 10 and 11.
 const TICK_JITTER: f32 = 1e-4;
+/// Mixed into the gun's seed for the frame clock's own (any odd constant: the demo's).
+const CLOCK_SEED: u32 = 0x7C10_C4E5;
 /// The game's degrees-to-radians factor in FUN_002229b0 and FUN_0022e1d0 (0x3a52e0).
 const DEG: f32 = 0.017444;
 /// FUN_000c4e10: degrees of spread per point of accuracy below 100.
@@ -157,6 +164,8 @@ pub struct FireState {
     /// empty trigger cycles since play_ammo.rs last took them (FUN_002327f0), by hand
     empty: [u32; HANDS],
     seed: u32,
+    /// the frame clock's random numbers (`TICK_JITTER`), apart from the gun's stream
+    clock_seed: u32,
     /// a trigger pull still owed its first shot, by hand (see `pull`), and the trigger last frame
     latched: [bool; HANDS],
     was_held: bool,
@@ -299,13 +308,16 @@ impl FireState {
         if self.seed == 0 {
             self.seed = seed | 1;
         }
+        if self.clock_seed == 0 {
+            self.clock_seed = (seed ^ CLOCK_SEED) | 1;
+        }
         self.ready -= dt;
         self.clock += dt;
         while self.clock >= TICK {
             self.clock -= TICK;
             self.tick = self.tick.wrapping_add(1);
             // FUN_0022ec90 (with the frame time's wobble, TICK_JITTER: one frame time for both)
-            let frame = TICK * (1.0 + (random(&mut self.seed) * 2.0 - 1.0) * TICK_JITTER);
+            let frame = TICK * (1.0 + (random(&mut self.clock_seed) * 2.0 - 1.0) * TICK_JITTER);
             for g in guns.iter_mut() {
                 self.tick_gun(g, frame);
             }
@@ -399,7 +411,16 @@ impl FireState {
     /// The directions of the shots of the gun in `hand` waiting, from its aim `base`: each game
     /// frame's turned once by the accuracy (FUN_002229b0, each weapon object's own turn,
     /// FUN_0022e4c0), a zero-delay burst's later shots each turned again from the one before by
-    /// the burst-spread (FUN_0022e1d0). The other hand's shots stay waiting.
+    /// the burst-spread (FUN_0022e1d0, the pellet walk). The walk is in the world's frame: the
+    /// aim d becomes Ry(a2) Rx(a1) d, a1 then a2 drawn uniform in +-the burst-spread about the
+    /// world's x and then its vertical axis (the routine builds Rx(a1) with FUN_0013e800, turns it
+    /// by Ry(a2) with FUN_0001fa20, multiplies the aim's frame by it, FUN_002334b0 as B x A, and
+    /// takes the frame's -z, FUN_0001f9c0). So a heading along x keeps its pellets nearly level
+    /// (the x turn spins the aim about itself) and one along z scatters them up and down as much as
+    /// across: the Bower's take09 at -170 degrees, 10.3 degrees across and 0.8 up and down (the
+    /// rule's 9.3 and 1.7), where a turn about the gun's own right gave 9.3 up and down at any
+    /// heading (todo/49-bower-20/spec.md §4). The MNR-7's darts walk by the same rule. The other
+    /// hand's shots stay waiting.
     pub fn directions(&mut self, hand: usize, base: Vec3, burst_spread: f32) -> Vec<(Pellet, Vec3)> {
         let (pellets, rest): (Vec<Pellet>, Vec<Pellet>) = std::mem::take(&mut self.pellets).into_iter().partition(|p| p.hand == hand);
         self.pellets = rest;
@@ -414,11 +435,12 @@ impl FireState {
                 dir = (Quat::from_rotation_z(z) * Quat::from_rotation_y(y) * Quat::from_rotation_x(x) * base).normalize();
             }
             if p.walk && burst_spread > 0.0 {
+                // FUN_0022e1d0: a1 (the first draw) about the world's x, then a2 about its
+                // vertical, applied to the world direction
                 let s = burst_spread * DEG;
-                let yaw = (random(&mut self.seed) * 2.0 - 1.0) * s;
-                let pitch = (random(&mut self.seed) * 2.0 - 1.0) * s;
-                let right = dir.cross(Vec3::Y).normalize_or(Vec3::X);
-                dir = (Quat::from_axis_angle(right, pitch) * Quat::from_rotation_y(yaw) * dir).normalize();
+                let a1 = (random(&mut self.seed) * 2.0 - 1.0) * s;
+                let a2 = (random(&mut self.seed) * 2.0 - 1.0) * s;
+                dir = (Quat::from_rotation_y(a2) * Quat::from_rotation_x(a1) * dir).normalize();
             }
             out.push((p, dir));
         }
@@ -562,9 +584,9 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                 // shows what the game's light does there, so the scope keeps the demo's old rule of
                 // no light
                 let kind = game.0.effect_type_defs.get(&d.muzzle_effect).cloned().unwrap_or_default();
-                // (a missile launcher's, the Therm Sweeper's launch dust: with its trail's and its
-                // explosion's rules, so the game's count makes it one card, see ale_fx's
-                // `Compiled::counted`)
+                // (a missile launcher's, the Therm Sweeper's and the Sweeper V's launch dust, the
+                // same h_002779c8: with its trail's and its explosion's rules, so the game's count
+                // makes it one card, see ale_fx's `Compiled::counted`)
                 let missile = super::missile::flies(&w.def);
                 let fxs: Vec<_> = kind.effects.iter().filter_map(|&e| match scoped {
                     Some(_) => ale.load(&mut game.0, &mut images, &mut materials, e),
@@ -640,8 +662,11 @@ impl FireState {
 /// controlled character starts with that weapon in the slot BF_START_WEAPON picks (the first by
 /// default), if the map's data (or the test map's, `-- --test`) defines it. For trying a gun
 /// the character doesn't carry. A list, `<a>;<b>`, fills the slots in order from the first
-/// instead (#35's Tex: `Confed LZR-50;Jax-iC`, the takes' loadout).
-fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, player: Res<Player>) {
+/// instead (#35's Tex: `Confed LZR-50;Jax-iC`, the takes' loadout). On a level whose
+/// spawn-triggers start the squad (e34, e40, the tutorial: #220) the character carries its
+/// spawn's template weapons (`SquadSpawn::dress`, set before this runs), so the slot is set in
+/// those too: without it the hook did nothing there.
+fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, mut player: ResMut<Player>) {
     if std::mem::replace(&mut *done, true) {
         return;
     }
@@ -657,6 +682,9 @@ fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, player: Res<Pl
         let slot = first + k;
         let list = game.0.character_weapons.entry(CHARACTERS[player.character].to_string()).or_default();
         if slot < list.len() { list[slot] = key } else { list.push(key) }
+        if let Some(list) = player.enemy.weapons.as_mut() {
+            if slot < list.len() { list[slot] = key } else { list.push(key) }
+        }
     }
 }
 
