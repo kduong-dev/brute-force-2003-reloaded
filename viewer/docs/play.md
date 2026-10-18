@@ -891,6 +891,16 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   body, 15.1-17.4 on an upper arm, 96.8 and 103.8 on the head, 9.0-10.7 on the calves (PARTICLE
   x1: take08 18.1-22.0, take09 106.8 on the head, take03 8.9-11.0 on the hovering Shrike's
   calves); each hit plays wmat_fleshit_particle (h_ed6363bd) with light_hit_particle.
+* **The Saryl-23** (#69, todo/69-saryl-23): Hawk carries it on e34 (`BF_CHARACTER=2` with the
+  gate recipe above). At the gate's foot as take01: each hit 0.1 s after its shot 7.7-8.8 m
+  out, plasma_hit_sml's small white star with blue shards out of the ground, then
+  wmat_dirtpuff's tan dust and one of the row's sounds (h_0655c729), the comet's head with its
+  tail on the way; the star shows on the hit's next frame (+0.13 s), take01's at +0.18 s. On the
+  frozen e34 Shrike Heavy 7 m out (the take03 recipe, `BF_CHARACTER=2 BF_CAMERA_PITCH=-0.12`):
+  held fire every 13 game frames (the rate's 12.5 rounded up; the take 12.7), every hit 0.1 s
+  after its shot, 12.9-18.9 on the body (PARTICLE x1: the range 11.9-18.9; take03 12.8 and 16.9
+  on the body, the rest on the hovering Shrike's calves), wmat_fleshit_particle with
+  light_hit_particle on each.
 * Regressions: the squad's eight guns at the test map's pillar (MK-ASLT, Minigun, Bower 20,
   Foley, L-Shot-50, LZR-23, LZR-50, Feral Cutter: two taps each, against main's frames, the
   free camera 4.5 m from the pillar's face): the instant rays' sminigun_hit now flashes out of
