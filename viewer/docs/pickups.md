@@ -25,10 +25,10 @@
     right edge (five), as the Frag and Sentry recordings' inventory overview stacks them,
     stepping round as the wheel picks. G uses the selected item. There's no separate medkit
     shortcut. An item that can't be used now shows a grey icon and red text.
-  * Each group of medkits (within 3.5 m of one another, on the same level) has one soft green
-    glow over its middle, all the time, marking where medkits are (todo/medkits glow.png). It
-    faces the camera and is drawn a little toward it so the ground doesn't cut it off; a light
-    lit the characters standing there green. The group's medkits are laid out in an even grid
+  * Medkits within 3.5 m of one another, on the same level, are one group. (The demo used to
+    draw its own soft green glow over each group, fitted to todo/medkits glow.png; it was
+    removed on 2026-10-19 because the game's own lights and placed effects are now drawn, #143
+    and #258.) The group's medkits are laid out in an even grid
     round its middle (rows of ceil(sqrt(n)), a short last row centred), each turned like the
     first give or take up to ~11 degrees (fixed per medkit), spaced by the medkit's measured
     footprint plus 30% so none overlap (the png's four in
@@ -72,7 +72,7 @@
       like the Garo fruit on its point. Then it's pushed over the way it leans. At rest it
       eases flush onto the face it stopped on over about 0.25 s, keeping its heading,
       instead of snapping upright.
-    * Moving ones push off the others. The medkit glows stay where the group was placed.
+    * Moving ones push off the others.
     * The bounce, friction, drag and thresholds are the demo's choices, not the game's.
   * The medkit sound is h_1538baad, the Sound whose file is h_15331992 (named "92193315":
     those bytes as stored in sounds-<level>.xmb), the same in all 54 levels' banks, 1.5 s.

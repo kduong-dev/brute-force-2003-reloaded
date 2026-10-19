@@ -13,8 +13,7 @@
 //!
 //! Each pickup adds a line under the character, "<n>x <name>" (counted up while more of the
 //! same are taken: the capture's "22x 11mm Ammo", "3x Medkit" -> "4x Medkit"), gone after
-//! FEED_TIME s without one. Each group of medkits has one soft green glow over its middle, all
-//! the time (todo/medkits glow.png: a marker for where medkits are).
+//! FEED_TIME s without one.
 //!
 //! Using a medkit (todo/medic + intenvory use case.mp4) plays the stance's use_item overlay
 //! (Sc_w1_/Sc_w2_use_item, ~1 s): the red used medkit (the carried type's own model) is in the
@@ -75,17 +74,9 @@ const REACH_UP: f32 = 1.5;
 /// 295.25) and 1.25 m (295.44 s, the line fading in at 295.5). The game's test isn't traced (the
 /// memory chip's, play_dna.rs, measures sqrt(3) in 3D to its middle).
 const DNA_REACH: f32 = 1.3;
-/// The medkit spots' glow (todo/medkits glow.png): one per group (medkits within GLOW_GROUP m
-/// across of another, and less than a metre up or down), a soft green halo over the group's middle, GLOW_UP m above the ground, facing
-/// the camera (added to the picture, unlit), GLOW_SIZE m across. It's drawn up to GLOW_NEAR m
-/// (at most GLOW_NEAR_PART of the way) toward the camera along its line of sight, made smaller
-/// to look the same, so the ground in front of the medkits doesn't cut it.
-const GLOW_GROUP: f32 = 3.5;
-const GLOW_SIZE: f32 = 1.6;
-const GLOW_UP: f32 = 0.3;
-const GLOW_NEAR: f32 = 1.0;
-const GLOW_NEAR_PART: f32 = 0.4;
-const GLOW_GREEN: Color = Color::srgba(0.3, 0.9, 0.4, 0.35);
+/// Medkits within GROUP_REACH m across of another (and less than a metre up or down) are one
+/// group (todo/medkits glow.png: four laid out together; the levels place them up to ~3 m apart).
+const GROUP_REACH: f32 = 3.5;
 /// A group's medkits are laid out in an even grid round its middle (todo/medkits glow.png: four
 /// in two rows, nearly touching), each turned the way its first one is give or take up to
 /// GROUP_TWIST (rad, fixed per medkit: not too neat), GROUP_GAP of a medkit's size apart edge
@@ -208,10 +199,6 @@ struct UsedMedkit {
     corners: Option<Vec<Vec3>>,
 }
 
-/// A medkit group's glow: where it is, faced to the camera each frame.
-#[derive(Component)]
-struct Glow(Vec3);
-
 /// A loose pickup (or used medkit): its motion, how high its origin sits above the ground at
 /// rest, and whether it's moving (at rest it's left alone until kicked or thrown).
 #[derive(Component)]
@@ -279,13 +266,13 @@ pub fn plugin(app: &mut App) {
             commands.insert_resource(UsedMedkit::default());
             commands.insert_resource(Blasts::default());
         }).after(setup))
-        .add_systems(Update, (find_pickups, late_pickups, throw, physics, take_pickups, use_medkit, medkit_used, hold_medkit, face_glows).chain()
+        .add_systems(Update, (find_pickups, late_pickups, throw, physics, take_pickups, use_medkit, medkit_used, hold_medkit).chain()
             .after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
 /// The level's health pickups, once its objects are spawned (their own Transform: placed objects
-/// are roots, and on their first frame the GlobalTransform isn't worked out yet), the medkit
-/// spots' glow, and the used medkit's model.
+/// are roots, and on their first frame the GlobalTransform isn't worked out yet), each medkit
+/// group laid out, and the used medkit's model.
 #[allow(clippy::too_many_arguments)]
 fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
                 mut used: ResMut<UsedMedkit>, mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>)>,
@@ -307,7 +294,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
             && game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT || i.group == IG_DNA_CANNISTER))
         .map(|(entity, p, t, _)| Pickup { entity, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false })
         .collect();
-    // one glow over each group of medkits (it stays when they're taken: it marks where they are)
+    // the level's medkits, grouped by where they're placed
     let kits: Vec<usize> = (0..pickups.list.len())
         .filter(|&i| game.0.items.get(&pickups.list[i].kind).is_some_and(|t| t.function == MEDKIT))
         // (dropped in ones fall where they will)
@@ -323,7 +310,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
     }
     for i in 0..spots.len() {
         for j in i + 1..spots.len() {
-            if spots[i].xz().distance(spots[j].xz()) < GLOW_GROUP && (spots[i].y - spots[j].y).abs() < 1.0 {
+            if spots[i].xz().distance(spots[j].xz()) < GROUP_REACH && (spots[i].y - spots[j].y).abs() < 1.0 {
                 let (a, b) = (root(&mut group, i), root(&mut group, j));
                 group[a] = b;
             }
@@ -373,17 +360,6 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
                 t.rotation = Quat::from_rotation_y((seed.fract() * 2.0 - 1.0) * GROUP_TWIST) * turn;
             }
         }
-    }
-    let halo = images.add(radial_halo(64));
-    let glow = materials.add(StandardMaterial { base_color: GLOW_GREEN, base_color_texture: Some(halo), unlit: true,
-                                                alpha_mode: AlphaMode::Add, double_sided: true, cull_mode: None, fog_enabled: false,
-                                                ..default() });
-    let quad = meshes.add(Rectangle::new(GLOW_SIZE, GLOW_SIZE));
-    for (sum, n) in middles.into_values() {
-        let c = sum / n;
-        let at = Vec3::new(c.x, floor_y(c.x, c.z, c.y + 0.5) + GLOW_UP, c.z);
-        commands.spawn((Mesh3d(quad.clone()), MeshMaterial3d(glow.clone()), Transform::from_translation(at), Glow(at),
-                        bevy::pbr::NotShadowCaster, Name::new("medkit glow")));
     }
     // every pickup on the ground is loose, lying tilted to the ground under it
     for (e, p, mut t, drop_in) in &mut placed {
@@ -691,22 +667,6 @@ fn footprint(entity: Entity, children: &Query<&Children>, parts: &Query<(&Transf
     Some(Vec2::new(hi.x - lo.x, hi.z - lo.z))
 }
 
-/// A soft round halo: white, alpha falling from the middle to nothing at the edge.
-fn radial_halo(n: u32) -> Image {
-    let mut px = Vec::with_capacity((n * n * 4) as usize);
-    for y in 0..n {
-        for x in 0..n {
-            let (dx, dy) = ((x as f32 + 0.5) / n as f32 * 2.0 - 1.0, (y as f32 + 0.5) / n as f32 * 2.0 - 1.0);
-            let r = (dx * dx + dy * dy).sqrt();
-            let a = (1.0 - r).clamp(0.0, 1.0).powf(2.2);
-            px.extend_from_slice(&[255, 255, 255, (a * 255.0) as u8]);
-        }
-    }
-    Image::new(bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
-               bevy::render::render_resource::TextureDimension::D2, px,
-               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
-}
-
 /// The medkit texture's cross (its blue: blue well over red and green) made red, as bright.
 fn red_cross(img: &mut Image) {
     let Some(px) = img.data.as_mut() else { return };
@@ -717,22 +677,6 @@ fn red_cross(img: &mut Image) {
             c[1] = (g * 2 / 5) as u8;
             c[2] = (r * 2 / 5) as u8;
         }
-    }
-}
-
-/// The medkit glows facing the camera, drawn a little toward it.
-fn face_glows(camera: Query<&GlobalTransform, With<MainCamera>>, mut glows: Query<(&Glow, &mut Transform)>) {
-    let Ok(cam) = camera.single() else { return };
-    let eye = cam.translation();
-    for (g, mut tr) in &mut glows {
-        let d = eye.distance(g.0);
-        if d < 0.01 {
-            continue;
-        }
-        let pull = GLOW_NEAR.min(d * GLOW_NEAR_PART);
-        tr.translation = g.0 + (eye - g.0) / d * pull;
-        tr.scale = Vec3::splat((d - pull) / d);
-        tr.look_at(eye, Vec3::Y);
     }
 }
 
@@ -1063,7 +1007,7 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
 /// The pickups placed since the map started (`LatePickup`), once the level's are in: each lies
 /// tilted to the ground under it, seated on its lowest point, loose (`Body`); one with `DropIn`
 /// (put in the air) falls from where it is instead, as it's turned. Medkits and fruit can be
-/// taken (no glow: the glows mark the level's medkit spots).
+/// taken.
 fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut<Pickups>,
                 mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>), With<LatePickup>>,
                 children: Query<&Children>, parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>, meshes: Res<Assets<Mesh>>) {
