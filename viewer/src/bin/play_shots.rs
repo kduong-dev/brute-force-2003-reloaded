@@ -290,9 +290,25 @@ impl FireState {
     }
 
     /// FUN_00123ea0 asked for besides a shot (Flint's targeting, every frame while it's on,
-    /// play_skills.rs): the gun raised, its ready timer held at READY_HOLD or more.
+    /// play_skills.rs; the right mouse's aim, play.rs, the demo's stand-in for it): the gun raised,
+    /// its ready timer held at READY_HOLD or more.
     pub fn keep_raised(&mut self) {
         self.ready = self.ready.max(READY_HOLD);
+    }
+
+    /// The ready timer out at once (char+0x7dc to 0): what FUN_0011e000 does every frame of a
+    /// motion that can't aim (aim="false", the motion's +0x250 bit 6: the crouch's transitions,
+    /// the dash, a jump, a dodge, a dive, a slide, a throw) and with an overlay that can't (the
+    /// reload's, inferred from #35 take29), FUN_00121670 at a weapon's draw and FUN_00115d50 at
+    /// death (todo/126 answers.md Q7, Q11; play.rs `can_aim`). The gun counts as down, so the
+    /// follow camera's aim shift runs out (play_camera.rs) and the next pull raises it again.
+    pub fn lower(&mut self) {
+        self.ready = 0.0;
+    }
+
+    /// The ready timer's time left (s; BF_CAMERA_LOG's t7dc).
+    pub fn ready_left(&self) -> f32 {
+        self.ready.max(0.0)
     }
 
     /// The current accuracy of weapon `i` (for logs and tests).
@@ -534,8 +550,8 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
             }
             // the controlled character's eye, when the view is its scope (see SCOPE_FLASH_REACH)
             let eye = (k == 0 && hand == 0 && p.scope > 0.5).then(|| {
-                let (eye, look) = camera_pose(p, 0.0);
-                (eye, (look - eye).normalize_or(Vec3::NEG_Z), (fov_at(p.zoom) * 0.5).tan())
+                let (eye, turn) = camera::view(p);
+                (eye, turn * Vec3::NEG_Z, (fov_at(p.zoom) * 0.5).tan())
             });
             let gun = if hand == 0 { Some(p.weapon) } else { p.second.map(|s| s.weapon) };
             let Some(w) = gun.and_then(|g| p.loaded.as_ref().and_then(|l| l.weapons.get(g))) else { continue };

@@ -42,7 +42,8 @@
 //!    grows to 0.4 of the screen (play_reticle.rs), so the guns, which aim at the lock, find the
 //!    enemies near the crosshair; her HUD marker shows the box or the locked target
 //!    (play_targeting.rs) and the crosshair fades out. Her gun stays raised and the camera in
-//!    while it's on and for a while after (`Skill::raised`, `Skill::shift`). Her rolls are
+//!    while it's on and for a while after (`Skill::raised`; the camera's aim shift follows it,
+//!    play_camera.rs). Her rolls are
 //!    doubled 15% of the time while on and x1.5 scoped (play_damage.rs), her rifles reach x1.25,
 //!    she walks, and the empty clip, the switch key and the reload key end it.
 //!
@@ -129,17 +130,6 @@ const TARGETING_MOVE_CAP: f32 = 0.55;
 /// FUN_001195c0: a stick length under this moves at the walk (0.65 at 0x3a53f0, the compare after
 /// the caps at 0x11973a); the demo's walk key stands for it (`move_capped`).
 const RUN_FROM: f32 = 0.65;
-/// The camera's aim shift timer (char+0x430): set to AIM_SHIFT_HOLD s (0x40cbd8) every frame while
-/// the gun is raised, its ready timer running, or scoped, for a player-controlled character
-/// (0x128280 at 0x1284e1-0x12852c). The character update counts it down by dt, 3 x dt dashing,
-/// and zeroes it for the dead and for a character no player controls (0x11ccb8-0x11cd61). The
-/// camera's boom gains 1.75 m along the crosshair ray x clamp(AIM_SHIFT_RAMP x the timer, 0, 1)
-/// (0x12858e, 1.5 at 0x3a4fb4): in in full until its last 1 / 1.5 s, then out along the ramp.
-const AIM_SHIFT_HOLD: f32 = 3.0;
-const AIM_SHIFT_RAMP: f32 = 1.5;
-/// The aim shift's countdown dashing (0x11ccfc-0x11cd23: MT_DASH with char+0x5f0 above 0.1, dt
-/// taken twice more).
-const AIM_SHIFT_DASH: f32 = 3.0;
 /// The lock box's scale Flint's +0x100 gives while on (0x13cd1d: 1.0 at 0x3a4f78), in place of
 /// the gun's own h_e1e41c2d (the L-Shot-75's 0.1, the Jax-iP's 0.6).
 const TARGETING_LOCK_BOX: f32 = 1.0;
@@ -337,7 +327,7 @@ pub trait SkillKind: Send + Sync {
     }
     /// Whether the skill keeps the gun raised now (FUN_00123ea0 every frame: Flint's update
     /// 0x13cbf0 while on), which holds the gun's ready timer (`Skill::raised`): the ready pose,
-    /// and the controlled character's camera in (the aim shift, `Skill::shift`).
+    /// and the controlled character's camera in (the aim shift, play_camera.rs).
     fn keeps_gun_up(&self, _u: &Player) -> bool {
         false
     }
@@ -414,13 +404,10 @@ pub struct Skill {
     /// every frame while on (FUN_00123ea0 from 0x13cbf0), which keeps the timer at 4 s or more
     /// (FUN_00123f60, 0x3c05fc), and it runs down after the off (`hold`). The ready pose shows
     /// while it runs (play.rs `upper_aim`): take17, off at 11.55 s, the rifle down at 15.5-15.8.
-    /// Kept apart from the shot's own (`FireState`'s, play_shots.rs), as the demo's pose and camera
-    /// after a shot are #126's fit (`Player::aim_hold`), not this rule
+    /// Kept apart from the shot's own (`FireState`'s, play_shots.rs), as the demo's pose after a
+    /// shot is its own (`Player::aim_hold`); the follow camera's aim shift reads both
+    /// (play_camera.rs: held while either runs, 3 s more after)
     pub raised: f32,
-    /// the camera's aim shift timer for the controlled character while that runs and after,
-    /// s (char+0x430, AIM_SHIFT_HOLD): the camera in, then out along the shift's ramp
-    /// (`aim_shift`; take17: in by 2.27 s, out over 18.13-18.6 s)
-    pub shift: f32,
     /// the character's invisibility material controller (its controllers of kind 2, char+0x54c),
     /// which Hawk's on and off switch and whose level her update reads back (`Cloak`); her
     /// refraction is drawn from it (play_stealth.rs). Off for everyone else
@@ -866,37 +853,22 @@ pub fn gun_raised(u: &Player) -> bool {
     u.skill.raised > 0.0
 }
 
-/// How far in the controlled character's camera is for its skill's hold, 0-1 (the aim shift,
-/// 0x12858e: clamp(1.5 x char+0x430, 0, 1)): play.rs `follow_camera`.
-pub fn aim_shift(u: &Player) -> f32 {
-    (u.skill.shift * AIM_SHIFT_RAMP).clamp(0.0, 1.0)
-}
-
-/// The skill's hold on the gun and the camera this frame (`Skill::raised`, `Skill::shift`): the
-/// ready timer at READY_HOLD while the skill keeps the gun up, else running down; the aim shift at
-/// AIM_SHIFT_HOLD while that runs, else counted down (3 x dt dashing), for the controlled
-/// character only (0 for the others, as the game's for a character no player controls).
+/// The skill's hold on the gun this frame (`Skill::raised`): the ready timer at READY_HOLD while
+/// the skill keeps the gun up, else running down. The follow camera's aim shift holds while it
+/// runs (play_camera.rs `step_shift`, for the controlled character).
 ///
 /// A reload after the off ends the ready timer at once: a fit to #35 take29, where the reload
 /// right after the off left the rifle lowered once it was done (6.6 s) and the camera came out at
 /// 7.6-8.0 s, 2.3-3 s after the reload began (5.2), where take17's, with no reload, held 6.6 s.
 /// What clears the game's timer there isn't found: the reload itself (FUN_00120d40) keeps a
 /// raised gun raised (FUN_00123f60 when FUN_000d4440 says it's up, 0x120e63-0x120e6e).
-fn hold(u: &mut Player, k: &dyn SkillKind, controlled: bool, dt: f32) {
+fn hold(u: &mut Player, k: &dyn SkillKind, dt: f32) {
     u.skill.raised = if k.keeps_gun_up(u) {
         shots::READY_HOLD
     } else if u.reloading.is_some() {
         0.0
     } else {
         (u.skill.raised - dt).max(0.0)
-    };
-    let dashing = matches!((u.action, u.gait), (Action::None, Gait::Sprint));
-    u.skill.shift = if !controlled {
-        0.0
-    } else if u.skill.raised > 0.0 {
-        AIM_SHIFT_HOLD
-    } else {
-        (u.skill.shift - dt * if dashing { AIM_SHIFT_DASH } else { 1.0 }).max(0.0)
     };
 }
 
@@ -1326,9 +1298,9 @@ fn sniper_transition(u: &Player) -> bool {
 ///  - **Update** (0x13cbf0), while on: the gun kept raised (FUN_00123ea0 every frame), and the
 ///    gun in hand's clip at 0 sends the toggle (take29: off in the tick the clip read 0, before
 ///    the reload).
-///  - **The hold** (`Skill::raised`, `Skill::shift`): raising the gun every frame holds its ready
-///    timer at 4 s, so the ready pose stays up while on and 4 s after the off; the camera's aim
-///    shift (0x128280) keeps the controlled character's camera in while that runs and 3 s more,
+///  - **The hold** (`Skill::raised`): raising the gun every frame holds its ready timer at 4 s, so
+///    the ready pose stays up while on and 4 s after the off; the camera's aim shift (0x128280,
+///    play_camera.rs) keeps the controlled character's camera in while that runs and 3 s more,
 ///    coming out over the last 0.67 s. take17: in by 2.27 s (on at 2.09), the rifle down at
 ///    15.5-15.8 s and the camera out over 18.13-18.6 s (off at 11.55); take29 the same way in.
 ///  - **The crosshair's lock** (+0x100 and +0xc4, play_reticle.rs): while on the lock box is 0.4
@@ -1775,11 +1747,10 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
         if u.skill.on {
             deactivate(u, k, env);
         }
-        // (the motions the toggle asked for go with the body, and the hold: the aim shift is 0 for
-        // the dead, 0x11ccb8)
+        // (the motions the toggle asked for go with the body, and the hold: the ready timer is 0
+        // for the dead, FUN_00115d50 at 0x115da4, and with it the camera's aim shift, 0x11ccb8)
         u.skill.special_motions = false;
         u.skill.raised = 0.0;
-        u.skill.shift = 0.0;
         u.skill.kind = Some(kind);
         return;
     }
@@ -1834,8 +1805,8 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
     if k.update(u, dt) {
         command(u, k, env, "its own end");
     }
-    // the gun it keeps raised, and the camera's aim shift that follows (Flint's)
-    hold(u, k, env.controlled, dt);
+    // the gun it keeps raised (Flint's), which the camera's aim shift follows
+    hold(u, k, dt);
     // off (checked again: a skill that went off this frame refills this frame, take02)
     if !u.skill.on {
         u.stamina = (u.stamina + recovery * dt * refill_factor(u)).min(u.max_stamina);

@@ -624,8 +624,9 @@ fn sweep(mut player: ResMut<Player>, mut applied: Local<f32>) {
     }).sum::<f32>().to_radians();
     match test_goto() {
         Some(g) => {
+            // (with the turn a scope's re-aim has given the aim: play_camera.rs `Rig::hook_turn`)
             let base = if g[0] == g[2] && g[1] == g[3] { 0.0 } else { (-(g[2] - g[0])).atan2(-(g[3] - g[1])) };
-            player.cam_yaw = wrap_angle(base + turn);
+            player.cam_yaw = wrap_angle(base + turn + player.rig.hook_turn.x);
         }
         None => player.cam_yaw = wrap_angle(player.cam_yaw + turn - *applied),
     }

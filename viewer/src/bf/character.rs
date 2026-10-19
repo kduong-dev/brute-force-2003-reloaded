@@ -832,8 +832,11 @@ pub const H_LIQUID_OBJECT: u32 = 0x0436_6A6A;
 /// copies the seven into the character type as 12-byte vectors from +0x1b0, in this order:
 /// walk 0x1b0, run 0x1bc, dash 0x1c8, ready 0x1d4, `h_e42d50a5` 0x1e0, dead 0x1ec, snipe 0x1f8.
 /// The squad's walk .. `h_e42d50a5` differ per character (Brutus `3.4 7 0`, Flint `3.2 1 0`),
-/// dead is `3.5 5 0` for all four and snipe `0.001 0 0`. What the three numbers mean isn't in
-/// the data; the death camera reads `dead` as (height, distance back, unused).
+/// dead is `3.5 5 0` for all four and snipe `0.001 0 0`. The type loader (0x12f129-0x12f1c5,
+/// FUN_0012eca0) reads each as (distance m, elevation degrees, yaw degrees): a direction (sin yaw
+/// cos el, sin el, cos yaw cos el) and a distance; only walk is read alive, dead dead (0x12834f,
+/// 0x12838b: the follow camera's boom, play_camera.rs `boom_of`). The demo's death camera reads
+/// `dead` its own way, as (height, distance back, unused).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CameraOffsets {
     pub walk: [f32; 3],

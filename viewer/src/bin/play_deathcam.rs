@@ -47,7 +47,8 @@ const PELVIS_HEIGHT: f32 = 1.1;
 /// `offset-dead` for a character type without one: the squad's `3.5 5 0`.
 const DEFAULT_OFFSET_DEAD: [f32; 3] = [3.5, 5.0, 0.0];
 /// How fast the orbit's centre and the point the view aims at follow the body as it falls and
-/// slides (per second; the follow camera's own rate for its target, see `follow_camera`).
+/// slides (per second; the demo's choice, the old follow camera's rate for its target before
+/// #126 gave it the game's leash).
 const BODY_FOLLOW_RATE: f32 = 12.0;
 /// Walls. The game's own camera collision here isn't recorded (the recording's camera does end
 /// up closer and lower near objects later on), so this is the demo's choice. The camera sits on

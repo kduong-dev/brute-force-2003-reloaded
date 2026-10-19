@@ -113,6 +113,19 @@ fn raise(p: &mut Player, in_time: f32) {
                  if p.controlled { "pc" } else { "npc" });
     }
 }
+/// Whether `p`'s motion can aim now (FUN_0011e000's "may aim", char+0x260 bit 3, from the motion's
+/// aim flag, aim="false" in the motion set being its +0x250 bit 6, and an overlay's +0x3d bit 0):
+/// not in the crouch's transitions (stand2crouch, crouch2stand; the crouch itself can), a dash, a
+/// jump, a dodge, a dive, a slide or a grenade's throw (ms_tex.xml: 43 of its 83 motions can't),
+/// nor a reload (its overlay's, inferred from #35 take29), a weapon switch (FUN_00121670) or dead
+/// (FUN_00115d50). While it can't, the ready timer is held at 0 (`FireState::lower`; todo/126
+/// answers.md Q7, Q11).
+fn can_aim(p: &Player) -> bool {
+    let dash = matches!((p.action, p.gait), (Action::None, Gait::Sprint));
+    let moving = matches!(p.action, Action::Crouching | Action::Rising | Action::Dodge { .. } | Action::Dive
+        | Action::JumpCrouch | Action::JumpLaunch | Action::JumpFall | Action::JumpLand);
+    !(p.dead || dash || moving || p.slide_on || p.throwing.is_some() || p.reloading.is_some() || p.switching.is_some())
+}
 const TURN_RATE: f32 = 9.0;
 /// yaw (radians) the spine takes when aiming standing; the feet turn for the rest
 const AIM_SPINE_YAW: f32 = 0.2;
@@ -313,8 +326,7 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     let mut p = Player::new(start);
     let env = |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<f32>().ok());
     if let Some(v) = env("BF_CAMERA_YAW") { p.cam_yaw = v; }
-    if let Some(v) = env("BF_CAMERA_PITCH") { p.cam_pitch = v; }
-    if let Some(v) = env("BF_CAMERA_DISTANCE") { p.cam_distance = v; }
+    if let Some(v) = env("BF_CAMERA_PITCH") { p.cam_pitch = v.clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT); }
     // (the level's triggers know it by its spawn's copy name, and it carries its template's
     // weapons, wherever a test hook starts it)
     if let Some(s) = spawns.of(start) {
@@ -341,7 +353,6 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     }
     if spawn.is_some() {
         p.prev_xz = Vec2::new(p.position.x, p.position.z);
-        p.cam_target = p.position + Vec3::new(0.0, 0.35, 0.0);
         return p;
     }
     if let Some(g) = test_goto() {
@@ -412,8 +423,7 @@ fn player_at(start: usize, at: Vec3, yaw: f32) -> Player {
     p.fall_from = feet;
     p.yaw = yaw;
     p.cam_yaw = yaw;
-    // (the follow camera starts on them, not swinging in from the origin)
-    p.cam_target = p.position + Vec3::new(0.0, 0.35, 0.0);
+    // (the follow camera starts on them, cut there: `camera::Rig`'s first frame)
     p
 }
 
@@ -655,6 +665,7 @@ fn main() {
         .add_plugins(script::plugin)
         .add_plugins(brain::plugin)
         .add_plugins(placed_fx::plugin)
+        .add_plugins(camera::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -750,6 +761,8 @@ mod script;
 mod brain;
 #[path = "play_placed_fx.rs"]
 mod placed_fx;
+#[path = "play_camera.rs"]
+mod camera;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1581,13 +1594,6 @@ const RELOAD_TIME: f32 = 0.7;
 /// measured in every weapon's take01), i.e. this fraction of the half-height above the middle;
 /// shots and aiming go through it
 const CROSSHAIR_UP: f32 = (240.0 - 192.0) / 240.0;
-/// A weapon that zooms (WeaponDef::zoom, h_efce7f77, above 0: its scope has levels) has a scope:
-/// in it the camera moves to the character's eyes (this far above and in front of the camera
-/// target, m), the field of view narrows by the level's zoom, the character's model is hidden,
-/// and its snipe-sound breathing plays in a loop (BREATH_GAP between breaths) while it stays
-/// there.
-const EYE_ABOVE_TARGET: f32 = 0.45;
-const EYE_FORWARD: f32 = 0.35;
 /// FUN_0011aa20, which runs the scope's ramp (its zoom +0x7ac and its progress +0x7cc) and the
 /// scope button's lockout (+0x7c8), is called twice a game frame for a character a player
 /// controls: by the character's own tick (FUN_0011caa0, its vtable's +0x6c at 0x39de44; the call
@@ -1605,6 +1611,11 @@ const SCOPE_IN_LOCK: f32 = 0.85;
 /// FUN_001249b0 (0x124a1c): leaving the scope sets the lockout to this, and a press to enter it
 /// again waits for it to run out (0.45 s). Medium confidence, as SCOPE_IN_LOCK.
 const SCOPE_OUT_LOCK: f32 = 0.9;
+/// A weapon that zooms (WeaponDef::zoom, h_efce7f77, above 0: its scope has levels) has a scope:
+/// in it the camera moves in behind the character's head (play_camera.rs: 0.5 m behind a point
+/// 0.5 m above its root node, by the scope's progress), the field of view narrows by the level's
+/// zoom, the character's model is hidden, and its snipe-sound breathing plays in a loop
+/// (BREATH_GAP between breaths) while it stays there.
 const BREATH_GAP: f32 = 0.6;
 const BREATH_VOLUME: f32 = 0.6;
 const SCOPE_SOUND_VOLUME: f32 = 0.8;
@@ -1613,11 +1624,16 @@ const SCOPE_SOUND_VOLUME: f32 = 0.8;
 /// second level is her skill's: play_skills.rs `scope_levels`, `scope_zoom`.)
 const STILL_SNIPER: usize = 1;
 const SWAY: f32 = 0.012;
-/// In the scope the eye keeps this far off walls (it sits in front of the head otherwise and
-/// would look through a barrier close by).
-const EYE_CLEARANCE: f32 = 0.25;
-/// vertical field of view (Bevy's default perspective)
-const FOV_Y: f32 = std::f32::consts::FRAC_PI_4;
+/// The vertical field of view (rad): the game's follow camera's 70 degrees across its 4:3 picture
+/// (the levels' follow-camera archetypes' fov, every one of the 54 levels' 70: the camera's
+/// attach 0x6ba30 -> FUN_0006e450 halves it into the view's +0x14, the aspect held to 4:3), so
+/// 2 atan(0.75 tan 35) = 55.413 degrees down. The takes' live read: fov 70, half vFOV 27.706
+/// (todo/126 notes, the field-of-view table), and the barrel and Tex's feet project where the
+/// picture shows them (`fov-check.png`). The demo keeps this vertical at any window's shape and
+/// shows more at the sides (86.1 degrees across at 16:9, the takes' black bars), so the window's
+/// central 4:3 is the game's picture; a window narrower than 4:3 shows less than the game's 70
+/// across (the product owner's call, #269: kept vertical always).
+const FOV_Y: f32 = 0.967_138;
 
 /// A weapon-switch overlay clip (upper body) and its events.
 struct SwitchClip {
@@ -1988,15 +2004,20 @@ struct Player {
     /// seconds of no footsteps after a landing (its thud covers the feet touching down)
     step_mute: f32,
     // camera
+    /// the aim (rad): its heading (0 down -z, + to the left) and pitch (+ up, held to
+    /// +-camera::PITCH_LIMIT), the game's aim frame char+0x5bc, which the follow camera's view is
+    /// (play_camera.rs). The pitch starts level (the takes' characters rest at -0.01..-0.02; the
+    /// game's at spawn isn't recorded)
     cam_yaw: f32,
     cam_pitch: f32,
-    cam_distance: f32,
-    cam_target: Vec3,
-    /// 0..1 blend of the over-the-shoulder aiming camera
-    shoulder: f32,
-    /// the scope: 0..1 blend into the sniping view (the character's `offset-snipe`, at its
-    /// eyes; the game's char+0x7cc) and the zoom it gives (+0x7ac: 1 none, the level's zoom in
-    /// it), both ramped linearly (`follow_camera`)
+    /// the follow camera's state (play_camera.rs `Rig`): the controlled character's runs
+    rig: camera::Rig,
+    /// the height (m above the feet) of the head the follow camera pivots on (char+0x48c: its
+    /// "Bip01 Head" bone at spawn, `camera::head_height`)
+    head_height: f32,
+    /// the scope: its progress, 0..1 (the game's char+0x7cc: the follow camera blends into the
+    /// scope's camera by it, play_camera.rs) and the zoom it gives (+0x7ac: 1 none, the level's
+    /// zoom in it), both ramped linearly (`follow_camera`)
     scope: f32,
     zoom: f32,
     /// the character's breathing in the scope (its snipe-sound, how long it lasts) and when it's
@@ -2131,8 +2152,8 @@ impl Player {
             weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
-            cam_yaw: 0.0, cam_pitch: -0.18, cam_distance: 3.6, cam_target: Vec3::new(0.0, 0.3, 0.0),
-            shoulder: 0.0, scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), scope_heard: 0, scope_level: 0, scope_lock: 0.0, test_scope_presses: 0, test_selected: false, sway: Vec2::ZERO,
+            cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
+            scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), scope_heard: 0, scope_level: 0, scope_lock: 0.0, test_scope_presses: 0, test_selected: false, sway: Vec2::ZERO,
             wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
             lock_aim: None,
             enemy: Default::default(),
@@ -2290,7 +2311,6 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     // their "camera" is the leader's, so movement and aim share the leader's frame
     m.cam_yaw = leader.cam_yaw;
     m.cam_pitch = leader.cam_pitch;
-    m.cam_distance = leader.cam_distance;
     let fwd = Vec3::new(-m.cam_yaw.sin(), 0.0, -m.cam_yaw.cos());
     let right = Vec3::new(m.cam_yaw.cos(), 0.0, -m.cam_yaw.sin());
     let moving = m.move_input.length() > 0.1;
@@ -2389,8 +2409,7 @@ fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
     // its "camera" looks at the target (the upper body and the feet turn to it)
     let to = t - (m.position + Vec3::Y * (GROUND + m.height + AI_EYE));
     m.cam_yaw = (-to.x).atan2(-to.z);
-    m.cam_pitch = (to.y / to.length().max(1e-3)).clamp(-1.0, 1.0).asin().clamp(-1.2, 0.5);
-    m.cam_target = m.position + Vec3::new(0.0, 0.35 + m.height * 0.5, 0.0);
+    m.cam_pitch = (to.y / to.length().max(1e-3)).clamp(-1.0, 1.0).asin().clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
     m.face_yaw = Some(m.cam_yaw);
     if m.ai_delay > 0.0 {
         m.ai_delay -= dt;
@@ -2415,7 +2434,7 @@ fn face_toward(m: &mut Player, p: Vec3) -> bool {
         return false;
     }
     m.cam_yaw = (-to.x).atan2(-to.z);
-    m.cam_pitch = (to.y / to.length().max(1e-3)).clamp(-1.0, 1.0).asin().clamp(-1.2, 0.5);
+    m.cam_pitch = (to.y / to.length().max(1e-3)).clamp(-1.0, 1.0).asin().clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
     m.face_yaw = Some(m.cam_yaw);
     true
 }
@@ -2555,7 +2574,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         player.select = Some((c, left - dt));
         return;
     }
-    let (pitch, distance, help) = (player.cam_pitch, player.cam_distance, player.show_help);
+    let (pitch, help) = (player.cam_pitch, player.show_help);
     // the squad shares one inventory: the grenades and medkits go with control (a throw under
     // way is called off, its grenade back in the inventory)
     player.cancel_throw();
@@ -2574,14 +2593,14 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     squad.0[i].select = None;
     player.select = None;
     player.cam_pitch = pitch;
-    player.cam_distance = distance;
-    player.cam_target = player.position + Vec3::new(0.0, 0.35 + player.height * 0.5, 0.0);
     // the cut lands behind them, clear of walls (the reference recording's cut to Hawk: from
-    // straight behind, the whole body in view)
-    player.cam_yaw = clear_follow_yaw(player.cam_target, player.yaw, pitch, distance);
-    player.shoulder = 0.0;
+    // straight behind, the whole body in view), the camera put there at once (take21: the
+    // picture jumps to Brutus's camera, no ease)
+    player.cam_yaw = clear_follow_yaw(&player, &game.0, player.yaw);
+    player.rig.cut = true;
     // the squad AI's aim, fire, walking and idling don't carry over: the cut is to the plain
-    // follow camera (not pulled in over the shoulder), and they stand where they face instead
+    // follow camera (no aim shift: its timer is 0 for a character no player controls), and they
+    // stand where they face instead
     // of walking on, turning to the old leader's heading (face_yaw) or kneeling on (the demo's
     // choice: the recording's Hawk stands at the cut, but whether a kneeling member stands up is
     // a guess)
@@ -2695,56 +2714,26 @@ fn ray_hit(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
     best.filter(|t| *t <= max)
 }
 
-/// Camera position and the point it looks at, from the player's camera state. Aiming and firing
-/// dolly the camera in along its view (as the game does: the background and crosshair stay put,
-/// the character grows ~1.8x, a little right of centre). Looking steeply down the
-/// game keeps its distance, so the zoom fades out below ~35 degrees of pitch.
-fn camera_pose(p: &Player, view_yaw: f32) -> (Vec3, Vec3) {
-    let rot = Quat::from_euler(EulerRot::YXZ, p.cam_yaw + view_yaw + p.sway.x, p.cam_pitch + p.sway.y, 0.0);
-    let s = p.shoulder * ((p.cam_pitch + 1.05) / 0.45).clamp(0.0, 1.0);
-    let target = p.cam_target + rot * Vec3::new(0.2, 0.3, 0.0) * s;
-    let pos = target + rot * Vec3::new(0.0, 0.0, p.cam_distance * (1.0 - 0.42 * s));
-    if p.scope <= 0.0 {
-        return (pos, target);
-    }
-    // the scope: the camera moves to the eyes (offset-snipe 0.001 0 0) and looks along the aim
-    let head = p.cam_target + Vec3::Y * EYE_ABOVE_TARGET;
-    let fwd = rot * Vec3::NEG_Z;
-    // not into a wall: no further forward than the clearance before what's in front
-    let reach = world::arena().and_then(|a| a.ray(head, fwd, EYE_FORWARD + EYE_CLEARANCE))
-        .map_or(EYE_FORWARD, |t| (t - EYE_CLEARANCE).clamp(-EYE_CLEARANCE, EYE_FORWARD));
-    let eye = head + fwd * reach;
-    let ahead = eye + fwd * 10.0;
-    (pos.lerp(eye, p.scope), target.lerp(ahead, p.scope))
-}
-
 /// Headings tried either side of straight behind when the cut to a squad member finds a wall
-/// there: this step, up to half a turn (the demo's choice; the game's own placement isn't
-/// recorded near walls).
+/// there: this step, up to half a turn (the demo's choice: the game's hand-over puts the camera
+/// behind the new character's aim, no search found in its code, and take21 has no wall behind).
 const HANDOVER_YAW_STEP: f32 = 10.0 * std::f32::consts::PI / 180.0;
-/// The follow camera keeps this far in front of a wall (its clamp in `follow_camera`).
-const FOLLOW_WALL_MARGIN: f32 = 0.3;
 
-/// The follow camera's heading for a cut to a character facing `facing`, its view on `target`:
-/// straight behind them if nothing is in the way back to the camera at `distance`; otherwise
-/// the nearest heading either side that is clear (the follow camera's clamp would otherwise
-/// pull it into the body); with none clear, the one with the most room.
-fn clear_follow_yaw(target: Vec3, facing: f32, pitch: f32, distance: f32) -> f32 {
-    let Some(a) = world::arena() else { return facing };
-    let need = distance + FOLLOW_WALL_MARGIN;
-    let room = |yaw: f32| {
-        let back = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0) * Vec3::Z;
-        a.ray(target, back, need).unwrap_or(f32::MAX)
-    };
-    let mut best = (facing, room(facing));
-    if best.1 >= need {
+/// The heading for a cut to `p`, facing `facing`: straight behind them if the follow camera's wall
+/// test leaves its whole boom there (`camera::room_at`); otherwise the nearest heading either side
+/// that does (else the wall's steps would put the camera at the body, see-through); with none, the
+/// one with the most room. The demo's choice (see HANDOVER_YAW_STEP).
+fn clear_follow_yaw(p: &Player, game: &Game, facing: f32) -> f32 {
+    let (room, full) = camera::room_at(p, game, facing);
+    if room >= full {
         return facing;
     }
+    let mut best = (facing, room);
     for k in 1..=18 {
         for side in [1.0, -1.0] {
             let yaw = wrap_angle(facing + side * k as f32 * HANDOVER_YAW_STEP);
-            let r = room(yaw);
-            if r >= need {
+            let (r, full) = camera::room_at(p, game, yaw);
+            if r >= full {
                 return yaw;
             }
             if r > best.1 {
@@ -2755,9 +2744,9 @@ fn clear_follow_yaw(target: Vec3, facing: f32, pitch: f32, distance: f32) -> f32
     best.0
 }
 
-/// The vertical field of view at a zoom: FUN_0006c720's 2 atan(tan(FOV / 2) / zoom), from the
-/// demo's FOV_Y where the game's follow camera has 70 degrees across its 4:3 picture (#126). The
-/// levels' zooms against each other are the game's either way.
+/// The vertical field of view at a zoom: FUN_0006c720's 2 atan(tan(FOV / 2) / zoom) from FOV_Y,
+/// the game's follow camera's (#269): the L-Shot-75's zoom 10 and 25 give 6.01 and 2.41 degrees
+/// down, 8.01 and 3.21 across (take15 / take16's zfov).
 fn fov_at(zoom: f32) -> f32 {
     2.0 * ((FOV_Y * 0.5).tan() / zoom.max(1.0)).atan()
 }
@@ -2857,14 +2846,12 @@ fn scope_input(p: &mut Player, pressed: bool) {
     }
 }
 
-/// Camera position and direction of the ray through the crosshair.
+/// The crosshair's ray: the follow camera's place and the direction through the crosshair
+/// (play_camera.rs `view`, `crosshair_local`: CROSSHAIR_UP of the half-height above the centre,
+/// in the middle in the scope). What the reticle, the guns and the throws aim by.
 fn aim_ray(p: &Player) -> (Vec3, Vec3) {
-    let (cam, look) = camera_pose(p, 0.0);
-    let fwd = (look - cam).normalize();
-    let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
-    let up = right.cross(fwd);
-    // (in the scope the crosshair is in the middle)
-    (cam, (fwd + up * CROSSHAIR_UP * (1.0 - p.scope) * (fov_at(p.zoom) * 0.5).tan()).normalize())
+    let (eye, turn) = camera::view(p);
+    (eye, turn * camera::crosshair_local(p))
 }
 
 /// The flat test floor: checkered ground, pillars, camera and lights (BF_MAP=flat).
@@ -3387,6 +3374,12 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
         clips.root_stand_in = root_stand_ins(&model, &clips.slots, clips.special.as_ref());
     }
     info!("{label} clips: {clips:?}");
+    // the head the follow camera pivots on (char+0x48c, measured at spawn: play_camera.rs)
+    p.head_height = camera::head_height(&model, game, clips.loco.idle);
+    if std::env::var("BF_CAMERA_LOG").is_ok() {
+        println!("camera: {label}: head height {:.3} m (its idle's root-height {:?}), the model's bounding sphere {:?} (in its frame)",
+                 p.head_height, clips.loco.idle.and_then(|c| model.anims.get(c)).and_then(|a| a.root_height), model.bounds);
+    }
     let (feet, foot_rest) = find_feet(&model, game, clips.loco.idle);
     let (footstep_type, jump_sound) = game.character_audio.get(name).copied()
         .or(ty.as_ref().map(|t| (t.footstep_type, t.jump_sound))).unwrap_or((-1, 0));
@@ -3704,11 +3697,11 @@ fn read_input(
     player.reload_pressed = reload;
     player.use_held = use_key;
     player.throw_held = throw;
+    // the mouse turns the aim, which the follow camera's view is (the game's right stick; no
+    // zoom wheel: the boom is each character's own, play_camera.rs), the pitch held to +-60 degrees
+    // (FUN_0011e7c0)
     player.cam_yaw -= look.x;
-    player.cam_pitch = (player.cam_pitch - look.y).clamp(-1.2, 0.5);
-    if scroll.delta.y != 0.0 && !player.item_list {
-        player.cam_distance = (player.cam_distance * (1.0 - scroll.delta.y * 0.1)).clamp(1.5, 12.0);
-    }
+    player.cam_pitch = (player.cam_pitch - look.y).clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
 }
 
 /// The mouse's capture, the demo's own (the game has no mouse): a left click captures it (never
@@ -3742,14 +3735,17 @@ fn autopilot(player: &mut Player) -> bool {
     // height (the floor below it). BF_TEST_FIRE=1 (or 2: the second weapon) fires as well.
     if let Some(g) = test_goto() {
         let to = Vec2::new(g[2] - player.position.x, g[3] - player.position.z);
-        player.cam_yaw = (-to.x).atan2(-to.y);
-        // (BF_CAMERA_PITCH: another pitch, e.g. to fire down at something)
-        player.cam_pitch = std::env::var("BF_CAMERA_PITCH").ok().and_then(|v| v.parse().ok()).unwrap_or(-0.2);
+        // (BF_CAMERA_PITCH: another pitch, e.g. to fire down at something; with the turn a scope's
+        // re-aim has given the aim, which the mouse would keep: play_camera.rs `Rig::hook_turn`)
+        let turn = player.rig.hook_turn;
+        player.cam_yaw = (-to.x).atan2(-to.y) + turn.x;
+        let pitch: f32 = std::env::var("BF_CAMERA_PITCH").ok().and_then(|v| v.parse().ok()).unwrap_or(-0.2);
+        player.cam_pitch = (pitch + turn.y).clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
         player.aim = std::env::var("BF_TEST_AIM").is_ok();
         // a goal on the start itself: stand there (and look down -z)
         let stay = g[0] == g[2] && g[1] == g[3];
         if stay {
-            player.cam_yaw = 0.0;
+            player.cam_yaw = turn.x;
         }
         // (BF_TEST_GO_AT=<s>: set off at that time instead of after 1 s, as #35 take08's dash at
         // 4.0 s after standing; play_vengar.rs)
@@ -5549,6 +5545,17 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
     p.aim_hold -= dt;
+    // the right mouse's aim (no scope) holds the gun raised, its ready timer at 4 s or more: the
+    // demo's stand-in for an aim the game has none of without a shot (the product owner's call,
+    // #126), so the follow camera stays in while it's held and eases out the game's way after it
+    // (play_camera.rs); scoped, the game's own raise every frame (FUN_0011a440 at 0x11a5ba). A
+    // motion that can't aim lowers it every frame (`can_aim`), the aim's hold included
+    if p.aim && p.controlled && armed {
+        p.fire_state.keep_raised();
+    }
+    if !can_aim(p) {
+        p.fire_state.lower();
+    }
     let gun_up = armed && p.reloading.is_none() && p.throwing.is_none()
         && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours;
     let clip_of = |p: &Player, w: usize| p.ammo.get(w).map_or(0, |a| a[0]);
@@ -5626,7 +5633,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let off = if armed { p.muzzle_off } else { 0.0 };
     // (and while a skill holds the gun raised: FUN_00123ea0 every frame of Flint's targeting, and
     // the ready timer's 4 s after the off, `skills::gun_raised`; the camera comes in with it,
-    // `follow_camera`)
+    // play_camera.rs)
     let upper_aim = p.aim || (p.aim_hold > 0.0 && armed) || (armed && skills::gun_raised(p));
     let mut twist_goal = 0.0;
     if sliding {
@@ -6231,38 +6238,20 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, game: Res<GameData
     } else {
         player.breath_in = 0.0;
     }
+    // the follow camera (play_camera.rs): placed after the character's step, its view the aim's
+    let (at, turn) = camera::update(&mut player, &game.0, dt);
+    // the body: not drawn by its own camera in the scope (the zoom above 1) or with the camera at
+    // its near plane (0x126bc0); its fade by the camera is play_stealth.rs's
     if let Some(root) = player.loaded.as_ref().map(|l| l.root) {
         if let Ok(mut v) = vis.get_mut(root) {
-            let want = if player.scope > 0.6 { Visibility::Hidden } else { Visibility::Inherited };
+            let want = if camera::hides_body(&player) { Visibility::Hidden } else { Visibility::Inherited };
             if *v != want {
                 *v = want;
             }
         }
     }
-    let goal = player.position + Vec3::new(0.0, 0.35 + player.height * 0.5, 0.0);
-    let k = 1.0 - (-12.0 * dt).exp();
-    player.cam_target = player.cam_target.lerp(goal, k);
-    // in close while aiming or firing: the game snaps in within ~0.1 s of the first shot, holds
-    // briefly after the last one (aim_hold), then drifts back out over ~2 s
-    let armed = player.loaded.as_ref().is_some_and(|l| !l.weapons.is_empty());
-    let firing: f32 = if player.aim || (armed && player.aim_hold > 0.0) { 1.0 } else { 0.0 };
-    // and in while a skill holds the gun raised and its aim shift after (Flint's targeting, the
-    // game's rule, 0x128280: `skills::aim_shift`): in as when firing, out along the shift's own
-    // ramp (the last 0.67 s of its 3 s; the game eases its distance over 0.2 s, FUN_00070090, so
-    // the demo's in-rate both ways). take17: off at 11.55 s, the camera out over 18.13-18.6 s
-    let shift = if armed { skills::aim_shift(&player) } else { 0.0 };
-    let want = firing.max(shift);
-    let rate = if want > player.shoulder || shift > firing { 25.0 } else { 1.6 };
-    player.shoulder += (want - player.shoulder) * (1.0 - (-rate * dt).exp());
-    // test hook: BF_VIEW_YAW turns only the rendered view (aim and controls are unchanged)
-    let view = std::env::var("BF_VIEW_YAW").ok().and_then(|s| s.parse().ok()).unwrap_or(0.0);
-    let (mut pos, look) = camera_pose(&player, view);
-    let back = pos - look;
-    if let Some(t) = world::arena().and_then(|a| a.ray(look, back.normalize_or_zero(), back.length())) {
-        pos = look + back.normalize_or_zero() * (t - 0.3).max(0.2);
-    }
     if let Ok((mut tr, mut projection)) = cam.single_mut() {
-        *tr = Transform::from_translation(pos).looking_at(look, Vec3::Y);
+        *tr = Transform::from_translation(at).with_rotation(turn);
         if let Projection::Perspective(pp) = projection.as_mut() {
             let fov = fov_at(player.zoom);
             if (pp.fov - fov).abs() > 1e-4 {
@@ -6330,7 +6319,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
          WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab items   T grenade type   E use   V special skill   M surface   H hide\n\
-         click: mouse look, Esc release   wheel zoom   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
+         click: mouse look, Esc release   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
          test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die\n\
          {}",
         CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,

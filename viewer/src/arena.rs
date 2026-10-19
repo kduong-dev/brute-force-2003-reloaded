@@ -5,7 +5,8 @@
 //! of, if any (what the crosshair's centre ray is on, `ray_object`; whether the floor is indoors,
 //! `floor_kind`). A level without collision data falls back to the
 //! drawn triangles (cut-outs left out). Used to stand characters on the ground (or on objects'
-//! floors), push them out of walls, cast shots and settle pickups.
+//! floors), push them out of walls, cast shots, settle pickups and keep the follow camera out of
+//! walls (`hull_triangles`, `convex_meet`: its wedge, play_camera.rs).
 //!
 //! Liquids (lava, toxic rivers, water: placed objects of class h_04366a6a) have a flat
 //! collision plane at their surface; it isn't solid: characters wade and sink through it to
@@ -75,6 +76,9 @@ struct Tri {
     /// and its level blocker's (`<blocker object-instance>`); None for the terrain, a blocker of
     /// no object and what a broken object leaves behind (`ray_object`)
     object: Option<u32>,
+    /// one of a level's blockers (`<blocker physics-id ...>`, the invisible walls round its
+    /// objects), which the follow camera's wedge passes through (`hull_triangles`)
+    blocker: bool,
 }
 
 pub struct Arena {
@@ -137,6 +141,149 @@ fn closest_on_tri(p: Vec3, t: &[Vec3; 3]) -> Vec3 {
     a + ab * (vb * denom) + ac * (vc * denom)
 }
 
+/// How many rounds `convex_meet` takes before it calls a case that hasn't settled a touch (a
+/// guess's bound: the game's FUN_00167c40 gives up after 100 and calls it a miss; ours settle in a
+/// handful).
+const GJK_ROUNDS: usize = 64;
+
+/// Whether the convex hulls of the points `a` and `b` meet, touching included: GJK on their
+/// Minkowski difference, as the game's FUN_00167c40 (the simplex of up to four support points,
+/// bit 0xf of its mask for a full tetrahedron round the origin) tests a world triangle against
+/// the follow camera's wedge (play_camera.rs). The points are taken relative to `a`'s first, so
+/// the sums stay small where the world's coordinates are large.
+pub fn convex_meet(a: &[Vec3], b: &[Vec3]) -> bool {
+    let (Some(&o), false) = (a.first(), b.is_empty()) else { return false };
+    let support = |d: Vec3| {
+        let far = |s: &[Vec3], sign: f32| s.iter().map(|&p| p - o).max_by(|x, y| (x.dot(d) * sign).total_cmp(&(y.dot(d) * sign))).unwrap_or(Vec3::ZERO);
+        far(a, 1.0) - far(b, -1.0)
+    };
+    let mut s = [Vec3::ZERO; 4];
+    s[0] = support(Vec3::X);
+    let mut n = 1;
+    let mut d = -s[0];
+    for _ in 0..GJK_ROUNDS {
+        // (the origin on the simplex: they touch)
+        if d.length_squared() < 1e-14 {
+            return true;
+        }
+        let p = support(d);
+        if p.dot(d) < 0.0 {
+            return false;
+        }
+        s[n] = p;
+        n += 1;
+        let inside = match n {
+            2 => {
+                gjk_edge(&mut s, &mut n, &mut d);
+                false
+            }
+            3 => gjk_triangle(&mut s, &mut n, &mut d),
+            _ => gjk_tetrahedron(&mut s, &mut n, &mut d),
+        };
+        if inside {
+            return true;
+        }
+    }
+    true
+}
+
+/// GJK's segment case: s[1] the newest point, s[0] the other; keeps the part nearest the origin
+/// and points `d` at it.
+fn gjk_edge(s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3) {
+    let (a, b) = (s[1], s[0]);
+    let (ab, ao) = (b - a, -a);
+    if ab.dot(ao) > 0.0 {
+        s[0] = b;
+        s[1] = a;
+        *n = 2;
+        *d = ab.cross(ao).cross(ab);
+    } else {
+        s[0] = a;
+        *n = 1;
+        *d = ao;
+    }
+}
+
+/// GJK's triangle case: s[2] the newest point. True when the origin lies in the triangle;
+/// otherwise keeps the feature nearest it (wound so (s1 - s2) x (s0 - s2) faces the origin) and
+/// points `d` at it.
+fn gjk_triangle(s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3) -> bool {
+    let (a, b, c) = (s[2], s[1], s[0]);
+    let (ab, ac, ao) = (b - a, c - a, -a);
+    let abc = ab.cross(ac);
+    // (three points in a line: the segment of the newest to the farther of the others)
+    if abc.length_squared() <= 1e-12 * ab.length_squared() * ac.length_squared() {
+        s[0] = if ab.length_squared() >= ac.length_squared() { b } else { c };
+        s[1] = a;
+        *n = 2;
+        gjk_edge(s, n, d);
+        return false;
+    }
+    let to_edge_ab = |s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3| {
+        s[0] = b;
+        s[1] = a;
+        *n = 2;
+        gjk_edge(s, n, d);
+    };
+    if abc.cross(ac).dot(ao) > 0.0 {
+        if ac.dot(ao) > 0.0 {
+            s[0] = c;
+            s[1] = a;
+            *n = 2;
+            *d = ac.cross(ao).cross(ac);
+        } else {
+            to_edge_ab(s, n, d);
+        }
+        return false;
+    }
+    if ab.cross(abc).dot(ao) > 0.0 {
+        to_edge_ab(s, n, d);
+        return false;
+    }
+    let side = abc.dot(ao);
+    if side.abs() <= 1e-9 * abc.length() {
+        return true;
+    }
+    if side > 0.0 {
+        (s[0], s[1], s[2]) = (c, b, a);
+        *d = abc;
+    } else {
+        (s[0], s[1], s[2]) = (b, c, a);
+        *d = -abc;
+    }
+    *n = 3;
+    false
+}
+
+/// GJK's tetrahedron case: s[3] the newest point. True when the origin is inside it; otherwise
+/// goes on with the face through the newest point that faces the origin (each face's normal
+/// turned away from the fourth corner, whatever the winding).
+fn gjk_tetrahedron(s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3) -> bool {
+    let (a, b, c, e) = (s[3], s[2], s[1], s[0]);
+    let ao = -a;
+    // (four points in a plane, which the support's test leaves only to rounding: the triangle of
+    // the newest three)
+    let (ab, ac, ae) = (b - a, c - a, e - a);
+    let scale = ab.length() * ac.length() * ae.length();
+    if ab.dot(ac.cross(ae)).abs() <= 1e-9 * scale {
+        (s[0], s[1], s[2]) = (c, b, a);
+        *n = 3;
+        return gjk_triangle(s, n, d);
+    }
+    let outward = |p: Vec3, q: Vec3, away: Vec3| {
+        let normal = (p - a).cross(q - a);
+        if normal.dot(away - a) > 0.0 { -normal } else { normal }
+    };
+    for (p, q, away) in [(b, c, e), (c, e, b), (e, b, c)] {
+        if outward(p, q, away).dot(ao) > 0.0 {
+            (s[0], s[1], s[2]) = (q, p, a);
+            *n = 3;
+            return gjk_triangle(s, n, d);
+        }
+    }
+    true
+}
+
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
         let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
@@ -172,6 +319,7 @@ impl Arena {
             for t in &mut a.tris[first..] {
                 t.piece = piece;
                 t.object = object;
+                t.blocker = true;
             }
         }
         if !physics {
@@ -257,7 +405,7 @@ impl Arena {
         let n = n.normalize();
         let n = if n.y < 0.0 { -n } else { n };
         let i = self.tris.len() as u32;
-        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None, object: None });
+        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None, object: None, blocker: false });
         let (lo, hi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
         let (c0, c1) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
         for x in c0.0..=c1.0 {
@@ -557,6 +705,53 @@ impl Arena {
     /// the level's placed geometry.
     pub fn ray_terrain(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
         self.ray_tri_where(origin, dir, max, |t| t.terrain).map(|(t, _)| t)
+    }
+
+    /// The solid triangles that meet the convex hull of `points` (`convex_meet`), and the flat
+    /// floor's ground under them where the hull reaches down to it (a triangle of it round the
+    /// hull): the follow camera's wedge test (play_camera.rs), where FUN_00152a50 gathers the
+    /// world's triangles round the wedge (its query mode 1: FUN_001516c0 keeps a leaf's triangle
+    /// when FUN_00167c40 says it meets the wedge) from the static mesh and the collidable objects
+    /// in their current pose, not characters or weapons (FUN_0006ef40's mask, the filter 0x6efb0:
+    /// todo/126 answers.md Q8). The level's blockers aren't met: the takes' camera passes the
+    /// hangar's on e34 (take17: 1.902 m at +0.061, where its blocker 1.2 m behind Tex would leave
+    /// 0.4) and the fence's at the range spot; which class keeps them out isn't traced (one of the
+    /// mask's types 15 / 19 / 24, or no collidable flag: a guess).
+    pub fn hull_triangles(&self, points: &[Vec3]) -> Vec<[Vec3; 3]> {
+        let Some(&first) = points.first() else { return vec![] };
+        let (lo, hi) = points.iter().fold((first, first), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+        let mut out = vec![];
+        if let Some(g) = self.flat.filter(|&g| lo.y <= g) {
+            let size = (hi - lo).max_element() + 1.0;
+            let corner = Vec3::new(lo.x - 1.0, g, lo.z - 1.0);
+            let ground = [corner, corner + Vec3::X * size * 3.0, corner + Vec3::Z * size * 3.0];
+            if convex_meet(points, &ground) {
+                out.push(ground);
+            }
+        }
+        let (c0, c1) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
+        let mut seen = HashSet::new();
+        for x in c0.0..=c1.0 {
+            for z in c0.1..=c1.1 {
+                for &i in self.cells.get(&(x, z)).map_or(&[][..], |v| v.as_slice()) {
+                    if !seen.insert(i) {
+                        continue;
+                    }
+                    let t = &self.tris[i as usize];
+                    if !self.solid(t) || t.blocker {
+                        continue;
+                    }
+                    let (tlo, thi) = (t.v[0].min(t.v[1]).min(t.v[2]), t.v[0].max(t.v[1]).max(t.v[2]));
+                    if tlo.cmpgt(hi).any() || thi.cmplt(lo).any() {
+                        continue;
+                    }
+                    if convex_meet(points, &t.v) {
+                        out.push(t.v);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// `ray`, with the triangle hit (None: the flat floor's ground).

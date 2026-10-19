@@ -1049,7 +1049,8 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         u.vy = 0.0;
         u.height = 0.0;
         u.trigger_name = copy;
-        u.cam_target = u.position + Vec3::new(0.0, 0.35, 0.0);
+        // (its follow camera cut to it: play_camera.rs `Rig::cut`)
+        u.rig.cut = true;
         // (in the world now, if it was waiting for this: play.rs `player_at_start`, #222)
         let came = std::mem::take(&mut u.absent);
         if tr.log {
@@ -2186,7 +2187,8 @@ fn warp(tr: &mut Triggers, i: usize, level: &Level, spawns: &SquadSpawns, player
             }
         }
         if controlled {
-            u.cam_target = u.position + Vec3::new(0.0, 0.35, 0.0);
+            // (the follow camera cut to the new place: play_camera.rs `Rig::cut`)
+            u.rig.cut = true;
         }
         if tr.log {
             println!("t {now:.2}: {by} warps {} to {} at {feet:.2}{}{}", tr.label(name), tr.label(point),

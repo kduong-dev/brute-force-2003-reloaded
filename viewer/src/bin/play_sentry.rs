@@ -491,7 +491,7 @@ fn test_rig(mut player: ResMut<Player>, mut squad: ResMut<Squad>, kits: Option<R
                 let want = (target - cam).normalize_or(ray);
                 let yaw = |v: Vec3| (-v.x).atan2(-v.z);
                 player.cam_yaw += wrap_angle(yaw(want) - yaw(ray));
-                player.cam_pitch = (player.cam_pitch + want.y.clamp(-1.0, 1.0).asin() - ray.y.clamp(-1.0, 1.0).asin()).clamp(-1.2, 0.5);
+                player.cam_pitch = (player.cam_pitch + want.y.clamp(-1.0, 1.0).asin() - ray.y.clamp(-1.0, 1.0).asin()).clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
             }
             // (from the hip, as take10's burst: the camera stays behind)
             player.aim = false;
