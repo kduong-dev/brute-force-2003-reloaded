@@ -34,10 +34,10 @@
 //!    and carries with it (0x212d60); hidden in the scope and within 0.15 m of the near plane
 //!    (0x126bc0). Another character between the camera and the one it follows fades by its depth
 //!    (FUN_00116340; `body_alpha`): code only, a guess's.
-//!  - **The scope's re-aim** (`reaim`): entering and leaving the scope, the point the reticle was on
-//!    is kept, and while the button's lockout runs the aim's pitch keeps the crosshair's ray on it
-//!    as the view moves (FUN_00122fa0, FUN_0011caa0 at 0x11d0e6; take15 / take16: the pitch -0.019
-//!    to +0.206 / +0.123 over the move in).
+//!  - **The scope's re-aim** (`reaim`): entering and leaving the scope, the point the reticle was
+//!    on is kept, and while the button's lockout runs the aim's pitch keeps the crosshair's ray on
+//!    it as the view moves (FUN_00122fa0, FUN_0011caa0 at 0x11d0e6; take15 / take16: the pitch
+//!    -0.019 to +0.206 / +0.123 over the move in).
 //!
 //! Test hooks: `BF_CAMERA_LOG=1` prints the camera every 0.05 s (`log`; `=2` also the triangles the
 //! wedge meets), `BF_CAMERA_AIM_AT=x,y,z` turns the aim so the crosshair's ray passes through that
@@ -49,8 +49,8 @@ use super::*;
 /// FUN_0011e7c0 (0x11e7c8): the aim's pitch, which the camera's is, is held to +-60 degrees (+
 /// up). take01 / 10 / 11 / 12 reach exactly +-1.0472 and stay.
 pub const PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_3;
-/// 0x1283eb: the boom's distance is x (1 + DOLLY_PER_PITCH x the aim pitch) (0x3a5380): x0.58 at the
-/// up limit, x1.42 at the down limit (take01: 5.534 m for Tex's 3.9 at -1.0472).
+/// 0x1283eb: the boom's distance is x (1 + DOLLY_PER_PITCH x the aim pitch) (0x3a5380): x0.58 at
+/// the up limit, x1.42 at the down limit (take01: 5.534 m for Tex's 3.9 at -1.0472).
 const DOLLY_PER_PITCH: f32 = -0.4;
 /// 0x128316: crouched (motion state 6 or 7, or 6 queued) the pivot is at this share of the head's
 /// height (0x3a5154). take07: 30.577 = 29.187 + 0.7 x 1.985.
@@ -437,8 +437,8 @@ fn wedge(pivot: Vec3, back: Vec3, d: f32) -> [Vec3; 7] {
 /// FUN_000718f0, the wall test: the distance the camera may have along `back` from `pivot`, of `d`.
 /// The world's triangles that meet the wedge at `d` (`Arena::hull_triangles`; none: `d`); then the
 /// wedge at 0.75 and 0.5 of it against those, the first clear one's; none clear, WEDGE_FLOOR. On
-/// the flat test floor without an arena, its ground at GROUND. take04 / take19: steps begin with the
-/// gate panel at d, 0.75 d and 0.5 d behind the pivot, within a 20 Hz row.
+/// the flat test floor without an arena, its ground at GROUND. take04 / take19: steps begin with
+/// the gate panel at d, 0.75 d and 0.5 d behind the pivot, within a 20 Hz row.
 fn wall_test(pivot: Vec3, back: Vec3, d: f32) -> (f32, Wall) {
     if d <= 0.0 {
         return (d, Wall::Clear);

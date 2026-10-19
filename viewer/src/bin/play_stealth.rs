@@ -1,12 +1,13 @@
 //! Hawk's Stealth beyond her own character (#123, #198): how her body looks as it fades and
 //! while she's stealthed; and the follow camera's fade of the squad's bodies (#126,
 //! play_camera.rs `body_alpha`: the controlled character see-through with the camera close, a
-//! squadmate between the camera and it by its depth), drawn the same way. Her skill's own part (the toggle, her material controllers, her
-//! visibility, the costs of a shot and an item) is play_skills.rs's `Stealth`; who sees her,
-//! play_brain.rs's `Sensor` (the AI) and play_reticle.rs (the crosshair). Sources: the spec and
-//! takes in `todo/35-special-skills/` (spec.md Part 4: takes 10-14, 18, 19), the leads and takes in
-//! `todo/198-hawk-invis/` and the functions cited (viewer/docs/code-map.md, "Skills and stamina");
-//! the page is viewer/docs/skills.md.
+//! squadmate between the camera and it by its depth), drawn the same way. Her skill's own part
+//! (the toggle, her material controllers, her visibility, the costs of a shot and an item) is
+//! play_skills.rs's `Stealth`; who sees her, play_brain.rs's `Sensor` (the AI) and
+//! play_reticle.rs (the crosshair). Sources: the spec and takes in `todo/35-special-skills/`
+//! (spec.md Part 4: takes 10-14, 18, 19), the leads and takes in `todo/198-hawk-invis/` and the
+//! functions cited (viewer/docs/code-map.md, "Skills and stamina"); the page is
+//! viewer/docs/skills.md.
 //!
 //! The game draws her through two of her model's material controllers (play_skills.rs):
 //!  - **Her skin** (kind 1, `Skin`): her model with its own materials at the controller's alpha

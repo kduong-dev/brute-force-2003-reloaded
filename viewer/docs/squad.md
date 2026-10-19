@@ -40,8 +40,10 @@ Squad movement and deaths follow the game's own data and the captures:
   `BF_TEST_SCOPE=<level>[,<from s>]` holds a level (from that time on), `BF_TEST_SCOPE_PRESS`
   presses the button (play.md). A scoped shot leaves from the eye along the crosshair's ray (from the
   muzzle, a little lower, it would land low through the zoom). In the scope the camera
-  moves to the character's eyes: the characters' `offset-snipe` camera offset is 0.001 0 0,
-  against 3.2–3.4 m behind for walking, running and ready. The field of view narrows by the
+  moves in by the scope's progress to 0.5 m behind a point 0.5 m above the character's root
+  node, every character's (the follow camera's own scope rig, 0x128280; the types'
+  `offset-snipe`, 0.001 0 0, isn't read: [camera.md](camera.md), "The scope"), and the aim
+  turns so the crosshair stays on its point as the view moves. The field of view narrows by the
   level's zoom (`h_efce7f77` on the weapon's definition: MK-ASLT 2, Kman Auto 2, Psionic Blast 2,
   Foley 356 Tact 3, L-Shot-50 5, L-Shot-75 10; 0 on the rest), the model is hidden, and mouse
   look slows by the same factor. Shots still go through the crosshair. While scoped, the

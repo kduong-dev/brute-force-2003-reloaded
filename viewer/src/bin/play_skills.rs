@@ -857,11 +857,13 @@ pub fn gun_raised(u: &Player) -> bool {
 /// the skill keeps the gun up, else running down. The follow camera's aim shift holds while it
 /// runs (play_camera.rs `step_shift`, for the controlled character).
 ///
-/// A reload after the off ends the ready timer at once: a fit to #35 take29, where the reload
-/// right after the off left the rifle lowered once it was done (6.6 s) and the camera came out at
-/// 7.6-8.0 s, 2.3-3 s after the reload began (5.2), where take17's, with no reload, held 6.6 s.
-/// What clears the game's timer there isn't found: the reload itself (FUN_00120d40) keeps a
-/// raised gun raised (FUN_00123f60 when FUN_000d4440 says it's up, 0x120e63-0x120e6e).
+/// A reload after the off ends the ready timer at once: #35 take29, where the reload right after
+/// the off left the rifle lowered once it was done (6.6 s) and the camera came out at 7.6-8.0 s,
+/// 2.3-3 s after the reload began (5.2), where take17's, with no reload, held 6.6 s. The reload
+/// itself (FUN_00120d40) keeps a raised gun raised (FUN_00123f60 when FUN_000d4440 says it's up,
+/// 0x120e63-0x120e6e); what clears the timer is FUN_0011e000, every frame of an overlay that
+/// can't aim (its +0x3d bit 0: the reload's, inferred from that take; todo/126 answers.md Q7,
+/// Q11), as play.rs `can_aim` does for the shot's timer.
 fn hold(u: &mut Player, k: &dyn SkillKind, dt: f32) {
     u.skill.raised = if k.keeps_gun_up(u) {
         shots::READY_HOLD

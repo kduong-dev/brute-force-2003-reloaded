@@ -176,7 +176,7 @@ to the camera as in take04: a goal on the start faces him the other way); the ha
 | The limits, +60 / -60 degrees (takes 01, 10-12) | Tex 1.700 (alpha 0.5) / 5.534; Brutus 1.482 / 4.824; Flint 1.395 / 4.540; Hawk 1.264 / 4.115 | the same, to the mm |
 | Level, each (takes 10-12) | Brutus 3.420, Flint 3.225, Hawk 2.919 | the same |
 | A tap (take02) | 3.915 -> 2.172-2.187 in 0.25 s; out from 6.4 s after the tap, done by 7.2 | 2.187 by +0.23 s (an undershoot to 2.161); out from 6.5 s, done by 7.4 (the press seen a frame late; the ramp itself 0.67 s as the game's) |
-| The gate, Z 35.285 / 37.6 / 38.6 / 40.0 (takes 04, 19) | 3.929 / 2.947 / 1.964 (alpha 0.60) / 0.400 (0.50) | the same (alpha 0.61, 0.50); take04 v 6.9 / 9.0 tile with the demo's see-through Tex |
+| The gate, Z 35.285 / 37.6 / 38.6 / 40.0 (takes 04, 19) | 3.929 / 2.947 / 1.964 (alpha 0.60) / 0.400 (0.50) | the same (alpha 0.61, 0.50); take04 v 6.9 / 9.0 tile with the demo's see-through Tex (at v 9.0 the take's head is larger: Tex is still stepping back there, motion 4, where the demo's stands; the camera is where the take's is but 9 cm higher, 6 of them the demo's ground and 3 the take's dead zone, still on its height from before the walk) |
 | A tap with the gate behind (take20) | 0.40 -> 1.10, alpha 0.54, back to 0.40 at t430 ~0.65 | 0.40 -> 1.101 (alpha 0.53), back at t430 0.6 |
 | Turning a full circle 1.1 m from the gate (take05) | 0.4 on [-56, +49]; 0.5 D on [-117, -57], [+50, +65]; clear [-134, +109]; 0.75 D [+100, +70] | 0.4 to -56.1 and from +52.6; 0.5 D to -116; 0.75 D to -125.7; clear to +104.8; 0.75 D to +68.1 |
 | The hangar at -0.479 / +0.061 / +1.047 / -1.047 (take17) | 2.323 / 1.902 / 1.700 / 0.400 | 2.324 / 1.902 / 1.700 / **2.767** (0.5 D: see below) |
@@ -187,6 +187,11 @@ to the camera as in take04: a goal on the start faces him the other way); the ha
 | A dash after a tap | t7dc to 0, t430 down at 3/s (answers Q11) | the same |
 | A run's start (take07) | the pivot trails 0.29 m, 0 within ~0.65 s | 0.43 m, 0 within 0.6 s: the demo's run accelerates faster than the take's (the leash itself gives the code's numbers on the demo's motion to the mm) |
 | The hand-over to Brutus (take21) | the camera at his place at once, no ease | the same (boom 3.413) |
+
+Checked again after main's level lights (#143, which relit e34, e40 and the tutorial): the
+same numbers, and the tiles against take01 v 2.0, take02 v 3.0, take04 v 5.3 / 6.9 / 9.0, take09
+v 3.0 and take16 v 3.5 line up as before; the tutorial's start (`BF_SCRIPT=off`) frames Tex as e34
+does.
 
 The unit tests (`cargo test --bin bf_play camera`) check the convex test, the wedge's steps against
 a wall, the alpha by cover, the leash's catch-up, the ease's first step and the field of view.
