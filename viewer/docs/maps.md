@@ -465,7 +465,8 @@ them):
     * The flies look about 1.65 times as big as take03's and take08's and cross the picture
       about twice as fast; their speed for their size on screen matches within 25%, so the
       turbulence (read from the code: ~12.6 m/s root mean square) is likely right and their size
-      is off. 1.27 of it is the demo's narrower view (#126); the rest wants a shot of a fly at a
+      is off. 1.27 of it was the demo's narrower view, the game's since #269
+      ([camera.md](camera.md): about 1.30 should be left, not measured again); the rest wants a shot of a fly at a
       known distance in xemu. Their size is xfly-basic's Scale x 2 (shape 2, 0x402a4c).
     * The embers are warmer and crisper (the demo's additive blend in linear light at 720
       lines, #165), and they come and go in waves of 5-10 s (1 to 42 specks within 6 s).

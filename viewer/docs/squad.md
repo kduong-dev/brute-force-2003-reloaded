@@ -240,16 +240,19 @@ Squad movement and deaths follow the game's own data and the captures:
   before.
 
   The hand-over, for a death or a manual switch, cuts to the camera straight behind the new
-  character's facing, the whole body in view, as the recording's cut to Hawk does. If a wall
-  is there, it swings in 10 degree steps to the nearest heading either side with room;
-  before, the follow camera's clamp could wedge it inside the body. The new character's aim,
-  fire, walking and squad-AI idling (the leader's heading it turned to, kneeling) are dropped,
-  so the cut is to the plain follow camera with them standing still. Standing a kneeling
-  member up is the demo's guess.
+  character's facing, the whole body in view, as the recording's cut to Hawk does: the follow
+  camera put at its place at once (#126: every character's camera is cut to its place each
+  frame while no player controls it, so take21's hand-over to Brutus jumps without an ease;
+  [camera.md](camera.md)). If the follow camera's wall test leaves less than its whole boom
+  there, the heading swings in 10 degree steps to the nearest one either side that leaves it
+  (the demo's choice: the game's hand-over with a wall behind isn't filmed). The new
+  character's aim, fire, walking and squad-AI idling (the leader's heading it turned to,
+  kneeling) are dropped, so the cut is to the plain follow camera with them standing still.
+  Standing a kneeling member up is the demo's guess.
 
-  After the cut the follow camera is unchanged: it stays on the heading the cut chose until
-  you turn it. If you turn it toward a close wall, its clamp still pulls it in, as close as
-  0.2 m. That behaviour is left for #89.
+  After the cut the follow camera is the game's ([camera.md](camera.md)): turned toward a close
+  wall its wall test steps it to 0.75, then 0.5 of its boom, then 0.4 m, and the body turns
+  see-through as the camera comes close (#126, which took #89's walls in).
 
   Not done: the HUD's red tint and fade, the red score popup, steering with the right stick.
   `BF_DEATHCAM_LOG=1` prints the camera every frame (heading, how much was skipped at walls,
@@ -280,8 +283,9 @@ Squad movement and deaths follow the game's own data and the captures:
     - frame 71: the cut, from behind with his whole body in view;
     - from frame 72 the hook's autopilot (a `BF_TEST_GOTO` whose goal is its start) sets the
       camera heading to 0 every frame, which points it at the cliff, 1.8 m away;
-    - the follow camera's clamp then pulls it in close to him (frames 73-89). That comes from
-      the hook and the clamp, not the hand-over.
+    - the follow camera's clamp then pulled it in close to him (frames 73-89; before #126: its
+      wall test now steps it in, and his body turns see-through). That comes from the hook
+      and the walls, not the hand-over.
   - With `BF_DEATHMATCH=1` there is no death camera.
 * `BF_COMBAT_LOG=1` prints hits (each with its factors: the hit part struck, the own side's
   x0.7, the difficulty step; play.md **Damage**), knockdowns and dives.

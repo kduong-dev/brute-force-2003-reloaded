@@ -6151,8 +6151,8 @@ fn frame_dt(time: &Time) -> f32 {
     }
 }
 
-fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, game: Res<GameData>, mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
-                 mut vis: Query<&mut Visibility>) {
+fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
+                 mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>, mut vis: Query<&mut Visibility>) {
     let dt = frame_dt(&time);
     // the scope: none in Tex's berserk either, from the accepted press to the second gun's
     // stowing (his toggle only refuses a press made scoped, 0x13d490): the demo's choice until a
@@ -6223,7 +6223,11 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, game: Res<GameData
             player.sound_queue.push((id, SCOPE_SOUND_VOLUME));
         }
         if std::env::var("BF_SCOPE_LOG").is_ok() {
-            println!("t={:.2} scope level {level}: zoom {:.2} -> {:.2} (lockout {:.3} s)", player.sim_time, player.zoom, level_zoom(&player, level), player.scope_lock);
+            // (with the level's field of view, down and across the game's 4:3 picture)
+            let (zoom, fov) = (level_zoom(&player, level), fov_at(level_zoom(&player, level)));
+            let across = 2.0 * ((fov * 0.5).tan() / 0.75).atan();
+            println!("t={:.2} scope level {level}: zoom {:.2} -> {zoom:.2}, {:.2} degrees down, {:.2} across (lockout {:.3} s)", player.sim_time, player.zoom,
+                     fov.to_degrees(), across.to_degrees(), player.scope_lock);
         }
     }
     // its breathing, in a loop while scoped
@@ -6238,8 +6242,15 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, game: Res<GameData
     } else {
         player.breath_in = 0.0;
     }
-    // the follow camera (play_camera.rs): placed after the character's step, its view the aim's
+    // the follow camera (play_camera.rs): placed after the character's step, its view the aim's.
+    // Every other character's is cut to its wanted place every frame (the cut flag, set every
+    // frame for a character no player controls: FUN_000702a0 at 0x70548), so the ray its aim
+    // takes without a target has a camera to come from, and a hand-over finds the camera in place
     let (at, turn) = camera::update(&mut player, &game.0, dt);
+    for m in squad.0.iter_mut() {
+        m.rig.cut = true;
+        camera::update(m, &game.0, dt);
+    }
     // the body: not drawn by its own camera in the scope (the zoom above 1) or with the camera at
     // its near plane (0x126bc0); its fade by the camera is play_stealth.rs's
     if let Some(root) = player.loaded.as_ref().map(|l| l.root) {

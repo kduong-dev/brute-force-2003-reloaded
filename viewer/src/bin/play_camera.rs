@@ -592,18 +592,26 @@ fn reticle_point(p: &Player, up: f32) -> Vec3 {
 fn aim_onto(p: &Player, point: Vec3) -> (f32, f32) {
     let (mut yaw, mut pitch) = (p.cam_yaw, p.cam_pitch);
     let up = crosshair_tan(p).atan();
-    for _ in 0..4 {
+    for _ in 0..AIM_ROUNDS {
         let turn = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
         let eye = p.rig.pivot + turn * (p.rig.dir * p.rig.distance);
         let to = point - eye;
         if to.length_squared() < 1e-6 {
             break;
         }
+        let was = (yaw, pitch);
         yaw = (-to.x).atan2(-to.z);
         pitch = ((to.y / to.length()).clamp(-1.0, 1.0).asin() - up).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+        if wrap_angle(yaw - was.0).abs() < 1e-6 && (pitch - was.1).abs() < 1e-6 {
+            break;
+        }
     }
     (yaw, pitch)
 }
+
+/// `aim_onto`'s rounds at most: each takes the camera's swing with the aim (its boom over the
+/// point's distance) off the error, so a handful settle it from any start (the demo's bound).
+const AIM_ROUNDS: usize = 16;
 
 /// The aim shift timer this frame (char+0x430, see SHIFT_HOLD): held while the gun is raised (its
 /// ready timer, `FireState::raised`, or a skill's, `Skill::raised`) or the scope is up, for the
@@ -634,6 +642,12 @@ fn step_shift(p: &mut Player, dt: f32) {
 /// over the move out.
 fn reaim(p: &mut Player, dt: f32) {
     let scoped = p.scope_level > 0;
+    // (a camera being cut has no view to keep a point from: a hand-over to a character left
+    // scoped when it was last controlled starts afresh)
+    if p.rig.cut {
+        (p.rig.scoped, p.rig.reaim) = (scoped, None);
+        return;
+    }
     if scoped != p.rig.scoped && !p.dead {
         let up = if scoped { CROSSHAIR_UP * (FOV_Y * 0.5).tan() } else { 0.0 };
         let point = reticle_point(p, up);
