@@ -957,7 +957,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         }
     }
     // the player's view shakes (FUN_00228c70, from the follow camera's eye)
-    shake(shaker, at, camera_pose(player, 0.0).0, &def);
+    shake(shaker, at, camera::view(player).0, &def);
     let volume = (1.0 - at.distance(player.position) / BLAST_HEARD).clamp(BLAST_QUIET, 1.0);
     for &(id, delay, _, _) in &fx.sounds {
         if delay > 0.0 {

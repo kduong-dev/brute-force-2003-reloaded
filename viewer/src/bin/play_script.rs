@@ -693,8 +693,9 @@ fn event(cs: &mut Cutscenes, k: usize, s: &Script, ev: &gscr::Event, tr: &mut Tr
                         // (the script's own 1-3, 0x1761b0; a camera's 1 hands it to the script's,
                         // 0x1732c0, whose 2 and 3 do nothing)
                         cs.shown = None;
-                        // the follow camera snaps (the view's cut flag, +0xc8)
-                        player.cam_target = player.position + Vec3::new(0.0, 0.35 + player.height * 0.5, 0.0);
+                        // the follow camera snaps (the view's cut flag, +0xc8: play_camera.rs
+                        // `Rig::cut`)
+                        player.rig.cut = true;
                         say(cs, format!("101 {arg}: back to the game's camera"));
                     } else {
                         say(cs, format!("101 {arg}: nothing (a {kind:?})"));

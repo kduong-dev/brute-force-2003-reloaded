@@ -1,10 +1,13 @@
 //! Hawk's Stealth beyond her own character (#123, #198): how her body looks as it fades and
-//! while she's stealthed. Her skill's own part (the toggle, her material controllers, her
-//! visibility, the costs of a shot and an item) is play_skills.rs's `Stealth`; who sees her,
-//! play_brain.rs's `Sensor` (the AI) and play_reticle.rs (the crosshair). Sources: the spec and
-//! takes in `todo/35-special-skills/` (spec.md Part 4: takes 10-14, 18, 19), the leads and takes in
-//! `todo/198-hawk-invis/` and the functions cited (viewer/docs/code-map.md, "Skills and stamina");
-//! the page is viewer/docs/skills.md.
+//! while she's stealthed; and the follow camera's fade of the squad's bodies (#126,
+//! play_camera.rs `body_alpha`: the controlled character see-through with the camera close, a
+//! squadmate between the camera and it by its depth), drawn the same way. Her skill's own part
+//! (the toggle, her material controllers, her visibility, the costs of a shot and an item) is
+//! play_skills.rs's `Stealth`; who sees her, play_brain.rs's `Sensor` (the AI) and
+//! play_reticle.rs (the crosshair). Sources: the spec and takes in `todo/35-special-skills/`
+//! (spec.md Part 4: takes 10-14, 18, 19), the leads and takes in `todo/198-hawk-invis/` and the
+//! functions cited (viewer/docs/code-map.md, "Skills and stamina"); the page is
+//! viewer/docs/skills.md.
 //!
 //! The game draws her through two of her model's material controllers (play_skills.rs):
 //!  - **Her skin** (kind 1, `Skin`): her model with its own materials at the controller's alpha
@@ -120,11 +123,11 @@ struct InvisMaterial {
 
 /// The game's screen in the demo's view: the half-width and the half-height of the game's 4:3
 /// view at unit depth (its follow camera's 70 degrees across, play_targeting.rs
-/// `GAME_TAN_ACROSS`, and 3 / 4 of that down) over the demo's half-height (play.rs `FOV_Y`, 45
-/// degrees down), unzoomed (a zoom divides both views alike). The material shifts its lookup by a
-/// share of the game's screen (NDC); scaled by these, the copy moves by the same angle in the
-/// demo's narrower view, so by the same amount against her body and what's behind her as in the
-/// takes.
+/// `GAME_TAN_ACROSS`, and 3 / 4 of that down) over the demo's half-height (play.rs `FOV_Y`, the
+/// game's own 55.4 degrees down since #269), unzoomed (a zoom divides both views alike): (4/3, 1),
+/// the game's 4:3 screen within the demo's taller-than-it-is-wide share. The material shifts its
+/// lookup by a share of the game's screen (NDC); scaled by these, the copy moves by the same angle
+/// as in the takes, so by the same amount against her body and what's behind her.
 fn game_screen() -> Vec2 {
     Vec2::new(targeting::GAME_TAN_ACROSS, targeting::GAME_TAN_ACROSS * 0.75) / (FOV_Y * 0.5).tan()
 }
@@ -297,7 +300,16 @@ fn see_through(m: &mut StandardMaterial, images: &mut Assets<Image>, textures: &
     m.base_color.set_alpha(alpha);
 }
 
-/// The copies of a cloaking character's parts (`skills::cloaks`), made once its model shows: a
+/// Whether `u`'s body can be drawn see-through: Hawk's cloak (`skills::cloaks`), or the follow
+/// camera's fade of the squad's four (any of them can be the one it follows, or stand between it
+/// and that one: play_camera.rs `body_alpha`). The game's depth fade takes any character between
+/// the camera and the one it follows (FUN_00116340); the demo the squad's, whose bodies these
+/// copies are made for (an NPC or enemy there is drawn whole).
+fn fades(u: &Player) -> bool {
+    skills::cloaks(u) || (u.character < SQUAD && u.npc.is_none())
+}
+
+/// The copies of a fading character's parts (`fades`), made once its model shows: a
 /// depth-only copy of each (`DepthCopy`, hidden but in the warm-up and the fades) and a blended
 /// warm-up copy (`WarmCopy`, alpha 0), each beside its part with the same mesh and skin. The
 /// warm-up copies go when their time is out. (Its refraction twins come from `refract_bodies`,
@@ -320,7 +332,7 @@ fn prepare_bodies(mut commands: Commands, time: Res<Time>, player: Res<Player>, 
     let log = std::env::var("BF_SKILL_LOG").is_ok();
     for u in std::iter::once(&*player).chain(squad.0.iter()) {
         let Some(l) = &u.loaded else { continue };
-        if !skills::cloaks(u) || faded.prepared.contains_key(&l.root) {
+        if !fades(u) || faded.prepared.contains_key(&l.root) {
             continue;
         }
         let depth = match &faded.depth {
@@ -413,7 +425,10 @@ fn fade_bodies(mut commands: Commands, player: Res<Player>, squad: Res<Squad>, c
                 }
             }
         }
-        let shown = skills::opacity(u);
+        // her skin's controller x the follow camera's (FUN_00116480 draws at the spawn fade x the
+        // camera's alpha, and each controller multiplies its own in, 0x213120; the guns she holds
+        // and carries too, 0x212d60: todo/126 answers.md Q6)
+        let shown = skills::opacity(u) * camera::body_alpha(u, &player);
         if shown >= 1.0 {
             let back: Vec<AssetId<StandardMaterial>> = made.iter().filter(|(_, k)| k.root == l.root).map(|(id, _)| *id).collect();
             for id in &back {
@@ -517,6 +532,10 @@ fn refract_bodies(mut commands: Commands, player: Res<Player>, squad: Res<Squad>
     let mut drawn: Vec<(Entity, Handle<InvisMaterial>, &Player)> = vec![];
     for u in std::iter::once(&*player).chain(squad.0.iter()) {
         let Some(l) = &u.loaded else { continue };
+        // (a body the camera fades without a cloak has no refraction)
+        if !skills::cloaks(u) {
+            continue;
+        }
         let Some(&warm) = prepared.get(&l.root) else { continue };
         let now = skills::refraction(u);
         let (alpha, offset) = now.unwrap_or((0.0, 0.0));

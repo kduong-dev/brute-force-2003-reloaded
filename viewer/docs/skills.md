@@ -296,7 +296,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | `lock_shares(u)` | +0xc4 | none (0x2894f0) | the lock box's shares of the screen the skill puts in the target selection (`lock_shares`): Flint's 0.4 / 0.4 |
 | `crosshair_alpha(u, alpha, fill)` | +0xfc | the alpha (0x10e8f0) | the crosshair's alpha (FUN_000c6280; `crosshair_alpha`): Flint's fades it as her marker fills |
 | `has_marker` | (+0xc4) | false | the skill shows the targeting marker for the controlled character (play_targeting.rs): Flint's |
-| `keeps_gun_up(u)` | (FUN_00123ea0) | false | the skill keeps the gun raised, holding its ready timer (`Skill::raised`: the ready pose, `gun_raised`) and the camera's aim shift after it (`Skill::shift`, `aim_shift`: the camera in): Flint's while on |
+| `keeps_gun_up(u)` | (FUN_00123ea0) | false | the skill keeps the gun raised, holding its ready timer (`Skill::raised`: the ready pose, `gun_raised`) and with it the follow camera's aim shift (play_camera.rs: the camera in): Flint's while on |
 | `bars_scope(u)` | | false | the demo's choice: no scope in Tex's berserk motions |
 | `fired(u, def)` | +0xb0 | nothing (0x2c60c0) | each round the character's gun fires (FUN_0022f640 from the fire loop; `skills::fired`, play.rs `step_player`): Hawk's flash and cost while stealthed |
 | `used_item(u, use_type)` | +0x104 | nothing (0x2c60c0) | an item used, by its IOU_ use type (FUN_00121170; `skills::used_item`: play.rs's throw and set-down, play_pickups.rs's medkit): Hawk's cost while stealthed |
@@ -559,9 +559,10 @@ and leads in `todo/198-hawk-invis/`.
     that texture first, and `RefractionOrder` moves that phase after the see-through things, so
     the copy holds the terrain's blended layers, the decals, her fading skin and any smoke, as the
     game's does. The game's shift is a share of its 4:3 screen, 70 degrees across; the demo's
-    view is 45 degrees down, so the shift is turned into the same angle (`game_screen`: x1.69
-    across, x1.27 down, in the demo's half-heights), the same against her body and what's behind
-    her as in the takes. The streaky texture the material loads (h_ff43a70b) is never bound: the
+    view is the game's since #269 (55.4 degrees down, [camera.md](camera.md)), so the shift is
+    the same angle (`game_screen`: x1.333 across, x1 down, in the demo's half-heights; x1.69 and
+    x1.27 when the demo drew 45 degrees down), the same against her body and what's behind her as
+    in the takes. The streaky texture the material loads (h_ff43a70b) is never bound: the
     wobble is the shift. Fully stealthed she's drawn by the refraction alone.
   * Bevy builds a pipeline the first time it's drawn with and skips the draw meanwhile, so as her
     model first shows each part gets an invisible blended copy, and its twin is drawn at alpha 0,
@@ -659,19 +660,20 @@ game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`).
   walks too (the game's cap is on the stick's way), and the sprint (the game's dash) is barred
   with the pistol as well, where the game's dash command comes from the stick before the cap
   (0x134f52) and her own motions, which the pistol keeps, have a dash (not filmed).
-* **The pose and the camera** (`Skill::raised`, `Skill::shift`): raising the gun every frame
-  holds its ready timer (char+0x7dc) at 4 s (FUN_00123f60), and the follow camera's aim shift
-  (char+0x430, 0x128280) is held at 3 s while that runs, for the controlled character: the
-  camera in, over the shoulder, as the demo's aiming camera after a shot (`Player::shoulder`).
-  After the off the ready pose stays 4 s and the camera 3 s more, coming out over its last 0.67
-  s (s = clamp(1.5 x the timer, 0, 1)), 3 x as fast dashing. take17 (no enemy, no shot): in by
+* **The pose and the camera** (`Skill::raised`): raising the gun every frame holds its ready
+  timer (char+0x7dc) at 4 s (FUN_00123f60), and the follow camera's aim shift (char+0x430,
+  0x128280, play_camera.rs `step_shift`) is held at 3 s while that runs, for the controlled
+  character: the camera in, 1.75 m along the crosshair's ray, as after a shot
+  ([camera.md](camera.md)). After the off the ready pose stays 4 s and the camera 3 s more,
+  coming out over its last 0.67 s (s = clamp(1.5 x the timer, 0, 1)), 3 x as fast dashing. take17 (no enemy, no shot): in by
   2.27 s (on at 2.09), the rifle down at 15.5-15.8 s and the camera out over 18.13-18.6 s (off
   at 11.55). A reload after the off ends the hold at once: a fit to take29, where the reload
   right after the off left the rifle lowered once done and the camera out at 7.6-8.0 s, 2.3-3 s
   after it began; what clears the game's timer there isn't found (the reload keeps a raised gun
-  raised, 0x120e63-0x120e6e). The demo's own post-shot hold (0.7 s, `Player::aim_hold`, #126's
-  fit) is left as it was: the same code rule would give a shot 4 s of pose and 7 of camera, which
-  #126's open question (its leads §10) is about.
+  raised, 0x120e63-0x120e6e; #126's answers Q11 read the reload's overlay as one that can't aim,
+  which zeroes the timer: play.rs `can_aim`). Since #126 a shot's camera follows the same rule (4 s
+  of ready timer, 2.33 + 0.67 s of shift); the demo's own post-shot pose (0.7 s,
+  `Player::aim_hold`) is left as it was.
 * **The lock box** (her +0xc4 and +0x100): each frame the target selection runs the controlled
   character's skill's +0xc4 (0xbd0c6); hers (0x13cd30) puts her box shares in the selection
   while on, h_108f0925 0.4 across and h_081520f0 0.4 down (the reticle's own 0.14 x 0.75 and
@@ -1152,9 +1154,9 @@ tiny-box lock caught the Shrike, so the demo's corners closed on the crosshair t
 leaves out the bones' own spheres (FUN_00236670's union of the posed pieces). The game's corners
 move whole units a frame, the demo's by the frame's time. The 0.65 run threshold stands for the
 demo's walk key; the sniper motions' speeds are their clips' roots. The black button has no demo
-key. The camera comes in as the demo's aiming camera does (`camera_pose`'s dolly, #126), not
-the game's 1.75 m along the crosshair ray, so the close view frames her less tightly than the
-takes'. The reload ending the pose and the camera's hold is a fit to take29 (the code that clears
+key. The camera comes in by the game's 1.75 m along the crosshair ray since #126
+([camera.md](camera.md); before, the demo's aiming dolly framed her less tightly than the takes').
+The reload ending the pose and the camera's hold is a fit to take29 (the code that clears
 the ready timer there isn't found). The box's size against the take's waits on the cameras
 matching: re-measured after #129's merge with the camera in, 115.5 units to the take's 105, where
 it was 98.5 with the camera out; the sphere leaves out the bones' parts (above).

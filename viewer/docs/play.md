@@ -5,15 +5,14 @@
 | WASD | move (relative to the camera); the character turns toward the direction |
 | Shift | sprint (the game's dash). `BF_TEST_SPRINT=<s>` sprints toward the goal from that time with `BF_TEST_GOTO` |
 | Ctrl | walk |
-| Right mouse (hold) | aim: the camera dollies in (as when firing), the gun is turned onto the crosshair while the legs keep moving; moving away from the aim backpedals. Moving across it (30-150 degrees off the crosshair) side-steps, standing (`Sc_w1/w2_rp_f_side_walk_l/r` up to 100 degrees, `rp_b_side_walk_l/r` past it) or crouched (`cr_f/b_side_walk_l/r`). Those clips twist the upper body about a quarter turn off the root, and their root motion runs straight along it, forward or back, as far as the walks. So the character turns until the gun is on the crosshair and walks where the clip takes it: across the aim, a little forward or back. One clip in the squad's data has no root motion: Tex's `Sc_w1_rp_f_side_walk_l` (his first slot, whatever gun is in it, aimed left; its own speed h_f9628571 is 5.9e-05 m/s where the squad's other side steps carry 1.0-2.1). The game doesn't move a walk by its clip (FUN_0012c6c0 moves it at the type's `speeds` along the stick), so there he steps left as he does right. The demo moves by root motion, so a side step whose own speed is under 0.001 (the game's no-speed threshold for the play rate) takes the root motion of its stance's walk in the same direction, forward or back (`root_stand_ins`; #170: he walked in place before). `BF_TEST_STRAFE=<x>[,<y>]` moves that way (camera-relative) with `BF_TEST_GOTO`; with a goal far ahead (`BF_TEST_GOTO=4.5,20,4.5,-80`) the camera keeps still while he steps. `BF_MOVE_LOG=1` prints the controlled character's position, facing, gait and clip every half second (and the stand-in walk, `root from`). Verified (#170, `BF_MOVE_LOG=1 BF_TEST_AIM=1 BF_TEST_GOTO=4.5,20,4.5,-80 -- --test`, Tex with the Therm Sweeper): aimed left (`BF_TEST_STRAFE=-1,0`) 1.59 m/s and right 1.60, back-left / back-right 1.53 / 1.54, crouched 1.72-1.73 each way; the planted boot holds within 1 px of the floor on both steps; main's build stepped left in place; Hawk's aimed steps and Tex's unaimed walk are pixel-identical to main |
-| Left mouse (hold) | fire the held weapon (at its own rate; also aims while held). Standing, the feet turn with the aim (the spine keeps at most ~11° of twist, also when looking down and turning). As in the game, the camera snaps in on the first shot, holds ~0.7 s after the last, then eases back out; looking steeply down it stays out |
+| Right mouse (hold) | aim: the gun is held raised (its ready timer at 4 s or more), so the camera moves in as after a shot and eases out the game's way after the release ([camera.md](camera.md): a keyboard-and-mouse adaptation, the game has no aim without shooting); the gun is turned onto the crosshair while the legs keep moving; moving away from the aim backpedals. Moving across it (30-150 degrees off the crosshair) side-steps, standing (`Sc_w1/w2_rp_f_side_walk_l/r` up to 100 degrees, `rp_b_side_walk_l/r` past it) or crouched (`cr_f/b_side_walk_l/r`). Those clips twist the upper body about a quarter turn off the root, and their root motion runs straight along it, forward or back, as far as the walks. So the character turns until the gun is on the crosshair and walks where the clip takes it: across the aim, a little forward or back. One clip in the squad's data has no root motion: Tex's `Sc_w1_rp_f_side_walk_l` (his first slot, whatever gun is in it, aimed left; its own speed h_f9628571 is 5.9e-05 m/s where the squad's other side steps carry 1.0-2.1). The game doesn't move a walk by its clip (FUN_0012c6c0 moves it at the type's `speeds` along the stick), so there he steps left as he does right. The demo moves by root motion, so a side step whose own speed is under 0.001 (the game's no-speed threshold for the play rate) takes the root motion of its stance's walk in the same direction, forward or back (`root_stand_ins`; #170: he walked in place before). `BF_TEST_STRAFE=<x>[,<y>]` moves that way (camera-relative) with `BF_TEST_GOTO`; with a goal far ahead (`BF_TEST_GOTO=4.5,20,4.5,-80`) the camera keeps still while he steps. `BF_MOVE_LOG=1` prints the controlled character's position, facing, gait and clip every half second (and the stand-in walk, `root from`). Verified (#170, `BF_MOVE_LOG=1 BF_TEST_AIM=1 BF_TEST_GOTO=4.5,20,4.5,-80 -- --test`, Tex with the Therm Sweeper): aimed left (`BF_TEST_STRAFE=-1,0`) 1.59 m/s and right 1.60, back-left / back-right 1.53 / 1.54, crouched 1.72-1.73 each way; the planted boot holds within 1 px of the floor on both steps; main's build stepped left in place; Hawk's aimed steps and Tex's unaimed walk are pixel-identical to main |
+| Left mouse (hold) | fire the held weapon (at its own rate; also aims while held). Standing, the feet turn with the aim (the spine keeps at most ~11° of twist, also when looking down and turning). As in the game, the camera moves in along the crosshair's ray from the first shot (the aim shift: Tex's 3.9 m to 2.2), stays in for the ready timer's 4 s and 2.33 s more, then eases out over 0.67 s; a dash, a jump, a crouch's transition, a throw, a reload or a switch lowers the gun and takes it out sooner ([camera.md](camera.md)) |
 | Q | switch between the character's two weapons (animated: stow one, draw the other; plays the game's hard-coded switch sounds ff820fda / e1e97460, 0.65 s apart) |
 | Space | jump: standing jumps crouch first, running jumps launch straight away and carry the run's momentum (Brutus uses his four-legged jump when sprinting on all fours) |
 | C | dodge roll / sidestep to the left or right of the movement |
 | Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` (held: asked for again each frame); `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time, as the key toggles. In Tex's berserk Z does nothing and the press is dropped ([skills.md](skills.md)) |
 | M | cycle the ground surface (changes footstep / landing / slide sounds) |
-| click, then mouse | look around (Esc releases the mouse, in cutscenes too: cutscenes.md) |
-| wheel | zoom |
+| click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
 | G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
@@ -640,10 +639,12 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   fire +-2.3; the Minigun's +-1.2 to +-1.8 over a clip; the Bower's aim +-0.5 before its
   pellets' walk.
   * Against the takes: the clusters measured in screen units, read with a 45 degree vertical
-    field of view, came out 1.5-2x tighter than this. The data's two player cameras
-    (objecttypes-common `<camera> fov="90"`; a debug dump labels a camera's field "fovh", so
-    horizontal) give ~74 degrees vertical at 4:3, and under that the MK, Minigun and Foley match
-    the takes within about 10%: the likely explanation, pending xemu's read of the game's FOV.
+    field of view, came out 1.5-2x tighter than this. The ~74 degrees vertical that the data's
+    `<camera> fov="90"` would give, and under which the MK, Minigun and Foley matched within
+    ~10%, isn't the game's view: the follow camera's is 70 across its 4:3 picture, 55.4 down
+    (#126's live read, [camera.md](camera.md)). Read at 55.4 the clusters are still about 1.2-1.6x
+    tighter than this (1.5-2 / 1.27): the accuracy fit is unexplained again (for the weapons'
+    tickets).
   * The Bower's "~2x too wide horizontally" (read from the tank's holes, where the pellets past
     ~+-7 degrees miss the 2.6 m cylinder and leave none) is settled by the walk's frame (#49, above):
     its takes' sparks at the 25 m cliff (take09, heading -170) spread 10.3 degrees across (sd 3.8)
@@ -1008,9 +1009,11 @@ Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec
   (`BF_TEST_WEAPON="A10 Bioreactive"`), the hits 8.8 m out 0.2 s after their shots (take01's
   burst at T0 + 0.20 s), the weapon's own bio-flash_hit and bio-shrap_hit out of the face with
   light_hit_bio, and its green hole h_1ce6db03 living 60 s (`BF_SHOT_LOG`'s "hole ... life 60
-  s, fading over its last 5 s"); the reload 0.40 s after the last round. Seen from where the
-  take's camera would see it (the demo's 45-degree view 23.7 m back for the game's ~74 degrees
-  at 13 m: `BF_TEST_FREECAM=0.5,2.5,2.0,6.0,5.5,-3.9`) the flash's white-green core is ~17 units
+  s, fading over its last 5 s"); the reload 0.40 s after the last round. Seen from a free camera
+  standing in for the take's (`BF_TEST_FREECAM=0.5,2.5,2.0,6.0,5.5,-3.9`, 23.7 m back: chosen when
+  the demo drew 45 degrees down against a guessed ~74; the game's view is 55.4 down since #269, so
+  the take's own camera, about 13 m back, is the one to stand in for now) the flash's white-green
+  core was ~17 units
   (take01 12-14) and its green haze thins over ~0.8 s (take01: to 10% at +1.3 s); the green
   bolt and the muzzle's green glow at Tex's gun as the take's. On a frozen e40 Shrike Heavy 7 m
   out (the Jax-iP's recipe with the A10): every hit 0.1 s after its shot, 11.0-12.8 on the body
@@ -1082,17 +1085,14 @@ spec (`todo/62-l-shot-75/spec.md` §3) and the analyst's answers
 * **The view** is the skill's (+0xa8: FUN_000b4070 shows the scope frame h_1807ec04 only while
   its bit 0 is clear): Flint's (0x2d5e40) 1, no frame, her full-screen glow; everyone else's 0
   (Tex's 8), the frame.
-* **The field of view** at a zoom is FUN_0006c720's 2 atan(tan(FOV / 2) / zoom) from the demo's
-  45 degrees down (`FOV_Y`), so the levels' zooms against each other and against the unscoped
-  view are the game's. The base isn't: the game's follow camera has 70 degrees across its 4:3
-  picture, 55.4 down (FUN_0006a9f0, #126), so in the 640 x 480 units the demo draws every view,
-  scoped or not, 1.27x the game's (tan 27.7 / tan 22.5): the L-Shot-75's first level shows 4.7
-  degrees down where the game shows 6.0, the MK's 23.4 where the game's 29.4 (#62 spec §3.3).
-  Setting `FOV_Y` to 55.4 degrees would put every view at the game's scale, and with it the
-  explosions' measured 1.5-1.6x (§ Missiles), but it moves everything fitted on the 45-degree
-  view (the aim dolly and the camera's distance, #126's; the stealth refraction's screen factor,
-  `play_stealth.rs`; the targeting marker reads the camera's own; the sizes measured in these
-  pages): left to #126.
+* **The field of view** at a zoom is FUN_0006c720's 2 atan(tan(FOV / 2) / zoom) from the game's
+  follow camera's 70 degrees across its 4:3 picture, 55.4 down (`FOV_Y`, #269,
+  [camera.md](camera.md)): the L-Shot-75's first level shows 8.01 degrees across, 6.01 down, its
+  second 3.21 / 2.41 (take15 / 16's live zfov), the MK's 38.6 / 29.4 (#62 spec §3.3). Before #269
+  the demo drew 45 degrees down, every view 1.27x the game's. `BF_SCOPE_LOG` prints each level's.
+* **The camera in the scope** is the follow camera's own (todo/126 answers Q1): blended by the
+  progress toward 0.5 m behind a point 0.5 m above the root node, the aim re-aimed so the
+  crosshair's point stays under it (camera.md, "The scope"); the demo's eye at the head went.
 
 Test hooks: `BF_TEST_SCOPE=<level>[,<from s>]` holds that level (at most the scope's top) from
 that time on, under `BF_TEST_GOTO` too; `BF_TEST_SCOPE_PRESS=<s>[,<s>...]` presses the scope
@@ -1559,11 +1559,11 @@ Not matching or not done:
   the surface (the analyst's Q2: placement, frame, slots and LOD are the same on both), and no
   exp-rocket appearance uses shape 3 (Q4). Left for a ticket of its own; its leads: the angle
   fade of the facing-3 quads near edge-on (exp-rocket-add's, up to 13.6 m), which the demo
-  doesn't do, and the added sprites summed in linear light (#104). A third (#72, not tried): the
-  demo's view, free camera included, is 45 degrees down (`FOV_Y`), where the game's 4:3 picture is
-  70 degrees across, 55.4 down (FUN_0006a9f0, #126): the same scene is drawn tan(27.7) /
-  tan(22.5) = 1.27x larger across the 640 x 480 units, 1.61x in area, which is about the excess
-  measured (1.5x, 1.6x). take20's open-air flame is
+  doesn't do, and the added sprites summed in linear light (#104). A third, now done (#269): the
+  demo's view, free camera included, was 45 degrees down where the game's 4:3 picture is 70
+  degrees across, 55.4 down, so the same scene was drawn tan(27.7) / tan(22.5) = 1.27x larger
+  across the 640 x 480 units, 1.61x in area, about the excess measured (1.5x, 1.6x): expected now
+  0.93x and 1.0x, to be measured again ([camera.md](camera.md)). take20's open-air flame is
   ~2x the take's. take04's late fire column (the take's at +1.4 s) is missing. The curves'
   easing (the demo reads easing bytes 0, 5 and 6 as linear, `bf/ale.rs`'s ease; no exp-rocket
   curve uses them) stays open.
@@ -1585,8 +1585,9 @@ Not matching or not done:
   both struck him. The demo has no Shrike to test on, and its body is a 0.4 m cylinder where the
   game's are the collision parts; which of those (or the paths) makes the difference isn't
   settled.
-* The demo's follow camera (its 45-degree view and the aiming dolly, #126) puts Tex over the
-  crosshair, so the launch and the blasts are mostly behind him. On e40 Tex and the standing
+* The demo's follow camera put Tex over the crosshair, so the launch and the blasts were mostly
+  behind him (before #126: its 45-degree view and the aiming dolly; the game's camera now,
+  [camera.md](camera.md), not checked against these takes again). On e40 Tex and the standing
   stones draw black (main too): not this ticket's.
 * The other effects keep the demo's quads, perp rules and count, and have no LOD: the shape 2
   appearances elsewhere (half the game's size), facing 3 on non-perp appearances (the Psionic
@@ -1622,9 +1623,13 @@ and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (defini
 hardpoints, fire sounds) and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
 character types, their motion sets' clips and the placements, and exits
 ([character-types.md](character-types.md)); `BF_SHOT_LOG=1` prints each shot's barrel and shot
-directions. Camera hooks: `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` / `BF_CAMERA_DISTANCE` set the
+directions. Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the
 start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
-something), `BF_VIEW_YAW` turns only the rendered view (aim unchanged), `BF_START_WEAPON=1` starts with
+something; held to +-60 degrees), `BF_CAMERA_DISTANCE` sets every character's boom,
+`BF_CAMERA_AIM_AT=x,y,z` turns the aim so the crosshair's ray passes through a point (the recipes
+here from before #126 aimed with `BF_CAMERA_PITCH` on the old camera: the same pitch now puts the
+crosshair elsewhere), `BF_CAMERA_LOG=1` prints the camera, `BF_VIEW_YAW` turns only the rendered
+view about the pivot (aim unchanged), `BF_START_WEAPON=1` starts with
 the second weapon. Captures wait 60 frames for shaders to compile before the clock starts.
 
 ### Damage: the difficulty step and the hit parts (#127)

@@ -194,14 +194,13 @@ pub(super) enum Panel {
     Scenery,
 }
 
-/// The player's camera and crouch, and whether the mouse was captured, before `read_input`
-/// (the free camera keeps the character's camera as it was; the menus keep the wheel's zoom;
-/// the click that captures the mouse doesn't place or spawn).
+/// The player's aim and crouch, and whether the mouse was captured, before `read_input` (the free
+/// camera keeps the character's aim as it was; the click that captures the mouse doesn't place or
+/// spawn).
 #[derive(Clone, Copy, Default)]
 pub(super) struct Before {
     yaw: f32,
     pitch: f32,
-    distance: f32,
     crouch: bool,
     pub(super) captured: bool,
 }
@@ -678,7 +677,6 @@ pub(super) fn before_input(mut tools: ResMut<Tools>, player: Res<Player>, mouse:
     tools.before = Before {
         yaw: player.cam_yaw,
         pitch: player.cam_pitch,
-        distance: player.cam_distance,
         crouch: player.crouch_wanted,
         captured,
     };
@@ -688,7 +686,7 @@ pub(super) fn before_input(mut tools: ResMut<Tools>, player: Res<Player>, mouse:
 
 /// Undoes what `read_input` took that a tool has: in the free camera, the character stands
 /// still (no move, aim, fire, jump, item; its camera stays); with a menu open, the click doesn't
-/// fire and the wheel doesn't zoom. (In edit mode `read_input` doesn't run: nothing to undo.)
+/// fire. (In edit mode `read_input` doesn't run: nothing to undo.)
 /// The test hooks that act as input (play_ammo.rs `test_trigger`, play_brain.rs `aim_hostile`)
 /// run after it, so they drive the character under the free camera too.
 pub(super) fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
@@ -699,7 +697,6 @@ pub(super) fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
     if tools.freecam.is_some() {
         player.cam_yaw = b.yaw;
         player.cam_pitch = b.pitch;
-        player.cam_distance = b.distance;
         player.crouch_wanted = b.crouch;
         player.move_input = Vec2::ZERO;
         player.sprint = false;
@@ -716,7 +713,6 @@ pub(super) fn gate_input(tools: Res<Tools>, mut player: ResMut<Player>) {
         player.next_surface = false;
     } else if tools.panel != Panel::None {
         player.fire = false;
-        player.cam_distance = b.distance;
     }
 }
 
@@ -761,7 +757,8 @@ fn teleport(player: &mut Player, to: Vec3, yaw: f32) {
     }
     player.yaw = yaw;
     player.cam_yaw = yaw;
-    player.cam_target = player.position + Vec3::new(0.0, 0.35, 0.0);
+    // (the follow camera cut there: play_camera.rs `Rig::cut`)
+    player.rig.cut = true;
 }
 
 /// F and the free camera's teleports (left click: the crosshair's ground; right click: the

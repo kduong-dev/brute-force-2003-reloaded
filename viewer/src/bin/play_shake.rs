@@ -14,7 +14,7 @@
 //! Kicked by the missiles' blasts only (play_missile.rs, FUN_00228c70, whose only callers are
 //! the missile's two explosion paths at 0x227867 and 0x227b1d): grenades and other blasts don't
 //! shake the view through it (their effect types' shake-effects lists aren't played). The view
-//! only, the demo's choice: the aim keeps the unshaken camera (play.rs's `camera_pose`). The
+//! only, the demo's choice: the aim keeps the unshaken camera (play_camera.rs's `view`). The
 //! game multiplies the turn into the camera's own frame (0x6c54a, FUN_00073b20, the camera's
 //! vtable +0x3c); whether its crosshair ray reads that frame isn't traced.
 //!

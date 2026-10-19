@@ -82,11 +82,11 @@ const TIGHT_MIN: f32 = 32.0;
 /// its depth x the zoom (FUN_0006c6f0: the unzoomed view's tangent over the zoomed one's).
 const SIZE_SCALE: f32 = 640.0;
 /// That size is in the game's view, its follow camera's 70 degrees across (tan 35 degrees, as
-/// ale_fx.rs's LOD_TAN): twice the sphere's projected radius x this, zoomed or not. The demo's
-/// view is narrower (45 degrees down, play.rs FOV_Y), so the size is taken as that share of the
-/// sphere's projection in the demo's view: the box keeps its place round the body as in the takes
-/// (take15 3.0 s: the Shrike Heavy, its sphere 1.24 m, 7 m from Flint in a box 105 x 162 units).
-/// play_stealth.rs scales Hawk's refraction by it the same way.
+/// ale_fx.rs's LOD_TAN): twice the sphere's projected radius x this, zoomed or not. The size is
+/// taken as that share of the sphere's projection in the demo's view (play.rs FOV_Y), which since
+/// #269 is the game's own (55.4 degrees down: the share is 1), so the box keeps its place round the
+/// body as in the takes (take15 3.0 s: the Shrike Heavy, its sphere 1.24 m, 7 m from Flint in a box
+/// 105 x 162 units). play_stealth.rs scales Hawk's refraction by it the same way.
 pub(super) const GAME_TAN_ACROSS: f32 = 0.700_207_5;
 /// Switched off, the corners head for the screen's middle less (the top left) or plus (the
 /// bottom right) OFF_X across (0x3a5290: 0xb4b7f, 0xb4d8d).

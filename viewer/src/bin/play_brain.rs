@@ -946,7 +946,7 @@ fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>, mut scoped: Local<
         let yaw = |v: Vec3| (-v.x).atan2(-v.z);
         let pitch = |v: Vec3| v.y.clamp(-1.0, 1.0).asin();
         player.cam_yaw = wrap_angle(player.cam_yaw + wrap_angle(yaw(want) - yaw(dir)));
-        player.cam_pitch = (player.cam_pitch + pitch(want) - pitch(dir)).clamp(-1.2, 0.5);
+        player.cam_pitch = (player.cam_pitch + pitch(want) - pitch(dir)).clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
     }
     player.aim = true;
     player.fire = true;
