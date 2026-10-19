@@ -280,11 +280,14 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     parts get an indoor variant of their material (`Lamps::indoor`, shader def INDOOR_PAIR):
     `src/lamps.wgsl` takes bevy's directional lights that are the outdoor pair out of
     `apply_pbr_lighting`'s result exactly as it put them in (with the shadow) and puts the
-    indoor pair in by the same diffuse and specular; while the outdoor pair is put out (the
-    Vengar view, whose vision pair replaces both pairs in the game) nothing is swapped. A level
-    with no outdoor pair (mp2: both its lights are indoor) lights its outdoor objects and its
-    characters with the ambient alone, as the game's code does; one with no directional light
-    at all gets a made-up sun.
+    indoor pair in by the same diffuse and specular. It knows the outdoor pair's lights by their
+    direction and their colour (`light_buffer` gives it both): by the direction alone the Vengar
+    view's light from below passed for sdm_m07's outdoor key, which also shines from below. In
+    the Vengar view, whose vision pair replaces both pairs in the game, nothing is swapped: the
+    outdoor pair is put out then, and on a level with no outdoor pair the indoor pair is lit only
+    while bevy has no directional light at all. A level with no outdoor pair (mp2: both its
+    lights are indoor) lights its outdoor objects and its characters with the ambient alone, as
+    the game's code does; one with no directional light at all gets a made-up sun.
   * **Strength.** The shaders take N.L against the light matrix's third column as it is, not
     normalised (vertex program 0x19's `max(0, n . c16)`): a hand-made transform whose column
     is short lights less. 34 of the 161 directional placements are off unit length by over
@@ -310,9 +313,12 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   (1 - distance / range) x N.L, unshadowed, nothing past the range, every falloff kind taken as
   linear. Bevy's own point lights fall off as 1 / d^2 and couldn't follow that. Characters take
   the outdoor pair's lamps at their chest from every direction, half of it, as their texture
-  added (emissive). Ammo Depot has 24, Cavern of Fire 22, Bulgar's squad map 2, campaign maps up
-  to 184 (m07_a). `BF_NO_LAMPS=1` leaves them out (to compare); `BF_LIGHT_LOG=1` lists them and
-  each start point's nearest.
+  added (emissive). The terrain takes none: it's drawn unlit, by its baked light map. The game
+  adds lamps to its terrain in a pass of their own per block (FUN_00091070: additive, three a
+  pass, vertex program 0x51) from a list whose filling isn't traced, so which lamps light the
+  ground there, and by which pair if any, is unknown (#181). Ammo Depot has 24, Cavern of Fire
+  22, Bulgar's squad map 2, campaign maps up to 184 (m07_a). `BF_NO_LAMPS=1` leaves them out
+  (to compare); `BF_LIGHT_LOG=1` lists them and each start point's nearest.
 * **Grass.** Bulgar's grass clumps are see-through cards standing upright with their normals
   lying flat (every normal's y is 0). Lit by those, they caught almost none of the high key
   light and their backs none at all: they were black. Cut-out cards whose normals all lie flat
@@ -351,13 +357,20 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     the terrain's shadow gone lightens the grass in sdm_e34's ravine (2.3% of the frame) and the
     water along sdm_e40's shore (0.3%). e34 at take01's spot differs only by Tex's second
     shadow. sdm_e40's ruin at (52.9, -54) has 27 indoor geosets and its 6 indoor lamps: it's now
-    a dim, green-lit room where the outdoor key lit it (no take of it). The Vengar view inside an
-    e34 building is the same as main's.
+    a dim, green-lit room where the outdoor key lit it (no take of it); its floor, part of the
+    ruin, takes those lamps. The Vengar view is the same as main's (to within 1 of 255) inside
+    an e34 building (`BF_MAP=e34 BF_CHARACTER=0 BF_TEST_GOTO=-51.3,10.4,-48.3,10.4
+    BF_TEST_GO_AT=99 BF_TEST_SKILL=2.0`, frame 74), looking up at sdm_m07's indoor-lit ceiling
+    (`BF_MAP=sdm_m07 BF_CHARACTER=0 BF_TEST_GOTO=27.3,2.6,27.3,4.0,87.5 BF_TEST_GO_AT=99
+    BF_TEST_SKILL=1.0 BF_CAMERA_PITCH=0.75`, frames 40 and 59) and at mp2's start with
+    `BF_NO_LAMPS=1` (frame 44).
   * The 15 maps that had lost a directional light (e05, e06, e10, e40, m03_a/b/c, m05_a/c/d/x,
     m08_a/b, mp8, the tutorial): their start views now light the squads and the scenery the
     outdoor pair faces (m03_a's, m05_a's and m08_a's squads were black). Lamps: m04_c's new red
-    lamps light its rock spikes, nothing burns out; frame time (no vsync, median of 40 s) m07_a
-    4.62 -> 4.90 ms (85 -> 184 lamps), m04_c 5.43 -> 6.04 ms (160 -> 181).
+    lamps light its rock spikes and nothing burns out, but no capture of m04_c's lamps (nor of
+    any other cluster of them) exists, so their look is untested against the game. Frame time
+    (no vsync, median of 40 s, before the terrain stopped casting shadows) m07_a 4.62 -> 4.90 ms
+    (85 -> 184 lamps), m04_c 5.43 -> 6.04 ms (160 -> 181).
 * **Sky.** A level's `<sky><object mesh-name>` is a set of layers, drawn in order. On Bulgar:
   a flat blue top, a panorama band of mountains and clouds, a moon, and a cloud swirl. They use
   the self-lit shader `h_f539fe8c`, whose texture is `h_e01baa40` (the texture lookup missed it,
@@ -382,6 +395,12 @@ Known gaps:
   (`Level::character_ambient`) but not drawn. Bevy's ambient term is also 0.45 x texture x
   ambient (EnvBRDFApprox at roughness 1), not texture x ambient: the shade on maps with a strong
   ambient (mp2, m07_c, sdm_m07) is about half the game's.
+* e40's characters outdoors are brighter and warmer than the takes show (take17 of todo/73:
+  Tex's vest luma 68 against 45, his shaded pants about 42 against about 10). That hints the
+  game lights e40's characters by something other than the outdoor key: the same open question
+  of their light-usage (char+0x44).
+* e05's sea went from navy to a flat light grey with #143's lights; there's no take of it.
+* The terrain takes no point lights (see **Point lights**), where the game adds them per block.
 * Mission maps (e01, m01_a, …) load their geometry but have no start points; missions place
   the player with their triggers. bf_play starts the squad at its spawn-triggers or its
   placements where the level has them (the tutorial, e40, m09_a: [triggers.md](triggers.md),

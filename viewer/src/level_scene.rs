@@ -27,8 +27,13 @@ use crate::scene::mip_image;
 /// x N.L, per pixel here (per vertex there), unshadowed, nothing past the range (src/lamps.wgsl).
 /// Bevy's own point lights fall off as 1 / d^2 and couldn't follow that: a light matched at mid
 /// range was far too bright beside it and too dim towards its edge. It takes the lamps of its
-/// light pair only, and an indoor one (`Lamps::indoor`) the level's indoor pair in place of
-/// bevy's directional lights, which are the outdoor pair (`spawn_lighting`).
+/// light pair only, as the wrapper material's draw gathers a scenery object's (FUN_0009f0b0: the
+/// lamps flagged for the pair its light-usage picks), and an indoor one (`Lamps::indoor`) the
+/// level's indoor pair in place of bevy's directional lights, which are the outdoor pair
+/// (`spawn_lighting`). The terrain takes no lamps here: it's drawn unlit, by its baked light map
+/// (`spawn_level`). The game adds lamps to it in a pass of their own per block (FUN_00091070:
+/// additive, three a pass) from a list whose filling isn't traced, so which lamps light the
+/// ground there, and by which pair if any, is unknown (#181's).
 pub type LevelMaterial = ExtendedMaterial<StandardMaterial, Lamps>;
 
 /// The level's lights, for `LevelMaterial`: one buffer shared by all its materials
@@ -368,9 +373,9 @@ fn no_lights() -> ShaderStorageBuffer {
     ShaderStorageBuffer::new(&[0u8; LIGHTS_HEADER + LAMP_SIZE], RenderAssetUsages::default())
 }
 
-/// `light_buffer`'s pairs (lamps.wgsl `Pairs`): the indoor pair's two directions and two colours
-/// and the outdoor pair's two directions, a vec4 each: 96 bytes.
-const LIGHTS_HEADER: usize = 96;
+/// `light_buffer`'s pairs (lamps.wgsl `Pairs`): each pair's two directions and two colours, a
+/// vec4 each: 128 bytes.
+const LIGHTS_HEADER: usize = 128;
 /// A lamp in `light_buffer` (lamps.wgsl `Lamp`): its place and range, its linear colour and
 /// falloff kind, its pairs and padding: 48 bytes.
 const LAMP_SIZE: usize = 48;
@@ -380,27 +385,26 @@ const LAMP_INDOOR: u32 = 2;
 const LAMP_OUTDOOR: u32 = 4;
 
 /// The level's lights for `LevelMaterial`s (lamps.wgsl's `LevelLights`): first the pairs
-/// (`Level::pair`): the indoor pair, each slot the way toward its light (w 1 when there's one)
-/// then its linear colour, and the way toward each light of the outdoor pair, which are bevy's
-/// directional lights (`spawn_lighting`): an indoor material swaps those for the indoor pair
-/// (lamps.wgsl `indoor_swap`). Then per lamp its place, range, linear colour, falloff kind and
-/// pairs (`LAMP_INDOOR`, `LAMP_OUTDOOR`); one lamp that reaches nowhere when there are none (or
-/// BF_NO_LAMPS).
+/// (`Level::pair`), the indoor pair then the outdoor one, each slot the way toward its light (w 1
+/// when there's one) then its linear colour (bevy's conversion of the sRGB colour
+/// `spawn_lighting` gives it). The outdoor pair are bevy's directional lights: an indoor material
+/// finds them by both (a vision light may come from the same way) and swaps them for the indoor
+/// pair (lamps.wgsl `indoor_swap`). Then per lamp its place, range, linear colour, falloff kind
+/// and pairs (`LAMP_INDOOR`, `LAMP_OUTDOOR`); one lamp that reaches nowhere when there are none
+/// (or BF_NO_LAMPS).
 pub fn light_buffer(level: &Level) -> ShaderStorageBuffer {
     let linear = |c: f32| Color::srgb(c, c, c).to_linear().red;
     let mut bytes: Vec<u8> = Vec::with_capacity(LIGHTS_HEADER + LAMP_SIZE * level.lamps.len().max(1));
     let floats = |b: &mut Vec<u8>, v: &[f32]| v.iter().for_each(|f| b.extend(f.to_le_bytes()));
     let toward = |l: Option<&&LevelLight>| l.map_or([0.0; 4], |l| { let to = -l.dir; [to.x, to.y, to.z, 1.0] });
-    let (indoor, outdoor) = (level.pair(true), level.pair(false));
-    for k in 0..2 {
-        floats(&mut bytes, &toward(indoor.get(k)));
-    }
-    for k in 0..2 {
-        let c = indoor.get(k).map_or([0.0; 4], |l| { let [r, g, b] = l.lit_color().map(linear); [r, g, b, 0.0] });
-        floats(&mut bytes, &c);
-    }
-    for k in 0..2 {
-        floats(&mut bytes, &toward(outdoor.get(k)));
+    let colour = |l: Option<&&LevelLight>| l.map_or([0.0; 4], |l| { let [r, g, b] = l.lit_color().map(linear); [r, g, b, 0.0] });
+    for pair in [level.pair(true), level.pair(false)] {
+        for k in 0..2 {
+            floats(&mut bytes, &toward(pair.get(k)));
+        }
+        for k in 0..2 {
+            floats(&mut bytes, &colour(pair.get(k)));
+        }
     }
     let mut n = 0;
     for l in level.lamps.iter().filter(|_| std::env::var("BF_NO_LAMPS").is_err()) {
