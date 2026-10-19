@@ -596,18 +596,24 @@ fn meshes(game: &Game, arch: &Element) -> Result<Vec<Geoset>, String> {
     mesh_geosets(game, best)
 }
 
+/// A `<geoset>`'s h_f89cd77d (its handler 0x23ef60, the record's +0x28): `Geoset::indoor`.
+const H_GEOSET_INDOOR: u32 = 0xF89C_D77D;
+
 /// Geosets of a mesh (objects `<mesh name=...>`), e.g. a level's terrain or sky.
 pub fn mesh_geosets(game: &Game, best: u32) -> Result<Vec<Geoset>, String> {
     let (mesh, ivd) = game.mesh(best).ok_or_else(|| format!("mesh h_{best:08x} not found"))?;
     let mut out = vec![];
     for g in mesh.walk().into_iter().filter(|e| e.name == h("geoset")) {
         let material = g.attr(h("material-name")).and_then(|v| v.as_hash()).unwrap_or(0);
+        // lit by the indoor pair under LU_GEOSET (`Geoset::indoor`)
+        let indoor = g.attr(H_GEOSET_INDOOR).and_then(|v| v.as_i64()).is_some_and(|v| v != 0);
         // one or more draw records; records over the same vertex buffer (terrain patches) are
         // merged: each uses the buffer's first `n` vertices
         let mut merged: Option<(i64, Geoset)> = None;
         for rec in g.walk().into_iter().filter(|e| e.name == 0xFDE5_0E9F) {
             let vb = rec.attr(0x0CDF_FA25).and_then(|v| v.as_i64()).unwrap_or(-1);
             let mut part = read_geoset(rec, ivd, &[], material)?.0;
+            part.indoor = indoor;
             match merged.as_mut() {
                 Some((at, m)) if *at == vb => {
                     let new = std::mem::take(&mut part.indices);
