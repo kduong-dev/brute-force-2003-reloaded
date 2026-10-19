@@ -294,14 +294,17 @@ them):
     * `bf_level` with `BF_FX_TEST=<effect name>` (and `BF_FX_MOVE=<m/s>`) runs one effect in
       front of the view.
 
-* **Look.** The game lights each surface `texture × (ambient + key·N·L + fill·N·L)` with the
-  level's own light colours, in gamma space, with no tone mapping. The demo does the same
+* **Look.** The game lights each surface `texture × (ambient + light₁·N·L + light₂·N·L)` with
+  the level's own light colours, in gamma space, with no tone mapping. The demo does the same
   (`level_scene::spawn_lighting` and `console_look`):
-  * Lights: the level's key (with shadows) and fill directional lights and its object ambient,
-    given as sRGB colours.
+  * Lights: the level's outdoor pair of directional lights (the brightest casting the
+    characters' shadow; the scenery and the terrain cast none) and its object ambient, given as
+    sRGB colours; scenery placed indoors takes the indoor pair instead ([levels.md](levels.md),
+    "Light objects", #143).
   * Camera: tone mapping off, and an exposure where a light of 1.0 leaves a texture as it is.
-  * Terrain: the level has a separate, dimmer key light for terrain (a bluish 0.44, 0.57, 0.65 on
-    sdm_e34), so the terrain is tinted by its ratio to the objects' key light.
+  * Terrain: tinted by the hue of the lights marked h_e02aba1c (a bluish 0.44, 0.57, 0.65 on
+    sdm_e34), read as the terrain's own before #143; the game's code has them as the indoor
+    pair, and what lights its terrain is #181's.
 
   Before this, an invented 9000 lux sun, a strong ambient and Bevy's default tone mapper (which
   desaturates) made everything pale. Point lights (muzzle flash, hit glows, explosions) are

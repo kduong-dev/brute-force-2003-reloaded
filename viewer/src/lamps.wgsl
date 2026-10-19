@@ -1,7 +1,10 @@
 // A level material (bevy's standard one) lit also by the level's point lights the way the game
 // lights its scenery: each lamp's colour x (1 - distance / range) x N.L, nothing past its range,
-// no shadows (see level_scene::LevelMaterial). A terrain layer (TERRAIN_DETAIL) samples its
-// colour and detail textures here, as the game's terrain pass does (level_scene::terrain_detail).
+// no shadows (see level_scene::LevelMaterial). It takes the lamps of its light pair only, and an
+// indoor material (INDOOR_PAIR) the level's indoor pair in place of bevy's directional lights,
+// which are the outdoor pair (level_scene::spawn_lighting, `indoor_lit`). A terrain layer
+// (TERRAIN_DETAIL) samples its colour and detail textures here, as the game's terrain pass does
+// (level_scene::terrain_detail); it's drawn unlit (its baked light map), so no lamp reaches it.
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -16,10 +19,15 @@
 #else
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
-    mesh_view_bindings::view,
+    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing, calculate_diffuse_color, calculate_F0},
+    pbr_types::{PbrInput, STANDARD_MATERIAL_FLAGS_UNLIT_BIT},
+    lighting,
+    shadows,
+    mesh_view_bindings as view_bindings,
+    mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
+    mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
 }
+#import bevy_render::maths::PI
 #endif
 
 struct Lamp {
@@ -29,9 +37,26 @@ struct Lamp {
     // linear colour (its strength), and the falloff kind (unused: every kind is linear here)
     color: vec3<f32>,
     falloff: f32,
+    // its pairs, as the game's light keeps them (its +0x94): 2 the indoor pair's, 4 the outdoor's
+    pairs: u32,
 }
 
-@group(2) @binding(100) var<storage, read> lamps: array<Lamp>;
+// The level's pairs (level_scene::light_buffer): the way toward each of the indoor pair's two
+// lights (w 1 when the slot holds one) and its linear colour, then the same for the outdoor pair,
+// which are bevy's directional lights (level_scene::spawn_lighting)
+struct Pairs {
+    indoor_dir: array<vec4<f32>, 2>,
+    indoor_color: array<vec4<f32>, 2>,
+    outdoor_dir: array<vec4<f32>, 2>,
+    outdoor_color: array<vec4<f32>, 2>,
+}
+
+struct LevelLights {
+    pairs: Pairs,
+    lamps: array<Lamp>,
+}
+
+@group(2) @binding(100) var<storage, read> level_lights: LevelLights;
 // a terrain layer's detail: the game's c20 = (1 / s^2, s^2, the detail's scale, its share at the
 // eye), s the distance it fades out at (FUN_00090f50); zero for the other materials
 @group(2) @binding(101) var<uniform> detail: vec4<f32>;
@@ -40,6 +65,90 @@ struct Lamp {
 @group(2) @binding(103) var colour_sampler: sampler;
 @group(2) @binding(104) var detail_texture: texture_2d<f32>;
 @group(2) @binding(105) var detail_sampler: sampler;
+
+#ifndef PREPASS_PIPELINE
+#ifdef INDOOR_PAIR
+// Whether one of bevy's directional lights (the way toward it, its colour) is a light of the
+// level's outdoor pair as spawn_lighting set it: the same way and the same colour, which bevy
+// keeps as the linear colour x the illuminance (PI). The direction alone isn't enough: the Vengar
+// view's vision pair (play_vengar.rs `vision_lights`) shines from straight up and straight down,
+// as sdm_m07's outdoor key does from below, but it's white at its own strength; and while that
+// view is on, the outdoor pair's own lights are put out (illuminance 0), so they match nothing.
+fn outdoor_light(to: vec3<f32>, color: vec3<f32>) -> bool {
+    for (var k = 0u; k < 2u; k++) {
+        let o = level_lights.pairs.outdoor_dir[k];
+        let c = level_lights.pairs.outdoor_color[k].rgb * PI;
+        let same = all(abs(color - c) <= vec3<f32>(1e-3 * max(c.r, max(c.g, c.b)) + 1e-6));
+        if o.w != 0.0 && same && dot(to, normalize(o.xyz)) > 0.9999 {
+            return true;
+        }
+    }
+    return false;
+}
+
+// What an indoor surface's light differs by from what apply_pbr_lighting gave it: bevy's
+// directional lights that are the outdoor pair (with the shadow its brightest casts) taken out,
+// exactly as apply_pbr_lighting put them in, and the indoor pair put in by the same diffuse and
+// specular, at an illuminance of PI (a light of 1.0 shows the texture as it is). The game has a
+// surface take one pair or the other (FUN_000dcc10 by the light-usage the wrapper material's draw
+// 0x9f3c0 reads), not both. In the Vengar view, whose vision pair takes both pairs' place
+// (FUN_000dcc10's second argument), nothing is swapped: the outdoor pair is put out then, and on a
+// level with no outdoor pair (mp2, whose indoor pair lights its indoor surfaces otherwise) bevy's
+// only directional lights are the vision pair's.
+fn indoor_swap(in: PbrInput) -> vec3<f32> {
+    // (the lighting input apply_pbr_lighting builds, for the base layer)
+    let NdotV = max(dot(in.N, in.V), 0.0001);
+    var input: lighting::LightingInput;
+    input.layers[lighting::LAYER_BASE].NdotV = NdotV;
+    input.layers[lighting::LAYER_BASE].N = in.N;
+    input.layers[lighting::LAYER_BASE].R = reflect(-in.V, in.N);
+    input.layers[lighting::LAYER_BASE].perceptual_roughness = in.material.perceptual_roughness;
+    input.layers[lighting::LAYER_BASE].roughness = lighting::perceptualRoughnessToRoughness(in.material.perceptual_roughness);
+    input.P = in.world_position.xyz;
+    input.V = in.V;
+    input.diffuse_color = calculate_diffuse_color(in.material.base_color.rgb, in.material.metallic,
+                                                  in.material.specular_transmission, in.material.diffuse_transmission);
+    input.F0_ = calculate_F0(in.material.base_color.rgb, in.material.metallic, in.material.reflectance);
+    input.F_ab = lighting::F_AB(in.material.perceptual_roughness, NdotV);
+    let view_z = dot(vec4<f32>(
+        view_bindings::view.view_from_world[0].z,
+        view_bindings::view.view_from_world[1].z,
+        view_bindings::view.view_from_world[2].z,
+        view_bindings::view.view_from_world[3].z
+    ), in.world_position);
+    var light = vec3<f32>(0.0);
+    // (the indoor pair is lit while the outdoor pair is; with no outdoor pair, while bevy has no
+    // directional light at all)
+    var lit = false;
+    if level_lights.pairs.outdoor_dir[0].w == 0.0 && level_lights.pairs.outdoor_dir[1].w == 0.0 {
+        lit = view_bindings::lights.n_directional_lights == 0u;
+    }
+    for (var i = 0u; i < view_bindings::lights.n_directional_lights; i++) {
+        let l = &view_bindings::lights.directional_lights[i];
+        if !outdoor_light((*l).direction_to_light, (*l).color.rgb) {
+            continue;
+        }
+        lit = lit || max((*l).color.r, max((*l).color.g, (*l).color.b)) > 0.0;
+        var shadow = 1.0;
+        if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u
+                && ((*l).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {
+            shadow = shadows::fetch_directional_shadow(i, in.world_position, in.world_normal, view_z);
+        }
+        light -= lighting::directional_light(i, &input, true) * shadow;
+    }
+    for (var k = 0u; k < 2u; k++) {
+        if !lit || level_lights.pairs.indoor_dir[k].w == 0.0 {
+            continue;
+        }
+        var derived = lighting::derive_lighting_input(in.N, in.V, normalize(level_lights.pairs.indoor_dir[k].xyz));
+        let diffuse = input.diffuse_color * lighting::Fd_Burley(&input, &derived);
+        let specular = lighting::specular(&input, &derived, 1.0);
+        light += (diffuse + specular) * derived.NdotL * level_lights.pairs.indoor_color[k].rgb * PI;
+    }
+    return light * view_bindings::view.exposure;
+}
+#endif
+#endif
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -52,7 +161,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // from the eye as 1 - d^2 / s^2 and is 0 past s; the mix is lit as the colour was (the
     // material's own colour is the vertex colour, its alpha the layer's mask). The console works
     // out the share per vertex; here it's per pixel.
-    let to_eye = in.world_position.xyz - view.world_position;
+    let to_eye = in.world_position.xyz - view_bindings::view.world_position;
     let d2 = dot(to_eye, to_eye);
     let share = select(0.0, detail.w * (1.0 - d2 * detail.x), d2 <= detail.y);
     let near = textureSample(detail_texture, detail_sampler, in.uv * detail.z);
@@ -71,13 +180,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var out: FragmentOutput;
     if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
         out.color = apply_pbr_lighting(pbr_input);
+        // (the lamps of the material's pair, as FUN_0009f0b0 gathers a scenery object's; the
+        // terrain is drawn unlit and takes none, see level_scene::LevelMaterial)
+#ifdef INDOOR_PAIR
+        let pair = 2u;
+        out.color = vec4<f32>(max(out.color.rgb + indoor_swap(pbr_input), vec3<f32>(0.0)), out.color.a);
+#else
+        let pair = 4u;
+#endif
         var light = vec3<f32>(0.0);
         let p = in.world_position.xyz;
-        for (var i = 0u; i < arrayLength(&lamps); i++) {
-            let l = lamps[i];
+        for (var i = 0u; i < arrayLength(&level_lights.lamps); i++) {
+            let l = level_lights.lamps[i];
             let to = l.at - p;
             let d = length(to);
-            if d < l.range && d > 1e-4 {
+            if (l.pairs & pair) != 0u && d < l.range && d > 1e-4 {
                 let n_dot_l = max(dot(pbr_input.N, to / d), 0.0);
                 light += l.color * ((1.0 - d / l.range) * n_dot_l);
             }

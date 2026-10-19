@@ -242,33 +242,135 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   to all of it at 1.6 m (lava: 10 hp/s ankle-deep, about 30 waist-deep), dealt every 0.4 s
   without blood; going under kills. A fall into a liquid doesn't hurt.
 * **Terrain hue.** The baked light map gives the ground's brightness. Its hue comes from the
-  terrain's own lights (ambient + key + fill, the pair marked `h_e02aba1c`), at 60% strength.
+  lights marked `h_e02aba1c` with the terrain's ambient, at 60% strength. Before #143 those were
+  read as the terrain's own pair; the game's code has them as the indoor pair (see **Light
+  objects**), and what lights its terrain is #181's, so the hue is kept as it was calibrated. If
+  vertex program 0x38 is the terrain's base pass (see **The detail**: no code was found loading
+  it), its vertex light is the Terrain `<ambient>` plus the second light of whichever pair was
+  uploaded last (c18 / c19, x the material's colour): each view's draw starts with the outdoor
+  pair (FUN_000dcc10(0, ..) at 0xda2aa), and the bump takes the first light's direction (c16).
+  So the outdoor pair, not the `h_e02aba1c` lights, would reach the ground.
   On Bulgar those lights are blue-grey, and the captures show grey ground and hills, not sand.
   The 60% is calibrated on a capture of the gate: the ground there measures 73 81 79; ours was
   79 74 64 and is now 68 77 74. `BF_DOOR_LOG=1` lists the doors (type, place, leaves); Bulgar's
   big gate is `h_0792d16a` at (-23.2, 74.3).
-* **Point lights.** A level's light-object `h_ea460e64` is a point light: a place, a colour
-  (`h_f08eb2f3`, 0-1), a `range` (4-40 m) and a `falloff` kind (3 or 4 on all 1290 of them; the
+* **Light objects** (#143). A level's `<light-object>` is read by its type's `light-type`
+  (objecttypes `<light><h_e275fb80 light-type=N>`, parsed by 0x192970 through the LT_ names at
+  0x3be720: 1 point, 2 spot, 3 directional; `Game::light_types`), not by a list of type names.
+  The game's data has four directional types (h_e1cac6f7 and h_f5302dc6 in common, h_157b3160
+  in e05, e40, m03_a/b/c, m08_a/b, mp8 and the tutorial, h_e8d6efe4 in e06, e10, m05_a/c/d/x)
+  and six point types (h_ea460e64, h_09020c30 and h_0b51040f in common, h_e81ba579, h_087ae059,
+  h_f1557cc8, h_ff66877a); no spot. The three directional types' records are alike: nothing in
+  them says key or fill. Before #143 the demo kept h_e1cac6f7, h_f5302dc6 and h_ea460e64 only,
+  so e40 and the tutorial lost their main light (h_157b3160) and drew their squads black, 15
+  maps lost a directional light and 959 point lights were dropped.
+  * **Two pairs.** The game lights an object with two directional lights at most
+    (FUN_000dcc10): the *outdoor* pair, the lights flagged `h_1f416687` (the light's +0x94 bit
+    2), or the *indoor* pair, those flagged `h_e02aba1c` (bit 1); a light may be in both (the
+    tutorial's fill). The object's `light-usage` picks one (the wrapper material's draw
+    0x9f3c0): LU_OUTDOOR the outdoor pair, LU_INDOOR the indoor one, LU_GEOSET each geoset's
+    own `h_f89cd77d` (`Geoset::indoor`, a building's inner faces: the tutorial has 59 such
+    geosets on 16 meshes), LU_NONE none (here the outdoor pair, the one each view starts with).
+    Each pair takes its lights in the level file's order; no level has more than two in one.
+    The demo read `h_e02aba1c` as "lights the terrain" before; it's the indoor pair.
+  * **Here.** The outdoor pair are bevy's directional lights (`spawn_lighting`), at PI lux with
+    their sRGB colour, the brightest (by luma) casting the characters' shadow: the game's
+    lights cast none, so the one shadow is the demo's choice. Characters take the outdoor pair
+    (535 of the game's 542 placed characters are LU_OUTDOOR). A placed object's indoor-lit
+    parts get an indoor variant of their material (`Lamps::indoor`, shader def INDOOR_PAIR):
+    `src/lamps.wgsl` takes bevy's directional lights that are the outdoor pair out of
+    `apply_pbr_lighting`'s result exactly as it put them in (with the shadow) and puts the
+    indoor pair in by the same diffuse and specular. It knows the outdoor pair's lights by their
+    direction and their colour (`light_buffer` gives it both): by the direction alone the Vengar
+    view's light from below passed for sdm_m07's outdoor key, which also shines from below. In
+    the Vengar view, whose vision pair replaces both pairs in the game, nothing is swapped: the
+    outdoor pair is put out then, and on a level with no outdoor pair the indoor pair is lit only
+    while bevy has no directional light at all. A level with no outdoor pair (mp2: both its
+    lights are indoor) lights its outdoor objects and its characters with the ambient alone, as
+    the game's code does; one with no directional light at all gets a made-up sun.
+  * **Strength.** The shaders take N.L against the light matrix's third column as it is, not
+    normalised (vertex program 0x19's `max(0, n . c16)`): a hand-made transform whose column
+    is short lights less. 34 of the 161 directional placements are off unit length by over
+    2% (e40's key 0.944, its outdoor fill 0.834); here a light's colour is scaled by it
+    (`LevelLight::lit_color`).
+  * **Linked lights.** A `<parent Type="1">` puts a light at its parent object times the
+    link's offset (FUN_0015f0b0, FUN_0015ed30); 373 point lights (all 159 h_09020c30, 214
+    h_e81ba579, white, range 10) hang on effect objects, whose effect types name them and run
+    them with an ALE light-effect: the placed effects draw those lights (#258), so these aren't
+    drawn again. A `<parent Type="2">` (a hardpoint) keeps its own transform.
+  * `BF_LIGHT_LOG=1` lists every light-object (name, type, kind, pairs, colour, strength,
+    direction or place), the two pairs, the ambients, the ones not drawn and why, and each
+    placement lit by the indoor pair.
+* **Point lights.** A point light-object (every point type, #143) is a place, a colour
+  (`h_f08eb2f3`, 0-1), a `range` (4-40 m) and a `falloff` kind (3 or 4 on all of them; the
   schema leaves its enum, `h_f30c3302`, unnamed, and the light's setter goes through the generic
   property table, so its meaning isn't traced; the other `falloff`s, explosions', are
   `DFALL_NONE / LINEAR / EXPONENTIAL / HALF_LIFE`). The game lights static geometry per vertex
-  by them (the scenery meshes carry no baked colours). Here the level materials do it per pixel
-  (`LevelMaterial`: bevy's standard material plus `src/lamps.wgsl`): each lamp's colour x
+  by them (the scenery meshes carry no baked colours), each object by the lamps of its pair
+  only (FUN_0009f0b0 takes those with the pair's flag; one with neither, 32 on m09_c, lights
+  nothing). Here the level materials do it per pixel (`LevelMaterial`: bevy's standard material
+  plus `src/lamps.wgsl`, which skips the lamps of the other pair): each lamp's colour x
   (1 - distance / range) x N.L, unshadowed, nothing past the range, every falloff kind taken as
   linear. Bevy's own point lights fall off as 1 / d^2 and couldn't follow that. Characters take
-  the lamps' light at their chest from every direction, half of it, as their texture added
-  (emissive). Ammo Depot has 24, Cavern of Fire 22, Bulgar's squad map 2, campaign maps up to
-  160. `BF_NO_LAMPS=1` leaves them out (to compare); `BF_LIGHT_LOG=1` lists them and each start
-  point's nearest.
+  the outdoor pair's lamps at their chest from every direction, half of it, as their texture
+  added (emissive). The terrain takes none: it's drawn unlit, by its baked light map. The game
+  adds lamps to its terrain in a pass of their own per block (FUN_00091070: additive, three a
+  pass, vertex program 0x51) from a list whose filling isn't traced, so which lamps light the
+  ground there, and by which pair if any, is unknown (#181). Ammo Depot has 24, Cavern of Fire
+  22, Bulgar's squad map 2, campaign maps up to 184 (m07_a). `BF_NO_LAMPS=1` leaves them out
+  (to compare); `BF_LIGHT_LOG=1` lists them and each start point's nearest.
 * **Grass.** Bulgar's grass clumps are see-through cards standing upright with their normals
   lying flat (every normal's y is 0). Lit by those, they caught almost none of the high key
   light and their backs none at all: they were black. Cut-out cards whose normals all lie flat
   (|y| < 0.1) are given normals pointing up, so they're lit like the ground, both faces alike.
   `BF_MAT_LOG=1` lists the materials (type, textures, average colour).
-* **Shadows.** The scenery casts no shadow; only characters do. The game lights static
-  geometry per vertex by the level's lights (every light-object is `enable-static`), with no
-  shadows, so building interiors are lit like the walls outside. With shadow-casting roofs
-  they were black, and a jungle canopy darkened the whole floor.
+* **Shadows.** The scenery and the terrain cast no shadow; only characters do, from the
+  brightest light of the outdoor pair (on e34, whose outdoor pair is two h_e1cac6f7, both cast
+  one before #143). The game lights static geometry per vertex by the level's lights (every
+  light-object is `enable-static`), with no shadows. With shadow-casting roofs interiors were
+  black, and a jungle canopy darkened the whole floor. The terrain cast one until #143: a
+  character standing where it shades the ground was drawn black (Tex on e40's beach, which
+  take17 of todo/73 shows lit), and it darkened sdm_e34's start ravine's grass and the water
+  along sdm_e40's shore.
+* **Checked** (#143; `BF_MUTE=1 BF_BACKGROUND=1`, frames beside the takes):
+  * e40 at take04's spot (`BF_MAP=e40 BF_TEST_GOTO=-16.00,152.32,-16.50,152.26
+    BF_CAMERA_PITCH=-0.10 BF_TEST_WEAPON="Therm Sweeper"`, frame 30, todo/73 take04 1.5 s): Tex,
+    Flint, Brutus and the standing stone are lit (main drew them black); the stone's lit face
+    measures 76 55 42 against the take's 77 55 43. The cliff (terrain, bluish here, #181) isn't
+    this. At take17's spot (`BF_TEST_GOTO=17.15,175.43,16.70,175.22`, the rest the same, frame
+    39 against take17 1.5 s) Tex is lit (his arm 72 38 27 against the take's 94 47 35) and the
+    two near stones measure 75 53 42 and 78 57 43 against 83 60 47 and 61 44 34; while the
+    terrain cast a shadow they were black (17 10 7, 10 9 8) and so was Tex.
+  * The tutorial's opening (`BF_MAP=tutorial`, frames 285-375 against take03 at the same clock +
+    1.66 s): Tex lit as the take has him (vest 146-161 luma against the take's 133-138, his
+    shaded arm 50 against 52; main 1-12). The second building (`BF_TEST_GOTO=37.22,-88.80,36.9,
+    -88.55` against take11 2.5 s) and the base building (`-62.22,19.23,-62.40,19.47` against
+    take12 300 s): their insides take the bluish indoor pair as the takes show (the base
+    building's wall 33 54 74 against take12's 34 39 51; main black and white); the gate wall
+    (`-43.76,-13.46,-43.81,-13.16`, take11 715 s) shows its dark blue panels where main drew it
+    black; the sniper crate and the base's containers are lit (take11 297 s, take12 50 and
+    120 s).
+  * Bulgar's interiors: inside sdm_e34's building at (-51.2, 10.9) (`BF_MAP=sdm_e34
+    BF_TEST_GOTO=-51.2,10.9,-48.2,10.9 BF_TEST_GO_AT=99`) the walls measure 34-42 47-57 55-65,
+    where main had 17-28 20-33 24-37: #2's capture measured 40 55 60 and the demo 23 27 32.
+  * Unchanged: by the lights, sdm_e40's and sdm_e34's start views are the same pixel for pixel;
+    the terrain's shadow gone lightens the grass in sdm_e34's ravine (2.3% of the frame) and the
+    water along sdm_e40's shore (0.3%). e34 at take01's spot differs only by Tex's second
+    shadow. sdm_e40's ruin at (52.9, -54) has 27 indoor geosets and its 6 indoor lamps: it's now
+    a dim, green-lit room where the outdoor key lit it (no take of it); its floor, part of the
+    ruin, takes those lamps. The Vengar view is the same as main's (to within 1 of 255) inside
+    an e34 building (`BF_MAP=e34 BF_CHARACTER=0 BF_TEST_GOTO=-51.3,10.4,-48.3,10.4
+    BF_TEST_GO_AT=99 BF_TEST_SKILL=2.0`, frame 74), looking up at sdm_m07's indoor-lit ceiling
+    (`BF_MAP=sdm_m07 BF_CHARACTER=0 BF_TEST_GOTO=27.3,2.6,27.3,4.0,87.5 BF_TEST_GO_AT=99
+    BF_TEST_SKILL=1.0 BF_CAMERA_PITCH=0.75`, frames 40 and 59) and at mp2's start with
+    `BF_NO_LAMPS=1` (frame 44).
+  * The 15 maps that had lost a directional light (e05, e06, e10, e40, m03_a/b/c, m05_a/c/d/x,
+    m08_a/b, mp8, the tutorial): their start views now light the squads and the scenery the
+    outdoor pair faces (m03_a's, m05_a's and m08_a's squads were black). Lamps: m04_c's new red
+    lamps light its rock spikes and nothing burns out, but no capture of m04_c's lamps (nor of
+    any other cluster of them) exists, so their look is untested against the game. Frame time
+    (no vsync, median of 40 s, before the terrain stopped casting shadows) m07_a 4.62 -> 4.90 ms
+    (85 -> 184 lamps), m04_c 5.43 -> 6.04 ms (160 -> 181).
 * **Sky.** A level's `<sky><object mesh-name>` is a set of layers, drawn in order. On Bulgar:
   a flat blue top, a panorama band of mountains and clouds, a moon, and a cloud swirl. They use
   the self-lit shader `h_f539fe8c`, whose texture is `h_e01baa40` (the texture lookup missed it,
@@ -284,10 +386,21 @@ Known gaps:
 
 * sdm_m07 is much darker than its preview's lava glow.
 * Bulgar's start ravine is darker than in the game (the terrain's baked light there is low).
-* Bulgar's interiors are much darker than in the game: walls facing away from the level's
-  two directional lights get only its dim ambient. Captured mean 40 55 60, ours 23 27 32.
-  Static meshes carry no per-vertex lighting (24-byte vertices: position, normal, uv), so the
-  game lights them some other way, not yet traced.
+* Characters standing indoors look darker than takes 11 and 12 show (Tex's back inside the
+  tutorial's buildings 33-35 luma against 40-48): they take the outdoor pair, where the game's
+  characters may take another indoors (their light-usage, char+0x44, isn't read live), or the
+  squad's shine (vertex program 0x19's environment map coordinate) adds what's missing.
+* Characters take the object ambient: the game gives skinned meshes `<character-ambient>` (c15,
+  0xda19b; e16 0.28 against its object ambient 0.04, m09_a 0.004 against 0.06), here read
+  (`Level::character_ambient`) but not drawn. Bevy's ambient term is also 0.45 x texture x
+  ambient (EnvBRDFApprox at roughness 1), not texture x ambient: the shade on maps with a strong
+  ambient (mp2, m07_c, sdm_m07) is about half the game's.
+* e40's characters outdoors are brighter and warmer than the takes show (take17 of todo/73:
+  Tex's vest luma 68 against 45, his shaded pants about 42 against about 10). That hints the
+  game lights e40's characters by something other than the outdoor key: the same open question
+  of their light-usage (char+0x44).
+* e05's sea went from navy to a flat light grey with #143's lights; there's no take of it.
+* The terrain takes no point lights (see **Point lights**), where the game adds them per block.
 * Mission maps (e01, m01_a, …) load their geometry but have no start points; missions place
   the player with their triggers. bf_play starts the squad at its spawn-triggers or its
   placements where the level has them (the tutorial, e40, m09_a: [triggers.md](triggers.md),

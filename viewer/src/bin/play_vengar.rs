@@ -442,15 +442,17 @@ struct LevelLight(DirectionalLight);
 struct VisionLight;
 
 /// The world's lights in the Vengar view. The world's shaders take their two lights from the
-/// constants FUN_000dcc10 uploads (c16-c19: a direction and a colour each; the terrain's pair, the
-/// lights marked h_e02aba1c, or the objects', h_1f416687, by what's drawn), and in a vision mode
-/// (its second argument, the view's vision mode not 0, 0x9f443-0x9f45a) it uploads a fixed pair in
-/// place of either: white (1.0 at 0x40d5b8) from straight up and straight down (the table 0x41b3a8,
-/// filled at 0xdd10e-0xdd1dc), the ambient left as it is. Floors are lit, walls by the ambient
-/// alone: take08's sunlit tower goes dark and its shaded sand light, take06's blue-lit gate dark.
-/// Here the level's directional lights are put out and the pair takes their place, at VISION_LIGHT
-/// (play.rs's lighting: PI lux is the console's 1.0, in linear terms), without shadows; the level's
-/// own come back at the off. The terrain takes the same pair per vertex (`vision_terrain`).
+/// constants FUN_000dcc10 uploads (c16-c19: a direction and a colour each; the indoor pair, the
+/// lights marked h_e02aba1c, or the outdoor pair, h_1f416687, by the object's light-usage, #143),
+/// and in a vision mode (its second argument, the view's vision mode not 0, 0x9f443-0x9f45a) it
+/// uploads a fixed pair in place of either: white (1.0 at 0x40d5b8) from straight up and straight
+/// down (the table 0x41b3a8, filled at 0xdd10e-0xdd1dc), the ambient left as it is. Floors are
+/// lit, walls by the ambient alone: take08's sunlit tower goes dark and its shaded sand light,
+/// take06's blue-lit gate dark. Here the level's directional lights are put out and the pair
+/// takes their place, at VISION_LIGHT (play.rs's lighting: PI lux is the console's 1.0, in linear
+/// terms), without shadows; the level's own come back at the off. The terrain takes the same pair
+/// per vertex (`vision_terrain`); the scenery lit by the level's indoor pair takes it too, as its
+/// shader swaps only the level's own lights while they're lit (lamps.wgsl `indoor_swap`).
 fn vision_lights(mut commands: Commands, view: Res<VengarView>,
                  mut lights: Query<(Entity, &mut DirectionalLight, Option<&LevelLight>), Without<VisionLight>>,
                  pair: Query<Entity, With<VisionLight>>) {

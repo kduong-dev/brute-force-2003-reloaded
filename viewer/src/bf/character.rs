@@ -332,6 +332,12 @@ pub struct Game {
     pub object_meshes: HashMap<u32, u32>,
     /// liquid types (objecttypes `<h_fa2f5452>`): type name -> its settings
     pub liquids: HashMap<u32, LiquidType>,
+    /// light types (objecttypes `<light><h_e275fb80 light-type=N ..><base name=T object-type=4>`):
+    /// type name -> its `light-type` (`LT_POINT`, `LT_SPOT`, `LT_DIRECTIONAL`), what a level's
+    /// light-objects are read by (`level::Level::load`). Ten in the game's data: h_e1cac6f7,
+    /// h_f5302dc6 (common), h_157b3160 and h_e8d6efe4 (some levels' own) directional; h_ea460e64,
+    /// h_09020c30, h_0b51040f (common), h_e81ba579, h_087ae059, h_f1557cc8, h_ff66877a point
+    pub light_types: HashMap<u32, i64>,
     /// inventory item types (objecttypes `<inventory>`): type name -> its settings
     pub items: HashMap<u32, ItemType>,
     /// the loaded levels' level files (levels-<name>.xmb: terrain, placed objects, sky, fog)
@@ -394,6 +400,13 @@ pub struct Game {
 pub const OBJECT_COMPOUND: i64 = 0;
 pub const OBJECT_GAME: i64 = 2;
 pub const OBJECT_EFFECT: i64 = 17;
+
+/// A light type's `light-type` (h_f4825987, kept at the type's +0x10 by its attribute parser
+/// 0x192970): the LT_ names at 0x3be720 (read through FUN_00185ca0) are LT_POINTLIGHT 1,
+/// LT_SPOTLIGHT 2 and LT_DIRECTIONALLIGHT 3. No light type of the game's data is a spot.
+pub const LT_POINT: i64 = 1;
+pub const LT_SPOT: i64 = 2;
+pub const LT_DIRECTIONAL: i64 = 3;
 
 /// An object type (objecttypes `<h_e275fb80>` entries), as far as breaking it goes:
 ///
@@ -1192,6 +1205,7 @@ impl Game {
             decals: HashMap::new(),
             object_meshes: HashMap::new(),
             liquids: HashMap::new(),
+            light_types: HashMap::new(),
             items: HashMap::new(),
             levels: vec![],
             flipbooks: HashMap::new(),
@@ -1549,6 +1563,14 @@ impl Game {
                         group: int("group-type"),
                         gameflag: t.child(h("campaign-gameflag")).map(|g| name_list(g, h("gameflag"))).unwrap_or_default(),
                     });
+                }
+            }
+            // light types: <light><h_e275fb80 light-type=K ..><base name=T object-type=4/>
+            // (see `light_types`; the first archive's wins, as for the other types)
+            for t in root.children_named(h("light")).flat_map(|l| l.children.iter()) {
+                let name = hash_of(t.child(h("base")).and_then(|b| b.attr(h("name"))));
+                if let (true, Some(kind)) = (name != 0 && name != h(""), t.attr(h("light-type")).and_then(|v| v.ints().first().copied())) {
+                    self.light_types.entry(name).or_insert(kind);
                 }
             }
             // liquid types: <h_fa2f5452><.. liquid-type=K h_06f6a40d=D..><base ..><base name=T/>
@@ -2292,6 +2314,12 @@ pub struct Geoset {
     pub weights: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub material: u32,
+    /// its `<geoset h_f89cd77d>` (the geoset's attribute handler 0x23ef60 keeps it at its
+    /// record's +0x28): lit by the level's indoor light pair when its object's light-usage is
+    /// LU_GEOSET (the wrapper material's draw 0x9f3c0 reads `[[item+0x2c]+0x28]`, 0x9f41c), else by
+    /// the outdoor pair. A building's inner faces have it (the tutorial: 59 of its 702 geosets, on
+    /// 16 meshes, 11 of them with outdoor geosets too); false for what isn't a level mesh
+    pub indoor: bool,
 }
 
 pub struct Character {
@@ -2580,7 +2608,7 @@ pub(crate) fn read_geoset(rec: &Element, ivd: &[u8], palettes: &[Vec<usize>], ma
     }
 
     let palette = palettes.get(pal.max(0) as usize).cloned().unwrap_or_default();
-    let mut g = Geoset { positions: vec![], normals: vec![], uvs: vec![], joints: vec![], weights: vec![], indices, material };
+    let mut g = Geoset { positions: vec![], normals: vec![], uvs: vec![], joints: vec![], weights: vec![], indices, material, indoor: false };
     let f32at = |o: usize| f32::from_le_bytes(ivd[o..o + 4].try_into().unwrap());
     let sx = |x: u32, bits: u32| { let x = x as i32; if x >= 1 << (bits - 1) { x - (1 << bits) } else { x } };
     for i in 0..nv {
