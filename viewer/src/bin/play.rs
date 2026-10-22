@@ -3449,7 +3449,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
                 spinners.push((pe, axis, part.offset));
             }
         }
-        let muzzle = wm.hardpoints.get(&def.muzzle).copied().unwrap_or(Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY });
+        let muzzle = wm.hardpoints.get(&def.muzzle()).copied().unwrap_or(Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY });
         let fire_dir = muzzle.rot * Vec3::NEG_Z;
         let flash = commands.spawn((
             Mesh3d(flash_mesh.clone()), MeshMaterial3d(flash_mat.clone()), NotShadowCaster,
@@ -7005,12 +7005,25 @@ fn dump_weapons(game: &Game) {
                         p.geosets.iter().map(|g| g.positions.len()).sum::<usize>(), if p.spin_axis.is_some() { " spin" } else { "" })).collect();
                     let mut hps: Vec<String> = m.hardpoints.keys().map(|k| format!("{k:08x}")).collect();
                     hps.sort();
-                    println!(" parts [{}] hardpoints [{}] muzzle {}", geo.join(", "), hps.join(" "),
-                             if m.hardpoints.contains_key(&d.muzzle) { "ok" } else { "MISSING" });
+                    // (each muzzle the definition names, found on the model or not)
+                    let muzzles: Vec<String> = d.muzzles.iter().map(|k| format!("{k:08x} {}", if m.hardpoints.contains_key(k) { "ok" } else { "MISSING" })).collect();
+                    println!(" parts [{}] hardpoints [{}] muzzles [{}]", geo.join(", "), hps.join(" "), muzzles.join(", "));
                 }
                 Err(e) => println!(" model error: {e}"),
             }
         }
+    }
+    // the definitions with more than one muzzle (the map's turrets), each found on its model or not
+    let mut many: Vec<&weapon::WeaponDef> = game.weapons.values().filter(|d| d.muzzles.len() > 1).collect();
+    many.sort_by_key(|d| d.name);
+    for d in many {
+        let model = weapon::WeaponModel::load(game, d.archetype).ok();
+        let muzzles: Vec<String> = d.muzzles.iter().map(|k| format!("{k:08x} {}", match &model {
+            Some(m) if m.hardpoints.contains_key(k) => "ok",
+            Some(_) => "MISSING",
+            None => "no model",
+        })).collect();
+        println!("h_{:08x} ({}, arch {:08x}): muzzles [{}]", d.name, d.label, d.archetype, muzzles.join(", "));
     }
 }
 
