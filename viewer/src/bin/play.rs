@@ -908,10 +908,11 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
 /// The level's point lights on the characters. The scenery takes them per surface (its
 /// `LevelMaterial`); a character's materials are bevy's own, so each takes the light at its chest
 /// from every direction, as its texture added to the picture (emissive), at CHARACTER_LAMP of it
-/// (about the average N.L over a body).
+/// (about the average N.L over a body). A body's stealth copies (play_stealth.rs `BodyCopy`)
+/// have materials of their own and are passed over.
 #[allow(clippy::too_many_arguments)]
 fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
-                   parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), With<Mesh3d>>,
+                   parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), (With<Mesh3d>, Without<stealth::BodyCopy>)>,
                    mut materials: ResMut<Assets<StandardMaterial>>, mut last: Local<HashMap<Entity, Vec3>>) {
     let Some(level) = &map.0 else { return };
     if level.lamps.is_empty() {

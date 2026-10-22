@@ -179,7 +179,11 @@ impl Plugin for RefractionOrder {
     fn build(&self, app: &mut App) {
         let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
         let mut graph = render.world_mut().resource_mut::<RenderGraph>();
-        let Some(core) = graph.get_sub_graph_mut(Core3d) else { return };
+        let Some(core) = graph.get_sub_graph_mut(Core3d) else {
+            // (without it the refraction would quietly keep bevy's order: say so)
+            warn!("the refraction's pass isn't moved: no Core3d render graph");
+            return;
+        };
         if let Err(e) = transmissive_last(core) {
             warn!("the refraction's pass isn't moved: {e}");
         }
@@ -222,6 +226,13 @@ impl MaterialExtension for Depth {
         Ok(())
     }
 }
+
+/// Marks a copy of a body's part drawn with a material of its own (a depth copy, `DepthCopy`, or
+/// a refraction twin, `Twin`), which sits under the body's root: play.rs's `lamp_characters`
+/// passes over it, as it has no standard material to light (without this a cloaking body's
+/// lamp light was sent to the GPU again every frame once it changed, #219).
+#[derive(Component)]
+pub struct BodyCopy;
 
 /// Marks a part's depth-only copy, and whose (the model's root).
 #[derive(Component)]
@@ -365,7 +376,7 @@ fn prepare_bodies(mut commands: Commands, time: Res<Time>, player: Res<Player>, 
                     // pass discards it all. The map's end removes it with the rest it spawned)
                     c.insert((MeshMaterial3d(blend.clone()), WarmCopy { left: WARM_UP }));
                 } else {
-                    c.insert((MeshMaterial3d(depth.clone()), DepthCopy { root: l.root }, NotShadowCaster, ChildOf(parent.parent())));
+                    c.insert((MeshMaterial3d(depth.clone()), DepthCopy { root: l.root }, BodyCopy, NotShadowCaster, ChildOf(parent.parent())));
                 }
             }
             made += 1;
@@ -576,7 +587,7 @@ fn refract_bodies(mut commands: Commands, player: Res<Player>, squad: Res<Squad>
             if standard.get(&material.0).is_none_or(|m| m.unlit) {
                 continue;
             }
-            let mut c = commands.spawn((Twin { root }, mesh.clone(), MeshMaterial3d(handle.clone()), Transform::IDENTITY, Visibility::Inherited,
+            let mut c = commands.spawn((Twin { root }, BodyCopy, mesh.clone(), MeshMaterial3d(handle.clone()), Transform::IDENTITY, Visibility::Inherited,
                                         NoFrustumCulling, NotShadowCaster, ChildOf(e)));
             if let Some(s) = skin {
                 c.insert(s.clone());
