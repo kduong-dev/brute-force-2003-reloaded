@@ -676,6 +676,7 @@ fn main() {
             .chain().run_if(playing.clone()))
         .add_systems(Update, lamp_characters.after(update_player).run_if(playing.clone()))
         .add_systems(Update, spawn_splashes.after(update_player).run_if(playing.clone()))
+        .add_systems(Update, turn_sky.run_if(playing.clone()))
         .add_systems(Update, (back_to_menu, audio_probe).run_if(playing))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
@@ -942,6 +943,17 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
         }
         if all {
             last.insert(l.root, light);
+        }
+    }
+}
+
+/// The sky's clock on the game's (`frame_dt`: stopped under a menu, fixed steps while
+/// capturing), which turns it (level_scene.rs `follow_sky`; FUN_00177ba0 from the world step).
+fn turn_sky(time: Res<Time>, mut sky: Query<&mut bf_viewer::level_scene::SkyLayer>) {
+    let dt = frame_dt(&time);
+    if dt > 0.0 {
+        for mut s in &mut sky {
+            s.run(dt);
         }
     }
 }

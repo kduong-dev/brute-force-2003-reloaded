@@ -11,8 +11,9 @@ level's own flyby cameras and 0 to an overview, F toggles fog, P prints the view
 `BF_LEVEL_DUMP=1` (placements, untextured materials, idle effects, placed effect objects),
 `BF_NO_PLACED_FX=1` (no placed effect objects), `BF_PART_DUMP=<hex
 archetype>` (each part's geosets: offset, bounds, normals, winding, UV direction; then exits).
-In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail texture) and
-`BF_ANISOTROPY=<1-16>` (the world textures' anisotropy; the game's is none), both below.
+In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail texture),
+`BF_ANISOTROPY=<1-16>` (the world textures' anisotropy; the game's is none) and
+`BF_SKY_TIME=<s>` (the sky's clock started that far into the level), all below.
 
 * Terrain vertices (type h_ef44f398) carry no float position. Slot 8 of the game's vertex
   format table gives the layout: SHORT2, packed normal, two float2 UVs, NORMSHORT3, 2 bytes.
@@ -375,7 +376,31 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   a flat blue top, a panorama band of mountains and clouds, a moon, and a cloud swirl. They use
   the self-lit shader `h_f539fe8c`, whose texture is `h_e01baa40` (the texture lookup missed it,
   so skies were flat grey). See-through layers are blended. The sky moves sideways with the
-  camera, so its mountains stay on the horizon.
+  camera, so its mountains stay on the horizon (the game's stays at its `<position>`,
+  FUN_00177d50: a few degrees of horizon parallax across a map, left as it is).
+* **The sky turns (#199).** The `<sky><object>` carries `<rotation>` (the starting angles,
+  radians: `0 360 0` on e05, e40, m03 and the tutorial, 0.3 on e23, 0.05 on e34) and
+  `angular-speed` (h_18180282, rad/s about x, y, z). The game turns the whole model about its
+  origin every world step (FUN_00177ba0: angles += dt x speed, the model's frame the identity
+  turned about x, y and z by them), every layer together. Turning: e23 and e34 (0.01 about y),
+  e05, e16 and the tutorial (0.005), e40 and sdm_e40 (0.004), m03_a/b/c (0.0032), m09_a/b/c/x
+  and m14_a/b (0.005 about x and 0.01 about z), m14_c (0.008, 0.005, 0.007), mp3 (0.05, 0.04,
+  0.05); every other sky, sdm_e34's among them, is still. `Level::sky_of` reads both
+  (`SkySpin`); each layer (`SkyLayer`) keeps the sky's clock, which runs on the game's
+  (`frame_dt`: stopped under a menu, the capture's fixed steps), and `follow_sky` turns it about
+  the sky's origin, each layer's lifted origin turned with it, so a tumbling sky keeps its
+  layers together. The sense is the takes': the helpers' frame read with its columns as the
+  model's axes (`SkySpin::rotation`); read the other way, e40's clouds drifted right. Test hook:
+  `BF_SKY_TIME=<s>` starts the sky's clock that far into the level (bf_play and bf_level).
+  Verified (`BF_MAP=e40 BF_TEST_GOTO=0.29,166.87,-3.46,176.14,26.13 BF_TEST_GO_AT=99
+  BF_CAMERA_PITCH=0.2`, the view of #198 take06; crops phase-correlated against a frame 2 s in):
+  the clouds drift screen-left, 2.4-2.6 px/s above the picture's centre and 4.0-4.1 px/s at the
+  left (the takes' 2.9 and 4.0: 0.004 rad/s at the game's focal length, 686 px, which the demo's
+  55.4-degree view shares), the same at 15 fps and at `BF_CAPTURE_FPS=5`; the rock holds within
+  1-2 px (the idle's sway). sdm_e34 over 20 s: the sky still (0.04 px). m09_a's sky over the test
+  map (`BF_TEST_SKY="1,m09_a"`, `BF_SKY_TIME=0` and `60`): its planet and nebula turned together.
+  Not checked against the game: the starting angle (no take is known to be at a level's start:
+  e23's start would show it) and the tumbling skies (none filmed).
 * **sdm_m07's background.** It has no sky (`h_ee630063="false"`, a cavern), and its terrain
   mesh is missing, so the background shows through where the terrain should be. There, the
   background is the fog's colour rather than its bright blue.

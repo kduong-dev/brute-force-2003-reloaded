@@ -29,6 +29,7 @@ use super::*;
 use super::testtools::{Hook, Panel, Script, Session, Tools};
 use bf_viewer::bf::bxml::SchemaSet;
 use bf_viewer::bf::character::{Geoset, LEVEL_DEATHMATCH, LEVEL_SQUAD_DEATHMATCH};
+use bf_viewer::bf::level::SkySpin;
 use bf_viewer::level_scene::{SkyLayer, SkyLayers};
 use super::testmap::TestMap;
 
@@ -75,8 +76,8 @@ struct Lists {
 }
 
 /// A level's sky loaded on a thread: the game data holding its meshes and textures (dropped
-/// once they're made ready), its layers, where they sit and its background colour.
-type SkyLoad = Result<(Game, Vec<Geoset>, Vec3, [f32; 3]), String>;
+/// once they're made ready), its layers, where they sit, its background colour and how it turns.
+type SkyLoad = Result<(Game, Vec<Geoset>, Vec3, [f32; 3], SkySpin), String>;
 /// A level's music bank decoded and mixed on a thread (`music_mix`).
 type MusicLoad = Result<Vec<(String, Vec<u8>, &'static str, f32)>, String>;
 /// A level loaded on a thread for the switch, and a note to show (when it fell back).
@@ -423,7 +424,7 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                 let (layers, bg) = &lists.ready[&z];
                 show_sky(&mut commands, layers, *bg, &skies, &mut clear);
                 if log {
-                    println!("test tools: sky: {z} ({} layers, ready)", layers.len());
+                    println!("test tools: sky: {z} ({} layers, ready)", layers.layers.len());
                 }
                 status.message = Some((format!("Sky: {z}"), MESSAGE_TIME));
             }
@@ -435,8 +436,8 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                     let load = (|| {
                         let mut game = Game::load(&dir)?;
                         game.load_level(&dir, &name)?;
-                        let (sky, at, bg) = bf_viewer::bf::level::Level::load_sky(&game)?;
-                        Ok((game, sky, at, bg))
+                        let (sky, at, bg, spin) = bf_viewer::bf::level::Level::load_sky(&game)?;
+                        Ok((game, sky, at, bg, spin))
                     })();
                     let _ = tx.send(load);
                 });
@@ -534,12 +535,12 @@ fn finish_loads(mut commands: Commands, mut world: ResMut<World>, mut lists: Res
     if let Some((z, load)) = got {
         world.sky_loading = None;
         match load {
-            Ok((mut g, sky, at, bg)) if !sky.is_empty() => {
-                let layers = bf_viewer::level_scene::sky_layers(&mut g, &sky, at, &mut meshes, &mut materials, &mut buffers, &mut images);
+            Ok((mut g, sky, at, bg, spin)) if !sky.is_empty() => {
+                let layers = bf_viewer::level_scene::sky_layers(&mut g, &sky, at, spin, &mut meshes, &mut materials, &mut buffers, &mut images);
                 world.own_clear.get_or_insert(clear.0);
                 show_sky(&mut commands, &layers, bg, &skies, &mut clear);
                 if log {
-                    println!("test tools: sky: {z} ({} layers at {at:.0}, background {bg:.2?})", layers.len());
+                    println!("test tools: sky: {z} ({} layers at {at:.0}, background {bg:.2?}, turning {:.4?} rad/s from {:.2?})", layers.layers.len(), spin.speed, spin.start);
                 }
                 lists.ready.insert(z.clone(), (layers, bg));
                 world.sky = z.clone();

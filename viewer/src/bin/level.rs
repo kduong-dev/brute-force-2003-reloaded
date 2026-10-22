@@ -211,7 +211,7 @@ fn main() {
         .init_resource::<Fly>()
         .add_plugins((bf_viewer::ale_fx::plugin, bf_viewer::level_scene::plugin))
         .add_systems(Startup, setup)
-        .add_systems(Update, (fly, screenshot, move_test_fx))
+        .add_systems(Update, (fly, screenshot, move_test_fx, turn_sky))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
 }
@@ -335,6 +335,14 @@ fn fly(mut commands: Commands, time: Res<Time>, keys: Res<ButtonInput<KeyCode>>,
     if keys.just_pressed(KeyCode::KeyP) {
         let p = tr.translation;
         println!("{}: BF_VIEW={:.1},{:.1},{:.1},{:.0},{:.0}", world.name, p.x, p.y, p.z, fly.yaw.to_degrees(), fly.pitch.to_degrees());
+    }
+}
+
+/// The sky's clock on the frame's time, which turns it (level_scene.rs `follow_sky`; the game's
+/// FUN_00177ba0 runs from the world step with its dt).
+fn turn_sky(time: Res<Time>, mut sky: Query<&mut bf_viewer::level_scene::SkyLayer>) {
+    for mut s in &mut sky {
+        s.run(time.delta_secs());
     }
 }
 
