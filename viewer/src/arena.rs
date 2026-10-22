@@ -22,7 +22,10 @@
 //!
 //! A spawn-trigger's template (its h_1299668b) isn't in the world: the trigger takes it out as it
 //! links (FUN_000dfe90), so it adds nothing here. (The tutorial's Tex template put a surface
-//! 1.7 m above the ground where his spawn stands him, #220.)
+//! 1.7 m above the ground where his spawn stands him, #220.) Nor does any character placement
+//! (`character-object`): a character's body is its own physics object, not part of the static
+//! collision (#230; m09_a's squad started on their own placements' bodies, 0.8-1.3 m up, and
+//! stepped off them, and e34's enemies left surfaces where they stood).
 //!
 //! The test tools' scenery (#185, play_testscenery.rs) joins the map's collision as it's placed
 //! (`Arena::place`): a piece's own triangles, solid like a placed object's. The flat test floor
@@ -343,7 +346,9 @@ impl Arena {
                 a.starts.push((p, (-f.x).atan2(-f.z)));
             }
             let Some(arch) = o.archetype else { continue };
-            if is_pickup(o.tag) || templates.contains(&o.name) {
+            // (a character's body is its own physics object, not the level's collision: #230,
+            // m09_a's squad stood on their own placements' bodies and stepped off them)
+            if is_pickup(o.tag) || templates.contains(&o.name) || o.tag == h("character-object") {
                 continue;
             }
             let tris = solid.entry(arch).or_insert_with(|| if physics { physics_tris(game, arch) } else { model_tris(game, arch) });

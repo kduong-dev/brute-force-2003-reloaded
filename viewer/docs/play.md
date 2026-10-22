@@ -295,7 +295,12 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
     Where a level starts the squad from its own placements (a spawn-trigger's template, or the
     squad placed in the world: [triggers.md](triggers.md), #220), the ammo they carry
     (`<inventory><h_10dd6db2 name count>`) sets those types instead: the tutorial's Tex 500 High
-    ROF, take03's "48 / 500".
+    ROF, take03's "48 / 500". The members' counts are added up and held to the type's stack-limit
+    (#230): in the game each character has an inventory of its own, which holds at most a stack
+    of an item (the item type's stack-limit, +0x164, read by FUN_001920d0), and a gun reloads
+    from its holder's. So m09_a's Brutus 200, Flint 120 and Tex 160 of Sonic Ammo (h_ef0c4c1e,
+    stack-limit 200) make 200, not 480 (`BF_AMMO_LOG`: "type 3 200"). Taking the stack, not the
+    leader's own count, is the demo's: its reserve is shared, the game's aren't.
   * A respawn (the test map's rack) keeps the reserve; the new gun comes with a full clip. The
     test map's NPCs reload from a bottomless reserve of their own.
 * **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show

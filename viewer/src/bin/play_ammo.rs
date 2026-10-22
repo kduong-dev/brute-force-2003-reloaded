@@ -127,16 +127,31 @@ fn stack_limits(game: &Game) -> HashMap<i64, i64> {
 /// counts instead: the tutorial's Tex 500 rounds of type 2 (h_02735ad0), take03's 48 / 500. The
 /// game's other counts are the campaign's (the takes start with full stacks of 11mm, Sonic and
 /// Shotgun, and half of High ROF and Cutter); a full stack is the demo's choice.
+///
+/// The members' counts of a type are added up, then held to the type's stack-limit (#230): in
+/// the game each character has its own inventory, which holds at most a stack of an item (the
+/// item type's stack-limit, its +0x164, read by the inventory parser FUN_001920d0), and a gun
+/// reloads from its holder's (FUN_0022da80). The squad's one reserve stands for the controlled
+/// character's, so it's at most a stack too: m09_a's Brutus 200 + Flint 120 + Tex 160 of Sonic
+/// Ammo (h_ef0c4c1e, ammo-type 3, stack-limit 200) is 200, not 480. (That the pool takes the
+/// stack and not the leader's own count is the demo's: the reserve is shared, the game's aren't.)
 fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>, spawns: Option<Res<super::triggers::SquadSpawns>>) {
     if reserve.stocked || player.loaded.is_none() {
         return;
     }
     let test = std::env::var("BF_TEST_RESERVE").ok().and_then(|v| v.parse::<i64>().ok());
-    reserve.rounds = stack_limits(&game.0).into_iter().map(|(t, n)| (t, test.unwrap_or(n))).collect();
+    let limits = stack_limits(&game.0);
+    reserve.rounds = limits.iter().map(|(&t, &n)| (t, test.unwrap_or(n))).collect();
     let mut carried: HashMap<i64, i64> = HashMap::new();
     for &(item, n) in spawns.iter().flat_map(|s| s.0.iter()).flat_map(|s| s.items.iter()) {
         if let Some(i) = game.0.items.get(&item).filter(|i| i.function == AMMO_ITEM && i.kind > 0) {
             *carried.entry(i.kind).or_default() += n;
+        }
+    }
+    // (no more than a stack of each, as one character carries: see above)
+    for (t, n) in carried.iter_mut() {
+        if let Some(&limit) = limits.get(t) {
+            *n = (*n).min(limit);
         }
     }
     if test.is_none() {

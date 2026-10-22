@@ -65,9 +65,15 @@ the key asks for the switch (`edit_input`) and the state's change makes it (`to_
   body.
 * **The world goes on** in edit mode: NPCs set to fight fight each other (a dummy is nobody's
   target), loose things fall, effects play, a medkit put in the air drops. Freezing it is #192's.
-  So do a level's triggers and the cutscenes they play (their pause in edit mode is #230's), but
-  a cutscene doesn't take the edit view: no letterbox, no cutscene camera, the HUD left hidden
-  ([cutscenes.md](cutscenes.md)); one still under way when play comes back has the view again.
+  A level's triggers don't (#230): they're held while edit mode is up. Their timers keep where
+  they were, no detector, spawn-trigger or damage plate acts, no script or cutscene they started
+  goes on, and the world's events for them (a death, a pickup) wait; back in play they go on
+  from there ([triggers.md](triggers.md), "Edit mode"). A cutscene under way doesn't take the
+  edit view: no letterbox, no cutscene camera, the HUD left hidden ([cutscenes.md](cutscenes.md));
+  one still under way when play comes back has the view again. Checked with `BF_MAP=tutorial
+  --test BF_TEST_GOTO=46,-20,46,-20 BF_TEST_EDIT=4 BF_TEST_PLAY=9 BF_TRIGGER_LOG=1`: no trigger
+  line from 4.07 s (edit) to 9.07 s (play); the lava yard's timer383 pulsed at 4.00 s and next at
+  13.07 s (its 4 s plus the 5 s held), timer384, due at 6.00 s, at 11.00 s.
 * **Play**: the test map as it always was.
 
 ## Play from here, and back

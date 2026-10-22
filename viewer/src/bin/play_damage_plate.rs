@@ -61,7 +61,10 @@ struct PlateVictims(HashMap<(u32, String), (f32, f32)>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<PlateVictims>()
         .add_systems(OnEnter(AppState::Playing), |mut commands: Commands| commands.insert_resource(PlateVictims::default()))
-        .add_systems(Update, deal.after(super::run).run_if(in_state(AppState::Playing)));
+        // (held with the triggers in the map editor's edit mode, #230: an NPC left in the plate
+        // takes nothing meanwhile)
+        .add_systems(Update, deal.after(super::run)
+            .run_if(in_state(AppState::Playing).and(not(in_state(super::super::editor::EditorMode::Edit)))));
 }
 
 /// FUN_001f8420: the share of a damage plate's amount at distance `d` from its middle, its radius

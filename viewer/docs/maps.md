@@ -29,7 +29,9 @@ them):
     step; steeper surfaces are walls.
   * Not solid: grass, wires and other undrawn or cut-out parts have no collision surface, so
     they don't block. Nor does a spawn-trigger's template, which the game takes out of the world
-    until it's spawned ([triggers.md](triggers.md), #220).
+    until it's spawned ([triggers.md](triggers.md), #220; nor is one drawn but a pickup, #230), nor a placed
+    character (`character-object`): a character's body is its own physics object, not the
+    level's collision (#230; m09_a's squad started on their own placements' bodies).
   * Fallback: a level without collision data uses the drawn triangles instead.
 * **Doors and gates.** Their leaves are the parts of a placed object that its clips move: parts
   on sliding joints (joint type h_fd8f670c: sdm_e34's and the tutorial's doors and gates) and,

@@ -149,7 +149,14 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   itself: that's how the tutorial's Tex (only trigger_spawn8 spawns him) seems to "move". So
   every placed character a spawn-trigger names (the tutorial's eight Red Hand, Tex and the five
   marines) is absent until spawned, and its collision isn't in the demo's arena either (arena.rs:
-  Tex's template put a surface 1.7 m above the ground where his spawn stands him).
+  Tex's template put a surface 1.7 m above the ground where his spawn stands him). Nor is a
+  template drawn where it's placed (#230, `level_scene::spawn_level`, the same `spawn_templates`
+  set: the tutorial's h_e5ab44a9, a pillar of type h_f02c006a at (50.3, 25.6, 80.6) 15 m from the
+  start, stood there as a walk-through ghost; the game shows it only once the campaign is done),
+  but for the pickups: every pickup of the multiplayer maps is a template (sdm_e34's 54, its four
+  power-ups among them), and as the triggers don't make pickup copies yet (below, "In the
+  world") the demo keeps them where they're placed. Making game-object copies from their
+  triggers is #228's or later.
 * **Spawning.** OPERATE while armed spawns at once, or after `h_eab6952f` s (e40's delayed
   spawns); a trigger is armed once by its constructor (0x1fd680-0x1fd6e7), and SPAWN_RESET arms a
   re-armable one again (the tutorial's lava bursts: TIMER_PULSE -> SPAWN_RESET, then OPERATE).
@@ -476,6 +483,18 @@ update 0x1fa7e0) and FUN_001f8510, FUN_001f8420.
 `BF_COMBAT_LOG=1` prints each hit from a plate (this frame's, the total so far and the hit
 points left), the first with its factors.
 
+## Edit mode
+
+The map editor's edit mode ([editor.md](editor.md)) holds the triggers (#230; the product owner's
+call, the game has no editor): the runtime's frame (`play_triggers.rs` `run`) and the damage
+plate's hits (`play_damage_plate.rs` `deal`) don't run while `EditorMode::Edit` is up. So the
+timers keep the time they had left, no detector sees anyone, no spawn-trigger makes a copy (the
+lava yard's bursts stop), no script or cutscene they started goes on, and the world's object
+events (deaths, pickups, panels) wait in `TriggerEvents`. Back in play they go on where they
+were: a timer due 2 s after the switch to edit pulses 2 s after the switch back. Effects already
+made play out. The sound-triggers' own frame (the music and the ambience beds,
+play_sound_triggers.rs) isn't held.
+
 ## Test hooks
 
 * `BF_TRIGGER_LOG=1`: at the start, the level's trigger counts by class, the squad's spawns and
@@ -677,9 +696,9 @@ the log read and the frames looked at:
   the sky beyond the pit) isn't the demo's (rock walls): the level's, not the bursts'.
 * The character's spawn fade-in isn't drawn.
 * The member check's roster test (0x8d430) is assumed to pass every squad type.
-* Placed characters that no spawn-trigger names still add their bodies' collision to the arena
-  at their placements (arena.rs), which the game's characters don't; only the templates are left
-  out here.
+* Placed characters add no collision to the arena (#230, arena.rs): a character's body is its
+  own physics object, not part of the static collision. Before, those no spawn-trigger names
+  added their bodies' at their placements, and m09_a's squad started on them and stepped off.
 * A character's body in a detector is the demo's cylinder, not its Ipion body against the
   phantom; a dead character leaves a detector 0.2 s after it dies (the game's ragdoll may stay
   in the phantom: not known).

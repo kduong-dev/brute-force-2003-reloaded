@@ -1168,8 +1168,19 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     // (the objects the level's anim-triggers play once: those of them with animated parts are
     // doors, see `played_once`)
     let played = played_once(level);
+    // (the spawn-triggers' templates aren't in the world: FUN_000dfe90 takes each out as the
+    // level links, and a trigger's copy is made at the trigger (FUN_000dfd90), so they aren't
+    // drawn where they're placed, as `Arena::new` leaves out their collision: #230, the
+    // tutorial's h_e5ab44a9 at (50.3, 25.6, 80.6) stood there as a walk-through ghost. Not the
+    // pickups: every pickup of the multiplayer maps is a template (sdm_e34's 54), whose copies
+    // the triggers don't make yet, so the demo keeps them where they're placed, as before)
+    let templates = level.spawn_templates();
+    let pickup = |tag: u32| tag == h("inventory-object") || tag == h("weapon-object");
     for o in &level.objects {
         let Some(arch) = o.archetype else { continue };
+        if templates.contains(&o.name) && !pickup(o.tag) {
+            continue;
+        }
         if !models.contains_key(&arch) {
             let parts = object_parts(game, arch, meshes, materials, images, &lamps, &mut cache);
             models.insert(arch, parts);

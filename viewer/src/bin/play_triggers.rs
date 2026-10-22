@@ -114,7 +114,11 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<TriggerEvents>()
         .init_resource::<Triggers>()
         .add_systems(OnEnter(AppState::Playing), start.after(setup).after(flags::begin_level))
-        .add_systems(Update, run.after(squad_control).before(doors).run_if(in_state(AppState::Playing)))
+        // (held while the map editor's edit mode is up, #230: their timers keep where they were,
+        // no detector, spawn or script runs, and the world's events wait; they go on from there
+        // back in play)
+        .add_systems(Update, run.after(squad_control).before(doors)
+            .run_if(in_state(AppState::Playing).and(not(in_state(super::editor::EditorMode::Edit)))))
         // (the hint lines, button gates, AI events and panels: #224; the radar's contacts and the
         // damage plate's hits: #228)
         .add_plugins((hints::plugin, panels::plugin, radar::plugin, damage_plate::plugin));
