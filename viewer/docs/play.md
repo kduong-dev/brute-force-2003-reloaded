@@ -1663,6 +1663,19 @@ enemy, and at a frozen enemy with another behind), the bolt's and its hit's look
 (paralyzer_bul_master, paralyzer_hit_master with light_hit_energy), its rate, reload and damage
 against the game, and which of a level's walls it goes through (a take at a level wall).
 
+**MNR-7 Bio** (#64; h_e671e0f8, light: Hawk, `BF_CHARACTER=2 BF_TEST_WEAPON="MNR-7 Bio"
+BF_CAMERA_PITCH=-0.16 BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,10"
+BF_TEST_TRIGGER=2.0-2.08,3.5-6.0`): each trigger cycle fires three darts at once (its burst of
+3, 0 s apart, walked by the burst's 3.5 degrees: #115's pellets; the log's three ways lie 3-4
+degrees apart) for one round off the clip (50 -> 49 -> 48: FUN_0022fe00), one cycle every 0.53 s
+(2 a second); each dart is a bolt at 80 m/s with its own roll (10-12 BIO) and its 40 m range (a
+0.5 s life), and lands 0.2 s after the shot 9.6 m out (14.0-16.0 on a x1 part; 81.5 on the
+head); one to three of them hit the Shrike, the walked ones passing it. The green darts
+(bio_bullet_pistol and its trail) and the green bio flash where they strike (bio-flash_hit,
+bio-shrap_hit, light_hit_bio). Blocked: the bioreactive kill (#147); on footage, the darts' walk
+(a wall 10 m out with the camera still), the damage on a frozen enemy 7 m out with its HP
+logged, the reload, and the darts' look against the game.
+
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
 `src/bin/play.rs` (`scope_levels`, `level_zoom`, `press_scope`, `scope_input`, `follow_camera`),
