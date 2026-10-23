@@ -1555,6 +1555,36 @@ BF_CAMERA_PITCH=-0.05`, take01's spot, the stone tower 10 m out):
 * Not checked again (as before #53, generic): the dry fire and its hint, the switch (take02), the
   pickup (take04).
 
+**PU Cutter** (#65, Brutus on e40; nothing of its own to build: the bolt's flight (#136), the
+bounces (#238) and the explosion (#53) are the Feral Cutter's, with its own data: 100 m/s, 80 m,
+4 a second, 10.5-13.5, plut_cuttertrail_ribbon in flight and plut_cutter_hit where it strikes.
+The bullet's `<mirv>` count 3 is dead data: its mode is 0, NO_MIRV, plan §2):
+* take01's spot, the cliff 10 m out (`BF_MAP=e40 BF_CHARACTER=0 BF_TEST_WEAPON="PU Cutter"
+  BF_TEST_GOTO=-30.73,151.62,-31.65,151.23 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.06
+  BF_TEST_TRIGGER=2.0-2.08,3.5-4.5`): an orange streak from the gun to the reticle, the white star
+  at the cliff with spikes after it, the dark mark; held fire one every 0.27 s (3.75 a second;
+  take01 ~3.8). The cliff (the terrain: no bounce) is 10.3 m (pitch -0.14) to 11.7 m (-0.06) from
+  the muzzle there, just past a first sweep's 10 m at 100 m/s, so the star comes 0.2 s after the
+  shot where take01's came at 0.1 s (the HUD's 49 -> 48 at f12-f13 of 5.20 s on, the star at
+  f18-f19): the take's spot or aim is a little closer, not measured.
+* Reload (`--test BF_CHARACTER=0 BF_TEST_WEAPON="PU Cutter" BF_TEST_CLIP=3 BF_TEST_TRIGGER=2.5-6.0
+  BF_AMMO_LOG=1`): 3 -> 0 a blade every 0.27 s, the reserve 120 -> 70 0.26 s after the last, the
+  clip 50 13 frames (0.87 s) later; take02's watch log: 2.742 / 2.942 / 3.243, the reserve at
+  3.545 (+0.30), the clip at 4.447 (+0.90).
+* Damage at 7 m (take03's spot: `BF_TEST_GOTO=-0.5,166.98,-7.0,164.4 BF_TEST_GO_AT=100
+  BF_TEST_NPC="0.5,shrike soldier@e40,enemy,frozen,-7.0,164.4" BF_TEST_NPC_HP=1.0,1,300
+  BF_TEST_INSTANT_KILL=0 BF_CAMERA_PITCH=-0.3 BF_TEST_TRIGGER=3.0-3.08,5.2-5.28,7.4-7.48,9.6-11.0
+  BF_COMBAT_LOG=1`): the taps took 15.7, 17.5 and 16.1 (the roll x 1.4 on a x1 part), take03's
+  16.0, 17.9 and 16.1; held fire 14.8-17.3 a blade, each 0.1 s after its shot. Aimed higher
+  (`BF_CAMERA_PITCH=-0.2`) the taps strike the head (x5, 78-88) and the held fire's blades pass
+  just over it to the standing stone 25 m out and bounce off it, as take03's held fire missed
+  the enemy and its blades left the stone to the right (why the held fire's blades go higher
+  isn't looked into).
+* The bounces off e40's standing stone (take05, take03): § Ricochet and pass-through above. A 25
+  m hit comes on the third sweep, 0.3 s after the shot (take07: ~0.3 s), at the same damage (a
+  bolt has no falloff; take07 17-18 a hit): the sweep's rule, not run again here.
+* Not checked again (generic): the dry fire, the switch (take02).
+
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
 `src/bin/play.rs` (`scope_levels`, `level_zoom`, `press_scope`, `scope_input`, `follow_camera`),
