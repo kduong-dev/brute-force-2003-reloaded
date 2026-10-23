@@ -1464,10 +1464,12 @@ const CHARGE_TIME: f32 = 0.6;
 /// after, so the meter's update (0xad950) counts it down from the last charging frame and draws
 /// the meter at clamp(2 x timer, 0, 1)^3 (play_hud.rs): full 0.5 s, gone at 1.0 s (#162).
 pub const METER_TIME: f32 = 1.0;
-/// seconds the chosen member's name shows before control passes to them. Where it was measured
-/// isn't recorded: if from the input to the picture, the game's is ~0.4-0.45 s (#140, todo/140
-/// answer §2), to be re-measured from a marker-synced take before it's changed
-const SELECT_TIME: f32 = 0.6;
+/// Seconds from a member's selection to control passing to them: the squad select widget's
+/// countdown, +0x78 set to its +0x7c, 0.5 (its constructor FUN_000c8760), as a selection is made
+/// (FUN_000c8cc0) and counted down by FUN_000c90c0 to the hand-over FUN_000c8fa0 (#88). The
+/// recordings agree: "BRUTUS" shows at 22.867 s and the cut is at 23.367 s in `Friendly Fire 2
+/// + Death Cam.mp4`, "HAWK" at 31.847 s and 32.333 s. (It was 0.6, unmeasured.)
+const SELECT_TIME: f32 = 0.5;
 /// chatter line set the character you hand over from says as they drop back into the squad
 /// ("I'm right behind you", "Following at a distance", ...: line_tag f415ab02 in all four
 /// <name>_chatter files; the capture's switches transcribe and match to these, said by the
