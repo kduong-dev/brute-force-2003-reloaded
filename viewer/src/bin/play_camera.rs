@@ -24,7 +24,8 @@
 //!  - **Walls** (`wall_test`, FUN_000718f0): a wedge of seven points from the pivot back along the
 //!    boom; where the world meets it the distance steps to 0.75 of it, 0.5, then 0.4 m. The world:
 //!    the static mesh and the collidable objects as they stand, not characters, weapons or the
-//!    level's blockers (`Arena::hull_triangles`).
+//!    level's blockers (`Arena::hull_triangles`). "Meets" is the game's GJK (FUN_00167c40,
+//!    `convex_meet`), which also takes a search that closes within 0.033 m as a meeting (#275).
 //!  - **The distance eases** to that (FUN_00070090: a cubic re-planned each frame over 0.2 s out,
 //!    0.14 s in) and the boom's direction turns toward the wanted one at its angle / 0.2 s a second
 //!    (FUN_00073f90). A wanted place 10 m off, or a cut (a hand-over, a teleport, a script giving
@@ -786,8 +787,9 @@ pub fn head_height(model: &Character, game: &Game, idle: Option<usize>) -> f32 {
 mod tests {
     use super::*;
 
-    /// The convex test: a triangle across the wedge meets it, one beside it or past its tip
-    /// doesn't, one just inside its tip does.
+    /// The convex test: a triangle across the wedge meets it, one beside it or 0.1 m past its tip
+    /// doesn't, one just inside its tip does (its straight points reach 3.985 m: 4 x cos 5 degrees),
+    /// and so does one 1.5 cm past it (FUN_00167c40's closeness, about 0.033 m, #275).
     #[test]
     fn wedge_meets() {
         let pivot = Vec3::new(10.0, 2.0, -30.0);
@@ -800,7 +802,9 @@ mod tests {
         assert!(!world::convex_meet(&w, &behind));
         let tip = [pivot + Vec3::new(-1.0, -1.0, 3.98), pivot + Vec3::new(1.0, -1.0, 3.98), pivot + Vec3::new(0.0, 1.0, 3.98)];
         assert!(world::convex_meet(&w, &tip));
-        let past = tip.map(|v| v + Vec3::Z * 0.02);
+        let close = tip.map(|v| v + Vec3::Z * 0.02);
+        assert!(world::convex_meet(&w, &close));
+        let past = tip.map(|v| v + Vec3::Z * 0.1);
         assert!(!world::convex_meet(&w, &past));
     }
 
