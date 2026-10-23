@@ -1257,6 +1257,16 @@ squad's LZRs and cutter go this way.
     debris types have none.
   * The effects are compiled with the game's emission count, shapes and facing 3
     (`load_recorded_facing`), with the type's bounding sphere for the distance LOD.
+* **The bullet's explosion** (#53; play.rs `shot_explosion`): before the struck material's hit
+  effect, the damage handler plays the bullet's own effect type at every direct hit, on the world
+  or a body (0x22d0b0 -> FUN_0022cfc0 -> FUN_0022cbe0: h_ec23d593, the weapon type's +0x250, at
+  user parameter 1.0, with its light) and its impact sound (h_e5618348, +0x254). Of the hand guns
+  only the two cutters have one: cutter_hit and plut_cutter_hit with light_hit_cutter, the white
+  star where a blade strikes (#53 take01 f17-f18 of 5.20 s on, on the tower; take03, on the
+  enemy's chest); every other gun names its hit in h_08d28037 instead. A bolt's hit on a body, a
+  corpse or a Sentry plays it from `deal` (play_bolts.rs), a world hit from `world_hit`. Not
+  done: the per-material overrides at +0x25c, taken when the hit record's +0x58 bit 1 is set (not
+  traced for a bolt). Before, the cutters' hits had only the material's debris.
 * **A hit on a body** (play_fx.rs `spawn_fx`): the flesh row's effect for the ammo-type, when the
   demo doesn't make it by hand (the squad's ballistic, cutter and laser ones), is played from
   the data with its light: the sonic h_177a62d8 (wmat_fleshit_sonic), the particle h_ed6363bd,
@@ -1270,8 +1280,9 @@ Test hooks: `BF_SHOT_LOG=1` also prints the map's world materials as it loads ("
 materials (id: triangles) 0: 15482 terrain + 4596, ..."), each world hit ("t=2.37 hit on world
 material 5 at [...] 8.4 m out (ammo-type 3): effect h_fed64261 sp 1.00 light h_eb110330 (the
 weapon's), debris h_fe578f8f sp 0.79, sound h_0655c729 vol 0.57 (slot 1)": which of the row's
-four sounds the random state picked; a bolt's says "(a bolt's sweep)" where a shot's says how
-far out) and each hole's life; and each bolt's launch ("t=2.20 bolt 1 launched by tex from [...]
+four sounds the random state picked; a bolt's says how far along its sweep ("10.3 m along its
+sweep") where a shot's says how far out; a cutter's adds "explosion h_0557b326 light h_16d39d8b" before its effect) and each
+hole's life; and each bolt's launch ("t=2.20 bolt 1 launched by tex from [...]
 along [...] at 80 m/s: roll 21.97 x skill 1.00, life 0.750 s (range 60.0 m)"), each sweep that
 meets something ("t=2.50 bolt 1 sweep at game frame 9 (0.30 s): hits Shrike Soldier (NPC 1) 7.4
 m on from its last checked point 23.4 m out", with "(past a level blocker 0.40 m on)" where the
@@ -1504,6 +1515,45 @@ frozen on the line):
   off it (an object, material 8) up and to either side, as take05's streaks leave the stone at
   10.2 s; in the demo the stone is 23.5 m out where take05's was ~40 m (the take's spot isn't
   reproduced exactly).
+
+### The guns of weapons batch 2 against their takes (#53, #65, #67)
+
+No tester's spec was written for these; each was measured here from its takes (`todo/<n>-*/`,
+the frames pulled with ffmpeg at 60 fps, the HUD's counts and the watch logs in each notes.md).
+The takes' spots are reproduced on their levels with the test map's tools (`-- --test`), since a
+campaign level whose squad spawn-triggers fire at once (m03_a) moves the character from a
+`BF_TEST_GOTO` start: `BF_TEST_FREECAM` straight down over the spot, `BF_TEST_TELEPORT` there, and
+`BF_TEST_GO_AT=100` so the autopilot only aims (from the GOTO's start toward its goal).
+
+**Feral Cutter** (#53, Brutus; `BF_MAP=m03_a BF_CHARACTER=0 BF_TEST_WEAPON="Feral Cutter"
+BF_TEST_GOTO=-182.6,-43.5,-188.6,-52.3 BF_TEST_GO_AT=100
+BF_TEST_FREECAM="0.3,-182.6,45,-41.88,0,-89.9" BF_TEST_TELEPORT=0.5 BF_TEST_FREECAM_OFF=0.7
+BF_CAMERA_PITCH=-0.05`, take01's spot, the stone tower 10 m out):
+* Each blade strikes the tower (an object, material 3) on its first sweep, 0.1 s after the shot
+  (take01: the HUD's 29 -> 28 at f11 of 5.20 s on, the white star at f17), with the white star of
+  its explosion and sparks (§ Bolts, "The bullet's explosion"), its ribbon drawn from the gun to
+  the tower and bending off it, and bounces off to the left and up (take01: the blades' later
+  flashes up-left of the tower). Where the bounced blade lands differs: take01's second flash comes
+  0.2 s after the shot at the tower's left edge, the demo's blades fly 35 m to the ground (the
+  tower's facet the blade meets, and so the bounce, isn't measured: shot C1 of
+  todo/drafts/done/bolt-ricochet-passthrough.md, a wall at 45 degrees seen from the side). It
+  leaves the cutter's scorch (h_1801e63d).
+* Held fire one blade every 0.38-0.47 s (2.5 a second; take01: 26 -> 18 in 3.5 s).
+* Reload (`--test BF_CHARACTER=0 BF_TEST_WEAPON=1545a4e4 BF_TEST_CLIP=3 BF_TEST_TRIGGER=2.5-7.0
+  BF_AMMO_LOG=1`; the label also names the enemies' variant h_1bb3c9c7, so the hex): the clip
+  3 -> 0 a blade every 0.4 s, the reserve drops 30 when the cooldown runs out 0.4 s after the
+  last blade, and the clip reads 30 14 frames (0.93 s) later. take02's watch log: 3 -> 0 at
+  2.735 / 3.136 / 3.537, the reserve 100 -> 70 at 3.939, the clip 30 at 4.944.
+* Damage on a frozen Filthy Mutant 9 m out in front of the tower (take03's spot; m03_a has no
+  Confed trooper type, take03's spawn: `BF_TEST_GOTO=-182.6,-43.5,-186.3,-51.7
+  BF_TEST_NPC="0.8,h_10a12c64,enemy,frozen,-186.3,-51.7" BF_TEST_NPC_HP=1.5,1,300
+  BF_TEST_INSTANT_KILL=0 BF_CAMERA_PITCH=-0.27 BF_TEST_TRIGGER=3.0-3.08,4.5-4.58,6.0-6.08,7.5-7.58,9.0-11.0
+  BF_COMBAT_LOG=1`): every blade lands on its chest (x1), 7.9-10.0 (the roll 5.625-7.875 x the
+  enemy step 1.4), one every 0.38-0.44 s in held fire; take03's taps took 9.1, 10.2 and 9.8,
+  its held fire 8-11 each every 0.4-0.5 s. The white star flashes on the body (take03 f10 of 3.15
+  s on), then the flesh's cutter hit.
+* Not checked again (as before #53, generic): the dry fire and its hint, the switch (take02), the
+  pickup (take04).
 
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 

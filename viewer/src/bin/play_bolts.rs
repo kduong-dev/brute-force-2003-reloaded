@@ -37,8 +37,10 @@
 //!    the world plays its material's hit effect, debris and sound with the launch roll as the
 //!    record (play.rs `world_hit`) and takes the bullet's hole (play_fx.rs); a breakable object
 //!    takes the roll (play_scenery.rs `ObjectHits`); a Sentry goes off (play_sentry.rs); a body on
-//!    the ground is shoved and bleeds (`Ragdoll::shove`). A liquid's surface it crosses splashes,
-//!    as an instant ray's does (play.rs `projectiles`), and it goes on to the bed.
+//!    the ground is shoved and bleeds (`Ragdoll::shove`). Whatever it strikes, the bullet's own
+//!    explosion plays there first (FUN_0022cfc0, play.rs `shot_explosion`: the cutters' white
+//!    star, #53). A liquid's surface it crosses splashes, as an instant ray's does (play.rs
+//!    `projectiles`), and it goes on to the bed.
 //!  - **Through, or off** (#238, `Bolt::after_hit`): with the pass flag it goes through an object
 //!    while n1 lasts and a character while n2 does, and stops at anything else (the terrain
 //!    always); without it, while n1 or n2 lasts, it bounces off what it hit, its way turned about
@@ -551,6 +553,15 @@ pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf
     let now = player.sim_time;
     // (the record: the roll x the shooter's skill x the falloff; a character's adds its part)
     let record = k.roll * k.skill * k.falloff;
+    // the bullet's own explosion where it strikes a body, a corpse or a Sentry (0x22d0b0 ->
+    // FUN_0022cfc0, `shot_explosion`: the cutters' white star; a world hit's is world_hit's)
+    let mut ale = ale;
+    if !matches!(met.what, What::World { .. }) {
+        if let Some(ale) = ale.as_deref_mut() {
+            let hit = Shot { origin: from, dir, dist: met.t, hit: true, normal: met.normal, ..*s };
+            shot_explosion(commands, game, ale, images, materials, &hit, at, met.normal, chance, listener, player);
+        }
+    }
     match met.what {
         What::World { material, terrain, breakable } => {
             // the bullet's hole, the material's hit effect, debris and sound, a breakable

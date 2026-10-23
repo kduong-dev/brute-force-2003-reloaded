@@ -7063,9 +7063,50 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
     }
 }
 
+/// How loud a sound at `at` is heard: the library's volume, by its distances from the listener
+/// (`distance_gain`) where it has them.
+fn heard_at(game: &Game, id: u32, at: Vec3, listener: Option<Vec3>) -> f32 {
+    match (game.sounds.params(id), listener) {
+        (Some(p), Some(l)) if p.min_distance >= 0.0 => triggers::sounds::distance_gain(l.distance(at), p.min_distance, p.max_distance) * p.volume,
+        (Some(p), _) => p.volume,
+        _ => 1.0,
+    }
+}
+
+/// A shot's explosion at a direct hit, on the world or a body (the damage handler 0x22d0b0 ->
+/// FUN_0022cfc0, before the struck material's hit effect, FUN_0022cd80): the bullet's own effect
+/// type (`WeaponDef::blast_effect`, h_ec23d593, the weapon type's +0x250) through FUN_0022cbe0 at
+/// user parameter 1.0, in its alignment's frame (`hit_effect_at`), and its impact sound
+/// (`WeaponDef::impact_sound`, h_e5618348, +0x254) heard from the hit. Of the hand guns only the
+/// two cutters have one (cutter_hit and plut_cutter_hit with light_hit_cutter: the white star
+/// where a blade strikes, #53 take01 and take03, #65); the grenades' and missiles' explosions are
+/// their own (play_grenade.rs, play_missile.rs). Its particles' seed is a draw of `chance` when
+/// there's an effect, so no other gun's draws move. Not done: the per-material overrides at
+/// +0x25c, which FUN_0022cfc0 takes when the hit record's +0x58 bit 1 is set (not traced for a
+/// bolt). Returns the effect type played, for the logs.
+#[allow(clippy::too_many_arguments)]
+fn shot_explosion(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &mut Assets<Image>,
+                  materials: &mut Assets<StandardMaterial>, s: &Shot, at: Vec3, normal: Vec3, chance: &mut GameRandom,
+                  listener: Option<Vec3>, player: &mut Player) -> Option<u32> {
+    let (effect, sound) = game.weapons.get(&s.weapon).map_or((0, 0), |d| (d.blast_effect, d.impact_sound));
+    if sound != 0 && game.sounds.has(sound) {
+        let volume = heard_at(game, sound, at, listener);
+        if volume > 0.0 {
+            player.sound_queue.push((sound, volume));
+        }
+    }
+    if effect == 0 {
+        return None;
+    }
+    let seed = chance.stirred();
+    hit_effect_at(commands, game, ale, images, materials, effect, at, s.dir, normal, 1.0, seed);
+    Some(effect)
+}
+
 /// A shot landing on the world at `at`: the damage handler's tail (0x22d0b0 -> FUN_0022cd80,
 /// FUN_0022b5b0) by the struck triangle's world material (`Arena::ray_material`; the flat test
-/// floor's 0) and the shot's ammo-type:
+/// floor's 0) and the shot's ammo-type, after the bullet's own explosion (`shot_explosion`, the
+/// cutters' white star):
 ///  - the material's hit effect for the ammo-type (world-materials h_f6f08598; the world's
 ///    materials have none, only the fleshes), else the weapon's own (h_08d28037) at user
 ///    parameter 1.0;
@@ -7094,6 +7135,8 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
     let [lo, hi] = s.damage;
     let roll = swept.map(|x| x.0).unwrap_or_else(|| (lo + (hi - lo) * chance.unit()) * s.falloff_at(s.dist));
     let sp = hit_sp(roll, false);
+    let place = at - s.dir * 0.05;
+    let explosion = shot_explosion(commands, game, ale, images, materials, s, place, s.normal, chance, listener, player);
     // (the hit effects' particles: the demo's draw)
     let seed = chance.stirred();
     let row = surface.as_ref().and_then(|x| x.hit_effect.get(&s.ammo)).copied();
@@ -7101,7 +7144,6 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
         Some(kind) => (kind, sp),
         None => (s.hit_fx, 1.0),
     };
-    let place = at - s.dir * 0.05;
     let log = std::env::var("BF_SHOT_LOG").is_ok();
     if main != 0 {
         hit_effect_at(commands, game, ale, images, materials, main, place, s.dir, s.normal, main_sp, seed);
@@ -7121,12 +7163,7 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
     let slot = (chance.stirred() >> 30) as usize;
     let mut heard = None;
     if let Some(id) = sounds.get(slot).copied().filter(|&id| game.sounds.has(id)) {
-        let p = game.sounds.params(id);
-        let volume = match (p, listener) {
-            (Some(p), Some(l)) if p.min_distance >= 0.0 => triggers::sounds::distance_gain(l.distance(at), p.min_distance, p.max_distance) * p.volume,
-            (Some(p), _) => p.volume,
-            _ => 1.0,
-        };
+        let volume = heard_at(game, id, at, listener);
         if volume > 0.0 {
             player.sound_queue.push((id, volume));
         }
@@ -7136,8 +7173,9 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
         let light = |k: u32| game.effect_type_defs.get(&k).map_or(0, |t| t.light);
         // (a bolt's sweep starts at its last checked point: its own line says how far out it is)
         let out = if swept.is_some() { format!("{:.1} m along its sweep", s.dist) } else { format!("{:.1} m out", s.dist) };
-        println!("t={:.2} hit on world material {material} at {at:.2} {out} (ammo-type {}): effect h_{main:08x} sp {main_sp:.2} light h_{:08x}{}, debris {}, sound {}",
-                 player.sim_time, s.ammo, light(main), if row.is_some() { " (the material's)" } else { " (the weapon's)" },
+        println!("t={:.2} hit on world material {material} at {at:.2} {out} (ammo-type {}): {}effect h_{main:08x} sp {main_sp:.2} light h_{:08x}{}, debris {}, sound {}",
+                 player.sim_time, s.ammo, explosion.map_or(String::new(), |x| format!("explosion h_{x:08x} light h_{:08x}, ", light(x))),
+                 light(main), if row.is_some() { " (the material's)" } else { " (the weapon's)" },
                  debris.map_or("none".into(), |d| format!("h_{d:08x} sp {sp:.2}")),
                  heard.map_or("none".into(), |(id, v)| format!("h_{id:08x} vol {v:.2} (slot {slot})")));
     }
