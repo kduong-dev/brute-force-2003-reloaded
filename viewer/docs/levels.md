@@ -242,6 +242,14 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   liquid burns from the first touch: 20% of its highest rate at the surface, rising with depth
   to all of it at 1.6 m (lava: 10 hp/s ankle-deep, about 30 waist-deep), dealt every 0.4 s
   without blood; going under kills. A fall into a liquid doesn't hurt.
+  * The tutorial's lava pits (h_ea243aea, two) are a box of collision (12 triangles, the east
+    one's top at 14.40 m, its bottom at 3.45 m) in a pit whose walls are steeper than a floor
+    (maps.md, "Collision": steep ground with no floor under it, #264). Tex runs off the east
+    pit's rim into it as in take08 (todo/28-tutorial), and dies sooner than there: the demo kills
+    him as his feet go 1.6 m under, about 0.3-0.5 s after he leaves the rim, where take08's Tex
+    (running off it at 167.16 s) loses 18.6 HP a 67 ms step from 0.6 m under (167.56 s), 36 in
+    one step at 2.3 m, then about 18 a second on the bed, and is at 0 at 168.43 s: 1.3 s after
+    the rim. How the game deals it is #152's.
 * **Terrain hue.** The baked light map gives the ground's brightness. Its hue comes from the
   lights marked `h_e02aba1c` with the terrain's ambient, at 60% strength. Before #143 those were
   read as the terrain's own pair; the game's code has them as the indoor pair (see **Light
