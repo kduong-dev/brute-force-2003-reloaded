@@ -1627,6 +1627,27 @@ light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in fligh
 * Not checked again (generic): the dry fire and switch (take02), the pickups (take04, take05),
   the far enemies (take09, take10).
 
+### The guns of weapons batch 2 without footage (#66, #56, #64)
+
+Nothing of their own to build: each fires through the shared machinery from its own data, and
+was run on the test map (`-- --test BF_NO_SQUAD=1 BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=4.5,20,4.5,20
+BF_TEST_NPC_HP=1.0,all,300 BF_SHOT_LOG=1 BF_COMBAT_LOG=1`, dm Shrike Soldiers frozen on the
+line). With no take, what it looks like and the numbers against the game are open; the shots
+that would settle them are listed with each (the draft's R1, R2 and I1 are in
+todo/drafts/done/bolt-ricochet-passthrough.md).
+
+**Rail CLVR** (#66; h_1b0310e6, heavy: Tex, `BF_TEST_WEAPON="Rail CLVR" BF_CAMERA_PITCH=-0.14
+BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,13;0.3,shrike soldier@dm,enemy,frozen,4.5,8"
+BF_TEST_TRIGGER=2.0-2.08,3.5-6.0`): the Rail RVR's ray and beam (§ Ricochet and pass-through, §
+Tracers and beams: rgun_perp_s, rgun_side_s and rgun_beam, railhit_s where it strikes) with its
+own data: 3 a second (held fire one every 0.33 s), clip 30, 11.5-15.5 BALLISTIC with no falloff,
+n1 1 and n2 500. Every ray strikes both Shrikes in line (their forearms: 8.1-10.5, the roll x 0.5
+x 1.4), goes into the ground 67-71 m out (its one wall) and on to its 90 m. Blocked on footage:
+the beam's look and its muzzle effect (h_ee51b13b), the rate and the reload against the game,
+the damage on a character (a take at a frozen enemy 7 m out with its HP logged), pass-through
+(shots R1, two frozen enemies in line at 7 and 12 m, and R2, one behind a placed object and one
+behind a level wall).
+
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
 `src/bin/play.rs` (`scope_levels`, `level_zoom`, `press_scope`, `scope_input`, `follow_camera`),
