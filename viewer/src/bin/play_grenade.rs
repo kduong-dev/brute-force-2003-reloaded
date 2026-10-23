@@ -106,15 +106,19 @@ const TINT_GREY: f32 = 0.4;
 /// Blast sounds are this loud at the blast, falling to BLAST_QUIET at BLAST_HEARD m (the demo's).
 pub(super) const BLAST_HEARD: f32 = 60.0;
 pub(super) const BLAST_QUIET: f32 = 0.3;
-/// The squad's grenade definitions, in the order the demo's grenade key (T) steps through them:
-/// Frag (#75), Energy (#74), Gas (#76), Light (#77), Sonic (#81), Roller (#79), Sentry (#80).
+/// The squad's grenade definitions, in the game's store order, (category, index): the group-type
+/// and h_e5f51266 of each (FUN_00149d30's key; the store and the item box run through it in that
+/// order, FUN_0014c230): Frag (2, 0; #75), Gas (2, 1; #76), Sonic (2, 4; #81), Energy (2, 5; #74),
+/// Light (2, 32; #77), Sentry (3, 1; #80), Roller (3, 4; #79). The kits are kept in that order
+/// (`load_kits` sorts them by it), which is the order the demo's grenade key (T) steps through
+/// them and the first one carried the item box shows: e34's Sonic, e16's and e23's Gas.
 /// Some labels have several definitions (the Sentry three, the Roller two): these are the ones
 /// the recordings show; a level that defines another of a label its squad's placements carry
-/// takes that one (`load_kits`: m14_c's and m14_d's Sentry h_f73de83d). The squad carries only
-/// these: the other labelled grenade with an icon, the Molotov (e01's h_f42e0faa), is the
+/// takes that one (`load_kits`: m14_c's and m14_d's Sentry h_f73de83d, (3, 3)). The squad carries
+/// only these: the other labelled grenade with an icon, the Molotov (e01's h_f42e0faa), is the
 /// mutants' weapon (#78); its definition is read like any other (`Game::weapons`) for an AI
 /// thrower to use.
-const SQUAD_GRENADES: [u32; 7] = [0x060F_95F7, 0x0CC3_C2C8, 0xE8C6_7904, 0xFD1A_966D, 0xEC0B_F28F, 0xFBA7_C475, 0xE5F1_F063];
+const SQUAD_GRENADES: [u32; 7] = [0x060F_95F7, 0xE8C6_7904, 0xEC0B_F28F, 0x0CC3_C2C8, 0xFD1A_966D, 0xE5F1_F063, 0xFBA7_C475];
 
 /// Throw velocity for a charge of `power` (0..1) toward the crosshair ray, lowered by
 /// THROW_LOB, aimed between 0.8 rad down and 1.2 rad up.
@@ -312,6 +316,9 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
             defs.push(d);
         }
     }
+    // (in the store's (category, index) order, as SQUAD_GRENADES: an alternate taken above goes in
+    // its place)
+    defs.sort_by_key(|d| (d.group_type, d.item_index));
     let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
     let kits: Vec<GrenadeKit> = defs.into_iter().map(|d| GrenadeKit::load(&mut game.0, &mut assets, d)).collect();
     if let Some(mut ale) = ale {

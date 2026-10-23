@@ -37,8 +37,10 @@
 //!    nothing yet, but for a character whose skill refuses its use type (Brutus: the OrgSen's
 //!    IOU_ATTACH_TO_FACE, the Hat's IOU_ATTACH_TO_EQUIP_SLOT, his skill's +0x1c 0x13c160), who is
 //!    told "Cannot use" (h_e784869e; #196 take26) and whose box shows it red.
-//!  - **The first item shown**: the first grenade kit carried, as before (e34's Energy, where the
-//!    game's first stack in (category, index) order is the Sonic): the game's order is #196's.
+//!  - **The first item shown**: the first grenade kit carried, the kits being in the store's
+//!    (category, index) order (play_grenade.rs `SQUAD_GRENADES`, `load_kits`), else the next item
+//!    carried: the game's first stack (e34's Sonic, e40's Frag, e16's and e23's Gas). The rest of
+//!    the game's selection (NEW, the list's slots, the selection after a stack runs out) is #196's.
 //!
 //! Test hooks: BF_INVENTORY_LOG=1 prints the store at the start (each member's items, the pooled
 //! stacks and where each goes) and each use of an item that isn't a grenade or the medkit;
@@ -84,10 +86,12 @@ pub fn plugin(app: &mut App) {
         ).run_if(in_state(AppState::Playing)));
 }
 
-/// An item type as the store sees it: its stack's key (category = group-type, index =
-/// h_e5f51266: the type's +0x34 / +0x38, FUN_00149d30 maps a type to them), its stack-limit
-/// (+0x180, FUN_0014bfe0's clamp), whether the item box lists it (h_1852ab6c, +0x71: FUN_0014d680)
-/// and its use type (h_1ee2f4ed, the IOU_ enum, +0x174), and its name (stringtable-name).
+/// An item type as the store sees it, from its item data (the block at type+0x160, which a
+/// stack's vtable +0x1c returns, 0x14ad70): its stack's key (category = group-type at
+/// [type+0x194], index = h_e5f51266 at [type+0x198]: FUN_00149d30 reads them; the block's +0x34 /
+/// +0x38, the offsets the #196 leads give), its stack-limit ([type+0x180], FUN_0014bfe0's clamp),
+/// whether the item box lists it (h_1852ab6c, the block's byte +0x71, type+0x1d1: FUN_0014d680),
+/// its use type (h_1ee2f4ed, the IOU_ enum, [type+0x174]) and its name (stringtable-name).
 #[derive(Clone, Debug, Default)]
 pub struct ItemInfo {
     pub group: i64,
@@ -124,7 +128,9 @@ pub struct Stack {
 /// FUN_0014bfe0: `n` of item type `kind` added to `store`: the stack of its (category, index)
 /// (FUN_0014bee0 finds it; a new one here, kept in the store's order) takes the type if it had
 /// none, and the count goes up by n, held to the type's stack-limit (`n = limit - count` where
-/// `count + n` would pass it). Returns what was added.
+/// `count + n` would pass it: so nothing at a limit of 0). Returns what was added. (FUN_00149d30
+/// sends a type whose (category, index) another type holds to a stack of its own in category 0;
+/// no two types a zone's squad placements carry share a key, so that isn't modelled.)
 fn add(store: &mut Vec<Stack>, info: &ItemInfo, kind: u32, n: i64) -> i64 {
     let at = match store.iter().position(|s| (s.group, s.index) == (info.group, info.index)) {
         Some(at) => at,
@@ -135,7 +141,7 @@ fn add(store: &mut Vec<Stack>, info: &ItemInfo, kind: u32, n: i64) -> i64 {
         }
     };
     let s = &mut store[at];
-    let n = if info.limit > 0 { n.min(info.limit - s.count) } else { n }.max(0);
+    let n = n.min(info.limit - s.count).max(0);
     s.count += n;
     n
 }
@@ -185,7 +191,9 @@ impl StartStore {
     }
 
     /// How many of grenade kit `kit` the squad starts with: its stacks' (category 2 or 3) whose
-    /// type has the kit's label (one in the data per zone), held to the kit's stack-limit.
+    /// type has the kit's label (one in the data per zone), held to the kit's stack-limit. (Each
+    /// stack is held to its own type's already; the kit's limit only matters were two types of a
+    /// label carried together, which no zone does, and a kit without one isn't held.)
     fn grenades(&self, game: &Game, kit: &WeaponDef) -> i64 {
         let n: i64 = self.stacks.iter().filter(|s| matches!(s.group, IG_GRENADE | IG_EXPLOSIVE))
             .filter(|s| item_info(game, s.kind).is_some_and(|i| i.label.eq_ignore_ascii_case(&kit.label))).map(|s| s.count).sum();

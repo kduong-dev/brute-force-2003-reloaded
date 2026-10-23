@@ -774,10 +774,11 @@ const CT_RELOAD_WEAPON: i64 = 17;
 ///    The openings switch guns this way: e34's Flint (13.06 s) and Tex (17.98 s), e40's Hawk,
 ///    Tex and Brutus (7.2-8.0 s), so a fresh start has Tex's LZR-50 / Jax-iC in hand (xemu's
 ///    reads at the first controllable frame, todo/196 notes, and take27 / take30's HUD);
-///  * CT_RELOAD_WEAPON (17; 0x122069): with a gun in hand and none in the second, the clip down a
-///    round when it isn't empty (0x12209a-0x1220c1), then the reload (FUN_00120d40, play_ammo.rs):
-///    a full clip takes one round from the reserve, e40's Flint (11mm 40 -> 39) and Tex (Sonic
-///    200 -> 199: take30's "36 / 199"; xemu's read: types 1 and 3 at 39 and 199).
+///  * CT_RELOAD_WEAPON (17; 0x122069): with a gun in hand (FUN_0014d2e0: none between a switch's
+///    put-away and its draw, `Player::holding`) and none in the second (FUN_0014d310), the clip
+///    down a round when it isn't empty (0x12209a-0x1220c1), then the reload (FUN_00120d40,
+///    play_ammo.rs): a full clip takes one round from the reserve, e40's Flint (11mm 40 -> 39) and
+///    Tex (Sonic 200 -> 199: take30's "36 / 199"; xemu's read: types 1 and 3 at 39 and 199).
 ///
 /// Any other command is logged (#232). One not in the world gets nothing (`unit`).
 fn command_100(cs: &Cutscenes, name: u32, u: &UserEvent, player: &mut Player, squad: &mut Squad, say: &dyn Fn(&Cutscenes, String)) {
@@ -793,13 +794,15 @@ fn command_100(cs: &Cutscenes, name: u32, u: &UserEvent, player: &mut Player, sq
         }
         CT_RELOAD_WEAPON => {
             let w = c.weapon;
-            if c.second.is_none() {
+            let reloads = c.holding && c.second.is_none();
+            if reloads {
                 if let Some(a) = c.ammo.get_mut(w).filter(|a| a[0] > 0) {
                     a[0] -= 1;
                 }
                 c.reload_wanted = true;
             }
-            say(cs, format!("100: CT_RELOAD_WEAPON: {}", if c.second.is_none() { "a round out of the clip, then the reload" } else { "a gun in the second hand: nothing" }));
+            say(cs, format!("100: CT_RELOAD_WEAPON: {}", if reloads { "a round out of the clip, then the reload" }
+                                                           else { "no gun in hand, or one in the second hand: nothing" }));
         }
         n => say(cs, format!("100 ({n}): not run (#232)")),
     }

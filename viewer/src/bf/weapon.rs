@@ -192,9 +192,10 @@ pub struct WeaponDef {
     pub function_type: i64,
     /// items: group-type (2 IG_GRENADE, 3 IG_EXPLOSIVE; 0 for the enemies' grenades)
     pub group_type: i64,
-    /// items: h_e5f51266, the item's index in its group (the item type's +0x38): with the group
-    /// the key of its stack in an inventory (FUN_00149d30). Frag 0, Gas 1, Sonic 4, Energy 5,
-    /// Light 32; Sentry 1 (h_e5f1f063) or 3 (h_f73de83d), Roller 4 (todo/196 leads §3.2)
+    /// items: h_e5f51266, the item's index in its group ([type+0x198], beside the group at
+    /// [type+0x194]): with the group the key of its stack in an inventory (FUN_00149d30). Frag 0,
+    /// Gas 1, Sonic 4, Energy 5, Light 32; Sentry 1 (h_e5f1f063) or 3 (h_f73de83d), Roller 4
+    /// (todo/196 leads §3.2)
     pub item_index: i64,
     /// items: h_1ee2f4ed, how it's used (see H_USE_TYPE)
     pub use_type: i64,

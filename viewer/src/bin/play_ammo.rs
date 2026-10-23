@@ -6,9 +6,10 @@
 //!    holder's inventory (FUN_0014cc30(1, type)). So the Foley and the L-Shot share 11mm Ammo
 //!    (type 1), the MK-ASLT and the Minigun High ROF Ammo (type 2). The counts start at what the
 //!    squad's placements carry (the store's category-1 stacks, play_inventory.rs: e34's 11mm 40,
-//!    Sonic, Particle and Rail 200), none of any other type; on a map without squad placements at
-//!    the stack limit of the level's ammo item of each type (objecttypes `<inventory>` entries with
-//!    function-type 14 = IFSET_AMMO_BOX, whose h_e5f51266 is the ammo-type; see `stack_limits`).
+//!    Sonic, Particle and Rail 200), none of any other type; on a map without squad placements,
+//!    or whose placements carry no ammo (the stopgap until #231, see `stock`), at the stack limit
+//!    of the level's ammo item of each type (objecttypes `<inventory>` entries with function-type
+//!    14 = IFSET_AMMO_BOX, whose h_e5f51266 is the ammo-type; see `stack_limits`).
 //!  - **Automatic reload.** When the fire loop (FUN_0022f2a0)
 //!    finds the clip empty as the cooldown runs out with the trigger held, FUN_002327f0 calls the
 //!    character's FUN_00120d40, which moves the rounds out of the reserve (FUN_0022daf0) and
@@ -132,7 +133,11 @@ fn stack_limits(game: &Game) -> HashMap<i64, i64> {
 /// "others 0"). A type nobody carries has no stack in the game's store, so a gun of that type
 /// picked up reads "6 / 0" (#73's notes: the Therm Sweeper on e34 and e40 until a Rocket Ammo).
 /// On a map without squad placements (the test map's floor, the deathmatch maps, whose sdm
-/// loadout is #144's) a full stack of every ammo-type: the demo's choice.
+/// loadout is #144's) a full stack of every ammo-type: the demo's choice. So too on a zone whose
+/// placements carry no ammo at all (m03_b, m03_c, m08_b): the game's squad comes to those from
+/// the zone before with the save game's pool (FUN_00089ea0), which the demo doesn't carry yet
+/// (#231), and with none no gun of theirs could reload. A stopgap until #231: a zone whose
+/// placements carry any ammo keeps the carried-only rule.
 ///
 /// The members' counts of a type are pooled as the game pools them (#230, #281): each member's own
 /// store holds at most a stack of an item (FUN_0014bfe0's clamp to the type's stack-limit,
@@ -145,7 +150,9 @@ fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>,
     }
     let test = std::env::var("BF_TEST_RESERVE").ok().and_then(|v| v.parse::<i64>().ok());
     let limits = stack_limits(&game.0);
-    reserve.rounds = limits.iter().map(|(&t, &n)| (t, test.unwrap_or(if store.placed { 0 } else { n }))).collect();
+    // (the carried ammo alone where the placements carry some; else the stopgap's full stacks)
+    let carried_only = store.placed && store.ammo().next().is_some();
+    reserve.rounds = limits.iter().map(|(&t, &n)| (t, test.unwrap_or(if carried_only { 0 } else { n }))).collect();
     if test.is_none() {
         reserve.rounds.extend(store.ammo());
     }

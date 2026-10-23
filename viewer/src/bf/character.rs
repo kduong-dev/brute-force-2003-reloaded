@@ -1046,9 +1046,10 @@ pub struct ItemType {
     /// IOU_RELOAD (the ammo), 7 IOU_ATTACH_TO_EQUIP_SLOT (the Hat). A character's skill can refuse
     /// a use type (play_skills.rs `uses_item`: Brutus the OrgSen and the Hat)
     pub use_type: i64,
-    /// h_1852ab6c (the item type's +0x71): the item box lists its stack (FUN_0014d680 takes a
-    /// stack only with it set). True for the ammo, grenades, medkits, OrgSen and Hat; false for
-    /// "Alien Technology Acquired!", the power-ups, the DNA canisters (todo/196 leads §3.2)
+    /// h_1852ab6c (byte +0x71 of the type's item data, type+0x160: type+0x1d1): the item box lists
+    /// its stack (FUN_0014d680 takes a stack only with it set, and never one of category 1). True
+    /// for the ammo, grenades, medkits, OrgSen and Hat; false for "Alien Technology Acquired!",
+    /// the power-ups, the DNA canisters (todo/196 leads §3.2)
     pub selectable: bool,
 }
 
