@@ -15,10 +15,12 @@
 //! Pickups (weapon / inventory objects and items) are placed at their spawn height in the level
 //! file (the game lets them fall); `settle_pickups` drops them onto the surface below.
 //!
-//! Breakable objects (game objects with a debris list, `Game::breakable`) are numbered in level
-//! object order: their own triangles and their level blocker (`<blocker object-instance>`) block
-//! until they're broken (`set_broken`), and the game objects they leave behind (the missile
-//! rack's stand) are put in from the start, blocking only once they're broken.
+//! Breakable objects (game objects with hit points, `Game::shootable`, #263: those with a debris
+//! list, `Game::breakable`, break) are numbered in level object order: shots on their collision
+//! find them (`ray_breakable`), their own triangles and their level blocker (`<blocker
+//! object-instance>`) block until they're broken (`set_broken`), and the game objects they leave
+//! behind (the missile rack's stand) are put in from the start, blocking only once they're
+//! broken. One without a debris list dies (`set_dead`) and stays as it is.
 //!
 //! A spawn-trigger's template (its h_1299668b) isn't in the world: the trigger takes it out as it
 //! links (FUN_000dfe90), so it adds nothing here. (The tutorial's Tex template put a surface
@@ -98,6 +100,9 @@ pub struct Arena {
     liquids: Vec<LiquidType>,
     /// breakable objects, in level object order: broken or not
     broken: Vec<AtomicBool>,
+    /// breakable objects, in level object order: dead or not (their hit points run out: broken
+    /// for one with a debris list, still standing for one without, #263)
+    dead: Vec<AtomicBool>,
     /// level object index -> its breakable index
     breakable_of: HashMap<usize, u32>,
     /// the flat test floor's ground: a plane at this height under every point, terrain (an
@@ -324,14 +329,16 @@ impl Johnson {
 
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
-        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
+        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
                             breakable_of: HashMap::new(), flat: None };
-        // breakable objects, numbered in level object order (and by name, for their blockers)
+        // breakable objects (with hit points, #263), numbered in level object order (and by name,
+        // for their blockers)
         let mut by_name: HashMap<u32, u32> = HashMap::new();
         for (i, o) in level.objects.iter().enumerate() {
-            if o.archetype.is_some() && !is_pickup(o.tag) && game.breakable(o.kind).is_some() {
+            if o.archetype.is_some() && !is_pickup(o.tag) && game.shootable(o.kind).is_some() {
                 let b = a.broken.len() as u32;
                 a.broken.push(AtomicBool::new(false));
+                a.dead.push(AtomicBool::new(false));
                 a.breakable_of.insert(i, b);
                 if o.name != 0 {
                     by_name.insert(o.name, b);
@@ -470,7 +477,7 @@ impl Arena {
     /// The flat test floor as an arena: nothing but its ground, a plane at `ground` under every
     /// point (see `flat`).
     pub fn flat(ground: f32) -> Arena {
-        Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
+        Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
                 breakable_of: HashMap::new(), flat: Some(ground) }
     }
 
@@ -484,7 +491,7 @@ impl Arena {
     fn duplicate(&self) -> Arena {
         let flags = |v: &[AtomicBool]| v.iter().map(|b| AtomicBool::new(b.load(Ordering::Relaxed))).collect();
         Arena { cells: self.cells.clone(), tris: self.tris.clone(), starts: self.starts.clone(), doors: flags(&self.doors), liquids: self.liquids.clone(),
-                broken: flags(&self.broken), breakable_of: self.breakable_of.clone(), flat: self.flat }
+                broken: flags(&self.broken), dead: flags(&self.dead), breakable_of: self.breakable_of.clone(), flat: self.flat }
     }
 
     /// Puts a placed object's collision into the current map's arena (the test tools' scenery,
@@ -522,7 +529,8 @@ impl Arena {
             && t.piece.is_none_or(|(b, after)| self.broken[b as usize].load(Ordering::Relaxed) == after)
     }
 
-    /// The breakable index of level object `object` (its place in `Level::objects`), if it breaks.
+    /// The breakable index of level object `object` (its place in `Level::objects`), if it has hit
+    /// points (`Game::shootable`; whether it breaks is `Game::breakable`'s).
     pub fn breakable(&self, object: usize) -> Option<usize> {
         self.breakable_of.get(&object).map(|&b| b as usize)
     }
@@ -539,6 +547,19 @@ impl Arena {
     /// play_triggers.rs).
     pub fn is_broken(&self, b: usize) -> bool {
         self.broken.get(b).is_some_and(|x| x.load(Ordering::Relaxed))
+    }
+
+    /// Breakable `b`'s hit points have run out (play_scenery.rs): the trigger runtime sends its
+    /// DESTROYED (FUN_00157260), whether it breaks or stays (#263).
+    pub fn set_dead(&self, b: usize) {
+        if let Some(x) = self.dead.get(b) {
+            x.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether breakable `b` has died (`set_dead`).
+    pub fn is_dead(&self, b: usize) -> bool {
+        self.dead.get(b).is_some_and(|x| x.load(Ordering::Relaxed))
     }
 
     /// The liquid at (x, z) whose surface is above `feet`: its surface height and type.

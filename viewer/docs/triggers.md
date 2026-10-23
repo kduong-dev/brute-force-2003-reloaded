@@ -393,8 +393,10 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
 ## Object events
 
 * **DESTROYED**: a character with a trigger name dies (a spawn copy: its spawn-trigger's
-  listeners hear it; the squad started at its spawns counts as those copies); a named breakable
-  object that a trigger listens to breaks (play_scenery.rs); a level's own Sentry mine goes off
+  listeners hear it; the squad started at its spawns counts as those copies); a named placed
+  object with hit points that a trigger listens to dies (play_scenery.rs, `Arena::is_dead`):
+  one with a debris list breaks, one without stays as it was (#263: e23's door h_054428e4 opens
+  on its own DESTROYED, shot for its 40 HP, and so does m08_b's gate h_f4d77cfd); a level's own Sentry mine goes off
   (#228, play_sentry.rs: 0x149520's send at 0x1496fc; the tutorial's calculator471 counts the
   mine field's three). Its id 0 and data -1 are the game's
   (the death's send: the object's +0x144(1), FUN_00157260, #221); the demo's subject is the dead

@@ -880,9 +880,10 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
             tr.object_event(n, Ev { signal: sig::DESTROYED, id: 0, subject: n, data: -1 });
         }
     }
-    // named breakable objects broken (play_scenery.rs breaks them)
+    // named breakable objects broken or dead (play_scenery.rs breaks them; one without a debris
+    // list dies and stays, #263: e23's door, which opens on its own DESTROYED)
     if let Some(a) = bf_viewer::arena::arena() {
-        let broke: Vec<(usize, u32)> = tr.watched.iter().copied().filter(|(i, _)| a.breakable(*i).is_some_and(|b| a.is_broken(b))).collect();
+        let broke: Vec<(usize, u32)> = tr.watched.iter().copied().filter(|(i, _)| a.breakable(*i).is_some_and(|b| a.is_broken(b) || a.is_dead(b))).collect();
         for (i, n) in broke {
             if tr.broken_seen.insert(i) {
                 tr.object_event(n, Ev { signal: sig::DESTROYED, id: 0, subject: n, data: -1 });
@@ -982,12 +983,15 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                         }
                     } else if let Some(i) = level.objects.iter().position(|o| o.name == object) {
                         // a placed object: no longer drawn; a breakable's collision goes with it
+                        // (one with a debris list, as before #263 numbered every object with hit
+                        // points)
                         for (p, mut v) in &mut placed {
                             if p.name == object {
                                 *v = Visibility::Hidden;
                             }
                         }
-                        if let Some(b) = bf_viewer::arena::arena().and_then(|a| a.breakable(i).map(|b| (a, b))) {
+                        let breaks = game.0.breakable(level.objects[i].kind).is_some();
+                        if let Some(b) = bf_viewer::arena::arena().filter(|_| breaks).and_then(|a| a.breakable(i).map(|b| (a, b))) {
                             b.0.set_broken(b.1, true);
                         }
                         if tr.log {
