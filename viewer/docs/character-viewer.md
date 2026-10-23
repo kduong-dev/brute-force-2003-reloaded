@@ -11,7 +11,9 @@
 | `src/bf/character.rs` | `char_render.py` | skeleton, skinned meshes (incl. NV2A push buffers), skin materials, animation channels |
 
 It loads `common.tgz` (all BXML decoded against the schemas) in about 0.3 s. Squad skins
-live in the level archives, which are opened on demand for their textures only.
+live in the level archives, which are opened on demand for their textures only: with no level
+loaded, the first by name (e01's tan outfit). Each level carries its own outfit, which bf_play
+and bf_level load with the level (character-types.md, "The squad's outfits", #284).
 
 Check against the Python tools:
 

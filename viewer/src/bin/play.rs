@@ -183,11 +183,12 @@ pub struct Mode {
 
 /// The game data for a map: the shared archives, the default level audio (surfaces and their
 /// footstep / landing sounds come from the first mission; the multiplayer bank has everyone's
-/// footsteps) and the squad's voice lines.
+/// footsteps) and the squad's voice lines. The first mission's texture library isn't loaded
+/// (`load_level_data`): the map's is, by `load_map` (#284).
 pub fn load_game() -> Result<Game, String> {
     let mut game = Game::load(&data_dir())?;
     let level = std::env::var("BF_LEVEL").unwrap_or_else(|_| "e01".into());
-    if let Err(e) = game.load_level(&data_dir(), &level) {
+    if let Err(e) = game.load_level_data(&data_dir(), &level) {
         eprintln!("no level audio from {level}: {e}");
     }
     if level != "mp1" {
@@ -201,8 +202,16 @@ pub fn load_game() -> Result<Game, String> {
     Ok(game)
 }
 
+/// The library the deathmatch characters name (game-options-en.xml lines 64-67, `<character
+/// h_f4db1dd4="dm" archetype-name="mp_tex">` ...): mp_common's textures-dm, what an arena's
+/// player wears (`Game::load_match_textures`).
+const DM_LIBRARY: &str = "dm";
+
 /// Load a map (its level, streamed sounds and collision, made the current arena); "flat" or a
-/// map that won't load: the flat test floor (None).
+/// map that won't load: the flat test floor (None). The map's texture library becomes the one
+/// after common's (`Game::load_level`): the squad wears its outfit (#284); on a multiplayer map
+/// mp_common's library of the match comes after it and its skins win. The flat floor loads
+/// none, so the search by archive name finds the squad's skins in e01's (the tan set).
 pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
     world::Arena::uninstall();
     if map == "flat" {
@@ -218,6 +227,14 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
             if map.starts_with("sdm_") {
                 if let Err(e) = game.load_squad_library(&data_dir(), skills::SDM_SQUAD) {
                     eprintln!("no squad deathmatch skills: {e}");
+                }
+            }
+            // a multiplayer map: the match's library from mp_common after the map's, the squad
+            // deathmatch squad's or the deathmatch characters' (its skins win: #284)
+            if damage::multiplayer_map(game, map) {
+                let library = if testworld::arena(game, map) { DM_LIBRARY } else { skills::SDM_SQUAD };
+                if let Err(e) = game.load_match_textures(&data_dir(), library) {
+                    eprintln!("no {library} textures from mp_common: {e}");
                 }
             }
             let a = world::Arena::install(game, &l);
@@ -7260,7 +7277,7 @@ fn dump_sounds(game: &mut Game, character: usize, dir: &str) {
 
 /// BF_DUMP_TYPES=all: every archive of data/ into `game` (common's and the map's are in already;
 /// one loaded twice adds nothing: first loaded wins), in name order, as the test map loads its
-/// levels (`Game::load_level`).
+/// levels (`Game::load_level_data`: their data, not their texture libraries).
 fn dump_all_archives(game: &mut Game) {
     let t = std::time::Instant::now();
     let mut names: Vec<String> = std::fs::read_dir(data_dir()).into_iter().flatten().filter_map(|e| e.ok())
@@ -7268,7 +7285,7 @@ fn dump_all_archives(game: &mut Game) {
         .filter(|n| n != "common").collect();
     names.sort();
     for n in &names {
-        if let Err(e) = game.load_level(&data_dir(), n) {
+        if let Err(e) = game.load_level_data(&data_dir(), n) {
             eprintln!("{n}: {e}");
         }
     }

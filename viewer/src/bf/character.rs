@@ -229,6 +229,31 @@ pub struct AnimDef {
     pub move_speed: Option<f32>,
 }
 
+/// One texture of `Game::textures`: its index entry, its library's data (the .tex, shared by
+/// the library's entries) and the archive whose library it came from ("common", a level's
+/// name, "mp_common/<library>", or the archive the search found it in). The archive says
+/// whether a library loaded later may replace it: the game loads common's libraries first, then
+/// the level's (FUN_000d61a0), so common's entries stay and the rest give way to the level's
+/// (`Game::load_level`) and a match's (`Game::load_match_textures`).
+#[derive(Clone)]
+struct LoadedTexture {
+    info: TexInfo,
+    blob: Arc<Vec<u8>>,
+    archive: Arc<str>,
+}
+
+/// The archive name of common's libraries, whose textures no level's library replaces.
+const COMMON: &str = "common";
+
+/// FNV-1a (32-bit) of a texture's bytes in its library's .tex (`offset`, `size` of its index
+/// entry): equal for byte-equal copies, so the log can tell which of a name's variants a level
+/// gave (`Game::texture_origin`). Not a game value: any hash of the bytes would do.
+fn texture_fingerprint(t: &LoadedTexture) -> u32 {
+    let end = (t.info.offset + t.info.size).min(t.blob.len());
+    t.blob.get(t.info.offset..end).unwrap_or(&[]).iter()
+        .fold(0x811C_9DC5u32, |a, &b| (a ^ b as u32).wrapping_mul(0x0100_0193))
+}
+
 /// Everything loaded from data/common.tgz (+ textures found in level archives on demand).
 pub struct Game {
     pub schemas: SchemaSet,
@@ -240,8 +265,18 @@ pub struct Game {
     pub material_constants: HashMap<u32, HashMap<u32, Vec<f32>>>,
     /// each material's textures' address modes (texture -> [u, v])
     material_address: HashMap<u32, HashMap<u32, [Address; 2]>>,
-    textures: HashMap<u32, (TexInfo, Arc<Vec<u8>>)>,
+    /// the textures found so far by name, each with the archive it came from (see
+    /// `LoadedTexture`): common's library, the played level's (`load_level`), and what the
+    /// name-ordered search of `pending_texture_archives` turned up for the rest
+    textures: HashMap<u32, LoadedTexture>,
+    /// the archives still to search for a texture no loaded library holds, in name order
+    /// (`texture_entry`)
     pending_texture_archives: Vec<PathBuf>,
+    /// the archives whose texture libraries are loaded after common's, in order: the played
+    /// level's (`load_level`), then mp_common in a match (`load_match_textures`)
+    texture_libraries: Vec<Arc<str>>,
+    /// BF_TEX_LOG: the names already logged since the libraries last changed (None: no log)
+    texture_log: Option<std::collections::HashSet<u32>>,
     pub channels: HashMap<u32, Channel>,
     pub anim_sets: HashMap<u32, Vec<AnimDef>>,
     /// (name, compound archetype hash)
@@ -1168,15 +1203,24 @@ impl Game {
             schemas.add(common.get(&n).unwrap()).map_err(|e| format!("{n}: {e}"))?;
         }
         let mut g = Game::empty(schemas);
-        g.load_archive(&common, "common")?;
+        // (BF_TEX_LOG=squad is bf_level's squad listing alone)
+        g.texture_log = std::env::var("BF_TEX_LOG").is_ok_and(|v| v != "squad").then(Default::default);
+        g.load_archive(&common, COMMON)?;
+        g.pending_texture_archives = Self::texture_archives(data_dir, None)?;
+        Ok(g)
+    }
+
+    /// The archives of data/ to search for a texture no loaded library holds, in name order:
+    /// every one but common's (loaded whole) and `level`'s (its library is loaded).
+    fn texture_archives(data_dir: &Path, level: Option<&str>) -> Result<Vec<PathBuf>, String> {
+        let loaded = |p: &Path| p.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s == COMMON || Some(s) == level);
         let mut others: Vec<PathBuf> = std::fs::read_dir(data_dir)
             .map_err(|e| e.to_string())?
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "tgz") && !p.ends_with("common.tgz"))
+            .filter(|p| p.extension().is_some_and(|x| x == "tgz") && !loaded(p))
             .collect();
         others.sort();
-        g.pending_texture_archives = others;
-        Ok(g)
+        Ok(others)
     }
 
     /// A Game with nothing loaded but `schemas` (common's, to parse the documents with) and no
@@ -1192,6 +1236,8 @@ impl Game {
             material_address: HashMap::new(),
             textures: HashMap::new(),
             pending_texture_archives: vec![],
+            texture_libraries: vec![],
+            texture_log: None,
             channels: HashMap::new(),
             anim_sets: HashMap::new(),
             characters: vec![],
@@ -1530,7 +1576,7 @@ impl Game {
             let Some(root) = self.parse(ar, &n)? else { continue };
             self.add_materials(&root, |_| true);
         }
-        self.load_textures(ar)?;
+        self.load_textures(ar, archive, true)?;
         self.load_sounds(ar)?;
         for n in ar.find("animations-", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
@@ -1941,16 +1987,78 @@ impl Game {
         Ok(n)
     }
 
-    /// Load a level's objects (weapon models), materials, weapon definitions, sound bank and
-    /// world materials (surface footstep / landing sounds), its characters' motion sets and
-    /// chatter (characters/ms_*.xmb, *_chatter.xmb: #128) and its placed characters. Entries
-    /// already loaded win.
+    /// Load the level being played: its data (`load_level_data`) and its texture library
+    /// (textures-<level>.xmb and .tex), the second the game loads after common's. Every level
+    /// file lists its texture libraries as `common <level>` (`<data-libraries>
+    /// <texture-libraries library-name>`), loaded in that order by FUN_000d61a0. common's
+    /// textures stay (the game side's lookup FUN_000a7770 takes the first library holding a
+    /// name, and the 20 names common shares with the levels are byte-equal in all of them), and
+    /// the level's replace every other one found so far (another level's library, or what the
+    /// name-ordered search found): among them the squad's eight skins, which common lacks and
+    /// every level carries in one of five outfits (#284), and 21 world textures that differ
+    /// between levels. What another level's library left is dropped and searched for again
+    /// (`texture_entry`). Entries already loaded win for the rest of the data.
     pub fn load_level(&mut self, data_dir: &Path, level: &str) -> Result<(), String> {
+        self.textures.retain(|_, t| &*t.archive == COMMON);
+        self.pending_texture_archives = Self::texture_archives(data_dir, Some(level))?;
+        self.texture_libraries = vec![level.into()];
+        if let Some(logged) = &mut self.texture_log {
+            logged.clear();
+        }
+        self.load_level_with(data_dir, level, true)
+    }
+
+    /// Load another level's objects (weapon models), materials, weapon definitions, sound bank
+    /// and world materials (surface footstep / landing sounds), its characters' motion sets and
+    /// chatter (characters/ms_*.xmb, *_chatter.xmb: #128) and its placed characters, on top of
+    /// what's loaded: entries already loaded win. Not its texture library: that is the played
+    /// level's alone (`load_level`), and a texture only this one holds is found by name later
+    /// (`texture_entry`). What the demo adds beside the played level (the first mission's
+    /// sounds, the test map's weapons) loads with this.
+    pub fn load_level_data(&mut self, data_dir: &Path, level: &str) -> Result<(), String> {
+        self.load_level_with(data_dir, level, false)
+    }
+
+    /// A multiplayer match's texture library, mp_common's textures-<library> (`dm` for a
+    /// deathmatch arena's characters, a squad's own for squad deathmatch: `sdm_bf`), loaded after
+    /// the map's as the game loads the libraries the players' character records or squads name
+    /// (FUN_000d5f60 fills FUN_000d61a0's second list, after the level's). Its entries replace
+    /// the map's but common's: the eight squad skins, mp_common's dark grey and green set 3 in all
+    /// six of its libraries, the only names it shares with a map. That a later library wins here
+    /// is the footage's, not the code's: FUN_000a7770 (the game side's lookup) takes the first
+    /// library holding a name, but the materials bind their textures through the engine's
+    /// locator, whose rule isn't read; #35 take20 (sdm_e34, whose own set is 4) and #146 take01 /
+    /// take02 (sdm_e13, whose own is 1) both show set 3: Tex's olive sleeves and grey-white boots,
+    /// Brutus's white shoulder wraps.
+    pub fn load_match_textures(&mut self, data_dir: &Path, library: &str) -> Result<(), String> {
+        let (xmb, tex) = (format!("textures-{library}.xmb"), format!("textures-{library}.tex"));
+        let ar = Archive::open_until(&data_dir.join("mp_common.tgz"), |n| n == xmb || n == tex, 2)?;
+        // (its entries are told from what the search finds in mp_common's other libraries)
+        let from = format!("mp_common/{library}");
+        self.texture_libraries.push(from.as_str().into());
+        if let Some(logged) = &mut self.texture_log {
+            logged.clear();
+        }
+        self.load_textures(&ar, &from, true)?;
+        if self.texture_log.is_some() {
+            println!("textures: {from}'s library loaded after the map's: {} textures",
+                     self.textures.values().filter(|t| *t.archive == *from).count());
+        }
+        Ok(())
+    }
+
+    /// `load_level` (`textures`: with the texture library) or `load_level_data`.
+    fn load_level_with(&mut self, data_dir: &Path, level: &str, textures: bool) -> Result<(), String> {
         let ar = Archive::open(&data_dir.join(format!("{level}.tgz")), |n| {
             ["objects-", "materials-", "objecttypes-", "sounds-", "world-materials", "levels-", "animations-", "ms_"].iter().any(|p| n.starts_with(p))
-                || n.ends_with("_chatter.xmb") || n.ends_with(".gscr")
+                || n.ends_with("_chatter.xmb") || n.ends_with(".gscr") || (textures && n.starts_with("textures-"))
         })?;
         self.load_archive(&ar, level)?;
+        if textures && self.texture_log.is_some() {
+            let n = self.textures.values().filter(|t| *t.archive == *level).count();
+            println!("textures: {level}'s library loaded: {n} textures (common's: {})",
+                     self.textures.values().filter(|t| &*t.archive == COMMON).count());
+        }
         // the cutscene scripts' entity names (Lua 4 source: `entity_name = "trigger_spawn8",`),
         // and the scripts themselves, by their names (the file's, without .gscr: #222)
         for f in ar.find("", ".gscr") {
@@ -2161,13 +2269,29 @@ impl Game {
     }
 
     /// An archive's texture libraries (textures-*.xmb, each with its .tex kept whole): their index
-    /// and animated textures; entries already loaded win.
-    pub(crate) fn load_textures(&mut self, ar: &Archive) -> Result<(), String> {
+    /// and animated textures. `archive` is its name ("common", "e34"). As a `library` (common's,
+    /// the played level's, a scenery archive's) its entries replace any already found but
+    /// common's, which the game looks in first (FUN_000a7770); otherwise (the search for a
+    /// missing name) entries already loaded win. The animated textures always keep the first
+    /// found: their 8 names are defined alike in every library that has them (checked over
+    /// every archive's textures-*.xml).
+    pub(crate) fn load_textures(&mut self, ar: &Archive, archive: &str, library: bool) -> Result<(), String> {
+        let from: Arc<str> = archive.into();
         for n in ar.find("textures-", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
             let blob = Arc::new(ar.get(&n.replace(".xmb", ".tex")).unwrap_or(&[]).to_vec());
             for t in texture::index(&root) {
-                self.textures.entry(t.name).or_insert((t, blob.clone()));
+                let new = LoadedTexture { info: t, blob: blob.clone(), archive: from.clone() };
+                match self.textures.entry(new.info.name) {
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(new);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        if library && &*e.get().archive != COMMON {
+                            e.insert(new);
+                        }
+                    }
+                }
             }
             for a in root.walk().into_iter().filter(|e| e.name == h("animated-texture")) {
                 let head = a.children.first();
@@ -2197,7 +2321,7 @@ impl Game {
         }
         let path = data_dir.join(format!("{level}.tgz"));
         if let Ok(ar) = Archive::open(&path, |n| n.starts_with("textures-")) {
-            let _ = self.load_textures(&ar);
+            let _ = self.load_textures(&ar, level, false);
             self.pending_texture_archives.retain(|p| *p != path);
         }
     }
@@ -2206,25 +2330,51 @@ impl Game {
     /// common, so missing textures are searched for in level archives (texture files only) on
     /// demand.
     pub fn texture_rgba(&mut self, name: u32) -> Option<(u32, u32, Vec<u8>)> {
-        let (t, blob) = self.texture_entry(name)?;
-        texture::decode(t, blob).map(|px| (t.w, t.h, px))
+        let t = self.texture_entry(name)?;
+        texture::decode(&t.info, &t.blob).map(|px| (t.info.w, t.info.h, px))
     }
 
     /// A texture's whole mip chain as its archive ships it (`texture::decode_mips`), searched for
     /// as `texture_rgba` does: what the world's textures are drawn with (`scene::mip_image`).
     /// The HUD and the menus keep `texture_rgba`'s top level.
     pub fn texture_mips(&mut self, name: u32) -> Option<texture::Mips> {
-        let (t, blob) = self.texture_entry(name)?;
-        texture::decode_mips(t, blob)
+        let t = self.texture_entry(name)?;
+        texture::decode_mips(&t.info, &t.blob)
     }
 
-    /// A texture's index entry and its library's data, the pending level archives searched in
-    /// turn until one holds it.
-    fn texture_entry(&mut self, name: u32) -> Option<&(TexInfo, Arc<Vec<u8>>)> {
+    /// Where a texture comes from, searched for as `texture_rgba` does: the archive whose library
+    /// holds it ("common", the level's name, "mp_common/<library>" for a match's, or the archive
+    /// the name-ordered search found it in) and a fingerprint of its bytes (FNV-1a over its data
+    /// in the .tex), equal for equal copies: what tells the squad's five outfits apart (#284;
+    /// BF_TEX_LOG, bf_level).
+    pub fn texture_origin(&mut self, name: u32) -> Option<(String, u32)> {
+        let t = self.texture_entry(name)?;
+        Some((t.archive.to_string(), texture_fingerprint(t)))
+    }
+
+    /// A texture's index entry and its library's data: the loaded libraries' (common's, the
+    /// played level's, a match's), else the pending archives searched in name order until one
+    /// holds it.
+    ///
+    /// Test hook: BF_TEX_LOG=1 prints each name the first time it is asked for after the
+    /// libraries change (`load_level`, `load_match_textures`): `tex h_<name> <- <archive>
+    /// (<common | library | search>) bytes <fingerprint>`, or `missing`.
+    fn texture_entry(&mut self, name: u32) -> Option<&LoadedTexture> {
         while !self.textures.contains_key(&name) && !self.pending_texture_archives.is_empty() {
             let p = self.pending_texture_archives.remove(0);
             if let Ok(ar) = Archive::open(&p, |n| n.starts_with("textures-")) {
-                let _ = self.load_textures(&ar);
+                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+                let _ = self.load_textures(&ar, &stem, false);
+            }
+        }
+        if self.texture_log.as_mut().is_some_and(|logged| logged.insert(name)) {
+            match self.textures.get(&name) {
+                Some(t) => {
+                    let how = if &*t.archive == COMMON { "common" }
+                        else if self.texture_libraries.contains(&t.archive) { "library" } else { "search" };
+                    println!("tex h_{name:08x} <- {} ({how}) bytes {:08x}", t.archive, texture_fingerprint(t));
+                }
+                None => println!("tex h_{name:08x} missing"),
             }
         }
         self.textures.get(&name)

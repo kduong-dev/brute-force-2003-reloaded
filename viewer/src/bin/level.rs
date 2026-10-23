@@ -10,6 +10,8 @@
 //! BF_VIEW=x,y,z,yaw,pitch starts there (degrees), BF_NO_FOG=1 starts without fog, BF_SCREENSHOT=<file.png> saves a screenshot
 //! once everything has loaded, then quits. BF_PART_DUMP=<hex archetype> prints its parts' geosets
 //! (bounds, normals, winding, UV direction) and exits; with BF_PART_VERTS=1 every vertex, not the first 6.
+//! BF_TEX_LOG=1 prints where each texture asked for came from (`Game::texture_entry`);
+//! BF_TEX_LOG=squad prints the squad's skin textures on the level (archive, bytes) and exits.
 
 use std::path::PathBuf;
 
@@ -95,6 +97,45 @@ fn script_check(dir: &std::path::Path) {
     println!("scripts: {ok} read, {bad} not; events by code / type: {}", codes.iter().map(|(k, n)| format!("{k} x{n}")).collect::<Vec<_>>().join(", "));
 }
 
+/// BF_TEX_LOG=squad: the textures the squad's four models (LOD 0) are drawn with on `level`, one
+/// line per member and texture: the archive it came from and its bytes' fingerprint
+/// (`Game::texture_origin`), which tells the level's outfit (#284: five sets, the same grouping
+/// for all eight skins). The model's materials are common's; the textures the level's library,
+/// and on a multiplayer map mp_common's library of the match after it, as bf_play's `load_map`
+/// loads it: `dm` on a deathmatch arena, the Brute Force squad's `sdm_bf` on a squad
+/// deathmatch map (game-options-en.xml).
+fn squad_skins(game: &mut Game, level: &str) {
+    use bf_viewer::bf::character::{LEVEL_DEATHMATCH, LEVEL_SQUAD_DEATHMATCH};
+    let kind = game.campaign.iter().find(|l| l.file == level || l.zones.iter().any(|z| z == level)).map(|l| l.kind);
+    let library = match kind {
+        Some(LEVEL_DEATHMATCH) => Some("dm"),
+        Some(LEVEL_SQUAD_DEATHMATCH) => Some("sdm_bf"),
+        _ => None,
+    };
+    if let Some(library) = library {
+        if let Err(e) = game.load_match_textures(&data_dir(), library) {
+            println!("{level}: no {library} textures from mp_common: {e}");
+        }
+    }
+    for name in ["hawk", "tex", "brutus", "flint"] {
+        let Ok(model) = bf_viewer::bf::character::Character::load(game, name, 0) else {
+            println!("{level} {name}: no model");
+            continue;
+        };
+        let mut seen: Vec<u32> = vec![];
+        for t in model.geosets.iter().filter_map(|g| game.material_texture(g.material)).collect::<Vec<_>>() {
+            if seen.contains(&t) {
+                continue;
+            }
+            seen.push(t);
+            match game.texture_origin(t) {
+                Some((archive, bytes)) => println!("{level} {name} h_{t:08x} <- {archive} bytes {bytes:08x}"),
+                None => println!("{level} {name} h_{t:08x} missing"),
+            }
+        }
+    }
+}
+
 fn main() {
     if std::env::var("BF_SCRIPT_CHECK").is_ok() {
         script_check(&data_dir());
@@ -108,6 +149,10 @@ fn main() {
     if let Err(e) = game.load_level(&data_dir(), &name) {
         eprintln!("failed to load level {name}: {e}");
         std::process::exit(1)
+    }
+    if std::env::var("BF_TEX_LOG").is_ok_and(|v| v == "squad") {
+        squad_skins(&mut game, &name);
+        return;
     }
     let mut level = Level::load(&game).unwrap_or_else(|e| {
         eprintln!("{name}: {e}");
