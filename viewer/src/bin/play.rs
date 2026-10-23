@@ -1464,10 +1464,12 @@ const CHARGE_TIME: f32 = 0.6;
 /// after, so the meter's update (0xad950) counts it down from the last charging frame and draws
 /// the meter at clamp(2 x timer, 0, 1)^3 (play_hud.rs): full 0.5 s, gone at 1.0 s (#162).
 pub const METER_TIME: f32 = 1.0;
-/// seconds the chosen member's name shows before control passes to them. Where it was measured
-/// isn't recorded: if from the input to the picture, the game's is ~0.4-0.45 s (#140, todo/140
-/// answer §2), to be re-measured from a marker-synced take before it's changed
-const SELECT_TIME: f32 = 0.6;
+/// Seconds from a member's selection to control passing to them: the squad select widget's
+/// countdown, +0x78 set to its +0x7c, 0.5 (its constructor FUN_000c8760), as a selection is made
+/// (FUN_000c8cc0) and counted down by FUN_000c90c0 to the hand-over FUN_000c8fa0 (#88). The
+/// recordings agree: "BRUTUS" shows at 22.867 s and the cut is at 23.367 s in `Friendly Fire 2
+/// + Death Cam.mp4`, "HAWK" at 31.847 s and 32.333 s. (It was 0.6, unmeasured.)
+const SELECT_TIME: f32 = 0.5;
 /// chatter line set the character you hand over from says as they drop back into the squad
 /// ("I'm right behind you", "Following at a distance", ...: line_tag f415ab02 in all four
 /// <name>_chatter files; the capture's switches transcribe and match to these, said by the
@@ -1597,7 +1599,8 @@ struct Throw {
 }
 
 /// Weapon-switch sounds, hard-coded in default.xbe (0xcbfda, the HUD weapon panel's row state
-/// setter FUN_000cbec0: heard for the controlled character's switch only, `start_switch`): the
+/// setter FUN_000cbec0, played through FUN_000bb220: heard for the controlled character's switch
+/// only, `start_switch`): the
 /// first when a switch starts, the second when it completes; in a capture of the game they play
 /// 0.63-0.66 s apart.
 const SWITCH_SOUNDS: [u32; 2] = [0xFF82_0FDA, 0xE1E9_7460];
@@ -5469,11 +5472,16 @@ fn start_switch(p: &mut Player, l: &Loaded) -> bool {
     let to = (p.weapon + 1) % l.weapons.len();
     p.fire_state.reset_burst(0);                        // FUN_0022dc00
     // the two sounds are the HUD's: the weapon panel's rows (vtables 0x39f0b8 / 0x39f078, their
-    // update 0xcb970) watch the slot in hand (inventory +0x1cc / +0x1d0) of the HUD entry's
-    // character (entry+0xe0, the controlled one), and their state setter FUN_000cbec0 plays
-    // ff820fda / e1e97460 (0xcbfda) through the entry's FUN_000bb220 as a row leaves or takes the
-    // hand. So only the controlled character's switch is heard: an AI member's, as a script's
-    // toggle of e40's Hawk and Brutus, is silent (the opening plays its own sound-triggers)
+    // update 0xcb970) watch the slot in hand (inventory +0x1cc / +0x1d0) of their HUD entry's
+    // character (entry+0xe0; every squad member has an entry, and every entry's rows update),
+    // and their state setter FUN_000cbec0 plays ff820fda / e1e97460 (0xcbfda) through
+    // FUN_000bb220 as a row leaves or takes the hand. FUN_000bb220 plays a squad member's entry's
+    // sound only when a player slot controls that member (0x8cf60), so only the controlled
+    // character's switch is heard: an AI member's, as a script's toggle of e40's Hawk and
+    // Brutus, is silent (the opening plays its own sound-triggers). A cutscene doesn't silence
+    // the controlled one's (#282): the entries update every frame of play (0x7a140) and the
+    // cutscene's HUD hide is the HUD's alpha (FUN_000b8e30), not the rows' hidden bit, the one
+    // FUN_000bb220 reads
     if p.controlled {
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
         p.switch_sound_in = SWITCH_SOUND_GAP;

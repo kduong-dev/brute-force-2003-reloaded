@@ -301,7 +301,7 @@ fn picture(commands: &mut Commands, screen: Entity, game: &mut Game, images: &mu
 /// A legend item's nodes: its button's glyph in the 12-point icon font (play_panels.rs
 /// `legend_icon`) and its word after it in the 12-point body font, in its style's colour.
 #[allow(clippy::too_many_arguments)]
-fn legend(commands: &mut Commands, screen: Entity, icons: &Option<Handle<Image>>, game: &Game, menu_at: Vec2, item: &MenuItem, style: &MenuStyle,
+pub(crate) fn legend(commands: &mut Commands, screen: Entity, icons: &Option<Handle<Image>>, game: &Game, menu_at: Vec2, item: &MenuItem, style: &MenuStyle,
           button: u32, word: &str) -> Vec<Entity> {
     let corner = menu_at + item.at;
     let mut out = vec![];

@@ -11,7 +11,7 @@
 //! upside down, so they are drawn flipped. Text uses Bevy's font, not the game's bitmap font.
 
 use super::*;
-use super::fonts::{record_text, Across, RecordText, BODY12};
+use super::fonts::{record_text, Across, RecordText, BODY12, HEADING24};
 use super::text::{game_text, Align, GameText, AMMO_ORANGE, MESSAGE_BLUE};
 
 /// radar frame (octagon) and its disc
@@ -170,25 +170,31 @@ const HEALTH_DARK: u32 = 27;
 /// where the radar frame sits (screen units, 128 x 128)
 const RADAR_FRAME_AT: (f32, f32) = (57.5, 305.0);
 const HEALTH_PINK: Color = Color::srgb(0.96, 0.45, 0.42);
-/// the selected member's name: shown during the selection, then at the camera cut it zooms to
-/// 3x and fades out over this long (capture)
-const NAME_ZOOM_TIME: f32 = 0.4;
-/// ... and swells to this many times its size as it fades (exaggerated from the game's ~3x)
-const NAME_ZOOM_TO: f32 = 6.0;
-/// The name is drawn this much larger than the capture's, and pops in: from NAME_POP times its
-/// size down to it over NAME_POP_TIME as the selection starts.
-const NAME_BIG: f32 = 1.6;
-const NAME_POP: f32 = 1.9;
-const NAME_POP_TIME: f32 = 0.15;
-/// the HUD font atlas (stored upright; glyph rows in ASCII order) and the capital letters' rows
-const FONT_ATLAS: u32 = 0xE0AF_CD52;
-const FONT_ROWS: [(usize, &str); 3] = [(1, "<=>?@ABCDEF"), (2, "GHIJKLMNOPQ"), (3, "RSTUVWXYZ[")];
-/// name size: screen units per atlas pixel (capture: "FLINT" 18 units tall, 21 px glyphs),
-/// colour, and centre
-const NAME_SCALE: f32 = 18.0 / 21.0;
-const NAME_ORANGE: Color = Color::srgb(0.93, 0.56, 0.3);
-const NAME_CENTRE_Y: f32 = 238.0;
-const NAME_SLOTS: usize = 8;
+/// The squad switch's name label (#88): the widget FUN_000c92e0 makes (vtable 0x39f1e8), the
+/// name in the heading font at 24 points (its text's font 0x97ecc77 at 0x18: the record 0x3c7b90 on
+/// h_e0afcd52, `fonts::HEADING24`), centred on the screen (FUN_000c9610: at half its parent's
+/// size, the HUD entry's 640 x 480). Shown for LABEL_SHOW + LABEL_OUT from each selection
+/// (0xc9507: its timer +0x4c = +0x50 + +0x54), whole for the first, then over the last its alpha
+/// falls to 0 and it swells (its update 0xc9690). The recordings agree: "HAWK" from 31.847 s to
+/// about 32.5 s in `Friendly Fire 2 + Death Cam.mp4`, fading from about 32.2 s; "BRUTUS" from
+/// 22.867 s, fading from 23.267 s.
+const LABEL_SHOW: f32 = 0.4;
+/// (+0x54: see LABEL_SHOW) the zoom-out's length (s)
+const LABEL_OUT: f32 = 0.3;
+/// +0x58: its alpha while whole (0.8: the recordings' (209, 138, 86) over the gas)
+const LABEL_ALPHA: f32 = 0.8;
+/// +0x5c and +0x60: its scale, 1 + 3 k^3 with k the zoom-out's share gone (0xc973f-0xc974b): 4x
+/// at its end (the recordings: 1.13, 1.28, 1.6, 2.1 and 2.73 times "HAWK"'s width at 32.30,
+/// 32.335, 32.37, 32.40 and 32.435 s, its alpha falling with it)
+const LABEL_SCALE: f32 = 1.0;
+const LABEL_SWELL: f32 = 3.0;
+/// Its colour: FUN_000b87e0's, bytes ff a0 6a (0xc9581-0xc9599 put them in its text's red, green,
+/// blue), orange. (The label of a character the select widget already holds, its +0x68, takes
+/// 0x4a5c90's 3c 69 dc, blue: the demo never draws that.)
+const LABEL_ORANGE: Color = Color::srgb(1.0, 160.0 / 255.0, 106.0 / 255.0);
+/// Its centre on the 640 x 480 screen (FUN_000c9610; the recordings' "HAWK" ink 272.0-368.7 x
+/// 230-251)
+const LABEL_CENTRE: (f32, f32) = (320.0, 240.0);
 /// the selection arrow: the game's chevron texture (158f87c1, drawn mirrored / turned to point at
 /// the portrait), three of them 5 units apart, 30 units square, the first 28 units short of the
 /// portrait's centre (capture), red, lit one after another
@@ -396,48 +402,7 @@ fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
 #[derive(Component)]
 struct PortraitArt(Handle<Image>, Rect);
 
-/// Glyph rectangles (atlas pixels) of the capital letters: the atlas cut at empty rows and
-/// columns; rows 1-3 hold `<=>?@ABCDEF`, `GHIJKLMNOPQ`, `RSTUVWXYZ[`.
-fn font_glyphs(w: u32, h: u32, px: &[u8]) -> HashMap<char, Rect> {
-    let solid = |x: u32, y: u32| px[((y * w + x) * 4 + 3) as usize] > 40;
-    let mut bands = vec![];
-    let mut y = 0;
-    while y < h {
-        if (0..w).any(|x| solid(x, y)) {
-            let y0 = y;
-            while y < h && (0..w).any(|x| solid(x, y)) { y += 1; }
-            bands.push((y0, y));
-        }
-        y += 1;
-    }
-    let mut out = HashMap::new();
-    for (row, chars) in FONT_ROWS {
-        let Some(&(y0, y1)) = bands.get(row) else { continue };
-        let mut cols = vec![];
-        let mut x = 0;
-        while x < w {
-            if (y0..y1).any(|y| solid(x, y)) {
-                let x0 = x;
-                while x < w && (y0..y1).any(|y| solid(x, y)) { x += 1; }
-                cols.push((x0, x));
-            }
-            x += 1;
-        }
-        if cols.len() != chars.chars().count() {
-            continue;
-        }
-        for (c, (x0, x1)) in chars.chars().zip(cols) {
-            // tight vertical extent of this glyph
-            let ys: Vec<u32> = (y0..y1).filter(|&y| (x0..x1).any(|x| solid(x, y))).collect();
-            let (ty0, ty1) = (ys[0], ys[ys.len() - 1] + 1);
-            out.insert(c, Rect::new(x0 as f32, ty0 as f32, x1 as f32, ty1 as f32));
-        }
-    }
-    out
-}
-
-/// Generated HUD images: the squad health bars, the selection chevrons, the name font and the
-/// speech icon.
+/// Generated HUD images: the squad health bars, the selection chevrons and the speech icon.
 #[derive(Resource, Default)]
 struct HudGen {
     /// the health / stamina frame is the original's (TUTORIAL_BAR), its length following the
@@ -450,8 +415,6 @@ struct HudGen {
     bar_fill: [f32; 4],
     /// the game's chevron, white, pointing right / left / up / down
     chevrons: [Handle<Image>; 4],
-    font: Handle<Image>,
-    glyphs: HashMap<char, Rect>,
     /// speech icon
     bubble: Handle<Image>,
     /// skulls for the dead, by character
@@ -666,14 +629,10 @@ enum SquadPart {
     FrameRight,
     /// the selection's three chevrons on the radar
     Chevron(usize),
-    /// the chosen member's name in the game's font: letter slots
-    NameGlyph(usize),
     /// speech icon beside a member's portrait while they talk (by character)
     Bubble(usize),
     /// portrait (by character): dimmed when dead
     Portrait(usize),
-    /// that member's name over their head (window space)
-    SelectName,
     MeterBox,
     MeterFill,
     MeterTick,
@@ -684,14 +643,19 @@ enum SquadPart {
 #[derive(Resource, Default)]
 pub(super) struct HudImages(HashMap<u32, Option<Handle<Image>>>);
 
-/// The selected member's name label: the member being selected and how long their name has
-/// shown, then, after the cut, the member and how far into the zoom-out it is. A resource, reset
-/// with each level, so a label doesn't carry into the next one.
+/// The squad switch's name label (LABEL_SHOW): the selection it was last shown for (the
+/// character being selected last frame, to tell a new selection), whose name it shows and its
+/// timer. A resource, reset with each level, so a label doesn't carry into the next one.
 #[derive(Resource, Default)]
 struct NameLabel {
-    pending: Option<(usize, f32)>,
-    zooming: Option<(usize, f32)>,
+    selecting: Option<usize>,
+    character: usize,
+    timer: f32,
 }
+
+/// The name label's record text (`NameLabel`).
+#[derive(Component)]
+struct NameLabelText;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
@@ -838,15 +802,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         gen.bar_fill = [-1.0; 4];
         info!("radar health channels: {:?} texels", gen.bar_texels.iter().map(|t| t.len()).collect::<Vec<_>>());
     }
-    if let Some((w, h, px)) = game.0.texture_rgba(FONT_ATLAS) {
-        gen.glyphs = font_glyphs(w, h, &px);
-        gen.font = images.add(Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                                         bevy::render::render_resource::TextureDimension::D2, px,
-                                         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-                                         bevy::asset::RenderAssetUsages::default()));
-        info!("HUD font: {} capital glyphs", gen.glyphs.len());
-    }
-    let (chevrons, font, bars) = (gen.chevrons.clone(), gen.font.clone(), gen.bars.clone());
+    let (chevrons, bars) = (gen.chevrons.clone(), gen.bars.clone());
     let game = &mut game.0;
     game.load_textures_for(&super::data_dir(), "tutorial", TUTORIAL_BAR);
     let tutorial = game.texture_rgba(TUTORIAL_BAR).map(|(w, h, px)| {
@@ -1040,15 +996,9 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         commands.spawn((ChildOf(screen), SquadPart::Chevron(k), Visibility::Hidden, ImageNode::new(chevrons[0].clone()).with_color(CHEVRON_RED),
                         ZIndex(2 + k as i32), at(0.0, 0.0, 30.0, 30.0)));
     }
-    // the chosen member's name in the game's font, in the middle of the screen (capture: centred
-    // at 320, 238); a row of letter images, bottom-aligned
-    let name_box = commands.spawn((ChildOf(screen), SquadPart::SelectName, Visibility::Hidden, ZIndex(3),
-                                   Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center,
-                                          column_gap: Val::Px(2.0), ..at(20.0, NAME_CENTRE_Y - 40.0, 600.0, 80.0) })).id();
-    for k in 0..NAME_SLOTS {
-        commands.spawn((ChildOf(name_box), SquadPart::NameGlyph(k), Visibility::Hidden,
-                        ImageNode::new(font.clone()).with_color(NAME_ORANGE), Node::default()));
-    }
+    // the chosen member's name label (LABEL_SHOW): the heading font's record text
+    commands.spawn((ChildOf(screen), NameLabelText, Visibility::Hidden, ZIndex(3),
+                    record_text("", LABEL_CENTRE.0, LABEL_CENTRE.1, &HEADING24, vec![LABEL_ORANGE], None, Across::Centre)));
     for (c, &(x, y)) in BUBBLE_AT.iter().enumerate() {
         commands.spawn((ChildOf(screen), SquadPart::Bubble(c), Visibility::Hidden, flipped(Handle::default()), ZIndex(2), at(x, y, 10.0, 10.0)));
     }
@@ -1345,34 +1295,45 @@ fn update_squad_hud(
     game: Res<GameData>,
     mut gen: ResMut<HudGen>,
     mut images: ResMut<Assets<Image>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
     mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>,
                       Option<&mut BackgroundColor>, Option<&mut BorderColor>)>,
+    mut name_text: Query<(&mut RecordText, &mut Visibility), (With<NameLabelText>, Without<SquadPart>)>,
 ) {
     let dt = frame_dt(&time);
-    let font_k = windows.single().map(|w| w.height() / 480.0).unwrap_or(1.5);
-    let _ = &font_k;
-    // name: pending while selecting (with how long it has shown: the pop counts from its start);
-    // when control passes, zoom it out. Over the death camera (the player dead) it doesn't pop:
-    // the reference recording's "HAWK" is at its final size from its first frame (f1910 and
-    // f1911 are the same)
-    let NameLabel { pending, zooming } = &mut *label;
-    if let Some((c, _)) = player.select {
-        let start = if player.dead { NAME_POP_TIME } else { 0.0 };
-        let shown = pending.filter(|(p, _)| *p == c).map_or(start, |(_, s)| s) + dt;
-        *pending = Some((c, shown));
-    } else if let Some((c, _)) = pending.take() {
-        if player.character == c {
-            *zooming = Some((c, 0.0));
+    // the name label (LABEL_SHOW): each new selection shows the name for LABEL_SHOW + LABEL_OUT
+    // (0xc9440 from the select widget's choice, FUN_000c8cc0, its own timer after: it runs on past
+    // the hand-over, which comes SELECT_TIME after the selection); whole from its first frame,
+    // over the death camera and on a manual switch alike (the recordings' "HAWK" and "BRUTUS")
+    let selecting = player.select.map(|(c, _)| c);
+    if selecting.is_some_and(|c| label.selecting != Some(c)) {
+        (label.character, label.timer) = (selecting.unwrap_or(0), LABEL_SHOW + LABEL_OUT);
+    } else {
+        label.timer = (label.timer - dt).max(0.0);
+    }
+    label.selecting = selecting;
+    if let Ok((mut t, mut vis)) = name_text.single_mut() {
+        let want = if label.timer > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
         }
-    }
-    if let Some((_, t)) = zooming.as_mut() {
-        *t += dt;
-    }
-    if zooming.is_some_and(|(_, t)| t > NAME_ZOOM_TIME) {
-        *zooming = None;
+        if label.timer > 0.0 {
+            // 0xc9690: alpha 0.8 x min(1, timer / LABEL_OUT), scale 1 + 3 k^3, k = 1 - that share
+            let share = (label.timer / LABEL_OUT).min(1.0);
+            let k = 1.0 - share;
+            let scale = LABEL_SCALE + LABEL_SWELL * k * k * k;
+            let name = CHARACTERS[label.character % CHARACTERS.len()].to_uppercase();
+            if t.text != name {
+                t.text = name;
+            }
+            // (centred both ways on LABEL_CENTRE as it swells)
+            let y = LABEL_CENTRE.1 - HEADING24.height() * scale * 0.5;
+            if t.scale != scale || t.y != y {
+                (t.scale, t.y) = (scale, y);
+            }
+            t.alpha = LABEL_ALPHA * share;
+        }
     }
     let health = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad())
         .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
@@ -1428,37 +1389,6 @@ fn update_squad_hud(
                     if let Some(mut img) = img {
                         if img.image != gen.chevrons[dir] { img.image = gen.chevrons[dir].clone(); }
                         img.color = if lit { CHEVRON_RED } else { CHEVRON_RED.darker(0.25).with_alpha(0.75) };
-                    }
-                }
-            }
-            SquadPart::SelectName => {
-                show(&mut vis, selected.is_some() || zooming.is_some());
-            }
-            SquadPart::NameGlyph(k) => {
-                let (c, scale, alpha) = match (selected, *zooming) {
-                    (Some((c, _)), _) => {
-                        // popping in: from big down to size, quickly
-                        let e = pending.map_or(1.0, |(_, shown)| (shown / NAME_POP_TIME).clamp(0.0, 1.0));
-                        (Some(c), NAME_BIG * (1.0 + (NAME_POP - 1.0) * (1.0 - e) * (1.0 - e)), 1.0)
-                    }
-                    (None, Some((c, t))) => {
-                        let z = (t / NAME_ZOOM_TIME).min(1.0);
-                        (Some(c), NAME_BIG * (1.0 + (NAME_ZOOM_TO - 1.0) * z * (2.0 - z)), (1.0 - z) * (1.0 - z))
-                    }
-                    _ => (None, 1.0, 0.0),
-                };
-                let glyph = c.and_then(|c| CHARACTERS[c].to_uppercase().chars().nth(k)).and_then(|ch| gen.glyphs.get(&ch).copied());
-                show(&mut vis, glyph.is_some());
-                // unused slots leave the row entirely (hidden nodes still take up space)
-                let display = if glyph.is_some() { Display::Flex } else { Display::None };
-                if node.display != display { node.display = display; }
-                if let Some(r) = glyph {
-                    let k = NAME_SCALE * scale * font_k;
-                    node.width = Val::Px(r.width() * k);
-                    node.height = Val::Px(r.height() * k);
-                    if let Some(mut img) = img {
-                        img.rect = Some(r);
-                        img.color = NAME_ORANGE.with_alpha(alpha);
                     }
                 }
             }

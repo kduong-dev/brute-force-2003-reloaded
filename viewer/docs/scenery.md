@@ -4,7 +4,23 @@
   puts them down too, see [testtools.md](testtools.md)). Placed game objects whose
   type has a debris list (objecttypes `h_197caf14`, 467 types; `Game::breakable`) break when
   their hitpoints run out. On sdm_e34 that's 38 objects: 23 radiation barrels (h_e04e5a0e, 1 hp),
-  6 supply crates (h_09a6856d, 25 hp), the missile rack (h_fbdcd828, 1 hp) and 8 others. Footage:
+  6 supply crates (h_09a6856d, 25 hp), the missile rack (h_fbdcd828, 1 hp) and 8 others.
+  * **Objects with hit points and no debris list** (#263; `Game::shootable`: a game object,
+    object-type 2, whose combat-target has hit points above 0) take shots, blasts and damage
+    areas the same way, and at 0 die and stay: drawn and solid, their DESTROYED sent to their
+    listeners. From the code: the game object's message handler (FUN_00156e50) hands every
+    MSG_DAMAGE to its combat target, whose take-damage (FUN_002232d0) works while the hit points
+    are above 0 and at 0 posts CBT_DEAD; the set dead (FUN_00157260) sends DESTROYED and, with no
+    debris list (type+0x14c 0), hides nothing and queues nothing. Neither reads the target-type
+    or h_fefee7df, so a type at 0 hit points is the only one left whole (19 game types have 9 999
+    or 100 000 instead, which reads as the designers' way to keep one: an inference). That makes
+    e23's door h_054428e4 (40 hp, no damage factors) open when shot: its anim-trigger plays it on
+    its own DESTROYED; m08_b's gate h_f4d77cfd too. The list (`BF_SCENERY_LOG`) is now 445
+    objects on e23, 551 on m08_b, 623 on e01 and 221 on sdm_e34 (38 of those break). Not traced: a placed object's +0x1ac mode 1, with which FUN_00157260 takes an
+    object without a list away (whether any level sets it); the other object classes with a
+    combat-target (object-types 0, 19, 20, ...: their message handlers aren't read) aren't
+    damaged.
+  * Footage:
   `todo/85-interactive-scenery/` (29 xemu takes with 20 Hz HP logs) and
   `todo/interactive scenery objects.mp4`.
   * **Data** (`ObjectType`, `Debris`, `AreaDamage` in `src/bf/character.rs`):
@@ -116,10 +132,18 @@
   * **Test hooks**:
     * `BF_TEST_HIT=<s>[,<s>...]` hits the intact breakable object nearest the controlled character
       (or `BF_TEST_HIT_NEAR=<x>,<z>`) with 50 ballistic at those times, as the takes' gdb call
-      did;
+      did: one with a debris list, or with `BF_TEST_HIT_ANY=1` any with hit points (#263);
     * `BF_SCENERY_LOG=1` lists the breakable objects and logs each hit, break, spawn and area;
     * `BF_COMBAT_LOG=1` prints each area tick's damage and the victim's difficulty step.
   * **Verified**:
+    * #263, e23's door: shot with Tex's gun (`BF_MAP=e23 BF_TEST_GOTO=37,0.5,37,0.5
+      BF_CAMERA_AIM_AT=44.0,22.5,0.5 BF_TEST_TRIGGER=2.0-5.0 BF_SCENERY_LOG=1
+      BF_TRIGGER_LOG=1`): 13.8, 13.4, 13.1 (type 6, x1) -> 0 at 3.13 s, "sends DESTROYED
+      [h_054428e4] to h_00ea51a5", "door h_054428e4 opens"; the door stays and takes the later
+      rounds' marks. m08_b's gate (`BF_TEST_HIT=2.0 BF_TEST_HIT_ANY=1
+      BF_TEST_HIT_NEAR=21.6,-107.5`): DESTROYED to trigger_anim194, the gate opens. The recipes
+      below as before (the same objects hit and broken, Tex's 40.0 and 91.0). Not filmed: how
+      many rounds the game takes and what the door looks like after (the ticket's shot).
     * take29's spot (`BF_MAP=sdm_e34 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6 BF_TEST_HIT=2.0`): Tex
       loses 40.0 HP from +0.07 to +0.53 s (take29: 39.4, +0.10 to +0.64 s), with no
       difficulty step on the multiplayer map (24.0 with `BF_DIFFICULTY=standard`).

@@ -15,10 +15,12 @@
 //! Pickups (weapon / inventory objects and items) are placed at their spawn height in the level
 //! file (the game lets them fall); `settle_pickups` drops them onto the surface below.
 //!
-//! Breakable objects (game objects with a debris list, `Game::breakable`) are numbered in level
-//! object order: their own triangles and their level blocker (`<blocker object-instance>`) block
-//! until they're broken (`set_broken`), and the game objects they leave behind (the missile
-//! rack's stand) are put in from the start, blocking only once they're broken.
+//! Breakable objects (game objects with hit points, `Game::shootable`, #263: those with a debris
+//! list, `Game::breakable`, break) are numbered in level object order: shots on their collision
+//! find them (`ray_breakable`), their own triangles and their level blocker (`<blocker
+//! object-instance>`) block until they're broken (`set_broken`), and the game objects they leave
+//! behind (the missile rack's stand) are put in from the start, blocking only once they're
+//! broken. One without a debris list dies (`set_dead`) and stays as it is.
 //!
 //! A spawn-trigger's template (its h_1299668b) isn't in the world: the trigger takes it out as it
 //! links (FUN_000dfe90), so it adds nothing here. (The tutorial's Tex template put a surface
@@ -98,6 +100,9 @@ pub struct Arena {
     liquids: Vec<LiquidType>,
     /// breakable objects, in level object order: broken or not
     broken: Vec<AtomicBool>,
+    /// breakable objects, in level object order: dead or not (their hit points run out: broken
+    /// for one with a debris list, still standing for one without, #263)
+    dead: Vec<AtomicBool>,
     /// level object index -> its breakable index
     breakable_of: HashMap<usize, u32>,
     /// the flat test floor's ground: a plane at this height under every point, terrain (an
@@ -147,159 +152,193 @@ fn closest_on_tri(p: Vec3, t: &[Vec3; 3]) -> Vec3 {
     a + ab * (vb * denom) + ac * (vc * denom)
 }
 
-/// How many rounds `convex_meet` takes before it calls a case that hasn't settled a touch (a
-/// guess's bound: the game's FUN_00167c40 gives up after 100 and calls it a miss; ours settle in a
-/// handful).
-const GJK_ROUNDS: usize = 64;
+/// How many rounds `convex_meet` takes before it calls the pair apart: FUN_00167c40 counts its
+/// rounds from 1 and gives up past 100 (0x167dc0), a miss.
+const GJK_ROUNDS: u32 = 100;
 
-/// Whether the convex hulls of the points `a` and `b` meet, touching included: GJK on their
-/// Minkowski difference, as the game's FUN_00167c40 (the simplex of up to four support points,
-/// bit 0xf of its mask for a full tetrahedron round the origin) tests a world triangle against
-/// the follow camera's wedge (play_camera.rs). The points are taken relative to `a`'s first, so
-/// the sums stay small where the world's coordinates are large.
+/// FUN_00167c40's closeness: a search vector (the simplex's point nearest the origin) of squared
+/// length at or under this (0x3c0278, 0.0011: about 0.033 m) counts as a meeting. So a wedge that
+/// comes within a few centimetres of a triangle can meet it (#275), but only when the search gets
+/// that close before it finds a separating direction; nothing makes it a fixed margin.
+const GJK_CLOSE_SQ: f32 = 0.0011;
+
+/// Whether the convex hull of the points `a` (the follow camera's wedge, play_camera.rs) meets
+/// the triangle `b`, as the game's FUN_00167c40 tests it (#275): GJK on the triangle less the hull
+/// with the Johnson sub-algorithm (FUN_00166c60) for the simplex's point nearest the origin, in
+/// f32 as the game. The search vector starts at the triangle's first corner less the hull's
+/// first point; each round takes the triangle's support point against it and the hull's along it
+/// (FUN_00167750, FUN_00167920); a new point that doesn't get past the origin is a miss, so is a
+/// simplex the sub-algorithm can't resolve and a 101st round; four points round the origin are a
+/// meeting, and so is a search vector within GJK_CLOSE_SQ. The points are taken relative to `a`'s
+/// first, so the sums stay small where the world's coordinates are large (the game works in the
+/// world's; the order of the arithmetic is otherwise the same).
 pub fn convex_meet(a: &[Vec3], b: &[Vec3]) -> bool {
-    let (Some(&o), false) = (a.first(), b.is_empty()) else { return false };
-    let support = |d: Vec3| {
-        let far = |s: &[Vec3], sign: f32| s.iter().map(|&p| p - o).max_by(|x, y| (x.dot(d) * sign).total_cmp(&(y.dot(d) * sign))).unwrap_or(Vec3::ZERO);
-        far(a, 1.0) - far(b, -1.0)
-    };
-    let mut s = [Vec3::ZERO; 4];
-    s[0] = support(Vec3::X);
-    let mut n = 1;
-    let mut d = -s[0];
-    for _ in 0..GJK_ROUNDS {
-        // (the origin on the simplex: they touch)
-        if d.length_squared() < 1e-14 {
-            return true;
+    let (Some(&o), Some(&b0)) = (a.first(), b.first()) else { return false };
+    // the support points: the triangle's farthest along `d` (FUN_00167750) and the hull's
+    // (FUN_00167920), the first of the farthest on a tie
+    let far = |s: &[Vec3], d: Vec3| {
+        let mut best = s[0] - o;
+        let mut at = best.dot(d);
+        for &p in &s[1..] {
+            let q = p - o;
+            if q.dot(d) > at {
+                (best, at) = (q, q.dot(d));
+            }
         }
-        let p = support(d);
-        if p.dot(d) < 0.0 {
+        best
+    };
+    let mut gjk = Johnson::default();
+    let mut v = b0 - o;
+    let mut last = 0;
+    for round in 1..=GJK_ROUNDS {
+        let w = far(b, -v) - far(a, v);
+        if w.dot(v) > 0.0 {
             return false;
         }
-        s[n] = p;
-        n += 1;
-        let inside = match n {
-            2 => {
-                gjk_edge(&mut s, &mut n, &mut d);
-                false
+        match gjk.add(last, w) {
+            Some(nearest) => v = nearest,
+            None => return false,
+        }
+        if gjk.bits == 0xf {
+            return true;
+        }
+        // the next free slot after the last, round the four
+        loop {
+            last = (last + 1) & 3;
+            if gjk.bits & (1 << last) == 0 {
+                break;
             }
-            3 => gjk_triangle(&mut s, &mut n, &mut d),
-            _ => gjk_tetrahedron(&mut s, &mut n, &mut d),
-        };
-        if inside {
+        }
+        if round == GJK_ROUNDS {
+            return false;
+        }
+        if v.length_squared() <= GJK_CLOSE_SQ {
             return true;
         }
     }
-    true
-}
-
-/// GJK's segment case: s[1] the newest point, s[0] the other; keeps the part nearest the origin
-/// and points `d` at it.
-fn gjk_edge(s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3) {
-    let (a, b) = (s[1], s[0]);
-    let (ab, ao) = (b - a, -a);
-    if ab.dot(ao) > 0.0 {
-        s[0] = b;
-        s[1] = a;
-        *n = 2;
-        *d = ab.cross(ao).cross(ab);
-    } else {
-        s[0] = a;
-        *n = 1;
-        *d = ao;
-    }
-}
-
-/// GJK's triangle case: s[2] the newest point. True when the origin lies in the triangle;
-/// otherwise keeps the feature nearest it (wound so (s1 - s2) x (s0 - s2) faces the origin) and
-/// points `d` at it.
-fn gjk_triangle(s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3) -> bool {
-    let (a, b, c) = (s[2], s[1], s[0]);
-    let (ab, ac, ao) = (b - a, c - a, -a);
-    let abc = ab.cross(ac);
-    // (three points in a line: the segment of the newest to the farther of the others)
-    if abc.length_squared() <= 1e-12 * ab.length_squared() * ac.length_squared() {
-        s[0] = if ab.length_squared() >= ac.length_squared() { b } else { c };
-        s[1] = a;
-        *n = 2;
-        gjk_edge(s, n, d);
-        return false;
-    }
-    let to_edge_ab = |s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3| {
-        s[0] = b;
-        s[1] = a;
-        *n = 2;
-        gjk_edge(s, n, d);
-    };
-    if abc.cross(ac).dot(ao) > 0.0 {
-        if ac.dot(ao) > 0.0 {
-            s[0] = c;
-            s[1] = a;
-            *n = 2;
-            *d = ac.cross(ao).cross(ac);
-        } else {
-            to_edge_ab(s, n, d);
-        }
-        return false;
-    }
-    if ab.cross(abc).dot(ao) > 0.0 {
-        to_edge_ab(s, n, d);
-        return false;
-    }
-    let side = abc.dot(ao);
-    if side.abs() <= 1e-9 * abc.length() {
-        return true;
-    }
-    if side > 0.0 {
-        (s[0], s[1], s[2]) = (c, b, a);
-        *d = abc;
-    } else {
-        (s[0], s[1], s[2]) = (b, c, a);
-        *d = -abc;
-    }
-    *n = 3;
     false
 }
 
-/// GJK's tetrahedron case: s[3] the newest point. True when the origin is inside it; otherwise
-/// goes on with the face through the newest point that faces the origin (each face's normal
-/// turned away from the fourth corner, whatever the winding).
-fn gjk_tetrahedron(s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3) -> bool {
-    let (a, b, c, e) = (s[3], s[2], s[1], s[0]);
-    let ao = -a;
-    // (four points in a plane, which the support's test leaves only to rounding: the triangle of
-    // the newest three)
-    let (ab, ac, ae) = (b - a, c - a, e - a);
-    let scale = ab.length() * ac.length() * ae.length();
-    if ab.dot(ac.cross(ae)).abs() <= 1e-9 * scale {
-        (s[0], s[1], s[2]) = (c, b, a);
-        *n = 3;
-        return gjk_triangle(s, n, d);
+/// The simplex of up to four points of a GJK search and Johnson's sub-algorithm for its point
+/// nearest the origin (FUN_00166c60, as in van den Bergen's GJK): the dot products of the points
+/// (`dot`), the determinants of every subset (`det[subset][point]`), the points in use (`bits`).
+#[derive(Default)]
+struct Johnson {
+    /// the points, by slot
+    y: [Vec3; 4],
+    /// y[i] . y[j]
+    dot: [[f32; 4]; 4],
+    /// the sub-algorithm's determinant of each subset (bit mask) for each of its points
+    det: [[f32; 4]; 16],
+    /// the slots of the simplex in use
+    bits: u32,
+}
+
+impl Johnson {
+    /// Puts `w` in slot `last` (not in use) and finds the smallest subset with it whose nearest
+    /// point to the origin lies inside it (FUN_00166ad0's test), which becomes the simplex: that
+    /// point (FUN_00166b30, the determinants' weights), or None when no subset passes.
+    fn add(&mut self, last: usize, w: Vec3) -> Option<Vec3> {
+        let last_bit = 1u32 << last;
+        self.y[last] = w;
+        for i in 0..4 {
+            if self.bits & (1 << i) != 0 {
+                let d = self.y[i].dot(w);
+                self.dot[i][last] = d;
+                self.dot[last][i] = d;
+            }
+        }
+        self.dot[last][last] = w.dot(w);
+        self.dets(last, last_bit);
+        let mut s = self.bits;
+        while s != 0 {
+            if s & self.bits == s && self.valid(s | last_bit, last_bit) {
+                self.bits = s | last_bit;
+                return Some(self.point(self.bits));
+            }
+            s -= 1;
+        }
+        if self.valid(last_bit, last_bit) {
+            self.bits = last_bit;
+            return Some(w);
+        }
+        None
     }
-    let outward = |p: Vec3, q: Vec3, away: Vec3| {
-        let normal = (p - a).cross(q - a);
-        if normal.dot(away - a) > 0.0 { -normal } else { normal }
-    };
-    for (p, q, away) in [(b, c, e), (c, e, b), (e, b, c)] {
-        if outward(p, q, away).dot(ao) > 0.0 {
-            (s[0], s[1], s[2]) = (q, p, a);
-            *n = 3;
-            return gjk_triangle(s, n, d);
+
+    /// The determinants of the subsets that hold the new point `last` (the old ones stand).
+    fn dets(&mut self, last: usize, last_bit: u32) {
+        let (dp, det) = (&self.dot, &mut self.det);
+        det[last_bit as usize][last] = 1.0;
+        for j in 0..4 {
+            let bj = 1u32 << j;
+            if self.bits & bj == 0 {
+                continue;
+            }
+            let s2 = (bj | last_bit) as usize;
+            det[s2][j] = dp[last][last] - dp[last][j];
+            det[s2][last] = dp[j][j] - dp[j][last];
+            for k in 0..j {
+                let bk = 1u32 << k;
+                if self.bits & bk == 0 {
+                    continue;
+                }
+                let s3 = (bk | s2 as u32) as usize;
+                let (kj, kl, jl) = ((bk | bj) as usize, (bk | last_bit) as usize, s2);
+                det[s3][k] = det[jl][j] * (dp[j][j] - dp[j][k]) + det[jl][last] * (dp[last][j] - dp[last][k]);
+                det[s3][j] = det[kl][k] * (dp[k][k] - dp[k][j]) + det[kl][last] * (dp[last][k] - dp[last][j]);
+                det[s3][last] = det[kj][k] * (dp[k][k] - dp[k][last]) + det[kj][j] * (dp[j][k] - dp[j][last]);
+            }
+        }
+        if self.bits | last_bit == 0xf {
+            det[15][0] = det[14][1] * (dp[1][1] - dp[1][0]) + det[14][2] * (dp[2][1] - dp[2][0]) + det[14][3] * (dp[3][1] - dp[3][0]);
+            det[15][1] = det[13][0] * (dp[0][0] - dp[0][1]) + det[13][2] * (dp[2][0] - dp[2][1]) + det[13][3] * (dp[3][0] - dp[3][1]);
+            det[15][2] = det[11][0] * (dp[0][0] - dp[0][2]) + det[11][1] * (dp[1][0] - dp[1][2]) + det[11][3] * (dp[3][0] - dp[3][2]);
+            det[15][3] = det[7][0] * (dp[0][0] - dp[0][3]) + det[7][1] * (dp[1][0] - dp[1][3]) + det[7][2] * (dp[2][0] - dp[2][3]);
         }
     }
-    true
+
+    /// FUN_00166ad0: whether subset `s`'s nearest point lies inside it: every one of its points'
+    /// determinants above 0, and none of the other points in play (the simplex and the new one)
+    /// with a positive determinant in `s` with it.
+    fn valid(&self, s: u32, last_bit: u32) -> bool {
+        (0..4).all(|i| {
+            let bit = 1u32 << i;
+            if (self.bits | last_bit) & bit == 0 {
+                true
+            } else if s & bit != 0 {
+                self.det[s as usize][i] > 0.0
+            } else {
+                self.det[(s | bit) as usize][i] <= 0.0
+            }
+        })
+    }
+
+    /// FUN_00166b30: the point of subset `s` nearest the origin, its points weighted by their
+    /// determinants.
+    fn point(&self, s: u32) -> Vec3 {
+        let (mut sum, mut p) = (0.0, Vec3::ZERO);
+        for i in 0..4 {
+            if s & (1 << i) != 0 {
+                sum += self.det[s as usize][i];
+                p += self.y[i] * self.det[s as usize][i];
+            }
+        }
+        p / sum
+    }
 }
 
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
-        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
+        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
                             breakable_of: HashMap::new(), flat: None };
-        // breakable objects, numbered in level object order (and by name, for their blockers)
+        // breakable objects (with hit points, #263), numbered in level object order (and by name,
+        // for their blockers)
         let mut by_name: HashMap<u32, u32> = HashMap::new();
         for (i, o) in level.objects.iter().enumerate() {
-            if o.archetype.is_some() && !is_pickup(o.tag) && game.breakable(o.kind).is_some() {
+            if o.archetype.is_some() && !is_pickup(o.tag) && game.shootable(o.kind).is_some() {
                 let b = a.broken.len() as u32;
                 a.broken.push(AtomicBool::new(false));
+                a.dead.push(AtomicBool::new(false));
                 a.breakable_of.insert(i, b);
                 if o.name != 0 {
                     by_name.insert(o.name, b);
@@ -438,7 +477,7 @@ impl Arena {
     /// The flat test floor as an arena: nothing but its ground, a plane at `ground` under every
     /// point (see `flat`).
     pub fn flat(ground: f32) -> Arena {
-        Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
+        Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
                 breakable_of: HashMap::new(), flat: Some(ground) }
     }
 
@@ -452,7 +491,7 @@ impl Arena {
     fn duplicate(&self) -> Arena {
         let flags = |v: &[AtomicBool]| v.iter().map(|b| AtomicBool::new(b.load(Ordering::Relaxed))).collect();
         Arena { cells: self.cells.clone(), tris: self.tris.clone(), starts: self.starts.clone(), doors: flags(&self.doors), liquids: self.liquids.clone(),
-                broken: flags(&self.broken), breakable_of: self.breakable_of.clone(), flat: self.flat }
+                broken: flags(&self.broken), dead: flags(&self.dead), breakable_of: self.breakable_of.clone(), flat: self.flat }
     }
 
     /// Puts a placed object's collision into the current map's arena (the test tools' scenery,
@@ -490,7 +529,8 @@ impl Arena {
             && t.piece.is_none_or(|(b, after)| self.broken[b as usize].load(Ordering::Relaxed) == after)
     }
 
-    /// The breakable index of level object `object` (its place in `Level::objects`), if it breaks.
+    /// The breakable index of level object `object` (its place in `Level::objects`), if it has hit
+    /// points (`Game::shootable`; whether it breaks is `Game::breakable`'s).
     pub fn breakable(&self, object: usize) -> Option<usize> {
         self.breakable_of.get(&object).map(|&b| b as usize)
     }
@@ -507,6 +547,19 @@ impl Arena {
     /// play_triggers.rs).
     pub fn is_broken(&self, b: usize) -> bool {
         self.broken.get(b).is_some_and(|x| x.load(Ordering::Relaxed))
+    }
+
+    /// Breakable `b`'s hit points have run out (play_scenery.rs): the trigger runtime sends its
+    /// DESTROYED (FUN_00157260), whether it breaks or stays (#263).
+    pub fn set_dead(&self, b: usize) {
+        if let Some(x) = self.dead.get(b) {
+            x.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether breakable `b` has died (`set_dead`).
+    pub fn is_dead(&self, b: usize) -> bool {
+        self.dead.get(b).is_some_and(|x| x.load(Ordering::Relaxed))
     }
 
     /// The liquid at (x, z) whose surface is above `feet`: its surface height and type.

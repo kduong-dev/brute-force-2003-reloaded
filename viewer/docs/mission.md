@@ -10,7 +10,7 @@ KILLED), and what follows it: the next mission's movies and zone, the zone again
 | `src/bin/play_mission.rs` | the campaign game mode, the world's end step, the screen fade, the status line, what an end screen choice leads to |
 | `src/bin/play_endmenu.rs` | the end screen h_e8e14fcf and its confirmation box (a child of `play_mission.rs`) |
 | `src/bin/play_level_over.rs` | the level-over and zone triggers (a child of `play_triggers.rs`) |
-| `src/bin/play_fonts.rs` | the game's font records (body 12, 14, 16 points, heading 24) drawn glyph by glyph: the end screen, the campaign path, the status line |
+| `src/bin/play_fonts.rs` | the game's font records (body 10, 12, 14, 16 points, heading 24) drawn glyph by glyph: the end screen, the campaign path, the status line |
 | `src/bf/menus.rs` | game-options' menus as data: their buttons, lists, keyboard, animations, styles |
 
 Written from default.xbe (the addresses are in the code's comments and in
@@ -165,6 +165,18 @@ with the takes':
 * **The squad's death** (take05, take10): the 3 s countdown, SQUAD KILLED with Objectives 0 / 2,
   Cash counting to $-3000 / $5040, Operatives Lost 1, "No DNA Found", its pages; Clone Squad: the
   tutorial again behind LOADING. B and X open the box.
+* **The end view's colours** (#250): the end screen neither dims nor tints the world. As it opens
+  FUN_001092e0 only cuts the view to the end camera, brings the letterbox in at once and fades
+  from black over 1 s (FUN_00069780); the menu h_e8e14fcf has no full-screen picture (its three
+  pictures are the 32-unit icons), and its texts and the title's fill are its only other
+  drawing. The tester's lower-left patch ((0, 300)-(100, 380), the demo's (83, 78, 72) against
+  take05's (58, 51, 22)) isn't the same picture: the takes' end view has a grass mound with
+  yellow plants in its lower-left foreground where the demo's shows the lava pool, its embers
+  and a dark rock (`BF_MAP=tutorial BF_TEST_GOTO=57.5,68.22,57.5,68.22 BF_TEST_DIE=3`, frame 140
+  of a 15 fps capture, against take05 at 192 s: the far fence, cabin, tower and sandbags line up,
+  the camera at take12's (-12.82, -5.63)). Where the two show the same thing the demo's world is
+  bluer: the middle ground (57, 69, 77) against take05's (68, 68, 63) and take12's (56, 63, 60),
+  the right-hand fence (39, 45, 72) against (38, 38, 51): the level's lighting, #181's.
 * **A zone's end** (m01_a, its zone-trigger h_fd436c00 and false level-over h_ffc73ff3 fired):
   the fade, "Saving Campaign...", m01_b (zone 1 of the mission).
 * **Regressions**: the main menu, SELECT MISSION and a deathmatch map from it (`BF_MENU_GO`),

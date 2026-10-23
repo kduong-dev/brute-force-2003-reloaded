@@ -2,9 +2,14 @@
 //! data and code, checked against the xemu takes in todo/85-interactive-scenery/ (and the first
 //! capture, todo/interactive scenery objects.mp4).
 //!
-//! Which objects: a placed game object whose type has a debris list (h_197caf14, `Game::breakable`;
-//! 467 game types have one). On sdm_e34: 23 radiation barrels (h_e04e5a0e, 1 hp), 6 supply
-//! crates (h_09a6856d, 25 hp) and a missile rack (h_fbdcd828, 1 hp), among others.
+//! Which objects: a placed game object whose type has hit points (`Game::shootable`, #263). Those
+//! whose type has a debris list (h_197caf14, `Game::breakable`; 467 game types have one) break: on
+//! sdm_e34 23 radiation barrels (h_e04e5a0e, 1 hp), 6 supply crates (h_09a6856d, 25 hp) and a
+//! missile rack (h_fbdcd828, 1 hp), among others. The others die and stay as they are (State::
+//! Dead): FUN_00157260 sends their DESTROYED and hides nothing, queues nothing, when the type has
+//! no list, so only their listeners act (e23's door h_054428e4, 40 hp, opens on its own DESTROYED:
+//! its anim-trigger listens to it). Whether a placed object's +0x1ac mode 1, which makes
+//! FUN_00157260 take an object without a list away, is ever set isn't traced.
 //!
 //! Damage (FUN_002232d0, the combat-target's take-damage): value x the type's factor for its
 //! damage-type (the combat-target's own h_142be76f list: the three above take Type 7 x5, 10 x10,
@@ -153,6 +158,8 @@ struct Push {
 /// A breakable object's state.
 enum State {
     Intact,
+    /// dead without a debris list (#263): its DESTROYED sent, still drawn and solid
+    Dead,
     /// broken: the countdown (s) and the debris entries not spawned yet
     Breaking { countdown: f32, queue: Vec<Debris> },
     Gone,
@@ -174,6 +181,9 @@ struct Breakable {
     entity: Option<Entity>,
     hp: f32,
     state: State,
+    /// its type has a debris list (`Game::breakable`): it breaks at 0 hit points; else it dies
+    /// and stays (`State::Dead`, #263)
+    breaks: bool,
     push: Push,
     /// it explodes (an effect in its debris list has a damage area)
     explosive: bool,
@@ -288,12 +298,16 @@ fn find_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: 
     }
     let log = std::env::var("BF_SCENERY_LOG").is_ok();
     let mut list = vec![];
+    // (the placed models by type: thousands of objects have hit points, #263)
+    let mut models: HashMap<u32, Vec<(Entity, Vec3)>> = HashMap::new();
+    for (e, p, tr) in &placed {
+        models.entry(p.kind).or_default().push((e, tr.translation));
+    }
     for (i, o) in level.objects.iter().enumerate() {
         let Some(b) = arena.breakable(i) else { continue };
-        let Some(t) = game.0.breakable(o.kind).cloned() else { continue };
+        let Some(t) = game.0.shootable(o.kind).cloned() else { continue };
         let place = Transform::from_matrix(o.transform);
-        let entity = placed.iter().filter(|(_, p, tr)| p.kind == o.kind && tr.translation.distance(place.translation) < 0.01)
-            .map(|(e, _, _)| e).next();
+        let entity = models.get(&o.kind).and_then(|m| m.iter().find(|(_, at)| at.distance(place.translation) < 0.01)).map(|(e, _)| *e);
         let explosive = t.debris.iter().any(|d| game.0.object_types.get(&d.kind).is_some_and(|k| k.object_type == OBJECT_EFFECT)
             && game.0.effect_type_defs.get(&d.kind).is_some_and(|e| !e.damage.is_empty()));
         if log {
@@ -307,7 +321,7 @@ fn find_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: 
         // (one a destroyer-trigger removed as the level started is gone already: the tutorial's
         // four h_0247aefb props, play_triggers.rs)
         let state = if arena.is_broken(b) { State::Gone } else { State::Intact };
-        list.push(Breakable { name: o.name, kind: o.kind, place, centre, entity, hp: t.hitpoints, state,
+        list.push(Breakable { name: o.name, kind: o.kind, place, centre, entity, hp: t.hitpoints, state, breaks: !t.debris.is_empty(),
                               push: Push { at: centre, dir: Vec3::ZERO }, explosive, bounds: None });
         let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
         prepare_debris(&mut commands, &mut scenery, &mut game.0, &mut assets, ale.as_deref_mut(), &t.debris);
@@ -373,7 +387,7 @@ fn late_scenery(mut commands: Commands, mut scenery: ResMut<Scenery>, mut game: 
         if let Some(bx) = bounds {
             PLACED_BOXES.lock().unwrap().push((scenery.list.len(), place, bx));
         }
-        scenery.list.push(Breakable { name: kind, kind, place, centre, entity: Some(e), hp: t.hitpoints, state: State::Intact,
+        scenery.list.push(Breakable { name: kind, kind, place, centre, entity: Some(e), hp: t.hitpoints, state: State::Intact, breaks: true,
                                       push: Push { at: centre, dir: Vec3::ZERO }, explosive, bounds });
         let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
         prepare_debris(&mut commands, &mut scenery, &mut game.0, &mut assets, ale.as_deref_mut(), &t.debris);
@@ -437,7 +451,8 @@ fn debris_model(game: &mut Game, assets: &mut ModelAssets, kind: u32) -> Vec<Pie
 ///
 /// Test hook: BF_TEST_HIT=<s>[,<s>...] hits the intact breakable object nearest the controlled
 /// character (or BF_TEST_HIT_NEAR=<x>,<z>) at those times with TEST_HIT_DAMAGE ballistic, as the
-/// takes' gdb call did.
+/// takes' gdb call did: one with a debris list, or with BF_TEST_HIT_ANY=1 any with hit points
+/// (#263: e23's door).
 fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                mut blasts: ResMut<ObjectBlasts>, mut direct: ResMut<ObjectHits>) {
     let dt = frame_dt(&time);
@@ -473,7 +488,8 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 let f: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
                 (f.len() >= 2).then(|| Vec2::new(f[0], f[1]))
             }).unwrap_or(player.position.xz());
-            let target = s.list.iter().enumerate().filter(|(_, b)| matches!(b.state, State::Intact))
+            let any = std::env::var("BF_TEST_HIT_ANY").is_ok();
+            let target = s.list.iter().enumerate().filter(|(_, b)| matches!(b.state, State::Intact) && (b.breaks || any))
                 .min_by(|a, b| a.1.place.translation.xz().distance(near).total_cmp(&b.1.place.translation.xz().distance(near))).map(|(i, _)| i);
             if let Some(i) = target {
                 let at = s.list[i].place.translation;
@@ -570,6 +586,18 @@ fn damage(s: &mut Scenery, game: &Game, i: usize, amount: f32, damage_type: i64,
         println!("t {now:.2}: breakable {i} (h_{:08x}) takes {amount:.2} x {factor} (type {damage_type}) -> {:.2} hp", b.name, b.hp.max(0.0));
     }
     if b.hp > 0.0 {
+        return;
+    }
+    // dead: its DESTROYED (FUN_00157260, the trigger runtime's from `Arena::is_dead`)
+    if let Some(a) = world::arena().filter(|_| b.bounds.is_none()) {
+        a.set_dead(i);
+    }
+    // without a debris list it stays, drawn and solid (#263)
+    if !b.breaks {
+        b.state = State::Dead;
+        if std::env::var("BF_SCENERY_LOG").is_ok() {
+            println!("t {now:.2}: breakable {i} (h_{:08x}) dies (no debris list): it stays", b.name);
+        }
         return;
     }
     // broken: its debris queued, the countdown from the longest delay (FUN_00157260)

@@ -2178,6 +2178,19 @@ impl Game {
         self.object_types.get(&kind).filter(|t| t.object_type == OBJECT_GAME && !t.debris.is_empty())
     }
 
+    /// The type of a placed object that shots and blasts can damage (#263): a game object
+    /// (object-type 2) whose combat-target has hit points, debris list or not. The game object's
+    /// message handler (FUN_00156e50) hands every MSG_DAMAGE to its combat target, whose
+    /// take-damage (FUN_002232d0) takes it off while the hit points are above 0 and at 0 sends
+    /// CBT_DEAD, the object's set dead (FUN_00157260: DESTROYED to its listeners); nothing in
+    /// them reads the target-type or h_fefee7df. A type with no hit points (0, or none parsed)
+    /// is left whole: FUN_002232d0 changes nothing at 0 or below. Those without a debris list
+    /// (`breakable`) stay as they are when they die: FUN_00157260 hides nothing and queues no
+    /// debris when the type has none (type+0x14c 0).
+    pub fn shootable(&self, kind: u32) -> Option<&ObjectType> {
+        self.object_types.get(&kind).filter(|t| t.object_type == OBJECT_GAME && t.hitpoints > 0.0)
+    }
+
     /// An archetype's `<h_e99750a9>` point (its own frame), or for a compound without one its
     /// first part's (the missile rack h_fbdcd828: its root part h_e3860cda's -0.18 1.16 0). Read
     /// as the physics body's centre, where the game places the object: the radiation barrel's

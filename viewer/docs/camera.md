@@ -83,11 +83,20 @@ it looks along the character's aim from behind a leashed pivot at the head.
 * **Walls** (`wall_test`, FUN_000718f0): seven points from the pivot: two straight back along the
   boom at its distance D, four at D / 2 turned 30 degrees either way, each pair 5 degrees above
   and below the boom. The world's triangles that meet their hull (GJK: FUN_00167c40,
-  `convex_meet`) are gathered (none: D); the hull at 0.75 D and 0.5 D is tested against them,
+  `convex_meet`, #275) are gathered (none: D); the hull at 0.75 D and 0.5 D is tested against them,
   the first clear one's distance taken; none clear: 0.4 m. No memory between frames. What it
   meets: the static mesh and the collidable objects as they stand (a closed gate's leaf),
   not characters or weapons (answers Q8), **nor the level's blockers** (the invisible walls round
   objects: the takes' camera passes e34's hangar blocker and the range spot's fence's).
+* **"Meets" is the game's GJK** (#275): the triangle less the hull, with Johnson's sub-algorithm
+  for the simplex's nearest point (FUN_00166c60), in f32, starting from the triangle's first corner
+  less the wedge's first point. A search point that doesn't get past the origin is a miss, so is a
+  101st round; four points round the origin are a meeting, and so is a search vector within
+  0.033 m (its square 0.0011, 0x3c0278). That last makes a wedge a few centimetres short of the
+  ground or a roof meet it, but only when the search closes in before it finds a separating
+  direction: not a fixed margin. It's what cuts take13's boom looking up at the range spot (the
+  wedge clears the ground there by less than 0.033 m: the exact test the demo had missed it) and
+  take17's looking straight down in the hangar (2.5 mm under the roof).
 * **The distance eases** to min(the wall test, D) along a cubic re-planned each frame
   (FUN_00070090), over 0.2 s moving out and 0.14 s moving in; a frame longer than that snaps. **The
   boom's direction** turns toward the wanted one by its angle x dt / 0.2 a frame (FUN_00073f90):
@@ -168,7 +177,10 @@ BF_CAMERA_PITCH=-0.0093` (Brutus `BF_CHARACTER=0` at -50.50,32.70 / 180.3 / -0.0
 -52.96,30.96 / 164.4 / -0.0199, Hawk 2 at -52.76,31.02 / 163.2 / -0.0165); the gate
 `BF_TEST_GOTO=-55.2,Z,-55.2,Z BF_CAMERA_PITCH=-0.0185` (a goal 0.5 m on, `Z-0.5`, turns Tex's back
 to the camera as in take04: a goal on the start faces him the other way); the hangar
-`BF_TEST_GOTO=-59.61,6.86,-59.61,6.36`; with `BF_CAMERA_LOG=1` and the letterbox hidden.
+`BF_TEST_GOTO=-59.61,6.86,-59.61,6.86 BF_TEST_SWEEP=-0.56` (take17's heading, -0.56 degrees:
+the camera 2 cm to -x of the pivot at -1.047, as the take's; at heading 0 the 0.5 D wedge sits
+2.5 mm under the roof's collision without meeting it and the boom stays at 2.767); with
+`BF_CAMERA_LOG=1` and the letterbox hidden.
 
 | What | The take | The demo |
 |---|---|---|
@@ -178,8 +190,10 @@ to the camera as in take04: a goal on the start faces him the other way); the ha
 | A tap (take02) | 3.915 -> 2.172-2.187 in 0.25 s; out from 6.4 s after the tap, done by 7.2 | 2.187 by +0.23 s (an undershoot to 2.161); out from 6.5 s, done by 7.4 (the press seen a frame late; the ramp itself 0.67 s as the game's) |
 | The gate, Z 35.285 / 37.6 / 38.6 / 40.0 (takes 04, 19) | 3.929 / 2.947 / 1.964 (alpha 0.60) / 0.400 (0.50) | the same (alpha 0.61, 0.50); take04 v 6.9 / 9.0 tile with the demo's see-through Tex (at v 9.0 the take's head is larger: Tex is still stepping back there, motion 4, where the demo's stands; the camera is where the take's is but 9 cm higher, 6 of them the demo's ground and 3 the take's dead zone, still on its height from before the walk) |
 | A tap with the gate behind (take20) | 0.40 -> 1.10, alpha 0.54, back to 0.40 at t430 ~0.65 | 0.40 -> 1.101 (alpha 0.53), back at t430 0.6 |
-| Turning a full circle 1.1 m from the gate (take05) | 0.4 on [-56, +49]; 0.5 D on [-117, -57], [+50, +65]; clear [-134, +109]; 0.75 D [+100, +70] | 0.4 to -56.1 and from +52.6; 0.5 D to -116; 0.75 D to -125.7; clear to +104.8; 0.75 D to +68.1 |
-| The hangar at -0.479 / +0.061 / +1.047 / -1.047 (take17) | 2.323 / 1.902 / 1.700 / 0.400 | 2.324 / 1.902 / 1.700 / **2.767** (0.5 D: see below) |
+| Turning a full circle 1.1 m from the gate (take05) | 0.4 on [-56, +49]; 0.5 D on [-117, -57], [+50, +65]; clear [-134, +109]; 0.75 D [+100, +70] | 0.4 to -57.0 and from +55.5; 0.5 D to -117.0; 0.75 D to -126.6; clear to +105.8; 0.75 D to +71.0 (#275: each boundary within a row or two of #126's, -55.1, +53.6, -115.0, -126.6, +103.8, +69.0) |
+| The hangar at -0.479 / +0.061 / +1.047 / -1.047 (take17) | 2.323 / 1.902 / 1.700 / 0.400, camera at -1.047 (-59.610, 31.375, 7.053) | 2.324 / 1.902 / 1.700 / 0.400 (#275), camera (-59.609, 31.377, 7.055) |
+| Looking up at the range spot, +0.757 (take13) | 2.039 (0.75 of 2.719); a tap: 1.508, out from t430 0.66, a peak of 2.58 and back to 2.039 | 2.039 (#275; 2.719 before: the exact test missed the ground); the tap 1.511, a peak of 2.63 and back to 2.039 |
+| A pitch sweep at the range spot (take01 4.1-5.3 s, 8.6-9.7 s) | cut (0.75 D) from +0.05 to about +0.43, then easing out toward D through +0.5 to +0.7, cut again by +0.8 | steady pitches: 0.75 D at +0.05 / 0.1 / 0.2 / 0.35, D at +0.5 / +0.6, 0.75 D at +0.757 / +0.9 / +1.047 |
 | The beach, a tap (take09, e40) | 3.928 -> 2.20, alpha stays 1.0 | 3.928 -> 2.200, 1.0 |
 | Flint scoped in the open (take16) | boom 0.500, zfov 8.01, pitch -0.018 -> +0.123 | 0.500, 8.01, -0.0177 -> +0.1230; level 2 3.21 |
 | Flint scoped at the gate (take15) | pitch -0.019 -> +0.206, out -0.008 | +0.2119, out -0.0025; after it 1.482 m, alpha 0.57 (take 1.495, 0.58) |
@@ -193,18 +207,19 @@ same numbers, and the tiles against take01 v 2.0, take02 v 3.0, take04 v 5.3 / 6
 v 3.0 and take16 v 3.5 line up as before; the tutorial's start (`BF_SCRIPT=off`) frames Tex as e34
 does.
 
-The unit tests (`cargo test --bin bf_play camera`) check the convex test, the wedge's steps against
+The unit tests (`cargo test --bin bf_play camera`) check the convex test (with a triangle 1.5 cm
+past the wedge's tip meeting it and one 9.5 cm past not, #275), the wedge's steps against
 a wall, the alpha by cover, the leash's catch-up, the ease's first step and the field of view.
 
 ## Not matching, not done
 
-* **The hangar looking straight down** (take17 at -1.047): the game's camera is cut to 0.4 m by
-  the roof, the demo's 0.5 D wedge clears the roof's collision by ~0.09 m and sits at 2.767. Its
-  other three pitches match; what the game's wedge meets there isn't found.
 * **Blockers are left out of the wall test** on the takes' evidence (the hangar and the fence);
   which object class keeps them out of the game's camera world isn't traced (the mask's types 15 /
-  19 / 24, or no collidable flag). FUN_00167c40 also counts a gap under 0.033 m (its 0.0011
-  squared) as a hit; the demo's GJK only a touch.
+  19 / 24, or no collidable flag).
+* **Within millimetres the heading decides**: the hangar's 0.5 D wedge meets the roof at take17's
+  heading (-0.56 degrees) and not at 0; the demo's ground and roofs are the game's collision, so a
+  spot where the game's camera and the demo's disagree by one step may be a few millimetres of
+  heading or pivot.
 * **Blocked** (not filmed; the spec's S1-S6): the wall test in the scope, the hand-over with a
   wall behind, a run along a jagged wall (whether the steps hunt: no hysteresis in the code), the
   scoped turn rate, the others' depth fade, Brutus's and Hawk's tap.

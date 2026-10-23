@@ -89,7 +89,7 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
 | 122 / 123 | the script | the world's cutscene bit on / off (world+0xc50 bit 4, "The cutscene bit") | 0x176227 / 0x176258 |
 | 119 | a character | the cutscene flags: with v0 or v9 set it joins the script's list (FUN_00174dc0), released at the end; then v0 without v1, or v9 without v10, hold it (FUN_00129470), else v0 with v1 hand it to the script's movement (FUN_001294a0); and apart from those, v9 with v10 release it (FUN_001294c0), last (0x17214b-0x17218e). All of the tutorial's 119s are `1,0,0,0,0,0,1,0,0,1,0,0`: hold | 0x17206d (fields FUN_001753f0 case 0x77) |
 | 105 | a character | hand it to the script's movement and send it to the world points listed after the `:` (FUN_001294a0, the goal FUN_00171710). The demo walks it there in straight lines (`held_step`): a point is done within 0.6 m, or given up once the walker hasn't come 0.1 m closer for 1 s (stuck: a guess, for the brain's route round what's in the way). The controlled character's walk ends as the script lets it go; another's goes on to its points | 0x171f7a |
-| 100 | a character | a command to its command handler (vtable +0x15c, 0x122040), the event's first value with 0 (#281, `command_100`). The scripts send three: CT_TOGGLE_WEAPON (9, eleven times) switches to its other gun, as Y does (play.rs `toggle_weapon`; silent for an AI member, as the switch sounds are the HUD weapon panel's, FUN_000cbec0: the openings play their own `trigger_sound_weapon_select` / `_deselect`); CT_RELOAD_WEAPON (17, five), with a gun in hand (none between a switch's put-away and its draw) and none in the second hand, takes a round out of a clip that isn't empty and reloads it (0x122069), so a full clip takes one round from the reserve; CT_TOGGLE_CROUCH (15, four) is logged, not run (below). That's how a fresh start's guns come: e34's opening switches Flint (13.06 s) and Tex (17.98 s, the LZR-50), e40's Hawk, Tex and Brutus (7.2-8.0 s) and reloads Flint's and Tex's (11mm 40 -> 39, Sonic 200 -> 199), as xemu read them after it (#196 notes) | 0x1722cc |
+| 100 | a character | a command to its command handler (vtable +0x15c, 0x122040), the event's first value with 0 (#281, `command_100`). The scripts send three: CT_TOGGLE_WEAPON (9, eleven times) switches to its other gun, as Y does (play.rs `toggle_weapon`; silent for an AI member, as the switch sounds are the HUD weapon panel's, FUN_000cbec0, played only for a character a player slot controls, FUN_000bb220: the openings play their own `trigger_sound_weapon_select` / `_deselect`; the controlled character's is heard, #282); CT_RELOAD_WEAPON (17, five), with a gun in hand (none between a switch's put-away and its draw) and none in the second hand, takes a round out of a clip that isn't empty and reloads it (0x122069), so a full clip takes one round from the reserve; CT_TOGGLE_CROUCH (15, four) is logged, not run (below). That's how a fresh start's guns come: e34's opening switches Flint (13.06 s) and Tex (17.98 s, the LZR-50), e40's Hawk, Tex and Brutus (7.2-8.0 s) and reloads Flint's and Tex's (11mm 40 -> 39, Sonic 200 -> 199), as xemu read them after it (#196 notes) | 0x1722cc |
 
 * **START_PATH_ANIMATION** moves its first entity along its second (a path) over its `duration`
   (the event class at vtable 0x392520: FUN_00275180 builds it, 0x275290 updates it each frame).
@@ -167,8 +167,10 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   is the co-op join, not the HUD. The tutorial's seven: trigger_letterbox14 (the opening: in at
   once, out over 0.5 s), the patrol's, the lessons', the V-squad's (0.5 s each way) and the
   ending's (in at once). Every one is driven by its script's 103s.
-* **The HUD** is hidden while the bars are in beyond 0.25 of full. **A fit**: the code that
-  hides it wasn't found. Take03 has no HUD at 26.3 s with the bars at 0.37, a faint one at 26.4 s
+* **The HUD** is hidden while the bars are in beyond 0.25 of full. **A fit**. The code was
+  found since (#282): the HUD's update FUN_000b8e30 sets its alpha to clamp(1 - 2 x the bars'
+  amount, 0, 1) every frame, and every top-level widget's draw takes it (FUN_000bb170), so the
+  game fades the HUD out by half bars and back in as they go; the demo still cuts it at 0.25. Take03 has no HUD at 26.3 s with the bars at 0.37, a faint one at 26.4 s
   (0.17) and all of it at 26.6 s (gone). Take09 at 39.95 s is half there at 0.14. Take15 has it
   hidden through show_patrol_2, which has no 122 / 123, so it follows the bars and not the
   cutscene bit.
@@ -402,7 +404,8 @@ frames were compared side by side.
 * The spawn and warp fade-ins (h_eeae96e7, h_0ede4719: 2 s on Tex and the marines; a warp
   without h_0ede4719 has 2 s, its constructor's, 0x200734) aren't drawn: they appear at once.
 * The HUD comes back at once as the bars fall below 0.25 (the fit). The game's fades in over
-  them (take03 faint at 26.4 s, take09 half there at 39.95 s); its code wasn't found.
+  them (take03 faint at 26.4 s, take09 half there at 39.95 s): its alpha is 1 - 2 x the bars'
+  amount (FUN_000b8e30, #282), not done yet.
 * The level's start fades in from black over ~0.5-0.7 s in take01. That isn't in the scripts
   and isn't done.
 * The opening's title card ("Brute Force" / "Welcome to the 23rd!", take03 from about 6 s to
