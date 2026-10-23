@@ -1384,8 +1384,13 @@ spec (`todo/62-l-shot-75/spec.md` §3) and the analyst's answers
   demo's gun can change at once (a test hook, a squad hand-back) with the zoom still up: then it
   falls at its own zoom / T_out. A gun in the second hand, or none, keeps the game's top of 1.
 * **The view** is the skill's (+0xa8: FUN_000b4070 shows the scope frame h_1807ec04 only while
-  its bit 0 is clear): Flint's (0x2d5e40) 1, no frame, her full-screen glow; everyone else's 0
-  (Tex's 8), the frame.
+  its bit 0 is clear, and 0xc6030 makes Flint's overlay only when it's set): Flint's (0x2d5e40)
+  1, no frame, her overlay of a corner smear and a dotted ring; everyone else's 0 (Tex's 8:
+  nothing reads bit 3), the frame. Both are drawn by `src/bin/play_scope_view.rs` (#283), one
+  pass over the picture in the console's sRGB values: the frame 1:1 from the middle, darkening
+  the picture to 40% outside its rim, whole at the press and growing 3x as it fades on the way
+  out; the overlay added, easing in from 3x to 2x over 0.17 s ([squad.md](squad.md), "Two kinds
+  of scope view", with how it was checked). `BF_SCOPE_VIEW_LOG=1` prints their state.
 * **The field of view** at a zoom is FUN_0006c720's 2 atan(tan(FOV / 2) / zoom) from the game's
   follow camera's 70 degrees across its 4:3 picture, 55.4 down (`FOV_Y`, #269,
   [camera.md](camera.md)): the L-Shot-75's first level shows 8.01 degrees across, 6.01 down, its

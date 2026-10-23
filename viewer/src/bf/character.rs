@@ -347,6 +347,14 @@ pub struct Game {
     pub radar: RadarOptions,
     /// game-options `<character-options>`: the scope's zoom times (see `ScopeOptions`)
     pub scope: ScopeOptions,
+    /// The follow cameras' far planes (m) by archetype name: objecttypes `<follow-camera>` entries'
+    /// `clip-plane-far` (h_f0ecfd49), the first archive's. Six in the game's data, each name the
+    /// same in every level: `follow_camera` (h_0129ad29) and common's h_e5cadbd0 250, h_f727cfb9
+    /// 100, h_f4e63ed2 350, h_13de6c98 300, h_eee6499f 800. A level's file names the one its
+    /// players' characters get (`level::Level::follow_camera`); its far plane is the view's +0x28,
+    /// which the follow camera clamps the scope's focus to (FUN_000702a0) and Flint's scope overlay
+    /// sizes by the focus's share of (play_scope_view.rs).
+    pub follow_cameras: HashMap<u32, f32>,
     /// game-options' characters (h_f5a42d61): the names the DNA is found by (see `GameCharacter`)
     pub option_characters: Vec<GameCharacter>,
     /// game-options `<combat-skills>`: the skills' own tuning (see `CombatSkills`)
@@ -1280,6 +1288,7 @@ impl Game {
             reticule: ReticuleOptions::default(),
             radar: RadarOptions::default(),
             scope: ScopeOptions::default(),
+            follow_cameras: HashMap::new(),
             option_characters: vec![],
             combat_skills: CombatSkills::default(),
             hud_safe: [48.0, 36.0],
@@ -1632,6 +1641,16 @@ impl Game {
                 let name = hash_of(t.child(h("base")).and_then(|b| b.attr(h("name"))));
                 if let (true, Some(kind)) = (name != 0 && name != h(""), t.attr(h("light-type")).and_then(|v| v.ints().first().copied())) {
                     self.light_types.entry(name).or_insert(kind);
+                }
+            }
+            // follow cameras: <follow-camera><h_e275fb80><base clip-plane-far=F ..><base name=T/>
+            // (see `follow_cameras`)
+            for t in root.children_named(h("follow-camera")).flat_map(|l| l.children.iter()) {
+                let Some(b) = t.child(h("base")) else { continue };
+                let name = hash_of(b.child(h("base")).and_then(|n| n.attr(h("name"))));
+                let far = b.attr(h("clip-plane-far")).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+                if let (true, Some(far)) = (name != 0 && name != h(""), far) {
+                    self.follow_cameras.entry(name).or_insert(far);
                 }
             }
             // liquid types: <h_fa2f5452><.. liquid-type=K h_06f6a40d=D..><base ..><base name=T/>

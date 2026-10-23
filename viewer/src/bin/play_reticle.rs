@@ -206,6 +206,11 @@ pub struct Reticle {
     /// the crosshair's alpha (FUN_000c6280: ALPHA through the skill's +0xfc; Flint's targeting
     /// fades it as its marker fills, play_targeting.rs)
     pub alpha: f32,
+    /// how deep along the view the centre ray's point lies (m): the controller's +0xb8, what the
+    /// ray meets or else the point at its full range (FUN_000becf0). The follow camera focuses
+    /// the scope on its depth (FUN_000702a0's cam+0x1f8, through FUN_000621c0), which sizes
+    /// Flint's scope overlay (play_scope_view.rs)
+    pub depth: f32,
     kept: Option<Who>,
     /// the tint, lock and what's under the centre that BF_RETICLE_LOG printed last
     logged: String,
@@ -213,7 +218,7 @@ pub struct Reticle {
 
 impl Default for Reticle {
     fn default() -> Self {
-        Reticle { tint: Tint::Blue, lock: None, aim: None, alpha: ALPHA, kept: None, logged: String::new() }
+        Reticle { tint: Tint::Blue, lock: None, aim: None, alpha: ALPHA, depth: 0.0, kept: None, logged: String::new() }
     }
 }
 
@@ -528,6 +533,8 @@ pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<G
     let range = held.map_or(NO_GUN_RANGE, |w| skills::weapon_range(&player, &w.def));
     let ray = view.through(centre).normalize();
     let under = under_ray(view.at, ray, range, &squad);
+    // its point's depth (+0xb8: what it meets, else the full range's end)
+    reticle.depth = view.depth(view.at + ray * under.map_or(range, |(t, _)| t));
     let level = map.0.as_ref();
     let mut state = Tint::Blue;
     let mut direct = None;

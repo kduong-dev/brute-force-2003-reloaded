@@ -369,6 +369,9 @@ pub struct Level {
     /// meshes' ambient, c15 (0xda19b), where the static meshes take `ambient` (c14). Read, not
     /// drawn: characters take `ambient` here
     pub character_ambient: [f32; 3],
+    /// the follow camera archetype its players get (H_FOLLOW_CAMERA; 0 if the file names none):
+    /// its far plane is `Game::follow_cameras`'
+    pub follow_camera: u32,
     /// half the terrain's width (m): its grid is width blocks x 16 cells of h_e023cdc9 m,
     /// centred on the origin; the layer masks span it
     pub terrain_half: f32,
@@ -465,6 +468,12 @@ const H_CAMERA_HALF_FOV: u32 = 0x1435_F288;
 const H_CAMERA_NEAR: u32 = 0x19BC_8FDF;
 /// A camera-object's h_125978e4: its far plane (0x6cb90, the view's +0x20).
 const H_CAMERA_FAR: u32 = 0x1259_78E4;
+/// The level file's h_e8eb1b7b: the follow camera archetype its players' characters get (the
+/// level-file parser 0x198690 -> world+0xa74, which FUN_000da8f0 looks up for a character's
+/// `follow_cam_%X`): `follow_camera` (h_0129ad29) on 35 levels, h_f727cfb9 on 12 (e06, e10,
+/// m01_*, m05_*, mp4, sdm_e10), h_f4e63ed2 on m02_*, h_13de6c98 on m07_c and sdm_m07, h_eee6499f
+/// on m14_c and m14_d (`Level::follow_camera`).
+const H_FOLLOW_CAMERA: u32 = 0xE8EB_1B7B;
 /// The patrol points' elements: `patrol-point` (h_ffcf1f13) and `patrol-first-point`
 /// (h_09528bf8, names recovered by hashing; their types patrol_point h_efd397a1 and
 /// patrol_first_point h_0eef0757 are the strings at 0x40ceac and 0x40ce98).
@@ -780,9 +789,10 @@ impl Level {
                 parent: link.map(|p| hash(p, h("parent"))).filter(|&n| n != h("")).unwrap_or(0),
             })
         }).collect();
+        let follow_camera = hash(root, H_FOLLOW_CAMERA);
         Ok(Level { terrain, objects, sky, sky_at, sky_spin, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, other_lights,
-                   terrain_ambient, character_ambient, terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths,
-                   max_score, patrols, effect_objects })
+                   terrain_ambient, character_ambient, follow_camera, terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects,
+                   paths, max_score, patrols, effect_objects })
     }
 
     /// The directional lights FUN_000dcc10 puts in the indoor pair (`indoor`) or the outdoor one:
