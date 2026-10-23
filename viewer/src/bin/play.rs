@@ -1597,7 +1597,8 @@ struct Throw {
 }
 
 /// Weapon-switch sounds, hard-coded in default.xbe (0xcbfda, the HUD weapon panel's row state
-/// setter FUN_000cbec0: heard for the controlled character's switch only, `start_switch`): the
+/// setter FUN_000cbec0, played through FUN_000bb220: heard for the controlled character's switch
+/// only, `start_switch`): the
 /// first when a switch starts, the second when it completes; in a capture of the game they play
 /// 0.63-0.66 s apart.
 const SWITCH_SOUNDS: [u32; 2] = [0xFF82_0FDA, 0xE1E9_7460];
@@ -5469,11 +5470,16 @@ fn start_switch(p: &mut Player, l: &Loaded) -> bool {
     let to = (p.weapon + 1) % l.weapons.len();
     p.fire_state.reset_burst(0);                        // FUN_0022dc00
     // the two sounds are the HUD's: the weapon panel's rows (vtables 0x39f0b8 / 0x39f078, their
-    // update 0xcb970) watch the slot in hand (inventory +0x1cc / +0x1d0) of the HUD entry's
-    // character (entry+0xe0, the controlled one), and their state setter FUN_000cbec0 plays
-    // ff820fda / e1e97460 (0xcbfda) through the entry's FUN_000bb220 as a row leaves or takes the
-    // hand. So only the controlled character's switch is heard: an AI member's, as a script's
-    // toggle of e40's Hawk and Brutus, is silent (the opening plays its own sound-triggers)
+    // update 0xcb970) watch the slot in hand (inventory +0x1cc / +0x1d0) of their HUD entry's
+    // character (entry+0xe0; every squad member has an entry, and every entry's rows update),
+    // and their state setter FUN_000cbec0 plays ff820fda / e1e97460 (0xcbfda) through
+    // FUN_000bb220 as a row leaves or takes the hand. FUN_000bb220 plays a squad member's entry's
+    // sound only when a player slot controls that member (0x8cf60), so only the controlled
+    // character's switch is heard: an AI member's, as a script's toggle of e40's Hawk and
+    // Brutus, is silent (the opening plays its own sound-triggers). A cutscene doesn't silence
+    // the controlled one's (#282): the entries update every frame of play (0x7a140) and the
+    // cutscene's HUD hide is the HUD's alpha (FUN_000b8e30), not the rows' hidden bit, the one
+    // FUN_000bb220 reads
     if p.controlled {
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
         p.switch_sound_in = SWITCH_SOUND_GAP;
