@@ -3,8 +3,12 @@
 Every grenade type comes from the loaded levels' `inventory-grenade` definitions (read into
 `WeaponDef`, `src/bf/weapon.rs`); nothing per type is hard-coded except which definitions the
 squad carries when several share a label (the Sentry has three, the Roller two: the ones the
-recordings show, `SQUAD_GRENADES`) and the order T steps through them. The squad carries only
-those seven. The Molotov (e01's h_f42e0faa, a labelled grenade with an icon) is the mutants'
+recordings show, `SQUAD_GRENADES`; a level that defines only another one its squad's
+placements carry takes that one, m14_c's and m14_d's Sentry h_f73de83d) and their order, which
+T steps through and the item box shows first: the game's store order, (category, index) = the
+group-type and h_e5f51266, Frag, Gas, Sonic, Energy, Light, Sentry, Roller (#281,
+[play.md](play.md) "Items: the squad's starting inventory"). The squad carries only those
+seven. The Molotov (e01's h_f42e0faa, a labelled grenade with an icon) is the mutants'
 weapon (#78), not the squad's: its definition is read like the others' for an AI thrower to
 use. Per type:
 

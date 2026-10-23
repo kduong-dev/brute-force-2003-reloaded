@@ -221,8 +221,10 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   in the world instead (m09_a's four, whose warp-triggers move them: #222) starts at its
   placement. It carries its template's inventory, as the copy is the placement
   (`SquadSpawn::dress`): its `<weapon>`s (the tutorial's Tex two MK-ASLTs, h_0c3db625, 48 a clip,
-  the icon take03 shows) and its ammo, which sets the squad's reserve of that type (play_ammo.rs:
-  his 500 of type 2, take03's 48 / 500). The level's other squad members aren't there: the
+  the icon take03 shows) and its items, pooled with the other members' into the squad's one store
+  (play_inventory.rs, #281: [play.md](play.md) "Items: the squad's starting inventory"): its ammo
+  is the squad's reserve of that type (play_ammo.rs: his 500 of type 2, take03's 48 / 500), its
+  grenades, medkits and other items the squad's. The level's other squad members aren't there: the
   tutorial has Tex alone (the marines are its own spawns). On a map without either (the
   deathmatch maps) the start points and the formation are as before. When the member's
   spawn-trigger fires later (the opening script at 17.09 s, #222) it's moved there; if the member

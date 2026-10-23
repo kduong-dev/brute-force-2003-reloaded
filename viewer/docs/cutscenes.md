@@ -89,6 +89,7 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
 | 122 / 123 | the script | the world's cutscene bit on / off (world+0xc50 bit 4, "The cutscene bit") | 0x176227 / 0x176258 |
 | 119 | a character | the cutscene flags: with v0 or v9 set it joins the script's list (FUN_00174dc0), released at the end; then v0 without v1, or v9 without v10, hold it (FUN_00129470), else v0 with v1 hand it to the script's movement (FUN_001294a0); and apart from those, v9 with v10 release it (FUN_001294c0), last (0x17214b-0x17218e). All of the tutorial's 119s are `1,0,0,0,0,0,1,0,0,1,0,0`: hold | 0x17206d (fields FUN_001753f0 case 0x77) |
 | 105 | a character | hand it to the script's movement and send it to the world points listed after the `:` (FUN_001294a0, the goal FUN_00171710). The demo walks it there in straight lines (`held_step`): a point is done within 0.6 m, or given up once the walker hasn't come 0.1 m closer for 1 s (stuck: a guess, for the brain's route round what's in the way). The controlled character's walk ends as the script lets it go; another's goes on to its points | 0x171f7a |
+| 100 | a character | a command to its command handler (vtable +0x15c, 0x122040), the event's first value with 0 (#281, `command_100`). The scripts send three: CT_TOGGLE_WEAPON (9, eleven times) switches to its other gun, as Y does (play.rs `toggle_weapon`; silent for an AI member, as the switch sounds are the HUD weapon panel's, FUN_000cbec0: the openings play their own `trigger_sound_weapon_select` / `_deselect`); CT_RELOAD_WEAPON (17, five), with a gun in hand (none between a switch's put-away and its draw) and none in the second hand, takes a round out of a clip that isn't empty and reloads it (0x122069), so a full clip takes one round from the reserve; CT_TOGGLE_CROUCH (15, four) is logged, not run (below). That's how a fresh start's guns come: e34's opening switches Flint (13.06 s) and Tex (17.98 s, the LZR-50), e40's Hawk, Tex and Brutus (7.2-8.0 s) and reloads Flint's and Tex's (11mm 40 -> 39, Sonic 200 -> 199), as xemu read them after it (#196 notes) | 0x1722cc |
 
 * **START_PATH_ANIMATION** moves its first entity along its second (a path) over its `duration`
   (the event class at vtable 0x392520: FUN_00275180 builds it, 0x275290 updates it each frame).
@@ -100,9 +101,14 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   their pads) as its home, but nothing sends them there: take11's watch log has the two on their
   spawn points to 0.1 m until Tex moves off, then following him (#227, [brain.md](brain.md),
   "The Confed marines").
-* **Not run** (logged, #232): codes 100, 104, 110 (another script by name), 111, 113, 114 (a
+* **Not run** (logged, #232): codes 104, 110 (another script by name), 111, 113, 114 (a
   camera shake), 115 and 120 (a fade, FUN_00069780), and ATTACH_ENTITY. The tutorial uses none
-  of them. Of 119's other fields (v2 and v7 the character's FUN_001268b0, v6 an entity flag, v8,
+  of them. Code 100 runs since #281 (above), but for its CT_TOGGLE_CROUCH (15: 0x12247b asks
+  for the crouch motion, standing up after FUN_0012b440's clearance when crouched): the demo's
+  squad AI sets the crouch every frame for a member the script doesn't hold, so the toggle can't
+  hold. e34's Hawk isn't held at her first (16.39 s: her copy comes after the script's start, so
+  its start doesn't hold her); her second (20.69 s) comes during her 105 walk, and run, it
+  crouched her for the opening's last 2.4 s. Of 119's other fields (v2 and v7 the character's FUN_001268b0, v6 an entity flag, v8,
   v11 its brain reset) none is run; the tutorial sets only v6.
 
 ## Cameras and paths

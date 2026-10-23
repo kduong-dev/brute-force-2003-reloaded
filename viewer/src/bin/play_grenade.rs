@@ -106,17 +106,19 @@ const TINT_GREY: f32 = 0.4;
 /// Blast sounds are this loud at the blast, falling to BLAST_QUIET at BLAST_HEARD m (the demo's).
 pub(super) const BLAST_HEARD: f32 = 60.0;
 pub(super) const BLAST_QUIET: f32 = 0.3;
-/// The squad's grenade definitions, in the order the demo's grenade key (T) steps through them:
-/// Frag (#75), Energy (#74), Gas (#76), Light (#77), Sonic (#81), Roller (#79), Sentry (#80).
+/// The squad's grenade definitions, in the game's store order, (category, index): the group-type
+/// and h_e5f51266 of each (FUN_00149d30's key; the store and the item box run through it in that
+/// order, FUN_0014c230): Frag (2, 0; #75), Gas (2, 1; #76), Sonic (2, 4; #81), Energy (2, 5; #74),
+/// Light (2, 32; #77), Sentry (3, 1; #80), Roller (3, 4; #79). The kits are kept in that order
+/// (`load_kits` sorts them by it), which is the order the demo's grenade key (T) steps through
+/// them and the first one carried the item box shows: e34's Sonic, e16's and e23's Gas.
 /// Some labels have several definitions (the Sentry three, the Roller two): these are the ones
-/// the recordings show. The squad carries only these: the other labelled grenade with an icon,
-/// the Molotov (e01's h_f42e0faa), is the mutants' weapon (#78); its definition is read like
-/// any other (`Game::weapons`) for an AI thrower to use.
-const SQUAD_GRENADES: [u32; 7] = [0x060F_95F7, 0x0CC3_C2C8, 0xE8C6_7904, 0xFD1A_966D, 0xEC0B_F28F, 0xFBA7_C475, 0xE5F1_F063];
-/// The Frag (the main game's starting grenades).
-const FRAG: u32 = 0x060F_95F7;
-/// grenades carried at the start of the main game (the capture's HUD shows 3 Frags)
-const START_GRENADES: i64 = 3;
+/// the recordings show; a level that defines another of a label its squad's placements carry
+/// takes that one (`load_kits`: m14_c's and m14_d's Sentry h_f73de83d, (3, 3)). The squad carries
+/// only these: the other labelled grenade with an icon, the Molotov (e01's h_f42e0faa), is the
+/// mutants' weapon (#78); its definition is read like any other (`Game::weapons`) for an AI
+/// thrower to use.
+const SQUAD_GRENADES: [u32; 7] = [0x060F_95F7, 0xE8C6_7904, 0xEC0B_F28F, 0x0CC3_C2C8, 0xFD1A_966D, 0xE5F1_F063, 0xFBA7_C475];
 
 /// Throw velocity for a charge of `power` (0..1) toward the crosshair ray, lowered by
 /// THROW_LOB, aimed between 0.8 rad down and 1.2 rad up.
@@ -284,25 +286,39 @@ pub fn plugin(app: &mut App) {
         .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
-        .add_systems(Update, (stock_inventory, launch_grenades, hold_grenade, super::sentry::trip, fly_grenades, super::energy::strike, super::sonic::ring, tint).chain().in_set(GrenadeSystems)
+        .add_systems(Update, (super::inventory::stock, launch_grenades, hold_grenade, super::sentry::trip, fly_grenades, super::energy::strike, super::sonic::ring, tint).chain().in_set(GrenadeSystems)
             .after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
 
-/// The squad's grenade types (SQUAD_GRENADES, those the loaded levels define), their ALE
-/// effects compiled and their materials' render pipelines built ahead (`ale_fx::warm_up`).
+/// The squad's grenade types (SQUAD_GRENADES, those the loaded levels define; then any other
+/// grenade or explosive the level's squad placements carry whose label none of those has: a
+/// Sentry defined only as h_f73de83d, m14_c and m14_d), their ALE effects compiled and their
+/// materials' render pipelines built ahead (`ale_fx::warm_up`).
+#[allow(clippy::too_many_arguments)]
 fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
              mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
              ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut held: ResMut<Held>, mut tint: ResMut<ScreenTint>,
-             mut delayed: ResMut<DelayedBlastParts>) {
+             mut delayed: ResMut<DelayedBlastParts>, spawns: Option<Res<super::triggers::SquadSpawns>>) {
     held.0 = None;
     tint.0 = TINT_TIME;
     delayed.0.clear();
     delayed.1.clear();
     delayed.2.clear();
     let usable = |d: &WeaponDef| d.projectile != 0 && d.icon != 0 && !d.label.is_empty() && !d.label.starts_with("h_");
-    let defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
+    let mut defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
+    let carried = spawns.iter().flat_map(|s| s.0.iter()).flat_map(|s| s.items.iter().map(|i| i.0));
+    for n in carried {
+        let other = game.0.weapons.get(&n).filter(|d| matches!(d.group_type, 2 | 3) && usable(d))
+            .filter(|d| !defs.iter().any(|k| k.label.eq_ignore_ascii_case(&d.label)));
+        if let Some(d) = other.cloned() {
+            defs.push(d);
+        }
+    }
+    // (in the store's (category, index) order, as SQUAD_GRENADES: an alternate taken above goes in
+    // its place)
+    defs.sort_by_key(|d| (d.group_type, d.item_index));
     let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
     let kits: Vec<GrenadeKit> = defs.into_iter().map(|d| GrenadeKit::load(&mut game.0, &mut assets, d)).collect();
     if let Some(mut ale) = ale {
@@ -316,37 +332,6 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
     }
     println!("{} grenade types: {}", kits.len(), kits.iter().map(|k| k.def.label.as_str()).collect::<Vec<_>>().join(", "));
     commands.insert_resource(GrenadeKits(kits));
-}
-
-/// The squad's grenades, once a character is loaded (and after a respawn): the main game starts
-/// with START_GRENADES Frags; the test map with a full stack (stack-limit) of every type.
-/// Test hook: BF_TEST_GRENADE_TYPE=<label> (e.g. Sonic) selects that type, giving a stack of it
-/// if none is carried.
-fn stock_inventory(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, test: Option<Res<super::testmap::TestMap>>) {
-    let Some(kits) = kits else { return };
-    if player.loaded.is_none() || player.grenades.len() == kits.0.len() {
-        return;
-    }
-    player.grenades = kits.0.iter().map(|k| match (test.is_some(), k.def.name == FRAG) {
-        (true, _) => k.def.stack_limit.max(1),
-        (false, true) => START_GRENADES,
-        _ => 0,
-    }).collect();
-    // the main game's levels without the Frag: the first type
-    if test.is_none() && !player.grenades.iter().any(|&n| n > 0) {
-        if let Some(n) = player.grenades.first_mut() {
-            *n = START_GRENADES;
-        }
-    }
-    let first = player.grenades.iter().position(|&n| n > 0).unwrap_or(0);
-    if let Some(k) = std::env::var("BF_TEST_GRENADE_TYPE").ok().and_then(|l| kits.find(&l)) {
-        if player.grenades[k] <= 0 {
-            player.grenades[k] = kits.0[k].def.stack_limit.max(1);
-        }
-        player.item = Item::Grenade(k);
-    } else if matches!(player.item, Item::Grenade(_)) {
-        player.item = Item::Grenade(first);
-    }
 }
 
 /// A grenade let go this frame (play.rs's throw and place): where, how fast, its type, and

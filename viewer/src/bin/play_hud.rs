@@ -1327,11 +1327,16 @@ fn update_hud_widgets(
     let name_of = |game: &GameData, i: Item| match i {
         Item::Grenade(k) => kit(k).map_or("Frag".to_string(), |g| g.def.label.clone()),
         Item::Medkit => game.0.items.get(&player.medkit_kind).map(|t| t.label.clone()).filter(|s| !s.is_empty()).unwrap_or("Medkit".into()),
+        Item::Other(t) => game.0.items.get(&t).map(|t| t.label.clone()).unwrap_or_default(),
     };
-    // pale while it can be used, red while it can't (capture: a medkit at full health)
+    // pale while it can be used, red while it can't (capture: a medkit at full health; #196 take26:
+    // Brutus's OrgSen)
     let usable = super::item_usable(&player, item);
     let item_color = if usable { MESSAGE_BLUE } else { ITEM_RED };
-    let grenade = matches!(item, Item::Grenade(_));
+    // (laid out as a grenade: the grenade types and the other items, whose icon, name and count sit
+    // where the grenades' do in #196 take26's OrgSen box and take27's Sonic; the Medkit keeps the
+    // medkit captures' own)
+    let grenade = !matches!(item, Item::Medkit);
     // the item list's slots: the other carried grenade types up the column (in order after the
     // selected one), the other items leftward
     let (mut up, left): (Vec<Item>, Vec<Item>) = carried.iter().copied().filter(|&i| i != item).partition(|i| matches!(i, Item::Grenade(_)));
@@ -1347,6 +1352,8 @@ fn update_hud_widgets(
     let icon_of = |game: &GameData, i: Item| match i {
         Item::Grenade(k) => kit(k).map(|g| g.def.icon).filter(|&x| x != 0).unwrap_or(FRAG_ICON),
         Item::Medkit => game.0.items.get(&player.medkit_kind).map_or(MEDKIT_ICON, |t| if t.icon != 0 { t.icon } else { MEDKIT_ICON }),
+        // (its type's own h_e5ec3f1f: the OrgSen's h_1b73c691, the Hat's h_06a6c5ad)
+        Item::Other(t) => game.0.items.get(&t).map_or(0, |t| t.icon),
     };
     let new_word = game.0.strings.get(&S_NEW).cloned().unwrap_or("NEW".into());
     let regen_word = game.0.strings.get(&S_REGEN).cloned().unwrap_or("Regen".into());

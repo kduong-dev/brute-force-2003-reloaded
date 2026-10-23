@@ -7,7 +7,7 @@
 | Ctrl | walk |
 | Right mouse (hold) | aim: the gun is held raised (its ready timer at 4 s or more), so the camera moves in as after a shot and eases out the game's way after the release ([camera.md](camera.md): a keyboard-and-mouse adaptation, the game has no aim without shooting); the gun is turned onto the crosshair while the legs keep moving; moving away from the aim backpedals. Moving across it (30-150 degrees off the crosshair) side-steps, standing (`Sc_w1/w2_rp_f_side_walk_l/r` up to 100 degrees, `rp_b_side_walk_l/r` past it) or crouched (`cr_f/b_side_walk_l/r`). Those clips twist the upper body about a quarter turn off the root, and their root motion runs straight along it, forward or back, as far as the walks. So the character turns until the gun is on the crosshair and walks where the clip takes it: across the aim, a little forward or back. One clip in the squad's data has no root motion: Tex's `Sc_w1_rp_f_side_walk_l` (his first slot, whatever gun is in it, aimed left; its own speed h_f9628571 is 5.9e-05 m/s where the squad's other side steps carry 1.0-2.1). The game doesn't move a walk by its clip (FUN_0012c6c0 moves it at the type's `speeds` along the stick), so there he steps left as he does right. The demo moves by root motion, so a side step whose own speed is under 0.001 (the game's no-speed threshold for the play rate) takes the root motion of its stance's walk in the same direction, forward or back (`root_stand_ins`; #170: he walked in place before). `BF_TEST_STRAFE=<x>[,<y>]` moves that way (camera-relative) with `BF_TEST_GOTO`; with a goal far ahead (`BF_TEST_GOTO=4.5,20,4.5,-80`) the camera keeps still while he steps. `BF_MOVE_LOG=1` prints the controlled character's position, facing, gait and clip every half second (and the stand-in walk, `root from`). Verified (#170, `BF_MOVE_LOG=1 BF_TEST_AIM=1 BF_TEST_GOTO=4.5,20,4.5,-80 -- --test`, Tex with the Therm Sweeper): aimed left (`BF_TEST_STRAFE=-1,0`) 1.59 m/s and right 1.60, back-left / back-right 1.53 / 1.54, crouched 1.72-1.73 each way; the planted boot holds within 1 px of the floor on both steps; main's build stepped left in place; Hawk's aimed steps and Tex's unaimed walk are pixel-identical to main |
 | Left mouse (hold) | fire the held weapon (at its own rate; also aims while held). Standing, the feet turn with the aim (the spine keeps at most ~11° of twist, also when looking down and turning). As in the game, the camera moves in along the crosshair's ray from the first shot (the aim shift: Tex's 3.9 m to 2.2), stays in for the ready timer's 4 s and 2.33 s more, then eases out over 0.67 s; a dash, a jump, a crouch's transition, a throw, a reload or a switch lowers the gun and takes it out sooner ([camera.md](camera.md)) |
-| Q | switch between the character's two weapons (animated: stow one, draw the other; plays the game's hard-coded switch sounds ff820fda / e1e97460, 0.65 s apart) |
+| Q | switch between the character's two weapons (animated: stow one, draw the other; plays the game's hard-coded switch sounds ff820fda / e1e97460, 0.65 s apart: the HUD weapon panel's, FUN_000cbec0, so an AI member's switch, a script's toggle, is silent) |
 | Space | jump: standing jumps crouch first, running jumps launch straight away and carry the run's momentum (Brutus uses his four-legged jump when sprinting on all fours) |
 | C | dodge roll / sidestep to the left or right of the movement |
 | Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` (held: asked for again each frame); `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time, as the key toggles. In Tex's berserk Z does nothing and the press is dropped ([skills.md](skills.md)) |
@@ -15,10 +15,10 @@
 | click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
-| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. The main game starts with 3 Frags |
+| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen and the Hat do nothing yet (#21), but Brutus is told "Cannot use" |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold [X] to activate panel." shows (the game's glyph line, X's glyph: E is the demo's X; [hints.md](hints.md)) and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
-| Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
+| Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit, OrgSen, Hat); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
 | I | in a mission, the MISSION OBJECTIVES menu (the game's BACK; the pad's Back too): the mission's objectives, " (completed)" or " (failed)" after each as its flags say; the game's clock stops under it. I again, Enter or Space (the pad's A or B) close it; while it's up no key or mouse press reaches the game (the closing one included). See [campaign.md](campaign.md) |
 | V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Tex's Berserker draws his other gun into his left hand and fires both; in it Q and R end it instead of switching or reloading. Brutus's Vengar heals him, cuts the damage he takes, charges enemies down when he sprints into them, and turns the view grey with every living character a heat figure. Flint's Targeting widens the crosshair's lock. Hawk's Stealth fades her out over a second: the enemies lose her, the crosshair can't lock her, a shot or an item costs stamina. See [skills.md](skills.md) |
 | B | the game's Black button (its Medkit shortcut): only the tutorial's button gates read it for now ("Press [Black] to use Medkit." clears on it); it uses no Medkit yet. See [hints.md](hints.md) |
@@ -49,8 +49,8 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     on its point) and the cards (on their edges) fall over onto their sides.
   * They're inventory-objects as on a map, so medkits and fruit work as in "Health pickups",
     and everything is loose (kicked, thrown by blasts, tumbling).
-* **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Energy,
-  Gas, Light, Sonic, Roller, Sentry. m09_a is
+* **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Gas,
+  Sonic, Energy, Light, Sentry, Roller (the game's store order, #281). m09_a is
   loaded for the Light (only in m09_a/b/c/x). T steps through them. See **Grenades**.
 * **Every character type of the data** (128) for the NPC spawner (#180): its levels define
   55; the other 73 come from the 31 level archives that define them, without those levels
@@ -164,7 +164,8 @@ buffered for 0.4 s.
 
 Weapons (`src/bf/weapon.rs`): every character carries their real starting inventory
 (objecttypes: Brutus Feral Cutter + Bower 20, Flint L-Shot-50 + Confed LZR-10, Hawk Foley 356
-Tact + Confed LZR-23, Tex Confed LZR-23 + RVG50 Minigun), with names from the English string
+Tact + Confed LZR-23, Tex Confed LZR-23 + RVG50 Minigun; on a campaign zone each member's
+placement's two instead, slot 1 in hand: see **Items: the squad's starting inventory**), with names from the English string
 table, models from the level's weapon archetypes (24-byte static vertices; the minigun is a
 compound whose barrel spins), and the definition's fire rate, fire sounds and range. A held gun
 hangs from the trigger hand: the character's hand hardpoint lined up with the weapon's trigger
@@ -286,21 +287,31 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
   of that type (FUN_0022da80 looks the weapon's `ammo-type` up in the holder's inventory). The
   Foley 356 and the L-Shot share 11mm Ammo (type 1); the MK-ASLT and the Minigun High ROF Ammo
   (type 2). The panel reads "clip / reserve" (orange), e.g. "24 / 50" for Hawk's Foley.
-  * Each level starts with a full stack of every type: the stack-limit of the level's ammo item
-    (objecttypes `<inventory>` with function-type 14, IFSET_AMMO_BOX; its h_e5f51266 is the
-    ammo-type): 11mm 50, High ROF 600, Sonic 200, Particle 200, Rail 400, Shotgun 80, Cutter
-    120, Bio 200, Rocket 40, Energy 200. The same in every level that defines them, so a level
-    without the item uses those. The game's counts are the campaign's (the takes start with full
-    11mm, Sonic and Shotgun, half the High ROF and Cutter); the full stack is the demo's choice.
-    Where a level starts the squad from its own placements (a spawn-trigger's template, or the
-    squad placed in the world: [triggers.md](triggers.md), #220), the ammo they carry
-    (`<inventory><h_10dd6db2 name count>`) sets those types instead: the tutorial's Tex 500 High
-    ROF, take03's "48 / 500". The members' counts are added up and held to the type's stack-limit
-    (#230): in the game each character has an inventory of its own, which holds at most a stack
-    of an item (the item type's stack-limit, +0x164, read by FUN_001920d0), and a gun reloads
-    from its holder's. So m09_a's Brutus 200, Flint 120 and Tex 160 of Sonic Ammo (h_ef0c4c1e,
-    stack-limit 200) make 200, not 480 (`BF_AMMO_LOG`: "type 3 200"). Taking the stack, not the
-    leader's own count, is the demo's: its reserve is shared, the game's aren't.
+  * Where a level starts the squad from its own placements (a spawn-trigger's template, or the
+    squad placed in the world: [triggers.md](triggers.md), #220; every campaign zone), the
+    reserve is the ammo they carry (`<inventory><h_10dd6db2 name count>`) and **nothing of any
+    other type** (#281): the squad's store at the start (see **Items: the squad's starting
+    inventory** below), whose IG_AMMO stacks are the ammo-types. The tutorial's Tex 500 High ROF
+    (take03's "48 / 500"); e34's 11mm 40, Sonic, Particle and Rail 200, every other type 0, as
+    xemu read the game's store at a fresh start (#196 notes); e40's 11mm 40, High ROF 600, Sonic
+    200, Shotgun 80, Cutter 120 (39 and 199 once the opening's two reloads have taken their
+    round: see the code 100 in [cutscenes.md](cutscenes.md)). A gun of a type nobody carries has
+    no reserve, as in the game: #73's Therm Sweeper picked up on e34 read "6 / 0". The members'
+    counts are pooled as the game pools them (#230): each member's own store holds at most a
+    stack of an item (FUN_0014bfe0's clamp to the type's stack-limit, +0x180), and joining the
+    squad merges it into the squad's one store with the same clamp. So m09_a's Brutus 200,
+    Flint 120 and Tex 160 of Sonic Ammo (h_ef0c4c1e, stack-limit 200) make 200, not 480
+    (`BF_AMMO_LOG`: "type 3 200").
+  * A map without squad placements (the test map's floor, the deathmatch maps, whose sdm
+    loadout is #144's) starts with a full stack of every type: the stack-limit of the level's
+    ammo item (objecttypes `<inventory>` with function-type 14, IFSET_AMMO_BOX; its h_e5f51266 is
+    the ammo-type): 11mm 50, High ROF 600, Sonic 200, Particle 200, Rail 400, Shotgun 80, Cutter
+    120, Bio 200, Rocket 40, Energy 200 (the same in every level that defines them, so a level
+    without the item uses those). The full stack is the demo's choice.
+  * A zone whose placements carry no ammo at all (m03_b, m03_c, m08_b: the game's squad comes to
+    them from the zone before, with the save game's pool) keeps the full stacks too: the demo's
+    stopgap until zones carry the reserve over (#231), as with none no gun could reload there.
+    A zone whose placements carry any ammo keeps the carried-only rule.
   * A respawn (the test map's rack) keeps the reserve; the new gun comes with a full clip. The
     test map's NPCs reload from a bottomless reserve of their own.
 * **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show
@@ -401,6 +412,103 @@ and `BF_TEST_FIRE`'s input, which `read_input` takes; #227 made that order expli
 new system flipped it);
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot (and the second hand's), recharged
 round and the hint.
+
+### Items: the squad's starting inventory (#281)
+
+`src/bin/play_inventory.rs`. Logic from `default.xbe` (the functions are cited in the code and
+have rows in [code-map.md](code-map.md)), the counts from the levels' squad placements, checked
+against xemu's reads of the game's store at fresh starts (`todo/196-inventory-hud/notes.md`,
+"Starting inventories") and the analyst's audit (`todo/inventory-audit/answer.md`, whose
+Appendix A lists every campaign zone).
+
+* **Each member's placement** (`levels-<zone>.xml`'s squad `<character-object>`, `<inventory>`)
+  carries its two `<weapon>`s and `<h_10dd6db2 name count>` items: ammo, grenades, medkits, the
+  OrgSen, the Hat, "Alien Technology Acquired!". The character's property handler applies them
+  (FUN_0014dd50): the weapons into the slots, each item into the character's own store by
+  FUN_0014bfe0, which keeps one stack per (category, index) (the item type's group-type and
+  h_e5f51266) and holds it to the type's stack-limit.
+* **One store for the squad.** Joining the squad (FUN_0005b9a0) gives a member the squad's
+  store, its own merged into it first with the same clamp (FUN_0014c060). So the squad's items are
+  every member's summed and held to a stack (m05_a's Frag 15 is 10, m09_b's Medkit 28 is 25), and
+  every member's item box shows the same counts. The demo builds that store as the map starts
+  (`StartStore`, `BF_INVENTORY_LOG=1` prints it) and hands it out: the IG_AMMO stacks are the
+  reserve (above), the grenades and explosives `Player::grenades` (by the kit of the same label:
+  m14_c's and m14_d's Sentry is h_f73de83d, which the kits load when a level defines no
+  h_e5f1f063), the Medkit (5, 0) `Player::medkits`, the rest `Player::others`. They go with
+  control, as the grenades always have.
+* **What it gives** (`BF_INVENTORY_LOG=1` on all 39 campaign zones, against Appendix A: the
+  same everywhere but where the appendix's sum passes a stack-limit, held to it: m05_a's Frag,
+  m09_b's and m09_c's Medkit; m14_c's and m14_d's Sentry is the h_f73de83d kit):
+
+  | Zone | Items | Reserve |
+  |---|---|---|
+  | tutorial | Frag 3, Gas 2 | High ROF 500 |
+  | m01_a | Frag 5, Medkit 3 | High ROF 400, Shotgun 40 |
+  | e34 | Sonic 4, Energy 5, Roller 5, Medkit 6, OrgSen 1 | 11mm 40, Sonic 200, Particle 200, Rail 200 |
+  | e40 | Frag 5, Sonic 5, Energy 5, Roller 5, Medkit 20, OrgSen 1 | 11mm 40, High ROF 600, Sonic 200, Shotgun 80, Cutter 120 |
+  | m09_a | Frag 10, Sonic 6, Energy 8, Light 4, Roller 6, Medkit 10, OrgSen 1 | 11mm 40, Sonic 200 (480 carried), Particle 200, Rail 200, Bio 200 (380) |
+
+  e34's and e40's are what xemu read in the game's store (e40's ammo after its opening: 11mm 39,
+  Sonic 199). A map without squad placements keeps the demo's own stock: the test map a full
+  stack of every grenade type, the deathmatch maps 3 Frags (the sdm loadout is #144's).
+* **The OrgSen and the Hat** are items of the box (their type's h_1852ab6c lists them; "Alien
+  Technology Acquired!" is carried but not listed), with their own icons and names, the count
+  shown from 2 as for every item (the game's box: #196 take26). What they do is #21's (the
+  OrgSen) and the Hat's own: G with one selected does nothing yet. A character whose skill
+  refuses its use type can't use it (the skill's +0x1c: Brutus's FUN_0013c160 refuses
+  IOU_ATTACH_TO_FACE, the OrgSen, and IOU_ATTACH_TO_EQUIP_SLOT, the Hat): his box shows it red
+  with the icon grey, and G says "Cannot use" (h_e784869e), as #196 take26 shows.
+* **The gun in hand** at a start is slot 1: a placement leaves none in hand, and the character's
+  activation (vtable +0xa4) draws the first slot with a gun (FUN_00123fa0). A zone's opening then
+  switches some by its script's code 100 (CT_TOGGLE_WEAPON, [cutscenes.md](cutscenes.md)): after
+  e34's opening Tex holds the Confed LZR-50 and Flint the Jax-iP, after e40's Tex the Jax-iC,
+  Hawk the Jax-iR and Brutus the PU Cutter, as xemu read them and take27 / take30 show ("99 Regen",
+  "36 / 199"). With `BF_TEST_GOTO` or `BF_SCRIPT` the opening doesn't play, so slot 1 stays in
+  hand.
+* **The first item shown** is the first grenade type carried, the kits being in the game's store
+  order (category, index: Frag 2/0, Gas 2/1, Sonic 2/4, Energy 2/5, Light 2/32, Sentry 3/1,
+  Roller 3/4; `load_kits` sorts them by it), else the next item carried (the Medkit, 5/0, then
+  the others): Frag on the tutorial, m01_a, e40 and m09_a, Sonic on e34 (take27's "Sonic 4"),
+  Gas on e16 and e23, as the game's first stack. T and Tab step in that order too. (The rest of
+  the game's selection, NEW and the list's slots, is #196's.)
+* **Not done**: carrying the store from zone to zone (the save game's `item-%d` pool and each
+  member's weapons, clips and hit points: FUN_000816f0, FUN_00081d10, FUN_00129080,
+  FUN_00089ea0; #231), so a zone the game only reaches from the one before starts with what its
+  own placements carry (m03_b, m03_c, m08_b: no item, and the reserve's full stacks, the stopgap
+  above); the order of the joins and the mode's
+  clear on a zone whose squad is placed in the world (m07_a, m09_a: the demo takes the
+  placements', a live read would settle it); NEW on the starting items (#196); the OrgSen's and
+  the Hat's uses; a Hat picked up (only medkits, fruit and DNA canisters are taken); whether the
+  controlled character's scripted toggle under a cutscene's hidden HUD makes the switch sounds
+  (the panel rows' update, 0xcb970, isn't traced that far: the demo plays them, e40's Tex at 7.7 s).
+
+Test hooks: `BF_INVENTORY_LOG=1` prints each member's placement items, the pooled store, what the
+controlled character is given and each use of an item that isn't a grenade or the Medkit;
+`BF_TEST_ITEM=<label>` selects the carried item of that name at the start (`OrgSen`, `Medkit`,
+`Sonic`); `BF_TEST_ITEM_USE=<s>[,<s>...]` presses G once at each time for an item that isn't a
+grenade (with `BF_TEST_GOTO`; it owns that use for the run).
+
+Verified (`BF_INVENTORY_LOG=1 BF_AMMO_LOG=1`, 15 fps captures in the scratchpad, against the
+takes in `todo/196-inventory-hud/`): the five zones above print the table's counts; e34 played
+through its opening (`BF_MAP=e34`, 375 frames): the script's 100s switch Flint at 13.0 s and Tex
+at 17.9 s, and the first controllable frame reads "99 Regen" as take27's; e40 through its
+opening: Hawk, Tex and Brutus switch at 7.1-8.0 s, Flint's and Tex's reloads take 11mm 40 -> 39
+and Sonic 200 -> 199, and the HUD reads "36 / 199" and "Frag 5" as take30 (14 s); with
+`BF_TEST_SELECT=2,24.5` Hawk's reads "24 / 199" with the Jax-iR held low at her right and no gun
+on her back, as `stills/still-e40-hawk.png`; on e34 (`BF_TEST_SELECT=1,23.5`) Flint's panel shows
+the Jax-iP. m09_a (`BF_SCRIPT=off "BF_TRIGGER_FIRE=trigger_letterbox92,12,0.05"`): Tex's A50
+"40 / 200" and "Frag 10"; m01_a: "48 / 400" and "Frag 5". The OrgSen box on Tex
+(`BF_TEST_ITEM=OrgSen`, e34's range spot) tiled beside take26's at 1.5 s: the same icon and name
+in the same place; Brutus's (`BF_CHARACTER=0 BF_TEST_ITEM_USE=1`) is red and grey with "Cannot
+use" over him, as take26 at 7 s. Regressions: the tutorial's "48 / 500" and "Frag 3"; e40's Frag
+thrown, 5 -> 4; e34's Medkit used at 50 HP, 6 -> 5 and healed; the test map's full stacks and its
+weapon switch (`BF_TEST_SWITCH=1.5`, the switch now `start_switch`); sdm_e34's 3 Frags and full
+stacks. After the kits' reorder (the review round): e34's box "Sonic 4" at the range spot, tiled
+beside take27's at 14 s; e16's and e23's first item Gas; the test map's kits Frag, Gas, Sonic,
+Energy, Light, Sentry, Roller; m14_c's Sentry (3, 3) before its Roller; m03_b, m03_c and m08_b
+with the full stacks (the stopgap), m02_b with its 11mm 40 and Cutter 75 alone. e40's opening with
+`BF_SOUND_LOG=1`: Hawk's and Brutus's toggles silent, Tex's ff820fda and, 0.65 s on, e1e97460,
+beside the opening's own `trigger_sound_weapon_select` (e1e97460 at 7.7 s).
 
 ### The crosshair's colours (#141)
 

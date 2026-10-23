@@ -1041,6 +1041,16 @@ pub struct ItemType {
     /// character it unlocks (the tutorial's h_1d604469/characters/h_048b8580, game-options'
     /// "Confed Marine": `GameCharacter`); empty for none
     pub gameflag: Vec<u32>,
+    /// h_1ee2f4ed, how it's used: the IOU_ enum (its name table 0x3be618; the item type's +0x174,
+    /// parser LAB_00185a30): 0 IOU_USE_IN_HAND (the Medkit), 1 IOU_ATTACH_TO_FACE (the OrgSen), 4
+    /// IOU_RELOAD (the ammo), 7 IOU_ATTACH_TO_EQUIP_SLOT (the Hat). A character's skill can refuse
+    /// a use type (play_skills.rs `uses_item`: Brutus the OrgSen and the Hat)
+    pub use_type: i64,
+    /// h_1852ab6c (byte +0x71 of the type's item data, type+0x160: type+0x1d1): the item box lists
+    /// its stack (FUN_0014d680 takes a stack only with it set, and never one of category 1). True
+    /// for the ammo, grenades, medkits, OrgSen and Hat; false for "Alien Technology Acquired!",
+    /// the power-ups, the DNA canisters (todo/196 leads §3.2)
+    pub selectable: bool,
 }
 
 /// An item's group-type IG_DNA_CANNISTER (the IG_ name table 0x3be594, its last record: 9): a DNA
@@ -1565,6 +1575,8 @@ impl Game {
                         message: t.child(h("base")).map(|b| hash_of(b.attr(0x1DD3_A49D))).filter(|&x| x != 0 && x != h("")).unwrap_or(0),
                         group: int("group-type"),
                         gameflag: t.child(h("campaign-gameflag")).map(|g| name_list(g, h("gameflag"))).unwrap_or_default(),
+                        use_type: int_of(t, 0x1EE2_F4ED),
+                        selectable: t.attr(0x1852_AB6C).and_then(|v| v.as_i64()).is_none_or(|v| v != 0),
                     });
                 }
             }

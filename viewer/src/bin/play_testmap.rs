@@ -11,7 +11,8 @@
 //!    level's inventory-object as far as play_pickups.rs is concerned: medkits and fruit are
 //!    taken and used as on a map; the rest are loose objects.
 //!  - The squad carries a full stack (stack-limit) of every grenade type the levels define
-//!    (play_grenade.rs: Frag, Energy, Gas, Light, Sonic, Roller, Sentry); T steps through them.
+//!    (play_grenade.rs: Frag, Gas, Sonic, Energy, Light, Sentry, Roller, the game's store
+//!    order); T steps through them.
 //!  - Instant kill: the player's shots and grenades kill any squad member they hurt, in one
 //!    hit. On at the start; K turns it on and off.
 //!  - X kills the controlled character outright (for the death camera and the hand-over to
