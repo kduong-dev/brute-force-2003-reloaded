@@ -16,7 +16,7 @@ use bevy::{
 
 use crate::bf::character::{Address, Game, Geoset, H_WRAP_ALPHA};
 use crate::bf::hash::h;
-use crate::bf::level::{Level, LevelLight, LU_GEOSET, LU_INDOOR};
+use crate::bf::level::{Level, LevelLight, SkySpin, LU_GEOSET, LU_INDOOR};
 use crate::bf::texture::Mips;
 use crate::bf::triggers::{act, Class, AC_PLAY, AC_RESUME, AM_BACKWARD, AM_FORWARD};
 use crate::bf::weapon::{PartJoint, WeaponModel, HINGE_JOINT, TRANSFORM_JOINT};
@@ -650,22 +650,49 @@ pub fn animates(moving: &HashMap<u32, Animated>, played: &HashSet<u32>, name: u3
     !moving.is_empty() && played.contains(&name)
 }
 
-/// The camera's look, as the console drew it: no tone mapping, and an exposure at which a
-/// light of 1.0 (a white directional light of PI lux, or ambient brightness 1) shows a texture
-/// as it is (Bevy scales light by 1 / (1.2 x 2^ev100)).
-/// A sky layer and where it sits with the camera at the map's centre: the sky moves along with
-/// the camera across the map (so its mountains stay on the horizon), not up and down.
+/// A sky layer: where the sky sits with the camera at the map's centre (its `<position>`), how
+/// far its own origin is lifted above that to draw the layers in order (`make_sky`), how the sky
+/// turns (`SkySpin`) and its clock (s of game time since it was put up). The sky moves along with
+/// the camera across the map (so its mountains stay on the horizon), not up and down; the game's
+/// stays at its `<position>` (FUN_00177d50), a few degrees of horizon parallax across a map.
 #[derive(Component)]
-pub struct SkyLayer(pub Vec3);
+pub struct SkyLayer {
+    /// the sky's origin, its `<position>`
+    pub at: Vec3,
+    /// how far this layer's origin sits above the sky's, unturned (`make_sky`)
+    pub lift: Vec3,
+    /// how the sky turns
+    pub spin: SkySpin,
+    /// s of game time on the sky's clock (`run`)
+    pub time: f64,
+}
 
-/// Keep the sky around the camera (see `SkyLayer`); add it to a level app's Update.
-pub fn follow_sky(camera: Query<&GlobalTransform, With<Camera3d>>, mut sky: Query<(&SkyLayer, &mut Transform)>) {
-    let Some(eye) = camera.iter().next().map(|c| c.translation()) else { return };
-    for (at, mut tr) in &mut sky {
-        tr.translation = at.0 + Vec3::new(eye.x, 0.0, eye.z);
+impl SkyLayer {
+    /// Its clock run by `dt` s of game time: the game turns the sky in the world step with the
+    /// step's dt (FUN_00177ba0 from FUN_000d9a20), so it stops while the game's clock does.
+    pub fn run(&mut self, dt: f32) {
+        self.time += dt as f64;
     }
 }
 
+/// Keep the sky around the camera and turned by its clock (see `SkyLayer`, `SkySpin`); add it
+/// to a level app's PostUpdate, before the transforms propagate. The whole model turns about the
+/// sky's origin (FUN_00177ba0 sets the instance's frame, FUN_00177d50 draws it at its position):
+/// each layer's mesh sits at its lifted origin less the lift, so its origin is put at the sky's
+/// plus the lift turned, and every layer stays where the others are as the sky tumbles (m09,
+/// m14, mp3); for the levels that turn about y alone the lift, along y, doesn't move.
+pub fn follow_sky(camera: Query<&GlobalTransform, With<Camera3d>>, mut sky: Query<(&SkyLayer, &mut Transform)>) {
+    let Some(eye) = camera.iter().next().map(|c| c.translation()) else { return };
+    for (s, mut tr) in &mut sky {
+        let turn = s.spin.rotation(s.time);
+        tr.translation = s.at + turn * s.lift + Vec3::new(eye.x, 0.0, eye.z);
+        tr.rotation = turn;
+    }
+}
+
+/// The camera's look, as the console drew it: no tone mapping, and an exposure at which a
+/// light of 1.0 (a white directional light of PI lux, or ambient brightness 1) shows a texture
+/// as it is (Bevy scales light by 1 / (1.2 x 2^ev100)).
 pub fn console_look() -> (bevy::core_pipeline::tonemapping::Tonemapping, bevy::render::camera::Exposure) {
     (bevy::core_pipeline::tonemapping::Tonemapping::None, bevy::render::camera::Exposure { ev100: (1.0f32 / 1.2).log2() })
 }
@@ -1262,21 +1289,31 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     if std::env::var("BF_LIGHT_LOG").is_ok() {
         eprintln!("lights: {indoor_parts} placed parts lit by the indoor pair ({} indoor materials)", indoor_cache.len());
     }
-    let layers = make_sky(game, &level.sky, level.sky_at, meshes, materials, images, &lamps, &mut cache);
+    let layers = make_sky(game, &level.sky, level.sky_at, level.sky_spin, meshes, materials, images, &lamps, &mut cache);
     spawn_sky(commands, &layers);
     doors
 }
 
-/// A sky's layers made ready to draw (`sky_layers`): each one's mesh, material and place.
-pub type SkyLayers = Vec<(Handle<Mesh>, Handle<LevelMaterial>, Vec3)>;
+/// A sky's layers made ready to draw (`sky_layers`): each one's mesh, material and lift above
+/// the sky's origin (`make_sky`); where the sky sits and how it turns (`Level::sky_of`).
+#[derive(Clone)]
+pub struct SkyLayers {
+    /// each layer's mesh, material and lift, in the mesh's order
+    pub layers: Vec<(Handle<Mesh>, Handle<LevelMaterial>, Vec3)>,
+    /// the sky's origin, its `<position>`
+    pub at: Vec3,
+    /// how it turns
+    pub spin: SkySpin,
+}
 
-/// A level's sky (`Level::sky_of`: its layers and where they sit) made ready to draw on any map,
-/// e.g. another level's sky over the test map (play_testworld.rs); `game` holds that level's
-/// meshes and textures. Self-lit, so no lamps.
-pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
+/// A level's sky (`Level::sky_of`: its layers, where they sit and how they turn) made ready to
+/// draw on any map, e.g. another level's sky over the test map (play_testworld.rs); `game` holds
+/// that level's meshes and textures. Self-lit, so no lamps.
+#[allow(clippy::too_many_arguments)]
+pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, spin: SkySpin, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
                   buffers: &mut Assets<ShaderStorageBuffer>, images: &mut Assets<Image>) -> SkyLayers {
     let lamps = Lamps { lamps: buffers.add(no_lights()), ..default() };
-    make_sky(game, sky, at, meshes, materials, images, &lamps, &mut HashMap::new())
+    make_sky(game, sky, at, spin, meshes, materials, images, &lamps, &mut HashMap::new())
 }
 
 /// The sky's layers in the mesh's order (sdm_e34: the flat top, the panorama of mountains and
@@ -1284,7 +1321,7 @@ pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets
 /// Transparent meshes are drawn far to near by their origin, so each layer's origin sits higher
 /// above the sky's than the next one's: they draw in order from the ground.
 #[allow(clippy::too_many_arguments)]
-fn make_sky(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
+fn make_sky(game: &mut Game, sky: &[Geoset], at: Vec3, spin: SkySpin, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
             images: &mut Assets<Image>, lamps: &Lamps, cache: &mut HashMap<u32, Handle<LevelMaterial>>) -> SkyLayers {
     let layers = sky.len() as f32;
     let mut out = vec![];
@@ -1307,13 +1344,21 @@ fn make_sky(game: &mut Game, sky: &[Geoset], at: Vec3, meshes: &mut Assets<Mesh>
                 *p = (Vec3::from(*p) - lift).to_array();
             }
         }
-        out.push((meshes.add(layer), mat, at + lift));
+        out.push((meshes.add(layer), mat, lift));
     }
-    out
+    SkyLayers { layers: out, at, spin }
 }
 
-/// Spawns a sky's layers (`SkyLayers`), each following the camera (`SkyLayer`).
-pub fn spawn_sky(commands: &mut Commands, layers: &SkyLayers) -> Vec<Entity> {
-    layers.iter().map(|(mesh, mat, at)| commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), NotShadowCaster,
-                                                         Transform::from_translation(*at), SkyLayer(*at))).id()).collect()
+/// Spawns a sky's layers (`SkyLayers`), each following the camera and turning (`SkyLayer`),
+/// from the sky's start (its `<rotation>`). Test hook: `BF_SKY_TIME=<s>` starts the sky's clock
+/// that far into the level instead, to set it as a take made that long after the level's start
+/// shows it.
+pub fn spawn_sky(commands: &mut Commands, sky: &SkyLayers) -> Vec<Entity> {
+    let time = std::env::var("BF_SKY_TIME").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+    sky.layers.iter().map(|(mesh, mat, lift)| {
+        let layer = SkyLayer { at: sky.at, lift: *lift, spin: sky.spin, time };
+        let turn = sky.spin.rotation(time);
+        commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), NotShadowCaster,
+                        Transform::from_translation(sky.at + turn * *lift).with_rotation(turn), layer)).id()
+    }).collect()
 }

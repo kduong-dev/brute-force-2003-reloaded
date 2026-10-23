@@ -520,9 +520,21 @@ impl Default for Cloak {
 }
 
 impl Cloak {
-    /// Switched on or off (`Fade::switch`): Hawk's on and off (0x13c650 / 0x13c670).
+    /// Switched on or off (`Fade::switch`): Hawk's on and off (0x13c650 / 0x13c670); then its
+    /// frame's values worked out again with no time (`update`), so the switch's own frame draws
+    /// the new state's: switched on from off, alpha 0 and no offset. Its update has already run
+    /// this frame (`step`: the controllers' frame, then the toggle clip's event that switches it),
+    /// so without this the switch frame drew what its update had left, the as-made alpha 1 on a
+    /// map's first switch-on: one frame of a full-alpha tinted copy of her (#219). The game's
+    /// order of the clip's event against the controllers' frame (FUN_00210560) isn't traced: with
+    /// the event first, its first frame of the fade-in is at (dt / 0.5)^2, about 0 as here; with
+    /// it after, the game would draw that frame with the values its update left too. #198 take01
+    /// shows no such frame at its switch-on (her body's mean colour steps once at 3.04 s and then
+    /// fades smoothly, frame by frame at 58 fps; whether it was that map's first switch-on isn't
+    /// known), so the demo takes the switch's state.
     pub fn switch(&mut self, on: bool) {
         self.fade.switch(on);
+        self.update(0.0);
     }
 
     /// Its level (`Fade::level`).
@@ -2008,4 +2020,29 @@ fn skill_line(u: &mut Player, env: &mut Env, tag: u32) -> String {
     }
     u.quote_in = Some((0.0, id));
     format!("said {id:08x} ({probability}%, replay delay {:.0} s)", block.replay_delay)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #219: switched on in a frame whose update has run, the cloak's values are the fade-in's
+    /// start (alpha 0, no offset), not the as-made alpha 1; switched off from on, the fade-out's
+    /// start (alpha 1, the offset it had).
+    #[test]
+    fn switch_sets_the_frame() {
+        let mut c = Cloak::default();
+        c.update(1.0 / 30.0);
+        c.switch(true);
+        assert_eq!((c.alpha, c.offset), (0.0, 0.0));
+        for _ in 0..60 {
+            c.update(1.0 / 30.0);
+        }
+        assert_eq!(c.fade.state, FadeState::On);
+        let offset = c.offset;
+        c.switch(false);
+        assert_eq!(c.fade.state, FadeState::Out);
+        assert_eq!(c.alpha, 1.0);
+        assert!((c.offset - offset).abs() < 1e-3);
+    }
 }

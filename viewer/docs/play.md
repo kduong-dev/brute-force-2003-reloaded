@@ -718,6 +718,20 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     * In the scope the effect leaves out its flat flash quads (perp quads lying along its axis,
       `AleEffect::hide_flat`, the demo's rule): seen from the eye they lay as bright ellipses
       under the star. The star itself is the ALE rendering's (#104), not the game's soft ball.
+* **Muzzles** (#246; `bf/weapon.rs`, `WeaponDef::muzzles`). The muzzle block's h_e41cb542 is a
+  list of hardpoint names (the weapon data's vector at +0x140), and the game uses every one: the
+  muzzle effect is attached at each (FUN_00232060), each one's aim is turned every frame
+  (FUN_0022e4c0), and a shot leaves from the muzzle the weapon's index (+0x1fc) points at, which
+  then moves on to the next, back to the first past the last (FUN_0022f5e0;
+  `WeaponDef::next_muzzle`). The muzzle effect that follows the shot is the one at the index as
+  moved (FUN_0022f170 reads +0x1fc after it): the flash shows at the barrel that fires next.
+  Every hand-held gun names one, MUZZLE (h_ecc0aa78), so its index never moves and the demo's
+  guns fire from it as before (`WeaponDef::muzzle`); the four turrets (object-type 29: e05, e16,
+  m03_b, m08_b, m09_b/c/x, m14_a-d) name two, h_f9eed613 and h_e2e787a9, of which the reader
+  kept only the first; 14 definitions without a model name none. The demo has no turrets yet,
+  so the turn is read from the code and not seen. `BF_DUMP_WEAPONS=1` lists each gun's muzzles
+  and then the map's definitions with more than one, each found on its model or not (e05:
+  `h_13e090b2 ... muzzles [f9eed613 ok, e2e787a9 ok]`).
 * **Tracers** (FUN_002317e0). An instant ray carries its flight effect only when its counter is
   0, which then restarts at h_eeb9e75a: the MK every 3rd shot, the Minigun every 4th, the rest
   every shot. The tracer is now turned along the shot (ALE emitters fire along their +y): it
@@ -1620,7 +1634,7 @@ backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing
 fixed 15 fps. `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
 and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `BF_DUMP_SOUNDS=<dir>` writes the character's jump and surface sounds as WAV files
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
-hardpoints, fire sounds) and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
+hardpoints, muzzles, fire sounds), then the map's definitions with more than one muzzle, and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
 character types, their motion sets' clips and the placements, and exits
 ([character-types.md](character-types.md)); `BF_SHOT_LOG=1` prints each shot's barrel and shot
 directions. Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the

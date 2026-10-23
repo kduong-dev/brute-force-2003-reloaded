@@ -1030,8 +1030,12 @@ scratchpad):
 * **The strength**: block matching inside her outline against a zero-crossing frame: the take's
   shift at its extremes 16-20 px (75th percentile, its 960-wide picture), the other sign's 10 px;
   the demo's 23-28 and 13-15 px, with everything drawn 1.22-1.3x the take's size (her head 105 px
-  against 81, the gate's pillar 110 against 90): 21-26 and 13 px on the take's scale. The two
-  signs differ the same way in both (the shift follows her surfaces' world axes).
+  against 81, the gate's pillar 110 against 90): 18-23 and 10-12 px on the take's scale (23 / 1.3
+  to 28 / 1.22, 13 / 1.3 to 15 / 1.22; #219 corrected the 21-26 and 13 first given here), against
+  the take's 16-20 and 10. The two signs differ the same way in both (the shift follows her
+  surfaces' world axes). Since #269 the demo draws at the take's scale (#219: her head 80 px
+  against take01's 83 at the same spot), so a new measurement needs no conversion; not redone
+  (no plate of the picture without her was filmed: `todo/198-hawk-invis/shotlist.md` A).
 * **take03's barrel** (the camera turned: `BF_TEST_GOTO=-52.96,30.96,-43.75,27.05`): the barrel and
   the shed's machinery behind her seen torn and doubled through her outline, as in the take at
   10-11 s.
@@ -1047,6 +1051,26 @@ scratchpad):
   from Tex at 7 m): no body at the shots, the muzzle ball and bolt over a faint distortion.
 * **The cut-short fade** (`BF_TEST_DIE=3.35`, in the fade-in): her skin whole again in the frame
   of death, the refraction dying over the second after. The code's case; not filmed.
+* **The first switch-on (#219)**: the controller's update runs before the toggle clip's event
+  switches it (`step`), so the switch's frame drew what the update had left: on a map's first
+  switch-on the as-made alpha 1 with no offset, a full-alpha copy of her tinted (0.9, 1, 1) for one
+  frame. `Cloak::switch` now works the frame's values out again with no time (switched on from
+  off: alpha 0). At take01's spot at 30 fps (`BF_CAMERA_DISTANCE=1.8 BF_CAMERA_PITCH=-0.05
+  BF_TEST_SKILL=2.0 BF_CAPTURE_FPS=30`), her body's mean R/G in the switch's frame (86) was 0.979
+  between 1.024 and 1.026 before, a one-frame cyan cast; now 1.025, the fade starting smoothly a
+  frame later. take01 shows no such frame either (her body's colour steps once at 3.04 s, then
+  fades). The game's order of the event against the controllers' frame isn't traced.
+* **Lamp light** (#219): play.rs's `lamp_characters` re-sent a cloaking body's materials to the
+  GPU every frame once her lamp light had changed: her depth copies and twins sit under her root
+  without a standard material, which it took for parts drawn with another material for now (the
+  Vengar view's) and so never recorded the light as set. They're marked (`BodyCopy`) and passed
+  over. Stealthed Hawk walking under sdm_e34's lamp at (-27.9, 42.8, 91.9)
+  (`BF_MAP=sdm_e34 BF_CHARACTER=2 BF_TEST_GOTO=-27.9,86,-27.9,100,42.5 BF_TEST_GO_AT=2.5
+  BF_TEST_SKILL=1.0`, 150 frames, counted with a temporary log): 134 re-sends before, all with
+  the light unrecorded; now only the frames whose light changed (70, as she walks and sways
+  under it).
+* **A missing 3D render graph** now warns ("the refraction's pass isn't moved") instead of leaving
+  the refraction in bevy's order silently (`RefractionOrder`).
 * **Unchanged**, against main (8457fa6), pixel for pixel but for the first 2-4 frames as the map
   loads (two runs of main differ there too): Hawk with her skill off at the spot (45 frames, her
   warm-up second among them), #122's e34 scene (`BF_MAP=e34 BF_TEST_GOTO=-53.56,30.81,-50.69,36.29`,

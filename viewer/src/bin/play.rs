@@ -676,6 +676,7 @@ fn main() {
             .chain().run_if(playing.clone()))
         .add_systems(Update, lamp_characters.after(update_player).run_if(playing.clone()))
         .add_systems(Update, spawn_splashes.after(update_player).run_if(playing.clone()))
+        .add_systems(Update, turn_sky.run_if(playing.clone()))
         .add_systems(Update, (back_to_menu, audio_probe).run_if(playing))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
@@ -907,10 +908,11 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
 /// The level's point lights on the characters. The scenery takes them per surface (its
 /// `LevelMaterial`); a character's materials are bevy's own, so each takes the light at its chest
 /// from every direction, as its texture added to the picture (emissive), at CHARACTER_LAMP of it
-/// (about the average N.L over a body).
+/// (about the average N.L over a body). A body's stealth copies (play_stealth.rs `BodyCopy`)
+/// have materials of their own and are passed over.
 #[allow(clippy::too_many_arguments)]
 fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
-                   parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), With<Mesh3d>>,
+                   parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), (With<Mesh3d>, Without<stealth::BodyCopy>)>,
                    mut materials: ResMut<Assets<StandardMaterial>>, mut last: Local<HashMap<Entity, Vec3>>) {
     let Some(level) = &map.0 else { return };
     if level.lamps.is_empty() {
@@ -942,6 +944,17 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
         }
         if all {
             last.insert(l.root, light);
+        }
+    }
+}
+
+/// The sky's clock on the game's (`frame_dt`: stopped under a menu, fixed steps while
+/// capturing), which turns it (level_scene.rs `follow_sky`; FUN_00177ba0 from the world step).
+fn turn_sky(time: Res<Time>, mut sky: Query<&mut bf_viewer::level_scene::SkyLayer>) {
+    let dt = frame_dt(&time);
+    if dt > 0.0 {
+        for mut s in &mut sky {
+            s.run(dt);
         }
     }
 }
@@ -3437,7 +3450,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
                 spinners.push((pe, axis, part.offset));
             }
         }
-        let muzzle = wm.hardpoints.get(&def.muzzle).copied().unwrap_or(Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY });
+        let muzzle = wm.hardpoints.get(&def.muzzle()).copied().unwrap_or(Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY });
         let fire_dir = muzzle.rot * Vec3::NEG_Z;
         let flash = commands.spawn((
             Mesh3d(flash_mesh.clone()), MeshMaterial3d(flash_mat.clone()), NotShadowCaster,
@@ -6993,12 +7006,25 @@ fn dump_weapons(game: &Game) {
                         p.geosets.iter().map(|g| g.positions.len()).sum::<usize>(), if p.spin_axis.is_some() { " spin" } else { "" })).collect();
                     let mut hps: Vec<String> = m.hardpoints.keys().map(|k| format!("{k:08x}")).collect();
                     hps.sort();
-                    println!(" parts [{}] hardpoints [{}] muzzle {}", geo.join(", "), hps.join(" "),
-                             if m.hardpoints.contains_key(&d.muzzle) { "ok" } else { "MISSING" });
+                    // (each muzzle the definition names, found on the model or not)
+                    let muzzles: Vec<String> = d.muzzles.iter().map(|k| format!("{k:08x} {}", if m.hardpoints.contains_key(k) { "ok" } else { "MISSING" })).collect();
+                    println!(" parts [{}] hardpoints [{}] muzzles [{}]", geo.join(", "), hps.join(" "), muzzles.join(", "));
                 }
                 Err(e) => println!(" model error: {e}"),
             }
         }
+    }
+    // the definitions with more than one muzzle (the map's turrets), each found on its model or not
+    let mut many: Vec<&weapon::WeaponDef> = game.weapons.values().filter(|d| d.muzzles.len() > 1).collect();
+    many.sort_by_key(|d| d.name);
+    for d in many {
+        let model = weapon::WeaponModel::load(game, d.archetype).ok();
+        let muzzles: Vec<String> = d.muzzles.iter().map(|k| format!("{k:08x} {}", match &model {
+            Some(m) if m.hardpoints.contains_key(k) => "ok",
+            Some(_) => "MISSING",
+            None => "no model",
+        })).collect();
+        println!("h_{:08x} ({}, arch {:08x}): muzzles [{}]", d.name, d.label, d.archetype, muzzles.join(", "));
     }
 }
 

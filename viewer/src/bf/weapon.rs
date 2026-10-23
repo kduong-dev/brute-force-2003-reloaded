@@ -4,7 +4,7 @@
 //!   <h_e275fb80 weapon-type=.. h_e93a46d6=RATE h_e33f08b8="FIRE SOUNDS" ammo-count=..>  weapon
 //!     <base ... stringtable-name=LABEL> <base mesh-name=ARCHETYPE> <base name=WEAPON object-type=20/>
 //!     <bullet h_113d3e3c=SPEED range=.. effect-name=FLIGHT h_08d28037=HIT> ...
-//!     <h_f738f302 h_e41cb542=MUZZLE HARDPOINT/>
+//!     <h_f738f302 h_e41cb542="MUZZLE HARDPOINTS"/>   (a list: a turret names two)
 //! SPEED is m/s (1: instant hit); FLIGHT and HIT are effect types (objecttypes <effect>): the
 //! shot's tracer or bolt (laser_bolt_s, cuttertrail_ribbon, tracer...) and what it does where it
 //! lands (laserhit_s, sminigun_hit...).
@@ -35,7 +35,10 @@ const H_HIT_EFFECT: u32 = 0x08D2_8037;
 const H_RATE: u32 = 0xE93A_46D6;
 const H_FIRE_SOUNDS: u32 = 0xE33F_08B8;
 const H_BULLET_SPEED: u32 = 0x113D_3E3C;
+/// weapon: the muzzle block (`<h_f738f302>`), which holds the muzzle hardpoints' names
 const H_MUZZLE_REF: u32 = 0xF738_F302;
+/// the muzzle block's h_e41cb542: a list of hardpoint names (the weapon data's vector at
+/// +0x140; see `WeaponDef::muzzles`)
 const H_MUZZLE_REF_NAME: u32 = 0xE41C_B542;
 /// item base: HUD icon texture (+ its size, h_e2bc2c81 x h_f71189bb, 128 x 64 for guns)
 const H_HUD_ICON: u32 = 0xE5EC_3F1F;
@@ -129,7 +132,16 @@ pub struct WeaponDef {
     pub fire_sounds: Vec<u32>,
     pub bullet_speed: f32,
     pub range: f32,
-    pub muzzle: u32,
+    /// the muzzle hardpoints on the model, every name of the muzzle block's list (H_MUZZLE_REF_NAME,
+    /// the weapon data's vector at +0x140), in order; MUZZLE when the block has no list. The game
+    /// uses each: the muzzle effect is attached at every one (FUN_00232060, an effect object per
+    /// muzzle at weapon+0x36c + 8 i), each one's aim is turned every frame (FUN_0022e4c0), and
+    /// the fire loop takes turns (`next_muzzle`). Every hand-held gun names one, MUZZLE
+    /// (h_ecc0aa78); two, h_f9eed613 and h_e2e787a9, on the four turrets (object-type 29:
+    /// h_13e090b2, h_e2bbcbc5, h_f35e1e0e, h_fb6e2a46) in e05, e16, m03_b, m08_b, m09_b/c/x and
+    /// m14_a-d, which the demo doesn't have; none ("") on 14 definitions without a model (e01's
+    /// h_15889e57, mesh-name "")
+    pub muzzles: Vec<u32>,
     /// weapon handling sound (picked up / drawn)
     pub pickup_sound: u32,
     /// HUD icon texture (0 if none)
@@ -213,6 +225,26 @@ pub struct WeaponDef {
     /// `MeshBullet::mirv_mode`): FUN_00232520 adds the range again to a mesh projectile's reach
     /// for WM_MIRV_ON_EXPLODE (2), 0.75 x it for WM_MIRV_ON_APOGEE (1)
     pub mirv_mode: i64,
+}
+
+impl WeaponDef {
+    /// The first muzzle hardpoint (0: none), the one a gun with a single muzzle fires from: every
+    /// gun the demo's characters hold.
+    pub fn muzzle(&self) -> u32 {
+        self.muzzles.first().copied().unwrap_or(0)
+    }
+
+    /// The muzzle after muzzle `i` (an index into `muzzles`): after each shot the fire loop moves
+    /// the weapon's muzzle index (+0x1fc) on by one, back to 0 past the last, when it has more than
+    /// one (FUN_0022f5e0, called once the shot, FUN_0022f1d0, has left from muzzle +0x1fc). So a
+    /// two-muzzle turret fires its barrels in turn. Its answer (true for such a weapon) also has
+    /// the fire loop FUN_0022f2a0 set off the muzzle effect after every shot (0x22f4e3, rather
+    /// than going straight on to the next round of a zero-delay burst), and that effect
+    /// (FUN_0022f170, at 0x22f56d) is the one at the index as moved: the flash shows at the barrel
+    /// that fires next, not the one that fired (read from the code; no take of a turret).
+    pub fn next_muzzle(&self, i: usize) -> usize {
+        if self.muzzles.len() > 1 && i + 1 < self.muzzles.len() { i + 1 } else { 0 }
+    }
 }
 
 /// The `<bullet>` of a mesh projectile (bullet-type 2, BTYPE_MESH_PROJECTILE: FUN_0022f1d0 case 2
@@ -357,8 +389,10 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             fire_sounds: hashes(w, H_FIRE_SOUNDS),
             bullet_speed: f32_of(bullet, H_BULLET_SPEED, 120.0),
             range: f32_of(bullet, h("range"), 75.0),
-            muzzle: all.iter().find(|e| e.name == H_MUZZLE_REF).and_then(|e| e.attr(H_MUZZLE_REF_NAME))
-                .and_then(|v| v.as_hash()).unwrap_or(MUZZLE),
+            muzzles: match all.iter().find(|e| e.name == H_MUZZLE_REF).filter(|e| e.attr(H_MUZZLE_REF_NAME).is_some()) {
+                Some(e) => hashes(e, H_MUZZLE_REF_NAME),
+                None => vec![MUZZLE],
+            },
             pickup_sound: find(h("pickup-sound")).and_then(|v| v.as_hash()).unwrap_or(0),
             icon: find(H_HUD_ICON).and_then(|v| v.as_hash()).unwrap_or(0),
             reload_time: f32_of(Some(&w), h("reload-time"), 0.0),
@@ -634,4 +668,43 @@ pub fn mesh_geosets(game: &Game, best: u32) -> Result<Vec<Geoset>, String> {
         out.extend(merged.map(|(_, m)| m));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `<weapon>` named `name` whose muzzle block is `muzzle` (None: no block).
+    fn weapon(name: u32, muzzle: Option<Value>) -> Element {
+        let base = Element { name: h("base"), attrs: vec![(h("name"), Value::Hash(name)), (h("object-type"), Value::Int(20))], children: vec![], text: None };
+        let mut children = vec![base];
+        if let Some(m) = muzzle {
+            children.push(Element { name: H_MUZZLE_REF, attrs: vec![(H_MUZZLE_REF_NAME, m)], children: vec![], text: None });
+        }
+        Element { name: H_WEAPON, attrs: vec![], children, text: None }
+    }
+
+    /// Every name of the list is kept (#246: the turrets' second was dropped), "" is none, a
+    /// weapon without the block has MUZZLE; the fire loop takes the muzzles in turn
+    /// (FUN_0022f5e0) and a single one stays put.
+    #[test]
+    fn muzzles_in_turn() {
+        let (a, b) = (0xF9EE_D613, 0xE2E7_87A9);
+        let root = Element { name: 0, attrs: vec![], children: vec![
+            weapon(1, Some(Value::List(vec![Value::Hash(a), Value::Hash(b)]))),
+            weapon(2, Some(Value::Hash(MUZZLE))),
+            weapon(3, Some(Value::Hash(0))),
+            weapon(4, None),
+        ], text: None };
+        let defs = parse_weapons(&root, &HashMap::new());
+        let of = |n: u32| defs.iter().find(|d| d.name == n).unwrap();
+        assert_eq!(of(1).muzzles, vec![a, b]);
+        assert_eq!(of(1).muzzle(), a);
+        assert_eq!((of(1).next_muzzle(0), of(1).next_muzzle(1)), (1, 0));
+        assert_eq!(of(2).muzzles, vec![MUZZLE]);
+        assert_eq!(of(2).next_muzzle(0), 0);
+        assert!(of(3).muzzles.is_empty());
+        assert_eq!(of(3).muzzle(), 0);
+        assert_eq!(of(4).muzzles, vec![MUZZLE]);
+    }
 }

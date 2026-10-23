@@ -344,6 +344,8 @@ pub struct Level {
     /// sky mesh geosets and where they sit
     pub sky: Vec<Geoset>,
     pub sky_at: Vec3,
+    /// how the sky turns (its `<rotation>` and angular-speed)
+    pub sky_spin: SkySpin,
     pub background: [f32; 3],
     /// colour (0-1), start, end (m)
     pub fog: Option<([f32; 3], f32, f32)>,
@@ -398,6 +400,48 @@ pub struct Level {
 
 fn floats(e: Option<&Element>) -> Vec<f32> {
     e.and_then(|e| e.text.as_ref()).map(|t| t.floats()).unwrap_or_default()
+}
+
+/// The sky object's `angular-speed` (h_18180282, name recovered by hashing): radians per second
+/// about x, y and z (the parser FUN_0018b5e0 keeps it at the object record's +0x1c).
+const H_ANGULAR_SPEED: u32 = 0x1818_0282;
+
+/// How a level's sky model turns: its `<sky><object>`'s `<rotation>` (the starting angles,
+/// radians: `0 360 0` on e05, e40, m03 and the tutorial is 360 rad) and its `angular-speed`
+/// (rad/s: e40's `0 0.004 0`, m09's `0.005 0 0.01`; 0 on most levels, sdm_e34 among them).
+/// FUN_000d8d80 puts them at sky+0xe70.. and sky+0xe7c.. (FUN_000d43e0); every world step
+/// FUN_00177ba0 adds dt x the speed to the angles and sets the model's frame to the identity
+/// post-multiplied by the turns about x, y and z (FUN_00072010, FUN_000720d0, FUN_00073d80:
+/// radians), about the sky object's `<position>`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SkySpin {
+    /// the angles at the level's start (`<rotation>`), radians about x, y, z
+    pub start: Vec3,
+    /// radians per second about x, y, z (`angular-speed`)
+    pub speed: Vec3,
+}
+
+impl SkySpin {
+    /// The sky's turn `t` seconds of game time into the level, as a rotation of the model about
+    /// its origin. The helpers build the frame row by row: about y the rows become (c, 0, s),
+    /// (0, 1, 0), (-s, 0, c), Bevy's `Mat3::from_rotation_y(a)` written out, and the same holds
+    /// for x and z; so the frame is X(ax) Y(ay) Z(az) in Bevy's terms with its columns the
+    /// model's axes (as the viewer reads a level `<transform>`, `transform`), or its transpose
+    /// with its rows the axes (the analysis' reading, todo/sky-motion answer.md § 2.3). How the
+    /// draw applies it isn't traced; the takes settle it: on e40's beach facing the sea (#73
+    /// take20, #198 take06) the clouds drift screen-left, as the columns reading turns them, where
+    /// the rows reading drifted them right at the same rate (#199's captures). The order of the
+    /// three turns follows from the same reading: z's first, about the model's own axis. The
+    /// angles grow without bound in the game (f32, never wrapped); here they're worked out in f64
+    /// from the start wrapped to a turn, the same angle, so a 360-rad start keeps the rate exact
+    /// at any frame rate.
+    pub fn rotation(&self, t: f64) -> bevy::math::Quat {
+        use bevy::math::Quat;
+        let tau = std::f64::consts::TAU;
+        let a = |start: f32, speed: f32| ((start as f64).rem_euclid(tau) + speed as f64 * t).rem_euclid(tau) as f32;
+        let (x, y, z) = (a(self.start.x, self.speed.x), a(self.start.y, self.speed.y), a(self.start.z, self.speed.z));
+        Quat::from_rotation_x(x) * Quat::from_rotation_y(y) * Quat::from_rotation_z(z)
+    }
 }
 
 fn hash(e: &Element, name: u32) -> u32 {
@@ -478,9 +522,10 @@ impl Level {
     }
 
     /// A level's sky from its level file's elements (`all`): the `<sky><object mesh-name>`
-    /// layers, where they sit (its `<position>`) and the `<background-color>`. No layers without
-    /// a sky mesh (sdm_m07).
-    pub fn sky_of(game: &Game, all: &[&Element]) -> (Vec<Geoset>, Vec3, [f32; 3]) {
+    /// layers, where they sit (its `<position>`), the `<background-color>` and how it turns
+    /// (`SkySpin`). No layers without a sky mesh (sdm_m07). The game reads the first `<object>`
+    /// only (FUN_000d8d80); every level has one.
+    pub fn sky_of(game: &Game, all: &[&Element]) -> (Vec<Geoset>, Vec3, [f32; 3], SkySpin) {
         let sky_el = all.iter().find(|e| e.name == h("sky"));
         let sky_obj = sky_el.and_then(|s| s.child(h("object")));
         // a mesh or an archetype (sdm_e34's is an archetype 3.2 km across)
@@ -494,11 +539,16 @@ impl Level {
         let sky_at = if p.len() >= 3 { Vec3::new(p[0], p[1], p[2]) } else { Vec3::ZERO };
         let bg = floats(sky_el.and_then(|s| s.child(h("background-color"))));
         let background = if bg.len() >= 3 { [bg[0], bg[1], bg[2]] } else { [0.5, 0.6, 0.7] };
-        (sky, sky_at, background)
+        let v3 = |name: u32| {
+            let v = floats(sky_obj.and_then(|o| o.child(name)));
+            if v.len() >= 3 { Vec3::new(v[0], v[1], v[2]) } else { Vec3::ZERO }
+        };
+        let spin = SkySpin { start: v3(h("rotation")), speed: v3(H_ANGULAR_SPEED) };
+        (sky, sky_at, background, spin)
     }
 
     /// The sky of the level loaded last (`Game::load_level`), alone (see `sky_of`).
-    pub fn load_sky(game: &Game) -> Result<(Vec<Geoset>, Vec3, [f32; 3]), String> {
+    pub fn load_sky(game: &Game) -> Result<(Vec<Geoset>, Vec3, [f32; 3], SkySpin), String> {
         let root = game.levels.last().ok_or("no level file loaded")?;
         Ok(Self::sky_of(game, &root.walk()))
     }
@@ -591,7 +641,7 @@ impl Level {
                 o.radar_contact = t.contact;
             }
         }
-        let (sky, sky_at, background) = Self::sky_of(game, &all);
+        let (sky, sky_at, background, sky_spin) = Self::sky_of(game, &all);
         // fog and ambient
         let fog = all.iter().find(|e| e.name == H_FOG).and_then(|f| {
             let c = floats(f.child(h("color")));
@@ -730,7 +780,7 @@ impl Level {
                 parent: link.map(|p| hash(p, h("parent"))).filter(|&n| n != h("")).unwrap_or(0),
             })
         }).collect();
-        Ok(Level { terrain, objects, sky, sky_at, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, other_lights,
+        Ok(Level { terrain, objects, sky, sky_at, sky_spin, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, other_lights,
                    terrain_ambient, character_ambient, terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects, paths,
                    max_score, patrols, effect_objects })
     }
