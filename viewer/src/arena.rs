@@ -57,6 +57,9 @@ const CELL: f32 = 2.0;
 /// Surfaces at least this level (normal y) are floors; steeper ones are walls. The game counts
 /// a contact as ground within 65 degrees of up (cos 65, set up at 0x30c440 in default.xbe).
 const FLOOR_NORMAL: f32 = 0.422_618_26;
+/// A terrain triangle whose normal's y is under this is taken as upright (a wall face, not
+/// ground to fall down: `slope_below`): about 87 degrees. The demo's.
+const SLOPE_UPRIGHT: f32 = 0.05;
 /// Pickup element: weapon and inventory objects, and the level's item spawns (h_1d1d4f05).
 const PICKUP_ITEM: u32 = 0x1D1D_4F05;
 
@@ -562,6 +565,40 @@ impl Arena {
         self.floor_at(x, z, top).map(|f| (f.0, f.1))
     }
 
+    /// Where there's no floor (`floor_below`), the terrain under (x, z) no higher than `top` that
+    /// is too steep to stand on (steeper than 65 degrees, not upright), with its normal: the
+    /// terrain is a height field, so a pit's wall or a cliff's face is still the ground there,
+    /// which a character falls onto and slides down (#264: the tutorial's lava pit's north wall is
+    /// 66 degrees, normal y 0.40, with no floor under it; take08's Tex runs off its rim in
+    /// JUMP_FALL, MT 21, and comes down it into the lava). The highest such triangle.
+    pub fn slope_below(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3)> {
+        let mut best: Option<(f32, Vec3)> = None;
+        for &i in self.near(x, z) {
+            let t = &self.tris[i as usize];
+            if !t.terrain || t.n.y >= FLOOR_NORMAL || t.n.y < SLOPE_UPRIGHT || !self.solid(t) {
+                continue;
+            }
+            if let Some(y) = Self::height_on(t, x, z).filter(|y| *y <= top) {
+                if best.is_none_or(|(b, _)| y > b) {
+                    best = Some((y, t.n));
+                }
+            }
+        }
+        best
+    }
+
+    /// The lowest floor between `low` and `top` under any of eight points `radius` m round (x, z)
+    /// (each point's highest floor no higher than `top`), with its normal and material: what a
+    /// body that wide rests on where the ground under its middle is too steep to stand on (a
+    /// sliver of steep ground beside a floor, a rim it's half over: #264). The lowest, as the
+    /// game's ground contact is the lowest-lying of its contacts (FUN_00153410).
+    pub fn floor_around(&self, x: f32, z: f32, radius: f32, low: f32, top: f32) -> Option<(f32, Vec3, u8)> {
+        (0..8).filter_map(|k| {
+            let a = k as f32 * std::f32::consts::FRAC_PI_4;
+            self.floor_at(x + radius * a.cos(), z + radius * a.sin(), top).filter(|f| f.0 >= low)
+        }).reduce(|a, b| if b.0 < a.0 { b } else { a })
+    }
+
     /// `floor_below` with the floor's collision material (world-material id | MATERIAL_SLIDE).
     /// The flat floor's ground is level, of material 0.
     pub fn floor_at(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3, u8)> {
@@ -622,6 +659,14 @@ impl Arena {
     /// Push a body (radius `radius`, standing from `feet` to `head`) out of the walls: spheres
     /// at a few heights against the steep triangles near it. Returns the corrected (x, z).
     pub fn push_out(&self, p: Vec2, radius: f32, feet: f32, head: f32, step: f32) -> Vec2 {
+        self.push_out_sliding(p, radius, feet, head, step, None)
+    }
+
+    /// `push_out` for a body sliding down a steep terrain face of normal `face` (#264): the
+    /// terrain's steep triangles that face the same way (their across normal within 90 degrees
+    /// of the face's) are what it slides on, not walls to push it off; others (the far side of a
+    /// gully, an object's wall) still push.
+    pub fn push_out_sliding(&self, p: Vec2, radius: f32, feet: f32, head: f32, step: f32, face: Option<Vec3>) -> Vec2 {
         let mut p = p;
         let lo = feet + step;
         let n = 3;
@@ -635,6 +680,9 @@ impl Arena {
                         }
                         let t = &self.tris[i as usize];
                         if t.n.y.abs() >= FLOOR_NORMAL || !self.solid(t) {
+                            continue;
+                        }
+                        if face.is_some_and(|f| t.terrain && t.n.x * f.x + t.n.z * f.z > 0.0) {
                             continue;
                         }
                         let ty = (t.v[0].y.min(t.v[1].y).min(t.v[2].y), t.v[0].y.max(t.v[1].y).max(t.v[2].y));

@@ -356,7 +356,10 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
         return p;
     }
     if let Some(g) = test_goto() {
-        // a 5th value starts at that height (on the floor below it), e.g. on a roof
+        // a 5th value starts at that height (on the floor below it), e.g. on a roof; with no
+        // floor below, on the steep face there if there's one (#264: it slides down it)
+        let face = g.get(4).and_then(|&y| world::arena().filter(|a| a.floor_below(g[0], g[1], y).is_none())
+            .and_then(|a| a.slope_below(g[0], g[1], y)));
         let ground = match g.get(4) {
             Some(&y) => world::arena().and_then(|a| a.floor_below(g[0], g[1], y)).map_or(y, |f| f.0),
             None => world::arena().and_then(|a| a.ground(g[0], g[1])).unwrap_or(GROUND),
@@ -364,6 +367,11 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
         p.position = Vec3::new(g[0], ground + 1.0 - GROUND, g[1]);
         p.yaw = (-(g[2] - g[0])).atan2(-(g[3] - g[1]));
         p.cam_yaw = p.yaw;
+        if let Some((y, _)) = face {
+            p.position.y = y - GROUND;
+            p.prev_xz = Vec2::new(p.position.x, p.position.z);
+            return p;
+        }
     }
     p.position.y = floor_y(p.position.x, p.position.z, p.position.y + GROUND) - GROUND;
     p.prev_xz = Vec2::new(p.position.x, p.position.z);
@@ -1983,6 +1991,12 @@ struct Player {
     /// air last frame
     fall_from: f32,
     was_air: bool,
+    /// the steep terrain face they're sliding down (its normal), in contact with it (#264: the
+    /// tutorial's lava pit wall; see `slide_on_face`); None off one
+    face: Option<Vec3>,
+    /// how far (m) their last move down a steep face brought them down (`face_move`): how far it
+    /// may fall away under them and still hold them, and their fall speed for a splash
+    face_drop: f32,
     slide_on: bool,
     slide_fx: Option<Entity>,
     pool_done: bool,
@@ -2182,7 +2196,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -4309,17 +4323,61 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // step; the game's collision surfaces, floors up to 65 degrees), fall off ledges, slide down
     // slide surfaces as the game does, and don't walk off the map
     if let Some(a) = world::arena() {
-        for u in units.iter_mut() {
+        for (i, u) in units.iter_mut().enumerate() {
             let air = u.action.airborne();
             let feet = u.position.y + GROUND + u.height.max(0.0);
             u.sliding -= dt;
-            let Some((g, n, material)) = a.floor_at(u.position.x, u.position.z, feet + STEP_UP) else {
+            // a character the AI steers (a follower, an enemy, a cutscene's walk; not one a fall, a
+            // slide or a knock is carrying) keeps to ground with a floor under its middle, as before
+            // #264 (a steep face is as the edge of the map), and stops at a drop ahead
+            // (`ledge_ahead`), where the game's routes keep its AI off a drop (#264: m09_a's
+            // followers walked off the start's platform down a 72-degree face, ~30 m into the
+            // liquid). The demo's stand-in for the routes; the game's AI has no refusal of its own.
+            // The probe leaves alone one on a slide-flagged floor or building up a slide there,
+            // which the game's slide should take down it (e40's Shrikes at (-12.9, 56.7))
+            let here = a.floor_at(u.position.x, u.position.z, feet + STEP_UP);
+            let steered = !(player_first && i == 0) && !air && !u.slide_active && u.knock.is_none();
+            let probe = steered && u.slide_amount <= 0.0 && !here.is_some_and(|f| world::Arena::slides(f.2));
+            let moved = Vec2::new(u.position.x, u.position.z) - u.prev_xz;
+            let off = steered && here.is_none();
+            if off || (probe && moved.length() > 1e-4 && moved.length() < 1.0 && ledge_ahead(&a, u.prev_xz, moved.normalize(), feet)) {
+                u.position.x = u.prev_xz.x;
+                u.position.z = u.prev_xz.y;
+                continue;
+            }
+            // on the ground, followed along the way they came in steps of at most GROUND_STEP, so
+            // where they leave it doesn't hang on the frame rate (`ground_walk`)
+            // (not one the AI steers: it keeps to the frame's own test, as before #264)
+            let feet = if air || u.knock.is_some() { if u.face.is_some() { face_walk(&a, u, feet) } else { feet } }
+                else if steered { feet } else { ground_walk(&a, u, feet) };
+            // the floor under the feet; else one under the body's middle part (a rim it's half
+            // over, a sliver of steep ground beside a floor: FUN_0012b950's ledge grace, LEDGE_GRACE,
+            // #264); else terrain too steep to stand on, which they fall onto and slide down
+            // (`slide_on_face`, #264); neither: the edge of the map, so back where they were
+            let top = feet + STEP_UP;
+            let floor = a.floor_at(u.position.x, u.position.z, top)
+                .or_else(|| (!steered).then(|| a.floor_around(u.position.x, u.position.z, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, top)).flatten());
+            let slope = if floor.is_none() { a.slope_below(u.position.x, u.position.z, top) } else { None };
+            let Some((g, n, material, steep)) = floor.map(|(g, n, m)| (g, n, m, false)).or(slope.map(|(g, n)| (g, n, 0, true))) else {
                 u.position.x = u.prev_xz.x;
                 u.position.z = u.prev_xz.y;
                 continue;
             };
-            if air {
-                // in the air: keep the height above the world, over whatever floor is below
+            // (on their feet on a floor: off any face, whatever ended the fall)
+            if !steep && !air && u.face.take().is_some() && std::env::var("BF_SLIDE_LOG").is_ok() {
+                println!("t {:.2}: {} off the face on its feet at {:.2}", u.sim_time, unit_name(u), u.position);
+            }
+            if steep && (air || u.knock.is_none()) {
+                slide_on_face(u, g, n, feet, air);
+            } else if steep {
+                // getting up on it: kept on it until they move
+                u.position.y = g - GROUND;
+            } else if air {
+                // in the air: keep the height above the world, over whatever floor is below (off
+                // a face onto a floor: falling the rest, the free fall's `vy` going on)
+                if u.face.take().is_some() && std::env::var("BF_SLIDE_LOG").is_ok() {
+                    println!("t {:.2}: {} off the face onto a floor at {:.2}, falling {:.1} m/s", u.sim_time, unit_name(u), u.position, -u.vy);
+                }
                 u.height = feet - g;
                 u.position.y = g - GROUND;
                 u.was_air = true;
@@ -4409,7 +4467,9 @@ fn splashes(u: &mut Player, liquid: Option<(f32, LiquidType)>, dt: f32) {
     };
     let at = Vec3::new(u.position.x, surface, u.position.z);
     if !u.wet {
-        let slot = if u.vy < -SPLASH_FAST { LIQUID_BIG_SPLASH } else { LIQUID_SPLASH };
+        // (on a steep face: the speed it's bringing them down, not the free fall's vy, #264)
+        let falling = if u.face.is_some() { u.face_drop / dt.max(1e-4) } else { -u.vy };
+        let slot = if falling > SPLASH_FAST { LIQUID_BIG_SPLASH } else { LIQUID_SPLASH };
         u.splash(at, &l, slot);
         u.wade_in = WADE_EVERY;
     } else {
@@ -4452,6 +4512,167 @@ fn spawn_once(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale
         commands.spawn((at, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life)));
     }
 }
+
+/// A character on terrain too steep to stand on, its surface at `g` under them with normal `n`
+/// (#264; `Arena::slope_below`), their feet at `feet`, `air` if they were already in the air. On
+/// a face steeper than 65 degrees the game's character is in the fall state, never a slide state
+/// (todo/264-steep-slopes/answer.md): no contact steeper than cos 65 counts as ground
+/// (FUN_00153410), so stepping onto one starts a fall (FUN_0012b950: the take-off height
+/// char+0x6e8 kept, mode 3, MT_JUMP_FALL 21: take08's Tex runs off the tutorial's lava pit rim in
+/// MT 21), carrying their speed. Once their feet reach it they're on it (`Player::face`): its
+/// surface keeps them (no landing), and `step_player` moves them by the free fall's move with its
+/// part into the face taken off (`face_move`). They stay on it while it falls away no faster than
+/// that move brought them down (FACE_TOUCH more); faster (a cliff past it), they leave it,
+/// falling on. Off it onto a floor they fall the rest and land, the drop counted from where they
+/// took off (FUN_0012b740).
+fn slide_on_face(u: &mut Player, g: f32, n: Vec3, feet: f32, air: bool) {
+    let log = std::env::var("BF_SLIDE_LOG").is_ok();
+    if !air {
+        u.action = Action::JumpFall;
+        u.vy = 0.0;
+        u.air_velocity = Vec3::new(u.last_velocity.x, 0.0, u.last_velocity.z);
+        u.fall_from = feet;
+        if log {
+            println!("{} steps onto a steep face at {:.1} ({:.0} deg)", unit_name(u), u.position, n.y.clamp(-1.0, 1.0).acos().to_degrees());
+        }
+    }
+    u.was_air = true;
+    u.position.y = g - GROUND;
+    let gap = feet - g;
+    let reach = if u.face.is_some() { FACE_TOUCH + u.face_drop } else { FACE_TOUCH };
+    if gap > reach {
+        // above it (falling onto it, or off it where it drops away)
+        if log && u.face.is_some() {
+            println!("t {:.2}: {} leaves the face at {:.2} ({gap:.2} m over it), falling {:.1} m/s", u.sim_time, unit_name(u), u.position, -u.vy);
+        }
+        u.face = None;
+        u.height = gap;
+        return;
+    }
+    if log && u.face.is_none() {
+        println!("t {:.2}: {} on the face at {:.2} ({:.0} deg)", u.sim_time, unit_name(u), u.position, n.y.clamp(-1.0, 1.0).acos().to_degrees());
+    }
+    u.face = Some(n);
+    u.height = 0.0;
+}
+
+/// The move `m` (m: this frame's velocity x dt) against a steep face of normal `n`: its part
+/// into the face taken off, none along it (the game's sweep, FUN_00150f90 / FUN_00168950 /
+/// FUN_00151170, adds impulses along the contact normals only: no friction). The velocity
+/// itself isn't changed (FUN_0012cd10 never feeds the sweep's result back into char+0x470), so
+/// from rest the speed along a face grows at g sin(theta): 16.4 m/s^2 at 66 degrees.
+fn face_move(m: Vec3, n: Vec3) -> Vec3 {
+    let into = m.dot(n);
+    if into < 0.0 { m - n * into } else { m }
+}
+
+/// The ledge grace (FUN_0012b950): before a fall starts the game probes a capsule of 0.8 x the
+/// character's radius (1.4 m tall, at the feet, FUN_00153780 at 0x12ba02), and any walkable
+/// triangle in it (normal y above cos 65, not slide-flagged) keeps them standing. Here: a floor
+/// within this share of BODY_RADIUS round their middle, no more than GRACE_DROP under the feet (`Arena::floor_around`).
+const LEDGE_GRACE: f32 = 0.8;
+/// How far under the feet (m) a floor round their middle may lie and still hold them in the
+/// ledge grace: the game's ground contact is one under feet + 0.1 m (FUN_00153410,
+/// 0x153530-0x153540). A grace that took floors a whole step down let a character walk down a
+/// bumpy face from patch to patch, further the more often it was tested (#264: e40's s3 route).
+const GRACE_DROP: f32 = 0.1;
+
+/// The AI's drop probe, FUN_00115b00's numbers (todo/264-steep-slopes/answer.md): the ground
+/// within LEDGE_PROBE_DOWN m below points LEDGE_PROBE m ahead along the way they're going (here
+/// a ray down from LEDGE_PROBE_DROP m over their feet, so ground rising ahead, up a ramp, is met
+/// from above and counts: from a step over the feet a ray started under a ramp steeper than ~32
+/// degrees and met nothing, which held enemies at the foot of e34's ramps); none at the first,
+/// or a change of more than
+/// LEDGE_PROBE_DROP m at both the second and the third, is a drop. The game computes that verdict
+/// and throws it away (its only caller, the feelers FUN_00018c40, reads only the height): its AI
+/// has no ledge refusal, and what keeps it off cliffs is its route over the level's world points,
+/// which the demo's brains don't walk yet. So the refusal is the demo's stand-in for those routes.
+const LEDGE_PROBE: [f32; 3] = [0.4, 0.8, 1.2];
+const LEDGE_PROBE_DOWN: f32 = 5.0;
+const LEDGE_PROBE_DROP: f32 = 2.75;
+
+/// Whether a character at `at` with its feet at `feet`, going `dir`, is at a drop (see
+/// LEDGE_PROBE).
+fn ledge_ahead(a: &world::Arena, at: Vec2, dir: Vec2, feet: f32) -> bool {
+    let ground = |d: f32| {
+        let p = at + dir * d;
+        a.ray(Vec3::new(p.x, feet + LEDGE_PROBE_DROP, p.y), Vec3::NEG_Y, LEDGE_PROBE_DROP + LEDGE_PROBE_DOWN).map(|t| feet + LEDGE_PROBE_DROP - t)
+    };
+    let off = |d: f32| ground(d).is_none_or(|g| (g - feet).abs() > LEDGE_PROBE_DROP);
+    ground(LEDGE_PROBE[0]).is_none() || (off(LEDGE_PROBE[1]) && off(LEDGE_PROBE[2]))
+}
+
+/// The longest step (m) a grounded character's move this frame is followed along the ground in
+/// (`ground_walk`): about a sprint's move at 60 fps. The demo's: the game's physics steps at a
+/// fixed rate with substeps (FUN_0012cd10), where the demo steps once a frame.
+const GROUND_STEP: f32 = 0.12;
+
+/// A grounded character's move this frame (from `prev_xz` to where it is), followed along the
+/// ground in steps of at most GROUND_STEP: at each step the floor within a step of the feet (as
+/// the frame's own test, the ledge grace's too) carries them on; the first point where it doesn't (a ledge, a steep
+/// face, nothing) is where they stop this frame, so the ground loop starts their fall or slide
+/// from there. With one test a frame, a 15 fps frame's 0.5 m sprint stepped over the floor
+/// patches of e40's cliff tops that a 60 fps one walked down, and the take-off (and so the fall's
+/// damage) hung on the frame rate (#264). Their feet's height where they stop.
+fn ground_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
+    let from = u.prev_xz;
+    let to = Vec2::new(u.position.x, u.position.z);
+    let length = from.distance(to);
+    if !(GROUND_STEP..1.0).contains(&length) {
+        return feet;
+    }
+    let steps = (length / GROUND_STEP).ceil() as usize;
+    let mut feet = feet;
+    for k in 1..steps {
+        let p = from.lerp(to, k as f32 / steps as f32);
+        let floor = a.floor_at(p.x, p.y, feet + STEP_UP)
+            .or_else(|| a.floor_around(p.x, p.y, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, feet + STEP_UP));
+        match floor {
+            Some((g, _, _)) if feet - g <= STEP_UP => feet = g,
+            _ => {
+                u.position.x = p.x;
+                u.position.z = p.y;
+                break;
+            }
+        }
+    }
+    u.position.y = feet - GROUND;
+    feet
+}
+
+/// A move down a steep face this frame (from `prev_xz` to where it is, its feet coming down
+/// `face_drop` along it), followed in steps of at most GROUND_STEP as `ground_walk` follows the
+/// ground: at the first point where there's a floor at the feet or no face under them (the
+/// face's foot, a cliff past it) they stop this frame, their feet where the move had brought
+/// them, so the ground loop lands them or lets them fall on from there. Taken whole, a 15 fps
+/// frame's move carried them up to a metre past the foot before the floor was seen, and the
+/// landing (and its damage) hung on the frame rate (#264). Their feet's height where they stop.
+fn face_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
+    let from = u.prev_xz;
+    let to = Vec2::new(u.position.x, u.position.z);
+    let length = from.distance(to);
+    if !(GROUND_STEP..4.0).contains(&length) {
+        return feet;
+    }
+    let steps = (length / GROUND_STEP).ceil() as usize;
+    for k in 1..steps {
+        let t = k as f32 / steps as f32;
+        let p = from.lerp(to, t);
+        let at = feet - u.face_drop * t;
+        let floor = a.floor_at(p.x, p.y, at + FACE_TOUCH).is_some_and(|f| at - f.0 <= FACE_TOUCH + u.face_drop / steps as f32);
+        if floor || a.slope_below(p.x, p.y, at + FACE_TOUCH + u.face_drop).is_none() {
+            u.position.x = p.x;
+            u.position.z = p.y;
+            u.position.y = at - GROUND;
+            return at;
+        }
+    }
+    feet
+}
+
+/// A body on a steep face (`slide_on_face`) whose feet are within this (m) of it, more than its
+/// move along the face brought them down, is touching it. The demo's.
+const FACE_TOUCH: f32 = 0.02;
 
 /// The game's slide on the ground under `u` (normal `n`, collision `material`), see SLIDE_COS.
 /// Moves `u` while sliding (its own movement this frame replaced, or blended back in as the
@@ -5251,9 +5472,15 @@ fn collide(units: &mut [&mut Player], player_first: bool) {
             }
         }
         if let Some(a) = world::arena() {
-            for u in units.iter_mut() {
+            for (i, u) in units.iter_mut().enumerate() {
                 let feet = u.position.y + GROUND + u.height;
-                let q = a.push_out(Vec2::new(u.position.x, u.position.z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP);
+                // (not off the steep face they're on or stepping onto, which they slide down:
+                // #264, `slide_on_face`; for the player or one in the air: one the AI steers
+                // keeps to floors, and the face stays a wall that turns it along the slope)
+                let (x, z) = (u.position.x, u.position.z);
+                let steps_on = (player_first && i == 0) || u.action.airborne();
+                let face = u.face.or_else(|| steps_on.then(|| a.floor_at(x, z, feet + STEP_UP).is_none().then(|| a.slope_below(x, z, feet + STEP_UP)).flatten()).flatten().map(|s| s.1));
+                let q = a.push_out_sliding(Vec2::new(x, z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, face);
                 u.position.x = q.x;
                 u.position.z = q.y;
             }
@@ -5979,10 +6206,23 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let facing = Quat::from_rotation_y(p.yaw);
     if p.action.airborne() {
         p.air_velocity *= AIR_DRAG.powf(dt * 30.0);
-        p.position += p.air_velocity * dt;
-        p.height += p.vy * dt;
-        p.vy -= GRAVITY * dt;
-        if p.height <= 0.0 && p.vy < 0.0 {
+        if let Some(n) = p.face {
+            // on a steep face (#264): the free fall goes on (FUN_0012cd10: vy -= 18 dt, x/z x0.99
+            // a frame) and its move slides along the face (`face_move`); the ground loop keeps
+            // their feet on it (`slide_on_face`). No landing on it
+            // (the fall's move over the frame at its mean speed, so it doesn't hang on the frame
+            // rate: the game's own steps are fixed)
+            let m = face_move(Vec3::new(p.air_velocity.x, p.vy - 0.5 * GRAVITY * dt, p.air_velocity.z) * dt, n);
+            p.vy -= GRAVITY * dt;
+            p.position += Vec3::new(m.x, 0.0, m.z);
+            p.face_drop = (-m.y).max(0.0);
+            p.height = 0.0;
+        } else {
+            p.position += p.air_velocity * dt;
+            p.height += (p.vy - 0.5 * GRAVITY * dt) * dt;
+            p.vy -= GRAVITY * dt;
+        }
+        if p.face.is_none() && p.height <= 0.0 && p.vy < 0.0 {
             p.height = 0.0;
             p.vy = 0.0;
             p.action = Action::JumpLand;
