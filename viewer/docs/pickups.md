@@ -17,21 +17,18 @@
     squad's items (play_inventory.rs, #281; play.md "Items: the squad's starting inventory"): e34
     6, e40 20, m01_a 3, m09_a 10, the tutorial none. They're the inventory Medkit h_192d5337 (80),
     the one a placed Medkit gives, so a pickup adds to the same count.
-  * The item box (capture todo/medkits.mp4) shows one item at a time, a grenade type, the
-    Medkit, or another item of the squad's (the OrgSen, the Hat: #281): its name at the bottom
-    and the count top right, over its HUD icon (the grenade type's or the item's own
-    h_e5ec3f1f: Frag fe20b919, Medkit f647bbef, OrgSen 1b73c691). A grenade's count sits at the
-    right middle and is hidden while only one is carried (see **Grenades**); the OrgSen and the
-    Hat sit as a grenade's do (#196 take26), their count hidden at 1. They're pale blue while the
-    item can be used and red while it can't, with the icon grey: a medkit at full health; the
-    OrgSen or the Hat for Brutus, whose skill refuses their use types (its +0x1c, FUN_0013c160),
-    where G says "Cannot use" (take26). A medkit taken while none is carried is selected and
-    marked NEW (orange) for 3 s (the game's NEW and selection are #196's). Tab steps to the next item
-    carried; held, the item list opens around the box (todo/medic + intenvory use case.mp4):
-    the other items leftward along the bottom (two), the other grenade types carried up the
-    right edge (five), as the Frag and Sentry recordings' inventory overview stacks them,
-    stepping round as the wheel picks. G uses the selected item. There's no separate medkit
-    shortcut. An item that can't be used now shows a grey icon and red text.
+  * The item box shows one item at a time, a grenade type, a Medkit, or another item of the
+    squad's (the OrgSen, the Hat: #281), each the same way: its HUD icon (the type's own
+    h_e5ec3f1f: Frag fe20b919, Medkit f647bbef, OrgSen 1b73c691) 64 units square, the name at the
+    bottom, the count at the right from 2 up. Blue while the item can be used and red while it
+    can't, with the icon grey: a Medkit at full health; the OrgSen or the Hat for Brutus, whose
+    skill refuses their use types (its +0x1c, FUN_0013c160), where G says "Cannot use" (#196
+    take26). A Medkit taken changes nothing in the box (#196 take34, #28 take08): NEW shows the
+    first time the box or the list shows that stack, and only if no slot has shown it before. Tab
+    steps to the next item; held, the item list opens round the box (up the next two, left the
+    previous two) and the game pauses; G uses the selected item; B is the Black button's Medkit
+    shortcut (the 80-point Medkit used, the item before it back on the release). All of it:
+    [play.md](play.md), **The item box and the item list** (#196).
   * Medkits within 3.5 m of one another, on the same level, are one group. (The demo used to
     draw its own soft green glow over each group, fitted to todo/medkits glow.png; it was
     removed on 2026-10-19 because the game's own lights and placed effects are now drawn, #143
@@ -107,7 +104,7 @@
   * A taken pickup comes back after 30 s (a guess; the respawn time isn't found). Only the
     player picks up.
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
-    `BF_TEST_HEALTH=<hp>` starts hurt. `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds the item list open.
+    `BF_TEST_HEALTH=<hp>` starts hurt. `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds Tab from the start (the item list open, the game paused).
     `BF_TEST_ITEM=<label>` selects a carried item at the start and `BF_TEST_ITEM_USE=<s>` presses
     G then (play.md "Items: the squad's starting inventory"). Verified (#281): e34's range spot
     with `BF_TEST_HEALTH=50 BF_TEST_ITEM=Medkit BF_TEST_MEDKIT=1.5`: "Medkit 6" blue, used,

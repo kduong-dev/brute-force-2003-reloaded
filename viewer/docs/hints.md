@@ -185,7 +185,8 @@ shows skips it: the plate disables timer464, starts timer391 and clears the co-o
   | 62 | BACK (press) | H | I | Back |
   | 63 | Black (held) | J | B | right shoulder (xemu's Black) |
 
-  B is the demo's Black: it uses no Medkit yet (the item box's G does); Escape stands for START,
+  B is the demo's Black, also its Medkit shortcut (#196, [play.md](play.md) **The item box and
+  the item list**; in a test session the test tools' key); Escape stands for START,
   whose pause menu the demo hasn't got. The mouse buttons count only while the mouse is
   captured (the click that captures it doesn't fire).
 * **The AI events** are posted by `ai_events` each frame, before the triggers' frame, from the

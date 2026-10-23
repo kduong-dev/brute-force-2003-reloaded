@@ -316,6 +316,21 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
             defs.push(d);
         }
     }
+    // (BF_TEST_INV's grenade types the level defines but neither SQUAD_GRENADES nor its squad have:
+    // e34's Sentry h_f73de83d for #196's nine-stack pool, play_inventory.rs; the first by name)
+    if let Ok(v) = std::env::var("BF_TEST_INV") {
+        for label in v.split(',').filter_map(|e| e.split_once(':')).map(|(n, _)| n.trim()) {
+            if defs.iter().any(|k| k.label.eq_ignore_ascii_case(label)) {
+                continue;
+            }
+            let mut named: Vec<(&u32, &WeaponDef)> = game.0.weapons.iter()
+                .filter(|(_, d)| matches!(d.group_type, 2 | 3) && usable(d) && d.label.eq_ignore_ascii_case(label)).collect();
+            named.sort_by_key(|(n, _)| **n);
+            if let Some((_, d)) = named.first() {
+                defs.push((*d).clone());
+            }
+        }
+    }
     // (in the store's (category, index) order, as SQUAD_GRENADES: an alternate taken above goes in
     // its place)
     defs.sort_by_key(|d| (d.group_type, d.item_index));
@@ -352,7 +367,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
     // test hook: BF_TEST_EXPLOSION=1 drops the selected type 6 m ahead every 1.5 s, going off at
     // once
     let test = std::env::var("BF_TEST_EXPLOSION").is_ok();
-    let selected = match player.item { Item::Grenade(k) => k, _ => 0 };
+    let selected = match player.item { Some(Item::Grenade(k)) => k, _ => 0 };
     if test && player.sim_time >= *next_test && !kits.0.is_empty() {
         *next_test = player.sim_time + 1.5;
         let (x, z) = (player.position.x, player.position.z - 6.0);

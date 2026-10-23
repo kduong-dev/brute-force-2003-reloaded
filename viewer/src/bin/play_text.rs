@@ -18,11 +18,10 @@ const SPACE: f32 = 4.0;
 const STROKE: f32 = 1.0;
 const SHADOW: f32 = 1.5;
 
-/// Colours sampled from the captures: messages and prompts (pale blue), ammo and "NEW"
-/// (orange), the item box's name and count (red).
+/// Colours sampled from the captures: prompts and labels (pale blue), ammo (orange). (The item
+/// box's and the message line's are the game's own: play_itembox.rs, play_hud.rs.)
 pub const MESSAGE_BLUE: Color = Color::srgb(0.73, 0.82, 0.98);
 pub const AMMO_ORANGE: Color = Color::srgb(1.0, 0.65, 0.41);
-pub const ITEM_RED: Color = Color::srgb(0.8, 0.35, 0.28);
 
 #[derive(Resource)]
 pub struct GameFont(AtlasFont);

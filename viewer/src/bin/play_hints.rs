@@ -179,7 +179,7 @@ struct Binding {
 /// E and R are the X button (use, reload), G the left trigger, V White, Q Y, Z the left stick's
 /// click, Tab B, the digits the d-pad (4 up to Tex's portrait, 2 right to Flint's, 1 down to
 /// Brutus's, 3 left to Hawk's), Escape START, the right mouse the right stick's click, Space A, I
-/// BACK; B stands for Black, which has no other key (it doesn't use a Medkit yet). On the pad,
+/// BACK; B stands for Black (its Medkit shortcut is play_itembox.rs's). On the pad,
 /// White and Black are the shoulder buttons (as xemu maps them: take08 RB, take09 LB).
 const BINDINGS: [Binding; 16] = [
     Binding { vb: 5, press: false, glyph: Glyph::Icon('F'), keys: &[], mouse: Some(MouseButton::Left), pads: &[GamepadButton::RightTrigger2] },
