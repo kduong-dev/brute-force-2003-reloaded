@@ -153,7 +153,8 @@ const CLASS_CUBE: u32 = 0xE0CA_2222;
 const ATTACHED: u32 = 0xE299_9FFD;
 /// How far a cube emitter's box reaches to either side of the emitter, in its Width, Height and
 /// Depth (h_fd22a11c x, h_efb0f8cf y, h_14b74eb2 z), under the placed rules
-/// (`Compiled::placed`), where every particle starts in it: the spawn of each cube class draws
+/// (`Compiled::placed`) and a beam's (`Compiled::beam`; both `Compiled::game_spawn`), where every
+/// particle starts in it: the spawn of each cube class draws
 /// x, y and z from [-1, 1) times them (FxCubeEmitter 0x2b18a7-0x2b18ed, the node's +0x4c / +0x50
 /// / +0x54 into the emitter's +0xf4 / +0xf8 / +0xfc at 0x2b16f0; the game's cube
 /// 0x64f1a-0x6500f), [0, 2) for the height of a game cube with OffsetHeight (ATTACHED). So
@@ -555,12 +556,22 @@ pub struct Compiled {
     /// (stun_beam_s's, the placed effects' xleaves_rustle_kill and slava-cavern-kill.fld), until
     /// checked against their own captures. A beam's appearances are turned by their facing type
     /// as the game's shader does (see FACING: 3 along their motion, `Pair::axial`; 2 square to
-    /// it, as perp quads) and drawn with the game's shapes (`shapes`); its count stays the
-    /// demo's.
+    /// it, as perp quads) and drawn with the game's shapes (`shapes`), and its particles start
+    /// where the game's spawn puts them (`game_spawn`); its count stays the demo's.
     pub beam: bool,
 }
 
 impl Compiled {
+    /// Whether its particles start where the game's spawn for their emitter's shape puts them
+    /// (the box, CUBE_REACH, with a game cube's OffsetHeight; the sphere 0x2a8a90; the cone
+    /// 0x2aa190) and none rides its effect: the placed effects (`placed`) and the beams (`beam`:
+    /// the Rails' rings, rgun_perp_s.emt, a game cube whose height grows 116 m a second with
+    /// OffsetHeight set, so they're strewn along the ray ahead of the muzzle, as #67's takes show
+    /// them; the L-Shots' rings likewise, their smoke within 2.25 m of the cone's emitter).
+    pub fn game_spawn(&self) -> bool {
+        self.placed || self.beam
+    }
+
     /// Whether any of its nodes has a parameter with variants by the user parameter (items at
     /// several sparams, `varies_with_user`): s-lavalight's size is 0.49 m at 0 and 4.9 m at 1,
     /// its box 0.23 m and 11.5 m, its rate 2.7 and 14 a second.
@@ -923,9 +934,9 @@ impl AleAssets {
             };
             // its particles kept in the effect's frame: its h_e2999ffd where it has one, else
             // (with `ride`) any but a trail, an emitter under the world node with its appearance
-            // at the root (see `Compiled::ride`); under the placed rules none (ATTACHED is a
-            // game cube's OffsetHeight there, see CUBE_REACH)
-            let attached = !placed && match emitter.params.get(&ATTACHED) {
+            // at the root (see `Compiled::ride`); under the placed rules and a beam's none
+            // (ATTACHED is a game cube's OffsetHeight there, see CUBE_REACH, `game_spawn`)
+            let attached = !(placed || beam) && match emitter.params.get(&ATTACHED) {
                 Some(crate::bf::ale::Value::Bool(b)) => *b,
                 _ => ride && !(under_world_node(&e, em) && !under_world_node(&e, ap)),
             };
@@ -1414,7 +1425,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     let speed = em.curve(SPEED, sp, t).unwrap_or(0.0);
                     let c = |p: u32| em.curve(p, sp, t).unwrap_or(0.0);
                     let (local, dir) = match em.class {
-                        CLASS_SPHERE if compiled.placed => {
+                        CLASS_SPHERE if compiled.game_spawn() => {
                             // the game's sphere spawn (0x2a8a90): a direction of three draws in
                             // [-1, 1) normalised (0x2a8ce0), out MinRadius + r x (MaxRadius -
                             // MinRadius) along it, r in [-1, 1) (the node's +0x4c and +0x50,
@@ -1423,7 +1434,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                             let (r0, r1) = (c(SPHERE_RADIUS[0]), c(SPHERE_RADIUS[1]));
                             (d * (r0 + (r1 - r0) * (fx.random() * 2.0 - 1.0)), d)
                         }
-                        CLASS_CONE if compiled.placed => {
+                        CLASS_CONE if compiled.game_spawn() => {
                             // the game's cone spawn (0x2aa190): the polar angle from +y MinSpread
                             // + r x (MaxSpread - MinSpread) and out MinRadius + r x (MaxRadius -
                             // MinRadius) along that way, each r in [-1, 1) (the node's +0x54 /
@@ -1447,7 +1458,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                             let flat = Vec3::new(d.x, 0.0, d.z).normalize_or_zero();
                             (flat * (r0 + (r1 - r0) * fx.random()), d)
                         }
-                        _ if compiled.placed => {
+                        _ if compiled.game_spawn() => {
                             // the game's box and spread (see CUBE_REACH): [-1, 1) of the sizes
                             // to either side, a game cube's OffsetHeight [0, 2) of its height
                             let size = Vec3::new(c(CUBE[0]), c(CUBE[1]), c(CUBE[2])) * CUBE_REACH;
@@ -1490,10 +1501,11 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                         let inv = place.rotation.inverse();
                         (Some(owner), inv * (origin - place.translation) + inv * frame * local, inv * frame * dir * speed, inv * lie)
                     } else {
-                        // (it starts at the emitter, or under the placed rules where the
-                        // game's spawn for the emitter's shape puts it: the box (CUBE_REACH),
-                        // the sphere 0x2a8a90 or the cone 0x2aa190 above)
-                        (None, if compiled.placed { local } else { Vec3::ZERO }, frame * dir * speed, lie)
+                        // (it starts at the emitter, or under the placed rules and a beam's
+                        // where the game's spawn for the emitter's shape puts it: the box
+                        // (CUBE_REACH), the sphere 0x2a8a90 or the cone 0x2aa190 above,
+                        // `Compiled::game_spawn`)
+                        (None, if compiled.game_spawn() { local } else { Vec3::ZERO }, frame * dir * speed, lie)
                     };
                     seq.0 += 1;
                     // a steady light's particles start at the moment within the frame the rate says

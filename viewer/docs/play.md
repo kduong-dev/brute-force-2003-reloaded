@@ -1036,7 +1036,11 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   below and is aimed at the ray's end, so in the scope it comes in from the lower right. A beam's
   appearances turn by their facing type as the game's vertex shader does (0x3b8bf8: facing 3
   along the motion, the tracer's streak and the Rails' side arcs, which stand on their particles,
-  shape 3; facing 2 square to it, the L-Shots' rings and smoke cards). Before, the effect was
+  shape 3; facing 2 square to it, the L-Shots' rings and smoke cards), and its particles start
+  where the game's spawn for their emitter puts them (`Compiled::game_spawn`, #67: the Rails'
+  rings, rgun_perp_s.emt, a game cube whose height grows 116 m a second with OffsetHeight set
+  (code-map 0x64e30), are strewn along the ray from the muzzle out, where the demo's spawn had
+  them all within a few metres of the gun, a tube of rings round the camera). Before, the effect was
   spun so its emitters' own turn threw it down into the ground at the muzzle, a tracer's
   camera-facing streak could cross the whole scoped view, and nothing stopped it at the hit (and
   before #115 it flew straight up, the thin vertical line over the Minigun). Checked against the
@@ -1058,11 +1062,12 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     BF_TEST_TRIGGER=2.0-2.08`): the spark at the hit, red-violet arcs from it down toward the gun
     turning blue over ~0.15 s, then blue sparks at the hit, as take01 f19-f41. The ray goes
     through the gate and stops at a wall 38.3 m out, the beam's length.
-  * Not matched: in the L-Shot's scope the demo draws more rings, bunched toward the hit, and a
-    smoke cloud far denser than take12's faint haze. The beams keep the demo's count, which spreads
-    a frame's particles along the emitter's move; whether the game's count (FUN_00065800) puts a
-    frame's batch at one point, which would leave a few rings ~10 m apart as take12 shows, isn't
-    traced.
+  * Not matched: in the L-Shot's scope the demo draws more rings than take12's three or four,
+    and a smoke cloud far denser than its faint haze; the Rails' rings are many more than #67
+    take06's four or five (rgun_perp_s.emt's 488 a second for 0.22 s, read as the demo's count).
+    The beams keep the demo's count, which spreads a frame's particles along the emitter's move;
+    whether the game's count (FUN_00065800) puts a frame's batch at one point, or where the
+    difference is, isn't traced.
 * **The Minigun's spin** (#68; `src/bin/play_minigun.rs`): its item set is IFSET_MINIGUN
   (function-type 16), whose per-frame hook FUN_00147f90 (vtable 0x39b8f8, the item-set factory
   0x146920; the analyst's reading, todo/weapons-plan/answers-batch1.md §12) keeps a spin level:
@@ -1584,6 +1589,43 @@ The bullet's `<mirv>` count 3 is dead data: its mode is 0, NO_MIRV, plan §2):
   m hit comes on the third sweep, 0.3 s after the shot (take07: ~0.3 s), at the same damage (a
   bolt has no falloff; take07 17-18 a hit): the sweep's rule, not run again here.
 * Not checked again (generic): the dry fire, the switch (take02).
+
+**Rail RVR** (#67, Hawk; nothing of its own beyond the beam's spawn below: the pass-through
+(#238) and the beam (#237), from its data: an instant ray, 90 m, 2.5 a second, 13.25-18.25
+BALLISTIC with no falloff, n1 1, n2 500 and the pass flag, no scope; railhit_s with
+light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in flight):
+* The beam (§ Tracers and beams) at e34's gate 10 m out (take01's spot, `BF_MAP=e34
+  BF_CHARACTER=2 BF_TEST_WEAPON="Rail RVR;Foley 356 Tact" BF_TEST_GOTO=-52.76,31.02,-52.9,31.5
+  BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.08 BF_TEST_TRIGGER=2.0-2.08`; the Foley as the second gun
+  so the one stowed on Hawk's back doesn't hide the view): the spark at the hit, red-violet arcs
+  from it down toward the gun turning blue over ~0.15 s, then the hit's blue sparks, as take01
+  f19-f41 of 3.05 s on. Its rings were all spawned within a few metres of the gun, a bright tube
+  round the camera; they're now strewn along the ray as the game's cube spawn puts them
+  (`Compiled::game_spawn`), but stay brighter and many more than take01's and take06's faint few
+  (§ Tracers and beams, "Not matched").
+* At e40's cliff 25 m out (take06's spot: `BF_MAP=e40 BF_CHARACTER=2 BF_TEST_WEAPON="Rail
+  RVR;Foley 356 Tact" BF_TEST_GOTO=-16.2,152.68,-16.69,152.58 BF_TEST_GO_AT=100
+  BF_CAMERA_PITCH=-0.05 BF_TEST_TRIGGER=2.0-2.08`): the arcs from the gun up to the reticle and
+  the white-blue glow at the muzzle (take06 f10-f17 of 2.5 s on, at 30 fps); the ray goes into
+  the cliff (the terrain, its one wall) and on to its 90 m, the beam's length, hidden behind it.
+* Held fire one shot every 0.4 s (2.5 a second; take01: one per ~0.4 s).
+* Reload (`--test BF_CHARACTER=2 BF_TEST_WEAPON="Rail RVR" BF_TEST_CLIP=3
+  BF_TEST_TRIGGER=2.5-6.5 BF_AMMO_LOG=1`): 3 -> 0 a shot every 0.4 s, the reserve drops 24 0.47 s
+  after the last and the clip reads 24 16 frames (1.07 s) later; take02's watch log: 2.757 /
+  3.158 / 3.560, the reserve 200 -> 176 at 3.961 (+0.40), the clip 24 at 5.065 (+1.10).
+* Damage at 7 m on e34's Shrike Soldier (take03's spot: `BF_MAP=e34 BF_CHARACTER=2
+  BF_TEST_WEAPON="Rail RVR" BF_TEST_GOTO=-52.76,31.02,-54.78,37.72 BF_TEST_GO_AT=100
+  BF_TEST_NPC="0.5,h_e96829a0,enemy,frozen,-54.78,37.72" BF_TEST_NPC_HP=1.0,1,300
+  BF_TEST_INSTANT_KILL=0 BF_CAMERA_PITCH=-0.32 BF_TEST_TRIGGER=3.0-3.08,5.2-5.28,7.4-7.48,9.6-12.0
+  BF_COMBAT_LOG=1`): with the crosshair on its legs, as take03's (its hits flash at the knees),
+  every ray strikes a calf (x0.5) and goes on through into the ground: 9.9-11.5 a hit (the roll
+  x 0.5 x 1.4), take03's nine 9.75-12.77. On the head (`BF_CAMERA_PITCH=-0.12`) 101-111 (x5).
+  take03's run of misses in its held fire (11.8-13.5 s) isn't reproduced: the demo's stays on.
+* Pass-through can't be seen in the takes (take01's wall has nothing visible behind it): the
+  demo's checks are § Ricochet and pass-through's (two Shrikes in line, a crate); shots R1 and R2
+  of todo/drafts/done/bolt-ricochet-passthrough.md would settle it against the game.
+* Not checked again (generic): the dry fire and switch (take02), the pickups (take04, take05),
+  the far enemies (take09, take10).
 
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
