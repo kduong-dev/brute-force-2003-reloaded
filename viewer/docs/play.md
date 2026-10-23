@@ -1648,6 +1648,21 @@ the damage on a character (a take at a frozen enemy 7 m out with its HP logged),
 (shots R1, two frozen enemies in line at 7 and 12 m, and R2, one behind a placed object and one
 behind a level wall).
 
+**Ion Beamer** (#56; h_ea241276, medium: Flint, `BF_CHARACTER=1 BF_TEST_WEAPON="Ion Beamer"
+BF_CAMERA_PITCH=-0.2 BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,6;0.3,shrike
+soldier@dm,enemy,frozen,4.5,1" BF_TEST_PLACE="0.5,supply crate,4.5,16,0;0.5,supply crate,4.5,12,0"
+BF_TEST_TRIGGER=2.0-2.08,3.5-6.0`): a bolt at 100 m/s (Flint's rifle range x1.25: 112.5 m) with
+the pass flag and n1 5, n2 0 (#238): it goes through both crates (each dealt the launch roll,
+its violet hit at each) and stops at the first Shrike (16.2 on an upper arm, the roll x 0.8 x
+1.4), never the one behind; held fire one bolt every 0.53 s (2 a second: 16 frames), clip 100.
+"Penetrates armour" is its damage-type 6 (PARTICLE) against each target type's factor (generic,
+`play_damage.rs`); "some types of walls" are the objects the code lets it through (a placed
+object, a gate, a crate, a broken object's remains: the ray result's kind 2), never the terrain,
+which ends it. Blocked on footage: shot I1 (a bolt through a crate or gate leaf into a frozen
+enemy, and at a frozen enemy with another behind), the bolt's and its hit's look
+(paralyzer_bul_master, paralyzer_hit_master with light_hit_energy), its rate, reload and damage
+against the game, and which of a level's walls it goes through (a take at a level wall).
+
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
 `src/bin/play.rs` (`scope_levels`, `level_zoom`, `press_scope`, `scope_input`, `follow_camera`),
