@@ -606,9 +606,9 @@ impl Plugin for PassPlugin {
     }
 }
 
-/// The pass's node label.
+/// The pass's node label (the scope views' pass comes after it: play_scope_view.rs).
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-struct VengarLabel;
+pub(super) struct VengarLabel;
 
 /// The pass (vengar.wgsl) on a camera whose settings ask for any of it.
 #[derive(Default)]

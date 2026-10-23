@@ -202,22 +202,13 @@ const SKULL_HUMAN: u32 = 0x1834_3E47;
 const SKULL_BRUTUS: u32 = 0x19DA_7869;
 const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
 
-/// The scope frame (h_1807ec04, 256 x 128: the top right quarter) and its size on screen: its
-/// rim where the capture shows it (77% of the width, nearly the full height), the quarters
-/// running past the screen's edge.
-const SCOPE_FRAME: u32 = 0x1807_EC04;
 /// The crosshair: the held weapon's 64 x 64 texture drawn 1:1, centred at (320, 192); in the
 /// scope it moves to the middle, (320, 240), the same size. Measured for all 11 weapons in their
 /// take01s (todo/49-68, 2.5 s: each texture's alpha box matches the screen box to 1-2 units),
 /// the same standing, firing and strafing (no growth); scoped in the Foley's, MK's and L-Shot's
-/// (both zoom steps).
+/// (both zoom steps). (The scope's frame and Flint's overlay are play_scope_view.rs's.)
 const CROSSHAIR_SIZE: f32 = 64.0;
 const CROSSHAIR_Y: f32 = 192.0;
-const SCOPE_QUARTER: (f32, f32) = (397.0, 269.0);
-/// the frame's grey (153 155 153, alpha 153) drawn as a darkening, and the same beyond it
-const SCOPE_SHADE: Color = Color::srgb(0.12, 0.13, 0.12);
-const SCOPE_FILL_COLOR: Color = Color::srgba(0.02, 0.02, 0.02, 0.6);
-const SCOPE_FILL: f32 = 400.0;
 
 /// The health / energy frame's top-left corner (common h_0cdf5876, 32 x 16: the notched outer
 /// edge and the bars' inset channel), mirrored into the other three, its last column stretched
@@ -399,44 +390,6 @@ fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
     Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
                bevy::render::render_resource::TextureDimension::D2, out,
                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
-}
-
-/// A scope overlay: the frame (false) or Flint's sniper rim (true).
-#[derive(Component)]
-struct ScopeOverlay(bool);
-
-/// Flint's sniper view: clear in the middle, a cyan-teal glow toward the edges (the capture's
-/// look, approximated: the game smears the edges with an effect).
-fn sniper_rim() -> Image {
-    let n = 256u32;
-    let mut px = Vec::with_capacity((n * n * 4) as usize);
-    for y in 0..n {
-        for x in 0..n {
-            let (u, v) = (x as f32 / (n - 1) as f32 * 2.0 - 1.0, y as f32 / (n - 1) as f32 * 2.0 - 1.0);
-            let r = (u * u + v * v).sqrt();
-            let k = ((r - 0.7) / 0.6).clamp(0.0, 1.0);
-            let a = k * k * (3.0 - 2.0 * k) * 0.5;
-            px.extend_from_slice(&[40, 150, 170, (a * 255.0) as u8]);
-        }
-    }
-    Image::new(bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
-               bevy::render::render_resource::TextureDimension::D2, px,
-               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
-}
-
-/// Show the scope's overlay while the scope is up: the frame for a character whose skill shows it
-/// (its +0xa8 with bit 0 clear: everyone's but Flint's, FUN_000b4070; `skills::scope_frame`),
-/// else Flint's rim (the game's full-screen smear is the camera's screen effect, its switch not
-/// traced to her skill: the analyst's likely reading).
-fn update_scope(player: Res<Player>, mut overlays: Query<(&ScopeOverlay, &mut Visibility)>) {
-    let up = player.scope > 0.6;
-    let flint = !skills::scope_frame(&player);
-    for (o, mut v) in &mut overlays {
-        let want = if up && o.0 == flint { Visibility::Inherited } else { Visibility::Hidden };
-        if *v != want {
-            *v = want;
-        }
-    }
 }
 
 /// A portrait's own image (to show again after the skull).
@@ -753,7 +706,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<HudGen>()
         // (after the death camera: its label and reticle show the frame it decides them)
         .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
-                              update_hud_widgets, update_squad_hud, update_scope, update_message).after(update_weapons).after(deathcam::death_cam)
+                              update_hud_widgets, update_squad_hud, update_message).after(update_weapons).after(deathcam::death_cam)
             .run_if(in_state(AppState::Playing)))
         // the radar's objective dots, once the radar-triggers' contacts are in (#228)
         .add_systems(Update, update_radar_marks.after(super::triggers::radar::RadarApply).after(update_player).run_if(in_state(AppState::Playing)));
@@ -895,7 +848,6 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     }
     let (chevrons, font, bars) = (gen.chevrons.clone(), gen.font.clone(), gen.bars.clone());
     let game = &mut game.0;
-    let rim = images.add(sniper_rim());
     game.load_textures_for(&super::data_dir(), "tutorial", TUTORIAL_BAR);
     let tutorial = game.texture_rgba(TUTORIAL_BAR).map(|(w, h, px)| {
         let mut piece = |cols: (u32, u32), red: bool| images.add(tutorial_piece(w, h, &px, cols, red));
@@ -924,26 +876,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let window = commands.spawn((HudRoot, Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0),
                                                  justify_content: JustifyContent::Center, ..default() })).id();
     let screen = commands.spawn((Node { height: Val::Percent(100.0), aspect_ratio: Some(4.0 / 3.0), ..default() }, ChildOf(window))).id();
-
-    // ---- the scope (under the rest of the HUD): for most, the game's frame h_1807ec04, a
-    // quarter (top right: outer grey, rounded corner, tick marks) mirrored four ways, the
-    // shading outside drawn dark as in the capture; Flint's sniper view has a cyan rim instead
-    // (an effect in the game, not a texture: approximated) ----
-    let quarter = tex(SCOPE_FRAME);
-    let (qw, qh) = SCOPE_QUARTER;
-    for (x, y, fx, fy) in [(320.0, 240.0 - qh, false, false), (320.0 - qw, 240.0 - qh, true, false),
-                           (320.0, 240.0, false, true), (320.0 - qw, 240.0, true, true)] {
-        commands.spawn((ChildOf(screen), at(x, y, qw, qh), ScopeOverlay(false), Visibility::Hidden,
-                        ImageNode { flip_x: fx, flip_y: fy, ..ImageNode::new(quarter.clone().unwrap_or_default()) }.with_color(SCOPE_SHADE)));
-    }
-    // beyond the frame's texture (wide windows): the same shading
-    for (x, w) in [(-SCOPE_FILL, 320.0 - qw + SCOPE_FILL), (320.0 + qw, SCOPE_FILL)] {
-        commands.spawn((ChildOf(screen), at(x, 240.0 - qh, w, 2.0 * qh), ScopeOverlay(false), Visibility::Hidden,
-                        BackgroundColor(SCOPE_FILL_COLOR)));
-    }
-    // (over the whole window, not just the 4:3 screen)
-    commands.spawn((ChildOf(window), Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                    ScopeOverlay(true), Visibility::Hidden, ImageNode::new(rim)));
+    // (the scope's frame and Flint's overlay, under the rest of the HUD: a pass over the picture,
+    // play_scope_view.rs)
 
     // ---- health (red) and energy (blue), top left: in the game's glossy frame ----
     let (red, blue, plus) = (tex(HEALTH_FILL), tex(ENERGY_FILL), tex(HEALTH_ICON));

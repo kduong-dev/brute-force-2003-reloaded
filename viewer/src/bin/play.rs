@@ -682,6 +682,8 @@ fn main() {
         .add_plugins(targeting::plugin)
         .add_plugins(enemies::plugin)
         .add_plugins(vengar::plugin)
+        // (after the Vengar view's: its pass follows that one's in the render graph)
+        .add_plugins(scope_view::plugin)
         .add_plugins(stealth::plugin)
         .add_plugins(flags::plugin)
         .add_plugins(objectives::plugin)
@@ -779,6 +781,8 @@ mod targeting;
 mod enemies;
 #[path = "play_vengar.rs"]
 mod vengar;
+#[path = "play_scope_view.rs"]
+mod scope_view;
 #[path = "play_stealth.rs"]
 mod stealth;
 #[path = "play_triggers.rs"]
