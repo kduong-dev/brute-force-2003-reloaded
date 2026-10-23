@@ -10,7 +10,8 @@
 //! damage-type (the combat-target's own h_142be76f list: the three above take Type 7 x5, 10 x10,
 //! 2 x0.25, 3 / 4 / 9 x0), off its hitpoints; at 0 it breaks (message 0x4e). What does damage:
 //!  - shots (anyone's): the weapon's Damage min..max at random, when the shot gets there (a
-//!    bolt flies at its speed), on the object's own collision (`Arena::ray_breakable`);
+//!    bolt's roll made at its launch, on the sweep that meets it: play_bolts.rs), on the
+//!    object's own collision (`Arena::ray_breakable`);
 //!  - grenade blasts: the explosion's Damage max, falling to nothing at its radius, as the
 //!    characters take a Frag's, on the same frame (play_grenade.rs hands them over,
 //!    `ObjectBlasts`). Every damaging type is dealt so, the Energy and the Sonic too, whose
@@ -126,8 +127,9 @@ pub struct ObjectBlast {
 #[derive(Resource, Default)]
 pub struct ObjectBlasts(pub Vec<ObjectBlast>);
 
-/// A direct hit on a breakable object that isn't a shot (play.rs's `Shot`s find their own): a
-/// missile that strikes it (play_missile.rs, FUN_0022c4d0's roll on the object struck). Its
+/// A direct hit on a breakable object that isn't found from a shot at its shot (play.rs's
+/// `Shot`s find their own): a missile that strikes it (play_missile.rs, FUN_0022c4d0's roll on the
+/// object struck), a bolt's sweep that meets it (play_bolts.rs: the roll made at its launch). Its
 /// object (`Arena::breakable`'s number), the amount before the object's damage-type factor, the
 /// damage type, where it struck and which way.
 pub struct ObjectHit {
@@ -395,8 +397,14 @@ pub(super) fn counts(scenery: &Scenery) -> (usize, usize) {
 /// How far along a ray (from `origin` along unit `dir`) it meets a placed breakable's box
 /// (`PLACED_BOXES`) within `max`, if it does.
 pub(super) fn ray_placed(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
-    PLACED_BOXES.lock().unwrap().iter().filter_map(|(_, place, bx)| ray_box(place, *bx, origin, dir))
-        .filter(|&t| t > 0.0 && t <= max).min_by(|a, b| a.total_cmp(b))
+    ray_placed_hit(origin, dir, max).map(|(t, _)| t)
+}
+
+/// `ray_placed`, with the breakable it meets (its list index, as `ObjectHit::target` takes it):
+/// a bolt's sweep strikes it there (play_bolts.rs).
+pub(super) fn ray_placed_hit(origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, usize)> {
+    PLACED_BOXES.lock().unwrap().iter().filter_map(|(i, place, bx)| ray_box(place, *bx, origin, dir).map(|t| (t, *i)))
+        .filter(|&(t, _)| t > 0.0 && t <= max).min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
 /// How far along a ray (from `origin` along unit `dir`) it enters a box (`lo`..`hi` in the frame
@@ -485,10 +493,11 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             }
         }
     }
-    // shots: each stops on the first breakable object's collision in its way
+    // shots: each stops on the first breakable object's collision in its way (a bolt strikes one
+    // on its sweep, play_bolts.rs, `ObjectHits`)
     if let Some(arena) = world::arena() {
         for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-            let shots: Vec<Shot> = u.shots.clone();
+            let shots: Vec<Shot> = u.shots.iter().filter(|s| !s.swept()).copied().collect();
             for shot in shots {
                 let Some((t, Some(b))) = arena.ray_breakable(shot.origin, shot.dir, shot.dist + SHOT_SLACK) else { continue };
                 if t > shot.dist + SHOT_SLACK || !matches!(s.list.get(b).map(|b| &b.state), Some(State::Intact)) {
@@ -499,7 +508,7 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 // scoped rolls; the gun's falloff over its range, play_shots.rs)
                 let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * super::skills::roll_factor(u) * shot.falloff_at(t);
                 let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
-                s.hits.push(PendingHit { delay: shot.countdown(t, dt), target: b, amount, damage_type: shot.damage_type, push });
+                s.hits.push(PendingHit { delay: shot.delay(t), target: b, amount, damage_type: shot.damage_type, push });
             }
         }
     }
@@ -511,7 +520,7 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
     }
     // ... or on the box of one put down without collision (`LateBreakable`)
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        let shots: Vec<Shot> = u.shots.clone();
+        let shots: Vec<Shot> = u.shots.iter().filter(|s| !s.swept()).copied().collect();
         for shot in shots {
             let first = s.list.iter().enumerate().filter(|(_, b)| matches!(b.state, State::Intact))
                 .filter_map(|(i, b)| b.bounds.and_then(|bx| ray_box(&b.place, bx, shot.origin, shot.dir)).map(|t| (i, t)))
@@ -520,7 +529,7 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             let [lo, hi] = if shot.damage[1] > 0.0 { shot.damage } else { [8.0, 10.0] };
             let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * super::skills::roll_factor(u) * shot.falloff_at(t);
             let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
-            s.hits.push(PendingHit { delay: shot.countdown(t, dt), target: b, amount, damage_type: shot.damage_type, push });
+            s.hits.push(PendingHit { delay: shot.delay(t), target: b, amount, damage_type: shot.damage_type, push });
         }
     }
     let mut due = vec![];

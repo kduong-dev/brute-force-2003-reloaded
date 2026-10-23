@@ -878,7 +878,8 @@ fn rigid_step(b: &mut Body, tr: &mut Transform, dt: f32) -> bool {
 /// spots follow them.
 #[allow(clippy::too_many_arguments)]
 fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: ResMut<Blasts>, mut pickups: ResMut<Pickups>,
-           mut last: Local<Vec<Vec3>>, mut bodies: Query<(Entity, &mut Body, &mut Transform, &Visibility)>) {
+           mut last: Local<Vec<Vec3>>, mut bodies: Query<(Entity, &mut Body, &mut Transform, &Visibility)>,
+           swept: Res<super::bolts::Sweeps>) {
     let dt = frame_dt(&time);
     if dt <= 0.0 {
         return;
@@ -890,9 +891,11 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
         .map(|(i, f)| last.get(i).filter(|_| last.len() == feet.len()).map_or(Vec3::ZERO, |l| (*f - *l) / dt)).collect();
     *last = feet.clone();
     let blasts = std::mem::take(&mut blasts.0);
-    // this frame's shots (anyone's): each knocks the first loose body on its line
+    // this frame's shots (anyone's): each knocks the first loose body on its line; a bolt's
+    // sweeps this frame (play_bolts.rs `Sweeps`: from its last checked point up to what it met)
     let shots: Vec<(Vec3, Vec3, f32)> = std::iter::once(&*player).chain(squad.0.iter())
-        .flat_map(|u| u.shots.iter().map(|s| (s.origin, s.dir, s.dist))).collect();
+        .flat_map(|u| u.shots.iter().filter(|s| !s.swept()).map(|s| (s.origin, s.dir, s.dist)))
+        .chain(swept.0.iter().copied()).collect();
     let mut struck: HashMap<Entity, (Vec3, Vec3)> = HashMap::new();
     for &(origin, dir, dist) in &shots {
         let hit = bodies.iter().filter(|(_, _, _, v)| **v != Visibility::Hidden).filter_map(|(e, b, t, _)| {

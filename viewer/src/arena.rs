@@ -85,6 +85,28 @@ struct Tri {
     /// one of a level's blockers (`<blocker physics-id ...>`, the invisible walls round its
     /// objects), which the follow camera's wedge passes through (`hull_triangles`)
     blocker: bool,
+    /// the physics body it stands for (`Arena::ray_shot`): one per terrain block, per placed
+    /// object, per blocker, per broken object's remains and per piece the test tools put down.
+    /// The game's ray queries report a body once (FUN_000dd8e0 fills one result per body), and a
+    /// bolt that passes through an object leaves that body out of its next sweep (FUN_00225440's
+    /// +0x40)
+    body: u32,
+}
+
+/// What a shot's ray met in the world (`Arena::ray_shot`): how far along, the struck triangle's
+/// normal (facing back along the ray), its world material (`ray_material`'s), whether it's the
+/// terrain (the static world: the ray result's kind 1, FUN_000dd8e0 for a body of PID 2,
+/// TERRAIN) or an object's body (kind 2, PID 0: every placed object's parts, a broken object's
+/// remains, the test tools' pieces), its body (`Tri::body`) and the breakable object it is, if
+/// it's one.
+#[derive(Clone, Copy, Debug)]
+pub struct ShotHit {
+    pub t: f32,
+    pub normal: Vec3,
+    pub material: u8,
+    pub terrain: bool,
+    pub body: u32,
+    pub breakable: Option<usize>,
 }
 
 pub struct Arena {
@@ -103,7 +125,13 @@ pub struct Arena {
     /// the flat test floor's ground: a plane at this height under every point, terrain (an
     /// arena made for the flat floor when the test tools put scenery on it, `Arena::flat`)
     flat: Option<f32>,
+    /// the bodies numbered so far (`Tri::body`); the flat floor's ground is body FLAT_BODY
+    bodies: u32,
 }
+
+/// The flat test floor's ground's body (`Tri::body`, `Arena::ray_shot`): numbered past any a map
+/// would use.
+pub const FLAT_BODY: u32 = u32::MAX;
 
 /// The current map's arena. A new map installs its own (bf_play loads maps one after another
 /// in one window), and the old one is freed once nothing holds it (it was leaked, several MB a
@@ -293,7 +321,7 @@ fn gjk_tetrahedron(s: &mut [Vec3; 4], n: &mut usize, d: &mut Vec3) -> bool {
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
         let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
-                            breakable_of: HashMap::new(), flat: None };
+                            breakable_of: HashMap::new(), flat: None, bodies: 0 };
         // breakable objects, numbered in level object order (and by name, for their blockers)
         let mut by_name: HashMap<u32, u32> = HashMap::new();
         for (i, o) in level.objects.iter().enumerate() {
@@ -309,9 +337,11 @@ impl Arena {
         // the game's collision: terrain blocks (world frame) and invisible blockers
         let physics = !level.terrain_collision.is_empty();
         for &s in &level.terrain_collision {
+            let first = a.tris.len();
             for (t, m) in game.collision(s) {
                 a.add(t, true, None, m);
             }
+            a.new_body(first);
         }
         // (every named object by name, for the blockers that belong to one)
         let object_of: HashMap<u32, u32> = level.objects.iter().enumerate().filter(|(_, o)| o.name != 0).map(|(i, o)| (o.name, i as u32)).collect();
@@ -327,12 +357,15 @@ impl Arena {
                 t.object = object;
                 t.blocker = true;
             }
+            a.new_body(first);
         }
         if !physics {
             if let Some((g, _)) = level.terrain.first() {
+                let first = a.tris.len();
                 for t in g.indices.chunks_exact(3) {
                     a.add([0, 1, 2].map(|k| Vec3::from(g.positions[t[k] as usize])), true, None, 0);
                 }
+                a.new_body(first);
             }
         }
         let mut solid: HashMap<u32, Vec<([Vec3; 3], bool, u8)>> = HashMap::new();
@@ -378,6 +411,7 @@ impl Arena {
                 t.piece = piece.map(|b| (b, false));
                 t.object = Some(i as u32);
             }
+            a.new_body(first);
             // what a breakable one leaves behind (its debris list's game objects: the missile
             // rack's stand), blocking once it's broken
             if let Some(b) = piece {
@@ -392,6 +426,7 @@ impl Arena {
                     for t in &mut a.tris[first..] {
                         t.piece = Some((b, true));
                     }
+                    a.new_body(first);
                 }
             }
             if liquid.is_some() && std::env::var("BF_LIQUID_LOG").is_ok() {
@@ -413,7 +448,7 @@ impl Arena {
         let n = n.normalize();
         let n = if n.y < 0.0 { -n } else { n };
         let i = self.tris.len() as u32;
-        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None, object: None, blocker: false });
+        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None, object: None, blocker: false, body: self.bodies });
         let (lo, hi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
         let (c0, c1) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
         for x in c0.0..=c1.0 {
@@ -421,6 +456,15 @@ impl Arena {
                 self.cells.entry((x, z)).or_default().push(i);
             }
         }
+    }
+
+    /// The triangles added since `first` are one physics body (`Tri::body`): they keep the
+    /// number they were added with, and the next body takes the next.
+    fn new_body(&mut self, first: usize) {
+        for t in &mut self.tris[first..] {
+            t.body = self.bodies;
+        }
+        self.bodies += 1;
     }
 
     /// Build the level's arena and make it the shared one (replacing the last map's).
@@ -439,7 +483,7 @@ impl Arena {
     /// point (see `flat`).
     pub fn flat(ground: f32) -> Arena {
         Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![],
-                breakable_of: HashMap::new(), flat: Some(ground) }
+                breakable_of: HashMap::new(), flat: Some(ground), bodies: 0 }
     }
 
     /// Whether this is the flat test floor's arena (`Arena::flat`): what the flat floor has of its
@@ -452,7 +496,7 @@ impl Arena {
     fn duplicate(&self) -> Arena {
         let flags = |v: &[AtomicBool]| v.iter().map(|b| AtomicBool::new(b.load(Ordering::Relaxed))).collect();
         Arena { cells: self.cells.clone(), tris: self.tris.clone(), starts: self.starts.clone(), doors: flags(&self.doors), liquids: self.liquids.clone(),
-                broken: flags(&self.broken), breakable_of: self.breakable_of.clone(), flat: self.flat }
+                broken: flags(&self.broken), breakable_of: self.breakable_of.clone(), flat: self.flat, bodies: self.bodies }
     }
 
     /// Puts a placed object's collision into the current map's arena (the test tools' scenery,
@@ -464,9 +508,11 @@ impl Arena {
     pub fn place(tris: &[([Vec3; 3], u8)], at: Mat4, ground: f32) -> Arc<Arena> {
         let mut slot = ARENA.write().unwrap_or_else(|e| e.into_inner());
         let mut a = slot.as_deref().map_or_else(|| Arena::flat(ground), Arena::duplicate);
+        let first = a.tris.len();
         for (t, m) in tris {
             a.add(t.map(|v| at.transform_point3(v)), false, None, *m);
         }
+        a.new_body(first);
         let a = Arc::new(a);
         *slot = Some(a.clone());
         a
@@ -758,6 +804,29 @@ impl Arena {
     /// the level's placed geometry.
     pub fn ray_terrain(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
         self.ray_tri_where(origin, dir, max, |t| t.terrain).map(|(t, _)| t)
+    }
+
+    /// What a shot's ray meets first within `max` (`ShotHit`), as a weapon's world query takes
+    /// the world: the filter a bolt's sweep (FUN_00225440) and an instant ray (FUN_00230040,
+    /// FUN_00230400) cast with (vtable 0x394848) leaves out every body kind but the PID_ list's 0,
+    /// 1 and 2 (its +0x10c mask 0xfffffff8: FUN_000df0a0 tests the objects' bodies, the bones
+    /// and the terrain, and skips the blockers' list, kinds 4, 6 and 8), so the level's
+    /// invisible blockers aren't met; nor is body `skip` (the object a bolt last passed through,
+    /// its +0x40).
+    pub fn ray_shot(&self, origin: Vec3, dir: Vec3, max: f32, skip: Option<u32>) -> Option<ShotHit> {
+        let keep = |t: &Tri| !t.blocker && Some(t.body) != skip;
+        let (t, i) = self.ray_tri_where(origin, dir, max, keep)?;
+        let Some(i) = i else {
+            // (the flat floor's ground)
+            return (skip != Some(FLAT_BODY)).then_some(ShotHit { t, normal: Vec3::Y, material: 0, terrain: true, body: FLAT_BODY, breakable: None });
+        };
+        let tri = &self.tris[i];
+        let n = (tri.v[1] - tri.v[0]).cross(tri.v[2] - tri.v[0]).normalize_or(Vec3::Y);
+        // (the material by `ray_material`'s rule: of a face met from its front within FRONT_SLACK)
+        let front = self.ray_tri_where(origin, dir, (t + FRONT_SLACK).min(max), |x| keep(x) && (x.v[1] - x.v[0]).cross(x.v[2] - x.v[0]).dot(dir) < 0.0)
+            .and_then(|(_, j)| j).unwrap_or(i);
+        Some(ShotHit { t, normal: if n.dot(dir) > 0.0 { -n } else { n }, material: self.tris[front].material & MATERIAL_ID, terrain: tri.terrain,
+                       body: tri.body, breakable: tri.piece.filter(|p| !p.1).map(|p| p.0 as usize) })
     }
 
     /// The solid triangles that meet the convex hull of `points` (`convex_meet`), and the flat

@@ -674,6 +674,7 @@ fn main() {
     app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
+        .add_plugins(bolts::plugin)
         .add_plugins(minigun::plugin)
         .add_plugins(shake::plugin)
         .add_plugins(skills::plugin)
@@ -763,6 +764,8 @@ mod ammo;
 mod shots;
 #[path = "play_missile.rs"]
 mod missile;
+#[path = "play_bolts.rs"]
+mod bolts;
 #[path = "play_minigun.rs"]
 mod minigun;
 #[path = "play_shake.rs"]
@@ -1772,6 +1775,8 @@ impl Bleed {
 
 #[derive(Clone, Copy)]
 struct Shot {
+    /// the gun that fired it (its `Game::weapons` key)
+    weapon: u32,
     origin: Vec3,
     dir: Vec3,
     dist: f32,
@@ -1795,10 +1800,11 @@ struct Shot {
     falloff: i64,
     range: f32,
     /// a bolt: bullet-type 0 or 3, the pooled object FUN_0022bac0 launches, which finds what it
-    /// hits on its sweeps (`Shot::delay`, `projectiles`)
+    /// hits as it flies, on its sweeps (play_bolts.rs, #136): its `dist` and `hit` are only what
+    /// the world held on its line at the shot (the AI's "shot at" reactions read them)
     bolt: bool,
     /// it stops on a body `dist` m out (`update_player`; `hit` is false then: the body's blood is
-    /// play_fx.rs's): a bolt lands there on its sweep, where one that meets nothing flies its range
+    /// play_fx.rs's)
     body: bool,
 }
 
@@ -3856,6 +3862,49 @@ fn shot_rolls(shot: &Shot) -> (f32, f32) {
 #[derive(Resource, Default)]
 struct AiHits(Vec<PendingHit>);
 
+/// A shot of an AI character's landing on `u` (`AiHits`, and a bolt's hit, play_bolts.rs): the
+/// victim's step and damage-type factor taken as it lands (play_damage.rs), the hurt and its blood
+/// where the shot meets them (`h.local` from their feet), the record's damage for the struck
+/// material's hit effect (play_fx.rs `flesh_sp`), and a level character hit by another side knows
+/// its shooter (play_brain.rs; a friend's hit posts no EVT_DAMAGED_NO_ENEMIES, 0x3e8fc).
+fn land_ai_shot(u: &mut Player, h: &PendingHit, game: &Game, difficulty: &damage::Difficulty, now: f32) {
+    let at = u.position + h.local;
+    let mut hit = h.hit;
+    let amount = hit.land(u, game, difficulty, now);
+    let bled = u.blood.len();
+    hurt(u, game, amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+    if let Some(b) = u.blood.get_mut(bled) {
+        b.record = Some(hit.record());
+    }
+    if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
+        brain::attacked(u, by, true);
+    }
+}
+
+/// A shot of the controlled character's landing on squad member (or NPC) `m`
+/// (`Player::pending_hits`, and a bolt's hit, play_bolts.rs): as `land_ai_shot`, but the hurt line
+/// is mostly a grunt, now and then "I'm hit" or a word about friendly fire; the test map's instant
+/// kill makes one hit enough (a stamina shield's share too); and shot by the player they sidestep
+/// one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE).
+fn land_player_shot(m: &mut Player, h: &PendingHit, game: &Game, difficulty: &damage::Difficulty, now: f32, instant_kill: bool) {
+    let tag = match m.random(6) { 0 => FRIENDLY_FIRE_CHATTER, 1 => HIT_CHATTER, _ => HURT_CHATTER };
+    let at = m.position + h.local;
+    let mut hit = h.hit;
+    let amount = hit.land(m, game, difficulty, now);
+    let amount = if instant_kill { enemies::lethal(m).max(amount) } else { amount };
+    let bled = m.blood.len();
+    hurt(m, game, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+    if let Some(b) = m.blood.get_mut(bled) {
+        b.record = Some(hit.record());
+    }
+    if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
+        brain::attacked(m, by, true);
+    }
+    if !m.dead && m.knock_request.is_none() && m.random(3) == 0 {
+        m.dodge_request = Some(m.random(2) == 0);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                  mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, mut saw: Local<HashMap<Who, bool>>, test: Option<Res<testmap::TestMap>>,
@@ -3962,34 +4011,37 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let (shooter, team) = (player.who(), player.team);
     let now = player.sim_time;
     // the squadmates' shots stop at a Sentry on their line (play_sentry.rs: 1 hitpoint), going
-    // off when the shot lands (`Shot::delay`, handed over as the distance at 1 m/s)
+    // off when the shot lands (`Shot::delay`, handed over as the distance at 1 m/s). (A bolt finds
+    // what it hits as it flies, play_bolts.rs: here and below its hits aren't looked for)
     for m in squad.0.iter_mut() {
-        for shot in m.shots.iter_mut() {
+        for shot in m.shots.iter_mut().filter(|s| !s.swept()) {
             if let Some((e, t)) = mines.first_on(shot.origin, shot.dir, shot.dist) {
                 shot.dist = t;
                 shot.hit = true;
-                mines.strike(e, shot.countdown(t, dt), 1.0, now);
+                mines.strike(e, shot.delay(t), 1.0, now);
             }
         }
     }
     let mut shots = std::mem::take(&mut player.shots);
     for shot in shots.iter_mut() {
         // a Sentry on the line stops the shot, unless a teammate is in the way before it
-        let mine = mines.first_on(shot.origin, shot.dir, shot.dist);
+        let mine = if shot.swept() { None } else { mines.first_on(shot.origin, shot.dir, shot.dist) };
         if let Some((_, t)) = mine {
             shot.dist = t;
             shot.hit = true;
         }
-        let hit = squad.0.iter().enumerate().filter(|(_, m)| !m.dead && !m.absent)
-            .filter_map(|(i, m)| ray_body(shot.origin, shot.dir, m, shot.dist).map(|t| (i, t)))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let hit = if shot.swept() { None } else {
+            squad.0.iter().enumerate().filter(|(_, m)| !m.dead && !m.absent)
+                .filter_map(|(i, m)| ray_body(shot.origin, shot.dir, m, shot.dist).map(|t| (i, t)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+        };
         if let Some((i, t)) = hit {
             shot.dist = t;
             shot.hit = false;
             shot.body = true;
-            // it lands when the shot gets there (a bolt on its sweep, `Shot::delay`): a roll x the
-            // shooter's skill's factor (Flint's doubled and scoped rolls) x the falloff over the
-            // range (play_shots.rs) x the hit part struck, x0.7 on the own side (play_damage.rs)
+            // it lands when the shot gets there (`Shot::delay`): a roll x the shooter's skill's
+            // factor (Flint's doubled and scoped rolls) x the falloff over the range
+            // (play_shots.rs) x the hit part struck, x0.7 on the own side (play_damage.rs)
             let (lo, hi) = shot_rolls(shot);
             let factor = skills::roll_factor(&mut player);
             let m = &mut squad.0[i];
@@ -3998,9 +4050,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let hit = damage::Hit::new(roll, "roll", shot.damage_type).skill(factor).by(shooter, team, m).falloff(shot.falloff_at(t))
                 .struck(m, &game.0, bone);
             let local = shot.origin + shot.dir * t - m.position;
-            player.pending_hits.push(PendingHit { delay: shot.countdown(t, dt), member: i, hit, dir: shot.dir, local, ammo: shot.ammo });
+            player.pending_hits.push(PendingHit { delay: shot.delay(t), member: i, hit, dir: shot.dir, local, ammo: shot.ammo });
         } else if let Some((e, t)) = mine {
-            mines.strike(e, shot.countdown(t, dt), 1.0, now);
+            mines.strike(e, shot.delay(t), 1.0, now);
         }
         // shot at: the others it passes close to may sidestep (see SHOT_AT_RADIUS)
         for (j, m) in squad.0.iter_mut().enumerate() {
@@ -4039,9 +4091,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         let mut shots = std::mem::take(&mut squad.0[k].shots);
         for shot in shots.iter_mut() {
             let ((lo, hi), ammo, damage_type) = (shot_rolls(shot), shot.ammo, shot.damage_type);
-            let hit = std::iter::once(&*player).chain(squad.0.iter()).enumerate().filter(|&(i, u)| i != k + 1 && !u.dead && !u.absent)
-                .filter_map(|(i, u)| ray_body(shot.origin, shot.dir, u, shot.dist).map(|t| (i, t, u.character, u.position)))
-                .min_by(|a, b| a.1.total_cmp(&b.1));
+            let hit = if shot.swept() { None } else {
+                std::iter::once(&*player).chain(squad.0.iter()).enumerate().filter(|&(i, u)| i != k + 1 && !u.dead && !u.absent)
+                    .filter_map(|(i, u)| ray_body(shot.origin, shot.dir, u, shot.dist).map(|t| (i, t, u.character, u.position)))
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+            };
             if let Some((i, t, _, at)) = hit {
                 shot.dist = t;
                 shot.hit = false;
@@ -4060,7 +4114,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     let name = |u: &Player| format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)));
                     println!("{} shoots {} ({t:.1} m)", name(&squad.0[k]), name(victim));
                 }
-                ai_hits.0.push(PendingHit { delay: shot.countdown(t, dt), member: i, hit, dir: shot.dir, local, ammo });
+                ai_hits.0.push(PendingHit { delay: shot.delay(t), member: i, hit, dir: shot.dir, local, ammo });
             }
             // a level character of another side the shot passes close to knows its shooter if it
             // knows no enemy, as with the player's shots (EVT_SHOT_AT_NO_ENEMIES, play_brain.rs)
@@ -4089,21 +4143,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     for h in due {
         let u = if h.member == 0 { Some(&mut *player) } else { squad.0.get_mut(h.member - 1) };
         let Some(u) = u else { continue };
-        let at = u.position + h.local;
-        // (the victim's step and damage-type factor as it lands: play_damage.rs)
-        let mut hit = h.hit;
-        let amount = hit.land(u, &game.0, &difficulty, now);
-        let bled = u.blood.len();
-        hurt(u, &game.0, amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
-        // (the record's damage, for the struck material's hit effect: play_fx.rs `flesh_sp`)
-        if let Some(b) = u.blood.get_mut(bled) {
-            b.record = Some(hit.record());
-        }
-        // (a level character hit by another side knows its shooter, play_brain.rs; a friend's hit
-        // posts no EVT_DAMAGED_NO_ENEMIES, 0x3e8fc)
-        if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
-            brain::attacked(u, by, true);
-        }
+        land_ai_shot(u, &h, &game.0, &difficulty, now);
     }
     // shots arriving: the hit lands on the member (blood where the shot meets them)
     let mut due = vec![];
@@ -4114,38 +4154,18 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
         h.delay > 0.0
     });
+    let instant_kill = test.as_ref().is_some_and(|t| t.instant_kill);
     for h in due {
         let Some(m) = squad.0.get_mut(h.member) else { continue };
-        // mostly grunts, now and then "I'm hit" or a word about friendly fire
-        let tag = match m.random(6) { 0 => FRIENDLY_FIRE_CHATTER, 1 => HIT_CHATTER, _ => HURT_CHATTER };
-        let at = m.position + h.local;
-        // (the victim's step and damage-type factor as it lands: play_damage.rs)
-        let mut hit = h.hit;
-        let amount = hit.land(m, &game.0, &difficulty, now);
-        // the test map's instant kill: one hit is enough (a stamina shield's share too)
-        let amount = if test.as_ref().is_some_and(|t| t.instant_kill) { enemies::lethal(m).max(amount) } else { amount };
-        let bled = m.blood.len();
-        hurt(m, &game.0, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
-        // (the record's damage, for the struck material's hit effect: play_fx.rs `flesh_sp`)
-        if let Some(b) = m.blood.get_mut(bled) {
-            b.record = Some(hit.record());
-        }
-        // (a level character hit by another side knows its shooter, play_brain.rs; a friend's
-        // hit posts no EVT_DAMAGED_NO_ENEMIES, 0x3e8fc)
-        if let Some(by) = h.hit.by.filter(|_| h.hit.friendly >= 1.0) {
-            brain::attacked(m, by, true);
-        }
-        // shot by the player: sidestep one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
-        if !m.dead && m.knock_request.is_none() && m.random(3) == 0 {
-            m.dodge_request = Some(m.random(2) == 0);
-        }
+        land_player_shot(m, &h, &game.0, &difficulty, now, instant_kill);
     }
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         u.hurt_quiet -= dt;
     }
-    // shots hitting a body on the ground push it (anyone's: the dead, and the knocked down)
+    // shots hitting a body on the ground push it (anyone's: the dead, and the knocked down; a
+    // bolt's on its sweep, play_bolts.rs)
     let shots: Vec<(Vec3, Vec3, f32)> = std::iter::once(&*player).chain(squad.0.iter())
-        .flat_map(|u| u.shots.iter().map(|s| (s.origin, s.dir, s.dist))).collect();
+        .flat_map(|u| u.shots.iter().filter(|s| !s.swept()).map(|s| (s.origin, s.dir, s.dist))).collect();
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         // (its name for the log, taken before its body is borrowed)
         let name = if std::env::var("BF_RAGDOLL_LOG").is_ok() { unit_name(u) } else { String::new() };
@@ -5164,13 +5184,8 @@ impl Ragdoll {
     /// body (it settles again, and can roll off its side again). Where it hit (world), if it did.
     fn shove(&mut self, origin: Vec3, dir: Vec3, dist: f32) -> Option<Vec3> {
         let back = Quat::from_rotation_y(self.yaw).inverse();
-        let (o, d) = (back * (origin - self.origin), back * dir);
-        let hit = self.pos.iter().enumerate().filter_map(|(i, p)| {
-            let t = (*p - o).dot(d);
-            let miss = (o + d * t).distance(*p);
-            (t > 0.0 && t < dist + 0.2 && miss < self.flesh[i] + 0.05).then_some((t, i))
-        }).min_by(|a, b| a.0.total_cmp(&b.0));
-        let (along, at) = hit?;
+        let d = back * dir;
+        let (along, at) = self.first_bone(origin, dir, dist)?;
         let centre = self.pos[at];
         for (p, q) in self.pos.iter().zip(self.prev.iter_mut()) {
             let k = 1.0 - p.distance(centre) / SHOT_SHOVE_REACH;
@@ -5185,6 +5200,19 @@ impl Ragdoll {
         self.still = 0;
         self.rolls = 0;
         Some(origin + dir * along)
+    }
+
+    /// The first bone a shot (world line from `origin` along `dir`, ending at `dist`) passes within
+    /// its thickness (`flesh`, and 5 cm) of, up to 0.2 m past `dist`: how far along it, and the
+    /// bone (`shove`; a bolt's sweep meets a body on the ground there, play_bolts.rs).
+    fn first_bone(&self, origin: Vec3, dir: Vec3, dist: f32) -> Option<(f32, usize)> {
+        let back = Quat::from_rotation_y(self.yaw).inverse();
+        let (o, d) = (back * (origin - self.origin), back * dir);
+        self.pos.iter().enumerate().filter_map(|(i, p)| {
+            let t = (*p - o).dot(d);
+            let miss = (o + d * t).distance(*p);
+            (t > 0.0 && t < dist + 0.2 && miss < self.flesh[i] + 0.05).then_some((t, i))
+        }).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     fn placed(mut self, origin: Vec3, yaw: f32) -> Self {
@@ -6257,7 +6285,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                     continue;
                 }
                 let hit = shots::hit_normal(origin, dir, range);
-                p.shots.push(Shot { origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
+                p.shots.push(Shot { weapon: w.def.name, origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
                                     flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
                                     damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type, ammo: w.def.ammo_type,
                                     decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff,
@@ -6737,12 +6765,15 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
         }
     }
     for s in p.shots.drain(..) {
+        // (a bolt is play_bolts.rs's from its shot: it flies there, with its flight effect)
+        if s.bolt {
+            continue;
+        }
         // the weapon's own effects (see `projectiles`), else a plain streak
         if s.flight != 0 || s.hit_fx != 0 || s.decal != 0 {
-            // (a bolt moves from its first frame, as the pool's object does; an instant ray's
-            // tracer waits two, `Projectile::wait`)
+            // (an instant ray's tracer waits two frames, `Projectile::wait`)
             commands.spawn((Transform::from_translation(s.origin).looking_to(s.dir, Vec3::Y), Visibility::default(),
-                            Projectile { shot: s, travelled: 0.0, started: false, wait: if s.bolt { 0 } else { 2 }, age: 0.0 }));
+                            Projectile { shot: s, travelled: 0.0, started: false, wait: 2 }));
             continue;
         }
         let speed = s.speed.min(s.dist.max(1.0) / 0.16);
@@ -6755,18 +6786,17 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
     }
 }
 
-/// A shot drawn with its weapon's effects: in flight it carries the flight effect (bolts move
-/// with it; an instant-hit gun's tracer is fired once from the muzzle), and where it lands on
-/// the world it plays the hit (`world_hit`).
+/// A shot drawn with its weapon's effects that isn't a bolt (a bolt is play_bolts.rs's): in
+/// flight it carries the flight effect (an instant-hit gun's tracer is fired once from the
+/// muzzle; a shot flying at its speed carries it along), and where it lands on the world it
+/// plays the hit (`world_hit`).
 #[derive(Component)]
 struct Projectile {
     shot: Shot,
     travelled: f32,
     started: bool,
-    /// an instant ray's frames before it moves (its tracer placed, then emitting); 0 for a bolt
+    /// an instant ray's frames before it moves (its tracer placed, then emitting)
     wait: u8,
-    /// a bolt's seconds since its shot (it lands on its sweep, `Shot::delay`)
-    age: f32,
 }
 
 /// An effect entity that goes after this many seconds (its particles finish on their own).
@@ -6777,46 +6807,19 @@ struct AleExpire(f32);
 /// its own speed, 113.6 m/s for `tracer`).
 const INSTANT_SHOT: f32 = 400.0;
 
-/// A bolt looks for what it hits once every this many seconds: FUN_00225440 counts the pool
-/// object's byte +3 down from 3 each game frame (FUN_00225000's reset sets it) and sweeps a ray
-/// at 0 over the way since its last sweep and this frame's step (FUN_000ddd10), then sets it to 3
-/// again; on a hit the damage, hole, hit effect and sound come the same frame (FUN_00224770 ->
-/// 0x22d0b0). So a hit lands on game frame 3, 6, 9 ... of the bolt's flight: three frames of 30
-/// Hz, 0.1 s (todo/weapons-plan/answers-batch1.md §1). Between sweeps it flies on unchecked, into
-/// what it struck (the Jax-iR's ball gone in the wall 0.117-0.183 s after the shot, its burst at
-/// 0.2 s: todo/59 take01).
-const SWEEP: f32 = 3.0 * shots::TICK;
-/// Seconds a bolt's hit may come early against its sweep (`Shot::countdown`, `projectiles`): a
-/// sum of frame times meant to land on it can fall a hair either side. The demo's.
-const SWEEP_SLACK: f32 = 1e-4;
-
 impl Shot {
-    /// How long after its shot's frame a hit `t` m along this shot lands: a bolt on its first
-    /// sweep that reaches it (SWEEP: k x 0.1 s, k = ceil(t / (speed x 0.1 s)), at least 1), its
-    /// flight starting the frame after the shot; anything else when it gets there (an instant
-    /// ray's t / INSTANT_SHOT). The takes measure the steps on all eight bolt guns of weapons
-    /// batch 1 (todo/57-jax-ic/spec.md §4: 7 m at 80 m/s 0.1 s in 16 of 16 hits, 25 m at 100 m/s
-    /// 0.3 s in 12 of 12) and time them so: the fire-to-hit sounds 0.21 s apart at 10 m and 80 m/s
-    /// (6 frames), the Saryl-45's within 10 m 0.09-0.1 s (3), the burst in the picture at the
-    /// shot + 0.2 s at 10 m, the ball one step out a frame after the shot. The code would count
-    /// the launch frame as the bolt's first tick (the world update runs the objects, where the
-    /// shot is made, before the pool's tick), a frame sooner; the analyst couldn't settle it from
-    /// the code and left it to the takes' frame counts (answers-batch1.md §1). A sweep due after
-    /// the bolt's life (range / speed) wouldn't come in the game: not modelled, the demo's hit is
-    /// found within the whole range (the Jax-iC's last sweep reaches 56 m of its 60).
+    /// How long after its shot's frame a hit `t` m along this shot lands, for a shot whose hits
+    /// are found at the shot (`update_player`, play_scenery.rs, play_sentry.rs): when it gets
+    /// there, an instant ray's t / INSTANT_SHOT. (A bolt's come on its sweeps, play_bolts.rs.)
     fn delay(&self, t: f32) -> f32 {
-        if !self.bolt {
-            return t / self.speed.max(1.0);
-        }
-        SWEEP * (t / (self.speed.max(1.0) * SWEEP)).ceil().max(1.0)
+        t / self.speed.max(1.0)
     }
 
-    /// The countdown to a hit `t` m along this shot, set in the shot's own frame and counted down
-    /// by the frame's time from that frame on (`update_player`, play_scenery.rs, play_sentry.rs):
-    /// `delay`, and for a bolt that frame too, its flight starting the frame after (less
-    /// SWEEP_SLACK, so the frames' summed times landing a hair over it don't put it a frame on).
-    fn countdown(&self, t: f32, dt: f32) -> f32 {
-        self.delay(t) + if self.bolt { dt - SWEEP_SLACK } else { 0.0 }
+    /// Whether this shot's hits are found where it flies rather than at the shot: a bolt's on its
+    /// sweeps (play_bolts.rs, #136). The shots' other readers (`update_player`'s bodies and
+    /// Sentries, play_scenery.rs, play_pickups.rs, the bodies on the ground) leave them alone.
+    fn swept(&self) -> bool {
+        self.bolt
     }
 }
 
@@ -6825,8 +6828,9 @@ impl Shot {
 /// as a [0, 1) fraction) and its hit sound (FUN_0022b5b0: one of the struck material's four, by
 /// its low 2 bits; the demo's by a stirred draw, see `world_hit`). In the game every random
 /// choice draws from it, so its draws vary from hit to hit; the demo's copy is drawn by its shots
-/// only: each shot's flight effect's seed, and at a hit on the world the roll, the hit effects'
-/// seed and the sound (`projectiles`, `world_hit`; the seeds are the demo's draws). It replaces a
+/// only: each shot's flight effect's seed, a bolt's roll at its launch (play_bolts.rs,
+/// FUN_0022bac0), and at a hit on the world the roll (an instant ray's), the hit effects' seed and
+/// the sound (`projectiles`, `world_hit`; the seeds are the demo's draws). It replaces a
 /// seed from the muzzle's place, which saturated to 0 wherever x 977 + z 131 was negative (every
 /// shot at e34's gate: one sound, one roll, one burst).
 #[derive(Resource, Default)]
@@ -6955,12 +6959,7 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             p.started = true;
             // (its flight effect's seed: a draw of the shots' random state)
             let seed = chance.stirred();
-            if s.bolt {
-                // the bolt's flight effect rides on the shot (`start_flight`)
-                start_flight(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, s.flight, e, seed);
-            }
-            let others = if s.bolt { vec![] } else { effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight) };
-            for fx in others {
+            for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight) {
                 if instant {
                     // the tracer: fired once from the muzzle, flying on its own along the
                     // emitter's +y (ale_fx.rs; turned along the shot's -z it flew straight up, the
@@ -6974,28 +6973,15 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
                 }
             }
         }
-        if s.bolt {
-            // a bolt flies from the frame after its shot (at the muzzle in the shot's own frame,
-            // `Shot::delay`), on, unchecked between its sweeps, into what it struck until the
-            // sweep that finds it; one that meets nothing ends at its range
-            let a = p.age;
-            p.age += dt;
-            let ends = if s.hit || s.body { s.delay(s.dist) } else { s.dist / s.speed.max(1.0) };
-            if a < ends - SWEEP_SLACK {
-                tr.translation = s.origin + s.dir * (s.speed * a);
-                continue;
-            }
-        } else {
-            // the first frames only start the tracer (placed, then emitting)
-            if p.wait > 0 {
-                p.wait -= 1;
-                continue;
-            }
-            p.travelled += s.speed * dt;
-            if p.travelled < s.dist {
-                tr.translation = s.origin + s.dir * p.travelled;
-                continue;
-            }
+        // the first frames only start the tracer (placed, then emitting)
+        if p.wait > 0 {
+            p.wait -= 1;
+            continue;
+        }
+        p.travelled += s.speed * dt;
+        if p.travelled < s.dist {
+            tr.translation = s.origin + s.dir * p.travelled;
+            continue;
         }
         // landed: the hit on the world (bodies bleed instead, see play_fx)
         let at = s.origin + s.dir * s.dist;
@@ -7012,7 +6998,7 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             if s.decal != 0 {
                 holes.0.push((s.decal, at, s.normal));
             }
-            world_hit(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, &s, at, &mut chance, listener, &mut player);
+            world_hit(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, &s, at, &mut chance, listener, &mut player, None);
         }
     }
 }
@@ -7032,17 +7018,21 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
 ///    (`distance_gain`: the sonic rows' full within 9 m, silent beyond 20 m).
 ///
 /// The roll, the effects' seed and the sound's pick are three draws of `chance` (GameRandom), in
-/// the handler's order: the record's roll, the effects, the sound.
+/// the handler's order: the record's roll, the effects, the sound. A bolt's hit brings its record
+/// and the struck material (`swept`: the roll FUN_0022bac0 made at its launch, and the material
+/// its sweep met, which leaves the level's blockers out, play_bolts.rs), so no roll is drawn for
+/// it.
 #[allow(clippy::too_many_arguments)]
 fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &mut Assets<Image>,
              materials: &mut Assets<StandardMaterial>, s: &Shot, at: Vec3, chance: &mut GameRandom, listener: Option<Vec3>,
-             player: &mut Player) {
-    let material = world::arena().and_then(|a| a.ray_material(s.origin, s.dir, s.dist + 0.1)).map_or(0, |(_, m)| m as i64);
+             player: &mut Player, swept: Option<(f32, i64)>) {
+    let material = swept.map(|x| x.1)
+        .unwrap_or_else(|| world::arena().and_then(|a| a.ray_material(s.origin, s.dir, s.dist + 0.1)).map_or(0, |(_, m)| m as i64));
     let surface = game.surfaces.iter().find(|x| x.id == material).cloned();
     // (the roll the record carries, FUN_0022c940: Damage min..max x an instant ray's falloff;
     // the world takes no hit part)
     let [lo, hi] = s.damage;
-    let roll = (lo + (hi - lo) * chance.unit()) * s.falloff_at(s.dist);
+    let roll = swept.map(|x| x.0).unwrap_or_else(|| (lo + (hi - lo) * chance.unit()) * s.falloff_at(s.dist));
     let sp = hit_sp(roll, false);
     // (the hit effects' particles: the demo's draw)
     let seed = chance.stirred();
@@ -7084,8 +7074,10 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
     }
     if log {
         let light = |k: u32| game.effect_type_defs.get(&k).map_or(0, |t| t.light);
-        println!("t={:.2} hit on world material {material} at {at:.2} {:.1} m out (ammo-type {}): effect h_{main:08x} sp {main_sp:.2} light h_{:08x}{}, debris {}, sound {}",
-                 player.sim_time, s.dist, s.ammo, light(main), if row.is_some() { " (the material's)" } else { " (the weapon's)" },
+        // (a bolt's sweep starts at its last checked point: its own line says how far out it is)
+        let out = if swept.is_some() { "(a bolt's sweep)".to_string() } else { format!("{:.1} m out", s.dist) };
+        println!("t={:.2} hit on world material {material} at {at:.2} {out} (ammo-type {}): effect h_{main:08x} sp {main_sp:.2} light h_{:08x}{}, debris {}, sound {}",
+                 player.sim_time, s.ammo, light(main), if row.is_some() { " (the material's)" } else { " (the weapon's)" },
                  debris.map_or("none".into(), |d| format!("h_{d:08x} sp {sp:.2}")),
                  heard.map_or("none".into(), |(id, v)| format!("h_{id:08x} vol {v:.2} (slot {slot})")));
     }

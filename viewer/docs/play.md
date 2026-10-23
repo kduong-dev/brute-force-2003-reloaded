@@ -1115,7 +1115,7 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   * The scopes (the MK's 2, the Foley's 3: one level each for everyone but Flint): § The scope.
   * Not done: the tracer and the beam as the game draws them (one effect stretched to the hit, the
     analyst's draft B, the ray path); the Foley's silence (its noise radius 10: no AI hearing
-    yet); the LZR bolts flying (#136); the MK's scoped held rate (no take).
+    yet); the MK's scoped held rate (no take). (The LZR bolts fly since #136: § Bolts.)
 * **The Kman Auto** (#60; `todo/60-kman-auto/spec.md`), Hawk (`BF_CHARACTER=2`) with it: nothing of
   its own to build. Held fire 5-6 game frames a round, 5.38 a second (the takes 5.18-5.62: 6 a
   second is exactly 5 frames, so the frame-time wobble splits 5 and 6), the same scoped (its
@@ -1133,32 +1133,46 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
 
 ### Bolts and their hits: the sweep, hit effects, lights and sounds (#57)
 
-`src/bin/play.rs` (`Shot::delay`, `projectiles`, `world_hit`, `hit_effect_at`, `start_flight`),
-`src/bin/play_fx.rs` (`spawn_fx`), `src/ale_fx.rs` (`load_flight`) and `src/arena.rs`
-(`ray_material`), from default.xbe's bolt pool (FUN_0022bac0, FUN_00225440) and the damage
+`src/bin/play_bolts.rs` (the flight and its sweeps, #136), `src/bin/play.rs` (`world_hit`,
+`hit_effect_at`, `start_flight`, `land_player_shot`, `land_ai_shot`), `src/bin/play_fx.rs`
+(`spawn_fx`), `src/ale_fx.rs` (`load_flight`) and `src/arena.rs` (`ray_shot`, `ray_material`),
+from default.xbe's bolt pool (FUN_0022bac0, FUN_00225220, FUN_00225440) and the damage
 handler's tail (0x22d0b0 -> FUN_0022cd80, FUN_0022b5b0); the analyst's answers are
 todo/weapons-plan/answers-batch1.md (group A), the takes and their measures todo/57-jax-ic/.
 The bolt guns of weapons batch 1 (the Jax-iC, -iP, -iR, the Saryls, the Bioreactives) and the
 squad's LZRs and cutter go this way.
 
-* **The sweep.** A flying shot of bullet-type 0 or 3 (under the demo's `INSTANT_SHOT` speed) is a
-  bolt (`Shot::bolt`), FUN_0022bac0's pooled object. FUN_00225440 counts its byte +3 down from 3
-  each 30 Hz game frame and at 0 casts the ray for a hit over the way since the last cast, so a
-  hit lands k x 0.1 s after the shot, k = ceil(distance / (speed x 0.1 s)) (`Shot::delay`,
-  `SWEEP`): 8 m a step at 80 m/s, 10 m at 100 m/s. The damage, the hole, the hit effect and
-  its sound come in that frame (FUN_00224770 -> 0x22d0b0). The demo still picks what the shot
-  meets at the shot (the body or the world on its line); the countdown starts the frame after
-  the shot's frame (`Shot::countdown`), as the takes count it (the code would count the launch
-  frame as the first, a frame sooner: answers-batch1.md §1 leaves it to the takes). It times a
-  bolt's hit on the squad and the NPCs, a mine (play_sentry.rs) and breakable scenery
-  (play_scenery.rs). Before, a hit landed at distance / speed.
+* **The launch** (#136; FUN_0022bac0, play_bolts.rs `launch_bolts`). A flying shot of bullet-type
+  0 or 3 (under the demo's `INSTANT_SHOT` speed) is a bolt (`Shot::bolt`), FUN_0022bac0's pooled
+  object: a moving object from the muzzle along the shot at the bullet's speed, living the
+  bullet's range in the holder's hands over its speed (FUN_002324c0), its damage roll made at the
+  launch (FUN_0022c940: Damage min..max from the game's random state, `GameRandom`, x the
+  shooter's skill's factor then) and kept as the record of every hit it makes.
+* **The sweep** (#136; FUN_00225220 -> FUN_00225440, play_bolts.rs `fly_bolts`, `Bolt::advance`).
+  Each 30 Hz game frame its life runs down (out: it ends where it is) and its byte +3 counts down
+  from 3; not yet 0 it moves on unchecked, at 0 a ray is swept from its last checked point over the
+  way since and this frame's step: 8 m at 80 m/s, 10 m at 100 m/s. So a hit lands k x 0.1 s after
+  the shot, on the first sweep that meets it, as the takes count it (from the frame after the
+  shot's; the code would count the launch frame as the first, a frame sooner: answers-batch1.md
+  §1 leaves it to the takes). The sweep meets what's there then (`sweep`): the world as the
+  weapons' ray filter takes it (`Arena::ray_shot`: the terrain and the placed objects, a breakable
+  among them, not the level's invisible blockers, which the filter's PID mask 0xfffffff8 leaves
+  out), a character where it is now (standing, its cylinder; knocked down, its ragdoll's bones; a
+  corpse, its ragdoll), a Sentry; never its shooter. On a hit the bolt is set back 0.1 % of the
+  way toward its last checked point, the hit is dealt that frame (FUN_00224770 -> 0x22d0b0: the
+  damage through `land_player_shot` / `land_ai_shot`, the hole, the hit effect and its sound, a
+  breakable's roll through `ObjectHits`, a Sentry set off, a body on the ground shoved) and the
+  bolt ends. Before #136 the demo picked a bolt's hit at its shot (the body or the world on its
+  line then) and landed it on the sweep that would reach it: a target that stepped out of the way
+  was still hit, one that stepped in wasn't. The loose pickups a sweep passes are knocked as by a
+  shot's line (`Sweeps`, play_pickups.rs).
 * **The flight.** A bolt moves from its first frame (before, it waited two at the muzzle): at
-  the muzzle in the shot's frame, then speed x its age along the shot, on into what it struck
-  until the sweep that finds it (the Jax-iR's ball gone into the wall before its burst,
-  todo/59 take01); one that meets nothing ends at its range (life = range / speed; a sweep
-  due after the life isn't modelled, the demo's line runs the whole range). Its flight effect
-  rides it (`start_flight`, compiled by `load_flight`): the effect's emitters ride with the
-  bolt and their particles go with it when it ends (the ball, its halo), except an emitter
+  the muzzle in the shot's frame, then on by its speed each game frame (drawn on by the frame's
+  time not yet run in game frames), on into what it struck until the sweep that finds it (the
+  Jax-iR's ball gone into the wall before its burst, todo/59 take01); one that meets nothing ends
+  with its life, without the sweeps after it (the Jax-iC's last reaches 56 m of its 60). Its
+  flight effect rides it (`start_flight`, compiled by `load_flight`): the effect's emitters ride
+  with the bolt and their particles go with it when it ends (the ball, its halo), except an emitter
   under the library's world node (h_ee223b51, node flag 1) whose appearance hangs at the root,
   which leaves its particles in the world (the trails). The Jax-iR's ball hangs under the node
   with its appearance and rides (#59: read as a trail it lay a violet band along the whole way,
@@ -1215,9 +1229,41 @@ Test hooks: `BF_SHOT_LOG=1` also prints the map's world materials as it loads ("
 materials (id: triangles) 0: 15482 terrain + 4596, ..."), each world hit ("t=2.37 hit on world
 material 5 at [...] 8.4 m out (ammo-type 3): effect h_fed64261 sp 1.00 light h_eb110330 (the
 weapon's), debris h_fe578f8f sp 0.79, sound h_0655c729 vol 0.57 (slot 1)": which of the row's
-four sounds the random state picked) and each hole's life;
-`BF_COMBAT_LOG=1` each flesh hit effect played from the data ("flesh hit effect h_177a62d8 at
-[...] sp 0.41 light h_eb110330").
+four sounds the random state picked; a bolt's says "(a bolt's sweep)" where a shot's says how
+far out) and each hole's life; and each bolt's launch ("t=2.20 bolt 1 launched by tex from [...]
+along [...] at 80 m/s: roll 21.97 x skill 1.00, life 0.750 s (range 60.0 m)"), each sweep that
+meets something ("t=2.50 bolt 1 sweep at game frame 9 (0.30 s): hits Shrike Soldier (NPC 1) 7.4
+m on from its last checked point 23.4 m out", with "(past a level blocker 0.40 m on)" where the
+sweep went by one) and its end at its life's ("bolt 1 (Jax-iC) ends at its life's end after 23
+game frames, 58.7 m from its muzzle"). `BF_COMBAT_LOG=1` each flesh hit effect played from the
+data ("flesh hit effect h_177a62d8 at [...] sp 0.41 light h_eb110330").
+
+**Moving targets** (#136; the test map, `-- --test BF_NO_SQUAD=1 BF_TEST_INSTANT_KILL=0
+BF_TEST_WEAPON=Jax-iC BF_TEST_GOTO=4.5,20,4.5,20 BF_CAMERA_PITCH=-0.115 BF_TEST_NPC_HP=1.0,1,300
+BF_SHOT_LOG=1 BF_COMBAT_LOG=1 BF_CAPTURE_FPS=30`, a dm Shrike Soldier 25 m out):
+* Standing (`BF_TEST_NPC="0.3,shrike soldier@dm,enemy,dummy,4.5,-5" BF_TEST_TRIGGER=2.0-2.08`):
+  the bolt fired at 2.20 meets it on its sweep at game frame 9 (0.30 s), 23.4 m out.
+* Stepping aside (the same with `BF_TEST_NPC_MOTION="2.23,1,dash,10.5,-5"`, the dash starting a
+  frame after the shot): the same bolt, along the same line, meets nothing and ends with its life
+  58.7 m out; frames 66-77 show the ball pass where the Shrike stood as it dashes off to the
+  right. The demo before #136 picked the hit at the shot and landed it on the Shrike.
+* Crossing (`BF_TEST_NPC="0.3,shrike soldier@dm,friend,dummy,-1.5,-5"` running across the line
+  from 2.2 s, `BF_TEST_NPC_MOTION="2.2,1,dash,10.5,-5" BF_TEST_TRIGGER=2.65-2.73`): fired at 2.80
+  with the Shrike 3.3 m left of the line, the sweep at frame 9 (24 m) meets nothing and the one
+  at frame 12 meets the Shrike 24.2 m out, where it is by then (its left upper arm, x0.7 on the
+  own side: a friend); before #136 the bolt missed it.
+* The pillar, e34's gate and the frozen Shrike Heavy recipes below land as before: 8.5-8.8 m out
+  at frame 6 (0.2 s), 5.3 m out at frame 3 (0.1 s). A supply crate put down 6.6 m out
+  (`BF_TEST_PLACE="0.5,supply crate,4.5,12,0"`) breaks on the sweep that meets it (24.38 x 5,
+  SONIC), the bolt ending there; a dead Shrike's body on the ground 8 m out stops the bolts after
+  it and is shoved ("hits Shrike Soldier (NPC 1)'s body"); a Sentry 9.6 m out (the grenade
+  page's `BF_TEST_SHOOT_MINE=2.2`, an LZR-23 bolt) goes off on the first sweep, 0.1 s after the
+  shot. `cargo test --bin bf_play bolts` checks the sweeps' frames and lengths and the life's
+  end (80 m/s and 60 m: sweeps on frames 3-21, the end on 23; 100 m/s and 80 m: the end on 24).
+* Not reproduced: the game sweeps against its bone bodies; the demo's characters are its
+  cylinder (standing) and ragdoll bones (lying), as the shots' have been. A bolt in a liquid
+  splashes at its surface and goes on to the bed, as the demo's shots do (the game's single ray
+  stops at a liquid's body: found, not checked for bolts).
 
 Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec):
 * **The Jax-iC at the test map's pillar** (`-- --test BF_TEST_WEAPON=Jax-iC BF_TEST_GOTO=0,-8,0,-8

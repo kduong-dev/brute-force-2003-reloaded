@@ -683,11 +683,16 @@ const MAX_HOLES: usize = 160;
 /// with the hole textures' alpha gives. The blood decals read theirs as half sizes.
 const HOLE_SCALE: f32 = 1.0;
 
+/// The hit effects' systems (`plugin`): what hits this frame (a bolt's, play_bolts.rs) is made
+/// before them, so its blood, hole and decals show on its frame.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FxSystems;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<DecalRequests>()
         .init_resource::<HoleRequests>()
         .add_systems(OnEnter(AppState::Playing), setup_fx.after(snapshot_entities))
-        .add_systems(Update, (spawn_fx, requested_decals, requested_holes, emit, animate_fx).chain().after(update_player).before(play_sounds)
+        .add_systems(Update, (spawn_fx, requested_decals, requested_holes, emit, animate_fx).chain().in_set(FxSystems).after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
 
