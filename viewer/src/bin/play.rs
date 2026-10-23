@@ -1813,6 +1813,9 @@ struct Shot {
     /// to spend: the Rails, FUN_00230860), whose hits play_rays.rs finds at its shot, all along
     /// its line (#238); `dist` is then where it stops
     pass: bool,
+    /// fired from the holder's scoped eye (`origin` the eye: the weapon's +0x225 bit 1), where an
+    /// instant ray's beam starts off to the side (`beam_line`, FUN_002312e0)
+    scoped: bool,
 }
 
 #[derive(Resource)]
@@ -6306,7 +6309,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                                     // pass flag, one without; two or more go through the
                                     // multi-hit ray, play_rays.rs)
                                     pass: speed >= INSTANT_SHOT && w.def.shots.pass_through
-                                        && w.def.shots.object_hits + w.def.shots.character_hits >= 2 });
+                                        && w.def.shots.object_hits + w.def.shots.character_hits >= 2,
+                                    scoped });
                 // (the pellet's hand: 0 the gun in hand, 1 the second hand's; the shooter last, as
                 // the combat log names it)
                 if std::env::var("BF_SHOT_LOG").is_ok() {
@@ -6783,7 +6787,7 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
         }
         // the weapon's own effects (see `projectiles`), else a plain streak
         if s.flight != 0 || s.hit_fx != 0 || s.decal != 0 {
-            // (an instant ray's tracer waits two frames, `Projectile::wait`)
+            // (an instant ray's hit waits two frames, `Projectile::wait`)
             commands.spawn((Transform::from_translation(s.origin).looking_to(s.dir, Vec3::Y), Visibility::default(),
                             Projectile { shot: s, travelled: 0.0, started: false, wait: 2 }));
             continue;
@@ -6799,15 +6803,15 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
 }
 
 /// A shot drawn with its weapon's effects that isn't a bolt (a bolt is play_bolts.rs's): in
-/// flight it carries the flight effect (an instant-hit gun's tracer is fired once from the
-/// muzzle; a shot flying at its speed carries it along), and where it lands on the world it
-/// plays the hit (`world_hit`).
+/// flight it carries the flight effect (an instant ray's is placed once along the ray, its beam
+/// or tracer, `beam_line`; a shot flying at its speed carries it along), and where it lands on
+/// the world it plays the hit (`world_hit`).
 #[derive(Component)]
 struct Projectile {
     shot: Shot,
     travelled: f32,
     started: bool,
-    /// an instant ray's frames before it moves (its tracer placed, then emitting)
+    /// an instant ray's frames before it lands (its beam placed, then emitting)
     wait: u8,
 }
 
@@ -6883,6 +6887,47 @@ fn effects_of(game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &
               materials: &mut Assets<StandardMaterial>, effect_type: u32) -> Vec<std::sync::Arc<bf_viewer::ale_fx::Compiled>> {
     let list = game.effect_types.get(&effect_type).cloned().unwrap_or_default();
     list.into_iter().filter_map(|e| ale.load(game, images, materials, e)).collect()
+}
+
+/// An instant ray's flight effect type's ALE effects, compiled for a beam (`AleAssets::load_beam`:
+/// their kill fields run).
+fn beam_effects_of(game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &mut Assets<Image>,
+                   materials: &mut Assets<StandardMaterial>, effect_type: u32) -> Vec<std::sync::Arc<bf_viewer::ale_fx::Compiled>> {
+    let list = game.effect_types.get(&effect_type).cloned().unwrap_or_default();
+    list.into_iter().filter_map(|e| ale.load_beam(game, images, materials, e)).collect()
+}
+
+/// The farthest an instant ray's beam reaches by its user parameter (m): FUN_002312e0 clamps the
+/// ray's length to 200.0 and takes x 0.005 of it.
+const BEAM_REACH: f32 = 200.0;
+/// How far right of the scoped eye (m) a scoped ray's beam starts (FUN_002312e0: x 0.25 the frame
+/// FUN_0001d0c0 builds from the ray's way, its first axis)...
+const BEAM_SCOPED_RIGHT: f32 = 0.25;
+/// ... and how far below it (m: x 0.1 its second axis, taken off).
+const BEAM_SCOPED_DOWN: f32 = 0.1;
+
+/// Where an instant ray's flight effect is placed and its user parameter (FUN_002317e0 ->
+/// FUN_002312e0, #237): at the muzzle, turned along the ray (FUN_0001d0c0's frame: its -z along
+/// the way, its x the world's up x that), with the user parameter min(d, BEAM_REACH) /
+/// BEAM_REACH for the ray's length d (`Shot::dist`: where it hit, or stopped going through,
+/// play_rays.rs; its range when it met nothing; FUN_00230860 writes it back). The effects are
+/// authored so: their emitters, turned -90 degrees about x, throw and carry their particles along
+/// the -z (tracer.emt at 113.6 m/s; rgun_beam.emt's offset out to 100 m in 0.24 s), and their kill
+/// fields stand that far out (ale_fx.rs CLASS_KILL_FIELD). Fired from the scoped eye, the beam
+/// starts BEAM_SCOPED_RIGHT right of and BEAM_SCOPED_DOWN below it and is aimed from there at the
+/// ray's end. Before #237 the demo spun the effect's +y along the shot, which its emitters' turn
+/// threw down instead (the tracers went into the ground at the muzzle), and gave it no length.
+fn beam_line(s: &Shot) -> (Transform, f32) {
+    let up = |d: Vec3| if d.y.abs() > 0.9848 { Vec3::Z } else { Vec3::Y };
+    let sp = s.dist.min(BEAM_REACH) / BEAM_REACH;
+    if !s.scoped {
+        return (Transform::from_translation(s.origin).looking_to(s.dir, up(s.dir)), sp);
+    }
+    let frame = Transform::default().looking_to(s.dir, up(s.dir));
+    let from = s.origin + frame.right() * BEAM_SCOPED_RIGHT - frame.up() * BEAM_SCOPED_DOWN;
+    let to = s.origin + s.dir * s.dist;
+    let way = (to - from).normalize_or(s.dir);
+    (Transform::from_translation(from).looking_to(way, up(way)), sp)
 }
 
 /// FUN_0022cd80's user parameter for the struck material's hit effect and its debris, from the
@@ -6973,21 +7018,22 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             p.started = true;
             // (its flight effect's seed: a draw of the shots' random state)
             let seed = chance.stirred();
-            for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight) {
-                if instant {
-                    // the tracer: fired once from the muzzle, flying on its own along the
-                    // emitter's +y (ale_fx.rs; turned along the shot's -z it flew straight up, the
-                    // thin vertical line over the Minigun)
+            if instant {
+                // the beam (#237): its effect placed once along the ray (`beam_line`), its user
+                // parameter the ray's length over 200 m, where its kill fields stop it
+                let (place, sp) = beam_line(&s);
+                for fx in beam_effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight) {
                     let life = fx.duration();
-                    let along = Transform::from_translation(s.origin).with_rotation(Quat::from_rotation_arc(Vec3::Y, s.dir));
-                    commands.spawn((along, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life)));
-                } else {
+                    commands.spawn((place, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, sp, seed), AleExpire(life)));
+                }
+            } else {
+                for fx in effects_of(&mut game.0, &mut ale, &mut images, &mut materials, s.flight) {
                     // (a shot flying at its speed that isn't a bolt: the effect rides on it)
                     commands.spawn((Transform::default(), Visibility::default(), bf_viewer::ale_fx::AleEffect::new(fx, 0.0, seed), ChildOf(e)));
                 }
             }
         }
-        // the first frames only start the tracer (placed, then emitting)
+        // the first frames only start the beam (placed, then emitting)
         if p.wait > 0 {
             p.wait -= 1;
             continue;
@@ -7286,5 +7332,27 @@ mod tests {
         }
         assert_eq!(shot_seed(3, Some(41_011)), (3u64 * 7919 + 41_011 * 104_729) as u32);
         assert_eq!(shot_seed(4, Some(u32::MAX)), (4u64 * 7919 + u32::MAX as u64 * 104_729) as u32);
+    }
+
+    /// #237 (FUN_002312e0): an instant ray's beam at the muzzle along the ray, its user parameter
+    /// the length over 200 m and 1 past it; scoped, from 0.25 m right of the eye and 0.1 m below,
+    /// aimed at the ray's end.
+    #[test]
+    fn a_beam_spans_the_ray() {
+        let shot = |dist: f32, scoped: bool| Shot { weapon: 0, origin: Vec3::new(1.0, 2.0, 3.0), dir: Vec3::NEG_Z, dist, hit: true, speed: INSTANT_SHOT,
+                                                    flight: 0, hit_fx: 0, damage: [1.0, 2.0], damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z,
+                                                    falloff: 0, range: 300.0, bolt: false, body: false, pass: false, scoped };
+        let (place, sp) = beam_line(&shot(27.0, false));
+        assert!(place.translation.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-6);
+        assert!(place.forward().as_vec3().distance(Vec3::NEG_Z) < 1e-6);
+        assert!((sp - 0.135).abs() < 1e-6);
+        assert_eq!(beam_line(&shot(250.0, false)).1, 1.0);
+        // scoped: right is +x and up +y for a ray along -z
+        let (place, sp) = beam_line(&shot(25.0, true));
+        let from = Vec3::new(1.25, 1.9, 3.0);
+        assert!(place.translation.distance(from) < 1e-6);
+        let end = Vec3::new(1.0, 2.0, 3.0 - 25.0);
+        assert!(place.forward().as_vec3().distance((end - from).normalize()) < 1e-6);
+        assert!((sp - 0.125).abs() < 1e-6);
     }
 }

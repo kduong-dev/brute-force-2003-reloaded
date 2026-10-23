@@ -649,7 +649,7 @@ mod tests {
     /// / `speed`, the hit counts `n1`, `n2` and the pass flag.
     fn bolt(speed: f32, range: f32, n1: u8, n2: u8, pass: bool) -> Bolt {
         let shot = Shot { weapon: 0, origin: Vec3::ZERO, dir: Vec3::NEG_Z, dist: range, hit: false, speed, flight: 0, hit_fx: 0, damage: [1.0, 2.0],
-                          damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, falloff: 0, range, bolt: true, body: false, pass: false };
+                          damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, falloff: 0, range, bolt: true, body: false, pass: false, scoped: false };
         Bolt { shot, id: 1, owner: Who::Squad(3), team: 0, human: true, pos: Vec3::ZERO, dir: Vec3::NEG_Z, speed, life: range / speed,
                counter: SWEEP_TICKS, last: Vec3::ZERO, roll: 1.0, skill: 1.0, n1, n2, pass, skip: None, clock: 0.0, ticks: 0 }
     }

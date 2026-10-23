@@ -1019,10 +1019,50 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   so the turn is read from the code and not seen. `BF_DUMP_WEAPONS=1` lists each gun's muzzles
   and then the map's definitions with more than one, each found on its model or not (e05:
   `h_13e090b2 ... muzzles [f9eed613 ok, e2e787a9 ok]`).
-* **Tracers** (FUN_002317e0). An instant ray carries its flight effect only when its counter is
-  0, which then restarts at h_eeb9e75a: the MK every 3rd shot, the Minigun every 4th, the rest
-  every shot. The tracer is now turned along the shot (ALE emitters fire along their +y): it
-  flew straight up before, the thin vertical line over the Minigun.
+* **Tracers and beams** (FUN_002317e0 -> FUN_002312e0, #237; play.rs `projectiles`, `beam_line`;
+  ale_fx.rs `load_beam`). An instant ray carries its flight effect only when its counter is 0,
+  which then restarts at h_eeb9e75a: the MK and the Kman every 3rd shot (the first among them),
+  the Minigun every 4th, the rest every shot. The effect is placed once, at the muzzle, turned
+  along the ray (FUN_0001d0c0's frame: its -z along the ray, its x the world's up x that, Bevy's
+  `looking_to`), with the user parameter min(d, 200) / 200 for the ray's length d: where it hit,
+  where a Rail stopped (§ Ricochet and pass-through), or its range when it met nothing. The
+  effects are made for that: their emitters, turned -90 degrees about x, throw or carry their
+  particles out along the ray (tracer.emt's at 113.6 m/s; tracer_snipe_beam.emt's offset runs
+  out to 200 m in 0.38 s, rgun_beam.emt's to 100 m in 0.24 s), and their kill field (class
+  h_027b6cd9, `CLASS_KILL_FIELD`: a plane facing back along the ray, past which a particle dies)
+  stands 200 m x the parameter out (tracer.fld, rgun_s_kill.fld; tracer_snipe_kill.fld 179.4 m
+  x it). So the MK's, Kman's and Minigun's tracer, the L-Shots' trail and the Rails' beam end
+  where the ray did. Fired from the scoped eye, the beam starts 0.25 m right of it and 0.1 m
+  below and is aimed at the ray's end, so in the scope it comes in from the lower right. A beam's
+  appearances turn by their facing type as the game's vertex shader does (0x3b8bf8: facing 3
+  along the motion, the tracer's streak and the Rails' side arcs, which stand on their particles,
+  shape 3; facing 2 square to it, the L-Shots' rings and smoke cards). Before, the effect was
+  spun so its emitters' own turn threw it down into the ground at the muzzle, a tracer's
+  camera-facing streak could cross the whole scoped view, and nothing stopped it at the hit (and
+  before #115 it flew straight up, the thin vertical line over the Minigun). Checked against the
+  takes:
+  * The MK on the test map (`-- --test BF_NO_SQUAD=1 BF_TEST_WEAPON=MK-ASLT BF_TEST_GOTO=0,-8,0,-8
+    BF_CAMERA_PITCH=-0.12 BF_TEST_FIRE=hip BF_SHOT_LOG=1`, the pillar 10 m out): on every 3rd
+    round a short orange streak at the strike end, gone into the pillar within 0.1 s, as #63
+    take01 shows it (f325-f328 of the take at 60 fps: the orange streak below the reticle,
+    shrinking into it); the Minigun's on every 4th the same (`BF_TEST_WEAPON="RVG50 Minigun"`).
+    Scoped (`BF_TEST_FIRE=1`) it comes in from the right to the reticle.
+  * The L-Shot-75 at e40's cliff 25 m out (#62 take05's spot: `BF_MAP=e40 BF_CHARACTER=1
+    BF_TEST_WEAPON=L-Shot-75 BF_TEST_GOTO=-16.16,152.62,-16.66,152.52 BF_CAMERA_PITCH=-0.05
+    BF_TEST_TRIGGER=2.0-2.08`, 27 m to the hit): a thin pale line from beside Flint's head to just
+    short of the reticle for ~0.15 s, then a grey smoke trail along it, gone by ~0.5 s, as take05
+    f168-f196. Scoped at level 2 (`BF_TEST_SCOPE=2,1.5 BF_TEST_TRIGGER=3.0-3.08`): the line from
+    the lower right to short of the reticle, with white rings along it, as take12 f195-f209.
+  * The Rail RVR at e34's gate 10 m out (#67 take01's spot: `BF_MAP=e34 BF_CHARACTER=2
+    BF_TEST_WEAPON="Rail RVR" BF_TEST_GOTO=-52.76,31.02,-52.9,31.5 BF_CAMERA_PITCH=-0.08
+    BF_TEST_TRIGGER=2.0-2.08`): the spark at the hit, red-violet arcs from it down toward the gun
+    turning blue over ~0.15 s, then blue sparks at the hit, as take01 f19-f41. The ray goes
+    through the gate and stops at a wall 38.3 m out, the beam's length.
+  * Not matched: in the L-Shot's scope the demo draws more rings, bunched toward the hit, and a
+    smoke cloud far denser than take12's faint haze. The beams keep the demo's count, which spreads
+    a frame's particles along the emitter's move; whether the game's count (FUN_00065800) puts a
+    frame's batch at one point, which would leave a few rings ~10 m apart as take12 shows, isn't
+    traced.
 * **The Minigun's spin** (#68; `src/bin/play_minigun.rs`): its item set is IFSET_MINIGUN
   (function-type 16), whose per-frame hook FUN_00147f90 (vtable 0x39b8f8, the item-set factory
   0x146920; the analyst's reading, todo/weapons-plan/answers-batch1.md §12) keeps a spin level:
@@ -1113,9 +1153,9 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   * The Minigun's spin (`BF_SOUND_LOG`): the loop with the first round, the spin-down 0.1 s after
     the release, a tap's round spinning it too.
   * The scopes (the MK's 2, the Foley's 3: one level each for everyone but Flint): § The scope.
-  * Not done: the tracer and the beam as the game draws them (one effect stretched to the hit, the
-    analyst's draft B, the ray path); the Foley's silence (its noise radius 10: no AI hearing
-    yet); the MK's scoped held rate (no take). (The LZR bolts fly since #136: § Bolts.)
+  * Not done: the Foley's silence (its noise radius 10: no AI hearing yet); the MK's scoped held
+    rate (no take). (The LZR bolts fly since #136: § Bolts; the tracers and beams are drawn as
+    the game places them since #237: **Tracers and beams** above.)
 * **The Kman Auto** (#60; `todo/60-kman-auto/spec.md`), Hawk (`BF_CHARACTER=2`) with it: nothing of
   its own to build. Held fire 5-6 game frames a round, 5.38 a second (the takes 5.18-5.62: 6 a
   second is exactly 5 frames, so the frame-time wobble splits 5 and 6), the same scoped (its
@@ -1128,8 +1168,9 @@ BF_TEST_FIRE=1 BF_SHOT_LOG=1`, the pillar 10 m ahead) and sdm_e34:
   middle, in in 0.15 s; an exit press 0.3 s after entering waits for the lockout; the shared
   in / out sounds 135ec2ce / f9ffc972. On e40's Shrike Soldier frozen 20 m out (frozen, 300 HP)
   14 hits of 22 rounds: x1 parts 2.73-5.53 (the rule 2.45-6.65), forearms and calves 1.33-2.99
-  (1.22-3.32); take08's at 25 m were 2.0-6.3, none on a forearm. Not done: the tracer's look
-  (draft B); hits at its 50 m range and scoped hits (no take with the aim verified).
+  (1.22-3.32); take08's at 25 m were 2.0-6.3, none on a forearm. Its tracer is the MK's
+  (§ Tracers and beams, #237). Not done: hits at its 50 m range and scoped hits (no take with the
+  aim verified).
 
 ### Bolts and their hits: the sweep, hit effects, lights and sounds (#57)
 

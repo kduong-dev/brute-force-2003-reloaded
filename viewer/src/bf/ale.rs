@@ -323,8 +323,15 @@ impl Node {
 
     /// The node transform at time `t` (s): translation, rotation (degrees about x, y, z), scale.
     pub fn transform(&self, p: u32, t: f32) -> [[f32; 3]; 3] {
+        self.transform_at(p, 0.0, t)
+    }
+
+    /// `transform` at the user parameter `sp` (its curves' variants blended by it, as `curve`'s):
+    /// the beams' kill fields are carried out along the ray by it (tracer.fld's z: -0.006 m at 0,
+    /// -200 m at 1).
+    pub fn transform_at(&self, p: u32, sp: f32, t: f32) -> [[f32; 3]; 3] {
         match self.params.get(&p) {
-            Some(Value::Transform(c)) if c.len() == 9 => [0, 1, 2].map(|i| [0, 1, 2].map(|j| c[i * 3 + j].at(0.0, t))),
+            Some(Value::Transform(c)) if c.len() == 9 => [0, 1, 2].map(|i| [0, 1, 2].map(|j| c[i * 3 + j].at(sp, t))),
             _ => [[0.0; 3], [0.0; 3], [1.0; 3]],
         }
     }

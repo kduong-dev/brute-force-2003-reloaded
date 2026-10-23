@@ -311,7 +311,8 @@ const PERP_OUT_CONES: [&str; 1] = ["sonic_grenade.emt"];
 /// (that fade isn't drawn: the demo's materials are shared per life step). The demo's perp rules
 /// (flat across the emitter's y, PERP_RADIAL_SPEED) stand in for these elsewhere; facing 3 is
 /// drawn as the shader does only for the effects compiled with `Compiled::facing`, on their
-/// AngleFadeOut appearances (all of them under `Compiled::placed`, see `Pair::axial`).
+/// AngleFadeOut appearances (all of them under `Compiled::placed` and `Compiled::beam`, see
+/// `Pair::axial`), and a beam's facing 2 as a perp quad.
 const FACING: u32 = 0xE354_2300;
 /// GeneralApp_ShapeType (the appearance's +0x48): which of the game's particle shapes the quad
 /// is. The table at 0x402a4c lists them (FUN_002b1bb0 registers each with FUN_002b1bf0, into
@@ -339,6 +340,16 @@ const SHAPE: u32 = 0x17D4_5550;
 /// upright, and a trail's spinning grenade would spin it), while an attached particle's
 /// velocity is in its effect's frame - no attached particle has an allowed field yet.
 const CLASS_AIR_FIELD: u32 = 0xE625_323F;
+/// The game's kill field (class h_027b6cd9: its constructor 0x661e0, its parameters h_09df410d and
+/// h_1bf425dd at +0x30 / +0x34, 10 m each, the table's KillField_Width and KillField_Height, which
+/// its test doesn't read). Its update (0x664c0) takes its plane from its place: the point its
+/// translation, the normal its frame's +y; its test (0x66650) kills a particle on the plane's far
+/// side (behind the normal) and one that crosses the plane within the step, where it crosses.
+/// Its transform is read at the effect's user parameter and time (`Node::transform_at`): the
+/// beams' fields are turned 90 degrees about x, their normal back along the ray, and carried out
+/// along it by the user parameter (tracer.fld: 0 m at 0, 200 m at 1). Run only for the effects
+/// compiled with `Compiled::beam`.
+const CLASS_KILL_FIELD: u32 = 0x027B_6CD9;
 const AIR_MAGNITUDE: u32 = 0xE5E3_524C;
 const AIR_APPROACH: u32 = 0x1042_3CEB;
 /// The air fields that run (node names): the Gas cloud's two (gas-grenade.fld: a wind of about
@@ -495,8 +506,9 @@ pub struct Compiled {
     /// Drawn with the game's particle shapes (see SHAPE): the effects compiled with both the
     /// recorded rules and the game's facing, the Therm Sweeper's trail, explosion and launch
     /// dust and the effects triggers make (`load_recorded_facing`), checked against their takes
-    /// (the triggers' with the tutorial's lava bursts, #228). Every other effect keeps the
-    /// demo's quad, half the size of the game's for its shape-2 appearances.
+    /// (the triggers' with the tutorial's lava bursts, #228), and the beams (`beam`: the Rails'
+    /// side arcs stand on their particles, shape 3). Every other effect keeps the demo's quad,
+    /// half the size of the game's for its shape-2 appearances.
     pub shapes: bool,
     /// Emitted by the game's count, once a game frame (FUN_00065800, `game_count`,
     /// GAME_FRAME), and drawn at the effect's distance LOD (see LOD_TAN, EMIT_LOD, APP_LOD):
@@ -535,6 +547,17 @@ pub struct Compiled {
     /// effects, the triggers' among them, keep their own checked rules until they're checked
     /// with these (#164, #101)
     pub placed: bool,
+    /// Compiled for an instant ray's flight effect (`load_beam`, #237): its appearances' kill
+    /// fields run (CLASS_KILL_FIELD), placed by the effect's user parameter, which FUN_002312e0
+    /// sets to the ray's length over 200 m: tracer.fld and rgun_s_kill.fld sit 200 m x it out
+    /// along the ray, tracer_snipe_kill.fld 179.4 m x it, so the tracer, the L-Shots' trail and
+    /// the Rails' beam die where the ray ended. Every other effect leaves its kill fields off
+    /// (stun_beam_s's, the placed effects' xleaves_rustle_kill and slava-cavern-kill.fld), until
+    /// checked against their own captures. A beam's appearances are turned by their facing type
+    /// as the game's shader does (see FACING: 3 along their motion, `Pair::axial`; 2 square to
+    /// it, as perp quads) and drawn with the game's shapes (`shapes`); its count stays the
+    /// demo's.
+    pub beam: bool,
 }
 
 impl Compiled {
@@ -575,8 +598,8 @@ pub struct AleAssets {
     quad: Handle<Mesh>,
     /// a unit quad standing on its middle-bottom (y 0..1): the game's shape 3 (see SHAPE)
     quad_base: Handle<Mesh>,
-    /// by (name hash, `recorded`, `facing`, `ride`, `placed`)
-    effects: HashMap<(u32, bool, bool, bool, bool), Option<Arc<Compiled>>>,
+    /// by (name hash, `recorded`, `facing`, `ride`, `placed`, `beam`)
+    effects: HashMap<(u32, bool, bool, bool, bool, bool), Option<Arc<Compiled>>>,
     /// by (texture name hash, linear, the source factor: see `texture`)
     textures: HashMap<(u32, bool, Source), Option<Handle<Image>>>,
 }
@@ -796,37 +819,37 @@ impl AleAssets {
 
     /// An effect compiled already (`load`).
     pub fn cached(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, false, false, false, false)).cloned().flatten()
+        self.effects.get(&(effect, false, false, false, false, false)).cloned().flatten()
     }
 
     /// An effect compiled already with the recorded rules (`load_recorded`).
     pub fn cached_recorded(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, true, false, false, false)).cloned().flatten()
+        self.effects.get(&(effect, true, false, false, false, false)).cloned().flatten()
     }
 
     /// An effect compiled already with the recorded rules and the game's facing
     /// (`load_recorded_facing`).
     pub fn cached_recorded_facing(&mut self, effect: u32) -> Option<Arc<Compiled>> {
-        self.effects.get(&(effect, true, true, false, false)).cloned().flatten()
+        self.effects.get(&(effect, true, true, false, false, false)).cloned().flatten()
     }
 
     /// Compile an effect of the library by name hash (cached); None if the library lacks it.
     pub fn load(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                 effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, false, false, false, false)
+        self.load_as(game, images, materials, effect, false, false, false, false, false)
     }
 
     /// `load`, with the rules checked against the Frag recording only (see `Compiled::recorded`):
     /// for the grenades' blast and trail effects.
     pub fn load_recorded(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                          effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, true, false, false, false)
+        self.load_as(game, images, materials, effect, true, false, false, false, false)
     }
 
     /// `load`, with the game's facing 3 (see `Compiled::facing`): for the muzzle effects.
     pub fn load_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                        effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, false, true, false, false)
+        self.load_as(game, images, materials, effect, false, true, false, false, false)
     }
 
     /// `load_recorded`, with the game's facing 3 (see `Compiled::facing`): for the Therm
@@ -835,14 +858,14 @@ impl AleAssets {
     /// debris and their lights (play.rs `projectiles`, play_fx.rs, #57).
     pub fn load_recorded_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                                 effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, true, true, false, false)
+        self.load_as(game, images, materials, effect, true, true, false, false, false)
     }
 
     /// `load_recorded_facing`, with the placed rules (see `Compiled::placed`): for the level's
     /// placed effect objects (`spawn_placed_effects`).
     pub fn load_placed(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                        effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, true, true, false, true)
+        self.load_as(game, images, materials, effect, true, true, false, true, false)
     }
 
     /// `load_facing`, with the root emitters' particles riding on the effect (see
@@ -852,19 +875,27 @@ impl AleAssets {
     /// takes; the heads this is for (sonic, plasma, bio) are shape 5 with no emit-count keys.
     pub fn load_flight(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                        effect: u32) -> Option<Arc<Compiled>> {
-        self.load_as(game, images, materials, effect, false, true, true, false)
+        self.load_as(game, images, materials, effect, false, true, true, false, false)
+    }
+
+    /// `load`, with the game's kill fields (see `Compiled::beam`): for an instant ray's flight
+    /// effect, the beam or tracer FUN_002312e0 places along the ray (play.rs `projectiles`, #237).
+    /// The demo's other rules as `load`'s, as the tracers were drawn before.
+    pub fn load_beam(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
+                     effect: u32) -> Option<Arc<Compiled>> {
+        self.load_as(game, images, materials, effect, false, false, false, false, true)
     }
 
     #[allow(clippy::too_many_arguments)]
     fn load_as(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
-               effect: u32, recorded: bool, facing: bool, ride: bool, placed: bool) -> Option<Arc<Compiled>> {
-        let key = (effect, recorded, facing, ride, placed);
+               effect: u32, recorded: bool, facing: bool, ride: bool, placed: bool, beam: bool) -> Option<Arc<Compiled>> {
+        let key = (effect, recorded, facing, ride, placed, beam);
         if let Some(c) = self.effects.get(&key) {
             return c.clone();
         }
         // (an effect that carries itself, through its effect appearances, carries nothing)
         self.effects.insert(key, None);
-        let compiled = self.compile(game, images, materials, effect, recorded, facing, ride, placed).map(Arc::new);
+        let compiled = self.compile(game, images, materials, effect, recorded, facing, ride, placed, beam).map(Arc::new);
         if compiled.is_none() {
             warn!("ALE effect h_{effect:08x}: not in the library, or nothing it draws is supported");
         }
@@ -874,9 +905,11 @@ impl AleAssets {
 
     #[allow(clippy::too_many_arguments)]
     fn compile(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
-               effect: u32, recorded: bool, facing: bool, ride: bool, placed: bool) -> Option<Compiled> {
-        // the game's particle shapes (see SHAPE, `Compiled::shapes`)
-        let shapes = recorded && facing;
+               effect: u32, recorded: bool, facing: bool, ride: bool, placed: bool, beam: bool) -> Option<Compiled> {
+        // the game's particle shapes (see SHAPE, `Compiled::shapes`), and its count
+        // (`Compiled::counted`)
+        let counted = recorded && facing;
+        let shapes = counted || beam;
         let e = game.effects.effects.get(&effect)?.clone();
         let node = |game: &Game, i: u32| e.refs.iter().find(|r| r.3 == i).and_then(|r| game.effects.nodes.get(&r.1)).cloned();
         let node_name = |i: u32| e.refs.iter().find(|r| r.3 == i).map_or(0, |r| r.1);
@@ -901,13 +934,21 @@ impl AleAssets {
                     continue;
                 }
                 let child = app.string(SPAWN_EFFECT).filter(|n| !n.is_empty())
-                    .and_then(|n| self.load_as(game, images, materials, h(n), recorded, facing, ride, placed));
+                    .and_then(|n| self.load_as(game, images, materials, h(n), recorded, facing, ride, placed, beam));
                 if let Some(child) = child {
                     pairs.push(Pair { perp: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fps: 0.0,
                                       frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None, vertical: false });
                 }
                 continue;
             }
+            // the fields linked to this appearance (pairs appearance -> field) that run: the air
+            // fields (see AIR_FIELDS; the effects compiled with the recorded rules: the grenades'
+            // and the Therm Sweeper's trail), under the placed rules its turbulence fields (see
+            // CLASS_TURBULENCE: xfly-basic.app -> xfly_turb.fld), and an instant ray's flight
+            // effect's kill fields (see CLASS_KILL_FIELD, `Compiled::beam`)
+            let fields: Vec<Node> = e.pairs.iter().filter(|p| p.0 == ap).filter_map(|p| node(game, p.1))
+                .filter(|n| (recorded && n.class == CLASS_AIR_FIELD && AIR_FIELDS.contains(&n.name.as_str())) || (placed && n.class == CLASS_TURBULENCE)
+                    || (beam && n.class == CLASS_KILL_FIELD)).collect();
             if app.class == CLASS_BEAM {
                 let additive = adds(app.pair(BEAM_BLEND).unwrap_or(BLEND_ADD));
                 let name = app.string(BEAM_TEXTURE).map(h).unwrap_or(0);
@@ -931,7 +972,7 @@ impl AleAssets {
                 let material = mats[0].clone();
                 let fps = book.map_or(0.0, |b| b.fps);
                 pairs.push(Pair { perp: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![mats], fps,
-                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields: vec![], rise: None, vertical: false });
+                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields, rise: None, vertical: false });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
@@ -975,22 +1016,22 @@ impl AleAssets {
             }).collect();
             let streak = app.flag(MOTION_BLUR);
             let frame = if recorded { FrameMode::of(&app) } else { FrameMode::Play };
-            // the air fields linked to this appearance (pairs appearance -> field) that run (see
-            // AIR_FIELDS; the effects compiled with the recorded rules: the grenades' and the
-            // Therm Sweeper's trail), and under the placed rules its turbulence fields (see
-            // CLASS_TURBULENCE: xfly-basic.app -> xfly_turb.fld)
-            let fields = e.pairs.iter().filter(|p| recorded && p.0 == ap).filter_map(|p| node(game, p.1))
-                .filter(|n| (n.class == CLASS_AIR_FIELD && AIR_FIELDS.contains(&n.name.as_str())) || (placed && n.class == CLASS_TURBULENCE)).collect();
             let rise = (recorded && !app.flag(PERP) && !streak && upright(&app)).then(|| offset_end(&app));
             // a spark (see SPARK_ASPECT): drawn as a streak along its motion, not a perp quad
             let spark = recorded && app.flag(PERP) && emitter.class == CLASS_CONE
                 && emitter.curve(SPEED, 0.0, 0.0).unwrap_or(0.0) >= PERP_RADIAL_SPEED && app.floats(ASPECT, 0.0, 0.0).unwrap_or(1.0) > SPARK_ASPECT;
             // the game's facing 3, where the effect is compiled with it (see FACING; stored as a
             // u32, parameter type 4): on its AngleFadeOut appearances, and under the placed rules
-            // on all of them, as the draw reads it (0x2a1de6 picks the shader's selector by the
-            // facing alone): e01's barrel and trash fires, m01_a's braziers
-            let axial = facing && (placed || app.flag(PERP)) && matches!(app.params.get(&FACING), Some(crate::bf::ale::Value::U32(3)));
-            let (perp, streak) = if axial { (false, false) } else if spark { (false, true) } else { (app.flag(PERP), streak) };
+            // and a beam's on all of them, as the draw reads it (0x2a1de6 picks the shader's
+            // selector by the facing alone): e01's barrel and trash fires, m01_a's braziers, the
+            // tracer's streak and the Rails' side arcs
+            let facing_type = match app.params.get(&FACING) { Some(crate::bf::ale::Value::U32(k)) => Some(*k), _ => None };
+            let axial = (beam || (facing && (placed || app.flag(PERP)))) && facing_type == Some(3);
+            // and a beam's facing 2, the plane square to the particle's motion, as the demo's perp
+            // quad (flat across its emitter's +y, which is the way each beam emitter throws its
+            // particles: along the ray), whether or not it fades edge-on (the L-Shots' rings,
+            // tracer_snipe_perp.app)
+            let (perp, streak) = if axial { (false, false) } else if spark { (false, true) } else { (app.flag(PERP) || (beam && facing_type == Some(2)), streak) };
             let vertical = recorded && VERTICAL_STREAKS.contains(&app.name.as_str());
             let shape = match app.params.get(&SHAPE) {
                 Some(crate::bf::ale::Value::U32(k @ (2 | 3))) if shapes => *k,
@@ -999,7 +1040,7 @@ impl AleAssets {
             pairs.push(Pair { perp, axial, shape, attached, streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false, fields, child: None, rise, vertical });
         }
-        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted: shapes, ride, placed })
+        (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted, ride, placed, beam })
     }
 
     /// A particle texture: as sRGB for a blended appearance, as linear amounts for an added one
@@ -1534,6 +1575,10 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         // its air fields: toward each one's wind (in the world's frame, see CLASS_AIR_FIELD)
         for field in &pair.fields {
             let t = p.born + p.age;
+            // (a kill field moves nothing: it's tested once the particle has moved, below)
+            if field.class == CLASS_KILL_FIELD {
+                continue;
+            }
             if field.class == CLASS_TURBULENCE {
                 // toward a new random velocity each game frame (0x2a9590)
                 let magnitude = field.curve(TURB_MAGNITUDE, p.sp, t).unwrap_or(0.0);
@@ -1579,6 +1624,24 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
                 p.turn = Quat::IDENTITY;
             }
             None => tr.translation += p.vel * dt,
+        }
+        // its kill fields (see CLASS_KILL_FIELD): each one's plane where its effect is, its
+        // transform read at the effect's user parameter and time; past it, the particle dies
+        if pair.fields.iter().any(|f| f.class == CLASS_KILL_FIELD) {
+            if let Ok(o) = owners.get(p.source) {
+                let place = o.compute_transform();
+                let t = p.born + p.age;
+                let killed = pair.fields.iter().filter(|f| f.class == CLASS_KILL_FIELD).any(|f| {
+                    let [offset, turn, _] = f.transform_at(TRANSFORM, p.sp, t);
+                    let point = place.translation + place.rotation * Vec3::from(offset);
+                    let normal = place.rotation * euler(turn) * Vec3::Y;
+                    (tr.translation - point).dot(normal) < 0.0
+                });
+                if killed {
+                    commands.entity(e).despawn();
+                    continue;
+                }
+            }
         }
         // an upright streak rises by its appearance's offset over its age (see `Pair::rise`; in
         // the world's frame: the blasts are placed upright)
