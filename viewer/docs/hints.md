@@ -195,10 +195,17 @@ shows skips it: the plate disables timer464, starts timer391 and clears the co-o
   player doesn't control the frame it starts to see a hostile or is hurt.
 * **The panels** are drawn from game-options' data (`bf/menus.rs`: menus, items, styles and
   picture sets), their texts wrapped by the body font records' own advances, so the lines break
-  where the takes' do. The words themselves are the demo's HUD font (play_text.rs) at capital
-  heights measured on take04: a few percent wider than the game's 10 and 12-point glyphs. The
-  legends' icons are the 12-point icon glyphs (`ICON12_GLYPHS`, `legend_icon`, which the
-  objectives menu's legends use too: the same style). The clock stops from the frame
+  where the takes' do. The words are the body font's own glyphs (#241), drawn as the end screen
+  draws its texts (`play_fonts.rs`, which gained the 10-point record 0x3c0b68 on h_f09bc36b from
+  row 340: `BODY10`; game-options' only 10-point style is the panels' tips, h_e2f74de0), each line
+  over its shadow one unit down and right in the style's h_ed70ff4f (FUN_0010a420), the legends'
+  words after their icons as the end screen's (`endmenu::legend`). Every picture is made over for
+  Bevy's blending (`gamma_blend`): the game draws its pictures alpha-blended (the `blend`
+  h_f83fc948: SRCALPHA over INVSRCALPHA; h_ee65bc4b is BLEND_ADD, 0xee751-0xee7bd) on the stored
+  sRGB values, where Bevy blends in linear light, which showed the rings' part-covering edges
+  pink and let the blue through. The shade, a picture over the game's whole 640 x 480 screen,
+  covers the whole window. The legends' icons are the 12-point icon glyphs (`ICON12_GLYPHS`,
+  `legend_icon`, which the objectives menu's legends use too: the same style). The clock stops from the frame
   after a panel opens to the frame it closes in (`set_paused`, as the objectives menu); no key,
   mouse or pad press reaches the game under it. Enter, Space or the pad's A accept; Q or the
   pad's Y skip; nothing else closes one.
@@ -236,11 +243,11 @@ BF_MAP=tutorial BF_HINT_LOG=1 BF_TEST_GOTO=57.5,68.22,57.5,68.22 BF_TEST_FALL=37
 
 ## Not done
 
-* **The panels' words** are the demo's HUD font, not the game's 10, 12 and 16-point glyphs (a few
-  percent wider: a line can run a little past its box). The controller's highlight rings look
-  dimmer than the takes' (BASIC CONTROLS' left stick ring is pink where take04's is orange): how
-  the game blends those pictures isn't traced. The message boxes (0xf3b06f04, 0x0ec41ef2) aren't
-  drawn; the tutorial opens none.
+* **The panels' blending** is an approximation (`gamma_blend`): exact over black, over a bright
+  background the texels' sum comes out a little darker than the game's (the rings within about
+  10 levels of take04's, through the same video encoding). The legends' word sits 1 pixel right
+  of take04's (a fit on a fit: the legend's draw isn't traced). The message boxes (0xf3b06f04,
+  0x0ec41ef2) aren't drawn; the tutorial opens none.
 * **MENU_ACCEPT** is sent whenever A closes a panel (the callback's +0 once the menu has closed on
   its accept item, as FUN_00100ea0 has it when the menu's controller takes the press: whether it
   does isn't traced); nothing in the tutorial acts on it.
@@ -280,6 +287,16 @@ set beside the takes' (todo/28-tutorial):
   (SPECIAL ABILITIES 278.0) and take11 (SELECTING CHARACTERS 119.0, SQUAD COMMANDS 123.2): the
   same pictures, texts, colours and line breaks; the legends' discs line up with the takes' to
   the pixel. h_194eab9a opens nothing.
+* **#241** (`BF_TRIGGER_FIRE=h_11313ffd,12,1 BF_TEST_PANEL=a,5`, frame 29; SQUAD COMMANDS with
+  `h_0a3f40d3,2,1`): every line of BASIC CONTROLS spans the same units as take04's at 10.0 s
+  within 0.6% ("Use Left thumbstick to" 100.7-246.0 against 102.0-246.7, the NOTE's last line
+  318.0-540.0 against 318.7-539.3, the title 140.0-289.3 in both); the title, the headings and
+  the legends' words correlate best with the take's at the same pixel, the 10 and 12-point lines a
+  pixel lower; SQUAD COMMANDS' "Press the A, B, X or Y button to issue" clears the radar
+  as take11's at 130 s. The rings through the takes' own encoding (x264 crf 16, yuv420p): the
+  left stick's (128, 70, 44) against take04's (121, 80, 35), the right stick's (137, 120, 53)
+  against (125, 132, 44), Movement's (137, 70, 40) against (133, 85, 38) (before: (144, 82, 69),
+  (167, 147, 88), (155, 83, 66)). The shade darkens the window's sides.
 * **Y** (the third): BASIC CONTROLS closed with Y at 13.80 s, h_10820d7c's USER1 disabling every
   panel, router524's USER2 starting timer464, the BACK hint 3.8 s of clock after the Y (take13:
   4.0 s; at 5 frames a second each of the two timers counts the frame it starts in), no HUD

@@ -10,7 +10,7 @@ KILLED), and what follows it: the next mission's movies and zone, the zone again
 | `src/bin/play_mission.rs` | the campaign game mode, the world's end step, the screen fade, the status line, what an end screen choice leads to |
 | `src/bin/play_endmenu.rs` | the end screen h_e8e14fcf and its confirmation box (a child of `play_mission.rs`) |
 | `src/bin/play_level_over.rs` | the level-over and zone triggers (a child of `play_triggers.rs`) |
-| `src/bin/play_fonts.rs` | the game's font records (body 12, 14, 16 points, heading 24) drawn glyph by glyph: the end screen, the campaign path, the status line |
+| `src/bin/play_fonts.rs` | the game's font records (body 10, 12, 14, 16 points, heading 24) drawn glyph by glyph: the end screen, the campaign path, the status line |
 | `src/bf/menus.rs` | game-options' menus as data: their buttons, lists, keyboard, animations, styles |
 
 Written from default.xbe (the addresses are in the code's comments and in

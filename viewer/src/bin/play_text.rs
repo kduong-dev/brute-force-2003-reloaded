@@ -3,8 +3,8 @@
 //! shadow, as the captures show the HUD's words and numbers (todo/gate button.mp4,
 //! medkits.mp4: a condensed bold face, capitals ~11-14 units tall, outlined dark).
 //!
-//! A `GameText` is placed in the HUD's 640 x 480 units: `x` is its left edge, centre or right
-//! edge (by `align`), `y` the top of its line. Its glyphs are rebuilt when the text, colour or
+//! A `GameText` is placed in the HUD's 640 x 480 units: `x` is its left edge or centre (by
+//! `align`), `y` the top of its line. Its glyphs are rebuilt when the text, colour or
 //! window height changes; moving it (x, y) only moves the node.
 
 use super::*;
@@ -30,7 +30,6 @@ pub struct GameFont(AtlasFont);
 pub enum Align {
     Left,
     Centre,
-    Right,
 }
 
 #[derive(Component)]
@@ -43,7 +42,7 @@ pub struct GameText {
     pub align: Align,
     /// what's drawn: text, colour, pixels per unit
     drawn: Option<(String, Color, f32)>,
-    /// its width in units (for centring and right alignment)
+    /// its width in units (for centring)
     width: f32,
 }
 
@@ -111,7 +110,6 @@ fn draw(mut commands: Commands, font: Option<Res<GameFont>>, windows: Query<&Win
         let left = match t.align {
             Align::Left => t.x,
             Align::Centre => t.x - t.width / 2.0,
-            Align::Right => t.x - t.width,
         };
         let (l, top) = (Val::Percent(left / 6.4), Val::Percent(t.y / 4.8));
         if node.left != l || node.top != top {
