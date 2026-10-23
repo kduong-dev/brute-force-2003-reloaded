@@ -666,6 +666,7 @@ fn main() {
         .add_plugins(brain::plugin)
         .add_plugins(placed_fx::plugin)
         .add_plugins(camera::plugin)
+        .add_plugins(inventory::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -700,6 +701,8 @@ mod fx;
 mod dna;
 #[path = "play_pickups.rs"]
 mod pickups;
+#[path = "play_inventory.rs"]
+mod inventory;
 #[path = "play_text.rs"]
 mod text;
 #[path = "play_deathcam.rs"]
@@ -1335,18 +1338,23 @@ const EV_RELEASE: u32 = 0x1186_6F3A;
 /// ground (the recordings: on the ground ~0.8 s (Sentry) / ~1.05 s (Roller) after the press)
 const EV_PLACED: u32 = EV_ITEM_USED;
 /// An inventory item: a grenade type (an index into `grenade::GrenadeKits`, the same as into
-/// `Player::grenades`) or the medkit.
+/// `Player::grenades`), the medkit, or another item of the squad's store by its item type
+/// (`Player::others`: the OrgSen, the Hat; play_inventory.rs).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Item {
     Grenade(usize),
     Medkit,
+    Other(u32),
 }
 /// Tab held this long (s) opens the item list instead of stepping.
 const ITEM_LIST_HOLD: f32 = 0.3;
 
-/// The inventory items, in the item box's order: every grenade type, then the medkit.
+/// The inventory items, in the item box's order: every grenade type, then the medkit, then the
+/// other items the item box lists (their type's h_1852ab6c: the OrgSen and the Hat, not "Alien
+/// Technology Acquired!"), in the store's (category, index) order (play_inventory.rs).
 fn items(p: &Player) -> Vec<Item> {
-    (0..p.grenades.len()).map(Item::Grenade).chain([Item::Medkit]).collect()
+    (0..p.grenades.len()).map(Item::Grenade).chain([Item::Medkit])
+        .chain(p.others.iter().filter(|c| c.listed).map(|c| Item::Other(c.kind))).collect()
 }
 
 /// How many of an item the squad carries.
@@ -1354,16 +1362,19 @@ fn item_count(p: &Player, item: Item) -> i64 {
     match item {
         Item::Grenade(k) => p.grenades.get(k).copied().unwrap_or(0),
         Item::Medkit => p.medkits,
+        Item::Other(kind) => p.others.iter().find(|c| c.kind == kind).map_or(0, |c| c.count),
     }
 }
 
-/// Whether the controlled character can use the item now (the item box shows it red when not:
-/// a medkit at full health; an item their character can't use, e.g. Brutus and OrgSen, once
-/// those items are in).
+/// Whether the controlled character can use the item now (the item box shows it red when not):
+/// a medkit at full health; an item whose use type the character's skill refuses (the skill's
+/// +0x1c, which the items' "can use" 0x146c70 asks: Brutus and the OrgSen or the Hat, red in #196
+/// take26; play_skills.rs `uses_item`).
 fn item_usable(p: &Player, item: Item) -> bool {
     !p.dead && item_count(p, item) > 0 && match item {
         Item::Grenade(_) => true,
         Item::Medkit => p.health < p.max_health,
+        Item::Other(kind) => p.others.iter().find(|c| c.kind == kind).is_some_and(|c| skills::uses_item(p, c.use_type)),
     }
 }
 
@@ -1856,11 +1867,18 @@ struct Player {
     regen: Vec<ammo::Charge>,
     /// reload in progress: (weapon, seconds left, clip it fills to)
     reloading: Option<Reload>,
-    /// grenades carried, by type (`grenade::GrenadeKits` order; filled by play_grenade.rs's
-    /// stock_inventory once the kits are loaded)
+    /// grenades carried, by type (`grenade::GrenadeKits` order; filled by play_inventory.rs's
+    /// `stock` once the kits are loaded: the squad placements' own, #281)
     grenades: Vec<i64>,
-    /// medkits carried (shared by the squad, like the grenades; see play_pickups.rs)
+    /// medkits carried (shared by the squad, like the grenades; the placements' at the start,
+    /// play_inventory.rs; pickups, play_pickups.rs)
     medkits: i64,
+    /// the squad's other items (the OrgSen, the Hat, "Alien Technology Acquired!"), in the
+    /// store's (category, index) order: play_inventory.rs. Shared, as the grenades are
+    others: Vec<inventory::Carried>,
+    /// the squad's items have been stocked from the start (play_inventory.rs `stock`): a respawn
+    /// refills the grenades only
+    stocked: bool,
     /// the inventory item in the item box, how long it's been NEW (s left),
     /// whether the item list is open (Tab held), how long Tab's been down, and the use key
     /// (G) pressed for a non-grenade item
@@ -2162,7 +2180,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -2596,9 +2614,9 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // the demo's choice, the game's hand-over isn't traced)
     player.leave_scope();
     (player.scope, player.zoom, player.scope_heard, player.scope_lock) = (0.0, 1.0, 0, 0.0);
-    let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.item, player.item_new);
+    let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.others.clone(), player.stocked, player.item, player.item_new);
     std::mem::swap(&mut *player, &mut squad.0[i]);
-    (player.grenades, player.medkits, player.medkit_kind, player.item, player.item_new) = inventory;
+    (player.grenades, player.medkits, player.medkit_kind, player.others, player.stocked, player.item, player.item_new) = inventory;
     // (a script's walk was its brain's goal: under the player's control it has none)
     player.script_walk.clear();
     // the switch sound, at the cut (a capture: the same sound at every hand-over)
@@ -3480,7 +3498,11 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     for (k, set) in clips.slots.iter().enumerate() {
         info!("{label} slot {} clips: carry {:?} / ready {:?}", k + 1, set.carry, set.rp);
     }
-    // test hook: BF_START_WEAPON=1 starts with the second weapon in hand
+    // the first slot in hand: a placement leaves none in hand (FUN_0014dd50: +0x1cc = 0), and the
+    // character's activation (vtable +0xa4, FUN_00112ab0: a spawn copy's, FUN_000dfd90) draws one
+    // through FUN_00123fa0, the first slot that has a gun (the second without one). A zone's opening
+    // script may switch it after (play_script.rs's code 100: CT_TOGGLE_WEAPON, e34's Tex and Flint,
+    // e40's Tex, Hawk and Brutus). Test hook: BF_START_WEAPON=1 starts with the second in hand
     p.weapon = std::env::var("BF_START_WEAPON").ok().and_then(|v| v.parse().ok()).unwrap_or(0).min(weapons.len().saturating_sub(1));
     p.weapon_dirty = true;
     p.holding = true;
@@ -3519,7 +3541,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
           reload_clips.iter().map(|c| c.as_ref().map(|c| c.duration)).collect::<Vec<_>>(),
           throw_clips.iter().map(|c| c.as_ref().map(|c| c.duration)).collect::<Vec<_>>(), throw_hand.map(|h| h.0));
     p.throwing = None;
-    // (play_grenade.rs's stock_inventory fills it again: a respawn starts with the start stock)
+    // (play_inventory.rs's `stock` fills it again: a respawn starts with the start's grenades)
     p.grenades.clear();
     p.max_health = game.character_hitpoints.get(name).copied().or(ty.as_ref().map(|t| t.hitpoints)).unwrap_or(100.0);
     p.health = p.max_health;
@@ -5260,6 +5282,46 @@ fn shot_seed(character: usize, npc: Option<u32>) -> u32 {
     (character as u32).wrapping_mul(7919).wrapping_add(npc.map_or(0, |id| id.wrapping_mul(104_729)))
 }
 
+/// The switch to `p`'s other weapon starts (the weapon switch's press, `step_player`; a script's
+/// CT_TOGGLE_WEAPON, `toggle_weapon`): its switch clip, or a swap at once without one. Not while
+/// busy, nor during a skill's toggle overlay either: one overlay at a time is the demo's choice
+/// (the game queues a toggle overlay only into a free overlay slot, char+0x218 or +0x244,
+/// 0x12253a-0x122587; whether a switch waits for one isn't traced). Nor while the skill's overlay
+/// filter refuses the switch's overlay (Tex's berserk, `skills::overlays_blocked`), nor while the
+/// skill says the character isn't free (FUN_0011e130 asking FUN_00117210: Flint's targeting on,
+/// `skills::lets_act`). Whether it started.
+fn start_switch(p: &mut Player, l: &Loaded) -> bool {
+    if !(l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
+        && p.skill.toggling.is_none() && !skills::overlays_blocked(p) && skills::lets_act(p)) {
+        return false;
+    }
+    let to = (p.weapon + 1) % l.weapons.len();
+    p.fire_state.reset_burst(0);                        // FUN_0022dc00
+    p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
+    p.switch_sound_in = SWITCH_SOUND_GAP;
+    p.hud_list = HUD_LIST_TIME;
+    if to < 2 && l.switch_clips[to].is_some() {
+        p.switching = Some(Switching { to, time: 0.0, dropped: false, grabbed: false });
+        p.aim_hold = 0.0;
+    } else {
+        // no clip: swap at once
+        p.weapon = to;
+        p.weapon_dirty = true;
+    }
+    true
+}
+
+/// CT_TOGGLE_WEAPON (9) sent to `p` (the command handler 0x122040's case at 0x12258c: out of the
+/// scope, then the slot change FUN_0011e130): a script's code 100 (play_script.rs). The switch
+/// starts as the press starts it (`start_switch`). Whether it started.
+fn toggle_weapon(p: &mut Player) -> bool {
+    let Some(l) = p.loaded.take() else { return false };
+    p.leave_scope();
+    let started = start_switch(p, &l);
+    p.loaded = Some(l);
+    started
+}
+
 fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, transforms: &mut Query<&mut Transform>) {
     p.sim_time += dt;
     if p.next_surface && !game.surfaces.is_empty() {
@@ -5390,27 +5452,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     // ---- weapons: switch and fire ----
     let armed = !l.weapons.is_empty();
-    // (not during a skill's toggle overlay either: one overlay at a time is the demo's choice.
-    // The game queues a toggle overlay only into a free overlay slot, char+0x218 or +0x244,
-    // 0x12253a-0x122587; whether a switch waits for one isn't traced. Nor while the skill's
-    // overlay filter refuses the switch's overlay: Tex's berserk, `skills::overlays_blocked`; nor
-    // while the skill says the character isn't free, FUN_0011e130 asking FUN_00117210: Flint's
-    // targeting on, `skills::lets_act`)
-    if p.switch_pressed && l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
-        && p.skill.toggling.is_none() && !skills::overlays_blocked(p) && skills::lets_act(p) {
-        let to = (p.weapon + 1) % l.weapons.len();
-        p.fire_state.reset_burst(0);                        // FUN_0022dc00
-        p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
-        p.switch_sound_in = SWITCH_SOUND_GAP;
-        p.hud_list = HUD_LIST_TIME;
-        if to < 2 && l.switch_clips[to].is_some() {
-            p.switching = Some(Switching { to, time: 0.0, dropped: false, grabbed: false });
-            p.aim_hold = 0.0;
-        } else {
-            // no clip: swap at once
-            p.weapon = to;
-            p.weapon_dirty = true;
-        }
+    if p.switch_pressed {
+        start_switch(p, l);
     }
     if p.switch_sound_in >= 0.0 {
         p.switch_sound_in -= dt;

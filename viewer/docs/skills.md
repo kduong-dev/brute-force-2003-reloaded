@@ -300,6 +300,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | `bars_scope(u)` | | false | the demo's choice: no scope in Tex's berserk motions |
 | `fired(u, def)` | +0xb0 | nothing (0x2c60c0) | each round the character's gun fires (FUN_0022f640 from the fire loop; `skills::fired`, play.rs `step_player`): Hawk's flash and cost while stealthed |
 | `used_item(u, use_type)` | +0x104 | nothing (0x2c60c0) | an item used, by its IOU_ use type (FUN_00121170; `skills::used_item`: play.rs's throw and set-down, play_pickups.rs's medkit): Hawk's cost while stealthed |
+| `uses_item(use_type)` | +0x1c | true (0x262a80) | whether the character can use an item of that IOU_ use type (the items' "can use" 0x146c70 asks it; `skills::uses_item`, play.rs `item_usable`, play_inventory.rs `use_other`): Brutus's (FUN_0013c160) refuses the OrgSen's IOU_ATTACH_TO_FACE and the Hat's IOU_ATTACH_TO_EQUIP_SLOT, red in his box and "Cannot use" at G (#281, #196 take26) |
 | `visibility(u)` | +0xe4 | 1.0 (0x10e3d0) | how visible the character is (`skills::visibility`): the AI's sight (play_brain.rs `Sensor`) and the crosshair's selection (play_reticle.rs) read it. Hawk's falls as she fades |
 | `noise(u)` | +0xe8 | 1.0 (0x10e3d0) | the factor on its footsteps (`skills::noise`, play.rs `step_player`): Hawk's a quarter stealthed |
 | `holds_fire(u)` | +0x108 | false (0x20e200) | an AI character holds fire (`skills::holds_fire`, play.rs `update_player`: no target for the squad AI or a test map NPC): Hawk while stealthed |

@@ -192,6 +192,10 @@ pub struct WeaponDef {
     pub function_type: i64,
     /// items: group-type (2 IG_GRENADE, 3 IG_EXPLOSIVE; 0 for the enemies' grenades)
     pub group_type: i64,
+    /// items: h_e5f51266, the item's index in its group (the item type's +0x38): with the group
+    /// the key of its stack in an inventory (FUN_00149d30). Frag 0, Gas 1, Sonic 4, Energy 5,
+    /// Light 32; Sentry 1 (h_e5f1f063) or 3 (h_f73de83d), Roller 4 (todo/196 leads §3.2)
+    pub item_index: i64,
     /// items: h_1ee2f4ed, how it's used (see H_USE_TYPE)
     pub use_type: i64,
     /// items: how many fit in the inventory (stack-limit: 10 for the squad's grenades)
@@ -418,6 +422,7 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             decal: bullet.and_then(|b| b.attr(H_BULLET_DECAL)).and_then(|v| v.as_hash()).filter(|&x| x != h("")).unwrap_or(0),
             function_type: find(h("function-type")).and_then(|v| v.ints().first().copied()).unwrap_or(0),
             group_type: find(h("group-type")).and_then(|v| v.ints().first().copied()).unwrap_or(0),
+            item_index: find(0xE5F5_1266).and_then(|v| v.ints().first().copied()).unwrap_or(0),
             use_type: find(H_USE_TYPE).and_then(|v| v.ints().first().copied()).unwrap_or(0),
             stack_limit: find(h("stack-limit")).and_then(|v| v.ints().first().copied()).unwrap_or(0),
             attached_effect: all.iter().find(|e| e.name == H_ATTACHED_EFFECTS)

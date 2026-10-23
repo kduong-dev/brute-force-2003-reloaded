@@ -140,7 +140,8 @@ const SETTLE_TURN: f32 = 12.0;
 /// How long a pickup message shows (s), a pickup's line stays, and an item stays NEW. The line's
 /// is the HUD widget's +0x64, 4.0 (its constructor FUN_000ad690), which each pickup puts back in its
 /// time left (+0x60, FUN_000ad790); take12's DNA line shows 295.4-300.0 s, fading out at its end.
-const MESSAGE_TIME: f32 = 2.0;
+/// (The message's time also play_inventory.rs's "Cannot use".)
+pub const MESSAGE_TIME: f32 = 2.0;
 pub const FEED_TIME: f32 = 4.0;
 const NEW_TIME: f32 = 3.0;
 

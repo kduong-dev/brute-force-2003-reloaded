@@ -4,8 +4,10 @@
 //!  - **Reserve.** The rounds a gun reloads from are the squad's inventory, one count per
 //!    ammo-type, not the gun's: default.xbe's FUN_0022da80 looks the weapon's ammo-type up in the
 //!    holder's inventory (FUN_0014cc30(1, type)). So the Foley and the L-Shot share 11mm Ammo
-//!    (type 1), the MK-ASLT and the Minigun High ROF Ammo (type 2). The counts start at the stack
-//!    limit of the level's ammo item of that type (objecttypes `<inventory>` entries with
+//!    (type 1), the MK-ASLT and the Minigun High ROF Ammo (type 2). The counts start at what the
+//!    squad's placements carry (the store's category-1 stacks, play_inventory.rs: e34's 11mm 40,
+//!    Sonic, Particle and Rail 200), none of any other type; on a map without squad placements at
+//!    the stack limit of the level's ammo item of each type (objecttypes `<inventory>` entries with
 //!    function-type 14 = IFSET_AMMO_BOX, whose h_e5f51266 is the ammo-type; see `stack_limits`).
 //!  - **Automatic reload.** When the fire loop (FUN_0022f2a0)
 //!    finds the clip empty as the cooldown runs out with the trigger held, FUN_002327f0 calls the
@@ -121,41 +123,31 @@ fn stack_limits(game: &Game) -> HashMap<i64, i64> {
     out
 }
 
-/// Fill the reserve once the level's data is in: a full stack of every ammo-type, but for the
-/// ammo the squad's own placements carry where the level starts the squad from them
-/// (play_triggers.rs `SquadSpawn::items`: the copy is the placement, with its inventory), which
-/// counts instead: the tutorial's Tex 500 rounds of type 2 (h_02735ad0), take03's 48 / 500. The
-/// game's other counts are the campaign's (the takes start with full stacks of 11mm, Sonic and
-/// Shotgun, and half of High ROF and Cutter); a full stack is the demo's choice.
+/// Fill the reserve once the level's data is in. Where the level starts the squad from its own
+/// placements (play_triggers.rs `SquadSpawn::items`: the copy is the placement, with its
+/// inventory), the ammo they carry and nothing else: the squad's store at the start
+/// (play_inventory.rs `StartStore`), whose category-1 stacks are the ammo-types: the tutorial's
+/// Tex 500 rounds of type 2 (h_02735ad0), take03's 48 / 500; e34's 11mm 40, Sonic, Particle and
+/// Rail Ammo 200 (xemu's read of the store at a fresh start, todo/196 notes: types 1, 3, 4 and 5,
+/// "others 0"). A type nobody carries has no stack in the game's store, so a gun of that type
+/// picked up reads "6 / 0" (#73's notes: the Therm Sweeper on e34 and e40 until a Rocket Ammo).
+/// On a map without squad placements (the test map's floor, the deathmatch maps, whose sdm
+/// loadout is #144's) a full stack of every ammo-type: the demo's choice.
 ///
-/// The members' counts of a type are added up, then held to the type's stack-limit (#230): in
-/// the game each character has its own inventory, which holds at most a stack of an item (the
-/// item type's stack-limit, its +0x164, read by the inventory parser FUN_001920d0), and a gun
-/// reloads from its holder's (FUN_0022da80). The squad's one reserve stands for the controlled
-/// character's, so it's at most a stack too: m09_a's Brutus 200 + Flint 120 + Tex 160 of Sonic
-/// Ammo (h_ef0c4c1e, ammo-type 3, stack-limit 200) is 200, not 480. (That the pool takes the
-/// stack and not the leader's own count is the demo's: the reserve is shared, the game's aren't.)
-fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>, spawns: Option<Res<super::triggers::SquadSpawns>>) {
+/// The members' counts of a type are pooled as the game pools them (#230, #281): each member's own
+/// store holds at most a stack of an item (FUN_0014bfe0's clamp to the type's stack-limit,
+/// type+0x180), and joining the squad merges it into the squad's one store with the same clamp
+/// (FUN_0005b9a0 -> FUN_0014cb60 -> FUN_0014c060). So m09_a's Brutus 200 + Flint 120 + Tex 160 of
+/// Sonic Ammo (h_ef0c4c1e, ammo-type 3, stack-limit 200) is 200, not 480.
+fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>, store: Res<super::inventory::StartStore>) {
     if reserve.stocked || player.loaded.is_none() {
         return;
     }
     let test = std::env::var("BF_TEST_RESERVE").ok().and_then(|v| v.parse::<i64>().ok());
     let limits = stack_limits(&game.0);
-    reserve.rounds = limits.iter().map(|(&t, &n)| (t, test.unwrap_or(n))).collect();
-    let mut carried: HashMap<i64, i64> = HashMap::new();
-    for &(item, n) in spawns.iter().flat_map(|s| s.0.iter()).flat_map(|s| s.items.iter()) {
-        if let Some(i) = game.0.items.get(&item).filter(|i| i.function == AMMO_ITEM && i.kind > 0) {
-            *carried.entry(i.kind).or_default() += n;
-        }
-    }
-    // (no more than a stack of each, as one character carries: see above)
-    for (t, n) in carried.iter_mut() {
-        if let Some(&limit) = limits.get(t) {
-            *n = (*n).min(limit);
-        }
-    }
+    reserve.rounds = limits.iter().map(|(&t, &n)| (t, test.unwrap_or(if store.placed { 0 } else { n }))).collect();
     if test.is_none() {
-        reserve.rounds.extend(carried);
+        reserve.rounds.extend(store.ammo());
     }
     reserve.stocked = true;
     if std::env::var("BF_AMMO_LOG").is_ok() {

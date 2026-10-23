@@ -147,8 +147,9 @@ pub struct TriggerEvents(pub Vec<ObjectEvent>);
 /// faces (the trigger's -z: `yaw_of`) and the template's inventory: the copy is the placement,
 /// which carries it (the character's property handler 0x112eb0 reads it, FUN_001130e0). Its
 /// `<weapon>`s: the tutorial's Tex two MK-ASLTs (h_0c3db625, 48 a clip: take03's 48 / 500 and its
-/// icon); its `<h_10dd6db2 name count>` items: his 500 rounds of ammo-type 2 (h_02735ad0), the
-/// squad's reserve (play_ammo.rs `stock`), and grenades. A member placed in the world instead
+/// icon); its `<h_10dd6db2 name count>` items, pooled with the other members' into the squad's
+/// store (play_inventory.rs `StartStore`): his 500 rounds of ammo-type 2 (h_02735ad0), the squad's
+/// reserve (play_ammo.rs `stock`), his Frag 3 and Gas 2. A member placed in the world instead
 /// (m09_a's) has its placement for all of these, `trigger` 0.
 #[derive(Clone, Debug)]
 pub struct SquadSpawn {

@@ -1,0 +1,393 @@
+//! The squad's inventory at a level's start (#281): the ammo, grenades, medkits and other items
+//! its members' placements carry, pooled into the squad's one store. Read from default.xbe (each
+//! function is cited where it's used, and has a row in viewer/docs/code-map.md) and checked
+//! against xemu's reads of the store at fresh starts (todo/196-inventory-hud notes, "Starting
+//! inventories"); the audit is todo/inventory-audit/answer.md.
+//!
+//!  - **A member's own inventory.** The character's property handler (0x112eb0, its `inventory`
+//!    case) gives the placement's `<inventory>` to FUN_0014dd50: its two `<weapon>`s into the
+//!    slots (play_triggers.rs `SquadSpawn::dress`), then each `<h_10dd6db2 name count>` through
+//!    FUN_0014ce90, which puts an item of class-type 2 or 3 (every one the squad's placements
+//!    carry) into the character's own store by FUN_0014bfe0: the stack of the type's (category,
+//!    index) (its group-type and h_e5f51266) takes the type if it had none and the count, held to
+//!    the type's stack-limit (type+0x180).
+//!  - **The squad's store.** A member joining the squad (FUN_0005b9a0) is given the squad's store
+//!    by FUN_0014cb60, its own merged into it first (FUN_0014c060: every typed stack's count added
+//!    through FUN_0014bfe0, the same clamp). So there's one store for the squad: every member's
+//!    inventory front points to it (xemu's reads on e34, e40 and the tutorial), and every
+//!    member's item box shows the same counts. A fresh campaign's mode set-up clears the store and
+//!    refills it from the save (FUN_00089ea0), which holds nothing yet; carrying the store from
+//!    zone to zone is #231's.
+//!  - **The demo's pieces of it.** The store is built once a level is loaded (`StartStore`, in
+//!    the store's (category, index) order) and handed out: the ammo (category 1, IG_AMMO) is the
+//!    reserve (play_ammo.rs, by ammo-type: the index); the grenades and explosives (2, 3) are
+//!    `Player::grenades`, by the kit of the same label (play_grenade.rs's kits hold one definition
+//!    per label; the placements carry the Sentry as h_e5f1f063 on m07_a, m14_a and m14_b, as
+//!    h_f73de83d on m14_c and m14_d); the Medkit (5, 0: the 80-point h_192d5337, the black
+//!    button's stack, 0x4a8ce4) is `Player::medkits`; the rest (the OrgSen (6, 0), the Hat (6, 3),
+//!    "Alien Technology Acquired!" (8, 28) on m14_a / m14_b) are `Player::others`, listed in the
+//!    item box as their type's h_1852ab6c says (the OrgSen and the Hat yes, "Alien Technology"
+//!    no). Those move with control as the rest of the inventory does (play.rs `squad_control`).
+//!  - **Where no placement starts the squad** (the test map's floor, the deathmatch maps) the
+//!    demo keeps its own stock: the test map a full stack of every grenade type, the deathmatch
+//!    maps START_GRENADES Frags (their sdm types' loadout is #144's), and the reserve full stacks
+//!    of every ammo-type (play_ammo.rs).
+//!  - **What the items do.** The grenades and the medkit as before (play_grenade.rs,
+//!    play_pickups.rs). The OrgSen's and the Hat's uses are #21's: G with one selected does
+//!    nothing yet, but for a character whose skill refuses its use type (Brutus: the OrgSen's
+//!    IOU_ATTACH_TO_FACE, the Hat's IOU_ATTACH_TO_EQUIP_SLOT, his skill's +0x1c 0x13c160), who is
+//!    told "Cannot use" (h_e784869e; #196 take26) and whose box shows it red.
+//!  - **The first item shown**: the first grenade kit carried, as before (e34's Energy, where the
+//!    game's first stack in (category, index) order is the Sonic): the game's order is #196's.
+//!
+//! Test hooks: BF_INVENTORY_LOG=1 prints the store at the start (each member's items, the pooled
+//! stacks and where each goes) and each use of an item that isn't a grenade or the medkit;
+//! BF_TEST_ITEM=<label> selects the carried item of that name (a grenade type, Medkit, OrgSen...)
+//! at the start; BF_TEST_ITEM_USE=<s>[,<s>...] presses the use key (G) once at each time for an
+//! item that isn't a grenade (it owns the key's use for the run).
+
+use super::grenade::GrenadeKits;
+use super::*;
+
+/// IG_AMMO (the IG_ name table 0x3be590): the ammo's category, never listed in the item box
+/// (FUN_0014d680); its stacks are the reserve (play_ammo.rs), the index the ammo-type.
+pub const IG_AMMO: i64 = 1;
+/// IG_GRENADE and IG_EXPLOSIVE: the thrown grenades (Frag, Gas, Sonic, Energy, Light) and the
+/// placed ones (Sentry, Roller), the demo's grenade kits (play_grenade.rs).
+const IG_GRENADE: i64 = 2;
+const IG_EXPLOSIVE: i64 = 3;
+/// IG_HEAL and the index of the Medkit (80) in it: the stack the black button uses ({5, 0} at
+/// 0x4a8ce4, todo/196 leads §2.3), `Player::medkits`.
+const IG_HEAL: i64 = 5;
+const MEDKIT_INDEX: i64 = 0;
+/// The Frag (h_060f95f7): the deathmatch maps' start stock (START_GRENADES of them).
+const FRAG: u32 = 0x060F_95F7;
+/// Grenades carried at the start of a map whose squad no placement starts (the deathmatch maps:
+/// the sdm types' loadout carries none, #144): the demo's 3 Frags, as the tutorial's capture showed
+/// before #281 (its placement's own Frag 3).
+const START_GRENADES: i64 = 3;
+/// "Cannot use" (h_e784869e in the string table): what Brutus's skill (+0x1c, 0x13c160) posts
+/// for an item whose use type it refuses (#196 take26: Brutus with the OrgSen, LT pressed).
+const S_CANNOT_USE: u32 = 0xE784_869E;
+
+/// The store built as a map starts (`start`); the use of an item that isn't a grenade or the
+/// medkit after the frame's step, its test hook before it. (`stock` runs with the grenades'
+/// systems, play_grenade.rs, once their kits are loaded.)
+pub fn plugin(app: &mut App) {
+    app.init_resource::<StartStore>()
+        .add_systems(OnEnter(AppState::Playing), start.after(setup))
+        .add_systems(Update, (
+            // (BF_TEST_ITEM_USE presses G as the keyboard would: after the input and its gate,
+            // before the frame's step)
+            test_item_use.after(read_input).after(super::testtools::gate_input).before(update_player),
+            use_other.after(update_player).before(play_sounds),
+        ).run_if(in_state(AppState::Playing)));
+}
+
+/// An item type as the store sees it: its stack's key (category = group-type, index =
+/// h_e5f51266: the type's +0x34 / +0x38, FUN_00149d30 maps a type to them), its stack-limit
+/// (+0x180, FUN_0014bfe0's clamp), whether the item box lists it (h_1852ab6c, +0x71: FUN_0014d680)
+/// and its use type (h_1ee2f4ed, the IOU_ enum, +0x174), and its name (stringtable-name).
+#[derive(Clone, Debug, Default)]
+pub struct ItemInfo {
+    pub group: i64,
+    pub index: i64,
+    pub limit: i64,
+    pub listed: bool,
+    pub use_type: i64,
+    pub label: String,
+}
+
+/// Item type `kind` (FUN_00160da0 finds a type by name): an `<inventory>` entry (`Game::items`:
+/// the ammo, the medkits, the OrgSen, the Hat ...) or an `<inventory-grenade>` one (read with the
+/// weapons, `Game::weapons`, group-type 2 or 3: every grenade's h_1852ab6c is true in the data).
+/// None for a name no loaded objecttypes defines (FUN_0014dd50 skips it).
+pub fn item_info(game: &Game, kind: u32) -> Option<ItemInfo> {
+    if let Some(i) = game.items.get(&kind) {
+        return Some(ItemInfo { group: i.group, index: i.kind, limit: i.stack_limit, listed: i.selectable, use_type: i.use_type, label: i.label.clone() });
+    }
+    game.weapons.get(&kind).filter(|d| matches!(d.group_type, IG_GRENADE | IG_EXPLOSIVE)).map(|d| ItemInfo {
+        group: d.group_type, index: d.item_index, limit: d.stack_limit, listed: true, use_type: d.use_type, label: d.label.clone(),
+    })
+}
+
+/// One stack of a store: its key (category, index), the item type it holds (the first one added
+/// to it, FUN_0014bfe0) and how many.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stack {
+    pub group: i64,
+    pub index: i64,
+    pub kind: u32,
+    pub count: i64,
+}
+
+/// FUN_0014bfe0: `n` of item type `kind` added to `store`: the stack of its (category, index)
+/// (FUN_0014bee0 finds it; a new one here, kept in the store's order) takes the type if it had
+/// none, and the count goes up by n, held to the type's stack-limit (`n = limit - count` where
+/// `count + n` would pass it). Returns what was added.
+fn add(store: &mut Vec<Stack>, info: &ItemInfo, kind: u32, n: i64) -> i64 {
+    let at = match store.iter().position(|s| (s.group, s.index) == (info.group, info.index)) {
+        Some(at) => at,
+        None => {
+            let at = store.iter().position(|s| (s.group, s.index) > (info.group, info.index)).unwrap_or(store.len());
+            store.insert(at, Stack { group: info.group, index: info.index, kind, count: 0 });
+            at
+        }
+    };
+    let s = &mut store[at];
+    let n = if info.limit > 0 { n.min(info.limit - s.count) } else { n }.max(0);
+    s.count += n;
+    n
+}
+
+/// The squad's store from its members' inventories (each a placement's `<h_10dd6db2 name
+/// count>` list): each member's own store first (FUN_0014dd50 -> FUN_0014ce90 -> FUN_0014bfe0, the
+/// clamp per stack), merged into the squad's as it joins (FUN_0014c060: each typed stack through
+/// FUN_0014bfe0 again), in the store's (category, index) order. `info` finds a type
+/// (`item_info`); a name it doesn't know is skipped, and so is a count under 1 (a stack whose
+/// count goes to 0 loses its type, FUN_0014aae0).
+pub fn pool<'a>(members: impl IntoIterator<Item = &'a [(u32, i64)]>, info: impl Fn(u32) -> Option<ItemInfo>) -> Vec<Stack> {
+    let mut squad: Vec<Stack> = vec![];
+    for items in members {
+        let mut own: Vec<Stack> = vec![];
+        for &(kind, n) in items {
+            if let (Some(i), true) = (info(kind), n > 0) {
+                add(&mut own, &i, kind, n);
+            }
+        }
+        for s in own.iter().filter(|s| s.count > 0) {
+            if let Some(i) = info(s.kind) {
+                add(&mut squad, &i, s.kind, s.count);
+            }
+        }
+    }
+    squad.retain(|s| s.count > 0);
+    squad
+}
+
+/// The squad's store at the level's start (`pool` over the level's squad spawns, play_triggers.rs
+/// `SquadSpawns`: each spawn-trigger's template, and each member placed in the world), built as the
+/// map starts; `stock` and play_ammo.rs hand it out.
+#[derive(Resource, Default)]
+pub struct StartStore {
+    /// its stacks, in the store's (category, index) order
+    pub stacks: Vec<Stack>,
+    /// the level starts its squad from placements, whose inventories are the start (every
+    /// campaign zone); false on a map without (the test map's floor, the deathmatch maps), where
+    /// the demo stocks its own
+    pub placed: bool,
+}
+
+impl StartStore {
+    /// The rounds of each ammo-type the squad starts with: the IG_AMMO stacks, by index.
+    pub fn ammo(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
+        self.stacks.iter().filter(|s| s.group == IG_AMMO).map(|s| (s.index, s.count))
+    }
+
+    /// How many of grenade kit `kit` the squad starts with: its stacks' (category 2 or 3) whose
+    /// type has the kit's label (one in the data per zone), held to the kit's stack-limit.
+    fn grenades(&self, game: &Game, kit: &WeaponDef) -> i64 {
+        let n: i64 = self.stacks.iter().filter(|s| matches!(s.group, IG_GRENADE | IG_EXPLOSIVE))
+            .filter(|s| item_info(game, s.kind).is_some_and(|i| i.label.eq_ignore_ascii_case(&kit.label))).map(|s| s.count).sum();
+        if kit.stack_limit > 0 { n.min(kit.stack_limit) } else { n }
+    }
+}
+
+/// An item of the squad's store that isn't ammo, a grenade or the Medkit (`Player::others`): the
+/// OrgSen, the Hat, "Alien Technology Acquired!". What it does is its own ticket's (#21 the
+/// OrgSen's).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Carried {
+    /// its item type (a `Game::items` key)
+    pub kind: u32,
+    pub count: i64,
+    /// the item box lists it: its type's h_1852ab6c (FUN_0014d680)
+    pub listed: bool,
+    /// its type's use type (h_1ee2f4ed): whose skill takes it (play_skills.rs `uses_item`)
+    pub use_type: i64,
+}
+
+/// The map starts: the squad's store from its placements (`StartStore`), logged with
+/// BF_INVENTORY_LOG.
+fn start(mut commands: Commands, game: Res<GameData>, spawns: Option<Res<super::triggers::SquadSpawns>>) {
+    let none = super::triggers::SquadSpawns::default();
+    let spawns = spawns.as_deref().unwrap_or(&none);
+    let stacks = pool(spawns.0.iter().map(|s| &s.items[..]), |k| item_info(&game.0, k));
+    if std::env::var("BF_INVENTORY_LOG").is_ok() {
+        let name = |k: u32| item_info(&game.0, k).map_or(format!("h_{k:08x}"), |i| i.label);
+        for s in &spawns.0 {
+            println!("inventory: {}'s placement carries {}", CHARACTERS[s.slot],
+                     s.items.iter().map(|&(k, n)| format!("{} {n}", name(k))).collect::<Vec<_>>().join(", "));
+        }
+        println!("inventory: the squad's store at the start ({} stacks{}): {}", stacks.len(),
+                 if spawns.0.is_empty() { "; no squad placement: the demo's own stock" } else { "" },
+                 stacks.iter().map(|s| format!("({}, {}) {} {}", s.group, s.index, name(s.kind), s.count)).collect::<Vec<_>>().join(", "));
+    }
+    commands.insert_resource(StartStore { stacks, placed: !spawns.0.is_empty() });
+}
+
+/// The squad's items, once the controlled character is loaded: its grenades (again after a
+/// respawn, play.rs `spawn_unit`, which empties them: a respawn starts with the start's), and once
+/// per squad its Medkits and other items (`Player::stocked`: a respawn on the test map's rack keeps
+/// the Medkits taken). From the store where placements start the squad (`StartStore`); on the test
+/// map a full stack (stack-limit) of every grenade type; on a map without placements
+/// START_GRENADES Frags (or of its first type without the Frag). The item box shows the first
+/// grenade type carried (else the next item carried: play_pickups.rs `take_pickups`).
+/// Test hooks: BF_TEST_GRENADE_TYPE=<label> (e.g. Sonic) selects that type, giving a stack of it if
+/// none is carried; BF_TEST_ITEM=<label> selects the carried item of that name.
+pub fn stock(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, test: Option<Res<super::testmap::TestMap>>, store: Res<StartStore>,
+             game: Res<GameData>) {
+    let Some(kits) = kits else { return };
+    if player.loaded.is_none() || (player.stocked && player.grenades.len() == kits.0.len()) {
+        return;
+    }
+    let p = &mut *player;
+    p.grenades = kits.0.iter().map(|k| match (test.is_some(), store.placed) {
+        (true, _) => k.def.stack_limit.max(1),
+        (false, true) => store.grenades(&game.0, &k.def),
+        (false, false) => if k.def.name == FRAG { START_GRENADES } else { 0 },
+    }).collect();
+    // (a deathmatch map without the Frag: its first type)
+    if test.is_none() && !store.placed && !p.grenades.iter().any(|&n| n > 0) {
+        if let Some(n) = p.grenades.first_mut() {
+            *n = START_GRENADES;
+        }
+    }
+    let log = std::env::var("BF_INVENTORY_LOG").is_ok();
+    if !p.stocked {
+        p.stocked = true;
+        p.medkits = 0;
+        p.others.clear();
+        for s in &store.stacks {
+            let Some(i) = item_info(&game.0, s.kind) else { continue };
+            match (s.group, s.index) {
+                (IG_AMMO, _) => {}
+                (IG_GRENADE | IG_EXPLOSIVE, _) => {
+                    if log && !kits.0.iter().any(|k| k.def.label.eq_ignore_ascii_case(&i.label)) {
+                        println!("inventory: {} {}: no grenade type of that name loaded: not carried", i.label, s.count);
+                    }
+                }
+                (IG_HEAL, MEDKIT_INDEX) => {
+                    p.medkits = s.count;
+                    p.medkit_kind = s.kind;
+                }
+                _ => p.others.push(Carried { kind: s.kind, count: s.count, listed: i.listed, use_type: i.use_type }),
+            }
+        }
+    }
+    let first = p.grenades.iter().position(|&n| n > 0).unwrap_or(0);
+    if let Some(k) = std::env::var("BF_TEST_GRENADE_TYPE").ok().and_then(|l| kits.find(&l)) {
+        if p.grenades[k] <= 0 {
+            p.grenades[k] = kits.0[k].def.stack_limit.max(1);
+        }
+        p.item = Item::Grenade(k);
+    } else if matches!(p.item, Item::Grenade(_)) {
+        p.item = Item::Grenade(first);
+    }
+    // BF_TEST_ITEM=<label>: the carried item of that name selected
+    if let Ok(want) = std::env::var("BF_TEST_ITEM") {
+        let found = items(p).into_iter().filter(|&i| item_count(p, i) > 0)
+            .find(|&i| item_label(&game.0, &kits, p, i).eq_ignore_ascii_case(want.trim()));
+        if let Some(i) = found {
+            p.item = i;
+        }
+    }
+    if log {
+        let names: Vec<String> = kits.0.iter().zip(&p.grenades).filter(|(_, &n)| n > 0).map(|(k, n)| format!("{} {n}", k.def.label)).collect();
+        println!("inventory: {}: grenades [{}], medkits {} ({}), others [{}]; the item box shows {}", unit_name(p), names.join(", "), p.medkits,
+                 item_info(&game.0, p.medkit_kind).map_or("-".to_string(), |i| i.label),
+                 p.others.iter().map(|c| format!("{} {}{}", item_info(&game.0, c.kind).map_or(format!("h_{:08x}", c.kind), |i| i.label), c.count,
+                                                 if c.listed { "" } else { " (not listed)" })).collect::<Vec<_>>().join(", "),
+                 item_label(&game.0, &kits, p, p.item));
+    }
+}
+
+/// An item's name in the item box (its type's stringtable-name): a grenade type's label, the
+/// carried Medkit's, another item's.
+pub fn item_label(game: &Game, kits: &GrenadeKits, p: &Player, item: Item) -> String {
+    match item {
+        Item::Grenade(k) => kits.0.get(k).map_or_else(String::new, |g| g.def.label.clone()),
+        Item::Medkit => game.items.get(&p.medkit_kind).map(|t| t.label.clone()).filter(|s| !s.is_empty()).unwrap_or("Medkit".into()),
+        Item::Other(kind) => game.items.get(&kind).map_or_else(|| format!("h_{kind:08x}"), |t| t.label.clone()),
+    }
+}
+
+/// BF_TEST_ITEM_USE=<s>[,<s>...]: the use key (G) pressed once at each time, for an item that
+/// isn't a grenade (`Player::item_use`; the hook owns it for the run, as BF_TEST_SWITCH owns the
+/// switch: under BF_TEST_GOTO the keyboard's isn't read).
+fn test_item_use(mut player: ResMut<Player>, mut last: Local<f32>) {
+    let Ok(v) = std::env::var("BF_TEST_ITEM_USE") else { return };
+    let t = player.sim_time;
+    let due = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).filter(|&s| t >= s && *last < s).fold(None, |a: Option<f32>, s| Some(a.map_or(s, |a| a.max(s))));
+    player.item_use = due.is_some() && !matches!(player.item, Item::Grenade(_));
+    if let Some(s) = due {
+        *last = s;
+    }
+}
+
+/// G (the game's LT, the use) with an item selected that isn't a grenade or the Medkit (the
+/// OrgSen, the Hat). A character whose skill refuses its use type (the skill's +0x1c: Brutus's
+/// 0x13c160, IOU_ATTACH_TO_FACE and IOU_ATTACH_TO_EQUIP_SLOT) is told "Cannot use" (h_e784869e,
+/// which his skill writes into the HUD entry's message, +0xe4: #196 take26, re-shown at each
+/// press); for anyone else the use is the item's own ticket (#21: the OrgSen) and nothing happens
+/// yet. The message shows as the demo's others do ("No need to heal": play_pickups.rs).
+fn use_other(player: Res<Player>, mut status: ResMut<UsePanel>, game: Res<GameData>) {
+    let Item::Other(kind) = player.item else { return };
+    if !player.item_use || player.dead {
+        return;
+    }
+    let Some(c) = player.others.iter().find(|c| c.kind == kind && c.count > 0).copied() else { return };
+    let log = std::env::var("BF_INVENTORY_LOG").is_ok();
+    let label = game.0.items.get(&kind).map_or_else(|| format!("h_{kind:08x}"), |t| t.label.clone());
+    if !super::skills::uses_item(&player, c.use_type) {
+        let text = game.0.strings.get(&S_CANNOT_USE).cloned().unwrap_or("Cannot use".into());
+        if log {
+            println!("t={:.2} {}: {label} (use type {}): \"{text}\" (the skill's +0x1c)", player.sim_time, unit_name(&player), c.use_type);
+        }
+        status.message = Some((text, super::pickups::MESSAGE_TIME));
+    } else if log {
+        println!("t={:.2} {}: {label} (use type {}): its use isn't in yet (#21)", player.sim_time, unit_name(&player), c.use_type);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The game's records of the types used below (e34's objecttypes): (kind, group, index, limit).
+    fn info(kind: u32) -> Option<ItemInfo> {
+        let (group, index, limit) = match kind {
+            0xEF0C_4C1E => (1, 3, 200),   // Sonic Ammo
+            0x1230_2D03 => (1, 1, 50),    // 11mm Ammo
+            0xEC0B_F28F => (2, 4, 10),    // Sonic
+            0x060F_95F7 => (2, 0, 10),    // Frag
+            0x192D_5337 => (5, 0, 25),    // Medkit
+            0x1143_3446 => (6, 0, 1),     // OrgSen
+            _ => return None,
+        };
+        Some(ItemInfo { group, index, limit, listed: true, use_type: 0, label: String::new() })
+    }
+
+    /// m09_a's Sonic Ammo: Brutus 200 + Flint 120 + Tex 160, one stack held to its 200; e34's
+    /// Medkit 6 and OrgSen 1 kept; m05_a's Frags past their 10 held; the store in (category,
+    /// index) order; an unknown name and a count of 0 left out.
+    #[test]
+    fn pools_and_clamps() {
+        let brutus = [(0xEF0C_4C1E, 200), (0x060F_95F7, 8)];
+        let flint = [(0xEF0C_4C1E, 120), (0x1230_2D03, 40), (0x1234_5678, 3)];
+        let tex = [(0xEF0C_4C1E, 160), (0x060F_95F7, 7), (0x192D_5337, 6), (0x1143_3446, 1), (0xEC0B_F28F, 0)];
+        let store = pool([&brutus[..], &flint[..], &tex[..]], info);
+        let got: Vec<(i64, i64, i64)> = store.iter().map(|s| (s.group, s.index, s.count)).collect();
+        assert_eq!(got, vec![(1, 1, 40), (1, 3, 200), (2, 0, 10), (5, 0, 6), (6, 0, 1)]);
+    }
+
+    /// A member's own store clamps first (FUN_0014dd50's adds): two entries of one type on one
+    /// placement held to the limit before the merge.
+    #[test]
+    fn clamps_each_member_first() {
+        let one = [(0x1143_3446, 1), (0x1143_3446, 1)];
+        let two = [(0x1143_3446, 1)];
+        let store = pool([&one[..], &two[..]], info);
+        assert_eq!(store, vec![Stack { group: 6, index: 0, kind: 0x1143_3446, count: 1 }]);
+    }
+}

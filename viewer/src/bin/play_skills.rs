@@ -150,6 +150,11 @@ pub const IOU_USE_IN_HAND: i64 = 0;
 const IOU_PLACE_ON_GROUND: i64 = 2;
 const IOU_THROW_TO_USE: i64 = 3;
 const IOU_SKILL_MELEE_ATTACK: i64 = 8;
+/// The use types Brutus's skill refuses (+0x1c, 0x13c160: `cmp eax, 1` / `cmp eax, 7` on the
+/// stack's use type for him, FUN_001463c0): IOU_ATTACH_TO_FACE (the OrgSen's h_1ee2f4ed) and
+/// IOU_ATTACH_TO_EQUIP_SLOT (the Hat's).
+const IOU_ATTACH_TO_FACE: i64 = 1;
+const IOU_ATTACH_TO_EQUIP_SLOT: i64 = 7;
 /// What Hawk's +0x104 (0x13d340) takes from her stamina for an item used while stealthed: 5.0
 /// (0x3a4fd4) for any, and 10.0 (0x3a4fdc) more for one placed or thrown (#35 take13: a Sonic
 /// thrown, 15.1 in one step); nothing for IOU_SKILL_MELEE_ATTACK.
@@ -345,6 +350,15 @@ pub trait SkillKind: Send + Sync {
     /// once the use starts: a throw, a placement, a medkit). The base does nothing (0x2c60c0);
     /// Hawk's (0x13d340) takes stamina while she's stealthed.
     fn used_item(&mut self, _u: &mut Player, _use_type: i64) {}
+    /// Whether the character can use an item of use type `use_type` (IOU_*; vtable +0x1c, which
+    /// the item function objects' "can use" 0x146c70 asks for the stack's type through its user's
+    /// skill: no, and the item box shows it red and the use is refused). The base says yes
+    /// (0x262a80: Tex's, Hawk's, Flint's); Brutus's (0x13c160) says no to IOU_ATTACH_TO_FACE and
+    /// IOU_ATTACH_TO_EQUIP_SLOT (the OrgSen, the Hat), posting "Cannot use" (play_inventory.rs
+    /// `use_other`; #196 take26).
+    fn uses_item(&self, _use_type: i64) -> bool {
+        true
+    }
     /// How visible the character is, 0 to 1 (vtable +0xe4): the stamina update pushes it into its
     /// combat target every frame (0x11a934-0x11a94a), where the target selection
     /// (FUN_000bf6d0) and the AI's sight (FUN_0004d140) read it. The base's 1.0 (0x10e3d0);
@@ -753,6 +767,12 @@ pub fn fired(u: &mut Player, def: &WeaponDef) {
     u.skill.kind = Some(k);
 }
 
+/// Whether `u` can use an item of use type `use_type` (IOU_*; `SkillKind::uses_item`, the skill's
+/// +0x1c): not Brutus the OrgSen or the Hat. Yes without a skill.
+pub fn uses_item(u: &Player, use_type: i64) -> bool {
+    u.skill.kind.as_ref().is_none_or(|k| k.uses_item(use_type))
+}
+
 /// An item of use type `use_type` (IOU_*) used by `u` (FUN_00121170 -> the skill's +0x104, as
 /// the use starts: play.rs's throw and placement, play_pickups.rs's medkit): Hawk's cost while
 /// she's stealthed.
@@ -1123,6 +1143,11 @@ impl SkillKind for Vengar {
 
     fn damage_factor(&self, u: &Player) -> f32 {
         if u.skill.on { self.s.damage_taken } else { 1.0 }
+    }
+
+    /// (+0x1c, 0x13c160: no to IOU_ATTACH_TO_FACE and IOU_ATTACH_TO_EQUIP_SLOT, on or off)
+    fn uses_item(&self, use_type: i64) -> bool {
+        !matches!(use_type, IOU_ATTACH_TO_FACE | IOU_ATTACH_TO_EQUIP_SLOT)
     }
 }
 

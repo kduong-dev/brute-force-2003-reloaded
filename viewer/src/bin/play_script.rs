@@ -31,11 +31,14 @@
 //!    released when the script stops. The tutorial's 119s all hold;
 //!  * 105 on a character: it walks to the listed world points, held (0x171f7a; a straight walk
 //!    here, the ticket's stub);
+//!  * 100 on a character: a command to its command handler (0x1722cc: vtable +0x15c), the weapon
+//!    switch or the reload (#281: the openings' guns in hand, `command_100`; the crouch's toggle
+//!    is logged);
 //!  * 122 / 123 on the script: the world's cutscene bit on / off (0x176227 / 0x176258: world+0xc50
 //!    bit 4): while it's on no input reaches the game (no menu opens, FUN_0008c8c0; the player's
 //!    character doesn't move), nobody takes damage (the damage handler 0x125600) and the squad's
 //!    chatter is quiet (FUN_00140a60, not done here);
-//!  * every other code (100, 104, 110, 111, 113-115, 120: #232) is logged, not run.
+//!  * every other code (104, 110, 111, 113-115, 120: #232) is logged, not run.
 //! START_PATH_ANIMATION moves its first entity (a camera here) along its second (a path) over its
 //! `duration` (the event class at 0x392520: 0x275290 each frame): see `PathCurve`.
 //!
@@ -711,6 +714,7 @@ fn event(cs: &mut Cutscenes, k: usize, s: &Script, ev: &gscr::Event, tr: &mut Tr
                 }
                 119 if kind == EntityKind::Compound => flags_119(cs, k, name, u, player, squad, &say),
                 105 if kind == EntityKind::Compound => walk_105(cs, k, name, u, player, squad, &say),
+                100 if kind == EntityKind::Compound => command_100(cs, name, u, player, squad, &say),
                 c => say(cs, format!("{c} ({}): not run (#232)", u.raw)),
             }
         }
@@ -751,6 +755,53 @@ fn flags_119(cs: &mut Cutscenes, k: usize, name: u32, u: &UserEvent, player: &mu
             say(cs, format!("119: {what}{rest}"));
         }
         None => say(cs, "119: not in the world (its entity isn't bound): nothing".into()),
+    }
+}
+
+/// CT_TOGGLE_WEAPON and CT_RELOAD_WEAPON (the CT_ name table 0x3c0360: the command handler
+/// 0x122040's jump table 0x12276c, cases 9 and 17): two of the three commands the scripts' 100s
+/// send (twenty uses: e34_startup, e40_start, E01_Startup, e05_start, e13_intro, e16_startup,
+/// m09_c_intro). The third, CT_TOGGLE_CROUCH (15, 0x12247b: e34's Hawk at 16.39 and 20.69 s,
+/// e13's), isn't run: the demo's squad AI sets the crouch every frame for a member the script
+/// doesn't hold (e34's Hawk isn't held at 16.39 s: her copy comes after the script's start), so
+/// the first toggle was lost and the second crouched her for the opening's last seconds.
+const CT_TOGGLE_WEAPON: i64 = 9;
+const CT_RELOAD_WEAPON: i64 = 17;
+
+/// 100 on a character (0x1722cc): its first value is a command for the character's command
+/// handler (vtable +0x15c, 0x122040, with 0), as its player or its brain would send it:
+///  * CT_TOGGLE_WEAPON (9; 0x12258c): the switch to its other weapon (play.rs `toggle_weapon`).
+///    The openings switch guns this way: e34's Flint (13.06 s) and Tex (17.98 s), e40's Hawk,
+///    Tex and Brutus (7.2-8.0 s), so a fresh start has Tex's LZR-50 / Jax-iC in hand (xemu's
+///    reads at the first controllable frame, todo/196 notes, and take27 / take30's HUD);
+///  * CT_RELOAD_WEAPON (17; 0x122069): with a gun in hand and none in the second, the clip down a
+///    round when it isn't empty (0x12209a-0x1220c1), then the reload (FUN_00120d40, play_ammo.rs):
+///    a full clip takes one round from the reserve, e40's Flint (11mm 40 -> 39) and Tex (Sonic
+///    200 -> 199: take30's "36 / 199"; xemu's read: types 1 and 3 at 39 and 199).
+///
+/// Any other command is logged (#232). One not in the world gets nothing (`unit`).
+fn command_100(cs: &Cutscenes, name: u32, u: &UserEvent, player: &mut Player, squad: &mut Squad, say: &dyn Fn(&Cutscenes, String)) {
+    let command = u.int(0);
+    let Some((c, _)) = unit(player, squad, name) else {
+        say(cs, format!("100 ({command}): not in the world (its entity isn't bound): nothing"));
+        return;
+    };
+    match command {
+        CT_TOGGLE_WEAPON => {
+            let started = super::toggle_weapon(c);
+            say(cs, format!("100: CT_TOGGLE_WEAPON: {}", if started { "the switch to its other weapon" } else { "busy, or one weapon: no switch" }));
+        }
+        CT_RELOAD_WEAPON => {
+            let w = c.weapon;
+            if c.second.is_none() {
+                if let Some(a) = c.ammo.get_mut(w).filter(|a| a[0] > 0) {
+                    a[0] -= 1;
+                }
+                c.reload_wanted = true;
+            }
+            say(cs, format!("100: CT_RELOAD_WEAPON: {}", if c.second.is_none() { "a round out of the clip, then the reload" } else { "a gun in the second hand: nothing" }));
+        }
+        n => say(cs, format!("100 ({n}): not run (#232)")),
     }
 }
 

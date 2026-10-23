@@ -13,13 +13,20 @@
     first squad member on it.
   * A placed one taken sends PICKUP_OBJECT (15) to the level's triggers that listen to it
     ([triggers.md](triggers.md), #220; none listens to a medkit in the levels played so far).
-  * The item box (capture todo/medkits.mp4) shows one item at a time, a grenade type or the
-    Medkit: its name at the bottom and the count top right, over its HUD icon (the grenade
-    type's or Medkit's own h_e5ec3f1f: Frag fe20b919, Medkit f647bbef). A grenade's count sits
-    at the right middle and is hidden while only one is carried (see **Grenades**). Both are pale
-    blue while the item can be used and red while it can't (a medkit at full health; later an
-    item the character can't use, such as Brutus and OrgSen). A
-    newly taken kind is selected and marked NEW (orange) for 3 s. Tab steps to the next item
+  * A zone starts with the Medkits its squad's placements carry, pooled with the rest of the
+    squad's items (play_inventory.rs, #281; play.md "Items: the squad's starting inventory"): e34
+    6, e40 20, m01_a 3, m09_a 10, the tutorial none. They're the inventory Medkit h_192d5337 (80),
+    the one a placed Medkit gives, so a pickup adds to the same count.
+  * The item box (capture todo/medkits.mp4) shows one item at a time, a grenade type, the
+    Medkit, or another item of the squad's (the OrgSen, the Hat: #281): its name at the bottom
+    and the count top right, over its HUD icon (the grenade type's or the item's own
+    h_e5ec3f1f: Frag fe20b919, Medkit f647bbef, OrgSen 1b73c691). A grenade's count sits at the
+    right middle and is hidden while only one is carried (see **Grenades**); the OrgSen and the
+    Hat sit as a grenade's do (#196 take26), their count hidden at 1. They're pale blue while the
+    item can be used and red while it can't, with the icon grey: a medkit at full health; the
+    OrgSen or the Hat for Brutus, whose skill refuses their use types (its +0x1c, FUN_0013c160),
+    where G says "Cannot use" (take26). A medkit taken while none is carried is selected and
+    marked NEW (orange) for 3 s (the game's NEW and selection are #196's). Tab steps to the next item
     carried; held, the item list opens around the box (todo/medic + intenvory use case.mp4):
     the other items leftward along the bottom (two), the other grenade types carried up the
     right edge (five), as the Frag and Sentry recordings' inventory overview stacks them,
@@ -101,6 +108,10 @@
     player picks up.
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
     `BF_TEST_HEALTH=<hp>` starts hurt. `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds the item list open.
+    `BF_TEST_ITEM=<label>` selects a carried item at the start and `BF_TEST_ITEM_USE=<s>` presses
+    G then (play.md "Items: the squad's starting inventory"). Verified (#281): e34's range spot
+    with `BF_TEST_HEALTH=50 BF_TEST_ITEM=Medkit BF_TEST_MEDKIT=1.5`: "Medkit 6" blue, used,
+    "Medkit 5" red at 115/115.
     `BF_TEST_CHIP=<x>,<z>[,<s>]` drops a memory chip there (see "Memory chip" in squad.md).
 
 ## DNA canisters (#228)
