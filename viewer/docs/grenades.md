@@ -401,7 +401,9 @@ BF_TEST_STRAFE=0,-1 BF_TEST_THROW=1.05,0.1` unless said):
     one place crouched isn't recorded.
 * Shot (`BF_TEST_SHOOT_MINE=0.7`): struck 2.3 m out, goes off the same frame; Tex 3.1 m from it
   takes 15.7 HP. From 10 m (`BF_TEST_SHOOT_MINE=2.2`, a laser bolt): goes off 0.07 s after the
-  shot; Tex takes nothing (outside the radius, where the recording's Tex took ~15, above).
+  shot; Tex takes nothing (outside the radius, where the recording's Tex took ~15, above). Since
+  #136 the bolt strikes it on its first sweep that meets it (play_bolts.rs): the LZR-23's from
+  9.6 m, 0.1 s after the shot.
 * The level's mines (#228, `BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_SENTRY_LOG=1
   "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`): the three armed at the start, team 1. Tex walked up to the
   first (`BF_TEST_GOTO=92.6,-62,92.6,-71.0`, after the mine lesson's cutscene) stops 1.08 m

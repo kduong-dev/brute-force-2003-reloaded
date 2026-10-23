@@ -663,7 +663,7 @@ fn lying_parts(u: &Player, at: Vec3) -> Vec<(f32, Vec3)> {
 /// Where along a ray (within `max`) it meets a body lying knocked down: its ragdoll's bones,
 /// each taken as a ball of LYING_RADIUS (the game's missile strikes the ragdoll's own bodies,
 /// FUN_002278e0; the shape is the demo's).
-fn ray_lying(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
+pub(super) fn ray_lying(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
     let r = &u.knock.as_ref()?.ragdoll;
     let turn = Quat::from_rotation_y(r.yaw);
     r.pos.iter().filter_map(|&p| {
