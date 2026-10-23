@@ -1566,7 +1566,7 @@ pub fn plugin(app: &mut App) {
 /// with no reload possible the reload key does nothing. R does it on the press, where the game's
 /// X does it on the release (take26: off about 0.6 s after X came up): the demo's choice, as its
 /// R reloads on the press. The black button (VB 63, 0x134367, the medkit shortcut) ends it the
-/// same way in the game; the demo has no key for it.
+/// same way: play_itembox.rs's B key (#196).
 fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut hooks: ResMut<SkillHooks>,
                reserve: Res<ammo::Reserve>) {
     if player.loaded.is_none() {
@@ -1642,8 +1642,9 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
     // not while the player's controls don't reach the character (#256): the toggle is the player
     // controller's command (0x134cff), and a script's hold switches that controller off
     // (FUN_00129530), as a cutscene does for every control (`read_input`, play_script.rs
-    // `blocks_input`); a press then, the key's or BF_TEST_SKILL's, is lost, not kept for later
-    if press && !player.dead && !script::blocks_input(&player) {
+    // `blocks_input`); nor under the item list or a menu (`paused`: the list's input locks,
+    // FUN_000ac080, #196); a press then, the key's or BF_TEST_SKILL's, is lost, not kept for later
+    if press && !player.dead && !script::blocks_input(&player) && !paused() {
         player.skill.request = true;
     }
     if let Ok(v) = std::env::var("BF_TEST_STAMINA") {

@@ -32,21 +32,25 @@
 //!    demo keeps its own stock: the test map a full stack of every grenade type, the deathmatch
 //!    maps START_GRENADES Frags (their sdm types' loadout is #144's), and the reserve full stacks
 //!    of every ammo-type (play_ammo.rs).
-//!  - **What the items do.** The grenades and the medkit as before (play_grenade.rs,
-//!    play_pickups.rs). The OrgSen's and the Hat's uses are #21's: G with one selected does
-//!    nothing yet, but for a character whose skill refuses its use type (Brutus: the OrgSen's
-//!    IOU_ATTACH_TO_FACE, the Hat's IOU_ATTACH_TO_EQUIP_SLOT, his skill's +0x1c 0x13c160), who is
-//!    told "Cannot use" (h_e784869e; #196 take26) and whose box shows it red.
-//!  - **The first item shown**: the first grenade kit carried, the kits being in the store's
-//!    (category, index) order (play_grenade.rs `SQUAD_GRENADES`, `load_kits`), else the next item
-//!    carried: the game's first stack (e34's Sonic, e40's Frag, e16's and e23's Gas). The rest of
-//!    the game's selection (NEW, the list's slots, the selection after a stack runs out) is #196's.
+//!  - **What the items do.** The grenades and the Medkits as before (play_grenade.rs,
+//!    play_pickups.rs: the 60-point (5, 2) one too, an `Other` that heals). The OrgSen's and the
+//!    Hat's uses are #21's: G with one selected does nothing yet, but for a character whose skill
+//!    refuses its use type (Brutus: the OrgSen's IOU_ATTACH_TO_FACE, the Hat's
+//!    IOU_ATTACH_TO_EQUIP_SLOT, his skill's +0x1c 0x13c160), who is told "Cannot use"
+//!    (h_e784869e; #196 take26) and whose box shows it red.
+//!  - **The first item shown** (#196): the first listable stack in the store's (category, index)
+//!    order (the front's selection starts at none and FUN_0014db60 steps it to the first): e34's
+//!    Sonic 4, e40's Frag 5, the tutorial's Frag 3; its NEW flag cleared, every other stack's set
+//!    (play_itembox.rs `ItemBox::start`). The rest of the selection (the B button, the list, NEW,
+//!    a stack running out) is play_itembox.rs's.
 //!
 //! Test hooks: BF_INVENTORY_LOG=1 prints the store at the start (each member's items, the pooled
-//! stacks and where each goes) and each use of an item that isn't a grenade or the medkit;
+//! stacks and where each goes) and each use of an item that isn't a grenade or a Medkit;
 //! BF_TEST_ITEM=<label> selects the carried item of that name (a grenade type, Medkit, OrgSen...)
-//! at the start; BF_TEST_ITEM_USE=<s>[,<s>...] presses the use key (G) once at each time for an
-//! item that isn't a grenade (it owns the key's use for the run).
+//! at the start; BF_TEST_INV=<name>:<n>,... sets the pool's counts at the start (a grenade type's
+//! label, Medkit the (5, 0) stack, Medkit60 the (5, 2) one, another listed item's label: OrgSen,
+//! Hat; 0 empties the stack; the rest keep the store's); BF_TEST_INV_NEW=<name>,... the stacks
+//! still NEW at the start (play_itembox.rs).
 
 use super::grenade::GrenadeKits;
 use super::*;
@@ -71,19 +75,20 @@ const START_GRENADES: i64 = 3;
 /// "Cannot use" (h_e784869e in the string table): what Brutus's skill (+0x1c, 0x13c160) posts
 /// for an item whose use type it refuses (#196 take26: Brutus with the OrgSen, LT pressed).
 const S_CANNOT_USE: u32 = 0xE784_869E;
+/// IFSET_GENERIC_HEALING (the IFSET_ table 0x3be3cc): an item type's function-type that heals as
+/// a Medkit does (both Medkits, h_192d5337 and h_f5123ace; play_pickups.rs's MEDKIT).
+const IFSET_GENERIC_HEALING: i64 = 5;
+/// The 60-point Medkit's stack (h_f5123ace: group-type 5, h_e5f51266 2), BF_TEST_INV's
+/// "Medkit60": the second Medkit of #196 take01's order.
+const MEDKIT60: (i64, i64) = (5, 2);
 
-/// The store built as a map starts (`start`); the use of an item that isn't a grenade or the
-/// medkit after the frame's step, its test hook before it. (`stock` runs with the grenades'
-/// systems, play_grenade.rs, once their kits are loaded.)
+/// The store built as a map starts (`start`); the use of an item that isn't a grenade or a
+/// Medkit after the frame's step. (`stock` runs with the grenades' systems, play_grenade.rs, once
+/// their kits are loaded.)
 pub fn plugin(app: &mut App) {
     app.init_resource::<StartStore>()
         .add_systems(OnEnter(AppState::Playing), start.after(setup))
-        .add_systems(Update, (
-            // (BF_TEST_ITEM_USE presses G as the keyboard would: after the input and its gate,
-            // before the frame's step)
-            test_item_use.after(read_input).after(super::testtools::gate_input).before(update_player),
-            use_other.after(update_player).before(play_sounds),
-        ).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, use_other.after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
 /// An item type as the store sees it, from its item data (the block at type+0x160, which a
@@ -201,9 +206,9 @@ impl StartStore {
     }
 }
 
-/// An item of the squad's store that isn't ammo, a grenade or the Medkit (`Player::others`): the
-/// OrgSen, the Hat, "Alien Technology Acquired!". What it does is its own ticket's (#21 the
-/// OrgSen's).
+/// An item of the squad's store that isn't ammo, a grenade or the Medkit (5, 0) (`Player::others`,
+/// in the store's (category, index) order): the 60-point Medkit (5, 2), the OrgSen, the Hat,
+/// "Alien Technology Acquired!". What the OrgSen and the Hat do is their own tickets' (#21).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Carried {
     /// its item type (a `Game::items` key)
@@ -213,6 +218,18 @@ pub struct Carried {
     pub listed: bool,
     /// its type's use type (h_1ee2f4ed): whose skill takes it (play_skills.rs `uses_item`)
     pub use_type: i64,
+    /// it heals as a Medkit does (its function-type IFSET_GENERIC_HEALING: the 60-point Medkit),
+    /// used as one (play_pickups.rs `use_medkit`) and red at full health
+    pub heals: bool,
+}
+
+impl Carried {
+    /// The item of type `kind` (`count` of it), as the store's item data has it.
+    fn of(game: &Game, kind: u32, count: i64) -> Option<Carried> {
+        let i = item_info(game, kind)?;
+        let heals = game.items.get(&kind).is_some_and(|t| t.function == IFSET_GENERIC_HEALING);
+        Some(Carried { kind, count, listed: i.listed, use_type: i.use_type, heals })
+    }
 }
 
 /// The map starts: the squad's store from its placements (`StartStore`), logged with
@@ -239,17 +256,22 @@ fn start(mut commands: Commands, game: Res<GameData>, spawns: Option<Res<super::
 /// per squad its Medkits and other items (`Player::stocked`: a respawn on the test map's rack keeps
 /// the Medkits taken). From the store where placements start the squad (`StartStore`); on the test
 /// map a full stack (stack-limit) of every grenade type; on a map without placements
-/// START_GRENADES Frags (or of its first type without the Frag). The item box shows the first
-/// grenade type carried (else the next item carried: play_pickups.rs `take_pickups`).
+/// START_GRENADES Frags (or of its first type without the Frag). The first time, the item box's
+/// selection: the first listable stack in the store's order (the front's starts at none and
+/// FUN_0014db60 steps it to the first: #196 AC-04), its NEW flag cleared and every other stack's
+/// set (play_itembox.rs `ItemBox::start`, AC-22).
 /// Test hooks: BF_TEST_GRENADE_TYPE=<label> (e.g. Sonic) selects that type, giving a stack of it if
-/// none is carried; BF_TEST_ITEM=<label> selects the carried item of that name.
+/// none is carried; BF_TEST_ITEM=<label> selects the carried item of that name; BF_TEST_INV and
+/// BF_TEST_INV_NEW set the pool and its NEW flags (the module notes).
+#[allow(clippy::too_many_arguments)]
 pub fn stock(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, test: Option<Res<super::testmap::TestMap>>, store: Res<StartStore>,
-             game: Res<GameData>) {
+             game: Res<GameData>, mut boxed: ResMut<super::itembox::ItemBox>) {
     let Some(kits) = kits else { return };
     if player.loaded.is_none() || (player.stocked && player.grenades.len() == kits.0.len()) {
         return;
     }
     let p = &mut *player;
+    let first_stock = !p.stocked;
     p.grenades = kits.0.iter().map(|k| match (test.is_some(), store.placed) {
         (true, _) => k.def.stack_limit.max(1),
         (false, true) => store.grenades(&game.0, &k.def),
@@ -279,26 +301,38 @@ pub fn stock(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, test: O
                     p.medkits = s.count;
                     p.medkit_kind = s.kind;
                 }
-                _ => p.others.push(Carried { kind: s.kind, count: s.count, listed: i.listed, use_type: i.use_type }),
+                _ => {
+                    if let Some(c) = Carried::of(&game.0, s.kind, s.count) {
+                        p.others.push(c);
+                    }
+                }
             }
         }
+        if let Ok(v) = std::env::var("BF_TEST_INV") {
+            test_inventory(p, &game.0, &kits, &v, log);
+        }
     }
-    let first = p.grenades.iter().position(|&n| n > 0).unwrap_or(0);
+    // the item box's first item (a respawn keeps the selection: play_itembox.rs moves it on if it
+    // ran out)
+    if first_stock {
+        p.item = super::itembox::first(p);
+    }
     if let Some(k) = std::env::var("BF_TEST_GRENADE_TYPE").ok().and_then(|l| kits.find(&l)) {
         if p.grenades[k] <= 0 {
             p.grenades[k] = kits.0[k].def.stack_limit.max(1);
         }
-        p.item = Item::Grenade(k);
-    } else if matches!(p.item, Item::Grenade(_)) {
-        p.item = Item::Grenade(first);
+        p.item = Some(Item::Grenade(k));
     }
     // BF_TEST_ITEM=<label>: the carried item of that name selected
     if let Ok(want) = std::env::var("BF_TEST_ITEM") {
-        let found = items(p).into_iter().filter(|&i| item_count(p, i) > 0)
-            .find(|&i| item_label(&game.0, &kits, p, i).eq_ignore_ascii_case(want.trim()));
-        if let Some(i) = found {
-            p.item = i;
+        if let Some(i) = named(p, &game.0, &kits, want.trim()).filter(|&i| item_count(p, i) > 0) {
+            p.item = Some(i);
         }
+    }
+    if first_stock {
+        let all = items(p);
+        let by_name = |n: &str| named(p, &game.0, &kits, n);
+        boxed.start(&all, p.item, by_name);
     }
     if log {
         let names: Vec<String> = kits.0.iter().zip(&p.grenades).filter(|(_, &n)| n > 0).map(|(k, n)| format!("{} {n}", k.def.label)).collect();
@@ -306,7 +340,67 @@ pub fn stock(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, test: O
                  item_info(&game.0, p.medkit_kind).map_or("-".to_string(), |i| i.label),
                  p.others.iter().map(|c| format!("{} {}{}", item_info(&game.0, c.kind).map_or(format!("h_{:08x}", c.kind), |i| i.label), c.count,
                                                  if c.listed { "" } else { " (not listed)" })).collect::<Vec<_>>().join(", "),
-                 item_label(&game.0, &kits, p, p.item));
+                 p.item.map_or("nothing".to_string(), |i| item_label(&game.0, &kits, p, i)));
+    }
+}
+
+/// The squad's stack a test hook names (BF_TEST_ITEM, BF_TEST_INV_NEW): a grenade type's label,
+/// Medkit (the (5, 0) stack), Medkit60 (the (5, 2) one), another listed item's label (OrgSen,
+/// Hat), any case.
+fn named(p: &Player, game: &Game, kits: &GrenadeKits, name: &str) -> Option<Item> {
+    if let Some(k) = kits.find(name) {
+        return Some(Item::Grenade(k));
+    }
+    if name.eq_ignore_ascii_case("medkit") {
+        return Some(Item::Medkit);
+    }
+    let medkit60 = name.eq_ignore_ascii_case("medkit60");
+    p.others.iter().map(|c| c.kind).find(|&k| item_info(game, k).is_some_and(|i| if medkit60 { (i.group, i.index) == MEDKIT60 } else { i.label.eq_ignore_ascii_case(name) }))
+        .map(Item::Other)
+}
+
+/// The item type of the first (by name) listed type of `game` whose item data `want` takes.
+fn type_where(game: &Game, want: impl Fn(&ItemInfo) -> bool) -> Option<u32> {
+    let mut kinds: Vec<u32> = game.items.keys().copied().filter(|&k| item_info(game, k).is_some_and(|i| i.listed && want(&i))).collect();
+    kinds.sort_unstable();
+    kinds.first().copied()
+}
+
+/// BF_TEST_INV=<name>:<n>,...: the pool's counts at the start (the module notes): a grenade type
+/// by its label, Medkit the (5, 0) stack, Medkit60 the (5, 2) one, another listed item type by its
+/// label; an item not carried yet is added in the store's (category, index) order. #196's
+/// nine-stack snapshot: Frag:5,Gas:5,Sonic:4,Energy:5,Sentry:3,Roller:4,Medkit:2,Medkit60:2,OrgSen:1.
+fn test_inventory(p: &mut Player, game: &Game, kits: &GrenadeKits, spec: &str, log: bool) {
+    for entry in spec.split(',') {
+        let Some((name, n)) = entry.split_once(':') else { continue };
+        let (name, Ok(n)) = (name.trim(), n.trim().parse::<i64>()) else { continue };
+        let n = n.max(0);
+        if let Some(k) = kits.find(name) {
+            p.grenades[k] = n;
+        } else if name.eq_ignore_ascii_case("medkit") {
+            p.medkits = n;
+            if p.medkit_kind == 0 {
+                p.medkit_kind = type_where(game, |i| (i.group, i.index) == (IG_HEAL, MEDKIT_INDEX)).unwrap_or(0);
+            }
+        } else {
+            let medkit60 = name.eq_ignore_ascii_case("medkit60");
+            let Some(kind) = type_where(game, |i| if medkit60 { (i.group, i.index) == MEDKIT60 } else { i.label.eq_ignore_ascii_case(name) }) else {
+                println!("inventory: BF_TEST_INV: no listed item type {name}");
+                continue;
+            };
+            match p.others.iter_mut().find(|c| c.kind == kind) {
+                Some(c) => c.count = n,
+                None => {
+                    let Some(c) = Carried::of(game, kind, n) else { continue };
+                    let key = |k: u32| item_info(game, k).map_or((i64::MAX, 0), |i| (i.group, i.index));
+                    let at = p.others.iter().position(|o| key(o.kind) > key(kind)).unwrap_or(p.others.len());
+                    p.others.insert(at, c);
+                }
+            }
+        }
+        if log {
+            println!("inventory: BF_TEST_INV: {name} {n}");
+        }
     }
 }
 
@@ -320,31 +414,18 @@ pub fn item_label(game: &Game, kits: &GrenadeKits, p: &Player, item: Item) -> St
     }
 }
 
-/// BF_TEST_ITEM_USE=<s>[,<s>...]: the use key (G) pressed once at each time, for an item that
-/// isn't a grenade (`Player::item_use`; the hook owns it for the run, as BF_TEST_SWITCH owns the
-/// switch: under BF_TEST_GOTO the keyboard's isn't read).
-fn test_item_use(mut player: ResMut<Player>, mut last: Local<f32>) {
-    let Ok(v) = std::env::var("BF_TEST_ITEM_USE") else { return };
-    let t = player.sim_time;
-    let due = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).filter(|&s| t >= s && *last < s).fold(None, |a: Option<f32>, s| Some(a.map_or(s, |a| a.max(s))));
-    player.item_use = due.is_some() && !matches!(player.item, Item::Grenade(_));
-    if let Some(s) = due {
-        *last = s;
-    }
-}
-
-/// G (the game's LT, the use) with an item selected that isn't a grenade or the Medkit (the
-/// OrgSen, the Hat). A character whose skill refuses its use type (the skill's +0x1c: Brutus's
-/// 0x13c160, IOU_ATTACH_TO_FACE and IOU_ATTACH_TO_EQUIP_SLOT) is told "Cannot use" (h_e784869e,
-/// which his skill writes into the HUD entry's message, +0xe4: #196 take26, re-shown at each
-/// press); for anyone else the use is the item's own ticket (#21: the OrgSen) and nothing happens
-/// yet. The message shows as the demo's others do ("No need to heal": play_pickups.rs).
-fn use_other(player: Res<Player>, mut status: ResMut<UsePanel>, game: Res<GameData>) {
-    let Item::Other(kind) = player.item else { return };
+/// G (the game's LT, the use) with an item selected that isn't a grenade or a Medkit (the
+/// OrgSen, the Hat; a Medkit is play_pickups.rs's). A character whose skill refuses its use type
+/// (the skill's +0x1c: Brutus's 0x13c160, IOU_ATTACH_TO_FACE and IOU_ATTACH_TO_EQUIP_SLOT) is told
+/// "Cannot use" (h_e784869e, which his skill writes into the HUD entry's message, +0xe4: #196
+/// take26, re-shown at each press) for the item messages' 3 s (play_itembox.rs MESSAGE_TIME); for
+/// anyone else the use is the item's own ticket (#21: the OrgSen) and nothing happens yet.
+pub fn use_other(player: Res<Player>, mut status: ResMut<UsePanel>, game: Res<GameData>) {
+    let Some(Item::Other(kind)) = player.item else { return };
     if !player.item_use || player.dead {
         return;
     }
-    let Some(c) = player.others.iter().find(|c| c.kind == kind && c.count > 0).copied() else { return };
+    let Some(c) = player.others.iter().find(|c| c.kind == kind && c.count > 0 && !c.heals).copied() else { return };
     let log = std::env::var("BF_INVENTORY_LOG").is_ok();
     let label = game.0.items.get(&kind).map_or_else(|| format!("h_{kind:08x}"), |t| t.label.clone());
     if !super::skills::uses_item(&player, c.use_type) {
@@ -352,7 +433,7 @@ fn use_other(player: Res<Player>, mut status: ResMut<UsePanel>, game: Res<GameDa
         if log {
             println!("t={:.2} {}: {label} (use type {}): \"{text}\" (the skill's +0x1c)", player.sim_time, unit_name(&player), c.use_type);
         }
-        status.message = Some((text, super::pickups::MESSAGE_TIME));
+        status.message = Some((text, super::itembox::MESSAGE_TIME));
     } else if log {
         println!("t={:.2} {}: {label} (use type {}): its use isn't in yet (#21)", player.sim_time, unit_name(&player), c.use_type);
     }

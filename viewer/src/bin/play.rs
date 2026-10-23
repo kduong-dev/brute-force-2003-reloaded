@@ -15,14 +15,14 @@
 //!   Right mouse aim: upper body turns to the camera direction, legs keep running;
 //!               backpedal when moving away
 //!   Mouse       look (click to capture, Esc to release)
-//!   Wheel       zoom
 //!   Left mouse  fire (hold)
 //!   Q           switch weapon
 //!   R           reload early (the demo's own: the game reloads only by itself, see play_ammo.rs)
 //!   G           use the item in the item box (grenade: hold to charge, release to throw;
 //!               Roller / Sentry: set down at the press)
-//!   T           next grenade type carried
-//!   Tab         next item; hold: the item list (wheel picks)
+//!   Tab         the game's B: tap for the next item; hold 0.25 s for the item list (the game
+//!               pauses; W/D or the wheel up the next item, S/A or the wheel down the previous)
+//!   B           the game's Black: the Medkit shortcut (play_itembox.rs)
 //!   E (hold)    use (a gate's wall panel)
 //!   M           next ground surface (footstep / landing sounds)
 //!   Backspace   back to the map menu (in the same window)
@@ -667,6 +667,7 @@ fn main() {
         .add_plugins(placed_fx::plugin)
         .add_plugins(camera::plugin)
         .add_plugins(inventory::plugin)
+        .add_plugins(itembox::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -703,6 +704,8 @@ mod dna;
 mod pickups;
 #[path = "play_inventory.rs"]
 mod inventory;
+#[path = "play_itembox.rs"]
+mod itembox;
 #[path = "play_text.rs"]
 mod text;
 #[path = "play_deathcam.rs"]
@@ -1337,21 +1340,24 @@ const EV_RELEASE: u32 = 0x1186_6F3A;
 /// 0.38-0.47 s") and lets it go (19f8311b, the use_item clip's "used" event, 0.50-0.60 s); it drops from the hand to the
 /// ground (the recordings: on the ground ~0.8 s (Sentry) / ~1.05 s (Roller) after the press)
 const EV_PLACED: u32 = EV_ITEM_USED;
-/// An inventory item: a grenade type (an index into `grenade::GrenadeKits`, the same as into
-/// `Player::grenades`), the medkit, or another item of the squad's store by its item type
-/// (`Player::others`: the OrgSen, the Hat; play_inventory.rs).
-#[derive(Clone, Copy, PartialEq, Debug)]
+/// An inventory item, one stack of the squad's store: a grenade type (an index into
+/// `grenade::GrenadeKits`, the same as into `Player::grenades`), the Medkit (the 80-point (5, 0)
+/// stack), or another item of the store by its item type (`Player::others`: the OrgSen, the Hat,
+/// the 60-point Medkit (5, 2); play_inventory.rs). The item box's selection is one
+/// (`Player::item`, play_itembox.rs).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Item {
     Grenade(usize),
     Medkit,
     Other(u32),
 }
-/// Tab held this long (s) opens the item list instead of stepping.
-const ITEM_LIST_HOLD: f32 = 0.3;
 
-/// The inventory items, in the item box's order: every grenade type, then the medkit, then the
-/// other items the item box lists (their type's h_1852ab6c: the OrgSen and the Hat, not "Alien
-/// Technology Acquired!"), in the store's (category, index) order (play_inventory.rs).
+/// The inventory items, in the store's (category, index) order, the item box's (FUN_0014c230's
+/// walk): every grenade type (the kits are in that order, play_grenade.rs `load_kits`: categories
+/// 2 and 3), then the Medkit (5, 0), then the other items the item box lists (their type's
+/// h_1852ab6c: the OrgSen and the Hat, not "Alien Technology Acquired!"), kept in that order too
+/// (play_inventory.rs: categories 5 and up). Each whether carried or not: the listable ones are
+/// those with a count (play_itembox.rs `listable`).
 fn items(p: &Player) -> Vec<Item> {
     (0..p.grenades.len()).map(Item::Grenade).chain([Item::Medkit])
         .chain(p.others.iter().filter(|c| c.listed).map(|c| Item::Other(c.kind))).collect()
@@ -1366,61 +1372,19 @@ fn item_count(p: &Player, item: Item) -> i64 {
     }
 }
 
-/// Whether the controlled character can use the item now (the item box shows it red when not):
-/// a medkit at full health; an item whose use type the character's skill refuses (the skill's
-/// +0x1c, which the items' "can use" 0x146c70 asks: Brutus and the OrgSen or the Hat, red in #196
-/// take26; play_skills.rs `uses_item`).
+/// Whether the controlled character can use the item now: the item box's colour (its name and
+/// count blue, else red with the icon grey; 0xac980 / FUN_000ace10 ask the item function's "can
+/// use", +0x3c). A Medkit (either) only while hurt (the Medkit's own +0x3c, "No need to heal":
+/// #196 take01 6.95 and 8.45 s, take10 2.55 s); an item whose use type the character's skill
+/// refuses (the skill's +0x1c, which the base set's "can use" 0x146c70 asks: Brutus and the OrgSen
+/// or the Hat, red in take26; play_skills.rs `uses_item`). A dead member's box isn't red (take18:
+/// "Energy 5" fades out blue).
 fn item_usable(p: &Player, item: Item) -> bool {
-    !p.dead && item_count(p, item) > 0 && match item {
+    item_count(p, item) > 0 && match item {
         Item::Grenade(_) => true,
         Item::Medkit => p.health < p.max_health,
-        Item::Other(kind) => p.others.iter().find(|c| c.kind == kind).is_some_and(|c| skills::uses_item(p, c.use_type)),
-    }
-}
-
-/// Select the next (or previous) item carried.
-fn step_item(p: &mut Player, step: i32) {
-    let list = items(p);
-    let n = list.len() as i32;
-    let here = list.iter().position(|&i| i == p.item).unwrap_or(0) as i32;
-    for k in 1..=n {
-        let i = list[(here + step * k).rem_euclid(n) as usize];
-        if item_count(p, i) > 0 {
-            if i != p.item {
-                p.item = i;
-                p.item_new = 0.0;
-            }
-            return;
-        }
-    }
-}
-
-/// Select the next grenade type carried (the demo's grenade key, T: the game's button for it
-/// isn't in the recordings). From another item, the first type carried.
-fn step_grenade(p: &mut Player) {
-    let n = p.grenades.len();
-    let here = match p.item { Item::Grenade(k) => k, _ => n.saturating_sub(1) };
-    for k in 1..=n {
-        let i = (here + k) % n;
-        if p.grenades[i] > 0 {
-            if Item::Grenade(i) != p.item {
-                p.item = Item::Grenade(i);
-                p.item_new = 0.0;
-            }
-            return;
-        }
-    }
-}
-
-/// The selected item ran out: the first grenade type carried if it was a grenade (the Sentry
-/// recording: the last Sentry set down, the box shows Frag 10; the Frag is the first type),
-/// else the next item carried.
-fn item_ran_out(p: &mut Player) {
-    if let (Item::Grenade(_), Some(k)) = (p.item, p.grenades.iter().position(|&n| n > 0)) {
-        p.item = Item::Grenade(k);
-        p.item_new = 0.0;
-    } else {
-        step_item(p, 1);
+        Item::Other(kind) => p.others.iter().find(|c| c.kind == kind)
+            .is_some_and(|c| skills::uses_item(p, c.use_type) && (!c.heals || p.health < p.max_health)),
     }
 }
 /// The highest ledge a character steps onto; a bigger drop is a fall.
@@ -1881,13 +1845,11 @@ struct Player {
     /// the squad's items have been stocked from the start (play_inventory.rs `stock`): a respawn
     /// refills the grenades only
     stocked: bool,
-    /// the inventory item in the item box, how long it's been NEW (s left),
-    /// whether the item list is open (Tab held), how long Tab's been down, and the use key
-    /// (G) pressed for a non-grenade item
-    item: Item,
-    item_new: f32,
-    item_list: bool,
-    tab_down: f32,
+    /// the item box's selection: the inventory front's wanted pair (inv+0x1c0), None the game's
+    /// (10, -1); it goes with control, as the game's hand-over copies it (FUN_000c8fa0). And the
+    /// use key (G) pressed this frame for an item that isn't a grenade, as the item controls
+    /// decide it (play_itembox.rs `item_controls`)
+    item: Option<Item>,
     item_use: bool,
     /// a medkit being used: time into the use_item clip; `item_in_hand` while the clip has it
     /// (its 0a6e8f79 event to its 19f8311b), `item_used` set the frame it's used (heal, sound,
@@ -1897,8 +1859,12 @@ struct Player {
     item_used: bool,
     /// the inventory item they are (what using one heals)
     medkit_kind: u32,
+    /// the Medkit stack the use under way takes from (the selected one as it started: the (5, 0)
+    /// Medkit or the 60-point (5, 2) one, play_pickups.rs)
+    use_stack: Item,
     test_medkit_used: bool,
-    /// throw button held: charging (the HUD meter shows `charge`)
+    /// throw button held: charging (the HUD meter shows `charge`); for the controlled character
+    /// as the item controls decide it (play_itembox.rs)
     throw_held: bool,
     charge: f32,
     /// the throw meter: its level and its timer (s; METER_TIME while charging, then counting
@@ -1912,8 +1878,6 @@ struct Player {
     pending_release: Option<(f32, usize, bool)>,
     /// released grenades to spawn (play_grenade.rs)
     thrown: Vec<grenade::Thrown>,
-    /// BF_TEST_NEXT_GRENADE: how many of its presses are done (per map, with the player)
-    test_next_grenade: usize,
     /// control is passing to this squad member (character index) in this many seconds
     select: Option<(usize, f32)>,
     /// a voice line to say in this many seconds
@@ -2182,7 +2146,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: Item::Grenade(0), item_new: 0.0, item_list: false, tab_down: -1.0, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], test_next_grenade: 0, select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -2616,9 +2580,11 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // the demo's choice, the game's hand-over isn't traced)
     player.leave_scope();
     (player.scope, player.zoom, player.scope_heard, player.scope_lock) = (0.0, 1.0, 0, 0.0);
-    let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.others.clone(), player.stocked, player.item, player.item_new);
+    // (the selection too: the game's hand-over copies the old character's wanted pair into the
+    // new one's front, FUN_000c8fa0; #196 take17 / take29: every member's box reads the item)
+    let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.others.clone(), player.stocked, player.item);
     std::mem::swap(&mut *player, &mut squad.0[i]);
-    (player.grenades, player.medkits, player.medkit_kind, player.others, player.stocked, player.item, player.item_new) = inventory;
+    (player.grenades, player.medkits, player.medkit_kind, player.others, player.stocked, player.item) = inventory;
     // (a script's walk was its brain's goal: under the player's control it has none)
     player.script_walk.clear();
     // the switch sound, at the cut (a capture: the same sound at every hand-over)
@@ -3590,21 +3556,18 @@ fn read_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
-    scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut player: ResMut<Player>,
 ) {
     // under a menu (the game's clock stopped, `paused`; the menu takes the frame's presses,
-    // play_objectives.rs) the controls go to the menu: no press reaches the character, it stops
-    // firing and aiming, and a Tab held as the menu opened doesn't step the item when it's let go
-    // (its hold starts again); the rest held stays as it was (nothing moves meanwhile) and is
-    // read again once the menu has closed
+    // play_objectives.rs) or the item list (its pause: the controller's movement, look and item
+    // sections are off while it's up, 0x13417b-0x13418c) the controls go to them: no press reaches
+    // the character, it stops firing and aiming; the rest held stays as it was (nothing moves
+    // meanwhile) and is read again once the menu has closed. (The item keys are play_itembox.rs's)
     if paused() {
         (player.jump_pressed, player.dodge_pressed, player.switch_pressed, player.reload_pressed) = (false, false, false, false);
         (player.item_use, player.next_surface, player.fire, player.aim) = (false, false, false, false);
-        player.tab_down = -1.0;
-        player.item_list = false;
         return;
     }
     // a cutscene has the world (its cutscene bit), a script holds the character, or it isn't in
@@ -3615,8 +3578,6 @@ fn read_input(
         // takes it again by the same rule as in play; a pause menu would open here, #40)
         mouse_capture(&mut windows, &keys, &mouse, player.sim_time);
         script::held_step(&mut player, frame_dt(&time));
-        player.tab_down = -1.0;
-        player.item_list = false;
         return;
     }
     // 1-4: hand control to that squad member (after their name shows, see squad_control); not
@@ -3633,10 +3594,6 @@ fn read_input(
     // test hook: BF_TEST_USE=<s> holds use (E) for a second from that time
     player.use_held = std::env::var("BF_TEST_USE").ok().and_then(|v| v.parse::<f32>().ok())
         .is_some_and(|at| player.sim_time >= at && player.sim_time - at < 1.0);
-    // test hook: BF_TEST_ITEM_LIST=1 holds the item list open
-    if std::env::var("BF_TEST_ITEM_LIST").is_ok() {
-        player.item_list = true;
-    }
     // test hook: BF_TEST_SELECT=<character>[,<s>] picks that member at 1 s (or s): control
     // passes SELECT_TIME later. Also under BF_TEST_GOTO's autopilot
     if let Some(v) = std::env::var("BF_TEST_SELECT").ok() {
@@ -3679,32 +3636,8 @@ fn read_input(
     let switch = keys.just_pressed(KeyCode::KeyQ);
     let reload = keys.just_pressed(KeyCode::KeyR);
     let use_key = keys.pressed(KeyCode::KeyE) || player.use_held;
-    // the item box (the game's B button): Tab tapped steps to the next item carried; held, it
-    // opens the item list, where the wheel picks one. G uses the item: a grenade is held to
-    // charge and thrown on release, a medkit is used at once.
-    let tab = keys.pressed(KeyCode::Tab);
-    if tab {
-        player.tab_down = if player.tab_down < 0.0 { 0.0 } else { player.tab_down + frame_dt(&time) };
-        player.item_list = player.tab_down >= ITEM_LIST_HOLD;
-        if player.item_list && scroll.delta.y != 0.0 {
-            let step = if scroll.delta.y < 0.0 { 1 } else { -1 };
-            step_item(&mut player, step);
-        }
-    } else {
-        if (0.0..ITEM_LIST_HOLD).contains(&player.tab_down) {
-            step_item(&mut player, 1);
-        }
-        player.tab_down = -1.0;
-        player.item_list = false;
-    }
-    // T: the next grenade type carried (the demo's key), not while a throw charges or is under
-    // way (it would turn the charge into another type's)
-    if keys.just_pressed(KeyCode::KeyT) && player.charge <= 0.0 && player.throwing.is_none() {
-        step_grenade(&mut player);
-    }
-    let grenade = matches!(player.item, Item::Grenade(_));
-    let throw = grenade && keys.pressed(KeyCode::KeyG);
-    player.item_use = !grenade && keys.just_pressed(KeyCode::KeyG);
+    // (the item box's keys, Tab, G and B, are play_itembox.rs's: the game's B, LT and Black, which
+    // the player controller's item section reads)
     if keys.just_pressed(KeyCode::KeyH) {
         player.show_help = !player.show_help;
     }
@@ -3733,7 +3666,6 @@ fn read_input(
     player.switch_pressed = switch;
     player.reload_pressed = reload;
     player.use_held = use_key;
-    player.throw_held = throw;
     // the mouse turns the aim, which the follow camera's view is (the game's right stick; no
     // zoom wheel: the boom is each character's own, play_camera.rs), the pitch held to +-60 degrees
     // (FUN_0011e7c0)
@@ -3764,6 +3696,9 @@ fn mouse_capture(windows: &mut Query<&mut Window, With<PrimaryWindow>>, keys: &B
     }
     (was, win.cursor_options.grab_mode != CursorGrabMode::None)
 }
+
+/// BF_AUTOPILOT's grenade: the use button held over these sim times (s), a 0.5 s charge.
+const AUTOPILOT_THROW: std::ops::Range<f32> = 29.0..29.5;
 
 /// BF_AUTOPILOT=1: scripted input for automated captures. Returns true while it is driving.
 fn autopilot(player: &mut Player) -> bool {
@@ -3808,22 +3743,8 @@ fn autopilot(player: &mut Player) -> bool {
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
             player.crouch_wanted = player.sim_time >= at;
         }
-        // BF_TEST_THROW=<s>[,<hold s>][,<s>,<hold s>...]: hold the grenade button from s for hold
-        // s (default 0.6: a full charge), as many times as given
-        if let Ok(v) = std::env::var("BF_TEST_THROW") {
-            let v: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            let t = player.sim_time;
-            player.throw_held = v.chunks(2).any(|c| (c[0]..c[0] + c.get(1).copied().unwrap_or(CHARGE_TIME)).contains(&t));
-        }
-        // BF_TEST_NEXT_GRENADE=<s>[,<s>...]: press the grenade-type key (T) once at each time
-        if let Ok(v) = std::env::var("BF_TEST_NEXT_GRENADE") {
-            let times: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect();
-            let done = player.test_next_grenade;
-            if times.get(done).is_some_and(|&s| player.sim_time >= s) && player.charge <= 0.0 && player.throwing.is_none() {
-                player.test_next_grenade += 1;
-                step_grenade(player);
-            }
-        }
+        // (BF_TEST_THROW, the grenade button held, and BF_TEST_NEXT_GRENADE, Tab taps, are the item
+        // controls' hooks: play_itembox.rs `item_input`)
         return true;
     }
     if std::env::var("BF_AUTOPILOT").is_err() {
@@ -3864,7 +3785,7 @@ fn autopilot(player: &mut Player) -> bool {
     }
     player.switch_pressed = at(21.8) || at(25.5);
     player.reload_pressed = at(26.5);
-    player.throw_held = (29.0..29.5).contains(&t);
+    // (the throw at AUTOPILOT_THROW: the item controls' input, play_itembox.rs)
     if at(31.0) {
         player.select = Some((1, SELECT_TIME));                // hand over to Flint
     }
@@ -5541,7 +5462,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- grenade: the selected type (play_grenade.rs). Thrown: the stance's throw clip; the
     // grenade is in the hand from the reach event and leaves it at the release event. Placed
     // (Roller, Sentry): set down at the feet at the press, no meter
-    let kind = match p.item { Item::Grenade(k) if p.grenades.get(k).is_some_and(|&n| n > 0) => kits.get(k).map(|kit| (k, kit)), _ => None };
+    let kind = match p.item { Some(Item::Grenade(k)) if p.grenades.get(k).is_some_and(|&n| n > 0) => kits.get(k).map(|kit| (k, kit)), _ => None };
     // (not during a skill's toggle overlay: the demo's choice, as for the weapon switch above;
     // nor in Tex's berserk, whose overlay filter refuses the throw's and whose motions have no
     // throw: #35 take26 20.5 s, LT throws nothing and the count stays; nor while the skill says
@@ -6174,8 +6095,8 @@ fn capture_step() -> f32 {
     1.0 / std::env::var("BF_CAPTURE_FPS").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(15.0).max(1.0)
 }
 
-/// The game's clock stopped under a menu: the objectives menu (play_objectives.rs) or a tutorial
-/// panel (play_panels.rs). The game's app clock [[0x469b54]+0x38] stops while one is open
+/// The game's clock stopped under a menu: the objectives menu (play_objectives.rs), a tutorial
+/// panel (play_panels.rs) or the item list (play_itembox.rs). The game's app clock [[0x469b54]+0x38] stops while one is open
 /// (take04's watch log: clk 60275 from the press at 62.6 s to the B at 74.5 s). `frame_dt` is 0
 /// meanwhile, so nothing in the world moves (the characters, the triggers' timers, the effects'
 /// clock), and `read_input` takes no input. Each menu holds a bit of its own (PAUSE_OBJECTIVES,
@@ -6186,6 +6107,10 @@ static PAUSED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(
 const PAUSE_OBJECTIVES: u32 = 1;
 /// The tutorial panels' hold on the clock (see PAUSED).
 const PAUSE_PANELS: u32 = 2;
+/// The item list's hold on the clock (play_itembox.rs): FUN_000ac080 pauses the game (the
+/// session's pause through the app, 0x7a320) while the list is open in single player; #196 take02's
+/// app clock still from the open to the release, take03's grenade hanging in the air.
+const PAUSE_ITEMS: u32 = 4;
 
 /// Stops (`on`) or lets go of the game's clock for one of its holders (a PAUSE_ bit; see PAUSED).
 fn set_paused(by: u32, on: bool) {
@@ -6395,7 +6320,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
         w.def.label, player.weapon + 1, l.weapons.len()))).unwrap_or_default();
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
-         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab items   T grenade type   E use   V special skill   M surface   H hide\n\
+         WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab next item (hold: the list, W/D S/A or the wheel)   B medkit   E use   V special skill   M surface   H hide\n\
          click: mouse look, Esc release   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
          test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die\n\
          {}",

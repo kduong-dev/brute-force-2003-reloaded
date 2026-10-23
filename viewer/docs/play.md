@@ -15,13 +15,12 @@
 | click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex: their name pops up in the middle of the screen in the game's own HUD font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; at the cut the close sound plays and the name zooms out to 3x and fades (0.25 s, as in the capture), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
-| G | use the item in the item box. A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. See **Grenades** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen and the Hat do nothing yet (#21), but Brutus is told "Cannot use" |
+| G | use the item in the item box (the game's LT). A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.6 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw - the charge sets how far; the count drops at once. A placed one (Roller, Sentry): set down at the feet at the press. A Medkit (either): used at the press, "No need to heal" at full health. Nothing selected: "Inventory is empty". A Tab or B press while G is held drops the charge, and G does nothing more until it's let go. See **Grenades** and **The item box and the item list** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen and the Hat do nothing yet (#21), but Brutus is told "Cannot use" |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold [X] to activate panel." shows (the game's glyph line, X's glyph: E is the demo's X; [hints.md](hints.md)) and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
-| T | the next grenade type carried (the demo's key: the recordings don't show the game's button for it) |
-| Tab | the item box (the game's B button): tap for the next item carried (each grenade type, Medkit, OrgSen, Hat); hold for the item list, the wheel picks one. With a Medkit selected, G heals 80 ("No need to heal" at full health). See "Health pickups" |
+| Tab | the item box (the game's B button): a tap (let go within 0.25 s) steps to the next item carried, in the store's order (every grenade type, the Sentry and the Roller, the Medkit, the 60-point Medkit, the OrgSen, the Hat), round to the first; held 0.25 s, the item list opens round the box and the game pauses until Tab is let go: W or D (or the wheel up) the next item, S or A (or the wheel down) the previous, a step at once and another every 0.25 s while held; nothing else reaches the character meanwhile (movement, look, fire, G, the 1-4 keys). The item scrolled to stays. With a Medkit selected, G heals ("No need to heal" at full health). See **The item box and the item list** |
 | I | in a mission, the MISSION OBJECTIVES menu (the game's BACK; the pad's Back too): the mission's objectives, " (completed)" or " (failed)" after each as its flags say; the game's clock stops under it. I again, Enter or Space (the pad's A or B) close it; while it's up no key or mouse press reaches the game (the closing one included). See [campaign.md](campaign.md) |
 | V | the special skill on / off (the game's White button): Tex's Berserker, Brutus's Vengar, Hawk's Stealth, Flint's Targeting. Stamina (the blue bar) pays for it; on needs 10% of it, at 0 it switches itself off. Tex's Berserker draws his other gun into his left hand and fires both; in it Q and R end it instead of switching or reloading. Brutus's Vengar heals him, cuts the damage he takes, charges enemies down when he sprints into them, and turns the view grey with every living character a heat figure. Flint's Targeting widens the crosshair's lock. Hawk's Stealth fades her out over a second: the enemies lose her, the crosshair can't lock her, a shot or an item costs stamina. See [skills.md](skills.md) |
-| B | the game's Black button (its Medkit shortcut): only the tutorial's button gates read it for now ("Press [Black] to use Medkit." clears on it); it uses no Medkit yet. See [hints.md](hints.md) |
+| B | the game's Black button, its Medkit shortcut: held, the 80-point Medkit is selected in the box and used as G would use it (healed, or "No need to heal" at full health), and let go the item before it comes back; "No Medkits" without one (the 60-point Medkit doesn't count); a grenade's charge is dropped; with Tex's berserk or Flint's targeting on it switches the skill off instead. The tutorial's button gates read it too ("Press [Black] to use Medkit.", [hints.md](hints.md)). In a test session B is the test tools' (an NPC's dummy / fight, [testtools.md](testtools.md)). See **The item box and the item list** |
 | Esc | also the game's START for the tutorial's button gates ("Press [START] for game options."): the demo has no pause menu |
 | Enter / Space, Q | on a tutorial panel (BASIC CONTROLS, HEADS-UP DISPLAY ...): Enter or Space (the pad's A) accepts it, Q (the pad's Y) skips the tutorial's later panels; nothing else closes it, and no press reaches the game under it (the game's clock stops). See [hints.md](hints.md) |
 
@@ -51,7 +50,7 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     and everything is loose (kicked, thrown by blasts, tumbling).
 * **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Gas,
   Sonic, Energy, Light, Sentry, Roller (the game's store order, #281). m09_a is
-  loaded for the Light (only in m09_a/b/c/x). T steps through them. See **Grenades**.
+  loaded for the Light (only in m09_a/b/c/x). Tab steps through them. See **Grenades**.
 * **Every character type of the data** (128) for the NPC spawner (#180): its levels define
   55; the other 73 come from the 31 level archives that define them, without those levels
   (`Game::load_type_assets`, about 0.9 s more; `BF_TEST_TYPES` picks a smaller set). See
@@ -128,22 +127,20 @@ tint. Its two channels are open in texel rows 6–11 and (mirrored) 20–25, col
 fills its channel exactly, and its icon is level with it. The bar fills (`h_e801997b` red,
 `h_e11c7d04` blue, 4 × 8) are coloured in 6 of their 8 rows, matching the channels' 6; only those
 rows are drawn. (Placed by hand, the bars sat over their channels' lines and left gaps at both
-ends; drawn whole, the clear rows put the colour off-centre.) The grenade's panel is
-`h_10891a71` (64 × 32, glossy, cut top-left corner), 9-sliced. Neither is referenced in the
-data, and the demo picked both by shape; the HUD code names both, for split screen. h_0cdf5876
+ends; drawn whole, the clear rows put the colour off-centre.) That corner isn't referenced in
+the data and the demo picked it by shape; the HUD code names it, for split screen: h_0cdf5876
 is the health bar's split-screen frame's left piece (0xb79f0 at 0xb7a53, with h_e0b02233 and
-h_06a1d26e; full screen h_e5634eaf, h_eee38815, h_17470408). h_10891a71 is the split-screen
-frame (a viewport under 600 wide or 400 tall) of a HUD widget of type 0xfa7c2b10, whose full
-screen frame is the 64 × 64 h_e16927fb (FUN_000ab580, 0xab614 and 0xab71f); FUN_000abe30 makes
-five of them, one bright and four dimmed (alpha 153). Which panel those five are isn't traced. (The tutorial's `h_17f34cbe` is only a baked picture of the
-whole bar.) Radar health channels are filled as bands (distance from the centre and extent
+h_06a1d26e; full screen h_e5634eaf, h_eee38815, h_17470408). The item box's panel is the game's
+own, the 64 × 64 h_e16927fb (FUN_000ab580, 0xab614; h_10891a71, 64 × 32, its split-screen one,
+which the demo drew 9-sliced before #196): see **The item box and the item list**. (The
+tutorial's `h_17f34cbe` is only a baked picture of the whole bar.) Radar health channels are filled as bands (distance from the centre and extent
 along the diagonal, from the dark texels found), so the channels' highlight lines no longer
 leave gaps.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
 (the weapon's own icon from its definition, clip / the squad's reserve, or "clip Regen" for a
 recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](skills.md)), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
-grenades bottom right, and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
+the item box bottom right (`play_itembox.rs`, **The item box and the item list**), the message line under the middle (the HUD entry's message widget: "No need to heal", "Inventory is empty"; the body font at 12 in (192, 255, 255) with a shadow, its last 0.5 s fading, FUN_000b32d0 / 0xb33b0), and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
 flipped). The HUD is drawn by the main camera's child, the Vengar view's heat camera
@@ -465,28 +462,29 @@ Appendix A lists every campaign zone).
   Hawk the Jax-iR and Brutus the PU Cutter, as xemu read them and take27 / take30 show ("99 Regen",
   "36 / 199"). With `BF_TEST_GOTO` or `BF_SCRIPT` the opening doesn't play, so slot 1 stays in
   hand.
-* **The first item shown** is the first grenade type carried, the kits being in the game's store
-  order (category, index: Frag 2/0, Gas 2/1, Sonic 2/4, Energy 2/5, Light 2/32, Sentry 3/1,
-  Roller 3/4; `load_kits` sorts them by it), else the next item carried (the Medkit, 5/0, then
-  the others): Frag on the tutorial, m01_a, e40 and m09_a, Sonic on e34 (take27's "Sonic 4"),
-  Gas on e16 and e23, as the game's first stack. T and Tab step in that order too. (The rest of
-  the game's selection, NEW and the list's slots, is #196's.)
+* **The first item shown** is the first listable stack in the game's store order (category,
+  index: Frag 2/0, Gas 2/1, Sonic 2/4, Energy 2/5, Light 2/32, Sentry 3/1, Roller 3/4, Medkit
+  5/0, the 60-point Medkit 5/2, OrgSen 6/0, Hat 6/3; `load_kits` sorts the grenade kits by it):
+  the front's selection starts at none and FUN_0014db60 steps it to the first (#196). Frag on the
+  tutorial, m01_a, e40 and m09_a, Sonic on e34 (take27's "Sonic 4"), Gas on e16 and e23. Its NEW
+  flag is clear and every other stack's set (**The item box and the item list**). Tab steps in
+  that order.
 * **Not done**: carrying the store from zone to zone (the save game's `item-%d` pool and each
   member's weapons, clips and hit points: FUN_000816f0, FUN_00081d10, FUN_00129080,
   FUN_00089ea0; #231), so a zone the game only reaches from the one before starts with what its
   own placements carry (m03_b, m03_c, m08_b: no item, and the reserve's full stacks, the stopgap
   above); the order of the joins and the mode's
   clear on a zone whose squad is placed in the world (m07_a, m09_a: the demo takes the
-  placements', a live read would settle it); NEW on the starting items (#196); the OrgSen's and
-  the Hat's uses; a Hat picked up (only medkits, fruit and DNA canisters are taken); whether the
+  placements', a live read would settle it); the OrgSen's and the Hat's uses; a Hat picked up (only medkits, fruit and DNA canisters are taken); whether the
   controlled character's scripted toggle under a cutscene's hidden HUD makes the switch sounds
   (the panel rows' update, 0xcb970, isn't traced that far: the demo plays them, e40's Tex at 7.7 s).
 
 Test hooks: `BF_INVENTORY_LOG=1` prints each member's placement items, the pooled store, what the
-controlled character is given and each use of an item that isn't a grenade or the Medkit;
+controlled character is given and each use of an item that isn't a grenade or a Medkit;
 `BF_TEST_ITEM=<label>` selects the carried item of that name at the start (`OrgSen`, `Medkit`,
-`Sonic`); `BF_TEST_ITEM_USE=<s>[,<s>...]` presses G once at each time for an item that isn't a
-grenade (with `BF_TEST_GOTO`; it owns that use for the run).
+`Medkit60`, `Sonic`); `BF_TEST_ITEM_USE=<s>[,<s>...]` presses G for a frame at each time for an
+item that isn't a grenade; `BF_TEST_INV` and `BF_TEST_INV_NEW` set the pool and its NEW flags at
+the start (**The item box and the item list**).
 
 Verified (`BF_INVENTORY_LOG=1 BF_AMMO_LOG=1`, 15 fps captures in the scratchpad, against the
 takes in `todo/196-inventory-hud/`): the five zones above print the table's counts; e34 played
@@ -509,6 +507,143 @@ Energy, Light, Sentry, Roller; m14_c's Sentry (3, 3) before its Roller; m03_b, m
 with the full stacks (the stopgap), m02_b with its 11mm 40 and Cutter 75 alone. e40's opening with
 `BF_SOUND_LOG=1`: Hawk's and Brutus's toggles silent, Tex's ff820fda and, 0.65 s on, e1e97460,
 beside the opening's own `trigger_sound_weapon_select` (e1e97460 at 7.7 s).
+
+### The item box and the item list (#196)
+
+`src/bin/play_itembox.rs`, from the player controller's item section (0x1332a0), the HUD item
+widget (FUN_000ab8d0, its update 0xabc60 / FUN_000ac220) and the inventory front's selection
+(FUN_0014d960, FUN_0014db60); each function is cited in the code and has a row in
+[code-map.md](code-map.md). Measured against the takes in `todo/196-inventory-hud/` (its
+`spec.md`, AC-01 to AC-35).
+
+* **The selection** is the inventory front's wanted pair (`Player::item`; none is the game's
+  (10, -1)), one stack of the squad's store at a time. The order is the store's, category then
+  index, round: Frag, Gas, Sonic, Energy, Light, Sentry, Roller, Medkit (80), Medkit (60),
+  OrgSen, Hat. A stack is listable while it holds any (one that reaches 0 loses its type) and its
+  type's h_1852ab6c lists it. It goes with control: a squad switch or the death camera's hand-over
+  copies it to the new member (FUN_000c8fa0; take17, take29: every member's box reads the item).
+* **Each frame of the world** (FUN_0014db60): a none selection becomes the first listable stack
+  (a level's start: e34's Sonic 4, e40's Frag 5, the tutorial's Frag 3); the shown pair, which
+  "can use now" checks, follows the wanted one unless a throw or a Medkit's use is under way; a
+  shown stack that ran out sets both to none, so the box is blank for that frame and shows the
+  first stack the next (take09: "Sonic", one blank frame, "Frag 5"). A pickup never moves the
+  selection (take34: the box stays on the Sonic while the Medkit stack fills).
+* **Tab, the B button** (0x1340e1): held, its timer counts and a grenade's charge stays 0; let go
+  under 0.25 s (0x3a5028) it steps to the next item, with the step's sound when it changed
+  (FUN_000abfc0); at 0.25 s the item list opens (FUN_000ac080: its sound, the game paused,
+  `PAUSE_ITEMS`) and stays until Tab is let go (FUN_000ac160: its sound, unpaused). Nothing is
+  picked at the release: the item is what the list was scrolled to. The pause stops the world as
+  the menus do (`frame_dt` 0: the characters, grenades in the air, effects, timers); the item
+  widget runs on the HUD's own clock meanwhile (`hud_dt`: take02 slides it while the app clock is
+  still). Movement, look, fire, G, B, the skill key and the 1-4 keys reach nothing while it's
+  open.
+* **The scroll** (FUN_000ac370), while the list is out past 0.75 and Tab is held: the stick past
+  0.5 on its larger axis, right or up the next item, left or down the previous; a step at once,
+  then one each time its ramp passes 1 at 4 a second (0.25 s and a frame: 8 frames at 30 a
+  second, take08). The keyboard's stick: W or D the next, S or A the previous (the product
+  owner's call D1); the wheel a step a notch, up the next (D2). The pad's left stick and d-pad
+  are #154's (`ItemInput`, which the keyboard fills now).
+* **G, the game's LT**: nothing selected, "Inventory is empty" (while held, so 3 s from the
+  release); the shown pair not the wanted one (a Tab tap during a throw), "Not ready" (code only);
+  else a grenade charges and is thrown on the release, the rest are used on the press. A Tab or B
+  press while G is held leaves it dead until it's let go (ctrl+0x68: take19, take12).
+* **B, the Black button** (0x134316): a charge dropped; Tex's or Flint's skill on: switched off
+  instead (#35); no Medkit (5, 0): "No Medkits" (the 60-point one doesn't count, take11); else the
+  Medkit selected (the item before it saved) and used the next frame as if G were pressed
+  ("No need to heal" at full health), and on the release the saved item back (take10: the box
+  Medkit, the Sonic back as Black is let go).
+* **The box** (FUN_000ab460, FUN_000ab580, FUN_000ab740): at (528, 375), 64 × 64 units, hidden
+  while nothing's selected (take21). Its panel h_e16927fb (64 × 64, white); the type's icon
+  h_e5ec3f1f 64 × 64 at its corner, grey while the character can't use it now; the name (the
+  type's stringtable-name) centred, its top at 45; the count right-aligned 4 in from the edge,
+  its top at 31, shown from 2 up; the body font at 12 (the 12-point record, play_fonts.rs) with a
+  shadow; (192, 215, 255), or (150, 70, 70) while it can't be used now: a Medkit at full health,
+  the OrgSen or the Hat for Brutus (take01, take10, take26). A dead member's box isn't red
+  (take18).
+* **The list** (FUN_000ac500, FUN_000ac5e0, FUN_000ac7f0): its open level rises 2 a second while
+  it's open and falls 3 after, on the HUD's clock (out in 0.5 s, gone 0.33 s after the release);
+  up the next item and the one after, left the previous and the one before, at int(open × 70)
+  and twice that from the box, faded in as open³; their panels (30, 30, 30) at 153. A slot showing
+  an earlier one's stack is hidden in the order box, left 1, up 1, left 2, up 2: one stack shows
+  no slot, two left 1 only, three left 1 and up 1, four all but up 2 (take25's logs).
+* **NEW** (0xad0c0): every stack has the flag from its making (FUN_0014ac90); the first slot to
+  show it (the box, or a list slot as the list opens) clears it and runs its label, 2 s on the
+  HUD's clock: "NEW" (h_0ba41874) in (255, 160, 106) at (10, 2), on while fract(2 × time left)
+  ≥ 0.3 (0.35 s on, 0.15 s off), its alpha 255 × min(1, 2 × time left). A slot's label stops when
+  its stack changes. At a level's start the stack shown first is clear and every other set
+  (take27: the first box has no label; take28 / take32: the first taps show NEW).
+* **The messages**: the item ones show for 3 s (FUN_000bcfe0(entry, 3.0)), restarted by each
+  press, on the message line (above): "Inventory is empty", "No Medkits", "No need to heal",
+  "Cannot use", "Not ready".
+* **The sounds** (FUN_000bb220, 2D at their library volume, h_eff0deab 0.7): the list's open
+  0x18fc2db8 and close 0xef4bd74d, the next item 0xf8f93c5e and the previous 0x1ab2fc23 (only when
+  the item changed). Logged with `BF_SOUND_LOG`; not heard in the takes (their game sound was at
+  the noise floor), so their loudness isn't checked.
+* **Not done**: the pad (#154); the weapon panel and the skill's name showing while the list is
+  open (take02, the product owner's call D8: a follow-up); split screen (64 × 32, no icon); the
+  OrgSen's and the Hat's uses (#21); "Can't use this item." (FUN_001301e0's use types per
+  character, not traced: only Brutus's refusals are in, his skill's "Cannot use"); the HUD's fade
+  at a death and a dead member's box (+0x11 = 127, its meaning not traced); whether the HUD's other
+  timers (the message line, the throw meter) run under the list's pause (they stop in the demo);
+  the sound groups paused under it (FUN_0007a360); Hawk's special pair (10, -2); the two silent
+  LT presses of take13 / take15 (the code's alternating ctrl+0x68 explains them, code-map's
+  0x1332a0 row; not copied, as the spec asks).
+
+Test hooks (the hooks' clock is the sim time plus the time the list's pause held it, so a hold's
+end comes while the world is stopped):
+* `BF_TEST_ITEM_INPUT="<s>:<input>:<hold s>;..."` holds an input from that time: `tab`, `lt` (G),
+  `black` (B), `next`, `prev` (the stick); a hold shorter than a frame still shows for one.
+* `BF_TEST_ITEM_LIST=1` holds Tab from the start (the list opens and the game pauses for good).
+* `BF_TEST_NEXT_GRENADE=<s>[,<s>...]` taps Tab (0.1 s) at each time (the T key it pressed is
+  gone: the product owner's call D3). `BF_TEST_THROW` (with `BF_TEST_GOTO`) holds G.
+* `BF_TEST_INV=<name>:<n>,...` sets the pool at the start: a grenade type's label, `Medkit` (the
+  (5, 0) stack), `Medkit60` (the (5, 2) one), another listed item's label (`OrgSen`, `Hat`); 0
+  empties a stack, the rest keep the store's; a grenade type the level defines but neither the
+  squad nor SQUAD_GRENADES has is loaded for it (e34's Sentry). `BF_TEST_INV_NEW=<name>,...`: the
+  stacks still NEW at the start, every other clear. #196's nine-stack pool:
+  `BF_TEST_INV=Frag:5,Gas:5,Sonic:4,Energy:5,Sentry:3,Roller:4,Medkit:2,Medkit60:2,OrgSen:1
+  BF_TEST_INV_NEW=Gas,Energy,Sentry,Medkit60 BF_TEST_ITEM=Sonic`.
+* `BF_ITEM_LOG=1` prints the controls' events (taps, the list, Black, uses, refusals, a stack
+  running out, NEW) and the state on every change and every 0.1 s while the list is out: the hooks'
+  time, the sim time and the HUD's, the open level, the timers, the selection and the shown pair
+  as (category, index), the five slots (box, up 1, up 2, left 1, left 2; `h` hidden), the lock,
+  Black's saved item, the counts with their NEW flags, the labels' times.
+
+Verified (e34's range spot `BF_MAP=e34 BF_TEST_GOTO=-53.56,30.81,-53.56,30.81 BF_TEST_SWEEP=167.8
+BF_CAMERA_PITCH=-0.0093 BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05`, the nine-stack pool where
+it says, `BF_ITEM_LOG=1`; frames tiled beside the takes'):
+* The box: "Sonic 4" beside take25 at 1.5 s: the icon's orange at the same box-relative x
+  17.3-45.3, y 9.0; the name's and the count's ink within a unit of the take's. Ten taps 1.5 s
+  apart (take01): Energy NEW, Sentry NEW, Roller, Medkit, Medkit (60) NEW, OrgSen, Frag, Gas NEW,
+  Sonic, Energy, each with the next sound; the Medkits grey and red at full health, the OrgSen
+  teal, as take01's frames.
+* The list, Tab held 2.0-5.0 at 30 fps: open 0.267 s after the press (8 frames), the sim time
+  still from then to the release; the slots 2,4 2,5 3,3 2,1 2,0 as take25; NEW on Gas, Energy and
+  Sentry as it opens (take24), their labels blinking and gone 2 s after the open, frame for frame
+  as take02 at 10 fps; out at 0.533 s, back in 0.33 s. Two, three and four stacks: take25's slot
+  logs. A Frag thrown before the open hangs in the air through it (`BF_GRENADE_LOG`: down 0.33 s
+  of sim time after it left the hand, which spanned the 2.8 s pause).
+* The scroll (take05 / take08): steps 0.267 s apart while held, two for a 0.4 s push, none in
+  the slide's first 0.375 s, the item kept at the release.
+* Taps of 0.10, 0.18, 0.22 s step, 0.30 and 0.40 s open the list (take04; at 30 fps a 0.24 s hold
+  is 8 frames, 0.267 s, and opens it). A tap while a Frag charges: the charge dropped, the Gas
+  selected, nothing thrown though G stays down (take19), a later press throws the Gas. A tap in
+  the throw's motion: the box shows the Gas at once, the shown pair follows as the grenade leaves
+  the hand, G meanwhile "Not ready".
+* Black at 60 hp: Medkit selected and used (6 to 5, 115 hp), the Sonic back at the release; at
+  full health the grey and red Medkit and "No need to heal" (take10, its message's ink at the
+  same x 269.3-370.0); the (5, 0) stack empty: "No Medkits", the box unchanged (take11); during a
+  charge with G held to 4.0: the charge dropped, the Medkit used, the Frag back, no throw (take12);
+  Tex's berserk on: the skill switched off.
+* The last Sonic thrown: "Sonic", one blank frame, "Frag 5" (take09); a third throw takes a Frag.
+  Nothing carried: no box, "Inventory is empty" at y 292.0-306.7 as take21; Tab held opens the
+  list with no slot. The tutorial's medkits taken: the box stays "Frag 3", taps reach Gas and the
+  Medkit, each NEW (take34). Brutus with the OrgSen: grey, red, "Cannot use" (take26). Tex taps
+  to Energy, control to Hawk: her box "Energy 5" (take17). NEW's blink at 60 fps: 21 frames on,
+  9 off, three times, then the fade (take23: 22 / 11 / 24 / 8 / 24 / 9 video frames at the take's
+  0.9 speed). e40's first item Frag 5, the tutorial's Frag 3.
+* Regressions: `BF_TEST_MEDKIT`, the 60-point Medkit healing 60, the test map's kits and
+  `BF_TEST_NEXT_GRENADE`, `BF_AUTOPILOT`'s throw at 29 s, `cargo test --bin bf_play`.
 
 ### The crosshair's colours (#141)
 

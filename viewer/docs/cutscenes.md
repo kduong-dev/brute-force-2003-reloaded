@@ -211,9 +211,10 @@ gives the controls back: a walk the player's character hadn't finished ends ther
 startup walks Brutus into a wall: before #222's fix round it held the controls for good).
 
 Every player-facing key goes through `read_input` but the skill key, read by play_skills.rs
-`skill_input`, which checks `blocks_input` too (#256). Its audit found nothing else leaking: the
-keys 1-4 (the hand-over), Tab and T (the item box, the grenade type), G (use, throw), Z, H, M,
-the move and fire keys and the mouse's look are all read past `read_input`'s early return.
+`skill_input`, and the item box's keys (Tab, G, B, and W/D/S/A and the wheel under the item
+list), read by play_itembox.rs `item_input` (#196), which both check `blocks_input` too (#256).
+Its audit found nothing else leaking: the keys 1-4 (the hand-over), Z, H, M, the move and fire
+keys and the mouse's look are all read past `read_input`'s early return.
 
 Escape isn't blocked, deliberately (#256): `read_input` reads the mouse's capture
 (`mouse_capture`) above the gate too, so Escape frees the mouse in a cutscene, while held and out

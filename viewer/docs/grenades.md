@@ -5,9 +5,10 @@ Every grenade type comes from the loaded levels' `inventory-grenade` definitions
 squad carries when several share a label (the Sentry has three, the Roller two: the ones the
 recordings show, `SQUAD_GRENADES`; a level that defines only another one its squad's
 placements carry takes that one, m14_c's and m14_d's Sentry h_f73de83d) and their order, which
-T steps through and the item box shows first: the game's store order, (category, index) = the
+Tab steps through and the item box shows first: the game's store order, (category, index) = the
 group-type and h_e5f51266, Frag, Gas, Sonic, Energy, Light, Sentry, Roller (#281,
-[play.md](play.md) "Items: the squad's starting inventory"). The squad carries only those
+[play.md](play.md) "Items: the squad's starting inventory"; BF_TEST_INV's grenade types the
+level defines but the squad doesn't carry are loaded too, #196). The squad carries only those
 seven. The Molotov (e01's h_f42e0faa, a labelled grenade with an icon) is the mutants'
 weapon (#78), not the squad's: its definition is read like the others' for an AI thrower to
 use. Per type:
@@ -66,9 +67,11 @@ decal, and a throw called off.
   while it rolls (the recording's loop), full within 5 m and silent at 25 m (the sound's own
   `falloff 5` / `h_fd40e332 25`, sounds-mp1.xml); the fuse (25 s; the Sentry's 9999 s) runs
   from when it's down.
-* **T** steps to the next type carried; it's ignored while a throw charges or is under way.
-  A throw cut short (knocked down, or control handed over, before the grenade leaves the hand)
-  puts the grenade back.
+* **Tab** (the game's B) steps to the next item carried, every category in the store's order,
+  and drops a charge in progress, G then dead until it's let go (#196: [play.md](play.md), **The
+  item box and the item list**; the T key that stepped the grenade types is gone, the game has
+  no such button). A throw cut short (knocked down, or control handed over, before the grenade
+  leaves the hand) puts the grenade back.
 * **The blast**, on the ground below where it went off: the effect type's ALE effects and its
   light effect run once from that frame (`src/ale_fx.rs`; an effect without a parent now starts
   on the frame it's spawned; a "light_" effect is a point light: reach = its size, strength =
@@ -200,17 +203,16 @@ decal, and a throw called off.
   1.) A quad in front of the camera, multiplied into the
   picture; the picture blends in linear light, so each factor is the linear one that scales
   a stored value of 0.4 (the ground's ~0.35-0.45) by it.
-* **HUD**: the item box shows the selected type's icon (62.5 units square at (529.3, 376.4):
-  the recording's icon spans x 553-568, y 384-425; at 50 units it came out 0.8x), label and
-  count (count at the right middle, the digit at y ~410-421 as recorded; hidden while only one
-  is carried, as in the Light and Sentry recordings). The medkit keeps its own icon size and
-  place (50 units at (535, 379), fitted to the medkit captures). The meter's fill is drawn as (226, 148,
+* **HUD**: the item box shows the selected type's icon (64 units square at the box's corner, as
+  every item's), label and count (from 2 up), the game's widget since #196 ([play.md](play.md),
+  **The item box and the item list**). The meter's fill is drawn as (226, 148,
   54) at 0.65: what the console's stored-value blend of (255, 160, 53) at 0.65 gives over the
   recording's ground (63, 63, 55), since the UI blends in linear light. The charge sound is
   queued on the frame the meter first shows (`BF_SOUND_LOG` and the capture agree). The fade's
   alpha is drawn so its strength over take01's ground (37, 27, 20) is the game's stored-value
-  one (`METER_GROUND`, `METER_FULL`). When the selected type runs out, the first type still carried is
-  selected (the Sentry recording: the last Sentry set down, the box shows Frag 10).
+  one (`METER_GROUND`, `METER_FULL`). When the selected type runs out, the box is blank a frame
+  and then shows the first stack in the store's order, whatever its category (FUN_0014db60; the
+  Sentry recording: the last Sentry set down, the box shows Frag 10; #196 take09).
 
 * **The Gas's cloud** (`src/bin/play_gas.rs`; issue #76). The explosion h_0cc6cb8c is
   `<Damage max=97.5 min=48 damage-type=4 radius=3 h_04ea9251=5.5>`; its effect type h_065e4b95
@@ -631,7 +633,8 @@ Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
 * `BF_TEST_THROW=<s>[,<hold s>][,<s>,<hold s>...]` holds G from s for hold s (default 0.6: a
   full charge), as many times as given (a placed type: one per press). At 15 fps a hold under
   one step (0.067 s) can fall between steps.
-* `BF_TEST_NEXT_GRENADE=<s>[,<s>...]` presses T once at each time.
+* `BF_TEST_NEXT_GRENADE=<s>[,<s>...]` taps Tab (0.1 s) at each time: the next item (#196; it
+  pressed the T key before, which stepped the grenade types only).
 * `BF_TEST_DETONATE=<s>` sets off every grenade out at that time. (The Sentry's own hooks:
   see **Sentry**.)
 * `BF_TEST_EXPLOSION=1` sets off the selected type 6 m ahead every 1.5 s.

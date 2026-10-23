@@ -3,10 +3,11 @@
 //!
 //!  - Medkit (h_f5123ace, function-type 5 = IFSET_GENERIC_HEALING): walking over one takes it
 //!    into the squad's shared inventory, up to its stack-limit (25). Medkits are an item of the
-//!    item box (see `Item`): the first one taken selects it, marked NEW; with it selected the
-//!    use key (G) uses one, or says "No need to heal" at full health (the game's string). Full:
-//!    "<name> cannot pick up Medkit." (the reticule-action 2 path of the game's prompt code)
-//!    and it stays where it is.
+//!    item box (see `Item`); a pickup doesn't change the box's selection (#196 take34: the Medkit
+//!    stack filled, the box stays on the Sonic; NEW shows when a tap first reaches it,
+//!    play_itembox.rs). With one selected the use key (G) uses one, or says "No need to heal" at
+//!    full health (the game's string). Full: "<name> cannot pick up Medkit." (the
+//!    reticule-action 2 path of the game's prompt code) and it stays where it is.
 //!  - Healing Garo Fruit (h_e711067e, function-type 19 = IFSET_POWERUP_MEDKIT): eaten as it's
 //!    walked over; left alone at full health. The HEALTH / STAMINA POWER power-ups share
 //!    function-type 19 but have an idle effect: they're #15's, not handled here.
@@ -55,6 +56,10 @@ use bevy::render::mesh::MeshAabb;
 
 const MEDKIT: i64 = 5;
 const FRUIT: i64 = 19;
+/// "No need to heal" (the Medkit's own "can use", its function set's +0x3c at 0x147118: full
+/// health) and "No Medkits" (h_f4502b28: BF_TEST_MEDKIT with none carried).
+const S_NO_NEED_TO_HEAL: u32 = 0x10C5_243D;
+const S_NO_MEDKITS: u32 = 0xF450_2B28;
 /// The sound of a medkit used (chosen by ear): the Sound whose file is h_15331992 (named as
 /// 92193315, its bytes as stored in sounds-<level>.xmb), id h_1538baad in all 54 levels'
 /// banks, 1.5 s.
@@ -137,13 +142,17 @@ const TOPPLE_PUSH: f32 = 1.5;
 /// of the way in about 0.25 s), so it doesn't snap flat on the frame it stops.
 const SETTLE_TURN: f32 = 12.0;
 /// The used medkit's cross: its texture's blue (the cross) turned red; the case keeps its colour.
-/// How long a pickup message shows (s), a pickup's line stays, and an item stays NEW. The line's
-/// is the HUD widget's +0x64, 4.0 (its constructor FUN_000ad690), which each pickup puts back in its
-/// time left (+0x60, FUN_000ad790); take12's DNA line shows 295.4-300.0 s, fading out at its end.
-/// (The message's time also play_inventory.rs's "Cannot use".)
+/// How long a pickup message shows (s) and a pickup's line stays. The line's is the HUD widget's
+/// +0x64, 4.0 (its constructor FUN_000ad690), which each pickup puts back in its time left (+0x60,
+/// FUN_000ad790); take12's DNA line shows 295.4-300.0 s, fading out at its end. (The item
+/// messages' is play_itembox.rs's MESSAGE_TIME.)
 pub const MESSAGE_TIME: f32 = 2.0;
 pub const FEED_TIME: f32 = 4.0;
-const NEW_TIME: f32 = 3.0;
+
+/// The pickups' frame systems (take, use, drop): the item box's frame runs after them
+/// (play_itembox.rs `settle`: a Medkit used to 0 moves the selection on).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PickupSystems;
 
 /// The pickup lines under the character: (item name, how many taken, seconds left). A count of 0
 /// or 1 shows the name alone (FUN_000ad790; the memory chip's message, play_dna.rs, is pushed
@@ -268,7 +277,7 @@ pub fn plugin(app: &mut App) {
             commands.insert_resource(Blasts::default());
         }).after(setup))
         .add_systems(Update, (find_pickups, late_pickups, throw, physics, take_pickups, use_medkit, medkit_used, hold_medkit).chain()
-            .after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
+            .in_set(PickupSystems).after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
 /// The level's health pickups, once its objects are spawned (their own Transform: placed objects
@@ -433,12 +442,7 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
         line.2 -= dt;
     }
     feed.0.retain(|l| l.2 > 0.0);
-    player.item_new = (player.item_new - dt).max(0.0);
-    // the selected item ran out (the last grenade thrown): another grenade type carried, else
-    // the next item carried
-    if item_count(&player, player.item) <= 0 {
-        item_ran_out(&mut player);
-    }
+    // (the selection after an item runs out is play_itembox.rs's `settle`)
     // who's near enough: the player first, then any squad member running over it (their
     // medkits go in the squad's shared inventory, the player's; a fruit heals whoever eats it;
     // the test map's NPCs take nothing)
@@ -476,11 +480,9 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             // is told
             MEDKIT if who > 0 && player.medkits >= item.stack_limit => false,
             MEDKIT if player.medkits < item.stack_limit => {
-                // a first medkit: the item box shows it, NEW
-                if player.medkits == 0 {
-                    player.item = Item::Medkit;
-                    player.item_new = NEW_TIME;
-                }
+                // (the item box stays on its item: a pickup never selects nor shows NEW, #196
+                // take34 and #28 take08; with nothing selected the box takes the first stack,
+                // play_itembox.rs `settle`)
                 player.medkits = (player.medkits + item.amount.max(1)).min(item.stack_limit);
                 player.medkit_kind = if item.gives != 0 { item.gives } else { p.kind };
                 true
@@ -532,21 +534,31 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
     }
 }
 
-/// The use key (G) with the medkit selected: start using one (the game's "Use Health Pack"),
-/// or say why not.
-fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>) {
-    // test hook: BF_TEST_MEDKIT=<s> uses one at that time
+/// The use key (G) with a Medkit selected (the 80-point (5, 0) stack, or the 60-point (5, 2) one:
+/// an `Other` that heals): start using one (the game's "Use Health Pack"), or say why not, for
+/// the item messages' 3 s (play_itembox.rs MESSAGE_TIME). The Black button's shortcut presses it
+/// on the (5, 0) one (play_itembox.rs `item_controls`).
+fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>, game: Res<GameData>) {
+    // test hook: BF_TEST_MEDKIT=<s> uses one at that time (of the (5, 0) stack, whatever's
+    // selected)
     let test = std::env::var("BF_TEST_MEDKIT").ok().and_then(|v| v.parse::<f32>().ok())
         .is_some_and(|at| player.sim_time >= at && player.sim_time - at < 0.1 && !player.test_medkit_used);
-    let selected = player.item == Item::Medkit;
-    if !((player.item_use && selected) || test) || player.dead || player.using.is_some() {
+    let selected = match player.item {
+        Some(Item::Medkit) => Some(Item::Medkit),
+        Some(Item::Other(k)) if player.others.iter().any(|c| c.kind == k && c.heals) => Some(Item::Other(k)),
+        _ => None,
+    };
+    let stack = if test { Some(Item::Medkit) } else { selected.filter(|_| player.item_use) };
+    let Some(stack) = stack else { return };
+    if player.dead || player.using.is_some() {
         return;
     }
     player.test_medkit_used |= test;
-    if player.medkits <= 0 {
-        status.message = Some(("No Medkits".into(), MESSAGE_TIME));
+    let text = |id: u32, fallback: &str| game.0.strings.get(&id).cloned().unwrap_or_else(|| fallback.to_string());
+    if item_count(&player, stack) <= 0 {
+        status.message = Some((text(S_NO_MEDKITS, "No Medkits"), super::itembox::MESSAGE_TIME));
     } else if player.health >= player.max_health {
-        status.message = Some(("No need to heal".into(), MESSAGE_TIME));
+        status.message = Some((text(S_NO_NEED_TO_HEAL, "No need to heal"), super::itembox::MESSAGE_TIME));
     } else if player.reloading.is_none() && player.throwing.is_none() && player.switching.is_none() && player.skill.toggling.is_none()
         && !super::skills::overlays_blocked(&player) && super::skills::lets_act(&player) {
         // (not during a skill's toggle overlay, play_skills.rs: one overlay at a time is the
@@ -556,21 +568,35 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>) {
         // IOU_USE_IN_HAND, which FUN_001210c0 asks FUN_00117210 for, 0x121139, so not in Flint's
         // targeting, `skills::lets_act`; where the two lines above are posted isn't traced)
         player.using = Some(0.0);
+        player.use_stack = stack;
         // the item use's skill call as its overlay is queued (FUN_00121170 -> +0x104, the medkit's
         // IOU_USE_IN_HAND): a stealthed Hawk's 5 stamina
         super::skills::used_item(&mut player, super::skills::IOU_USE_IN_HAND);
     }
 }
 
-/// The use_item clip's use event: heal, the sound, now and then a "healed" line, and let the
-/// medkit go.
+/// The use_item clip's use event: one of the stack in use taken (`Player::use_stack`), heal by
+/// its type's h_0a811e94 (the 80-point Medkit's 80, the other's 60), the sound, now and then a
+/// "healed" line, and let the medkit go.
 fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<Player>, mut used: ResMut<UsedMedkit>,
                joints: Query<&GlobalTransform>) {
-    if !player.item_used || player.medkits <= 0 {
+    let stack = player.use_stack;
+    if !player.item_used || item_count(&player, stack) <= 0 {
         return;
     }
-    player.medkits -= 1;
-    let heal = game.0.items.get(&player.medkit_kind).map_or(60.0, |i| i.health);
+    let kind = match stack {
+        Item::Other(k) => {
+            if let Some(c) = player.others.iter_mut().find(|c| c.kind == k) {
+                c.count -= 1;
+            }
+            k
+        }
+        _ => {
+            player.medkits -= 1;
+            player.medkit_kind
+        }
+    };
+    let heal = game.0.items.get(&kind).map_or(60.0, |i| i.health);
     player.health = (player.health + heal).min(player.max_health);
     player.sound_queue.push((MEDKIT_SOUND, 1.0));
     // test hook: BF_TEST_HEALED=1 always says it
@@ -592,8 +618,8 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
         commands.entity(old).despawn();
     }
     if std::env::var("BF_PICKUP_LOG").is_ok() {
-        println!("used a medkit: health {:.0}/{:.0}, {} left; sound h_{MEDKIT_SOUND:08x} (in the bank: {}), healed line: {:?}, dropped at {hand:.2}",
-                 player.health, player.max_health, player.medkits, game.0.sounds.has(MEDKIT_SOUND), player.quote_in);
+        println!("used a medkit (h_{kind:08x}): health {:.0}/{:.0}, {} left; sound h_{MEDKIT_SOUND:08x} (in the bank: {}), healed line: {:?}, dropped at {hand:.2}",
+                 player.health, player.max_health, item_count(&player, stack), game.0.sounds.has(MEDKIT_SOUND), player.quote_in);
     }
 }
 

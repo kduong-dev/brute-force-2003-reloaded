@@ -80,7 +80,7 @@ fn test_drop(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, mut don
     let Some(times) = std::env::var("BF_TEST_DROP").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>())
         else { return };
     let Some(kits) = kits else { return };
-    let Item::Grenade(kind) = player.item else { return };
+    let Some(Item::Grenade(kind)) = player.item else { return };
     if *done < times.len() && player.sim_time >= times[*done] && kind < kits.0.len() {
         *done += 1;
         let (x, z) = (player.position.x, player.position.z);
