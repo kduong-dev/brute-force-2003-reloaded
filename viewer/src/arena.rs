@@ -829,6 +829,59 @@ impl Arena {
                        body: tri.body, breakable: tri.piece.filter(|p| !p.1).map(|p| p.0 as usize) })
     }
 
+    /// Every body a shot's ray meets within `max`, once each where it first meets it, nearest
+    /// first (`ShotHit`, by `ray_shot`'s filter): the multi-hit ray of an instant ray that passes
+    /// through what it hits (FUN_00230400 casts FUN_000dd8e0 with its list, which keeps one result
+    /// per body, sorted). Its filter leaves the liquids out too (its +0x110, 0x400000: object type
+    /// 22), as `solid` does every query's.
+    pub fn ray_shot_all(&self, origin: Vec3, dir: Vec3, max: f32) -> Vec<ShotHit> {
+        // the nearest crossing of each body's triangles (and whether it's met from the front)
+        let mut first: HashMap<u32, (f32, usize)> = HashMap::new();
+        let mut seen = HashSet::new();
+        let flat = Vec2::new(dir.x, dir.z).length();
+        let step = if flat > 1e-4 { (CELL * 0.5 / flat).min(max) } else { max };
+        let mut t = 0.0;
+        loop {
+            let p = origin + dir * t;
+            for &i in self.near(p.x, p.z) {
+                if !seen.insert(i) {
+                    continue;
+                }
+                let tri = &self.tris[i as usize];
+                if !self.solid(tri) || tri.blocker {
+                    continue;
+                }
+                let Some(d) = ray_triangle(&tri.v, origin, dir).filter(|&d| d > 1e-3 && d <= max) else { continue };
+                let e = first.entry(tri.body).or_insert((d, i as usize));
+                // (of a body's faces met within FRONT_SLACK of its nearest, the one met from its
+                // front: `ray_material`'s twins)
+                let front = |j: usize| (self.tris[j].v[1] - self.tris[j].v[0]).cross(self.tris[j].v[2] - self.tris[j].v[0]).dot(dir) < 0.0;
+                if d < e.0 - FRONT_SLACK || (d <= e.0 + FRONT_SLACK && front(i as usize) && !front(e.1)) {
+                    *e = (d.min(e.0), i as usize);
+                }
+            }
+            if t >= max {
+                break;
+            }
+            t = (t + step).min(max);
+        }
+        let mut out: Vec<ShotHit> = first.into_iter().map(|(body, (t, i))| {
+            let tri = &self.tris[i];
+            let n = (tri.v[1] - tri.v[0]).cross(tri.v[2] - tri.v[0]).normalize_or(Vec3::Y);
+            ShotHit { t, normal: if n.dot(dir) > 0.0 { -n } else { n }, material: tri.material & MATERIAL_ID, terrain: tri.terrain, body,
+                      breakable: tri.piece.filter(|p| !p.1).map(|p| p.0 as usize) }
+        }).collect();
+        // (the flat floor's ground, met from above)
+        if let Some(g) = self.flat.filter(|_| dir.y < -1e-4) {
+            let d = (g - origin.y) / dir.y;
+            if d > 1e-3 && d <= max {
+                out.push(ShotHit { t: d, normal: Vec3::Y, material: 0, terrain: true, body: FLAT_BODY, breakable: None });
+            }
+        }
+        out.sort_by(|a, b| a.t.total_cmp(&b.t));
+        out
+    }
+
     /// The solid triangles that meet the convex hull of `points` (`convex_meet`), and the flat
     /// floor's ground under them where the hull reaches down to it (a triangle of it round the
     /// hull): the follow camera's wedge test (play_camera.rs), where FUN_00152a50 gathers the
@@ -908,25 +961,7 @@ impl Arena {
                 if !self.solid(tri) || !keep(tri) {
                     continue;
                 }
-                // Moller-Trumbore, both sides
-                let (e1, e2) = (tri.v[1] - tri.v[0], tri.v[2] - tri.v[0]);
-                let pv = dir.cross(e2);
-                let det = e1.dot(pv);
-                if det.abs() < 1e-9 {
-                    continue;
-                }
-                let tv = origin - tri.v[0];
-                let u = tv.dot(pv) / det;
-                if !(0.0..=1.0).contains(&u) {
-                    continue;
-                }
-                let qv = tv.cross(e1);
-                let v = dir.dot(qv) / det;
-                if v < 0.0 || u + v > 1.0 {
-                    continue;
-                }
-                let d = e2.dot(qv) / det;
-                if d > 1e-3 && d < best {
+                if let Some(d) = ray_triangle(&tri.v, origin, dir).filter(|&d| d > 1e-3 && d < best) {
                     best = d;
                     hit = Some(Some(i as usize));
                 }
@@ -956,6 +991,28 @@ impl Arena {
             }
         }
     }
+}
+
+/// Where a ray (from `origin` along unit `dir`) crosses triangle `v`, met from either side
+/// (Moller-Trumbore): how far along, if it does.
+fn ray_triangle(v: &[Vec3; 3], origin: Vec3, dir: Vec3) -> Option<f32> {
+    let (e1, e2) = (v[1] - v[0], v[2] - v[0]);
+    let pv = dir.cross(e2);
+    let det = e1.dot(pv);
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    let tv = origin - v[0];
+    let u = tv.dot(pv) / det;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let qv = tv.cross(e1);
+    let w = dir.dot(qv) / det;
+    if w < 0.0 || u + w > 1.0 {
+        return None;
+    }
+    Some(e2.dot(qv) / det)
 }
 
 /// An archetype's collision triangles in its own frame (each part's surface, placed as the

@@ -12,7 +12,8 @@
 //!    (FUN_002324c0) over the speed; the damage roll made now (+0x20, FUN_0022c940: Damage
 //!    min..max, then the shooter's skill's factor, `skills::roll_factor`), with the shooter
 //!    (+0x48) and its team (+0x6c). Its last checked point (+0x70) is the muzzle and its sweep
-//!    counter (byte +3) the pool's reset's 3 (FUN_00225000).
+//!    counter (byte +3) the pool's reset's 3 (FUN_00225000). The bullet's h_1835f15e,
+//!    h_fe4f3035 and h_11caf57b become its bytes +1 and +2 and its flag 0x20 (#238, below).
 //!  - **Each game frame** (a 30 Hz tick, shots::TICK; FUN_00225220): its life runs down by the
 //!    frame's time, and once it's out the bolt goes where it is; then FUN_00225440 counts the
 //!    sweep counter down. Not yet 0, the bolt moves speed x dt along its way unchecked; at 0 the
@@ -21,22 +22,29 @@
 //!    checked point is where it is. Met: it's set back 0.1 % of the way from the hit toward the
 //!    last checked point (HIT_BACK), which is set there too, the body struck is gathered
 //!    (FUN_00224320, the hit part's factor asked for) and dealt in the same frame (FUN_00224770),
-//!    and it ends: the next frame takes it away (the flag 4 FUN_00225220 reads).
+//!    and it ends (the next frame takes it away, the flag 4 FUN_00225220 reads), passes through
+//!    it or bounces off it (`Bolt::after_hit`, #238).
 //!  - **What a sweep meets** (its filter, vtable 0x394848 with the mask 0xfffffff8: the bodies of
 //!    PID 0, 1 and 2, `Arena::ray_shot`): the terrain and the placed objects, a breakable among
 //!    them, but not the level's invisible blockers; a character's body (standing, play.rs's
 //!    `ray_body`; knocked down, play_missile.rs's `ray_lying`; a corpse, its ragdoll's bones,
-//!    `Ragdoll::first_bone`); a Sentry. Never its shooter: the filter holds the shooter's body
-//!    (+0x48's, at its +0x6c).
-//!  - **A hit** (the damage handler 0x22d0b0): a character takes the launch roll x the shooter's
-//!    skill x the struck hit part's factor (FUN_00125940), x0.7 on its own side, then its own
-//!    step and damage-type factor as it lands (play_damage.rs, through play.rs's
+//!    `Ragdoll::first_bone`); a Sentry. Never its shooter (the filter holds the shooter's body,
+//!    +0x48's at its +0x6c), nor what it last passed through (+0x40, for that one sweep).
+//!  - **A hit** (the damage handler 0x22d0b0, `deal`): a character takes the launch roll x the
+//!    shooter's skill x the struck hit part's factor (FUN_00125940), x0.7 on its own side, then
+//!    its own step and damage-type factor as it lands (play_damage.rs, through play.rs's
 //!    `land_player_shot` for the controlled character's bolts and `land_ai_shot` for the rest);
 //!    the world plays its material's hit effect, debris and sound with the launch roll as the
 //!    record (play.rs `world_hit`) and takes the bullet's hole (play_fx.rs); a breakable object
 //!    takes the roll (play_scenery.rs `ObjectHits`); a Sentry goes off (play_sentry.rs); a body on
 //!    the ground is shoved and bleeds (`Ragdoll::shove`). A liquid's surface it crosses splashes,
 //!    as an instant ray's does (play.rs `projectiles`), and it goes on to the bed.
+//!  - **Through, or off** (#238, `Bolt::after_hit`): with the pass flag it goes through an object
+//!    while n1 lasts and a character while n2 does, and stops at anything else (the terrain
+//!    always); without it, while n1 or n2 lasts, it bounces off what it hit, its way turned about
+//!    the surface's normal. The Ion Beamer passes through up to five objects and stops at the
+//!    first character; the cutters' blades bounce off up to five objects and stop on a character
+//!    or the terrain. Each thing it hits on the way is dealt its hit.
 //!
 //! The timing, measured on all eight bolt guns of weapons batch 1 (todo/57-jax-ic/spec.md §4: 7 m
 //! at 80 m/s 0.1 s in 16 of 16 hits, 25 m at 100 m/s 0.3 s in 12 of 12; the fire-to-hit sounds
@@ -54,15 +62,18 @@
 //!
 //! Before #136 the demo picked a bolt's hit at its shot (the body or the world on its line then)
 //! and landed it on the sweep that would reach it: a target that stepped out of the way was still
-//! hit, one that stepped in wasn't.
+//! hit, one that stepped in wasn't. Before #238 every bolt stopped at its first hit.
 //!
 //! FUN_00225220 also sets the flight effect's user parameter to life / start each frame
 //! (FUN_0021c380): no bolt's flight effect varies with it (every curve of the data's 22 has one
 //! variant), so it isn't kept. The bolt's flight voice (FUN_0022bac0's h_03dc7b9a pick) isn't
-//! played (answers-batch1.md §3: never heard in the takes).
+//! played (answers-batch1.md §3: never heard in the takes). A bolt that ends on a loose object
+//! pushes it (FUN_002b3bc0, the object's +0x26 bit 0x40): the demo's loose pickups are knocked by
+//! the sweeps' lines instead (`Sweeps`).
 //!
-//! `BF_SHOT_LOG=1` prints each bolt's launch (its roll, life and range), each sweep that meets
-//! something (what, how far from its last checked point, its tick and age) and its end.
+//! `BF_SHOT_LOG=1` prints each bolt's launch (its roll, life, range and hit counts), each sweep
+//! that meets something (what, how far from its last checked point, its game frame, and whether
+//! it goes on through it or off it) and its end.
 
 use super::*;
 use super::damage::{self, Difficulty};
@@ -103,6 +114,15 @@ pub(super) struct Bolt {
     /// on it
     roll: f32,
     skill: f32,
+    /// the hits it goes on after (#238, `after_hit`): byte +1 (n1, the bullet's h_1835f15e,
+    /// `ShotData::object_hits`) and byte +2 (n2, h_fe4f3035, `ShotData::character_hits`), each
+    /// the low byte of the int FUN_0022bac0 copies; and its flag 0x20 (h_11caf57b,
+    /// `ShotData::pass_through`): it passes through, else it bounces
+    n1: u8,
+    n2: u8,
+    pass: bool,
+    /// what it last passed through (+0x40): its next sweep leaves it out, and only that one
+    skip: Option<Struck>,
     /// game time not yet run in ticks (s)
     clock: f32,
     /// game frames flown since its launch (BF_SHOT_LOG)
@@ -119,6 +139,29 @@ enum Advance {
     /// its sweep is due: from its last checked point, over this far, this frame's step (the move
     /// it makes if the sweep meets nothing)
     Sweep { from: Vec3, len: f32, step: f32 },
+}
+
+/// What a hit is to the rules after it (`Bolt::after_hit`, play_rays.rs's budgets): the ray
+/// result's kind (FUN_000dd8e0) and the object's type. The terrain (kind 1, no object); a game
+/// object that isn't a character (kind 2 of an object's body: the placed objects, a broken one's
+/// remains, a Sentry; the test floor's pillars, the demo's); a character (kind 2 of a bone body,
+/// object type 3: standing, lying or dead).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Terrain,
+    Object,
+    Character,
+}
+
+/// What came of a bolt's hit (`Bolt::after_hit`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Outcome {
+    /// the bolt ends there (flag 4)
+    Ends,
+    /// it goes on through it, leaving it out of its next sweep
+    Passes,
+    /// it goes on off it, turned about the surface's normal
+    Bounces,
 }
 
 impl Bolt {
@@ -141,6 +184,40 @@ impl Bolt {
         self.counter = SWEEP_TICKS;
         Advance::Sweep { from: self.last, len: self.pos.distance(self.last) + step, step }
     }
+
+    /// FUN_00225440 after a sweep's hit `id` of `kind` (its surface's `normal`), once the hit is
+    /// gathered (#238):
+    ///  - With the pass flag (0x20): an object while n1 is left takes one off it, a character
+    ///    while n2 is left one off that, and the bolt goes on through it, leaving it out of its
+    ///    next sweep (+0x40, the object's handle); anything else ends it, the terrain always.
+    ///  - Without it, while either count is left: an object takes one off n1, or off n2 when n1 is
+    ///    out; anything else (the terrain, a character) one off n2; and the bolt's way is turned
+    ///    about the surface's normal (d - 2 (d.n) n, the ray result's normal). With the count it
+    ///    would take at 0 it ends.
+    ///
+    /// The Ion Beamer (pass, n1 5, n2 0) goes through up to five objects and stops at the first
+    /// character or the terrain; the cutters (n1 5, n2 0) bounce off up to five objects and stop
+    /// on a character or the terrain; every other bolt (0, 0) ends at its first hit.
+    fn after_hit(&mut self, kind: Kind, id: Struck, normal: Vec3) -> Outcome {
+        if self.pass {
+            match kind {
+                Kind::Object if self.n1 > 0 => self.n1 -= 1,
+                Kind::Character if self.n2 > 0 => self.n2 -= 1,
+                _ => return Outcome::Ends,
+            }
+            self.skip = Some(id);
+            return Outcome::Passes;
+        }
+        if kind == Kind::Object && self.n1 > 0 {
+            self.n1 -= 1;
+        } else if self.n2 > 0 {
+            self.n2 -= 1;
+        } else {
+            return Outcome::Ends;
+        }
+        self.dir = (self.dir - 2.0 * self.dir.dot(normal) * normal).normalize_or(-self.dir);
+        Outcome::Bounces
+    }
 }
 
 /// The bolts' shared state: the next number.
@@ -150,9 +227,15 @@ struct BoltState {
 }
 
 /// This frame's sweeps (from the last checked point, along the bolt's way, as far as what it
-/// met): the loose pickups they pass are knocked as by a shot's line (play_pickups.rs `physics`).
+/// met) and pass-through rays' lines (play_rays.rs): the loose pickups they pass are knocked as by
+/// a shot's line (play_pickups.rs `physics`).
 #[derive(Resource, Default)]
 pub(super) struct Sweeps(pub Vec<(Vec3, Vec3, f32)>);
+
+/// The bolts' systems (`plugin`): play_rays.rs's runs after them (`Sweeps` is started afresh in
+/// `fly_bolts`).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BoltSystems;
 
 /// The systems, after the characters have moved and fired (`update_player`): the bolts in flight,
 /// then this frame's new ones (a bolt is drawn at the muzzle in its shot's frame and flies from
@@ -165,24 +248,27 @@ pub fn plugin(app: &mut App) {
             *state = BoltState::default();
             sweeps.0.clear();
         })
-        .add_systems(Update, (fly_bolts, launch_bolts).chain()
+        .add_systems(Update, (fly_bolts, launch_bolts).chain().in_set(BoltSystems)
             .after(update_player).before(super::grenade::GrenadeSystems).before(super::pickups::PickupSystems)
             .before(super::fx::FxSystems).before(play_sounds).run_if(in_state(AppState::Playing)));
 }
 
-/// What a sweep met first: how far along it, and what.
+/// What a sweep (or a pass-through ray, play_rays.rs) met: how far along, what, which body it
+/// is, and its surface's normal (facing back along the line).
 #[derive(Clone, Copy, Debug)]
-struct Met {
-    t: f32,
-    what: What,
+pub(super) struct Met {
+    pub t: f32,
+    pub what: What,
+    pub id: Struck,
+    pub normal: Vec3,
 }
 
-/// What a sweep can meet (see the module notes).
+/// What a sweep or a pass-through ray can meet (see the module notes).
 #[derive(Clone, Copy, Debug)]
-enum What {
-    /// the world: the struck surface's normal (facing back along the sweep), its world material,
-    /// whether it's the terrain, and the breakable object it is, if one
-    World { normal: Vec3, material: i64, terrain: bool, breakable: Option<usize> },
+pub(super) enum What {
+    /// the world: its world material, whether it's the terrain, and the breakable object it is,
+    /// if one
+    World { material: i64, terrain: bool, breakable: Option<usize> },
     /// a character standing, or knocked down
     Body(Who),
     /// a corpse (its ragdoll)
@@ -191,34 +277,46 @@ enum What {
     Mine(Entity),
 }
 
-/// What the world holds on a sweep's line within `len` m of `from` (`What::World`): the map's
-/// collision less its blockers (`Arena::ray_shot`, with its world material, `ray_material`'s
-/// front-face rule); on the flat test floor its ground, a pillar's box and a breakable the test
-/// tools put down (as play.rs's `ray_hit` and play_shots.rs's `hit_normal` meet them), and the
-/// pieces of scenery they put on it (the floor's arena). The test floor's pillars count as
-/// objects: the demo's.
-fn world_met(from: Vec3, dir: Vec3, len: f32) -> Option<Met> {
-    let arena = world::arena();
-    let shot = arena.as_ref().and_then(|a| a.ray_shot(from, dir, len, None))
-        .map(|h| Met { t: h.t, what: What::World { normal: h.normal, material: h.material as i64, terrain: h.terrain, breakable: h.breakable } });
-    if arena.as_ref().is_some_and(|a| !a.is_flat()) {
-        return shot;
-    }
-    // the flat test floor: its ground (no arena: the plane at GROUND), its pillars, its placed
-    // breakables' boxes
-    let mut best = shot;
-    let mut take = |m: Met| {
-        if best.is_none_or(|b| m.t < b.t) {
-            best = Some(m);
+impl What {
+    /// What it is to the hit rules (`Kind`).
+    pub(super) fn kind(&self) -> Kind {
+        match self {
+            What::World { terrain: true, .. } => Kind::Terrain,
+            What::World { .. } | What::Mine(_) => Kind::Object,
+            What::Body(_) | What::Corpse(_) => Kind::Character,
         }
-    };
-    if arena.is_none() && dir.y < -1e-4 {
+    }
+}
+
+/// One thing a sweep or a ray can meet, by its body (the game's ray results come one per body,
+/// FUN_000dd8e0, and a bolt leaves out the one it last passed through, +0x40).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Struck {
+    /// a body of the map's collision (`Arena::ray_shot`'s, `Tri::body`)
+    Body(u32),
+    /// one of the flat test floor's pillars (its number in `pillars`)
+    Pillar(usize),
+    /// a breakable the test tools put down without collision (its scenery list index)
+    Placed(usize),
+    /// a character
+    Unit(Who),
+    /// a Sentry mine
+    Mine(Entity),
+}
+
+/// The flat test floor's own things a line from `from` along `dir` meets within `len` m, but
+/// `skip`: its ground (with no arena, the plane at GROUND), its pillars' boxes and the boxes of
+/// the breakables the test tools put down, as play.rs's `ray_hit` and play_shots.rs's
+/// `hit_normal` meet them. The pillars count as objects: the demo's.
+fn floor_met(from: Vec3, dir: Vec3, len: f32, skip: Option<Struck>, ground: bool) -> Vec<Met> {
+    let mut out = vec![];
+    if ground && dir.y < -1e-4 {
         let t = (GROUND - from.y) / dir.y;
         if t > 1e-3 && t <= len {
-            take(Met { t, what: What::World { normal: Vec3::Y, material: 0, terrain: true, breakable: None } });
+            out.push(Met { t, what: What::World { material: 0, terrain: true, breakable: None }, id: Struck::Body(world::FLAT_BODY), normal: Vec3::Y });
         }
     }
-    for c in pillars() {
+    for (i, c) in pillars().enumerate().filter(|&(i, _)| skip != Some(Struck::Pillar(i))) {
         let (lo, hi) = (c - Vec3::new(0.3, 1.5, 0.3), c + Vec3::new(0.3, 1.5, 0.3));
         let Some(t) = ray_aabb(from, dir, lo, hi).filter(|&t| t <= len) else { continue };
         let at = from + dir * t;
@@ -226,12 +324,44 @@ fn world_met(from: Vec3, dir: Vec3, len: f32) -> Option<Met> {
         let k = if d.x.abs() >= d.y.abs().max(d.z.abs()) { 0 } else if d.y.abs() >= d.z.abs() { 1 } else { 2 };
         let mut n = Vec3::ZERO;
         n[k] = d[k].signum();
-        take(Met { t, what: What::World { normal: n, material: 0, terrain: false, breakable: None } });
+        out.push(Met { t, what: What::World { material: 0, terrain: false, breakable: None }, id: Struck::Pillar(i), normal: n });
     }
-    if let Some((t, i)) = super::scenery::ray_placed_hit(from, dir, len) {
-        take(Met { t, what: What::World { normal: -dir, material: 0, terrain: false, breakable: Some(i) } });
+    let skip_placed = match skip { Some(Struck::Placed(b)) => Some(b), _ => None };
+    for (t, i) in super::scenery::rays_placed(from, dir, len).into_iter().filter(|&(_, i)| Some(i) != skip_placed) {
+        out.push(Met { t, what: What::World { material: 0, terrain: false, breakable: Some(i) }, id: Struck::Placed(i), normal: -dir });
     }
-    best
+    out
+}
+
+/// A body of the map's collision a shot's ray met (`Arena::ray_shot`), as a `Met`.
+pub(super) fn arena_met(h: world::ShotHit) -> Met {
+    Met { t: h.t, what: What::World { material: h.material as i64, terrain: h.terrain, breakable: h.breakable }, id: Struck::Body(h.body), normal: h.normal }
+}
+
+/// What the world holds first on a sweep's line within `len` m of `from` (`What::World`), but
+/// `skip`: the map's collision less its blockers (`Arena::ray_shot`, with its world material,
+/// `ray_material`'s front-face rule); on the flat test floor its own things (`floor_met`) and the
+/// pieces of scenery the test tools put on it (the floor's arena).
+fn world_met(from: Vec3, dir: Vec3, len: f32, skip: Option<Struck>) -> Option<Met> {
+    let arena = world::arena();
+    let skip_body = match skip { Some(Struck::Body(b)) => Some(b), _ => None };
+    let shot = arena.as_ref().and_then(|a| a.ray_shot(from, dir, len, skip_body)).map(arena_met);
+    if arena.as_ref().is_some_and(|a| !a.is_flat()) {
+        return shot;
+    }
+    shot.into_iter().chain(floor_met(from, dir, len, skip, arena.is_none())).min_by(|a, b| a.t.total_cmp(&b.t))
+}
+
+/// Every body of the world a pass-through ray's line meets within `len` m of `from`, once each,
+/// nearest first (play_rays.rs; `Arena::ray_shot_all`, and the flat test floor's own things).
+pub(super) fn world_all(from: Vec3, dir: Vec3, len: f32) -> Vec<Met> {
+    let arena = world::arena();
+    let mut out: Vec<Met> = arena.as_ref().map(|a| a.ray_shot_all(from, dir, len).into_iter().map(arena_met).collect()).unwrap_or_default();
+    if arena.as_ref().is_none_or(|a| a.is_flat()) {
+        out.extend(floor_met(from, dir, len, None, arena.is_none()));
+    }
+    out.sort_by(|a, b| a.t.total_cmp(&b.t));
+    out
 }
 
 /// Where a ray (from `origin` along unit `dir`) enters the box `lo`..`hi`, if it does ahead of
@@ -252,42 +382,56 @@ fn ray_aabb(origin: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
     (t0 <= t1 && t0 > 0.0).then_some(t0)
 }
 
-/// What a bolt's sweep meets first (see the module notes): from `from` along `dir` within `len`
-/// m, the world (`world_met`), every character but its shooter `owner` and one out of the world
-/// (`Player::absent`), and the Sentries.
-fn sweep(from: Vec3, dir: Vec3, len: f32, owner: Who, units: &[&Player], mines: &super::sentry::MineTargets) -> Option<Met> {
-    let mut best = world_met(from, dir, len);
-    let mut take = |m: Met| {
-        if best.is_none_or(|b| m.t < b.t) {
-            best = Some(m);
-        }
-    };
-    for u in units.iter().filter(|u| u.who() != owner && !u.absent) {
+/// The characters (and their bodies on the ground) and the Sentries a line from `from` along
+/// `dir` meets within `len` m, each once, but its shooter `owner`, one out of the world
+/// (`Player::absent`) and `skip`: standing, the cylinder (`ray_body`), its normal out from the
+/// axis; knocked down, its ragdoll's bones (play_missile.rs's `ray_lying`); dead, its ragdoll
+/// (`Ragdoll::first_bone`); a Sentry, its sphere (`MineTargets::first_on`). The lying, the dead
+/// and the Sentries are met with the normal straight back along the line: the demo's (no bolt
+/// bounces off them: none has the character count, and a Sentry a cutter's blade meets goes off).
+pub(super) fn units_met(from: Vec3, dir: Vec3, len: f32, owner: Who, skip: Option<Struck>, units: &[&Player],
+                        mines: &super::sentry::MineTargets) -> Vec<Met> {
+    let mut out = vec![];
+    for u in units.iter().filter(|u| u.who() != owner && !u.absent && skip != Some(Struck::Unit(u.who()))) {
+        let id = Struck::Unit(u.who());
         if u.dead {
             if let Some((t, _)) = u.ragdoll.as_ref().and_then(|r| r.first_bone(from, dir, len)).filter(|&(t, _)| t <= len) {
-                take(Met { t, what: What::Corpse(u.who()) });
+                out.push(Met { t, what: What::Corpse(u.who()), id, normal: -dir });
             }
             continue;
         }
-        let t = if knocked_down(u) { super::missile::ray_lying(from, dir, u, len) } else { ray_body(from, dir, u, len) };
-        if let Some(t) = t {
-            take(Met { t, what: What::Body(u.who()) });
+        if knocked_down(u) {
+            if let Some(t) = super::missile::ray_lying(from, dir, u, len) {
+                out.push(Met { t, what: What::Body(u.who()), id, normal: -dir });
+            }
+        } else if let Some(t) = ray_body(from, dir, u, len) {
+            let at = from + dir * t;
+            let normal = Vec3::new(at.x - u.position.x, 0.0, at.z - u.position.z).normalize_or(-dir);
+            out.push(Met { t, what: What::Body(u.who()), id, normal });
         }
     }
-    if let Some((e, t)) = mines.first_on(from, dir, len) {
-        take(Met { t, what: What::Mine(e) });
-    }
-    best
+    out.extend(mines.all_on(from, dir, len).into_iter().filter(|&(e, _)| skip != Some(Struck::Mine(e)))
+        .map(|(e, t)| Met { t, what: What::Mine(e), id: Struck::Mine(e), normal: -dir }));
+    out
+}
+
+/// What a bolt's sweep meets first (see the module notes): from `from` along `dir` within `len`
+/// m, the world (`world_met`) and the characters and Sentries (`units_met`), but `skip`, the
+/// thing it last passed through.
+fn sweep(from: Vec3, dir: Vec3, len: f32, owner: Who, skip: Option<Struck>, units: &[&Player], mines: &super::sentry::MineTargets) -> Option<Met> {
+    world_met(from, dir, len, skip).into_iter().chain(units_met(from, dir, len, owner, skip, units, mines))
+        .min_by(|a, b| a.t.total_cmp(&b.t))
 }
 
 /// A character's name for the log (BF_SHOT_LOG).
-fn name(u: &Player) -> String {
+pub(super) fn name(u: &Player) -> String {
     format!("{}{}", unit_name(u), u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)))
 }
 
 /// The bolts in flight, a 30 Hz game frame at a time (shots::TICK; FUN_00225220 ->
-/// FUN_00225440): their lives, moves and sweeps, and what each sweep meets dealt then (see the
-/// module notes). A bolt that meets something, or whose life is out, goes this frame.
+/// FUN_00225440): their lives, moves and sweeps, what each sweep meets dealt then, and whether the
+/// bolt goes on through it or off it (see the module notes). A bolt that ends, on a hit or with
+/// its life, goes this frame.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn fly_bolts(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut game: ResMut<GameData>,
              mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
@@ -318,9 +462,11 @@ fn fly_bolts(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>
                 Advance::Sweep { from, len, step } => (from, len, step),
             };
             let dir = b.dir;
+            // (what it last passed through is left out of this sweep only)
+            let skip = b.skip.take();
             let met = {
                 let units: Vec<&Player> = std::iter::once(&*player).chain(squad.0.iter()).collect();
-                sweep(from, dir, len, b.owner, &units, &mines)
+                sweep(from, dir, len, b.owner, skip, &units, &mines)
             };
             let reach = met.map_or(len, |m| m.t);
             sweeps.0.push((from, dir, reach));
@@ -343,17 +489,31 @@ fn fly_bolts(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>
             b.pos = at - (at - from) * HIT_BACK;
             b.last = b.pos;
             let now = player.sim_time;
-            let record = b.roll * b.skill;
-            let what = deal(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, &b, met, from, dir,
-                            &mut player, &mut squad, &mut chance, &mut holes, &mut mines, &mut objects, &difficulty, listener, instant_kill, record);
+            let strike = Strike { shot: &b.shot, owner: b.owner, team: b.team, human: b.human, roll: b.roll, skill: b.skill, falloff: 1.0 };
+            let what = deal(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, &strike, met, from, dir,
+                            &mut player, &mut squad, &mut chance, &mut holes, &mut mines, &mut objects, &difficulty, listener, instant_kill);
+            let outcome = b.after_hit(met.what.kind(), met.id, met.normal);
             if log {
                 // (a level blocker its sweep passed, which a shot met before #136)
                 let blocker = world::arena().and_then(|a| a.ray(from, dir, met.t)).filter(|&t| t < met.t - 1e-3)
                     .map_or(String::new(), |t| format!(" (past a level blocker {t:.2} m on)"));
-                println!("t={now:.2} bolt {} sweep at game frame {} ({:.2} s): {what} {:.1} m on from its last checked point {:.1} m out{blocker}", b.id, b.ticks,
-                         b.ticks as f32 * shots::TICK, met.t, at.distance(b.shot.origin));
+                let next = match outcome {
+                    Outcome::Ends => String::new(),
+                    Outcome::Passes => format!("; passes through it (n1 {} n2 {} left)", b.n1, b.n2),
+                    Outcome::Bounces => format!("; bounces off it along {:.3} (n1 {} n2 {} left)", b.dir, b.n1, b.n2),
+                };
+                println!("t={now:.2} bolt {} sweep at game frame {} ({:.2} s): {what} {:.1} m on from its last checked point {:.1} m out{blocker}{next}", b.id,
+                         b.ticks, b.ticks as f32 * shots::TICK, met.t, at.distance(b.shot.origin));
             }
-            gone = true;
+            match outcome {
+                Outcome::Ends => gone = true,
+                // (turned along its new way: its flight effect rides it)
+                Outcome::Bounces => {
+                    let way = b.dir;
+                    tr.look_to(way, Vec3::Y);
+                }
+                Outcome::Passes => {}
+            }
         }
         if gone {
             commands.entity(e).despawn();
@@ -365,24 +525,40 @@ fn fly_bolts(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>
     }
 }
 
-/// A sweep's hit `met` dealt (the damage handler 0x22d0b0, see the module notes); what it was,
-/// for the log.
+/// One hit to deal through the damage handler 0x22d0b0 (`deal`): the shot that made it, who fired
+/// it (their team, and whether the controlled character), the hit record's roll and the shooter's
+/// skill's factor on it, and an instant ray's falloff over its range (1 for a bolt).
+pub(super) struct Strike<'a> {
+    pub shot: &'a Shot,
+    pub owner: Who,
+    pub team: u8,
+    pub human: bool,
+    pub roll: f32,
+    pub skill: f32,
+    pub falloff: f32,
+}
+
+/// A hit `met` on a line from `from` along `dir` dealt (the damage handler 0x22d0b0, see the
+/// module notes): a bolt's on its sweep, a pass-through ray's at its shot (play_rays.rs). What it
+/// was, for the log.
 #[allow(clippy::too_many_arguments)]
-fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
-        materials: &mut Assets<StandardMaterial>, b: &Bolt, met: Met, from: Vec3, dir: Vec3, player: &mut Player, squad: &mut Squad,
-        chance: &mut GameRandom, holes: &mut super::fx::HoleRequests, mines: &mut super::sentry::MineTargets,
-        objects: &mut super::scenery::ObjectHits, difficulty: &Difficulty, listener: Option<Vec3>, instant_kill: bool, record: f32) -> String {
-    let s = &b.shot;
+pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
+                   materials: &mut Assets<StandardMaterial>, k: &Strike, met: Met, from: Vec3, dir: Vec3, player: &mut Player, squad: &mut Squad,
+                   chance: &mut GameRandom, holes: &mut super::fx::HoleRequests, mines: &mut super::sentry::MineTargets,
+                   objects: &mut super::scenery::ObjectHits, difficulty: &Difficulty, listener: Option<Vec3>, instant_kill: bool) -> String {
+    let s = k.shot;
     let at = from + dir * met.t;
     let now = player.sim_time;
+    // (the record: the roll x the shooter's skill x the falloff; a character's adds its part)
+    let record = k.roll * k.skill * k.falloff;
     match met.what {
-        What::World { normal, material, terrain, breakable } => {
-            // the bullet's hole, the material's hit effect, debris and sound (the launch roll as
-            // the record), a breakable object's damage
+        What::World { material, terrain, breakable } => {
+            // the bullet's hole, the material's hit effect, debris and sound, a breakable
+            // object's damage
             if s.decal != 0 {
-                holes.0.push((s.decal, at, normal));
+                holes.0.push((s.decal, at, met.normal));
             }
-            let hit = Shot { origin: from, dir, dist: met.t, hit: true, normal, ..*s };
+            let hit = Shot { origin: from, dir, dist: met.t, hit: true, normal: met.normal, ..*s };
             if let Some(ale) = ale {
                 world_hit(commands, game, ale, images, materials, &hit, at, chance, listener, player, Some((record, material)));
             }
@@ -396,19 +572,19 @@ fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::al
             let Some((u, controlled)) = unit_mut(player, squad, who) else { return "hits a body that's gone".into() };
             // the struck part (FUN_00224320 asks FUN_00125940), x0.7 on the shooter's own side
             let bone = damage::struck_bone(u, game, from, dir, met.t);
-            let hit = damage::Hit::new(b.roll, "roll", s.damage_type).skill(b.skill).by(b.owner, b.team, u).struck(u, game, bone);
+            let hit = damage::Hit::new(k.roll, "roll", s.damage_type).skill(k.skill).by(k.owner, k.team, u).falloff(k.falloff).struck(u, game, bone);
             let landing = PendingHit { delay: 0.0, member: 0, hit, dir, local: at - u.position, ammo: s.ammo };
             let lying = knocked_down(u);
             // (the player's shot's rules on anyone but the controlled character: control may have
             // passed while it flew)
-            if b.human && !controlled {
+            if k.human && !controlled {
                 land_player_shot(u, &landing, game, difficulty, now, instant_kill);
             } else {
                 land_ai_shot(u, &landing, game, difficulty, now);
             }
             // (one knocked down is shoved too, as a shot's line shoves it, play.rs)
-            if let Some(k) = u.knock.as_mut() {
-                k.ragdoll.shove(from, dir, met.t);
+            if let Some(kd) = u.knock.as_mut() {
+                kd.ragdoll.shove(from, dir, met.t);
             }
             format!("hits {}{}", name(u), if lying { " (knocked down)" } else { "" })
         }
@@ -429,7 +605,8 @@ fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::al
 
 /// This frame's bolts launched (FUN_0022bac0): each shooter's new shots of a bolt gun become bolts
 /// at the muzzle with their flight effect riding on them (play.rs `start_flight`), their damage
-/// roll made now (GameRandom, FUN_0022c940's draw) with the shooter's skill's factor.
+/// roll made now (GameRandom, FUN_0022c940's draw) with the shooter's skill's factor, and their
+/// bullet's hit counts and pass flag (#238).
 #[allow(clippy::too_many_arguments)]
 fn launch_bolts(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut game: ResMut<GameData>,
                 mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut images: ResMut<Assets<Image>>,
@@ -444,12 +621,15 @@ fn launch_bolts(mut commands: Commands, mut player: ResMut<Player>, mut squad: R
             let skill = skills::roll_factor(u);
             let speed = s.speed.max(1.0);
             let life = s.range / speed;
+            // (FUN_0022bac0 copies the ints' low bytes: pbVar2[1] = type+0x23c, [2] = +0x240)
+            let data = game.0.weapons.get(&s.weapon).map(|d| d.shots.clone()).unwrap_or_default();
+            let (n1, n2) = (data.object_hits as u8, data.character_hits as u8);
             state.next += 1;
             let b = Bolt { shot: s, id: state.next, owner: u.who(), team: u.team, human: k == 0, pos: s.origin, dir: s.dir, speed, life,
-                           counter: SWEEP_TICKS, last: s.origin, roll, skill, clock: 0.0, ticks: 0 };
+                           counter: SWEEP_TICKS, last: s.origin, roll, skill, n1, n2, pass: data.pass_through, skip: None, clock: 0.0, ticks: 0 };
             if log {
-                println!("t={now:.2} bolt {} launched by {} from {:.2} along {:.3} at {speed} m/s: roll {roll:.2} x skill {skill:.2}, life {life:.3} s (range {:.1} m)",
-                         b.id, name(u), s.origin, s.dir, s.range);
+                println!("t={now:.2} bolt {} launched by {} from {:.2} along {:.3} at {speed} m/s: roll {roll:.2} x skill {skill:.2}, life {life:.3} s (range {:.1} m), n1 {n1} n2 {n2}{}",
+                         b.id, name(u), s.origin, s.dir, s.range, if b.pass { " passing through" } else { "" });
             }
             let e = commands.spawn((Transform::from_translation(s.origin).looking_to(s.dir, Vec3::Y), Visibility::default(), b, Name::new("bolt"))).id();
             // (its flight effect's seed: a draw of the shots' random state)
@@ -466,12 +646,12 @@ mod tests {
     use super::*;
 
     /// A bolt as `launch_bolts` makes one: `speed` m/s along -z from the origin, its life `range`
-    /// / `speed`.
-    fn bolt(speed: f32, range: f32) -> Bolt {
+    /// / `speed`, the hit counts `n1`, `n2` and the pass flag.
+    fn bolt(speed: f32, range: f32, n1: u8, n2: u8, pass: bool) -> Bolt {
         let shot = Shot { weapon: 0, origin: Vec3::ZERO, dir: Vec3::NEG_Z, dist: range, hit: false, speed, flight: 0, hit_fx: 0, damage: [1.0, 2.0],
-                          damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, falloff: 0, range, bolt: true, body: false };
+                          damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, falloff: 0, range, bolt: true, body: false, pass: false };
         Bolt { shot, id: 1, owner: Who::Squad(3), team: 0, human: true, pos: Vec3::ZERO, dir: Vec3::NEG_Z, speed, life: range / speed,
-               counter: SWEEP_TICKS, last: Vec3::ZERO, roll: 1.0, skill: 1.0, clock: 0.0, ticks: 0 }
+               counter: SWEEP_TICKS, last: Vec3::ZERO, roll: 1.0, skill: 1.0, n1, n2, pass, skip: None, clock: 0.0, ticks: 0 }
     }
 
     /// The game frames a bolt that meets nothing sweeps on, each sweep's start (m from the
@@ -497,7 +677,7 @@ mod tests {
     /// with no sweep past frame 21's, which reaches 56 m (FUN_00225220 / FUN_00225440).
     #[test]
     fn sweeps_every_third_frame_until_its_life_is_out() {
-        let (sweeps, end) = flight(&mut bolt(80.0, 60.0));
+        let (sweeps, end) = flight(&mut bolt(80.0, 60.0, 0, 0, false));
         assert_eq!(end, 23);
         assert_eq!(sweeps.iter().map(|s| s.0).collect::<Vec<_>>(), vec![3, 6, 9, 12, 15, 18, 21]);
         for (k, &(_, from, len)) in sweeps.iter().enumerate() {
@@ -510,7 +690,52 @@ mod tests {
     /// m at 100 m/s, 24 frames, its last sweep on frame 21.
     #[test]
     fn a_whole_frames_life_ends_on_its_last_frame() {
-        let (sweeps, end) = flight(&mut bolt(100.0, 80.0));
+        let (sweeps, end) = flight(&mut bolt(100.0, 80.0, 0, 0, false));
         assert_eq!((end, sweeps.last().map(|s| s.0)), (24, Some(21)));
+    }
+
+    /// #238: a cutter's blade (n1 5, n2 0, no pass) bounces off five objects, its way turned
+    /// about each normal, and ends on the sixth; it ends on the terrain and on a character at
+    /// once; a bolt with no counts ends at its first hit.
+    #[test]
+    fn a_cutters_blade_bounces_off_five_objects() {
+        let mut b = bolt(120.0, 75.0, 5, 0, false);
+        let wall = Vec3::new(0.0, 0.0, 1.0);
+        for k in 0..5 {
+            b.dir = Vec3::new(0.6, 0.0, -0.8);
+            assert_eq!(b.after_hit(Kind::Object, Struck::Body(7), wall), Outcome::Bounces, "bounce {k}");
+            assert!((b.dir - Vec3::new(0.6, 0.0, 0.8)).length() < 1e-5, "turned about the normal: {:?}", b.dir);
+            assert_eq!(b.skip, None);
+        }
+        assert_eq!(b.after_hit(Kind::Object, Struck::Body(7), wall), Outcome::Ends);
+        assert_eq!(bolt(120.0, 75.0, 5, 0, false).after_hit(Kind::Terrain, Struck::Body(0), wall), Outcome::Ends);
+        assert_eq!(bolt(120.0, 75.0, 5, 0, false).after_hit(Kind::Character, Struck::Unit(Who::Squad(0)), wall), Outcome::Ends);
+        assert_eq!(bolt(80.0, 60.0, 0, 0, false).after_hit(Kind::Object, Struck::Body(7), wall), Outcome::Ends);
+    }
+
+    /// #238: without the pass flag a hit on an object with n1 out takes n2 instead (FUN_00225440
+    /// at 0x225b0a), and the terrain and a character take n2.
+    #[test]
+    fn a_bounce_takes_n2_once_n1_is_out() {
+        let mut b = bolt(100.0, 80.0, 0, 2, false);
+        assert_eq!(b.after_hit(Kind::Object, Struck::Body(3), Vec3::Z), Outcome::Bounces);
+        assert_eq!(b.after_hit(Kind::Terrain, Struck::Body(1), Vec3::Y), Outcome::Bounces);
+        assert_eq!((b.n1, b.n2), (0, 0));
+        assert_eq!(b.after_hit(Kind::Character, Struck::Unit(Who::Squad(1)), Vec3::Z), Outcome::Ends);
+    }
+
+    /// #238: the Ion Beamer's bolt (pass, n1 5, n2 0) passes through five objects, each left out
+    /// of the next sweep, and stops at the sixth, at a character and at the terrain.
+    #[test]
+    fn the_ion_beamers_bolt_passes_through_five_objects() {
+        let mut b = bolt(100.0, 90.0, 5, 0, true);
+        for k in 0..5u32 {
+            assert_eq!(b.after_hit(Kind::Object, Struck::Body(k), Vec3::Z), Outcome::Passes);
+            assert_eq!(b.skip, Some(Struck::Body(k)));
+            assert_eq!(b.dir, Vec3::NEG_Z, "it keeps its way");
+        }
+        assert_eq!(b.after_hit(Kind::Object, Struck::Body(9), Vec3::Z), Outcome::Ends);
+        assert_eq!(bolt(100.0, 90.0, 5, 0, true).after_hit(Kind::Character, Struck::Unit(Who::Squad(2)), Vec3::Z), Outcome::Ends);
+        assert_eq!(bolt(100.0, 90.0, 5, 0, true).after_hit(Kind::Terrain, Struck::Body(0), Vec3::Y), Outcome::Ends);
     }
 }

@@ -397,14 +397,15 @@ pub(super) fn counts(scenery: &Scenery) -> (usize, usize) {
 /// How far along a ray (from `origin` along unit `dir`) it meets a placed breakable's box
 /// (`PLACED_BOXES`) within `max`, if it does.
 pub(super) fn ray_placed(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
-    ray_placed_hit(origin, dir, max).map(|(t, _)| t)
+    rays_placed(origin, dir, max).into_iter().map(|(t, _)| t).min_by(|a, b| a.total_cmp(b))
 }
 
-/// `ray_placed`, with the breakable it meets (its list index, as `ObjectHit::target` takes it):
-/// a bolt's sweep strikes it there (play_bolts.rs).
-pub(super) fn ray_placed_hit(origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, usize)> {
+/// Every placed breakable's box a ray (from `origin` along unit `dir`) meets within `max`, how far
+/// along, with the breakable (its list index, as `ObjectHit::target` takes it): a bolt's sweep and
+/// a pass-through ray strike them there (play_bolts.rs, play_rays.rs).
+pub(super) fn rays_placed(origin: Vec3, dir: Vec3, max: f32) -> Vec<(f32, usize)> {
     PLACED_BOXES.lock().unwrap().iter().filter_map(|(i, place, bx)| ray_box(place, *bx, origin, dir).map(|t| (t, *i)))
-        .filter(|&(t, _)| t > 0.0 && t <= max).min_by(|a, b| a.0.total_cmp(&b.0))
+        .filter(|&(t, _)| t > 0.0 && t <= max).collect()
 }
 
 /// How far along a ray (from `origin` along unit `dir`) it enters a box (`lo`..`hi` in the frame

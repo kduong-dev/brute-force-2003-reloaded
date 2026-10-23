@@ -337,6 +337,19 @@ pub struct ShotData {
     /// bullet h_eeb9e75a (data+0xa4): shots without the flight effect between two with it
     /// (FUN_002317e0's counter at weapon+0x290). MK 2, Minigun 3, others 0
     pub tracer_gap: i64,
+    /// bullet h_1835f15e (bullet +0x2c, data+0x64; FUN_0018a8d0): the hits on objects a shot
+    /// goes on after (#238). A bolt's byte +1 (FUN_0022bac0 copies the low byte): with
+    /// `pass_through` the objects it passes, else the bounces off them (FUN_00225440); an instant
+    /// ray with `pass_through` takes n1 + n2 hits, this the walls' share (FUN_00230860). The
+    /// cutters and the Ion Beamer 5, the Rails 1, others 0
+    pub object_hits: i64,
+    /// bullet h_fe4f3035 (bullet +0x30, data+0x68): the same for characters and, for a bolt's
+    /// ricochet, for any hit that isn't an object's (byte +2). The Rails 500, others 0
+    pub character_hits: i64,
+    /// bullet h_11caf57b (bullet +0x34, data+0x6c, a byte): the shot passes through what it hits
+    /// while `object_hits` / `character_hits` last (a bolt's flag 0x20). The Rails, the Ion
+    /// Beamer (and the Saryl-45, with no hits to spend), not the cutters
+    pub pass_through: bool,
 }
 
 /// `ShotData` of a `<weapon>` element and its `<bullet>`.
@@ -361,6 +374,9 @@ fn shot_data(w: &Element, bullet: Option<&&Element>) -> ShotData {
         falloff: damage.and_then(|d| d.attr(0xFB12_4E6C)).and_then(|v| v.as_i64().or(v.ints().first().copied())).unwrap_or(0),
         bullet_type: bullet.and_then(|b| b.attr(h("bullet-type"))).and_then(|v| v.as_i64().or(v.ints().first().copied())).unwrap_or(0),
         tracer_gap: num(bullet.copied(), 0xEEB9_E75A).map_or(0, |v| v as i64),
+        object_hits: num(bullet.copied(), 0x1835_F15E).map_or(0, |v| v as i64),
+        character_hits: num(bullet.copied(), 0xFE4F_3035).map_or(0, |v| v as i64),
+        pass_through: bullet.and_then(|b| b.attr(0x11CA_F57B)).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
     }
 }
 

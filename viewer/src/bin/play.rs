@@ -675,6 +675,7 @@ fn main() {
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
         .add_plugins(bolts::plugin)
+        .add_plugins(rays::plugin)
         .add_plugins(minigun::plugin)
         .add_plugins(shake::plugin)
         .add_plugins(skills::plugin)
@@ -766,6 +767,8 @@ mod shots;
 mod missile;
 #[path = "play_bolts.rs"]
 mod bolts;
+#[path = "play_rays.rs"]
+mod rays;
 #[path = "play_minigun.rs"]
 mod minigun;
 #[path = "play_shake.rs"]
@@ -1806,6 +1809,10 @@ struct Shot {
     /// it stops on a body `dist` m out (`update_player`; `hit` is false then: the body's blood is
     /// play_fx.rs's)
     body: bool,
+    /// an instant ray that passes through what it hits (bullet h_11caf57b with more than one hit
+    /// to spend: the Rails, FUN_00230860), whose hits play_rays.rs finds at its shot, all along
+    /// its line (#238); `dist` is then where it stops
+    pass: bool,
 }
 
 #[derive(Resource)]
@@ -6294,7 +6301,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                                     range: reach,
                                     // (FUN_0022f1d0: types 0 and 3 to FUN_0022bac0; flying, not
                                     // instant: the speed check above)
-                                    bolt: matches!(w.def.shots.bullet_type, 0 | 3) && speed < INSTANT_SHOT, body: false });
+                                    bolt: matches!(w.def.shots.bullet_type, 0 | 3) && speed < INSTANT_SHOT, body: false,
+                                    // (FUN_00230860: an instant ray takes n1 + n2 hits with the
+                                    // pass flag, one without; two or more go through the
+                                    // multi-hit ray, play_rays.rs)
+                                    pass: speed >= INSTANT_SHOT && w.def.shots.pass_through
+                                        && w.def.shots.object_hits + w.def.shots.character_hits >= 2 });
                 // (the pellet's hand: 0 the gun in hand, 1 the second hand's; the shooter last, as
                 // the combat log names it)
                 if std::env::var("BF_SHOT_LOG").is_ok() {
@@ -6815,11 +6827,13 @@ impl Shot {
         t / self.speed.max(1.0)
     }
 
-    /// Whether this shot's hits are found where it flies rather than at the shot: a bolt's on its
-    /// sweeps (play_bolts.rs, #136). The shots' other readers (`update_player`'s bodies and
-    /// Sentries, play_scenery.rs, play_pickups.rs, the bodies on the ground) leave them alone.
+    /// Whether this shot's hits are found by a module of their own rather than by the shots'
+    /// readers here: a bolt's on its sweeps as it flies (play_bolts.rs, #136), a pass-through
+    /// ray's all along its line (play_rays.rs, #238). The shots' other readers (`update_player`'s
+    /// bodies and Sentries, play_scenery.rs, play_pickups.rs, the bodies on the ground) leave them
+    /// alone.
     fn swept(&self) -> bool {
-        self.bolt
+        self.bolt || self.pass
     }
 }
 
@@ -7075,7 +7089,7 @@ fn world_hit(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_
     if log {
         let light = |k: u32| game.effect_type_defs.get(&k).map_or(0, |t| t.light);
         // (a bolt's sweep starts at its last checked point: its own line says how far out it is)
-        let out = if swept.is_some() { "(a bolt's sweep)".to_string() } else { format!("{:.1} m out", s.dist) };
+        let out = if swept.is_some() { format!("{:.1} m along its sweep", s.dist) } else { format!("{:.1} m out", s.dist) };
         println!("t={:.2} hit on world material {material} at {at:.2} {out} (ammo-type {}): effect h_{main:08x} sp {main_sp:.2} light h_{:08x}{}, debris {}, sound {}",
                  player.sim_time, s.ammo, light(main), if row.is_some() { " (the material's)" } else { " (the weapon's)" },
                  debris.map_or("none".into(), |d| format!("h_{d:08x} sp {sp:.2}")),

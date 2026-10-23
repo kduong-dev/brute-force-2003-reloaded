@@ -94,11 +94,17 @@ impl MineTargets {
     /// The nearest mine on a shot's line (from `origin` along `dir`) before `dist`, and how far
     /// along it the shot meets its sphere.
     pub(super) fn first_on(&self, origin: Vec3, dir: Vec3, dist: f32) -> Option<(Entity, f32)> {
+        self.all_on(origin, dir, dist).into_iter().min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// Every mine on a shot's line before `dist`, and how far along it the shot meets each one's
+    /// sphere (a pass-through ray's, play_rays.rs, meets them all).
+    pub(super) fn all_on(&self, origin: Vec3, dir: Vec3, dist: f32) -> Vec<(Entity, f32)> {
         self.targets.iter().filter_map(|&(e, c, r)| {
             let along = (c - origin).dot(dir);
             let miss = (origin + dir * along).distance(c);
             (along > 0.0 && miss < r && along - r < dist).then(|| (e, (along - (r * r - miss * miss).sqrt()).max(0.0)))
-        }).min_by(|a, b| a.1.total_cmp(&b.1))
+        }).collect()
     }
 
     /// A shot meets mine `e` `t` m out, flying at `speed` m/s: it goes off when the shot gets
