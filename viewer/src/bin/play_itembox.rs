@@ -27,18 +27,23 @@
 //!    after; the four list slots slide out by int(open x 70) units each and fade in as open^3; up
 //!    are the next and the one after, left the previous and the one before; a slot repeating an
 //!    earlier one's stack is hidden (box, left1, up1, left2, up2: FUN_000ac7f0). The open list
-//!    scrolls with the stick (`ItemInput::stick`) past 0.5, a step at once and then every 0.25 s.
+//!    scrolls with the stick (`ItemInput::stick`) past 0.5, a step at once and then every 0.25 s,
+//!    and with the wheel (the demo's: a step a notch, none lost). Its character dead, the box
+//!    fades out (0xabc79, FUN_000ba730: out 1.7 s after the death, take18) and stays out through
+//!    the death camera.
 //!  - **NEW** (0xad0c0): a stack's NEW flag is set from its making and cleared the first time any
-//!    slot shows it, which starts that slot's 2 s label: on while fract(2 x time left) >= 0.3, its
-//!    alpha 255 x min(1, 2 x time left). The stack shown first at a level's start is cleared
-//!    without a label (take27: its label ran out in the intro).
+//!    slot has it, which starts that slot's 2 s label: on while fract(2 x time left) >= 0.3, its
+//!    alpha 255 x min(1, 2 x time left). A hidden slot counts too (its label unseen). The stack
+//!    shown first at a level's start is cleared without a label (take27: its label ran out in the
+//!    intro).
 //!  - **The input** (`ItemInput`, the product owner's call D5): the buttons the item section reads,
 //!    which the keyboard and mouse fill now (Tab B, G the left trigger, B Black, W/D and S/A the
 //!    stick's next and previous, the wheel) and the pad will under #154.
 //!
 //! Test hooks: BF_TEST_ITEM_INPUT="<s>:<input>:<hold s>;..." holds an input from that time
 //! (tab, lt, black, next, prev; on the hooks' clock, the sim time plus the time the list's pause
-//! held it); BF_TEST_ITEM_LIST=1 holds Tab from the start; BF_TEST_NEXT_GRENADE=<s>[,<s>...] taps
+//! held it), "<s>:wheel:<notches>" turns the wheel that many notches in one frame (up +, down
+//! -); BF_TEST_ITEM_LIST=1 holds Tab from the start; BF_TEST_NEXT_GRENADE=<s>[,<s>...] taps
 //! Tab (0.1 s) at each time; BF_TEST_THROW=<s>[,<hold s>...] (with BF_TEST_GOTO) holds G;
 //! BF_TEST_ITEM_USE=<s>[,<s>...] presses G for one frame at each time for an item that isn't a
 //! grenade; BF_TEST_INV / BF_TEST_INV_NEW set the pool and its NEW flags at the start
@@ -83,6 +88,9 @@ const SCROLL_OPEN: f32 = 0.75;
 /// the take's 0.906 speed, 0.27 s of game time).
 const DEAD_ZONE: f32 = 0.5;
 const RAMP_RATE: f32 = 4.0;
+/// The pixels of a scroll in pixel units (a touchpad's) taken as one wheel notch: the demo's
+/// choice, as the wheel is (the game has none); a mouse wheel's notch comes as a line.
+const WHEEL_PIXELS: f32 = 100.0;
 /// The list slots' step (units): +0x68 / +0x6c, 70.0 (FUN_000ab8d0; 0xabcbd on a full screen);
 /// FUN_000ac500 puts slot k at -(k + 1) x int(open x 70). take25 9.5 s: the slots' counts 105 and
 /// 210 px (70 and 140 units) from the box's.
@@ -134,12 +142,26 @@ const SOUND_OPEN: u32 = 0x18FC_2DB8;
 const SOUND_NEXT: u32 = 0xF8F9_3C5E;
 const SOUND_PREV: u32 = 0x1AB2_FC23;
 const SOUND_CLOSE: u32 = 0xEF4B_D74D;
+/// The box's fade at its character's death (a second's share of full): the widget's update
+/// (0xabc79) puts its fade rate (+0x11) to 127 each frame its character is dead (char+0x70 bit 0),
+/// and FUN_000ba730 takes rate x dt off its fade level (+0x12, 255 full) each frame, truncated to a
+/// whole level (0x2ebf10): 5 a frame at the game's 30 a second, so 150 a second and out in 1.7 s
+/// from the death's frame. The widget draws at level / 255 of its alpha (FUN_000bb170), its slots
+/// with it. A living character's level is 255 at once (0xabc90): the next member's box at full
+/// (take18 6.9 s video). take18 measured: the box's icon gone 1.66-1.73 s of the game's clock
+/// (the watch log's clk: 673615 ms at the death) after the death; the picture froze twice just
+/// after it (the game hitched 0.15 and 0.18 s, the fade taking a bigger step after each), then
+/// fell about 5 levels a frame (0.52-0.55 of full a second of video, the game at 0.9 speed).
+const DEATH_FADE_RATE: f32 = 150.0 / 255.0;
 
 // ---- the messages (the HUD entry's message line, its widget +0x114) ----
 
 /// How long an item message shows (s): the controller's FUN_000bcfe0(entry, 3.0) at each of them
 /// (0x1344fd, 0x13496a, 0x1349cc); the line fades over its last 0.5 s (its update 0xb33b0,
-/// play_hud.rs). Restarted by each press (take16).
+/// play_hud.rs). Restarted by each press (take16). take26's "Cannot use" too: on from 6.2 s of
+/// video to 15.15 through presses 3 s apart, and from the last press to the line's ink gone 2.8 s
+/// of the game's clock (the watch log's clk: 682.48 s to 685.27), where the demo's line takes
+/// 2.87 s to the same threshold (the take's notes' "~6.5 s each" is the run of presses).
 pub const MESSAGE_TIME: f32 = 3.0;
 /// "Inventory is empty" (LT with nothing selected, 0x1349b2), "No Medkits" (Black with no (5, 0)
 /// stack, 0x1344ef), "Not ready" (FUN_000abbb0: the shown pair isn't the wanted one).
@@ -187,14 +209,15 @@ pub struct ItemInput {
     /// x right, y down; right or up is the next item (take05). The keys fill x only: W or D +1,
     /// S or A -1
     pub stick: Vec2,
-    /// the wheel's notches this frame, up + (the next item: the product owner's call D2)
+    /// the wheel's whole notches this frame, up + (the next item: the product owner's call D2)
     pub wheel: i32,
 }
 
 /// The use button's lock (ctrl+0x68): the stack the use button is on while it's held, or "another"
 /// (-1: a B press, a refused use, the empty inventory). While it's another and not the selected
 /// stack, the use button does nothing until it's let go (0x134689-0x1346b1: the charge zeroed, the
-/// lock cleared once LT is up): take19's B tap during a charge left LT dead to its release.
+/// lock cleared once LT is up): take19's B tap during a charge left LT dead to its release. A use
+/// gives it back once the button is up (`item_controls`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 enum UseLock {
     #[default]
@@ -229,9 +252,11 @@ pub struct ItemBox {
     /// look and item sections off, bits 0-2)
     b_timer: f32,
     list_mode: bool,
-    /// the use button's lock (ctrl+0x68) and whether it was held last frame (a press is its
-    /// first frame)
+    /// the use button's lock (ctrl+0x68), whether a use was made with the button still down
+    /// (ctrl+0xa0 bit 7, set at the use 0x1348af and cleared once LT reads 0, 0x13467e) and
+    /// whether it was held last frame (a press is its first frame)
     lock: UseLock,
+    used: bool,
     lt_was: bool,
     /// Black's saved selection (ctrl+0x6c / +0x70; None the game's (10, -1)), whether its use has
     /// been made (ctrl+0xa1 bit 0) and whether Black was held last frame
@@ -250,6 +275,15 @@ pub struct ItemBox {
     opened: bool,
     paused_game: bool,
     slots: [Slot; 5],
+    /// the wheel's notches turned while the list is open and not yet stepped (the demo's: the
+    /// game has no wheel; none is lost to the slide's first 0.375 s or to two in a frame), and
+    /// the part of a notch turned so far (a fine wheel's fractions of a line, a touchpad's pixels)
+    wheel_queue: i32,
+    wheel_part: f32,
+    /// the widget's fade level (+0x12 / 255: 1 full; DEATH_FADE_RATE) and how long its character
+    /// has been dead (for BF_ITEM_LOG)
+    fade: f32,
+    dead_time: f32,
     /// the controlled character last frame (a hand-over closes the list: FUN_000c8fa0)
     character: Option<usize>,
     /// the time the list's pause has held the world's clock (s): the hooks' clock is the sim time
@@ -268,9 +302,10 @@ pub struct ItemBox {
 impl Default for ItemBox {
     fn default() -> Self {
         ItemBox {
-            b_timer: 0.0, list_mode: false, lock: UseLock::Free, lt_was: false, saved: None, black_used: false, black_was: false,
+            b_timer: 0.0, list_mode: false, lock: UseLock::Free, used: false, lt_was: false, saved: None, black_used: false, black_was: false,
             shown: None, seen: HashSet::new(), open: 0.0, hold: 0.0, ramp: 0.0, opened: false, paused_game: false,
-            slots: [Slot::default(); 5], character: None, paused_time: 0.0, tests: None, last_use_press: -1.0,
+            slots: [Slot::default(); 5], wheel_queue: 0, wheel_part: 0.0, fade: 1.0, dead_time: 0.0, character: None, paused_time: 0.0,
+            tests: None, last_use_press: -1.0,
             log: std::env::var("BF_ITEM_LOG").is_ok(), logged: String::new(), log_clock: 0.0, log_at: 0.0,
         }
     }
@@ -305,7 +340,7 @@ struct TestInput {
 }
 
 /// What a BF_TEST_ITEM_INPUT entry holds: Tab (B), G (LT), B (Black), the stick's next or
-/// previous.
+/// previous; or the wheel's notches in one frame (up +).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum TestKey {
     B,
@@ -313,9 +348,11 @@ enum TestKey {
     Black,
     Next,
     Prev,
+    Wheel(i32),
 }
 
-/// BF_TEST_ITEM_INPUT's entries ("<s>:<input>:<hold s>;...") and BF_TEST_NEXT_GRENADE's taps.
+/// BF_TEST_ITEM_INPUT's entries ("<s>:<input>:<hold s>;...", the wheel's "<s>:wheel:<notches>")
+/// and BF_TEST_NEXT_GRENADE's taps.
 fn read_tests() -> Vec<TestInput> {
     let mut out: Vec<TestInput> = std::env::var("BF_TEST_ITEM_INPUT").ok().iter().flat_map(|v| v.split(';').filter_map(|e| {
         let mut it = e.split(':').map(str::trim);
@@ -326,9 +363,15 @@ fn read_tests() -> Vec<TestInput> {
             "black" => TestKey::Black,
             "next" => TestKey::Next,
             "prev" => TestKey::Prev,
+            "wheel" => TestKey::Wheel(1),
             _ => return None,
         };
-        let hold = it.next().and_then(|h| h.parse::<f32>().ok()).unwrap_or(TEST_TAP);
+        let third = it.next();
+        if what == TestKey::Wheel(1) {
+            let n = third.and_then(|n| n.parse::<i32>().ok()).unwrap_or(1);
+            return Some(TestInput { at, what: TestKey::Wheel(n), hold: 0.0, down: false });
+        }
+        let hold = third.and_then(|h| h.parse::<f32>().ok()).unwrap_or(TEST_TAP);
         Some(TestInput { at, what, hold, down: false })
     }).collect::<Vec<_>>()).collect();
     // BF_TEST_NEXT_GRENADE=<s>[,<s>...]: a Tab tap at each time (the T key it pressed is gone: the
@@ -384,15 +427,24 @@ fn item_input(keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScrol
         let next = keys.any_pressed([KeyCode::KeyW, KeyCode::KeyD]);
         let prev = keys.any_pressed([KeyCode::KeyS, KeyCode::KeyA]);
         i.stick.x = next as i32 as f32 - prev as i32 as f32;
-        if scroll.delta.y != 0.0 {
-            i.wheel = scroll.delta.y.signum() as i32;
-        }
+        // the wheel's whole notches: a line each, a fine wheel's fractions and a touchpad's pixels
+        // added up until they make one
+        b.wheel_part += match scroll.unit {
+            bevy::input::mouse::MouseScrollUnit::Line => scroll.delta.y,
+            bevy::input::mouse::MouseScrollUnit::Pixel => scroll.delta.y / WHEEL_PIXELS,
+        };
+        let whole = b.wheel_part.trunc();
+        b.wheel_part -= whole;
+        i.wheel = whole as i32;
+    } else {
+        b.wheel_part = 0.0;
     }
     let t = hook_time(&player, b);
     // BF_TEST_ITEM_INPUT and BF_TEST_NEXT_GRENADE
     let tests = b.tests.get_or_insert_with(read_tests);
     for e in tests.iter_mut() {
-        if t >= e.at && (t < e.at + e.hold || !e.down) {
+        let first = !e.down;
+        if t >= e.at && (t < e.at + e.hold || first) {
             e.down = true;
             match e.what {
                 TestKey::B => i.b = true,
@@ -400,6 +452,11 @@ fn item_input(keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScrol
                 TestKey::Black => i.black = true,
                 TestKey::Next => i.stick.x = 1.0,
                 TestKey::Prev => i.stick.x = -1.0,
+                TestKey::Wheel(n) => {
+                    if first {
+                        i.wheel += n;
+                    }
+                }
             }
         }
     }
@@ -548,9 +605,11 @@ fn item_controls(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Play
     let dt = frame_dt(&time);
     let (p, b, g) = (&mut *player, &mut *boxed, &game.0);
     let i = *input;
-    // a hand-over (a squad switch, the death camera's): the old character's list closes and its
-    // Black shortcut ends (FUN_000c8fa0 closes the old entry's list; the selection itself goes with
-    // control, play.rs `squad_control`)
+    // a hand-over (a squad switch, the death camera's): the old character's list closes
+    // (FUN_000c8fa0 closes the old entry's list; the selection itself goes with control, play.rs
+    // `squad_control`). The controller is the player's, not the character's: FUN_000c8fa0 leaves
+    // its lock, Black's saved item and its use flag (ctrl+0x68, +0x6c, +0xa1) as they are, so a
+    // Black held across it gives the saved item back to the new member at the release
     if b.character != Some(p.character) {
         if b.character.is_some() {
             close_list(b, p, g);
@@ -558,9 +617,6 @@ fn item_controls(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Play
         b.character = Some(p.character);
         b.list_mode = false;
         b.b_timer = 0.0;
-        b.saved = None;
-        b.black_used = false;
-        b.lock = UseLock::Free;
     }
     // the section runs for a living character whose controls are on (0x1340e5 bit 2, 0x134101's
     // char+0x70 bit 0); a menu over the game takes the controls (a list open under it closes)
@@ -662,27 +718,30 @@ fn item_controls(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Play
                 println!("item t={:.3}: Black: Medkit selected ({} saved)", hook_time(p, b), item_name_plain(p, b.saved));
             }
         } else {
-            // FUN_001210c0, the character can use it now: no use or other action under way
+            // FUN_001210c0 (0x13443f), the character can use it now: no use or other action under
+            // way, free to act, and the Medkit's own "can use" (0x147070: hurt). The first frame
+            // uses it whatever it says (a refusal's message, "No need to heal"); while Black stays
+            // down, another each time it can (a Medkit after a Medkit until healed), never while
+            // the use button's lock is held (0x134459)
             let can = p.using.is_none() && p.throwing.is_none() && p.reloading.is_none() && p.switching.is_none() && p.second.is_none()
-                && skills::lets_act(p);
+                && skills::lets_act(p) && item_usable(p, Item::Medkit);
             if (can || !b.black_used) && b.lock == UseLock::Free {
                 forced = true;
                 b.black_used = true;
             }
         }
     } else {
-        if b.black_was {
-            // (FUN_0014d730: back only if it's still listable)
-            if let Some(s) = b.saved.take() {
-                if item_count(p, s) > 0 {
-                    p.item = Some(s);
-                }
-                if b.log {
-                    println!("item t={:.3}: Black let go: {} back", hook_time(p, b), item_name_plain(p, p.item));
-                }
+        // Black up with an item saved (0x1345c6, the first frame the section runs: after a hand-over
+        // the new member's): the item back if it's still listable (FUN_0014d730), the saved pair
+        // none
+        if let Some(s) = b.saved.take() {
+            if item_count(p, s) > 0 {
+                p.item = Some(s);
+            }
+            if b.log {
+                println!("item t={:.3}: Black let go: {} back", hook_time(p, b), item_name_plain(p, p.item));
             }
         }
-        b.saved = None;
         b.black_used = false;
     }
     b.black_was = i.black;
@@ -691,13 +750,33 @@ fn item_controls(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Play
     // ---- the use button (0x13460e)
     let current = p.item;
     let held = lt || forced;
+    if !held {
+        b.used = false;
+    }
+    // nothing selected (0x134612, before the lock's test): "Inventory is empty" each frame the
+    // button is held while the lock is free or "another" (0x1349c3), so it's shown again each
+    // frame and lasts 3 s from the release (take21: on 0.2 s after the press, about 3 s); the lock
+    // "another" either way (0x13451b, 0x1349df)
+    let Some(item) = current else {
+        if held && !matches!(b.lock, UseLock::On(_)) {
+            message(&mut status, g, S_INVENTORY_EMPTY, "Inventory is empty");
+            if b.log && press {
+                println!("item t={:.3}: use: Inventory is empty", hook_time(p, b));
+            }
+        }
+        b.lock = UseLock::Blocked;
+        p.charge = 0.0;
+        (p.throw_held, p.item_use) = (false, false);
+        return;
+    };
+    // the lock (0x134689): another stack's, or "another", leaves the button dead until it's let
+    // go (0x1346a7 frees it once LT reads 0)
     let blocked = match b.lock {
         UseLock::Free => false,
-        UseLock::On(x) => Some(x) != current,
+        UseLock::On(x) => x != item,
         UseLock::Blocked => true,
     };
     if blocked {
-        // another item's or a B press's lock: nothing until the button is let go
         if !held {
             b.lock = UseLock::Free;
         }
@@ -705,40 +784,41 @@ fn item_controls(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Play
         (p.throw_held, p.item_use) = (false, false);
         return;
     }
-    let Some(item) = current else {
-        // nothing selected: "Inventory is empty" while it's held (shown again each frame, so
-        // 3 s from the release; take21: on 0.2 s after the press, about 3 s)
-        if held {
-            message(&mut status, g, S_INVENTORY_EMPTY, "Inventory is empty");
-            b.lock = UseLock::Blocked;
-            if b.log && press {
-                println!("item t={:.3}: use: Inventory is empty", hook_time(p, b));
-            }
-        }
+    // a use made with the button still down (bit 7: 0x1346f6, 0x134957): nothing more, the lock
+    // "another" (0x13497f) until it's let go
+    if b.used {
+        b.lock = UseLock::Blocked;
         p.charge = 0.0;
         (p.throw_held, p.item_use) = (false, false);
         return;
-    };
-    // "can use now" (FUN_000abbb0): the shown pair must be the wanted one, else "Not ready" (the
-    // shown pair lags while a use is under way: a B tap in a throw, take20; code only, not filmed)
+    }
+    // "can use now" (FUN_000abbb0): the shown pair must be the wanted one, else "Not ready" at the
+    // press (the shown pair lags while a use is under way: a B tap in a throw, take20; code only,
+    // not filmed) and the lock "another" while it's held (0x13497f)
     if b.shown != current {
         if press {
             message(&mut status, g, S_NOT_READY, "Not ready");
-            b.lock = UseLock::Blocked;
             if b.log {
                 println!("item t={:.3}: use: Not ready (shown {} != wanted {})", hook_time(p, b), item_name_plain(p, b.shown), item_name_plain(p, current));
             }
         }
+        if held {
+            b.lock = UseLock::Blocked;
+        }
         p.charge = 0.0;
         (p.throw_held, p.item_use) = (false, false);
         return;
     }
-    if held {
-        b.lock = UseLock::On(item);
-    }
+    // the lock is the stack while the button is held (0x134751) and free once it's up: the game
+    // puts it to "another" the frame after a use (bit 7 above; or "can use now" saying no while the
+    // use's overlay runs) at 0x13497f, and back to 0 once LT reads 0 (0x1346a7), so a use never
+    // leaves the button, or Black, dead
+    b.lock = if held { UseLock::On(item) } else { UseLock::Free };
     let grenade = matches!(item, Item::Grenade(_));
     p.throw_held = held && grenade;
     p.item_use = press && !grenade;
+    // (a grenade's use is its throw at the release, with the button up)
+    b.used |= p.item_use;
     if b.log && press {
         println!("item t={:.3}: use {}{}", hook_time(p, b), item_name_plain(p, current), if forced { " (Black)" } else { "" });
     }
@@ -778,9 +858,10 @@ fn settle(mut player: ResMut<Player>, mut boxed: ResMut<ItemBox>) {
     }
 }
 
-/// The item widget's frame (0xabc60 -> FUN_000ac220, on the HUD's clock): the hold timer, the open
-/// level, the scroll while the list is out, the slots' stacks (the box from the wanted pair; the
-/// list's around it while it shows; repeats hidden), then each slot's NEW label (0xad0c0).
+/// The item widget's frame (0xabc60 -> FUN_000ac220, on the HUD's clock): the death fade, the hold
+/// timer, the open level, the scroll while the list is out, the slots' stacks (the box from the
+/// wanted pair; the list's around it while it shows; repeats hidden), then each slot's NEW label
+/// (0xad0c0).
 #[allow(clippy::too_many_arguments)]
 fn widget(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Player>, mut boxed: ResMut<ItemBox>, game: Res<GameData>,
           kits: Option<Res<GrenadeKits>>) {
@@ -788,6 +869,20 @@ fn widget(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Player>, mu
     let (p, b, g) = (&mut *player, &mut *boxed, &game.0);
     if b.paused_game {
         b.paused_time += dt;
+    }
+    // the fade (0xabc60's +0x11 / +0x12, FUN_000ba730): its character dead, out at
+    // DEATH_FADE_RATE from the death's frame and out through the death camera; alive, full at once
+    if p.dead {
+        b.dead_time += dt;
+        if b.fade > 0.0 {
+            b.fade = (b.fade - DEATH_FADE_RATE * dt).max(0.0);
+            if b.log && b.fade == 0.0 {
+                println!("item t={:.3}: the box faded out ({:.3} s after the death)", hook_time(p, b), b.dead_time);
+            }
+        }
+    } else {
+        b.dead_time = 0.0;
+        b.fade = 1.0;
     }
     if b.hold != 0.0 {
         b.hold -= dt;
@@ -797,10 +892,12 @@ fn widget(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Player>, mu
         }
     }
     if !b.opened {
+        b.wheel_queue = 0;
         if b.open > 0.0 {
             b.open -= CLOSE_RATE * dt;
         }
     } else {
+        b.wheel_queue += input.wheel;
         if b.open <= SCROLL_OPEN || b.hold < SCROLL_FRESH {
             b.ramp = 0.0;
         } else {
@@ -844,8 +941,15 @@ fn widget(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Player>, mu
             }
         }
     }
-    // NEW (0xad0c0, each slot): the first slot to show a stack whose flag is set clears it and runs
-    // its label; a slot's label stops when its stack changes
+    // NEW (0xad0c0, each slot's label, in the widget's child order: box, up 1, up 2, left 1, left 2,
+    // FUN_000abe30): the first slot to have a stack whose flag is set clears it and runs its label;
+    // a slot's label stops when its stack changes. A hidden slot counts too: the slots' updates
+    // (FUN_000b21f0 from 0xabe25, then FUN_000ab810's at 0xab825 for its texts) and 0xad0c0 never
+    // test the slot's hidden flag, so a repeat hidden by FUN_000ac7f0 can take a stack's NEW
+    // before the slot that shows it (Sonic selected, Energy and Roller NEW: the hidden up 2's
+    // Roller takes it from left 1's, whose Roller shows no label). Code only, not filmed: the
+    // takes' lists with NEW stacks (take02, take24) have nine stacks, no repeat, and take25's
+    // lists of two to four stacks have none NEW
     for s in 0..b.slots.len() {
         let stack = b.slots[s].pair.filter(|&i| item_count(p, i) > 0);
         if let Some(i) = stack {
@@ -872,7 +976,9 @@ fn widget(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Player>, mu
 
 /// The open list's scroll (FUN_000ac370): the stick past the dead zone on its larger axis, right
 /// or up the next item, left or down the previous; a step the frame it's pushed, then another
-/// each time the ramp passes 1 while it's held; the wheel's notches a step each (the demo's).
+/// each time the ramp passes 1 while it's held. The wheel's notches (the demo's: the game has no
+/// wheel) a step each, one a frame from `ItemBox::wheel_queue`, so those turned in the slide's
+/// first 0.375 s or two in a frame aren't lost.
 fn scroll(b: &mut ItemBox, p: &mut Player, game: &Game, input: &ItemInput, dt: f32) {
     let (x, y) = (input.stick.x, input.stick.y);
     let forward = (x > DEAD_ZONE && x > y.abs()) || (y < -DEAD_ZONE && y < -x.abs());
@@ -898,8 +1004,12 @@ fn scroll(b: &mut ItemBox, p: &mut Player, game: &Game, input: &ItemInput, dt: f
     } else {
         b.ramp = 0.0;
     }
-    for _ in 0..input.wheel.unsigned_abs() {
-        step(p, game, input.wheel > 0);
+    if b.wheel_queue != 0 {
+        step(p, game, b.wheel_queue > 0);
+        b.wheel_queue -= b.wheel_queue.signum();
+        if b.log {
+            println!("item t={:.3}: wheel step to {} ({} notches queued)", hook_time(p, b), item_name_plain(p, p.item), b.wheel_queue);
+        }
     }
 }
 
@@ -991,7 +1101,8 @@ fn slot_at(s: usize, open: f32) -> Vec2 {
 }
 
 /// The widget drawn: each slot's frame at its place and shown or hidden, its alpha (the box at
-/// full; a list slot open^3, FUN_000ac500), its stack's icon (its type's h_e5ec3f1f; grey while
+/// full; a list slot open^3, FUN_000ac500; both times the widget's fade level, FUN_000bb170's
+/// parent's share: the death fade), its stack's icon (its type's h_e5ec3f1f; grey while
 /// the character can't use it now, FUN_000ace10's flag), name (the type's stringtable-name) and
 /// count (from 2 up: 0xacbd0's `cmp word [item+0x1a], 1; jle`) in the blue or the red, and NEW
 /// (0xad0c0's blink and fade).
@@ -1005,7 +1116,7 @@ fn draw(boxed: Res<ItemBox>, player: Res<Player>, mut game: ResMut<GameData>, ki
     let rgb = |c: [u8; 3]| Color::srgb_u8(c[0], c[1], c[2]);
     // (no box without a character: the editor's stand-in)
     let shown = |s: usize| p.loaded.is_some() && !p.stand_in && b.slots[s].pair.is_some() && !b.slots[s].hidden && (s == 0 || b.open > 0.0);
-    let alpha = |s: usize| if s == 0 { 1.0 } else { b.open * b.open * b.open };
+    let alpha = |s: usize| b.fade * if s == 0 { 1.0 } else { b.open * b.open * b.open };
     for (part, mut vis, node, img, text) in &mut parts {
         let set_vis = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
         match *part {

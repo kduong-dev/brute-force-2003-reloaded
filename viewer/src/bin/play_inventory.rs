@@ -417,9 +417,12 @@ pub fn item_label(game: &Game, kits: &GrenadeKits, p: &Player, item: Item) -> St
 /// G (the game's LT, the use) with an item selected that isn't a grenade or a Medkit (the
 /// OrgSen, the Hat; a Medkit is play_pickups.rs's). A character whose skill refuses its use type
 /// (the skill's +0x1c: Brutus's 0x13c160, IOU_ATTACH_TO_FACE and IOU_ATTACH_TO_EQUIP_SLOT) is told
-/// "Cannot use" (h_e784869e, which his skill writes into the HUD entry's message, +0xe4: #196
-/// take26, re-shown at each press) for the item messages' 3 s (play_itembox.rs MESSAGE_TIME); for
-/// anyone else the use is the item's own ticket (#21: the OrgSen) and nothing happens yet.
+/// "Cannot use" (h_e784869e: his skill only writes it into the HUD entry's message, +0xe4; the
+/// controller shows it at the press when "can use now" says no, FUN_000bcfe0(entry, 3.0) at
+/// 0x13496a) for the item messages' 3 s from each press (play_itembox.rs MESSAGE_TIME; #196
+/// take26: on through presses 3 s apart, its ink gone 2.8 s of the game's clock after the last,
+/// as the demo's 2.87 s); for anyone else the use is the item's own ticket (#21: the OrgSen) and
+/// nothing happens yet.
 pub fn use_other(player: Res<Player>, mut status: ResMut<UsePanel>, game: Res<GameData>) {
     let Some(Item::Other(kind)) = player.item else { return };
     if !player.item_use || player.dead {

@@ -56,8 +56,9 @@ use bevy::render::mesh::MeshAabb;
 
 const MEDKIT: i64 = 5;
 const FRUIT: i64 = 19;
-/// "No need to heal" (the Medkit's own "can use", its function set's +0x3c at 0x147118: full
-/// health) and "No Medkits" (h_f4502b28: BF_TEST_MEDKIT with none carried).
+/// "No need to heal" (the healing items' own "can use", their function set's +0x3c 0x147070,
+/// writes it at 0x147118 when there's nothing to heal: full health) and "No Medkits"
+/// (h_f4502b28: BF_TEST_MEDKIT with none carried).
 const S_NO_NEED_TO_HEAL: u32 = 0x10C5_243D;
 const S_NO_MEDKITS: u32 = 0xF450_2B28;
 /// The sound of a medkit used (chosen by ear): the Sound whose file is h_15331992 (named as

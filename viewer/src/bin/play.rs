@@ -1382,7 +1382,7 @@ fn item_count(p: &Player, item: Item) -> i64 {
 
 /// Whether the controlled character can use the item now: the item box's colour (its name and
 /// count blue, else red with the icon grey; 0xac980 / FUN_000ace10 ask the item function's "can
-/// use", +0x3c). A Medkit (either) only while hurt (the Medkit's own +0x3c, "No need to heal":
+/// use", +0x3c). A Medkit (either) only while hurt (the Medkit's own +0x3c 0x147070, "No need to heal":
 /// #196 take01 6.95 and 8.45 s, take10 2.55 s); an item whose use type the character's skill
 /// refuses (the skill's +0x1c, which the base set's "can use" 0x146c70 asks: Brutus and the OrgSen
 /// or the Hat, red in take26; play_skills.rs `uses_item`). A dead member's box isn't red (take18:
