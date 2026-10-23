@@ -78,13 +78,14 @@ pub fn requested() -> bool {
 
 /// Every level's weapon definitions and models, on top of the first mission's (only the
 /// definitions with a clip are hand weapons). The test map's levels: BF_TESTMAP_LEVELS
-/// (comma-separated) overrides the list.
+/// (comma-separated) overrides the list. Their data only, not their texture libraries
+/// (`Game::load_level_data`): the map played keeps its own (#284).
 pub fn load_weapon_data(game: &mut bf_viewer::bf::character::Game) {
     let t = std::time::Instant::now();
     let surfaces = game.surfaces.clone();
     let list = std::env::var("BF_TESTMAP_LEVELS").unwrap_or_else(|_| TEST_LEVELS.join(","));
     for level in list.split(',').filter(|l| !l.is_empty()) {
-        if let Err(e) = game.load_level(&data_dir(), level) {
+        if let Err(e) = game.load_level_data(&data_dir(), level) {
             eprintln!("test map: no data from {level}: {e}");
         }
     }

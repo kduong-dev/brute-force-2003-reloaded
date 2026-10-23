@@ -165,6 +165,81 @@ demo yet.
   two NPCs that share a slot (OTHER, or an NPC of a squad member's type) each take a damage
   area's first hurt and get their own log line. The squad's are one per member, as before.
 
+## The squad's outfits (#284)
+
+The squad wears each level's own outfit. Nothing in the types, the placements or the level
+list says so (`todo/284-squad-outfits/leads.md`): the four types, their meshes and their 20
+skin materials are defined once, in common, and those materials name eight colour textures
+(Hawk h_ea43a355 and h_ec3831c0; Tex h_14a67d23, h_f693182d, h_f0e88ab8; Brutus h_02a0c7fe;
+Flint h_079d2872, h_01e6bae7) that common's library lacks. Every level's `textures-<lvl>` and
+each of mp_common's six libraries carries all eight, in one of five outfits (the same grouping
+for all eight; Brutus's two other textures, h_e095a2f0 and h_e6ee3065, are common's, one copy):
+
+| Set | Look (the decoded textures) | Zones |
+|---|---|---|
+| 1 | tan and olive, brown leather; Tex's trousers khaki, Brutus's wraps tan | tutorial, e01, e05, m01_a/b, m02_a/b/c, m14_c/d |
+| 2 | blue-grey camo (olive in m03_a's light); Tex in blue denim | e06, e10, m03_a/b/c, m04_a/c, m05_a/b/c/d/x/y |
+| 3 | dark grey and olive camo, grey-white boots; Brutus's wraps white | e16, e23, m07_a/b/c, and every multiplayer match (mp_common's libraries) |
+| 4 | black; Tex's trousers black leather, Brutus's wraps dark brown | e13, m08_a/b, m09_a/b/c/x |
+| 5 | brown and dark grey, Brutus's wraps white with orange pads | e34, e40, m14_a/b |
+
+(The multiplayer maps' own libraries carry sets 1 (mp1-mp8, sdm_e01, sdm_e13, sdm_m03), 2
+(sdm_e10), 3 (sdm_m07), 4 (sdm_e34) and 5 (sdm_e40), but a match shows mp_common's set 3, below.)
+
+* **The rule.** The game loads the level's texture library after common's (the level file's
+  `<texture-libraries library-name="common <lvl>">`, FUN_000d61a0), so the level's copies are
+  the ones the squad's materials find. `Game::load_level` does the same: the level's library
+  replaces every texture but common's (levels.md, "Which copy of a texture"). Before #284 the
+  demo read no level's library and found the skins by searching the archives in name order:
+  e01's set 1 on every map.
+* **A match** (a deathmatch arena or a squad deathmatch map) also loads the libraries its
+  players name from mp_common, after the map's (FUN_000d5f60 fills FUN_000d61a0's second list:
+  the deathmatch characters' `dm`, a squad's own, e.g. `sdm_bf` for the Brute Force squad;
+  game-options-en.xml). Those carry set 3, and the takes show set 3 whatever the map's own:
+  #35 take20 (sdm_e34, whose own is set 4: Tex's olive sleeves, khaki-topped camo trousers,
+  grey-white boots and vest) and #146 take01 / take02 (sdm_e13, whose own is set 1: Brutus's
+  white shoulder wraps, Tex's grey-white boots). So mp_common's copy wins: bf_play's `load_map`
+  loads `dm` or `sdm_bf` after the map's library (`Game::load_match_textures`), replacing the
+  map's. The game side's lookup FUN_000a7770 takes the *first* library holding a name, which
+  would give the map's set; the materials bind their textures through the engine's named-texture
+  locator (FUN_00090970, its vtable +0x2c), whose rule isn't read: the later library winning is
+  the footage's, not a code reading. (For the campaign it makes no difference: no level shares a
+  differing name with common.)
+* The stealth shader and the dead bodies draw the same materials, so they follow the outfit;
+  the HUD's
+  portraits (h_082379f7, h_076b684b, h_fdfb4331, h_eb2fda05) are common's, one copy, and don't
+  change. The skin glow of #173 isn't drawn on characters yet.
+* **Test hooks.** `BF_TEX_LOG=1` (bf_play, bf_level) prints where each texture came from and its
+  bytes' fingerprint (levels.md); `BF_TEX_LOG=squad bf_level <zone>` prints the squad's skins on
+  a zone and exits.
+* **Verified (#284).**
+  * All 53 zones from the data: `BF_TEX_LOG=squad bf_level <zone>` for each, checked by script
+    against a byte survey of every archive's libraries (md5 per copy): every skin of every zone
+    comes from the zone's own library (mp_common's `dm` on mp1-mp8, `sdm_bf` on the sdm maps),
+    each set's fingerprints are the same on all its zones, and the zones fall into the five sets
+    as the leads' table says (the multiplayer maps into set 3).
+  * Against the takes (bf_play, `BF_MUTE=1 BF_BACKGROUND=1`, frames at 15 fps):
+    * set 1, the tutorial (`BF_TEST_GOTO=-15.6,-87.4,-15.6,-84`, frame 39) against #28 take05 at
+      90 s: Tex's olive shirt, tan vest and khaki trousers;
+    * set 2, m03_a (`BF_CHARACTER=2`, no hooks, frame 39) against #51 take01 at 3 s and 8 s:
+      Hawk's camo, the same pattern on the back and shoulders; the take's is greener in its light;
+    * set 4, m09_a (`BF_CHARACTER=0 BF_TEST_GOTO=28,-118,28,-114`) against #43 take06 (both dark
+      in the purple light);
+    * set 5, e34 at the range spot (Tex and Brutus, `BF_TEST_GOTO=-53.56,30.81,-53.69,31.29`)
+      against #126 take01 / take10, and e40 (`BF_CHARACTER=0 BF_TEST_GOTO=-15.2,152.3,-15.69,152.21`)
+      against #43 take01: Brutus's orange shoulder pads over a white back, brown loincloth;
+    * matches: sdm_e34 Tex (`BF_CHARACTER=3 BF_TEST_GOTO=-81.78,63.86,-82.5,62.5`) against #35
+      take20 at 3 s, and sdm_e13 Brutus (`BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.8,-19.97,-120`)
+      against #146 take01 at 2 s: set 3 in both;
+    * set 3's campaign zones have no take: e16 (`BF_CHARACTER=0
+      BF_TEST_GOTO=-124.9,-207.1,-124.9,-203`) checked from the log and the decoded textures.
+  * A level switch swaps the outfit: `--test` with `BF_MAP=tutorial BF_TEST_LEVEL=2,e34
+    BF_TEX_LOG=1`: the squad's skins from `tutorial (library)`, then after the switch from
+    `e34 (library)`, and the member spawned on e34 wears set 5.
+  * Regressions: Hawk's stealth fade on e34 (`BF_TEST_SKILL=1.0`), fading with the set 5 skin;
+    Hawk's dead body on e40 (`BF_TEST_DIE=1`), textured; the HUD portraits unchanged;
+    `cargo test --bin bf_play` passes.
+
 ## The test map's other types (#180)
 
 The test map's levels (common, e01 for the first mission, mp_common, mp1-mp8, m02_a, m09_a,

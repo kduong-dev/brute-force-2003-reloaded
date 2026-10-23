@@ -268,8 +268,10 @@ impl Game {
     /// Load `archive`'s objects (each objects file whole, with its .ivd and .ipn: its meshes
     /// and collision surfaces point into them), materials and textures (textures-*.xmb and the
     /// .tex, kept whole), what its static scenery is drawn and collided from (see the module's
-    /// notes). Entries already loaded win. How many bytes of vertex, collision and texture data
-    /// it keeps.
+    /// notes). Entries already loaded win, but for textures: the archive's library replaces any
+    /// shared from the played game that aren't common's, as a level's own does in the game
+    /// (`Game::load_level`, #284), so a piece wears its own level's copy. How many bytes of
+    /// vertex, collision and texture data it keeps.
     pub fn load_scenery(&mut self, data_dir: &Path, archive: &str) -> Result<usize, String> {
         let keep = |n: &str| n.starts_with("objects-") || n.starts_with("materials-") || n.starts_with("textures-");
         let ar = Archive::open(&data_dir.join(format!("{archive}.tgz")), keep)?;
@@ -285,7 +287,7 @@ impl Game {
             let root = bxml::parse(ar.get(&n).unwrap_or(&[]), &self.schemas).map_err(|e| format!("{n}: {e}"))?;
             self.add_materials(&root, |_| true);
         }
-        self.load_textures(&ar)?;
+        self.load_textures(&ar, archive, true)?;
         kept += ar.find("textures-", ".tex").iter().filter_map(|n| ar.get(n)).map(|d| d.len()).sum::<usize>();
         Ok(kept)
     }
