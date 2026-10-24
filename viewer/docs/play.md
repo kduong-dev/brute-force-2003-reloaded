@@ -2424,6 +2424,16 @@ Not matching or not done:
   character's animation event makes again (0x118390), which reads as the gun's magazine. What sets
   it isn't found, so the demo keeps "clip / reserve" (a code question). No level defines an ammo
   item for the iKhan-GPL's ammo-type 9.
+* The iKhan-GPL (#55): the round's glow and ribbon are pale cream, ~(229-240, 200-215, 125-136)
+  (the tester's), where the takes' are a saturated gold, ~(245, 172, 67). The ribbon's colour,
+  mirvgrenade_ribbon.app's (0.808, 0.545, 0.149), and the flare's, (0.788, 0.710, 0.271) to (0.792,
+  0.459, ...), are added as linear amounts, as `src/ale_fx.rs` adds every additive appearance's
+  (the convention play_fx.rs gives: the console adds to the picture's stored gamma values, and
+  amounts taken as linear come out about as bright as its sums over a mid-grey picture); encoded,
+  the ribbon's is (232, 194, 108). Taken as the console's gamma values it's (206, 139, 38), which
+  over the take's dark cliff (~40, 30, 30) adds up to about the take's gold. Not this effect's slip
+  but the blend every added effect is drawn with (and checked against its takes with): a
+  follow-up, e.g. adding the effects in gamma values.
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's
