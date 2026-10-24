@@ -470,8 +470,10 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   * The tutorial's lava pits (h_ea243aea, two) are a box of collision (12 triangles, the east
     one's top at 14.40 m, its bottom at 3.45 m) in a pit whose walls are steeper than a floor
     (maps.md, "Collision": steep ground with no floor under it, #264).
+  * The AI keeps out of the liquids that burn (#1): squad.md, "Liquids that burn".
   * Test hooks: `BF_LIQUID_LOG=1` prints each character's parts in a liquid as their count
-    changes, each entry hit, a death, and the hit points each second in one; `BF_TEST_WALK=1`
+    changes, each entry hit, a death, the hit points each second in one, and a wingman waiting at
+    the shore of one (#1); `BF_TEST_WALK=1`
     makes BF_TEST_GOTO walk (Ctrl), as the takes' half stick; `BF_TEST_HEALTH=<hp>` above the most
     raises the most too (play_pickups.rs).
 * **Terrain hue.** The baked light map gives the ground's brightness. Its hue comes from the

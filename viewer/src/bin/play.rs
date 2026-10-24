@@ -2369,8 +2369,16 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         return;
     }
     // wingman follow: set off when this far from the place, settle when close; dash when far
-    // behind (or past the data's leash + 10 m), walk the last bit
+    // behind (or past the data's leash + 10 m), walk the last bit; but not on into a liquid that
+    // burns (#1, play_liquids.rs `burning_ahead`: the game's routes have no point in one): they
+    // wait at its shore
     let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START }) || (in_lane && dist > 0.3);
+    let shore = go && dist > 1e-4 && world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, Vec2::new(to.x, to.z) / dist));
+    // (BF_LIQUID_LOG: twice a second while it waits there)
+    if shore && std::env::var("BF_LIQUID_LOG").is_ok() && (m.sim_time * 2.0).floor() != ((m.sim_time - dt) * 2.0).floor() {
+        println!("t {:.2}: {} waits at a liquid that burns, {dist:.1} m from its place, at {:.2}", m.sim_time, unit_name(m), m.position);
+    }
+    let go = go && !shore;
     if go {
         let d = to / dist;
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
@@ -4312,7 +4320,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let probe = steered && u.slide_amount <= 0.0 && !here.is_some_and(|f| world::Arena::slides(f.2));
             let moved = Vec2::new(u.position.x, u.position.z) - u.prev_xz;
             let off = steered && here.is_none();
-            if off || (probe && moved.length() > 1e-4 && moved.length() < 1.0 && ledge_ahead(&a, u.prev_xz, moved.normalize(), feet)) {
+            // nor into a liquid that burns it (#1, play_liquids.rs `steps_into_burning`: the
+            // game's routes have no world point in one), unless it's in one already
+            let burns = steered && moved.length() > 1e-4 && moved.length() < 1.0
+                && liquids::steps_into_burning(&a, u.prev_xz, feet, Vec2::new(u.position.x, u.position.z));
+            if off || burns || (probe && moved.length() > 1e-4 && moved.length() < 1.0 && ledge_ahead(&a, u.prev_xz, moved.normalize(), feet)) {
                 u.position.x = u.prev_xz.x;
                 u.position.z = u.prev_xz.y;
                 continue;

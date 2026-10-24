@@ -70,6 +70,49 @@ pub fn in_liquid(u: &Player) -> bool {
     u.wading.count() > 0
 }
 
+/// Whether `p` is in a liquid that burns characters: one whose character rate h_e0489ea0 is above
+/// 0 (lava 30, sludge 50, toxic waste 30; not the waters or chloride, whose rates are 0; the
+/// objects' rate doesn't count, which is 0 on toxic waste).
+pub fn burns_at(a: &world::Arena, p: Vec3) -> bool {
+    a.liquid_inside(p).is_some_and(|(_, _, t)| t.damage[LIQUID_CHARACTER_RATE] > 0.0)
+}
+
+/// How far below its feet (m) a character's hit parts reach, standing (its calves' collision
+/// surfaces round the soles): ground within this of a liquid's surface puts a part in it. The
+/// demo's, from what it measures: Brutus walking into sdm_e13's lava has his first part in with
+/// his feet 0.10 m over the surface (#146's take01 has the game's at 0.05 m under it).
+const PART_REACH: f32 = 0.15;
+
+/// How far ahead (m) a wingman looks for ground in a liquid that burns before setting off toward
+/// its place (`burning_ahead`): the ledge probe's points (play.rs LEDGE_PROBE).
+const BURNING_AHEAD: [f32; 3] = [0.4, 0.8, 1.2];
+
+/// Whether the AI's character `u`, going `dir` (unit, level), would step into a liquid that burns
+/// it within BURNING_AHEAD (#1): `steps_into_burning` at each of those points. The game's AI has
+/// no liquid code (no AI routine reads the liquid state or the liquid objects, todo/146-liquids
+/// leads §4.2); what keeps its squad and its enemies out is their routes over the level's world
+/// points, of which no harmful liquid has one with its floor under the surface on the SDM maps
+/// (sdm_e13's lava 0 of the 536 over it, 2 at a 1.3 m eye offset; sdm_m03's sludge 0 of 141;
+/// sdm_m07's lava 0 of 284, 1), where water has many (sdm_e10's pond 87-272). The demo's AI
+/// doesn't walk those routes yet, so this and play.rs's refusal of such a step stand in for them,
+/// as its ledge probe does for their keeping off drops (#264): a wingman waits at the shore, an
+/// enemy or a cutscene's walk stops there. Whether the game's squad follows its leader in when he
+/// walks into lava (a direct move to him) isn't traced: #146's shot A4, not filmed.
+pub fn burning_ahead(a: &world::Arena, u: &Player, dir: Vec2) -> bool {
+    let feet = u.position.y + GROUND + u.height.max(0.0);
+    let at = Vec2::new(u.position.x, u.position.z);
+    BURNING_AHEAD.iter().any(|&d| steps_into_burning(a, at, feet, at + dir * d))
+}
+
+/// Whether the AI's step from `from` (its feet at `feet`) to `to` is onto ground in a liquid that
+/// burns (#1; see `burning_ahead`, PART_REACH): from outside one, any; from inside, one that isn't
+/// higher than where it is, so it can still climb out. play.rs undoes such a step, as it undoes
+/// one off a ledge.
+pub fn steps_into_burning(a: &world::Arena, from: Vec2, feet: f32, to: Vec2) -> bool {
+    let inside = burns_at(a, Vec3::new(from.x, feet - PART_REACH, from.y));
+    a.floor_at(to.x, to.y, feet + STEP_UP).is_some_and(|(g, _, _)| (!inside || g <= feet) && burns_at(a, Vec3::new(to.x, g - PART_REACH, to.y)))
+}
+
 /// The liquids' damage, once the characters have moved and been posed.
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, burn_in_liquids.after(update_player).run_if(in_state(AppState::Playing)));
