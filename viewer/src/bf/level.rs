@@ -272,7 +272,7 @@ pub struct LevelLight {
     /// h_1f416687: one of the outdoor pair
     pub outdoor: bool,
     /// its type's `enable-specular` (`Game::light_specular`): FUN_000dcc10 puts it in its pair's
-    /// slot 0 (`Level::objects_key`)
+    /// slot 0 (`file_slots`)
     pub specular: bool,
 }
 
@@ -299,6 +299,18 @@ pub fn pair_slots_of<'a>(lights: impl Iterator<Item = &'a LevelLight>) -> [Optio
         }
     }
     [slot0, slot1]
+}
+
+/// FUN_000dcc10's two slots for the indoor pair (`indoor`) or the outdoor one, [slot 0, slot 1],
+/// from a level's directional lights in the level file's order (`Level::lights`). It walks the
+/// world's directional list (+0x22c) from the front, and 0x14f2a0 puts each new directional light
+/// at that list's front, so it meets the pair's lights last to first, slotting them by
+/// `pair_slots_of`: a key (enable-specular) and a fill give the key slot 0 whichever the file
+/// lists first (sdm_e34 and sdm_e13 list the key first, e40 and the tutorial second); two keys or
+/// two fills, the file's second; one key alone, slot 0 (mp3); one fill alone, slot 1 with slot 0
+/// empty.
+pub fn file_slots(lights: &[LevelLight], indoor: bool) -> [Option<&LevelLight>; 2] {
+    pair_slots_of(lights.iter().rev().filter(|l| if indoor { l.indoor } else { l.outdoor }))
 }
 
 impl LevelLight {
@@ -826,26 +838,30 @@ impl Level {
 
     /// The directional lights FUN_000dcc10 puts in the indoor pair (`indoor`) or the outdoor one:
     /// those with the pair's flag (`LevelLight::indoor`, `outdoor`), two at most, in the level
-    /// file's order. It walks the world's directional lights (+0x22c) from the front, filling the
-    /// pair's two slots as it meets them (a slot rule on the type's +0x50 bit 3 never applies: that
-    /// byte is the parsed bool h_ee2faf73, 0 or 1), and 0x14f2a0 puts each new directional light at
-    /// the front of that list, so it meets them last to first: with more than two it would keep
-    /// the file's last two, but no level of the game has more than two in either pair. Which light
-    /// takes which slot (`level_scene::pair_slots`) only matters to the terrain's bump map.
+    /// file's order (no level of the game has more than two in either pair). The objects'
+    /// programs light the pair's two slots alike; which light takes which slot (`slots`) matters
+    /// to the terrain's bump map and the lava's v0 only.
     pub fn pair(&self, indoor: bool) -> Vec<&LevelLight> {
         self.lights.iter().filter(|l| if indoor { l.indoor } else { l.outdoor }).take(2).collect()
     }
 
-    /// The light FUN_000dcc10 puts in slot 0 of the outdoor pair (the light-objects flagged
-    /// h_1f416687, the analyst's "objects set"), whose colour it copies to the world's +0xba0
-    /// (0x41b478; through FUN_0009e9c0: the colour x max(0, 1 - type+0x4c x light+0x78), taken as
-    /// 1 for the levels' steady lights): what BF_LavaMaterial hands its pixel shader as v0 (slot 24
-    /// from the draw context's +0xdc, FUN_000e6ef0 / FUN_00091fe0; todo/146-liquids answer-spec
-    /// Q3). The lights are met from the world list's front, the file's last first (as `pair` reads
-    /// 0x14f2a0), and slotted by `pair_slots_of`. None: FUN_000dcc10 leaves 0x41b478 as it was (0
-    /// after boot, inferred).
+    /// FUN_000dcc10's two slots for the indoor pair (`indoor`) or the outdoor one, [slot 0, slot
+    /// 1] (the shaders' c16 / c17 and c18 / c19), by its rule on the lights' types (`file_slots`,
+    /// 0xdcc8e-0xdccf4). The outdoor pair's slot 0 lights the terrain's bump map
+    /// (`level_scene::terrain_bump`) and gives the lava its v0 (`objects_key`).
+    pub fn slots(&self, indoor: bool) -> [Option<&LevelLight>; 2] {
+        file_slots(&self.lights, indoor)
+    }
+
+    /// The light FUN_000dcc10 puts in slot 0 of the outdoor pair (`slots`: the light-objects
+    /// flagged h_1f416687, the analyst's "objects set"), whose colour it copies to the world's
+    /// +0xba0 (0x41b478; through FUN_0009e9c0: the colour x max(0, 1 - type+0x4c x light+0x78),
+    /// taken as 1 for the levels' steady lights): what BF_LavaMaterial hands its pixel shader as
+    /// v0 (slot 24 from the draw context's +0xdc, FUN_000e6ef0 / FUN_00091fe0;
+    /// todo/146-liquids answer-spec Q3). The same light lights the terrain's bump map. None:
+    /// FUN_000dcc10 leaves 0x41b478 as it was (0 after boot, inferred).
     pub fn objects_key(&self) -> Option<&LevelLight> {
-        pair_slots_of(self.lights.iter().rev().filter(|l| l.outdoor))[0]
+        self.slots(false)[0]
     }
 
     /// The placements the level's spawn-triggers take as their templates (h_1299668b): out of the
@@ -906,5 +922,22 @@ mod tests {
         assert_eq!(names(pair_slots_of([&fill, &key].into_iter())), [Some(1), Some(2)]);
         assert_eq!(names(pair_slots_of([&fill, &other].into_iter())), [Some(2), Some(3)]);
         assert_eq!(names(pair_slots_of([&fill].into_iter())), [None, Some(2)]);
+    }
+
+    /// The slots from the level file's order (`file_slots`), met last to first: a key light takes
+    /// slot 0 whichever the file lists first (sdm_e34 and sdm_e13 list it first, e40 and the
+    /// tutorial second: #288); of two fills the file's second (#271); a key alone slot 0 (mp3); a
+    /// light of the other pair is passed over.
+    #[test]
+    fn the_file_is_met_last_to_first() {
+        let names = |s: [Option<&LevelLight>; 2]| s.map(|l| l.map(|l| l.name));
+        let (key, fill, other) = (light(1, true), light(2, false), light(3, false));
+        assert_eq!(names(file_slots(&[key, fill], false)), [Some(1), Some(2)]);
+        assert_eq!(names(file_slots(&[fill, key], false)), [Some(1), Some(2)]);
+        assert_eq!(names(file_slots(&[fill, other], false)), [Some(3), Some(2)]);
+        assert_eq!(names(file_slots(&[key], false)), [Some(1), None]);
+        let indoor = LevelLight { indoor: true, outdoor: false, ..light(4, true) };
+        assert_eq!(names(file_slots(&[key, indoor], false)), [Some(1), None]);
+        assert_eq!(names(file_slots(&[key, indoor], true)), [Some(4), None]);
     }
 }

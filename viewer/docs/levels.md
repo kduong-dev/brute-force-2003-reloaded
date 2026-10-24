@@ -105,16 +105,31 @@ level), all below.
       layers), its y the way v falls; and v12.y is the block's baked light cell (h_e2d79bad) at
       the vertex (98.8% within their four cells' values: the bright cells, 183-255, have the top
       bit, the cliffs' shadows, 35-86, don't).
-    * Which light. FUN_000dcc10 meets the world's directional lights last to first: 0x14f2a0
-      puts each new one at the front of the world's list (+0x228; a point light goes to the
-      back), and the second it meets moves the first to slot 0. So slot 0 is the pair's second
-      light in the level file and slot 1 its first (`level_scene::pair_slots`); with one light,
-      slot 1, and slot 0 is black (no bump). The objects' programs light both slots alike, so
-      only this tells them apart. The outdoor pair (the one each view's draw starts with): on
-      e40, m03_a, e34 and the tutorial slot 0 is the key (e40's h_1a801d2e, 0.85 0.66 0.59 from
-      +x and 32 degrees up), on sdm_e34 the dim fill h_eec4a26b. In the file's order the bump
-      would take e40's fill, which comes from just under the horizon and fails n . c16 >= 0 on
-      the beach: no relief at all, where take06 shows it.
+    * Which light (#288). FUN_000dcc10 fills a pair's two slots by each light type's
+      enable-specular bit (the type's +0x50 bit 3, which the light type copy sets at 0x14e3d5): a
+      light with it takes slot 0 if that's free, else slot 1; any other takes slot 1 and moves the
+      one there to slot 0; with both full the rest are passed over (0xdcc8e-0xdccf4). It meets
+      the world's directional lights last to first: 0x14f2a0 puts each new one at the front of
+      the world's list (+0x228; a point light goes to the back). The key types (h_e1cac6f7,
+      h_157b3160, h_e8d6efe4) have the bit and the fill (h_f5302dc6) hasn't, so slot 0 is the
+      pair's key whichever the level file lists first; of two keys or two fills it's the file's
+      second; one key alone is slot 0 (mp3); one fill alone is slot 1, and slot 0 is black (no
+      bump). (`Level::slots`, `bf::level::file_slots`; the lava's v0 is the same light,
+      `Level::objects_key`.) The objects' programs light both slots alike, so only the bump map
+      and the lava tell them apart. The outdoor pair is the one each view's draw starts with.
+      * e40's key h_1a801d2e (0.85 0.66 0.59, from +x and 32 degrees up), sdm_e34's h_e7c392fd
+        (0.82 0.91 0.99, 44 degrees up), sdm_e13's h_e7c392fd (0.96 0.87 0.80, 41 degrees up).
+        Every level with an outdoor pair has a key in it (mp2 has none: both its lights are
+        indoor).
+      * #271 took the file's second light, the key only where the file lists it second. 31
+        levels list the key first and drew the bump by their fill instead: e01, e13, e16, e23,
+        m01_a/b, m02_a/c, m04_a/c, m05_b/y, m07_a/b, m09_a/b/c/x, m14_a/b, mp1, mp4, mp6, mp7 and
+        every sdm map (sdm_e34's dim h_eec4a26b, 0.15 0.20 0.27; sdm_e13's h_eec4a26b from 10
+        degrees up). mp3's lone key took slot 1: no bump (mp3 draws no terrain anyway, its mesh
+        h_0eb16f84 being on no disc, nor does sdm_m07). The rest (e40, the tutorial, e05, e06,
+        e10, e34, m02_b, m03_a/b/c, m05_a/c/d/x, m07_c, m08_a/b, m14_c/d, mp8) keep their light.
+      * In the file's order the bump would take e40's fill, which comes from just under the
+        horizon and fails n . c16 >= 0 on the beach: no relief at all, where take06 shows it.
     * c0, stage 2's constant (pixel constant 0 by the shaders' C0 mapping 0xfffff0ff; their own
       PSConstant0 is 0), sets the relief's strength. It's set nowhere for these shaders (nothing
       selects them, below); the demo takes slot 0's colour, the light the bump map stands for. A
@@ -179,6 +194,19 @@ level), all below.
         shots, holes and counts), the ground's hue. The start views (`BF_CAMERA_PITCH=-0.25`,
         frame 30): sdm_e34 (its slot 0 the weak fill: little change), sdm_e40, e34, sdm_e13 (its
         rock more grained), sdm_m03 (little change); m03_a's (strong ripples, as its take01 shows).
+      * The key by the slot rule (#288; `BF_LIGHT_LOG=1` prints the slots):
+        * sdm_e34 by take20's orb (`BF_MAP=sdm_e34 BF_CHARACTER=3
+          BF_TEST_GOTO=-81.78,63.86,-82.3,63.2 BF_CAMERA_PITCH=-0.6`, frame 19, against
+          `todo/35-special-skills/take20` at 1.0 s, the view near but not matched): the rock right
+          of Tex 1.70 / 1.38 / 1.12 at 59 luma (the take's 1.43 / 1.35 / 1.13 at 61; with #271's
+          fill 1.18 / 1.11 / 0.99). The rock's grain shows all over the near ground, as in the take.
+        * sdm_e13's shore (`BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.80,-19.97,-110,25.09
+          BF_TEST_GO_AT=100`, frame 19, against #146's take01 at 1.5 s): the ground left of Brutus
+          3.47 / 3.30 / 3.11 at 51 luma (with the fill 3.41 / 3.63 / 3.50 at 56; the take's 2.67 /
+          2.71 / 2.80 at 37, its ground darker: #181's), its relief dark grooves like the take's;
+          the rock wall right of the lava 3.60 / 3.77 / 4.70 (2.60 / 3.32 / 4.48).
+        * e40's beach (the recipe above, frames 10-19) and the tutorial's opening (`BF_MAP=tutorial`,
+          frames 30-39): the same pixels as #271's build. Their slot 0 is the same light.
     * Test hook: `BF_NO_BUMP=1` draws the ground without its bump map, as before.
   * The layers' masks: program 0x38 samples a layer's mask at the second uv set (oT1 = v10,
     pixel shader 0x1a's alpha), which on every masked layer's vertex is its place across the
@@ -334,8 +362,8 @@ or `cargo run --bin bf_level -- <map>`). What it took:
 
     v0 is the colour of the level's key light, slot 0 of the outdoor pair (`Level::objects_key`;
     FUN_00091fe0 slot 24 from the world's +0xba0): sdm_e13 0.96 0.87 0.80, the tutorial and e40
-    the h_157b3160 light's; black where the pair has no key light (FUN_000dcc10 then leaves it as
-    it was: 0 after boot, inferred). It's unlit otherwise. The wrapper's h_e59d69a0 (lava 60, sludge 200, toxic waste 1) is the stencil value
+    the h_157b3160 light's; black where slot 0 is empty (only mp2, whose lights are both indoor:
+    FUN_000dcc10 then leaves it as it was, 0 after boot, inferred). It's unlit otherwise. The wrapper's h_e59d69a0 (lava 60, sludge 200, toxic waste 1) is the stencil value
     its pixels write for the game's glare, not an opacity (below).
   * **BF_OceanMaterialBase** (`h_0f8904b9`: water). Pixel shader 0x2f: (t0 x `color` + t1 x
     `color-1`) / 2 x v0, alpha the ramp's, SRCALPHA / INVSRCALPHA (0x92f70).
@@ -597,9 +625,9 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   objects**), and what lights its terrain is #181's, so the hue is kept as it was calibrated. If
   vertex program 0x38 is the terrain's base pass (see **The detail**: no code was found loading
   it), its vertex light is the Terrain `<ambient>` plus slot 1's light of whichever pair was
-  uploaded last (c18 / c19, x the material's colour; the pair's first light in the level file),
-  each view's draw starting with the outdoor pair (FUN_000dcc10(0, ..) at 0xda2aa), and the bump
-  map takes slot 0's (c16, the file's second; **The bump map**), all of it x the vertex's baked
+  uploaded last (c18 / c19, x the material's colour; the pair's fill where it has a key and a
+  fill), each view's draw starting with the outdoor pair (FUN_000dcc10(0, ..) at 0xda2aa), and
+  the bump map takes slot 0's (c16, the key; **The bump map**), all of it x the vertex's baked
   light. So the outdoor pair, not the `h_e02aba1c` lights, would reach the ground. A lead for
   #181 (inferred: c26 and c27, which decode the baked light's byte, are set for no terrain
   program): read as its low 7 bits / 127.5 x (the ambient + the pair's N.L), e40's beach comes
@@ -627,10 +655,10 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     own `h_f89cd77d` (`Geoset::indoor`, a building's inner faces: the tutorial has 59 such
     geosets on 16 meshes), LU_NONE none (here the outdoor pair, the one each view starts with).
     Each pair takes its lights from the level file; no level has more than two in one. Its two
-    slots (c16 / c17, c18 / c19) light an object alike; FUN_000dcc10 meets the lights last to
-    first, so slot 0 is the file's second (#271, **The bump map**: only the terrain's bump map
-    tells them apart). The demo read `h_e02aba1c` as "lights the terrain" before; it's the indoor
-    pair.
+    slots (c16 / c17, c18 / c19) light an object alike; FUN_000dcc10 gives slot 0 to the pair's
+    key light, the one whose type has enable-specular (#288, **The bump map**: only the
+    terrain's bump map and the lava's v0 tell them apart). The demo read `h_e02aba1c` as "lights
+    the terrain" before; it's the indoor pair.
   * **Here.** The outdoor pair are bevy's directional lights (`spawn_lighting`), at PI lux with
     their sRGB colour, the brightest (by luma) casting the characters' shadow: the game's
     lights cast none, so the one shadow is the demo's choice. Characters take the outdoor pair
@@ -657,8 +685,9 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     them with an ALE light-effect: the placed effects draw those lights (#258), so these aren't
     drawn again. A `<parent Type="2">` (a hardpoint) keeps its own transform.
   * `BF_LIGHT_LOG=1` lists every light-object (name, type, kind, pairs, colour, strength,
-    direction or place), the two pairs, the ambients, the ones not drawn and why, and each
-    placement lit by the indoor pair.
+    direction or place), the two pairs and FUN_000dcc10's slots for each (`Level::slots`: the
+    outdoor slot 0 is the bump map's light and the lava's v0), the ambients, the ones not drawn
+    and why, and each placement lit by the indoor pair.
 * **Point lights.** A point light-object (every point type, #143) is a place, a colour
   (`h_f08eb2f3`, 0-1), a `range` (4-40 m) and a `falloff` kind (3 or 4 on all of them; the
   schema leaves its enum, `h_f30c3302`, unnamed, and the light's setter goes through the generic
