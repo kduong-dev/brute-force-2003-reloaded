@@ -306,42 +306,97 @@ or `cargo run --bin bf_level -- <map>`). What it took:
 
   The level's dynamic terrain lights are dim; sdm_e40's key is 0.2, low in the sky. The baked
   light is what the map-select previews show: bright sdm_e40 and sdm_e10, night sdm_e01.
-* **Liquid surfaces.** A liquid object's surfaces use one of two shaders, drawn by
-  `LiquidMaterial` (`src/liquid.wgsl`):
-  * the animated liquid `h_f124a774` (lava, toxic rivers): `texture-0` and `texture-1`, each
-    a tile `texture-scale` / `texture-scale-1` of the mesh's uv across (by the sizes that gives:
-    sdm_e13's lava, 1.5 km over 15 uv, has 10 m tiles at 0.1; read as repeats, a 256-texel
-    texture stretched over a kilometre, blurred, and scrolled tens of m/s), scrolling in tiles
-    per second (two unnamed pairs, by their values u and v of each layer: `h_0e41af5b
-    h_0e2b9302`, `h_e002ae8e h_fb0bff34`), combined by
-    `blend-mode-1` (0: over by its alpha, sdm_e40's lava crust; 1: added, the toxic river's
-    green over its dark swirl). Every layered liquid's `blend-mode` is 2, read as the console's
-    modulate x 2: the colour doubled. Lava (liquid-type 2) gives all its colour as light, toxic
-    (4) 80%; both are solid (the materials' own opacity, 60-200 / 255, is left out: captures of
-    Singe's and Cavern of Fire's lava and Shanty Town's acid show them opaque, near yellow).
-  * the water `h_0f8904b9`: `texture-0` tiled (`scale-u`, `scale-v`) and scrolling, tinted by
-    `color`; over it the reflection by a fresnel ramp (`h_0b85cb09`, a 128 x 1 alpha strip: more
-    at a glance). The game's reflection is `texture-1`, a texture no archive holds (rendered at
-    run time); here it's the level's sky colour tinted by `color-1`, rippled by the water's own
-    texture, 15% looking straight down (without any a pool seen from above was its murky colour
-    over a bed of the same colour: it vanished) to 50% at a glance; 92% opaque, its colour doubled
-    too (no blend-mode: a choice; a capture of sdm_e10's pond measures 57 60 36, ours 49 49 18).
-  * Water ripples: its texture twice (scale-u, scale-v and scale-u-1, scale-v-1, each drifting:
-    at least 0.02 tiles/s, the two crossing; sdm_e10's own speeds, 0.0002 and 0.01, left it still;
-    the water's `framerate` constants, 17 and 25, hint at an animation of the game's own, not
-    traced). Their brightness slopes, as heights, tilt the surface: the light, the sun's glint
-    and the reflection ripple, and the water's colour is shaded by the tilt from one side. It
-    gives 35% of its colour as its own light: sdm_e10's dim lights alone left the pond near
-    black, its ripples lost, where a capture shows it evenly lit.
+* **Liquid surfaces (#4).** A surface whose material is one of the game's two liquid material
+  classes is drawn as that class draws it (`LiquidMaterial`, `src/liquid.wgsl`; the code read in
+  todo/146-liquids leads.md §6 and answer-spec.md, the code map's Effects rows 0x91a10-FUN_00093210):
+  a liquid object's, and the few other placed objects that wear one (e13's h_e9f071d8, m02_a's
+  h_fe3dec33, m14_c's three h_e82c9d42). The textures are taken as stored and the shaders' sums
+  and products are on those values, as the console's combiners take the texels' bytes; the result
+  is clamped as they clamp it, and fogged. Nothing doubles a colour, and no liquid gives its colour
+  as light.
+  * **BF_LavaMaterial** (`h_f124a774`: lava, sludge, toxic waste, chloride). t0 `texture-0` at uv /
+    `texture-scale` + the clock x (`translate-u`, `translate-v`), t1 `texture-1` likewise with the
+    `-1` constants (repeats per second, not divided by the scale; the names and offsets from its
+    parameter table 0x91a10), the clock starting at the material's `lifetime` (0x91ba0: sludge 10,
+    toxic waste 2). Its two blend modes pick the pixel shader (FUN_00091bc0, FUN_00091e60;
+    `lava_passes`; the combiners decoded again for #4: no stage scales its output):
+
+    | blend-mode / -1 | Shader | Colour | Blending | Used by |
+    |---|---|---|---|---|
+    | 2 / 0 | 0x2b | lerp(t0, t1 x v0, t1.a) | opaque | the lava of sdm_e13, sdm_e40, sdm_m07, the tutorial, m02 |
+    | 2 / 1 | 0x2a | t0 + t1 | opaque | sludge (sdm_m03, m03_a/b, e01, mp6) |
+    | 0 / 1 | 0x29 | t0 x t0.a + t1, alpha t0.a | ONE / INVSRCALPHA | toxic waste (m09, m14): see-through |
+    | 1 / 1 | 0x27 | t0 + t1 | ONE / ONE | m14_c's chloride |
+    | 1 / 0 | 0x28 | lerp(t0, t1, t1.a), alpha t1.a | ONE / INVSRCALPHA | none |
+    | any / 2 | 0x2c | t1 | opaque | none |
+    | 0 / 0 | 0x2c twice | t0, then t1 at LESSEQUAL | SRCALPHA / INVSRCALPHA each | m02_a's h_fa91cd3b (a second entity draws the second pass) |
+    | one texture | 0x2c | that layer | by its own mode: 0 alpha, 1 added, else opaque | e13's h_eabb45fa (mode 2: opaque, inferred) |
+
+    v0 is the colour of the level's key light, slot 0 of the outdoor pair (`Level::objects_key`;
+    FUN_00091fe0 slot 24 from the world's +0xba0): sdm_e13 0.96 0.87 0.80, the tutorial and e40
+    the h_157b3160 light's; black where the pair has no key light (FUN_000dcc10 then leaves it as
+    it was: 0 after boot, inferred). It's unlit otherwise. The wrapper's h_e59d69a0 (lava 60, sludge 200, toxic waste 1) is the stencil value
+    its pixels write for the game's glare, not an opacity (below).
+  * **BF_OceanMaterialBase** (`h_0f8904b9`: water). Pixel shader 0x2f: (t0 x `color` + t1 x
+    `color-1`) / 2 x v0, alpha the ramp's, SRCALPHA / INVSRCALPHA (0x92f70).
+    * t0 `texture-0` at uv / (`scale-u`, `scale-v`) + frac(clock x (`translate-u`, `translate-v`)
+      / scale), t1 likewise with the `-1` constants: the drift is near still (the pond's 0.005 and
+      3e-5 repeats a second). The e40 ocean has no `texture-0`: t0 is the console's default white
+      (FUN_00062280; bevy's white fallback here).
+    * `texture-1` is the shimmer `h_e757ea7c`, an animated texture of 34 separate 128 x 128 frames
+      (`Flipbook::frame_textures`), played in a loop at the material's `framerate-1`
+      (FUN_00092d10, 0x262680): sdm_e10's pond 17 fps (2.0 s), the e40 pools 25 (1.36 s), the
+      ocean 30 (1.13 s). It's what moves the water.
+    * v0 is the vertex light: the object ambient + max(N.L, 0) x colour of the outdoor pair's two
+      lights (answer-spec Q7), clamped, in the console's terms (`water_light`: bevy's ambient and
+      directional lights taken back to the values the game hands the shader, so the Vengar view's
+      vision lights reach it too).
+    * Alpha: the ramp texture at the vertex's own height in its mesh (its model-space y, the
+      second uv). The game makes the ramp from the material's six key / value pairs (FUN_00092df0,
+      0x92eb0: 128 texels, trunc(ramp(i / 127) x 255), an ease-in-out between keys), which gives the
+      archives' own ramp textures byte for byte (`water_ramp`'s test; BF_LIQUID_LOG compares each
+      map's). The pond and the pools sit at model height 1: alpha 1, drawn opaque (the same
+      picture; and it writes depth, as the game's does). The ocean spans 0 to 1: see-through
+      where its mesh is low, at the shore.
+    * Height: every vertex at its node's world height (vertex program 0x45 takes slot 28's y,
+      FUN_00093210: the draw's world matrix's translation y; `water_mesh`). The pond is drawn at
+      15.22 (its mesh 1 m higher), the e40 pools at 27.0-27.1, the e40 ocean at 22.10, 1 m under
+      its collision's top (23.10). This replaces the lift onto the collision's top.
+    * No reflection: no render target or reflection camera exists (leads §6.3), and #73's take20
+      mirrors nothing in the e40 sea. The sky-colour reflection, the fresnel ramp and its 15-50%,
+      the 92% opacity, the x2, the 35% self-light, the ripple tilt and the 0.02 tiles/s least drift
+      the demo drew before are gone.
+  * Both are drawn one-sided: take03 of #146 (26-41 s, the camera under sdm_e13's lava) shows no
+    surface from under it.
+  * Their clocks (`LiquidClock`) run on the game's time from the level's start: stopped under a
+    menu (0x1ea830 skips the material and texture updates while paused), fixed steps under
+    BF_CAPTURE.
   * Liquid surfaces have a depth bias: Singe's lake lies centimetres over terrain painted with
     lava veins, and seen low the two fought, the veins showing through the lava.
-    `BF_LIQUID_TEX=<hex>` puts one texture on every liquid layer (a test).
-  * A liquid's drawn surface is moved onto its collision's top (what's waded in): sdm_e40's
-    pools draw theirs 1 m higher, so from the side the water floated over the floor (from above
-    it lined up, so it seemed to come and go with the view); lava and the rivers already agree.
-    `BF_LIQUID_DEBUG=1` draws every liquid surface solid white.
-  Other names found by hash: `framerate`, `framerate-1`, `lifetime`, `blend-mode`.
-  `BF_LIQUID_LOG=1` lists a map's liquid surfaces (material, textures, constants).
+  * Test hooks: `BF_LIQUID_TEX=<hex>` puts one texture on every liquid layer;
+    `BF_LIQUID_DEBUG=1` draws every liquid surface solid white; `BF_LIQUID_LOG=1` lists a map's
+    liquid surfaces and materials (constants, passes, frames, the ramp against the archive's) and
+    the other objects wearing a liquid material.
+  * **Not drawn: the glare.** The takes' lava is brighter and yellower than these shaders give:
+    take01 of #146 (2 s, the stream on sdm_e13) 254 134 30, its brightest tenth 254 193 31, where
+    the demo's (`BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.80,-19.97,-110,25.09
+    BF_TEST_GO_AT=100`, frame 19) is 217 86 9, brightest 237 111 9; take08 of #28 (165 s, the
+    tutorial's pit) 171 106 62, brightest 252 201 97, against the demo's 88 59 51, 151 87 67. Even
+    the lava texture's brightest texels x v0 (236 108 13) fall short, so something is laid over
+    it: the glare (FUN_000e5f60 / FUN_000e5d40), which the game runs when a material writes a
+    stencil value other than 255 (lava 60): a bright pass of the picture (pixel shader 0x1f keeps
+    what's brighter than a threshold), blurred into 24 offset copies, added ONE / ONE (code map).
+    The demo has no glare yet (its own ticket); the x2 it drew before stood in for it.
+  * Checked (#4): sdm_e10's pond from its start (`BF_MAP=sdm_e10 BF_CHARACTER=3
+    BF_TEST_GOTO=74,5,60,5 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.4`): 59 57 28 near, the shimmer
+    changing frame to frame and repeating after 2.00 s (30 frames at 15 fps: a mean change of 1.5
+    against 6.8 half a loop on). The e40 sea from take20's place (`BF_MAP=e40 BF_CHARACTER=3
+    BF_TEST_GOTO=-1.97,169.30,-5.77,178.55,26.12 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=0.02`): the
+    same warm grey-brown as the take, R : G : B about 1 : 0.84 : 0.67, from the horizon's fog to
+    61 51 41 nearer (the take's 84 64 53 to 44 38 30: the code's colour before fog is 44 42 34; the
+    framing isn't the take's), mirroring nothing; at e40's shore the sand shows through the
+    shallow edge. sdm_e40's pools are opaque and flat in their basins; sdm_m03's sludge
+    yellow-green. No take shows the shimmer up close, the pools, the pond or sludge (B4, C1).
 * **Splashes.** A liquid type also names its effects and sounds (`<h_fa2f5452>` entries:
   h_08f6cd94 a shot striking it, h_e4791abc a small splash, h_07ab4143 a big one, h_f458daca the
   ring round a wader; `env_xl_*` water, `env_sl_*` lava, `env_fl_*` toxic, `env_tl_*` type 3,

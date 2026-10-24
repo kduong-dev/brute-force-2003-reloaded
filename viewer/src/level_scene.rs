@@ -268,23 +268,37 @@ fn pair_slots<'a>(pair: &[&'a LevelLight]) -> [Option<&'a LevelLight>; 2] {
 /// themselves (+10 each, as before). Its depth-test bias stays as it was (`Lamps::layer_bias`).
 const TERRAIN_LAYER_SORT: f32 = -1.0e6;
 
-/// A liquid's surface (the game's animated liquid shader h_f124a774: lava, toxic rivers; its
-/// water h_0f8904b9): bevy's standard material, its colour the moving layers (src/liquid.wgsl).
+/// A liquid's surface, drawn as the game's two liquid material classes draw theirs (#4;
+/// src/liquid.wgsl): BF_LavaMaterial (h_f124a774: lava, sludge, toxic waste, chloride), whose two
+/// blend modes pick one of its pixel shaders (`lava_passes`), and BF_OceanMaterialBase
+/// (h_0f8904b9: water), two layers averaged and lit by the level's lights. The extension makes the
+/// colour; bevy's standard material carries the rest: the fog, the blending, the depth bias. The
+/// code read is todo/146-liquids/leads.md §6 and answer-spec.md Q2, Q3, Q7, Q8, Q10, Q11.
 pub type LiquidMaterial = ExtendedMaterial<StandardMaterial, LiquidSurface>;
 
+/// A liquid surface's textures and constants (`LiquidMaterial`, `liquid_materials`).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 pub struct LiquidSurface {
     #[uniform(100)]
     pub params: LiquidParams,
-    #[texture(101)]
+    /// `texture-0`'s frames, a layer each (a plain texture is one), as stored (`frames_image`).
+    /// None: bevy's white fallback, which is what the console binds for a slot left empty
+    /// (FUN_00062280 binds its 1 x 1 opaque white default texture for a null one: the e40 ocean's
+    /// texture-0, answer-spec Q2)
+    #[texture(101, dimension = "2d_array")]
     #[sampler(102)]
     pub layer0: Option<Handle<Image>>,
-    #[texture(103)]
+    /// `texture-1`'s frames, likewise (the water's shimmer: 34)
+    #[texture(103, dimension = "2d_array")]
     #[sampler(104)]
     pub layer1: Option<Handle<Image>>,
+    /// the water's alpha ramp (`water_ramp`): 128 x 1, clamped
     #[texture(105)]
     #[sampler(106)]
     pub ramp: Option<Handle<Image>>,
+    /// where the material's clock starts (s): BF_LavaMaterial's `lifetime` (+0x38, its clock:
+    /// 0x91ba0 adds dt to it), 0 for the water (+0x94 from 0, 0x92f50); see `LiquidClock`
+    pub start: f32,
 }
 
 /// See src/liquid.wgsl. (In a module of its own: the derive's own checks read as unused.)
@@ -292,19 +306,29 @@ mod liquid_params {
     #![allow(dead_code)]
     use bevy::{prelude::*, render::render_resource::ShaderType};
 
+    /// A liquid surface's constants (src/liquid.wgsl `Liquid`).
     #[derive(Clone, Copy, Debug, Default, Reflect, ShaderType)]
     pub struct LiquidParams {
-        pub scale0: Vec2,
-        pub scale1: Vec2,
-        pub speed0: Vec2,
-        pub speed1: Vec2,
-        pub tint: Vec4,
-        pub reflection: Vec4,
-        pub kind: u32,
-        pub mode: u32,
-        pub glow: f32,
-        pub opacity: f32,
-        pub bright: f32,
+        /// the game's pixel shader it draws with (`level_scene`'s PS_*: BF_LavaMaterial's 0x27 -
+        /// 0x2c, the water's 0x2f; 0 the BF_LIQUID_DEBUG white)
+        pub shader: u32,
+        /// how its output is blended (`level_scene`'s BLEND_*), for what it writes as alpha
+        pub blend: u32,
+        /// pixel shader 0x2c's layer: 0 texture-0, 1 texture-1
+        pub layer: u32,
+        /// the material's clock (s): `LiquidSurface::start` + the level's `LiquidClock`
+        pub clock: f32,
+        /// per layer: 1 / its scale (u, v) and its translate (u, v; repeats per second)
+        pub coords0: Vec4,
+        pub coords1: Vec4,
+        /// per layer: its frame count and frame rate (per second), and 1 where its translate is
+        /// divided by its scale (the water's vertex program 0x45), else 0
+        pub anim0: Vec4,
+        pub anim1: Vec4,
+        /// the water's `color` and `color-1` (pixel shader 0x2f's c0 and c1); BF_LavaMaterial's v0
+        /// in `color0` (pixel shader 0x2b's tint of texture-1)
+        pub color0: Vec4,
+        pub color1: Vec4,
     }
 }
 pub use liquid_params::LiquidParams;
@@ -317,130 +341,354 @@ impl MaterialExtension for LiquidSurface {
     }
 }
 
-/// The level materials (`LevelMaterial`, `LiquidMaterial`) and their shaders.
+/// The game time (s) the level's liquid materials have run for, set to 0 as `spawn_level` makes
+/// them: what their clocks count from (`LiquidSurface::start`). The game steps every material's
+/// update with the frame's dt from the main tick, skipped while the game is paused (0x1ea830 ->
+/// the material library's +0x4c, 0x25cf30: the water's +0x94, the lava's `lifetime`), and the
+/// texture library's animators with the same dt (+0x1c, 0x286060: the water's shimmer), so one
+/// clock runs both. bf_play runs it on the game's clock (paused under a menu, fixed steps under
+/// BF_CAPTURE), bf_level on bevy's.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct LiquidClock(pub f32);
+
+/// The level materials (`LevelMaterial`, `LiquidMaterial`), their shaders, and the liquids' clock
+/// (`LiquidClock`).
 pub fn plugin(app: &mut App) {
     let mut shaders = app.world_mut().resource_mut::<Assets<Shader>>();
     shaders.insert(&LAMP_SHADER, Shader::from_wgsl(include_str!("lamps.wgsl"), file!()));
     shaders.insert(&LIQUID_SHADER_HANDLE, Shader::from_wgsl(include_str!("liquid.wgsl"), file!()));
-    app.add_plugins((MaterialPlugin::<LevelMaterial>::default(), MaterialPlugin::<LiquidMaterial>::default()));
+    app.add_plugins((MaterialPlugin::<LevelMaterial>::default(), MaterialPlugin::<LiquidMaterial>::default()))
+        .init_resource::<LiquidClock>()
+        .add_systems(PostUpdate, run_liquid_clocks);
 }
 
-/// How far a liquid's drawn surface (its liquid-shader geosets' top) must move to lie on its
-/// collision's top (the archetype's own frame); 0 without collision.
-fn liquid_lift(game: &Game, arch: u32) -> f32 {
-    let top = crate::arena::physics_tris(game, arch).iter().flat_map(|t| t.0.map(|v| v.y)).fold(f32::MIN, f32::max);
-    let Ok(m) = WeaponModel::load(game, arch) else { return 0.0 };
-    let drawn = m.parts.iter().flat_map(|p| p.geosets.iter().filter(|g| [LIQUID_LAYERS, LIQUID_WATER].contains(&game.material_type(g.material)))
-        .flat_map(move |g| g.positions.iter().map(move |v| (p.rotation * Vec3::from(*v) + p.offset).y))).fold(f32::MIN, f32::max);
-    if top == f32::MIN || drawn == f32::MIN { 0.0 } else { top - drawn }
+/// Each liquid material's clock: its start + the level's `LiquidClock`, once the clock has moved.
+fn run_liquid_clocks(clock: Res<LiquidClock>, mut liquids: ResMut<Assets<LiquidMaterial>>) {
+    if !clock.is_changed() {
+        return;
+    }
+    for (_, m) in liquids.iter_mut() {
+        m.extension.params.clock = m.extension.start + clock.0;
+    }
 }
 
-/// The game's liquid shaders: animated layers (lava, toxic) and water.
+/// The game's liquid material classes: BF_LavaMaterial (lava, sludge, toxic waste, chloride) and
+/// BF_OceanMaterialBase (water). (The e40 surf band's BF_OceanMaterialSurf, h_06591b8a, isn't
+/// one of them here: it keeps the level material, out of #4.)
 const LIQUID_LAYERS: u32 = 0xF124_A774;
 const LIQUID_WATER: u32 = 0x0F89_04B9;
-/// The water's fresnel ramp (a 128 x 1 alpha strip) parameter.
+/// The water's ramp texture parameter (h_0b85cb09, its stage 2 slot; 0x925e0): the texture
+/// 0x92eb0 fills from the ramp's keys (`water_ramp`).
 const WATER_RAMP: u32 = 0x0B85_CB09;
-/// The liquid shaders' scroll speeds (tiles per second; unnamed: by their values, the pairs u, v
-/// of texture-0 and of texture-1). A layer's `texture-scale` is its tile's size in the mesh's uv
-/// (by the sizes it gives: sdm_e13's lava 1.5 km across spans 15 uv, so 0.1 is a 10 m tile; taken
-/// as repeats it stretched a 256-texel texture over a kilometre, and scrolled tens of m/s).
-const SCROLL0: [u32; 2] = [0x0E41_AF5B, 0x0E2B_9302];
-const SCROLL1: [u32; 2] = [0xE002_AE8E, 0xFB0B_FF34];
-/// A liquid's glow (its colour given as light) by liquid-type: lava 2 all, toxic 4 nearly so
-/// (captures: Singe's lava and Shanty Town's acid shine, solid, near yellow).
-const LAVA_GLOW: f32 = 1.0;
-const TOXIC_GLOW: f32 = 0.8;
-/// Water's own share of light: a capture of sdm_e10's pond shows it evenly lit, its ripples
-/// plain, where the level's dim lights alone left it near black.
-const WATER_GLOW: f32 = 0.35;
-/// Water's opacity looking straight down (the fresnel ramp takes it to opaque at a glance; a
-/// capture of a pond shows a murky surface, nothing of what's under it).
-const WATER_OPACITY: f32 = 0.92;
-/// The liquids' colour scale: every layered liquid's blend-mode is 2, read as the console's
-/// modulate x 2 (captures: bright yellow lava, yellow-green acid); water's too (no blend-mode:
-/// a choice, by a capture of a pond's olive brown).
-const LIQUID_BRIGHT: f32 = 2.0;
+/// BF_OceanMaterialBase's six ramp keys (+0x64..+0x78) and six values (+0x7c..+0x90), in the
+/// parameter table's order (0x92a70; todo/146-liquids leads §6.3). Unnamed.
+const RAMP_KEYS: [u32; 6] = [0x04F8_4A86, 0x0DFF_7A10, 0x16F6_2BAA, 0x1FF1_1B3C, 0xFB95_8E9F, 0xF292_BE09];
+const RAMP_VALUES: [u32; 6] = [0x19DF_E035, 0x10D8_D0A3, 0x0BD1_8119, 0x02D6_B18F, 0xE6B2_242C, 0xEFB5_14BA];
+/// How many texels 0x92eb0 writes into the water's ramp texture, and the step between their
+/// keys (0x3a52e8: 1/127) and their scale (0x3a50e8: 255).
+const RAMP_TEXELS: usize = 128;
+const RAMP_STEP: f32 = 0.007_874_02;
+/// The ramp's mode (FUN_00092df0 sets the `IRampSingle`'s vtable +0x34 to 4): Freelancer's
+/// ease-in-out between keys (`ale::ease` 4).
+const RAMP_EASE: u8 = 4;
 /// Liquid surfaces are drawn as if this much nearer (bevy depth bias), over terrain just under them.
 const LIQUID_DEPTH_BIAS: f32 = 1000.0;
 
-/// Water's layers drift at least this fast (tiles per second), the two crossing: sdm_e10's
-/// scroll 0.0002 and 0.01, their ripples all but still. (The game's water has `framerate`
-/// constants, 17 and 25: some animation of its own, not traced.)
-const WATER_DRIFT: [Vec2; 2] = [Vec2::new(0.02, 0.012), Vec2::new(-0.015, 0.022)];
+/// BF_LavaMaterial's pixel shaders (FUN_00091bc0, FUN_00091e60; the combiners decoded by the
+/// analyst, todo/146-liquids leads §6.2), on the texels as stored (t0 texture-0, t1 texture-1),
+/// each fogged, none doubling: 0x27 t0 + t1; 0x28 lerp(t0, t1, t1.a), alpha t1.a; 0x29
+/// t0 x t0.a + t1, alpha t0.a; 0x2a t0 + t1; 0x2b lerp(t0, t1 x v0, t1.a); 0x2c one layer as it
+/// is. And the water's (0x92f70): 0x2f (t0 x color + t1 x color-1) / 2 x v0, alpha the ramp's.
+pub const PS_ADD: u32 = 0x27;
+pub const PS_OVER: u32 = 0x28;
+pub const PS_SEE_THROUGH: u32 = 0x29;
+pub const PS_SUM: u32 = 0x2A;
+pub const PS_CRUST: u32 = 0x2B;
+pub const PS_ONE: u32 = 0x2C;
+pub const PS_WATER: u32 = 0x2F;
+/// How a liquid's output is blended into the picture (the material's render states): none
+/// (opaque), SRCALPHA / INVSRCALPHA, ONE / INVSRCALPHA, ONE / ONE.
+pub const BLEND_NONE: u32 = 0;
+pub const BLEND_ALPHA: u32 = 1;
+pub const BLEND_PREMULTIPLIED: u32 = 2;
+pub const BLEND_ADD: u32 = 3;
 
-fn drift(water: bool, speed: Vec2, least: Vec2) -> Vec2 {
-    if water && speed.length() < least.length() { least } else { speed }
+/// BF_LavaMaterial's passes by its `blend-mode` (+0x24), `blend-mode-1` (+0x34) and which of its
+/// textures it has (FUN_00091fe0): (pixel shader, blending, layer) each.
+///  - Both textures (FUN_00091bc0): blend-mode-1 2: 0x2c on texture-1, no blend state set; 0 / 0:
+///    two passes (FUN_000920a0), texture-0 then texture-1 through 0x2c, each SRCALPHA /
+///    INVSRCALPHA, the second at ZFUNC LESSEQUAL (m02_a's h_fa91cd3b); blend-mode 2: 0x2b for
+///    blend-mode-1 0 (lava), 0x2a for 1 (sludge), else 0x2c (texture-0), no blend state; blend-mode
+///    0: 0x29, ONE / INVSRCALPHA (m09 and m14's toxic waste); otherwise 0x28 (blend-mode-1 0) ONE /
+///    INVSRCALPHA, or 0x27 ONE / ONE (m14_c's chloride).
+///  - One texture (FUN_00091e60): 0x2c on it, blended by its own layer's mode: 0 SRCALPHA /
+///    INVSRCALPHA, 1 ONE / ONE, anything else none (e13's h_eabb45fa, mode 2: opaque, answer-spec
+///    Q11).
+///  - Neither: nothing drawn (FUN_00091fe0 clears its draw bit).
+///
+/// "No blend state set" leaves the world pass's own: blending off (the state reset FUN_001ea890),
+/// so opaque.
+pub fn lava_passes(blend0: i64, blend1: i64, has0: bool, has1: bool) -> Vec<(u32, u32, u32)> {
+    let own = |mode: i64| match mode {
+        0 => BLEND_ALPHA,
+        1 => BLEND_ADD,
+        _ => BLEND_NONE,
+    };
+    match (has0, has1) {
+        (false, false) => vec![],
+        (true, false) => vec![(PS_ONE, own(blend0), 0)],
+        (false, true) => vec![(PS_ONE, own(blend1), 1)],
+        (true, true) => match (blend0, blend1) {
+            (_, 2) => vec![(PS_ONE, BLEND_NONE, 1)],
+            (0, 0) => vec![(PS_ONE, BLEND_ALPHA, 0), (PS_ONE, BLEND_ALPHA, 1)],
+            (2, 0) => vec![(PS_CRUST, BLEND_NONE, 0)],
+            (2, 1) => vec![(PS_SUM, BLEND_NONE, 0)],
+            (2, _) => vec![(PS_ONE, BLEND_NONE, 0)],
+            (0, _) => vec![(PS_SEE_THROUGH, BLEND_PREMULTIPLIED, 0)],
+            (_, 0) => vec![(PS_OVER, BLEND_PREMULTIPLIED, 0)],
+            _ => vec![(PS_ADD, BLEND_ADD, 0)],
+        },
+    }
 }
 
-/// A liquid surface's material (see `LiquidMaterial`), if `id` is a liquid shader's; `kind` is
-/// the liquid object's liquid-type, `sky` the level's background colour (the water's reflection).
-fn liquid_material(game: &mut Game, images: &mut Assets<Image>, liquids: &mut Assets<LiquidMaterial>,
-                   cache: &mut HashMap<u32, Handle<LiquidMaterial>>, id: u32, kind: i64, sky: [f32; 3]) -> Option<Handle<LiquidMaterial>> {
+/// The water's alpha ramp as the game makes it (#4): FUN_00092df0 builds an `IRampSingle` from
+/// the material's six key / value pairs (`RAMP_KEYS`, `RAMP_VALUES`) in mode 4 (RAMP_EASE), and
+/// 0x92eb0 fills the ramp texture with it, texel i = trunc(ramp(i x RAMP_STEP) x 255),
+/// RAMP_TEXELS of them. The ramp past its first and last keys holds their values. Read this way
+/// it gives the archives' own baked ramps byte for byte (sdm_e10's pond h_fa12ff06, sdm_e40's
+/// pools' h_1efc6e62 and ocean's h_15a80001, A8 128 x 1; a straight line between keys is off by
+/// up to 25): the ease-in-out is inferred from that match, the ramp class's evaluation wasn't
+/// read.
+pub fn water_ramp(keys: [f32; 6], values: [f32; 6]) -> [u8; RAMP_TEXELS] {
+    let at = |x: f32| -> f32 {
+        if x <= keys[0] {
+            return values[0];
+        }
+        for k in 0..5 {
+            if x <= keys[k + 1] {
+                let f = if keys[k + 1] > keys[k] { (x - keys[k]) / (keys[k + 1] - keys[k]) } else { 1.0 };
+                return values[k] + (values[k + 1] - values[k]) * crate::bf::ale::ease(RAMP_EASE, f);
+            }
+        }
+        values[5]
+    };
+    let mut out = [0u8; RAMP_TEXELS];
+    for (i, texel) in out.iter_mut().enumerate() {
+        *texel = (at(i as f32 * RAMP_STEP) * 255.0).clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+/// Water material `id`'s ramp (`water_ramp`) from its six key / value pairs (0 where one is
+/// missing).
+fn material_ramp(game: &Game, id: u32) -> [u8; RAMP_TEXELS] {
+    let pairs = |names: [u32; 6]| names.map(|n| game.material_constant(id, n).and_then(|v| v.first().copied()).unwrap_or(0.0));
+    water_ramp(pairs(RAMP_KEYS), pairs(RAMP_VALUES))
+}
+
+/// A texture's frames as one 2D array image, as stored (Rgba8Unorm: the console's combiners
+/// take the texels' bytes as they are, so the shader's sums and products are on those values,
+/// src/liquid.wgsl): an animated texture's (`Game::flipbooks`: each frame its own texture,
+/// `Flipbook::frame_textures`, the water's shimmer h_e757ea7c) or a plain texture as one frame,
+/// each with its mip chain, sampled past its edges as `material` says. With the frame count and
+/// the texture's own frame rate (the animated texture's h_e6375a47, 30 on all of the data's; 0
+/// for a plain one). None if a frame doesn't decode or the frames' sizes differ.
+fn frames_image(game: &mut Game, images: &mut Assets<Image>, material: u32, texture: u32) -> Option<(Handle<Image>, u32, f32)> {
+    let (names, fps) = match game.flipbooks.get(&texture) {
+        Some(b) if !b.frame_textures.is_empty() => (b.frame_textures.clone(), b.fps),
+        _ => (vec![texture], 0.0),
+    };
+    let frames: Vec<Mips> = names.iter().map(|&t| game.texture_mips(t)).collect::<Option<_>>()?;
+    let top = (frames[0].top().w, frames[0].top().h);
+    if frames.iter().any(|m| (m.top().w, m.top().h) != top) {
+        return None;
+    }
+    // (every frame's levels that halve as wgpu wants, as `mip_image` keeps them)
+    let levels = frames.iter().map(|m| m.levels.iter().enumerate()
+        .take_while(|(n, l)| l.w == (top.0 >> n).max(1) && l.h == (top.1 >> n).max(1) && l.px.len() == (l.w * l.h * 4) as usize)
+        .count().max(1)).min().unwrap_or(1);
+    let mut img = Image::new_uninit(bevy::render::render_resource::Extent3d { width: top.0, height: top.1, depth_or_array_layers: frames.len() as u32 },
+                                    bevy::render::render_resource::TextureDimension::D2, TextureFormat::Rgba8Unorm, RenderAssetUsages::default());
+    img.texture_descriptor.mip_level_count = levels as u32;
+    // (layer by layer, each with its levels: wgpu's layer-major order, bevy's upload)
+    img.data = Some(frames.iter().flat_map(|m| m.levels[..levels].iter().flat_map(|l| l.px.iter().copied())).collect());
+    img.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
+        dimension: Some(bevy::render::render_resource::TextureViewDimension::D2Array),
+        ..default()
+    });
+    img.sampler = bevy::image::ImageSampler::Descriptor(crate::scene::world_sampler(game.texture_address(material, texture)));
+    Some((images.add(img), frames.len() as u32, fps))
+}
+
+/// The water's ramp image (`water_ramp`): white, its alpha the ramp, stored as is (linear), clamped
+/// past its ends (0x93165: stage 2's ADDRESSU and ADDRESSV CLAMP).
+fn ramp_image(images: &mut Assets<Image>, ramp: &[u8; RAMP_TEXELS]) -> Handle<Image> {
+    let px: Vec<u8> = ramp.iter().flat_map(|&a| [255, 255, 255, a]).collect();
+    images.add(mip_image(&Mips::single(RAMP_TEXELS as u32, 1, px), TextureFormat::Rgba8Unorm, [Address::Clamp; 2]))
+}
+
+/// The materials a liquid surface draws with, one per pass (see `LiquidMaterial`), if `id` is a
+/// liquid material class's; `opaque_water`: a water surface whose ramp is 1 all over its mesh
+/// (`spawn_level`: the ponds and pools, at model height 1), drawn opaque (the game blends it by
+/// alpha 1: the same picture, and it writes depth as the game's does); `key` the level's lava v0
+/// (`Level::objects_key`'s colour; black without one). Made once per (id, opaque_water)
+/// (`cache`).
+///
+/// Water (BF_OceanMaterialBase, 0x92f70 with vertex program 0x45 and pixel shader 0x2f): its
+/// layers at uv x 1 / (`scale-u`, `scale-v`) + frac(clock x (`translate-u`, `translate-v`) /
+/// scale), and the same with the `-1` constants (c26, c27; the names and order answer-spec Q8);
+/// `texture-1` (and `texture-0`, were it animated) plays at the material's `framerate-1`
+/// (`framerate`), FUN_00092d10 giving each animator its rate (0x262680: the loop is frames /
+/// rate, 34 frames: sdm_e10's pond 17 fps, 2 s; the pools 25; the ocean 30), looping on the game's
+/// clock (answer-spec Q10); colour (t0 x `color` + t1 x `color-1`) / 2 x the vertex light, which
+/// the shader takes from the level's lights (src/liquid.wgsl `water_light`); alpha the ramp at the
+/// vertex's own height in its mesh (`water_mesh`), SRCALPHA / INVSRCALPHA (0x93165). No
+/// reflection: no render target or reflection camera exists (leads §6.3), and take20 of #73
+/// mirrors nothing in the e40 sea (spec §1.5).
+///
+/// BF_LavaMaterial (FUN_00091fe0, vertex program 0x42): each layer at uv x 1 / its
+/// `texture-scale` (`-1`) + clock x its `translate-u`, `translate-v` (`-1`) (c25, c26: not divided
+/// by the scale), the clock from its `lifetime` (h_0f85824e; parameter table 0x91a10:
+/// texture-scale h_06262ee7 +0x18, translate h_fb0bff34 / h_e002ae8e +0x1c / +0x20, blend-mode
+/// h_0f5ae13f +0x24, texture-scale-1 h_ff6226e8 +0x28, translate-1 h_0e41af5b / h_0e2b9302 +0x2c /
+/// +0x30, blend-mode-1 h_f3c8bfa2 +0x34, lifetime +0x38), its passes by `lava_passes`, unlit
+/// (no vertex light: pixel shader 0x2b's v0 is the constant `key`, FUN_00091fe0's slot 24). The
+/// wrapper material's h_e59d69a0 (lava 60, sludge 200) is the stencil value its pixels write for
+/// the game's glare pass (answer-spec Q4), not an opacity: left out with that pass.
+///
+/// Test hooks: BF_LIQUID_TEX=<hex> puts one texture on every liquid layer; BF_LIQUID_DEBUG=1 draws
+/// every liquid surface solid white; BF_LIQUID_LOG=1 prints each material's constants.
+#[allow(clippy::too_many_arguments)]
+fn liquid_materials(game: &mut Game, images: &mut Assets<Image>, liquids: &mut Assets<LiquidMaterial>,
+                    cache: &mut HashMap<(u32, bool), Vec<Handle<LiquidMaterial>>>, id: u32, opaque_water: bool, key: [f32; 3]) -> Option<Vec<Handle<LiquidMaterial>>> {
     let ty = game.material_type(id);
     if ty != LIQUID_LAYERS && ty != LIQUID_WATER {
         return None;
     }
-    if let Some(m) = cache.get(&id) {
+    if let Some(m) = cache.get(&(id, opaque_water)) {
         return Some(m.clone());
     }
-    let h = crate::bf::hash::h;
-    let num = |game: &Game, n: u32, or: f32| game.material_constant(id, n).and_then(|v| v.first().copied()).unwrap_or(or);
-    let col = |game: &Game, n: &str| game.material_constant(id, h(n)).filter(|v| v.len() >= 3)
-        .map_or(Vec4::ONE, |v| Color::srgb(v[0], v[1], v[2]).to_linear().to_vec4());
-    let mut tex = |game: &mut Game, param: u32| game.material_param_texture(id, param)
-        .map(|t| std::env::var("BF_LIQUID_TEX").ok().and_then(|v| u32::from_str_radix(&v, 16).ok()).unwrap_or(t)).and_then(|t| game.texture_mips(t))
-        .map(|mips| image(images, &mips));
     let water = ty == LIQUID_WATER;
-    let (scale0, scale1) = if water {
-        (Vec2::new(num(game, h("scale-u"), 1.0), num(game, h("scale-v"), 1.0)), Vec2::new(num(game, h("scale-u-1"), 1.0), num(game, h("scale-v-1"), 1.0)))
+    let num = |game: &Game, n: &str, or: f32| game.material_constant(id, h(n)).and_then(|v| v.first().copied()).unwrap_or(or);
+    let colour = |game: &Game, n: &str| game.material_constant(id, h(n)).filter(|v| v.len() >= 3).map_or(Vec4::ONE, |v| Vec4::new(v[0], v[1], v[2], 1.0));
+    let forced = std::env::var("BF_LIQUID_TEX").ok().and_then(|v| u32::from_str_radix(&v, 16).ok());
+    // a layer's frames (`frames_image`), its count and rate; none for an empty slot
+    let mut layer = |game: &mut Game, param: &str| game.material_param_texture(id, h(param)).filter(|&t| t != 0 && t != h(""))
+        .map(|t| forced.unwrap_or(t)).and_then(|t| frames_image(game, images, id, t));
+    let (l0, l1) = (layer(game, "texture-0"), layer(game, "texture-1"));
+    let coords = |game: &Game, scale: [&str; 2], translate: [&str; 2]| {
+        let inv = |n: &str| { let s = num(game, n, 1.0); if s.abs() > 1e-6 { 1.0 / s } else { 0.0 } };
+        Vec4::new(inv(scale[0]), inv(scale[1]), num(game, translate[0], 0.0), num(game, translate[1], 0.0))
+    };
+    // (frame count, rate: the material's own for the water, FUN_00092d10; else the texture's)
+    let anim = |l: &Option<(Handle<Image>, u32, f32)>, rate: Option<f32>, divided: bool|
+        Vec4::new(l.as_ref().map_or(1.0, |x| x.1 as f32), rate.or(l.as_ref().map(|x| x.2)).unwrap_or(0.0), if divided { 1.0 } else { 0.0 }, 0.0);
+    let mut params = LiquidParams::default();
+    let (passes, start) = if water {
+        params.coords0 = coords(game, ["scale-u", "scale-v"], ["translate-u", "translate-v"]);
+        params.coords1 = coords(game, ["scale-u-1", "scale-v-1"], ["translate-u-1", "translate-v-1"]);
+        params.anim0 = anim(&l0, Some(num(game, "framerate", 30.0)), true);
+        params.anim1 = anim(&l1, Some(num(game, "framerate-1", 30.0)), true);
+        params.color0 = colour(game, "color");
+        params.color1 = colour(game, "color-1");
+        (vec![(PS_WATER, if opaque_water { BLEND_NONE } else { BLEND_ALPHA }, 0)], 0.0)
     } else {
-        (Vec2::splat(num(game, h("texture-scale"), 1.0)), Vec2::splat(num(game, h("texture-scale-1"), 1.0)))
+        params.coords0 = coords(game, ["texture-scale", "texture-scale"], ["translate-u", "translate-v"]);
+        params.coords1 = coords(game, ["texture-scale-1", "texture-scale-1"], ["translate-u-1", "translate-v-1"]);
+        params.anim0 = anim(&l0, None, false);
+        params.anim1 = anim(&l1, None, false);
+        params.color0 = Vec3::from(key).extend(1.0);
+        let modes = (num(game, "blend-mode", 0.0) as i64, num(game, "blend-mode-1", 0.0) as i64);
+        (lava_passes(modes.0, modes.1, l0.is_some(), l1.is_some()), num(game, "lifetime", 0.0))
     };
-    let glow = if water { WATER_GLOW } else { match kind { 2 => LAVA_GLOW, 4 => TOXIC_GLOW, _ => 0.0 } };
-    // (lava and acid are solid: captures; the material's own opacity, 0-255, was 200 on the
-    // toxic river and 60-95 on lava)
-    let opacity = if water { WATER_OPACITY } else { 1.0 };
-    let reflection = Color::srgb(sky[0], sky[1], sky[2]).to_linear().to_vec4() * col(game, "color-1");
-    let params = LiquidParams {
-        scale0, scale1,
-        speed0: drift(water, Vec2::new(num(game, SCROLL0[0], 0.0), num(game, SCROLL0[1], 0.0)), WATER_DRIFT[0]),
-        speed1: drift(water, Vec2::new(num(game, SCROLL1[0], 0.0), num(game, SCROLL1[1], 0.0)), WATER_DRIFT[1]),
-        tint: col(game, "color"),
-        reflection,
-        kind: water as u32,
-        mode: num(game, h("blend-mode-1"), 0.0) as u32,
-        glow,
-        opacity,
-        bright: if water || num(game, h("blend-mode"), 0.0) as u32 == 2 { LIQUID_BRIGHT } else { 1.0 },
-    };
+    let ramp = water.then(|| ramp_image(images, &material_ramp(game, id)));
     if std::env::var("BF_LIQUID_LOG").is_ok() {
-        eprintln!("liquid material h_{id:08x}: texture-0 {:x?} texture-1 {:x?} ramp {:x?} {params:?}",
-                  game.material_param_texture(id, h("texture-0")), game.material_param_texture(id, h("texture-1")),
-                  game.material_param_texture(id, WATER_RAMP));
+        eprintln!("liquid material h_{id:08x} ({}): texture-0 {:x?} ({} frames) texture-1 {:x?} ({} frames), clock from {start}, passes {passes:x?} {params:?}",
+                  if water { "water" } else { "BF_LavaMaterial" }, game.material_param_texture(id, h("texture-0")), params.anim0.x,
+                  game.material_param_texture(id, h("texture-1")), params.anim1.x);
+        // (the ramp made from the keys against the archive's own texture in the ramp's slot)
+        if let Some(t) = game.material_param_texture(id, WATER_RAMP).filter(|_| water) {
+            let made = material_ramp(game, id);
+            let stored: Option<Vec<u8>> = game.texture_rgba(t).map(|(_, _, px)| px.chunks_exact(4).map(|p| p[3]).collect());
+            let differ = stored.as_ref().map(|a| a.iter().zip(made.iter()).filter(|(x, y)| x != y).count());
+            eprintln!("  ramp from its keys {:?}: the archive's h_{t:08x} differs in {differ:?} of {RAMP_TEXELS} texels", made.iter().step_by(8).collect::<Vec<_>>());
+        }
     }
     // BF_LIQUID_DEBUG: every liquid surface solid white (where are they drawn?)
     let debug = std::env::var("BF_LIQUID_DEBUG").is_ok();
-    let params = if debug { LiquidParams { kind: 0, mode: 0, glow: 1.0, opacity: 1.0, ..params } } else { params };
-    let surface = LiquidSurface {
-        params,
-        layer0: if debug { None } else { tex(game, h("texture-0")) },
-        layer1: if debug { None } else { tex(game, h("texture-1")) },
-        ramp: if water { tex(game, WATER_RAMP) } else { None },
-    };
-    let base = StandardMaterial {
-        perceptual_roughness: if water { 0.15 } else { 0.6 },
-        reflectance: if water { 0.5 } else { 0.2 },
-        alpha_mode: if opacity < 1.0 && !debug { AlphaMode::Blend } else { AlphaMode::Opaque },
-        // (Singe's lake lies on terrain painted with lava veins, centimetres under it: seen low,
-        // the two fought and the terrain's veins showed through the lava)
-        depth_bias: LIQUID_DEPTH_BIAS,
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    };
-    let m = liquids.add(LiquidMaterial { base, extension: surface });
-    cache.insert(id, m.clone());
+    let passes = if debug { vec![(0, BLEND_NONE, 0)] } else { passes };
+    let made: Vec<Handle<LiquidMaterial>> = passes.iter().enumerate().map(|(k, &(shader, blend, layer))| {
+        let surface = LiquidSurface {
+            params: LiquidParams { shader, blend, layer, clock: start, ..params },
+            layer0: l0.as_ref().map(|x| x.0.clone()),
+            layer1: l1.as_ref().map(|x| x.0.clone()),
+            ramp: ramp.clone(),
+            start,
+        };
+        let base = StandardMaterial {
+            alpha_mode: match blend {
+                BLEND_ALPHA => AlphaMode::Blend,
+                BLEND_PREMULTIPLIED => AlphaMode::Premultiplied,
+                BLEND_ADD => AlphaMode::Add,
+                _ => AlphaMode::Opaque,
+            },
+            // (Singe's lake lies on terrain painted with lava veins, centimetres under it: seen
+            // low, the two fought and the terrain's veins showed through the lava; a second pass
+            // sorts after the first, FUN_000920a0)
+            depth_bias: LIQUID_DEPTH_BIAS + k as f32,
+            // one-sided, as the game's CULLMODE is left at its default for them: take03 of #146
+            // shows no lava surface from under it (26-41 s, the camera under the lava)
+            double_sided: false,
+            cull_mode: Some(bevy::render::render_resource::Face::Back),
+            ..default()
+        };
+        liquids.add(LiquidMaterial { base, extension: surface })
+    }).collect();
+    cache.insert((id, opaque_water), made.clone());
+    Some(made)
+}
+
+/// A water part's mesh as BF_OceanMaterialBase draws it (#4), from its shared mesh (`mesh_of`:
+/// the geoset's own positions) and `node`, the part's world matrix (the object's and the part's):
+/// every vertex at the node's world height, as vertex program 0x45 puts slot 28's y in place of
+/// the vertex's world y (FUN_00093210 sets it to the draw's world matrix's translation y,
+/// [matrix]+0x28), and the vertex's own height in the mesh (its model-space y, the ramp's
+/// coordinate: stage 2's u) kept as the second uv. So sdm_e10's pond is drawn at 15.22 (its mesh
+/// sits 1 m higher: model height 1), the e40 pools at 27.0-27.1 (the collision tops there), and
+/// the e40 ocean at 22.10 while its collision's top is 23.10 (leads §6.3). The positions are put
+/// back in the part's frame, so it stays under its object. None for a mesh without float
+/// positions or a node that can't be inverted.
+fn water_mesh(mesh: &Mesh, node: Mat4) -> Option<Mesh> {
+    let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { return None };
+    if node.determinant().abs() < 1e-9 {
+        return None;
+    }
+    let back = node.inverse();
+    let height = node.w_axis.y;
+    let flat: Vec<[f32; 3]> = positions.iter().map(|&p| {
+        let mut w = node.transform_point3(Vec3::from(p));
+        w.y = height;
+        back.transform_point3(w).to_array()
+    }).collect();
+    let own: Vec<[f32; 2]> = positions.iter().map(|p| [p[1], 0.0]).collect();
+    let mut m = mesh.clone();
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, flat);
+    m.insert_attribute(Mesh::ATTRIBUTE_UV_1, own);
     Some(m)
+}
+
+/// Whether a water mesh's ramp is 1 all over it (`water_mesh`'s model heights, the ramp's texels
+/// between the lowest and the highest, linearly sampled): the opaque ponds and pools.
+fn water_opaque(mesh: &Mesh, ramp: &[u8; RAMP_TEXELS]) -> bool {
+    let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { return false };
+    let (lo, hi) = positions.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[1]), hi.max(p[1])));
+    if lo > hi {
+        return false;
+    }
+    // (the texels a linear sample at those heights reads: u x 128 - 0.5, clamped)
+    let texel = |u: f32| (u.clamp(0.0, 1.0) * RAMP_TEXELS as f32 - 0.5).clamp(0.0, (RAMP_TEXELS - 1) as f32);
+    let (a, b) = (texel(lo).floor() as usize, texel(hi).ceil() as usize);
+    ramp[a..=b.min(RAMP_TEXELS - 1)].iter().all(|&t| t == 255)
 }
 
 /// The level's point light at `p` from every direction (linear colour: each lamp's colour x
@@ -1197,6 +1445,10 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     let mut doors = vec![];
     let mut cache = HashMap::new();
     let mut liquid_cache = HashMap::new();
+    // the liquids' clock starts with their materials (`LiquidClock`), and BF_LavaMaterial's v0 is
+    // the level's key light's colour (`Level::objects_key`; black without one)
+    commands.insert_resource(LiquidClock(0.0));
+    let lava_key = level.objects_key().map_or([0.0; 3], |l| l.color);
     let lamps = Lamps { lamps: buffers.add(light_buffer(level)), ..default() };
     // (the placed objects' indoor-lit materials, `indoor_material`)
     let mut indoor_cache = HashMap::new();
@@ -1327,14 +1579,30 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                                 Placed { tag: o.tag, kind: o.kind, name: o.name })).id();
         // the archetype's animation (archetype-set of the same name) moves the leaves: a
         // channel per part
-        // a liquid's surface moves (see `LiquidMaterial`)
-        let liquid_kind = (o.tag == crate::bf::character::H_LIQUID_OBJECT).then(|| game.liquids.get(&o.kind).map_or(0, |l| l.kind));
-        // a liquid's drawn surface where its collision's top is (what's waded in): sdm_e40's
-        // pools draw theirs 1 m higher, floating over the floor (seen from the side the water
-        // was in the air; from above it lined up)
-        let lift = liquid_kind.map_or(0.0, |_| liquid_lift(game, arch));
-        let surfaces: Vec<_> = models[&arch].iter()
-            .map(|p| liquid_kind.and_then(|k| liquid_material(game, images, liquids, &mut liquid_cache, p.material_id, k, level.background))).collect();
+        // a liquid's surfaces, and any other part whose material is of a liquid material class
+        // (the class draws it, whatever the object): the game's liquid materials
+        // (`liquid_materials`), a water part's mesh flattened to its node's height with its own
+        // heights kept for the ramp (`water_mesh`), opaque where the ramp is 1 all over it
+        // (`water_opaque`)
+        let liquid = o.tag == crate::bf::character::H_LIQUID_OBJECT;
+        let surfaces: Vec<Option<(Handle<Mesh>, Vec<Handle<LiquidMaterial>>)>> = models[&arch].iter().map(|p| {
+            if ![LIQUID_LAYERS, LIQUID_WATER].contains(&game.material_type(p.material_id)) {
+                return None;
+            }
+            if !liquid && std::env::var("BF_LIQUID_LOG").is_ok() {
+                eprintln!("liquid material h_{:08x} on a placed object that isn't a liquid: h_{:08x} (arch h_{arch:08x}) at {:.1}", p.material_id, o.kind,
+                          o.transform.w_axis.truncate());
+            }
+            let (mesh, opaque) = if game.material_type(p.material_id) == LIQUID_WATER {
+                let shared = meshes.get(&p.mesh).cloned();
+                let opaque = shared.as_ref().is_some_and(|m| water_opaque(m, &material_ramp(game, p.material_id)));
+                let flat = shared.and_then(|m| water_mesh(&m, o.transform * p.at.compute_matrix()));
+                (flat.map_or_else(|| p.mesh.clone(), |m| meshes.add(m)), opaque)
+            } else {
+                (p.mesh.clone(), false)
+            };
+            liquid_materials(game, images, liquids, &mut liquid_cache, p.material_id, opaque, lava_key).map(|m| (mesh, m))
+        }).collect();
         // (the gate's set has a clip per leaf: h_10d3fde3 moves one, h_0a48ec76 the other)
         let clips = game.anim_sets.get(&arch).map(|a| a.as_slice()).unwrap_or_default();
         // its transform and hinge parts are leaves when an anim-trigger plays it once (the same
@@ -1352,11 +1620,22 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         }
         for (p, surface) in models[&arch].iter().zip(surfaces) {
             let at = p.at;
+            // (a liquid material that has nothing to draw, no texture at all: FUN_00091fe0
+            // clears its draw bit)
+            if surface.as_ref().is_some_and(|(_, passes)| passes.is_empty()) {
+                continue;
+            }
             // (the scenery casts no shadow: see `spawn_object_parts`)
-            let place = if surface.is_some() { Transform { translation: at.translation + Vec3::Y * lift, ..at } } else { at };
-            let part = commands.spawn((Mesh3d(p.mesh.clone()), place, NotShadowCaster, ChildOf(e))).id();
+            let mesh = surface.as_ref().map_or_else(|| p.mesh.clone(), |(m, _)| m.clone());
+            let part = commands.spawn((Mesh3d(mesh.clone()), at, NotShadowCaster, ChildOf(e))).id();
             match surface {
-                Some(l) => { commands.entity(part).insert(MeshMaterial3d(l)); }
+                Some((_, passes)) => {
+                    commands.entity(part).insert(MeshMaterial3d(passes[0].clone()));
+                    // (BF_LavaMaterial's second pass, FUN_000920a0: the same mesh again)
+                    for l in &passes[1..] {
+                        commands.spawn((Mesh3d(mesh.clone()), at, NotShadowCaster, MeshMaterial3d(l.clone()), ChildOf(e)));
+                    }
+                }
                 // (lit by the pair its light-usage picks: `indoor_lit`)
                 None if indoor_lit(o.light_usage, p.indoor) => {
                     indoor_parts += 1;
@@ -1503,7 +1782,7 @@ mod tests {
 
     /// An outdoor directional light named `name` (the rest doesn't matter to the slots).
     fn light(name: u32) -> LevelLight {
-        LevelLight { kind: 0, name, color: [1.0; 3], dir: Vec3::NEG_Y, strength: 1.0, indoor: false, outdoor: true }
+        LevelLight { kind: 0, name, color: [1.0; 3], dir: Vec3::NEG_Y, strength: 1.0, indoor: false, outdoor: true, specular: false }
     }
 
     /// FUN_000dcc10 meets a pair's lights last to first (0x14f2a0 puts each new one at the front
@@ -1529,5 +1808,41 @@ mod tests {
                          weights: vec![[1.0, 0.0, 0.0, 0.0]], indices: vec![], material: 0, indoor: false, frames: vec![q.to_array()] };
         let t = terrain_tangents(&g)[0];
         assert!((Vec3::new(t[0], t[1], t[2]) - Vec3::X).length() < 1e-5 && t[3] == 1.0);
+    }
+
+    /// The water's ramp from its keys (`water_ramp`) is the archive's baked ramp texture byte for
+    /// byte: the e40 / sdm_e40 ocean's h_15a80001 (keys 0 .22 .36 .56 .8 1 -> 0 0 .67 1 1 1) and
+    /// sdm_e10's pond's h_fa12ff06 (0 .2 .4 .6 .8 1 -> 0 .25 .5 .6 .8 1), A8 128 x 1 in sdm_e40's
+    /// and sdm_e10's textures-*.tex.
+    #[test]
+    fn the_water_ramp_is_the_archives() {
+        const OCEAN: [u8; 128] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 6, 13, 22, 33, 46,
+            59, 73, 87, 102, 116, 129, 141, 151, 160, 166, 170, 170, 171, 172, 174, 177, 180, 183, 187, 191, 196, 201, 205, 210, 215, 220, 225,
+            230, 234, 238, 242, 246, 249, 251, 253, 254, 254, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
+        const POND: [u8; 128] = [0, 0, 1, 2, 4, 6, 8, 11, 14, 18, 21, 25, 29, 33, 36, 40, 44, 47, 50, 53, 56, 58, 60, 62, 63, 63, 63, 64, 65,
+            67, 69, 71, 74, 77, 80, 84, 87, 91, 95, 99, 102, 106, 109, 113, 116, 119, 121, 123, 125, 126, 127, 127, 127, 128, 128, 129, 130,
+            131, 132, 133, 135, 136, 138, 139, 141, 142, 143, 145, 146, 148, 149, 150, 151, 151, 152, 152, 152, 153, 153, 154, 156, 157, 159,
+            162, 164, 167, 169, 172, 175, 178, 181, 184, 187, 190, 193, 195, 197, 199, 201, 202, 203, 203, 204, 204, 205, 206, 208, 209, 212,
+            214, 217, 219, 222, 225, 228, 231, 234, 237, 240, 243, 245, 247, 249, 251, 253, 254, 254, 255];
+        assert_eq!(water_ramp([0.0, 0.22, 0.36, 0.56, 0.8, 1.0], [0.0, 0.0, 0.67, 1.0, 1.0, 1.0]), OCEAN);
+        assert_eq!(water_ramp([0.0, 0.2, 0.4, 0.6, 0.8, 1.0], [0.0, 0.25, 0.5, 0.6, 0.8, 1.0]), POND);
+    }
+
+    /// BF_LavaMaterial's passes by its blend modes (FUN_00091bc0, FUN_00091e60): the data's lava
+    /// 2 / 0, sludge 2 / 1, toxic waste 0 / 1, chloride 1 / 1, m02_a's two passes 0 / 0 and e13's
+    /// one-texture h_eabb45fa (mode 2).
+    #[test]
+    fn the_lava_shaders_by_blend_mode() {
+        assert_eq!(lava_passes(2, 0, true, true), vec![(PS_CRUST, BLEND_NONE, 0)]);
+        assert_eq!(lava_passes(2, 1, true, true), vec![(PS_SUM, BLEND_NONE, 0)]);
+        assert_eq!(lava_passes(0, 1, true, true), vec![(PS_SEE_THROUGH, BLEND_PREMULTIPLIED, 0)]);
+        assert_eq!(lava_passes(1, 1, true, true), vec![(PS_ADD, BLEND_ADD, 0)]);
+        assert_eq!(lava_passes(1, 0, true, true), vec![(PS_OVER, BLEND_PREMULTIPLIED, 0)]);
+        assert_eq!(lava_passes(0, 0, true, true), vec![(PS_ONE, BLEND_ALPHA, 0), (PS_ONE, BLEND_ALPHA, 1)]);
+        assert_eq!(lava_passes(2, 2, true, true), vec![(PS_ONE, BLEND_NONE, 1)]);
+        assert_eq!(lava_passes(2, 1, true, false), vec![(PS_ONE, BLEND_NONE, 0)]);
+        assert_eq!(lava_passes(0, 0, false, false), vec![]);
     }
 }

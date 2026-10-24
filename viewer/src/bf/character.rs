@@ -7,7 +7,7 @@
 //!  materials    skin material (type h_eb58ab52) has no textures: the next material does
 //!  animations   archetype-set <name> -> animations -> target bone -> channel in .chnl
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -419,6 +419,11 @@ pub struct Game {
     /// h_f5302dc6 (common), h_157b3160 and h_e8d6efe4 (some levels' own) directional; h_ea460e64,
     /// h_09020c30, h_0b51040f (common), h_e81ba579, h_087ae059, h_f1557cc8, h_ff66877a point
     pub light_types: HashMap<u32, i64>,
+    /// the light types whose `enable-specular` (h_e2d53b1e) is true: common's key h_e1cac6f7 and
+    /// some levels' h_157b3160 (common's fill h_f5302dc6 and the point types have it false). The
+    /// light type copy puts it in the type's +0x50 bit 3 (0x14e3d5, from the parsed +0x6d,
+    /// 0x192bb9), the bit FUN_000dcc10 gives a pair's slot 0 by (`level::Level::objects_key`)
+    pub light_specular: HashSet<u32>,
     /// inventory item types (objecttypes `<inventory>`): type name -> its settings
     pub items: HashMap<u32, ItemType>,
     /// the loaded levels' level files (levels-<name>.xmb: terrain, placed objects, sky, fog)
@@ -432,7 +437,7 @@ pub struct Game {
     /// #221, `gameflags::GameFlags`); empty if it isn't there
     pub default_flags: super::gameflags::GameFlags,
     /// animated textures (textures-*.xmb <animated-texture>): name -> the sheet texture, frames
-    /// per second (h_e6375a47) and each frame's (u0, v0, u1, v1) on the sheet
+    /// per second (h_e6375a47) and each frame's (u0, v0, u1, v1) and texture (`Flipbook`)
     pub flipbooks: HashMap<u32, Flipbook>,
     /// collision surfaces (objects-<lvl>.ipn) by name: the blob and the surface's offset
     physics: HashMap<u32, (Arc<Vec<u8>>, usize)>,
@@ -909,13 +914,29 @@ const H_SUBTITLE_COLOUR: u32 = 0x0538_7560;
 pub const LEVEL_DEATHMATCH: u32 = 0x1207_85EF;
 pub const LEVEL_SQUAD_DEATHMATCH: u32 = 0xEFB1_8D28;
 
-/// An animated texture: frames laid out on one sheet texture.
+/// An animated texture (textures-*.xmb `<animated-texture>`): its first `<frame-texture>`
+/// (`texture`), its frames per second (h_e6375a47) and each `<frame>`'s (u0, v0, u1, v1) and
+/// texture. Two kinds are in the data (checked over every library's textures-*.xml): common's
+/// seven effect sheets, 16 frames all on frame-texture 0 by a 4 x 4 grid of uv rects (what ALE
+/// appearances flip through), and the water's shimmer `h_e757ea7c` (11 libraries), 34 frames each
+/// its own 128 x 128 frame-texture over the whole uv (the water's `texture-1`, #4).
 #[derive(Clone, Debug)]
 pub struct Flipbook {
     pub texture: u32,
     pub fps: f32,
     pub frames: Vec<[f32; 4]>,
+    /// each frame's texture: the `<frame-texture>` its h_1ef06846 numbers (frame-textures in
+    /// file order; 0 or past the list: the first)
+    pub frame_textures: Vec<u32>,
 }
+
+/// A `<frame>`'s frame-texture number (unnamed, h_1ef06846: 0 on every frame of common's sheets,
+/// the frame's own number on the shimmer's 34; `Flipbook::frame_textures`).
+const H_FRAME_TEXTURE: u32 = 0x1EF0_6846;
+
+/// A light type's `enable-specular` (h_e2d53b1e, name recovered by hashing; the light archetype
+/// parser's case at 0x192b65): `Game::light_specular`.
+const H_ENABLE_SPECULAR: u32 = 0xE2D5_3B1E;
 
 /// The objecttypes list of liquid types, and the placed liquids' element (levels-*.xmb).
 const H_LIQUIDS: u32 = 0xFA2F_5452;
@@ -1313,6 +1334,7 @@ impl Game {
             object_meshes: HashMap::new(),
             liquids: HashMap::new(),
             light_types: HashMap::new(),
+            light_specular: HashSet::new(),
             items: HashMap::new(),
             levels: vec![],
             flipbooks: HashMap::new(),
@@ -1681,7 +1703,13 @@ impl Game {
             for t in root.children_named(h("light")).flat_map(|l| l.children.iter()) {
                 let name = hash_of(t.child(h("base")).and_then(|b| b.attr(h("name"))));
                 if let (true, Some(kind)) = (name != 0 && name != h(""), t.attr(h("light-type")).and_then(|v| v.ints().first().copied())) {
-                    self.light_types.entry(name).or_insert(kind);
+                    if let std::collections::hash_map::Entry::Vacant(e) = self.light_types.entry(name) {
+                        e.insert(kind);
+                        // (`light_specular`)
+                        if t.attr(H_ENABLE_SPECULAR).and_then(|v| v.as_i64()).is_some_and(|v| v != 0) {
+                            self.light_specular.insert(name);
+                        }
+                    }
                 }
             }
             // follow cameras: <follow-camera><h_e275fb80><base clip-plane-far=F ..><base name=T/>
@@ -2370,15 +2398,19 @@ impl Game {
                 let head = a.children.first();
                 let name = hash_of(head.and_then(|p| p.attr(h("name"))));
                 let fps = head.and_then(|p| p.attr(0xE637_5A47)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(15.0);
-                let frames = a.child(h("frames")).map(|f| f.children_named(h("frame")).filter_map(|fr| {
+                // the frame-textures in file order, and each frame's rect and its frame-texture's
+                // number (h_1ef06846, `Flipbook::frame_textures`)
+                let textures: Vec<u32> = a.walk().into_iter().filter(|e| e.name == h("frame-texture"))
+                    .map(|f| hash_of(f.children.first().and_then(|p| p.attr(h("name"))))).collect();
+                let (frames, frame_textures): (Vec<[f32; 4]>, Vec<u32>) = a.child(h("frames")).map(|f| f.children_named(h("frame")).filter_map(|fr| {
                     let p = fr.children.first()?;
                     let g = |n: &str| p.attr(h(n)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
-                    Some([g("u0")?, g("v0")?, g("u1")?, g("v1")?])
-                }).collect()).unwrap_or_default();
-                let sheet = a.walk().into_iter().find(|e| e.name == h("frame-texture"))
-                    .map(|f| hash_of(f.children.first().and_then(|p| p.attr(h("name"))))).unwrap_or(0);
+                    let k = p.attr(H_FRAME_TEXTURE).and_then(|v| v.as_i64()).unwrap_or(0).max(0) as usize;
+                    Some(([g("u0")?, g("v0")?, g("u1")?, g("v1")?], textures.get(k).or(textures.first()).copied().unwrap_or(0)))
+                }).unzip()).unwrap_or_default();
+                let sheet = textures.first().copied().unwrap_or(0);
                 if sheet != 0 {
-                    self.flipbooks.entry(name).or_insert(Flipbook { texture: sheet, fps, frames });
+                    self.flipbooks.entry(name).or_insert(Flipbook { texture: sheet, fps, frames, frame_textures });
                 }
             }
         }

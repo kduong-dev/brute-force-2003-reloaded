@@ -708,6 +708,7 @@ fn main() {
         .add_systems(Update, lamp_characters.after(update_player).run_if(playing.clone()))
         .add_systems(Update, spawn_splashes.after(update_player).run_if(playing.clone()))
         .add_systems(Update, turn_sky.run_if(playing.clone()))
+        .add_systems(Update, run_liquid_clock.run_if(playing.clone()))
         .add_systems(Update, (back_to_menu, audio_probe).run_if(playing))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
@@ -4428,6 +4429,16 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if let Some(tr) = u.loaded.as_ref().and_then(|l| transforms.get_mut(l.root).ok()).as_mut() {
             tr.translation = u.position + Vec3::Y * (u.height + u.lift_now);
         }
+    }
+}
+
+/// The liquids' clock (level_scene::LiquidClock: their scroll and the water's shimmer) on the
+/// game's (`frame_dt`): stopped under a menu, as the game's material and texture updates are
+/// skipped while it's paused (0x1ea830), and in BF_CAPTURE's fixed steps.
+fn run_liquid_clock(time: Res<Time>, mut clock: ResMut<bf_viewer::level_scene::LiquidClock>) {
+    let dt = frame_dt(&time);
+    if dt > 0.0 {
+        clock.0 += dt;
     }
 }
 
