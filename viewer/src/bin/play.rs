@@ -134,11 +134,34 @@ const AIM_SPINE_YAW: f32 = 0.2;
 const MIN_AIM_REACH: f32 = 1.5;
 /// The character's pelvis (skeleton origin) sits about this high above its feet.
 const GROUND: f32 = -1.05;
-/// The game's gravity and jump take-off speed (default.xbe: FUN_0012cd10 subtracts 18 m/s^2
-/// from the vertical speed while falling; FUN_0012b630 launches at 5.8 m/s): apex 0.93 m.
+/// The game's gravity (m/s^2): FUN_0012cd10 takes 18 x dt (0x3c0584) off the vertical speed in
+/// each step while the falling flag (char+0x262 bit 2) is set, and nothing else: no drag on the
+/// vertical speed and no top speed (#270). The #264 takes' falls lose 17.9, 18.2 and 18.3 m/s a
+/// second of the game's clock (take02, take05, take03's 20 Hz watch logs).
 const GRAVITY: f32 = 18.0;
+/// The jump's launch speed (m/s): FUN_0012b630 sets the vertical speed to 5.8 (0x3c0588) at the
+/// jump_launch event (0xf2702e0c, 0x118f47) or, on the run, at once (0x12275b).
 const JUMP_SPEED: f32 = 5.8;
-/// In the air the horizontal speed keeps 0.99 of itself per game frame (taken as 30 Hz).
+/// The game's step (s; shots::TICK, 30 Hz). FUN_0012cd10 steps a character once a world update
+/// (FUN_0011caa0), with its time; in single play the main loop (0x68d20) runs one update a frame
+/// with the frame's own time (0x68f1f-0x68f77; network play steps a fixed 1/30 s, [0x3ffc10] =
+/// 30), and the console's frames are 1/30 s: the #264 falls' horizontal speed keeps 0.99 a step
+/// 30.5-31 times a second of the game's clock, and their vertical speed drops 0.47-0.70 a step,
+/// 0.59 on average (18 x dt, dt about 1/30; take02, take03, take05).
+const GAME_FRAME: f32 = shots::TICK;
+/// The speed (m/s) a jump's height grows at as it leaves the ground: the 5.8 m/s launch as
+/// FUN_0012cd10 steps it. Each step moves by the speed it has (move = v dt) before it takes
+/// gravity off, and the first step after the launch takes none: gravity applies while the
+/// falling flag is set, and that step's own sweep sets it once it finds no ground (FUN_00153810,
+/// 0x1539de). So after n steps the game's height is 5.8 n dt - 9 dt^2 (n - 1)(n - 2): the
+/// parabola of a 6.7 m/s take-off (5.8 + 1.5 x 18 x dt), 2 cm lower (18 dt^2, left out). The
+/// demo's: apex 1.25 m (the game's steps reach 1.23), 0.74 s in the air, against #126 take07's
+/// two standing jumps (Tex, e34, its watch log): 1.18 and 1.22 m, 0.73 and 0.74 s, leaving the
+/// ground at 6.5 and 6.6 m/s with gravity 17.8 and 18.0. The bare 5.8 gave 0.93 m and 0.64 s,
+/// three frames short.
+const JUMP_TAKE_OFF: f32 = JUMP_SPEED + 1.5 * GRAVITY * GAME_FRAME;
+/// In the air the horizontal speed keeps 0.99 of itself a game frame (0x3c058c, FUN_0012cd10;
+/// GAME_FRAME).
 const AIR_DRAG: f32 = 0.99;
 /// A foot counts as planted below its resting height plus this.
 const FOOT_CONTACT: f32 = 0.035;
@@ -1163,13 +1186,25 @@ const BACK_FROM: f32 = 2.62;
 
 /// BF_MOVE_LOG=1: the controlled character's position, facing, gait and clip every half second,
 /// with the clip whose root motion moves it when that's a stand-in (`root_stand_ins`).
+/// BF_MOVE_LOG=frame prints `frame_log`'s line every frame instead.
 fn move_log(p: &Player, l: &Loaded, dt: f32) {
-    if (p.sim_time * 2.0).floor() == ((p.sim_time - dt) * 2.0).floor() || std::env::var("BF_MOVE_LOG").is_err() {
+    if (p.sim_time * 2.0).floor() == ((p.sim_time - dt) * 2.0).floor() || std::env::var("BF_MOVE_LOG").map_or(true, |v| v == "frame") {
         return;
     }
     let top = p.layers.last().map(|x| x.clip);
     println!("t={:.2} pos ({:.2}, {:.2}) yaw {:.0} gait {:?} {:?} clip {:?} root from {:?}", p.sim_time, p.position.x, p.position.z,
              p.yaw.to_degrees(), p.gait, p.action, top, top.and_then(|t| l.clips.root_stand_in.get(&t)));
+}
+
+/// BF_MOVE_LOG=frame (#270): the controlled character every frame once the ground loop has put
+/// its feet where they end the frame: the time, the feet, the vertical speed, the height over the
+/// floor and the action, to time a jump or a fall against the takes' 20 Hz watch logs (their
+/// `y` and `v` columns).
+fn frame_log(u: &Player) {
+    if std::env::var("BF_MOVE_LOG").is_ok_and(|v| v == "frame") {
+        println!("t={:.3} feet ({:.2}, {:.3}, {:.2}) vy {:.2} height {:.3} {:?}{}", u.sim_time, u.position.x, u.position.y + GROUND + u.height.max(0.0),
+                 u.position.z, u.vy, u.height, u.action, if u.face.is_some() { " on a face" } else { "" });
+    }
 }
 
 /// A looping clip's root motion from `t` over `dt`; a side step without root motion of its own
@@ -3829,6 +3864,9 @@ fn autopilot(player: &mut Player) -> bool {
         let (t, was) = (player.sim_time, player.sim_time - capture_step());
         let due = |key: &str| std::env::var(key).ok().is_some_and(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).any(|s| was < s && t >= s));
         player.dodge_pressed = due("BF_TEST_DODGE");
+        // (#270) BF_TEST_JUMP=<s>[,<s>...]: the jump pressed at those times (standing: the crouch,
+        // then the launch; on the move: the launch at once), as #126 take07's A presses
+        player.jump_pressed = due("BF_TEST_JUMP");
         if due("BF_TEST_DIVE") {
             let away = Vec3::new(g[2] - player.position.x, 0.0, g[3] - player.position.z).normalize_or(Vec3::NEG_Z);
             player.dive_from = Some(player.position - away);
@@ -4463,6 +4501,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             }
             // (in a liquid: what it does to them, their splashes and rings are play_liquids.rs's)
             inside_log(&a, u);
+            if player_first && i == 0 {
+                frame_log(u);
+            }
             u.prev_xz = Vec2::new(u.position.x, u.position.z);
         }
     }
@@ -5750,7 +5791,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let start_launch = |p: &mut Player| {
         p.action = Action::JumpLaunch;
         p.action_left = dur(if four { c.leg4_launch } else { jump_launch });
-        p.vy = JUMP_SPEED;
+        // (the game's launch as its steps carry it: JUMP_TAKE_OFF)
+        p.vy = JUMP_TAKE_OFF;
         p.air_velocity = Vec3::new(p.last_velocity.x, 0.0, p.last_velocity.z);
         p.fall_from = p.position.y + GROUND;
         p.sound_queue.push((l.jump_sound, 1.0));
@@ -6339,7 +6381,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- move: root motion on the ground, ballistic in the air ----
     let facing = Quat::from_rotation_y(p.yaw);
     if p.action.airborne() {
-        p.air_velocity *= AIR_DRAG.powf(dt * 30.0);
+        p.air_velocity *= AIR_DRAG.powf(dt / GAME_FRAME);
         if let Some(n) = p.face {
             // on a steep face (#264): the free fall goes on (FUN_0012cd10: vy -= 18 dt, x/z x0.99
             // a frame) and its move slides along the face (`face_move`); the ground loop keeps
@@ -7626,6 +7668,25 @@ fn dump_weapons(game: &Game) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #270 (FUN_0012cd10, FUN_0012b630): the jump the demo flies (JUMP_TAKE_OFF's parabola)
+    /// passes through the heights the game's own steps give, 18 dt^2 (2 cm) over them: each step
+    /// moves by the speed it has, then takes gravity off, from the second step on (the falling
+    /// flag set by the first step's sweep).
+    #[test]
+    fn the_jump_flies_through_the_game_steps() {
+        let dt = GAME_FRAME;
+        let (mut y, mut v) = (0.0f32, JUMP_SPEED);
+        for n in 1..=24 {
+            y += v * dt;
+            if n >= 2 {
+                v -= GRAVITY * dt;
+            }
+            let t = n as f32 * dt;
+            let demo = JUMP_TAKE_OFF * t - 0.5 * GRAVITY * t * t;
+            assert!((demo - GRAVITY * dt * dt - y).abs() < 1e-4, "step {n}: the game's {y}, the demo's {demo}");
+        }
+    }
 
     /// #5 (FUN_00179250): a liquid sound's entry (min 5 m, max 15 m, volume 0.5) heard at its own
     /// volume within 5 m, by the rolloff curve to 15 m and not at all from there; at the entry's
