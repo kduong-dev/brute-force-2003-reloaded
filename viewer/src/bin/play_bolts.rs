@@ -39,8 +39,9 @@
 //!    takes the roll (play_scenery.rs `ObjectHits`); a Sentry goes off (play_sentry.rs); a body on
 //!    the ground is shoved and bleeds (`Ragdoll::shove`). Whatever it strikes, the bullet's own
 //!    explosion plays there first (FUN_0022cfc0, play.rs `shot_explosion`: the cutters' white
-//!    star, #53). A liquid's surface it crosses splashes, as an instant ray's does (play.rs
-//!    `projectiles`), and it goes on to the bed.
+//!    star, #53). A liquid's surface it crosses does nothing (FUN_00225440's sweep has no liquid
+//!    code, todo/146-liquids leads §5.1: only an instant ray splashes, play.rs `projectiles`), and
+//!    it goes on to the bed (whether the game's stops on the liquid isn't traced).
 //!  - **Through, or off** (#238, `Bolt::after_hit`): with the pass flag it goes through an object
 //!    while n1 lasts and a character while n2 does, and stops at anything else (the terrain
 //!    always); without it, while n1 or n2 lasts, it bounces off what it hit, its way turned about
@@ -472,15 +473,8 @@ fn fly_bolts(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>
             };
             let reach = met.map_or(len, |m| m.t);
             sweeps.0.push((from, dir, reach));
-            // a liquid's surface on the way: its splash there (a shot's rule, play.rs `projectiles`)
-            if let Some(ale) = ale.as_deref_mut() {
-                if let Some((surface, liquid)) = world::arena().and_then(|a| a.liquid_crossing(from, from + dir * reach)) {
-                    let effect = liquid.effects[LIQUID_SHOT];
-                    if effect != 0 {
-                        spawn_once(&mut commands, &mut game.0, ale, &mut images, &mut materials, effect, Transform::from_translation(surface));
-                    }
-                }
-            }
+            // (a liquid's surface on the way: nothing, the blast pool has no liquid code; an
+            // instant ray's splash is play.rs `projectiles`', todo/146-liquids leads §5.1)
             let Some(met) = met else {
                 b.pos += dir * step;
                 b.last = b.pos;

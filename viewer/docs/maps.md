@@ -70,10 +70,10 @@ them):
       the demo doesn't do.
     * **At the bottom** they land as from any fall: the drop counted from where they took off
       (char+0x6e8, written once when the fall starts, FUN_0012b740), so a 20 m run down a 66°
-      face costs what a 20 m free fall does (36 HP before the difficulty's step); a liquid breaks
-      the fall.
-    * **A splash** going into a liquid on a face is big by the speed the face is bringing them
-      down, not the free fall's vy (which grows on the face as in the game).
+      face costs what a 20 m free fall does (36 HP before the difficulty's step); into a liquid
+      too, by the drop to its bed (FUN_0012b740 has no liquid check, #152).
+    * **Splashes** going into a liquid off a face are as any other entry's: by each part's
+      bounding radius, not the speed (#5, levels.md "What a liquid plays").
     * **The AI** (followers, enemies, a cutscene's walk; not one a fall, a slide or a knock is
       carrying) keeps to ground with a floor under its middle and to the frame's own test, as
       before #264, and stops at a drop ahead: the ground within 5 m under points 0.4, 0.8 and
@@ -90,8 +90,9 @@ them):
     * Checked:
       * `BF_MAP=tutorial BF_TEST_GOTO=46.26,-25.92,45.9,-34 BF_SLIDE_LOG=1`: "tex steps onto a
         steep face at [46.2, 16.1, -26.5] (66 deg)" (take08: off the rim at (46.2, 15.2, -26.4)
-        in MT 21), running clear of the face into the lava and dead (levels.md, "Liquids aren't
-        solid", for how fast).
+        in MT 21), running clear of the face into the lava (levels.md, "What a liquid does to a
+        character": with this goal he runs on over the bed and out of the pit's south side,
+        burned to 4.6 HP; to take08's own stop at z -30.4 he dies there).
       * Starting on the pit wall (`BF_TEST_GOTO=46.2,-26.9,46.2,-26.9,15.5`: a start height with
         no floor under it stands on the steep face there) the slide is the same at 15 and 60 fps
         (`BF_CAPTURE_FPS=60`): the feet 0.40 m down after 0.27 s at 15 fps, 0.44 m after 0.25 s at

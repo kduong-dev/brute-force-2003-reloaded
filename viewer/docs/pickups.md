@@ -104,7 +104,8 @@
   * A taken pickup comes back after 30 s (a guess; the respawn time isn't found). Only the
     player picks up.
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
-    `BF_TEST_HEALTH=<hp>` starts hurt. `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds Tab from the start (the item list open, the game paused).
+    `BF_TEST_HEALTH=<hp>` starts hurt (above the most, with the most raised to it: #152's lava
+    runs at 5000, as #146's take03). `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds Tab from the start (the item list open, the game paused).
     `BF_TEST_ITEM=<label>` selects a carried item at the start and `BF_TEST_ITEM_USE=<s>` presses
     G then (play.md "Items: the squad's starting inventory"). Verified (#281): e34's range spot
     with `BF_TEST_HEALTH=50 BF_TEST_ITEM=Medkit BF_TEST_MEDKIT=1.5`: "Medkit 6" blue, used,

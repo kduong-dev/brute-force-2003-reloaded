@@ -256,9 +256,14 @@ fn main() {
         .init_resource::<Fly>()
         .add_plugins((bf_viewer::ale_fx::plugin, bf_viewer::level_scene::plugin))
         .add_systems(Startup, setup)
-        .add_systems(Update, (fly, screenshot, move_test_fx, turn_sky))
+        .add_systems(Update, (fly, screenshot, move_test_fx, turn_sky, run_liquid_clock))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
+}
+
+/// The liquids' clock (level_scene::LiquidClock: their scroll and the water's shimmer) on bevy's.
+fn run_liquid_clock(time: Res<Time>, mut clock: ResMut<bf_viewer::level_scene::LiquidClock>) {
+    clock.0 += time.delta_secs();
 }
 
 fn setup(mut commands: Commands, mut world: ResMut<World>, mut fly: ResMut<Fly>, mut meshes: ResMut<Assets<Mesh>>,

@@ -13,9 +13,10 @@
 //! only; most of the data's come twinned, so they block both ways (`BodyShape`, #285), but for a
 //! rock's faces that face into it (`Tri::inner`), which are neither floors nor walls.
 //!
-//! Liquids (lava, toxic rivers, water: placed objects of class h_04366a6a) have a flat
-//! collision plane at their surface; it isn't solid: characters wade and sink through it to
-//! the bed, and `liquid_at` tells how deep they are in what.
+//! Liquids (lava, sludge, toxic waste, water: placed objects of class h_04366a6a) have a
+//! collision volume under their surface (a box for most); it isn't solid: characters wade and
+//! sink through it to the bed. `liquid_at` tells how deep under a surface a point is, and
+//! `liquid_inside` whether it's in a liquid's volume (#152).
 //!
 //! Pickups (weapon / inventory objects and items) are placed at their spawn height in the level
 //! file (the game lets them fall); `settle_pickups` drops them onto the surface below.
@@ -1114,6 +1115,50 @@ impl Arena {
         best
     }
 
+    /// Liquid `l`'s type (its index among the level's liquids, as `liquid_inside` gives it).
+    pub fn liquid(&self, l: u32) -> Option<LiquidType> {
+        self.liquids.get(l as usize).copied()
+    }
+
+    /// The liquid whose collision holds `p`: its index among the level's liquids, its surface over
+    /// `p` (the highest of its triangles above) and its type (#152). The liquid's body is a
+    /// phantom of its whole collision (FUN_002218e0), a closed volume (sdm_e13's lava and the
+    /// tutorial's pits a box under the surface, sdm_m03's sludge too; sdm_e10's pond a 40-triangle
+    /// volume; the e40 ocean's 420 triangles 210 faces, each with its twin, as the e40 lava flow's,
+    /// m02_a's lava's and e05's water's: every liquid of the 19 maps that have one closes, by
+    /// BF_FIND_BODIES), so a point is in it when an odd number of its faces lie above it, however
+    /// deep; for a liquid whose collision is a lone sheet (sdm_m07's lava quads, which have no
+    /// physics mesh) that's anywhere under it. Each face is counted once: a twin pair's second
+    /// left out (`Tri::duplicate`; counted, a twinned liquid held nobody), and a point on an edge
+    /// or a corner its triangles share over one of them alone (`over_once`).
+    pub fn liquid_inside(&self, p: Vec3) -> Option<(u32, f32, LiquidType)> {
+        // (each liquid's triangles above p, and the highest)
+        let mut above: Vec<(u32, u32, f32)> = vec![];
+        for &i in self.near(p.x, p.z) {
+            let t = &self.tris[i as usize];
+            let Some(l) = t.liquid.filter(|_| !t.duplicate) else { continue };
+            let Some(y) = Self::over_once(t, p.x, p.z).filter(|y| *y > p.y) else { continue };
+            match above.iter_mut().find(|a| a.0 == l) {
+                Some(a) => {
+                    a.1 += 1;
+                    a.2 = a.2.max(y);
+                }
+                None => above.push((l, 1, y)),
+            }
+        }
+        above.into_iter().find(|a| a.1 % 2 == 1).map(|(l, _, y)| (l, y, self.liquids[l as usize]))
+    }
+
+    /// Where a ray straight down from (x, `top`, z) first meets liquid `l`'s collision within
+    /// `length` m (strictly nearer), its height: FUN_00222480's surface ray (#5), cast from the top
+    /// of a part's or object's bounding sphere 2r down against that liquid alone (vtable +0x108),
+    /// for its splash and its rings. A sphere wholly under the surface finds nothing (unless the
+    /// volume's floor is within its reach), as one wholly over it.
+    pub fn liquid_below(&self, l: u32, x: f32, z: f32, top: f32, length: f32) -> Option<f32> {
+        self.near(x, z).iter().map(|&i| &self.tris[i as usize]).filter(|t| t.liquid == Some(l))
+            .filter_map(|t| Self::height_on(t, x, z)).filter(|&y| y <= top && top - y < length).reduce(f32::max)
+    }
+
     /// Where the line from `from` to `to` first goes into a liquid (through its surface, from
     /// above), and the liquid: sampled every LIQUID_STEP m.
     pub fn liquid_crossing(&self, from: Vec3, to: Vec3) -> Option<(Vec3, LiquidType)> {
@@ -1129,7 +1174,41 @@ impl Arena {
         })
     }
 
-    /// Height of triangle `t` at (x, z), if (x, z) is over it.
+    /// Height of triangle `t` at (x, z) when (x, z) is over it by a half-open rule, for counting
+    /// where a vertical line crosses a closed surface (`liquid_inside`). No slack, and a point on
+    /// an edge or a corner that triangles share is over one of them alone: each edge is reckoned
+    /// from its lesser corner (by x, then z) to the greater, so the triangles on its two sides
+    /// work out the same number for it, bit for bit, and a point on it goes with the triangle on
+    /// its left, as if it lay a hair further toward +z (and a hair less toward -x). Two faces
+    /// folded over the same side of an edge (a pool's top and its bank at the rim) take its points
+    /// both or neither, which a crossing count reads right: the line only touches the surface
+    /// there. `height_on`'s slack of 1e-4 of a triangle's size counted both triangles of a split
+    /// face near their diagonal, an even count read as out: some 4 cm either side of the diagonal
+    /// of sdm_e13's lava top (512 m square), where a part crossing it went out and in (a whole
+    /// entry hit).
+    fn over_once(t: &Tri, x: f32, z: f32) -> Option<f32> {
+        let p = Vec2::new(x, z);
+        let c = t.v.map(|v| Vec2::new(v.x, v.z));
+        for i in 0..3 {
+            let (a, b, third) = (c[i], c[(i + 1) % 3], c[(i + 2) % 3]);
+            let (from, to) = if (a.x, a.y) <= (b.x, b.y) { (a, b) } else { (b, a) };
+            let side = (to - from).perp_dot(third - from);
+            if side == 0.0 {
+                return None;
+            }
+            let e = (to - from).perp_dot(p - from);
+            if (e == 0.0 && side < 0.0) || (e != 0.0 && (e > 0.0) != (side > 0.0)) {
+                return None;
+            }
+        }
+        let d = (c[1] - c[0]).perp_dot(c[2] - c[0]);
+        let u = (p - c[0]).perp_dot(c[2] - c[0]) / d;
+        let v = (c[1] - c[0]).perp_dot(p - c[0]) / d;
+        Some(t.v[0].y + (t.v[1].y - t.v[0].y) * u + (t.v[2].y - t.v[0].y) * v)
+    }
+
+    /// Height of triangle `t` at (x, z), if (x, z) is over it (with a little slack, 1e-4 of its
+    /// size: a floor's edge holds a foot on it).
     fn height_on(t: &Tri, x: f32, z: f32) -> Option<f32> {
         let p = Vec2::new(x, z);
         let [a, b, c] = t.v.map(|v| Vec2::new(v.x, v.z));
@@ -1911,6 +1990,71 @@ mod tests {
         }
         a.new_body(0);
         a
+    }
+
+    /// The flat floor at 0 with a liquid (a lava type, rate 30) of `tris`, one body (twinned: each
+    /// also wound the other way, as the e40 ocean's 420 triangles and the e40, m02_a and e05
+    /// liquids' come).
+    fn arena_with_liquid(tris: &[[Vec3; 3]], twinned: bool) -> Arena {
+        let mut a = Arena::flat(0.0);
+        a.liquids.push(LiquidType { kind: 2, damage: [50.0, 50.0, 30.0], ..Default::default() });
+        for t in tris {
+            a.add(*t, false, None, 0);
+            if twinned {
+                a.add([t[0], t[2], t[1]], false, None, 0);
+            }
+        }
+        for t in &mut a.tris {
+            t.liquid = Some(0);
+        }
+        a.new_body(0);
+        a
+    }
+
+    /// #152: a point in a liquid's box is in it however near the diagonal its top and bottom are
+    /// split along (box_tris splits each face from its first corner to its third: x = z here),
+    /// on it too; one under the box or over it isn't; twinned, each face counts once. The same a
+    /// few centimetres off the diagonal of a box the size of sdm_e13's lava (512 m square) and of
+    /// one a kilometre across (the e40 ocean's size), inside `height_on`'s slack, where a part read
+    /// out.
+    #[test]
+    fn a_liquid_holds_a_point_on_its_diagonal() {
+        for twinned in [false, true] {
+            let a = arena_with_liquid(&box_tris(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)), twinned);
+            for (x, z) in [(0.3, 0.3), (0.3, 0.300_05), (0.300_05, 0.3), (-0.7, -0.7), (0.0, 0.0), (0.5, -0.2)] {
+                assert!(a.liquid_inside(Vec3::new(x, 1.0, z)).is_some_and(|l| l.0 == 0 && (l.1 - 2.0).abs() < 1e-5), "in at {x}, {z} ({twinned})");
+                assert!(a.liquid_inside(Vec3::new(x, -0.5, z)).is_none(), "under at {x}, {z} ({twinned})");
+                assert!(a.liquid_inside(Vec3::new(x, 2.5, z)).is_none(), "over at {x}, {z} ({twinned})");
+            }
+        }
+        let singe = arena_with_liquid(&box_tris(Vec3::new(-256.0, 12.94, -256.0), Vec3::new(256.0, 23.89, 256.0)), false);
+        let big = arena_with_liquid(&box_tris(Vec3::new(-543.0, 12.94, -543.0), Vec3::new(543.0, 23.89, 543.0)), false);
+        for (x, z) in [(10.0, 10.03), (10.03, 10.0), (-20.0, -20.0), (200.0, 199.97)] {
+            assert!(singe.liquid_inside(Vec3::new(x, 23.5, z)).is_some(), "in at {x}, {z}");
+            assert!(big.liquid_inside(Vec3::new(x, 23.5, z)).is_some(), "in at {x}, {z}");
+            assert!(singe.liquid_inside(Vec3::new(x, 12.5, z)).is_none(), "under at {x}, {z}");
+        }
+    }
+
+    /// #152 (`over_once`): of a fan of six triangles round a corner, each point within it is over
+    /// one triangle: at the shared corner, on the spokes, between them.
+    #[test]
+    fn a_point_is_over_one_triangle_of_a_fan() {
+        let ring: Vec<Vec3> = (0..6).map(|k| {
+            let a = k as f32 * std::f32::consts::TAU / 6.0;
+            Vec3::new(3.0 * a.cos(), 1.0, 3.0 * a.sin())
+        }).collect();
+        let mut a = Arena::flat(0.0);
+        for k in 0..6 {
+            a.add([Vec3::new(0.0, 1.0, 0.0), ring[k], ring[(k + 1) % 6]], false, None, 0);
+        }
+        let mut points = vec![Vec2::ZERO, Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), Vec2::new(-1.0, 0.0), Vec2::new(0.0, -1.0)];
+        points.extend(ring.iter().map(|r| Vec2::new(r.x, r.z) * 0.5));
+        points.extend((0..40).map(|k| Vec2::new((k as f32 * 0.37).sin(), (k as f32 * 0.61).cos()) * 1.5));
+        for p in points {
+            let n = a.tris.iter().filter(|t| Arena::over_once(t, p.x, p.y).is_some()).count();
+            assert_eq!(n, 1, "{p:?}");
+        }
     }
 
     /// A character's move on the flat floor: radius 0.4, 1.9 m tall, its wall test from 0.5 m up.

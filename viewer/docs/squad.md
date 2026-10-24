@@ -175,6 +175,31 @@ Squad movement and deaths follow the game's own data and the captures:
   | `EVT_IDLE_VARY_DATA` | `IDLE_VARY_DATA_PAUSE_CROUCH` 15, `…_PAUSE_CAUTIOUS` 12 (equal weights) | holding position: the first pause kneels (as in the captures), then kneeling and cautious pauses (standing, weapon ready, looking left and right) are drawn, lasting 15 and 12 s |
 
   `BF_AI_LOG=1` prints their idle choices and dodges.
+* **Liquids that burn** (#1, play_liquids.rs `burning_ahead`, `steps_into_burning`). A wingman
+  doesn't walk into lava, sludge or toxic waste (a liquid whose character rate h_e0489ea0 is
+  above 0, the one that hurts: levels.md, "What a liquid does to a character"): with ground in
+  one ahead of it (its feet within 0.15 m of the surface or under it: where its calves' parts
+  would be in, `PART_REACH`) it doesn't set off toward its place, so it waits at the shore, and
+  the movement undoes any AI-steered character's step onto such ground (a wingman's, an enemy's,
+  a cutscene's walk), as the ledge probe undoes a step off a drop; one already in may still step
+  up and out. Water stays walkable (its rate is 0).
+  * Why: the game's AI has no liquid code (no AI routine reads the liquid state or the liquid
+    objects, todo/146-liquids leads §4.2); what keeps its squad out is its routes over the
+    level's world points, and no harmful liquid has one over its floor on the SDM maps (sdm_e13's
+    lava 0 of the 536 over it, sdm_m03's sludge 0 of 141, sdm_m07's lava 0 of 284; at most a
+    couple ankle-deep at a shore), where water has many (sdm_e10's pond 87-272). The demo's AI
+    doesn't walk those routes yet, so this stands in for them: a data-backed rule, not a traced
+    one.
+  * Not known: whether the game's squad follows its leader into lava when he walks in (a direct
+    move to him isn't traced; #146's shot A4, not filmed), and how its routes take it round a
+    liquid between a wingman and its place: the demo steers straight, so the wingman waits at
+    the shore there (on sdm_e13 the squad starting across the lava from a leader moved by a test
+    hook stays where it starts).
+  * Checked: `BF_MAP=sdm_e13 BF_CHARACTER=0 BF_START=9 BF_TEST_GOTO=-9.9,-111.3,-21.44,-105
+    BF_TEST_GO_AT=4 BF_TEST_HEALTH=5000 BF_LIQUID_LOG=1` (`BF_VIEW_YAW=3.14159` to look back):
+    Brutus walks into the lava, Tex and Hawk crouch at the shore and Flint stands on the rock
+    behind them, 11-16 m from their places, and none of them takes a hit; `BF_LIQUID_LOG` prints
+    "waits at a liquid that burns" twice a second for each.
 * Hits come from the game's effect library (common/effects-common.ale, read with
   `../ale_tool.py`) and the flesh world material (21, WMAT_FLESH_HUMAN). Every hit plays its
   debris bundle: blood_puff (smokecard.tga mist), bloodsplat_s (diffuse_big.tga droplets in a

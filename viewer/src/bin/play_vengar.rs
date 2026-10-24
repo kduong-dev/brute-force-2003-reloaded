@@ -246,7 +246,7 @@ fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<
                 let due: Vec<u32> = now_due.chain([fx.light]).filter(|&e| e != 0).collect();
                 if let Some(ale) = ale.as_deref_mut() {
                     for e in due {
-                        spawn_once(&mut commands, &mut game.0, ale, &mut images, &mut materials, e, at);
+                        spawn_once(&mut commands, &mut game.0, ale, &mut images, &mut materials, e, at, 0.0);
                     }
                 }
                 v.sound_queue.extend(fx.sounds.iter().map(|&(id, ..)| (id, 1.0)));

@@ -296,9 +296,12 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
         return;
     }
     pickups.ready = true;
-    // test hook: BF_TEST_HEALTH=<hp> starts the player hurt (a session started in play)
+    // test hook: BF_TEST_HEALTH=<hp> starts the player hurt (a session started in play); above its
+    // most, with its most raised to it too (as #146's take03 had the trainer set Brutus's hit
+    // points and their most to 5000, play_liquids.rs)
     if let Some(hp) = std::env::var("BF_TEST_HEALTH").ok().and_then(|v| v.parse::<f32>().ok()).filter(|_| !player.stand_in) {
-        player.health = hp.min(player.max_health);
+        player.max_health = player.max_health.max(hp);
+        player.health = hp;
     }
     pickups.list = placed.iter()
         .filter(|(_, p, _, _)| p.tag == h("inventory-object") && !game.0.idle_effects.contains_key(&p.kind)

@@ -246,6 +246,10 @@ struct MissileKit {
     parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)>,
     trail: EffectType,
     radius: f32,
+    /// the radius its splash goes by (#5, play_liquids.rs `object_enters`): its mesh archetype's
+    /// h_1ab09530 (`Game::archetype_sphere`; h_13a8dfb8 0.046 m, h_07d84a52 0.17, h_e9e61b85
+    /// 0.43), else `radius` (a compound's isn't in the data: the demo's)
+    splash_radius: f32,
 }
 
 /// The projectile objects' kits, by object type, loaded when a map starts (None: no model).
@@ -303,6 +307,9 @@ struct Missile {
     age: f32,
     /// its trail effects (their user parameter follows its life)
     trails: Vec<Entity>,
+    /// in a liquid (its obj+0x104 above 0, play_liquids.rs `object_enters`): it splashes going in
+    /// only from out of one
+    wet: bool,
 }
 
 /// A missile going off: where, which way it flew, what it struck (a body, the world's surface
@@ -593,7 +600,8 @@ fn missile_kit(game: &mut Game, assets: &mut ModelAssets, object: u32) -> Option
     }
     let radius = ((lo + hi) * 0.5).length() + ((hi - lo) * 0.5).length();
     let trail = def.map(|d| d.attached_effect).and_then(|e| game.effect_type_defs.get(&e).cloned()).unwrap_or_default();
-    Some(MissileKit { parts, trail, radius })
+    let splash_radius = game.archetype_sphere(arch).map_or(radius, |s| s.1);
+    Some(MissileKit { parts, trail, radius, splash_radius })
 }
 
 /// Where a character's feet are (the game's character position, char+0x458; the blast's body
@@ -927,7 +935,7 @@ fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32
         out.push(Missile {
             id: state.next, weapon: m.weapon, object: if b.mirv_object != 0 { b.mirv_object } else { m.object }, owner: m.owner, team: m.team,
             side: NEUTRAL, human: m.human, pos, vel: heading * speed, heading, speed, life, start, straight: start * b.straight, after: b.after,
-            seek_in: 0.0, fuse_clock: 0.0, target, aim, mode: 0, falls: falling, clock: m.clock, from: m.from, age: m.age, trails: vec![],
+            seek_in: 0.0, fuse_clock: 0.0, target, aim, mode: 0, falls: falling, clock: m.clock, from: m.from, age: m.age, trails: vec![], wet: false,
         });
     }
     if log {
@@ -1005,7 +1013,7 @@ fn launch_missiles(mut commands: Commands, mut player: ResMut<Player>, mut squad
             id: state.next, weapon: l.weapon, object: b.object, owner, team, side: team, human: owner == human, pos: l.origin, vel: dir * speed, heading: dir,
             speed, life: start, start, straight: start * b.straight, after: b.after, seek_in: 0.0, fuse_clock: 0.0,
             target, aim: target.and_then(|t| origin_of(&units, t)).unwrap_or(l.aim), mode: b.mirv_mode, falls: falls(game.0.weapons.get(&b.object), b.steady),
-            clock: 0.0, from: l.origin, age: 0.0, trails: vec![],
+            clock: 0.0, from: l.origin, age: 0.0, trails: vec![], wet: false,
         };
         if log {
             println!("t {now:.2}: missile {} launched ({}) from {:.2} along {:.3} at {speed} m/s: life {start:.3} s, straight {:.3} s, then {} s; mirv {} x mode {}; target {:?}, aim {:.2}{}",
@@ -1036,6 +1044,8 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
     let listener = player.position;
     let mut blows = vec![];
     let mut children = vec![];
+    let mut splashes = vec![];
+    let arena = world::arena();
     {
         let units: Vec<&Player> = std::iter::once(&*player).chain(squad.0.iter()).collect();
         for (e, mut m, mut tr) in &mut missiles {
@@ -1046,8 +1056,21 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
             let mut gone = false;
             while m.clock >= super::shots::TICK && !gone {
                 m.clock -= super::shots::TICK;
+                let from = m.pos;
                 match tick(&mut m, &b, range, radius, &units, &mines, super::shots::TICK, now, log) {
-                    Tick::Flying => {}
+                    Tick::Flying => {
+                        // into a liquid (#5): its splash, by its mesh's radius (the liquids aren't
+                        // solid: it flies on through)
+                        let r = kits.0.get(&m.object).and_then(|k| k.as_ref()).map_or(b.radius, |k| k.splash_radius);
+                        let (to, speed) = (m.pos, m.vel.length());
+                        if let Some(s) = arena.as_ref().and_then(|a| super::liquids::object_enters(a, &mut m.wet, from, to, b.radius, r, speed)) {
+                            if log || std::env::var("BF_LIQUID_LOG").is_ok() {
+                                println!("t {now:.2}: missile {} into a liquid (type {}) at {speed:.1} m/s: a {} splash at {:.2} (r {r:.3})", m.id, s.0.kind,
+                                         if s.2 == bf_viewer::bf::character::LIQUID_BIG_SPLASH { "big" } else { "small" }, s.1);
+                            }
+                            splashes.push(s);
+                        }
+                    }
                     Tick::Split => {
                         let radii = |o: u32| kits.0.get(&o).and_then(|k| k.as_ref()).map_or(0.0, |k| k.radius);
                         let child = if b.mirv_object != 0 { b.mirv_object } else { m.object };
@@ -1084,6 +1107,9 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
                 }
             }
         }
+    }
+    for (t, at, slot) in splashes {
+        super::liquids::splash(&mut player, &t, slot, at);
     }
     let mut sounds = vec![];
     for c in children {
@@ -1418,7 +1444,7 @@ mod tests {
         let start = 40.0 / 23.0;
         Missile { id: 1, weapon: 0xE9BE_70F0, object: 0x175A_0ADF, owner: Who::Squad(0), team: 0, human: true, side: 0, pos: Vec3::ZERO, vel,
                   heading: vel.normalize(), speed: 23.0, life: start - age, start, straight: 0.0, after: 0.0, seek_in: 0.0, fuse_clock: 0.0,
-                  target: None, aim: Vec3::ZERO, mode: 1, falls: true, clock: 0.0, from: Vec3::ZERO, age, trails: vec![] }
+                  target: None, aim: Vec3::ZERO, mode: 1, falls: true, clock: 0.0, from: Vec3::ZERO, age, trails: vec![], wet: false }
     }
 
     /// #239: the iKhan-GPL's round fired level from 1.44 m over flat ground (take08's muzzle over

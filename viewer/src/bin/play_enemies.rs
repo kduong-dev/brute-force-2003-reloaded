@@ -788,7 +788,7 @@ fn shield_look(u: &mut Player, game: &Game) {
         println!("  shield hit-effect h_{effect:08x}: ALE effects {:x?} at {at:.2}", effects);
     }
     for &fx in effects {
-        u.splashes.push((at, fx));
+        u.splashes.push((Transform::from_translation(at), fx, 0.0));
     }
 }
 

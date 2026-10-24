@@ -13,6 +13,9 @@
 //!    giblet#1) and the game's decal rule (FUN_00124a70: `game_decals`), the first list at the
 //!    body and the second along the shot, multiplied into what's under them. The other fleshes
 //!    keep the demo's reading (a splat past each hit, splats and a pool at death) until #150.
+//!  - a liquid's hits (#152, play_liquids.rs) on any flesh: the game's decal rule alone (the
+//!    second list straight up, the record's +0x24), no blood, no hit effect or sound: the liquid
+//!    deals no weapon's impact. A death by one leaves out the demo's death spray and splats.
 //!  - the memory chip a dead squadmate drops (what this module used to draw as "the DNA", with
 //!    the DNA canister's powerup_pill effect) is a mesh pickup now: play_dna.rs.
 //!
@@ -909,7 +912,8 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
 ///    m; on the first surface it meets (take 23: the gate's panel 2.8-3.3 m behind), facing back
 ///    along it; scale min(0.5 + 0.05a, 1), alpha 0.8 + 0.2 min(0.05a, 1). Nothing if it meets
 ///    nothing (take 14's first hit: the panel 4.03 m on). The shot's way is taken level (the
-///    hit's push: the demo's shots are near level at these ranges).
+///    hit's push: the demo's shots are near level at these ranges); a liquid's hit's is straight
+///    up (its record's +0x24, 0x221780: a ceiling within 4 m, or nothing).
 /// The decal is multiplied into what's under it (`spawn_game_decal`).
 #[allow(clippy::too_many_arguments)]
 fn game_decals(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, materials: &mut Assets<StandardMaterial>, game: &Game,
@@ -935,7 +939,7 @@ fn game_decals(commands: &mut Commands, state: &mut FxState, fx: &FxAssets, mate
             spawn_game_decal(commands, state, fx, materials, def, spot, None, scale, alpha);
         }
     }
-    let way = Vec3::new(b.dir.x, 0.0, b.dir.z).normalize_or_zero();
+    let way = if b.burn { Vec3::Y } else { Vec3::new(b.dir.x, 0.0, b.dir.z).normalize_or_zero() };
     if b.hp_left > 0.0 && a >= DECAL_BEHIND_SHARE * max && way != Vec3::ZERO {
         let name = pick(lists[1], state);
         let met = shots::hit_normal(skin, way, DECAL_BEHIND_REACH);
@@ -1071,7 +1075,15 @@ fn spawn_fx(
         };
         // the game's decal rule (FUN_00124a70), for Shrike flesh (#129; the rest is #150's)
         let game_rule = flesh == SHRIKE;
+        // (killed by a liquid's hit this frame: `burn` bleeds)
+        let mut burned = false;
         for b in std::mem::take(&mut u.blood) {
+            // a liquid's hit (play.rs `burn`): FUN_00124a70's decals alone, on any flesh
+            if b.burn {
+                burned |= b.hp_left <= 0.0;
+                game_decals(&mut commands, &mut state, &fx, &mut materials, &game.0, u, &b, b.at, [hit_decals, pool_decals]);
+                continue;
+            }
             let (at, dir, ammo) = (b.at, b.dir, b.ammo);
             // the effect's axis: the hit's normal (back toward the shooter)
             let back = -Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::Z);
@@ -1130,8 +1142,9 @@ fn spawn_fx(
             continue;
         }
         // the moment they die: blood splashed round where they fall, a spray and splats on the
-        // ground (DEATH_SPLATS, within DEATH_SPLAT_REACH m)
-        if u.dead_for == 0.0 {
+        // ground (DEATH_SPLATS, within DEATH_SPLAT_REACH m); not for a death by a liquid (#146's
+        // take01: none as Brutus dies in the lava)
+        if u.dead_for == 0.0 && !burned {
             let at = u.position + Vec3::Y * (GROUND + DEATH_SPRAY_UP);
             let sp = state.random();
             for e in blood {

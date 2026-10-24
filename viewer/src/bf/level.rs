@@ -271,6 +271,34 @@ pub struct LevelLight {
     pub indoor: bool,
     /// h_1f416687: one of the outdoor pair
     pub outdoor: bool,
+    /// its type's `enable-specular` (`Game::light_specular`): FUN_000dcc10 puts it in its pair's
+    /// slot 0 (`Level::objects_key`)
+    pub specular: bool,
+}
+
+/// FUN_000dcc10's two slots for one pair, its lights in the order it meets them (0xdcc8e-0xdccf4):
+/// a light whose type's +0x50 bit 3 is set (enable-specular, `LevelLight::specular`: the light
+/// type copy 0x14e3d5) takes slot 0 if it's free, else slot 1; any other takes slot 1, moving
+/// the one there to slot 0 if that's free; with both taken the rest are passed over. So a key
+/// (enable-specular) and a fill give the key slot 0 whatever their order; two fills, the one met
+/// second; one fill alone, slot 1 and slot 0 empty.
+pub fn pair_slots_of<'a>(lights: impl Iterator<Item = &'a LevelLight>) -> [Option<&'a LevelLight>; 2] {
+    let (mut slot0, mut slot1): (Option<&LevelLight>, Option<&LevelLight>) = (None, None);
+    for l in lights {
+        if l.specular {
+            if slot0.is_none() {
+                slot0 = Some(l);
+            } else if slot1.is_none() {
+                slot1 = Some(l);
+            }
+        } else if slot1.is_none() || slot0.is_none() {
+            if slot1.is_some() {
+                slot0 = slot1;
+            }
+            slot1 = Some(l);
+        }
+    }
+    [slot0, slot1]
 }
 
 impl LevelLight {
@@ -713,6 +741,7 @@ impl Level {
             match game.light_types.get(&kind).copied() {
                 Some(LT_DIRECTIONAL) => lights.push(LevelLight {
                     kind, name, color, indoor, outdoor,
+                    specular: game.light_specular.contains(&kind),
                     dir: -placed.z_axis.truncate().normalize_or_zero(),
                     strength: placed.z_axis.truncate().length(),
                 }),
@@ -807,6 +836,18 @@ impl Level {
         self.lights.iter().filter(|l| if indoor { l.indoor } else { l.outdoor }).take(2).collect()
     }
 
+    /// The light FUN_000dcc10 puts in slot 0 of the outdoor pair (the light-objects flagged
+    /// h_1f416687, the analyst's "objects set"), whose colour it copies to the world's +0xba0
+    /// (0x41b478; through FUN_0009e9c0: the colour x max(0, 1 - type+0x4c x light+0x78), taken as
+    /// 1 for the levels' steady lights): what BF_LavaMaterial hands its pixel shader as v0 (slot 24
+    /// from the draw context's +0xdc, FUN_000e6ef0 / FUN_00091fe0; todo/146-liquids answer-spec
+    /// Q3). The lights are met from the world list's front, the file's last first (as `pair` reads
+    /// 0x14f2a0), and slotted by `pair_slots_of`. None: FUN_000dcc10 leaves 0x41b478 as it was (0
+    /// after boot, inferred).
+    pub fn objects_key(&self) -> Option<&LevelLight> {
+        pair_slots_of(self.lights.iter().rev().filter(|l| l.outdoor))[0]
+    }
+
     /// The placements the level's spawn-triggers take as their templates (h_1299668b): out of the
     /// world until spawned, as FUN_000dfe90 takes each out when its spawn-trigger links. A
     /// template is drawn, made solid or started only as a copy (play_triggers.rs `spawn_copy`).
@@ -841,5 +882,29 @@ impl Level {
             todo.extend(self.triggers.iter().filter(|n| t.targets.contains(&n.name)));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A directional light of the outdoor pair named `name`, `specular` or not (the rest doesn't
+    /// matter to the slots).
+    fn light(name: u32, specular: bool) -> LevelLight {
+        LevelLight { kind: 0, name, color: [1.0; 3], dir: Vec3::NEG_Y, strength: 1.0, indoor: false, outdoor: true, specular }
+    }
+
+    /// FUN_000dcc10's slots (`pair_slots_of`), the lights in the order it meets them: a key light
+    /// (enable-specular) takes slot 0 whichever comes first; of two fills the one met second; one
+    /// fill alone leaves slot 0 empty.
+    #[test]
+    fn the_key_light_takes_slot_0() {
+        let names = |s: [Option<&LevelLight>; 2]| s.map(|l| l.map(|l| l.name));
+        let (key, fill, other) = (light(1, true), light(2, false), light(3, false));
+        assert_eq!(names(pair_slots_of([&key, &fill].into_iter())), [Some(1), Some(2)]);
+        assert_eq!(names(pair_slots_of([&fill, &key].into_iter())), [Some(1), Some(2)]);
+        assert_eq!(names(pair_slots_of([&fill, &other].into_iter())), [Some(2), Some(3)]);
+        assert_eq!(names(pair_slots_of([&fill].into_iter())), [None, Some(2)]);
     }
 }

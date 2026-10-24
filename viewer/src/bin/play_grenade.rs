@@ -141,6 +141,11 @@ pub struct GrenadeKit {
     /// the model's bounding sphere (centre in the model's frame, radius; m), from its meshes'
     /// vertices: what a shot has to pass through to strike it (play_sentry.rs)
     pub bounds: (Vec3, f32),
+    /// the radius its splash goes by (#5, play_liquids.rs `object_enters`): its mesh archetype's
+    /// h_1ab09530 (`Game::archetype_sphere`: the grenades' 0.081 m, the Sentry's 0.33 m; what
+    /// FUN_00236670 gives its scene node), else `bounds`' (a compound's isn't in the data: the
+    /// demo's)
+    pub splash_radius: f32,
 }
 
 impl GrenadeKit {
@@ -171,11 +176,13 @@ impl GrenadeKit {
             }
         }
         let bounds = if lo.x <= hi.x { ((lo + hi) * 0.5, ((hi - lo) * 0.5).length().max(GRENADE_RADIUS)) } else { (Vec3::ZERO, GRENADE_RADIUS) };
-        info!("grenade {} (h_{:08x}): timer {}, use {}, function {}, explosion h_{:08x} {}-{} type {} radius {}, effect h_{:08x} {:x?} light {:08x} sounds {:x?}, impact {:08x}, decal {:08x}, trail h_{:08x} {:x?} {:x?}, icon {:08x}, {} parts, bounds {:.2} - {:.2}",
+        let sphere = game.archetype_sphere(def.archetype);
+        let splash_radius = sphere.map_or(bounds.1, |s| s.1);
+        info!("grenade {} (h_{:08x}): timer {}, use {}, function {}, explosion h_{:08x} {}-{} type {} radius {}, effect h_{:08x} {:x?} light {:08x} sounds {:x?}, impact {:08x}, decal {:08x}, trail h_{:08x} {:x?} {:x?}, icon {:08x}, {} parts, bounds {:.2} - {:.2}, archetype h_{:08x} sphere {:?}",
               def.label, def.name, def.fuse, def.use_type, def.function_type, def.projectile, blast.damage_min, blast.damage, blast.damage_type,
               blast.blast_radius, blast.blast_effect, blast_fx.effects, blast_fx.light, blast_fx.sounds, blast.impact_sound, blast.decal,
-              def.attached_effect, trail_fx.effects, trail_fx.sounds, def.icon, parts.len(), lo, hi);
-        GrenadeKit { def, blast, blast_fx, trail_fx, parts, bounds }
+              def.attached_effect, trail_fx.effects, trail_fx.sounds, def.icon, parts.len(), lo, hi, def.archetype, sphere);
+        GrenadeKit { def, blast, blast_fx, trail_fx, parts, bounds, splash_radius }
     }
 
     /// Goes off on the first contact (timer 0: the Sonic).
@@ -230,6 +237,9 @@ pub(super) struct Grenade {
     roll_sound: f32,
     /// when it left the hand (sim time; BF_GRENADE_LOG prints the flight to the first contact)
     launched: f32,
+    /// in a liquid (its obj+0x104 above 0, play_liquids.rs `object_enters`): it splashes going in
+    /// only from out of one
+    wet: bool,
 }
 
 impl Grenade {
@@ -238,7 +248,7 @@ impl Grenade {
     /// Sentry's 9999 s: what sets it off is its check), thrown by no one (OTHER: no squad member's
     /// own, so no thrower's share of its blast).
     pub(super) fn placed(kind: usize, fuse: f32, now: f32) -> Grenade {
-        Grenade { kind, velocity: Vec3::ZERO, fuse, landed: true, spin: Vec3::ZERO, thrower: OTHER, rolling: None, roll_sound: 0.0, launched: now }
+        Grenade { kind, velocity: Vec3::ZERO, fuse, landed: true, spin: Vec3::ZERO, thrower: OTHER, rolling: None, roll_sound: 0.0, launched: now, wet: false }
     }
 }
 
@@ -395,7 +405,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
         let spin = if kit.placed() { Vec3::ZERO } else { t.velocity.cross(Vec3::Y).normalize_or(Vec3::X) * -12.0 };
         let fuse = if t.landed { 0.0 } else { kit.def.fuse.max(0.0) };
         commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, spin, thrower: player.character, rolling,
-                                            roll_sound: 0.0, launched: player.sim_time });
+                                            roll_sound: 0.0, launched: player.sim_time, wet: false });
     }
 }
 
@@ -571,6 +581,7 @@ fn fly_grenades(
             continue;
         }
         g.velocity.y -= GRENADE_GRAVITY * dt;
+        let speed = g.velocity.length();
         let mut pos = tr.translation + g.velocity * dt;
         let floor = floor_y(pos.x, pos.z, tr.translation.y) + GRENADE_RADIUS;
         let mut hit = false;
@@ -655,6 +666,18 @@ fn fly_grenades(
         if hit && kit.on_contact() {
             g.landed = true;
             g.fuse = 0.0;
+        }
+        // into a liquid (#5): its splash, by its mesh's radius (play_liquids.rs; the liquids aren't
+        // solid, so it goes on down to the bed)
+        if let Some(a) = world::arena() {
+            if let Some((t, at, slot)) = super::liquids::object_enters(&a, &mut g.wet, tr.translation, pos, GRENADE_RADIUS, kit.splash_radius, speed) {
+                super::liquids::splash(p, &t, slot, at);
+                if std::env::var("BF_GRENADE_LOG").is_ok() || std::env::var("BF_LIQUID_LOG").is_ok() {
+                    println!("t {:.2}: {} into a liquid (type {}) at {speed:.1} m/s: a {} splash at {at:.2} (r {:.3}): effect h_{:08x}, sound {:08x}",
+                             p.sim_time, kit.def.label, t.kind, if slot == bf_viewer::bf::character::LIQUID_BIG_SPLASH { "big" } else { "small" }, kit.splash_radius,
+                             t.effects[slot], t.sounds[slot]);
+                }
+            }
         }
         tr.translation = pos;
         let spin = g.spin * dt;

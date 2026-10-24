@@ -57,7 +57,7 @@ use bevy::{
     render::mesh::skinning::SkinnedMeshInverseBindposes,
     window::{CursorGrabMode, PrimaryWindow},
 };
-use bf_viewer::bf::character::{Character, Game, LiquidType, LIQUID_BIG_SPLASH, LIQUID_SHOT, LIQUID_SPLASH, LIQUID_WADE};
+use bf_viewer::bf::character::{Character, Game, LIQUID_SHOT};
 use bf_viewer::bf::locomotion::{self, Locomotion};
 use bf_viewer::bf::weapon::{self, Hardpoint, WeaponDef, WeaponModel};
 use bf_viewer::scene::{spawn_model, spawn_static, ModelAssets};
@@ -700,6 +700,7 @@ fn main() {
         .add_plugins(shake::plugin)
         .add_plugins(skills::plugin)
         .add_plugins(damage::plugin)
+        .add_plugins(liquids::plugin)
         .add_plugins(reticle::plugin)
         .add_plugins(targeting::plugin)
         .add_plugins(enemies::plugin)
@@ -728,6 +729,7 @@ fn main() {
         .add_systems(Update, lamp_characters.after(update_player).run_if(playing.clone()))
         .add_systems(Update, spawn_splashes.after(update_player).run_if(playing.clone()))
         .add_systems(Update, turn_sky.run_if(playing.clone()))
+        .add_systems(Update, run_liquid_clock.run_if(playing.clone()))
         .add_systems(Update, (back_to_menu, audio_probe).run_if(playing))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
@@ -825,6 +827,8 @@ mod brain;
 mod placed_fx;
 #[path = "play_camera.rs"]
 mod camera;
+#[path = "play_liquids.rs"]
+mod liquids;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1464,16 +1468,6 @@ const SLIDE_RELEASE: f32 = 0.2;
 const SLIDE_BLOCKED: f32 = 0.1;
 /// The slide clip shows for this long past the slide (keeps it from flickering).
 const SLIDE_HOLD: f32 = 0.25;
-/// A liquid this deep (m above the feet: the head under) kills, if it's a harmful one (any of
-/// its LiquidType::damage values set: lava, toxic). From a capture of sdm_e13: Brutus waded
-/// waist-deep through lava for 10 s at full health, then died the moment he went under.
-const LIQUID_UNDER: f32 = 1.6;
-/// A harmful liquid (any damage rate set: lava, toxic) burns from the first touch: LIQUID_TOUCH
-/// of its highest rate (per second) at the surface, rising with depth to all of it at
-/// LIQUID_UNDER; dealt every LIQUID_TICK s. (A capture of sdm_e13 had Brutus wade waist-deep
-/// through lava unhurt; this is the demo's choice: touching it hurts.)
-const LIQUID_TOUCH: f32 = 0.2;
-const LIQUID_TICK: f32 = 0.4;
 /// Falls (FUN_0012b740): past 5 m a landing hurts, 100 x ((drop - 5) / 25)^2 with no upper
 /// clamp (5.0 at 0x3c0590, 30.0 at 0x3c0594, 100.0 at 0x3c0598): 100 at 30 m, 144 at 35 m, 164
 /// at 37 m (m09_a's waste pit), so a long fall kills Brutus (105) and Tex (115) too (#157).
@@ -1780,7 +1774,8 @@ struct PendingHit {
 /// into a body on the ground), and the hit points left after it. `shielded`: a stamina shield
 /// took it whole (play_enemies.rs: no blood, the shield's look). `record`: a shot's hit record
 /// damage (`damage::Hit::record`), which sets the user parameter of the struck material's hit
-/// effect (FUN_0022cd80, play_fx.rs `flesh_sp`); None for any other hit.
+/// effect (FUN_0022cd80, play_fx.rs `flesh_sp`); None for any other hit. `burn`: a liquid's hit
+/// (`burn`): only the game's decals show it.
 #[derive(Clone, Copy, Debug)]
 struct Bleed {
     at: Vec3,
@@ -1790,12 +1785,13 @@ struct Bleed {
     hp_left: f32,
     shielded: bool,
     record: Option<f32>,
+    burn: bool,
 }
 
 impl Bleed {
     /// A hit to show that did no damage (a shot into a body on the ground).
     fn shown(at: Vec3, dir: Vec3, ammo: i64) -> Self {
-        Bleed { at, dir, ammo, a: 0.0, hp_left: 0.0, shielded: false, record: None }
+        Bleed { at, dir, ammo, a: 0.0, hp_left: 0.0, shielded: false, record: None, burn: false }
     }
 }
 
@@ -2019,7 +2015,7 @@ struct Player {
     /// tutorial's lava pit wall; see `slide_on_face`); None off one
     face: Option<Vec3>,
     /// how far (m) their last move down a steep face brought them down (`face_move`): how far it
-    /// may fall away under them and still hold them, and their fall speed for a splash
+    /// may fall away under them and still hold them
     face_drop: f32,
     slide_on: bool,
     slide_fx: Option<Entity>,
@@ -2111,15 +2107,16 @@ struct Player {
     test_selected: bool,
     /// the scoped aim's wander (yaw, pitch; radians)
     sway: Vec2,
-    /// in a liquid (its surface above the feet), the time to the next wading ring, and the
-    /// splashes made this frame (where, ALE effect); see `splashes`
-    wet: bool,
-    wade_in: f32,
-    splashes: Vec<(Vec3, u32)>,
-    /// a harmful liquid's damage not yet dealt, and the time to the next dealing (see
-    /// LIQUID_TOUCH)
-    burn: f32,
-    burn_in: f32,
+    /// the effects it starts this frame, each played once (where and how turned, the ALE effect,
+    /// its user parameter): its liquids' splashes and rings (play_liquids.rs), a shield's look
+    /// (play_enemies.rs); `spawn_splashes` spawns them
+    splashes: Vec<(Transform, u32, f32)>,
+    /// the sounds it made this frame with play parameters of their own (`WorldSound`: the liquids'
+    /// splashes and wading steps, an instant ray through a surface; #5), which `play_sounds` hears
+    /// from the listener
+    world_sounds: Vec<WorldSound>,
+    /// its hit parts in the liquids (play_liquids.rs: the game's wade entries and char+0x104)
+    wading: liquids::Wading,
     /// the side the character is on: 0 the squad (everyone in the main game); BF_TEST_HOSTILE puts
     /// a squadmate on another (play_sentry.rs: the squad's mines go off for them), and the test
     /// map's enemy NPCs are on ENEMY_TEAM (play_testtools.rs: the squad AI fires at them)
@@ -2225,7 +2222,7 @@ impl Player {
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
             scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), scope_heard: 0, scope_level: 0, scope_lock: 0.0, test_scope_presses: 0, test_selected: false, sway: Vec2::ZERO,
-            wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
+            splashes: vec![], world_sounds: vec![], wading: Default::default(), team: 0, test_hold: false, npc: None, ai_target: None,
             lock_aim: None,
             enemy: Default::default(),
             stand_in: false,
@@ -2264,16 +2261,6 @@ impl Player {
         p.position = at;
         p.prev_xz = at.xz();
         p
-    }
-
-    /// (see `splashes`)
-    fn splash(&mut self, at: Vec3, liquid: &LiquidType, slot: usize) {
-        if liquid.effects[slot] != 0 {
-            self.splashes.push((at, liquid.effects[slot]));
-        }
-        if liquid.sounds[slot] != 0 {
-            self.sound_queue.push((liquid.sounds[slot], 1.0));
-        }
     }
 
     /// A grenade throw (or set-down) cut short - knocked down, or control handed over - before
@@ -2315,6 +2302,13 @@ impl Player {
         self.rng ^= self.rng >> 17;
         self.rng ^= self.rng << 5;
         (self.rng as usize) % n.max(1)
+    }
+
+    /// A draw in [0, 1) of its random state (`random`): the demo's stand-in for the game's
+    /// FUN_00233b90 (a unit draw of the one LCG every system shares), for a sound's pitch jitter
+    /// (play_liquids.rs).
+    fn unit(&mut self) -> f32 {
+        self.random(1 << 24) as f32 / (1 << 24) as f32
     }
 
     fn queue_any(&mut self, ids: &[u32], volume: f32) {
@@ -2395,8 +2389,16 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         return;
     }
     // wingman follow: set off when this far from the place, settle when close; dash when far
-    // behind (or past the data's leash + 10 m), walk the last bit
+    // behind (or past the data's leash + 10 m), walk the last bit; but not on into a liquid that
+    // burns (#1, play_liquids.rs `burning_ahead`: the game's routes have no point in one): they
+    // wait at its shore
     let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START }) || (in_lane && dist > 0.3);
+    let shore = go && dist > 1e-4 && world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, Vec2::new(to.x, to.z) / dist));
+    // (BF_LIQUID_LOG: twice a second while it waits there)
+    if shore && std::env::var("BF_LIQUID_LOG").is_ok() && (m.sim_time * 2.0).floor() != ((m.sim_time - dt) * 2.0).floor() {
+        println!("t {:.2}: {} waits at a liquid that burns, {dist:.1} m from its place, at {:.2}", m.sim_time, unit_name(m), m.position);
+    }
+    let go = go && !shore;
     if go {
         let d = to / dist;
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
@@ -3813,6 +3815,9 @@ fn autopilot(player: &mut Player) -> bool {
         }
         // BF_TEST_SPRINT=<s>: sprint (the game's dash) toward the goal from that time on
         player.sprint = std::env::var("BF_TEST_SPRINT").ok().and_then(|v| v.parse::<f32>().ok()).is_some_and(|at| player.sim_time >= at);
+        // BF_TEST_WALK=1: walk toward it (Ctrl), as #146's takes' half-stick (motion 47, 2.15 m/s;
+        // play_liquids.rs)
+        player.walk = std::env::var("BF_TEST_WALK").is_ok();
         // BF_TEST_CROUCH=<s>: crouch from that time on
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
             player.crouch_wanted = player.sim_time >= at;
@@ -4348,7 +4353,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let probe = steered && u.slide_amount <= 0.0 && !here.is_some_and(|f| world::Arena::slides(f.2));
             let moved = Vec2::new(u.position.x, u.position.z) - u.prev_xz;
             let off = steered && here.is_none();
-            if off || (probe && moved.length() > 1e-4 && moved.length() < 1.0 && ledge_ahead(&a, u.prev_xz, moved.normalize(), feet)) {
+            // nor into a liquid that burns it (#1, play_liquids.rs `steps_into_burning`: the
+            // game's routes have no world point in one), unless it's in one already
+            let burns = steered && moved.length() > 1e-4 && moved.length() < 1.0
+                && liquids::steps_into_burning(&a, u.prev_xz, feet, Vec2::new(u.position.x, u.position.z));
+            if off || burns || (probe && moved.length() > 1e-4 && moved.length() < 1.0 && ledge_ahead(&a, u.prev_xz, moved.normalize(), feet)) {
                 u.position.x = u.prev_xz.x;
                 u.position.z = u.prev_xz.y;
                 continue;
@@ -4428,9 +4437,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                         println!("{} lands at {:.1} after a {drop:.1} m drop", unit_name(u), u.position);
                     }
                     let (lo, hi, most) = FALL_HURT;
-                    // a liquid breaks the fall
-                    let wet = a.liquid_at(u.position.x, u.position.z, g + 0.5).is_some();
-                    if drop > lo && !wet {
+                    // (into a liquid too: the drop to its bed, FUN_0012b740 has no liquid check;
+                    // #152)
+                    if drop > lo {
                         // (no clamp: FUN_0012b740)
                         let k = (drop - lo) / (hi - lo);
                         let at = u.position + Vec3::Y * 0.2;
@@ -4452,35 +4461,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 && a.inside_span(u.prev_xz, y0 + GROUND + STEP_UP, y0 + GROUND + BODY_HEIGHT).is_none() {
                 u.position = Vec3::new(u.prev_xz.x, y0, u.prev_xz.y);
             }
-            // in a liquid: wading is harmless; going under a harmful one (lava, toxic) kills
-            let feet = u.position.y + GROUND + u.height.max(0.0);
-            let liquid_here = a.liquid_at(u.position.x, u.position.z, feet);
-            splashes(u, liquid_here, dt);
-            if let Some((surface, liquid)) = liquid_here {
-                let deep = surface - feet;
-                let rate = liquid.damage.iter().copied().fold(0.0, f32::max);
-                let at = Vec3::new(u.position.x, surface, u.position.z);
-                if deep > LIQUID_UNDER && rate > 0.0 {
-                    let all = u.health;
-                    hurt(u, &game.0, all, HURT_CHATTER, Vec3::Y, at, -1);
-                } else if rate > 0.0 {
-                    // burning: from LIQUID_TOUCH of the liquid's rate at a touch up to all of
-                    // it chest-deep, dealt every LIQUID_TICK s (no blood: it burns)
-                    let k = (deep / LIQUID_UNDER).clamp(0.0, 1.0);
-                    u.burn += rate * (LIQUID_TOUCH + (1.0 - LIQUID_TOUCH) * k) * dt;
-                    u.burn_in -= dt;
-                    if u.burn_in <= 0.0 {
-                        let (amount, bled) = (u.burn, u.blood.len());
-                        hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y, at, -1);
-                        u.blood.truncate(bled);
-                        u.burn = 0.0;
-                        u.burn_in = LIQUID_TICK;
-                    }
-                }
-                if std::env::var("BF_SLIDE_LOG").is_ok() {
-                    println!("{} in liquid {} {deep:.2} m deep: {} hp", unit_name(u), liquid.kind, u.health);
-                }
-            }
+            // (in a liquid: what it does to them, their splashes and rings are play_liquids.rs's)
             inside_log(&a, u);
             u.prev_xz = Vec2::new(u.position.x, u.position.z);
         }
@@ -4489,6 +4470,16 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if let Some(tr) = u.loaded.as_ref().and_then(|l| transforms.get_mut(l.root).ok()).as_mut() {
             tr.translation = u.position + Vec3::Y * (u.height + u.lift_now);
         }
+    }
+}
+
+/// The liquids' clock (level_scene::LiquidClock: their scroll and the water's shimmer) on the
+/// game's (`frame_dt`): stopped under a menu, as the game's material and texture updates are
+/// skipped while it's paused (0x1ea830), and in BF_CAPTURE's fixed steps.
+fn run_liquid_clock(time: Res<Time>, mut clock: ResMut<bf_viewer::level_scene::LiquidClock>) {
+    let dt = frame_dt(&time);
+    if dt > 0.0 {
+        clock.0 += dt;
     }
 }
 
@@ -4508,60 +4499,29 @@ fn inside_log(a: &world::Arena, u: &Player) {
     }
 }
 
-/// A character and a liquid (its surface height and type, if the feet are under it): going in
-/// makes a splash (a big one falling in faster than SPLASH_FAST m/s), wading leaves a ring every
-/// WADE_EVERY s while moving; the liquid type's effects and sounds (see `LiquidType`). They're
-/// spawned by `spawn_splashes`.
-fn splashes(u: &mut Player, liquid: Option<(f32, LiquidType)>, dt: f32) {
-    let Some((surface, l)) = liquid else {
-        u.wet = false;
-        return;
-    };
-    let at = Vec3::new(u.position.x, surface, u.position.z);
-    if !u.wet {
-        // (on a steep face: the speed it's bringing them down, not the free fall's vy, #264)
-        let falling = if u.face.is_some() { u.face_drop / dt.max(1e-4) } else { -u.vy };
-        let slot = if falling > SPLASH_FAST { LIQUID_BIG_SPLASH } else { LIQUID_SPLASH };
-        u.splash(at, &l, slot);
-        u.wade_in = WADE_EVERY;
-    } else {
-        let moved = Vec2::new(u.position.x, u.position.z).distance(u.prev_xz);
-        u.wade_in -= dt;
-        if u.wade_in <= 0.0 && moved > WADE_MOVING * dt && moved < 1.0 {
-            u.splash(at, &l, LIQUID_WADE);
-            u.wade_in = WADE_EVERY;
-        }
-    }
-    u.wet = true;
-}
-
-/// See `splashes`: a fall speed (m/s) that makes a big splash; how often a wader leaves a ring
-/// (s), moving faster than WADE_MOVING m/s.
-const SPLASH_FAST: f32 = 5.0;
-const WADE_EVERY: f32 = 0.5;
-const WADE_MOVING: f32 = 0.5;
-
-/// The splashes the characters made this frame (see `splashes`), and shots striking a liquid's
-/// surface (see `projectiles`): each liquid effect once, at the surface.
+/// The effects the characters started this frame (`Player::splashes`: their liquids' splashes
+/// and rings, play_liquids.rs; a shield's look, play_enemies.rs), each once where it was started.
 #[allow(clippy::too_many_arguments)]
 fn spawn_splashes(mut commands: Commands, mut game: ResMut<GameData>, ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
                   mut images: ResMut<Assets<Image>>, mut materials: ResMut<Assets<StandardMaterial>>,
                   mut player: ResMut<Player>, mut squad: ResMut<Squad>) {
     let Some(mut ale) = ale else { return };
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        for (at, effect) in u.splashes.drain(..) {
-            spawn_once(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, effect, Transform::from_translation(at));
+        for (at, effect, sp) in u.splashes.drain(..) {
+            spawn_once(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, effect, at, sp);
         }
     }
 }
 
-/// An ALE effect run once at `at` (removed when it's done); nothing if the library lacks it.
+/// An ALE effect run once at `at` with user parameter `sp` (removed when it's done); nothing if
+/// the library lacks it.
+#[allow(clippy::too_many_arguments)]
 fn spawn_once(commands: &mut Commands, game: &mut Game, ale: &mut bf_viewer::ale_fx::AleAssets, images: &mut Assets<Image>,
-              materials: &mut Assets<StandardMaterial>, effect: u32, at: Transform) {
+              materials: &mut Assets<StandardMaterial>, effect: u32, at: Transform, sp: f32) {
     if let Some(fx) = ale.load(game, images, materials, effect) {
         let life = fx.duration();
         let seed = (at.translation.x * 977.0 + at.translation.z * 131.0) as u32;
-        commands.spawn((at, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed), AleExpire(life)));
+        commands.spawn((at, Visibility::default(), bf_viewer::ale_fx::AleEffect::once(fx, sp, seed), AleExpire(life)));
     }
 }
 
@@ -4870,6 +4830,26 @@ fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
 /// `push`, a surviving squadmate may answer); a hard hit can knock them down; otherwise they
 /// grunt or say a line of `tag` now and then.
 fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64) {
+    take_hit(u, game, amount, tag, push, at, ammo, false, true);
+}
+
+/// A liquid's hit on `u` (play_liquids.rs), at `at` (the record's point: the character's
+/// position): as `hurt`, through the same handler (each game frame's share too, as the game's
+/// liquid sends every one to it, 0x221780), but it floors nobody (take03 of #146: thirteen entry
+/// hits of 30 left Brutus walking) and its blood is the game's decals alone (`Bleed::burn`:
+/// FUN_00124a70 runs after any hit on a character, but there's no weapon's impact: no particles,
+/// no hit effect or sound). No push (the record's direction is straight down, 0x221780). `entry`:
+/// the whole rate as a part goes in, which may draw a hurt line as `hurt`'s hits do; a frame's
+/// share draws none (the demo's: take03 has no sound between the foot events while Brutus
+/// stands burning, todo/5-liquid-sounds leads §4.1; the game's chatter gate isn't modelled here).
+fn burn(u: &mut Player, game: &Game, amount: f32, at: Vec3, entry: bool) {
+    take_hit(u, game, amount, HURT_CHATTER, Vec3::ZERO, at, -1, true, entry);
+}
+
+/// `hurt` and `burn`'s hit: `liquid` for a liquid's (`burn`), `speaks` whether it may draw a hurt
+/// line (`tag`).
+#[allow(clippy::too_many_arguments)]
+fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64, liquid: bool, speaks: bool) {
     // (nor while a cutscene has the world: the damage handler 0x125600 leaves at once while the
     // world's +0xc50 bit 4 is set, play_script.rs; nor one not in the world yet)
     if u.dead || amount <= 0.0 || script::in_cutscene() || u.absent {
@@ -4880,14 +4860,14 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     // one it takes whole draws no blood (the shield's look instead)
     let amount = enemies::absorb(u, game, amount);
     if amount <= 0.0 {
-        u.blood.push(Bleed { at, dir, ammo, a: 0.0, hp_left: u.health, shielded: true, record: None });
+        u.blood.push(Bleed { at, dir, ammo, a: 0.0, hp_left: u.health, shielded: true, record: None, burn: liquid });
         return;
     }
     u.health = (u.health - amount).max(0.0);
     // (the game's blood decals size by the amount over the type's damage-multiplier, and by the
     // hit points left after it: FUN_00124a70, play_fx.rs)
     let a = amount / damage::damage_multiplier(game, u).max(1e-3);
-    u.blood.push(Bleed { at, dir, ammo, a, hp_left: u.health, shielded: false, record: None });
+    u.blood.push(Bleed { at, dir, ammo, a, hp_left: u.health, shielded: false, record: None, burn: liquid });
     if std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", unit_name(u),
                  u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)), u.health, u.knock_cooldown);
@@ -4916,16 +4896,20 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
         return;
     }
     // a hard hit floors them now and then (not right after getting up); an enemy reacts by its
-    // personality instead (#129: a stun or a knock-down clip, play_enemies.rs)
-    if enemies::enemy(u) {
-        enemies::damaged(u, game, amount, dir);
-    } else if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
-        u.knock_request = Some(push);
-        if std::env::var("BF_COMBAT_LOG").is_ok() {
-            println!("  knocked down: {}", unit_name(u));
+    // personality instead (#129: a stun or a knock-down clip, play_enemies.rs). A liquid's hit
+    // does neither (take03 of #146: thirteen entry hits of 30 left Brutus walking; an enemy's
+    // reaction to one isn't filmed)
+    if !liquid {
+        if enemies::enemy(u) {
+            enemies::damaged(u, game, amount, dir);
+        } else if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
+            u.knock_request = Some(push);
+            if std::env::var("BF_COMBAT_LOG").is_ok() {
+                println!("  knocked down: {}", unit_name(u));
+            }
         }
     }
-    if u.hurt_quiet <= 0.0 {
+    if speaks && u.hurt_quiet <= 0.0 {
         say(u, game, tag, 0.05);
         u.hurt_quiet = 0.8;
     }
@@ -6377,7 +6361,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.vy = 0.0;
             p.action = Action::JumpLand;
             p.action_left = dur(if four { c.leg4_land } else { jump_land });
-            p.queue_any(&surface.jump_land, 0.9);
+            // (not with a part in a liquid: the landing's dust and sound are skipped while
+            // char+0x104 > 0, 0x12d842)
+            if !liquids::in_liquid(p) {
+                p.queue_any(&surface.jump_land, 0.9);
+            }
             p.step_mute = 0.3;
         }
     } else {
@@ -6520,47 +6508,132 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         let contact = FOOT_CONTACT.max(0.25 * swing);
         let y = y - contact + FOOT_CONTACT;                   // contact band starts at FOOT_CONTACT
         if walking && y < FOOT_CONTACT && p.foot_prev[f] >= FOOT_CONTACT {
-            p.queue_any(&steps, volume);
+            // (in a liquid the wading step or nothing, FUN_00119020's branch: play_liquids.rs;
+            // the foot's bone in the world, as drawn)
+            let foot = Mat4::from_rotation_translation(Quat::from_rotation_y(p.yaw), p.position + Vec3::Y * (p.height + p.lift_now))
+                .transform_point3(world[l.feet[f]].w_axis.truncate());
+            match liquids::step(p, foot) {
+                liquids::Step::Ground => p.queue_any(&steps, volume),
+                liquids::Step::Wade(s) => p.world_sounds.push(s),
+                liquids::Step::Silent => {}
+            }
         }
         p.foot_prev[f] = y;
     }
 }
 
-/// Decode queued sound ids (cached as in-memory WAVs) and play them.
+/// A sound request with play parameters of its own (`Player::world_sounds`, #5): what the game's
+/// FUN_00179250 takes for the liquids' sounds (ECX's play-parameter block; todo/5-liquid-sounds
+/// leads §2.1), where `Player::sound_queue` holds the demo's plain (id, volume) ones.
+#[derive(Clone, Copy, Debug)]
+struct WorldSound {
+    /// the sound id
+    id: u32,
+    /// where it plays from (the block's position +0 with its set byte +0xc): heard by its library
+    /// entry's distances from the listener, and dropped at or beyond its max distance
+    /// (0x17932a-0x179334: 15 m for every liquid sound). None plays it 2D (the controlled
+    /// character's own wading step, whose point FUN_00119020 writes into the block's +0x10)
+    at: Option<Vec3>,
+    /// its volume (+0x48 with its set byte +0x4c), which replaces the library entry's (FUN_0017ec80:
+    /// 1.0 for a splash, where the bank has 0.5); None for the entry's own (FUN_0022feb0's ray sets
+    /// none)
+    volume: Option<f32>,
+    /// its pitch (+0x40 with +0x44) in octaves (FUN_0017f580: DirectSound's 1/4096-octave units):
+    /// played at 2^pitch the speed
+    pitch: f32,
+    /// the request's kind, FUN_00179250's third argument (KIND_STEP, KIND_SPLASH, KIND_RAY; for
+    /// BF_SOUND_LOG)
+    kind: u8,
+}
+
+impl WorldSound {
+    /// How loud it's heard from `listener` with its library entry `entry` (FUN_00179250, FUN_0017ec80),
+    /// and how far it is: a positional one by the entry's distances (`distance_gain`; a 2D entry,
+    /// min distance -1, at its volume), None at or beyond the entry's max distance or without an
+    /// entry (0x17932a-0x179334); a 2D one at its volume. Its volume is its own when it has one,
+    /// else the entry's.
+    fn heard(&self, entry: Option<bf_viewer::bf::audio::SoundParams>, listener: Vec3) -> Option<(f32, Option<f32>)> {
+        let own = self.volume.unwrap_or(entry.map_or(1.0, |e| e.volume));
+        match (self.at, entry) {
+            (Some(at), Some(e)) => {
+                let d = listener.distance(at);
+                let gain = if e.min_distance >= 0.0 { triggers::sounds::distance_gain(d, e.min_distance, e.max_distance) } else { 1.0 };
+                (d < e.max_distance).then_some((own * gain, Some(d)))
+            }
+            (Some(_), None) => None,
+            (None, _) => Some((own, None)),
+        }
+    }
+}
+
+/// The kinds of sound request FUN_00179250 is given (its third argument, pushed by its callers): a
+/// footstep (FUN_00119020, 0x1192a2), a splash (FUN_00221af0, before 0x221dc2) and an instant ray
+/// through a liquid's surface (FUN_0022feb0, 0x22ffb9), kept at the request record's +0x74. What
+/// the manager does by a kind isn't traced; here they label the log.
+const KIND_STEP: u8 = 4;
+const KIND_SPLASH: u8 = 5;
+const KIND_RAY: u8 = 7;
+
+/// Decode queued sound ids (cached as in-memory WAVs) and play them: the plain queue
+/// (`Player::sound_queue`) as it is, the world's sounds (`WorldSound`) as the game requests them.
 fn play_sounds(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-               mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>) {
+               mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>, cutscenes: Res<script::Cutscenes>) {
     // squad members' sounds join the player's, quieter with distance (none from one not in the
     // world yet, play_script.rs: its queue is dropped; the player's own queue carries the world's
     // sounds to the listener too, so an absent leader's stays, its body making none: no step)
     let here = player.position;
+    let mut world = std::mem::take(&mut player.world_sounds);
     for m in squad.0.iter_mut() {
         if m.absent {
             m.sound_queue.clear();
+            m.world_sounds.clear();
             continue;
         }
         let k = (1.0 - m.position.distance(here) / 35.0).clamp(0.15, 1.0) * 0.8;
         let queued: Vec<(u32, f32)> = m.sound_queue.drain(..).map(|(id, v)| (id, v * k)).collect();
         player.sound_queue.extend(queued);
+        world.append(&mut m.world_sounds);
     }
-    if std::env::var("BF_SOUND_LOG").is_ok() {
+    let log = std::env::var("BF_SOUND_LOG").is_ok();
+    if log {
         for (id, volume) in &player.sound_queue {
             println!("t={:6.2} sound {id:08x} vol {volume:.2} action {:?} height {:.2}", player.sim_time, player.action, player.height);
         }
     }
+    // the world's sounds (FUN_00179250): a positional one is heard from the listener (FUN_00178c10:
+    // the followed character's feet, or the cutscene's camera while one is shown, as the
+    // sound-triggers hear theirs, play_sound_triggers.rs `listener`) by its library entry's
+    // distances (`distance_gain`), and dropped where that's at or beyond the entry's max distance
+    // or the library hasn't the id; a 2D one plays at its volume
+    let listener = cutscenes.camera_at().unwrap_or(player.position + Vec3::Y * (GROUND + player.height.max(0.0)));
+    let mut queue: Vec<(u32, f32, f32)> = player.sound_queue.drain(..).map(|(id, v)| (id, v, 1.0)).collect();
+    for s in world {
+        let heard = s.heard(game.0.sounds.params(s.id), listener);
+        if log {
+            let place = match (s.at, heard) {
+                (Some(at), Some((_, Some(d)))) => format!("at {at:.2}, {d:.1} m from the listener"),
+                (Some(at), _) => format!("at {at:.2}, {:.1} m from the listener: not heard (beyond the entry's max distance, or no entry)", listener.distance(at)),
+                (None, _) => "2D".to_string(),
+            };
+            println!("t={:6.2} sound {:08x} kind {} vol {:.2} (asked {}) pitch {:+.3} oct {place}", player.sim_time, s.id, s.kind,
+                     heard.map_or(0.0, |h| h.0), s.volume.map_or("the entry's".to_string(), |v| format!("{v:.2}")), s.pitch);
+        }
+        if let Some((volume, _)) = heard.filter(|h| h.0 > 0.0) {
+            queue.push((s.id, volume, 2f32.powf(s.pitch)));
+        }
+    }
     if std::env::var("BF_MUTE").is_ok() {
-        player.sound_queue.clear();
         return;
     }
-    let queue: Vec<(u32, f32)> = player.sound_queue.drain(..).collect();
-    for (id, volume) in queue {
+    for (id, volume, speed) in queue {
         let handle = cache.0.entry(id).or_insert_with(|| {
             game.0.sounds.wav(id).map(|w| sources.add(AudioSource { bytes: Arc::from(w.into_boxed_slice()) }))
         });
         match handle.clone() {
             Some(h) => {
-                commands.spawn((AudioPlayer::new(h), PlaybackSettings { volume: Volume::Linear(volume), ..PlaybackSettings::DESPAWN }));
+                commands.spawn((AudioPlayer::new(h), PlaybackSettings { volume: Volume::Linear(volume), speed, ..PlaybackSettings::DESPAWN }));
             }
-            None => if std::env::var("BF_SOUND_LOG").is_ok() {
+            None => if log {
                 println!("  sound {id:08x}: no sample data in the loaded banks");
             }
         }
@@ -7221,11 +7294,24 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
         // landed: the hit on the world (bodies bleed instead, see play_fx)
         let at = s.origin + s.dir * s.dist;
         commands.entity(e).despawn();
-        // through a liquid's surface on the way: its splash there
-        if let Some((surface, liquid)) = world::arena().and_then(|a| a.liquid_crossing(s.origin, at)) {
+        // through a liquid's surface on the way: an instant ray's (bullet-type 4) splash there,
+        // FUN_0022feb0 from FUN_00230860's hit loop (0x230f7c): the liquid type's shot effect
+        // upright at user parameter 1.0 (0x22ff6b) and its shot sound at the crossing, kind 7, at
+        // the library's volume and pitch (no play parameters set, 0x22ff8f-0x22ffcf). A flying
+        // shot or a bolt has no liquid code (todo/146-liquids leads §5.1). (The ocean's trail along
+        // the ray under the surface, +0x168, isn't done.)
+        let ray = game.0.weapons.get(&s.weapon).is_some_and(|d| d.shots.bullet_type == 4);
+        if let Some((surface, liquid)) = world::arena().filter(|_| ray).and_then(|a| a.liquid_crossing(s.origin, at)) {
             let effect = liquid.effects[LIQUID_SHOT];
             if effect != 0 {
-                spawn_once(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, effect, Transform::from_translation(surface));
+                spawn_once(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, effect, Transform::from_translation(surface), 1.0);
+            }
+            if liquid.sounds[LIQUID_SHOT] != 0 {
+                player.world_sounds.push(WorldSound { id: liquid.sounds[LIQUID_SHOT], at: Some(surface), volume: None, pitch: 0.0, kind: KIND_RAY });
+            }
+            if std::env::var("BF_LIQUID_LOG").is_ok() {
+                println!("t {:.2}: an instant ray through a liquid's surface (type {}) at {surface:.2}: effect h_{effect:08x}, sound {:08x}",
+                         player.sim_time, liquid.kind, liquid.sounds[LIQUID_SHOT]);
             }
         }
         if s.hit {
@@ -7540,6 +7626,26 @@ fn dump_weapons(game: &Game) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #5 (FUN_00179250): a liquid sound's entry (min 5 m, max 15 m, volume 0.5) heard at its own
+    /// volume within 5 m, by the rolloff curve to 15 m and not at all from there; at the entry's
+    /// volume when it asks none; 2D at its volume wherever the listener is; none without an entry.
+    #[test]
+    fn a_world_sound_is_heard_by_its_entry() {
+        let entry = Some(bf_viewer::bf::audio::SoundParams { min_distance: 5.0, max_distance: 15.0, volume: 0.5 });
+        let splash = |x: f32| WorldSound { id: 1, at: Some(Vec3::new(x, 0.0, 0.0)), volume: Some(1.0), pitch: 0.0, kind: KIND_SPLASH };
+        assert_eq!(splash(4.0).heard(entry, Vec3::ZERO), Some((1.0, Some(4.0))));
+        // (the curve's second stretch, 7-9 m: 1.0 to 0.375)
+        let (v, _) = splash(8.0).heard(entry, Vec3::ZERO).unwrap();
+        assert!((v - 0.6875).abs() < 1e-5, "{v}");
+        assert!(splash(14.9).heard(entry, Vec3::ZERO).is_some_and(|h| h.0 < 0.01));
+        assert_eq!(splash(15.0).heard(entry, Vec3::ZERO), None);
+        assert_eq!(splash(4.0).heard(None, Vec3::ZERO), None);
+        let ray = WorldSound { volume: None, kind: KIND_RAY, ..splash(2.0) };
+        assert_eq!(ray.heard(entry, Vec3::ZERO), Some((0.5, Some(2.0))));
+        let own_step = WorldSound { at: None, volume: Some(0.375), kind: KIND_STEP, ..splash(0.0) };
+        assert_eq!(own_step.heard(entry, Vec3::new(100.0, 0.0, 0.0)), Some((0.375, None)));
+    }
 
     /// #229: the seed is the old product for the numbers that fitted, and a number past the old
     /// limit (2^32 / 104729, about 41,010) wraps instead of overflowing.

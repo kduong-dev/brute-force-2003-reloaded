@@ -7,7 +7,7 @@
 //!  materials    skin material (type h_eb58ab52) has no textures: the next material does
 //!  animations   archetype-set <name> -> animations -> target bone -> channel in .chnl
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -98,7 +98,8 @@ const H_JOINT: u32 = 0x151A_CE78;
 const H_PALETTE: u32 = 0xF133_0520;
 const H_DRAW: u32 = 0xFDE5_0E9F;
 /// A mesh geoset's bounding sphere: its radius attribute and its centre child (the names of an
-/// archetype's and an effect type's alike; `Character::bounds`).
+/// archetype's and an effect type's alike; `Character::bounds`, `bounding_sphere`):
+/// `bounding-sphere-radius` and `bounding-sphere-center`, names recovered by hashing.
 const H_GEOSET_RADIUS: u32 = 0x1AB0_9530;
 const H_GEOSET_CENTRE: u32 = H_ARCHETYPE_CENTRE;
 const H_INTERVAL: u32 = 0xF63F_0F49;
@@ -164,6 +165,17 @@ fn name_list(e: &Element, k: u32) -> Vec<u32> {
         }
     }
     e.attrs.iter().filter(|(n, _)| *n == k).flat_map(|(_, v)| one(v)).filter(|&x| x != 0).collect()
+}
+
+/// An element's bounding sphere, its h_1ab09530 radius and h_e99750a9 centre (`H_GEOSET_RADIUS`),
+/// if it has a radius over 0 (the centre 0 0 0 when it has none). What FUN_00236670 (mode 0)
+/// gives a scene node of that archetype, unscaled: the sphere a liquid's surface ray starts from
+/// (FUN_00222480) and its splash's size goes by (FUN_00221af0; todo/5-liquid-sounds leads §2.2).
+fn bounding_sphere(e: &Element) -> Option<(Vec3, f32)> {
+    let radius = e.attr(H_GEOSET_RADIUS).and_then(|v| v.as_f32()).filter(|&r| r > 0.0)?;
+    let centre = e.child(H_GEOSET_CENTRE).and_then(|c| c.text.as_ref()).map(|t| t.floats()).filter(|v| v.len() >= 3)
+        .map_or(Vec3::ZERO, |v| Vec3::new(v[0], v[1], v[2]));
+    Some((centre, radius))
 }
 
 /// game-options' character list h_f5a42d61 (`<character h_07f2f670 h_f4db1dd4 archetype-name
@@ -419,6 +431,11 @@ pub struct Game {
     /// h_f5302dc6 (common), h_157b3160 and h_e8d6efe4 (some levels' own) directional; h_ea460e64,
     /// h_09020c30, h_0b51040f (common), h_e81ba579, h_087ae059, h_f1557cc8, h_ff66877a point
     pub light_types: HashMap<u32, i64>,
+    /// the light types whose `enable-specular` (h_e2d53b1e) is true: common's key h_e1cac6f7 and
+    /// some levels' h_157b3160 (common's fill h_f5302dc6 and the point types have it false). The
+    /// light type copy puts it in the type's +0x50 bit 3 (0x14e3d5, from the parsed +0x6d,
+    /// 0x192bb9), the bit FUN_000dcc10 gives a pair's slot 0 by (`level::Level::objects_key`)
+    pub light_specular: HashSet<u32>,
     /// inventory item types (objecttypes `<inventory>`): type name -> its settings
     pub items: HashMap<u32, ItemType>,
     /// the loaded levels' level files (levels-<name>.xmb: terrain, placed objects, sky, fog)
@@ -432,7 +449,7 @@ pub struct Game {
     /// #221, `gameflags::GameFlags`); empty if it isn't there
     pub default_flags: super::gameflags::GameFlags,
     /// animated textures (textures-*.xmb <animated-texture>): name -> the sheet texture, frames
-    /// per second (h_e6375a47) and each frame's (u0, v0, u1, v1) on the sheet
+    /// per second (h_e6375a47) and each frame's (u0, v0, u1, v1) and texture (`Flipbook`)
     pub flipbooks: HashMap<u32, Flipbook>,
     /// collision surfaces (objects-<lvl>.ipn) by name: the blob and the surface's offset
     physics: HashMap<u32, (Arc<Vec<u8>>, usize)>,
@@ -909,13 +926,29 @@ const H_SUBTITLE_COLOUR: u32 = 0x0538_7560;
 pub const LEVEL_DEATHMATCH: u32 = 0x1207_85EF;
 pub const LEVEL_SQUAD_DEATHMATCH: u32 = 0xEFB1_8D28;
 
-/// An animated texture: frames laid out on one sheet texture.
+/// An animated texture (textures-*.xmb `<animated-texture>`): its first `<frame-texture>`
+/// (`texture`), its frames per second (h_e6375a47) and each `<frame>`'s (u0, v0, u1, v1) and
+/// texture. Two kinds are in the data (checked over every library's textures-*.xml): common's
+/// seven effect sheets, 16 frames all on frame-texture 0 by a 4 x 4 grid of uv rects (what ALE
+/// appearances flip through), and the water's shimmer `h_e757ea7c` (11 libraries), 34 frames each
+/// its own 128 x 128 frame-texture over the whole uv (the water's `texture-1`, #4).
 #[derive(Clone, Debug)]
 pub struct Flipbook {
     pub texture: u32,
     pub fps: f32,
     pub frames: Vec<[f32; 4]>,
+    /// each frame's texture: the `<frame-texture>` its h_1ef06846 numbers (frame-textures in
+    /// file order; 0 or past the list: the first)
+    pub frame_textures: Vec<u32>,
 }
+
+/// A `<frame>`'s frame-texture number (unnamed, h_1ef06846: 0 on every frame of common's sheets,
+/// the frame's own number on the shimmer's 34; `Flipbook::frame_textures`).
+const H_FRAME_TEXTURE: u32 = 0x1EF0_6846;
+
+/// A light type's `enable-specular` (h_e2d53b1e, name recovered by hashing; the light archetype
+/// parser's case at 0x192b65): `Game::light_specular`.
+const H_ENABLE_SPECULAR: u32 = 0xE2D5_3B1E;
 
 /// The objecttypes list of liquid types, and the placed liquids' element (levels-*.xmb).
 const H_LIQUIDS: u32 = 0xFA2F_5452;
@@ -1138,28 +1171,54 @@ pub struct ItemType {
 /// canister, whose pickup unlocks a character (`ItemType::group`; play_pickups.rs).
 pub const IG_DNA_CANNISTER: i64 = 9;
 
-/// A liquid type: a pool's surface is its object's collision plane, which characters sink
-/// through. The game reads, besides these, five factors (h_049350bb .. h_e12e7b9d: 0.1 1 0.4
-/// 0.4 0.1 on every liquid but one) and four sounds (entering, leaving, ..).
+/// A liquid type (objecttypes `<h_fa2f5452>`, `water-lava-flow`, loaded by FUN_00193420): a
+/// pool's collision is a volume under its surface, which characters sink through. Of its five
+/// factors (h_049350bb .. h_e12e7b9d: 0.1 1 0.4 0.4 0.1 on every liquid but chloride) the game
+/// reads four here; h_ee656831 (0.4) isn't placed. todo/146-liquids leads §1-§3, §5;
+/// todo/5-liquid-sounds leads §1.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LiquidType {
-    /// liquid-type: 1 water, 2 lava (sdm_e13), 4 toxic (sdm_m03's river);
-    /// 3 hurts only deep (0 10 30), 5 is silent and harmless
+    /// liquid-type, the LT_ names (0x3be754): 0 ocean water (e40), 1 swamp water (sdm_e10's pond,
+    /// the e40 pools), 2 lava (sdm_e13, the tutorial), 3 toxic waste (m09, m14), 4 sludge
+    /// (sdm_m03's river), 5 chloride (m14_c)
     pub kind: i64,
-    /// damage per second, from the shallowest depth to under (h_06f6a40d, h_eba69d33,
-    /// h_e0489ea0: water 0 0 0, lava 50 50 30, toxic 50 50 50); see `play`'s use of them
+    /// its three damage values (the copy 0x221170: `ltype`+0x1c8, +0x1c4, +0x1cc):
+    /// [LIQUID_OBJECT_HIT] h_06f6a40d, one hit on an object entering it (FUN_00221af0); h_eba69d33,
+    /// read by nothing; [LIQUID_CHARACTER_RATE] h_e0489ea0, a character's (play_liquids.rs). Lava 50
+    /// 50 30, sludge 50 50 50, toxic waste 0 10 30, the waters and chloride 0 0 0
     pub damage: [f32; 3],
     /// its effects (ALE effect name hashes): a shot striking it (h_08f6cd94, env_<x>l_projectile),
     /// a small splash (h_e4791abc, env_<x>l_smsplash), a big one (h_07ab4143, env_<x>l_mdsplash),
     /// the ring round a wader (h_f458daca, env_<x>l_wadering); <x> is x water, s lava, f toxic,
     /// t type 3, i type 0
     pub effects: [u32; 4],
-    /// its four sounds (h_e259380a, h_0ed21145, h_0c46dff8, h_ed055bce: unnamed; taken in the
-    /// effects' order: water's are 0.40, 0.61, 0.47 and 0.61 s)
+    /// its four sounds (the copy 0x221170: +0x170, +0x180, +0x190, +0x1a0; #5): h_e259380a an
+    /// instant ray through its surface (FUN_0022feb0), h_0ed21145 a small splash and h_0c46dff8 a
+    /// big one (FUN_00221af0), h_ed055bce the wading step (FUN_00221ec0 -> FUN_00119020). Every
+    /// type of one liquid-type names the same four (todo/5-liquid-sounds leads §1.1)
     pub sounds: [u32; 4],
+    /// the splash's size threshold, h_e12e7b9d (`ltype`+0x1b0; 0.1 m, chloride 0.25): an entering
+    /// part's or object's bounding radius at least this splashes big (FUN_00221af0, 0x221cec)
+    pub big_radius: f32,
+    /// h_1f6de6f9 (+0x1bc; 0.4 m/s): an object splashes only entering at least this fast
+    /// (0x221bc7); a character's parts at any speed
+    pub splash_speed: f32,
+    /// h_049350bb (+0x1b4; 0.1 m): a wading part's ring needs its surface point this far from its
+    /// last ring's (FUN_00221ec0)
+    pub ring_distance: f32,
+    /// h_fd22997d (+0x1b8; 1): the ring's user parameter is clamp((moved - ring_distance) / dt x
+    /// this, 0, 1) (FUN_00221ec0, 0x2221d1)
+    pub ring_scale: f32,
 }
 
-/// A liquid type's effect slots (`LiquidType::effects` / `sounds`).
+/// `LiquidType::damage`'s slots: an object's one hit as it enters (h_06f6a40d, `ltype`+0x1c8)
+/// and a character's rate (h_e0489ea0, `ltype`+0x1cc).
+pub const LIQUID_OBJECT_HIT: usize = 0;
+pub const LIQUID_CHARACTER_RATE: usize = 2;
+
+/// A liquid type's effect and sound slots (`LiquidType::effects` / `sounds`): an instant ray
+/// through the surface, a small splash, a big one, and the wading ring (effects) or the wading
+/// step (sounds).
 pub const LIQUID_SHOT: usize = 0;
 pub const LIQUID_SPLASH: usize = 1;
 pub const LIQUID_BIG_SPLASH: usize = 2;
@@ -1313,6 +1372,7 @@ impl Game {
             object_meshes: HashMap::new(),
             liquids: HashMap::new(),
             light_types: HashMap::new(),
+            light_specular: HashSet::new(),
             items: HashMap::new(),
             levels: vec![],
             flipbooks: HashMap::new(),
@@ -1681,7 +1741,13 @@ impl Game {
             for t in root.children_named(h("light")).flat_map(|l| l.children.iter()) {
                 let name = hash_of(t.child(h("base")).and_then(|b| b.attr(h("name"))));
                 if let (true, Some(kind)) = (name != 0 && name != h(""), t.attr(h("light-type")).and_then(|v| v.ints().first().copied())) {
-                    self.light_types.entry(name).or_insert(kind);
+                    if let std::collections::hash_map::Entry::Vacant(e) = self.light_types.entry(name) {
+                        e.insert(kind);
+                        // (`light_specular`)
+                        if t.attr(H_ENABLE_SPECULAR).and_then(|v| v.as_i64()).is_some_and(|v| v != 0) {
+                            self.light_specular.insert(name);
+                        }
+                    }
                 }
             }
             // follow cameras: <follow-camera><h_e275fb80><base clip-plane-far=F ..><base name=T/>
@@ -1706,6 +1772,10 @@ impl Game {
                         damage: [f(0x06F6_A40D), f(0xEBA6_9D33), f(0xE048_9EA0)],
                         effects: [effect(0x08F6_CD94), effect(0xE479_1ABC), effect(0x07AB_4143), effect(0xF458_DACA)],
                         sounds: [sound(0xE259_380A), sound(0x0ED2_1145), sound(0x0C46_DFF8), sound(0xED05_5BCE)],
+                        big_radius: t.attr(0xE12E_7B9D).and_then(|v| v.as_f32()).unwrap_or(0.1),
+                        splash_speed: t.attr(0x1F6D_E6F9).and_then(|v| v.as_f32()).unwrap_or(0.4),
+                        ring_distance: t.attr(0x0493_50BB).and_then(|v| v.as_f32()).unwrap_or(0.1),
+                        ring_scale: t.attr(0xFD22_997D).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(1.0),
                     });
                 }
             }
@@ -2232,6 +2302,13 @@ impl Game {
         self.object_types.get(&kind).filter(|t| t.object_type == OBJECT_GAME && t.hitpoints > 0.0)
     }
 
+    /// An archetype's own bounding sphere (`bounding_sphere`), if its element has a radius: a
+    /// grenade's mesh 0.081 m, the Sentry's 0.33 m (todo/5-liquid-sounds leads §2.2). A compound's
+    /// isn't on its archetype (90 of the 106 bodies read 0.0): None.
+    pub fn archetype_sphere(&self, archetype: u32) -> Option<(Vec3, f32)> {
+        bounding_sphere(self.archetype(archetype)?.0)
+    }
+
     /// An archetype's `<h_e99750a9>` point (its own frame), or for a compound without one its
     /// first part's (the missile rack h_fbdcd828: its root part h_e3860cda's -0.18 1.16 0). Read
     /// as the physics body's centre, where the game places the object: the radiation barrel's
@@ -2370,15 +2447,19 @@ impl Game {
                 let head = a.children.first();
                 let name = hash_of(head.and_then(|p| p.attr(h("name"))));
                 let fps = head.and_then(|p| p.attr(0xE637_5A47)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(15.0);
-                let frames = a.child(h("frames")).map(|f| f.children_named(h("frame")).filter_map(|fr| {
+                // the frame-textures in file order, and each frame's rect and its frame-texture's
+                // number (h_1ef06846, `Flipbook::frame_textures`)
+                let textures: Vec<u32> = a.walk().into_iter().filter(|e| e.name == h("frame-texture"))
+                    .map(|f| hash_of(f.children.first().and_then(|p| p.attr(h("name"))))).collect();
+                let (frames, frame_textures): (Vec<[f32; 4]>, Vec<u32>) = a.child(h("frames")).map(|f| f.children_named(h("frame")).filter_map(|fr| {
                     let p = fr.children.first()?;
                     let g = |n: &str| p.attr(h(n)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
-                    Some([g("u0")?, g("v0")?, g("u1")?, g("v1")?])
-                }).collect()).unwrap_or_default();
-                let sheet = a.walk().into_iter().find(|e| e.name == h("frame-texture"))
-                    .map(|f| hash_of(f.children.first().and_then(|p| p.attr(h("name"))))).unwrap_or(0);
+                    let k = p.attr(H_FRAME_TEXTURE).and_then(|v| v.as_i64()).unwrap_or(0).max(0) as usize;
+                    Some(([g("u0")?, g("v0")?, g("u1")?, g("v1")?], textures.get(k).or(textures.first()).copied().unwrap_or(0)))
+                }).unzip()).unwrap_or_default();
+                let sheet = textures.first().copied().unwrap_or(0);
                 if sheet != 0 {
-                    self.flipbooks.entry(name).or_insert(Flipbook { texture: sheet, fps, frames });
+                    self.flipbooks.entry(name).or_insert(Flipbook { texture: sheet, fps, frames, frame_textures });
                 }
             }
         }
@@ -2605,6 +2686,12 @@ pub struct Character {
     /// makes a character's hit parts of (FUN_00114d00 builds each from the part's node), which
     /// a shot strikes (FUN_00115000 gives the part's bone)
     pub part_collision: Vec<Vec<[Vec3; 3]>>,
+    /// per bone, its part archetype's bounding sphere (`bounding_sphere`: the centre in the bone's
+    /// own frame), None for a part without one (radius 0 in the data): what the liquid's splash
+    /// takes (FUN_00221af0: its ray from the sphere's top, 2r down; a radius of at least the
+    /// liquid's h_e12e7b9d splashes big). The squad's eleven hit parts are 0.14-0.45 m
+    /// (todo/146-liquids answer-spec Q5)
+    pub part_spheres: Vec<Option<(Vec3, f32)>>,
     /// its bounding sphere in the model's frame (centre, radius): the union (FUN_002364a0, the
     /// smallest sphere round both) of its skin mesh's geosets' spheres, each `<geoset
     /// h_1ab09530>` radius round its `<h_e99750a9>` centre (the e34 Shrike Heavy's 1.24 m). The
@@ -2671,12 +2758,14 @@ impl Character {
         let (mut bind_rows, mut bind_pos, mut inverse_bind) = (vec![], vec![], vec![]);
         let mut hardpoints = HashMap::new();
         let mut part_collision = vec![];
+        let mut part_spheres = vec![];
         for (bi, &(_, an)) in parts.iter().enumerate() {
             let (pa, _) = game.archetype(an).ok_or("part archetype not found")?;
             for (k, hp) in weapon::parse_hardpoints(pa) {
                 hardpoints.entry(k).or_insert((bi, hp));
             }
             part_collision.push(game.archetype_physics(an).map(|s| game.collision(s).into_iter().map(|(t, _)| t).collect()).unwrap_or_default());
+            part_spheres.push(bounding_sphere(pa));
             let v = pa.child(H_INVBIND).and_then(|e| e.text.as_ref()).map(|t| t.floats()).unwrap_or_default();
             if v.len() < 12 {
                 return Err("bad part matrix".into());
@@ -2748,7 +2837,7 @@ impl Character {
         let default_face = face_anims.iter().position(|a| a.name == NEUTRAL_FACE)
             .or(if face_anims.is_empty() { None } else { Some(0) });
         Ok(Character { bones, parent, bind_rows, bind_pos, parent_point, child_point,
-                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision, bounds })
+                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision, part_spheres, bounds })
     }
 
     /// Index of the animation whose (hashed) name is `script`, e.g. "Sc_w1_run".

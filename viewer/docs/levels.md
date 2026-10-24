@@ -306,75 +306,291 @@ or `cargo run --bin bf_level -- <map>`). What it took:
 
   The level's dynamic terrain lights are dim; sdm_e40's key is 0.2, low in the sky. The baked
   light is what the map-select previews show: bright sdm_e40 and sdm_e10, night sdm_e01.
-* **Liquid surfaces.** A liquid object's surfaces use one of two shaders, drawn by
-  `LiquidMaterial` (`src/liquid.wgsl`):
-  * the animated liquid `h_f124a774` (lava, toxic rivers): `texture-0` and `texture-1`, each
-    a tile `texture-scale` / `texture-scale-1` of the mesh's uv across (by the sizes that gives:
-    sdm_e13's lava, 1.5 km over 15 uv, has 10 m tiles at 0.1; read as repeats, a 256-texel
-    texture stretched over a kilometre, blurred, and scrolled tens of m/s), scrolling in tiles
-    per second (two unnamed pairs, by their values u and v of each layer: `h_0e41af5b
-    h_0e2b9302`, `h_e002ae8e h_fb0bff34`), combined by
-    `blend-mode-1` (0: over by its alpha, sdm_e40's lava crust; 1: added, the toxic river's
-    green over its dark swirl). Every layered liquid's `blend-mode` is 2, read as the console's
-    modulate x 2: the colour doubled. Lava (liquid-type 2) gives all its colour as light, toxic
-    (4) 80%; both are solid (the materials' own opacity, 60-200 / 255, is left out: captures of
-    Singe's and Cavern of Fire's lava and Shanty Town's acid show them opaque, near yellow).
-  * the water `h_0f8904b9`: `texture-0` tiled (`scale-u`, `scale-v`) and scrolling, tinted by
-    `color`; over it the reflection by a fresnel ramp (`h_0b85cb09`, a 128 x 1 alpha strip: more
-    at a glance). The game's reflection is `texture-1`, a texture no archive holds (rendered at
-    run time); here it's the level's sky colour tinted by `color-1`, rippled by the water's own
-    texture, 15% looking straight down (without any a pool seen from above was its murky colour
-    over a bed of the same colour: it vanished) to 50% at a glance; 92% opaque, its colour doubled
-    too (no blend-mode: a choice; a capture of sdm_e10's pond measures 57 60 36, ours 49 49 18).
-  * Water ripples: its texture twice (scale-u, scale-v and scale-u-1, scale-v-1, each drifting:
-    at least 0.02 tiles/s, the two crossing; sdm_e10's own speeds, 0.0002 and 0.01, left it still;
-    the water's `framerate` constants, 17 and 25, hint at an animation of the game's own, not
-    traced). Their brightness slopes, as heights, tilt the surface: the light, the sun's glint
-    and the reflection ripple, and the water's colour is shaded by the tilt from one side. It
-    gives 35% of its colour as its own light: sdm_e10's dim lights alone left the pond near
-    black, its ripples lost, where a capture shows it evenly lit.
+* **Liquid surfaces (#4).** A surface whose material is one of the game's two liquid material
+  classes is drawn as that class draws it (`LiquidMaterial`, `src/liquid.wgsl`; the code read in
+  todo/146-liquids leads.md §6 and answer-spec.md, the code map's Effects rows 0x91a10-FUN_00093210):
+  a liquid object's, and the few other placed objects that wear one (e13's h_e9f071d8, m02_a's
+  h_fe3dec33, m14_c's three h_e82c9d42). The textures are taken as stored and the shaders' sums
+  and products are on those values, as the console's combiners take the texels' bytes; the result
+  is clamped as they clamp it, and fogged. Nothing doubles a colour, and no liquid gives its colour
+  as light.
+  * **BF_LavaMaterial** (`h_f124a774`: lava, sludge, toxic waste, chloride). t0 `texture-0` at uv /
+    `texture-scale` + the clock x (`translate-u`, `translate-v`), t1 `texture-1` likewise with the
+    `-1` constants (repeats per second, not divided by the scale; the names and offsets from its
+    parameter table 0x91a10), the clock starting at the material's `lifetime` (0x91ba0: sludge 10,
+    toxic waste 2). Its two blend modes pick the pixel shader (FUN_00091bc0, FUN_00091e60;
+    `lava_passes`; the combiners decoded again for #4: no stage scales its output):
+
+    | blend-mode / -1 | Shader | Colour | Blending | Used by |
+    |---|---|---|---|---|
+    | 2 / 0 | 0x2b | lerp(t0, t1 x v0, t1.a) | opaque | the lava of sdm_e13, sdm_e40, sdm_m07, the tutorial, m02 |
+    | 2 / 1 | 0x2a | t0 + t1 | opaque | sludge (sdm_m03, m03_a/b, e01, mp6) |
+    | 0 / 1 | 0x29 | t0 x t0.a + t1, alpha t0.a | ONE / INVSRCALPHA | toxic waste (m09, m14): see-through |
+    | 1 / 1 | 0x27 | t0 + t1 | ONE / ONE | m14_c's chloride |
+    | 1 / 0 | 0x28 | lerp(t0, t1, t1.a), alpha t1.a | ONE / INVSRCALPHA | none |
+    | any / 2 | 0x2c | t1 | opaque | none |
+    | 0 / 0 | 0x2c twice | t0, then t1 at LESSEQUAL | SRCALPHA / INVSRCALPHA each | m02_a's h_fa91cd3b (a second entity draws the second pass) |
+    | one texture | 0x2c | that layer | by its own mode: 0 alpha, 1 added, else opaque | e13's h_eabb45fa (mode 2: opaque, inferred) |
+
+    v0 is the colour of the level's key light, slot 0 of the outdoor pair (`Level::objects_key`;
+    FUN_00091fe0 slot 24 from the world's +0xba0): sdm_e13 0.96 0.87 0.80, the tutorial and e40
+    the h_157b3160 light's; black where the pair has no key light (FUN_000dcc10 then leaves it as
+    it was: 0 after boot, inferred). It's unlit otherwise. The wrapper's h_e59d69a0 (lava 60, sludge 200, toxic waste 1) is the stencil value
+    its pixels write for the game's glare, not an opacity (below).
+  * **BF_OceanMaterialBase** (`h_0f8904b9`: water). Pixel shader 0x2f: (t0 x `color` + t1 x
+    `color-1`) / 2 x v0, alpha the ramp's, SRCALPHA / INVSRCALPHA (0x92f70).
+    * t0 `texture-0` at uv / (`scale-u`, `scale-v`) + frac(clock x (`translate-u`, `translate-v`)
+      / scale), t1 likewise with the `-1` constants: the drift is near still (the pond's 0.005 and
+      3e-5 repeats a second). The e40 ocean has no `texture-0`: t0 is the console's default white
+      (FUN_00062280; bevy's white fallback here).
+    * `texture-1` is the shimmer `h_e757ea7c`, an animated texture of 34 separate 128 x 128 frames
+      (`Flipbook::frame_textures`), played in a loop at the material's `framerate-1`
+      (FUN_00092d10, 0x262680): sdm_e10's pond 17 fps (2.0 s), the e40 pools 25 (1.36 s), the
+      ocean 30 (1.13 s). It's what moves the water.
+    * v0 is the vertex light: the object ambient + max(N.L, 0) x colour of the outdoor pair's two
+      lights (answer-spec Q7), clamped, in the console's terms (`water_light`: bevy's ambient and
+      directional lights taken back to the values the game hands the shader, so the Vengar view's
+      vision lights reach it too).
+    * Alpha: the ramp texture at the vertex's own height in its mesh (its model-space y, the
+      second uv). The game makes the ramp from the material's six key / value pairs (FUN_00092df0,
+      0x92eb0: 128 texels, trunc(ramp(i / 127) x 255), an ease-in-out between keys), which gives the
+      archives' own ramp textures byte for byte (`water_ramp`'s test; BF_LIQUID_LOG compares each
+      map's). The pond and the pools sit at model height 1: alpha 1, drawn opaque (the same
+      picture; and it writes depth, as the game's does). The ocean spans 0 to 1: see-through
+      where its mesh is low, at the shore.
+    * Height: every vertex at its node's world height (vertex program 0x45 takes slot 28's y,
+      FUN_00093210: the draw's world matrix's translation y; `water_mesh`). The pond is drawn at
+      15.22 (its mesh 1 m higher), the e40 pools at 27.0-27.1, the e40 ocean at 22.10, 1 m under
+      its collision's top (23.10). This replaces the lift onto the collision's top.
+    * No reflection: no render target or reflection camera exists (leads §6.3), and #73's take20
+      mirrors nothing in the e40 sea. The sky-colour reflection, the fresnel ramp and its 15-50%,
+      the 92% opacity, the x2, the 35% self-light, the ripple tilt and the 0.02 tiles/s least drift
+      the demo drew before are gone.
+  * Both are drawn one-sided: take03 of #146 (26-41 s, the camera under sdm_e13's lava) shows no
+    surface from under it.
+  * Their clocks (`LiquidClock`) run on the game's time from the level's start: stopped under a
+    menu (0x1ea830 skips the material and texture updates while paused), fixed steps under
+    BF_CAPTURE.
   * Liquid surfaces have a depth bias: Singe's lake lies centimetres over terrain painted with
     lava veins, and seen low the two fought, the veins showing through the lava.
-    `BF_LIQUID_TEX=<hex>` puts one texture on every liquid layer (a test).
-  * A liquid's drawn surface is moved onto its collision's top (what's waded in): sdm_e40's
-    pools draw theirs 1 m higher, so from the side the water floated over the floor (from above
-    it lined up, so it seemed to come and go with the view); lava and the rivers already agree.
-    `BF_LIQUID_DEBUG=1` draws every liquid surface solid white.
-  Other names found by hash: `framerate`, `framerate-1`, `lifetime`, `blend-mode`.
-  `BF_LIQUID_LOG=1` lists a map's liquid surfaces (material, textures, constants).
-* **Splashes.** A liquid type also names its effects and sounds (`<h_fa2f5452>` entries:
-  h_08f6cd94 a shot striking it, h_e4791abc a small splash, h_07ab4143 a big one, h_f458daca the
-  ring round a wader; `env_xl_*` water, `env_sl_*` lava, `env_fl_*` toxic, `env_tl_*` type 3,
-  `env_il_*` type 0 with bubbles) and four sounds (unnamed; taken in the effects' order). Going
-  into a liquid splashes (big when falling faster than 5 m/s), wading leaves a ring every 0.5 s
-  while moving, and a shot through a surface splashes where it goes in.
-* **Liquids aren't solid.** A pool (sdm_m03's toxic river, sdm_e13's lava, and pools on sdm_e10,
-  sdm_e40, sdm_m07, mp4, mp6 and mp7) is a placed object of class `h_04366a6a` whose collision
-  is one flat plane at its surface. That plane is left out of the floor and walls: characters
-  wade and sink to the bed. A liquid's type
-  (objecttypes `<h_fa2f5452>`, read by 0x193420) gives its kind (`liquid-type`) and three damage
-  rates per second (h_06f6a40d, h_eba69d33, h_e0489ea0):
+  * Test hooks: `BF_LIQUID_TEX=<hex>` puts one texture on every liquid layer;
+    `BF_LIQUID_DEBUG=1` draws every liquid surface solid white; `BF_LIQUID_LOG=1` lists a map's
+    liquid surfaces and materials (constants, passes, frames, the ramp against the archive's) and
+    the other objects wearing a liquid material.
+  * **Not drawn: the glare.** The takes' lava is brighter and yellower than these shaders give:
+    take01 of #146 (2 s, the stream on sdm_e13) 254 134 30, its brightest tenth 254 193 31, where
+    the demo's (`BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.80,-19.97,-110,25.09
+    BF_TEST_GO_AT=100`, frame 19) is 217 86 9, brightest 237 111 9; take08 of #28 (165 s, the
+    tutorial's pit) 171 106 62, brightest 252 201 97, against the demo's 88 59 51, 151 87 67. Even
+    the lava texture's brightest texels x v0 (236 108 13) fall short, so something is laid over
+    it: the glare (FUN_000e5f60 / FUN_000e5d40), which the game runs when a material writes a
+    stencil value other than 255 (lava 60): a bright pass of the picture (pixel shader 0x1f keeps
+    what's brighter than a threshold), blurred into 24 offset copies, added ONE / ONE (code map).
+    The demo has no glare yet (its own ticket); the x2 it drew before stood in for it.
+  * Checked (#4): sdm_e10's pond from its start (`BF_MAP=sdm_e10 BF_CHARACTER=3
+    BF_TEST_GOTO=74,5,60,5 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.4`): 59 57 28 near, the shimmer
+    changing frame to frame and repeating after 2.00 s (30 frames at 15 fps: a mean change of 1.5
+    against 6.8 half a loop on). The e40 sea from take20's place (`BF_MAP=e40 BF_CHARACTER=3
+    BF_TEST_GOTO=-1.97,169.30,-5.77,178.55,26.12 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=0.02`): the
+    same warm grey-brown as the take, R : G : B about 1 : 0.84 : 0.67, from the horizon's fog to
+    61 51 41 nearer (the take's 84 64 53 to 44 38 30: the code's colour before fog is 44 42 34; the
+    framing isn't the take's), mirroring nothing; at e40's shore the sand shows through the
+    shallow edge. sdm_e40's pools are opaque and flat in their basins; sdm_m03's sludge
+    yellow-green. No take shows the shimmer up close, the pools, the pond or sludge (B4, C1).
+* **Liquids aren't solid.** A pool (sdm_m03's sludge river, sdm_e13's lava, the tutorial's pits,
+  and pools on sdm_e10, sdm_e40, sdm_m07, mp4, mp6 and mp7) is a placed object of class
+  `h_04366a6a` (`water-lava-flow-object`) whose collision is a closed volume under its surface
+  (sdm_e13's lava a box from 12.94 to 23.89 m; sdm_e10's pond and the e40 ocean 40- and
+  420-triangle volumes): the game makes it a phantom (FUN_002218e0), so it's left out of the floor
+  and walls here, and characters wade and sink to the bed. No movement code reads it: no
+  slowdown, swimming, drowning or tint under it (todo/146-liquids leads §4). A liquid's type
+  (objecttypes `<h_fa2f5452>`, `water-lava-flow`, loaded by FUN_00193420) gives its kind
+  (`liquid-type`, the LT_ names at 0x3be754) and three damage values (`LiquidType::damage`):
 
-  | liquid-type | Liquid | Damage per second |
-  |---|---|---|
-  | 1 | water | 0, 0, 0 |
-  | 2 | lava | 50, 50, 30 |
-  | 3 | (unnamed) | 0, 10, 30 |
-  | 4 | toxic | 50, 50, 50 |
+  | liquid-type | Liquid | h_06f6a40d: an object's hit | h_eba69d33 | h_e0489ea0: a character's rate |
+  |---|---|---|---|---|
+  | 0 | ocean water (e40) | 0 | 0 | 0 |
+  | 1 | swamp water (sdm_e10's pond, the e40 pools) | 0 | 0 | 0 |
+  | 2 | lava (sdm_e13, sdm_e40, sdm_m07, the tutorial) | 50 | 50 | 30 |
+  | 3 | toxic waste (m09, m14) | 0 | 10 | 30 |
+  | 4 | sludge (sdm_m03, m03, e01, mp6) | 50 | 50 | 50 |
+  | 5 | chloride (m14_c) | 0 | 0 | 0 |
 
-  How the game uses these values isn't traced (a capture of sdm_e13 had Brutus wade waist-deep
-  through lava for 10 s at full health, then die the moment he went under). Here a harmful
-  liquid burns from the first touch: 20% of its highest rate at the surface, rising with depth
-  to all of it at 1.6 m (lava: 10 hp/s ankle-deep, about 30 waist-deep), dealt every 0.4 s
-  without blood; going under kills. A fall into a liquid doesn't hurt.
+  h_eba69d33 is read by nothing; h_06f6a40d is one hit on an object entering (a pickup, a
+  grenade, a missile: #146's Part 5, not in the demo).
+* **What a liquid does to a character** (#152, play_liquids.rs; the code read in
+  todo/146-liquids leads.md §2-§4 and answer-spec.md Q1 / Q9, the code map's Levels rows
+  FUN_00221af0-FUN_00222400):
+  * The liquid sees a living character by its eleven hit-part bodies (PID_BONE), never by its
+    movement capsule (answer-spec Q1; L1's live read on e40's pools: 16 enter events, all
+    PID_BONE). A part is in while it's in the volume, however deep: here, while the lowest corner
+    of its collision surface, posed as drawn, is inside the volume (`Arena::liquid_inside`: an
+    odd number of the liquid's faces above it). The count is the game's char+0x104.
+    * Each face counts once. A point on an edge or a corner its triangles share is over one of
+      them alone (`Arena::over_once`, a half-open rule with no slack): the slack the floor test
+      gives an edge counted both halves of a split face near their diagonal, an even count, so
+      a part crossing the diagonal of sdm_e13's lava top (x + z = 0, some 4 cm either side) went
+      out and back in, a whole entry hit each time. And a twin pair (a face that comes twice,
+      wound both ways) counts once: the e40 ocean's 420 triangles are 210 such pairs, as the e40
+      lava flow's 168, m02_a's lava's 720 and e05's water's 184, so before they held nobody.
+    * Every liquid of the 19 maps that have one closes round its volume (`BF_FIND_BODIES=1`: no
+      open edge, a twin pair counted once; sdm_e10's pond and its copies 40 triangles, the boxes
+      12, m03_a's 8); sdm_m07's four lava quads are open sheets, under which a point is in.
+  * The damage is the character rate alone, once a game frame (30 Hz, the liquid's update): a
+    frame on which a part enters deals the whole rate, any other with a part in its share of
+    the second, and one hit a frame at most (FUN_00221a40). No depth ramp, no tick, nothing
+    more for going under: a body fully under keeps burning at the rate. Every hit, an entry's and
+    each frame's share alike, goes through the character's damage handler as DTYPE_FLAME
+    (0x221780 -> 0x125600; play.rs `burn` through `take_hit`): a stamina shield takes it first,
+    nothing in a cutscene or out of the world, the difficulty step (the multiplayer maps none;
+    STANDARD's squad x0.6), Vengar, the type's factor, BF_COMBAT_LOG's line. It floors nobody.
+    Only an entry hit may draw a hurt line (the demo's rule: take03 has no sound between the foot
+    events while Brutus stands burning, todo/5-liquid-sounds leads §4.1).
+    Its blood is the game's decals alone (FUN_00124a70: the entry hits are big enough, the
+    shares never; the spray straight up), and a death in a liquid leaves out the demo's death
+    spray (play_fx.rs). The game frames run between the drawn ones with the parts' lowest points
+    between their two places, so 15 Hz captures and a 60 Hz screen deal what the game's 30 Hz
+    does.
+  * A fall into a liquid hurts by the drop to its bed, as on land (FUN_0012b740 has no liquid
+    check; answer-spec Q9); only the landing's sound (and dust, which the demo doesn't draw) is
+    left out while a part is in one (0x12d842).
+  * Checked against the takes (`BF_LIQUID_LOG=1` prints the parts in and each hit):
+    * #146's take01 (sdm_e13, Brutus at 75 HP walking north into the lava at half stick:
+      `BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.80,-20.92,-100,25.09 BF_TEST_WALK=1
+      BF_TEST_HEALTH=75`): the first part in at (-20.3, -116.0), 75 to 45; the second 0.24 s
+      later (the take's 0.20), down to 9 (the take's 9.3); dead 0.54 s after the first (the
+      take's 0.53), ankle-deep.
+    * take03 (Brutus at 5000, `BF_TEST_HEALTH=5000`, to (-21.44, -110.15), then on to
+      (-23.73, -87.26)): thirteen entry hits of 30 walking in (the take's twelve or thirteen),
+      then 9 of 11 parts in waist-deep (the take's 10) at 30.0 HP a second (the take's 30.0); all
+      11 in, 3 m under, still 30.0 a second and alive (the take's 30.2, alive 9 s under). The view
+      from under the lava shows no surface (one-sided, as the take).
+    * #28's take08 (the tutorial, STANDARD: `BF_MAP=tutorial BF_TEST_GOTO=46.26,-25.92,45.96,-30.40
+      BF_TEST_HEALTH=101.6`): Tex runs off the east pit's rim and falls in: five entry hits of 18
+      (30 x 0.6), 101.6 to 83.6, 64.4, 45.8, 27.8, 9.8 (the take's 83.0, 64.5, 45.9, then 36 in
+      one step to 9.9), then 18 a second on the bed, dead 0.80 s after the first hit (the take's
+      0.87). The same at 15 Hz and 30 Hz capture steps. (With the goal at z -34, past where the
+      take's Tex stopped at -30.4, and his full 115, he runs on over the bed and up out of the
+      pit's south side with 4.6 left.)
+    * Across sdm_e13's lava diagonal (`BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-12,2,-2,12
+      BF_TEST_WALK=1 BF_TEST_HEALTH=5000`: Brutus starts 4 m under the surface and walks across
+      x + z = 0 at about 4.6 s): one entry hit as he starts, then 30 HP a second to the end. With
+      the old slack the same walk took seven more entry hits of 30 between 4.60 and 5.20 s, as his
+      parts crossed the diagonal.
+  * Not filmed: sludge's rate (50, sdm_m03: C1), toxic waste's (30, m09: D1), a fall into a pool
+    (B3), squad members or enemies in a liquid; built from the code and the data alone. The
+    waters do nothing (their rates are 0).
   * The tutorial's lava pits (h_ea243aea, two) are a box of collision (12 triangles, the east
     one's top at 14.40 m, its bottom at 3.45 m) in a pit whose walls are steeper than a floor
-    (maps.md, "Collision": steep ground with no floor under it, #264). Tex runs off the east
-    pit's rim into it as in take08 (todo/28-tutorial), and dies sooner than there: the demo kills
-    him as his feet go 1.6 m under, about 0.3-0.5 s after he leaves the rim, where take08's Tex
-    (running off it at 167.16 s) loses 18.6 HP a 67 ms step from 0.6 m under (167.56 s), 36 in
-    one step at 2.3 m, then about 18 a second on the bed, and is at 0 at 168.43 s: 1.3 s after
-    the rim. How the game deals it is #152's.
+    (maps.md, "Collision": steep ground with no floor under it, #264).
+  * The AI keeps out of the liquids that burn (#1): squad.md, "Liquids that burn".
+  * Test hooks: `BF_LIQUID_LOG=1` prints each character's parts in a liquid as their count
+    changes, each entry hit, a death, the hit points each second in one, and a wingman waiting at
+    the shore of one (#1); `BF_TEST_WALK=1`
+    makes BF_TEST_GOTO walk (Ctrl), as the takes' half stick; `BF_TEST_HEALTH=<hp>` above the most
+    raises the most too (play_pickups.rs).
+* **What a liquid plays** (#5: play_liquids.rs, play.rs `WorldSound`; the code read in
+  todo/5-liquid-sounds leads.md and todo/146-liquids leads.md §5, the code map's Sound rows
+  FUN_00179250-FUN_0017f580 and Levels rows FUN_00221af0-FUN_00222480). A liquid type names four
+  effects and four sounds (`LiquidType::effects` / `sounds`), in slots the code reads alike for
+  every liquid:
+
+  | Slot | Effect (`env_<x>l_*`) | Sound | Plays |
+  |---|---|---|---|
+  | `LIQUID_SHOT` | h_08f6cd94 `_projectile` | h_e259380a | an instant ray through the surface (FUN_0022feb0) |
+  | `LIQUID_SPLASH` | h_e4791abc `_smsplash` | h_0ed21145 | a part or an object going in with a bounding radius under h_e12e7b9d (0.1 m; chloride 0.25) |
+  | `LIQUID_BIG_SPLASH` | h_07ab4143 `_mdsplash` | h_0c46dff8 | the same with a radius of at least that (FUN_00221af0) |
+  | `LIQUID_WADE` | h_f458daca `_wadering`, silent | h_ed055bce | the ring round a wading part (FUN_00221ec0); the sound is the wading step (FUN_00119020) |
+
+  `<x>` is x water, s lava, f toxic, t type 3, i type 0 (with bubbles). Every type of one
+  liquid-type names the same four sounds, five recordings among the sixteen ids: lava's big splash
+  and its wading step are one wave, the ocean's small and big splash another; chloride has none
+  (todo/5 leads §1). The effect types carry no sounds, and no liquid has a sound of its own: the
+  shore's and the lava's loops are the levels' sound-triggers (triggers.md).
+  * **Splashing in.** Each hit part going in (at any speed: a walk, a jump and a fall alike)
+    casts FUN_00222480's ray from the top of its bounding sphere 2r down against that liquid
+    (`Arena::liquid_below`); the sphere is the part archetype's `bounding-sphere-radius`
+    h_1ab09530 round its `bounding-sphere-center` h_e99750a9 (`Character::part_spheres`; the
+    squad's eleven parts 0.14-0.45 m: all big). Meeting the surface, the character keeps its
+    height (char+0x414, `Wading::surface`) and the part splashes there: the effect upright at user
+    parameter 1.0, the sound at the surface point, volume 1.0 (in place of the bank's 0.5), pitch
+    U x 0.1 - 0.05 octaves. A part whose sphere doesn't reach the surface as it goes in splashes
+    nothing: walking in, the feet and calves go in first without one, and the splashes start
+    with the part that does (take03: no splash for the first four parts, the first at the fifth;
+    the demo's Brutus the same). A part out and in again splashes again.
+  * **Rings.** Each part in a liquid, at most every 0.2 s, casts its ray again; where the surface
+    point has moved more than h_049350bb (0.1 m) from its last ring's (its node as it went in, at
+    first), and not straight up or down, a ring there, turned to the move, at user parameter
+    clamp((moved - 0.1) / dt x h_fd22997d, 0, 1). Silent. So a part crossing the surface leaves up
+    to five a second while it moves, and none once it's under or still.
+  * **Wading steps.** Each game frame a part is in, the character takes the liquid's fourth sound
+    as its next step's (char+0x410). At a foot event (the demo's: a foot planting on the move,
+    play.rs `step_player`) in a liquid, the step plays it only while the surface of the last
+    splash is more than 0.25 m above that foot, and plays **nothing** otherwise: the ground's step
+    never sounds in a liquid, and before any splash has found the surface (char+0x414 still -1)
+    every step is silent. Its volume is max(min(depth, 1), the skill's noise) x the gait's factor
+    (1.0 running or dashing, 0.5 walking, 0.35 the crouch walk) x 0.75 for the controlled
+    character, whose own step plays 2D (inferred: FUN_00119020 puts its point where the cull reads
+    none); another's plays at its foot; the pitch U x 0.7 - 0.35 octaves. The first step after
+    coming out still plays the wading step the last frame in left (the code's order); the ground's
+    come back from the next.
+  * **Objects** (`object_enters`). A grenade (play_grenade.rs) or a missile (play_missile.rs) going
+    into a liquid, from out of every one, at h_1f6de6f9 (0.4 m/s) or faster, splashes where its
+    body crosses the surface, by its mesh archetype's radius (`Game::archetype_sphere`): the five
+    hand grenades 0.081 m small, the Sentry 0.33 m and the Roller 0.19 m big, the iKhan-GPL's
+    round 0.046 m small. They go on down to the bed (the liquids aren't solid). Not done: what
+    happens to them in it (a grenade's fuse cut to at most 0.3 s, 0x149420; a missile's timers x5,
+    FUN_00226cc0), the object damage h_06f6a40d, the blast's liquid override effect (#146).
+  * **Shots.** Only an instant ray (bullet-type 4: the MK-ASLT, Bower 20, L-Shots, Minigun,
+    Foley, Kman, Rails) splashes, once where it goes through the surface: the shot effect upright
+    and the shot sound at the library's volume (FUN_0022feb0 sets no volume or pitch). A bolt or a
+    flying shot passes through with nothing (the blast pool has no liquid code); the ocean's trail
+    of bubbles along the ray under its surface (+0x168) isn't drawn.
+  * **Nothing** plays for going under, staying under, getting out or burning: no reader of the
+    liquid state in the sound system (todo/5 leads §2.5).
+  * **How they're heard** (play.rs `play_sounds`, `WorldSound`: FUN_00179250's request). The
+    listener is FUN_00178c10's, as the sound-triggers have it: the followed character's feet, or a
+    cutscene's camera while one is shown. A positional sound is heard by its library entry's
+    distances (`distance_gain`: every liquid sound full to 5 m, nothing at 15 m) and dropped at
+    15 m or beyond (0x17932a); a 2D one at its volume. The pitch is the playback speed, 2^octaves
+    (DirectSound's pitch is a resampling too). Not done: the sound manager's queue and its budget
+    of 16 positional voices a frame (FUN_001793e0: here every one plays), and placing a sound in
+    3D (every demo sound plays 2D at its distance's volume).
+  * Checked with `BF_SOUND_LOG=1 BF_LIQUID_LOG=1` (BF_MUTE: nothing was played aloud; how they
+    sound is the user's check by ear):
+    * sdm_e13's lava, Brutus walking in to 2.6 m deep (`BF_MAP=sdm_e13 BF_CHARACTER=0
+      BF_TEST_GOTO=-19.97,-122.80,-22.6,-102.0 BF_TEST_WALK=1 BF_TEST_HEALTH=5000`): his first
+      four parts in without a splash and his steps silent (no surface found yet), then big
+      splashes (ef2c3bf6, the lava's C recording) at full volume, 0.7-1.5 m away, as more parts go
+      in, and wading steps (188ca605) 2D at 0.38 every ~0.55 s, 1.0-2.6 m under the surface, with
+      their +-0.35 octave pitch; frames 80-118 show the rings at his feet, then the splashes'
+      orange puffs round his waist (take03 at 10.2-10.9 s: orange puffs round Brutus's waist as
+      the splashes start; the demo's brighter and yellower, the ALE effect's colour).
+    * The tutorial's pit (#28's take08 recipe above): Tex falls in, six big splashes over 0.07 s
+      at 1.3-1.9 m (a fall splashes as a walk does), the damage unchanged (five hits of 18, dead
+      0.80 s after the first).
+    * sdm_e10's pond (water: `BF_MAP=sdm_e10 BF_CHARACTER=3 BF_TEST_GOTO=74,5,74,-30
+      BF_TEST_WALK=1`): wading steps (fa93070a) from 0.60 to 0.31 m deep, silent at 0.25, 0.17,
+      0.10 and 0 m, the first step out still the wading step, then the ground's (fe306c9e,
+      e5393d24) at 0.35. With `BF_TEST_GOTO=74,5,74,5 BF_TEST_TARGET=1` Brutus stands in it 8 m
+      off: his five big splashes (0d339af9) heard at 0.54-0.66 by the distance.
+    * Brutus at sdm_e13's shore (`BF_TEST_GOTO=-20.6,-117.5,-20.62,-117.0`): `BF_TEST_THROW=1.0,0.05
+      BF_CAMERA_PITCH=-0.2` lobs a Frag in at 15.1 m/s, a small splash (1eb5691c, the B recording) 5.3 m off at 1.00;
+      thrown long (`BF_TEST_GOTO=-19.97,-122.80,-20.0,-121.8 BF_TEST_THROW=1.0,0.6 BF_CAMERA_PITCH=0.1`) it goes in
+      15.3 m off, past the 15 m: not heard. `BF_TEST_WEAPON=iKhan-GPL BF_TEST_FIRE=1
+      BF_CAMERA_PITCH=-0.25`: each round a small splash 8.6 m off at about 0.5. `BF_TEST_FIRE=2`
+      (the Bower 20, bullet-type 4) at `BF_CAMERA_PITCH=-0.3`: a shot effect and sound
+      (0a94d4e9) where each ray goes in, 12.9-24 m off: those under 15 m at 0.00-0.03, the rest
+      not heard.
+  * Not filmed: every water item is **code only, needs a take**: which of the B and D recordings
+    plays for each event on water, the silence in the shallows (0.25 m), the player's own step 2D
+    and a squadmate's at its foot, a grenade into water, a ray through it (todo/5 shot list).
+    The lava's are checked against take03's offline audio analysis only (todo/5 leads §4: a burst
+    within 0.06 s of each foot event waist-deep; no burst for the first four parts in), which
+    can't tell the lava's big splash from its wading step (one recording). The idle animation's
+    foot events (take03's step every ~2.1 s standing waist-deep) and the ragdoll's splashes
+    (take01's corpse) aren't reproduced: the demo's steps come from feet planting on the move,
+    and its ragdoll has no part bodies.
 * **Terrain hue.** The baked light map gives the ground's brightness. Its hue comes from the
   lights marked `h_e02aba1c` with the terrain's ambient, at 60% strength. Before #143 those were
   read as the terrain's own pair; the game's code has them as the indoor pair (see **Light
