@@ -515,7 +515,13 @@ grenade), frames looked at:
   * Bulgar's 39 m rock ridge (sdm_e34:1): Brutus and Hawk climbed it ("hawk walks off a ledge ...
     4.8 m to the floor"); Tex, running into its steep end, went into it: a slope steeper than
     about 51 degrees (under the 65-degree wall limit, so not a wall) rises more than the 0.5 m
-    step in one 0.4 m capture step. That's the demo's floor rule on any level.
+    step in one 0.4 m capture step. That's the demo's floor rule on any level. Since #285
+    (`BF_TEST_GOTO=4.5,10,4.5,-60 BF_TEST_SCENERY_PLACE="0.3,sdm_e34:1,4.5,-30,0"
+    BF_TEST_SPRINT=1.0 BF_INSIDE_LOG=1`) he runs up its steep end in the ground step's 0.12 m
+    steps and along its flank; where the flank steepens past 65 degrees (at 6.1 s, and once more
+    before 8.5 s) he's on it as on terrain too steep to stand on and slides down it to its foot,
+    and sprints on along it to the goal at z -60, never in it: nothing logged
+    ([maps.md](maps.md), Rocks and boulders).
 * In the air (`BF_TEST_FREECAM="0.3,-30,4,10,0,5" BF_TEST_SCENERY="0.5,sdm_e34:13,45"
   BF_TEST_AIR=0.6,12 BF_TEST_SCENERY_PLACE=2.5`): the see-through cactus hangs 12 m along the
   crosshair with the yellow ring at its foot, turned 45 degrees; the click leaves it "7.08 m up
