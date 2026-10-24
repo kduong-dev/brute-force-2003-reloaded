@@ -5,8 +5,12 @@
 //! of, if any (what the crosshair's centre ray is on, `ray_object`; whether the floor is indoors,
 //! `floor_kind`). A level without collision data falls back to the
 //! drawn triangles (cut-outs left out). Used to stand characters on the ground (or on objects'
-//! floors), push them out of walls, cast shots, settle pickups and keep the follow camera out of
-//! walls (`hull_triangles`, `convex_meet`: its wedge, play_camera.rs).
+//! floors), sweep their moves against the walls and take them out of a rock (`move_body`,
+//! `out_of_rock`, #285), push other bodies out of walls, cast shots, settle pickups and keep the
+//! follow camera out of walls (`hull_triangles`, `convex_meet`: its wedge, play_camera.rs).
+//!
+//! A triangle faces the way its winding does (`Tri::front`), and the game meets it from that side
+//! only; most of the data's come twinned, so they block both ways (`BodyShape`, #285).
 //!
 //! Liquids (lava, toxic rivers, water: placed objects of class h_04366a6a) have a flat
 //! collision plane at their surface; it isn't solid: characters wade and sink through it to
@@ -70,6 +74,17 @@ struct Tri {
     v: [Vec3; 3],
     /// facing up (floors), or sideways for walls
     n: Vec3,
+    /// the way it faces by its winding, (v1 - v0) x (v2 - v0) (unit): its front, the one side the
+    /// game's sweep meets it from (FUN_001516c0 makes the normal so, FUN_00152d20 leaves out a
+    /// triangle whose plane has the body behind it). A lone triangle of Ipion's data comes with a
+    /// twin facing the other way (`BodyShape`), so most faces block from both sides
+    front: Vec3,
+    /// met from either side whatever its winding: the drawn triangles of a level without
+    /// collision data (`model_tris`), whose winding is the renderer's
+    two_sided: bool,
+    /// the second of a twin pair (the same corners wound the other way, `BodyShape`): left out
+    /// where crossings of a body's surface are counted (`Arena::inside`), so a face counts once
+    duplicate: bool,
     terrain: bool,
     /// collision material: world-material id (low 5 bits), MATERIAL_SLIDE and MATERIAL_INDOOR
     material: u8,
@@ -132,11 +147,143 @@ pub struct Arena {
     flat: Option<f32>,
     /// the bodies numbered so far (`Tri::body`); the flat floor's ground is body FLAT_BODY
     bodies: u32,
+    /// each body's triangles (a range of `tris`: a body's are added together, `new_body`)
+    spans: Vec<(u32, u32)>,
+    /// each body: whether its faces close round a solid (`shell`), so that a point can be inside
+    /// it (`inside`): no edge left open, a twin pair counted once, and no door leaf or liquid
+    /// among them (part of it would come and go). #285: e34's, e40's and the tutorial's rocks
+    solid_shell: Vec<bool>,
 }
 
 /// The flat test floor's ground's body (`Tri::body`, `Arena::ray_shot`): numbered past any a map
 /// would use.
 pub const FLAT_BODY: u32 = u32::MAX;
+
+/// How many times a character's move is swept on after it meets a wall (`Arena::move_body`):
+/// FUN_00153810's passes (its context's +0xb4: 3 for a character, set at 0x12d1a7; 4 under the
+/// session record's +0x14 bit 1, which isn't identified). What's left after the last is dropped.
+const SWEEP_PASSES: usize = 3;
+/// A move goes into a contact when its direction's dot product with the contact's normal is
+/// under this (FUN_00152d20: the move's direction normalised by FUN_00039410, against the
+/// contact's +0x30, with 0x3c0280, -0.01): a wall it grazes or leaves doesn't hold it.
+const SWEEP_ENTERS: f32 = -0.01;
+/// How far short of a wall (m) a swept body stops, so the next pass starts clear of it: the
+/// demo's. (The game's stop is coarser: FUN_00152f20 steps the move in halves, its context's
+/// +0xbc 2, each half tested from the pass's start, and keeps the last free one.)
+const SWEEP_SKIN: f32 = 0.002;
+/// Within this (m) beyond its radius a body touches a wall at a pass's start (`move_body`), so
+/// the wall it stopped at last pass (SWEEP_SKIN short) still holds the rest of the move: the
+/// demo's.
+const SWEEP_TOUCH: f32 = 0.004;
+/// A triangle whose normal's y, by its winding, is at or under this faces down: a ceiling, cos
+/// 130 degrees (0x46d2f4, set up from the double 0x3a5550 at 0x30c450); between it and
+/// FLOOR_NORMAL a triangle is steep (FUN_00152d20, 0x152d62-0x152d6f). The game tests a steep
+/// triangle's plane at the body's base and any other's at its middle (`WallSection::base`).
+const CEILING_NORMAL: f32 = -0.642_787_6;
+/// How far in front of a wall's plane (m) the body's point must be for the wall to meet it
+/// (`WallSection::faces`): the demo's. The game asks only that it isn't behind (FUN_00152d20),
+/// but its response leaves a body 1 mm off the ground it stands on (FUN_00151170 adds 0.001 m
+/// along a ground-like contact's normal), behind the twin of that ground facing down into it.
+/// The demo stands the feet on the ground's plane, where without the margin the rounding decided
+/// whether that twin (steep by the game's split on a slope over 50 degrees) was met.
+const PLANE_MARGIN: f32 = 0.01;
+/// How many ways out of a rock `Arena::escape` tries, evenly round: the demo's.
+const ESCAPE_WAYS: usize = 32;
+/// How far (m) beyond its radius past a rock's surface `Arena::escape` puts a body: the demo's.
+const ESCAPE_CLEAR: f32 = 0.02;
+
+/// Where a body taken out of a rock goes (`Arena::escape`): its place (x, z) and the floor there
+/// (the highest under its head; None for none), which its feet go on.
+#[derive(Debug, PartialEq)]
+pub struct Moved {
+    pub at: Vec2,
+    pub floor: Option<f32>,
+}
+
+/// What a body's collision triangles make (`Arena::survey`, #285): how many, their bounds, and
+/// whether they close round a volume. Corners are welded to the millimetre. A triangle with a twin
+/// (the same corners wound the other way) faces both ways: Ipion keeps a lone triangle as a flat
+/// ledge of its two sides, and the terrain's, the blockers' and most placed objects' faces come
+/// so. Closed: the faces (a twin pair counted once) leave no edge open (used by one face).
+/// Wound against its neighbour: an edge whose two faces, without twins, run along it the same
+/// way. The volume is signed by the winding ((v1 - v0) x (v2 - v0) out: positive), the sum over
+/// the triangles of the tetrahedra they make with the bounds' centre: 0 for a twinned body.
+pub struct BodyShape {
+    pub body: u32,
+    pub terrain: bool,
+    pub blocker: bool,
+    /// a liquid's surface (not solid) or a door's leaves (not solid while open)
+    pub liquid: bool,
+    pub door: bool,
+    /// the placed object it's part of (its index in `Level::objects`), if any
+    pub object: Option<u32>,
+    pub triangles: usize,
+    pub lo: Vec3,
+    pub hi: Vec3,
+    /// edges used by a single face (a twin pair counted once)
+    pub open_edges: usize,
+    /// edges used by more than two faces (a twin pair counted once)
+    pub shared_edges: usize,
+    /// of the untwinned faces' edges, those whose two faces run along them the same way
+    pub flipped_edges: usize,
+    /// triangles with a twin
+    pub twins: usize,
+    /// m^3, by the winding
+    pub volume: f32,
+    /// every corner on or behind every triangle's plane (within 1 cm), by the winding (not tried
+    /// over 2000 triangles)
+    pub convex: bool,
+}
+
+impl BodyShape {
+    fn of(body: u32, tris: &[&Tri]) -> BodyShape {
+        type Key = bevy::math::IVec3;
+        let key = |v: Vec3| (v * 1000.0).round().as_ivec3();
+        let (lo, hi) = tris.iter().flat_map(|t| t.v).fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(l, h), v| (l.min(v), h.max(v)));
+        let mid = (lo + hi) * 0.5;
+        // (each face by its corners from its least, keeping the winding: a twin is the same
+        // corners the other way round)
+        let mut faces: HashMap<[Key; 3], u32> = HashMap::new();
+        let mut volume = 0.0;
+        for t in tris {
+            let k = t.v.map(key);
+            let first = (0..3).min_by_key(|&i| k[i].to_array()).unwrap_or(0);
+            *faces.entry([k[first], k[(first + 1) % 3], k[(first + 2) % 3]]).or_default() += 1;
+            let (a, b, c) = (t.v[0] - mid, t.v[1] - mid, t.v[2] - mid);
+            volume += a.dot(b.cross(c)) / 6.0;
+        }
+        let twinned = |f: &[Key; 3]| faces.contains_key(&[f[0], f[2], f[1]]);
+        let twins = faces.iter().filter(|(f, _)| twinned(f)).map(|(_, &n)| n as usize).sum();
+        // (each undirected edge of the faces, a twin pair once: how many faces use it, and of the
+        // untwinned how often each way)
+        let mut edges: HashMap<(Key, Key), (u32, u32, u32)> = HashMap::new();
+        for f in faces.keys() {
+            let lone = !twinned(f);
+            if !lone && f[1].to_array() > f[2].to_array() {
+                continue;
+            }
+            for i in 0..3 {
+                let (a, b) = (f[i], f[(i + 1) % 3]);
+                let forward = a.to_array() < b.to_array();
+                let e = edges.entry(if forward { (a, b) } else { (b, a) }).or_default();
+                e.0 += 1;
+                if lone && forward { e.1 += 1 } else if lone { e.2 += 1 }
+            }
+        }
+        let open_edges = edges.values().filter(|e| e.0 == 1).count();
+        let shared_edges = edges.values().filter(|e| e.0 > 2).count();
+        let flipped_edges = edges.values().filter(|e| e.1 > 1 || e.2 > 1).count();
+        let corners: Vec<Vec3> = tris.iter().flat_map(|t| t.v).collect();
+        // (not tried on big ones, the terrain's blocks: never convex)
+        let convex = tris.len() <= 2000 && tris.iter().all(|t| {
+            let n = (t.v[1] - t.v[0]).cross(t.v[2] - t.v[0]).normalize_or_zero();
+            corners.iter().all(|&p| (p - t.v[0]).dot(n) <= 0.01)
+        });
+        BodyShape { body, terrain: tris.iter().any(|t| t.terrain), blocker: tris.iter().any(|t| t.blocker), liquid: tris.iter().any(|t| t.liquid.is_some()),
+                    door: tris.iter().any(|t| t.door.is_some()), object: tris.iter().find_map(|t| t.object),
+                    triangles: tris.len(), lo, hi, open_edges, shared_edges, flipped_edges, twins, volume, convex }
+    }
+}
 
 /// The current map's arena. A new map installs its own (bf_play loads maps one after another
 /// in one window), and the old one is freed once nothing holds it (it was leaked, several MB a
@@ -178,6 +325,239 @@ fn closest_on_tri(p: Vec3, t: &[Vec3; 3]) -> Vec3 {
     }
     let denom = 1.0 / (va + vb + vc);
     a + ab * (vb * denom) + ac * (vc * denom)
+}
+
+/// A wall (a triangle that isn't a floor, `Arena::wall_sections`) cut to the heights of a body's
+/// wall test and seen from above (`Arena::move_body`, #285): the corners (x, z) of its part
+/// between the heights, in order round it (a convex polygon of up to five; a segment or a point
+/// for one seen edge on). The game sweeps a vertical cylinder against the whole triangle
+/// (FUN_00167a80: GJK with the cylinder's rim as its support, FUN_001678a0 / FUN_00167810); the
+/// cylinder meets the triangle where its circle meets this section, so the demo's sweep is a
+/// circle's against it, in two dimensions.
+struct WallSection {
+    corners: [Vec2; 6],
+    count: usize,
+    /// which edges (corner k to k + 1) the heights cut across the triangle's face, not along one
+    /// of its own edges: a body against one meets the face (`closest`)
+    cut: [bool; 6],
+    /// the triangle's normal by its winding and a corner: its plane, which side meets it
+    /// (`faces`) and the way a face contact pushes (`normal`); and whether it's met from either
+    /// side (`Tri::two_sided`)
+    front: Vec3,
+    corner: Vec3,
+    two_sided: bool,
+    /// the height of the body's axis its plane is tested at: the feet for a steep triangle, the
+    /// body's middle for a ceiling (FUN_00152d20 raises the point by half the height for a
+    /// triangle that isn't steep)
+    base: f32,
+}
+
+impl WallSection {
+    /// Triangle `t` between the heights lo and hi, if any of it is, for a body with its feet at
+    /// `feet` and its middle at `mid`.
+    fn of(t: &Tri, lo: f32, hi: f32, feet: f32, mid: f32) -> Option<WallSection> {
+        // (Sutherland-Hodgman: above lo, then below hi; up to five corners, each with the height
+        // it was cut at, if any: 1 lo, 2 hi)
+        let clip = |poly: &[(Vec3, u8)], y: f32, above: bool, tag: u8| -> ([(Vec3, u8); 6], usize) {
+            let inside = |p: Vec3| if above { p.y >= y } else { p.y <= y };
+            let (mut out, mut m) = ([(Vec3::ZERO, 0u8); 6], 0);
+            for k in 0..poly.len() {
+                let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+                if inside(a.0) && m < 6 {
+                    out[m] = a;
+                    m += 1;
+                }
+                if inside(a.0) != inside(b.0) && m < 6 {
+                    out[m] = (a.0 + (b.0 - a.0) * ((y - a.0.y) / (b.0.y - a.0.y)), tag);
+                    m += 1;
+                }
+            }
+            (out, m)
+        };
+        let (low, n) = clip(&t.v.map(|v| (v, 0)), lo, true, 1);
+        let (both, n) = clip(&low[..n], hi, false, 2);
+        if n == 0 {
+            return None;
+        }
+        let mut corners = [Vec2::ZERO; 6];
+        let mut tags = [0u8; 6];
+        let mut count = 0;
+        for &(p, tag) in &both[..n] {
+            let q = Vec2::new(p.x, p.z);
+            if count > 0 && corners[count - 1].distance_squared(q) <= 1e-10 {
+                tags[count - 1] |= tag;
+                continue;
+            }
+            corners[count] = q;
+            tags[count] = tag;
+            count += 1;
+        }
+        if count > 1 && corners[0].distance_squared(corners[count - 1]) <= 1e-10 {
+            tags[0] |= tags[count - 1];
+            count -= 1;
+        }
+        let cut = std::array::from_fn(|k| k < count && tags[k] & tags[(k + 1) % count] != 0);
+        let base = if t.two_sided || t.front.y > CEILING_NORMAL { feet } else { mid };
+        Some(WallSection { corners, count, cut, front: t.front, corner: t.v[0], two_sided: t.two_sided, base })
+    }
+
+    /// Whether a body at `at` meets the wall: from its front (FUN_00152d20 leaves out a triangle
+    /// whose plane, by the winding, has the body's point, `base`, behind it), more than
+    /// PLANE_MARGIN in front; or either way for a drawn triangle.
+    fn faces(&self, at: Vec2) -> bool {
+        self.two_sided || (Vec3::new(at.x, self.base, at.y) - self.corner).dot(self.front) > PLANE_MARGIN
+    }
+
+    /// Whether `p` is inside the section seen from above (a sliver never is).
+    fn contains(&self, p: Vec2) -> bool {
+        let c = &self.corners[..self.count];
+        if c.len() < 3 {
+            return false;
+        }
+        let area: f32 = (0..c.len()).map(|k| c[k].perp_dot(c[(k + 1) % c.len()])).sum();
+        if area.abs() < 1e-6 {
+            return false;
+        }
+        (0..c.len()).all(|k| (c[(k + 1) % c.len()] - c[k]).perp_dot(p - c[k]) * area.signum() >= 0.0)
+    }
+
+    /// The section's point nearest `p`, and whether that's a contact with the triangle's face
+    /// (`p` over the section, or nearest a cut edge between its ends) rather than with one of its
+    /// edges or corners (FUN_00150a10 tells the kinds apart by the contact point's distance from
+    /// the edges).
+    fn closest(&self, p: Vec2) -> (Vec2, bool) {
+        let c = &self.corners[..self.count];
+        if c.len() == 1 {
+            return (c[0], false);
+        }
+        if self.contains(p) {
+            return (p, true);
+        }
+        let mut best = (f32::MAX, c[0], false);
+        let edges = if c.len() == 2 { 1 } else { c.len() };
+        for k in 0..edges {
+            let (a, b) = (c[k], c[(k + 1) % c.len()]);
+            let q = closest_on_segment(p, a, b);
+            if p.distance_squared(q) < best.0 {
+                let inner = q.distance_squared(a) > 1e-8 && q.distance_squared(b) > 1e-8;
+                best = (p.distance_squared(q), q, self.cut[k] && inner);
+            }
+        }
+        (best.1, best.2)
+    }
+
+    /// The way a contact with the section pushes a body whose axis is at `p`, its nearest point
+    /// `q` on it (`closest`): a face contact along the triangle's normal across (FUN_00150a10
+    /// takes a steep face's contact normal across; for one met from either side, the side the
+    /// body's point, `base`, is on), an edge or corner contact away from it across. None for a
+    /// face lying flat (the game's bump on the head) or one facing away from the body: the twin
+    /// facing into a slope it's on, met where a bump in the ground has its feet in front of it.
+    fn normal(&self, p: Vec2, q: Vec2, face: bool) -> Vec2 {
+        let across = Vec2::new(self.front.x, self.front.z);
+        let across = if self.two_sided && (Vec3::new(p.x, self.base, p.y) - self.corner).dot(self.front) < 0.0 { -across } else { across };
+        let on = p.distance_squared(q) <= 1e-10;
+        if face || on {
+            let n = if across.length() > 0.05 { across.normalize() } else { Vec2::ZERO };
+            return if !on && (p - q).dot(n) < 0.0 { Vec2::ZERO } else { n };
+        }
+        (p - q).normalize()
+    }
+
+    /// How far along unit `u` a circle of radius `r` from `a` (clear of the section) goes before
+    /// it meets the section, if it does.
+    fn meets(&self, a: Vec2, u: Vec2, r: f32) -> Option<f32> {
+        let c = &self.corners[..self.count];
+        let edges = if c.len() <= 2 { 1 } else { c.len() };
+        (0..edges).filter_map(|k| circle_meets_segment(a, u, c[k], c[(k + 1) % c.len()], r)).reduce(f32::min)
+    }
+}
+
+/// The point of segment a..b nearest `p` (a point when they're the same).
+fn closest_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let d = b - a;
+    let l = d.length_squared();
+    if l < 1e-12 {
+        return a;
+    }
+    a + d * ((p - a).dot(d) / l).clamp(0.0, 1.0)
+}
+
+/// How far along unit `u` a circle of radius `r` from `a`, clear of segment e0..e1 (more than
+/// `r` from it), goes before it touches it: the first of its end points' circles and the band
+/// along it.
+fn circle_meets_segment(a: Vec2, u: Vec2, e0: Vec2, e1: Vec2, r: f32) -> Option<f32> {
+    let end = |c: Vec2| {
+        let m = a - c;
+        let (b, k) = (m.dot(u), m.length_squared() - r * r);
+        let disc = b * b - k;
+        (k > 0.0 && b < 0.0 && disc >= 0.0).then(|| -b - disc.sqrt())
+    };
+    let mut best = [end(e0), end(e1)].into_iter().flatten().reduce(f32::min);
+    let d = e1 - e0;
+    let l = d.length_squared();
+    if l > 1e-12 {
+        let n = Vec2::new(-d.y, d.x) / l.sqrt();
+        let (h, v) = ((a - e0).dot(n), u.dot(n));
+        let s = if h > r && v < 0.0 { Some((h - r) / -v) } else if h < -r && v > 0.0 { Some((-r - h) / v) } else { None };
+        if let Some(s) = s.filter(|&s| (0.0..=1.0).contains(&((a + u * s - e0).dot(d) / l))) {
+            best = Some(best.map_or(s, |b| b.min(s)));
+        }
+    }
+    best
+}
+
+/// Move `m` with its part into each of the walls `normals` (across, unit) taken out, as the
+/// game's response takes the move out of every plane it touches (FUN_00150f90 builds the
+/// system, FUN_00168950 solves it, FUN_00151170 adds the impulses along the normals: no
+/// friction). Projected in turn a few times; one still going into a wall (a corner it's pressed
+/// into) stops.
+fn slide_off(m: Vec2, normals: &[Vec2]) -> Vec2 {
+    let mut m = m;
+    for _ in 0..4 {
+        let mut changed = false;
+        for n in normals {
+            let into = m.dot(*n);
+            if into < 0.0 {
+                m -= *n * into;
+                changed = true;
+            }
+        }
+        if !changed {
+            return m;
+        }
+    }
+    if normals.iter().any(|n| m.dot(*n) < -1e-5) { Vec2::ZERO } else { m }
+}
+
+/// A body's triangles as a surface (#285): whether it closes (every edge of its faces, a twin
+/// pair counted once, used an even number of times: no edge left open), and which triangles are
+/// the second of a twin pair (the same corners, to the millimetre, wound the other way), by their
+/// place in `tris`. Ipion keeps a lone triangle as a flat ledge of its two sides, so a twinned
+/// face is one face of the surface (`BodyShape`).
+fn shell(tris: &[Tri]) -> (bool, Vec<usize>) {
+    type Key = bevy::math::IVec3;
+    let key = |v: Vec3| (v * 1000.0).round().as_ivec3();
+    let mut seen: HashMap<[Key; 3], usize> = HashMap::new();
+    let mut twins = vec![];
+    let mut edges: HashMap<(Key, Key), u32> = HashMap::new();
+    for (i, t) in tris.iter().enumerate() {
+        let k = t.v.map(key);
+        let first = (0..3).min_by_key(|&j| k[j].to_array()).unwrap_or(0);
+        let face = [k[first], k[(first + 1) % 3], k[(first + 2) % 3]];
+        // (its twin seen already, and not yet paired: this one is the second)
+        let back = [face[0], face[2], face[1]];
+        if seen.get(&back).is_some_and(|&n| n > 0) {
+            *seen.entry(back).or_default() -= 1;
+            twins.push(i);
+            continue;
+        }
+        *seen.entry(face).or_default() += 1;
+        for j in 0..3 {
+            let (a, b) = (face[j], face[(j + 1) % 3]);
+            *edges.entry(if a.to_array() < b.to_array() { (a, b) } else { (b, a) }).or_default() += 1;
+        }
+    }
+    (edges.values().all(|n| n % 2 == 0), twins)
 }
 
 /// How many rounds `convex_meet` takes before it calls the pair apart: FUN_00167c40 counts its
@@ -358,7 +738,7 @@ impl Johnson {
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
         let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
-                            breakable_of: HashMap::new(), flat: None, bodies: 0 };
+                            breakable_of: HashMap::new(), flat: None, bodies: 0, spans: vec![], solid_shell: vec![] };
         // breakable objects (with hit points, #263), numbered in level object order (and by name,
         // for their blockers)
         let mut by_name: HashMap<u32, u32> = HashMap::new();
@@ -403,6 +783,10 @@ impl Arena {
                 let first = a.tris.len();
                 for t in g.indices.chunks_exact(3) {
                     a.add([0, 1, 2].map(|k| Vec3::from(g.positions[t[k] as usize])), true, None, 0);
+                }
+                // (drawn triangles: met from either side)
+                for t in &mut a.tris[first..] {
+                    t.two_sided = true;
                 }
                 a.new_body(first);
             }
@@ -449,6 +833,7 @@ impl Arena {
                 t.liquid = liquid;
                 t.piece = piece.map(|b| (b, false));
                 t.object = Some(i as u32);
+                t.two_sided = !physics;
             }
             a.new_body(first);
             // what a breakable one leaves behind (its debris list's game objects: the missile
@@ -464,6 +849,7 @@ impl Arena {
                     }
                     for t in &mut a.tris[first..] {
                         t.piece = Some((b, true));
+                        t.two_sided = !physics;
                     }
                     a.new_body(first);
                 }
@@ -484,10 +870,12 @@ impl Arena {
             return;
         }
         // facing up: collision triangles' winding varies; floors are what's under the feet
-        let n = n.normalize();
-        let n = if n.y < 0.0 { -n } else { n };
+        // (`front` keeps the winding)
+        let front = n.normalize();
+        let n = if front.y < 0.0 { -front } else { front };
         let i = self.tris.len() as u32;
-        self.tris.push(Tri { v, n, terrain, material, door, liquid: None, piece: None, object: None, blocker: false, body: self.bodies });
+        self.tris.push(Tri { v, n, front, two_sided: false, duplicate: false, terrain, material, door, liquid: None, piece: None, object: None, blocker: false,
+                             body: self.bodies });
         let (lo, hi) = (v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]));
         let (c0, c1) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
         for x in c0.0..=c1.0 {
@@ -498,11 +886,19 @@ impl Arena {
     }
 
     /// The triangles added since `first` are one physics body (`Tri::body`): they keep the
-    /// number they were added with, and the next body takes the next.
+    /// number they were added with, and the next body takes the next. Its twins are marked
+    /// (`Tri::duplicate`) and whether it closes round a solid kept (`solid_shell`).
     fn new_body(&mut self, first: usize) {
         for t in &mut self.tris[first..] {
             t.body = self.bodies;
         }
+        let (closed, twins) = shell(&self.tris[first..]);
+        for i in twins {
+            self.tris[first + i].duplicate = true;
+        }
+        let moving = self.tris[first..].iter().any(|t| t.door.is_some() || t.liquid.is_some());
+        self.spans.push((first as u32, self.tris.len() as u32));
+        self.solid_shell.push(closed && !moving && self.tris.len() > first);
         self.bodies += 1;
     }
 
@@ -522,7 +918,7 @@ impl Arena {
     /// point (see `flat`).
     pub fn flat(ground: f32) -> Arena {
         Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
-                breakable_of: HashMap::new(), flat: Some(ground), bodies: 0 }
+                breakable_of: HashMap::new(), flat: Some(ground), bodies: 0, spans: vec![], solid_shell: vec![] }
     }
 
     /// Whether this is the flat test floor's arena (`Arena::flat`): what the flat floor has of its
@@ -535,7 +931,8 @@ impl Arena {
     fn duplicate(&self) -> Arena {
         let flags = |v: &[AtomicBool]| v.iter().map(|b| AtomicBool::new(b.load(Ordering::Relaxed))).collect();
         Arena { cells: self.cells.clone(), tris: self.tris.clone(), starts: self.starts.clone(), doors: flags(&self.doors), liquids: self.liquids.clone(),
-                broken: flags(&self.broken), dead: flags(&self.dead), breakable_of: self.breakable_of.clone(), flat: self.flat, bodies: self.bodies }
+                broken: flags(&self.broken), dead: flags(&self.dead), breakable_of: self.breakable_of.clone(), flat: self.flat, bodies: self.bodies,
+                spans: self.spans.clone(), solid_shell: self.solid_shell.clone() }
     }
 
     /// Puts a placed object's collision into the current map's arena (the test tools' scenery,
@@ -712,11 +1109,18 @@ impl Arena {
     }
 
     /// The highest floor at (x, z) no higher than `top` and its triangle (None: the flat floor).
+    /// A floor faces up by its winding (#285): the game meets a triangle only from its front
+    /// (FUN_00152d20), so one wound down (the underside of a rock that isn't twinned) holds no
+    /// one up, and of a twin pair the floor is the one facing up, which carries the material and
+    /// the slide flag (`ray_material`; with both, a rounding tie picked either: e40's canyon rim
+    /// at (-54.23, 84.80), its twin facing down 4 µm higher, material 0). A drawn triangle of a
+    /// level without collision data faces either way.
     fn floor_tri(&self, x: f32, z: f32, top: f32) -> Option<(f32, Option<&Tri>)> {
         let mut best: Option<(f32, Option<&Tri>)> = self.flat.filter(|&g| g <= top).map(|g| (g, None));
         for &i in self.near(x, z) {
             let t = &self.tris[i as usize];
-            if t.n.y < FLOOR_NORMAL || !self.solid(t) {
+            let up = if t.two_sided { t.n.y } else { t.front.y };
+            if up < FLOOR_NORMAL || !self.solid(t) {
                 continue;
             }
             if let Some(y) = Self::height_on(t, x, z).filter(|y| *y <= top) {
@@ -744,6 +1148,45 @@ impl Arena {
         out
     }
 
+    /// The body whose solid `at` is in, if any (#285): a body that closes round a solid
+    /// (`solid_shell`: a rock) has its surface crossed an odd number of times by the vertical line
+    /// below `at` and by the one above it (each face once, `Tri::duplicate`; two lines, so a
+    /// crossing counted twice on an edge two faces share makes them disagree, and that counts as
+    /// outside). Only solid faces count. The game doesn't ask this: its sweep never lets a body
+    /// in (FUN_00153810), and from inside a twinned rock its inner faces would hold it.
+    pub fn inside(&self, at: Vec3) -> Option<u32> {
+        let mut crossings: HashMap<u32, (u32, u32)> = HashMap::new();
+        for &i in self.near(at.x, at.z) {
+            let t = &self.tris[i as usize];
+            if t.duplicate || !self.solid_shell[t.body as usize] || !self.solid(t) {
+                continue;
+            }
+            if let Some(y) = Self::height_on(t, at.x, at.z) {
+                let c = crossings.entry(t.body).or_default();
+                if y < at.y { c.0 += 1 } else { c.1 += 1 }
+            }
+        }
+        crossings.into_iter().filter(|(_, (below, above))| below % 2 == 1 && above % 2 == 1).map(|(b, _)| b).min()
+    }
+
+    /// The placed object body `body` is part of (its index in `Level::objects`), if any: for the
+    /// log (BF_INSIDE_LOG).
+    pub fn body_object(&self, body: u32) -> Option<u32> {
+        let (first, end) = *self.spans.get(body as usize)?;
+        self.tris[first as usize..end as usize].iter().find_map(|t| t.object)
+    }
+
+    /// Every body's shape (`BodyShape`), for the survey (play.rs BF_FIND_BODIES, #285).
+    pub fn survey(&self) -> Vec<BodyShape> {
+        let mut by_body: HashMap<u32, Vec<&Tri>> = HashMap::new();
+        for t in &self.tris {
+            by_body.entry(t.body).or_default().push(t);
+        }
+        let mut out: Vec<BodyShape> = by_body.into_iter().map(|(body, tris)| BodyShape::of(body, &tris)).collect();
+        out.sort_by_key(|s| s.body);
+        out
+    }
+
     /// (triangles, of them terrain, slide-flagged, door leaves), for the log.
     pub fn stats(&self) -> (usize, usize, usize, usize) {
         let n = |f: &dyn Fn(&Tri) -> bool| self.tris.iter().filter(|t| f(t)).count();
@@ -756,16 +1199,10 @@ impl Arena {
     }
 
     /// Push a body (radius `radius`, standing from `feet` to `head`) out of the walls: spheres
-    /// at a few heights against the steep triangles near it. Returns the corrected (x, z).
+    /// at a few heights against the steep triangles near it. Returns the corrected (x, z). For
+    /// what isn't a character (a grenade, a ragdoll's bones) and a character's place before it's
+    /// in the world (the squad's spawn); a character's own moves are swept (`move_body`).
     pub fn push_out(&self, p: Vec2, radius: f32, feet: f32, head: f32, step: f32) -> Vec2 {
-        self.push_out_sliding(p, radius, feet, head, step, None)
-    }
-
-    /// `push_out` for a body sliding down a steep terrain face of normal `face` (#264): the
-    /// terrain's steep triangles that face the same way (their across normal within 90 degrees
-    /// of the face's) are what it slides on, not walls to push it off; others (the far side of a
-    /// gully, an object's wall) still push.
-    pub fn push_out_sliding(&self, p: Vec2, radius: f32, feet: f32, head: f32, step: f32, face: Option<Vec3>) -> Vec2 {
         let mut p = p;
         let lo = feet + step;
         let n = 3;
@@ -779,9 +1216,6 @@ impl Arena {
                         }
                         let t = &self.tris[i as usize];
                         if t.n.y.abs() >= FLOOR_NORMAL || !self.solid(t) {
-                            continue;
-                        }
-                        if face.is_some_and(|f| t.terrain && t.n.x * f.x + t.n.z * f.z > 0.0) {
                             continue;
                         }
                         let ty = (t.v[0].y.min(t.v[1].y).min(t.v[2].y), t.v[0].y.max(t.v[1].y).max(t.v[2].y));
@@ -803,6 +1237,206 @@ impl Arena {
             }
         }
         p
+    }
+
+    /// A character's move this frame, from `from` to `to` (x, z), its body a vertical cylinder of
+    /// `radius` from `step` over its `feet` to its `head`, as the game's sweep moves one
+    /// (FUN_00153810, #285); where it ends:
+    /// - the move swept against the walls (`WallSection`: what isn't a floor, by its winding,
+    ///   between the cylinder's heights), as FUN_00152f20 sweeps the whole body along it: it stops
+    ///   at the first one it goes into (SWEEP_ENTERS) before it passes through, however fast it
+    ///   goes, and what's left of the move has its part into the wall taken out (FUN_00150f90 /
+    ///   FUN_00168950 / FUN_00151170: no friction), up to SWEEP_PASSES times; a wall it already
+    ///   touches that the move goes into does the same at once (FUN_00152f20 makes no progress
+    ///   while one is met). A wall the body is behind where the move starts is left out, as the
+    ///   game leaves out a triangle whose plane has the body behind it (FUN_00152d20; the demo
+    ///   tells once, at the start: its move is level, with the feet where they were, so along a
+    ///   slope they'd fall behind the plane of the ground ahead); Ipion's twinned faces are met
+    ///   from both sides;
+    /// - then out of any wall it overlaps (a door shut on it), met from its front, as `push_out`
+    ///   did before (the game pushes nothing out: its sweep only stops a move), unless that would
+    ///   put it in a rock (`inside_span`).
+    ///
+    /// A body sliding down a steep terrain face of normal `face` (#264) isn't held or pushed by
+    /// the terrain's steep triangles that face the same way (their across normal within 90
+    /// degrees of the face's): they're what it slides on. The game's step is 0.4 m on the ground,
+    /// 0.1 m in the air (FUN_00152d20); the demo passes STEP_UP. A body already in a rock is
+    /// `out_of_rock`'s.
+    #[allow(clippy::too_many_arguments)]
+    pub fn move_body(&self, from: Vec2, to: Vec2, radius: f32, feet: f32, head: f32, step: f32, face: Option<Vec3>) -> Vec2 {
+        let lo = feet + step;
+        let walls: Vec<WallSection> = self.wall_sections(from, to, radius, feet, head, step, face).into_iter().filter(|w| w.faces(from)).collect();
+        let mut at = from;
+        let mut rest = to - from;
+        // (the wall it stopped at last pass)
+        let mut held: Option<Vec2> = None;
+        for _ in 0..SWEEP_PASSES {
+            if rest.length() < 1e-5 {
+                break;
+            }
+            let u = rest.normalize();
+            let mut touching: Vec<Vec2> = held.into_iter().filter(|n| u.dot(*n) < SWEEP_ENTERS).collect();
+            for w in &walls {
+                let (q, face) = w.closest(at);
+                if at.distance(q) < radius + SWEEP_TOUCH {
+                    let n = w.normal(at, q, face);
+                    if u.dot(n) < SWEEP_ENTERS {
+                        touching.push(n);
+                    }
+                }
+            }
+            if !touching.is_empty() {
+                rest = slide_off(rest, &touching);
+                if rest.length() < 1e-5 {
+                    break;
+                }
+            }
+            let len = rest.length();
+            let u = rest / len;
+            // the first wall the body meets on the way that the move goes into
+            let mut first: Option<(f32, Vec2)> = None;
+            for w in &walls {
+                if at.distance(w.closest(at).0) < radius {
+                    continue;
+                }
+                let Some(s) = w.meets(at, u, radius).filter(|&s| s <= len) else { continue };
+                let p = at + u * s;
+                let (q, face) = w.closest(p);
+                let n = w.normal(p, q, face);
+                if u.dot(n) < SWEEP_ENTERS && first.is_none_or(|f| s < f.0) {
+                    first = Some((s, n));
+                }
+            }
+            match first {
+                None => {
+                    at += rest;
+                    rest = Vec2::ZERO;
+                }
+                Some((s, n)) => {
+                    let go = (s - SWEEP_SKIN).max(0.0);
+                    at += u * go;
+                    rest = u * (len - go);
+                    held = Some(n);
+                }
+            }
+        }
+        // out of what it overlaps, from the front (unless that puts it in a rock)
+        let swept = at;
+        for _ in 0..2 {
+            for w in &walls {
+                let (q, face) = w.closest(at);
+                let d = at.distance(q);
+                if d < radius {
+                    at += w.normal(at, q, face) * (radius - d);
+                }
+            }
+        }
+        if at != swept && self.inside_span(at, lo, head).is_some() && self.inside_span(swept, lo, head).is_none() {
+            at = swept;
+        }
+        at
+    }
+
+    /// A body standing at `at` with its feet at `feet` whose span from `step` over them to its
+    /// `head` is in a rock's solid (`inside_span`: put there by a spawn, a test teleport, or a
+    /// fall's drop past a rock's steep flank, which isn't swept) taken out of it (`escape`), if it
+    /// is (#285).
+    pub fn out_of_rock(&self, at: Vec2, radius: f32, feet: f32, head: f32, step: f32) -> Option<Moved> {
+        let lo = feet + step;
+        self.inside_span(at, lo, head).map(|body| self.escape(at, body, radius, feet, lo, head))
+    }
+
+    /// The walls near a move from `from` to `to` (`move_body`) cut to the heights lo..hi
+    /// (`WallSection`): the solid triangles that aren't a floor by their winding (normal y under
+    /// FLOOR_NORMAL: the steep ones, and the ceilings, normal y at or under cos 130, which the game
+    /// meets with the whole cylinder, FUN_00152d20, and whose edge stops a move across,
+    /// FUN_00150a10: a rock's underside over the step is in the way), a drawn triangle of a level
+    /// without collision data steep either way up, and not the face a body slides down (`face`,
+    /// #264). The heights: from `step` over the `feet` to the `head`; what's under the step is the
+    /// floors' to step onto.
+    #[allow(clippy::too_many_arguments)]
+    fn wall_sections(&self, from: Vec2, to: Vec2, radius: f32, feet: f32, head: f32, step: f32, face: Option<Vec3>) -> Vec<WallSection> {
+        let (lo, mid) = (feet + step, (feet + head) * 0.5);
+        let reach = radius + SWEEP_TOUCH + 0.01;
+        let (a, b) = (from.min(to) - Vec2::splat(reach), from.max(to) + Vec2::splat(reach));
+        let (c0, c1) = (cell(a.x, a.y), cell(b.x, b.y));
+        let mut seen = HashSet::new();
+        let mut out = vec![];
+        for x in c0.0..=c1.0 {
+            for z in c0.1..=c1.1 {
+                for &i in self.cells.get(&(x, z)).map_or(&[][..], |v| v.as_slice()) {
+                    if !seen.insert(i) {
+                        continue;
+                    }
+                    let t = &self.tris[i as usize];
+                    let wall = if t.two_sided { t.n.y < FLOOR_NORMAL } else { t.front.y < FLOOR_NORMAL };
+                    if !wall || !self.solid(t) || face.is_some_and(|f| t.terrain && t.n.x * f.x + t.n.z * f.z > 0.0) {
+                        continue;
+                    }
+                    if let Some(w) = WallSection::of(t, lo, head, feet, mid) {
+                        out.push(w);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether a body standing at `at` with its feet at `feet` has no wall within `radius` of it
+    /// between `step` over its feet and its `head` (`move_body`'s walls, met from their front and
+    /// pushing it, `WallSection::normal`; within a millimetre counts as clear): where a step up
+    /// may raise it (#285). The game's sweep moves a body up a slope with its move (FUN_0012cd10
+    /// projects the move on the ground's normal before FUN_00153810), so a rock overhanging the
+    /// slope stops it; the demo raises the feet to the floor after the move (play.rs), and asks
+    /// this first.
+    pub fn clear(&self, at: Vec2, radius: f32, feet: f32, head: f32, step: f32) -> bool {
+        self.wall_sections(at, at, radius, feet, head, step, None).iter().all(|w| {
+            let (q, face) = w.closest(at);
+            !w.faces(at) || at.distance(q) >= radius - 1e-3 || w.normal(at, q, face) == Vec2::ZERO
+        })
+    }
+
+    /// The rock body (`inside`) a body standing at `at` has its span lo..hi in: tried at its
+    /// bottom, middle and top.
+    pub fn inside_span(&self, at: Vec2, lo: f32, hi: f32) -> Option<u32> {
+        [lo, (lo + hi) * 0.5, hi].into_iter().find_map(|y| self.inside(Vec3::new(at.x, y, at.y)))
+    }
+
+    /// A body at `at` whose span lo..hi is in rock `body` (`inside_span`) taken out to the nearest
+    /// place round it clear of it (#285: "pushed out to the nearest outside point"): of
+    /// ESCAPE_WAYS ways evenly round, the one where the rock's surface is nearest, measured at each
+    /// height of the span that's inside it and taken at the farthest of those, then its radius
+    /// and ESCAPE_CLEAR beyond. A place in another rock, or whose floor (the highest under its
+    /// head) is further from its feet than its head is, comes after one without. Its feet go on
+    /// that floor (`Moved::floor`). The demo's: the game never has a body inside (its sweep
+    /// doesn't let one in, FUN_00153810), and its twinned inner faces would hold one there.
+    pub fn escape(&self, at: Vec2, body: u32, radius: f32, feet: f32, lo: f32, hi: f32) -> Moved {
+        let heights: Vec<f32> = [lo, (lo + hi) * 0.5, hi].into_iter().filter(|&y| self.inside(Vec3::new(at.x, y, at.y)) == Some(body)).collect();
+        let (first, end) = self.spans[body as usize];
+        let faces: Vec<&Tri> = self.tris[first as usize..end as usize].iter().filter(|t| !t.duplicate && self.solid(t)).collect();
+        // (rank: in a rock or with no floor near: after; then the distance)
+        let mut best: Option<((bool, f32), Vec2, Option<f32>)> = None;
+        for k in 0..ESCAPE_WAYS {
+            let a = k as f32 * std::f32::consts::TAU / ESCAPE_WAYS as f32;
+            let d = Vec2::new(a.cos(), a.sin());
+            let out = heights.iter().map(|&y| {
+                let o = Vec3::new(at.x, y, at.y);
+                faces.iter().filter_map(|t| ray_triangle(&t.v, o, Vec3::new(d.x, 0.0, d.y)).filter(|&s| s > 1e-4)).fold(f32::MAX, f32::min)
+            }).fold(0.0, f32::max);
+            if out == f32::MAX {
+                continue;
+            }
+            let p = at + d * (out + radius + ESCAPE_CLEAR);
+            let floor = self.floor_below(p.x, p.y, hi).map(|f| f.0);
+            let stuck = self.inside_span(p, lo, hi).is_some() || floor.is_none_or(|g| (g - feet).abs() > hi - feet);
+            if best.is_none_or(|(r, _, _)| (stuck, out) < r) {
+                best = Some(((stuck, out), p, floor));
+            }
+        }
+        match best {
+            Some((_, p, floor)) => Moved { at: p, floor },
+            None => Moved { at, floor: Some(feet) },
+        }
     }
 
     /// Distance along a ray to the terrain or an object, if within `max`.
@@ -1108,4 +1742,162 @@ fn model_tris(game: &Game, arch: u32) -> Vec<([Vec3; 3], bool, u8)> {
 /// blocking while its door is open (an object that isn't a door has no door to open).
 fn leaf_part(p: &crate::bf::weapon::WeaponPart, moving: &HashMap<u32, crate::level_scene::Animated>) -> bool {
     p.slide_axis.is_some() || moving.contains_key(&p.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A box's twelve triangles from `lo` to `hi`, each wound to face out ((v1 - v0) x (v2 - v0)
+    /// away from its middle).
+    fn box_tris(lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
+        let c = |x: bool, y: bool, z: bool| Vec3::new(if x { hi.x } else { lo.x }, if y { hi.y } else { lo.y }, if z { hi.z } else { lo.z });
+        let quads = [
+            [c(false, false, false), c(false, true, false), c(false, true, true), c(false, false, true)],
+            [c(true, false, false), c(true, true, false), c(true, true, true), c(true, false, true)],
+            [c(false, false, false), c(true, false, false), c(true, false, true), c(false, false, true)],
+            [c(false, true, false), c(true, true, false), c(true, true, true), c(false, true, true)],
+            [c(false, false, false), c(true, false, false), c(true, true, false), c(false, true, false)],
+            [c(false, false, true), c(true, false, true), c(true, true, true), c(false, true, true)],
+        ];
+        let mid = (lo + hi) * 0.5;
+        let mut out = vec![];
+        for q in quads {
+            for t in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
+                let n = (t[1] - t[0]).cross(t[2] - t[0]);
+                let centre = (t[0] + t[1] + t[2]) / 3.0;
+                out.push(if n.dot(centre - mid) > 0.0 { t } else { [t[0], t[2], t[1]] });
+            }
+        }
+        out
+    }
+
+    /// The flat floor at 0 with one body of `tris` on it (twinned: each also wound the other way,
+    /// as Ipion's lone triangles come).
+    fn arena_with(tris: &[[Vec3; 3]], twinned: bool) -> Arena {
+        let mut a = Arena::flat(0.0);
+        for t in tris {
+            a.add(*t, false, None, 0);
+            if twinned {
+                a.add([t[0], t[2], t[1]], false, None, 0);
+            }
+        }
+        a.new_body(0);
+        a
+    }
+
+    /// A character's move on the flat floor: radius 0.4, 1.9 m tall, its wall test from 0.5 m up.
+    fn go(a: &Arena, from: Vec2, to: Vec2) -> Vec2 {
+        a.move_body(from, to, 0.4, 0.0, 1.9, 0.5, None)
+    }
+
+    /// #285: a 2 m rock (a twinned box) holds a body out however fast it comes at it: in one 5 m
+    /// move or in steps, it stops 0.4 m (its radius) short of the face; a move along the face
+    /// isn't held, and one at it slantwise slides along it.
+    #[test]
+    fn a_rock_holds_a_body_out() {
+        let a = arena_with(&box_tris(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)), true);
+        assert!(a.solid_shell[0]);
+        let m = go(&a, Vec2::new(-5.0, 0.1), Vec2::new(0.0, 0.1));
+        assert!((m.x - -1.4).abs() < 0.01 && (m.y - 0.1).abs() < 1e-4, "{m:?}");
+        let mut at = Vec2::new(-5.0, 0.3);
+        for _ in 0..20 {
+            at = go(&a, at, at + Vec2::new(0.6, 0.0));
+            assert!(at.x <= -1.39, "{at:?}");
+        }
+        let along = go(&a, Vec2::new(-1.41, -3.0), Vec2::new(-1.41, 3.0));
+        assert!(along.distance(Vec2::new(-1.41, 3.0)) < 1e-4, "{along:?}");
+        let slant = go(&a, Vec2::new(-3.0, -2.0), Vec2::new(0.0, 1.0));
+        assert!((slant.x - -1.4).abs() < 0.01 && slant.y > -0.5, "{slant:?}");
+    }
+
+    /// #285: a point inside the rock's solid is inside it (`inside`), one beside it or over it
+    /// isn't; a body put inside is taken out to the nearest side, past its radius, its feet on
+    /// the floor there; one outside is left alone.
+    #[test]
+    fn a_body_inside_a_rock_is_taken_out() {
+        let a = arena_with(&box_tris(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)), true);
+        assert_eq!(a.inside(Vec3::new(0.2, 0.7, 0.1)), Some(0));
+        assert_eq!(a.inside(Vec3::new(1.3, 0.7, 0.1)), None);
+        assert_eq!(a.inside(Vec3::new(0.2, 2.5, 0.1)), None);
+        let m = a.out_of_rock(Vec2::new(0.2, 0.1), 0.4, 0.0, 1.9, 0.5).expect("in the rock");
+        assert_eq!(m.floor, Some(0.0));
+        assert!((m.at.x - 1.42).abs() < 0.01 && (m.at.y - 0.1).abs() < 0.01, "{:?}", m.at);
+        assert!(a.inside_span(m.at, 0.5, 1.9).is_none());
+        assert_eq!(a.out_of_rock(Vec2::new(-3.0, 0.1), 0.4, 0.0, 1.9, 0.5), None);
+    }
+
+    /// #285: a lone triangle (not twinned) is met from its front only (FUN_00152d20): a wall
+    /// facing -x holds a body coming from -x and lets one through from behind. A box wound to
+    /// face out isn't stood on from inside (its bottom faces down), but is on its top.
+    #[test]
+    fn a_lone_face_is_met_from_its_front() {
+        let wall = [[Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 3.0, 2.0)],
+                    [Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 3.0, 2.0), Vec3::new(0.0, 3.0, -2.0)]];
+        let a = arena_with(&wall, false);
+        assert!(a.tris.iter().all(|t| t.front.x < -0.99));
+        assert!((go(&a, Vec2::new(-3.0, 0.0), Vec2::new(3.0, 0.0)).x - -0.4).abs() < 0.01);
+        assert!(go(&a, Vec2::new(3.0, 0.0), Vec2::new(-3.0, 0.0)).distance(Vec2::new(-3.0, 0.0)) < 1e-4);
+        let b = arena_with(&box_tris(Vec3::new(-1.0, 0.5, -1.0), Vec3::new(1.0, 1.0, 1.0)), false);
+        assert_eq!(b.floor_below(0.2, 0.1, 0.8).map(|f| f.0), Some(0.0));
+        assert_eq!(b.floor_below(0.2, 0.1, 1.2).map(|f| f.0), Some(1.0));
+    }
+
+    /// A rock under the step (0.5 m over the feet here) isn't a wall: the floor's to step up onto
+    /// it. The underside of an overhang is a wall to a body under it: one wound down 57 degrees
+    /// from flat (its normal's y between cos 130 and cos 65: steep) stops a body walking at it
+    /// where it reaches the body's height, 0.6 m out from its foot; so does a flat one (a
+    /// ceiling) 1.2 m up.
+    #[test]
+    fn low_rocks_and_overhangs() {
+        let a = arena_with(&box_tris(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 0.3, 1.0)), true);
+        assert!(go(&a, Vec2::new(-3.0, 0.0), Vec2::new(0.0, 0.0)).distance(Vec2::ZERO) < 1e-4);
+        // (from x 0 at 1 m up to x -1 at 2.52 m up, over the whole of z -2..2)
+        let (p, q, r, s) = (Vec3::new(0.0, 1.0, -2.0), Vec3::new(-1.0, 2.518, -2.0), Vec3::new(-1.0, 2.518, 2.0), Vec3::new(0.0, 1.0, 2.0));
+        let b = arena_with(&[[p, r, q], [p, s, r]], false);
+        let n = b.tris[0].front;
+        assert!(n.y < -FLOOR_NORMAL && n.y > CEILING_NORMAL && n.x < 0.0, "{n:?}");
+        let stop = go(&b, Vec2::new(-3.0, 0.0), Vec2::new(0.5, 0.0)).x;
+        assert!((stop - (-0.9 / 1.518 - 0.4)).abs() < 0.01, "{stop}");
+        // (a flat underside alone, facing down, x 0..2 at 1.2 m)
+        let (p, q, r, s) = (Vec3::new(0.0, 1.2, -2.0), Vec3::new(2.0, 1.2, -2.0), Vec3::new(2.0, 1.2, 2.0), Vec3::new(0.0, 1.2, 2.0));
+        let ceiling = arena_with(&[[p, q, r], [p, r, s]], false);
+        assert!(ceiling.tris.iter().all(|t| t.front.y < -0.99));
+        assert!((go(&ceiling, Vec2::new(-3.0, 0.0), Vec2::new(1.0, 0.0)).x - -0.4).abs() < 0.01);
+    }
+
+    /// A body standing on a 55-degree slope (twinned, as the terrain comes) walks on up it: the
+    /// twin facing down into the ground has the feet on its plane, and isn't met (PLANE_MARGIN).
+    /// Nor where the slope eases to 53 degrees ahead, whose twin facing into the ground (steep by
+    /// the game's split) has the feet 5 cm in front of its plane: met at its face, it faces away
+    /// from the body (`WallSection::normal`).
+    #[test]
+    fn up_a_twinned_slope() {
+        let k = 55f32.to_radians().tan();
+        let slope = [[Vec3::new(0.0, 0.0, -2.0), Vec3::new(3.0, 3.0 * k, 2.0), Vec3::new(3.0, 3.0 * k, -2.0)],
+                     [Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 0.0, 2.0), Vec3::new(3.0, 3.0 * k, 2.0)]];
+        let a = arena_with(&slope, true);
+        let feet = 0.5 * k;
+        let to = a.move_body(Vec2::new(0.5, 0.0), Vec2::new(0.8, 0.0), 0.4, feet, feet + 1.9, 0.5, None);
+        assert!(to.distance(Vec2::new(0.8, 0.0)) < 1e-4, "{to:?}");
+        // (60 degrees to x 1, then 53)
+        let (k1, k2) = (60f32.to_radians().tan(), 53f32.to_radians().tan());
+        let (p, q, r) = (Vec3::new(0.0, 0.0, -2.0), Vec3::new(1.0, k1, -2.0), Vec3::new(3.0, k1 + 2.0 * k2, -2.0));
+        let z = Vec3::Z * 4.0;
+        let eases = arena_with(&[[p, q + z, q], [p, p + z, q + z], [q, r + z, r], [q, q + z, r + z]], true);
+        let feet = 0.8 * k1;
+        assert!(eases.tris.iter().any(|t| t.front.y < -0.6 && (Vec3::new(0.8, feet, 0.0) - t.v[0]).dot(t.front) > PLANE_MARGIN));
+        let to = eases.move_body(Vec2::new(0.8, 0.0), Vec2::new(1.0, 0.0), 0.4, feet, feet + 1.9, 0.5, None);
+        assert!(to.distance(Vec2::new(1.0, 0.0)) < 1e-4, "{to:?}");
+    }
+
+    /// The response (FUN_00150f90 / FUN_00168950 / FUN_00151170): the part into a wall is taken
+    /// out, the rest kept; pressed into a corner, nothing's left.
+    #[test]
+    fn slide_off_walls() {
+        let m = slide_off(Vec2::new(1.0, 1.0), &[Vec2::new(-1.0, 0.0)]);
+        assert!(m.distance(Vec2::new(0.0, 1.0)) < 1e-6);
+        assert_eq!(slide_off(Vec2::new(1.0, 1.0), &[Vec2::new(-1.0, 0.0), Vec2::new(0.0, -1.0)]), Vec2::ZERO);
+        assert!(slide_off(Vec2::new(-1.0, 1.0), &[Vec2::new(-1.0, 0.0)]).distance(Vec2::new(-1.0, 1.0)) < 1e-6);
+    }
 }

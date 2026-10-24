@@ -264,6 +264,25 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
                 }
                 std::process::exit(0);
             }
+            // test hook: BF_FIND_BODIES=1 lists the collision bodies of the placed objects and the
+            // blockers (the terrain's in one line each): their size and shape (#285), then exits
+            if std::env::var("BF_FIND_BODIES").is_ok() {
+                for s in a.survey() {
+                    let size = s.hi - s.lo;
+                    let what = match (s.terrain, s.blocker, s.object) {
+                        (true, _, _) => "terrain".to_string(),
+                        (_, true, o) => format!("blocker{}", o.map_or(String::new(), |o| format!(" of object {o}"))),
+                        (_, _, Some(o)) => format!("object {o} type h_{:08x} arch h_{:08x}", l.objects[o as usize].kind, l.objects[o as usize].archetype.unwrap_or(0)),
+                        _ => "remains".to_string(),
+                    };
+                    let shape = if s.open_edges == 0 { "closed" } else { "open" };
+                    let what = format!("{what}{}{}", if s.liquid { " (liquid)" } else { "" }, if s.door { " (door)" } else { "" });
+                    println!("body {} {what}: {} triangles, {:.2} .. {:.2} ({:.1} x {:.1} x {:.1} m), {shape} ({} open edges, {} shared by 3+, {} wound against their neighbour), {} twinned, volume {:.2} m3{}",
+                             s.body, s.triangles, s.lo, s.hi, size.x, size.y, size.z, s.open_edges, s.shared_edges, s.flipped_edges, s.twins, s.volume,
+                             if s.convex { ", convex" } else { "" });
+                }
+                std::process::exit(0);
+            }
             let (n, terrain, slide, doors) = a.stats();
             println!("map {map}: collision {n} triangles ({terrain} terrain, {slide} slide-flagged, {doors} door leaves; {} blockers), {} start points",
                      l.blockers.len(), a.starts.len());
@@ -3797,6 +3816,17 @@ fn autopilot(player: &mut Player) -> bool {
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
             player.crouch_wanted = player.sim_time >= at;
         }
+        // (#285) BF_TEST_DODGE=<s>[,<s>...]: the dodge pressed at those times (to the side the move
+        // goes, or to the right standing: `step_player`); BF_TEST_DIVE=<s>: a dive at that time
+        // toward the goal, as from a grenade landing behind (`Player::dive_from`). Each once, on
+        // the frame its time falls in (the capture's fixed step, as BF_AUTOPILOT's presses)
+        let (t, was) = (player.sim_time, player.sim_time - capture_step());
+        let due = |key: &str| std::env::var(key).ok().is_some_and(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).any(|s| was < s && t >= s));
+        player.dodge_pressed = due("BF_TEST_DODGE");
+        if due("BF_TEST_DIVE") {
+            let away = Vec3::new(g[2] - player.position.x, 0.0, g[3] - player.position.z).normalize_or(Vec3::NEG_Z);
+            player.dive_from = Some(player.position - away);
+        }
         // (BF_TEST_THROW, the grenade button held, and BF_TEST_NEXT_GRENADE, Tab taps, are the item
         // controls' hooks: play_itembox.rs `item_input`)
         return true;
@@ -4300,6 +4330,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     if let Some(a) = world::arena() {
         for (i, u) in units.iter_mut().enumerate() {
             let air = u.action.airborne();
+            // (where they stood: a step into a rock goes back there, below)
+            let y0 = u.position.y;
             let feet = u.position.y + GROUND + u.height.max(0.0);
             u.sliding -= dt;
             // a character the AI steers (a follower, an enemy, a cutscene's walk; not one a fall, a
@@ -4338,6 +4370,16 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 u.position.z = u.prev_xz.y;
                 continue;
             };
+            // a step up that would raise the body into a wall (a rock overhanging the slope it's
+            // going up) isn't taken: back where they were (#285, `Arena::clear`). The game's sweep
+            // moves the body up the slope with its move, and the overhang stops it (FUN_0012cd10,
+            // FUN_00153810); here the move is swept level and the feet raised after
+            if !steep && !air && u.knock.is_none() && g > feet + 1e-3
+                && !a.clear(Vec2::new(u.position.x, u.position.z), BODY_RADIUS, g, g + BODY_HEIGHT, STEP_UP) {
+                u.position.x = u.prev_xz.x;
+                u.position.z = u.prev_xz.y;
+                continue;
+            }
             // (on their feet on a floor: off any face, whatever ended the fall)
             if !steep && !air && u.face.take().is_some() && std::env::var("BF_SLIDE_LOG").is_ok() {
                 println!("t {:.2}: {} off the face on its feet at {:.2}", u.sim_time, unit_name(u), u.position);
@@ -4390,7 +4432,17 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     }
                     u.fall_from = g;
                 }
-                slide(u, &a, g, n, material, dt);
+                slide(u, &a, g, y0 + GROUND, n, material, dt);
+            }
+            // a body on its feet that the floor has carried into a rock's solid (#285: a floor
+            // under the step that a level move took it onto, where the rock's surface rises above
+            // the step within the move; the game's sweep moves the body up the floor and the rock
+            // holds it, FUN_00153810) goes back where it stood
+            let feet = u.position.y + GROUND + u.height.max(0.0);
+            if !u.action.airborne() && u.knock.is_none()
+                && a.inside_span(Vec2::new(u.position.x, u.position.z), feet + STEP_UP, feet + BODY_HEIGHT).is_some()
+                && a.inside_span(u.prev_xz, y0 + GROUND + STEP_UP, y0 + GROUND + BODY_HEIGHT).is_none() {
+                u.position = Vec3::new(u.prev_xz.x, y0, u.prev_xz.y);
             }
             // in a liquid: wading is harmless; going under a harmful one (lava, toxic) kills
             let feet = u.position.y + GROUND + u.height.max(0.0);
@@ -4421,6 +4473,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     println!("{} in liquid {} {deep:.2} m deep: {} hp", unit_name(u), liquid.kind, u.health);
                 }
             }
+            inside_log(&a, u);
             u.prev_xz = Vec2::new(u.position.x, u.position.z);
         }
     }
@@ -4428,6 +4481,22 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if let Some(tr) = u.loaded.as_ref().and_then(|l| transforms.get_mut(l.root).ok()).as_mut() {
             tr.translation = u.position + Vec3::Y * (u.height + u.lift_now);
         }
+    }
+}
+
+/// BF_INSIDE_LOG=1 (#285): each frame a character ends with its body in a rock's solid
+/// (`Arena::inside` at the bottom, middle and top of what its wall test spans: STEP_UP over the
+/// feet to its head), which body and placed object, and where.
+fn inside_log(a: &world::Arena, u: &Player) {
+    if std::env::var("BF_INSIDE_LOG").is_err() {
+        return;
+    }
+    let feet = u.position.y + GROUND + u.height.max(0.0);
+    let (lo, hi) = (feet + STEP_UP, feet + BODY_HEIGHT);
+    let found = [lo, (lo + hi) * 0.5, hi].into_iter().find_map(|y| a.inside(Vec3::new(u.position.x, y, u.position.z)).map(|b| (b, y)));
+    if let Some((body, y)) = found {
+        println!("t {:.2}: {} inside body {body} (object {:?}) at {:.2}, {:.2} m over its feet", u.sim_time, unit_name(u),
+                 a.body_object(body), Vec3::new(u.position.x, feet, u.position.z), y - feet);
     }
 }
 
@@ -4588,7 +4657,9 @@ const GROUND_STEP: f32 = 0.12;
 /// face, nothing) is where they stop this frame, so the ground loop starts their fall or slide
 /// from there. With one test a frame, a 15 fps frame's 0.5 m sprint stepped over the floor
 /// patches of e40's cliff tops that a 60 fps one walked down, and the take-off (and so the fall's
-/// damage) hung on the frame rate (#264). Their feet's height where they stop.
+/// damage) hung on the frame rate (#264). A floor that would raise them into a wall (a rock's
+/// overhang, `Arena::clear`, #285) stops them at the step before it. Their feet's height where
+/// they stop.
 fn ground_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
     let from = u.prev_xz;
     let to = Vec2::new(u.position.x, u.position.z);
@@ -4603,6 +4674,14 @@ fn ground_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
         let floor = a.floor_at(p.x, p.y, feet + STEP_UP)
             .or_else(|| a.floor_around(p.x, p.y, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, feet + STEP_UP));
         match floor {
+            // (a step up into a wall, under a rock's overhang, isn't taken: they stop before it,
+            // #285, `Arena::clear`)
+            Some((g, _, _)) if g > feet + 1e-3 && !a.clear(p, BODY_RADIUS, g, g + BODY_HEIGHT, STEP_UP) => {
+                let back = from.lerp(to, (k - 1) as f32 / steps as f32);
+                u.position.x = back.x;
+                u.position.z = back.y;
+                break;
+            }
             Some((g, _, _)) if feet - g <= STEP_UP => feet = g,
             _ => {
                 u.position.x = p.x;
@@ -4651,8 +4730,10 @@ const FACE_TOUCH: f32 = 0.02;
 
 /// The game's slide on the ground under `u` (normal `n`, collision `material`), see SLIDE_COS.
 /// Moves `u` while sliding (its own movement this frame replaced, or blended back in as the
-/// slide fades) and keeps the slide clip on.
-fn slide(u: &mut Player, a: &world::Arena, g: f32, n: Vec3, material: u8, dt: f32) {
+/// slide fades) and keeps the slide clip on. `g` is the ground where its own move took it, and
+/// `start` the feet's height where the slide's move starts (`prev_xz`, where the last frame
+/// stood it): its sweep's (#285), as the collision's sweep of the own move is.
+fn slide(u: &mut Player, a: &world::Arena, g: f32, start: f32, n: Vec3, material: u8, dt: f32) {
     let here = Vec2::new(u.position.x, u.position.z);
     let own = here - u.prev_xz;
     let moving = own.length() > 1e-3 && own.length() < 1.0;     // (not a spawn's jump)
@@ -4700,9 +4781,15 @@ fn slide(u: &mut Player, a: &world::Arena, g: f32, n: Vec3, material: u8, dt: f3
     };
     // blocked: the game ends the slide when the sweep achieves under a tenth of the move asked
     // (FUN_0012cd10 -> FUN_0012bf40): a wall, the edge of the map, or flat slide-flagged
-    // ground, where the slide only presses down into the floor
+    // ground, where the slide only presses down into the floor. The slide's move swept as the
+    // character's own is (`Arena::move_body`, #285: not into a rock at the canyon's foot), from
+    // the feet where it starts (from the ground the own move reached, down a slope, the slope's
+    // twin facing into the ground would have the feet in front of it and push them back up)
+    let asked = to - u.prev_xz;
+    let to = a.move_body(u.prev_xz, to, BODY_RADIUS, start, start + BODY_HEIGHT, STEP_UP, None);
+    let kept = if asked.length() > 1e-5 { ((to - u.prev_xz).length() / asked.length()).min(1.0) } else { 1.0 };
     let floor = a.floor_at(to.x, to.y, g + STEP_UP);
-    let across = Vec2::new(mv.x, mv.z).length();
+    let across = Vec2::new(mv.x, mv.z).length() * kept;
     match floor {
         Some((g2, _, _)) if across >= SLIDE_BLOCKED * mv.length() => u.position = Vec3::new(to.x, g2 - GROUND, to.y),
         _ => {
@@ -5438,8 +5525,17 @@ fn hinge_offset(pos: &[Vec3], a: usize, b: usize, c: usize) -> Vec3 {
 }
 
 /// Collision: characters are circles (BODY_RADIUS) on the ground: pushed out of the pillars and
-/// apart from each other (the player - units[0] when `player_first` - gives way less).
+/// apart from each other (the player - units[0] when `player_first` - gives way less). On a map
+/// one left in a rock is taken out of it first (`out_of_rocks`), then each one's move is swept
+/// from where the last frame left it (`prev_xz`) against the walls (`walls`), and so is each
+/// push apart after it, so nothing takes a body through a wall or into a rock (#285).
 fn collide(units: &mut [&mut Player], player_first: bool) {
+    let arena = world::arena();
+    if let Some(a) = arena.as_deref() {
+        out_of_rocks(a, units);
+    }
+    // (where each one's sweep starts: last frame's place, then where the last sweep left it)
+    let mut from: Vec<Vec2> = units.iter().map(|u| u.prev_xz).collect();
     for _ in 0..2 {
         for u in units.iter_mut() {
             for c in pillars() {
@@ -5454,19 +5550,8 @@ fn collide(units: &mut [&mut Player], player_first: bool) {
                 }
             }
         }
-        if let Some(a) = world::arena() {
-            for (i, u) in units.iter_mut().enumerate() {
-                let feet = u.position.y + GROUND + u.height;
-                // (not off the steep face they're on or stepping onto, which they slide down:
-                // #264, `slide_on_face`; for the player or one in the air: one the AI steers
-                // keeps to floors, and the face stays a wall that turns it along the slope)
-                let (x, z) = (u.position.x, u.position.z);
-                let steps_on = (player_first && i == 0) || u.action.airborne();
-                let face = u.face.or_else(|| steps_on.then(|| a.floor_at(x, z, feet + STEP_UP).is_none().then(|| a.slope_below(x, z, feet + STEP_UP)).flatten()).flatten().map(|s| s.1));
-                let q = a.push_out_sliding(Vec2::new(x, z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, face);
-                u.position.x = q.x;
-                u.position.z = q.y;
-            }
+        if let Some(a) = arena.as_deref() {
+            walls(a, units, &mut from, player_first);
         }
         for i in 0..units.len() {
             let (a, b) = units.split_at_mut(i + 1);
@@ -5482,6 +5567,69 @@ fn collide(units: &mut [&mut Player], player_first: bool) {
                     v.position -= Vec3::new(dir.x, 0.0, dir.y) * push * (1.0 - share);
                 }
             }
+        }
+    }
+    // (the last push apart swept too)
+    if let Some(a) = arena.as_deref() {
+        walls(a, units, &mut from, player_first);
+    }
+}
+
+/// Each of `units` moved from `from` (its own) to where it is now, swept against the walls
+/// (`Arena::move_body`, #285: the game's sweep, FUN_00153810, stops a move before it passes
+/// through a face, so a sprint, a dodge, a dive or a knock can't carry a body into a rock). Not
+/// off the steep face they're on or stepping onto, which they slide down (#264, `slide_on_face`;
+/// for the player or one in the air: one the AI steers keeps to floors, and the face stays a wall
+/// that turns it along the slope). One in the air whose move across would end in a rock's solid
+/// (into a rock's slope, which isn't a wall, rising over its feet faster than it falls) stays
+/// where it was across and comes down on the slope, where the game's sweep takes it along it; one
+/// on its feet is the ground loop's, which may yet stand it on the rock. (The fall's drop isn't
+/// swept: one that drops past a rock's steep flank into it is taken out at the start of the
+/// collision, `out_of_rocks`, before it's drawn.) One out of the world (`Player::absent`) stays
+/// where it is.
+fn walls(a: &world::Arena, units: &mut [&mut Player], from: &mut [Vec2], player_first: bool) {
+    for (i, u) in units.iter_mut().enumerate() {
+        if u.absent {
+            continue;
+        }
+        let feet = u.position.y + GROUND + u.height;
+        let (x, z) = (u.position.x, u.position.z);
+        let steps_on = (player_first && i == 0) || u.action.airborne();
+        let face = u.face.or_else(|| steps_on.then(|| a.floor_at(x, z, feet + STEP_UP).is_none().then(|| a.slope_below(x, z, feet + STEP_UP)).flatten()).flatten().map(|s| s.1));
+        let mut at = a.move_body(from[i], Vec2::new(x, z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, face);
+        if u.action.airborne() && a.inside_span(at, feet + STEP_UP, feet + BODY_HEIGHT).is_some()
+            && a.inside_span(from[i], feet + STEP_UP, feet + BODY_HEIGHT).is_none() {
+            at = from[i];
+        }
+        u.position.x = at.x;
+        u.position.z = at.y;
+        from[i] = at;
+    }
+}
+
+/// Each of `units` in a rock's solid where the last frame left it (`Arena::out_of_rock`, #285:
+/// put there by a spawn or a test teleport, or by this frame's fall dropping it past a rock's
+/// steep flank, which isn't swept) is taken out to the nearest place clear of it, its feet on the
+/// floor there unless it's in the air, and its move this frame is over (`prev_xz` there too: the
+/// ground loop follows none). One out of the world (`Player::absent`) stays where it is.
+/// BF_INSIDE_LOG logs it.
+fn out_of_rocks(a: &world::Arena, units: &mut [&mut Player]) {
+    for u in units.iter_mut() {
+        if u.absent {
+            continue;
+        }
+        let feet = u.position.y + GROUND + u.height;
+        let Some(out) = a.out_of_rock(u.prev_xz, BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP) else { continue };
+        if std::env::var("BF_INSIDE_LOG").is_ok() {
+            println!("t {:.2}: {} taken out of a rock from {:.2} to {:.2} (feet {feet:.2}, the floor there {:.2?})", u.sim_time, unit_name(u),
+                     u.prev_xz, out.at, out.floor);
+        }
+        u.position.x = out.at.x;
+        u.position.z = out.at.y;
+        u.prev_xz = out.at;
+        if let Some(g) = out.floor.filter(|_| !u.action.airborne()) {
+            u.position.y = g - GROUND;
+            u.height = 0.0;
         }
     }
 }

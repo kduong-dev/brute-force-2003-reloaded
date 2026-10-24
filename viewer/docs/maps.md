@@ -7,7 +7,9 @@ given, e.g. a roof; with no floor below it, on the steep face there if there's o
 that time instead: #35 take08's dash after standing 4 s, skills.md), or stands still when both
 points are the same;
 `BF_FIND_STEEP=1` lists slide surfaces steeper than 50° and ledges with a drop of more than 6 m,
-then exits; `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` prints particle emission;
+then exits; `BF_FIND_BODIES=1` lists the collision bodies (size, closed or open, twinned) and
+exits; `BF_INSIDE_LOG=1` prints a character in a rock and one taken out (#285);
+`BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` prints particle emission;
 `BF_NO_IDLE_FX=1` leaves out the power-ups' effects; `BF_NO_PLACED_FX=1` the level's placed
 effect objects, `BF_PLACED_FX_VARIANTS=1` starts the ones held out, `BF_LEVEL_DUMP=1` lists
 them):
@@ -25,8 +27,9 @@ them):
     The terrain blocks, the 23 invisible blockers and every placed object's parts each name
     theirs. Door leaves have their own and stop blocking while open.
   * Material: every triangle carries one, a world-material id plus a slide flag.
-  * Standing: characters stand on surfaces up to 65° (the game's ground limit) within a 0.5 m
-    step; steeper surfaces are walls.
+  * Standing: characters stand on surfaces up to 65° (the game's ground limit), facing up by
+    their winding, within a 0.5 m step; steeper surfaces are walls (#285: so is a surface facing
+    down, under the body).
   * Steep ground with no floor under it (#264; the code: todo/264-steep-slopes/answer.md). The
     terrain is a height field, so a pit's wall or a cliff face steeper than 65° is still the
     ground where there's no floor below it (`Arena::slope_below`: terrain only, not an upright
@@ -104,6 +107,104 @@ them):
         `BF_SCRIPT=m09_a_startup,0`: no squad member falls. The NPC ramp drives on sdm_e34
         (`BF_TEST_NPC=0.5,shrike soldier@dm,enemy,dummy,<x>,<z>`, `BF_TEST_NPC_MOTION=1.0,1,run,..`)
         go as on main; e34's followers reach Tex again.
+  * Rocks and boulders (#285; the code: FUN_00153810's sweep, [code-map.md](code-map.md)
+    "Characters and motion"). Before #285 a character could run into a boulder and not get out.
+    * The rocks: placed scenery models (game-objects; `BF_FIND_BODIES=1` lists every body of a
+      map and exits), each a closed shell of 330-660 triangles (h_e729625c, h_0a4ac769,
+      h_05736b8b, h_e117fe28, ...; down to 40 for the small h_09a6856d), not convex hulls. Like
+      nearly everything in the data (all the terrain, every blocker, most placed objects) their
+      triangles come twinned: each also wound the other way, as Ipion keeps a lone triangle as a
+      flat ledge of its two sides. So a rock's faces block from both sides. The terrain is a height
+      field with no rocks of its own; there are no physics blocks among them.
+    * Why a body got in: the wall test pushed the body's spheres out from the nearest point of
+      each steep triangle where the move ended. A move that carried the body's middle past a face
+      in one frame (a sprint, a dive, a knock: more than its 0.4 m radius at 15 fps) left it
+      behind the face, where the push sent it further in; inside, the inner faces held it, and the
+      twins of the rock's underside facing up into it were floors to stand on. A thin wall went
+      the same way: sprinting slantwise at sdm_e34's barracks
+      (`BF_TEST_GOTO=-70,-12,-90,8 BF_TEST_SPRINT=1.0`) took Tex through its wall into the
+      building at (-75, -8).
+    * Which (before, with `BF_INSIDE_LOG=1`: frames the body ended inside): sdm_e34's boulder
+      h_e729625c at (0.1, 69.5) let Tex in sprinting (trapped from 1.7 s), diving (5 frames) and
+      knocked into it (trapped); e34's h_09a6856d at (-59.9, 34.2) sprinting (trapped); the
+      tutorial's h_e729625c at (54.0, 16.6) sprinting and diving, and its h_0a4ac769 at (56.7, 5.1)
+      sprinting (trapped). A run (5 m/s) didn't get in, nor did a dodge. e40's low boulders
+      (h_034df7ff, h_142e34fd, h_0f18f5e6) are walked onto, before and after.
+    * **Swept, as the game does it.** The game moves a character's body (a vertical cylinder)
+      along its move and stops it before it passes into a face: nothing lets it in, and nothing
+      pushes it out (FUN_00153810, FUN_00152f20, FUN_00152d20). Now a character's move each frame
+      is swept from where the last frame left it (`Arena::move_body`): a circle of BODY_RADIUS
+      against each wall's part between STEP_UP over the feet and the head, seen from above. It
+      stops at the first wall the move goes into (its direction into the contact under -0.01),
+      however far the move goes, and the rest of the move slides along it (its part into the
+      wall taken out, no friction: FUN_00150f90 / FUN_00168950 / FUN_00151170), up to 3 times
+      (the game's passes). Each push of the squad apart is swept too, and a slide's move, at the
+      height of the feet where it starts. What's left overlapping a wall after (a door shut on a
+      body) is pushed out from the front, as before, unless that puts the body in a rock. One in
+      the air whose move across would end in a rock's solid (into a rock's slope, which isn't a
+      wall, rising over its feet faster than it falls) stays where it was across and comes down on
+      the slope.
+    * **Walls by their winding.** A triangle is met from its front only (the game leaves out one
+      whose plane has the body's point behind it: the feet for a steep triangle, the middle for
+      others), its front by the winding ((v1 - v0) x (v2 - v0), FUN_001516c0). A contact with a
+      wall's face pushes along the face's normal across, as the game's does (FUN_00150a10), and
+      one with its edge or corner away from it; the demo asks for the body's point to be 1 cm in
+      front, and leaves out a face contact whose normal faces away from the body, so the twin of
+      a slope facing into the ground never holds a body walking up it (a bump ahead can put the
+      feet in front of it). Twinned faces block both ways as before; a lone one (a few small hulls:
+      sdm_e34's h_fc2033e6 and h_04c527a0, e34's h_f809f8de and h_fbad6fba) only from its front. A
+      wall is any triangle that isn't a floor by its winding: a steep face, and the underside of
+      an overhang (a ceiling, normal y at or under cos 130), which the game meets with the whole
+      cylinder. A floor faces up by its winding, so a lone hull's underside holds no one, and the
+      floor under the feet is always the twin facing up, which carries the material and the slide
+      flag (`Arena::ray_material`); before, both twins were floors and a rounding tie picked
+      either: on e40's canyon rim at (-54.23, 84.80) the twin facing down (material 0) came out
+      4 µm higher, and the slide flag was missed on that frame.
+    * **Climbing onto a rock.** The game's sweep moves the body up a slope with its move, so a
+      rock overhanging the slope stops it. The demo moves level and raises the feet to the floor
+      after, so a step up that would raise the body into a wall isn't taken (`Arena::clear`, in
+      `ground_walk` and the ground loop), and a body on its feet that the floor carried into a
+      rock's solid (a dome rising faster than the step along one move) goes back where it stood.
+    * **Out of a rock.** One in a rock's solid anyway (a spawn or a test teleport there, or a
+      fall's drop past a rock's steep flank: the drop isn't swept) is taken out at the start of
+      the collision, before it's drawn, to the nearest place clear of it (`Arena::escape`: of 32
+      ways round, the one where the rock's surface is nearest at the heights of its body that are
+      inside, then its radius beyond; its feet on the floor there, unless it's in the air). The
+      game's sweep would slide a falling body off the flank along it; here it's one step sideways.
+      Inside is told by the rock's surface (`Arena::inside`): a body whose faces, a twin pair
+      counted once, close round a solid (no edge left open; not a door's, not a liquid's) and that
+      the vertical lines below and above the point each cross an odd number of times.
+      `BF_INSIDE_LOG=1` logs a character ending a frame inside one and each one taken out.
+    * The fall onto a rock's top is the air step's, which lands on the floor it was over (a 6 m
+      and an 8 m drop onto sdm_e34's boulders land on their tops).
+    * Test hooks for the moves (with `BF_TEST_GOTO`): `BF_TEST_DODGE=<s>[,<s>...]` presses the dodge
+      at those times (to the right, standing), `BF_TEST_DIVE=<s>` dives toward the goal then (as
+      from a grenade behind); `BF_TEST_SPRINT`, `BF_TEST_KNOCK` (thrown back) as before.
+    * Checked (15 fps captures, `BF_INSIDE_LOG=1 BF_NO_SQUAD=1`, from 6-7 m out sprinting at a
+      rock's middle, or 3.4-4.2 m out dodging, diving or knocked at it; 27 runs over sdm_e34, e34,
+      e40 and the tutorial): before, 7 ended in a rock; after, none ends a frame inside, and Tex
+      runs on the spot against the boulder (frames 26-60 of
+      `BF_MAP=sdm_e34 BF_TEST_GOTO=0.10,76.50,0.10,69.50 BF_TEST_SPRINT=1.0`). Started on a rock's
+      middle (`BF_TEST_GOTO=0.1,69.5,0.1,69.5`; the tutorial's 54.0,16.6; e34's -59.9,34.2) he's
+      taken out on the first frame, beside it: 1.9, 2.4 and 1.2 m out. The test tools' ridge:
+      [testtools.md](testtools.md).
+      `cargo test --lib arena`: a 2 m twinned box holds a body out in one 5 m move and in 0.6 m
+      steps, slides it along, takes one put inside out to its nearest side; a lone face holds
+      from its front only; a low rock is stepped over; an overhang and a ceiling at 1.2 m hold; a
+      55° twinned slope doesn't.
+    * Against main, the same runs (15 fps): the tutorial's base door identical, its second
+      building within 0.06 m; sdm_e34's barracks door closes a frame later, Tex within 0.37 m.
+      #264's checks: the tutorial's rim and pit wall identical; e40's s3 takes off and lands
+      (20.9 m) as before, Tex's slide after it starting 0.13 s later and ending 0.04 m off, the
+      Shrikes' slides within a frame; m09_a's squad doesn't fall (Flint steps down a 1.2 m ledge
+      on the way), its Shrike Hound's slide starts a frame sooner and doesn't start again at 6.8
+      s. e40's s2 steps onto the 66° face where it did but lands after 17.2 m, not 19.4 m: on the
+      rim the floor is now the twin with the slide flag (above), so the slide starts a frame
+      sooner and he leaves the face slower (#264's 30 and 60 fps runs landed after 17.6 and
+      17.8 m). Sprinting slantwise at sdm_e34's barracks he's held at its wall (-75.1, -9.7),
+      where main took him through it. The squad following Tex on e34, and past the boulders of
+      sdm_e34 and e40 (`BF_TEST_GOTO=6,60,6,90`, `-5,-150,-5,-180`): within 1.13, 0.04 and
+      0.43 m of main's.
   * Not solid: grass, wires and other undrawn or cut-out parts have no collision surface, so
     they don't block. Nor does a spawn-trigger's template, which the game takes out of the world
     until it's spawned ([triggers.md](triggers.md), #220; nor is one drawn but a pickup, #230), nor a placed
