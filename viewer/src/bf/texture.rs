@@ -11,6 +11,10 @@ use super::hash::h;
 /// 8, the bump maps 9; most HUD and effect textures in common.tgz have 1.
 const H_MIPS: u32 = 0x1203_36EF;
 
+/// D3DFMT_P8 (0x0B): the bump maps' format, an index into the game's normal palette per texel
+/// (tex_tool.py; `Game::bump_mips`).
+pub const P8: u32 = 0x0B;
+
 #[derive(Clone, Debug)]
 pub struct TexInfo {
     pub name: u32,

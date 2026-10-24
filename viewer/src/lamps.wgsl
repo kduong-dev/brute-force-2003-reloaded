@@ -4,7 +4,8 @@
 // indoor material (INDOOR_PAIR) the level's indoor pair in place of bevy's directional lights,
 // which are the outdoor pair (level_scene::spawn_lighting, `indoor_lit`). A terrain layer
 // (TERRAIN_DETAIL) samples its colour and detail textures here, as the game's terrain pass does
-// (level_scene::terrain_detail); it's drawn unlit (its baked light map), so no lamp reaches it.
+// (level_scene::terrain_detail), and lights its bump map (TERRAIN_BUMP, level_scene::terrain_bump);
+// it's drawn unlit (its baked light map), so no lamp reaches it.
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -65,6 +66,17 @@ struct LevelLights {
 @group(2) @binding(103) var colour_sampler: sampler;
 @group(2) @binding(104) var detail_texture: texture_2d<f32>;
 @group(2) @binding(105) var detail_sampler: sampler;
+
+// a terrain layer's bump map (its normals in R G B, 0-1 for -1 to 1) and the light it takes
+// (level_scene::terrain_bump, `TerrainBump`): vertex program 0x38's c16 (toward the light, w the
+// bump map's tiling) and pixel shaders 0x1a / 0x1b's c0 (its colour)
+struct TerrainBump {
+    key: vec4<f32>,
+    key_colour: vec4<f32>,
+}
+@group(2) @binding(106) var bump_texture: texture_2d<f32>;
+@group(2) @binding(107) var bump_sampler: sampler;
+@group(2) @binding(108) var<uniform> bump: TerrainBump;
 
 #ifndef PREPASS_PIPELINE
 #ifdef INDOOR_PAIR
@@ -170,6 +182,29 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // linear values: a small difference between two samples of one texture)
     let texel = mix(far.rgb, near.rgb, share);
     pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * texel, pbr_input.material.base_color.a);
+#endif
+#endif
+#endif
+#ifdef TERRAIN_BUMP
+#ifdef VERTEX_TANGENTS
+#ifdef VERTEX_UVS_A
+#ifndef PREPASS_PIPELINE
+    // the bump map (pixel shaders 0x1a / 0x1b, stages 0-2): its normal, given in the vertex's
+    // tangent frame, against the light program 0x38 hands it (c16), clamped at 0, x the vertex's
+    // baked light where the vertex faces that light (v0.a) x c0, added to the vertex light. The
+    // ground's light here (the vertex colour) is that baked light already lit, so it takes the
+    // term's change from the flat normal's, in the console's gamma terms: x (1 + c0 (max(0, N . c16)
+    // - max(0, n . c16))), and the linear light that to the power 2.2. A flat texel leaves it as
+    // it was
+    let normal = textureSample(bump_texture, bump_sampler, in.uv * bump.key.w).rgb * 2.0 - 1.0;
+    let n = normalize(in.world_normal);
+    let t = normalize(in.world_tangent.xyz - n * dot(n, in.world_tangent.xyz));
+    let bumped = t * normal.x + in.world_tangent.w * cross(n, t) * normal.y + n * normal.z;
+    let faces = select(0.0, 1.0, dot(n, bump.key.xyz) >= 0.0);
+    let change = faces * (max(0.0, dot(bumped, bump.key.xyz)) - max(0.0, dot(n, bump.key.xyz)));
+    let gain = pow(max(vec3<f32>(0.0), 1.0 + change * bump.key_colour.rgb), vec3<f32>(2.2));
+    pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * gain, pbr_input.material.base_color.a);
+#endif
 #endif
 #endif
 #endif
