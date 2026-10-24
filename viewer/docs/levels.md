@@ -13,8 +13,9 @@ level's own flyby cameras and 0 to an overview, F toggles fog, P prints the view
 archetype>` (each part's geosets: offset, bounds, normals, winding, UV direction; then exits),
 `BF_TEX_LOG=1|squad` (where each texture came from, below).
 In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail texture),
-`BF_ANISOTROPY=<1-16>` (the world textures' anisotropy; the game's is none) and
-`BF_SKY_TIME=<s>` (the sky's clock started that far into the level), all below.
+`BF_NO_BUMP=1` (the terrain without its bump map), `BF_ANISOTROPY=<1-16>` (the world textures'
+anisotropy; the game's is none) and `BF_SKY_TIME=<s>` (the sky's clock started that far into the
+level), all below.
 
 * Terrain vertices (type h_ef44f398) carry no float position. Slot 8 of the game's vertex
   format table gives the layout: SHORT2, packed normal, two float2 UVs, NORMSHORT3, 2 bytes.
@@ -80,13 +81,105 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
     the first uv set as it is (the vertex declaration at 0x3c9860 puts it at v9), and take03's
     wall-gate shot, where the cliff is past 20 m, shows the same rock features at the same size
     as the demo.
-  * Not done: the bump map. Pixel shaders 0x1a / 0x1b give final = (vertex light + bump) x
-    lerp(colour, detail, share), the bump being the P8 normal map lit per pixel by the key light,
-    (2 t3 - 1) . (2 v1 - 1), at the detail's tiling and unfaded. Without it the near ground has
-    less contrast than the takes: the hillsides and rock 1-5 m off have a fine band of 5.7
-    against 10.3 on take03's 21 s hillside, and e40's sand ripples (`todo/49-bower-20/take06`,
-    1.0 s) are 3-4 times weaker (the tester's measures). It belongs with the terrain's own
-    lighting.
+  * **The bump map (#271).** The terrain materials name a normal map in their slot h_ed0b519d
+    ("normalmap" by its hash; the class is `BF_DetailTextureBlend`, h_0ec4edf0, described in the
+    executable as "Terrain Detail-Bump-Alpha Blend"): 140 of the 141, all P8, 132 of them 256 x
+    256, 3 a flat 2 x 2; mp7's h_1c7f8bd5 has none. A P8 texel is an index into a fixed palette
+    of 256 normals in default.xbe (0x3ba968, FUN_00285780), which the demo now reads from the
+    executable beside the data (`Game::bump_mips`; without default.xbe the ground has no bump).
+    The normal maps are their colour textures' relief (the sand's ripples, the rock's cracks),
+    and their mip levels are filtered and renormalised: the normals' spread falls from 0.31-0.44
+    at 256 x 256 to 0.10-0.13 at 32 x 32, so the far ground goes flat.
+    * What the shaders do. Program 0x38 hands slot 0's light of the pair the shaders hold (c16)
+      to the bump map, turned into the vertex's tangent frame: oD1.rgb = q c16 q* x 0.5 + 0.5,
+      q the vertex's quaternion (v11's three NORMSHORTs, w = 1 - 2 x v12.x's byte); oD0.w =
+      the vertex's baked light where n . c16 >= 0, else 0; and lights the vertex by the ambient
+      and slot 1's light, oD0.rgb = (c23 + max(0, n . c18) c19 c21) x that baked light. Pixel
+      shaders 0x1a / 0x1b add max(0, (2 t3 - 1) . (2 v1 - 1)) x v0.a x c0 to v0, t3 the normal
+      map at the detail's tiling (oT3 = v9 x c20.z), not faded, and light the colour and detail
+      mix with the sum, clamped at 1.
+    * The tangent frame and the baked light are in the vertex (`Geoset::frames`, `character.rs`
+      TERRAIN_FRAME): checked on 3311 of e40's vertices, the quaternion turns each vertex's
+      normal to +z (within 8 degrees on 58%, the rest from a normal of the frame's own), its x
+      axis is the way the colour's u grows (cos 0.98-0.99 on the flat vertices of all three
+      layers), its y the way v falls; and v12.y is the block's baked light cell (h_e2d79bad) at
+      the vertex (98.8% within their four cells' values: the bright cells, 183-255, have the top
+      bit, the cliffs' shadows, 35-86, don't).
+    * Which light. FUN_000dcc10 meets the world's directional lights last to first: 0x14f2a0
+      puts each new one at the front of the world's list (+0x228; a point light goes to the
+      back), and the second it meets moves the first to slot 0. So slot 0 is the pair's second
+      light in the level file and slot 1 its first (`level_scene::pair_slots`); with one light,
+      slot 1, and slot 0 is black (no bump). The objects' programs light both slots alike, so
+      only this tells them apart. The outdoor pair (the one each view's draw starts with): on
+      e40, m03_a, e34 and the tutorial slot 0 is the key (e40's h_1a801d2e, 0.85 0.66 0.59 from
+      +x and 32 degrees up), on sdm_e34 the dim fill h_eec4a26b. In the file's order the bump
+      would take e40's fill, which comes from just under the horizon and fails n . c16 >= 0 on
+      the beach: no relief at all, where take06 shows it.
+    * c0, stage 2's constant (pixel constant 0 by the shaders' C0 mapping 0xfffff0ff; their own
+      PSConstant0 is 0), sets the relief's strength. It's set nowhere for these shaders (nothing
+      selects them, below); the demo takes slot 0's colour, the light the bump map stands for. A
+      guess, not fitted: with it the near ground's fine contrast is the takes' to within about
+      15% where the views match (Checked).
+    * The demo (`level_scene::terrain_bump`, lamps.wgsl TERRAIN_BUMP) lights the ground by the
+      baked light alone, which already holds the light as a flat normal gives it, so it adds the
+      bump term's change from the flat normal's: the ground's light x (1 + c0 (max(0, N . c16) -
+      max(0, n . c16))) where n . c16 >= 0, N the normal map's normal in the vertex's frame, n
+      the vertex's normal, in the console's gamma terms (the linear light takes it to the power
+      2.2). The baked light stands for v0.a, so the change is the console's own, whatever lights
+      the rest of the ground (#181). A flat texel leaves the ground as it was; over a whole bump
+      map the mean of N . c16 is mostly below the flat one, so the bumped ground comes out up to
+      7% darker (e40's sand 3%, the tutorial's hillside 7%, its rock walls 0-2%, m03_a's sand
+      under 1%), its hue the same (the patches' chromaticity within 0.002). The console's clamp of
+      the sum at 1 is left out.
+    * Taken over the whole vertex light instead, (v0 + c0 max(0, N . c16)) / (v0 + c0 max(0,
+      n . c16)) with v0 from the level's lights, the relief came out as strong as the takes' against
+      the demo's brighter ground, but slopes the key grazes went white in specks (the tutorial's
+      rock behind Tex at take03's 24 s, 0.46% of the frame): there the console's v0 is dark
+      where the demo's baked light isn't.
+    * Not found: what draws the terrain's base pass. No code selects program 0x38 or pixel
+      shaders 0x1a / 0x1b (below), and the live read (`todo/257-terrain-mips/live-read.md`)
+      never saw 0x38 loaded in the tutorial's, e34's or e40's terrain scenes. The material's
+      begin (FUN_00090f50) binds only stage 2 (the detail); its colour (stage 0), mask (1) and
+      normal map (3) aren't bound by any of its methods (vtable 0x3a1b58; the stage-3 binds
+      elsewhere in the executable are other classes', e.g. 0x96130's), and its draw (FUN_00091070)
+      draws only the lamp pass. These are still the only shaders in the executable that read the
+      terrain's colour uv, its tangent frame and its normal map, and the takes show the relief
+      they give. A live read of what's bound and selected while a terrain block's base pass draws
+      (a breakpoint on DrawIndexedVertices, 0x36ca20, with the terrain's stream: 0x3f7c58,
+      0x3f7c68) would settle it.
+    * Checked (`BF_MUTE=1 BF_BACKGROUND=1`, each against `BF_NO_BUMP=1`; the measure: luminance at
+      480 lines, differences of Gaussians at 1-2, 2-4 and 4-8 px, their spread (in 8-bit luma)
+      over a patch of ground, the take's patch beside the same ground in the demo; in brackets
+      the take, then the demo without the bump):
+      * e40's beach (`BF_MAP=e40 BF_CHARACTER=0 BF_TEST_GOTO=0,167.3,-40.6,147.9
+        BF_TEST_GO_AT=100`, frame 15, against `todo/49-bower-20/take06` at 1.0 s): the sand right
+        of Brutus 2.09 / 1.57 / 1.12 (2.18 / 1.68 / 1.08; 0.93 / 0.88 / 0.88), left of him 0.97 /
+        1.55 / 1.38 (0.83 / 1.51 / 1.51; 0.45 / 0.50 / 0.49). The ripples are the take's shape,
+        size and direction; the cliff's rock gains its cracks' relief as in the take.
+      * The tutorial's opening (`BF_MAP=tutorial`, frames 162, 230 and 256 against take03 at 13,
+        18 and 21 s, matched by the picture): the hillside 3.55 / 3.15 / 2.96 at 21 s (3.38 /
+        3.30 / 2.98; 3.29 / 3.16 / 3.02) and 3.50 / 3.11 / 2.96 at 18 s (3.15 / 2.84 / 2.67;
+        3.25 / 3.14 / 3.02); the rock wall 5.68 / 5.90 / 6.80 at 18 s (4.32 / 5.11 / 6.31; 5.47 /
+        5.87 / 6.81) and 4.60 / 4.20 / 4.04 at 13 s (3.28 / 3.62 / 3.69; 4.46 / 4.19 / 4.07),
+        brighter than the take's and so more contrasty without the bump already. The rock behind
+        Tex (frame 330, take03 24 s) shows the take's fine relief, no specks (no pixel of the run
+        both twice as bright and 40 luma brighter than without the bump).
+      * m03_a's sand (`BF_MAP=m03_a BF_CHARACTER=0 BF_TEST_GOTO=-182.6,-43.5,-188.2,-51.8
+        BF_TEST_GO_AT=100`, frame 15, against take01 at 1.0 s, the view not matched): 2.61 /
+        2.46 / 1.69 and 6.50 / 6.03 / 5.48 (the take's 2.01 / 2.20 / 2.44 and 3.01 / 3.71 / 3.27;
+        1.23 / 1.21 / 1.18 and 5.84 / 5.17 / 5.28 without); the ripples are there as in the take,
+        on sand 3 times as bright.
+      * Against the ground's brightness the relief is weaker than the takes' (e40's 5.8% against
+        8.7%, the tutorial's hillside 6.8% against 7.5%): the takes' ground is darker (25 luma
+        against e40's 36, 44 against the hillside's 52), #181's.
+      * The far ground stays soft: e40's beach 20-40 m off 2.83 and 3.27 (2.80 and 3.30 without).
+      * Unchanged: the HUD (sdm_e34's firing run, `BF_MAP=sdm_e34 BF_TEST_GOTO=0,0,0,-20
+        BF_TEST_FIRE=1 BF_TEST_HIT=2`, 75 frames: the two builds differ only on the ground, 0.7-2.6%
+        of the pixels, some of it seen through the radar's glass), the run itself (the same
+        shots, holes and counts), the ground's hue. The start views (`BF_CAMERA_PITCH=-0.25`,
+        frame 30): sdm_e34 (its slot 0 the weak fill: little change), sdm_e40, e34, sdm_e13 (its
+        rock more grained), sdm_m03 (little change); m03_a's (strong ripples, as its take01 shows).
+    * Test hook: `BF_NO_BUMP=1` draws the ground without its bump map, as before.
   * The layers' masks: program 0x38 samples a layer's mask at the second uv set (oT1 = v10,
     pixel shader 0x1a's alpha), which on every masked layer's vertex is its place across the
     terrain, 0 to 1 with v toward -z: the orientation the demo bakes into the vertex alpha (2 m
@@ -94,14 +187,19 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
     another second uv set (the tutorial's: the position / 3.2 m), unread.
   * Not found in the code: what selects vertex program 0x38 and pixel shaders 0x1a / 0x1b. No
     call of the program setter (FUN_000a4a60, 72 sites) or the pixel shader setter
-    (FUN_000a4d00) passes those indices, and the program tables hold their only references. The
-    rest fits them: the begin computes c20's 1 / s², s² and w, which of the terrain's
-    (declaration-8) programs only 0x38 reads (c20 is the world matrix's first row in programs
-    0x2-0x19, 0x27, 0x3f, 0x50 and others); the masked layers' second uv set is the mask's
-    coordinate; the terrain lights are `enable-bump`; and the takes show the finer tiling near
-    the camera (take03 at 25 s, take08 at 45 s, the e40 beach).
-    A live read of the current program (0x3f7c58, set by FUN_000a4a60) while a terrain block
-    draws would settle it.
+    (FUN_000a4d00, 77) passes those indices: the immediates are other programs, and the eight
+    computed program indices (0x97479, 0x9af13, 0x9cffb, 0x9e2df, 0xa38c1, 0xa6711, 0xa6837,
+    0xba8d9) and ten computed shader ones (0x91c5f-0x91e4e, 0x9bad4, 0x9cbec, 0x9e56d, 0xa30ac)
+    come out as others too. The two other program loads (0x21d683, 0x2a1d7a) load the ALE's
+    0x3b8bf8, the tables hold the only pointers to the programs and shaders, and nothing points
+    at those table slots or at the setters (#271). The live read (`todo/257-terrain-mips/
+    live-read.md`) caught no 0x38 in three terrain scenes. The rest fits them: the begin
+    computes c20's 1 / s², s² and w, which of the terrain's (declaration-8) programs only 0x38
+    reads (c20 is the world matrix's first row in programs 0x2-0x19, 0x27, 0x3f, 0x50 and
+    others); the masked layers' second uv set is the mask's coordinate; the vertices carry the
+    tangent frame and baked light it reads (v11, v12); the terrain lights are `enable-bump`; and
+    the takes show the finer tiling near the camera (take03 at 25 s, take08 at 45 s, the e40
+    beach) and the relief of the bump map (above).
   * Test hooks: `BF_NO_DETAIL=1` draws the colour's tiling alone, as before.
 * **Which copy of a texture (#284).** A texture is found by name in the loaded libraries,
   common's first, then the level's own `textures-<lvl>` (every level file lists its texture
@@ -162,7 +260,8 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
       a magnified blur;
     * e40's beach, against `todo/49-bower-20/take06` at 1 s (`BF_MAP=e40 BF_CHARACTER=brutus
       BF_TEST_GOTO=0,167.3,-40.6,147.9 BF_TEST_GO_AT=100`): the near sand shows the detail's
-      ripples, fainter than the take's (the bump map, above); sdm_e13's lava surface unchanged,
+      ripples, fainter than the take's (the bump map, above, drawn since #271); sdm_e13's lava
+      surface unchanged,
       its shore's lava veins sharp underfoot;
     * unchanged: the HUD (the flat floor's bars, ammo and radar the same to the pixel), the
       main menu (the same to the pixel but the highlighted entry's glow, which differs from run
@@ -171,7 +270,7 @@ In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail textur
       the takes' size, 1x anisotropy right, no regressions. Short of the takes: the near
       hillsides and rock 1-5 m off have less contrast (a fine band of 5.7 against 10.3 on
       take03's 21 s hillside) and e40's sand ripples are 3-4 times weaker, both the missing bump
-      map ("Not done" above).
+      map (**The bump map**, above, since #271).
 * A level `<transform>` is a 3 × 3 rotation followed by the position. The rotation's columns are
   the object's axes; read that way, the level's cameras come out level and looking down −z.
 * Object types map to mesh archetypes through objecttypes (`mesh-name` beside the type's
@@ -281,10 +380,15 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   read as the terrain's own pair; the game's code has them as the indoor pair (see **Light
   objects**), and what lights its terrain is #181's, so the hue is kept as it was calibrated. If
   vertex program 0x38 is the terrain's base pass (see **The detail**: no code was found loading
-  it), its vertex light is the Terrain `<ambient>` plus the second light of whichever pair was
-  uploaded last (c18 / c19, x the material's colour): each view's draw starts with the outdoor
-  pair (FUN_000dcc10(0, ..) at 0xda2aa), and the bump takes the first light's direction (c16).
-  So the outdoor pair, not the `h_e02aba1c` lights, would reach the ground.
+  it), its vertex light is the Terrain `<ambient>` plus slot 1's light of whichever pair was
+  uploaded last (c18 / c19, x the material's colour; the pair's first light in the level file),
+  each view's draw starting with the outdoor pair (FUN_000dcc10(0, ..) at 0xda2aa), and the bump
+  map takes slot 0's (c16, the file's second; **The bump map**), all of it x the vertex's baked
+  light. So the outdoor pair, not the `h_e02aba1c` lights, would reach the ground. A lead for
+  #181 (inferred: c26 and c27, which decode the baked light's byte, are set for no terrain
+  program): read as its low 7 bits / 127.5 x (the ambient + the pair's N.L), e40's beach comes
+  out about 0.6 of the demo's whole-cell light, and take06's beach is darker by about that (25
+  luma against the demo's 35, the same view).
   On Bulgar those lights are blue-grey, and the captures show grey ground and hills, not sand.
   The 60% is calibrated on a capture of the gate: the ground there measures 73 81 79; ours was
   79 74 64 and is now 68 77 74. `BF_DOOR_LOG=1` lists the doors (type, place, leaves); Bulgar's
@@ -306,8 +410,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     0x9f3c0): LU_OUTDOOR the outdoor pair, LU_INDOOR the indoor one, LU_GEOSET each geoset's
     own `h_f89cd77d` (`Geoset::indoor`, a building's inner faces: the tutorial has 59 such
     geosets on 16 meshes), LU_NONE none (here the outdoor pair, the one each view starts with).
-    Each pair takes its lights in the level file's order; no level has more than two in one.
-    The demo read `h_e02aba1c` as "lights the terrain" before; it's the indoor pair.
+    Each pair takes its lights from the level file; no level has more than two in one. Its two
+    slots (c16 / c17, c18 / c19) light an object alike; FUN_000dcc10 meets the lights last to
+    first, so slot 0 is the file's second (#271, **The bump map**: only the terrain's bump map
+    tells them apart). The demo read `h_e02aba1c` as "lights the terrain" before; it's the indoor
+    pair.
   * **Here.** The outdoor pair are bevy's directional lights (`spawn_lighting`), at PI lux with
     their sRGB colour, the brightest (by luma) casting the characters' shadow: the game's
     lights cast none, so the one shadow is the demo's choice. Characters take the outdoor pair

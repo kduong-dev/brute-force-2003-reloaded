@@ -38,7 +38,7 @@ pub type LevelMaterial = ExtendedMaterial<StandardMaterial, Lamps>;
 
 /// The level's lights, for `LevelMaterial`: one buffer shared by all its materials
 /// (`light_buffer`: the pairs, then the point lights). A terrain layer's material also carries
-/// its colour and detail textures (`terrain_detail`).
+/// its colour and detail textures (`terrain_detail`) and its bump map (`terrain_bump`).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 #[bind_group_data(LampsKey)]
 pub struct Lamps {
@@ -65,23 +65,50 @@ pub struct Lamps {
     #[texture(104)]
     #[sampler(105)]
     pub detail_texture: Option<Handle<Image>>,
+    /// A terrain layer's bump map (its material's normal map, h_ed0b519d), its normals in R G B
+    /// (`Game::bump_mips`): see `terrain_bump`.
+    #[texture(106)]
+    #[sampler(107)]
+    pub bump_texture: Option<Handle<Image>>,
+    /// The light a terrain layer's bump map takes (`terrain_bump`); zero for the other materials.
+    #[uniform(108)]
+    pub bump: TerrainBump,
 }
 
 /// What a `Lamps` material's pipeline depends on: the layer's own depth-test bias, if any,
-/// whether it takes the indoor pair, and whether it mixes in a detail texture (a terrain layer:
-/// the shader def TERRAIN_DETAIL).
+/// whether it takes the indoor pair, whether it mixes in a detail texture (a terrain layer: the
+/// shader def TERRAIN_DETAIL) and whether it lights a bump map (TERRAIN_BUMP).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LampsKey {
     layer_bias: Option<i32>,
     indoor: bool,
     detail: bool,
+    bump: bool,
 }
 
 impl From<&Lamps> for LampsKey {
     fn from(lamps: &Lamps) -> Self {
-        LampsKey { layer_bias: lamps.layer_bias, indoor: lamps.indoor, detail: lamps.colour.is_some() }
+        LampsKey { layer_bias: lamps.layer_bias, indoor: lamps.indoor, detail: lamps.colour.is_some(), bump: lamps.bump_texture.is_some() }
     }
 }
+
+/// The light a terrain layer's bump map takes (`terrain_bump`, src/lamps.wgsl under
+/// TERRAIN_BUMP). (In a module of its own: the derive's own checks read as unused.)
+mod terrain_bump_params {
+    #![allow(dead_code)]
+    use bevy::{prelude::*, render::render_resource::ShaderType};
+
+    #[derive(Clone, Copy, Debug, Default, Reflect, ShaderType)]
+    pub struct TerrainBump {
+        /// Toward the light the bump map takes, as the game hands it to vertex program 0x38 (c16:
+        /// the column of the light's transform, not normalised); w the bump map's tiling over the
+        /// colour's uv (c20.z, the detail's).
+        pub key: Vec4,
+        /// That light's colour (pixel shaders 0x1a / 0x1b's c0, see `terrain_bump`).
+        pub key_colour: Vec4,
+    }
+}
+pub use terrain_bump_params::TerrainBump;
 
 const LAMP_SHADER: Handle<Shader> = weak_handle!("6b0f6c1e-5a3d-4f0e-9a51-1d2c7e4b8a90");
 
@@ -93,7 +120,7 @@ impl MaterialExtension for Lamps {
     /// A terrain layer keeps its own depth-test bias (the base material set it from the sort
     /// bias, see TERRAIN_LAYER_SORT), an indoor material takes the indoor pair (INDOOR_PAIR) and a
     /// terrain layer samples its textures as the game's terrain pass does (TERRAIN_DETAIL, see
-    /// `terrain_detail`).
+    /// `terrain_detail`) and lights its bump map (TERRAIN_BUMP, `terrain_bump`).
     fn specialize(_pipeline: &MaterialExtensionPipeline, descriptor: &mut RenderPipelineDescriptor, _layout: &MeshVertexBufferLayoutRef,
                   key: MaterialExtensionKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
         if let (Some(bias), Some(depth)) = (key.bind_group_data.layer_bias, descriptor.depth_stencil.as_mut()) {
@@ -105,6 +132,9 @@ impl MaterialExtension for Lamps {
         if let (true, Some(fragment)) = (key.bind_group_data.detail, descriptor.fragment.as_mut()) {
             fragment.shader_defs.push("TERRAIN_DETAIL".into());
         }
+        if let (true, Some(fragment)) = (key.bind_group_data.bump, descriptor.fragment.as_mut()) {
+            fragment.shader_defs.push("TERRAIN_BUMP".into());
+        }
         Ok(())
     }
 }
@@ -112,8 +142,8 @@ impl MaterialExtension for Lamps {
 /// The terrain material class (h_0ec4edf0, factory 0x91330; every terrain layer's material).
 const TERRAIN_MATERIAL: u32 = 0x0EC4_EDF0;
 /// Its texture slots past `color` and `alpha` (0x90b10): the detail texture (h_17fc684a,
-/// "detail" by its hash) and a P8 bump map (h_ed0b519d, not drawn here). On all 141 terrain
-/// materials of the game's levels the detail texture is the colour texture.
+/// "detail" by its hash) and a P8 bump map (h_ed0b519d, TERRAIN_BUMP_TEXTURE). On all 141
+/// terrain materials of the game's levels the detail texture is the colour texture.
 const TERRAIN_DETAIL_TEXTURE: u32 = 0x17FC_684A;
 /// Its constants (the table at 0x90e40) that the detail reads, over the 141 terrain materials of
 /// the game's levels: the detail's tiling over the colour's uv (h_08e8e4c3, +0x54; 0-16, 112 of
@@ -142,7 +172,7 @@ const DETAIL_DEFAULTS: (f32, f32, f32) = (0.8, 16.0, 0.0);
 /// the eye, by this use). Its pixel shaders 0x1a (a layer: its alpha the mask's) and 0x1b (the
 /// ground) mix the two by that share, lerp(t0, t2, v1.a), before lighting it. So within s of the
 /// eye the ground shows its texture k times finer, fading to the colour's own tiling at s; the
-/// demo drew the colour's tiling everywhere. (The bump map, lit through oD1.rgb, isn't drawn.)
+/// demo drew the colour's tiling everywhere. (The bump map, lit through oD1.rgb: `terrain_bump`.)
 /// No code was found that selects 0x38 / 0x1a / 0x1b; the rest of the data and the takes fit
 /// them (levels.md, Terrain layers). Drawn by lamps.wgsl under TERRAIN_DETAIL, per pixel (the
 /// console's share is per vertex, 2 m apart).
@@ -156,6 +186,76 @@ pub fn terrain_detail(game: &Game, id: u32) -> Option<(Vec4, u32)> {
     // (FUN_00090f50: 1 / s^2 is 0 when s^2 is no more than FLT_EPSILON, 0x3a4ffc)
     let s2 = s * s;
     (w > 0.0).then_some((Vec4::new(if s2 > f32::EPSILON { 1.0 / s2 } else { 0.0 }, s2, k, w), texture))
+}
+
+/// The terrain material's bump map: its texture slot h_ed0b519d ("normalmap" by its hash; +0x18
+/// of the class's slots, 0x90b10 / 0x90bf0), a P8 texture of normals (`Game::bump_mips`). 140 of
+/// the 141 terrain materials of the game's levels name one, all P8: 132 of 256 x 256 (the
+/// tutorial's with 9 levels), 5 of 128 x 128 and 3 a flat 2 x 2 (e40's rock h_f5b37660, e05's
+/// h_fa6eaf30); mp7's h_1c7f8bd5 names none.
+const TERRAIN_BUMP_TEXTURE: u32 = 0xED0B_519D;
+
+/// A terrain layer's bump map, lit as the game's terrain base pass lights it (#271): material
+/// `id`'s normal map with the constants its light comes from (`TerrainBump`); None for a material
+/// of another class, one without a normal map or with BF_NO_BUMP=1 (to compare). (`spawn_level`
+/// draws none either without the normal palette: no default.xbe beside the data.)
+///
+/// Vertex program 0x38 (0x3d8bf8) lights a terrain vertex by the ambient and slot 1's light of
+/// the pair the shaders hold (`pair_slots`: c18 toward it, c19 its colour), oD0.rgb = (c23 +
+/// max(0, n . c18) c19 c21) x the vertex's baked light (v12.y, TERRAIN_FRAME), and hands slot 0's
+/// light (c16) to the bump map: oD1.rgb = c16 turned into the vertex's tangent frame
+/// (`Geoset::frames`), x 0.5 + 0.5, and oD0.w = the baked light where n . c16 >= 0, else 0. Its
+/// pixel shaders 0x1a (a layer) and 0x1b (the ground) add (2 t3 - 1) . (2 v1 - 1), the bump map's
+/// normal (sampled at oT3 = the colour's uv x c20.z, the detail's tiling, not faded) against that
+/// light, clamped at 0 (the combiner's unsigned input), x v0.a x c0 to v0, and light the colour
+/// and detail mix with the sum (`terrain_detail`). The demo lights the ground by the baked light
+/// alone (`spawn_level`), which already holds that light as a flat normal gives it, so the shader
+/// (lamps.wgsl, TERRAIN_BUMP) adds the term's change from the flat one: the ground's light x (1 +
+/// c0 (max(0, N . c16) - max(0, n . c16))) where n . c16 >= 0, N the bump map's normal and n the
+/// vertex's, in the console's gamma terms. That's the console's own change, the baked light
+/// standing for its v0.a; where the bump map is flat the ground is as before. (Taken over the
+/// whole vertex light instead, (v0 + c0 max(0, N . c16)) / (v0 + c0 max(0, n . c16)), it blew
+/// slopes the key light grazes up to white: the console's v0 there is dark where the demo's baked
+/// light isn't, #181. The console's clamp of the sum at 1 is left out.)
+///
+/// No code was found that selects program 0x38 or pixel shaders 0x1a / 0x1b (levels.md "The
+/// bump map"); they're the only shaders that read the terrain's normal map and its tangent frame,
+/// and the takes show the relief they give: e40's sand (todo/49-bower-20 take06), m03_a's (take01)
+/// and the tutorial's hillsides (todo/28-tutorial take03). The pair is the outdoor one, the one
+/// each view's draw starts with (0xda2aa). c0 (stage 2's C0: pixel constant 0, by the shaders' C0
+/// mapping 0xfffff0ff; their own PSConstant0 is 0) is set nowhere for them: taken as slot 0's
+/// colour, the light the bump map stands for (a guess, not fitted; levels.md "The bump map" has
+/// what it gives against the takes).
+pub fn terrain_bump(game: &Game, level: &Level, id: u32) -> Option<(TerrainBump, u32)> {
+    if game.material_type(id) != TERRAIN_MATERIAL || std::env::var("BF_NO_BUMP").is_ok() {
+        return None;
+    }
+    let texture = game.material_param_texture(id, TERRAIN_BUMP_TEXTURE)?;
+    let k = game.material_constant(id, DETAIL_SCALE).and_then(|v| v.first().copied()).unwrap_or(DETAIL_DEFAULTS.0);
+    // slot 0 of the outdoor pair (FUN_000dcc10, `pair_slots`); toward the light is minus `dir`, at
+    // the column's length; an empty slot is black (no bump)
+    let [key, _] = pair_slots(&level.pair(false));
+    let bump = TerrainBump {
+        key: key.map_or(Vec3::ZERO, |l| -l.dir * l.strength).extend(k),
+        key_colour: key.map_or(Vec3::ZERO, |l| Vec3::from(l.color)).extend(1.0),
+    };
+    Some((bump, texture))
+}
+
+/// The two slots FUN_000dcc10 puts a pair's lights in (`Level::pair`, the level file's order):
+/// [slot 0, slot 1], the shaders' c16 / c17 and c18 / c19. It walks the world's directional lights
+/// from the front of their list, which 0x14f2a0 builds by putting each new one in front (a point
+/// light goes to the back), so it meets them last to first; the first it meets goes in slot 1 and
+/// the second moves that one to slot 0 (0xdcc8e-0xdccf4). So with two lights the file's second is
+/// slot 0 and its first slot 1; with one, slot 1 and slot 0 empty (black: no bump map). The
+/// objects' programs light both slots alike, so only the terrain's (program 0x38) tells them apart:
+/// e40's take06 (todo/49-bower-20) shows the sand's relief lit by its key, the file's second.
+fn pair_slots<'a>(pair: &[&'a LevelLight]) -> [Option<&'a LevelLight>; 2] {
+    match pair.len() {
+        0 => [None, None],
+        1 => [None, Some(pair[0])],
+        n => [Some(pair[n - 1]), Some(pair[n - 2])],
+    }
 }
 
 /// Added to a terrain layer's sort distance: bevy sorts transparent meshes back to front by
@@ -920,7 +1020,7 @@ const GRASS_KEY: u32 = 0x6752_A55E;
 
 fn upright_normals(g: &Geoset) -> Geoset {
     Geoset { normals: vec![[0.0, 1.0, 0.0]; g.normals.len()], positions: g.positions.clone(), uvs: g.uvs.clone(), joints: g.joints.clone(),
-             weights: g.weights.clone(), indices: g.indices.clone(), material: g.material, indoor: g.indoor }
+             weights: g.weights.clone(), indices: g.indices.clone(), material: g.material, indoor: g.indoor, frames: g.frames.clone() }
 }
 
 /// `flip`: reverse the winding (terrain triangles face the other way from objects'). Otherwise
@@ -949,6 +1049,16 @@ fn mesh_of(g: &Geoset, colors: Option<Vec<[f32; 4]>>, lift: f32, flip: bool) -> 
         m.insert_attribute(Mesh::ATTRIBUTE_COLOR, c);
     }
     m
+}
+
+/// A terrain geoset's tangents for its bump map (`terrain_bump`): each vertex's tangent frame
+/// (`Geoset::frames`, world to tangent) taken back to the world, its x axis (the way the colour's
+/// u grows) with w 1, as bevy keeps a tangent: the frame's y axis is the normal x that axis (a
+/// quaternion's frame is never mirrored), the way v falls. The shader makes it perpendicular to
+/// the vertex normal, which the frame's z axis is within 8 degrees of on most vertices
+/// (TERRAIN_FRAME).
+fn terrain_tangents(g: &Geoset) -> Vec<[f32; 4]> {
+    g.frames.iter().map(|q| (Quat::from_array(*q).inverse() * Vec3::X).extend(1.0).to_array()).collect()
 }
 
 /// A terrain layer's mask at world (x, z), bilinear: one mask over the whole terrain (`half` m
@@ -1097,6 +1207,12 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         // lit by its baked light map (texture x light, in gamma space: the vertex colour is that
         // light in linear terms); without one, by the level's lights tinted for the terrain
         let baked = level.terrain_light.is_some();
+        // its bump map (`terrain_bump`): the normal map, linear (normals, not colours), with the
+        // vertices' tangent frames; only over the baked light, which it takes up or down
+        let bump = terrain_bump(game, level, g.material).filter(|_| baked && g.frames.len() == g.positions.len()).and_then(|(b, t)| {
+            let address = game.texture_address(g.material, t);
+            game.bump_mips(t).map(|mips| (b, images.add(mip_image(&mips, TextureFormat::Rgba8Unorm, address))))
+        });
         let base = match materials.get(&base).cloned() {
             Some(mut m) => {
                 if baked {
@@ -1122,6 +1238,10 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                         m.base.base_color_texture = colour;
                     }
                 }
+                if let Some((b, image)) = &bump {
+                    m.extension.bump = *b;
+                    m.extension.bump_texture = Some(image.clone());
+                }
                 materials.add(m)
             }
             None => base,
@@ -1138,7 +1258,7 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
             let v = if n > 0 { sum / n as f32 } else { 0.8 };
             v.powf(2.2)
         };
-        let (mesh, mat) = match mask.and_then(|m| game.texture_rgba(m)) {
+        let (mut mesh, mat) = match mask.and_then(|m| game.texture_rgba(m)) {
             Some(m) => {
                 let colors = g.positions.iter().map(|p| { let l = light(p); [l * hue[0], l * hue[1], l * hue[2], mask_at(&m, p[0], p[2], level.terrain_half)] }).collect();
                 let mut layer = materials.get(&base).cloned().unwrap_or_default();
@@ -1154,6 +1274,9 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 (mesh_of(g, colors, 0.0, true), base)
             }
         };
+        if bump.is_some() {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, terrain_tangents(g));
+        }
         // it casts no shadow, as the scenery doesn't (`spawn_object_parts`): the game's lights
         // cast none, so its characters are lit by the outdoor pair wherever they stand, on ground
         // the baked light map has in shade too (todo/73 take17: Tex lit on e40's dark beach, where
@@ -1372,4 +1495,39 @@ pub fn spawn_sky(commands: &mut Commands, sky: &SkyLayers) -> Vec<Entity> {
         commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), NotShadowCaster,
                         Transform::from_translation(sky.at + turn * *lift).with_rotation(turn), layer)).id()
     }).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An outdoor directional light named `name` (the rest doesn't matter to the slots).
+    fn light(name: u32) -> LevelLight {
+        LevelLight { kind: 0, name, color: [1.0; 3], dir: Vec3::NEG_Y, strength: 1.0, indoor: false, outdoor: true }
+    }
+
+    /// FUN_000dcc10 meets a pair's lights last to first (0x14f2a0 puts each new one at the front
+    /// of the world's list): slot 0 is the level file's second light, slot 1 its first; a single
+    /// light is slot 1, with slot 0 empty.
+    #[test]
+    fn the_files_second_light_takes_slot_0() {
+        let (a, b) = (light(1), light(2));
+        let names = |s: [Option<&LevelLight>; 2]| s.map(|l| l.map(|l| l.name));
+        assert_eq!(names(pair_slots(&[&a, &b])), [Some(2), Some(1)]);
+        assert_eq!(names(pair_slots(&[&a])), [None, Some(1)]);
+        assert_eq!(names(pair_slots(&[])), [None, None]);
+    }
+
+    /// A terrain vertex's tangent comes back to the world as its frame's x axis: a frame that
+    /// turns the world's +y (the flat ground's normal) to +z and keeps +x gives +x, the way the
+    /// colour's u grows on e40's flat ground (TERRAIN_FRAME).
+    #[test]
+    fn a_flat_frame_gives_the_u_axis() {
+        let q = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        assert!((q * Vec3::Y - Vec3::Z).length() < 1e-5);
+        let g = Geoset { positions: vec![[0.0; 3]], normals: vec![[0.0, 1.0, 0.0]], uvs: vec![[0.0; 2]], joints: vec![[0; 4]],
+                         weights: vec![[1.0, 0.0, 0.0, 0.0]], indices: vec![], material: 0, indoor: false, frames: vec![q.to_array()] };
+        let t = terrain_tangents(&g)[0];
+        assert!((Vec3::new(t[0], t[1], t[2]) - Vec3::X).length() < 1e-5 && t[3] == 1.0);
+    }
 }
