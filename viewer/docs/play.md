@@ -1332,9 +1332,10 @@ BF_SHOT_LOG=1 BF_COMBAT_LOG=1 BF_CAPTURE_FPS=30`, a dm Shrike Soldier 25 m out):
   shot. `cargo test --bin bf_play bolts` checks the sweeps' frames and lengths and the life's
   end (80 m/s and 60 m: sweeps on frames 3-21, the end on 23; 100 m/s and 80 m: the end on 24).
 * Not reproduced: the game sweeps against its bone bodies; the demo's characters are its
-  cylinder (standing) and ragdoll bones (lying), as the shots' have been. A bolt in a liquid
-  splashes at its surface and goes on to the bed, as the demo's shots do (the game's single ray
-  stops at a liquid's body: found, not checked for bolts).
+  cylinder (standing) and ragdoll bones (lying), as the shots' have been. A bolt passes a liquid's
+  surface without a splash and goes on to the bed: the blast pool has no liquid code (#5,
+  todo/146-liquids leads §5.1; only an instant ray splashes, levels.md "What a liquid plays").
+  Whether the game's sweep stops on the liquid's body isn't checked.
 
 Verified (`BF_CAPTURE_FPS=30`, the logs, against todo/57-jax-ic's takes and spec):
 * **The Jax-iC at the test map's pillar** (`-- --test BF_TEST_WEAPON=Jax-iC BF_TEST_GOTO=0,-8,0,-8
@@ -1496,7 +1497,7 @@ other gun 0, 0 (the Saryl-45's pass flag has nothing to spend).
   pickups are knocked by the lines, `Sweeps`); FUN_00230400's x3 on a character while the shooter
   is scoped (no pass-through gun has a scope); the squad AI's ray given up at a squadmate in the way
   (EVT 34, plan §4.2); a bolt or a ray at a liquid's surface (the game's single ray stops there,
-  the demo's shots splash and go on: unchanged).
+  the demo's go on; since #5 only an instant ray splashes, levels.md "What a liquid plays").
 
 `BF_SHOT_LOG=1` prints a bolt's counts at its launch ("n1 5 n2 0 passing through"), each bounce
 ("bounces off it along [0.561, 0.190, 0.806] (n1 4 n2 0 left)") and each pass ("passes through it
@@ -2440,7 +2441,11 @@ ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory.
 archetype names its jump grunt and footstep type (Tex 1, Flint 2, Brutus 3, Hawk 4), and
 `world-materials.xmb` gives every surface four footstep variants per type plus landing and slide
 sounds. Footsteps fire when a toe comes down into the lowest quarter of its swing in the clip
-being played. Surface sounds live in level archives: `BF_LEVEL=<name>` (default `e01`) picks the
+being played; in a liquid the step is the liquid's wading step or nothing, by the depth
+(FUN_00119020's liquid branch, #5: levels.md, "What a liquid plays"). The liquids' sounds are
+requests with play parameters of their own (`WorldSound`: a position heard by the library's
+distances from the listener and dropped beyond its max distance, a volume, a pitch in octaves
+played as the speed); `BF_SOUND_LOG` prints each with its kind, volume, pitch and distance. Surface sounds live in level archives: `BF_LEVEL=<name>` (default `e01`) picks the
 level; `mp1`'s bank is merged in too, since a mission only carries its own squad's footsteps.
 On a level, its sound-triggers play their own voices (#223: voice lines, door and gate sounds,
 ambience, the music cues; 3D ones by DirectSound's distance law from the camera): see

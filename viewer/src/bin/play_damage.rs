@@ -315,13 +315,48 @@ fn posed_parts<'a>(u: &'a Player, game: &'a Game) -> Vec<(u32, f32, Mat4, &'a [[
     }).collect()
 }
 
-/// Where each of `u`'s hit parts reaches lowest, standing: its bone and the lowest corner of its
-/// collision surface posed as drawn (`posed_parts`). What play_liquids.rs tests against a
-/// liquid's volume: the game's liquid sees a character by these parts' bodies (FUN_00221af0,
-/// answer-spec Q1). Empty without a model or hit parts.
-pub fn part_lowest(u: &Player, game: &Game) -> Vec<(u32, Vec3)> {
-    posed_parts(u, game).into_iter().filter_map(|(bone, _, frame, surface)| {
-        surface.iter().flat_map(|t| t.iter()).map(|&p| frame.transform_point3(p)).min_by(|a, b| a.y.total_cmp(&b.y)).map(|low| (bone, low))
+/// One of a character's hit parts as a liquid sees it (`part_bodies`), posed as drawn, in the
+/// world.
+#[derive(Clone, Copy, Debug)]
+pub struct PartBody {
+    /// its bone (the motion set's `<collision>` entry)
+    pub bone: u32,
+    /// the lowest corner of its collision surface: the part is in a liquid while this is in its
+    /// volume (play_liquids.rs)
+    pub low: Vec3,
+    /// its node's origin, the bone's frame: where its wade entry's first ring is measured from
+    /// (FUN_00222310 keeps the node's position)
+    pub node: Vec3,
+    /// its bounding sphere's centre and radius (`Character::part_spheres`; the node and -1 without
+    /// one, as FUN_00236670 gives a node without bounds): what its splash and rings go by
+    pub centre: Vec3,
+    pub radius: f32,
+}
+
+impl PartBody {
+    /// The body `k` of the way from `self` to `to` (linear; a game frame between two drawn ones,
+    /// play_liquids.rs).
+    pub fn lerp(&self, to: &PartBody, k: f32) -> PartBody {
+        PartBody { bone: to.bone, low: self.low.lerp(to.low, k), node: self.node.lerp(to.node, k), centre: self.centre.lerp(to.centre, k),
+                   radius: to.radius }
+    }
+}
+
+/// `u`'s hit parts standing, as play_liquids.rs needs them (`PartBody`): the game's liquid sees a
+/// character by these parts' bodies (FUN_00221af0, answer-spec Q1), in while one is in its volume
+/// (here: the lowest corner), splashing by its sphere. Posed as `posed_parts` poses them. Empty
+/// without a model or hit parts.
+pub fn part_bodies(u: &Player, game: &Game) -> Vec<PartBody> {
+    let Some(l) = u.loaded.as_ref() else { return vec![] };
+    let root = model_root(u);
+    hit_bones(game, u).iter().filter_map(|b| {
+        let i = l.model.bones.iter().position(|&x| x == b.bone)?;
+        let surface = l.model.part_collision.get(i).filter(|s| !s.is_empty())?;
+        let frame = root * *u.last_world.get(i)?;
+        let low = surface.iter().flat_map(|t| t.iter()).map(|&p| frame.transform_point3(p)).min_by(|a, b| a.y.total_cmp(&b.y))?;
+        let node = frame.w_axis.truncate();
+        let (centre, radius) = l.model.part_spheres.get(i).copied().flatten().map_or((node, -1.0), |(c, r)| (frame.transform_point3(c), r));
+        Some(PartBody { bone: b.bone, low, node, centre, radius })
     }).collect()
 }
 

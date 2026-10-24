@@ -654,6 +654,16 @@ impl Arena {
         above.into_iter().find(|a| a.1 % 2 == 1).map(|(l, _, y)| (l, y, self.liquids[l as usize]))
     }
 
+    /// Where a ray straight down from (x, `top`, z) first meets liquid `l`'s collision within
+    /// `length` m (strictly nearer), its height: FUN_00222480's surface ray (#5), cast from the top
+    /// of a part's or object's bounding sphere 2r down against that liquid alone (vtable +0x108),
+    /// for its splash and its rings. A sphere wholly under the surface finds nothing (unless the
+    /// volume's floor is within its reach), as one wholly over it.
+    pub fn liquid_below(&self, l: u32, x: f32, z: f32, top: f32, length: f32) -> Option<f32> {
+        self.near(x, z).iter().map(|&i| &self.tris[i as usize]).filter(|t| t.liquid == Some(l))
+            .filter_map(|t| Self::height_on(t, x, z)).filter(|&y| y <= top && top - y < length).reduce(f32::max)
+    }
+
     /// Where the line from `from` to `to` first goes into a liquid (through its surface, from
     /// above), and the liquid: sampled every LIQUID_STEP m.
     pub fn liquid_crossing(&self, from: Vec3, to: Vec3) -> Option<(Vec3, LiquidType)> {

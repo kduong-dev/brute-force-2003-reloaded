@@ -69,8 +69,8 @@ them):
       (char+0x6e8, written once when the fall starts, FUN_0012b740), so a 20 m run down a 66°
       face costs what a 20 m free fall does (36 HP before the difficulty's step); into a liquid
       too, by the drop to its bed (FUN_0012b740 has no liquid check, #152).
-    * **A splash** going into a liquid on a face is big by the speed the face is bringing them
-      down, not the free fall's vy (which grows on the face as in the game).
+    * **Splashes** going into a liquid off a face are as any other entry's: by each part's
+      bounding radius, not the speed (#5, levels.md "What a liquid plays").
     * **The AI** (followers, enemies, a cutscene's walk; not one a fall, a slide or a knock is
       carrying) keeps to ground with a floor under its middle and to the frame's own test, as
       before #264, and stops at a drop ahead: the ground within 5 m under points 0.4, 0.8 and
