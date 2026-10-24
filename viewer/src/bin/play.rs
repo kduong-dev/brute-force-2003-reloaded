@@ -265,7 +265,8 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
                 std::process::exit(0);
             }
             // test hook: BF_FIND_BODIES=1 lists the collision bodies of the placed objects and the
-            // blockers (the terrain's in one line each): their size and shape (#285), then exits
+            // blockers (the terrain's in one line each): their size and shape, and how many of
+            // their faces face into them (`Tri::inner`) (#285), then exits
             if std::env::var("BF_FIND_BODIES").is_ok() {
                 for s in a.survey() {
                     let size = s.hi - s.lo;
@@ -277,8 +278,8 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
                     };
                     let shape = if s.open_edges == 0 { "closed" } else { "open" };
                     let what = format!("{what}{}{}", if s.liquid { " (liquid)" } else { "" }, if s.door { " (door)" } else { "" });
-                    println!("body {} {what}: {} triangles, {:.2} .. {:.2} ({:.1} x {:.1} x {:.1} m), {shape} ({} open edges, {} shared by 3+, {} wound against their neighbour), {} twinned, volume {:.2} m3{}",
-                             s.body, s.triangles, s.lo, s.hi, size.x, size.y, size.z, s.open_edges, s.shared_edges, s.flipped_edges, s.twins, s.volume,
+                    println!("body {} {what}: {} triangles, {:.2} .. {:.2} ({:.1} x {:.1} x {:.1} m), {shape} ({} open edges, {} shared by 3+, {} wound against their neighbour), {} twinned, {} facing in, volume {:.2} m3{}",
+                             s.body, s.triangles, s.lo, s.hi, size.x, size.y, size.z, s.open_edges, s.shared_edges, s.flipped_edges, s.twins, s.inner, s.volume,
                              if s.convex { ", convex" } else { "" });
                 }
                 std::process::exit(0);
@@ -4360,12 +4361,19 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // the floor under the feet; else one under the body's middle part (a rim it's half
             // over, a sliver of steep ground beside a floor: FUN_0012b950's ledge grace, LEDGE_GRACE,
             // #264); else terrain too steep to stand on, which they fall onto and slide down
-            // (`slide_on_face`, #264); neither: the edge of the map, so back where they were
+            // (`slide_on_face`, #264); neither: the edge of the map, so back where they were. A
+            // rock's steep flank under the body's middle more than a step over that floor is
+            // ground too steep to stand on as well (#285, `Arena::flank_below`; not for one the AI
+            // steers, which keeps to floors)
             let top = feet + STEP_UP;
             let floor = a.floor_at(u.position.x, u.position.z, top)
                 .or_else(|| (!steered).then(|| a.floor_around(u.position.x, u.position.z, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, top)).flatten());
+            let flank = if steered { None } else {
+                a.flank_below(u.position.x, u.position.z, top).filter(|f| floor.is_none_or(|g| f.0 > g.0 + STEP_UP))
+            };
             let slope = if floor.is_none() { a.slope_below(u.position.x, u.position.z, top) } else { None };
-            let Some((g, n, material, steep)) = floor.map(|(g, n, m)| (g, n, m, false)).or(slope.map(|(g, n)| (g, n, 0, true))) else {
+            let Some((g, n, material, steep)) = flank.map(|(g, n)| (g, n, 0, true)).or(floor.map(|(g, n, m)| (g, n, m, false)))
+                .or(slope.map(|(g, n)| (g, n, 0, true))) else {
                 u.position.x = u.prev_xz.x;
                 u.position.z = u.prev_xz.y;
                 continue;
@@ -4696,11 +4704,12 @@ fn ground_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
 
 /// A move down a steep face this frame (from `prev_xz` to where it is, its feet coming down
 /// `face_drop` along it), followed in steps of at most GROUND_STEP as `ground_walk` follows the
-/// ground: at the first point where there's a floor at the feet or no face under them (the
-/// face's foot, a cliff past it) they stop this frame, their feet where the move had brought
-/// them, so the ground loop lands them or lets them fall on from there. Taken whole, a 15 fps
-/// frame's move carried them up to a metre past the foot before the floor was seen, and the
-/// landing (and its damage) hung on the frame rate (#264). Their feet's height where they stop.
+/// ground: at the first point where there's a floor at the feet or no face under them (steep
+/// terrain or a rock's flank, #285: the face's foot, a cliff past it) they stop this frame, their
+/// feet where the move had brought them, so the ground loop lands them or lets them fall on from
+/// there. Taken whole, a 15 fps frame's move carried them up to a metre past the foot before the
+/// floor was seen, and the landing (and its damage) hung on the frame rate (#264). Their feet's
+/// height where they stop.
 fn face_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
     let from = u.prev_xz;
     let to = Vec2::new(u.position.x, u.position.z);
@@ -4714,7 +4723,9 @@ fn face_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
         let p = from.lerp(to, t);
         let at = feet - u.face_drop * t;
         let floor = a.floor_at(p.x, p.y, at + FACE_TOUCH).is_some_and(|f| at - f.0 <= FACE_TOUCH + u.face_drop / steps as f32);
-        if floor || a.slope_below(p.x, p.y, at + FACE_TOUCH + u.face_drop).is_none() {
+        // (the face: steep terrain, or a rock's flank, #285)
+        let top = at + FACE_TOUCH + u.face_drop;
+        if floor || (a.slope_below(p.x, p.y, top).is_none() && a.flank_below(p.x, p.y, top).is_none()) {
             u.position.x = p.x;
             u.position.z = p.y;
             u.position.y = at - GROUND;
@@ -5584,9 +5595,9 @@ fn collide(units: &mut [&mut Player], player_first: bool) {
 /// (into a rock's slope, which isn't a wall, rising over its feet faster than it falls) stays
 /// where it was across and comes down on the slope, where the game's sweep takes it along it; one
 /// on its feet is the ground loop's, which may yet stand it on the rock. (The fall's drop isn't
-/// swept: one that drops past a rock's steep flank into it is taken out at the start of the
-/// collision, `out_of_rocks`, before it's drawn.) One out of the world (`Player::absent`) stays
-/// where it is.
+/// swept: one over a rock's steep side is stood on it by the ground loop, `Arena::flank_below`,
+/// and one that drops into a rock anyway is taken out at the start of the collision,
+/// `out_of_rocks`, before it's drawn.) One out of the world (`Player::absent`) stays where it is.
 fn walls(a: &world::Arena, units: &mut [&mut Player], from: &mut [Vec2], player_first: bool) {
     for (i, u) in units.iter_mut().enumerate() {
         if u.absent {
@@ -5608,8 +5619,8 @@ fn walls(a: &world::Arena, units: &mut [&mut Player], from: &mut [Vec2], player_
 }
 
 /// Each of `units` in a rock's solid where the last frame left it (`Arena::out_of_rock`, #285:
-/// put there by a spawn or a test teleport, or by this frame's fall dropping it past a rock's
-/// steep flank, which isn't swept) is taken out to the nearest place clear of it, its feet on the
+/// put there by a spawn or a test teleport, or by this frame's fall, which isn't swept, dropping
+/// it past a rock's side it slid off) is taken out to the nearest place clear of it, its feet on the
 /// floor there unless it's in the air, and its move this frame is over (`prev_xz` there too: the
 /// ground loop follows none). One out of the world (`Player::absent`) stays where it is.
 /// BF_INSIDE_LOG logs it.
