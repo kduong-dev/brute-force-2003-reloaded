@@ -230,6 +230,15 @@ pub struct WeaponDef {
     /// `MeshBullet::mirv_mode`): FUN_00232520 adds the range again to a mesh projectile's reach
     /// for WM_MIRV_ON_EXPLODE (2), 0.75 x it for WM_MIRV_ON_APOGEE (1)
     pub mirv_mode: i64,
+    /// The object `<base>`'s h_11e7d864 (base +0x35; FUN_00154a20 copies it to the runtime
+    /// type's +0xa8 bit 4): its body leaves the world's gravity. The root body's maker FUN_00158cd0
+    /// (game object vtable +0x158, the projectile's too) calls FUN_0016a760 with the flag set
+    /// (0x158ec0), which takes the body's core off the Ipion controller of priority 1000 (vtable
+    /// 0x38e7f4 +0x14, 0x2b4770): the environment's gravity controller, made beside its default
+    /// gravity (0x2b49ff). Of the mesh projectiles' objects only the two steady missiles' have it
+    /// (h_e9327576, the Therm Sweeper's, and h_fa69b507, the Sweeper V's); the iKhan-GPL's
+    /// h_175a0adf and the breath objects don't (#239, play_missile.rs `falls`)
+    pub no_gravity: bool,
 }
 
 impl WeaponDef {
@@ -453,6 +462,7 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             bullet_after: f32_of(bullet, 0xF0A5_6297, 0.0),
             mirv_mode: bullet.and_then(|b| b.children.iter().find(|c| c.name == h("mirv"))).and_then(|m| m.attr(0x11F5_15C5))
                 .and_then(|v| v.as_i64().or(v.as_f32().map(|f| f as i64))).unwrap_or(0),
+            no_gravity: find(0x11E7_D864).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
         });
     }
     out

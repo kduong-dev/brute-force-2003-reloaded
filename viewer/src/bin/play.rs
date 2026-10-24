@@ -5844,8 +5844,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // round (take05: the gun in hand empty, the other fires on alone)
     let second = p.second.filter(|s| s.weapon < l.weapons.len());
     let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
+    // (an AI holds a lobbed weapon's fire while its target is within the blast's reach of itself,
+    // `missile::lob_holds`: the demo's, untraced)
+    let held = p.ai_target.zip(l.weapons.get(p.weapon)).is_some_and(|(t, w)| missile::lob_holds(&w.def, game, p.position, t));
     // (a tap is held for each gun until its first shot, play_shots.rs `pull`)
-    let pulled = p.fire_state.pull(p.fire, can_fire);
+    let pulled = p.fire_state.pull(p.fire && !held, can_fire);
     if pulled.contains(&true) {
         if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
             // raise the gun before the first shot, for the character's own in-time (#140; both
@@ -5861,7 +5864,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     if let Some(def) = l.weapons.get(p.weapon).map(|w| &w.def) {
         // (an empty gun's dry cycle: the button down, or a pull still owed the other gun's shot,
         // as the game's request sets both guns' fire flags)
-        let dry = (p.fire || pulled.contains(&true)) && gun_up && p.using.is_none();
+        let dry = ((p.fire && !held) || pulled.contains(&true)) && gun_up && p.using.is_none();
         // (the accuracy object's bonus from the holder: a level character's placement's, #227,
         // play_brain.rs; -1 for the rest)
         let bonus = p.brain.as_ref().map_or(shots::ACCURACY_BONUS, |b| b.gun_bonus);
@@ -6294,6 +6297,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             // the shot with the aim point and the shooter's line
             let missile = missile::flies(&w.def);
             let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
+            // an AI's lobbed round is pitched up to come down on its aim point (`missile::lob`:
+            // the demo's stand-in for the game's AI aim, untraced); its line stays the straight one
+            if p.ai_target.is_some() && missile::lobs(&w.def, game) {
+                dir = missile::lob(origin, target, w.def.bullet_speed);
+            }
             for (pellet, dir) in p.fire_state.directions(side, dir, w.def.shots.burst_spread) {
                 if missile {
                     p.launches.push(missile::Launch { weapon: w.def.name, origin, dir, aim: target, look });

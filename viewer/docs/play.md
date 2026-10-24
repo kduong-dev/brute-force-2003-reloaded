@@ -1801,9 +1801,17 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   skipped, 0x226dd9-0x226dfc). Its body keeps the velocity FUN_00227ce0 gave it at the launch,
   the bullet's speed along the shot (vtable +0x58 adds the change through FUN_002b3b20: no mass
   term), and falls under the Ipion world's gravity, (0, -9.81, 0) (FUN_0016a250), its speed
-  damped by 0.1 a second (FUN_00158f80's body template, read as Ipion's speed damping, #161's
-  inference), each game frame before its tick, as the physics step runs before the objects'
-  (FUN_00169e20). The iKhan-GPL's (h_e9be70f0): 23 m/s, range 40, so a life of 1.74 s and a
+  damped by 0.1 a second (the body template of FUN_00158cd0 / FUN_00158f80: 0.1 where Ipion's own
+  template constructor, 0x2b4710, puts the speed damping's 0.01; #161's inference, by that
+  layout), each game frame before its tick, as the physics step runs before the objects'
+  (FUN_00169e20). **Which bodies fall** is the projectile object type's (`falls`): its `<base>`
+  h_11e7d864 (base +0x35 -> the runtime type's +0xa8 bit 4, FUN_00154a20) has the root body's maker
+  FUN_00158cd0 (game object vtable +0x158) take the body off the world's gravity controller
+  (0x158ec0 -> FUN_0016a760: the core leaves the controller of priority 1000, vtable 0x38e7f4,
+  0x2b4770, the one the Ipion environment makes beside its gravity at 0x2b49ff). It's set on
+  exactly the two steady missiles' objects (h_e9327576, h_fa69b507) and on no other mesh
+  projectile's (h_175a0adf, the breath objects h_0dc93533 and h_175340d6): the reviewer's lead,
+  traced. The iKhan-GPL's (h_e9be70f0): 23 m/s, range 40, so a life of 1.74 s and a
   straight phase of 0.6 of it, 1.04 s; fired level from Brutus's muzzle, ~1.45 m up, it comes
   down 12 m out 0.53 s later. It goes off at its first contact (0x227b90: h_0bafbd6f set and
   n1 = n2 = 0; another projectile doesn't count), the world or a body, as any missile here: one
@@ -1820,6 +1828,15 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   degrees up. Its node isn't turned (nothing steers it), so the drawn round keeps the turn it
   left with. The game runs a projectile's timers x5 while it's in a liquid (its +0x104, 0x226d22):
   not done.
+* **An AI's lobbed rounds** (`missile::lob`, `missile::lob_holds`; **the demo's stand-in for the
+  game's AI aim, untraced and not filmed**): FUN_0022e5b0 turns every gun straight onto its aim
+  point, and fired so, level at a target 20 m off, an AI's round came down ~5 m in front of it and
+  its own 8 m blasts killed it (e40's Shrike placement h_1f979a8a, which carries the iKhan-GPL).
+  So an AI pitches a lobbed round up, the lower of the two pitches whose flight (the demo's
+  gravity and damping at the round's speed, the split and the world left out) passes through its
+  aim point, or, out of reach, the one that carries it farthest at that height; and it holds its
+  fire while the aim point is within its own blast's reach (the Damage radius and
+  `BLAST_PART_REACH` more, across). What the game's AI does about a lob isn't read.
 * **The iKhan-GPL** (#55; h_e9be70f0, WTYPE_RIFLE, Brutus's in the takes): 0.66 rounds a second
   from a clip of 16 (ammo-type 9, for which no level defines an ammo item: no reserve, no
   reload), its fire sound f3ccb53d, its muzzle effect h_0d18cac3 (grenade_launcher_smoke and
@@ -1882,10 +1899,11 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   degrees off its heading, is given up for one ahead along its velocity (velocity x 200: 6 km,
   0x227038), and the target with it; that test runs before the fuse, so a NEUTRAL child that
   gives up has no fuse and flies on to contact or its timeout. The trail's user parameter
-  follows life / start (FUN_00228c10). No gravity on the steady ones, as measured (take20's
-  children climbed straight at ~8.5 degrees for 168.6 m in 5.58 s): the game's body has it, and
-  the steering's halving of the velocity across its way each frame leaves a sag of 0.33 m/s,
-  0.6 degrees at 30 m/s, which the demo leaves out (`falls`).
+  follows life / start (FUN_00228c10). No gravity: their objects' h_11e7d864 takes their bodies
+  off it (**Lobbed** above), as the takes show (take20's children climbed straight at ~8.5 degrees
+  for 168.6 m in 5.58 s). The steering wouldn't hold one up: the Sweeper V's, along its own
+  velocity (flag 4 alone), takes nothing across it, and a missile under gravity would bend as
+  freely as an unsteered round.
 * **The trail's puffs** rise in place: the air fields linked to them, mtrail-rise (0.3 m/s up)
   and mtrail-rise#1 (1.0 m/s up, Approach 1.66 taken as 1), now run (`AIR_FIELDS`,
   `src/ale_fx.rs`). take21's side view shows a cloud round the missile from 0.1 s, then a line
@@ -2282,10 +2300,13 @@ step):
     from the muzzle, 0.40 s after the launch, the blast out of Brutus's reach (his nearest part
     9.5 m away). The take, at 60 fps: the burst on the cliff at the crosshair's bottom bracket
     0.47-0.50 s after the launch glow's first frame, on two shots. Not matched: 0.07-0.1 s
-    longer in the take, cause not found. The code's launch is the bullet's speed exactly, and the
-    damping, read as 0.1 a second, would have to be ~0.7 to account for it (the steered Sweeper V
-    would then hold ~52 m/s, where #72's take05 timed 59.5 on average). Where the take's
-    crosshair sat on the cliff, and so how far its round went, is read from the picture.
+    longer in the take, cause not found. The code's launch is the bullet's speed exactly. Both
+    iKhan takes (01 and 08) would fit a stronger damping, ~0.7 a second; the reviewer noted that
+    the objection to it assumed the steady bodies take the damping too. They do, by the code: the
+    steady missiles' bodies come from the same template (FUN_00158cd0's 0.1; h_11e7d864 takes them
+    off the gravity only), so at 0.7 the Sweeper V's steering would hold ~52 m/s where #72's
+    take05 timed 59.5 on average. Kept at the code's 0.1; a follow-up. Where the take's crosshair
+    sat on the cliff, and so how far its round went, is read from the picture.
   * take08's 25 m: each round comes down on the sand 12.4-12.7 m from the muzzle, 0.53 s after the
     launch (the take: ~0.47 s after the glow, "~8-10 m ahead" by eye).
   * take03's spot, a frozen Shrike Soldier 7 m out (the take's was a Shrike of e40's spawn
@@ -2306,6 +2327,18 @@ step):
   * The apogee, 20 degrees up in the open: the split 1.07 s after the launch (its straight phase
     out, rising at -0.45 m/s), 21.3 m out and 5.1 m up; the bomblets fan out (three trails in the
     capture) and land 32-39 m out, 1.7-2.1 s after the launch. Not filmed.
+  * An AI's (the tester's repro, `-- --test BF_MAP=e40 BF_NO_SQUAD=1 BF_CHARACTER=0
+    BF_TEST_GOTO=17.15,175.43,17.15,175.0 BF_TEST_NPC=0.5,h_1f979a8a,enemy,fight,17.7,196.0`):
+    on #239's first build (the tester's run) every round of the Shrike's came down ~5.3 m in front
+    of it and its own blasts (9.0-9.7 each) took it from 64 HP to 0 by 11.4 s, Brutus untouched.
+    Now it pitches them 13.4 degrees up and each strikes Brutus 19.5 m off, 0.9 s after the
+    launch, a round every ~1.5 s: 6.8-7.4 (the roll x0.62, his multiplier, x0.6) and the blast's
+    share 5.5-5.9; it takes nothing itself, and Brutus is down at 14.9 s (main's plain shots hit
+    him every 1.5 s too). With the squad (without `BF_NO_SQUAD`) Hawk and Tex shoot it from 37-40
+    m, and it gets two rounds off at Brutus, both hits. Put 6 m from Brutus (17.7, 181.5) it holds
+    its fire (no round in 10 s); at 10 m (17.7, 185.5) it fires, nearly level, and its own blast
+    misses it by 0.4 m (its nearest part 8.97 m away). `cargo test` checks the lob's pitch (~11
+    degrees for 20 m level) and that the flight passes within 2 cm of the target.
 * **The iKhan-GPL** (#55, the recipes above with `BF_TEST_WEAPON="iKhan-GPL"`, which now gives the
   gun every run; `BF_CAPTURE_FPS=60` against the takes' 60 fps):
   * take01's look: the launch is an orange smoke beside the gun and a yellow glow leaving it with
