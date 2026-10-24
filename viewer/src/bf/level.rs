@@ -796,10 +796,13 @@ impl Level {
     }
 
     /// The directional lights FUN_000dcc10 puts in the indoor pair (`indoor`) or the outdoor one:
-    /// those with the pair's flag (`LevelLight::indoor`, `outdoor`), two at most. It walks the
-    /// world's lights (+0x22c) and fills the pair's two slots in the list's order (a slot rule on
-    /// the type's +0x50 bit 3 never applies: that byte is the parsed bool h_ee2faf73, 0 or 1); no
-    /// level of the game has more than two lights in either pair, so the order never decides.
+    /// those with the pair's flag (`LevelLight::indoor`, `outdoor`), two at most, in the level
+    /// file's order. It walks the world's directional lights (+0x22c) from the front, filling the
+    /// pair's two slots as it meets them (a slot rule on the type's +0x50 bit 3 never applies: that
+    /// byte is the parsed bool h_ee2faf73, 0 or 1), and 0x14f2a0 puts each new directional light at
+    /// the front of that list, so it meets them last to first: with more than two it would keep
+    /// the file's last two, but no level of the game has more than two in either pair. Which light
+    /// takes which slot (`level_scene::pair_slots`) only matters to the terrain's bump map.
     pub fn pair(&self, indoor: bool) -> Vec<&LevelLight> {
         self.lights.iter().filter(|l| if indoor { l.indoor } else { l.outdoor }).take(2).collect()
     }

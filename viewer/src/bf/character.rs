@@ -39,6 +39,22 @@ const TERRAIN_VERTEX: u32 = 0xEF44_F398;
 const TERRAIN_ROW: u32 = 65;
 const TERRAIN_CELL: f32 = 2.0;
 const TERRAIN_HEIGHT: f32 = 1.0 / 16.0;
+/// Where a terrain vertex keeps its tangent frame (`Geoset::frames`): the vertex declaration at
+/// 0x3c9860 (entry 8 of the table at 0x3e2300) puts v11 at +0x18 as NORMSHORT3 (format 0x31: three
+/// shorts / 32767) and v12 at +0x1e as PBYTE2 (0x24: two bytes / 255). Vertex program 0x38
+/// (0x3d8bf8) reads them as a quaternion: v11 its x, y, z and w = c27.z - v12.x c27.w, and turns
+/// the key light (c16) by it, 2 (v . c) v + (2 w^2 - 1) c + 2 w (v x c) (instructions 5-51), into
+/// oD1 for the bump map. c27 isn't set for that program anywhere (no code loads it, levels.md
+/// "The bump map"); w = 1 - 2 b / 255 is what the data says: on e40's terrain (3311 vertices
+/// sampled) it gives |w| = sqrt(1 - |v|^2) to within 0.011 on average, the frame turns each
+/// vertex's normal (v2) to +z (mean z 0.95; within 8 degrees on 58% of them, the rest from a
+/// normal of the frame's own), its x axis points the way the colour's u grows (cos 0.98-0.99 on
+/// the flat vertices of all three layers) and its y the way v falls (cos 0.99). v12.y is the
+/// vertex's baked light: the block's cell value (h_e2d79bad) at the vertex, 98.8% of them within
+/// their four cells' values (`Level::terrain_light` already gives the demo that light).
+const TERRAIN_FRAME: usize = 0x18;
+/// The byte of v12 that holds the quaternion's w (see TERRAIN_FRAME).
+const TERRAIN_FRAME_W: usize = 0x1E;
 const H_WRAP_COUNT: u32 = 0xEDCA_4B16;
 /// A wrapper material's opacity, 0-255 (e.g. 50 for a pickup's glow shell).
 pub const H_WRAP_ALPHA: u32 = 0xE59D_69A0;
@@ -254,6 +270,26 @@ fn texture_fingerprint(t: &LoadedTexture) -> u32 {
         .fold(0x811C_9DC5u32, |a, &b| (a ^ b as u32).wrapping_mul(0x0100_0193))
 }
 
+/// The first three entries of the P8 bump maps' normal palette (`normal_palette`) as default.xbe
+/// stores them (B G R A): what finds the table in the file (tex_tool.py's PALETTE_SIG), which in
+/// the US build is at 0x3ba968 (.data).
+const NORMAL_PALETTE_SIG: [u8; 12] = [0xCC, 0x19, 0x7A, 0xFF, 0xCC, 0x19, 0x7E, 0xFF, 0xCC, 0x19, 0x80, 0xFF];
+
+/// The game's fixed 256-entry palette of normals for its P8 bump maps, from the executable
+/// (`xbe`, default.xbe): FUN_00285780 copies the table (0x3ba968, 1024 bytes, B G R A each) into a
+/// D3D palette. Returned as R G B A, R G B a normal's x, y, z (0-255 for -1 to 1; 249 of the
+/// entries cover the hemisphere, the last one straight up). None without the file or the table.
+fn normal_palette(xbe: &Path) -> Option<[[u8; 4]; 256]> {
+    let data = std::fs::read(xbe).ok()?;
+    let at = data.windows(NORMAL_PALETTE_SIG.len()).position(|w| w == NORMAL_PALETTE_SIG)?;
+    let table = data.get(at..at + 1024)?;
+    let mut out = [[0u8; 4]; 256];
+    for (o, e) in out.iter_mut().zip(table.chunks_exact(4)) {
+        *o = [e[2], e[1], e[0], e[3]];
+    }
+    Some(out)
+}
+
 /// Everything loaded from data/common.tgz (+ textures found in level archives on demand).
 pub struct Game {
     pub schemas: SchemaSet,
@@ -277,6 +313,8 @@ pub struct Game {
     texture_libraries: Vec<Arc<str>>,
     /// BF_TEX_LOG: the names already logged since the libraries last changed (None: no log)
     texture_log: Option<std::collections::HashSet<u32>>,
+    /// The P8 bump maps' normal palette (`normal_palette`), None without default.xbe
+    normal_palette: Option<Arc<[[u8; 4]; 256]>>,
     pub channels: HashMap<u32, Channel>,
     pub anim_sets: HashMap<u32, Vec<AnimDef>>,
     /// (name, compound archetype hash)
@@ -1215,6 +1253,7 @@ impl Game {
         g.texture_log = std::env::var("BF_TEX_LOG").is_ok_and(|v| v != "squad").then(Default::default);
         g.load_archive(&common, COMMON)?;
         g.pending_texture_archives = Self::texture_archives(data_dir, None)?;
+        g.normal_palette = normal_palette(&data_dir.join("..").join("default.xbe")).map(Arc::new);
         Ok(g)
     }
 
@@ -1246,6 +1285,7 @@ impl Game {
             pending_texture_archives: vec![],
             texture_libraries: vec![],
             texture_log: None,
+            normal_palette: None,
             channels: HashMap::new(),
             anim_sets: HashMap::new(),
             characters: vec![],
@@ -1312,6 +1352,7 @@ impl Game {
         for (k, v) in &other.textures {
             self.textures.entry(*k).or_insert_with(|| v.clone());
         }
+        self.normal_palette = self.normal_palette.clone().or_else(|| other.normal_palette.clone());
     }
 
     /// Whether an objects file loaded has the archetype `name` (`archetype`).
@@ -2374,6 +2415,23 @@ impl Game {
         texture::decode_mips(&t.info, &t.blob)
     }
 
+    /// A P8 bump map's mip chain with each texel's index looked up in the normal palette
+    /// (`normal_palette`): R G B the normal's x, y, z (0-255 for -1 to 1), as the console's texture
+    /// unit hands the sampled normal to the combiners (`2 t - 1` in pixel shaders 0x1a / 0x1b).
+    /// Each level is the archive's own (the tutorial's bump maps ship 9). None for a texture of
+    /// another format, or without the palette (no default.xbe).
+    pub fn bump_mips(&mut self, name: u32) -> Option<texture::Mips> {
+        let palette = self.normal_palette.clone()?;
+        let t = self.texture_entry(name)?;
+        if t.info.fmt != texture::P8 {
+            return None;
+        }
+        let mut mips = texture::decode_mips(&t.info, &t.blob)?;
+        // (decode_level gives a P8 texel's index as grey)
+        mips.map_texels(|p| p.copy_from_slice(&palette[p[0] as usize]));
+        Some(mips)
+    }
+
     /// Where a texture comes from, searched for as `texture_rgba` does: the archive whose library
     /// holds it ("common", the level's name, "mp_common/<library>" for a match's, or the archive
     /// the name-ordered search found it in) and a fingerprint of its bytes (FNV-1a over its data
@@ -2517,6 +2575,10 @@ pub struct Geoset {
     /// the outdoor pair. A building's inner faces have it (the tutorial: 59 of its 702 geosets, on
     /// 16 meshes, 11 of them with outdoor geosets too); false for what isn't a level mesh
     pub indoor: bool,
+    /// A terrain vertex's tangent frame (TERRAIN_FRAME): the unit quaternion (x, y, z, w) that
+    /// turns world directions into the frame its bump map's normals are given in, one per
+    /// vertex; empty for every other mesh.
+    pub frames: Vec<[f32; 4]>,
 }
 
 pub struct Character {
@@ -2805,7 +2867,8 @@ pub(crate) fn read_geoset(rec: &Element, ivd: &[u8], palettes: &[Vec<usize>], ma
     }
 
     let palette = palettes.get(pal.max(0) as usize).cloned().unwrap_or_default();
-    let mut g = Geoset { positions: vec![], normals: vec![], uvs: vec![], joints: vec![], weights: vec![], indices, material, indoor: false };
+    let mut g = Geoset { positions: vec![], normals: vec![], uvs: vec![], joints: vec![], weights: vec![], indices, material, indoor: false,
+                         frames: vec![] };
     let f32at = |o: usize| f32::from_le_bytes(ivd[o..o + 4].try_into().unwrap());
     let sx = |x: u32, bits: u32| { let x = x as i32; if x >= 1 << (bits - 1) { x - (1 << bits) } else { x } };
     for i in 0..nv {
@@ -2826,6 +2889,12 @@ pub(crate) fn read_geoset(rec: &Element, ivd: &[u8], palettes: &[Vec<usize>], ma
             g.uvs.push([f32at(o + 8), f32at(o + 12)]);
             g.joints.push([0; 4]);
             g.weights.push([1.0, 0.0, 0.0, 0.0]);
+            // the tangent frame (TERRAIN_FRAME): v11's NORMSHORT3 the quaternion's x, y, z, v12.x's
+            // byte its w as 1 - 2 b / 255
+            let s = |k: usize| i16::from_le_bytes([ivd[o + k], ivd[o + k + 1]]) as f32 / 32767.0;
+            let w = 1.0 - 2.0 * ivd[o + TERRAIN_FRAME_W] as f32 / 255.0;
+            let q = Quat::from_xyzw(s(TERRAIN_FRAME), s(TERRAIN_FRAME + 2), s(TERRAIN_FRAME + 4), w).normalize();
+            g.frames.push(q.to_array());
             continue;
         }
         g.positions.push([f32at(o), f32at(o + 4), f32at(o + 8)]);
