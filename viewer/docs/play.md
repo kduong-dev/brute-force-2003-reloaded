@@ -37,8 +37,9 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   to take it into the held weapon's slot: the character is respawned carrying it, with a full
   clip, and "Took <name>" shows.
   * Loading every level (about 6 s) adds no others: the rest are the creatures' built-in
-    weapons (no model), Feral Cutter (the same model as another) and the iKhan-GPL (a model
-    under 0.1 m).
+    weapons (no model), Feral Cutter (the same model as another) and the bioreactive death's
+    vaporise blast h_1f4a5a0a, which carries the iKhan-GPL's name (a model under 0.1 m; the gun
+    itself, h_e9be70f0, is on the rack: #55).
   * `BF_TESTMAP_LEVELS=<level>,<level>...` loads a different list.
   * `BF_TESTMAP_LOG=1` lists every weapon on the rack with its type, clip and model size, and
     every hand weapon left off it, with why.
@@ -1109,7 +1110,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
 
 Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"`, `0c3db625`)
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
-map's data has it (the test map has every hand weapon); a list, `<a>;<b>`, fills the slots in
+map's data has it (the test map has every hand weapon; a label two definitions share takes the
+one that isn't WTYPE_DATA, so `"iKhan-GPL"` is the gun h_e9be70f0 and never #147's vaporise
+blast, #55); a list, `<a>;<b>`, fills the slots in
 order from the first (#35's Tex: `"Confed LZR-50;Jax-iC"`). On a level whose spawn-triggers start
 the squad (e34, e40, the tutorial: #220) the character carries its spawn's template weapons, and
 the hook now sets those too (#72): it did nothing there before. `BF_SHOT_LOG=1` now also prints each
@@ -1817,6 +1820,28 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   degrees up. Its node isn't turned (nothing steers it), so the drawn round keeps the turn it
   left with. The game runs a projectile's timers x5 while it's in a liquid (its +0x104, 0x226d22):
   not done.
+* **The iKhan-GPL** (#55; h_e9be70f0, WTYPE_RIFLE, Brutus's in the takes): 0.66 rounds a second
+  from a clip of 16 (ammo-type 9, for which no level defines an ammo item: no reserve, no
+  reload), its fire sound f3ccb53d, its muzzle effect h_0d18cac3 (grenade_launcher_smoke and
+  grenade_launcher_muzzle, no light; compiled with the missiles' rules, as every mesh projectile
+  gun's launch is), and the bracket crosshair h_12a2c478. Its round is the projectile object
+  h_175a0adf (model h_13a8dfb8, 0.04 m), the yellow glow with a ribbon behind it: the attached
+  effect h_f788f9c4 (mirvgrenade_trail: mirvgrenade_ribbon and mirvgrenade_flare) and its sound
+  10318b29, lobbed (above). **Its bomblets** are its own `<mirv>` children, three more
+  h_175a0adf: the fuse makes them as it passes an enemy within 3 m, the apogee when it's fired
+  more than ~10 degrees up; each goes off on its own. Each blast (a direct hit's, a timeout's or a
+  bomblet's): the explosion type h_e26237da (exp_mirvgrenade: a white dome, sparks and a flash;
+  light_explosion; the sound 065168c9), the bullet's impact sound e404fac6 (in no level's sound
+  bank: silent, as the Sweeper V's), Damage 18-20 EXPLOSION (as written, min 20 and max 18) in a
+  radius of 8 m, half a roll to every body it reaches (h_011cb154 false), the scorch h_e1e26e25
+  (1.5 x 1.5, 25 s) on the ground under it, and the view's shake (18 x 0.00769 = 0.14 within 56
+  m). A direct hit takes a roll first. **The other "iKhan-GPL"**: h_1f4a5a0a carries the gun's
+  stringtable name and description but is the bioreactive death's vaporise blast (WTYPE_DATA,
+  Damage 1.1-1.5 x the victim's max HP, BIOREACTIVE, radius 7: the invisible grenade h_0569a8b4
+  that FUN_001252b0 leaves at the body goes off with it, #147), never held, placed or picked up.
+  `BF_TEST_WEAPON="iKhan-GPL"` took whichever of the two the weapons' map gave first (the blast
+  about half the runs: Brutus then held its 7 mm placeholder); a label two definitions share now
+  takes the one that isn't WTYPE_DATA (`shots::test_weapon_key`).
 * **The Sweeper V** (#72; `h_ed3f6b0c`, the same machinery with other numbers, spec §2): one
   rocket a trigger cycle, 0.5 a second (60 game frames), clip 8 of the squad's AMMO_10 rockets.
   Its missile object h_fa69b507 is the Therm's model h_07d84a52 with its own attached effect
@@ -2281,6 +2306,23 @@ step):
   * The apogee, 20 degrees up in the open: the split 1.07 s after the launch (its straight phase
     out, rising at -0.45 m/s), 21.3 m out and 5.1 m up; the bomblets fan out (three trails in the
     capture) and land 32-39 m out, 1.7-2.1 s after the launch. Not filmed.
+* **The iKhan-GPL** (#55, the recipes above with `BF_TEST_WEAPON="iKhan-GPL"`, which now gives the
+  gun every run; `BF_CAPTURE_FPS=60` against the takes' 60 fps):
+  * take01's look: the launch is an orange smoke beside the gun and a yellow glow leaving it with
+    its ribbon, as the take's (its smoke shows on its second shot; the take's glow is a round halo
+    ~90 px across for its first 0.1 s, the demo's a streak: the demo's camera sees the round's way
+    from the side, where the take's is behind it, and the flare is a facing-3 quad stretched along
+    its motion). The burst is a white dome at the crosshair on the cliff's foot; above luminance
+    200 (in 640 x 480 units², 15 fps from the burst) the take's grows 0.6k, 3.2k, 5.2k, 6.7k and is
+    gone after 0.33 s, the demo's 0.5k, 1.5k, 4.7k, 4.0k, 3.9k, 2.3k, 1.2k, over 0.47 s: the same
+    light all told, 0.7x at its peak and longer. The scorch shows under the crosshair from ~0.7 s
+    (the take ~0.8 s).
+  * take02 (`BF_TEST_CLIP=3 BF_TEST_RESERVE=0`, the trigger held): three rounds 1.53 s apart (the
+    take 1.51-1.60), no reload with no reserve, then a dry click (f740ecdd) on a tap and the
+    switch.
+  * take06's frozen enemy 25 m out (Brutus at the take's spot, 17.13, 175.49, the crosshair on the
+    enemy): each round comes down 14.4-14.6 m out, 9.5 m short of him, and doesn't reach him (the
+    take: no hits). take05's 45 m wall is the same arc: down on the sand ~12-15 m out.
 
 Not matching or not done:
 * The explosion is too big: 1.5x the take's bright area on take04's cliff (two fireballs) and
@@ -2335,6 +2377,20 @@ Not matching or not done:
   a round aimed at a body always strikes the demo's cylinder, where most of take03's passed and
   split at the fuse; the creatures' Breath Attacks keep the plain shot (#83, #130); a
   projectile's timers running x5 in a liquid aren't done.
+* The iKhan-GPL (#55): its explosion's flames. The take's rise and spread up and out from the
+  dome (+0.13-0.33 s); the demo's lie flat along the ground. exp_mirvgrenade has a radial field,
+  exp-mirvgren_rad.fld (class h_03d20af6; its parameters 5.9, a curve 1 to 0.001, a curve of 370
+  falling to 62 over 0.2 s and 0.43, read by Freelancer's FxRadialField as its radius,
+  attenuation, magnitude and approach), which `src/ale_fx.rs` doesn't run, and two air fields
+  (exp_mirvgrenade_air.fld, a wind of 0.004 m/s at approach 1.49; exp-mirvgren-air.fld, 1 m/s at
+  0.3) left off (`AIR_FIELDS`): run without the push, the first would stop every particle where
+  it's born. The weapon panel reads "16 / 0" where take01's reads "16": the game's panel
+  (0xcbdd0) writes "%d / %d" (0x40d654) only when the held gun's data +0x174 is set and it doesn't
+  recharge, "%d Regen" (0x40d664) for a recharging one, else the clip alone (FUN_000bb920); data
+  +0x174 names an object type that FUN_0022b6d0 makes with each weapon (0x22d820) and a
+  character's animation event makes again (0x118390), which reads as the gun's magazine. What sets
+  it isn't found, so the demo keeps "clip / reserve" (a code question). No level defines an ammo
+  item for the iKhan-GPL's ammo-type 9.
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's

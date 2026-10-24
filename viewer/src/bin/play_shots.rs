@@ -684,7 +684,8 @@ impl FireState {
 /// instead (#35's Tex: `Confed LZR-50;Jax-iC`, the takes' loadout). On a level whose
 /// spawn-triggers start the squad (e34, e40, the tutorial: #220) the character carries its
 /// spawn's template weapons (`SquadSpawn::dress`, set before this runs), so the slot is set in
-/// those too: without it the hook did nothing there.
+/// those too: without it the hook did nothing there. A label two definitions share takes the
+/// one a character can hold (`test_weapon_key`).
 fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, mut player: ResMut<Player>) {
     if std::mem::replace(&mut *done, true) {
         return;
@@ -693,8 +694,7 @@ fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, mut player: Re
     let names: Vec<&str> = want.split(';').map(str::trim).filter(|n| !n.is_empty()).collect();
     let first: usize = if names.len() > 1 { 0 } else { std::env::var("BF_START_WEAPON").ok().and_then(|v| v.parse().ok()).unwrap_or(0) };
     for (k, name) in names.into_iter().enumerate() {
-        let hex = u32::from_str_radix(name.trim_start_matches("h_").trim_start_matches("0x"), 16).ok();
-        let Some(key) = game.0.weapons.iter().find(|(k, d)| Some(**k) == hex || d.label.eq_ignore_ascii_case(name)).map(|(k, _)| *k) else {
+        let Some(key) = test_weapon_key(&game.0.weapons, name) else {
             warn!("BF_TEST_WEAPON: no weapon {name}");
             continue;
         };
@@ -705,6 +705,25 @@ fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, mut player: Re
             if slot < list.len() { list[slot] = key } else { list.push(key) }
         }
     }
+}
+
+/// WTYPE_DATA, a weapon-type (the WTYPE_ table at 0x3bf714, 6): a definition nobody holds, a
+/// blast's own weapon type. The one that shares a hand gun's label is h_1f4a5a0a, the
+/// bioreactive death's vaporise blast (Damage 1.1-1.5 BIOREACTIVE, radius 7; #147's: the
+/// invisible grenade h_0569a8b4 that FUN_001252b0 leaves at the body goes off with it), whose
+/// stringtable name and description are the iKhan-GPL's (h_11ae541f, h_1e4e6a41; #55's
+/// comments).
+const WTYPE_DATA: i64 = 6;
+
+/// The weapon `BF_TEST_WEAPON` names: a definition by its hex name ("e9be70f0", "h_e9be70f0"),
+/// else by its label, any case. A label two definitions share takes the one that isn't
+/// WTYPE_DATA, then the lowest name: "iKhan-GPL" is the gun h_e9be70f0 every time, where the
+/// first the weapons' map gave was the vaporise blast h_1f4a5a0a about half the runs (#55).
+fn test_weapon_key(weapons: &HashMap<u32, WeaponDef>, name: &str) -> Option<u32> {
+    let hex = u32::from_str_radix(name.trim_start_matches("h_").trim_start_matches("0x"), 16).ok();
+    hex.filter(|k| weapons.contains_key(k)).or_else(|| {
+        weapons.iter().filter(|(_, d)| d.label.eq_ignore_ascii_case(name)).min_by_key(|(k, d)| (d.weapon_type == WTYPE_DATA, **k)).map(|(k, _)| *k)
+    })
 }
 
 /// Mixed into the last muzzle effect's seed for its light effect's (any odd constant: the
@@ -732,5 +751,24 @@ fn move_shells(mut commands: Commands, time: Res<Time>, mut shells: Query<(Entit
         }
         let spin = s.spin * dt;
         tr.rotate(Quat::from_euler(EulerRot::XYZ, spin.x, spin.y, spin.z));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #55: "iKhan-GPL" names the gun h_e9be70f0 (WTYPE_RIFLE), never the vaporise blast
+    /// h_1f4a5a0a (WTYPE_DATA) that shares its label, whatever the map's order; a hex name takes
+    /// that definition, the blast too.
+    #[test]
+    fn a_shared_label_takes_the_gun() {
+        let def = |name: u32, weapon_type: i64| WeaponDef { name, label: "iKhan-GPL".into(), weapon_type, ..Default::default() };
+        let weapons: HashMap<u32, WeaponDef> = [(0xE9BE_70F0, def(0xE9BE_70F0, 1)), (0x1F4A_5A0A, def(0x1F4A_5A0A, WTYPE_DATA))].into_iter().collect();
+        assert_eq!(test_weapon_key(&weapons, "iKhan-GPL"), Some(0xE9BE_70F0));
+        assert_eq!(test_weapon_key(&weapons, "ikhan-gpl"), Some(0xE9BE_70F0));
+        assert_eq!(test_weapon_key(&weapons, "1f4a5a0a"), Some(0x1F4A_5A0A));
+        assert_eq!(test_weapon_key(&weapons, "h_e9be70f0"), Some(0xE9BE_70F0));
+        assert_eq!(test_weapon_key(&weapons, "Jax-iC"), None);
     }
 }
