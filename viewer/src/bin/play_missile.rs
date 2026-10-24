@@ -1,8 +1,8 @@
-//! Mesh projectiles (bullet-type 2, BTYPE_MESH_PROJECTILE; issue #73, the Therm Sweeper, and
-//! #72, the Sweeper V): a missile that flies, steers, splits in two (MIRV) and explodes, from
-//! default.xbe's projectile class (0x226000-0x229000) and its weapon type's damage handler
-//! (0x22d0b0), checked against the xemu takes in todo/73-therm-sweeper/ and todo/72-sweeper-v/
-//! (the tester's specs there have the measurements).
+//! Mesh projectiles (bullet-type 2, BTYPE_MESH_PROJECTILE; issue #73, the Therm Sweeper, #72,
+//! the Sweeper V, and #239, the lobbed ones): a missile that flies, steers or falls, splits
+//! (MIRV) and explodes, from default.xbe's projectile class (0x226000-0x229000) and its weapon
+//! type's damage handler (0x22d0b0), checked against the xemu takes in todo/73-therm-sweeper/,
+//! todo/72-sweeper-v/ (the tester's specs there have the measurements) and todo/55-ikhan-gpl/.
 //!
 //!  - **Launch** (FUN_0022f1d0 case 2 -> FUN_0022fb50): one projectile object, the bullet's
 //!    mesh-name (h_e9327576: model h_07d84a52, attached effect h_194dc78e with its sound
@@ -39,20 +39,32 @@
 //!    and every blast shakes the player's view (FUN_00228c70, play_shake.rs). No hit or blast
 //!    knocks its victim down (`hurt_still`).
 //!
-//! Only mesh projectiles steered at a steady speed (h_0b03ece5) fly here: the Therm Sweeper and
-//! the Sweeper V, the only two bullet-type 2 weapons with it in every level's data (#72 spec §2).
-//! The Sweeper V's has no `<mirv>` (count and mode 0), no homing or seeking and no second timer,
-//! so the same tick makes it the first missile that doesn't split: it flies straight along its
-//! launch at 60 m/s (FUN_002266d0 steering it along its own velocity, flag 4 alone) and goes off
-//! where it strikes, at its fuse, or where it is when its life (range / speed: 200 / 60 = 3.33 s)
-//! runs out (h_0976a9dc, FUN_00227760). The others (the iKhan-GPL's lobbed cluster, the
-//! creatures' weapons) fly under their physics body's gravity, which isn't traced, and keep
-//! play.rs's plain `Shot`.
+//! Every mesh projectile flies here (`flies`). Those steered at a steady speed (h_0b03ece5) are
+//! the Therm Sweeper and the Sweeper V, the only two bullet-type 2 weapons with it in every
+//! level's data (#72 spec §2). The Sweeper V's has no `<mirv>` (count and mode 0), no homing or
+//! seeking and no second timer, so the same tick makes it the first missile that doesn't split:
+//! it flies straight along its launch at 60 m/s (FUN_002266d0 steering it along its own
+//! velocity, flag 4 alone) and goes off where it strikes, at its fuse, or where it is when its
+//! life (range / speed: 200 / 60 = 3.33 s) runs out (h_0976a9dc, FUN_00227760).
 //!
-//! `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (with its children
-//! and their targets), fuse and end (where, how far from its launch, how long after, what it
-//! struck), and each body its blast reaches with the damage; `BF_MISSILE_DEBUG=1` also prints
-//! every body each target search looks at (distance, its root, angle, line of sight).
+//!  - **Lobbed** (#239): the others, the iKhan-GPL's round (and the hounds' breath, which the
+//!    demo keeps on the plain shot: `flies`), aren't steered at all: without flag 4, and without
+//!    homing or seeking, FUN_00226cc0 skips FUN_002266d0 (0x226dd9-0x226dfc), so the body keeps
+//!    the speed FUN_00227ce0 gave it at the launch and falls under the Ipion world's gravity
+//!    (FUN_0016a250) with its template's damping (FUN_00158cd0): `falls` (by the object type's
+//!    h_11e7d864, which takes the steady missiles' bodies off the gravity), GRAVITY,
+//!    SPEED_DAMPING. A collision sets it off at once, as any missile; WM_MIRV_ON_APOGEE (the
+//!    iKhan-GPL's) splits it once its upward speed is under APOGEE_VY past its straight phase,
+//!    its life or its fuse out, and the children leave at the parent's speed then (FUN_00227f80
+//!    at 0x228748-0x228794) and fall too. An AI pitches its lobbed rounds up to come down on its
+//!    target and holds fire with the target within its own blast's reach (`lob`, `lob_holds`:
+//!    the demo's, untraced).
+//!
+//! `BF_MISSILE_LOG=1` prints each missile's launch (a lobbed one's line ends "lobbed (gravity
+//! 9.81, damping 0.1 a second)"), seeks, retargets, apogee, split (with its children and their
+//! targets), fuse and end (where, how far from its launch, how long after, what it struck), and
+//! each body its blast reaches with the damage; `BF_MISSILE_DEBUG=1` also prints every body each
+//! target search looks at (distance, its root, angle, line of sight).
 //!
 //! Not here: the 75 m noise for the AI's hearing (FUN_0004d490); the damage event
 //! (FUN_001fe3d0).
@@ -105,9 +117,27 @@ const CHILD_LIFE: f32 = 0.15;
 /// FUN_00227f80: a child is turned off the parent's velocity by spread-max x SPREAD_TURN degrees.
 const SPREAD_TURN: f32 = 90.0;
 /// FUN_00226cc0: a WM_MIRV_ON_APOGEE parent splits once its upward speed is under this (m/s),
-/// past its straight phase. (No mesh projectile that flies here has that mode: the iKhan-GPL's
-/// does, and it's lobbed. Kept as the code has it.)
+/// past its straight phase (0x2272b4-0x2272ea: the body's velocity, vtable +0x54, its y, under
+/// [0x3a4f74]; the straight phase +0x230 at 0). The iKhan-GPL's round is the one mesh
+/// projectile with that mode: one fired level is already falling, so it splits the tick its
+/// straight phase (1.04 s) ends, if it hasn't struck anything by then.
 const APOGEE_VY: f32 = 0.5;
+/// FUN_0016a250: the Ipion world's gravity, (0, -9.81, 0) (0x16a4a7, 0x16a4c7; #161's reading).
+/// Every body under the world's gravity controller falls at it (m/s^2): here the projectile
+/// objects without h_11e7d864 (`falls`).
+const GRAVITY: f32 = 9.81;
+/// FUN_00158cd0 / FUN_00158f80, the body template a game object's bodies are made from (vtable
+/// +0x158 for the root, +0x154 for the others; the projectile's vtable 0x3946c8 has both): its
+/// 0.1 where Ipion's own template constructor (0x2b4710) puts the speed damping's 0.01 (+0x2c,
+/// after the rotation-inertia minimum 0.03 at +0x28; the rotation damping's 0.01 x 3 after it),
+/// so read as the share of its speed a body loses a second (#161's inference, now by the
+/// constructor's layout; not followed into Ipion's step). The demo takes it as v x (1 - 0.1 dt) a
+/// tick: 5% of the iKhan-GPL's speed over its half second to the ground 12 m out. Both iKhan takes
+/// would fit a stronger damping, ~0.7 a second (the flight to take01's cliff 0.47-0.50 s, the
+/// demo's 0.40): but the steady missiles' bodies come from the same template (0x3dcccccd at
+/// FUN_00158cd0's +0x2c), and at 0.7 the Sweeper V's steering would hold ~52 m/s where #72's
+/// take05 timed 59.5. Open (play.md § Missiles).
+const SPEED_DAMPING: f32 = 0.1;
 /// FUN_00226cc0: the proximity fuse's clock (+0x218) gains each tick's time while it's under
 /// FUSE_EVERY s; on the tick it's at least that, it's cleared and the fuse looks, within the
 /// Damage radius x FUSE_REACH (FUN_00227dd0 -> +0x214: 1.69 m for the Therm Sweeper's 4.5, 3.375
@@ -264,6 +294,8 @@ struct Missile {
     aim: Vec3,
     /// +0x204: its MIRV mode (0 once it's a child: children don't split)
     mode: i64,
+    /// whether its body is under the world's gravity (`falls`, by its object type)
+    falls: bool,
     /// game time not yet run in ticks (s)
     clock: f32,
     /// where it was launched and how long ago (BF_MISSILE_LOG)
@@ -342,11 +374,150 @@ pub fn plugin(app: &mut App) {
             .after(update_player).before(super::grenade::GrenadeSystems).run_if(in_state(AppState::Playing)));
 }
 
-/// Whether a weapon's shots fly here: a mesh projectile steered at a steady speed (h_0b03ece5,
-/// flag 4: see the module notes), with a `<mirv>` (the Therm Sweeper) or without (the Sweeper
-/// V, #72). In every level's data no other bullet-type 2 weapon has the flag (#72 spec §2).
+/// WTYPE_NATURAL, a weapon-type (the WTYPE_ table at 0x3bf714: 0 PISTOL, 1 RIFLE, 2 CANNON ... 6
+/// DATA, 7 NATURAL): the creatures' own weapons, the hounds' Breath Attacks and the Seers'
+/// Psionic Blasts (44 definitions across the levels' data, 16 distinct names).
+const WTYPE_NATURAL: i64 = 7;
+
+/// Whether a weapon's shots fly here: a mesh projectile, a bullet-type 2 with a projectile object
+/// (FUN_0022f1d0 case 2 -> FUN_0022fb50, `MeshBullet`), steered at a steady speed (h_0b03ece5,
+/// flag 4), with a `<mirv>` (the Therm Sweeper) or without (the Sweeper V, #72), or lobbed (#239,
+/// `falls`: the iKhan-GPL). The game flies every one so; the demo leaves out the creatures'
+/// (WTYPE_NATURAL): the hounds' four Breath Attacks are the other lobbed ones, and e34's Shrike
+/// Hounds fire theirs (h_1492c676: 24 m/s, an 8 m blast of damage-type 4) at the squad, so
+/// they keep play.rs's plain shot until their breath is checked against footage of its own
+/// (#83, #130). The seven mesh projectiles of every level's data are listed in play.md §
+/// Missiles.
 pub fn flies(def: &WeaponDef) -> bool {
-    def.mesh_bullet.as_ref().is_some_and(|b| b.steady)
+    def.mesh_bullet.is_some() && def.weapon_type != WTYPE_NATURAL
+}
+
+/// Whether a projectile of the object type `object` falls under GRAVITY with SPEED_DAMPING
+/// (#239): unless its `<base>` has h_11e7d864 (`WeaponDef::no_gravity`), with which its root
+/// body's maker FUN_00158cd0 takes the body off the world's gravity controller (0x158ec0 ->
+/// FUN_0016a760). In every level's data that's set on the two steady missiles' objects
+/// (h_e9327576, h_fa69b507) and on no other mesh projectile's: so the iKhan-GPL's round (and the
+/// hounds' breath) falls, and the Therm Sweeper and the Sweeper V fly as before, which their takes
+/// show with no sag (#73's take20: children climbing straight at 8.5 degrees for 168.6 m). The
+/// steering doesn't stand in for it: a Sweeper V, steered along its own velocity (flag 4 alone,
+/// FUN_002266d0), would bend under gravity as freely as an unsteered round. An object type the
+/// map doesn't define (a gun brought in with another level's character type,
+/// `Game::load_type_assets`) goes by its bullet instead: it falls unless steered at a steady
+/// speed (`steady`), the same answer on every mesh projectile in the data.
+fn falls(object: Option<&WeaponDef>, steady: bool) -> bool {
+    object.map_or(!steady, |o| !o.no_gravity)
+}
+
+/// One physics step of a projectile that falls (`falls`), `dt` long: GRAVITY on its velocity,
+/// then SPEED_DAMPING.
+fn fall(vel: Vec3, dt: f32) -> Vec3 {
+    (vel - Vec3::Y * GRAVITY * dt) * (1.0 - SPEED_DAMPING * dt)
+}
+
+/// Whether a weapon fires lobbed rounds: a mesh projectile that flies here (`flies`) whose
+/// object falls (`falls`): the iKhan-GPL. For the AI's aim (`lob`, `lob_holds`, play.rs).
+pub fn lobs(def: &WeaponDef, game: &Game) -> bool {
+    flies(def) && def.mesh_bullet.as_ref().is_some_and(|b| falls(game.weapons.get(&b.object), b.steady))
+}
+
+/// Whether an AI character at `at` (its feet) holds fire with `def` at `target`: a lobbed
+/// weapon (`lobs`) whose round, coming down on the target, would go off within its own blast's
+/// reach of it (the Damage radius and BLAST_PART_REACH more, across). The demo's, as `lob` is:
+/// with the 8 m blast round it, an iKhan-GPL's holder at the target's feet would take every share
+/// its target does.
+pub fn lob_holds(def: &WeaponDef, game: &Game, at: Vec3, target: Vec3) -> bool {
+    def.blast_radius > 0.0 && lobs(def, game) && at.xz().distance(target.xz()) <= def.blast_radius + BLAST_PART_REACH
+}
+
+/// The steepest pitch (degrees, up or down) `lob` tries: the demo's.
+const LOB_STEEPEST: f32 = 80.0;
+/// `lob`'s search: the pitches it scans (LOB_STEEPEST down to up, 1 degree apart), then the
+/// halvings of the bracket it found. The demo's.
+const LOB_STEPS: usize = 161;
+const LOB_HALVINGS: usize = 24;
+/// How long (s) `lob`'s flight runs before it's given up as never getting there: well past any
+/// lobbed round's life (the iKhan-GPL's 1.74 s, its bomblets' 2 s at most). The demo's.
+const LOB_LONGEST: f32 = 6.0;
+
+/// A round launched at `speed` m/s and `pitch` (radians above level) from height 0, flying as
+/// `tick` flies a falling one (`fall` each game frame, then the move): its height when it has gone
+/// `across` m across, or None if it doesn't get that far within LOB_LONGEST s. Its split, life
+/// and the world aren't in it. For `lob`.
+fn lob_height(speed: f32, pitch: f32, across: f32) -> Option<f32> {
+    let mut v = Vec3::new(pitch.cos(), pitch.sin(), 0.0) * speed;
+    let mut p = Vec3::ZERO;
+    let mut t = 0.0;
+    while t < LOB_LONGEST {
+        v = fall(v, shots::TICK);
+        let next = p + v * shots::TICK;
+        if next.x >= across {
+            let f = if next.x > p.x { (across - p.x) / (next.x - p.x) } else { 0.0 };
+            return Some(p.y + (next.y - p.y) * f);
+        }
+        p = next;
+        t += shots::TICK;
+    }
+    None
+}
+
+/// How far across a round launched at `speed` m/s and `pitch` comes back down to `height` m
+/// (flying as `lob_height` does): the last point it's at or above it. For `lob`'s fallback.
+fn lob_reach(speed: f32, pitch: f32, height: f32) -> f32 {
+    let mut v = Vec3::new(pitch.cos(), pitch.sin(), 0.0) * speed;
+    let mut p = Vec3::ZERO;
+    let mut t = 0.0;
+    while t < LOB_LONGEST {
+        v = fall(v, shots::TICK);
+        let next = p + v * shots::TICK;
+        if next.y < height && v.y < 0.0 {
+            let f = if p.y > next.y { ((p.y - height) / (p.y - next.y)).clamp(0.0, 1.0) } else { 0.0 };
+            return p.x + (next.x - p.x) * f;
+        }
+        p = next;
+        t += shots::TICK;
+    }
+    p.x
+}
+
+/// The way an AI character launches a lobbed round from `origin` to come down on `target`: the
+/// lower of the two pitches whose flight (`lob_height`, at the round's `speed` and the demo's
+/// GRAVITY and SPEED_DAMPING) passes through the target, or, out of reach, the pitch that carries
+/// it farthest at the target's height (`lob_reach`). **The demo's stand-in for the game's AI
+/// aim**, neither traced nor filmed: FUN_0022e5b0 turns every weapon straight onto its aim point,
+/// and what the game's AI does about a lob (its aim point, or an elevation of its own) isn't
+/// read. Without it an AI firing level dropped its rounds ~5 m in front of itself and its own
+/// blasts killed it (e40's Shrike placement h_1f979a8a).
+pub fn lob(origin: Vec3, target: Vec3, speed: f32) -> Vec3 {
+    let to = target - origin;
+    let across = Vec2::new(to.x, to.z).length();
+    if across < 1e-3 || speed <= 0.0 {
+        return to.normalize_or(Vec3::NEG_Z);
+    }
+    let flat = Vec3::new(to.x, 0.0, to.z) / across;
+    let way = |pitch: f32| (flat * pitch.cos() + Vec3::Y * pitch.sin()).normalize();
+    let pitch_at = |k: usize| (-LOB_STEEPEST + 2.0 * LOB_STEEPEST * k as f32 / (LOB_STEPS - 1) as f32).to_radians();
+    // the highest it gets over the target, and at what pitch: below it the height there rises
+    // with the pitch, so the lower solution lies between the lowest pitch and that one
+    let heights: Vec<(f32, Option<f32>)> = (0..LOB_STEPS).map(|k| (pitch_at(k), lob_height(speed, pitch_at(k), across))).collect();
+    let best = heights.iter().filter_map(|&(a, y)| y.map(|y| (a, y))).max_by(|x, y| x.1.total_cmp(&y.1));
+    match best {
+        Some((top, y)) if y >= to.y => {
+            let (mut lo, mut hi) = (-LOB_STEEPEST.to_radians(), top);
+            if lob_height(speed, lo, across).is_some_and(|y| y >= to.y) {
+                return way(lo);
+            }
+            for _ in 0..LOB_HALVINGS {
+                let mid = 0.5 * (lo + hi);
+                if lob_height(speed, mid, across).is_some_and(|y| y >= to.y) { hi = mid } else { lo = mid }
+            }
+            way(hi)
+        }
+        _ => {
+            // out of reach: the pitch that carries it farthest at the target's height
+            let far = (0..LOB_STEPS).map(pitch_at).filter(|&a| a > 0.0).max_by(|&a, &b| lob_reach(speed, a, to.y).total_cmp(&lob_reach(speed, b, to.y)));
+            way(far.unwrap_or(std::f32::consts::FRAC_PI_4))
+        }
+    }
 }
 
 /// The projectile objects of the weapons whose shots fly here (and their MIRV children's), their
@@ -516,6 +687,11 @@ enum Tick {
 #[allow(clippy::too_many_arguments)]
 fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Player], mines: &super::sentry::MineTargets,
         dt: f32, now: f32, log: bool) -> Tick {
+    // the physics step (FUN_00169e20, before the objects' ticks): a body nothing steers falls
+    // under the world's gravity, its speed damped (`falls`), then moves
+    if m.falls {
+        m.vel = fall(m.vel, dt);
+    }
     // the move, and what it meets on the way (FUN_002278e0): the world (a breakable object's
     // collision among it), a body but its shooter's, standing or lying knocked down, a Sentry
     let step = m.vel * dt;
@@ -595,6 +771,9 @@ fn tick(m: &mut Missile, b: &MeshBullet, range: f32, radius: f32, units: &[&Play
         m.after -= dt;
     }
     if m.mode == 1 && m.vel.y < APOGEE_VY && m.straight == 0.0 {
+        if log {
+            println!("t {now:.2}: missile {} at its apogee: rising {:.2} m/s, {:.2} m above its launch", m.id, m.vel.y, m.pos.y - m.from.y);
+        }
         return Tick::Split;
     }
     // the proximity fuse, after the give-up and the timers: every FUSE_EVERY s, a body (its
@@ -698,14 +877,19 @@ fn seek(m: &mut Missile, range: f32, units: &[&Player], dt: f32, now: f32, log: 
     }
 }
 
-/// FUN_00227f80 (WM_MIRV_ON_EXPLODE / ON_APOGEE): the children of a parent whose life is out.
-/// Each leaves beside it (`r_parent + r_child` m off along a side axis rolled at random, then
-/// 360 / count degrees on for the next), turned spread-max x 90 degrees toward that side, at the
-/// parent's speed, living range / speed x 0.85-1.15. If the parent seeks, the split's hostiles
-/// (up to the count, within the range and 30 degrees) are dealt out to them in turn; without
-/// any, each aims 200 m along the parent's velocity.
+/// FUN_00227f80 (WM_MIRV_ON_EXPLODE / ON_APOGEE): the children of a parent whose life is out
+/// (or, ON_APOGEE, that's past its apogee). Each leaves beside it (`r_parent + r_child` m off
+/// along a side axis rolled at random, then 360 / count degrees on for the next), turned
+/// spread-max x 90 degrees toward that side, at the parent's speed, living range / speed x
+/// 0.85-1.15. The parent's speed is the bullet's for a steady one (+0x208, copied); a lobbed
+/// one's children leave at the speed its body has now (0x228748-0x228794: without the bullet's
+/// h_0b03ece5 a child's +0x208 is set to the parent's velocity's length, and its flag 4
+/// cleared), and fall (`falling`: their object type's `falls`) as it did. If the parent seeks,
+/// the split's hostiles (up to the count, within the range and 30 degrees) are dealt out to them
+/// in turn; without any, each aims 200 m along the parent's velocity.
 #[allow(clippy::too_many_arguments)]
-fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32, f32), state: &mut MissileState, now: f32, log: bool) -> Vec<Missile> {
+fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32, f32), falling: bool, state: &mut MissileState, now: f32,
+         log: bool) -> Vec<Missile> {
     let count = b.mirv_count.min(MIRV_MAX).max(0) as usize;
     if count == 0 {
         return vec![];
@@ -726,7 +910,10 @@ fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32
         vec![]
     };
     let turn = (b.spread[1] * SPREAD_TURN).to_radians();
+    // (the children's life from the bullet's speed, FUN_00227dd0 run on each before its speed
+    // is set: range / +0x208 with +0x208 the bullet's)
     let start = range / m.speed.max(1e-3);
+    let speed = if b.steady { m.speed } else { m.vel.length() };
     let mut out = vec![];
     for i in 0..count {
         let life = start * (1.0 - CHILD_LIFE + 2.0 * CHILD_LIFE * state.random());
@@ -739,8 +926,8 @@ fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32
         state.next += 1;
         out.push(Missile {
             id: state.next, weapon: m.weapon, object: if b.mirv_object != 0 { b.mirv_object } else { m.object }, owner: m.owner, team: m.team,
-            side: NEUTRAL, human: m.human, pos, vel: heading * m.speed, heading, speed: m.speed, life, start, straight: start * b.straight, after: b.after,
-            seek_in: 0.0, fuse_clock: 0.0, target, aim, mode: 0, clock: m.clock, from: m.from, age: m.age, trails: vec![],
+            side: NEUTRAL, human: m.human, pos, vel: heading * speed, heading, speed, life, start, straight: start * b.straight, after: b.after,
+            seek_in: 0.0, fuse_clock: 0.0, target, aim, mode: 0, falls: falling, clock: m.clock, from: m.from, age: m.age, trails: vec![],
         });
     }
     if log {
@@ -817,12 +1004,14 @@ fn launch_missiles(mut commands: Commands, mut player: ResMut<Player>, mut squad
         let m = Missile {
             id: state.next, weapon: l.weapon, object: b.object, owner, team, side: team, human: owner == human, pos: l.origin, vel: dir * speed, heading: dir,
             speed, life: start, start, straight: start * b.straight, after: b.after, seek_in: 0.0, fuse_clock: 0.0,
-            target, aim: target.and_then(|t| origin_of(&units, t)).unwrap_or(l.aim), mode: b.mirv_mode, clock: 0.0, from: l.origin, age: 0.0, trails: vec![],
+            target, aim: target.and_then(|t| origin_of(&units, t)).unwrap_or(l.aim), mode: b.mirv_mode, falls: falls(game.0.weapons.get(&b.object), b.steady),
+            clock: 0.0, from: l.origin, age: 0.0, trails: vec![],
         };
         if log {
-            println!("t {now:.2}: missile {} launched ({}) from {:.2} along {:.3} at {speed} m/s: life {start:.3} s, straight {:.3} s, then {} s; mirv {} x mode {}; target {:?}, aim {:.2}",
+            println!("t {now:.2}: missile {} launched ({}) from {:.2} along {:.3} at {speed} m/s: life {start:.3} s, straight {:.3} s, then {} s; mirv {} x mode {}; target {:?}, aim {:.2}{}",
                      m.id, def.label, m.pos, dir, m.straight, m.after, b.mirv_count, b.mirv_mode,
-                     target.and_then(|t| units.iter().find(|u| u.who() == t)).map(|u| name(u)), m.aim);
+                     target.and_then(|t| units.iter().find(|u| u.who() == t)).map(|u| name(u)), m.aim,
+                     if m.falls { format!("; lobbed (gravity {GRAVITY}, damping {SPEED_DAMPING} a second)") } else { String::new() });
         }
         spawn_missile(&mut commands, kits.0.get(&b.object).and_then(|k| k.as_ref()), ale.as_deref_mut(), m, listener, &mut sounds);
     }
@@ -862,7 +1051,8 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
                     Tick::Split => {
                         let radii = |o: u32| kits.0.get(&o).and_then(|k| k.as_ref()).map_or(0.0, |k| k.radius);
                         let child = if b.mirv_object != 0 { b.mirv_object } else { m.object };
-                        children.extend(split(&m, &b, range, &units, (radii(m.object), radii(child)), &mut state, now, log));
+                        let falling = falls(game.0.weapons.get(&child), b.steady);
+                        children.extend(split(&m, &b, range, &units, (radii(m.object), radii(child)), falling, &mut state, now, log));
                         gone = true;
                     }
                     Tick::Blow(bl) => {
@@ -878,10 +1068,13 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
             // (drawn where it is by now: the time not yet run in ticks carries it on, so it
             // doesn't stand still every other frame at 60 fps)
             tr.translation = m.pos + m.vel * m.clock;
-            // (the mesh faces its velocity: FUN_002266d0 turns the node along it for the
-            // frame's picture)
-            if m.vel.length_squared() > 1e-6 {
-                tr.look_to(m.vel.normalize(), Vec3::Y);
+            // (the mesh faces its velocity while FUN_002266d0 steers it: it turns the node along
+            // it for the frame's picture. One it doesn't steer, a lobbed one, keeps its body's
+            // turn, set only at the launch and the split: its heading)
+            let steered = b.steady || ((b.homes || b.seeks) && m.straight <= 0.0);
+            let face = if steered { m.vel } else { m.heading };
+            if face.length_squared() > 1e-6 {
+                tr.look_to(face.normalize(), Vec3::Y);
             }
             // FUN_00228c10: the trail's user parameter is life / start
             let sp = if m.start > 0.0 { (m.life / m.start).clamp(0.0, 1.0) } else { 1.0 };
@@ -903,6 +1096,15 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
         go_off(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, bl, &mut player, &mut squad, &mut state,
                &mut mines, &mut loose, &mut objects, &mut tint, &mut hits, &mut shaker, &difficulty, instant, now, log);
     }
+}
+
+/// A roll of a weapon's Damage for `u` (a draw in 0..1): FUN_0022c940's min (type+0x1f4) + U x
+/// (max (+0x1f0) - min), the two as written. The iKhan-GPL's are written the wrong way round
+/// (min 20, max 18), so it rolls 18-20, as take03's half shares show (13.1-14.0: x1.4 of 18.7-
+/// 20.0) where taking the smaller as the min rolled 18 every time. The Therm Sweeper's and the
+/// Sweeper V's (84-96, 27-37) roll as before.
+fn damage_roll(def: &WeaponDef, u: f32) -> f32 {
+    def.damage_min + (def.damage - def.damage_min) * u
 }
 
 /// The factor the shooter `who`'s skill puts on one roll of its missile's (FUN_0022c940 asks a
@@ -972,8 +1174,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     // a breakable object struck: a roll of Damage min..max (FUN_0022c4d0 on the object struck;
     // the scenery applies its damage-type factor), then the blast's share too
     if let Some(target) = bl.breakable {
-        let (lo, hi) = (def.damage_min.min(def.damage), def.damage);
-        let roll = (lo + (hi - lo) * state.random()) * shooter_skill(player, squad, bl.owner);
+        let roll = damage_roll(&def, state.random()) * shooter_skill(player, squad, bl.owner);
         hits.0.push(super::scenery::ObjectHit { target, amount: roll, damage_type: def.damage_type, at: bl.at, dir: bl.dir });
         if log {
             println!("t {now:.2}: missile {} direct hit: breakable {target} takes a roll of {roll:.1}", bl.id);
@@ -982,7 +1183,6 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     if let Some(e) = bl.mine {
         mines.strike(e, 0.0, 1.0, now);
     }
-    let (lo, hi) = (def.damage_min.min(def.damage), def.damage);
     // the direct hit (FUN_0022c4d0 with no blast object): a roll, now, x the shooter's skill's
     // factor (`shooter_skill`), x the hit-location factor (FUN_00125940 at 0x227a03: the victim
     // type's damage-multiplier x the struck part's bone's Damage; the missile's own +0x1cc is
@@ -991,7 +1191,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     // the contact
     let factor = if bl.struck.is_some() { shooter_skill(player, squad, bl.owner) } else { 1.0 };
     if let Some((u, controlled)) = bl.struck.and_then(|w| unit_mut(player, squad, w)) {
-        let roll = lo + (hi - lo) * state.random();
+        let roll = damage_roll(&def, state.random());
         let bone = damage::struck_bone(u, game, bl.at - bl.dir * STRUCK_BACK, bl.dir, STRUCK_BACK);
         let mut hit = damage::Hit::new(roll, "roll", def.damage_type).skill(factor).by(bl.owner, bl.team, u).struck(u, game, bone);
         let amount = hit.land(u, game, difficulty, now);
@@ -1016,7 +1216,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     }
     // the blast object (FUN_0022bfc0): its own roll (x the shooter's skill's factor, its own:
     // FUN_0022c940 again), dealt after its delay (`deal_blasts`)
-    let roll = (lo + (hi - lo) * state.random()) * shooter_skill(player, squad, bl.owner);
+    let roll = damage_roll(&def, state.random()) * shooter_skill(player, squad, bl.owner);
     let left = BLAST_DELAY + BLAST_DELAY_MORE * state.random();
     let eye = bl.at + bl.surface.unwrap_or(Vec3::Y) * COVER_LIFT;
     state.blasts.push(PendingBlast { left, at, eye, weapon: bl.weapon, roll, owner: bl.owner, team: bl.team, id: bl.id });
@@ -1199,4 +1399,106 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
         }
         *left > 0.0
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The iKhan-GPL's bullet (h_e9be70f0, every level alike): not steady, no homing or seeking,
+    /// the proximity fuse, 3 children h_175a0adf on the apogee, spread-max 0.16, straight 0.6.
+    fn ikhan() -> MeshBullet {
+        MeshBullet { object: 0x175A_0ADF, radius: 0.1, homes: false, straight: 0.6, seeks: false, after: 0.0, explode_at_end: true, steady: false,
+                     fuse: true, mirv_count: 3, mirv_mode: 1, mirv_object: 0x175A_0ADF, spread: [0.708, 0.16] }
+    }
+
+    /// A projectile as `launch_missiles` makes one of the iKhan-GPL's (23 m/s, range 40), moving
+    /// at `vel`, `age` s after its launch.
+    fn round(vel: Vec3, age: f32) -> Missile {
+        let start = 40.0 / 23.0;
+        Missile { id: 1, weapon: 0xE9BE_70F0, object: 0x175A_0ADF, owner: Who::Squad(0), team: 0, human: true, side: 0, pos: Vec3::ZERO, vel,
+                  heading: vel.normalize(), speed: 23.0, life: start - age, start, straight: 0.0, after: 0.0, seek_in: 0.0, fuse_clock: 0.0,
+                  target: None, aim: Vec3::ZERO, mode: 1, falls: true, clock: 0.0, from: Vec3::ZERO, age, trails: vec![] }
+    }
+
+    /// #239: the iKhan-GPL's round fired level from 1.44 m over flat ground (take08's muzzle over
+    /// the sand) falls under 9.81 m/s^2 with the 0.1 a second damping (FUN_0016a250,
+    /// FUN_00158f80): it comes down on the 16th game frame, 0.53 s and 11.9 m out (take08: on the
+    /// sand ~0.47 s after the launch, "~8-10 m ahead"), at 22.4 m/s.
+    #[test]
+    fn a_level_round_falls_to_the_ground_12_m_out() {
+        let (mut pos, mut vel) = (Vec3::Y * 1.44, Vec3::X * 23.0);
+        let mut frames = 0;
+        let down = loop {
+            frames += 1;
+            vel = fall(vel, shots::TICK);
+            let next = pos + vel * shots::TICK;
+            if next.y <= 0.0 {
+                break pos.x + (next.x - pos.x) * pos.y / (pos.y - next.y);
+            }
+            pos = next;
+        };
+        assert_eq!(frames, 16);
+        assert!((down - 11.87).abs() < 0.02, "down {down} m out");
+        assert!((vel.length() - 22.39).abs() < 0.02, "at {} m/s", vel.length());
+        // the object types' h_11e7d864: set on the two steady missiles' (the Therm Sweeper's, the
+        // Sweeper V's), which keep their flight; not on the iKhan-GPL's round
+        assert!(!falls(Some(&WeaponDef { no_gravity: true, ..Default::default() }), true));
+        assert!(falls(Some(&WeaponDef::default()), false));
+        // (an object type the map doesn't define goes by the bullet: steady or not)
+        assert!(falls(None, false) && !falls(None, true));
+    }
+
+    /// #239: a lobbed parent's children leave at the speed its body has at the split (FUN_00227f80
+    /// at 0x228748-0x228794), 14.4 degrees off its way (spread-max 0.16 x 90); a steady one's at
+    /// the bullet's. Their life is the bullet's range / speed x 0.85-1.15 either way.
+    #[test]
+    fn a_lobbed_parents_children_leave_at_its_speed() {
+        let vel = Vec3::new(18.0, -0.4, 0.0);
+        let mut state = MissileState::default();
+        let kids = split(&round(vel, 1.067), &ikhan(), 40.0, &[], (0.04, 0.04), true, &mut state, 0.0, false);
+        assert_eq!(kids.len(), 3);
+        for k in &kids {
+            assert!((k.vel.length() - vel.length()).abs() < 1e-3, "child at {} m/s", k.vel.length());
+            assert!((k.speed - vel.length()).abs() < 1e-3);
+            assert!((k.vel.normalize().dot(vel.normalize()).acos().to_degrees() - 14.4).abs() < 0.01);
+            assert!(k.life >= 0.85 * 40.0 / 23.0 && k.life <= 1.15 * 40.0 / 23.0, "life {}", k.life);
+            assert_eq!((k.mode, k.side), (0, NEUTRAL));
+        }
+        let steady = MeshBullet { steady: true, ..ikhan() };
+        let kids = split(&round(vel, 1.067), &steady, 40.0, &[], (0.04, 0.04), false, &mut state, 0.0, false);
+        assert!(kids.iter().all(|k| (k.vel.length() - 23.0).abs() < 1e-3 && !k.falls));
+    }
+
+    /// The AI's lob (`lob`, the demo's stand-in): at the iKhan-GPL's 23 m/s, a target 20 m off at
+    /// the muzzle's height is reached on the lower of the two pitches (~11 degrees, the flight
+    /// passing through it within 2 cm); one below the muzzle on a lower pitch; one out of reach
+    /// (90 m) takes the pitch that carries it farthest, between 30 and 45 degrees.
+    #[test]
+    fn an_ai_lobs_onto_its_target() {
+        let from = Vec3::new(3.0, 1.4, -2.0);
+        for (to, low) in [(Vec3::new(3.0, 1.4, -22.0), (8.0, 14.0)), (Vec3::new(-7.0, -0.6, 15.32), (0.0, 12.0))] {
+            let way = lob(from, to, 23.0);
+            let pitch = way.y.asin();
+            let across = Vec2::new(to.x - from.x, to.z - from.z).length();
+            let height = lob_height(23.0, pitch, across).expect("it gets there");
+            assert!((height - (to.y - from.y)).abs() < 0.02, "{height} at {across} m");
+            assert!(pitch.to_degrees() > low.0 && pitch.to_degrees() < low.1, "pitch {}", pitch.to_degrees());
+            // (along the target's way across)
+            let flat = Vec2::new(way.x, way.z).normalize();
+            assert!(flat.dot(Vec2::new(to.x - from.x, to.z - from.z).normalize()) > 0.9999);
+        }
+        let far = lob(from, from + Vec3::new(0.0, 0.0, -90.0), 23.0).y.asin().to_degrees();
+        assert!(far > 30.0 && far < 45.0, "far pitch {far}");
+    }
+
+    /// FUN_0022c940 rolls min + U x (max - min) as written: the iKhan-GPL's min 20 and max 18
+    /// roll 18-20 (take03's half shares, 13.1-14.0 at x1.4); the Therm Sweeper's 84-96 as before.
+    #[test]
+    fn damage_rolls_between_min_and_max_as_written() {
+        let ikhan = WeaponDef { damage: 18.0, damage_min: 20.0, ..Default::default() };
+        assert_eq!((damage_roll(&ikhan, 0.0), damage_roll(&ikhan, 1.0)), (20.0, 18.0));
+        let therm = WeaponDef { damage: 96.0, damage_min: 84.0, ..Default::default() };
+        assert_eq!((damage_roll(&therm, 0.0), damage_roll(&therm, 0.5)), (84.0, 90.0));
+    }
 }

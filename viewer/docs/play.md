@@ -37,8 +37,9 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   to take it into the held weapon's slot: the character is respawned carrying it, with a full
   clip, and "Took <name>" shows.
   * Loading every level (about 6 s) adds no others: the rest are the creatures' built-in
-    weapons (no model), Feral Cutter (the same model as another) and the iKhan-GPL (a model
-    under 0.1 m).
+    weapons (no model), Feral Cutter (the same model as another) and the bioreactive death's
+    vaporise blast h_1f4a5a0a, which carries the iKhan-GPL's name (a model under 0.1 m; the gun
+    itself, h_e9be70f0, is on the rack: #55).
   * `BF_TESTMAP_LEVELS=<level>,<level>...` loads a different list.
   * `BF_TESTMAP_LOG=1` lists every weapon on the rack with its type, clip and model size, and
     every hand weapon left off it, with why.
@@ -1109,7 +1110,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
 
 Test hooks: `BF_TEST_WEAPON=<label or hex>` (e.g. `"Bower 20"`, `"RVG50 Minigun"`, `0c3db625`)
 puts that weapon in the controlled character's slot `BF_START_WEAPON` (default the first) if the
-map's data has it (the test map has every hand weapon); a list, `<a>;<b>`, fills the slots in
+map's data has it (the test map has every hand weapon; a label two definitions share takes the
+one that isn't WTYPE_DATA, so `"iKhan-GPL"` is the gun h_e9be70f0 and never #147's vaporise
+blast, #55); a list, `<a>;<b>`, fills the slots in
 order from the first (#35's Tex: `"Confed LZR-50;Jax-iC"`). On a level whose spawn-triggers start
 the squad (e34, e40, the tutorial: #220) the character carries its spawn's template weapons, and
 the hook now sets those too (#72): it did nothing there before. `BF_SHOT_LOG=1` now also prints each
@@ -1273,11 +1276,14 @@ squad's LZRs and cutter go this way.
 * **The bullet's explosion** (#53; play.rs `shot_explosion`): before the struck material's hit
   effect, the damage handler plays the bullet's own effect type at every direct hit, on the world
   or a body (0x22d0b0 -> FUN_0022cfc0 -> FUN_0022cbe0: h_ec23d593, the weapon type's +0x250, at
-  user parameter 1.0, with its light) and its impact sound (h_e5618348, +0x254). Of the hand guns
-  only the two cutters have one: cutter_hit and plut_cutter_hit with light_hit_cutter, the white
-  star where a blade strikes (#53 take01 f17-f18 of 5.20 s on, on the tower; take03, on the
-  enemy's chest); every other gun names its hit in h_08d28037 instead. A bolt's hit on a body, a
-  corpse or a Sentry plays it from `deal` (play_bolts.rs), a world hit from `world_hit`. Not
+  user parameter 1.0, with its light) and its impact sound (h_e5618348, +0x254). Of the hand guns'
+  shots only the two cutters' come here with one: cutter_hit and plut_cutter_hit with
+  light_hit_cutter, the white star where a blade strikes (#53 take01 f17-f18 of 5.20 s on, on the
+  tower; take03, on the enemy's chest); every other gun names its hit in h_08d28037 instead. The
+  iKhan-GPL names one too (exp_mirvgrenade), which its round, a plain shot after batch 2, played
+  here (#287); since #239 the round is a lobbed missile and plays it where it goes off
+  (**Missiles** below). A bolt's hit on a body, a corpse or a Sentry plays it from `deal`
+  (play_bolts.rs), a world hit from `world_hit`. Not
   done: the per-material overrides at +0x25c, taken when the hit record's +0x58 bit 1 is set (not
   traced for a bolt). Before, the cutters' hits had only the material's debris.
 * **A hit on a body** (play_fx.rs `spawn_fx`): the flesh row's effect for the ammo-type, when the
@@ -1770,7 +1776,7 @@ rock 24 m off, `BF_CAPTURE_FPS=30`; e34 opens letterboxed with no HUD):
   frames apart (its scoped rate 6/s). `BF_TEST_SCOPE=2,2.0` with Flint's L-Shot-75: level 2 at
   2.07 s, zoom 25.
 
-### Missiles: the Therm Sweeper (#73) and the Sweeper V (#72)
+### Missiles: the Therm Sweeper (#73), the Sweeper V (#72) and the lobbed ones (#239)
 
 `src/bin/play_missile.rs` (the camera shake in `src/bin/play_shake.rs`), the bullet's data in
 `weapon::MeshBullet` (`src/bf/weapon.rs`), from default.xbe's projectile class
@@ -1781,11 +1787,78 @@ takes 08-23 (a real reload, self-damage at a wall, homing on two enemies and an 
 open air, a side view, cover) came after its spec and are compared under **Verified**.
 
 * **Which guns.** bullet-type 2 is BTYPE_MESH_PROJECTILE (the enum at 0x3bd63c): FUN_0022f1d0
-  launches the bullet's mesh-name object (FUN_0022fb50). Those steered at a steady speed
-  (h_0b03ece5, flag 4) fly here (`missile::flies`): the Therm Sweeper, which splits (a
-  `<mirv>`), and since #72 the Sweeper V, which doesn't; no other weapon in any level's data has
-  the flag. The other bullet-type 2 weapons (the iKhan-GPL's lobbed cluster, the creatures') fly
-  under their physics body's gravity, which isn't traced, and keep the plain shot.
+  launches the bullet's mesh-name object (FUN_0022fb50), and every one flies here
+  (`missile::flies`). Those steered at a steady speed (h_0b03ece5, flag 4) are the Therm
+  Sweeper, which splits (a `<mirv>`), and since #72 the Sweeper V, which doesn't; no other weapon
+  in any level's data has the flag. Since #239 the iKhan-GPL's round flies here too, lobbed
+  (below). The seven bullet-type 2 weapons with a projectile object in the data are these three
+  and the hounds' four Breath Attacks (h_0edc1617, h_1492c676, h_11582931, h_1c6108cb: lobbed,
+  `<mirv>` count 1 mode 0, 24-45 m/s, blasts of 3.5-8 m); the demo leaves the creatures' own
+  weapons (weapon-type 7, WTYPE_NATURAL, the table at 0x3bf714) on the plain shot, as e34's
+  Shrike Hounds fire theirs at the squad and their breath has no footage (#83, #130).
+* **Lobbed** (#239; `falls`, `GRAVITY`, `SPEED_DAMPING`): without h_0b03ece5, and with neither
+  homing (flag 8) nor seeking (0x40), FUN_00226cc0 never steers the projectile (FUN_002266d0 is
+  skipped, 0x226dd9-0x226dfc). Its body keeps the velocity FUN_00227ce0 gave it at the launch,
+  the bullet's speed along the shot (vtable +0x58 adds the change through FUN_002b3b20: no mass
+  term), and falls under the Ipion world's gravity, (0, -9.81, 0) (FUN_0016a250), its speed
+  damped by 0.1 a second (the body template of FUN_00158cd0 / FUN_00158f80: 0.1 where Ipion's own
+  template constructor, 0x2b4710, puts the speed damping's 0.01; #161's inference, by that
+  layout), each game frame before its tick, as the physics step runs before the objects'
+  (FUN_00169e20). **Which bodies fall** is the projectile object type's (`falls`): its `<base>`
+  h_11e7d864 (base +0x35 -> the runtime type's +0xa8 bit 4, FUN_00154a20) has the root body's maker
+  FUN_00158cd0 (game object vtable +0x158) take the body off the world's gravity controller
+  (0x158ec0 -> FUN_0016a760: the core leaves the controller of priority 1000, vtable 0x38e7f4,
+  0x2b4770, the one the Ipion environment makes beside its gravity at 0x2b49ff). It's set on
+  exactly the two steady missiles' objects (h_e9327576, h_fa69b507) and on no other mesh
+  projectile's (h_175a0adf, the breath objects h_0dc93533 and h_175340d6): the reviewer's lead,
+  traced. The iKhan-GPL's (h_e9be70f0): 23 m/s, range 40, so a life of 1.74 s and a
+  straight phase of 0.6 of it, 1.04 s; fired level from Brutus's muzzle, ~1.45 m up, it comes
+  down 12 m out 0.53 s later. It goes off at its first contact (0x227b90: h_0bafbd6f set and
+  n1 = n2 = 0; another projectile doesn't count), the world or a body, as any missile here: one
+  blast. WM_MIRV_ON_APOGEE (its `<mirv>` mode 1) splits it instead on the tick its upward speed
+  is under 0.5 m/s past its straight phase (0x2272b4-0x2272ea), when its life runs out, or at its
+  proximity fuse (a hostile within its Damage radius 8 x 0.375 = 3 m that it has passed, looked
+  for every 0.3 s), which sets its life to 0: 3 children h_175a0adf leave beside it, turned 14.4
+  degrees (spread-max 0.16 x 90) at a random roll, **at the parent's speed then** (FUN_00227f80:
+  without h_0b03ece5 a child's +0x208 is the length of the parent's velocity, 0x228748-0x228794;
+  a steady parent's leave at the bullet's), and fall in their turn, NEUTRAL and without a target
+  (no fuse), living 0.85-1.15 x 1.74 s, going off at their first contact or where they are when
+  that runs out (h_0976a9dc). So a round fired at something short of ~12 m goes off on it as one
+  blast; the bomblets come from the fuse when it passes an enemy, or from a shot more than ~10
+  degrees up. Its node isn't turned (nothing steers it), so the drawn round keeps the turn it
+  left with. The game runs a projectile's timers x5 while it's in a liquid (its +0x104, 0x226d22):
+  not done.
+* **An AI's lobbed rounds** (`missile::lob`, `missile::lob_holds`; **the demo's stand-in for the
+  game's AI aim, untraced and not filmed**): FUN_0022e5b0 turns every gun straight onto its aim
+  point, and fired so, level at a target 20 m off, an AI's round came down ~5 m in front of it and
+  its own 8 m blasts killed it (e40's Shrike placement h_1f979a8a, which carries the iKhan-GPL).
+  So an AI pitches a lobbed round up, the lower of the two pitches whose flight (the demo's
+  gravity and damping at the round's speed, the split and the world left out) passes through its
+  aim point, or, out of reach, the one that carries it farthest at that height; and it holds its
+  fire while the aim point is within its own blast's reach (the Damage radius and
+  `BLAST_PART_REACH` more, across). What the game's AI does about a lob isn't read.
+* **The iKhan-GPL** (#55; h_e9be70f0, WTYPE_RIFLE, Brutus's in the takes): 0.66 rounds a second
+  from a clip of 16 (ammo-type 9, for which no level defines an ammo item: no reserve, no
+  reload), its fire sound f3ccb53d, its muzzle effect h_0d18cac3 (grenade_launcher_smoke and
+  grenade_launcher_muzzle, no light; compiled with the missiles' rules, as every mesh projectile
+  gun's launch is), and the bracket crosshair h_12a2c478. Its round is the projectile object
+  h_175a0adf (model h_13a8dfb8, 0.04 m), the yellow glow with a ribbon behind it: the attached
+  effect h_f788f9c4 (mirvgrenade_trail: mirvgrenade_ribbon and mirvgrenade_flare) and its sound
+  10318b29, lobbed (above). **Its bomblets** are its own `<mirv>` children, three more
+  h_175a0adf: the fuse makes them as it passes an enemy within 3 m, the apogee when it's fired
+  more than ~10 degrees up; each goes off on its own. Each blast (a direct hit's, a timeout's or a
+  bomblet's): the explosion type h_e26237da (exp_mirvgrenade: a white dome, sparks and a flash;
+  light_explosion; the sound 065168c9), the bullet's impact sound e404fac6 (in no level's sound
+  bank: silent, as the Sweeper V's), Damage 18-20 EXPLOSION (as written, min 20 and max 18) in a
+  radius of 8 m, half a roll to every body it reaches (h_011cb154 false), the scorch h_e1e26e25
+  (1.5 x 1.5, 25 s) on the ground under it, and the view's shake (18 x 0.00769 = 0.14 within 56
+  m). A direct hit takes a roll first. **The other "iKhan-GPL"**: h_1f4a5a0a carries the gun's
+  stringtable name and description but is the bioreactive death's vaporise blast (WTYPE_DATA,
+  Damage 1.1-1.5 x the victim's max HP, BIOREACTIVE, radius 7: the invisible grenade h_0569a8b4
+  that FUN_001252b0 leaves at the body goes off with it, #147), never held, placed or picked up.
+  `BF_TEST_WEAPON="iKhan-GPL"` took whichever of the two the weapons' map gave first (the blast
+  about half the runs: Brutus then held its 7 mm placeholder); a label two definitions share now
+  takes the one that isn't WTYPE_DATA (`shots::test_weapon_key`).
 * **The Sweeper V** (#72; `h_ed3f6b0c`, the same machinery with other numbers, spec §2): one
   rocket a trigger cycle, 0.5 a second (60 game frames), clip 8 of the squad's AMMO_10 rockets.
   Its missile object h_fa69b507 is the Therm's model h_07d84a52 with its own attached effect
@@ -1826,8 +1899,11 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   degrees off its heading, is given up for one ahead along its velocity (velocity x 200: 6 km,
   0x227038), and the target with it; that test runs before the fuse, so a NEUTRAL child that
   gives up has no fuse and flies on to contact or its timeout. The trail's user parameter
-  follows life / start (FUN_00228c10). No gravity: measured, not traced (take20's children
-  climbed straight at ~8.5 degrees for 168.6 m in 5.58 s).
+  follows life / start (FUN_00228c10). No gravity: their objects' h_11e7d864 takes their bodies
+  off it (**Lobbed** above), as the takes show (take20's children climbed straight at ~8.5 degrees
+  for 168.6 m in 5.58 s). The steering wouldn't hold one up: the Sweeper V's, along its own
+  velocity (flag 4 alone), takes nothing across it, and a missile under gravity would bend as
+  freely as an unsteered round.
 * **The trail's puffs** rise in place: the air fields linked to them, mtrail-rise (0.3 m/s up)
   and mtrail-rise#1 (1.0 m/s up, Approach 1.66 taken as 1), now run (`AIR_FIELDS`,
   `src/ale_fx.rs`). take21's side view shows a cloud round the missile from 0.1 s, then a line
@@ -1873,7 +1949,8 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   (not the shooter's) standing (play.rs's cylinder) or lying knocked down (its ragdoll's bones,
   each a ball 0.2 m round: `LYING_RADIUS`, the demo's shape; the game's missile strikes the
   ragdoll's bodies, where the plain shots pass over them), a breakable object, or a Sentry. A
-  body struck takes a roll of Damage min..max (84-96, FUN_0022c4d0), x the hit-location factor,
+  body struck takes a roll of Damage min..max (84-96, FUN_0022c4d0; min + U x (max - min) as
+  written, FUN_0022c940: the iKhan-GPL's min 20 and max 18 roll 18-20), x the hit-location factor,
   x 0.7 on the shooter's side (FUN_0004b9c0), x the victim's difficulty step and damage-type
   factor. **The hit-location factor** (FUN_00125940 at 0x227a03, the bone from FUN_00115000;
   the missile's own +0x1cc is 1.0): the victim type's `damage-multiplier` (h_e7e9fcd3: 0.62 for
@@ -2032,7 +2109,9 @@ open air, a side view, cover) came after its spec and are compared under **Verif
 * **Not done**: the AI's 75 m noise (FUN_0004d490), the damage event (FUN_001fe3d0), the second
   sound list h_03dc7b9a, the red enemy crosshair (a shared HUD feature).
 
-Test hooks: `BF_MISSILE_LOG=1` prints each missile's launch, seeks, retargets, split (children,
+Test hooks: `BF_MISSILE_LOG=1` prints each missile's launch (a lobbed one's ends "lobbed (gravity
+9.81, damping 0.1 a second)"), seeks, retargets, apogee ("at its apogee: rising -0.45 m/s, 5.09 m
+above its launch"), split (children,
 targets), fuse and end (where, how far, how long after the launch, what it struck), each direct
 hit's amount with its roll, hit-location factor, struck bone and step (`x0.31 at bone
 h_044f3505, x0.60 the step`), and each body its blast reaches (with its step) or finds behind
@@ -2078,6 +2157,18 @@ The takes' places, with
   BF_TEST_NPC=0.5,brutus,enemy,dummy,6.2,-15.5` (33 m out and 1.5 m off the line, where the
   second check, 36 m out, finds him just passed); an enemy's launches, e40's Shrike Heavy
   placement `BF_TEST_NPC=0.5,h_17bc6519,enemy,fight,2.15,168.43` with take06's spot.
+* The iKhan-GPL's takes (#239, #55: `todo/55-ikhan-gpl`), on e40 with Brutus as in the takes,
+  `BF_MAP=e40 BF_CHARACTER=0 BF_NO_SQUAD=1 BF_TEST_WEAPON=e9be70f0`, taps
+  `BF_TEST_TRIGGER=3.0-3.08,5.2-5.28,7.4-7.48`: take01's cliff at 10 m
+  `BF_TEST_GOTO=-30.63,151.66,-31.10,151.48 BF_CAMERA_AIM_AT=-40.22,28.5,147.40` (the crosshair
+  1 m up the cliff from its foot, as the take's sits; at the foot itself the round comes down 2 m
+  short on the rising ground); take08's at 25 m `BF_TEST_GOTO=-16.45,152.86,-16.94,152.76
+  BF_CAMERA_AIM_AT=-40.6,28.0,147.9`; take03's frozen enemy 7 m out `-- --test
+  BF_TEST_INSTANT_KILL=0 BF_TEST_NPC="0.5,shrike soldier,enemy,frozen,-6.62,164.35"
+  BF_TEST_NPC_HP=1.0,1,300 BF_TEST_GOTO=-0.19,167.13,-0.65,166.93` with
+  `BF_CAMERA_AIM_AT=-6.62,27.6,164.35` (on his chest) or `-10.01,27.6,162.12` (past his side, the
+  fuse's case); the apogee, open air from take08's spot turned round,
+  `BF_TEST_GOTO=-16.45,152.86,-15.96,152.96 BF_CAMERA_PITCH=0.35`.
 
 Verified (15 fps captures and the logs; the takes' damage x1.4 or x0.6, see the difficulty
 step):
@@ -2201,6 +2292,70 @@ step):
   * An enemy's (e40's Shrike Heavy placement, 15 m away, fighting): a rocket every 2.0 s at Tex's
     hips, each a direct hit (12.5-13.1: the roll x0.62, his type's multiplier, x0.6) and its share
     (8.5-10.7).
+* **Lobbed** (#239, the iKhan-GPL's recipes above; `BF_MISSILE_LOG`):
+  * The Therm Sweeper on #73's take01 setup and the Sweeper V on #72's take01 setup log the same
+    missile lines as main's build, line for line (only the kits' load lines change order, as the
+    weapons' map does run to run).
+  * take01's cliff (three taps): each round leaves at 23 m/s and strikes the cliff's foot 9.5 m
+    from the muzzle, 0.40 s after the launch, the blast out of Brutus's reach (his nearest part
+    9.5 m away). The take, at 60 fps: the burst on the cliff at the crosshair's bottom bracket
+    0.47-0.50 s after the launch glow's first frame, on two shots. Not matched: 0.07-0.1 s
+    longer in the take, cause not found. The code's launch is the bullet's speed exactly. Both
+    iKhan takes (01 and 08) would fit a stronger damping, ~0.7 a second; the reviewer noted that
+    the objection to it assumed the steady bodies take the damping too. They do, by the code: the
+    steady missiles' bodies come from the same template (FUN_00158cd0's 0.1; h_11e7d864 takes them
+    off the gravity only), so at 0.7 the Sweeper V's steering would hold ~52 m/s where #72's
+    take05 timed 59.5 on average. Kept at the code's 0.1; a follow-up. Where the take's crosshair
+    sat on the cliff, and so how far its round went, is read from the picture.
+  * take08's 25 m: each round comes down on the sand 12.4-12.7 m from the muzzle, 0.53 s after the
+    launch (the take: ~0.47 s after the glow, "~8-10 m ahead" by eye).
+  * take03's spot, a frozen Shrike Soldier 7 m out (the take's was a Shrike of e40's spawn
+    template 834ae160), aimed at his chest: every round strikes him 0.23 s
+    after the launch, a direct roll of 25.5-26.2 (18.2-18.7 x1.4) and then its blast's half share
+    of 12.8-13.8, 0.07-0.25 s later; Brutus takes 3.8-4.2 of his own blast (5.7 m from him).
+    Aimed past his side (the round 0.7 m from his hips), the fuse splits it 6.8 m out at 0.3 s
+    and the three bomblets come down 7.7-13.8 m out, 0.33-0.6 s after the launch: two or three
+    half shares of 12.7-13.9, 0.07-0.35 s apart, and no direct roll; Brutus takes one share when a
+    bomblet lands within ~8 m of him. take03 logged both patterns: 26 at once (shots 1, 4 and 7),
+    two or three shares of 13.1-14.0 0.1-0.2 s apart (shots 2, 3, 5), 26.2 then 13.2 (shot 6),
+    300 down to 85.8 over seven rounds where the demo's seven direct hits take 273. That reads as
+    most of the take's rounds passing him and splitting at the fuse (an inference from the shares'
+    count and spacing; the take's blasts hide the rounds), which the demo's body, a cylinder 0.4 m
+    round, doesn't let a round aimed at him do (the game strikes his collision parts; a round
+    through the gap between his legs isn't checked). The rolls: 18-20 as the code has them (the
+    shares 13.1-14.0 = x1.4 of 18.7-20.0), where the demo rolled 18 every time before.
+  * The apogee, 20 degrees up in the open: the split 1.07 s after the launch (its straight phase
+    out, rising at -0.45 m/s), 21.3 m out and 5.1 m up; the bomblets fan out (three trails in the
+    capture) and land 32-39 m out, 1.7-2.1 s after the launch. Not filmed.
+  * An AI's (the tester's repro, `-- --test BF_MAP=e40 BF_NO_SQUAD=1 BF_CHARACTER=0
+    BF_TEST_GOTO=17.15,175.43,17.15,175.0 BF_TEST_NPC=0.5,h_1f979a8a,enemy,fight,17.7,196.0`):
+    on #239's first build (the tester's run) every round of the Shrike's came down ~5.3 m in front
+    of it and its own blasts (9.0-9.7 each) took it from 64 HP to 0 by 11.4 s, Brutus untouched.
+    Now it pitches them 13.4 degrees up and each strikes Brutus 19.5 m off, 0.9 s after the
+    launch, a round every ~1.5 s: 6.8-7.4 (the roll x0.62, his multiplier, x0.6) and the blast's
+    share 5.5-5.9; it takes nothing itself, and Brutus is down at 14.9 s (main's plain shots hit
+    him every 1.5 s too). With the squad (without `BF_NO_SQUAD`) Hawk and Tex shoot it from 37-40
+    m, and it gets two rounds off at Brutus, both hits. Put 6 m from Brutus (17.7, 181.5) it holds
+    its fire (no round in 10 s); at 10 m (17.7, 185.5) it fires, nearly level, and its own blast
+    misses it by 0.4 m (its nearest part 8.97 m away). `cargo test` checks the lob's pitch (~11
+    degrees for 20 m level) and that the flight passes within 2 cm of the target.
+* **The iKhan-GPL** (#55, the recipes above with `BF_TEST_WEAPON="iKhan-GPL"`, which now gives the
+  gun every run; `BF_CAPTURE_FPS=60` against the takes' 60 fps):
+  * take01's look: the launch is an orange smoke beside the gun and a yellow glow leaving it with
+    its ribbon, as the take's (its smoke shows on its second shot; the take's glow is a round halo
+    ~90 px across for its first 0.1 s, the demo's a streak: the demo's camera sees the round's way
+    from the side, where the take's is behind it, and the flare is a facing-3 quad stretched along
+    its motion). The burst is a white dome at the crosshair on the cliff's foot; above luminance
+    200 (in 640 x 480 units², 15 fps from the burst) the take's grows 0.6k, 3.2k, 5.2k, 6.7k and is
+    gone after 0.33 s, the demo's 0.5k, 1.5k, 4.7k, 4.0k, 3.9k, 2.3k, 1.2k, over 0.47 s: the same
+    light all told, 0.7x at its peak and longer. The scorch shows under the crosshair from ~0.7 s
+    (the take ~0.8 s).
+  * take02 (`BF_TEST_CLIP=3 BF_TEST_RESERVE=0`, the trigger held): three rounds 1.53 s apart (the
+    take 1.51-1.60), no reload with no reserve, then a dry click (f740ecdd) on a tap and the
+    switch.
+  * take06's frozen enemy 25 m out (Brutus at the take's spot, 17.13, 175.49, the crosshair on the
+    enemy): each round comes down 14.4-14.6 m out, 9.5 m short of him, and doesn't reach him (the
+    take: no hits). take05's 45 m wall is the same arc: down on the sand ~12-15 m out.
 
 Not matching or not done:
 * The explosion is too big: 1.5x the take's bright area on take04's cliff (two fireballs) and
@@ -2251,6 +2406,34 @@ Not matching or not done:
   (the analyst, answers-batch1 §13). Its 0.3 m ball strikes a body where the demo's ray meets the
   cylinder: a pass within 0.3 m of the body misses here (the hit part's back-off, `STRUCK_BACK`, is
   #73's 0.5 m).
+* Lobbed (#239): take01's flight is 0.07-0.1 s shorter than the take's (above, cause not found);
+  a round aimed at a body always strikes the demo's cylinder, where most of take03's passed and
+  split at the fuse; the creatures' Breath Attacks keep the plain shot (#83, #130); a
+  projectile's timers running x5 in a liquid aren't done.
+* The iKhan-GPL (#55): its explosion's flames. The take's rise and spread up and out from the
+  dome (+0.13-0.33 s); the demo's lie flat along the ground. exp_mirvgrenade has a radial field,
+  exp-mirvgren_rad.fld (class h_03d20af6; its parameters 5.9, a curve 1 to 0.001, a curve of 370
+  falling to 62 over 0.2 s and 0.43, read by Freelancer's FxRadialField as its radius,
+  attenuation, magnitude and approach), which `src/ale_fx.rs` doesn't run, and two air fields
+  (exp_mirvgrenade_air.fld, a wind of 0.004 m/s at approach 1.49; exp-mirvgren-air.fld, 1 m/s at
+  0.3) left off (`AIR_FIELDS`): run without the push, the first would stop every particle where
+  it's born. The weapon panel reads "16 / 0" where take01's reads "16": the game's panel
+  (0xcbdd0) writes "%d / %d" (0x40d654) only when the held gun's data +0x174 is set and it doesn't
+  recharge, "%d Regen" (0x40d664) for a recharging one, else the clip alone (FUN_000bb920); data
+  +0x174 names an object type that FUN_0022b6d0 makes with each weapon (0x22d820) and a
+  character's animation event makes again (0x118390), which reads as the gun's magazine. What sets
+  it isn't found, so the demo keeps "clip / reserve" (a code question). No level defines an ammo
+  item for the iKhan-GPL's ammo-type 9.
+* The iKhan-GPL (#55): the round's glow and ribbon are pale cream, ~(229-240, 200-215, 125-136)
+  (the tester's), where the takes' are a saturated gold, ~(245, 172, 67). The ribbon's colour,
+  mirvgrenade_ribbon.app's (0.808, 0.545, 0.149), and the flare's, (0.788, 0.710, 0.271) to (0.792,
+  0.459, ...), are added as linear amounts, as `src/ale_fx.rs` adds every additive appearance's
+  (the convention play_fx.rs gives: the console adds to the picture's stored gamma values, and
+  amounts taken as linear come out about as bright as its sums over a mid-grey picture); encoded,
+  the ribbon's is (232, 194, 108). Taken as the console's gamma values it's (206, 139, 38), which
+  over the take's dark cliff (~40, 30, 30) adds up to about the take's gold. Not this effect's slip
+  but the blend every added effect is drawn with (and checked against its takes with): a
+  follow-up, e.g. adding the effects in gamma values.
 
 Sounds (`src/bf/audio.rs`) come straight from the game's banks: `sounds-<level>.xmb` maps sound
 ids to Xbox ADPCM data in `sounds-<level>.mem`, decoded to 22 kHz WAV in memory. Each character's
