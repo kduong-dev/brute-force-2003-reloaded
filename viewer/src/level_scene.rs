@@ -201,7 +201,7 @@ const TERRAIN_BUMP_TEXTURE: u32 = 0xED0B_519D;
 /// draws none either without the normal palette: no default.xbe beside the data.)
 ///
 /// Vertex program 0x38 (0x3d8bf8) lights a terrain vertex by the ambient and slot 1's light of
-/// the pair the shaders hold (`pair_slots`: c18 toward it, c19 its colour), oD0.rgb = (c23 +
+/// the pair the shaders hold (`Level::slots`: c18 toward it, c19 its colour), oD0.rgb = (c23 +
 /// max(0, n . c18) c19 c21) x the vertex's baked light (v12.y, TERRAIN_FRAME), and hands slot 0's
 /// light (c16) to the bump map: oD1.rgb = c16 turned into the vertex's tangent frame
 /// (`Geoset::frames`), x 0.5 + 0.5, and oD0.w = the baked light where n . c16 >= 0, else 0. Its
@@ -232,30 +232,16 @@ pub fn terrain_bump(game: &Game, level: &Level, id: u32) -> Option<(TerrainBump,
     }
     let texture = game.material_param_texture(id, TERRAIN_BUMP_TEXTURE)?;
     let k = game.material_constant(id, DETAIL_SCALE).and_then(|v| v.first().copied()).unwrap_or(DETAIL_DEFAULTS.0);
-    // slot 0 of the outdoor pair (FUN_000dcc10, `pair_slots`); toward the light is minus `dir`, at
-    // the column's length; an empty slot is black (no bump)
-    let [key, _] = pair_slots(&level.pair(false));
+    // slot 0 of the outdoor pair by FUN_000dcc10's rule on the lights' types (`Level::slots`,
+    // #288: the key light whichever the file lists first; the lava's v0 is the same light's,
+    // `Level::objects_key`); toward the light is minus `dir`, at the column's length; an empty
+    // slot is black (no bump)
+    let [key, _] = level.slots(false);
     let bump = TerrainBump {
         key: key.map_or(Vec3::ZERO, |l| -l.dir * l.strength).extend(k),
         key_colour: key.map_or(Vec3::ZERO, |l| Vec3::from(l.color)).extend(1.0),
     };
     Some((bump, texture))
-}
-
-/// The two slots FUN_000dcc10 puts a pair's lights in (`Level::pair`, the level file's order):
-/// [slot 0, slot 1], the shaders' c16 / c17 and c18 / c19. It walks the world's directional lights
-/// from the front of their list, which 0x14f2a0 builds by putting each new one in front (a point
-/// light goes to the back), so it meets them last to first; the first it meets goes in slot 1 and
-/// the second moves that one to slot 0 (0xdcc8e-0xdccf4). So with two lights the file's second is
-/// slot 0 and its first slot 1; with one, slot 1 and slot 0 empty (black: no bump map). The
-/// objects' programs light both slots alike, so only the terrain's (program 0x38) tells them apart:
-/// e40's take06 (todo/49-bower-20) shows the sand's relief lit by its key, the file's second.
-fn pair_slots<'a>(pair: &[&'a LevelLight]) -> [Option<&'a LevelLight>; 2] {
-    match pair.len() {
-        0 => [None, None],
-        1 => [None, Some(pair[0])],
-        n => [Some(pair[n - 1]), Some(pair[n - 2])],
-    }
 }
 
 /// Added to a terrain layer's sort distance: bevy sorts transparent meshes back to front by
@@ -1117,6 +1103,9 @@ fn log_lights(level: &Level, shadow: Option<u32>) {
     }
     let names = |indoor: bool| level.pair(indoor).iter().map(|l| format!("h_{:08x}", l.name)).collect::<Vec<_>>().join(" ");
     eprintln!("  outdoor pair: [{}]  indoor pair: [{}]", names(false), names(true));
+    let slots = |indoor: bool| level.slots(indoor).map(|l| l.map_or("-".to_string(), |l| format!("h_{:08x}", l.name))).join(" / ");
+    eprintln!("  slots 0 / 1 (FUN_000dcc10): outdoor {}, indoor {} (the outdoor slot 0 lights the terrain's bump map and is the lava's v0)",
+              slots(false), slots(true));
     let [o, c, t] = [level.ambient, level.character_ambient, level.terrain_ambient];
     eprintln!("  ambient: object {:.3} {:.3} {:.3}, character {:.3} {:.3} {:.3} (not drawn: characters take the object's), terrain {:.3} {:.3} {:.3}",
               o[0], o[1], o[2], c[0], c[1], c[2], t[0], t[1], t[2]);
@@ -1779,23 +1768,6 @@ pub fn spawn_sky(commands: &mut Commands, sky: &SkyLayers) -> Vec<Entity> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// An outdoor directional light named `name` (the rest doesn't matter to the slots).
-    fn light(name: u32) -> LevelLight {
-        LevelLight { kind: 0, name, color: [1.0; 3], dir: Vec3::NEG_Y, strength: 1.0, indoor: false, outdoor: true, specular: false }
-    }
-
-    /// FUN_000dcc10 meets a pair's lights last to first (0x14f2a0 puts each new one at the front
-    /// of the world's list): slot 0 is the level file's second light, slot 1 its first; a single
-    /// light is slot 1, with slot 0 empty.
-    #[test]
-    fn the_files_second_light_takes_slot_0() {
-        let (a, b) = (light(1), light(2));
-        let names = |s: [Option<&LevelLight>; 2]| s.map(|l| l.map(|l| l.name));
-        assert_eq!(names(pair_slots(&[&a, &b])), [Some(2), Some(1)]);
-        assert_eq!(names(pair_slots(&[&a])), [None, Some(1)]);
-        assert_eq!(names(pair_slots(&[])), [None, None]);
-    }
 
     /// A terrain vertex's tangent comes back to the world as its frame's x axis: a frame that
     /// turns the world's +y (the flat ground's normal) to +z and keeps +x gives +x, the way the
