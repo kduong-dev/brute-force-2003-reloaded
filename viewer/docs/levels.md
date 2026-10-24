@@ -403,33 +403,77 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   `env_il_*` type 0 with bubbles) and four sounds (unnamed; taken in the effects' order). Going
   into a liquid splashes (big when falling faster than 5 m/s), wading leaves a ring every 0.5 s
   while moving, and a shot through a surface splashes where it goes in.
-* **Liquids aren't solid.** A pool (sdm_m03's toxic river, sdm_e13's lava, and pools on sdm_e10,
-  sdm_e40, sdm_m07, mp4, mp6 and mp7) is a placed object of class `h_04366a6a` whose collision
-  is one flat plane at its surface. That plane is left out of the floor and walls: characters
-  wade and sink to the bed. A liquid's type
-  (objecttypes `<h_fa2f5452>`, read by 0x193420) gives its kind (`liquid-type`) and three damage
-  rates per second (h_06f6a40d, h_eba69d33, h_e0489ea0):
+* **Liquids aren't solid.** A pool (sdm_m03's sludge river, sdm_e13's lava, the tutorial's pits,
+  and pools on sdm_e10, sdm_e40, sdm_m07, mp4, mp6 and mp7) is a placed object of class
+  `h_04366a6a` (`water-lava-flow-object`) whose collision is a closed volume under its surface
+  (sdm_e13's lava a box from 12.94 to 23.89 m; sdm_e10's pond and the e40 ocean 40- and
+  420-triangle volumes): the game makes it a phantom (FUN_002218e0), so it's left out of the floor
+  and walls here, and characters wade and sink to the bed. No movement code reads it: no
+  slowdown, swimming, drowning or tint under it (todo/146-liquids leads §4). A liquid's type
+  (objecttypes `<h_fa2f5452>`, `water-lava-flow`, loaded by FUN_00193420) gives its kind
+  (`liquid-type`, the LT_ names at 0x3be754) and three damage values (`LiquidType::damage`):
 
-  | liquid-type | Liquid | Damage per second |
-  |---|---|---|
-  | 1 | water | 0, 0, 0 |
-  | 2 | lava | 50, 50, 30 |
-  | 3 | (unnamed) | 0, 10, 30 |
-  | 4 | toxic | 50, 50, 50 |
+  | liquid-type | Liquid | h_06f6a40d: an object's hit | h_eba69d33 | h_e0489ea0: a character's rate |
+  |---|---|---|---|---|
+  | 0 | ocean water (e40) | 0 | 0 | 0 |
+  | 1 | swamp water (sdm_e10's pond, the e40 pools) | 0 | 0 | 0 |
+  | 2 | lava (sdm_e13, sdm_e40, sdm_m07, the tutorial) | 50 | 50 | 30 |
+  | 3 | toxic waste (m09, m14) | 0 | 10 | 30 |
+  | 4 | sludge (sdm_m03, m03, e01, mp6) | 50 | 50 | 50 |
+  | 5 | chloride (m14_c) | 0 | 0 | 0 |
 
-  How the game uses these values isn't traced (a capture of sdm_e13 had Brutus wade waist-deep
-  through lava for 10 s at full health, then die the moment he went under). Here a harmful
-  liquid burns from the first touch: 20% of its highest rate at the surface, rising with depth
-  to all of it at 1.6 m (lava: 10 hp/s ankle-deep, about 30 waist-deep), dealt every 0.4 s
-  without blood; going under kills. A fall into a liquid doesn't hurt.
+  h_eba69d33 is read by nothing; h_06f6a40d is one hit on an object entering (a pickup, a
+  grenade, a missile: #146's Part 5, not in the demo).
+* **What a liquid does to a character** (#152, play_liquids.rs; the code read in
+  todo/146-liquids leads.md §2-§4 and answer-spec.md Q1 / Q9, the code map's Levels rows
+  FUN_00221af0-FUN_00222400):
+  * The liquid sees a living character by its eleven hit-part bodies (PID_BONE), never by its
+    movement capsule (answer-spec Q1; L1's live read on e40's pools: 16 enter events, all
+    PID_BONE). A part is in while it's in the volume, however deep: here, while the lowest corner
+    of its collision surface, posed as drawn, is inside the volume (`Arena::liquid_inside`: an
+    odd number of the liquid's triangles above it). The count is the game's char+0x104.
+  * The damage is the character rate alone, once a game frame (30 Hz, the liquid's update): a
+    frame on which a part enters deals the whole rate, any other with a part in its share of
+    the second, and one hit a frame at most (FUN_00221a40). No depth ramp, no tick, nothing
+    more for going under: a body fully under keeps burning at the rate. It goes through the
+    character's damage handler as DTYPE_FLAME (0x221780 -> 0x125600): the difficulty step (the
+    multiplayer maps none; STANDARD's squad x0.6), Vengar, the type's factor. It floors nobody.
+    Its blood is the game's decals alone (FUN_00124a70: the entry hits are big enough, the
+    shares never; the spray straight up), and a death in a liquid leaves out the demo's death
+    spray (play_fx.rs). The game frames run between the drawn ones with the parts' lowest points
+    between their two places, so 15 Hz captures and a 60 Hz screen deal what the game's 30 Hz
+    does.
+  * A fall into a liquid hurts by the drop to its bed, as on land (FUN_0012b740 has no liquid
+    check; answer-spec Q9); only the landing's sound (and dust, which the demo doesn't draw) is
+    left out while a part is in one (0x12d842).
+  * Checked against the takes (`BF_LIQUID_LOG=1` prints the parts in and each hit):
+    * #146's take01 (sdm_e13, Brutus at 75 HP walking north into the lava at half stick:
+      `BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.80,-20.92,-100,25.09 BF_TEST_WALK=1
+      BF_TEST_HEALTH=75`): the first part in at (-20.3, -116.0), 75 to 45; the second 0.24 s
+      later (the take's 0.20), down to 9 (the take's 9.3); dead 0.54 s after the first (the
+      take's 0.53), ankle-deep.
+    * take03 (Brutus at 5000, `BF_TEST_HEALTH=5000`, to (-21.44, -110.15), then on to
+      (-23.73, -87.26)): thirteen entry hits of 30 walking in (the take's twelve or thirteen),
+      then 9 of 11 parts in waist-deep (the take's 10) at 30.0 HP a second (the take's 30.0); all
+      11 in, 3 m under, still 30.0 a second and alive (the take's 30.2, alive 9 s under). The view
+      from under the lava shows no surface (one-sided, as the take).
+    * #28's take08 (the tutorial, STANDARD: `BF_MAP=tutorial BF_TEST_GOTO=46.26,-25.92,45.96,-30.40
+      BF_TEST_HEALTH=101.6`): Tex runs off the east pit's rim and falls in: five entry hits of 18
+      (30 x 0.6), 101.6 to 83.6, 64.4, 45.8, 27.8, 9.8 (the take's 83.0, 64.5, 45.9, then 36 in
+      one step to 9.9), then 18 a second on the bed, dead 0.80 s after the first hit (the take's
+      0.87). The same at 15 Hz and 30 Hz capture steps. (With the goal at z -34, past where the
+      take's Tex stopped at -30.4, and his full 115, he runs on over the bed and up out of the
+      pit's south side with 4.6 left.)
+  * Not filmed: sludge's rate (50, sdm_m03: C1), toxic waste's (30, m09: D1), a fall into a pool
+    (B3), squad members or enemies in a liquid; built from the code and the data alone. The
+    waters do nothing (their rates are 0).
   * The tutorial's lava pits (h_ea243aea, two) are a box of collision (12 triangles, the east
     one's top at 14.40 m, its bottom at 3.45 m) in a pit whose walls are steeper than a floor
-    (maps.md, "Collision": steep ground with no floor under it, #264). Tex runs off the east
-    pit's rim into it as in take08 (todo/28-tutorial), and dies sooner than there: the demo kills
-    him as his feet go 1.6 m under, about 0.3-0.5 s after he leaves the rim, where take08's Tex
-    (running off it at 167.16 s) loses 18.6 HP a 67 ms step from 0.6 m under (167.56 s), 36 in
-    one step at 2.3 m, then about 18 a second on the bed, and is at 0 at 168.43 s: 1.3 s after
-    the rim. How the game deals it is #152's.
+    (maps.md, "Collision": steep ground with no floor under it, #264).
+  * Test hooks: `BF_LIQUID_LOG=1` prints each character's parts in a liquid as their count
+    changes, each entry hit, a death, and the hit points each second in one; `BF_TEST_WALK=1`
+    makes BF_TEST_GOTO walk (Ctrl), as the takes' half stick; `BF_TEST_HEALTH=<hp>` above the most
+    raises the most too (play_pickups.rs).
 * **Terrain hue.** The baked light map gives the ground's brightness. Its hue comes from the
   lights marked `h_e02aba1c` with the terrain's ambient, at 60% strength. Before #143 those were
   read as the terrain's own pair; the game's code has them as the indoor pair (see **Light

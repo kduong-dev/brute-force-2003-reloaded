@@ -680,6 +680,7 @@ fn main() {
         .add_plugins(shake::plugin)
         .add_plugins(skills::plugin)
         .add_plugins(damage::plugin)
+        .add_plugins(liquids::plugin)
         .add_plugins(reticle::plugin)
         .add_plugins(targeting::plugin)
         .add_plugins(enemies::plugin)
@@ -806,6 +807,8 @@ mod brain;
 mod placed_fx;
 #[path = "play_camera.rs"]
 mod camera;
+#[path = "play_liquids.rs"]
+mod liquids;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1445,16 +1448,6 @@ const SLIDE_RELEASE: f32 = 0.2;
 const SLIDE_BLOCKED: f32 = 0.1;
 /// The slide clip shows for this long past the slide (keeps it from flickering).
 const SLIDE_HOLD: f32 = 0.25;
-/// A liquid this deep (m above the feet: the head under) kills, if it's a harmful one (any of
-/// its LiquidType::damage values set: lava, toxic). From a capture of sdm_e13: Brutus waded
-/// waist-deep through lava for 10 s at full health, then died the moment he went under.
-const LIQUID_UNDER: f32 = 1.6;
-/// A harmful liquid (any damage rate set: lava, toxic) burns from the first touch: LIQUID_TOUCH
-/// of its highest rate (per second) at the surface, rising with depth to all of it at
-/// LIQUID_UNDER; dealt every LIQUID_TICK s. (A capture of sdm_e13 had Brutus wade waist-deep
-/// through lava unhurt; this is the demo's choice: touching it hurts.)
-const LIQUID_TOUCH: f32 = 0.2;
-const LIQUID_TICK: f32 = 0.4;
 /// Falls (FUN_0012b740): past 5 m a landing hurts, 100 x ((drop - 5) / 25)^2 with no upper
 /// clamp (5.0 at 0x3c0590, 30.0 at 0x3c0594, 100.0 at 0x3c0598): 100 at 30 m, 144 at 35 m, 164
 /// at 37 m (m09_a's waste pit), so a long fall kills Brutus (105) and Tex (115) too (#157).
@@ -1761,7 +1754,8 @@ struct PendingHit {
 /// into a body on the ground), and the hit points left after it. `shielded`: a stamina shield
 /// took it whole (play_enemies.rs: no blood, the shield's look). `record`: a shot's hit record
 /// damage (`damage::Hit::record`), which sets the user parameter of the struck material's hit
-/// effect (FUN_0022cd80, play_fx.rs `flesh_sp`); None for any other hit.
+/// effect (FUN_0022cd80, play_fx.rs `flesh_sp`); None for any other hit. `burn`: a liquid's hit
+/// (`burn`): only the game's decals show it.
 #[derive(Clone, Copy, Debug)]
 struct Bleed {
     at: Vec3,
@@ -1771,12 +1765,13 @@ struct Bleed {
     hp_left: f32,
     shielded: bool,
     record: Option<f32>,
+    burn: bool,
 }
 
 impl Bleed {
     /// A hit to show that did no damage (a shot into a body on the ground).
     fn shown(at: Vec3, dir: Vec3, ammo: i64) -> Self {
-        Bleed { at, dir, ammo, a: 0.0, hp_left: 0.0, shielded: false, record: None }
+        Bleed { at, dir, ammo, a: 0.0, hp_left: 0.0, shielded: false, record: None, burn: false }
     }
 }
 
@@ -2097,10 +2092,8 @@ struct Player {
     wet: bool,
     wade_in: f32,
     splashes: Vec<(Vec3, u32)>,
-    /// a harmful liquid's damage not yet dealt, and the time to the next dealing (see
-    /// LIQUID_TOUCH)
-    burn: f32,
-    burn_in: f32,
+    /// its hit parts in the liquids (play_liquids.rs: the game's wade entries and char+0x104)
+    wading: liquids::Wading,
     /// the side the character is on: 0 the squad (everyone in the main game); BF_TEST_HOSTILE puts
     /// a squadmate on another (play_sentry.rs: the squad's mines go off for them), and the test
     /// map's enemy NPCs are on ENEMY_TEAM (play_testtools.rs: the squad AI fires at them)
@@ -2206,7 +2199,7 @@ impl Player {
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
             scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), scope_heard: 0, scope_level: 0, scope_lock: 0.0, test_scope_presses: 0, test_selected: false, sway: Vec2::ZERO,
-            wet: false, wade_in: 0.0, splashes: vec![], burn: 0.0, burn_in: 0.0, team: 0, test_hold: false, npc: None, ai_target: None,
+            wet: false, wade_in: 0.0, splashes: vec![], wading: Default::default(), team: 0, test_hold: false, npc: None, ai_target: None,
             lock_aim: None,
             enemy: Default::default(),
             stand_in: false,
@@ -3794,6 +3787,9 @@ fn autopilot(player: &mut Player) -> bool {
         }
         // BF_TEST_SPRINT=<s>: sprint (the game's dash) toward the goal from that time on
         player.sprint = std::env::var("BF_TEST_SPRINT").ok().and_then(|v| v.parse::<f32>().ok()).is_some_and(|at| player.sim_time >= at);
+        // BF_TEST_WALK=1: walk toward it (Ctrl), as #146's takes' half-stick (motion 47, 2.15 m/s;
+        // play_liquids.rs)
+        player.walk = std::env::var("BF_TEST_WALK").is_ok();
         // BF_TEST_CROUCH=<s>: crouch from that time on
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
             player.crouch_wanted = player.sim_time >= at;
@@ -4379,9 +4375,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                         println!("{} lands at {:.1} after a {drop:.1} m drop", unit_name(u), u.position);
                     }
                     let (lo, hi, most) = FALL_HURT;
-                    // a liquid breaks the fall
-                    let wet = a.liquid_at(u.position.x, u.position.z, g + 0.5).is_some();
-                    if drop > lo && !wet {
+                    // (into a liquid too: the drop to its bed, FUN_0012b740 has no liquid check;
+                    // #152)
+                    if drop > lo {
                         // (no clamp: FUN_0012b740)
                         let k = (drop - lo) / (hi - lo);
                         let at = u.position + Vec3::Y * 0.2;
@@ -4393,35 +4389,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 }
                 slide(u, &a, g, n, material, dt);
             }
-            // in a liquid: wading is harmless; going under a harmful one (lava, toxic) kills
+            // in a liquid: its splashes (what it does to them is play_liquids.rs's)
             let feet = u.position.y + GROUND + u.height.max(0.0);
             let liquid_here = a.liquid_at(u.position.x, u.position.z, feet);
             splashes(u, liquid_here, dt);
-            if let Some((surface, liquid)) = liquid_here {
-                let deep = surface - feet;
-                let rate = liquid.damage.iter().copied().fold(0.0, f32::max);
-                let at = Vec3::new(u.position.x, surface, u.position.z);
-                if deep > LIQUID_UNDER && rate > 0.0 {
-                    let all = u.health;
-                    hurt(u, &game.0, all, HURT_CHATTER, Vec3::Y, at, -1);
-                } else if rate > 0.0 {
-                    // burning: from LIQUID_TOUCH of the liquid's rate at a touch up to all of
-                    // it chest-deep, dealt every LIQUID_TICK s (no blood: it burns)
-                    let k = (deep / LIQUID_UNDER).clamp(0.0, 1.0);
-                    u.burn += rate * (LIQUID_TOUCH + (1.0 - LIQUID_TOUCH) * k) * dt;
-                    u.burn_in -= dt;
-                    if u.burn_in <= 0.0 {
-                        let (amount, bled) = (u.burn, u.blood.len());
-                        hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y, at, -1);
-                        u.blood.truncate(bled);
-                        u.burn = 0.0;
-                        u.burn_in = LIQUID_TICK;
-                    }
-                }
-                if std::env::var("BF_SLIDE_LOG").is_ok() {
-                    println!("{} in liquid {} {deep:.2} m deep: {} hp", unit_name(u), liquid.kind, u.health);
-                }
-            }
             u.prev_xz = Vec2::new(u.position.x, u.position.z);
         }
     }
@@ -4783,6 +4754,21 @@ fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
 /// `push`, a surviving squadmate may answer); a hard hit can knock them down; otherwise they
 /// grunt or say a line of `tag` now and then.
 fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64) {
+    take_hit(u, game, amount, tag, push, at, ammo, false);
+}
+
+/// A liquid's hit on `u` (play_liquids.rs), at `at` (the record's point: the character's
+/// position): as `hurt`, through the same handler, but it floors nobody (take03 of #146: thirteen
+/// entry hits of 30 left Brutus walking) and its blood is the game's decals alone (`Bleed::burn`:
+/// FUN_00124a70 runs after any hit on a character, but there's no weapon's impact: no particles,
+/// no hit effect or sound). No push (the record's direction is straight down, 0x221780).
+fn burn(u: &mut Player, game: &Game, amount: f32, at: Vec3) {
+    take_hit(u, game, amount, HURT_CHATTER, Vec3::ZERO, at, -1, true);
+}
+
+/// `hurt` and `burn`'s hit: `liquid` for a liquid's (`burn`).
+#[allow(clippy::too_many_arguments)]
+fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64, liquid: bool) {
     // (nor while a cutscene has the world: the damage handler 0x125600 leaves at once while the
     // world's +0xc50 bit 4 is set, play_script.rs; nor one not in the world yet)
     if u.dead || amount <= 0.0 || script::in_cutscene() || u.absent {
@@ -4793,14 +4779,14 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
     // one it takes whole draws no blood (the shield's look instead)
     let amount = enemies::absorb(u, game, amount);
     if amount <= 0.0 {
-        u.blood.push(Bleed { at, dir, ammo, a: 0.0, hp_left: u.health, shielded: true, record: None });
+        u.blood.push(Bleed { at, dir, ammo, a: 0.0, hp_left: u.health, shielded: true, record: None, burn: liquid });
         return;
     }
     u.health = (u.health - amount).max(0.0);
     // (the game's blood decals size by the amount over the type's damage-multiplier, and by the
     // hit points left after it: FUN_00124a70, play_fx.rs)
     let a = amount / damage::damage_multiplier(game, u).max(1e-3);
-    u.blood.push(Bleed { at, dir, ammo, a, hp_left: u.health, shielded: false, record: None });
+    u.blood.push(Bleed { at, dir, ammo, a, hp_left: u.health, shielded: false, record: None, burn: liquid });
     if std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("hit {}{} for {amount:.1} -> {:.1} hp at {at:.2} by ammo type {ammo} (knock cooldown {:.2})", unit_name(u),
                  u.npc.map_or(String::new(), |n| format!(" (NPC {})", n.id)), u.health, u.knock_cooldown);
@@ -4829,13 +4815,17 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
         return;
     }
     // a hard hit floors them now and then (not right after getting up); an enemy reacts by its
-    // personality instead (#129: a stun or a knock-down clip, play_enemies.rs)
-    if enemies::enemy(u) {
-        enemies::damaged(u, game, amount, dir);
-    } else if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
-        u.knock_request = Some(push);
-        if std::env::var("BF_COMBAT_LOG").is_ok() {
-            println!("  knocked down: {}", unit_name(u));
+    // personality instead (#129: a stun or a knock-down clip, play_enemies.rs). A liquid's hit
+    // does neither (take03 of #146: thirteen entry hits of 30 left Brutus walking; an enemy's
+    // reaction to one isn't filmed)
+    if !liquid {
+        if enemies::enemy(u) {
+            enemies::damaged(u, game, amount, dir);
+        } else if amount >= KNOCKDOWN_DAMAGE && u.knock.is_none() && u.knock_cooldown <= 0.0 && !u.action.airborne() && u.random(3) != 0 {
+            u.knock_request = Some(push);
+            if std::env::var("BF_COMBAT_LOG").is_ok() {
+                println!("  knocked down: {}", unit_name(u));
+            }
         }
     }
     if u.hurt_quiet <= 0.0 {
@@ -6229,7 +6219,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.vy = 0.0;
             p.action = Action::JumpLand;
             p.action_left = dur(if four { c.leg4_land } else { jump_land });
-            p.queue_any(&surface.jump_land, 0.9);
+            // (not with a part in a liquid: the landing's dust and sound are skipped while
+            // char+0x104 > 0, 0x12d842)
+            if !liquids::in_liquid(p) {
+                p.queue_any(&surface.jump_land, 0.9);
+            }
             p.step_mute = 0.3;
         }
     } else {

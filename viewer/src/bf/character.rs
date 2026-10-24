@@ -1159,16 +1159,20 @@ pub struct ItemType {
 /// canister, whose pickup unlocks a character (`ItemType::group`; play_pickups.rs).
 pub const IG_DNA_CANNISTER: i64 = 9;
 
-/// A liquid type: a pool's surface is its object's collision plane, which characters sink
-/// through. The game reads, besides these, five factors (h_049350bb .. h_e12e7b9d: 0.1 1 0.4
-/// 0.4 0.1 on every liquid but one) and four sounds (entering, leaving, ..).
+/// A liquid type (objecttypes `<h_fa2f5452>`, `water-lava-flow`, loaded by FUN_00193420): a
+/// pool's collision is a volume under its surface, which characters sink through. The game reads,
+/// besides these, five factors (h_049350bb .. h_e12e7b9d: 0.1 1 0.4 0.4 0.1 on every liquid but
+/// one) and four sounds (entering, leaving, ..). todo/146-liquids leads §1-§3.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LiquidType {
-    /// liquid-type: 1 water, 2 lava (sdm_e13), 4 toxic (sdm_m03's river);
-    /// 3 hurts only deep (0 10 30), 5 is silent and harmless
+    /// liquid-type, the LT_ names (0x3be754): 0 ocean water (e40), 1 swamp water (sdm_e10's pond,
+    /// the e40 pools), 2 lava (sdm_e13, the tutorial), 3 toxic waste (m09, m14), 4 sludge
+    /// (sdm_m03's river), 5 chloride (m14_c)
     pub kind: i64,
-    /// damage per second, from the shallowest depth to under (h_06f6a40d, h_eba69d33,
-    /// h_e0489ea0: water 0 0 0, lava 50 50 30, toxic 50 50 50); see `play`'s use of them
+    /// its three damage values (the copy 0x221170: `ltype`+0x1c8, +0x1c4, +0x1cc):
+    /// [LIQUID_OBJECT_HIT] h_06f6a40d, one hit on an object entering it (FUN_00221af0); h_eba69d33,
+    /// read by nothing; [LIQUID_CHARACTER_RATE] h_e0489ea0, a character's (play_liquids.rs). Lava 50
+    /// 50 30, sludge 50 50 50, toxic waste 0 10 30, the waters and chloride 0 0 0
     pub damage: [f32; 3],
     /// its effects (ALE effect name hashes): a shot striking it (h_08f6cd94, env_<x>l_projectile),
     /// a small splash (h_e4791abc, env_<x>l_smsplash), a big one (h_07ab4143, env_<x>l_mdsplash),
@@ -1179,6 +1183,11 @@ pub struct LiquidType {
     /// effects' order: water's are 0.40, 0.61, 0.47 and 0.61 s)
     pub sounds: [u32; 4],
 }
+
+/// `LiquidType::damage`'s slots: an object's one hit as it enters (h_06f6a40d, `ltype`+0x1c8)
+/// and a character's rate (h_e0489ea0, `ltype`+0x1cc).
+pub const LIQUID_OBJECT_HIT: usize = 0;
+pub const LIQUID_CHARACTER_RATE: usize = 2;
 
 /// A liquid type's effect slots (`LiquidType::effects` / `sounds`).
 pub const LIQUID_SHOT: usize = 0;

@@ -8,9 +8,10 @@
 //! floors), push them out of walls, cast shots, settle pickups and keep the follow camera out of
 //! walls (`hull_triangles`, `convex_meet`: its wedge, play_camera.rs).
 //!
-//! Liquids (lava, toxic rivers, water: placed objects of class h_04366a6a) have a flat
-//! collision plane at their surface; it isn't solid: characters wade and sink through it to
-//! the bed, and `liquid_at` tells how deep they are in what.
+//! Liquids (lava, sludge, toxic waste, water: placed objects of class h_04366a6a) have a
+//! collision volume under their surface (a box for most); it isn't solid: characters wade and
+//! sink through it to the bed. `liquid_at` tells how deep under a surface a point is, and
+//! `liquid_inside` whether it's in a liquid's volume (#152).
 //!
 //! Pickups (weapon / inventory objects and items) are placed at their spawn height in the level
 //! file (the game lets them fall); `settle_pickups` drops them onto the surface below.
@@ -621,6 +622,36 @@ impl Arena {
             }
         }
         best
+    }
+
+    /// Liquid `l`'s type (its index among the level's liquids, as `liquid_inside` gives it).
+    pub fn liquid(&self, l: u32) -> Option<LiquidType> {
+        self.liquids.get(l as usize).copied()
+    }
+
+    /// The liquid whose collision holds `p`: its index among the level's liquids, its surface over
+    /// `p` (the highest of its triangles above) and its type (#152). The liquid's body is a
+    /// phantom of its whole collision (FUN_002218e0), a closed volume (sdm_e13's lava and the
+    /// tutorial's pits a box under the surface, sdm_m03's sludge too; sdm_e10's pond and the e40
+    /// ocean 40- and 420-triangle volumes), so a point is in it when an odd number of its
+    /// triangles lie above it, however deep; for a liquid whose collision is a lone sheet
+    /// (sdm_m07's lava quads, which have no physics mesh) that's anywhere under it.
+    pub fn liquid_inside(&self, p: Vec3) -> Option<(u32, f32, LiquidType)> {
+        // (each liquid's triangles above p, and the highest)
+        let mut above: Vec<(u32, u32, f32)> = vec![];
+        for &i in self.near(p.x, p.z) {
+            let t = &self.tris[i as usize];
+            let Some(l) = t.liquid else { continue };
+            let Some(y) = Self::height_on(t, p.x, p.z).filter(|y| *y > p.y) else { continue };
+            match above.iter_mut().find(|a| a.0 == l) {
+                Some(a) => {
+                    a.1 += 1;
+                    a.2 = a.2.max(y);
+                }
+                None => above.push((l, 1, y)),
+            }
+        }
+        above.into_iter().find(|a| a.1 % 2 == 1).map(|(l, _, y)| (l, y, self.liquids[l as usize]))
     }
 
     /// Where the line from `from` to `to` first goes into a liquid (through its surface, from

@@ -31,12 +31,13 @@
 //!     0x125600 itself), so older xemu logs of it carry no step.
 //!
 //! What uses it: play.rs's shots (the player's and the AI's) and falls, play_missile.rs's direct
-//! hits and blasts, the grenades (play_grenade.rs, play_energy.rs, play_sonic.rs, play_gas.rs)
-//! and the scenery's damage areas (play_scenery.rs). The grenades keep their own rules (their
+//! hits and blasts, the grenades (play_grenade.rs, play_energy.rs, play_sonic.rs, play_gas.rs),
+//! the scenery's damage areas (play_scenery.rs) and the liquids (play_liquids.rs: DTYPE_FLAME
+//! through 0x125600, #152). The grenades keep their own rules (their
 //! shares aren't the game's yet: #112, grenades.md); their amounts fitted to the recordings on a
 //! squad victim are divided by the recordings' step (`footage_squad_step`), so on STANDARD they
 //! come out as measured. Not stepped: the test hooks' kills (BF_TEST_DIE, the test map's suicide and
-//! instant kill) and a harmful liquid's (play.rs: the game's liquid damage isn't traced).
+//! instant kill).
 //!
 //! `BF_DIFFICULTY=<standard|hard|brutal|n>` sets the difficulty; without it the missions and the
 //! test map play STANDARD and the multiplayer maps none, n = 0, as read live in a match
@@ -311,6 +312,16 @@ fn posed_parts<'a>(u: &'a Player, game: &'a Game) -> Vec<(u32, f32, Mat4, &'a [[
         let i = l.model.bones.iter().position(|&x| x == b.bone)?;
         let surface = l.model.part_collision.get(i).filter(|s| !s.is_empty())?;
         Some((b.bone, b.damage, root * *u.last_world.get(i)?, surface.as_slice()))
+    }).collect()
+}
+
+/// Where each of `u`'s hit parts reaches lowest, standing: its bone and the lowest corner of its
+/// collision surface posed as drawn (`posed_parts`). What play_liquids.rs tests against a
+/// liquid's volume: the game's liquid sees a character by these parts' bodies (FUN_00221af0,
+/// answer-spec Q1). Empty without a model or hit parts.
+pub fn part_lowest(u: &Player, game: &Game) -> Vec<(u32, Vec3)> {
+    posed_parts(u, game).into_iter().filter_map(|(bone, _, frame, surface)| {
+        surface.iter().flat_map(|t| t.iter()).map(|&p| frame.transform_point3(p)).min_by(|a, b| a.y.total_cmp(&b.y)).map(|low| (bone, low))
     }).collect()
 }
 
