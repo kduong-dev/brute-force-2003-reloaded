@@ -20,12 +20,15 @@
 //!    object a frame (FUN_00221a40), so an entering frame deals the rate once. No depth (nothing
 //!    measures it), no tick, nothing more for going under: fully under, the parts are still in the
 //!    volume and the rate runs on (take03: 30.2 HP/s 2.9-3 m under, alive 9 s).
-//!  - **The hit.** Each queued hit goes to the character's damage handler as DTYPE_FLAME, no
-//!    attacker (0x221780 -> 0x125600): the difficulty step (STANDARD's squad x0.6: take08's 18 a
-//!    hit and 18 a second; SDM none: the takes' 30), Vengar's 0.85 and the type's factor; no hit
-//!    part. It floors nobody (take03: thirteen entry hits of 30, Brutus walking on), and draws no
-//!    blood but FUN_00124a70's decals, which the entry hits are big enough for and the per-frame
-//!    shares never (play.rs `burn`, play_fx.rs).
+//!  - **The hit.** Each queued hit, an entry's and each frame's share alike, goes to the
+//!    character's damage handler as DTYPE_FLAME, no attacker (0x221780 -> 0x125600; play.rs
+//!    `burn`, through `take_hit`: a stamina shield takes it first, nothing in a cutscene): the
+//!    difficulty step (STANDARD's squad x0.6: take08's 18 a hit and 18 a second; SDM none: the
+//!    takes' 30), Vengar's 0.85 and the type's factor; no hit part. It floors nobody (take03:
+//!    thirteen entry hits of 30, Brutus walking on), and draws no blood but FUN_00124a70's
+//!    decals, which the entry hits are big enough for and the per-frame shares never
+//!    (play_fx.rs). Only an entry hit may draw a hurt line (the demo's: take03 has no sound
+//!    between the foot events while Brutus stands burning, todo/5-liquid-sounds leads §4.1).
 //!  - **Splashes** (#5, FUN_00221af0 0x221ca9-0x221dc2). A part going in casts its surface ray
 //!    (FUN_00222480: from the top of its bounding sphere, `Character::part_spheres`, 2r straight
 //!    down against that liquid, `Arena::liquid_below`). Meeting the surface, the character keeps
@@ -252,7 +255,8 @@ fn run_liquids(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
         u.wading.bodies = bodies;
         if log && u.wading.count() > 0 && now - u.wading.logged >= 1.0 {
             u.wading.logged = now;
-            println!("t {now:.2}: {} in a liquid, {} parts: {:.2} hp", unit_name(u), u.wading.count(), u.health);
+            println!("t {now:.2}: {} in a liquid, {} parts: {:.2} hp, at {:.2}", unit_name(u), u.wading.count(), u.health,
+                     u.position + Vec3::Y * (GROUND + u.height.max(0.0)));
         }
     }
 }
@@ -288,14 +292,12 @@ fn game_frame(u: &mut Player, game: &Game, a: &world::Arena, difficulty: &damage
         if rate <= 0.0 || u.dead {
             continue;
         }
+        // (each hit through the character's damage handler, the entry's and each frame's share
+        // alike: 0x221780 -> 0x125600 every game frame; `burn`)
         let mut hit = damage::Hit::new(if entered { rate } else { rate * shots::TICK }, "liquid", DTYPE_FLAME);
         let amount = if entered { hit.land(u, game, difficulty, at) } else { hit.on(u, game, difficulty) };
-        if entered || amount >= u.health {
-            let point = u.position + Vec3::Y * GROUND;
-            burn(u, game, amount, point);
-        } else {
-            u.health -= amount;
-        }
+        let point = u.position + Vec3::Y * GROUND;
+        burn(u, game, amount, point, entered);
         if log && entered {
             println!("t {at:.2}: {} {} of its parts in liquid {l} (type {kind}): a part in, hit {amount:.2}: {:.2} hp", unit_name(u),
                      u.wading.count(), u.health);

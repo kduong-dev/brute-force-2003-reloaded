@@ -425,13 +425,27 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     movement capsule (answer-spec Q1; L1's live read on e40's pools: 16 enter events, all
     PID_BONE). A part is in while it's in the volume, however deep: here, while the lowest corner
     of its collision surface, posed as drawn, is inside the volume (`Arena::liquid_inside`: an
-    odd number of the liquid's triangles above it). The count is the game's char+0x104.
+    odd number of the liquid's faces above it). The count is the game's char+0x104.
+    * Each face counts once. A point on an edge or a corner its triangles share is over one of
+      them alone (`Arena::over_once`, a half-open rule with no slack): the slack the floor test
+      gives an edge counted both halves of a split face near their diagonal, an even count, so
+      a part crossing the diagonal of sdm_e13's lava top (x + z = 0, some 4 cm either side) went
+      out and back in, a whole entry hit each time. And a twin pair (a face that comes twice,
+      wound both ways) counts once: the e40 ocean's 420 triangles are 210 such pairs, as the e40
+      lava flow's 168, m02_a's lava's 720 and e05's water's 184, so before they held nobody.
+    * Every liquid of the 19 maps that have one closes round its volume (`BF_FIND_BODIES=1`: no
+      open edge, a twin pair counted once; sdm_e10's pond and its copies 40 triangles, the boxes
+      12, m03_a's 8); sdm_m07's four lava quads are open sheets, under which a point is in.
   * The damage is the character rate alone, once a game frame (30 Hz, the liquid's update): a
     frame on which a part enters deals the whole rate, any other with a part in its share of
     the second, and one hit a frame at most (FUN_00221a40). No depth ramp, no tick, nothing
-    more for going under: a body fully under keeps burning at the rate. It goes through the
-    character's damage handler as DTYPE_FLAME (0x221780 -> 0x125600): the difficulty step (the
-    multiplayer maps none; STANDARD's squad x0.6), Vengar, the type's factor. It floors nobody.
+    more for going under: a body fully under keeps burning at the rate. Every hit, an entry's and
+    each frame's share alike, goes through the character's damage handler as DTYPE_FLAME
+    (0x221780 -> 0x125600; play.rs `burn` through `take_hit`): a stamina shield takes it first,
+    nothing in a cutscene or out of the world, the difficulty step (the multiplayer maps none;
+    STANDARD's squad x0.6), Vengar, the type's factor, BF_COMBAT_LOG's line. It floors nobody.
+    Only an entry hit may draw a hurt line (the demo's rule: take03 has no sound between the foot
+    events while Brutus stands burning, todo/5-liquid-sounds leads §4.1).
     Its blood is the game's decals alone (FUN_00124a70: the entry hits are big enough, the
     shares never; the spray straight up), and a death in a liquid leaves out the demo's death
     spray (play_fx.rs). The game frames run between the drawn ones with the parts' lowest points
@@ -458,6 +472,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
       0.87). The same at 15 Hz and 30 Hz capture steps. (With the goal at z -34, past where the
       take's Tex stopped at -30.4, and his full 115, he runs on over the bed and up out of the
       pit's south side with 4.6 left.)
+    * Across sdm_e13's lava diagonal (`BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-12,2,-2,12
+      BF_TEST_WALK=1 BF_TEST_HEALTH=5000`: Brutus starts 4 m under the surface and walks across
+      x + z = 0 at about 4.6 s): one entry hit as he starts, then 30 HP a second to the end. With
+      the old slack the same walk took seven more entry hits of 30 between 4.60 and 5.20 s, as his
+      parts crossed the diagonal.
   * Not filmed: sludge's rate (50, sdm_m03: C1), toxic waste's (30, m09: D1), a fall into a pool
     (B3), squad members or enemies in a liquid; built from the code and the data alone. The
     waters do nothing (their rates are 0).

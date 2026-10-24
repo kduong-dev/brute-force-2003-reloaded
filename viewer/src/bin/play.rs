@@ -4830,21 +4830,26 @@ fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
 /// `push`, a surviving squadmate may answer); a hard hit can knock them down; otherwise they
 /// grunt or say a line of `tag` now and then.
 fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64) {
-    take_hit(u, game, amount, tag, push, at, ammo, false);
+    take_hit(u, game, amount, tag, push, at, ammo, false, true);
 }
 
 /// A liquid's hit on `u` (play_liquids.rs), at `at` (the record's point: the character's
-/// position): as `hurt`, through the same handler, but it floors nobody (take03 of #146: thirteen
-/// entry hits of 30 left Brutus walking) and its blood is the game's decals alone (`Bleed::burn`:
+/// position): as `hurt`, through the same handler (each game frame's share too, as the game's
+/// liquid sends every one to it, 0x221780), but it floors nobody (take03 of #146: thirteen entry
+/// hits of 30 left Brutus walking) and its blood is the game's decals alone (`Bleed::burn`:
 /// FUN_00124a70 runs after any hit on a character, but there's no weapon's impact: no particles,
-/// no hit effect or sound). No push (the record's direction is straight down, 0x221780).
-fn burn(u: &mut Player, game: &Game, amount: f32, at: Vec3) {
-    take_hit(u, game, amount, HURT_CHATTER, Vec3::ZERO, at, -1, true);
+/// no hit effect or sound). No push (the record's direction is straight down, 0x221780). `entry`:
+/// the whole rate as a part goes in, which may draw a hurt line as `hurt`'s hits do; a frame's
+/// share draws none (the demo's: take03 has no sound between the foot events while Brutus
+/// stands burning, todo/5-liquid-sounds leads §4.1; the game's chatter gate isn't modelled here).
+fn burn(u: &mut Player, game: &Game, amount: f32, at: Vec3, entry: bool) {
+    take_hit(u, game, amount, HURT_CHATTER, Vec3::ZERO, at, -1, true, entry);
 }
 
-/// `hurt` and `burn`'s hit: `liquid` for a liquid's (`burn`).
+/// `hurt` and `burn`'s hit: `liquid` for a liquid's (`burn`), `speaks` whether it may draw a hurt
+/// line (`tag`).
 #[allow(clippy::too_many_arguments)]
-fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64, liquid: bool) {
+fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64, liquid: bool, speaks: bool) {
     // (nor while a cutscene has the world: the damage handler 0x125600 leaves at once while the
     // world's +0xc50 bit 4 is set, play_script.rs; nor one not in the world yet)
     if u.dead || amount <= 0.0 || script::in_cutscene() || u.absent {
@@ -4904,7 +4909,7 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: 
             }
         }
     }
-    if u.hurt_quiet <= 0.0 {
+    if speaks && u.hurt_quiet <= 0.0 {
         say(u, game, tag, 0.05);
         u.hurt_quiet = 0.8;
     }
