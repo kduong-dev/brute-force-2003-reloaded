@@ -6288,10 +6288,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             // the others' instant hits; the rest fly at the bullet's speed
             let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
             let accuracy = p.fire_state.accuracy(index);
-            // a mesh projectile (bullet-type 2 steered at a steady speed: the Therm Sweeper, the
-            // Sweeper V) is a missile of its own (FUN_0022f1d0 case 2 -> FUN_0022fb50,
-            // play_missile.rs): it leaves the muzzle along the shot with the aim point and the
-            // shooter's line
+            // a mesh projectile (bullet-type 2: the Therm Sweeper and the Sweeper V, steered at a
+            // steady speed, and the iKhan-GPL's lobbed round, #239) is a missile of its own
+            // (FUN_0022f1d0 case 2 -> FUN_0022fb50, play_missile.rs): it leaves the muzzle along
+            // the shot with the aim point and the shooter's line
             let missile = missile::flies(&w.def);
             let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
             for (pellet, dir) in p.fire_state.directions(side, dir, w.def.shots.burst_spread) {
@@ -7085,10 +7085,15 @@ fn heard_at(game: &Game, id: u32, at: Vec3, listener: Option<Vec3>) -> f32 {
 /// FUN_0022cfc0, before the struck material's hit effect, FUN_0022cd80): the bullet's own effect
 /// type (`WeaponDef::blast_effect`, h_ec23d593, the weapon type's +0x250) through FUN_0022cbe0 at
 /// user parameter 1.0, in its alignment's frame (`hit_effect_at`), and its impact sound
-/// (`WeaponDef::impact_sound`, h_e5618348, +0x254) heard from the hit. Of the hand guns only the
-/// two cutters have one (cutter_hit and plut_cutter_hit with light_hit_cutter: the white star
-/// where a blade strikes, #53 take01 and take03, #65); the grenades' and missiles' explosions are
-/// their own (play_grenade.rs, play_missile.rs). Its particles' seed is a draw of `chance` when
+/// (`WeaponDef::impact_sound`, h_e5618348, +0x254) heard from the hit. Of the hand guns' shots
+/// only the two cutters' come here with one (cutter_hit and plut_cutter_hit with
+/// light_hit_cutter: the white star where a blade strikes, #53 take01 and take03, #65). The
+/// iKhan-GPL names one too (h_e26237da, exp_mirvgrenade), and after weapons batch 2 its round,
+/// then a plain shot, played it here where it hit (#287); since #239 it flies as a lobbed
+/// missile, which plays it where it goes off (play_missile.rs). The grenades' and missiles'
+/// explosions are their own (play_grenade.rs, play_missile.rs); the hounds' Breath Attacks, left
+/// on the plain shot (`missile::flies`), still play theirs here where it meets the world. Its
+/// particles' seed is a draw of `chance` when
 /// there's an effect, so no other gun's draws move. Not done: the per-material overrides at
 /// +0x25c, which FUN_0022cfc0 takes when the hit record's +0x58 bit 1 is set (not traced for a
 /// bolt). Returns the effect type played, for the logs.

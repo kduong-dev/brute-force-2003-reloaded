@@ -604,7 +604,8 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                 let kind = game.0.effect_type_defs.get(&d.muzzle_effect).cloned().unwrap_or_default();
                 // (a missile launcher's, the Therm Sweeper's and the Sweeper V's launch dust, the
                 // same h_002779c8: with its trail's and its explosion's rules, so the game's count
-                // makes it one card, see ale_fx's `Compiled::counted`)
+                // makes it one card, see ale_fx's `Compiled::counted`; since #239 every mesh
+                // projectile's gun, the iKhan-GPL's launch smoke and flash too)
                 let missile = super::missile::flies(&w.def);
                 let fxs: Vec<_> = kind.effects.iter().filter_map(|&e| match scoped {
                     Some(_) => ale.load(&mut game.0, &mut images, &mut materials, e),
