@@ -320,7 +320,7 @@ fn head_point(u: &Player) -> Option<Vec3> {
     let l = u.loaded.as_ref()?;
     let i = l.model.bones.iter().position(|&b| b == h("Bip01 Head"))?;
     if let Some(r) = u.knock.as_ref().map(|k| &k.ragdoll).or(u.ragdoll.as_ref()) {
-        return r.pos.get(i).map(|&p| r.origin + Quat::from_rotation_y(r.yaw) * p);
+        return r.bone_world(i);
     }
     let root = Mat4::from_rotation_translation(Quat::from_rotation_y(u.yaw), u.position + Vec3::Y * (u.height + u.lift_now));
     Some(root.transform_point3(u.last_world.get(i)?.w_axis.truncate()))

@@ -60,10 +60,11 @@ const SELF_BOLT: f32 = 0.34;
 /// demo's (the data has none).
 const THROW_BACK: f32 = 3.0;
 const THROW_UP: f32 = 4.0;
-/// A corpse struck: shoved along a line from below it, this far through (m) (the ragdoll's
-/// `shove`, which brings the bones it passes up to SHOT_SHOVE m/s along the line). The demo's
-/// choice: any length that starts the line outside the body does.
-const CORPSE_SHOVE_FROM: f32 = 1.0;
+/// A body on the ground struck (a corpse, one knocked down): thrown up and out at this speed
+/// (m/s) along the strike's throw, every part of it brought up to that (play_ragdoll.rs
+/// `Ragdoll::fling`). The demo's: the 3 m/s its shot on a body gives (#259 keeps the old shove's
+/// speed).
+const CORPSE_THROW: f32 = 3.0;
 
 /// Blasts that release bolts this frame: (grenade type, where, the thrower's character), from
 /// play_grenade.rs's `fly_grenades`.
@@ -194,16 +195,19 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             println!("t {:.2}: {} bolt strikes {} {:.2} s after the blast, {:.1} m out", p_time(b), kit.def.label, unit_name(u), b.age, b.dist);
         }
         if u.dead {
-            // a corpse: shoved up and out
-            let shoved = u.ragdoll.as_mut().is_some_and(|r| shove_up(r, throw));
+            // a corpse: thrown up and out
+            let thrown = u.ragdoll.is_some();
+            if let Some(r) = u.ragdoll.as_mut() {
+                r.fling(throw, CORPSE_THROW);
+            }
             if log {
-                println!("  {}'s body {}", unit_name(u), if shoved { "thrown" } else { "missed" });
+                println!("  {}'s body {}", unit_name(u), if thrown { "thrown" } else { "missed" });
             }
             continue;
         }
         // one knocked down already: their body is thrown again
         if let Some(k) = u.knock.as_mut() {
-            shove_up(&mut k.ragdoll, throw);
+            k.ragdoll.fling(throw, CORPSE_THROW);
         }
         let k = 1.0 - b.dist / radius;
         // (times the character's step and factor for the explosion's damage-type, 6: Flint's
@@ -239,14 +243,6 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
         }
     }
     bolts.0.retain(|b| b.age < BOLT_DELAY + BOLT_LIFE + b.dist / BOLT_SPEED);
-}
-
-/// Throw a limp body (a corpse, one knocked down) along `throw`: the ragdoll's `shove` along a
-/// line from below its pelvis up through it. Whether it hit a bone.
-fn shove_up(r: &mut Ragdoll, throw: Vec3) -> bool {
-    let pelvis = r.origin + Quat::from_rotation_y(r.yaw) * r.pos[0];
-    let line = throw.normalize_or(Vec3::Y);
-    r.shove(pelvis - line * CORPSE_SHOVE_FROM, line, CORPSE_SHOVE_FROM * 2.0).is_some()
 }
 
 /// The sim time a bolt's strike happens at (its blast's time + its age), for the log.

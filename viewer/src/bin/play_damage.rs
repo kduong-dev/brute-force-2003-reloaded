@@ -240,8 +240,8 @@ pub fn vulnerability(game: &Game, u: &Player, damage_type: i64) -> f32 {
 ///  - A shot through the cylinder that meets none of them (between the legs, past an arm): the
 ///    part whose bone (from its joint to its first child's) comes nearest the shot's way through
 ///    the body. The demo's: the game's shot would pass; here the cylinder decides what's hit.
-///  - Knocked down: the part whose bone is nearest the contact on the ragdoll (#73's rule; the
-///    ragdoll keeps no turn of its bones to pose the surfaces with).
+///  - Knocked down: the part whose bone is nearest the contact on the ragdoll (#73's rule, from
+///    before the ragdoll had the game's bodies, play_ragdoll.rs; kept).
 ///
 /// None without a model or a hit-part list: FUN_00125940 then takes the damage-multiplier alone,
 /// as for a body that isn't one of the parts (FUN_00115000's -1).
@@ -250,8 +250,7 @@ pub fn struck_bone(u: &Player, game: &Game, from: Vec3, dir: Vec3, met: f32) -> 
     let l = u.loaded.as_ref()?;
     let contact = from + dir * met;
     if let Some(k) = &u.knock {
-        let turn = Quat::from_rotation_y(k.ragdoll.yaw);
-        let place = |i: usize| k.ragdoll.pos.get(i).map(|&p| k.ragdoll.origin + turn * p);
+        let place = |i: usize| k.ragdoll.bone_world(i);
         return nearest_part(bones, &l.model, &place, &[contact]).map(|bone| Struck { bone, found: Found::Lying });
     }
     let first = posed_parts(u, game).into_iter().filter_map(|(bone, _, frame, surface)| {
@@ -369,7 +368,7 @@ pub fn part_bodies(u: &Player, game: &Game) -> Vec<PartBody> {
 /// weapon blast's physics ball meets of a character (FUN_00224a90 takes the character when one
 /// of its collision-bone bodies overlaps the ball, the ray from the centre to that bone body's
 /// position; play_missile.rs `deal_blasts`). Empty without a model or hit parts, or knocked down
-/// (the ragdoll keeps no turn of its bones to pose the surfaces with).
+/// (play_missile.rs takes the ragdoll's bones then, `lying_parts`).
 pub fn part_distances(u: &Player, game: &Game, p: Vec3) -> Vec<(f32, Vec3)> {
     if u.knock.is_some() {
         return vec![];
@@ -520,13 +519,29 @@ pub struct Hit {
     /// it reaches them
     pub damage_type: i64,
     pub vulnerability: f32,
+    /// the weapon's push (`WeaponDef::push`), which FUN_0022c4d0 copies into the record (+0x54; a
+    /// blast's hit 2 when it's 0): the factor of the death's shove (play_ragdoll.rs
+    /// `death_shoves`). 0 for a hit of no weapon
+    pub push: f32,
 }
 
 impl Hit {
     /// A hit of `base` (`kind`, for the log) of damage type `damage_type`, with no other factor yet.
     pub fn new(base: f32, kind: &'static str, damage_type: i64) -> Self {
         Hit { base, kind, skill: 1.0, power: 1.0, by: None, falloff: 1.0, part: None, friendly: 1.0, step: 1.0, difficulty: None, victim_skill: 1.0,
-              victim_power: 1.0, damage_type, vulnerability: 1.0 }
+              victim_power: 1.0, damage_type, vulnerability: 1.0, push: 0.0 }
+    }
+
+    /// The weapon's push into the record (FUN_0022c4d0: +0x54 = the type's +0x234, 2 for a blast's
+    /// hit when that's 0; `WeaponDef::push`).
+    pub fn push(mut self, push: f32) -> Self {
+        self.push = push;
+        self
+    }
+
+    /// The bone of the hit part struck, if the hit has one (FUN_00125940's).
+    pub fn bone(&self) -> Option<u32> {
+        self.part.and_then(|p| p.struck).map(|s| s.0.bone)
     }
 
     /// The shooter's skill's factor on its roll (`skills::roll_factor`, FUN_0022c940's +0xec).

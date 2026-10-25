@@ -75,9 +75,10 @@ a click is any left click off the panel, and F and its teleports do nothing.
     `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals, and it takes
     damage by its type's factors, hit parts and damage-multiplier (play_damage.rs). It runs its
     type's own behaviour (#129, [enemies.md](enemies.md)): the MOTION table's clips and the
-    type's speeds, hit reactions by its personality, the game's ragdoll bodies and leg limits,
-    its death line from its type's chatter, and on Shrike flesh green blood and the game's decal
-    rule. It says nothing else and has no skill; its ground is the squad's (the sole lift); its
+    type's speeds, hit reactions by its personality, the game's ragdoll (every character's,
+    [ragdoll.md](ragdoll.md)), its death line from its type's chatter, and on Shrike flesh green
+    blood and the game's decal rule. It says nothing else and has no skill; its ground is the
+    squad's (the sole lift); its
     capsule is the squad's and its skin's glow isn't drawn (#173). The other species' tickets
     (#130-#134) check theirs. See character-types.md, "In play" and "Not done".
   * A **frozen** one (`BF_TEST_NPC`'s behaviour) is a dummy with its brain off, as the takes'

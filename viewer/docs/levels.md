@@ -699,7 +699,7 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     can't tell the lava's big splash from its wading step (one recording). The idle animation's
     foot events (take03's step every ~2.1 s standing waist-deep) and the ragdoll's splashes
     (take01's corpse) aren't reproduced: the demo's steps come from feet planting on the move,
-    and its ragdoll has no part bodies.
+    and its ragdoll's part bodies (#259, ragdoll.md) don't tell the liquids when they enter.
 * **Terrain hue.** The baked light map gives the ground's brightness. Its hue comes from the
   lights marked `h_e02aba1c` with the terrain's ambient, at 60% strength. Before #143 those were
   read as the terrain's own pair; the game's code has them as the indoor pair (see **Light

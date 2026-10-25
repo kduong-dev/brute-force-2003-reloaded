@@ -42,6 +42,13 @@ fn f32_at(d: &[u8], o: usize) -> Option<f32> {
     d.get(o..o + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()))
 }
 
+/// The mass centre of the surface at `offset` in an .ipn blob (its header's first three floats,
+/// in the owner's frame): where Ipion puts the core of a body made of it (the compact surface's
+/// mass centre; a ragdoll's hit-part bodies turn about it, #259).
+pub fn mass_centre(d: &[u8], offset: usize) -> Option<Vec3> {
+    Some(Vec3::new(f32_at(d, offset)?, f32_at(d, offset + 4)?, f32_at(d, offset + 8)?)).filter(|c| c.is_finite())
+}
+
 /// The triangles (corners, material) of the surface at `offset` in an .ipn blob.
 pub fn surface(d: &[u8], offset: usize) -> Vec<([Vec3; 3], u8)> {
     let mut out = vec![];

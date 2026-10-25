@@ -320,9 +320,9 @@ them):
       alone, and the one world query that takes them in is a character's sweep (the weapons'
       leaves them out: play.md, "Bolts and their hits"). So the demo's other queries pass through
       every blocker and hinter (`arena::Body::Thing`): a grenade's flight and its bounces off the
-      walls, a corpse's ragdoll bones (their floors and walls; a living character knocked down
-      keeps a character's, as the demo stands it up where its ragdoll's pelvis lies and the
-      game's knockdown moves the character itself), the floors that pickups, lying guns,
+      walls, a corpse's ragdoll bodies (the faces they meet and the floor under them, ragdoll.md;
+      a living character knocked down keeps a character's, as the demo stands it up where its
+      ragdoll's pelvis lies and the game's knockdown moves the character itself), the floors that pickups, lying guns,
       casings and memory chips settle and land on, a missile's and an instant shot's hit
       (`Arena::ray_normal`, `ray_material`, `ray_breakable`: a breakable object's own blocker no
       longer takes the shots meant for it, its collision does), the decals' surfaces and the

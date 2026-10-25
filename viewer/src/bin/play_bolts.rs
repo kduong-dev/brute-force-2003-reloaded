@@ -28,8 +28,8 @@
 //!  - **What a sweep meets** (its filter, vtable 0x394848 with the mask 0xfffffff8: the bodies of
 //!    PID 0, 1 and 2, `Arena::ray_shot`): the terrain and the placed objects, a breakable among
 //!    them, but not the level's invisible blockers; a character's body (standing, play.rs's
-//!    `ray_body`; knocked down, play_missile.rs's `ray_lying`; a corpse, its ragdoll's bones,
-//!    `Ragdoll::first_bone`); a Sentry. Never its shooter (the filter holds the shooter's body,
+//!    `ray_body`; knocked down, play_missile.rs's `ray_lying`; a corpse, its ragdoll's bodies,
+//!    play_ragdoll.rs `Ragdoll::first_hit`); a Sentry. Never its shooter (the filter holds the shooter's body,
 //!    +0x48's at its +0x6c), nor what it last passed through (+0x40, for that one sweep).
 //!  - **A hit** (the damage handler 0x22d0b0, `deal`): a character takes the launch roll x the
 //!    shooter's skill x the struck hit part's factor (FUN_00125940), x0.7 on its own side, then
@@ -38,7 +38,7 @@
 //!    the world plays its material's hit effect, debris and sound with the launch roll as the
 //!    record (play.rs `world_hit`) and takes the bullet's hole (play_fx.rs); a breakable object
 //!    takes the roll (play_scenery.rs `ObjectHits`); a Sentry goes off (play_sentry.rs); a body on
-//!    the ground is shoved and bleeds (`Ragdoll::shove`). Whatever it strikes, the bullet's own
+//!    the ground is shoved and bleeds (`Ragdoll::shot`). Whatever it strikes, the bullet's own
 //!    explosion plays there first (FUN_0022cfc0, play.rs `shot_explosion`: the cutters' white
 //!    star, #53). A liquid's surface it crosses does nothing (FUN_00225440's sweep has no liquid
 //!    code, todo/146-liquids leads §5.1: only an instant ray splashes, play.rs `projectiles`), and
@@ -426,7 +426,7 @@ fn ray_aabb_both(origin: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, f3
 /// `dir` meets within `len` m, each once, but its shooter `owner`, one out of the world
 /// (`Player::absent`) and `skip`: standing, the cylinder (`ray_body`), its normal out from the
 /// axis; knocked down, its ragdoll's bones (play_missile.rs's `ray_lying`); dead, its ragdoll
-/// (`Ragdoll::first_bone`); a Sentry, its sphere (`MineTargets::first_on`). The lying, the dead
+/// (`Ragdoll::first_hit`); a Sentry, its sphere (`MineTargets::first_on`). The lying, the dead
 /// and the Sentries are met with the normal straight back along the line: the demo's (no bolt
 /// bounces off them: none has the character count, and a Sentry a cutter's blade meets goes off).
 pub(super) fn units_met(from: Vec3, dir: Vec3, len: f32, owner: Who, skip: Option<Struck>, units: &[&Player],
@@ -435,7 +435,7 @@ pub(super) fn units_met(from: Vec3, dir: Vec3, len: f32, owner: Who, skip: Optio
     for u in units.iter().filter(|u| u.who() != owner && !u.absent && skip != Some(Struck::Unit(u.who()))) {
         let id = Struck::Unit(u.who());
         if u.dead {
-            if let Some((t, _)) = u.ragdoll.as_ref().and_then(|r| r.first_bone(from, dir, len)).filter(|&(t, _)| t <= len) {
+            if let Some((t, _)) = u.ragdoll.as_ref().and_then(|r| r.first_hit(from, dir, len)).filter(|&(t, _)| t <= len) {
                 out.push(Met { t, what: What::Corpse(u.who()), id, normal: -dir });
             }
             continue;
@@ -619,7 +619,7 @@ pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf
             // the struck part (FUN_00224320 asks FUN_00125940), x0.7 on the shooter's own side
             let bone = damage::struck_bone(u, game, from, dir, met.t);
             let hit = damage::Hit::new(k.roll, "roll", s.damage_type).skill(k.skill).power(k.power).by(k.owner, k.team, u).falloff(k.falloff)
-                .struck(u, game, bone);
+                .struck(u, game, bone).push(game.weapons.get(&s.weapon).map_or(0.0, |w| w.push));
             let landing = PendingHit { delay: 0.0, member: 0, hit, dir, local: at - u.position, ammo: s.ammo };
             let lying = knocked_down(u);
             // (the player's shot's rules on anyone but the controlled character: control may have
@@ -631,13 +631,13 @@ pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf
             }
             // (one knocked down is shoved too, as a shot's line shoves it, play.rs)
             if let Some(kd) = u.knock.as_mut() {
-                kd.ragdoll.shove(from, dir, met.t);
+                kd.ragdoll.shot(from, dir, met.t);
             }
             format!("hits {}{}", name(u), if lying { " (knocked down)" } else { "" })
         }
         What::Corpse(who) => {
             let Some((u, _)) = unit_mut(player, squad, who) else { return "hits a body that's gone".into() };
-            if let Some(hit) = u.ragdoll.as_mut().and_then(|r| r.shove(from, dir, met.t)) {
+            if let Some(hit) = u.ragdoll.as_mut().and_then(|r| r.shot(from, dir, met.t)) {
                 u.blood.push(Bleed::shown(hit, dir, s.ammo));
             }
             format!("hits {}'s body", name(u))

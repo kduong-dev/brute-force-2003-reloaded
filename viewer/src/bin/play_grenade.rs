@@ -791,14 +791,23 @@ fn stays(kit: &GrenadeKit) -> bool {
 /// and factor for the explosion's damage-type (play_damage.rs: a blast reaches a character's
 /// handler 0x125600 as every hit does); thrown back and up by as much. `own` is an amount
 /// measured on the takes' squad (STANDARD), which holds their step already: it's divided by it
-/// (`damage::footage_squad_step`) and comes out as measured there. Returns the damage dealt (None
-/// if none: out of reach, dead, or no damage).
+/// (`damage::footage_squad_step`) and comes out as measured there. A corpse isn't hurt: its
+/// ragdoll takes the blast's push (`ragdoll::blast_corpse`). Returns the damage dealt (None if
+/// none: out of reach, dead, or no damage).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: Vec3, own: f32, thrower: usize, kill: bool,
                             difficulty: &Difficulty, now: f32) -> Option<f32> {
     let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
+    // a corpse: the blast's push on its ragdoll's root body when the explosion pushes
+    // (FUN_00224a90, its Damage max as the blast's damage: play_ragdoll.rs `blast_corpse`, #259).
+    // With no cover test, as the grenades' blasts hurt the living here (their rule is the demo's
+    // until #112 gives them the game's: its ray from the blast to the body)
+    if u.dead {
+        ragdoll::blast_corpse(u, at, radius, max, kit.blast.push, |_| true);
+        return None;
+    }
     let d = u.position.distance(at);
-    if d >= radius || u.dead {
+    if d >= radius {
         return None;
     }
     let k = 1.0 - d / radius;
@@ -817,6 +826,12 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
     }
     hit.report(u, game, now);
     hurt(u, game, dealt, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
+    // (a kill's own shoves on the body, behind ragdoll::DEATH_SHOVE: the blast's record has no
+    // part, and a push of 2 when its weapon's is 0, FUN_0022c4d0)
+    if u.dead {
+        let push = if kit.blast.push > 0.0 { kit.blast.push } else { 2.0 };
+        ragdoll::death_shoves(u, None, u.position + Vec3::Y * 1.0, away, dealt, kit.blast.damage_type, push);
+    }
     if std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("{} blast at {d:.1} m: {} takes {dealt:.1} -> {:.1} / {:.0}", kit.def.label, unit_name(u), u.health, u.max_health);
     }

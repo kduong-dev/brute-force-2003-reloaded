@@ -234,7 +234,8 @@ Squad movement and deaths follow the game's own data and the captures:
   (#128) Brutus killing her on the test map, frame for frame as before the flesh came from the
   data (character-types.md, "Verified"). A
   hard hit (15+ damage: L-Shot, Bower, a close grenade) can knock a character down: the body
-  goes limp (ragdoll, pushed harder at the top so it topples) for 0.7 s, thuds on the ground
+  goes limp (the game's ragdoll, [ragdoll.md](ragdoll.md), thrown by the hit's push, harder at
+  the top so it topples: the demo's start) for 0.7 s, thuds on the ground
   (the surface's landing sound) and gets back up over 0.45 s where it lies - the game uses
   Ipion physics for this (its constraint messages are in default.xbe, with MT_KNOCKDOWN).
 * Death: the death cry (chatter e1213623 - the captures' deaths match its lines), a thud, a
