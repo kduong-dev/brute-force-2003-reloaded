@@ -500,6 +500,9 @@ h_fb24bcb7; its trail grenade_trail with f6dbdb17. Measured from the recording
   1 HP or more on the player (`TINT_MIN`, a guess: the falloff still gives a few tenths of an
   HP at 5.0 m, measured from the pelvis, where T2 had no tint); it isn't scaled with the
   damage, since only the Frag's ~12.5 HP tint was measured.
+  The tint quad keeps the picture's alpha (`KeepAlpha`, play_grenade.rs), which carries the
+  glare's key (#289, levels.md § The glare). The game lays the tint over the finished picture,
+  after the glare; the demo multiplies it in before, so while it's on the glare dims with it.
 * **Nobody is knocked down by it** (the recording's Tex and an enemy ~1 m away stayed up; a
   hit of 15 HP or more floors a body two times in three otherwise). The ring's hit holds the
   body's knock-down cooldown for the call, so a knock-down already pending from another hit
