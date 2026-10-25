@@ -46,6 +46,13 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   walking past it takes no rounds from it (`KeepClip`: the test map's convenience).
   `BF_TEST_GOTO=0.8,-4.3,0.8,-6 BF_TEST_GO_AT=999 BF_TEST_SWAP=2.0` stands Tex at the first row's
   fifth gun and swaps it.
+  * The gun dropped there never vanishes: the flat floor plays as a mission (it isn't a
+    multiplayer map in the game's level list), where a swap's dropped gun gets no vanish timer
+    ([pickups.md](pickups.md), "The vanish timers").
+  * The swap changes the guns a character holds, not its loadout (`Game::character_weapons`,
+    which the rack's old walk-in respawn rewrote): a character made anew has its original guns
+    again, as when play resumes from the map editor's edit mode (the squad comes back fresh,
+    [editor.md](editor.md)) or a level switch brings the squad back.
   * Loading every level (about 6 s) adds no others: the rest are the creatures' built-in
     weapons (no model), Feral Cutter (the same model as another) and the bioreactive death's
     vaporise blast h_1f4a5a0a, which carries the iKhan-GPL's name (a model under 0.1 m; the gun

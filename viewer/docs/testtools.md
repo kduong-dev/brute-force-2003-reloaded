@@ -188,9 +188,10 @@ a click is any left click off the panel, and F and its teleports do nothing.
   weapon data, and `begin_play` starts it. Everything a map starts with is made anew by each
   map's start (the tools' state, `Catalogue`, `AiHits`, the scenery's `PLACED_BOXES`, the
   pickups, the squad, the menus' state); the test session's own state stays: instant kill, the
-  lists and the skies made ready. Two leaks this found are fixed: switching to the flat floor
-  kept the last level's `Doors` and `UsePanel` (its gate panels' use prompt), and a weapon
-  taken just before a switch was put in the next map's hand (`PendingSlot`). The deathmatch
+  lists and the skies made ready. A leak this found is fixed: switching to the flat floor kept
+  the last level's `Doors` and `UsePanel` (its gate panels' use prompt). (The rack's guns are
+  taken by the swap now, so nothing waits across a switch; each flat-floor start fills the
+  rack anew, `Rack`.) The deathmatch
   arenas are played alone, as the front end plays them (by the game's level list, also with
   `--test BF_MAP=<arena>`). A zone with no level file puts up the test map, saying so; one whose
   load fails (an error, or its thread stops without a result, e.g. a panic) is noted and the map
