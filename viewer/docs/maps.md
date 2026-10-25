@@ -620,6 +620,16 @@ them):
   * Building up: a slide amount (0–1) grows while you move. On ground steeper than 50° it grows
     at up to 8 per second, at the full rate from 55°; flagged ground always counts at least half
     rate. At 1 the slide starts.
+    * "Move" is the step's own ground move, more than 1 mm (FUN_0012c020's third argument, from
+      FUN_0012c6c0 or FUN_0012cb40): standing there's none, as the idle motion has no ground
+      speed and isn't moved by its clip's root. The demo moves a standing body by its idle clip's
+      root sway (a centimetre or two), and pushes from squadmates and walls move it too; before
+      #294 those counted, so a character left standing on flagged ground built a slide up and slid
+      off, turned downhill, with no input: on sdm_e34's 36° face at (23, 10) Flint after 42 s and
+      Tex after 83 s in real time (some 190 frames a second), Flint at 1.3 s at the capture's 15
+      fps, where a frame's sway is longer (the same at 62b6cd9, before #285). Now a character
+      standing on its feet or kneeling, not sliding nor knocked, has no move (play.rs
+      `stands_still`).
   * Sliding: it carries on until the ground eases under 45°.
   * Speed: the slide velocity starts at (1 − normal y) × 8 downhill plus 5 m/s down, then
     builds by that push 3 times a second, up to 40 m/s. You move by it times the amount.

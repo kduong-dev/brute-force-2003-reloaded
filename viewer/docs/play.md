@@ -175,6 +175,30 @@ The squad's only sideways clips are dodge rolls, so aimed movement is legs-run p
 upper-body twist spread over the spine and head (`aim_chain` / `twist`). Movement is root
 motion: each frame the character moves by exactly what the playing clips' root channels move,
 crossfaded over 0.2 s, so speeds and footfalls match the original animations.
+Standing with the stick at rest, the controlled character keeps its heading (#294): only the
+stick's move and turn request and the aim turn it (FUN_001195c0 makes no request from a stick in
+its dead zone). The AI's characters settle to a heading of their own (`face_yaw`: a squadmate
+the leader's way, an enemy where its motion left it); a script's walk, a warp and a hit
+reaction's end leave one on the controlled character too, and it used to turn back to it at
+3.15 rad/s whenever it stood still (e34's opening walk; the tutorial's warps of Tex,
+trigger_warp_tex_patrol and trigger_warp_tex_to_vsquad). `BF_HEADING_LOG=1` prints the
+controlled character's heading every frame, what the step turned it, the aim's yaw, its place
+and what may turn it standing (the stick, the aim, the gun raised, a slide, a throw), with a
+`face_yaw` left on it. Standing still on slide-flagged ground built a slide up too, which
+turned the character downhill (maps.md, "Sliding": `stands_still`). Checked (#294), each of
+the four standing with no input, its heading unchanged to the fifth decimal:
+
+* at sdm_e34's start and on its 36° face at (23, 10) (`BF_TEST_GOTO=23,10,23,10`), 95 s each
+  in real time; before, Flint slid off the face at 41.6 s and Tex (another run) at 82.9 s,
+  each turning about 180°;
+* on that face at the capture's 15 fps (`BF_CAPTURE_FRAMES=900 BF_CAPTURE_EVERY=150`), 61.5 s:
+  before, Flint slid at 1.3 s; the place moves 0.7-2.3 cm (the idle's root sway);
+* after the tutorial's trigger_warp_tex_patrol (`BF_MAP=tutorial BF_TEST_GOTO=31,92,36,96
+  BF_TEST_GO_AT=4 "BF_TRIGGER_FIRE=h_095ae7a3,11,2"`): Tex runs to the goal and keeps the
+  heading he stops with (-1.99 rad, 5 s on), where before he turned back 140° to the warp's
+  (+1.55) over 0.85 s;
+* a run onto that face (#285's test, `BF_TEST_GOTO=30,10,-30,10`) still slides at 2.47 s.
+
 Jumping uses the game's named clips (`Sc_w1_jump_crouch/launch/fall/land`, `Sc_4leg_w1_jump_*`;
 names recovered from the motion scripts) with simple gravity; a jump pressed during a dodge is
 buffered for 0.4 s.
@@ -188,34 +212,66 @@ compound whose barrel spins), and the definition's fire rate, fire sounds and ra
 hangs from the trigger hand: the character's hand hardpoint lined up with the weapon's trigger
 grip hardpoint (both point + w-x-y-z quaternion). That pairing makes every squad weapon point
 straight ahead and level in the game's ready-pose clips, and puts the support hand on the
-foregrip in the carry clips. Locomotion follows the weapon's stance. Each character's two motion
-sets, `Sc_w1_*` and `Sc_w2_*` (idle, walk, run, dash, backpedal, reload, throw), belong to the
-weapon classes of its two slots (`<limit-weapon one="CLASS n" two="CLASS n">`, class = the
-weapon's `weapon-type`: 0 light, 1 medium, 2 heavy):
+foregrip in the carry clips. Locomotion follows the weapon's stance. Each character has two motion
+sets, `Sc_w1_*` and `Sc_w2_*` (idle, walk, run, dash, backpedal, reload, throw), and the game
+picks one every frame from the gun in hand (char+0x5b0, FUN_0011aa20) by the character type's
+pickup mode (`<limit-weapon h_fb08d4c6>`, the one that also chooses a picked-up gun's slot):
 
-| Character | `Sc_w1_*` | `Sc_w2_*` |
+| Character | pickup mode | the set |
 |---|---|---|
-| Brutus | medium | heavy |
-| Flint | medium | light |
-| Hawk | light | medium |
-| Tex | heavy | heavy |
+| Flint, Hawk | 1 | the slot's: slot 1 `Sc_w1_*`, slot 2 `Sc_w2_*` |
+| Brutus, Tex | 2, 3 | the gun's class (its `weapon-type`, WTYPE 0 pistol, 1 rifle, 2 cannon): `Sc_w2_*` for a cannon, `Sc_w1_*` for any other |
+| any other type | 0, 4 | `Sc_w1_*` |
 
-A gun takes the set of its class, else that of its slot. So Brutus holds his medium Bower 20 in
-his medium stance, like the Feral Cutter, though it's his second weapon. Arms then carry each gun
+So Brutus holds his rifle-class Bower 20 in his rifle stance, like the Feral Cutter, though it's
+his second weapon, and a rifle Tex picks up into his cannon's slot is held as a rifle (#297: the
+demo had keyed Tex's by the slot, from his `limit-weapon` slots, both "2 1"). Arms then carry each gun
 the way the game animates it (Tex's minigun low in both hands, Flint's LZR-10 one-handed), and
 aiming or firing switches to that set's `rp_*` ready-pose clips. The barrel is then turned onto the crosshair (yaw and pitch, two
 passes, over the spine bones that carry the arm), so shots leave along the barrel (within 1
-degree). The other weapon is stowed for its inventory slot: the weapon's holster hardpoint (`h_10ab40ac`,
-on every gun) on the character's stow hardpoint for that slot, which puts Tex's guns vertical on
-his ramps, Brutus's diagonally across his back, and Flint's and Hawk's sidearms barrel-down on
-the hip. Switching plays the character's own weapon-change overlay from its motion script (Flint and
+degree). The other weapon is stowed: the weapon's holster hardpoint (`h_10ab40ac`, on every gun) on
+one of the character's three stow hardpoints (`weapon::STOW`), the one its slot's holder is on
+(its place, `StowPlaces`, #297: the holders' +0x40 through their hardpoint getter 0x14ba70). Slot 1
+starts on 0xff4c691b and slot 2 on 0xf4ccf78c, which hang Brutus's first gun from his pelvis
+and his second diagonally across his back (on Bip01 Spine2), Flint's and Hawk's rifles across
+their backs and their sidearms barrel-down on the hip (Bip01 R Thigh); only Tex's places move. His draw swaps them (FUN_00123fa0) and his switch clips' events move
+them, so his stowed gun hangs vertical on his left ramp (0xff4c691b) whichever slot it's from, as
+the takes have it (#61 take04: the LZR-50 of his slot 2; #68 take02: the LZR-23, then the
+Minigun after Y), where the demo had hung slot 2's on his right ramp. Switching plays the character's own weapon-change overlay from its motion script (Flint and
 Hawk `Sc_w1_2_w2` / `Sc_w2_2_w1`, Brutus `Sc_w1_2_w2rifle` / `Sc_w2rifle_2_w1`, Tex
 `Sc_wc_rifle2cannon` / `Sc_wc_cannon2rifle`, whose ramps swing the gun over his shoulder) on the
 upper body over whatever the legs are doing. The clips carry timed events (an event channel of
 f32 time + name hash per event): at `drop_weapon` the held gun goes to its stow point, at the
 grab event the other one comes to the hand, each with the weapon's handling (`pickup-sound`)
-sound; no firing or aiming until the clip ends. Shots: muzzle flash and light,
+sound; no firing or aiming until the clip ends. Tex's clips swing his two ramps across his back
+(the left one up to his right shoulder with the gun to draw, 0.50-0.83 s; the right one out and
+over to his left side, 0.75-1.08 s; both back to rest between 1.25 and 1.33 s) and carry two more
+events: the gun let go goes on his right ramp at `drop_weapon` and rides it over, ed585109
+(1.20 s) hands it to Spine2's 0xe3307376, which sits where the left ramp rests, for the ramps'
+snap back, and f18780b8 (1.37-1.40 s) onto the left ramp (FUN_0014d500, FUN_0014d570). Shots: muzzle flash and light,
 recoil, tracers that fly to what the crosshair is on (ground or pillars) and a spark there.
+
+`BF_WEAPON_LOG=1` (pickups.md) prints, whenever it changes, where each gun hangs (in the hand, the
+second hand, or stowed at which hardpoint and bone) with its class and stance. Checked (#297) on
+the test map (`--test`), with it:
+
+* #61 take04's recreation (pickups.md, with `BF_TEST_SWITCH=10.0,13.0`): Tex's LZR-50 (slot 2)
+  hangs on his left ramp before the swap and after it, as at take04's 1.0 s and 9.0 s (it had hung
+  on his right one); after each Q the stowed gun is there again (the L-Shot-50 at 11.47 s, the
+  LZR-50 at 14.47 s), having gone right ramp, Spine2, left ramp at the clip's drop, 1.20 and
+  1.40 s;
+* #68 take02's switch (`BF_TEST_WEAPON="Confed LZR-23;RVG50 Minigun" BF_START_WEAPON=1
+  BF_TEST_GOTO=0,0,0,-1.5 BF_TEST_SWITCH=2.0,5.0`, every frame): the Minigun put on the right
+  ramp at the drop (2.53 s) and carried over to the left as the take's (from 22.15 s on the right,
+  22.55 s on the left; the demo's clip runs at its data's rate, slower than the take's: see
+  **The crosshair** below);
+* Tex swapping his Minigun for an MK-ASLT (`BF_TEST_GUN="MK-ASLT,3.6,0.3"`, the same weapons): the
+  rifle goes to slot 2 (`Sc_w_drop_cannon_pickup_rifle`) and is held in `Sc_w1_*` (it had been
+  `Sc_w2_*`: lower in the hands, as the Minigun; side view with `BF_VIEW_YAW=1.4
+  BF_TEST_TRIGGER=4.0-5.0`, the carry and the ready pose against the old build's);
+* Brutus (#52's recreation: the LZR-50 to slot 2 after the switch), Flint (an LZR-10 to slot 2)
+  and Hawk (a Saryl-23 to slot 1), each with two Qs after: their guns' hardpoints and stances as
+  before (each slot on its own, Flint's and Hawk's by the slot, Brutus's by the class).
 
 ### Radar (#228)
 
@@ -2628,13 +2684,17 @@ ambience, the music cues; 3D ones by DirectSound's distance law from the camera)
 
 Test hooks: `BF_AUTOPILOT=1` plays a scripted run (idle, run, turn, sprint, aimed walk,
 backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing on the run); `BF_TEST_EXPLOSION=1` sets off the selected grenade type 6 m ahead every 1.5 s; with `BF_TEST_GOTO`, `BF_TEST_THROW=<s>[,<hold s>,...]` holds the grenade button (G) at those times (see **Grenades** for the rest of its hooks); `BF_ANIM_PROBE=<script>,...` prints each character's clips by script name (duration, root motion over a cycle, the clip's own speed h_f9628571, events); `BF_DUMP_TEXTURE=<file>:<hex id>` writes a decoded texture (raw RGBA after a u32 width and height). `BF_AUTOPILOT_SPIN=<rad/s>` makes it look down and turn the camera during the standing fire; with `BF_CAPTURE=<dir>` it saves every frame at a
-fixed 15 fps. `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
+fixed 15 fps (`BF_CAPTURE_EVERY=<n>`: only every n-th, for a long run at that step whose logs
+are what's wanted, #294). `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
 and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `BF_DUMP_SOUNDS=<dir>` writes the character's jump and surface sounds as WAV files
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
 hardpoints, muzzles, fire sounds), then the map's definitions with more than one muzzle, and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
 character types, their motion sets' clips and the placements, and exits
 ([character-types.md](character-types.md)); `BF_SHOT_LOG=1` prints each shot's barrel and shot
-directions. Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the
+directions; `BF_FEET_LOG=1` prints, every frame, the controlled character's soles (the posed
+model's lowest skinned vertex) and its two foot bones over its ground, whether it moves, and the
+overlays playing with their times (a pickup, a use, a reload, a throw: #293's check of the
+pickup clips' feet). Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the
 start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
 something; held to +-60 degrees), `BF_CAMERA_DISTANCE` sets every character's boom,
 `BF_CAMERA_AIM_AT=x,y,z` turns the aim so the crosshair's ray passes through a point (the recipes
