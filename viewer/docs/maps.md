@@ -8,7 +8,11 @@ that time instead: #35 take08's dash after standing 4 s, skills.md), or stands s
 points are the same;
 `BF_FIND_STEEP=1` lists slide surfaces steeper than 50° and ledges with a drop of more than 6 m,
 then exits; `BF_FIND_BODIES=1` lists the collision bodies (size, closed or open, twinned, how
-many faces face into the body) and exits; `BF_INSIDE_LOG=1` prints a character in a rock and one taken out (#285);
+many faces face into the body; blockers and hinters, a placed object's object-type, its faces by
+the way they face) and exits, `BF_FIND_BODIES=b<n>` lists body n's triangles (#292);
+`BF_FIND_HOLES=1` or `=<file>.ppm` scans the map for holes in its collision and for the hinters'
+walls and exits (#292, "Holes" below); `BF_HELD_LOG=1` prints what stops the controlled
+character's move (#292); `BF_INSIDE_LOG=1` prints a character in a rock and one taken out (#285);
 `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` prints particle emission;
 `BF_NO_IDLE_FX=1` leaves out the power-ups' effects; `BF_NO_PLACED_FX=1` the level's placed
 effect objects, `BF_PLACED_FX_VARIANTS=1` starts the ones held out, `BF_LEVEL_DUMP=1` lists
@@ -25,7 +29,8 @@ them):
   `src/arena.rs`). On sdm_e34 that's 43,348 triangles.
   * Where they come from: `objects-<level>.ipn` holds them in the Ipion physics engine's format.
     The terrain blocks, the 23 invisible blockers and every placed object's parts each name
-    theirs. Door leaves have their own and stop blocking while open.
+    theirs. Door leaves have their own and stop blocking while open. A blocker is a wall to
+    every character or, a hinter, to the AI's alone (#292, "Blockers and hinters" below).
   * Material: every triangle carries one, a world-material id plus a slide flag.
   * Standing: characters stand on surfaces up to 65° (the game's ground limit), facing up by
     their winding, within a 0.5 m step; steeper surfaces are walls (#285: so is a surface facing
@@ -33,7 +38,8 @@ them):
   * Steep ground with no floor under it (#264; the code: todo/264-steep-slopes/answer.md). The
     terrain is a height field, so a pit's wall or a cliff face steeper than 65° is still the
     ground where there's no floor below it (`Arena::slope_below`: terrain only, not an upright
-    face, normal y under 0.05; a rock's steep side is #285's, below). Before #264 no floor under
+    face, normal y under 0.05; a rock's steep side is #285's, below; nothing under it at all is a
+    hole, #292's, below). Before #264 no floor under
     the feet put a character back where it was, as at the edge of the map: in the tutorial's lava
     yard Tex ran in place at the east pit's rim (z -26.5), whose north wall is 66° (normal y 0.40)
     down to the bed at ~10.5 m, under lava at 14.40 m. Now, as the game does it:
@@ -138,11 +144,12 @@ them):
       against each wall's part between STEP_UP over the feet and the head, seen from above. It
       stops at the first wall the move goes into (its direction into the contact under -0.01),
       however far the move goes, and the rest of the move slides along it (its part into the
-      wall taken out, no friction: FUN_00150f90 / FUN_00168950 / FUN_00151170), up to 3 times
-      (the game's passes). Each push of the squad apart is swept too, and a slide's move, at the
-      height of the feet where it starts. What's left overlapping a wall after (a door shut on a
-      body) is pushed out from the front, as before, by the body's radius at most, unless that
-      puts the body in a rock. One in the air whose move across would end in a rock's solid (into
+      wall taken out, no friction: FUN_00150f90 / FUN_00168950 / FUN_00151170), up to the
+      game's passes: 4 times for the character a player controls, 3 for the AI's (#292,
+      FUN_0012cd10; it was 3 for every one). Each push of the squad apart is swept too, and a
+      slide's move, at the height of the feet where it starts. What's left overlapping a wall
+      after (a door shut on a body) is pushed out from the front, as before, by the body's radius
+      at most, unless that puts the body in a rock. One in the air whose move across would end in a rock's solid (into
       a rock's slope, which isn't a wall, rising over its feet faster than it falls) stays where it
       was across and comes down on the slope. The game raises the cylinder's bottom 0.4 m on the
       ground and 0.1 m in the air for a steep triangle only and meets any other with the whole
@@ -270,6 +277,109 @@ them):
       test's 16 walks and sprints over open ground on e34, sdm_e34, e40, the tutorial and m09_a
       end where main's do (within 0.25 m) but where a slide on slide-flagged ground starts
       sooner: e34's sprint 2.4 m off, sdm_e34's flat run and sprint 1.5 and 3.4 m.
+  * **Blockers and hinters (#292).** A level's `<blocker>` carries a `physics-id`, the PID_ kind
+    of its body (its attribute handler FUN_00197e40 reads it through the PID_ names,
+    FUN_00186320): 2768 of the 2952 blockers of the 54 levels are 4, PID_BLOCKER, and 184 on 28
+    levels are 6, PID_HINTER. A character's sweep meets the world's blockers by a mask of kinds
+    (FUN_001525f0) that its physics step builds (FUN_0012cd10, code map): the blockers always,
+    the hinters only for a character no player controls (one whose brain has +0x3c4 bit 12, set
+    while its route jumps between world points, FUN_00026520, passes them too). A hinter is a wall
+    the AI keeps to and the player walks through. Every hinter of the data is an open band of
+    upright faces (no floor, flank or face looking down among them, none closed:
+    `BF_FIND_BODIES` over the 28 levels), round ground the AI shouldn't leave: sdm_e13's 2.7 km
+    band (body 71, 25 m tall) traces its arena's outer lava shore, m14_c's longest (body 49,
+    375 m) the edge of its icy plateau.
+    * The demo made every blocker a wall to everyone. Before #285 the push-out let a body run
+      through a thin band; #285's sweep holds a body at it, so the hinters became walls to the
+      player: on sdm_e13 (`BF_TEST_GOTO=90,-91,130,-91`) Tex runs down to the shore and is held
+      at the band at (94.9, -102.0), sliding along it, on 018e360 (#285 merged) and on main
+      051dce2; on 62b6cd9 (before #285) he went through it into the lava. On m14_c (the free
+      camera's teleport to (59.1, 75.4), running to (64.0, 81.7)) main held him at (61.5, 78.4),
+      short of the plateau's edge.
+    * Now the sweep and the step-up test (`Arena::move_body`, `Arena::clear`) take who moves
+      (`arena::Mover`, from `Player::controlled`): the hinters' walls (`Tri::hinter`) are left out
+      for the controlled character and kept for the AI's (the wingmen, the enemies, a cutscene's
+      walk; the demo's AI walks no routes, so they always hold it). The player's move is swept in
+      4 passes, the AI's in 3, as FUN_0012cd10 sets them. On sdm_e13 the band holds the wingmen at
+      the outer shore as the game's AI is held; the demo's own shore stop for them (squad.md,
+      "Liquids that burn") is unchanged.
+    * Where (`BF_FIND_HOLES`: the hinters' walls on ground the player can walk to, in metres of
+      floor, an upper bound): sdm_e13 1532, m02_a 670, m07_a 494, m02_c 426, m14_a 400, e05 366,
+      m07_b 352, m14_b 333, m04_c 304, m03_b 294, m14_c 289, m04_a 276, m03_a 232, m02_b 225, e01
+      212, m09_x 210, the tutorial 51, m09_a 49, e16 31, sdm_m03 19, e13 18, e40 16, m09_c 14,
+      sdm_e40 11, m07_c 1; m05_y's and m09_b's one hinter each is on no such ground; sdm_m07's six
+      (a level with no terrain) aren't scanned. The fix takes the kind, so it covers every one.
+  * **Holes (#292).** Where a character has nothing under it at any height (no floor, no terrain
+    too steep to stand on, no rock's flank: a hole in the level's collision, or past the
+    terrain's edge), the demo put it back where it stood, as at the edge of the map: an invisible
+    wall round every hole, older than #285 (62b6cd9 the same). The game has no edge: its sweep
+    meets nothing there and sets the falling flag (FUN_00153810, 0x1539de), and past the ledge
+    grace (FUN_0012b950) the character falls. A terrain block's surface leaves out the cells its
+    level has no ground in (17 of sdm_e34's 64 blocks have none at all), and the drawn terrain
+    leaves them out too: the background's colour shows through.
+    * sdm_e34's chasm, between the mountains east of the valley (x 44-70, z -5 to 16, the valley
+      floor beside it at 29-32 m), is such a hole, with no blocker or trigger near it: running
+      north from (56, 32) Tex stopped at (55.95, 15.67), and sliding down the mountain's face
+      west of it (`BF_TEST_GOTO=30,5,60,5`) he hung at its foot at (40.52, 8.53).
+    * Now (`void_fall`) a character with nothing under it falls: on its feet it steps off as off
+      a ledge (JUMP_FALL, its speed carried, its take-off height kept), on a face it leaves it,
+      in the air it falls on. A living character under -500 m is out of the game's world: a game
+      object's update (FUN_00157c40) refuses it and the character's (FUN_0011caa0) returns
+      before its physics step, so it hangs there (`OUT_OF_WORLD`): the demo holds it there, with
+      no landing and no fall damage. The AI the demo steers keeps to floors as before (the
+      stand-in for its routes, above), so the wingmen stop at the rim.
+    * Where (`BF_FIND_HOLES`): every level with terrain but e10, e13, e23, m01_a, m01_b, m05_b,
+      m05_y, m07_c, mp4, mp6, mp7, mp8, sdm_e10 and sdm_e13 has holes, nearly all of them the
+      terrain's outer edge behind the mountains round the level (sdm_e34 908 rim metres, m09_c
+      3122). The scan's upper bound (it climbs any slope a floor allows, as no slide holds it)
+      counts most of each edge as reachable; in play the slides on the slide-flagged slopes keep
+      the player off most of them. The fix takes the place, so it covers every one.
+  * Test hooks (#292):
+    * `BF_HELD_LOG=1`: each frame the sweep stops the controlled character's move more than 1 cm
+      short, where and the bodies that held it (`Arena::holding`: the terrain, a blocker, a
+      hinter or object n, by `BF_FIND_BODIES`' numbers), and each time the ground loop puts it
+      back (a step up into a wall, `Arena::clear`; a floor that carried it into a rock).
+    * `BF_FIND_HOLES=1` or `=<file>.ppm`: the map a metre at a time over its terrain's extent
+      (`find_holes`): floors, steep terrain, flanks and holes, the walls by what they are, what
+      can be walked to from the start points, the spawn-triggers and the placed characters (an
+      upper bound: a step up a floor of up to 2.15 m a metre, any drop, no wall across the way of
+      a 0.25 m body, the slides not counted), then in runs the holes' rims and the hinters' walls
+      on that ground; the picture: floors grey by height (darker where not reached), steep
+      terrain red, flanks orange, holes black, the hinters' walls magenta, the blockers' blue, the
+      objects' yellow, -z up, a pixel a metre.
+    * `BF_FIND_BODIES=b<n>`: body n's triangles and the way each faces.
+    * `BF_TEST_GOTO`'s start is kept on the levels whose spawn-triggers place the squad at the
+      level's start (m14_a-c, m09_c, m05_a): the spawn names the controlled character and brings
+      it into the world where the hook put it (play_triggers.rs `spawn_copy`); it moved it to the
+      spawn before. The squad's other members still go to theirs.
+  * Checked (15 fps captures, `BF_MUTE=1 BF_BACKGROUND=1`, `BF_NO_SQUAD=1` but where a squad is
+    named, against main 051dce2's build; 62b6cd9's and 018e360's for when):
+    * sdm_e13's band: `BF_MAP=sdm_e13 BF_TEST_GOTO=90,-91,130,-91 BF_TEST_HEALTH=5000`: Tex runs
+      down the slope, through the band at (95, -102.3) and into the lava (feet 17.0 m at 4.5 s),
+      where main slid him along it.
+    * m14: 35 runs across the big hinters of m14_a, m14_b and m14_c, from 4 m on one side of a
+      segment's middle to 4 m on the other: 20 crossed (m14_a's bodies 37, 39 and 40, m14_b's
+      42, 43 and 44, m14_c's 44 and 49); of the rest 5 started over a hole and fell, 6 were held
+      by an object, a blocker or the terrain beside the band, and 4 went off another way down a
+      slope. Main can't start those runs at the bands (the spawn moved Tex, above); its free
+      camera's teleport run held him at m14_c's plateau edge (above).
+    * sdm_e34's chasm: from (56, 32) Tex steps off into the void at (55.95, 30.13, 15.67) at 4.5 s
+      and falls (5.8 m under the rim 0.8 s later, 416 m by 11.3 s), the camera following him
+      down into the background's colour.
+    * No change where nothing of this is met (the same runs on main's build and this one, 150
+      frames, end in the same place with the same log lines): #285's rocks (sdm_e34's boulder
+      from the north, (0.25, 71.63); Tex put in it, the tutorial's and e34's taken out to (1.43,
+      70.83), (51.81, 15.69) and (-61.10, 34.20); over the boulder to (0.17, 77.59); e40's
+      h_05736b8b, (126.12, 80.86); the outcrop's crest, (31.53, 46.16); the barracks' wall,
+      (-75.07, -9.82); the dive at the boulder), #264's slopes (the tutorial's rim and pit wall,
+      e40's s3 and s2 landing after 20.9 and 18.4 m, m09_a's start with Flint's 1.2 m step and the
+      Shrike Hound's slide), the slides (sdm_e34's at 2.47 s on 36°, e34's at 2.93 s), the
+      liquids (#146's take01: 45, then 9, dead 0.54 s after the first part in; the tutorial's pit,
+      five hits of 18; the wingmen waiting at sdm_e13's shore, 48 lines alike) and the squads
+      following on e34 and e40. The player's fourth pass changed none of them.
+    * Fallen into the chasm (off the rim at 4.67 s), Tex hangs at -500 m from 12.40 s on (feet
+      -500.00, JumpFall, 100 m over the void's floor) with no landing; with the squad following
+      (`BF_TEST_TARGET=1`) no wingman steps off into the void (`BF_SLIDE_LOG`).
   * Not solid: grass, wires and other undrawn or cut-out parts have no collision surface, so
     they don't block. Nor does a spawn-trigger's template, which the game takes out of the world
     until it's spawned ([triggers.md](triggers.md), #220; nor is one drawn but a pickup, #230), nor a placed

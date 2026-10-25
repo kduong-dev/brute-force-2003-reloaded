@@ -289,22 +289,43 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
             }
             // test hook: BF_FIND_BODIES=1 lists the collision bodies of the placed objects and the
             // blockers (the terrain's in one line each): their size and shape, and how many of
-            // their faces face into them (`Tri::inner`) (#285), then exits
+            // their faces face into them (`Tri::inner`) (#285), then exits; BF_FIND_BODIES=b<n>
+            // lists body n's triangles (#292)
+            if let Some(body) = std::env::var("BF_FIND_BODIES").ok().and_then(|v| v.strip_prefix('b').and_then(|n| n.parse::<u32>().ok())) {
+                for (v, front) in a.body_triangles(body) {
+                    println!("{:.2} {:.2} {:.2}  {:.2} {:.2} {:.2}  {:.2} {:.2} {:.2}  facing {:.2}", v[0].x, v[0].y, v[0].z, v[1].x, v[1].y, v[1].z,
+                             v[2].x, v[2].y, v[2].z, front);
+                }
+                std::process::exit(0);
+            }
             if std::env::var("BF_FIND_BODIES").is_ok() {
                 for s in a.survey() {
                     let size = s.hi - s.lo;
                     let what = match (s.terrain, s.blocker, s.object) {
                         (true, _, _) => "terrain".to_string(),
-                        (_, true, o) => format!("blocker{}", o.map_or(String::new(), |o| format!(" of object {o}"))),
-                        (_, _, Some(o)) => format!("object {o} type h_{:08x} arch h_{:08x}", l.objects[o as usize].kind, l.objects[o as usize].archetype.unwrap_or(0)),
+                        (_, true, o) => format!("{}{}", if s.hinter { "hinter" } else { "blocker" }, o.map_or(String::new(), |o| format!(" of object {o}"))),
+                        (_, _, Some(o)) => format!("object {o} type h_{:08x} (object-type {}) arch h_{:08x}", l.objects[o as usize].kind,
+                                                   game.object_types.get(&l.objects[o as usize].kind).map_or(-1, |t| t.object_type),
+                                                   l.objects[o as usize].archetype.unwrap_or(0)),
                         _ => "remains".to_string(),
                     };
                     let shape = if s.open_edges == 0 { "closed" } else { "open" };
                     let what = format!("{what}{}{}", if s.liquid { " (liquid)" } else { "" }, if s.door { " (door)" } else { "" });
-                    println!("body {} {what}: {} triangles, {:.2} .. {:.2} ({:.1} x {:.1} x {:.1} m), {shape} ({} open edges, {} shared by 3+, {} wound against their neighbour), {} twinned, {} facing in, volume {:.2} m3{}",
+                    let [floors, steep, upright, down] = s.facing;
+                    println!("body {} {what}: {} triangles, {:.2} .. {:.2} ({:.1} x {:.1} x {:.1} m), {shape} ({} open edges, {} shared by 3+, {} wound against their neighbour), {} twinned, {} facing in, volume {:.2} m3{}; faces {floors} floors, {steep} steep, {upright} upright, {down} facing down",
                              s.body, s.triangles, s.lo, s.hi, size.x, size.y, size.z, s.open_edges, s.shared_edges, s.flipped_edges, s.twins, s.inner, s.volume,
                              if s.convex { ", convex" } else { "" });
                 }
+                std::process::exit(0);
+            }
+            // test hook: BF_FIND_HOLES=1 or <file>.ppm (#292) scans the map, then exits
+            if let Ok(out) = std::env::var("BF_FIND_HOLES") {
+                // (where characters start: the start points, the spawn-triggers, the placed
+                // characters)
+                let h = bf_viewer::bf::hash::h;
+                let seeds: Vec<Vec3> = a.starts.iter().map(|s| s.0).chain(l.objects.iter()
+                    .filter(|o| o.tag == h("spawn-trigger") || o.tag == h("character-object")).map(|o| o.transform.w_axis.truncate())).collect();
+                find_holes(&a, map, &seeds, (out != "1").then_some(out.as_str()));
                 std::process::exit(0);
             }
             let (n, terrain, slide, doors) = a.stats();
@@ -333,6 +354,181 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
         }
     }
 }
+
+/// BF_FIND_HOLES (#292): the map seen from above, a metre at a time over its terrain's extent, as
+/// a character walking it finds it (the ground loop's tests, `update_player`): a floor under it
+/// at some height (`Arena::floor_below`, the highest), else terrain too steep to stand on
+/// (`slope_below`) or a rock's flank (`flank_below`), else nothing: a hole, which a character
+/// falls through (`void_fall`; before #292 the demo put it back where it stood, an invisible wall
+/// round the hole). On each floor, the walls within half a metre of the point at a body's heights
+/// over it (`Arena::holding`, as the AI meets them: the hinters too), by what they are. What can be
+/// walked to from where characters start (`seeds`: from a metre's middle to the next one's, a
+/// step up of at most CLIMB_CELL on a floor, half a metre onto or off steep ground, any drop, and
+/// no wall in the way of a body of SCAN_RADIUS (the player's sweep, closed doors among the walls);
+/// one floor a metre, the highest; the slides on slide-flagged ground not counted) is counted
+/// apart: an upper bound on what the player can reach. Prints the counts, then in connected runs
+/// the holes' rims (hole cells beside a floor or a slope) beside ground walked to and the
+/// hinters' walls on ground walked to; with a file, writes the picture (a binary PPM, a pixel a
+/// metre, -z up): floors grey by height (darker where not walked to), steep terrain red, flanks
+/// orange, holes black, and over the floors the hinters' walls magenta, the blockers' blue, the
+/// placed objects' yellow.
+fn find_holes(a: &world::Arena, map: &str, seeds: &[Vec3], file: Option<&str>) {
+    let Some((lo, hi)) = a.terrain_bounds() else {
+        println!("{map}: no terrain");
+        return;
+    };
+    let (w, h) = ((hi.x - lo.x).ceil() as usize, (hi.y - lo.y).ceil() as usize);
+    // per cell: 0 a hole, 1 a floor, 2 steep terrain, 3 a flank; its height; the walls on it
+    // (bits: 1 a hinter's, 2 a blocker's, 4 an object's)
+    let (mut kind, mut height, mut walls) = (vec![0u8; w * h], vec![0f32; w * h], vec![0u8; w * h]);
+    for j in 0..h {
+        for i in 0..w {
+            let (x, z, k) = (lo.x + i as f32 + 0.5, lo.y + j as f32 + 0.5, j * w + i);
+            if let Some((g, _)) = a.floor_below(x, z, 1e4) {
+                (kind[k], height[k]) = (1, g);
+                for b in a.holding(Vec2::new(x, z), None, 0.5, g, g + BODY_HEIGHT, STEP_UP, None, world::Mover::Ai) {
+                    walls[k] |= match a.body_kind(b) {
+                        world::BodyKind::Hinter(_) => 1,
+                        world::BodyKind::Blocker(_) => 2,
+                        world::BodyKind::Object(_) | world::BodyKind::Other => 4,
+                        world::BodyKind::Terrain => 0,
+                    };
+                }
+            } else if let Some((g, _)) = a.slope_below(x, z, 1e4) {
+                (kind[k], height[k]) = (2, g);
+            } else if let Some((g, _)) = a.flank_below(x, z, 1e4) {
+                (kind[k], height[k]) = (3, g);
+            }
+        }
+    }
+    let count = |f: &dyn Fn(usize) -> bool| (0..w * h).filter(|&k| f(k)).count();
+    let near = |k: usize| {
+        let (i, j) = ((k % w) as i64, (k / w) as i64);
+        [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().map(move |(di, dj)| (i + di, j + dj))
+            .filter(|&(i, j)| i >= 0 && j >= 0 && (i as usize) < w && (j as usize) < h).map(move |(i, j)| j as usize * w + i as usize)
+    };
+    // whether a body (SCAN_RADIUS) walks from cell k's middle to the next one's at its feet's
+    // height without a wall holding it (`Arena::move_body`, the player's: no hinter holds it)
+    let centre = |k: usize| Vec2::new(lo.x + (k % w) as f32 + 0.5, lo.y + (k / w) as f32 + 0.5);
+    let walks = |k: usize, n: usize| {
+        let (from, to) = (centre(k), centre(n));
+        a.move_body(from, to, SCAN_RADIUS, height[k], height[k] + BODY_HEIGHT, STEP_UP, None, world::Mover::Player).distance(to) < 0.01
+    };
+    // (each cell to the next one east, back west, south, back north)
+    let mut pass = vec![[false; 4]; w * h];
+    for k in 0..w * h {
+        if kind[k] == 0 {
+            continue;
+        }
+        if k % w + 1 < w && kind[k + 1] != 0 {
+            pass[k][0] = walks(k, k + 1);
+            pass[k + 1][1] = walks(k + 1, k);
+        }
+        if k + w < w * h && kind[k + w] != 0 {
+            pass[k][2] = walks(k, k + w);
+            pass[k + w][3] = walks(k + w, k);
+        }
+    }
+    let passes = |k: usize, n: usize| if n == k + 1 { pass[k][0] } else if n + 1 == k { pass[k][1] } else if n == k + w { pass[k][2] } else { pass[k][3] };
+    // what can be walked to from the seeds (each seed's cell when its floor is within 3 m of it)
+    let mut reach = vec![false; w * h];
+    let mut stack: Vec<usize> = seeds.iter().filter_map(|s| {
+        let (i, j) = ((s.x - lo.x).floor(), (s.z - lo.y).floor());
+        let k = (i >= 0.0 && j >= 0.0 && (i as usize) < w && (j as usize) < h).then(|| j as usize * w + i as usize)?;
+        (kind[k] != 0 && (height[k] - s.y).abs() < 3.0).then_some(k)
+    }).collect();
+    let seeded = stack.len();
+    for &k in &stack {
+        reach[k] = true;
+    }
+    while let Some(k) = stack.pop() {
+        for n in near(k) {
+            let climb = if kind[k] == 1 && kind[n] == 1 { CLIMB_CELL } else { STEP_UP };
+            if !reach[n] && kind[n] != 0 && passes(k, n) && height[n] - height[k] <= climb {
+                reach[n] = true;
+                stack.push(n);
+            }
+        }
+    }
+    let rim: Vec<bool> = (0..w * h).map(|k| kind[k] == 0 && near(k).any(|n| kind[n] != 0)).collect();
+    let rim_reached = |k: usize| rim[k] && near(k).any(|n| reach[n]);
+    println!("{map}: {} x {} m from ({:.0}, {:.0}): {} floor, {} steep terrain, {} flank, {} hole cells ({} on a rim, {} of them beside ground walked to \
+              from {seeded} of {} seeds); walls on {} floor cells: {} a hinter's ({} walked to), {} a blocker's, {} an object's",
+             w, h, lo.x, lo.y, count(&|k| kind[k] == 1), count(&|k| kind[k] == 2), count(&|k| kind[k] == 3), count(&|k| kind[k] == 0),
+             count(&|k| rim[k]), count(&rim_reached), seeds.len(), count(&|k| walls[k] != 0), count(&|k| walls[k] & 1 != 0),
+             count(&|k| walls[k] & 1 != 0 && reach[k]), count(&|k| walls[k] & 2 != 0), count(&|k| walls[k] & 4 != 0));
+    // in connected runs (8 ways round, within 2 m): the rims beside ground walked to, and the
+    // hinters' walls on it: where, how many cells, the ground's height
+    let runs = |mask: &[bool]| {
+        let mut seen = vec![false; w * h];
+        let mut out: Vec<Vec<usize>> = vec![];
+        for start in 0..w * h {
+            if !mask[start] || seen[start] {
+                continue;
+            }
+            let (mut stack, mut cells) = (vec![start], vec![]);
+            seen[start] = true;
+            while let Some(k) = stack.pop() {
+                cells.push(k);
+                let (i, j) = ((k % w) as i64, (k / w) as i64);
+                for di in -2..=2i64 {
+                    for dj in -2..=2i64 {
+                        let (ni, nj) = (i + di, j + dj);
+                        if ni >= 0 && nj >= 0 && (ni as usize) < w && (nj as usize) < h && mask[nj as usize * w + ni as usize] && !seen[nj as usize * w + ni as usize] {
+                            seen[nj as usize * w + ni as usize] = true;
+                            stack.push(nj as usize * w + ni as usize);
+                        }
+                    }
+                }
+            }
+            out.push(cells);
+        }
+        out
+    };
+    let print = |what: &str, cells: &[usize], ground: &dyn Fn(usize) -> Vec<f32>| {
+        let at = |k: usize| Vec2::new(lo.x + (k % w) as f32 + 0.5, lo.y + (k / w) as f32 + 0.5);
+        let (cl, ch) = cells.iter().fold((Vec2::MAX, Vec2::MIN), |(l, h), &k| (l.min(at(k)), h.max(at(k))));
+        let (yl, yh) = cells.iter().flat_map(|&k| ground(k)).fold((f32::MAX, f32::MIN), |(l, h), y| (l.min(y), h.max(y)));
+        println!("  {what} of {} cells from ({:.1}, {:.1}) to ({:.1}, {:.1}), the ground at {yl:.1} .. {yh:.1} m", cells.len(), cl.x, cl.y, ch.x, ch.y);
+    };
+    let rims: Vec<bool> = (0..w * h).map(rim_reached).collect();
+    for cells in runs(&rims) {
+        print("rim beside ground walked to", &cells, &|k| near(k).filter(|&n| reach[n]).map(|n| height[n]).collect());
+    }
+    let hinters: Vec<bool> = (0..w * h).map(|k| walls[k] & 1 != 0 && reach[k]).collect();
+    for cells in runs(&hinters) {
+        print("hinter's wall on ground walked to", &cells, &|k| vec![height[k]]);
+    }
+    let Some(file) = file else { return };
+    let (fl, fh) = (0..w * h).filter(|&k| kind[k] != 0).fold((f32::MAX, f32::MIN), |(l, h), k| (l.min(height[k]), h.max(height[k])));
+    let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+    for k in 0..w * h {
+        let t = ((height[k] - fl) / (fh - fl).max(1e-3)).clamp(0.0, 1.0);
+        let grey = if reach[k] { (60.0 + 180.0 * t) as u8 } else { (30.0 + 70.0 * t) as u8 };
+        ppm.extend_from_slice(&match (kind[k], walls[k]) {
+            (1, b) if b & 1 != 0 => [255, 0, 255],
+            (1, b) if b & 2 != 0 => [40, 90, 255],
+            (1, b) if b & 4 != 0 => [230, 200, 40],
+            (1, _) => [grey, grey, grey],
+            (2, _) => [grey.saturating_add(40), grey / 4, grey / 4],
+            (3, _) => [220, 130, 40],
+            _ => [0, 0, 0],
+        });
+    }
+    match std::fs::write(file, ppm) {
+        Ok(()) => println!("{map}: the picture in {file}"),
+        Err(e) => eprintln!("{map}: can't write {file}: {e}"),
+    }
+}
+
+/// How far up (m) a character may walk from one metre of floor to the next (`find_holes`'s count
+/// of what can be walked to): a 65-degree slope's rise over a metre (the game's ground limit,
+/// `Arena`'s FLOOR_NORMAL), and the scan's own allowance.
+const CLIMB_CELL: f32 = 2.15;
+/// The radius (m) of the body `find_holes` walks from a metre to the next: under a character's
+/// (BODY_RADIUS 0.4), as the scan's metres are on a grid, not where a body would go through a
+/// gap. The scan's own.
+const SCAN_RADIUS: f32 = 0.25;
 
 /// A loaded map, ready to play: the data, its level, and the mode.
 pub struct LoadedMap {
@@ -4412,10 +4608,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // the floor under the feet; else one under the body's middle part (a rim it's half
             // over, a sliver of steep ground beside a floor: FUN_0012b950's ledge grace, LEDGE_GRACE,
             // #264); else terrain too steep to stand on, which they fall onto and slide down
-            // (`slide_on_face`, #264); neither: the edge of the map, so back where they were. A
-            // rock's steep flank under the body's middle more than a step over that floor is
-            // ground too steep to stand on as well (#285, `Arena::flank_below`; not for one the AI
-            // steers, which keeps to floors)
+            // (`slide_on_face`, #264); neither: a hole in the level's collision, which they fall
+            // through (`void_fall`, #292). A rock's steep flank under the body's middle more than
+            // a step over that floor is ground too steep to stand on as well (#285,
+            // `Arena::flank_below`; not for one the AI steers, which keeps to floors)
             let top = feet + STEP_UP;
             let floor = a.floor_at(u.position.x, u.position.z, top)
                 .or_else(|| (!steered).then(|| a.floor_around(u.position.x, u.position.z, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, top)).flatten());
@@ -4425,8 +4621,19 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let slope = if floor.is_none() { a.slope_below(u.position.x, u.position.z, top) } else { None };
             let Some((g, n, material, steep)) = flank.map(|(g, n)| (g, n, 0, true)).or(floor.map(|(g, n, m)| (g, n, m, false)))
                 .or(slope.map(|(g, n)| (g, n, 0, true))) else {
-                u.position.x = u.prev_xz.x;
-                u.position.z = u.prev_xz.y;
+                // (nothing under it at any height: before #292 the demo put it back where it
+                // stood, as at the edge of the map, an invisible wall round every hole; one out of
+                // the world yet, `Player::absent`, stays where it is, as the sweep leaves it)
+                if u.absent {
+                    u.position.x = u.prev_xz.x;
+                    u.position.z = u.prev_xz.y;
+                    continue;
+                }
+                void_fall(u, feet, air);
+                if player_first && i == 0 {
+                    frame_log(u);
+                }
+                u.prev_xz = Vec2::new(u.position.x, u.position.z);
                 continue;
             };
             // a step up that would raise the body into a wall (a rock overhanging the slope it's
@@ -4434,7 +4641,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // moves the body up the slope with its move, and the overhang stops it (FUN_0012cd10,
             // FUN_00153810); here the move is swept level and the feet raised after
             if !steep && !air && u.knock.is_none() && g > feet + 1e-3
-                && !a.clear(Vec2::new(u.position.x, u.position.z), BODY_RADIUS, g, g + BODY_HEIGHT, STEP_UP) {
+                && !a.clear(Vec2::new(u.position.x, u.position.z), BODY_RADIUS, g, g + BODY_HEIGHT, STEP_UP, world::Mover::of(u.controlled)) {
+                held_log(u, &format!("a step up {:.2} m into a wall (Arena::clear)", g - feet));
                 u.position.x = u.prev_xz.x;
                 u.position.z = u.prev_xz.y;
                 continue;
@@ -4501,6 +4709,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if !u.action.airborne() && u.knock.is_none()
                 && a.inside_span(Vec2::new(u.position.x, u.position.z), feet + STEP_UP, feet + BODY_HEIGHT).is_some()
                 && a.inside_span(u.prev_xz, y0 + GROUND + STEP_UP, y0 + GROUND + BODY_HEIGHT).is_none() {
+                held_log(u, "the floor carried it into a rock's solid");
                 u.position = Vec3::new(u.prev_xz.x, y0, u.prev_xz.y);
             }
             // (in a liquid: what it does to them, their splashes and rings are play_liquids.rs's)
@@ -4541,6 +4750,34 @@ fn inside_log(a: &world::Arena, u: &Player) {
     if let Some((body, y)) = found {
         println!("t {:.2}: {} inside body {body} (object {:?}) at {:.2}, {:.2} m over its feet", u.sim_time, unit_name(u),
                  a.body_object(body), Vec3::new(u.position.x, feet, u.position.z), y - feet);
+    }
+}
+
+/// How far short (m) of where its move was going a swept body must stop for BF_HELD_LOG to print
+/// it (`walls`): the demo's, over the sweep's own skin (`Arena::move_body`'s 2 mm).
+const HELD_SHORT: f32 = 0.01;
+
+/// BF_HELD_LOG=1 (#292): the controlled character put back where it stood this frame by the
+/// ground loop, and why (a step up into a wall, a rock's solid). `walls` prints its sweep's stops
+/// and what held them (`Arena::holding`).
+fn held_log(u: &Player, why: &str) {
+    if u.controlled && std::env::var("BF_HELD_LOG").is_ok() {
+        let feet = u.position.y + GROUND + u.height.max(0.0);
+        println!("t {:.2}: {} back where it stood, ({:.2}, {:.2}, {:.2}), from ({:.2}, {:.2}): {why}", u.sim_time, unit_name(u),
+                 u.prev_xz.x, feet, u.prev_xz.y, u.position.x, u.position.z);
+    }
+}
+
+/// A collision body for the logs (BF_HELD_LOG): its number and what it is (`Arena::body_kind`;
+/// an object by its index in the level's objects, as BF_FIND_BODIES lists them).
+fn body_name(a: &world::Arena, body: u32) -> String {
+    let of = |o: Option<u32>| o.map_or(String::new(), |o| format!(" of object {o}"));
+    match a.body_kind(body) {
+        world::BodyKind::Terrain => format!("body {body} (terrain)"),
+        world::BodyKind::Blocker(o) => format!("body {body} (blocker{})", of(o)),
+        world::BodyKind::Hinter(o) => format!("body {body} (hinter{})", of(o)),
+        world::BodyKind::Object(o) => format!("body {body} (object {o})"),
+        world::BodyKind::Other => format!("body {body}"),
     }
 }
 
@@ -4611,6 +4848,49 @@ fn slide_on_face(u: &mut Player, g: f32, n: Vec3, feet: f32, air: bool) {
     }
     u.face = Some(n);
     u.height = 0.0;
+}
+
+/// How low (m) a living character falls before the game stops it: a game object's update
+/// (FUN_00157c40, a character's at 0x11cb94) refuses one whose transform's y is under -500
+/// (0x3a5524, compared at 0x157c61; a dead character's goes on), and the character's update
+/// (FUN_0011caa0) then returns at once (0x11cb9d), its physics step with it: it hangs there.
+const OUT_OF_WORLD: f32 = -500.0;
+/// How far under OUT_OF_WORLD (m) the demo puts the floor a character in the void falls toward
+/// (`void_fall`): more than a frame's fall at the speed a fall reaches there (about 140 m/s after
+/// 550 m, 14 m in the longest frame the demo steps, 0.1 s), so it never lands on it. The demo's.
+const VOID_DEPTH: f32 = 100.0;
+
+/// A character with nothing under it at any height (#292; the ground loop, `update_player`): a
+/// hole in the level's collision, or past the terrain's edge (sdm_e34's chasm, x 44-70, z -5 to
+/// 16, beside the valley's floor; `BF_FIND_HOLES` maps them). The game has no edge there: its sweep
+/// meets nothing and sets the falling flag (FUN_00153810, 0x1539de), and past the ledge grace
+/// (FUN_0012b950) the character falls. On its feet it steps off as off a ledge (JUMP_FALL, its
+/// speed carried, its take-off height kept), on a face it leaves it, in the air it falls on,
+/// toward a floor VOID_DEPTH under OUT_OF_WORLD; there it hangs, as the game stops updating it:
+/// no landing and no fall damage. Before, the demo put it back where it stood, as at the edge of
+/// the map: an invisible wall round every hole. Its feet at `feet`, `air` if it was in the air.
+fn void_fall(u: &mut Player, feet: f32, air: bool) {
+    if !air {
+        u.action = Action::JumpFall;
+        u.vy = 0.0;
+        u.air_velocity = Vec3::new(u.last_velocity.x, 0.0, u.last_velocity.z);
+        u.fall_from = feet;
+        if std::env::var("BF_SLIDE_LOG").is_ok() {
+            println!("t {:.2}: {} steps off into the void at {:.2}", u.sim_time, unit_name(u), Vec3::new(u.position.x, feet, u.position.z));
+        }
+    }
+    u.face = None;
+    u.was_air = true;
+    if feet <= OUT_OF_WORLD {
+        // (where the game stops it)
+        u.vy = 0.0;
+        u.air_velocity = Vec3::ZERO;
+        u.position.x = u.prev_xz.x;
+        u.position.z = u.prev_xz.y;
+    }
+    let floor = OUT_OF_WORLD - VOID_DEPTH;
+    u.position.y = floor - GROUND;
+    u.height = feet.max(OUT_OF_WORLD) - floor;
 }
 
 /// The move `m` (m: this frame's velocity x dt) against a steep face of normal `n`: its part
@@ -4689,7 +4969,8 @@ fn ground_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
         match floor {
             // (a step up into a wall, under a rock's overhang, isn't taken: they stop before it,
             // #285, `Arena::clear`)
-            Some((g, _, _)) if g > feet + 1e-3 && !a.clear(p, BODY_RADIUS, g, g + BODY_HEIGHT, STEP_UP) => {
+            Some((g, _, _)) if g > feet + 1e-3 && !a.clear(p, BODY_RADIUS, g, g + BODY_HEIGHT, STEP_UP, world::Mover::of(u.controlled)) => {
+                held_log(u, &format!("a step up {:.2} m into a wall on its way (ground_walk, Arena::clear)", g - feet));
                 let back = from.lerp(to, (k - 1) as f32 / steps as f32);
                 u.position.x = back.x;
                 u.position.z = back.y;
@@ -4796,19 +5077,29 @@ fn slide(u: &mut Player, a: &world::Arena, g: f32, start: f32, n: Vec3, material
         slid + (here - slid) * w
     };
     // blocked: the game ends the slide when the sweep achieves under a tenth of the move asked
-    // (FUN_0012cd10 -> FUN_0012bf40): a wall, the edge of the map, or flat slide-flagged
-    // ground, where the slide only presses down into the floor. The slide's move swept as the
-    // character's own is (`Arena::move_body`, #285: not into a rock at the canyon's foot), from
-    // the feet where it starts (from the ground the own move reached, down a slope, the slope's
-    // twin facing into the ground would have the feet in front of it and push them back up)
+    // (FUN_0012cd10 -> FUN_0012bf40): a wall, or flat slide-flagged ground, where the slide only
+    // presses down into the floor. The slide's move swept as the character's own is
+    // (`Arena::move_body`, #285: not into a rock at the canyon's foot), from the feet where it
+    // starts (from the ground the own move reached, down a slope, the slope's twin facing into
+    // the ground would have the feet in front of it and push them back up)
     let asked = to - u.prev_xz;
-    let to = a.move_body(u.prev_xz, to, BODY_RADIUS, start, start + BODY_HEIGHT, STEP_UP, None);
+    let to = a.move_body(u.prev_xz, to, BODY_RADIUS, start, start + BODY_HEIGHT, STEP_UP, None, world::Mover::of(u.controlled));
     let kept = if asked.length() > 1e-5 { ((to - u.prev_xz).length() / asked.length()).min(1.0) } else { 1.0 };
     let floor = a.floor_at(to.x, to.y, g + STEP_UP);
     let across = Vec2::new(mv.x, mv.z).length() * kept;
     match floor {
         Some((g2, _, _)) if across >= SLIDE_BLOCKED * mv.length() => u.position = Vec3::new(to.x, g2 - GROUND, to.y),
         _ => {
+            // (off the floor over a hole, nothing under it at any height: the slide carries it
+            // there and it falls at the slide's speed, `void_fall`; #292, where it stopped at the
+            // rim)
+            if floor.is_none() && across >= SLIDE_BLOCKED * mv.length() && dt > 0.0 && a.floor_below(to.x, to.y, 1e4).is_none()
+                && a.slope_below(to.x, to.y, 1e4).is_none() && a.flank_below(to.x, to.y, 1e4).is_none() {
+                u.position.x = to.x;
+                u.position.z = to.y;
+                u.last_velocity = Vec3::new(mv.x, 0.0, mv.z) / dt;
+                void_fall(u, g, false);
+            }
             u.slide_active = false;
             u.slide_amount = 0.0;
             u.slide_vel = Vec3::ZERO;
@@ -5636,7 +5927,15 @@ fn walls(a: &world::Arena, units: &mut [&mut Player], from: &mut [Vec2], player_
         let (x, z) = (u.position.x, u.position.z);
         let steps_on = (player_first && i == 0) || u.action.airborne();
         let face = u.face.or_else(|| steps_on.then(|| a.floor_at(x, z, feet + STEP_UP).is_none().then(|| a.slope_below(x, z, feet + STEP_UP)).flatten()).flatten().map(|s| s.1));
-        let mut at = a.move_body(from[i], Vec2::new(x, z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, face);
+        let who = world::Mover::of(u.controlled);
+        let mut at = a.move_body(from[i], Vec2::new(x, z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, face, who);
+        // (BF_HELD_LOG: what held the controlled character's move short, #292)
+        if u.controlled && at.distance(Vec2::new(x, z)) > HELD_SHORT && std::env::var("BF_HELD_LOG").is_ok() {
+            let by: Vec<String> = a.holding(at, Some(Vec2::new(x, z)), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, face, who).into_iter()
+                .map(|b| body_name(a, b)).collect();
+            println!("t {:.2}: {} held {:.2} m short at ({:.2}, {:.2}, {:.2}) by {}", u.sim_time, unit_name(u), at.distance(Vec2::new(x, z)),
+                     at.x, feet, at.y, if by.is_empty() { "nothing it touches (slid off its way)".to_string() } else { by.join(", ") });
+        }
         if u.action.airborne() && a.inside_span(at, feet + STEP_UP, feet + BODY_HEIGHT).is_some()
             && a.inside_span(from[i], feet + STEP_UP, feet + BODY_HEIGHT).is_none() {
             at = from[i];

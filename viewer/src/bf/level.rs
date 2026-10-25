@@ -22,7 +22,8 @@
 //!              too (`LevelLamp`). Ambient: Terrain <ambient>, <object-ambient>,
 //!              <character-ambient>.
 //!  collision   the terrain blocks' collision surfaces (Terrain > blocks h_051ac63e) and the
-//!              invisible blockers (blocker h_051ac63e + transform), see bf::collision
+//!              invisible blockers (blocker h_051ac63e + transform, and its physics-id: a
+//!              blocker or a hinter, which only the AI meets, #292), see bf::collision
 //!  buttons     world-button-object (h_16f22d4b, reticule-action 1): a wall panel that sends
 //!              its signal (h_eaf8a35b, 14 on every one) when used
 //!  triggers    every element built on the game's trigger base (routers, timers, calculators,
@@ -392,11 +393,13 @@ pub struct Level {
     pub ambient: [f32; 3],
     pub cameras: Vec<Mat4>,
     /// collision: the terrain blocks' surfaces (world frame) and the invisible blockers
-    /// (<blocker h_051ac63e=surface object-instance=owner><transform>): surface, placement and
-    /// the placed object it belongs to (its name; 0 for none). A breakable object's blocker goes
-    /// with it (sdm_e34's missile rack h_128f3de2: blocker h_e1a3f88e, physics-id 4)
+    /// (<blocker physics-id h_051ac63e=surface object-instance=owner><transform>): surface,
+    /// placement, the placed object it belongs to (its name; 0 for none) and its physics-id (the
+    /// PID_ kind its body's client data carries: BLOCKER_PID or HINTER_PID, #292). A breakable
+    /// object's blocker goes with it (sdm_e34's missile rack h_128f3de2: blocker h_e1a3f88e,
+    /// physics-id 4)
     pub terrain_collision: Vec<u32>,
-    pub blockers: Vec<(u32, Mat4, u32)>,
+    pub blockers: Vec<(u32, Mat4, u32, u8)>,
     /// directional lights (`LevelLight`), in the level file's order, and the terrain's ambient
     /// (`ambient` is the objects')
     pub lights: Vec<LevelLight>,
@@ -490,6 +493,24 @@ impl SkySpin {
 fn hash(e: &Element, name: u32) -> u32 {
     e.attr(name).and_then(|v| v.as_hash()).unwrap_or(0)
 }
+
+/// A blocker's `physics-id` (h_f15d9ab6, name recovered by hashing): the PID_ kind of its body's
+/// client data, read by the blocker's attribute parser (FUN_00197e40) through the PID_ names
+/// (FUN_00186320, the table at 0x3bea08: 4 PID_BLOCKER, 6 PID_HINTER, 8 PID_FLY_BLOCKER) into
+/// the first word of the world's blocker record (0x44 bytes; its body at +0x3c), the kind the
+/// sweep's broad phase tests (FUN_001525f0).
+const H_PHYSICS_ID: u32 = 0xF15D_9AB6;
+/// PID_BLOCKER (4): a blocker every character's sweep meets (FUN_0012cd10's filter, #292). 2768
+/// of the 2952 blockers of the game's 54 levels.
+pub const BLOCKER_PID: u8 = 4;
+/// PID_HINTER (6): a blocker only the AI's characters meet. FUN_0012cd10 builds a character's
+/// sweep filter (vtable 0x39dbbc) with the PID kinds 1, 3, 5, 6 and 7 left out (+0x10c = 0xea,
+/// 0x12d113) and, for a character no player controls (the world's +0xbec vtable +0xc, its
+/// +0x24's flag 2: FUN_00112800's test), takes kind 6 back in (0x12d16b) unless its brain's
+/// +0x3c4 has bit 12 (set while its route jumps between world points, FUN_00026520 /
+/// FUN_000267b0). The sweep's broad phase meets the world's blockers by that mask
+/// (FUN_001525f0). 184 of the 2952: sdm_e13's band round its lava shore among them (#292).
+pub const HINTER_PID: u8 = 6;
 
 /// A world button, world-button-object (h_16f22d4b): a wall panel.
 const H_WORLD_BUTTON: u32 = 0x16F2_2D4B;
@@ -721,9 +742,12 @@ impl Level {
         let surface = |e: &Element| hash(e, H_PHYSICS_NAME);
         let terrain_collision = all.iter().filter(|e| e.name == h("blocks")).map(|e| surface(e))
             .filter(|&n| n != 0 && n != h("")).collect();
+        // (a blocker without a physics-id is a BLOCKER: the parse's default isn't traced, and
+        // every blocker of the game's 54 levels has one, 4 or 6)
         let blockers = all.iter().filter(|e| e.name == h("blocker"))
-            .filter_map(|e| Some((surface(e), transform(&floats(e.child(h("transform"))))?, hash(e, h("object-instance")))))
-            .filter(|(n, _, _)| *n != 0 && *n != h("")).collect();
+            .filter_map(|e| Some((surface(e), transform(&floats(e.child(h("transform"))))?, hash(e, h("object-instance")),
+                                  e.attr(H_PHYSICS_ID).and_then(|v| v.as_i64()).map_or(BLOCKER_PID, |k| k as u8))))
+            .filter(|(n, _, _, _)| *n != 0 && *n != h("")).collect();
         // the light-objects, each by its type's light-type (`Game::light_types`)
         let (mut lights, mut lamps, mut other_lights) = (vec![], vec![], vec![]);
         for e in all.iter().filter(|e| e.name == h("light-object")) {
