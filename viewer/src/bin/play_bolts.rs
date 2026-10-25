@@ -242,9 +242,11 @@ pub struct BoltSystems;
 
 /// The systems, after the characters have moved and fired (`update_player`): the bolts in flight,
 /// then this frame's new ones (a bolt is drawn at the muzzle in its shot's frame and flies from
-/// the next); before the grenades (a Sentry a bolt struck goes off this frame, play_sentry.rs's
-/// `trip` among them), the scenery (play_scenery.rs, `ObjectHits`), the pickups (`Sweeps`), the
-/// hits' blood (play_fx.rs) and the sounds.
+/// the next); before the shots are drawn and cleared (`update_weapons`, `projectiles`: named, where
+/// it held only through `play_sounds`' place in play.rs's chain before #287), the grenades (a
+/// Sentry a bolt struck goes off this frame, play_sentry.rs's `trip` among them), the scenery
+/// (play_scenery.rs, `ObjectHits`), the pickups (`Sweeps`), the hits' blood (play_fx.rs) and the
+/// sounds.
 pub fn plugin(app: &mut App) {
     app.init_resource::<BoltState>().init_resource::<Sweeps>()
         .add_systems(OnEnter(AppState::Playing), |mut state: ResMut<BoltState>, mut sweeps: ResMut<Sweeps>| {
@@ -253,7 +255,7 @@ pub fn plugin(app: &mut App) {
         })
         .add_systems(Update, (fly_bolts, launch_bolts).chain().in_set(BoltSystems)
             .after(update_player).before(super::grenade::GrenadeSystems).before(super::pickups::PickupSystems)
-            .before(super::fx::FxSystems).before(play_sounds).run_if(in_state(AppState::Playing)));
+            .before(super::fx::FxSystems).before(play_sounds).before(update_weapons).run_if(in_state(AppState::Playing)));
 }
 
 /// What a sweep (or a pass-through ray, play_rays.rs) met: how far along, what, which body it
@@ -291,8 +293,9 @@ impl What {
     }
 }
 
-/// One thing a sweep or a ray can meet, by its body (the game's ray results come one per body,
-/// FUN_000dd8e0, and a bolt leaves out the one it last passed through, +0x40).
+/// One thing a sweep or a ray can meet, by its body (a sweep's single-hit query meets a body at
+/// its nearest face, FUN_000dd8e0, and a bolt leaves out the one it last passed through, +0x40; a
+/// pass-through ray meets a body at each face it crosses, `Arena::ray_shot_all`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Struck {
     /// a body of the map's collision (`Arena::ray_shot`'s, `Tri::body`)
@@ -355,21 +358,53 @@ fn world_met(from: Vec3, dir: Vec3, len: f32, skip: Option<Struck>) -> Option<Me
     shot.into_iter().chain(floor_met(from, dir, len, skip, arena.is_none())).min_by(|a, b| a.t.total_cmp(&b.t))
 }
 
-/// Every body of the world a pass-through ray's line meets within `len` m of `from`, once each,
-/// nearest first (play_rays.rs; `Arena::ray_shot_all`, and the flat test floor's own things).
+/// Every crossing of the world's surfaces a pass-through ray's line makes within `len` m of
+/// `from`, nearest first (play_rays.rs): the map's (`Arena::ray_shot_all`: a closed object twice,
+/// where the line goes in and where it comes out, #287) and, on the flat test floor, its ground
+/// and its own things (`floor_all`).
 pub(super) fn world_all(from: Vec3, dir: Vec3, len: f32) -> Vec<Met> {
     let arena = world::arena();
     let mut out: Vec<Met> = arena.as_ref().map(|a| a.ray_shot_all(from, dir, len).into_iter().map(arena_met).collect()).unwrap_or_default();
     if arena.as_ref().is_none_or(|a| a.is_flat()) {
-        out.extend(floor_met(from, dir, len, None, arena.is_none()));
+        out.extend(floor_all(from, dir, len, arena.is_none()));
     }
     out.sort_by(|a, b| a.t.total_cmp(&b.t));
+    out
+}
+
+/// `floor_met` for the multi-hit ray (`world_all`): its ground (with no arena), and each pillar's
+/// and placed breakable's box twice, where the line goes in and where it comes out, the way out
+/// with the normal of the face it leaves by, turned back along the line as a ray result's is.
+fn floor_all(from: Vec3, dir: Vec3, len: f32, ground: bool) -> Vec<Met> {
+    let mut out: Vec<Met> = floor_met(from, dir, len, None, ground).into_iter().filter(|m| !matches!(m.id, Struck::Pillar(_) | Struck::Placed(_))).collect();
+    for (i, c) in pillars().enumerate() {
+        let half = Vec3::new(0.3, 1.5, 0.3);
+        let Some((t0, t1)) = ray_aabb_both(from, dir, c - half, c + half) else { continue };
+        for (t, out_way) in [(t0, false), (t1, true)].into_iter().filter(|&(t, _)| t > 1e-3 && t <= len) {
+            let d = (from + dir * t - c) / half;
+            let k = if d.x.abs() >= d.y.abs().max(d.z.abs()) { 0 } else if d.y.abs() >= d.z.abs() { 1 } else { 2 };
+            let mut n = Vec3::ZERO;
+            n[k] = d[k].signum();
+            // (the face's outward normal; on the way out it faces along the line: turned back)
+            let n = if out_way { -n } else { n };
+            out.push(Met { t, what: What::World { material: 0, terrain: false, breakable: None }, id: Struck::Pillar(i), normal: n });
+        }
+    }
+    for (t, i, _) in super::scenery::crossings_placed(from, dir, len) {
+        out.push(Met { t, what: What::World { material: 0, terrain: false, breakable: Some(i) }, id: Struck::Placed(i), normal: -dir });
+    }
     out
 }
 
 /// Where a ray (from `origin` along unit `dir`) enters the box `lo`..`hi`, if it does ahead of
 /// its start (play.rs `ray_hit`'s pillar test).
 fn ray_aabb(origin: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
+    ray_aabb_both(origin, dir, lo, hi).map(|(t0, _)| t0).filter(|&t0| t0 > 0.0)
+}
+
+/// Where a ray (from `origin` along unit `dir`) enters the box `lo`..`hi` and where it leaves it,
+/// if it meets it (the way in at 0 if it starts inside).
+fn ray_aabb_both(origin: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<(f32, f32)> {
     let (mut t0, mut t1) = (0.0f32, f32::MAX);
     for k in 0..3 {
         if dir[k].abs() < 1e-6 {
@@ -382,7 +417,7 @@ fn ray_aabb(origin: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
             t1 = t1.min(a.max(b));
         }
     }
-    (t0 <= t1 && t0 > 0.0).then_some(t0)
+    (t0 <= t1).then_some((t0, t1))
 }
 
 /// The characters (and their bodies on the ground) and the Sentries a line from `from` along

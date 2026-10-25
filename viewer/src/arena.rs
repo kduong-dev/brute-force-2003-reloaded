@@ -115,9 +115,9 @@ struct Tri {
     blocker: bool,
     /// the physics body it stands for (`Arena::ray_shot`): one per terrain block, per placed
     /// object, per blocker, per broken object's remains and per piece the test tools put down.
-    /// The game's ray queries report a body once (FUN_000dd8e0 fills one result per body), and a
-    /// bolt that passes through an object leaves that body out of its next sweep (FUN_00225440's
-    /// +0x40)
+    /// A single-hit query meets a body once, at its nearest face; the multi-hit ray meets each
+    /// face it crosses (`Arena::ray_shot_all`, #287); and a bolt that passes through an object
+    /// leaves that body out of its next sweep (FUN_00225440's +0x40)
     body: u32,
 }
 
@@ -1722,14 +1722,24 @@ impl Arena {
                        body: tri.body, breakable: tri.piece.filter(|p| !p.1).map(|p| p.0 as usize) })
     }
 
-    /// Every body a shot's ray meets within `max`, once each where it first meets it, nearest
-    /// first (`ShotHit`, by `ray_shot`'s filter): the multi-hit ray of an instant ray that passes
-    /// through what it hits (FUN_00230400 casts FUN_000dd8e0 with its list, which keeps one result
-    /// per body, sorted). Its filter leaves the liquids out too (its +0x110, 0x400000: object type
-    /// 22), as `solid` does every query's.
+    /// Every crossing of a body's surface a shot's ray makes within `max`, nearest first
+    /// (`ShotHit`, by `ray_shot`'s filter): the multi-hit ray of an instant ray that passes through
+    /// what it hits (FUN_00230400 casts FUN_000dd8e0 with its list). That query's collector
+    /// (vtable 0x39efc8, its hit method 0x2b7af0) keeps every hit the ray caster hands it, up to
+    /// 256, each in a table keyed by the record itself (FUN_002b8ea0): nothing merges the hits of
+    /// one body. So a closed object is met twice, where the ray goes in and where it comes out
+    /// (#287: the Rail RVR's ray takes two hits off the supply crate in take02, the base gate's
+    /// leaf in take01 and take03, and the objects behind the Heavy in take05; the Rail CLVR's off
+    /// the object behind the Shrike in take17), and the terrain's floor once (take04). That the
+    /// caster reports each face it crosses is read from those takes: the faces come as Ipion's
+    /// flat ledges (`Tri::front`), not traced inside the caster. A face's twin (the same corners
+    /// wound the other way, met at the same distance) and an edge two faces share are one
+    /// crossing: of crossings of a body within FRONT_SLACK of each other the first is kept, with
+    /// the material of the one met from its front (`ray_material`'s twins). Its filter leaves the
+    /// liquids out too (its +0x110, 0x400000: object type 22), as `solid` does every query's.
     pub fn ray_shot_all(&self, origin: Vec3, dir: Vec3, max: f32) -> Vec<ShotHit> {
-        // the nearest crossing of each body's triangles (and whether it's met from the front)
-        let mut first: HashMap<u32, (f32, usize)> = HashMap::new();
+        // every face the ray crosses: (how far along, the triangle)
+        let mut crossings: Vec<(f32, usize)> = vec![];
         let mut seen = HashSet::new();
         let flat = Vec2::new(dir.x, dir.z).length();
         let step = if flat > 1e-4 { (CELL * 0.5 / flat).min(max) } else { max };
@@ -1744,13 +1754,8 @@ impl Arena {
                 if !self.solid(tri) || tri.blocker {
                     continue;
                 }
-                let Some(d) = ray_triangle(&tri.v, origin, dir).filter(|&d| d > 1e-3 && d <= max) else { continue };
-                let e = first.entry(tri.body).or_insert((d, i as usize));
-                // (of a body's faces met within FRONT_SLACK of its nearest, the one met from its
-                // front: `ray_material`'s twins)
-                let front = |j: usize| (self.tris[j].v[1] - self.tris[j].v[0]).cross(self.tris[j].v[2] - self.tris[j].v[0]).dot(dir) < 0.0;
-                if d < e.0 - FRONT_SLACK || (d <= e.0 + FRONT_SLACK && front(i as usize) && !front(e.1)) {
-                    *e = (d.min(e.0), i as usize);
+                if let Some(d) = ray_triangle(&tri.v, origin, dir).filter(|&d| d > 1e-3 && d <= max) {
+                    crossings.push((d, i as usize));
                 }
             }
             if t >= max {
@@ -1758,10 +1763,28 @@ impl Arena {
             }
             t = (t + step).min(max);
         }
-        let mut out: Vec<ShotHit> = first.into_iter().map(|(body, (t, i))| {
+        crossings.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let front = |j: usize| (self.tris[j].v[1] - self.tris[j].v[0]).cross(self.tris[j].v[2] - self.tris[j].v[0]).dot(dir) < 0.0;
+        // one crossing per twin pair or shared edge: (how far along, the triangle it takes its
+        // material from)
+        let mut kept: Vec<(f32, usize)> = vec![];
+        for (d, i) in crossings {
+            let body = self.tris[i].body;
+            let twin = kept.iter_mut().rev().take_while(|k| d - k.0 <= FRONT_SLACK).find(|k| self.tris[k.1].body == body);
+            match twin {
+                // (the face met from its front carries the material and the flags)
+                Some(k) => {
+                    if front(i) && !front(k.1) {
+                        k.1 = i;
+                    }
+                }
+                None => kept.push((d, i)),
+            }
+        }
+        let mut out: Vec<ShotHit> = kept.into_iter().map(|(t, i)| {
             let tri = &self.tris[i];
             let n = (tri.v[1] - tri.v[0]).cross(tri.v[2] - tri.v[0]).normalize_or(Vec3::Y);
-            ShotHit { t, normal: if n.dot(dir) > 0.0 { -n } else { n }, material: tri.material & MATERIAL_ID, terrain: tri.terrain, body,
+            ShotHit { t, normal: if n.dot(dir) > 0.0 { -n } else { n }, material: tri.material & MATERIAL_ID, terrain: tri.terrain, body: tri.body,
                       breakable: tri.piece.filter(|p| !p.1).map(|p| p.0 as usize) }
         }).collect();
         // (the flat floor's ground, met from above)
@@ -2221,5 +2244,31 @@ mod tests {
         assert!(m.distance(Vec2::new(0.0, 1.0)) < 1e-6);
         assert_eq!(slide_off(Vec2::new(1.0, 1.0), &[Vec2::new(-1.0, 0.0), Vec2::new(0.0, -1.0)]), Vec2::ZERO);
         assert!(slide_off(Vec2::new(-1.0, 1.0), &[Vec2::new(-1.0, 0.0)]).distance(Vec2::new(-1.0, 1.0)) < 1e-6);
+    }
+
+    /// #287: the multi-hit ray (`ray_shot_all`) meets a closed box twice, where it goes in and
+    /// where it comes out, twinned or not (a twin pair is one crossing), each with its normal
+    /// turned back along the ray; along the diagonal two of a face's triangles share it meets the
+    /// face once; started inside the box, once; the flat floor's ground, met from above, once.
+    #[test]
+    fn the_multi_hit_ray_meets_a_box_where_it_goes_in_and_comes_out() {
+        for twinned in [false, true] {
+            let a = arena_with(&box_tris(Vec3::new(4.0, 0.0, -1.0), Vec3::new(6.0, 2.0, 1.0)), twinned);
+            // (box_tris splits each face from its first corner to its third: at y 1, z 0 the ray
+            // runs through the diagonal of the faces at x 4 and x 6)
+            for start in [Vec3::new(0.0, 1.0, 0.3), Vec3::new(0.0, 1.0, 0.0)] {
+                let hits = a.ray_shot_all(start, Vec3::X, 20.0);
+                let ts: Vec<f32> = hits.iter().map(|h| h.t).collect();
+                assert_eq!(hits.len(), 2, "{ts:?} from {start} ({twinned})");
+                assert!((ts[0] - 4.0).abs() < 1e-4 && (ts[1] - 6.0).abs() < 1e-4, "{ts:?} ({twinned})");
+                assert!(hits.iter().all(|h| h.normal.dot(Vec3::X) < -0.99 && h.body == 0 && !h.terrain), "{twinned}");
+            }
+            let inside = a.ray_shot_all(Vec3::new(5.0, 1.0, 0.3), Vec3::X, 20.0);
+            assert_eq!(inside.len(), 1, "{twinned}");
+            assert!((inside[0].t - 1.0).abs() < 1e-4);
+        }
+        let ground = Arena::flat(0.0).ray_shot_all(Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.6, -0.8, 0.0), 20.0);
+        assert_eq!(ground.len(), 1);
+        assert!(ground[0].terrain && (ground[0].t - 2.5).abs() < 1e-4);
     }
 }

@@ -1059,7 +1059,11 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     round a short orange streak at the strike end, gone into the pillar within 0.1 s, as #63
     take01 shows it (f325-f328 of the take at 60 fps: the orange streak below the reticle,
     shrinking into it); the Minigun's on every 4th the same (`BF_TEST_WEAPON="RVG50 Minigun"`).
-    Scoped (`BF_TEST_FIRE=1`) it comes in from the right to the reticle.
+    Scoped (`BF_TEST_FIRE=1`) it comes in from the right to the reticle. The phase: a new weapon
+    object's counter starts at 0 (FUN_0022d330 zeroes +0x290 at 0x22d419; only FUN_002317e0
+    writes it after), so a fresh gun's first round carries the tracer, as the demo's does; #63
+    take01's first tracer on its second tap is the snapshot's counter (its MK had fired 3k + 2
+    rounds before it, the only start the code allows), not a different rule (#287).
   * The L-Shot-75 at e40's cliff 25 m out (#62 take05's spot: `BF_MAP=e40 BF_CHARACTER=1
     BF_TEST_WEAPON=L-Shot-75 BF_TEST_GOTO=-16.16,152.62,-16.66,152.52 BF_CAMERA_PITCH=-0.05
     BF_TEST_TRIGGER=2.0-2.08`, 27 m to the hit): a thin pale line from beside Flint's head to just
@@ -1072,11 +1076,59 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     turning blue over ~0.15 s, then blue sparks at the hit, as take01 f19-f41. The ray goes
     through the gate and stops at a wall 38.3 m out, the beam's length.
   * Not matched: in the L-Shot's scope the demo draws more rings than take12's three or four,
-    and a smoke cloud far denser than its faint haze; the Rails' rings are many more than #67
-    take06's four or five (rgun_perp_s.emt's 488 a second for 0.22 s, read as the demo's count).
-    The beams keep the demo's count, which spreads a frame's particles along the emitter's move;
-    whether the game's count (FUN_00065800) puts a frame's batch at one point, or where the
-    difference is, isn't traced.
+    and a smoke cloud far denser than its faint haze; the Rails' rings make a bulb round the
+    shooter's head where #67 take01 / take06 show a thin core with a few rings farther out (#287,
+    still open). What #287 traced:
+    * The count and its spread are the code's, and the demo's: FUN_00065800 cuts each update's
+      count (trunc(elapsed x Emitter_Frequency), the emit count's keys passed, x the LOD curve)
+      and spreads the batch over the emitter's move since its last batch, in place and age
+      (0x65a73-0x65aa7 the move over the count, 0x65ca2-0x65ce5 each particle stepped back by it
+      and its age by elapsed / count), all at the emitter's point when the particle system's frame
+      is the emitter's own (0x65c3a-0x65c8b zero the steps). rgun_perp_s.emt: 16 rings a game
+      frame for 0.21 s, strewn by the cube's spawn (0x64e30) over [0, 2 x Height) along the ray,
+      Height growing 116 m a second; the demo's count (its rate, a render frame at a time) gives
+      the same 16 at 30 fps (`BF_ALE_LOG`).
+    * A curve's ends (FUN_002dfc10): its flags' low four bits say what it does before its first
+      key (0 holds it) and the next four after its last (1 repeats the keys' span from the first
+      key, 2 repeats it adding the change, 3 runs it back and forth, 4 goes on along the end key's
+      tangent); between keys it's a Hermite curve from their tangents (FUN_002df650,
+      FUN_002df730). The demo repeats a flagged curve from 0 over its last key's time
+      (`Curve::at`) and runs straight between keys. rgun_perp_s's life (48: back and forth) and
+      tracer_snipe's (16: repeat) come within a few hundredths of a second either way: not the
+      difference.
+    * What differs: seen from behind the shooter, the demo's rings near the gun (0.2-1 m across,
+      3-5 m from the camera) bulge round the right of Hawk's head. The bulb is the rings alone:
+      drawn without rgun_perp_s's pair (a local build), the side arcs and the core come up from
+      Hawk's helmet to the reticle, red turning blue, as #67 take06 f013-f019; drawn without the
+      arcs, the bulb stays. At take06's spot (`-- --test BF_MAP=e40 BF_CHARACTER=2
+      BF_TEST_WEAPON="Rail RVR;Foley 356 Tact" BF_TEST_GOTO=-16.2,152.68,-16.69,152.58
+      BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.05 BF_TEST_TRIGGER=2.0-2.08`, frames 65-68 at 30 fps)
+      the demo draws a dozen rings or more, up to ~100 px across beside the helmet, where take06
+      shows five or six, ~15 px by the reticle to ~45 px just over the helmet (f011-f012, both
+      1280 x 720). The camera differs a little too: at the shot it's still closing in on the
+      raised gun (the boom 2.96 m to 1.24 m over the frames round it, `BF_CAMERA_LOG`), the
+      helmet ~116 px across where take06's is ~100. #287 take05's side view shows no ring (the
+      game fades a quad seen within 20 degrees of edge-on, FUN_002a1a50's AngleFadeOut, which the
+      demo doesn't draw) and nothing within ~3.5 m of the muzzle after the first game frame: the
+      side arcs' near end 3.2 m out in the first, 5.3 m in the second, 5.8 m in the third (frames
+      41-46 at 60 fps). What takes the near rings away isn't found:
+      * rgun-mkill, the kill plane that sweeps out from the muzzle, is too slow by its curve (0.31
+        m behind the muzzle to 8.7 m out over 0.04-0.46 s), and the arcs' lives (0.17-0.21 s)
+        outlast it.
+      * The spawn asks the appearance's fields first (its vtable +0xb4, 0x60f90, through each
+        field's +0xac, the kill field's 0x66650): a particle a kill plane would take isn't made.
+        rgun-mkill starts behind the muzzle, so that doesn't thin the near rings either, and the
+        add (+0xb8, 0x2a14b0) draws from a pool that grows: no cap on the count.
+      * The emitter's time: the game steps it before it reads a curve (FUN_00065800 calls the
+        node's step, 0x2a5b10, first), so a beam's first batch is read one game frame in, where
+        the demo's beams read theirs at the frame's start. Tried for the beams: the first rings
+        spread over 14.2 m instead of 6.4 m and the first arc starts 3.4 m out (take05's 3.2 m),
+        but the bulb stays, and with the demo's own count for beams (no EmitCount keys: the
+        game's first batch of rgun_beam.emt is three points, its two keys and one by its rate,
+        where the demo's is one, then 12.5 m out) the core and the arcs start well above the
+        helmet where take06's come up from it. Not applied.
+      * So it's a code question (the analyst); the L-Shot's smoke along the line to the reticle,
+        where take12's gathers at the lower right near the gun, may share it.
 * **The Minigun's spin** (#68; `src/bin/play_minigun.rs`): its item set is IFSET_MINIGUN
   (function-type 16), whose per-frame hook FUN_00147f90 (vtable 0x39b8f8, the item-set factory
   0x146920; the analyst's reading, todo/weapons-plan/answers-batch1.md §12) keeps a spin level:
@@ -1484,15 +1536,23 @@ other gun 0, 0 (the Saryl-45's pass flag has nothing to spend).
   1: a blade ends on e40's cliff. Each thing on the way is dealt its hit (its effects, hole,
   sound; a breakable takes the roll).
 * **An instant ray** (FUN_00230860): one hit, or n1 + n2 with the pass flag, the latter through
-  the multi-hit ray (FUN_00230400: every body on the line once, nearest first, no blockers, no
-  liquids; `Arena::ray_shot_all`, the characters and their bodies on the ground, the Sentries).
-  Each hit takes one off a budget, a character not hit yet n2, anything else n1 (the terrain
-  counts), and is dealt with a roll of its own (FUN_002318e0 -> 0x22d0b0); after the hit that
-  drives a budget below 0 the ray stops. So **the Rails go through one object or wall and every
-  character on their line**, and stop at the second wall; with no second wall they go on to
-  their range. The demo deals a Rail's hits in its shot's frame (the game's ray deals them as it's
-  cast), where its other rays land theirs at INSTANT_SHOT; the shot's `dist` becomes where it
-  stopped (its beam's length, § Shots). One hit (every other gun) stays play.rs's.
+  the multi-hit ray (FUN_00230400, nearest first, no blockers, no liquids, at most 256 hits).
+  Its collector (vtable 0x39efc8, hit method 0x2b7af0) keeps every hit the ray caster hands it,
+  merging none by their body (FUN_002b8ea0 keys its table by the record), so a closed object is
+  met twice, where the ray goes in and where it comes out, and the terrain's floor once
+  (`Arena::ray_shot_all`: each face it crosses, a face's twin and a shared edge once; the test
+  floor's pillars and placed breakables likewise, play_bolts.rs `floor_all`). A character is met
+  once (`units_met`: the loop passes over one it has met, 0x230bf9-0x230c14, neither dealt nor
+  counted). Each hit takes one off a budget, a character not hit yet n2, anything else n1, and is
+  dealt with a roll of its own (FUN_002318e0 -> 0x22d0b0); after the hit that drives a budget
+  below 0 the ray stops. So **the Rails go through every character on their line and stop at the
+  far side of the first object they enter**, dealing it two rolls, and never reach a character
+  behind it; fired into the ground they go through the floor (one crossing) into a character
+  below and on to the next surface. Before #287 a body was met once, so a Rail went through a
+  crate or a gate leaf into the enemy behind it and stopped at the second wall: #287's takes show
+  otherwise (below). The demo deals a Rail's hits in its shot's frame (the game's ray deals them
+  as it's cast), where its other rays land theirs at INSTANT_SHOT; the shot's `dist` becomes
+  where it stopped (its beam's length, § Shots). One hit (every other gun) stays play.rs's.
 * Not done: a bolt's push on the loose object it ends on and a ray's push x3 (the demo's loose
   pickups are knocked by the lines, `Sweeps`); FUN_00230400's x3 on a character while the shooter
   is scoped (no pass-through gun has a scope); the squad AI's ray given up at a squadmate in the way
@@ -1505,7 +1565,37 @@ other gun 0, 0 (the Saryl-45's pass flag has nothing to spend).
 Soldier (NPC 1) (walls 1 characters 499 left)") and where it stops ("; it stops there", or "goes
 on to its full range, 90.0 m"). `cargo test --bin bf_play bolts` checks the bolt's rule (five
 bounces off objects and the end on the sixth, on the terrain and on a character; n2 once n1 is
-out; five passes and the end at a character).
+out; five passes and the end at a character); `cargo test --lib multi_hit` the multi-hit ray's
+crossings (a box twice, twinned or not and along a face's diagonal; once from inside it; the flat
+floor's ground once).
+
+Against #287's takes (`todo/287-weapon-shots/`, take-log.md's hit logs: every take-damage the
+game dealt, in order), on e34 with Hawk (`-- --test BF_MAP=e34 BF_CHARACTER=2
+BF_TEST_WEAPON="Rail RVR;Foley 356 Tact" BF_TEST_GO_AT=100 BF_TEST_INSTANT_KILL=0
+BF_TEST_NPC_HP=1.0,all,300 BF_TEST_TRIGGER=3.0-3.08,5.6-5.68 BF_SHOT_LOG=1 BF_COMBAT_LOG=1
+BF_SCENERY_LOG=1`):
+* **Two enemies in line** (take01: `BF_TEST_GOTO=-48.0,23.35,-49.61,30.16 BF_CAMERA_PITCH=-0.10
+  BF_TEST_NPC="0.3,shrike heavy@e34,enemy,frozen,-49.61,30.16;0.3,h_e96829a0,enemy,frozen,-50.72,35.96"`):
+  each ray hits the Heavy 6.0 m out, the Soldier 12.0 m out, then the base gate's leaf (breakable
+  56, 40 hp) where it goes in, 17.8 m out (walls 1 -> 0), and where it comes out, 18.2 m (-> -1),
+  and stops there. take01's every shot: the Heavy, the Soldier (or the Soldier alone), then the
+  leaf 7f1e2a00 twice. Before #287 the demo's met the leaf once and went on to a wall 38 m out.
+* **An enemy behind a crate** (take02: `BF_TEST_GOTO=-43.47,20.97,-41.89,32.36
+  BF_CAMERA_PITCH=-0.16 BF_TEST_NPC="0.3,shrike heavy@e34,enemy,frozen,-41.89,32.36"`): the ray
+  meets the yard's supply crate (h_e45338bd, the take's, breakable 460) 7.0 and 7.7 m out, two
+  rolls (16.36, 15.79), and stops: the Heavy behind isn't hit. take02: the crate (its hp raised to
+  500) took two rolls a shot, five shots, and the Heavy none. The demo's crate (25 hp) breaks on
+  the first shot, and the next goes on into the Heavy.
+* **An enemy behind the gate's leaf** (take03: `BF_TEST_GOTO=-52.2,34.5,-52.2,41.3
+  BF_CAMERA_PITCH=-0.10 BF_TEST_NPC="0.3,shrike heavy@e34,enemy,frozen,-52.2,43.6"`): the leaf 6.2
+  and 6.6 m out (14.43, 16.59), then the ray stops; the Heavy 2.3 m behind isn't hit, as take03's
+  ten leaf hits and none on the Heavy. The leaf, dead at 0 hp, stays standing and blocking (#263).
+* **Into the ground** (take04's spot, `BF_TEST_GOTO=-48.0,23.35,-48.99,27.64
+  BF_CAMERA_PITCH=-0.45`): the floor 4.7 m out is one crossing (walls 0) and the ray goes on to its
+  90 m, so a character under the floor would be hit, as take04's Heavy 2 m under it took every
+  shot. The test hooks can't put one there (`BF_TEST_NPC` stands it on a floor): not run.
+* take05 (the Heavy with two objects behind it, from the side) and take17 (the CLVR, a Shrike
+  then the object 7f20f200 behind it twice) follow the same rule (#66).
 
 Verified (`-- --test BF_NO_SQUAD=1 BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=4.5,20,4.5,20
 BF_TEST_NPC_HP=1.0,all,300 BF_SHOT_LOG=1 BF_COMBAT_LOG=1 BF_CAPTURE_FPS=30`, dm Shrike Soldiers
@@ -1514,10 +1604,12 @@ frozen on the line):
   BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,13;0.3,shrike soldier@dm,enemy,frozen,4.5,8"
   BF_TEST_TRIGGER=2.0-2.08,3.5-3.58`): each shot hits both, 6.0 and 11.0 m out (14.43 and 14.64 x
   their forearms 0.5 x 1.4, their stamina shields taking it), goes through the ground 67.8 m out
-  (its one wall) and on to its 90 m.
-* **Rail RVR through a crate** (supply crates put down 4 and 16 m out and a Shrike 10 m out,
-  `BF_TEST_PLACE="0.5,supply crate,4.5,16,0;0.5,supply crate,4.5,4,0"`): through the first crate (walls 1 -> 0, it takes 14.43), the Shrike 9.0 m out, and it stops at the second
-  crate 14.5 m out (walls -1, it takes 15.17); the second shot breaks both.
+  (its one wall, one crossing) and on to its 90 m.
+* **Rail RVR at a crate** (supply crates put down 4 and 16 m out and a Shrike 10 m out,
+  `BF_TEST_PLACE="0.5,supply crate,4.5,16,0;0.5,supply crate,4.5,4,0"`, #287's rule): the first
+  shot meets the near crate 2.5 and 4.2 m out (walls 0, then -1) and stops; it breaks, and the
+  second goes on into the Shrike 9.1 m out and stops at the far crate's far side, 14.5 and 16.3 m.
+  Before #287 the first shot went through the near crate into the Shrike.
 * **Ion Beamer through two crates** (`BF_TEST_WEAPON="Ion Beamer" BF_CAMERA_PITCH=-0.2`, crates
   4 and 8 m out, Shrikes 14 and 19 m out): the bolt passes the first on its sweep at frame
   3 (n1 5 -> 4) and the second at frame 6 (-> 3), each taking the launch roll 14.44, and stops at
@@ -1545,19 +1637,32 @@ campaign level whose squad spawn-triggers fire at once (m03_a) moves the charact
 `BF_TEST_GOTO` start: `BF_TEST_FREECAM` straight down over the spot, `BF_TEST_TELEPORT` there, and
 `BF_TEST_GO_AT=100` so the autopilot only aims (from the GOTO's start toward its goal).
 
-**Feral Cutter** (#53, Brutus; `BF_MAP=m03_a BF_CHARACTER=0 BF_TEST_WEAPON="Feral Cutter"
-BF_TEST_GOTO=-182.6,-43.5,-188.6,-52.3 BF_TEST_GO_AT=100
+**Feral Cutter** (#53, Brutus; `-- --test BF_MAP=m03_a BF_CHARACTER=0 BF_TEST_WEAPON="Feral Cutter"
+BF_TEST_GOTO=-182.6,-43.5,-186.90,-52.59 BF_TEST_GO_AT=100
 BF_TEST_FREECAM="0.3,-182.6,45,-41.88,0,-89.9" BF_TEST_TELEPORT=0.5 BF_TEST_FREECAM_OFF=0.7
-BF_CAMERA_PITCH=-0.05`, take01's spot, the stone tower 10 m out):
+BF_CAMERA_PITCH=-0.05`, take01's spot, the stone tower 10 m out; the goal is #287 take07's first
+hit, where its blade left along bearing -115, 9 degrees right of Brutus's facing -124, which the
+recipe aimed at before #287):
 * Each blade strikes the tower (an object, material 3) on its first sweep, 0.1 s after the shot
   (take01: the HUD's 29 -> 28 at f11 of 5.20 s on, the white star at f17), with the white star of
   its explosion and sparks (§ Bolts, "The bullet's explosion"), its ribbon drawn from the gun to
-  the tower and bending off it, and bounces off to the left and up (take01: the blades' later
-  flashes up-left of the tower). Where the bounced blade lands differs: take01's second flash comes
-  0.2 s after the shot at the tower's left edge, the demo's blades fly 35 m to the ground (the
-  tower's facet the blade meets, and so the bounce, isn't measured: shot C1 of
-  todo/drafts/done/bolt-ricochet-passthrough.md, a wall at 45 degrees seen from the side). It
-  leaves the cutter's scorch (h_1801e63d).
+  the tower and bending off it. Then, as #287 take07's breakpoint log has it, blade by blade
+  (the bolt's hits, normals and new ways), the blade bounces off the tower's block (breakable 46,
+  type h_e989e46e, the take's 7f1de400) along [-0.22, 0.19, 0.96] (the take: [-0.19, 0.22,
+  0.96]), meets the flat wall up and to the left 5.4 m on at 0.2 s (breakable 281, the take's
+  7f20ee00, h_0536a5bc 5.9 m on) and turns along [0.41, 0.17, 0.89] ([0.39, 0.20, 0.90]), then a
+  third object 9.6 m on at 0.4 s (breakable 336; the take's 7f21ce00) along [0.99, -0.08, -0.13]
+  ([0.98, -0.06, -0.17]), and flies on to its life's end. That second hit is take01's and take06's
+  big flash up-left of the tower 0.1 s after the first (#287 take06 f12 and f15 at 30 fps; the
+  demo's frames 98 and 101 of a capture at 30 fps). The demo's blades had flown 35-45 m to the
+  ground: the recipe aimed at Brutus's facing, 11 degrees left of the take's blade, which met
+  another facet of the tower. It leaves the cutter's scorch (h_1801e63d).
+* A blade fired straight at a wall comes back past its owner and never hurts him (#287 takes
+  10-13: Brutus's 105 hp all through, take13's second blade reaching the floor at his feet; the
+  sweep's filter leaves the shooter out, FUN_00225440's +0x48). The demo's
+  (`BF_TEST_GOTO=-182.73,-46.85,-188.07,-46.9 BF_CAMERA_PITCH=-0.10`, take13's spot, its freecam
+  and teleport as above) bounce off the wall (breakable 281) 4.4 m out back past Brutus to the
+  ground or their life's end, with no hit on him.
 * Held fire one blade every 0.38-0.47 s (2.5 a second; take01: 26 -> 18 in 3.5 s).
 * Reload (`--test BF_CHARACTER=0 BF_TEST_WEAPON=1545a4e4 BF_TEST_CLIP=3 BF_TEST_TRIGGER=2.5-7.0
   BF_AMMO_LOG=1`; the label also names the enemies' variant h_1bb3c9c7, so the hex): the clip
@@ -1579,7 +1684,7 @@ BF_CAMERA_PITCH=-0.05`, take01's spot, the stone tower 10 m out):
 bounces (#238) and the explosion (#53) are the Feral Cutter's, with its own data: 100 m/s, 80 m,
 4 a second, 10.5-13.5, plut_cuttertrail_ribbon in flight and plut_cutter_hit where it strikes.
 The bullet's `<mirv>` count 3 is dead data: its mode is 0, NO_MIRV, plan §2):
-* take01's spot, the cliff 10 m out (`BF_MAP=e40 BF_CHARACTER=0 BF_TEST_WEAPON="PU Cutter"
+* take01's spot, the cliff 10 m out (`-- --test BF_MAP=e40 BF_CHARACTER=0 BF_TEST_WEAPON="PU Cutter"
   BF_TEST_GOTO=-30.73,151.62,-31.65,151.23 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.06
   BF_TEST_TRIGGER=2.0-2.08,3.5-4.5`): an orange streak from the gun to the reticle, the white star
   at the cliff with spikes after it, the dark mark; held fire one every 0.27 s (3.75 a second;
@@ -1600,6 +1705,16 @@ The bullet's `<mirv>` count 3 is dead data: its mode is 0, NO_MIRV, plan §2):
   just over it to the standing stone 25 m out and bounce off it, as take03's held fire missed
   the enemy and its blades left the stone to the right (why the held fire's blades go higher
   isn't looked into).
+* A blade on the body (#287): take03 shows the white star, then a green blotch on the chest with
+  sparks for ~5 frames (f13-f18 of 3.0 s on at 30 fps). The demo washed the whole Shrike
+  cyan-white for 6 frames: the two cutter lights, the explosion's (cutter_hit's light-effect)
+  and the flesh hit's (wmat_fleshit_cutter's, made by hand in play_fx.rs, `CUTTER_LIGHT`). Both
+  left out, the demo's hit is take03's blotch; the explosion's alone left out, the wash stayed:
+  the flesh's light did it. It stood 0.3 m off the body (the demo's), where its effect type puts it 2.70 m back along
+  the shot (its light-effect light_hit_cutter, alignment 0, its emitter's tz 2.70: `Glow::back`;
+  the explosion's, played from the data, already stood there). There, the body shows the blotch
+  and a faint light, as take03 (the capture's frames 98-105 of `BF_TEST_TRIGGER=3.0-3.08
+  BF_CAPTURE_FPS=30`). The LZRs' flesh light (light_hit_laser) moved the same way, 2.67 m back.
 * The bounces off e40's standing stone (take05, take03): § Ricochet and pass-through above. A 25
   m hit comes on the third sweep, 0.3 s after the shot (take07: ~0.3 s), at the same damage (a
   bolt has no falloff; take07 17-18 a hit): the sweep's rule, not run again here.
@@ -1609,7 +1724,7 @@ The bullet's `<mirv>` count 3 is dead data: its mode is 0, NO_MIRV, plan §2):
 (#238) and the beam (#237), from its data: an instant ray, 90 m, 2.5 a second, 13.25-18.25
 BALLISTIC with no falloff, n1 1, n2 500 and the pass flag, no scope; railhit_s with
 light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in flight):
-* The beam (§ Tracers and beams) at e34's gate 10 m out (take01's spot, `BF_MAP=e34
+* The beam (§ Tracers and beams) at e34's gate 10 m out (take01's spot, `-- --test BF_MAP=e34
   BF_CHARACTER=2 BF_TEST_WEAPON="Rail RVR;Foley 356 Tact" BF_TEST_GOTO=-52.76,31.02,-52.9,31.5
   BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.08 BF_TEST_TRIGGER=2.0-2.08`; the Foley as the second gun
   so the one stowed on Hawk's back doesn't hide the view): the spark at the hit, red-violet arcs
@@ -1618,7 +1733,7 @@ light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in fligh
   round the camera; they're now strewn along the ray as the game's cube spawn puts them
   (`Compiled::game_spawn`), but stay brighter and many more than take01's and take06's faint few
   (§ Tracers and beams, "Not matched").
-* At e40's cliff 25 m out (take06's spot: `BF_MAP=e40 BF_CHARACTER=2 BF_TEST_WEAPON="Rail
+* At e40's cliff 25 m out (take06's spot: `-- --test BF_MAP=e40 BF_CHARACTER=2 BF_TEST_WEAPON="Rail
   RVR;Foley 356 Tact" BF_TEST_GOTO=-16.2,152.68,-16.69,152.58 BF_TEST_GO_AT=100
   BF_CAMERA_PITCH=-0.05 BF_TEST_TRIGGER=2.0-2.08`): the arcs from the gun up to the reticle and
   the white-blue glow at the muzzle (take06 f10-f17 of 2.5 s on, at 30 fps); the ray goes into
@@ -1628,7 +1743,7 @@ light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in fligh
   BF_TEST_TRIGGER=2.5-6.5 BF_AMMO_LOG=1`): 3 -> 0 a shot every 0.4 s, the reserve drops 24 0.47 s
   after the last and the clip reads 24 16 frames (1.07 s) later; take02's watch log: 2.757 /
   3.158 / 3.560, the reserve 200 -> 176 at 3.961 (+0.40), the clip 24 at 5.065 (+1.10).
-* Damage at 7 m on e34's Shrike Soldier (take03's spot: `BF_MAP=e34 BF_CHARACTER=2
+* Damage at 7 m on e34's Shrike Soldier (take03's spot: `-- --test BF_MAP=e34 BF_CHARACTER=2
   BF_TEST_WEAPON="Rail RVR" BF_TEST_GOTO=-52.76,31.02,-54.78,37.72 BF_TEST_GO_AT=100
   BF_TEST_NPC="0.5,h_e96829a0,enemy,frozen,-54.78,37.72" BF_TEST_NPC_HP=1.0,1,300
   BF_TEST_INSTANT_KILL=0 BF_CAMERA_PITCH=-0.32 BF_TEST_TRIGGER=3.0-3.08,5.2-5.28,7.4-7.48,9.6-12.0
@@ -1636,9 +1751,9 @@ light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in fligh
   every ray strikes a calf (x0.5) and goes on through into the ground: 9.9-11.5 a hit (the roll
   x 0.5 x 1.4), take03's nine 9.75-12.77. On the head (`BF_CAMERA_PITCH=-0.12`) 101-111 (x5).
   take03's run of misses in its held fire (11.8-13.5 s) isn't reproduced: the demo's stays on.
-* Pass-through can't be seen in the takes (take01's wall has nothing visible behind it): the
-  demo's checks are § Ricochet and pass-through's (two Shrikes in line, a crate); shots R1 and R2
-  of todo/drafts/done/bolt-ricochet-passthrough.md would settle it against the game.
+* Pass-through can't be seen in #67's takes (take01's wall has nothing visible behind it). #287's
+  R1 and R2 takes settle it: § Ricochet and pass-through ("Against #287's takes": through every
+  character, stopped at the far side of the first object it enters).
 * Not checked again (generic): the dry fire and switch (take02), the pickups (take04, take05),
   the far enemies (take09, take10).
 

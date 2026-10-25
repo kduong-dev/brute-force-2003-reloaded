@@ -139,25 +139,35 @@ struct Effect {
 }
 
 /// A "light_" effect: its particles are a point light's, not sprites: `size` is the light's
-/// reach (m), colour x alpha its strength. `rate` 0: one particle, at the start.
+/// reach (m), colour x alpha its strength. `rate` 0: one particle, at the start. `back`: how far
+/// back along the shot from the hit it stands (m): its emitter's offset (TRANSFORM tz) in the
+/// frame of its effect type's light-effect, alignment 0 (the shot's way, its +z back toward the
+/// shooter; FUN_0001d0c0's frame, play.rs `hit_frame`).
 struct Glow {
     rate: f32,
     life: f32,
     color: &'static [(f32, [f32; 3])],
     alpha: f32,
     size: Keys,
+    back: f32,
 }
 
-/// light_hit_cutter: a pale blue flash
+/// light_hit_cutter (wmat_fleshit_cutter's light-effect h_16d39d8b): a pale blue flash, its
+/// emitter light_hit_cutter.emt 2.70 m back along the shot (tz 2.6992). The demo had it 0.3 m
+/// off the body, which washed a struck Shrike cyan-white from head to foot for 6 frames where
+/// #65 take03 shows a green blotch on its chest (#287: with both cutter lights left out the
+/// demo's hit is that blotch; at 2.70 m, as the data places it, the light reaches the body
+/// faintly)
 static CUTTER_LIGHT: Glow = Glow {
     rate: 0.0, life: 0.3866, color: &[(0.0, [0.545, 0.796, 0.871]), (1.0, [0.0, 0.0, 0.0])], alpha: 0.583,
-    size: &[(0.0, 1.28), (0.434, 4.04)],
+    size: &[(0.0, 1.28), (0.434, 4.04)], back: 2.6992,
 };
 
-/// light_hit_laser: an orange flash
+/// light_hit_laser (wmat_fleshit_laser's light): an orange flash, its emitter light_hit_laser.emt
+/// 2.67 m back along the shot (tz 2.6659)
 static LASER_LIGHT: Glow = Glow {
     rate: 0.0, life: 0.3866, color: &[(0.0, [0.886, 0.294, 0.0941]), (1.0, [0.0, 0.0, 0.0])], alpha: 0.583,
-    size: &[(0.0, 1.01), (1.0, 3.98)],
+    size: &[(0.0, 1.01), (1.0, 3.98)], back: 2.6659,
 };
 
 /// blood_puff: blood_mist.emt / blood_mist.app
@@ -1104,7 +1114,9 @@ fn spawn_fx(
             if let Some(g) = light {
                 if state.lights < MAX_LIGHTS {
                     state.lights += 1;
-                    spawn_light(&mut commands, g, at + back * 0.3);
+                    // (where its effect type's light-effect puts it: `Glow::back` along the
+                    // shot's way back toward the shooter, alignment 0)
+                    spawn_light(&mut commands, g, at - dir.normalize_or(-back) * g.back);
                 }
             }
             // a row's effect type the demo hasn't made by hand: from the data, with its light
