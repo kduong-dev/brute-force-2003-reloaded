@@ -2,8 +2,8 @@
 """
 build_decompiled.py - regenerate decompiled/ from the English (US) disc in "Brute Force/".
 
-  python build_decompiled.py              # everything
-  python build_decompiled.py --skip-textures --skip-asm
+  python tools/build_decompiled.py              # everything
+  python tools/build_decompiled.py --skip-textures --skip-asm
 
 Output (decompiled/):
   README.md
@@ -27,7 +27,7 @@ import tex_tool
 import xbe_tool
 import xmb_tool as X
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root, one up from tools/
 GAME = os.path.join(ROOT, 'Brute Force')
 DATA = os.path.join(GAME, 'data')
 OUT = os.path.join(ROOT, 'decompiled')

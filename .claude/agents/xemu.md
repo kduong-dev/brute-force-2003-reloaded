@@ -102,7 +102,7 @@ own session; reload the snapshot.
 When memory edits can't stage a shot (what a level loads: geometry, which enemies or objects
 exist, new assets), you may build a modified copy of the game:
 - copy the ISO's files (or the level archives) into `D:\Emulators\Xbox\agent\mods\<name>\`
-  and change only the copy: level placements (BXML, see `xmb_tool.py` and the README),
+  and change only the copy: level placements (BXML, see `tools/xmb_tool.py` and the root README),
   imported assets, a test level made from an existing one;
 - build a new ISO there, and point your `xemu.toml`'s `dvd_path` at it;
 - every take from a modified build says so in its notes, with what was changed.

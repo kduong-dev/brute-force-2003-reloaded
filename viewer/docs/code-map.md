@@ -1597,11 +1597,11 @@ drive them (#222).
 | `FUN_002364a0` | The smallest sphere round two spheres (centre, radius): the bigger one when it holds the other, else the one whose diameter runs from the far side of one to the far side of the other. | code | todo/126 answers Q5; `bf/character.rs` (`sphere_union`) |
 | `FUN_00236670` | A scene node's bounding sphere: cached (+0x60 the radius, +0x64 the centre, -1 none), else the pairwise union (FUN_002364a0) of its children's, carried into the node's frame, starting from the node's mesh bound ([mesh+0x1c], +0x20); FUN_00235a30 invalidates it. For a model, the union of its pieces' spheres (the skin mesh's geosets' `h_1ab09530` radius round their centre; the posed bones' parts' too). `0x158ca0` (game object vtable +0xac) calls it on [obj+0x6c]: the body fade's sphere (FUN_0011be80). | code | todo/126 answers Q5; `bf/character.rs` (`Character::bounds`: the geosets only); `play_camera.rs` (`FADE_RADIUS`: the squad's radii fitted to the takes, round the node, where the demo's union misses by 0.13 m); `bf/character.rs` (`bounding_sphere`: an archetype's own `h_1ab09530`, `Character::part_spheres`, `Game::archetype_sphere`); `play_liquids.rs` (the splash's and rings' sphere) |
 | `FUN_00238d00` | Fills a static table that holds motion-type numbers; not the movement code. | code | ghidra README |
-| `FUN_00254c60` | BXML reader (with FUN_00255330 and FUN_00281d30). | code | `xmb_tool.py` |
-| `FUN_00255330` | See FUN_00254c60. | code | `xmb_tool.py` |
-| `FUN_00281bf0` | BXML token-stream decompressor: block LZ over u16 words (with FUN_00281cc0, FUN_00281d30). | code | `bf/bxml.rs`; `xmb_tool.py` |
-| `FUN_00281cc0` | See FUN_00281bf0. | code | `xmb_tool.py` |
-| `FUN_00281d30` | See FUN_00281bf0. | code | `bf/bxml.rs`; `xmb_tool.py` |
+| `FUN_00254c60` | BXML reader (with FUN_00255330 and FUN_00281d30). | code | `tools/xmb_tool.py` |
+| `FUN_00255330` | See FUN_00254c60. | code | `tools/xmb_tool.py` |
+| `FUN_00281bf0` | BXML token-stream decompressor: block LZ over u16 words (with FUN_00281cc0, FUN_00281d30). | code | `bf/bxml.rs`; `tools/xmb_tool.py` |
+| `FUN_00281cc0` | See FUN_00281bf0. | code | `tools/xmb_tool.py` |
+| `FUN_00281d30` | See FUN_00281bf0. | code | `bf/bxml.rs`; `tools/xmb_tool.py` |
 | `FUN_002930e0` | A Lua bytecode interpreter's opcode switch. | code | ghidra README |
 | `FUN_002b3b20` | Ipion: adds a linear speed change to a body (core +0x8c). FUN_002b3b70 the angular one (core +0x7c). | code | todo/73 answer-round4 R3 |
 | `0x2b4710` | Ipion: a body template's constructor (no Ghidra function): zeroed, then +0x10 the mass 1.0, +0x14 1, +0x18..+0x20 the rotation inertia 1.0 x 3, +0x28 0.03, +0x2c 0.01, +0x30..+0x38 0.01 x 3: Ipion's defaults (the rotation-inertia minimum, the speed damping, the rotation damping), which the game's FUN_00158cd0 / FUN_00158f80 fill the same way but with 0.1 at +0x2c. | code (the names: inferred) | #239; `play_missile.rs` (`SPEED_DAMPING`) |
@@ -1612,8 +1612,8 @@ drive them (#222).
 | `FUN_00311070` | Static destructor of the debug-config name string (0x400438). | code | xemu.md |
 | `0x38db80` | A clip name suffix's fallback (6 ints: 0, 0, 0, 0, 1, 1): `_left_cr` and `_right_cr` fall back to `_cr`, `_cr`, `_left` and `_right` to none (FUN_00130c50, FUN_001314c0). | code | character-types.md; `bf/character_type.rs` (`SUFFIXES`) |
 | `0x39b508` | Item object vtable (the memory chip, STAMINA POWER): +0x38 FUN_001597d0, +0x140 FUN_0014a410, +0x144 FUN_00157260. | code, live | todo/43, todo/35 notes |
-| `0x3ba968` | The fixed 256-entry normal palette of P8 bump maps (`.data`), copied into a D3D palette by FUN_00285780: 1024 bytes, B G R A each, R G B a normal's x, y, z (0-255 for -1 to 1); 249 entries cover the hemisphere in rows of constant y, 249-254 are 0, 255 is straight up. | code | `tex_tool.py`; `bf/character.rs` (`normal_palette`, `NORMAL_PALETTE_SIG`, `Game::bump_mips`); levels.md § Terrain layers (the bump map) |
-| `0x3bc150` | The name hash's CRC table: CRC32's polynomial, with the top byte of most entries different. | code | `bf/hash.rs`; `xmb_tool.py` |
+| `0x3ba968` | The fixed 256-entry normal palette of P8 bump maps (`.data`), copied into a D3D palette by FUN_00285780: 1024 bytes, B G R A each, R G B a normal's x, y, z (0-255 for -1 to 1); 249 entries cover the hemisphere in rows of constant y, 249-254 are 0, 255 is straight up. | code | `tools/tex_tool.py`; `bf/character.rs` (`normal_palette`, `NORMAL_PALETTE_SIG`, `Game::bump_mips`); levels.md § Terrain layers (the bump map) |
+| `0x3bc150` | The name hash's CRC table: CRC32's polynomial, with the top byte of most entries different. | code | `bf/hash.rs`; `tools/xmb_tool.py` |
 | `0x3bc94c` | ALIGN_ team name table (records from 0x3bc948): -1 NONE, 0 CONFEDERATION, 1 SHRIKE, 2 NEUTRAL, 3-6 TEAM1-4, 7 PC_NO_TEAM, 8 HOSTILE, 9 SEER_SLAVE. | code | todo/73 answer-round3 §2; `play_missile.rs` (`NEUTRAL`); `play_damage.rs` (`TEAM_TABLE`); `bf/character_type.rs` (`TEAMS`, `ALIGN_NONE`) |
 | `0x3bd480` | AT_ archetype-type name table: 1 BILLBOARD, 2 CAMERA, 3 FOLLOW_CAMERA, 4 CHARACTER, 7 GAME, 25 TRIGGER, 28 WORLDBUTTON ... | code | todo/126 leads §1 |
 | `0x3be3cc` | IFSET_ name table (parser FUN_00185620): 5 GENERIC_HEALING, 8 PROXIMITY_EXPLOSIVE, 13 ROLLING_BOMB, 14 AMMO_BOX, 16 MINIGUN, 18 POWERUP_POWER_CRYSTAL (the memory chip's function-type), 19 POWERUP_MEDKIT, 20 POWERUP_BRUTAL_DAMAGE, 21 POWERUP_FORCE_SHIELD, 22 POWERUP_SQUAD_REGENERATOR, 23 POWERUP_PAIN_BROADCASTER, 24 SHIELD_BATTERY. | code | pickups.md; `bf/character.rs`; `play_ammo.rs` |
@@ -1631,9 +1631,9 @@ drive them (#222).
 | `0x40caf0` | `"Sc_%s%s%s"`: a clip name from stance, script and suffix (FUN_00130ba0, FUN_001314c0); `"%s%s"` (0x40dd4c) without the stance. | code | character-types.md |
 | `0x40cafc` | Clip name suffixes (6 pointers): "", `_cr`, `_left`, `_right`, `_left_cr`, `_right_cr`; their fallbacks are 0x38db80. | code | character-types.md; `bf/character_type.rs` (`SUFFIXES`) |
 | `0x40cb30` | Clip name stances (3 pointers): "", `w1_`, `w2_`. The builders make the `w1_` and `w2_` clips (from 0x40cb34) and fall back to "". | code | character-types.md; `bf/character_type.rs` (`STANCES`) |
-| `0x46cfc8` | BXML schema global: the hash of the `stringid` type (values stored as a 4-byte name hash). | code | `xmb_tool.py` |
-| `0x46cfcc` | BXML schema global: the hash of the `wstring` type. | code | `xmb_tool.py` |
-| `0x46cfd4` | BXML schema global: the index-string type (values stored as a varint, index + 1). | code | `xmb_tool.py` |
+| `0x46cfc8` | BXML schema global: the hash of the `stringid` type (values stored as a 4-byte name hash). | code | `tools/xmb_tool.py` |
+| `0x46cfcc` | BXML schema global: the hash of the `wstring` type. | code | `tools/xmb_tool.py` |
+| `0x46cfd4` | BXML schema global: the index-string type (values stored as a varint, index + 1). | code | `tools/xmb_tool.py` |
 | `0x46cfd8` | Random state word stepped by the damage roll (FUN_0022c940) and the blast delay (FUN_0022bfc0); 0x46cfdc is the decal pick's (FUN_0022ca20). Also stepped by the chatter roll (FUN_001374c0) and the variant pick (FUN_00136fc0); 86 writers in all. | code | this page; todo/35 answer-120-chatter |
 
 ### Constants

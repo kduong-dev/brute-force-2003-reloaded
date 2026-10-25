@@ -6,9 +6,9 @@
 |---|---|---|
 | `src/bf/hash.rs` | `xmb_tool.name_hash` | name hash (CRC32 variant, game's own table) |
 | `src/bf/archive.rs` | `tarfile` | level `.tgz` archives |
-| `src/bf/bxml.rs` | `xmb_tool.py` | BXML documents + BXSD schemas (LZ token stream, typed values) |
-| `src/bf/texture.rs` | `tex_tool.py` | texture index + DXT1/3/5 and swizzled formats -> RGBA |
-| `src/bf/character.rs` | `char_render.py` | skeleton, skinned meshes (incl. NV2A push buffers), skin materials, animation channels |
+| `src/bf/bxml.rs` | `tools/xmb_tool.py` | BXML documents + BXSD schemas (LZ token stream, typed values) |
+| `src/bf/texture.rs` | `tools/tex_tool.py` | texture index + DXT1/3/5 and swizzled formats -> RGBA |
+| `src/bf/character.rs` | `tools/char_render.py` | skeleton, skinned meshes (incl. NV2A push buffers), skin materials, animation channels |
 
 It loads `common.tgz` (all BXML decoded against the schemas) in about 0.3 s. Squad skins
 live in the level archives, which are opened on demand for their textures only: with no level
@@ -21,7 +21,7 @@ Check against the Python tools:
 cargo run -- --dump brutus 20 0.5     # counts, bind check, bone positions for anim 20 at 0.5 s
 ```
 
-All four characters match `char_render.py` exactly (bone counts, triangles, animations) and
+All four characters match `tools/char_render.py` exactly (bone counts, triangles, animations) and
 bone positions agree to ~1e-6.
 
 ## Controls
@@ -39,7 +39,7 @@ bone positions agree to ~1e-6.
 | F | reset camera |
 | G | toggle ground plane |
 
-Animation numbers match `python char_render.py anims <name>`.
+Animation numbers match `python tools/char_render.py anims <name>`.
 
 ## Notes
 

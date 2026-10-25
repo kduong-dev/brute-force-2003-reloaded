@@ -2,12 +2,12 @@
 """
 char_render.py - render a Brute Force character (skinned mesh + textures) playing an animation.
 
-  python char_render.py list                                   # characters in common.tgz
-  python char_render.py anims brutus                           # that character's animations
-  python char_render.py render brutus --anim 5 -o brutus.gif   # animated GIF
-  python char_render.py render brutus --anim all -o out/       # every animation, one GIF each
-  python char_render.py render brutus --pose bind -o bind.png  # bind (T) pose, front/side/back
-  python char_render.py uv-check flint --texture h_e6ee3065    # overlay UVs on a texture
+  python tools/char_render.py list                                   # characters in common.tgz
+  python tools/char_render.py anims brutus                           # that character's animations
+  python tools/char_render.py render brutus --anim 5 -o brutus.gif   # animated GIF
+  python tools/char_render.py render brutus --anim all -o out/       # every animation, one GIF each
+  python tools/char_render.py render brutus --pose bind -o bind.png  # bind (T) pose, front/side/back
+  python tools/char_render.py uv-check flint --texture h_e6ee3065    # overlay UVs on a texture
 
 Characters are looked up in data/common.tgz (Brutus, Flint, Hawk, Tex) and, with --level,
 in a level archive (e.g. --level e01 for the militia / mutants there).
@@ -39,7 +39,7 @@ from PIL import Image, ImageDraw
 import tex_tool
 import xmb_tool as X
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root, one up from tools/
 DATA = os.path.join(ROOT, 'Brute Force', 'data')
 H = X.name_hash
 

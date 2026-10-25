@@ -8,12 +8,11 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
 
 | Path | What |
 |---|---|
-| `viewer/` | Rust + Bevy 0.16 crate: `bf_play` (the demo), `bf_level`, `bf_viewer`, `glb_viewer`. `viewer/README.md` indexes `viewer/docs/`, the reference for how everything works (one page per area) |
+| `viewer/` | Rust + Bevy 0.16 crate: `bf_play` (the demo), `bf_level`, `bf_viewer`, `glb_viewer`. `viewer/docs/README.md` indexes `viewer/docs/`, the reference for how everything works (one page per area) |
 | `viewer/src/bf/` | format readers: BXML (`bxml.rs`), levels, characters, textures, sounds |
 | `viewer/src/bin/play*.rs` | the demo, one module per feature (`play_hud`, `play_pickups`, `play_grenade`, `play_text`, ...) |
-| `xmb_tool.py`, `xbe_tool.py`, `xwb_tool.py`, `tex_tool.py`, `ale_tool.py` | format tools: BXML decoder, XBE, music banks, textures, ALE effects |
 | `Brute Force/`, `decompiled/`, `todo/` | game data, extracted data and reference captures. **Git-ignored. Never commit them or copy them anywhere** |
-| `tools/` | Ghidra scripts (the Ghidra install and its projects are ignored) |
+| `tools/` | Python tools, run from the root (`python tools/xmb_tool.py`): `xmb_tool.py` (BXML decoder), `xbe_tool.py`, `xwb_tool.py` (music banks), `tex_tool.py` (textures), `ale_tool.py` (ALE effects), `fn.py` (decompiled functions), `xbe_peek.py` (`default.xbe` values), `char_render.py`, `build_decompiled.py`; the Ghidra scripts (the Ghidra install and its projects are ignored). The root `README.md` lists them all |
 
 ## Building and running
 
@@ -206,7 +205,7 @@ Relay what agents report faithfully, including what failed or wasn't tested.
   the surrounding code: plain sentences, no marketing.
 - New test hooks are `BF_*` environment variables, documented in their comment and on the
   area's `viewer/docs/` page.
-- **Every change updates its area's page in `viewer/docs/`** (and the index in `viewer/README.md` for a new page): controls, the feature's section, and how it was
+- **Every change updates its area's page in `viewer/docs/`** (and the index in `viewer/docs/README.md` for a new page): controls, the feature's section, and how it was
   verified.
 - Commits go on `main` (or a branch to be merged into it) with a short imperative subject and a
   body that explains why. End it with `Closes #N` for each ticket it finishes. Commit or push

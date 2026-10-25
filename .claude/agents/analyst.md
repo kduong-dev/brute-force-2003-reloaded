@@ -16,8 +16,8 @@ first, then `viewer/docs/code-map.md`: don't trace a function someone has alread
   `levels-`, `animations-`, `sounds-`, `common/`), the schema `decompiled/schemas/bfns.txt`
   (element and attribute names; unnamed ones are `h_xxxxxxxx` hashes, and a name recovered by
   hashing is worth a note), and the archives in `Brute Force/data` through the root tools:
-  `xmb_tool.py`, `ale_tool.py` (effects), `tex_tool.py`, `xwb_tool.py` (music banks),
-  `xbe_tool.py`.
+  `tools/xmb_tool.py`, `tools/ale_tool.py` (effects), `tools/tex_tool.py`, `tools/xwb_tool.py` (music banks),
+  `tools/xbe_tool.py`.
 - **Code:** `decompiled/xbe/` (`default.text.asm`, `default.strings.txt`, `ghidra/functions.csv`,
   `ghidra/c/`). Find a function by the strings, attribute hashes, enum tables and constants it
   uses, then follow its callers and callees. Ghidra scripts are in `tools/`.

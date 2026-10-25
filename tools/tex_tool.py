@@ -3,8 +3,8 @@
 tex_tool.py - Brute Force texture library (.tex + textures-*.xmb) exporter.
 
 Usage:
-  python tex_tool.py list   <level.tgz | textures-x.xmb>
-  python tex_tool.py export <level.tgz | data-dir | textures-x.xmb> -o OUTDIR [--dds] [--mips]
+  python tools/tex_tool.py list   <level.tgz | textures-x.xmb>
+  python tools/tex_tool.py export <level.tgz | data-dir | textures-x.xmb> -o OUTDIR [--dds] [--mips]
 
 Inputs can be the level archives straight from the disc (data/e01.tgz, data/common.tgz, ...);
 schemas are read from common.tgz next to them. A directory exports every *.tgz in it.

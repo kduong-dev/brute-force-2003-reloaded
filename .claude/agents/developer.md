@@ -13,7 +13,7 @@ building, test hooks and conventions.
    footage is in `todo/<ticket>-<slug>/` (`take*.mp4` and `notes.md`); study the takes and
    extract frames with ffmpeg (`imageio-ffmpeg`) where you need them. If you need a shot that
    doesn't exist, say so in your report instead of guessing: the lead sends the `xemu` agent.
-2. Find the behaviour in the game data before writing code: BXML attributes (`xmb_tool.py`,
+2. Find the behaviour in the game data before writing code: BXML attributes (`tools/xmb_tool.py`,
    `BF_LEVEL_DUMP`), XBE tables, sound and texture ids.
    **Logic comes from the code first, footage confirms.** For a formula, timing, trigger, AI rule
    or what an effect parameter means, find the function that does it in the decompiled game
@@ -21,7 +21,7 @@ building, test hooks and conventions.
    - look it up in `viewer/docs/code-map.md` and the ticket's `leads.md` first;
    - search `decompiled/xbe/ghidra/functions.csv` by the strings and attribute hashes it uses,
      then read the C in `decompiled/xbe/ghidra/c/`;
-   - follow callers and callees; `xbe_tool.py` and `default.strings.txt` give tables and names;
+   - follow callers and callees; `tools/xbe_tool.py` and `default.strings.txt` give tables and names;
    - for ALE effect parameters, Librelancer's open-source implementation of the same format is a
      reference.
    Implement what the function does, in our own Rust (never paste or translate decompiled code
@@ -37,7 +37,7 @@ building, test hooks and conventions.
 5. `cargo build --bins` in `viewer/`: no errors, no warnings.
 6. Verify in the game with `BF_CAPTURE`. Look at the frames yourself and compare them with the
    xemu footage. Iterate until it matches.
-7. Update the area's page in `viewer/docs/` (index in `viewer/README.md`), and add a row to
+7. Update the area's page in `viewer/docs/` (index in `viewer/docs/README.md`), and add a row to
    `viewer/docs/code-map.md` for each default.xbe function your change relies on.
 8. Commit on your worktree branch with `Closes #<n>`. Don't merge into `main` or push: the
    lead does that after the review and the user's yes.

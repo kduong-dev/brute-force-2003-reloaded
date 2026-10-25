@@ -201,7 +201,7 @@ Squad movement and deaths follow the game's own data and the captures:
     behind them, 11-16 m from their places, and none of them takes a hit; `BF_LIQUID_LOG` prints
     "waits at a liquid that burns" twice a second for each.
 * Hits come from the game's effect library (common/effects-common.ale, read with
-  `../ale_tool.py`) and the flesh world material (21, WMAT_FLESH_HUMAN). Every hit plays its
+  `tools/ale_tool.py`) and the flesh world material (21, WMAT_FLESH_HUMAN). Every hit plays its
   debris bundle: blood_puff (smokecard.tga mist), bloodsplat_s (diffuse_big.tga droplets in a
   jet, under a weak gravity field) and giblet (a blood.tga spatter). Each ammo type adds its own
   hit effect and sound: ballistic sparks (Flint, Hawk), the cutter's long white streaks with a

@@ -37,7 +37,7 @@ repo.
    - **Sounds:** match against the level's bank by spectrogram (`BF_SOUND_LOG`,
      `BF_DUMP_SOUND_IDS` list the ids), and say how close the match is.
    - **Text:** transcribe exactly and find it in the string tables.
-4. Cross-reference the game data (objecttypes, weapons, ALE effects with `ale_tool.py`) so the
+4. Cross-reference the game data (objecttypes, weapons, ALE effects with `tools/ale_tool.py`) so the
    developer gets the game's own values where they exist. **Code first, footage confirms:** where
    the behaviour is logic (a formula, timing, trigger, AI rule, an effect parameter's meaning),
    check `viewer/docs/code-map.md` and `leads.md` for the function. A quick lookup is fine; a

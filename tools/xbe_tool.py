@@ -3,10 +3,10 @@
 xbe_tool.py - Original Xbox executable (.xbe) analyzer, aimed at PC-port feasibility.
 
 Usage:
-  python xbe_tool.py info    <file.xbe> [--json]   header, certificate, sections, XDK libs, kernel imports
-  python xbe_tool.py hwscan  <file.xbe> [-v N]     disassemble; find instructions touching NV2A/APU MMIO
-  python xbe_tool.py strings <file.xbe> [-n MIN] [--section NAME]   ASCII strings with virtual addresses
-  python xbe_tool.py dump    <file.xbe> <section> <out.bin>         raw section bytes
+  python tools/xbe_tool.py info    <file.xbe> [--json]   header, certificate, sections, XDK libs, kernel imports
+  python tools/xbe_tool.py hwscan  <file.xbe> [-v N]     disassemble; find instructions touching NV2A/APU MMIO
+  python tools/xbe_tool.py strings <file.xbe> [-n MIN] [--section NAME]   ASCII strings with virtual addresses
+  python tools/xbe_tool.py dump    <file.xbe> <section> <out.bin>         raw section bytes
 
 Layout reference: XBE header at 0x0 ('XBEH'), image base normally 0x00010000.
 Entry point and kernel thunk address are XOR-obfuscated with retail or debug keys.
