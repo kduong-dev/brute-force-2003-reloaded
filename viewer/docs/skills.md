@@ -483,7 +483,10 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
     figures change colour with a period of 1.0 s, all in step: the ramp swings up and down by a
     sine of that period (`scroll`, a fit). The dead are drawn as the world is (take22's body).
     Round the figures a halo of their colour (the glare's 24 offset copies, FUN_000e47b0, at
-    0.006 of the screen; its weight a fit);
+    0.006 of the screen; its weight a fit). It is the glare (#289, levels.md "The glare"): the
+    heat material keys it at 0 (0xa8c80, its byte +0x20), so every pixel of a figure is kept;
+    the demo draws it on the heat camera with its own fitted weight, where the code's is 25 /
+    255 a copy;
   * the HUD on top, unchanged.
   * **The colour fade** at each switch, on and off (FUN_000c6980: 0.6 s, level 1, colour ff 00
     00): the picture, not the HUD, times red, back to white linearly in 0.6 s (take06: 2.20-2.80 s

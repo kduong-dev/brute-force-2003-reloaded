@@ -316,15 +316,16 @@ fn update(mut commands: Commands, time: Res<Time>, player: Res<Player>, reticle:
     }
 }
 
-/// The pass in the render graph: after the Vengar view's world pass (it draws over the picture it
-/// leaves), before the HUD.
+/// The pass in the render graph: after the Vengar view's world pass and the glare (it draws over
+/// the picture they leave, as the HUD's widgets do over the world's), before the HUD.
 struct PassPlugin;
 
 impl Plugin for PassPlugin {
     fn build(&self, app: &mut App) {
         let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
         render.add_render_graph_node::<ViewNodeRunner<ScopeNode>>(Core3d, ScopeLabel)
-            .add_render_graph_edges(Core3d, (vengar::VengarLabel, ScopeLabel, Node3d::EndMainPassPostProcessing));
+            .add_render_graph_edges(Core3d, (vengar::VengarLabel, ScopeLabel, Node3d::EndMainPassPostProcessing))
+            .add_render_graph_edge(Core3d, bf_viewer::glare::GlareLabel, ScopeLabel);
     }
 
     fn finish(&self, app: &mut App) {

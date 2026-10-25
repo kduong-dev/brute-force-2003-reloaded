@@ -279,8 +279,8 @@ Squad movement and deaths follow the game's own data and the captures:
   * Not used: `time-scale` (h_01590d7a, 0.4) is mapped to +0x58, but none of the shader's own
     functions read it (and it couldn't move where the scroll stops). The wrapper's h_e59d69a0
     (60) goes to render state +0x294 of the state cache (FUN_0009e960, flagging the material
-    when it isn't 255); which state that is isn't established. An alpha-test reference is a
-    guess, and as one it can't be cutting at 60/255, since the footage's distant chip is filled.
+    when it isn't 255): STENCILREF (#4), the stencil value the chip's pixels write, which the
+    game's glare reads as a luminance threshold (#289, levels.md "The glare"; see below).
   * **Not matched: the footage's fill.** In `todo/43-memory-chip/` it's a filled translucent
     green box with a darker circuit pattern, not a lattice: over dark sand (take02, background
     about 10, 8, 6) its middle is 19, 79, 28; over lit grey rock (take05 at 16 s, background
@@ -290,8 +290,13 @@ Squad movement and deaths follow the game's own data and the captures:
     material's colour (red at most 16) can do, and the fill between the traces needs alpha the
     texture doesn't have there (alpha 0 in two thirds of it at the top level). So what the code
     reads (FUN_0008fd20's blend states, pixel shader 0) and what xemu draws disagree; the demo
-    draws what the code reads. Not explained: whether the state-cache slots are read right, or
-    something else draws over it.
+    draws what the code reads. **Explained by the glare (#289):** the game keeps every pixel
+    whose stencil is 60 (the chip's) and whose luminance is above 60 / 255, blurs it and adds
+    2.35 times it back (levels.md "The glare"). Over the dark sand the chip's 19, 79, 28 has a
+    luminance of 55 / 255, under the key: nothing added, as take02 shows; over the lit rock its
+    blend is above it, and the glare raises every channel and spreads the soft halo. The demo
+    doesn't key the chip yet: the glare also multiplies by the frame buffer's alpha, which the
+    chip's blend leaves at a value not worked out (a follow-up).
   * Earlier footage: far off (Friendly Fire 2, 33.8 s) the chip's inside is
     green +58 over the background, red and blue up too; the demo's is green +30 to +48 at 6-15 m
     on sdm_e34, red and blue a little down. Up close in front of a lit wall (DNA + Weapon

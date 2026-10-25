@@ -3,5 +3,6 @@
 pub mod bf;
 pub mod scene;
 pub mod level_scene;
+pub mod glare;
 pub mod arena;
 pub mod ale_fx;
