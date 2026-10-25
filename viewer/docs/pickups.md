@@ -359,6 +359,24 @@ and `todo/DNA + Weapon Pickups.mp4`.
     0.58 m over it; the switch before Brutus's and Flint's pickup as before. With the stick
     pushed from 6.4 s (`BF_TEST_GOTO=0,0,0,-8 BF_TEST_GO_AT=6.4 BF_TEST_GUN="L-Shot-50,1.6,0.3"`)
     Tex stays where he stands through the clip (6.27-7.33 s) and sets off after it.
+  * #299, a swap moves rounds and makes none: the release keeps in the gun what the stack doesn't
+    take (0x118a09-0x118a22: FUN_0014ce90 returns how many went in, the gun's +0x1f8 less them)
+    and the grab takes the lying clip and what it lacks from the reserve (`release_rounds`,
+    `grab_rounds`, the unit test `the_swap_moves_rounds`). Eight swaps back and forth with
+    `BF_TEST_SWAP=3.0,6.0,...,24.0 BF_WEAPON_LOG=1`, the clip in hand, the lying gun's and the
+    reserve adding up the same after each: the tutorial's L-Shot-50 and MK-ASLT (the command
+    above: 548 of High ROF, 6 of 11mm); the test map's laid L-Shot-50 (`--test
+    BF_TEST_GOTO=0,0,0,-0.5 BF_TEST_WEAPON="MK-ASLT;Confed LZR-50" BF_TEST_GUN="L-Shot-50,1.6,0.3"
+    BF_TEST_RESERVE=10`: 58 and 16), and two MK-ASLTs with shots between (`BF_TEST_GUN="MK-ASLT,
+    1.6,0.3,20" BF_TEST_RESERVE=30 BF_TEST_TRIGGER=1.0-1.6,7.5-8.2,13.5-14.0`: 94, less each
+    burst); e34's placed iKhan-GPL against Tex's Jax-iC (`BF_MAP=e34
+    BF_TEST_GOTO=98.6,-47.0,98.6,-48.6`: the Jax-iC keeps its 36 with the Sonic stack full, the
+    iKhan its 16, its ammo-type 9 having no ammo item); a dead squad member's guns
+    (`--test BF_TEST_GOTO=0,0,0,0 BF_TEST_KILL=1 BF_TEST_SWAP=4.0,7.0,...`: Flint's L-Shot-50,
+    walked over first, its 6 into the reserve and back at the grab); sdm_e34's Saryl-45 copy
+    (the gun recipe in triggers.md, swaps every 3 s: 30 and 50 throughout, then the copy's
+    respawn at 22.85 s lays a new full one, as it should). The test map's rack, the copies'
+    respawns and the LZRs' recharge are the sources of new rounds.
 
 ## Pickups from spawn-triggers (#278)
 
