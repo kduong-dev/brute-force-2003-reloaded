@@ -9,16 +9,19 @@
 //!    biped), shaped by the part's collision surface (`Character::part_collision`) and turning
 //!    about its mass centre (`Character::part_mass_centre`, where Ipion puts a body's core); a
 //!    0.05 m ball for each ancestor of a hit part (pelvis, spines, neck, clavicles) and for the
-//!    character's own node (the model's root, the root body char+0x500). Masses: 9 kg for the
-//!    root and for a body whose bone hangs from it (Bip01), 4.5 kg for the rest, 90 kg a biped;
-//!    inertia isotropic, 0.5 and 0.25 x the mass (4.5 and 1.125 kg m^2).
+//!    character's own node (the model's root, the root body char+0x500), which weighs and turns
+//!    but meets nothing (FUN_00127290 turns its collision off and, unlike a hit part's, never back
+//!    on: 0x1276a8-0x1276da). Masses: 9 kg for the root and for a body whose bone hangs from it
+//!    (Bip01), 4.5 kg for the rest, 90 kg a biped; inertia isotropic, 0.5 and 0.25 x the mass
+//!    (4.5 and 1.125 kg m^2).
 //!  - **Joints** (FUN_00113120): one per body with its parent's, at the child bone's origin, hard,
 //!    with the game's ranges by the child bone's name (`joint_limits`: knees and elbows one-way
-//!    hinges, the hips, spine, head and shoulders within three ranges), about the pose at death (an
-//!    Ipion constraint's frames are made from the bodies as they are, FUN_002b9370); a bone not in
-//!    its table (Bip01, the pelvis, the spine's base, the neck, the clavicles) is held rigid to its
-//!    parent as it was at death, so the hips, the chest and the shoulders move as pieces. The
-//!    solver takes each such rigid piece as one body (`Body`), its parts' masses summed.
+//!    hinges, the hips, spine, head and shoulders within three ranges), about the parent bone's
+//!    axes and the pose at death (the parent's body is the constraint's reference, its own frame
+//!    the constraint's: FUN_002b9370, `Joint`); a bone not in its table (Bip01, the pelvis, the
+//!    spine's base, the neck, the clavicles) is held rigid to its parent as it was at death, so
+//!    the hips, the chest and the shoulders move as pieces. The solver takes each such rigid
+//!    piece as one body (`Body`), its parts' masses summed.
 //!  - **Bones without a body** (below the lowest hit part: feet, toes, hands, fingers, a Shrike's
 //!    HorseLink; and every bone of the face, the hair and the props) are carried rigidly in their
 //!    pose at death under their parent: the game disconnects the whole skeleton from the
@@ -28,12 +31,11 @@
 //!    beamed to their bones, FUN_00169140), each given an impulse of 9 x the character's velocity
 //!    at its centre (the 9 kg bodies start at that velocity, the 4.5 kg ones at twice it), which
 //!    the build gives only to a character that moves. One that stood still stays as it stood for
-//!    REST_WAKE s, then goes (or at once if something pushes it): Ipion makes an object out of
-//!    the simulation (FUN_002b2f40: movement state 8) and only a push or a touch revives it
-//!    (FUN_002b3c60, FUN_002bb1e0), and the takes' frozen Shrikes hold their pose 0.35-0.45 s,
-//!    until about when their dropped gun reaches their feet (`REST_WAKE`, a fit). No other push
-//!    on a death: the CBT_DEAD handler's shove and up-kick (FUN_00115f90) are in the code but in
-//!    no take, so they wait behind DEATH_SHOVE.
+//!    REST_WAKE s, then goes (or at once if something pushes it): a fit to the takes' frozen
+//!    Shrikes, which hold their pose 0.35-0.45 s, though the game's body is simulated from the
+//!    build (FUN_00114b80 puts each ball into the simulation at once, FUN_002b3c60). No other
+//!    push on a death: the CBT_DEAD handler's shove and up-kick (FUN_00115f90) are in the code
+//!    but in no take, so they wait behind DEATH_SHOVE.
 //!  - **The step** (Ipion): 66 steps a second whatever the frame rate, gravity 9.81, damping
 //!    `v *= 1 - k dt` (0.95 a second linear, 0.5 angular, +0.1 once calm), contact with the level's
 //!    faces (`Arena::faces_near`) with friction 4 and restitution 0.04: a body that lands stays.
@@ -49,10 +51,11 @@
 //! The solver (the demo's, not the game's: Ipion solves a ragdoll's joints together as one linear
 //! system each step, FUN_002db0a0 / FUN_002db5a0): extended position-based dynamics (Müller et
 //! al., "Detailed Rigid Body Simulation with Extended Position Based Dynamics", 2020), SUBSTEPS
-//! substeps a step, each moving the bodies, holding the joints' points and ranges and the
-//! contacts by moving the bodies, then taking the velocities from the moves and applying
-//! restitution and sliding friction. The game's isotropic inertia makes every angular correction
-//! a plain turn (a rigid piece's is its parts' summed, `Body::inv_inertia`). A crate was weighed
+//! substeps a step, each moving the bodies, holding the joints' ranges (the smallest turn back to
+//! the stops, `solve_joint`) and points and the contacts by moving the bodies, then taking the
+//! velocities from the moves and applying restitution and sliding friction. The game's isotropic
+//! inertia makes every angular correction a plain turn (a rigid piece's is its parts' summed,
+//! `Body::inv_inertia`). A crate was weighed
 //! (rapier, avian): either would need the level's triangles mirrored into its own world and kept
 //! in step with the doors and breakables the arena already tracks, for a dozen bodies a
 //! character.
@@ -129,18 +132,20 @@ const START_IMPULSE: f32 = 9.0;
 /// Under this speed (m/s) a character stood still as it died (the demo's: the walk cycle's root
 /// leaves a standing body a few mm/s), so its ragdoll gets no start push.
 const AT_REST: f32 = 0.05;
-/// A ragdoll that stood still holds its pose this long (s), unless pushed sooner: a fit. The takes'
-/// frozen Shrikes (todo/280-ragdoll answer §3: takes 17-22, first motion 0.35-0.45 s after the
-/// hit) hold every limb as it was until then, though the ragdoll is built in the hit's frame (the
-/// gun leaves the hands at once, take22 2.60-2.63 s). The code's side: Ipion makes an object out
-/// of the simulation (FUN_002b2f40 sets its movement state to 8: the balls'; that a still
-/// character's hit-part bodies were frozen by the movement check too is an inference), and only
-/// a push (FUN_002b3bc0 -> FUN_002b3c60, which the build gives a still character none of) or a
-/// moving object's touch revives it (FUN_002bb1e0). What touches it in the takes is a guess: the
-/// dropped gun, which reaches the feet as the body starts to move (take22: the ground at
-/// 2.93-2.97 s, the body at 3.00). The demo's dropped guns don't meet the ragdoll, so this stands
-/// in. Tex in take05 went 0.5 s after the hit.
-const REST_WAKE: f32 = 0.35;
+/// A ragdoll that stood still holds its pose this long (s), unless pushed sooner: a fit, with no
+/// code behind it. The takes' frozen Shrikes (todo/280-ragdoll answer §3: takes 17-22, first
+/// motion 0.35-0.45 s after the hit; Tex in #28 take05 0.5 s) hold every limb as it was until
+/// then, though the ragdoll is built in the hit's frame (the gun leaves the hands at once, take22
+/// 2.60-2.63 s), and nothing in the code holds it: Ipion makes a new object out of the simulation
+/// (FUN_002b2f40: movement state 8), but FUN_00114b80 puts each ball into it at once
+/// (FUN_002b3c60 right after FUN_002cce90), and the joints make the ragdoll one simulation unit,
+/// so the game's body is simulated from the build. Released from rest the demo's body shows its
+/// first motion (its root 3 cm off) 0.13-0.2 s after the release and is down 0.8-1.0 s after
+/// that (a Shrike Soldier, a Heavy and Tex, #259's fix round): with no hold its first motion
+/// comes 0.15-0.3 s early and its trunk lands 0.1-0.4 s late; with 0.35 s the first motion fits
+/// and it lands 0.4-0.7 s late; 0.2 s brings the first motion to 0.27-0.33 s with the same total
+/// error as none. The rest of the gap is the collapse's own length (ragdoll.md, "Not done").
+const REST_WAKE: f32 = 0.2;
 /// An ancestor's body: a ball this big (m) (FUN_00114b80 -> FUN_002cce90, Ipion's ball).
 const BALL_RADIUS: f32 = 0.05;
 /// Contact with the level: friction, the product of the two materials' (Ipion's manager,
@@ -164,6 +169,12 @@ const EDGE_SLACK: f32 = 0.02;
 /// the demo's (Ipion recovers a penetration gradually; a Shrike's calf whose surface starts 3 cm
 /// in the ground otherwise left it at several m/s, throwing the body up).
 const RECOVERY_SPEED: f32 = 0.5;
+/// The turn (rad) a joint's stop correction measures its angles' rates of change with, and the
+/// most it turns a joint back in one substep: one far past its stops comes back over a few
+/// substeps (a radian taken back in one 1/1056 s substep would leave the limb turning at
+/// ~1000 rad/s). Both the demo's.
+const RATE_STEP: f32 = 1e-3;
+const MAX_STOP_TURN: f32 = 0.05;
 /// A hit part's contact points: its surface's corners, at most this many (the ones furthest out
 /// along 26 ways round it, when it has more): the demo's.
 const MAX_POINTS: usize = 26;
@@ -307,6 +318,8 @@ struct Part {
     /// and the shoves go to the game's bodies one by one
     centre: Vec3,
     mass: f32,
+    /// a hit part (a surface: what a blast's ball and a shot meet), not a ball
+    hit: bool,
 }
 
 /// A rigid body of the solver: one of the game's bodies, or a piece of them the game holds
@@ -328,11 +341,11 @@ struct Body {
     mass: f32,
     inv_mass: f32,
     inv_inertia: f32,
-    /// its contact points from its centre in its frame, each with how round it is (a ball's
-    /// radius; 0 for a surface's corner)
+    /// its contact points from its centre in its frame (its hit parts' surfaces' corners; none for
+    /// a piece of balls alone), each with how round it is (0 for a corner)
     points: Vec<(Vec3, f32)>,
-    /// its hit parts' surfaces and its balls (centre, radius), from its centre in its frame:
-    /// what shots meet
+    /// its hit parts' surfaces, what shots meet, and its balls (centre, radius) for
+    /// BF_RAGDOLL_DRAW, from its centre in its frame
     tris: Vec<[Vec3; 3]>,
     balls: Vec<(Vec3, f32)>,
     /// how far its furthest point is from its centre (m): also its radius in the movement check
@@ -364,7 +377,12 @@ impl Body {
 }
 
 /// A joint between two bodies (FUN_00113120's, limited): at the child bone's origin, with the
-/// child bone's ranges.
+/// child bone's ranges about the parent bone's axes. FUN_00113120 makes the parent bone's body
+/// the constraint's reference object and the child's the attached one (0x127738-0x127750: EAX,
+/// then ESI, the parent's body; EDI the child's), and FUN_002b9370 gives the reference side the
+/// reference body's own frame (FUN_002b90a0 -> FUN_002b6aa0: identity in its space) at the child
+/// bone's origin, the attached side the same frame as it was at the build: so the ranges are
+/// about the parent bone's x, y and z at death, and zero is the pose at death.
 #[derive(Clone, Debug)]
 struct Joint {
     parent: usize,
@@ -372,14 +390,22 @@ struct Joint {
     /// the joint's point from each body's centre, in its frame
     at_parent: Vec3,
     at_child: Vec3,
-    /// the child bone's turn in the parent body's frame at death: its angles' zero
+    /// the constraint's frame in the parent body's frame: the parent bone's turn at death
+    frame: Quat,
+    /// the child body's turn in the parent body's frame at death: the angles' zero
     rest: Quat,
-    /// the child bone's turn in the child body's frame
-    child_off: Quat,
-    /// FUN_00113120's ranges about the child bone's x, y and z (`joint_limits`)
+    /// FUN_00113120's ranges about the frame's x, y and z (`joint_limits`)
     limits: [(f32, f32); 3],
     /// the child's bone name hash (for the log)
     name: u32,
+}
+
+impl Joint {
+    /// The child's turn since death in the joint's frame (the parent bone's axes), for bodies
+    /// turned `a` (the parent) and `b` (the child).
+    fn turn(&self, a: Quat, b: Quat) -> Quat {
+        (self.frame.inverse() * (a.inverse() * b) * self.rest.inverse() * self.frame).normalize()
+    }
 }
 
 /// A point of a body against a face of the level for this step: the plane it's kept in front of
@@ -497,8 +523,11 @@ impl Ragdoll {
         // parts (every model here hangs its skeleton from one, at the model's origin: the
         // Shrikes' h_12688f2d), its ball the root body (char+0x500); a model whose root bone is a
         // hit part itself gets a ball of its own at the model's origin
+        // (a ball meets nothing: FUN_00127290 clears its collision bits, +0x70 & 0x300, after
+        // making it and never sets them again as it does a hit part's, 0x1276a8-0x1276da; it's
+        // kept for BF_RAGDOLL_DRAW)
         let ball = |bone: Option<usize>, m: Mat4, mass: f32, inertia: f32, parent: usize, limits| Proto {
-            bone, frame: m, com: Vec3::ZERO, mass, inertia: inertia * mass, points: vec![(Vec3::ZERO, BALL_RADIUS)], tris: vec![],
+            bone, frame: m, com: Vec3::ZERO, mass, inertia: inertia * mass, points: vec![], tris: vec![],
             balls: vec![(Vec3::ZERO, BALL_RADIUS)], parent, limits,
         };
         let node = (0..n).filter(|&i| parent[i].is_none() && bodied[i]).collect::<Vec<_>>();
@@ -566,7 +595,8 @@ impl Ragdoll {
                 if let Some(i) = p.bone {
                     body_of[i] = Some((b, body.parts.len()));
                 }
-                body.parts.push(Part { bone: p.bone, rot: (back * turn(p)).normalize(), pos: into(k, Vec3::ZERO), centre: into(k, p.com), mass: p.mass });
+                body.parts.push(Part { bone: p.bone, rot: (back * turn(p)).normalize(), pos: into(k, Vec3::ZERO), centre: into(k, p.com), mass: p.mass,
+                                       hit: !p.tris.is_empty() });
                 body.points.extend(p.points.iter().map(|&(c, r)| (into(k, c), r)));
                 body.tris.extend(p.tris.iter().map(|t| t.map(|c| into(k, c))));
                 body.balls.extend(p.balls.iter().map(|&(c, r)| (into(k, c), r)));
@@ -574,16 +604,16 @@ impl Ragdoll {
             body.reach = body.points.iter().map(|(p, r)| p.length() + r).fold(0.0, f32::max);
             bodies.push(body);
         }
-        // the joints between the pieces: each limited one, at its child bone's origin
+        // the joints between the pieces: each limited one, at its child bone's origin, its ranges
+        // about its parent bone's axes (the reference body's frame, `Joint`)
         let mut joints = vec![];
         for (k, p) in protos.iter().enumerate() {
             let Some(limits) = p.limits.filter(|_| k > 0) else { continue };
             let (bp, bc) = (&bodies[piece[p.parent]], &bodies[piece[k]]);
             let anchor = p.frame.w_axis.truncate();
-            let q = turn(p);
             joints.push(Joint { parent: piece[p.parent], child: piece[k], at_parent: bp.q.inverse() * (anchor - bp.x),
-                                at_child: bc.q.inverse() * (anchor - bc.x), rest: (bp.q.inverse() * q).normalize(),
-                                child_off: (bc.q.inverse() * q).normalize(), limits, name: p.bone.map_or(0, |i| model.bones[i]) });
+                                at_child: bc.q.inverse() * (anchor - bc.x), frame: (bp.q.inverse() * turn(&protos[p.parent])).normalize(),
+                                rest: (bp.q.inverse() * bc.q).normalize(), limits, name: p.bone.map_or(0, |i| model.bones[i]) });
         }
         // the start: a moving character's push (9 x its velocity at each of the game's bodies'
         // centres); one that stood still holds its pose a while (`REST_WAKE`)
@@ -761,14 +791,19 @@ impl Ragdoll {
         Some(at)
     }
 
+    /// Where the hit parts' bodies are now (world: their cores' places), the points a blast's
+    /// ball meets the body by.
+    pub fn hit_points(&self) -> impl Iterator<Item = Vec3> + '_ {
+        self.bodies.iter().flat_map(|b| b.parts.iter().filter(|p| p.hit).map(move |p| b.at(p.centre)))
+    }
+
     /// The first part a line (from `origin` along unit `dir`, within `max`) meets: how far along,
-    /// and the body (a hit part by its surface, a ball by its size).
+    /// and the body (a hit part by its surface; the balls meet nothing, `Ragdoll::new`).
     pub fn first_hit(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, usize)> {
         self.bodies.iter().enumerate().filter_map(|(i, b)| {
             let back = b.q.inverse();
             let (o, d) = (back * (origin - b.x), back * dir);
-            let balls = b.balls.iter().filter_map(|&(c, r)| ray_ball(o - c, d, r));
-            ray_tris(&b.tris, o, d, max).into_iter().chain(balls).filter(|&t| t > 0.0 && t <= max).min_by(|a, b| a.total_cmp(b)).map(|t| (t, i))
+            ray_tris(&b.tris, o, d, max).filter(|&t| t > 0.0 && t <= max).map(|t| (t, i))
         }).min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
@@ -885,12 +920,45 @@ impl Ragdoll {
         }
     }
 
-    /// Joint `k` held: its two bodies' points brought together, then the child bone's turn
-    /// within its ranges. Each correction is shared by the bodies' inverse masses (and inertias:
+    /// Joint `k` held: the child's turn brought within its ranges, then the two bodies' points
+    /// brought together. The turn goes first: it turns each body about its own centre, which
+    /// moves the joint's point, and the point's correction after it closes that again (the first
+    /// round's order left the point open for the next substep). Each correction is shared by the
+    /// bodies' inverse masses (and inertias:
     /// isotropic, so a turn's share is plain).
     fn solve_joint(&mut self, k: usize) {
         let j = &self.joints[k];
         let (a, b) = pair(&mut self.bodies, j.parent, j.child);
+        // the child's turn since death, in the joint's frame, within the ranges: the smallest turn
+        // that brings the angles past their stops back to them and leaves the others as they are
+        // (to first order: each angle's rate of change with a small turn of the child about each
+        // world axis), so a stop takes no energy out of nor puts any into the free axes' motion
+        let l = j.limits;
+        let now = angles(j.turn(a.q, b.q));
+        let held = Vec3::new(now.x.clamp(l[0].0, l[0].1), now.y.clamp(l[1].0, l[1].1), now.z.clamp(l[2].0, l[2].1));
+        let over = now - held;
+        if over.length_squared() > 1e-12 {
+            let cols = [Vec3::X, Vec3::Y, Vec3::Z].map(|axis| (angles(j.turn(a.q, Quat::from_scaled_axis(axis * RATE_STEP) * b.q)) - now) / RATE_STEP);
+            let rows: Vec<(Vec3, f32)> = (0..3).filter(|&i| over[i].abs() > 1e-6).map(|i| (Vec3::new(cols[0][i], cols[1][i], cols[2][i]), over[i])).collect();
+            // (phi = J^T (J J^T)^-1 (-over) over the angles past a stop)
+            let n = rows.len();
+            let mut g = [[0.0f32; 3]; 3];
+            for r in 0..n {
+                for c in 0..n {
+                    g[r][c] = rows[r].0.dot(rows[c].0);
+                }
+            }
+            let rhs: Vec<f32> = rows.iter().map(|r| -r.1).collect();
+            let lam = solve_small(&g, &rhs, n);
+            let phi = rows.iter().zip(&lam).fold(Vec3::ZERO, |s, (r, l)| s + r.0 * *l);
+            // (a joint far past its stops comes back over a few substeps, not in one leap)
+            let phi = phi.clamp_length_max(MAX_STOP_TURN);
+            let total = a.inv_inertia + b.inv_inertia;
+            if total > 0.0 && phi.is_finite() {
+                b.q = turned(b.q, phi * (b.inv_inertia / total));
+                a.q = turned(a.q, -phi * (a.inv_inertia / total));
+            }
+        }
         // the points together
         let (ra, rb) = (a.q * j.at_parent, b.q * j.at_child);
         let gap = (b.x + rb) - (a.x + ra);
@@ -904,20 +972,6 @@ impl Ragdoll {
             b.x -= p * b.inv_mass;
             b.q = turned(b.q, -rb.cross(p) * b.inv_inertia);
         }
-        // the child bone's turn since death, in its own frame, within the ranges
-        let l = j.limits;
-        let now = angles(j.rest.inverse() * (a.q.inverse() * b.q * j.child_off));
-        let held = Vec3::new(now.x.clamp(l[0].0, l[0].1), now.y.clamp(l[1].0, l[1].1), now.z.clamp(l[2].0, l[2].1));
-        if (held - now).length_squared() < 1e-12 {
-            return;
-        }
-        let want = a.q * j.rest * from_angles(held) * j.child_off.inverse();
-        let e = want * b.q.inverse();
-        let e = if e.w < 0.0 { -e } else { e };
-        let turn = e.to_scaled_axis();
-        let total = a.inv_inertia + b.inv_inertia;
-        b.q = turned(b.q, turn * (b.inv_inertia / total));
-        a.q = turned(a.q, -turn * (a.inv_inertia / total));
     }
 
     /// Contact `k` held: its point pushed out of the face's plane (its friction is the velocity
@@ -1058,8 +1112,8 @@ impl Ragdoll {
         }
     }
 
-    /// BF_RAGDOLL_LOG at the build: its bodies, joints (with which way a bend about -y takes the
-    /// limb's far end, along the model's -z and up) and start.
+    /// BF_RAGDOLL_LOG at the build: its bodies, joints (with which way a turn about the joint's
+    /// -y and -z takes the child body's centre: along the model's -z, its +x and up) and start.
     fn log_build(&self, start: Start) {
         let name = |b: Option<usize>| b.map_or("(the character's node)".to_string(), |i| bone_name(self.names[i]));
         let mass: f32 = self.bodies.iter().map(|b| b.mass).sum();
@@ -1070,17 +1124,26 @@ impl Ragdoll {
         let minus_z = turn * Vec3::NEG_Z;
         for b in &self.bodies {
             let parts: Vec<String> = b.parts.iter().map(|p| format!("{} {:.1} kg", name(p.bone), p.mass)).collect();
-            let low = b.points.iter().map(|&(p, r)| b.at(p).y - r).fold(f32::MAX, f32::min) - self.floor_under(b.x);
-            println!("  body [{}]: {:.1} kg, inertia {:.3}, {} points, {} triangles, {} balls, at {:.2} (lowest {low:.3} m over the floor), v {:.2}",
+            let floor = self.floor_under(b.x);
+            let low = b.points.iter().map(|&(p, r)| b.at(p).y - r - floor).reduce(f32::min)
+                .map_or("no contact points".to_string(), |l| format!("lowest {l:.3} m over the floor"));
+            println!("  body [{}]: {:.1} kg, inertia {:.3}, {} points, {} triangles, {} balls, at {:.2} ({low}), v {:.2}",
                      parts.join(", "), b.mass, 1.0 / b.inv_inertia, b.points.len(), b.tris.len(), b.balls.len(), b.x, b.v);
         }
+        let plus_x = turn * Vec3::X;
         for j in &self.joints {
             let deg = |v: f32| v.to_degrees();
             let l = j.limits;
-            // (a turn of -y about the child bone's own y takes its x, along the bone, toward its +z)
-            let bend = self.bodies[j.child].q * j.child_off * Vec3::Z;
-            println!("  joint {}: x {:.0}..{:.0} y {:.0}..{:.0} z {:.0}..{:.0}; -y takes its end {:.2} along the model's -z, {:.2} up", bone_name(j.name),
-                     deg(l[0].0), deg(l[0].1), deg(l[1].0), deg(l[1].1), deg(l[2].0), deg(l[2].1), bend.dot(minus_z), bend.y);
+            // (where a small turn about the joint frame's axis takes the child's centre, round the
+            // joint's point)
+            let (a, c) = (&self.bodies[j.parent], &self.bodies[j.child]);
+            let arm = c.x - a.at(j.at_parent);
+            let way = |axis: Vec3| {
+                let w = (a.q * j.frame * axis).cross(arm).normalize_or_zero();
+                format!("{:.2} -z, {:.2} +x, {:.2} up", w.dot(minus_z), w.dot(plus_x), w.y)
+            };
+            println!("  joint {}: x {:.0}..{:.0} y {:.0}..{:.0} z {:.0}..{:.0}; -y takes the child {}; -z takes it {}", bone_name(j.name),
+                     deg(l[0].0), deg(l[0].1), deg(l[1].0), deg(l[1].1), deg(l[2].0), deg(l[2].1), way(Vec3::NEG_Y), way(Vec3::NEG_Z));
         }
     }
 
@@ -1167,14 +1230,45 @@ pub fn death_shoves(u: &mut Player, bone: Option<u32>, at: Vec3, dir: Vec3, dama
 }
 
 /// A blast's push on `u` if it's a corpse with a ragdoll (FUN_00224a90: `Ragdoll::blast`), when
-/// the blast's weapon pushes (`push`, its bullet's h_e39b994b, 1 or more).
-pub fn blast_corpse(u: &mut Player, at: Vec3, radius: f32, damage: f32, push: f32) {
+/// the blast's weapon pushes (`push`, its bullet's h_e39b994b, 1 or more) and the blast meets
+/// the body: one of its hit parts within the radius that `clear` says the blast sees (the game
+/// gathers a character through a hit-part body in its ball with a clear ray from the blast's
+/// centre to that body, FUN_002b3970, the same test as the living's).
+pub fn blast_corpse(u: &mut Player, at: Vec3, radius: f32, damage: f32, push: f32, clear: impl Fn(Vec3) -> bool) {
     if push < 1.0 || !u.dead {
         return;
     }
     if let Some(r) = u.ragdoll.as_mut() {
-        r.blast(at, radius, damage);
+        if r.hit_points().any(|p| p.distance(at) <= radius && clear(p)) {
+            r.blast(at, radius, damage);
+        }
     }
+}
+
+/// The solution of the first `n` rows and columns of `g` x = `rhs` (n up to 3; Gaussian
+/// elimination with partial pivoting): zeros where it's singular.
+fn solve_small(g: &[[f32; 3]; 3], rhs: &[f32], n: usize) -> Vec<f32> {
+    let mut m = [[0.0f32; 4]; 3];
+    for r in 0..n {
+        m[r][..n].copy_from_slice(&g[r][..n]);
+        m[r][3] = rhs[r];
+    }
+    for c in 0..n {
+        let p = (c..n).max_by(|&x, &y| m[x][c].abs().total_cmp(&m[y][c].abs())).unwrap_or(c);
+        m.swap(c, p);
+        if m[c][c].abs() < 1e-12 {
+            return vec![0.0; n];
+        }
+        for r in 0..n {
+            if r != c {
+                let f = m[r][c] / m[c][c];
+                for k in c..4 {
+                    m[r][k] -= f * m[c][k];
+                }
+            }
+        }
+    }
+    (0..n).map(|r| m[r][3] / m[r][r]).collect()
 }
 
 /// Two bodies of a slice at once (`a` and `b` differ).
@@ -1215,7 +1309,8 @@ fn angles(r: Quat) -> Vec3 {
     Vec3::new(twist, swing.y, swing.z)
 }
 
-/// The turn whose `angles` these are.
+/// The turn whose `angles` these are (the tests' poses).
+#[cfg(test)]
 fn from_angles(a: Vec3) -> Quat {
     Quat::from_scaled_axis(Vec3::new(0.0, a.y, a.z)) * Quat::from_rotation_x(a.x)
 }
@@ -1284,14 +1379,6 @@ fn closest_on_triangle(p: Vec3, [a, b, c]: [Vec3; 3]) -> Vec3 {
     a + ab * (vb * denom) + ac * (vc * denom)
 }
 
-/// Where a line (from `o`, relative to the ball's centre, along unit `d`) first meets a ball of
-/// radius `r`.
-fn ray_ball(o: Vec3, d: Vec3, r: f32) -> Option<f32> {
-    let b = o.dot(d);
-    let disc = b * b - (o.length_squared() - r * r);
-    (disc >= 0.0).then(|| -b - disc.sqrt()).filter(|&t| t > 0.0)
-}
-
 /// Where a line (from `o` along `d`) first meets one of `tris`, either side, within `max`
 /// (Moller-Trumbore).
 fn ray_tris(tris: &[[Vec3; 3]], o: Vec3, d: Vec3, max: f32) -> Option<f32> {
@@ -1354,7 +1441,7 @@ mod tests {
     fn bar(x: Vec3, mass: f32) -> Body {
         let points = [-0.2f32, 0.2].iter().flat_map(|&a| [-0.05f32, 0.05].iter().flat_map(move |&b| [-0.05f32, 0.05].map(|c| (Vec3::new(a, b, c), 0.0))))
             .collect();
-        Body { parts: vec![Part { bone: None, rot: Quat::IDENTITY, pos: Vec3::ZERO, centre: Vec3::ZERO, mass }], x, q: Quat::IDENTITY, v: Vec3::ZERO,
+        Body { parts: vec![Part { bone: None, rot: Quat::IDENTITY, pos: Vec3::ZERO, centre: Vec3::ZERO, mass, hit: true }], x, q: Quat::IDENTITY, v: Vec3::ZERO,
                w: Vec3::ZERO, x0: x, q0: Quat::IDENTITY, mass, inv_mass: 1.0 / mass, inv_inertia: 1.0 / (LIMB_INERTIA * mass), points, tris: vec![],
                balls: vec![], reach: 0.21, short: (x, Quat::IDENTITY, 0.0), long: (x, Quat::IDENTITY, 0.0), state: 1 }
     }
@@ -1379,8 +1466,39 @@ mod tests {
 
     /// A joint of bars `parent` and `child` lying end to end along x, with these ranges.
     fn bar_joint(parent: usize, child: usize, limits: [(f32, f32); 3]) -> Joint {
-        Joint { parent, child, at_parent: Vec3::new(0.2, 0.0, 0.0), at_child: Vec3::new(-0.2, 0.0, 0.0), rest: Quat::IDENTITY, child_off: Quat::IDENTITY,
+        Joint { parent, child, at_parent: Vec3::new(0.2, 0.0, 0.0), at_child: Vec3::new(-0.2, 0.0, 0.0), frame: Quat::IDENTITY, rest: Quat::IDENTITY,
                 limits, name: 0 }
+    }
+
+    /// A bar sticking out level from a fixed body, held there by its joint's range against
+    /// gravity (it may turn up, not down), comes to rest at its stop within a second and is
+    /// frozen within the next: the stop's correction doesn't open the joint's point, so the pair
+    /// doesn't creep.
+    #[test]
+    fn rests_at_a_stop() {
+        let mut anchor = bar(Vec3::new(-0.2, 5.0, 0.0), LIMB_MASS);
+        anchor.inv_mass = 0.0;
+        anchor.inv_inertia = 0.0;
+        anchor.points.clear();
+        let mut arm = bar(Vec3::new(0.2, 5.0, 0.0), LIMB_MASS);
+        arm.points.clear();
+        // (a turn of the arm about +z lifts its end: 0..1 radian, so gravity holds it at 0)
+        let mut r = test_ragdoll(vec![anchor, arm], vec![bar_joint(0, 1, [(0.0, 0.0), (0.0, 0.0), (0.0, 1.0)])]);
+        let mut frozen = None;
+        for k in 0..132 {
+            r.psi();
+            if r.asleep && frozen.is_none() {
+                frozen = Some(k as f32 * STEP);
+            }
+            if k == 66 {
+                let b = &r.bodies[1];
+                assert!(b.w.length() < 0.05 && b.v.length() < 0.02, "still moving after 1 s: v {:?} w {:?}", b.v, b.w);
+            }
+        }
+        let b = &r.bodies[1];
+        let tip = b.at(Vec3::new(0.2, 0.0, 0.0));
+        assert!((tip.y - 5.0).abs() < 0.01 && b.at(Vec3::new(-0.2, 0.0, 0.0)).distance(Vec3::new(0.0, 5.0, 0.0)) < 0.002, "{tip} {:?}", b.x);
+        assert!(frozen.is_some_and(|t| t < 1.5), "frozen at {frozen:?}");
     }
 
     /// Two joined bodies lying on a flat floor stay put, hold their joint and go to sleep.
@@ -1446,6 +1564,45 @@ mod tests {
         assert_eq!(frozen_at(0.02), None, "a moving body is frozen");
     }
 
+    /// A body hanging in a corner of its ranges (its twist and side bend at their stops, pressed
+    /// there by gravity) may slide along the stops to where it hangs lowest, but the stops make no
+    /// energy (its energy falls every step, the damping's) and it comes to rest and is frozen.
+    /// (The first stop correction, which rebuilt the turn from the clamped angles, made energy
+    /// here and kept such a body creeping.)
+    #[test]
+    fn slides_along_its_stops() {
+        let mut anchor = bar(Vec3::new(0.0, 5.0, 0.0), LIMB_MASS);
+        anchor.inv_mass = 0.0;
+        anchor.inv_inertia = 0.0;
+        anchor.points.clear();
+        let corner = from_angles(Vec3::new(0.5, 0.0, 0.5));
+        let r0 = Vec3::new(-0.1, -0.1, 0.1);
+        let mut head = bar(Vec3::ZERO, LIMB_MASS);
+        head.points.clear();
+        head.q = corner;
+        head.x = Vec3::new(0.0, 5.0, 0.0) + corner * r0;
+        let joint = Joint { parent: 0, child: 1, at_parent: Vec3::ZERO, at_child: -r0, frame: Quat::IDENTITY, rest: Quat::IDENTITY,
+                            limits: [(-0.5, 0.5), (-1.0, 1.0), (-0.5, 0.5)], name: 0 };
+        let mut r = test_ragdoll(vec![anchor, head], vec![joint]);
+        let energy = |r: &Ragdoll| {
+            let b = &r.bodies[1];
+            0.5 * b.mass * b.v.length_squared() + 0.5 / b.inv_inertia * b.w.length_squared() + b.mass * GRAVITY * b.x.y
+        };
+        let mut last = energy(&r);
+        let mut frozen = None;
+        for k in 0..(66 * 12) {
+            r.psi();
+            let e = energy(&r);
+            assert!(e <= last + 1e-4, "energy made at step {k}: {last} -> {e}");
+            last = e;
+            if r.asleep {
+                frozen = Some(k as f32 * STEP);
+                break;
+            }
+        }
+        assert!(frozen.is_some(), "never frozen: {:?} {:?}", r.bodies[1].w, r.bodies[1].v);
+    }
+
     /// A bar hung from a fixed point by one end swings with the period its mass and inertia give
     /// (2 pi sqrt((I + m r^2) / (m g r)): 2.42 s for the game's limb, I 1.125, m 4.5, r 0.2), so the
     /// solver adds no stiffness or drag of its own to a joint.
@@ -1458,7 +1615,7 @@ mod tests {
         let mut hung = bar(Vec3::new(0.0, 5.0 - 0.2, 0.0), LIMB_MASS);
         hung.points.clear();
         // (a swing of about 33 degrees about z, the bar pointing down from the anchor)
-        let joint = Joint { parent: 0, child: 1, at_parent: Vec3::ZERO, at_child: Vec3::new(0.0, 0.2, 0.0), rest: Quat::IDENTITY, child_off: Quat::IDENTITY,
+        let joint = Joint { parent: 0, child: 1, at_parent: Vec3::ZERO, at_child: Vec3::new(0.0, 0.2, 0.0), frame: Quat::IDENTITY, rest: Quat::IDENTITY,
                             limits: [(-3.0, 3.0); 3], name: 0 };
         let mut r = test_ragdoll(vec![anchor, hung], vec![joint]);
         r.bodies[1].w = Vec3::new(0.0, 0.0, 1.5);

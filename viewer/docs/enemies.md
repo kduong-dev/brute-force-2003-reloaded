@@ -127,8 +127,9 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   damping and joint limits (FUN_00127290, FUN_00113120). A bone below the lowest hit part of its
   chain has no body and keeps its pose at death under the bone above: a Shrike's HorseLink, foot
   and toes under the calf, its hands under the forearms, so the digitigrade lower leg keeps its
-  bend from death and only the hip and the knee move. A frozen Shrike holds its pose 0.35 s,
-  then folds down.
+  bend from death and only the hip and the knee move (their ranges about the thigh's and the
+  pelvis's axes, the parent bone's). A frozen Shrike holds its pose 0.2 s (a fit), then folds
+  down onto its knees and topples.
 * **The death line.** The type's chatter library (`chatter-library`: shrike_light_chatter,
   shrike_heavy_chatter; dm_shrike_*_chatter in the deathmatch types), its tag e1213623, one of
   its three lines: the Heavy's h_04d16d90, h_00c08720, h_f6aa73af, the Soldier's h_0384c97d,
@@ -257,10 +258,11 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
   BF_TEST_FREECAM=1.1,-49.5,31.0,36.4,90,-14 BF_NO_HUD=1 BF_RAGDOLL_LOG=1 BF_SOUND_LOG=1`, 120
   frames; #259's game ragdoll): at the kill the green mist, the gun drops at the feet; "ragdoll:
   45 bones, 18 of the game's bodies (90.0 kg) in 12 pieces, 11 joints"; the body holds its pose
-  0.35 s, the legs buckle, it kneels and lies on its side 0.6 m from where it stood (the trunk
-  down at +1.4 s, take 21: +0.83), the limbs quiet by +4.5 s (takes: 1.5-1.8), frozen at +8 s.
-  Its lower legs keep their bend from death. The death line h_04d16d90 plays on the frame of the
-  killing hit's sound. The timings against takes 17-22: [ragdoll.md](ragdoll.md), "Verified".
+  0.2 s, the legs buckle, it kneels, topples and lies 0.7 m from where it stood (moving
+  at +0.33 s, the trunk down at +1.2 s; take 21: +0.43 and +0.83), the limbs quiet by +3.1 s
+  (takes: still by 1.5-1.8), its head still swaying at +8 s. Its lower legs keep their bend from
+  death. The death line h_04d16d90 plays on the frame of the killing hit's sound. The timings
+  against takes 17-22: [ragdoll.md](ragdoll.md), "Verified".
 * **Death lines** (the same, four Heavies and then a Soldier spawned in turn at the same spot,
   `BF_TEST_NPC="0.3,h_1c5780f8,...;2.5,...;4.7,...;6.9,...;9.1,h_e9a41520,..." BF_ENEMY_LOG=1
   BF_SOUND_LOG=1`): the Heavies say h_04d16d90, h_f6aa73af, h_00c08720, then one of all three

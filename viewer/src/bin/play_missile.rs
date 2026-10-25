@@ -1347,8 +1347,13 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if u.dead {
                 // a corpse: the blast's push on its ragdoll's root body, by its roll, when the
-                // weapon pushes (FUN_00224a90, play_ragdoll.rs `blast_corpse`, #259)
-                ragdoll::blast_corpse(u, b.at, radius, b.roll, def.push);
+                // weapon pushes and the blast sees one of its hit parts, as it must the living's
+                // (FUN_00224a90, play_ragdoll.rs `blast_corpse`, #259)
+                let eye = b.eye;
+                ragdoll::blast_corpse(u, b.at, radius, b.roll, def.push, |p| {
+                    let to = p - eye;
+                    to.length() <= 0.05 || ray_hit(eye, to.normalize(), to.length()).is_none()
+                });
                 continue;
             }
             // what of the body the blast's ball meets (FUN_00224a90: one of its collision-bone

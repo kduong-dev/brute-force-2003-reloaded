@@ -799,9 +799,11 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
                             difficulty: &Difficulty, now: f32) -> Option<f32> {
     let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
     // a corpse: the blast's push on its ragdoll's root body when the explosion pushes
-    // (FUN_00224a90, its Damage max as the blast's damage: play_ragdoll.rs `blast_corpse`, #259)
+    // (FUN_00224a90, its Damage max as the blast's damage: play_ragdoll.rs `blast_corpse`, #259).
+    // With no cover test, as the grenades' blasts hurt the living here (their rule is the demo's
+    // until #112 gives them the game's: its ray from the blast to the body)
     if u.dead {
-        ragdoll::blast_corpse(u, at, radius, max, kit.blast.push);
+        ragdoll::blast_corpse(u, at, radius, max, kit.blast.push, |_| true);
         return None;
     }
     let d = u.position.distance(at);
