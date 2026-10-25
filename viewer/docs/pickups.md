@@ -103,8 +103,10 @@
   * Healing Garo Fruit (h_e711067e, function 19): eaten when walked over, +40, left alone at
     full health. HEALTH / STAMINA POWER are also function 19, but they're power-ups with idle
     effects and aren't taken yet.
-  * A taken pickup comes back after 30 s (a guess; the respawn time isn't found). Only the
-    player picks up.
+  * A level's own taken pickup comes back after 30 s (a guess: the game removes what it takes,
+    FUN_0011c170, and only spawn-triggers put pickups back). A spawn-trigger's copy (every pickup
+    of the multiplayer maps) is removed for good, and its trigger's timer makes the next: see
+    "Pickups from spawn-triggers" (#278). Only the player picks up.
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
     `BF_TEST_HEALTH=<hp>` starts hurt (above the most, with the most raised to it: #152's lava
     runs at 5000, as #146's take03). `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds Tab from the start (the item list open, the game paused).
@@ -157,7 +159,8 @@ and `todo/DNA + Weapon Pickups.mp4`.
     clip: the tutorial's L-Shot-50 by the crate at (-109.9, 17.3, -39.1) (placement h_f6a8a9b5),
     e34's iKhan-GPL at (98.6, 41.0, -49.4), the campaign's others (leads §1). A spawn-trigger's
     template isn't one: every multiplayer map's weapons, e34's Therm Sweeper, m02_a's second
-    MK-ASLT and m02_c's iKhan-GPL are its copies' (#278), drawn where they're placed as before;
+    MK-ASLT and m02_c's iKhan-GPL lie as its copies, on their side under the trigger, from its
+    spawns (#278: "Pickups from spawn-triggers");
   * the gun a swap drops, and a dead character's guns (the ragdoll's start, FUN_00127290, drops
     whatever both slots hold, FUN_0014dfd0; release_weapon's dead path, FUN_00117660 at
     0x118a64, does the same where a clip carries the event), with the rounds they had; they fall
@@ -175,7 +178,17 @@ and `todo/DNA + Weapon Pickups.mp4`.
     collision-type is 0) isn't known: the demo puts it on the ground as every pickup, the
     placement has it 2 m up.
   * Taken, a gun is gone for good: nothing puts a placed campaign weapon back (leads §4.6), so
-    the medkits' guessed 30 s respawn isn't theirs.
+    the medkits' guessed 30 s respawn isn't theirs. A spawn-trigger's copy comes back as its
+    trigger's next spawn (#278).
+* **The vanish timers** (#278; the gun's +0x1a8, FUN_00157c40, `Vanish`): while one runs it counts
+  down, and at 0 the gun is taken out of the world (the tick loop FUN_000d9840 -> FUN_000db3e0).
+  Outside a mission (the multiplayer maps: the session's level kind isn't 0x17506391):
+  * a gun a swap drops, 20 s (release_weapon, 0x1189e5);
+  * a dead character's guns, 20 s (FUN_0014dfd0);
+  * a gun a walk-over takes rounds from, 10 s, whether one ran or not (FUN_0011c170, 0x11c3fd).
+  In a mission only a dead squad member's guns get one, 300 s (FUN_0014dfd0); the enemies' and a
+  swap's dropped guns stay, as every campaign take has them. A use's start on the gun stops its
+  timer (FUN_00121670). A level's placed gun and a spawn-trigger's copy have none.
 * **The target** (the HUD's use tracker FUN_000bf2f0 and its caller 0xbf110): of the lying guns
   at most 1.7 m above or below the controlled character's position (the hips: its node) and 2.5 m
   away across (the target it has at 0.7 of its distance, so kept out to 3.6 m), in the front half
@@ -257,8 +270,7 @@ and `todo/DNA + Weapon Pickups.mp4`.
 * **Not done, or not the game's yet:**
   * where a dropped gun lands: it falls from the hand with a small spin (the demo's; the game's
     drop, FUN_0014a1d0's physics, isn't read: shot list C);
-  * the vanish timers a dropped gun gets outside the game mode 0x17506391 (20 s, 10 s after a
-    walk-over): the campaign's stay in every take; the mode isn't identified (shot list C2);
+  * the vanish timers aren't filmed (shot list C2): they're the code's (above);
   * the use's walk to the gun (FUN_00120290's phase 1, when the gun is beyond 2-3 m of a slot in
     hand or 1 m otherwise): the demo uses it from where the character stands;
   * take11's view turns about 20 degrees during the use (300.6-301.2 s, no stick input): not
@@ -278,7 +290,8 @@ and `todo/DNA + Weapon Pickups.mp4`.
   there and killed), full unless given rounds; `BF_TEST_SWAP=<s>[,<s>...]` holds X 0.5 s from
   each time (`BF_TEST_USE=<s>` holds it 1 s); `BF_WEAPON_LOG=1` prints the lying guns, the
   target as it changes (its class, the slots' classes and the mode), each use, its clip, the
-  release and the grab with the rounds and the reserve, the walk-overs and the dead's drops.
+  release and the grab with the rounds and the reserve, the walk-overs and the dead's drops (with
+  their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies.
 * **Verified:**
   * the tutorial (`BF_MAP=tutorial BF_TEST_GOTO=-106.5,-43.5,-108.6,-40.6 BF_TEST_SWAP=3.0
     BF_WEAPON_LOG=1 BF_HINT_LOG=1`, 105 frames) against take11 299.5-301.4 s: "Hold [X] to swap
@@ -312,3 +325,56 @@ and `todo/DNA + Weapon Pickups.mp4`.
     them back); the tutorial run as above, the same times and counts; m04_a (`BF_MAP=m04_a
     BF_TEST_GOTO=-203.5,78.5,-205.4,77.6`): "Tex cannot pick up Breath Attack." and the red ring
     on the creature weapons, as the code reads.
+
+## Pickups from spawn-triggers (#278)
+
+`play_pickup_spawns.rs` (the copies), `play_triggers.rs` (`spawn_copy`, the subject relay), from
+default.xbe's code (the addresses below) and checked against #35 take20 (sdm_e34's STAMINA POWER)
+and #129 take38 (mp1's walkway).
+
+* **What they are.** Every pickup the multiplayer maps place is a spawn-trigger's template
+  (sdm_e34 54 of 54, mp1 29 of 29 ... sdm_e40 66), and so are the campaign's supply drops and
+  caches (e34's Therm Sweeper, medkits and ammo after a radio line; m02_a's 15, m04_c's 20 ...).
+  A template is out of the world (FUN_000dfe90): it isn't drawn, taken or counted where it's
+  placed, and its idle effect doesn't start there. Its model is kept hidden
+  (`level_scene::SpawnTemplate`) to draw the copies with. The level's other pickups (the
+  tutorial's all) are as before.
+* **The copies.** Each spawn of the trigger (on the multiplayer maps: its FIRST_UPDATE, then each
+  TIMER_PULSE, with OPERATE and SPAWN_RESET; [triggers.md](triggers.md), "Spawn-triggers") puts a
+  copy of the template at the trigger's transform (FUN_00209620; an item's place call is the game
+  object's 0x159b70, with no ray to the ground), named by the trigger (a re-armable one's get
+  made-up names, as the game gives them none):
+  * a type without a collision body (`collision-type` CT_NONE, the enum 0x3bd79c: the four
+    power-ups' orb h_e9e61b85) stays at the transform with its idle effect: sdm_e34's STAMINA
+    POWER at (-84.07, 29.78, 60.58), where take20's live object lies, 2 m from its placement
+    (-82.11, 32.06, 60.06). The power-ups can't be taken yet (#15);
+  * another item (CT_CONVEX) lies on the ground under the transform, upright and tilted to the
+    ground, loose, as the level's own pickups do ("Pickups are loose" above); medkits and fruit
+    can be taken (no level has a DNA canister as a template). The multiplayer maps' triggers stand
+    ~0.5 m over the ground, so the copy is the body the game's physics drops there, at rest (its
+    fall isn't drawn);
+  * a weapon lies on its side on the ground under the transform, turned the trigger's way about
+    the vertical (take38: the guns flat on the walkway under their green spawn glows; where the
+    game's physics rests it isn't read), a lying gun with its type's full clip ("Weapon pickups"
+    above: the prompt, the swap, the walk-over).
+* **Taking one** removes it for good (FUN_0011c170 removes an item it takes; the grab the gun) and
+  sends PICKUP_OBJECT from it {iD 0, the taker, data -1}. A gun copy walked over keeps lying with
+  what's left (its 10 s vanish timer outside a mission, above).
+* **The respawn** is the data's ([triggers.md](triggers.md), "Subject relays"): the trigger's
+  OPERATED goes through a subject relay that binds the copy to a timer, the PICKUP_OBJECT starts
+  the timer, and its pulse makes the next copy and, beside most, the spawn flash (an effect
+  object of type h_117c1805). sdm_e34: the STAMINA POWER 30 s (h_0021e47f; take20: back ~31 s
+  after it was taken, fading in over ~0.3 s), its medkits 10 or 45 s, its guns 20 or 45 s, its
+  ammo and grenades 10 or 20 s, BRUTE POWER 180 s, FORCE POWER 165 s, HEALTH POWER 30 s.
+* **Not done:** the copy's fall and its fade-in (take20's ~0.3 s; the spawn-trigger's h_eeae96e7
+  is 2 s, the demo draws no fade); taking ammo boxes, grenades and power-ups (the demo's walk-over
+  of items covers medkits, fruit and DNA canisters only: #17's "found, not in scope", #15); where
+  the game's physics rests a gun copy (lying on its side is take38's look).
+* **Test hooks:** `BF_PICKUP_LOG=1` (or `BF_TRIGGER_LOG`, `BF_WEAPON_LOG`) prints each copy made
+  (its trigger, name, template, type, place and kind), the item copies listed and each taken.
+* **Verified** ([triggers.md](triggers.md) "Verified" has the commands): sdm_e34's 54 copies at
+  the start, the STAMINA POWER's ahead left of Tex from take20's spot; three medkits taken and
+  back 10.00 s later with the flash; a Saryl-45 swapped and back 20 s after the grab, the dropped
+  LZR-23 gone 20 s after the release; mp1's walkway against take38's player 2 view (the
+  L-Shot-75 on its side at Flint's feet, the medkits 14 m on); the tutorial and e34's own pickups
+  as before.

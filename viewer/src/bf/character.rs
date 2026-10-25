@@ -531,7 +531,15 @@ pub struct ObjectType {
     /// `<base name object-type>`; the type's +0x130, set on the object at its set-up, 0x155058):
     /// 0 for the scenery, 7 for the squad's memory chip h_f50f94f9, 6 for the bosses
     pub radar_contact: u8,
+    /// `collision-type` on the same record (its parser 0x18f39c, into the record's +0xec through
+    /// the enum table 0x3bd79c): CT_NONE 0, CT_CONVEX 1, CT_EXACT 2. The power-ups are CT_NONE (no
+    /// body: a spawn-trigger's copy stays where it's put, #278), the other pickups CT_CONVEX
+    pub collision: i64,
 }
+
+/// `collision-type` CT_NONE (the enum table 0x3bd79c): an object without a physics body (see
+/// `ObjectType::collision`).
+pub const CT_NONE: i64 = 0;
 
 /// An object's radar-contact (name recovered by hashing as `radar-contact-type`; byte +0x7a of
 /// the object, set by FUN_0015b310): RCONTACT_ (name table 0x3beaac) 0 NONE, 1 ALIGNMENT (every
@@ -1807,6 +1815,7 @@ impl Game {
                     factors,
                     debris,
                     radar_contact: t.attr(H_RADAR_CONTACT).and_then(|v| v.as_i64()).map_or(0, |v| v.clamp(0, 255) as u8),
+                    collision: t.attr(h("collision-type")).and_then(|v| v.as_i64()).unwrap_or(CT_NONE),
                 });
             }
             // idle effects: a type's <events><event state="1" h_ed0c9fac=EFFECT_TYPE/>

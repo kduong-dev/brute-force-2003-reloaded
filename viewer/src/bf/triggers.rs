@@ -643,6 +643,11 @@ pub enum Class {
     /// (+0x44, a std::string), the file name of the zone to go to: OPERATE hands it to the session
     /// (its vtable +0x60, +0x64, then +0x5c(name, 0))
     Zone { next: String },
+    /// the subject relay H_RELAY (vtable 0x395308, parser FUN_002012c0, handler 0x201310, #278):
+    /// its entries unread, each event with a subject binds the subject to its targets (they
+    /// listen to it) and passes on; `keep` is its h_f49c30af (+0x40): the binding stays, else
+    /// it's undone once the event has passed
+    Relay { keep: bool },
     /// every other class: its base actions only, until its step runs it
     Other,
 }
@@ -841,6 +846,8 @@ fn class(e: &Element) -> Class {
         Class::LevelOver { ends_mission: e.attr(H_ENDS_MISSION).and_then(|v| v.as_i64()).is_none_or(|v| v != 0) }
     } else if tag == h("zone-trigger") {
         Class::Zone { next: e.attr(H_NEXT_ZONE).and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase() }
+    } else if tag == H_RELAY {
+        Class::Relay { keep: flag(e, H_RELAY_KEEP) }
     } else {
         Class::Other
     }
@@ -852,6 +859,16 @@ pub const H_LEVEL_OVER_TRIGGER: u32 = 0x1F07_BE84;
 const H_ENDS_MISSION: u32 = 0x18F6_6101;
 /// A zone-trigger's h_14b0089f (+0x44, FUN_00207d80): the next zone's file name ("m01_b").
 const H_NEXT_ZONE: u32 = 0x14B0_089F;
+/// The subject relay's element, h_0cb602d0 (vtable 0x395308; its parser FUN_002012c0 reads
+/// h_f49c30af, its handler is 0x201310; the class's name isn't in the data): 122 in the campaign
+/// (the teleporter pads' plate -> relay -> warp) and 39-77 per multiplayer map, where each pickup
+/// spawn-trigger's OPERATED goes through one to the timer that respawns the pickup (sdm_e34's
+/// h_f106c777 -> h_0021e47f, #278). See `Class::Relay`.
+pub const H_RELAY: u32 = 0x0CB6_02D0;
+/// A subject relay's h_f49c30af (+0x40, FUN_002012c0): the binding stays after the event has
+/// passed (0x201310 undoes it with FUN_001fea10 only when it's false). True on every pickup relay
+/// of the multiplayer maps (sdm_e34's 54); false on some of the campaign's (m04_c's).
+const H_RELAY_KEEP: u32 = 0xF49C_30AF;
 
 /// Every trigger of a level file's elements (`all`, its walk), in the file's order.
 pub fn read(all: &[&Element]) -> Vec<Trigger> {
@@ -890,6 +907,7 @@ pub fn class_name(tag: u32) -> String {
         0x10EC_B459 => "waypoint".into(),
         0x14CC_CFAA => "property".into(),
         0x1308_18C0 => "damage-plate".into(),
+        H_RELAY => "relay".into(),
         t => format!("h_{t:08x}"),
     }
 }

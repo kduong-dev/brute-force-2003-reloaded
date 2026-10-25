@@ -75,6 +75,7 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | zone-trigger (0) | OPERATE names the zone (its h_14b0089f, an archive) the next zone's end goes to (#226) | 0x207de0 |
 | radar (18) | OPERATE gives its objects their `radar-contact` and a blink time (#228: see "Radar-triggers") | 0x207230 |
 | damage plate h_130818c0 (1) | A proximity detector that hurts what's in it while it's enabled (#228: see "The damage plate") | 0x1fa7e0, FUN_001f8510 |
+| subject relay h_0cb602d0 (0; 39-77 per multiplayer map) | Binds each event's subject to its targets, which then listen to it, and passes the event on (#278: see "Subject relays") | 0x201310, FUN_001fe6c0, FUN_001fea10 |
 
 Every other class (property h_14cccfaa) runs its base actions; each of its own actions is
 counted as used, as its handler counts it, and logged with the step that runs it ("h_11a8c558
@@ -152,11 +153,11 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   Tex's template put a surface 1.7 m above the ground where his spawn stands him). Nor is a
   template drawn where it's placed (#230, `level_scene::spawn_level`, the same `spawn_templates`
   set: the tutorial's h_e5ab44a9, a pillar of type h_f02c006a at (50.3, 25.6, 80.6) 15 m from the
-  start, stood there as a walk-through ghost; the game shows it only once the campaign is done),
-  but for the pickups: every pickup of the multiplayer maps is a template (sdm_e34's 54, its four
-  power-ups among them), and as the triggers don't make pickup copies yet (below, "In the
-  world") the demo keeps them where they're placed. Making game-object copies from their
-  triggers is #228's or later.
+  start, stood there as a walk-through ghost; the game shows it only once the campaign is done).
+  Nor a pickup: every pickup of the multiplayer maps is a template (sdm_e34's 54, its four
+  power-ups among them), as are the campaign's supply drops and caches (e34's 9 spawns of 6,
+  m02_a's 30 of 15 ...): their copies come from their triggers (#278, "In the world" below). A
+  pickup template's model is kept hidden (`level_scene::SpawnTemplate`) to make the copies from.
 * **Spawning.** OPERATE while armed spawns at once, or after `h_eab6952f` s (e40's delayed
   spawns); a trigger is armed once by its constructor (0x1fd680-0x1fd6e7), and SPAWN_RESET arms a
   re-armable one again (the tutorial's lava bursts: TIMER_PULSE -> SPAWN_RESET, then OPERATE).
@@ -212,8 +213,16 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   flashes; the farcast-out pad, which the game keeps until its destroyer, plays its emitters once
   here), with the game's particle rules (`load_recorded_facing`: its shapes, its count once a
   game frame, its facing; #228, checked against take08's lava bursts, which the demo's half-size
-  quads drew as a string of small blobs); a pickup template (sdm_e34's 118 re-armable ones) isn't
-  made: the demo keeps the placed pickups as before.
+  quads drew as a string of small blobs); a pickup (an inventory-object or weapon-object, #278)
+  becomes a copy of its template's model at the transform, named as the copy
+  (play_pickup_spawns.rs): one whose type has no collision body (`collision-type` CT_NONE: the
+  power-ups) stays where the transform puts it, with its idle effect (sdm_e34's STAMINA POWER at
+  (-84.07, 29.78, 60.58), #35 take20's live object); another item lies on the ground under it as
+  the level's own pickups do; a weapon lies on its side on the ground under it, a lying gun the
+  prompt offers (#129 take38: mp1's walkway guns flat under their spawn glows). The item's place
+  call is the game object's 0x159b70 (no ray); where its body comes to rest is the demo's. Taking
+  a copy removes it and sends PICKUP_OBJECT from it; what comes back is the trigger's next spawn
+  ("Subject relays").
 * **The squad's start (#102).** A squad member (Brutus, Flint, Hawk, Tex) that a spawn-trigger
   spawns starts on the ground under that trigger's transform, named as its copy (`SquadSpawns`,
   play.rs `player_at_start`): the tutorial's Tex at (65.55, 25.25, 74.03), where take03 has him
@@ -237,6 +246,34 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
   him in, so the start area's proximity detectors h_ea082132 and h_e30f11a4 send ENTER_DETECTOR
   at 17.27 s, as he lands. Under `BF_TEST_GOTO` or `BF_SCRIPT` the level's start scripts don't
   play and the squad is in the world from t 0, as before ([cutscenes.md](cutscenes.md)).
+
+## Subject relays
+
+#278. The class h_0cb602d0 (its name isn't in the data; vtable 0x395308, parser FUN_002012c0,
+handler 0x201310): 644 on the multiplayer maps carry the pickups' respawns, the rest are the
+teleporter pads' (plate -> relay -> warp) and the campaign's AI and destroyer hand-offs.
+
+* **What it does** (0x201310). Disabled, its base actions. Enabled, it doesn't read its entries:
+  an event with a subject binds that subject to each of its targets (FUN_001fe6c0: the target's
+  first object becomes the subject, and the subject hears the target from now on, the old first
+  object no longer), goes on to the targets (FUN_001ff0a0), and unless its h_f49c30af is set the
+  binding is undone after (FUN_001fea10). An event without a subject goes nowhere.
+* **The pickups' respawn.** Each pickup spawn-trigger of a multiplayer map sends its OPERATED (the
+  copy as the subject) to a relay with h_f49c30af, whose target is a timer: the timer now hears the
+  copy, so the copy's PICKUP_OBJECT, as it's taken, starts the timer (its OPERATE), and its pulse
+  (TIMER_PULSE) goes back to the spawn-trigger: OPERATE (a new copy, whose OPERATED binds the
+  timer to it) and SPAWN_RESET (armed for the next), and to a second spawn-trigger beside most,
+  whose template is the spawn flash's effect object (h_117c1805). The timers stop and reload at
+  their pulse (h_f92b0b15). sdm_e34: the STAMINA POWER's h_f069b2c2 -> relay h_f106c777 -> timer
+  h_0021e47f, 30 s (#35 take20: back ~31 s after it was taken); its medkits 10 or 45 s, its guns
+  20 or 45 s, its ammo and grenades 10 or 20 s, its other power-ups 30, 165 and 180 s. mp1's
+  power-ups spawn only on a pulse, through routers and gamevars that pick one of three spots.
+* **The teleporter pads.** A plate's ENTER_DETECTOR (the occupant the subject) through a relay
+  without h_f49c30af to a warp-trigger: the warp moves its first object, the occupant, and the
+  binding is undone. The warp takes the objects it had at its OPERATE (`Act::Warp`), as the game's
+  warps in its handler. It finds a squad member by the name the triggers know it by (a mission's:
+  "tex_1" ...); the multiplayer maps' players have none, so their pads don't warp them yet. The
+  pads themselves are #236's (not checked against footage).
 
 ## Sound- and dialog-triggers
 
@@ -405,9 +442,11 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
   (0x163060), the user as the subject.
 * **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs): since #228 the tutorial's DNA
   canister h_ef649b0f, whose PICKUP_OBJECT starts timer467 (4 s) and then Bratton's line
-  ([pickups.md](pickups.md), "DNA canisters"). Its other listened ones aren't takeable: the
-  Sentry mines are armed instead (their disarm, #145, would take them) and the L-Shot-50 is a
-  weapon pickup, which the demo doesn't have yet.
+  ([pickups.md](pickups.md), "DNA canisters"); since #17 a lying gun taken by the swap or walked
+  over (the tutorial's L-Shot-50: the sniper hint); since #278 a spawn-trigger's pickup copy, to
+  the timer its relay bound to it ("Subject relays"). The Sentry mines are armed instead (their
+  disarm, #145, would take them). {iD 0, the taker as the subject, data -1}, as FUN_0011c170 posts
+  it (0x11c3b7-0x11c3db) and the grab_weapon event.
 * **AI events** (RESERVE_4EVT, 17): a character's EVT_ events (its health under 75, 50 and 25
   percent of its most; EVT_SOUND_ENEMY_NOISE as a stub) to the event-triggers listening to it
   only (FUN_001fe440), with the character as the subject (#224, play_hints.rs `ai_events`).
@@ -582,7 +621,31 @@ the log read and the frames looked at:
   h_f12ff6e9: ENTER_DETECTOR_FIRST opens it, EMPTIED_DETECTOR closes it 0.2 s after Tex is off the
   plate; the gate from its panel (`BF_TEST_GOTO=-23.23,79.05,-23.7,80.8 BF_TEST_GO_AT=100
   BF_TEST_USE=0.5`): USE_OBJECT -> router h_1c61561d -> both leaves' anim-triggers, once, 4.96 s.
-  Its 118 pickup spawn-triggers fire at the start and make nothing (the placed pickups stay).
+  Its pickup spawn-triggers fire at the start and make their copies (#278, below).
+* **Pickup copies and their respawn (#278)**, `BF_TRIGGER_LOG=1 BF_PICKUP_LOG=1 BF_WEAPON_LOG=1`:
+  * sdm_e34 (`BF_CHARACTER=3 BF_TEST_GOTO=-81.78,63.86,-81.78,59.0 BF_TEST_GO_AT=999`): 54 copies at
+    the first update, each OPERATED bound to its timer by its relay ("h_f106c777 (relay) binds
+    h_7e00001b to h_0021e47f"); the STAMINA POWER's at (-84.07, 29.78, 60.58) with its idle effect,
+    ahead left of Tex as in #35 take20 (frame 19 against the take at 1.0 s; the effect's look is
+    #15's); the level's own power-up idle effects none (they're all templates);
+  * the medkits (`BF_TEST_GOTO=16.5,99.1,12.1,99.1`): Tex takes the three copies at 10.84-11.01 s,
+    each PICKUP_OBJECT starts its timer (trigger_timer267/271/275, 10 s), whose pulses at
+    20.84-21.01 s spawn the next three and the spawn flash beside them (trigger_spawn269 ...); he
+    takes those at once, and so on every 10 s;
+  * a gun (`BF_TEST_GOTO=-53.3,78.6,-55.08,79.45 BF_TEST_GO_AT=999 BF_TEST_SWAP=2.0`): "Hold [X] to
+    swap Saryl-45.", the swap (the LZR-23 released at 2.55 s, "gone in 20 s"), the grab's
+    PICKUP_OBJECT starts trigger_timer355 (20 s); the dropped LZR-23 vanishes at 22.55 s, and at
+    22.85 s the next Saryl-45 lies there with the spawn flash (h_117c1805) and the prompt back
+    (5 fps capture, frames 113-118);
+  * mp1 (`BF_CHARACTER=1 BF_TEST_GOTO=-42.68,-3.6,-43.13,-10.59,36.5 BF_TEST_GO_AT=999`, #129
+    take38's player 2): 28 copies at the first update (its five pulse-only power-up spawns wait
+    for their timers); Flint stands on the walkway's L-Shot-75 lying on its side under its green
+    spawn glow with the 11mm Ammo beside it ("Hold [X] to swap L-Shot-75.", "11mm Ammo (full)"),
+    and the two medkits lie 14 m on under theirs, as the take's bottom half has them.
+  * The campaign: the tutorial has no pickup template (its L-Shot-50 swap, its medkits and DNA as
+    before); e34's iKhan-GPL and 12 medkits are found as before, its six templates (the supply
+    drops after a radio line, the finished campaign's air filter h_028920ea behind its flag test)
+    wait for their triggers.
 * **e40 / m09_a**: the squad starts on the ground under its spawn-triggers (Brutus at
   (-14.04, 26.20, 160.70), xemu.md's live read) with its placements' weapons, and `BF_SLIDE_LOG`
   shows no fall in its first 6 s (it fell ~10 m before, with fall damage); m09_a's squad at its
@@ -711,7 +774,6 @@ the log read and the frames looked at:
   character its subject is a character from its vtable +0xf4 object's +0x45c (perhaps its last
   attacker: not traced), not the dead object as the demo has it (#221's reading; nothing in the
   tutorial reads it).
-  PICKUP_OBJECT's id and data are guesses (0, -1).
 * Usable game objects (`reticule-action` 1 consoles, e34's) don't send USE_OBJECT yet: only
   world buttons have the panel prompt.
 * Animated objects only looped (the tutorial's looping props h_e5b1f2c8, h_0cbffd71, the fans

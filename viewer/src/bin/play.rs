@@ -742,6 +742,7 @@ fn main() {
         .add_plugins(inventory::plugin)
         .add_plugins(itembox::plugin)
         .add_plugins(weapon_pickups::plugin)
+        .add_plugins(pickup_spawns::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -855,6 +856,8 @@ mod camera;
 mod liquids;
 #[path = "play_weapon_pickups.rs"]
 mod weapon_pickups;
+#[path = "play_pickup_spawns.rs"]
+mod pickup_spawns;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -7037,6 +7040,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
 
 /// Weapon placement (hand / back), recoil, minigun spin, muzzle flash, and tracers for new shots,
 /// for the player and the squad.
+#[allow(clippy::too_many_arguments)]
 fn update_weapons(
     mut commands: Commands,
     time: Res<Time>,
@@ -7047,8 +7051,10 @@ fn update_weapons(
     mut visibility: Query<&mut Visibility>,
     mut lights: Query<&mut PointLight>,
     globals: Query<&GlobalTransform>,
+    guns: Option<Res<weapon_pickups::Guns>>,
 ) {
     let dt = frame_dt(&time);
+    let mission = guns.as_ref().is_none_or(|g| g.mission);
     for p in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         let Some(mut l) = p.loaded.take() else { continue };
         // the dead let go of the gun in their hand: it falls from where it is, thrown a little
@@ -7057,7 +7063,8 @@ fn update_weapons(
         // Each then lies as a pickup with the rounds it had: the ragdoll's start drops whatever
         // both slots hold (FUN_00127290 -> FUN_0014dfd0, a creature's weapon too), and
         // release_weapon's dead path (FUN_00117660 at 0x118a64) leaves the dead's rounds in the
-        // gun (#17, play_weapon_pickups.rs)
+        // gun (#17, play_weapon_pickups.rs). FUN_0014dfd0 starts its vanish timer: 20 s outside a
+        // mission, 300 s in one for a squad member's (#278, `weapon_pickups::death_vanish`)
         if p.dead && !l.weapon_dropped {
             l.weapon_dropped = true;
             for (i, w) in l.weapons.iter().enumerate() {
@@ -7072,8 +7079,13 @@ fn update_weapons(
                     commands.entity(w.entity).remove::<ChildOf>()
                         .insert((g.compute_transform(), pickups::Thrown { velocity: push, spin },
                                  weapon_pickups::LyingGun { kind: w.def.name, clip, name: 0 }));
+                    let vanish = weapon_pickups::death_vanish(mission, p.in_squad());
+                    if let Some(v) = vanish {
+                        commands.entity(w.entity).insert(weapon_pickups::Vanish(v));
+                    }
                     if std::env::var("BF_WEAPON_LOG").is_ok() {
-                        println!("t {:.2}: {} dies and lets go of {} ({clip} rounds) at {:.2}", p.sim_time, unit_name(p), w.def.label, g.translation());
+                        println!("t {:.2}: {} dies and lets go of {} ({clip} rounds) at {:.2}{}", p.sim_time, unit_name(p), w.def.label, g.translation(),
+                                 vanish.map_or(String::new(), |v| format!(", gone in {v} s")));
                     }
                 }
                 if let Ok(mut v) = visibility.get_mut(w.flash) {

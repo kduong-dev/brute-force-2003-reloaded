@@ -7,12 +7,17 @@
 //! Pickups.mp4 (refusals and the walk-over's lines).
 //!
 //!  - **A lying gun** (`LyingGun`) is a level's weapon-object placement (object type 20 WEAPON,
-//!    reticule-action 2 RACT_PICKUP) that isn't a spawn-trigger's template (those are #278's), in
-//!    its placement's pose, or a gun a character let go of: the one a swap drops, and a dead
-//!    character's (the ragdoll's start FUN_00127290 drops both slots' guns, FUN_0014dfd0; and
-//!    release_weapon's dead path, FUN_00117660 at 0x118a64: play.rs `update_weapons`), which fall
-//!    and tumble as the loose pickups do (play_pickups.rs `Thrown`). Taken, it's gone: nothing
-//!    puts a placed campaign weapon back (leads §4.6), so no respawn.
+//!    reticule-action 2 RACT_PICKUP) that isn't a spawn-trigger's template, in its placement's
+//!    pose; a spawn-trigger's copy of one (every multiplayer map's guns: play_pickup_spawns.rs,
+//!    #278); or a gun a character let go of: the one a swap drops, and a dead character's (the
+//!    ragdoll's start FUN_00127290 drops both slots' guns, FUN_0014dfd0; and release_weapon's
+//!    dead path, FUN_00117660 at 0x118a64: play.rs `update_weapons`), which fall and tumble as
+//!    the loose pickups do (play_pickups.rs `Thrown`). Taken, it's gone: nothing puts a placed
+//!    campaign weapon back (leads §4.6), and a copy's trigger makes the next.
+//!  - **The vanish timers** (`Vanish`, the gun's +0x1a8; FUN_00157c40 counts it, at 0 the gun is
+//!    taken out of the world): outside a mission 20 s on a gun a swap or a death drops and 10 s
+//!    on one a walk-over takes rounds from; in a mission 300 s on a dead squad member's only; a
+//!    use's start stops it (`vanish`, `death_vanish`).
 //!  - **A creature's weapons too** (class 7, ammo-count -1, the 7 mm dummy model h_ff18f12d:
 //!    m04_a's Psionic Blast x2 and Breath Attack at (-207, 44.5, 76.8), a dead Shrike Hound's
 //!    Breath Attack): nothing in the code sets them apart. A placement whose h_1cb7d5f2 is false
@@ -82,7 +87,7 @@
 //! the ground round the controlled character's start (3.5 m ahead by default, as the takes' carrier
 //! was put, with a full clip), as a dead carrier's guns would lie; BF_TEST_SWAP=<s>[,<s>...] holds
 //! X from each of those times for SWAP_HOLD s; BF_WEAPON_LOG=1 prints the lying guns, the target
-//! changes, each use, its events and the walk-overs.
+//! changes, each use, its events, the walk-overs and the vanish timers.
 
 use super::*;
 use bf_viewer::bf::hash::h;
@@ -139,6 +144,39 @@ const SWAP_HOLD: f32 = 0.5;
 /// A dropped gun's spin as it leaves the hand (rad/s): the demo's, the drop's physics isn't traced
 /// (FUN_0014a1d0 -> FUN_00210630; leads §4.6).
 const DROP_SPIN: f32 = 2.0;
+/// The vanish time (s, `Vanish`) outside a mission of a gun a swap lets go (release_weapon,
+/// 0x41a00000 stored at 0x1189e5) or a dead character drops (FUN_0014dfd0, 0x14e062 / 0x14e0d0),
+/// each only when the gun's timer isn't running.
+const VANISH_DROPPED: f32 = 20.0;
+/// The vanish time (s) in a mission of a gun a dead member of a player's squad drops
+/// (FUN_0014dfd0, 0x43960000 at 0x14e072 / 0x14e0e4); anyone else's gets none there.
+const VANISH_SQUAD_DEAD: f32 = 300.0;
+/// The vanish time (s) outside a mission of a lying gun a walk-over takes rounds from
+/// (FUN_0011c170, 0x41200000 at 0x11c3fd, whether it's running or not).
+const VANISH_WALKED: f32 = 10.0;
+
+/// A lying gun's vanish timer, the weapon's +0x1a8 (s): while it isn't 0 the object's update
+/// counts it down by dt (FUN_00157c40 at 0x157d66-0x157da1, plain dt for an object of type 20
+/// WEAPON), and once it's 0 or less the update returns 0 and the world takes the gun out
+/// (FUN_000d9840 collects the objects whose update said so and hands each to FUN_000db3e0).
+/// Started outside a mission (the session's level kind isn't 0x17506391: the multiplayer maps)
+/// on a gun a swap lets go or a dead character drops (VANISH_DROPPED) and on one a walk-over
+/// takes rounds from (VANISH_WALKED), in a mission on a dead squad member's (VANISH_SQUAD_DEAD);
+/// cleared when a use starts on it (FUN_00121670 at 0x121827). A gun without one stays: a
+/// level's, a spawn-trigger's copy, the campaign's dropped guns (as every take has them).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Vanish(pub f32);
+
+/// The vanish timer (s) FUN_0014dfd0 starts on a gun a dead character drops: outside a
+/// `mission` VANISH_DROPPED; in one VANISH_SQUAD_DEAD for a member of a player's squad (`squad`:
+/// char+0x59c's squad, FUN_0005c0a0), else none.
+pub fn death_vanish(mission: bool, squad: bool) -> Option<f32> {
+    match (mission, squad) {
+        (false, _) => Some(VANISH_DROPPED),
+        (true, true) => Some(VANISH_SQUAD_DEAD),
+        (true, false) => None,
+    }
+}
 
 /// A gun lying in the world (see the module notes): the game's weapon object out of any holder
 /// (its +0x1b0 clear, reticule-action +0x79 = 2: FUN_0014a170). Its entity is a root (a placed
@@ -212,7 +250,8 @@ struct PickupClip {
 
 /// The lying guns' state: whether the level's have been found, the target last frame (its
 /// entity), the hold on it, and whether X is armed (pressed and not yet used: the controller's
-/// +0xa0 bit 4).
+/// +0xa0 bit 4); `mission`: the map is played as a mission (the session's level kind 0x17506391,
+/// play_damage.rs `multiplayer_map`), which the vanish timers ask (`Vanish`).
 #[derive(Resource, Default)]
 pub(super) struct Guns {
     ready: bool,
@@ -221,43 +260,45 @@ pub(super) struct Guns {
     armed: bool,
     was_down: bool,
     log: bool,
+    pub(super) mission: bool,
 }
 
 /// The lying guns found once the level's objects are in; each frame after the panels (`doors`)
 /// and before the characters' step, the target, the prompt, the ring and the hold
-/// (`use_target`); after the step, the walk-overs (`walk_over`) and then the clips' events
-/// (`swap`), both before the frame's sounds play and the guns are placed on the bodies. The
-/// walk-over goes first: after a grab the new gun's ammo type counts, while the lying gun it came
-/// from is only queued to go, and the walk-over would take its rounds a second time (#17 review).
+/// (`use_target`); after the step, the walk-overs (`walk_over`), the clips' events (`swap`) and
+/// the vanish timers (`vanish`), before the frame's sounds play and the guns are placed on the
+/// bodies. The walk-over goes first: after a grab the new gun's ammo type counts, while the
+/// lying gun it came from is only queued to go, and the walk-over would take its rounds a second
+/// time (#17 review).
 pub fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| {
-        commands.insert_resource(Guns { log: std::env::var("BF_WEAPON_LOG").is_ok(), ..default() });
+    app.add_systems(OnEnter(AppState::Playing), (|mut commands: Commands, game: Res<GameData>, current: Res<CurrentMap>| {
+        commands.insert_resource(Guns { log: std::env::var("BF_WEAPON_LOG").is_ok(), mission: !damage::multiplayer_map(&game.0, &current.0), ..default() });
     }).after(setup))
         .add_systems(Update, (find_guns, use_target).chain().after(doors).before(update_player).run_if(in_state(AppState::Playing)))
-        .add_systems(Update, (walk_over, swap).chain().after(update_player).before(play_sounds).before(update_weapons)
+        .add_systems(Update, (walk_over, swap, vanish).chain().after(update_player).before(play_sounds).before(update_weapons)
             .run_if(in_state(AppState::Playing)));
 }
 
 /// The level's lying guns, once its objects are in (as play_pickups.rs `find_pickups` waits for
-/// the character): every weapon-object placement that isn't a spawn-trigger's template (those
-/// stay as level_scene.rs draws them, #278's), with a full clip, in its placement's pose but
-/// raised where the ground under it covers part of it (`lowest`). The arena's `settle_pickups`
-/// seats a pickup's model bottom on the floor as if it stood upright, which sinks one lying on
-/// its side: the tutorial's L-Shot-50 (up axis along x), placed 4.5 cm above the ground there,
-/// came out 1 cm under it, half buried; raised, it rests on the ground as take11 shows it. And
-/// BF_TEST_GUN's (module notes).
-#[allow(clippy::too_many_arguments)]
-fn find_guns(mut commands: Commands, mut guns: ResMut<Guns>, mut game: ResMut<GameData>, player: Res<Player>, map: Option<Res<MapLevel>>,
-             mut placed: Query<(Entity, &Placed, &mut Transform)>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
+/// the character): every weapon-object placement that isn't a spawn-trigger's template (out of
+/// the world, `SpawnTemplate`: its copies are made lying guns by play_pickup_spawns.rs, #278),
+/// with a full clip, in its placement's pose but raised where the ground under it covers part of
+/// it (`lowest`). The arena's `settle_pickups` seats a pickup's model bottom on the floor as if it
+/// stood upright, which sinks one lying on its side: the tutorial's L-Shot-50 (up axis along x),
+/// placed 4.5 cm above the ground there, came out 1 cm under it, half buried; raised, it rests on
+/// the ground as take11 shows it. And BF_TEST_GUN's (module notes).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn find_guns(mut commands: Commands, mut guns: ResMut<Guns>, mut game: ResMut<GameData>, player: Res<Player>,
+             mut placed: Query<(Entity, &Placed, &mut Transform), (Without<LyingGun>, Without<bf_viewer::level_scene::SpawnTemplate>)>,
+             mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
              mut images: ResMut<Assets<Image>>, mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
              (children, parts): (Query<&Children>, Query<(&Transform, Option<&Mesh3d>), Without<Placed>>)) {
     if guns.ready || player.loaded.is_none() {
         return;
     }
     guns.ready = true;
-    let templates = map.as_ref().and_then(|m| m.0.as_ref()).map(|l| l.spawn_templates()).unwrap_or_default();
     for (e, p, mut t) in &mut placed {
-        if p.tag != h("weapon-object") || templates.contains(&p.name) {
+        if p.tag != h("weapon-object") {
             continue;
         }
         let Some(def) = game.0.weapons.get(&p.kind) else { continue };
@@ -433,8 +474,8 @@ fn character_name(p: &Player, game: &Game) -> String {
 /// Each frame after `doors`: the controlled character's target among the lying guns (see the
 /// module notes), the prompt for it, the ring, and the hold that starts a use; BF_TEST_SWAP's X.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn use_target(time: Res<Time>, mut guns: ResMut<Guns>, mut player: ResMut<Player>, game: Res<GameData>, mut use_panel: ResMut<UsePanel>,
-              lying: Query<(Entity, &LyingGun, &Transform, &Visibility)>) {
+pub(super) fn use_target(mut commands: Commands, time: Res<Time>, mut guns: ResMut<Guns>, mut player: ResMut<Player>, game: Res<GameData>,
+              mut use_panel: ResMut<UsePanel>, lying: Query<(Entity, &LyingGun, &Transform, &Visibility)>) {
     let dt = frame_dt(&time);
     let t = player.sim_time;
     // test hook: BF_TEST_SWAP=<s>[,<s>...]
@@ -519,10 +560,12 @@ pub(super) fn use_target(time: Res<Time>, mut guns: ResMut<Guns>, mut player: Re
                 guns.held = 0.0;
                 if takes {
                     start_use(&mut player, &game.0, e, class, guns.log);
-                    // (in use from this frame: no prompt, the ring's lighter blue)
+                    // (in use from this frame: no prompt, the ring's lighter blue; the gun's
+                    // vanish timer stopped, FUN_00121670 at 0x121827)
                     if player.gun_use.is_some() {
                         use_panel.prompt = None;
                         use_panel.ring.colour = RingColour::InUse;
+                        commands.entity(e).remove::<Vanish>();
                     }
                 } else if player.random(100) < REFUSE_CHANCE {
                     say(&mut player, &game.0, REFUSE_CHATTER, 0.0);
@@ -671,7 +714,7 @@ fn swap(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Sq
             u.grab_due = true;
         }
         if std::mem::take(&mut u.release_due) {
-            release(&mut commands, p, &mut l, &game.0, &mut reserve, &globals, guns.log);
+            release(&mut commands, p, &mut l, &game.0, &mut reserve, &globals, guns.mission, guns.log);
         }
         if std::mem::take(&mut u.grab_due) {
             let mut assets = ModelAssets { meshes: &mut meshes, materials: &mut materials, images: &mut images, bindposes: &mut bindposes };
@@ -699,8 +742,11 @@ fn swap(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Sq
 /// leaving the hand plays the switch's first sound
 /// (`SWITCH_SOUNDS`, FUN_000cbec0 through FUN_000bb220: the controlled character's only), as the
 /// takes have it at the release: #52 take04 7.52 s, #61 take04 6.57 s, take11 300.73 s, matched
-/// by spectrogram.
-fn release(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &Game, reserve: &mut ammo::Reserve, globals: &Query<&GlobalTransform>, log: bool) {
+/// by spectrogram. Outside a `mission` the gun's vanish timer starts (VANISH_DROPPED: 0x1189e5,
+/// the gun just left the hand, so its timer isn't running).
+#[allow(clippy::too_many_arguments)]
+fn release(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &Game, reserve: &mut ammo::Reserve, globals: &Query<&GlobalTransform>,
+           mission: bool, log: bool) {
     if p.controlled {
         p.sound_queue.push((SWITCH_SOUNDS[0], 0.9));
     }
@@ -715,11 +761,14 @@ fn release(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &Game,
     let spin = Vec3::new(p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0) * (DROP_SPIN / 50.0);
     commands.entity(held.entity).remove::<ChildOf>().insert((at, Visibility::Inherited, pickups::Thrown { velocity: Vec3::ZERO, spin },
                                                               LyingGun { kind: held.def.name, clip, name: 0 }));
+    if !mission {
+        commands.entity(held.entity).insert(Vanish(VANISH_DROPPED));
+    }
     commands.entity(held.flash).despawn();
     commands.entity(held.light).despawn();
     if log {
-        println!("t {:.2}: {} releases {} at {:.2}: {} rounds left in it, reserve type {ammo_type} now {}", p.sim_time, unit_name(p), held.def.label,
-                 at.translation, clip, reserve.get(ammo_type));
+        println!("t {:.2}: {} releases {} at {:.2}: {} rounds left in it, reserve type {ammo_type} now {}{}", p.sim_time, unit_name(p), held.def.label,
+                 at.translation, clip, reserve.get(ammo_type), if mission { String::new() } else { format!(", gone in {VANISH_DROPPED} s") });
     }
     let empty = commands.spawn((Transform::default(), Visibility::Hidden, ChildOf(l.root))).id();
     (held.entity, held.flash, held.light) = (empty, empty, empty);
@@ -806,9 +855,10 @@ fn walkable(e: Entity, gun: &LyingGun, vis: Visibility, grabbed: &[Entity]) -> b
 
 /// Squad members walking over a lying gun (FUN_0011c540 -> FUN_0011c170; see the module notes):
 /// its rounds into the reserve when someone in the squad has a gun of its ammo type, the pickup
-/// line, the ammo's pickup sound and PICKUP_OBJECT; "(full)" when nothing goes in. Before `swap`.
+/// line, the ammo's pickup sound and PICKUP_OBJECT, and outside a mission its vanish timer
+/// (VANISH_WALKED); "(full)" when nothing goes in. Before `swap`.
 #[allow(clippy::too_many_arguments)]
-fn walk_over(mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut reserve: ResMut<ammo::Reserve>,
+fn walk_over(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut reserve: ResMut<ammo::Reserve>,
              mut feed: ResMut<pickups::PickupFeed>, mut events: ResMut<triggers::TriggerEvents>, guns: Res<Guns>,
              mut lying: Query<(Entity, &mut LyingGun, &Transform, &Visibility)>) {
     let units = || std::iter::once(&*player).chain(squad.0.iter());
@@ -850,10 +900,30 @@ fn walk_over(mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<Gam
             if gun.name != 0 {
                 events.0.push(triggers::ObjectEvent { from: gun.name, signal: bf_viewer::bf::triggers::sig::PICKUP_OBJECT, subject: u.trigger_name, data: -1 });
             }
-            if guns.log {
-                println!("t {:.2}: {} takes {added}x {name} from a lying gun at {p:.2} ({} left in it), reserve type {ammo_type} {}", u.sim_time, unit_name(u),
-                         gun.clip, reserve.get(ammo_type));
+            // (0x11c3fd: outside a mission, running or not)
+            if !guns.mission {
+                commands.entity(e).insert(Vanish(VANISH_WALKED));
             }
+            if guns.log {
+                println!("t {:.2}: {} takes {added}x {name} from a lying gun at {p:.2} ({} left in it), reserve type {ammo_type} {}{}", u.sim_time, unit_name(u),
+                         gun.clip, reserve.get(ammo_type), if guns.mission { String::new() } else { format!(", gone in {VANISH_WALKED} s") });
+            }
+        }
+    }
+}
+
+/// The vanish timers (`Vanish`, FUN_00157c40 for a weapon): each running one down by the frame's
+/// dt, and a gun whose time is out taken out of the world (FUN_000d9840 -> FUN_000db3e0).
+fn vanish(mut commands: Commands, time: Res<Time>, guns: Res<Guns>, player: Res<Player>, mut timed: Query<(Entity, &mut Vanish, &LyingGun)>) {
+    let dt = frame_dt(&time);
+    for (e, mut v, gun) in &mut timed {
+        v.0 -= dt;
+        if v.0 > 0.0 {
+            continue;
+        }
+        commands.entity(e).try_despawn();
+        if guns.log {
+            println!("t {:.2}: a lying gun (h_{:08x}, {} rounds) vanishes: its timer ran out", player.sim_time, gun.kind, gun.clip);
         }
     }
 }
@@ -861,6 +931,18 @@ fn walk_over(mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<Gam
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FUN_0014dfd0's timers on a dead character's guns: 20 s outside a mission, 300 s in one for
+    /// a squad member, none for the others there; release_weapon's and the walk-over's are 20 and
+    /// 10 s (0x1189e5, 0x11c3fd).
+    #[test]
+    fn the_vanish_timers() {
+        assert_eq!(death_vanish(false, false), Some(20.0));
+        assert_eq!(death_vanish(false, true), Some(20.0));
+        assert_eq!(death_vanish(true, true), Some(300.0));
+        assert_eq!(death_vanish(true, false), None);
+        assert_eq!((VANISH_DROPPED, VANISH_WALKED), (20.0, 10.0));
+    }
 
     /// The squad's `limit-weapon` (objecttypes-common): Brutus 1 8 / 2 1, Flint 1 8 / 0 8, Hawk
     /// 0 8 / 1 8, Tex 2 1 / 2 1.

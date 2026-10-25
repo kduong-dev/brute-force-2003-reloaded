@@ -866,6 +866,14 @@ pub struct Placed {
     pub name: u32,
 }
 
+/// A spawn-trigger's pickup template (an inventory-object or weapon-object its h_1299668b names,
+/// #278): out of the world (FUN_000dfe90 takes it out as its trigger links), so hidden; its
+/// entity is kept as the model the trigger's copies are made from (bf_play's
+/// play_pickup_spawns.rs), placed where the level puts it. The other templates aren't spawned at
+/// all (#230).
+#[derive(Component)]
+pub struct SpawnTemplate;
+
 /// A door or gate, in level object order (the same order as `Arena::doors`): its leaves and how
 /// long it takes to open (its archetype's animation: 1.21 s for sdm_e34's doors, 4.96 s for the
 /// gate, 3.29 s for m09's Shrike doors). Its sounds are the level's sound-triggers' (bf_play's
@@ -1608,14 +1616,15 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     // (the spawn-triggers' templates aren't in the world: FUN_000dfe90 takes each out as the
     // level links, and a trigger's copy is made at the trigger (FUN_000dfd90), so they aren't
     // drawn where they're placed, as `Arena::new` leaves out their collision: #230, the
-    // tutorial's h_e5ab44a9 at (50.3, 25.6, 80.6) stood there as a walk-through ghost. Not the
-    // pickups: every pickup of the multiplayer maps is a template (sdm_e34's 54), whose copies
-    // the triggers don't make yet, so the demo keeps them where they're placed, as before)
+    // tutorial's h_e5ab44a9 at (50.3, 25.6, 80.6) stood there as a walk-through ghost. A
+    // pickup's is spawned hidden (`SpawnTemplate`): its copies are made from it, #278; every
+    // pickup of the multiplayer maps is one, sdm_e34's 54)
     let templates = level.spawn_templates();
     let pickup = |tag: u32| tag == h("inventory-object") || tag == h("weapon-object");
     for o in &level.objects {
         let Some(arch) = o.archetype else { continue };
-        if templates.contains(&o.name) && !pickup(o.tag) {
+        let template = templates.contains(&o.name);
+        if template && !pickup(o.tag) {
             continue;
         }
         if !models.contains_key(&arch) {
@@ -1639,6 +1648,9 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
         }
         let e = commands.spawn((Transform::from_matrix(o.transform), Visibility::default(), Name::new(format!("h_{:08x}", o.kind)),
                                 Placed { tag: o.tag, kind: o.kind, name: o.name })).id();
+        if template {
+            commands.entity(e).insert((SpawnTemplate, Visibility::Hidden));
+        }
         // the archetype's animation (archetype-set of the same name) moves the leaves: a
         // channel per part
         // a liquid's surfaces, and any other part whose material is of a liquid material class
