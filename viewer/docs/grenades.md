@@ -25,13 +25,14 @@ use. Per type:
 | use | h_1ee2f4ed: 3 IOU_THROW_TO_USE, 2 IOU_PLACE_ON_GROUND; function-type 8 / 13 (Sentry / Roller) | thrown |
 | event sound | `<event state=7 h_fa04e025>` | e43166d1 (the meter appears) |
 
-`BF_GRENADE_LOG=1` prints each type's fields at load (`grenade <label> ...`), each grenade's
-first contact (how long after leaving the hand, how far from the thrower), each blast and
-decal, and a throw called off.
+`BF_GRENADE_LOG=1` prints each type's fields at load (`grenade <label> ...`), each throw's launch
+("Frag leaves the hand 2.13 m over the floor at the thrower's feet at 25.6 m/s, 6.0 degrees up
+(mass 0.9)", #161), each grenade's first contact (how long after leaving the hand, how far from
+the thrower), each blast and decal, and a throw called off.
 
 * **Throwing** (thrown types): hold G to charge. The meter (the recordings, every grenade): a
   blue outlined bar at x 354.0-367.7, y 162.0-221.7 right of the crosshair, its fill
-  x 355.3-365.7 growing linearly from y 218.7 to 164.3 in 0.6 s, sRGB 255 160 53 at 0.65, a
+  x 355.3-365.7 growing linearly from y 218.7 to 164.3 as the charge grows, sRGB 255 160 53 at 0.65, a
   dark divider at y 179, the box clear inside (only the fill and the frame are drawn, 0xadac0).
   Its timer (the meter widget FUN_000ad8d0's +0x40) is set to 1 with the level every frame the
   charge is above 0 (0x134823) and counts down after, so the meter stays full 0.5 s from the
@@ -48,13 +49,55 @@ decal, and a throw called off.
   less the rig's input delay, #140) start then - and lets go at its release event (0.60 s after
   the button for Tex, as recorded: if that was the picture, the game's own release is ~0.40-0.46
   s, the picture lagging 0.12-0.15 s and the input 0.02-0.06; which one the recording timed is
-  open, to be re-measured from a marker-synced take by the hiss onset, #140). It flies at 12-20 m/s over
-  the charge, aimed 0.25 rad below the crosshair (at most 0.8 rad down), and keeps 0.3 of its
-  speed along the ground per bounce: values fitted to the Frag recording (leaves the hand
-  0.60-0.63 s after the button, input to picture, so with the 0.14-0.21 s of lag and input delay
-  in it, goes off 1.65-1.78 s later, so down 0.13-0.28 s after leaving
-  the hand, a few metres ahead with the camera looking down, and resting near there), not
-  from the data. Bounces are
+  open, to be re-measured from a marker-synced take by the hiss onset, #140).
+  * **The charge** (#161; the player controller 0x1332a0): while G is held on a grenade (an item
+    of group 2, IG_GRENADE) the charge grows 1.6 a second (0x3a5088, 0x1347cf-0x1347e0), held at
+    1.0 (FUN_000abf30): full in 0.625 s (`CHARGE_TIME`; #119 take01 0.600-0.617 s, the demo's
+    0.6 before was fitted to it). At G's release the throw's power is clamp((charge - 0.3) / 0.7,
+    0.01, 1) (0x3a50b0, the double 0x3a54c8; 0x1348fd-0x134941): a hold under 0.19 s throws as a
+    tap, the meter's bottom 30% no farther (`grenade::throw_power`). The release is the item use
+    (FUN_000abf60 -> FUN_00121170), which leaves the scope first (FUN_001249b0), with its sound
+    and its button's lockout. Every other kind of item is used at the press, with no charge.
+  * **The launch** (FUN_00117660 at 0x117be4, the throw clip's release event): the grenade is let
+    go, moved 0.4 m along (0, sin 15, -cos 15) in the world's axes (0x3ecccccd; a quirk: the
+    offset isn't turned by the aim) and pushed at the hand with J = 16 + 7 p^2 (FUN_00122ea0) along
+    the aim frame x (0, sin 15, -cos 15): 15 degrees above the aim, whatever the charge
+    (0x3e84816f, 0xbf774539). The demo's aim frame is the camera's turn (`camera::aim_turn`: its
+    yaw and `cam_pitch`), not the crosshair's ray, which is 6 degrees above the view's axis: the
+    throw leaves 9 degrees above the crosshair. Ipion's push (FUN_002b3bc0) changes its speed by
+    J over the body's mass, the item type's `mass` (h_1a19ff7a, `WeaponDef::mass`: the Frag and
+    the Light 0.9, the Energy, the Gas and the Sonic 1.0): a Frag at 17.8 m/s for a tap to 25.6
+    m/s full, an Energy 16.0-23.0. It flies under gravity 9.81 (FUN_0016a250's Ipion world). Not
+    done: Ipion's speed damping, read as 0.1 in the body template (FUN_00158f80: -10% of the speed
+    a second; an inference, #161's leads: take01 fits with or without it, 25.1 against 26.3 m); the
+    off-centre push's spin. The thrower's own speed along the ground is added (`carry`), the
+    demo's: the game's release gives the body only its push, and whether it already moves with
+    the hand isn't traced (#161's shot D would show it). Before #161 the demo threw at 12-20 m/s,
+    0.25 rad below the crosshair's ray (fitted to a recording looking down), so a level throw
+    landed ~5 m ahead where the game's goes ~26 m.
+  * Checked (`-- --test BF_NO_SQUAD=1 BF_TEST_GOTO=0,30,0,60 BF_TEST_GO_AT=100
+    BF_GRENADE_LOG=1 BF_CAPTURE_FPS=60`, facing away from the rack): at `BF_CAMERA_PITCH=-0.157`
+    (#119 take01's -9 degrees) a full Frag (`BF_TEST_THROW=2.0,1.0`) leaves the hand 2.13 m over
+    the floor at 25.6 m/s, 6.0 degrees up, and comes down 24.9 m out 0.95 s later (#161: 24-27 m,
+    1.0-1.1 s from take01's 2.5 m hand; the demo's hand is lower); a tap (hold 0.1) 15.7 m at
+    17.8 m/s (15-17 m); a 0.4 s hold 17.6 m at 19.6 m/s (the leads' 17.9-18.6 m from 2.5 m); a full
+    Energy (`BF_TEST_NEXT_GRENADE=0.6,0.9,1.2`) 21.7 m at 23.0 m/s (21-23 m). At -0.52 rad
+    (-30 degrees) a full Frag 6.9 m in 0.25 s (7-8 m from 2.5 m; the world-axis nudge takes 0.39
+    m off facing +z, as here). On e40 at take01's spot (`-- --test BF_MAP=e40 BF_CHARACTER=3
+    BF_TEST_GOTO=-1.97,169.30,-25.63,158.34 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.157
+    BF_TEST_THROW=2.0,2.0`) a 2 s charge comes down 25.5 m out 0.93 s after leaving the hand, at
+    the foot of the crosshair (take01: its three Frags first touch the sand 26.1 m out, at the
+    bottom of the crosshair box). Thrown while scoped (Flint's L-Shot-75,
+    `BF_TEST_SCOPE_PRESS=1.0 BF_TEST_THROW=2.0,0.5 BF_SCOPE_LOG=1`), the scope is left at G's
+    release (2.53 s: level 0, its lockout 0.83 s), and the throw goes at 21.7 m/s (p 0.71).
+  * The recipes elsewhere on this page and in testtools.md, skills.md and levels.md that throw
+    with `BF_TEST_THROW` were run with the throw before #161: the same recipe now throws faster
+    and higher and its grenade lands farther (a tap at `BF_CAMERA_PITCH=-0.35` ~10 m out where it
+    came down ~3 m), so their distances and who stood in a blast don't hold as written; they
+    weren't run again. To land one close, aim lower (-0.6 rad: a tap ~5 m, by the launch above) or stand nearer.
+  * It keeps 0.3 of its speed along the ground per bounce, a value fitted to the Frag recording
+    (resting near where it came down), not from the data: the game's is its physics material's,
+    not traced (#161 leaves the bounces and the roll out). Bounces are
   silent; the trail keeps puffing where it lies until the blast.
 * **Placing** (Roller, Sentry): the press drops the count and plays the event sound; the
   stance's `Sc_w1/w2_place_hi` clip takes it in hand at its reach event (0.23-0.47 s over the

@@ -1512,8 +1512,12 @@ const FALL_HURT: (f32, f32, f32) = (5.0, 30.0, 100.0);
 const FALL_DAMAGE_TYPE: i64 = 0;
 /// Effect type of the dust kicked up sliding (objecttypes <effect>: slide_puff).
 const SLIDE_EFFECT: u32 = 0x0151_3B0F;
-/// seconds to charge a throw fully (the recordings: a linear fill, full in 0.60 s, then held)
-const CHARGE_TIME: f32 = 0.6;
+/// Seconds to charge a throw fully: while the use button is held on a grenade (an item of group 2,
+/// IG_GRENADE) the player controller's charge (+0x54) grows 1.6 a second (0x3a5088; 0x1347cf-0x1347e0),
+/// held at 1.0 (FUN_000abf30's cap for group 2): full in 0.625 s. #119 take01 measures 0.600-0.617
+/// s; the demo's 0.6 before #161 was fitted to it. The throw's power is `grenade::throw_power`
+/// of the charge at the release.
+const CHARGE_TIME: f32 = 1.0 / 1.6;
 /// The throw meter's timer (`Player::meter_after`'s second value): the player controller sets
 /// it to 1.0 with the level every frame the charge is above 0 (0x134823-0x13484e) and nothing
 /// after, so the meter's update (0xad950) counts it down from the last charging frame and draws
@@ -5964,8 +5968,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 p.sound_queue.push((kit.def.arm_sound, 0.8));
             }
             p.throwing = Some(Throw { power: 0.0, time: 0.0, slot, grabbed: false, released: false, kind: k, place: true });
-            // the item use's skill call (FUN_00121170 -> +0x104, IOU_PLACE_ON_GROUND): Hawk's cost
+            // the item use's skill call (FUN_00121170 -> +0x104, IOU_PLACE_ON_GROUND): Hawk's cost;
+            // it leaves the scope first, as every use but IOU_JUST_USE (FUN_001249b0)
             skills::used_item(p, kit.def.use_type);
+            p.leave_scope();
         }
         p.charge = 0.0;
     } else if p.throw_held && can_throw {
@@ -5985,9 +5991,13 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         p.meter_after = (p.charge, METER_TIME);
         let slot = stance_of(l, p.weapon);
         if let (true, true, Some((k, kit))) = (can_throw, l.throw_clips[slot].is_some(), kind) {
-            p.throwing = Some(Throw { power: p.charge.max(0.1), time: 0.0, slot, grabbed: false, released: false, kind: k,
+            // the power the charge gives (0x1348fd-0x134941), kept for the release
+            p.throwing = Some(Throw { power: grenade::throw_power(p.charge), time: 0.0, slot, grabbed: false, released: false, kind: k,
                                       place: false });
             p.aim_hold = 0.0;
+            // the item use leaves the scope first (FUN_00121170 -> FUN_001249b0: a grenade isn't
+            // IOU_JUST_USE), with its sound and its button's lockout
+            p.leave_scope();
             // the count drops at the button (one game frame after it in the recordings)
             p.grenades[k] -= 1;
             // the item use's skill call (FUN_00121170 -> +0x104, IOU_THROW_TO_USE): Hawk's cost,
@@ -6433,15 +6443,25 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let world = l.model.world(&pose);
     p.last_world.clone_from(&world);
 
-    // ---- grenade release: from the throwing hand, toward the crosshair with a lob ----
+    // ---- grenade release: from the throwing hand, 15 degrees above the aim (the release event,
+    // FUN_00117660 at 0x117be4; `grenade::throw_velocity`) ----
     if let Some((power, kind, placed)) = p.pending_release.take() {
         if let Some((bone, point)) = l.throw_hand {
             let root = Transform::from_translation(p.position + Vec3::Y * p.height).with_rotation(facing).compute_matrix();
-            let pos = (root * world[bone]).transform_point3(point);
-            let (_, ray) = aim_ray(p);
+            let hand = (root * world[bone]).transform_point3(point);
+            // the thrower's own sideways speed: the demo's, kept until a take settles it (#161's
+            // shot D): the game's release gives the body only its push, and whether the body
+            // already moves with the hand isn't traced
             let carry = Vec3::new(p.last_velocity.x, 0.0, p.last_velocity.z);
-            // a placed one is let go from the hand and drops at the feet
-            let velocity = if placed { carry } else { grenade::throw_velocity(ray, power) + carry };
+            let (pos, velocity) = if placed {
+                // a placed one is let go from the hand and drops at the feet
+                (hand, carry)
+            } else {
+                // moved along the world's (0, sin 15, -cos 15) first, then pushed along the aim
+                // frame (the camera's turn, the demo's stand-in for char+0x5bc) by its type's mass
+                let mass = kits.get(kind).map_or(1.0, |k| k.def.mass);
+                (hand + grenade::throw_nudge(), grenade::throw_velocity(camera::aim_turn(p), power, mass) + carry)
+            };
             p.thrown.push(grenade::Thrown { pos, velocity, kind, landed: false });
         }
     }

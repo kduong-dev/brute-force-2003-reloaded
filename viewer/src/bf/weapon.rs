@@ -78,6 +78,9 @@ const H_ATTACHED_EFFECTS: u32 = 0x18B6_AB72;
 const H_DAMAGE_TIME: u32 = 0x04EA_9251;
 /// weapon: the crosshair's lock box scale (name not recovered; see `WeaponDef::lock_box`)
 const H_LOCK_BOX: u32 = 0xE1E4_1C2D;
+/// `mass` (h_1a19ff7a, the name recovered by hashing, #156): on an object base (the element with
+/// its mesh-name) the object's mass, on a `<bullet>` the bullet's (`WeaponDef::mass`)
+const H_MASS: u32 = 0x1A19_FF7A;
 const H_PARTS: u32 = 0xE487_418A;
 const H_MESHES: u32 = 0xEA78_3362;
 const H_JOINT: u32 = 0x151A_CE78;
@@ -156,6 +159,13 @@ pub struct WeaponDef {
     pub ammo_regen: f32,
     /// grenades: fuse seconds (attribute `timer`; 0 for guns)
     pub fuse: f32,
+    /// the object's mass (kg; H_MASS on its object base, the element with its mesh-name): the
+    /// object base parser stores it at base+0xf4 (0x18f2a5), FUN_00154a20 copies it to the type's
+    /// +0x138, and FUN_001590a0 builds the item's physics bodies with it (x100 only for object
+    /// types 2, 0x1a and 0x1f). A thrown grenade's speed is its push over it (#161): the Frag, the
+    /// Light and the Molotov 0.9, the Energy, the Gas and the Sonic 1.0, the Roller 40, the
+    /// Sentry 100 (the same on every level). 1.0 when absent
+    pub mass: f32,
     /// grenades: definition of the explosion (a weapon with Damage radius and impact sound)
     pub projectile: u32,
     /// grenades: heard when the throw starts charging (pin pulled / gauge)
@@ -430,6 +440,7 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             empty_sound: hashes(w, H_EMPTY_SOUND).first().copied().filter(|&x| x != h("")).unwrap_or(0),
             ammo_regen: f32_of(Some(&w), H_AMMO_REGEN, 0.0),
             fuse: f32_of(Some(&w), h("timer"), 0.0),
+            mass: f32_of(all.iter().find(|e| e.name != h("bullet") && e.attr(h("mesh-name")).is_some() && e.attr(H_MASS).is_some()), H_MASS, 1.0),
             projectile: w.attr(H_PROJECTILE).and_then(|v| v.as_hash()).unwrap_or(0),
             reticle: w.attr(h("reticule-prefix")).and_then(|v| v.as_hash()).unwrap_or(0),
             arm_sound: find(H_EVENT_SOUND).and_then(|v| v.as_hash()).unwrap_or(0),
