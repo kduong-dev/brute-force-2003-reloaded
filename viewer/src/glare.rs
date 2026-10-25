@@ -33,10 +33,19 @@
 //! there (`level_scene::LiquidMaterial`, src/liquid.wgsl `GLARE_KEY`), everything else 1 (bevy's
 //! opaque materials write 1, its blends keep 1 over them; a blend that covers the view must keep
 //! the alpha as it is: play_grenade.rs's tint quad, `KeepAlpha`). The bright pass reads the
-//! threshold from it; the game's other factor, the frame buffer's alpha t0.a, is taken as 1 (the
-//! lava's and the sludge's pixel shaders 0x2b and 0x2a write alpha 1). The three passes work on
+//! threshold from it; the game's other factor, the frame buffer's alpha t0.a, is taken as 1, as
+//! the code leaves it nearly everywhere (#291): the back buffer is A8R8G8B8 (FUN_0006a750), each
+//! view's clear writes alpha 255 (the sky's background colour is packed 0xFFRRGGBB,
+//! FUN_000d8d80), and the world pass writes no alpha: the state cache's COLORWRITEENABLE is red,
+//! green and blue (0x10101, FUN_001ea890), all four only for the sorted list (0xe86dd, in a saved
+//! state block), where a see-through surface over 255 keeps 255 by ONE / INVSRCALPHA (toxic
+//! waste) and ONE / ONE (chloride), a little less by SRCALPHA / INVSRCALPHA. The three passes work on
 //! the picture's sRGB values, as the console's combiners and blending take the frame buffer's
 //! bytes (src/glare.wgsl), and the composite writes the picture's alpha back to 1.
+//!
+//! So toxic waste, keyed 1, glares everything seen through it that isn't black: m14_c's two
+//! toxic pools (h_19563c4f, h_e9a68aa5, liquid-type 3) over the level's violet crystals blow out
+//! to white, as the code says they should (no take shows them).
 //!
 //! Only the liquids write keys so far. The game's other keyed surfaces (the wrappers' values on
 //! glow shells, lit glow maps, the glow shader's lamps, the memory chip; decal types; the heat

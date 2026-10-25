@@ -354,8 +354,8 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     |---|---|---|---|---|
     | 2 / 0 | 0x2b | lerp(t0, t1 x v0, t1.a) | opaque | the lava of sdm_e13, sdm_e40, sdm_m07, the tutorial, m02 |
     | 2 / 1 | 0x2a | t0 + t1 | opaque | sludge (sdm_m03, m03_a/b, e01, mp6) |
-    | 0 / 1 | 0x29 | t0 x t0.a + t1, alpha t0.a | ONE / INVSRCALPHA | toxic waste (m09, m14): see-through |
-    | 1 / 1 | 0x27 | t0 + t1 | ONE / ONE | m14_c's chloride |
+    | 0 / 1 | 0x29 | t0 x t0.a + t1, alpha t0.a | ONE / INVSRCALPHA | toxic waste (m09, m14; m14_c's pools over the violet crystals): see-through |
+    | 1 / 1 | 0x27 | t0 + t1 | ONE / ONE | m14_c's chloride (the blue h_1c711b16) |
     | 1 / 0 | 0x28 | lerp(t0, t1, t1.a), alpha t1.a | ONE / INVSRCALPHA | none |
     | any / 2 | 0x2c | t1 | opaque | none |
     | 0 / 0 | 0x2c twice | t0, then t1 at LESSEQUAL | SRCALPHA / INVSRCALPHA each | m02_a's h_fa91cd3b (a second entity draws the second pass) |
@@ -432,7 +432,12 @@ or `cargo run --bin bf_level -- <map>`). What it took:
       of 240 rows (each texel the average of the pixels it covers, in the picture's sRGB values,
       then kept above its key), the blur into one of 120 rows (the steps as a share of the game's
       4:3 screen), added to the picture's sRGB values and clamped; the picture's alpha goes back
-      to 1. The frame buffer's alpha (the game's second factor) is taken as 1. A liquid added ONE /
+      to 1. The frame buffer's alpha (the game's second factor) is taken as 1, as the code leaves
+      it nearly everywhere (#291): the back buffer is A8R8G8B8 (FUN_0006a750), the view's clear
+      writes alpha 255 (the background colour packed 0xFFRRGGBB, FUN_000d8d80), and the world pass
+      writes no alpha (COLORWRITEENABLE red, green and blue, 0x10101, FUN_001ea890), all four
+      channels only for the sorted list (0xe86dd), where ONE / INVSRCALPHA and ONE / ONE keep 255
+      over 255 and SRCALPHA / INVSRCALPHA a little less. A liquid added ONE /
       ONE (chloride) writes its key too; one whose blend needs its own alpha (toxic waste's ONE /
       INVSRCALPHA, m02_a's SRCALPHA / INVSRCALPHA) writes 0, the nearest a blend can write (toxic
       waste's 1 / 255 exactly enough; m02_a's 20 / 255 not). A blend over the whole view must keep
@@ -463,6 +468,14 @@ or `cargo run --bin bf_level -- <map>`). What it took:
       fogged under its key (88 67 65): nothing added. In the Vengar view (the sdm_e13 start with
       `BF_TEST_SKILL=0.5`) the lava, greyed by the view's world pass first, glares to white: the
       code's order, which no take shows.
+    * m14_c's toxic pools (#291; `BF_MAP=m14_c BF_SCRIPT=off
+      BF_TEST_FREECAM=0.3,-29.8,52,36,180,-35 --edit`, frame 24): the see-through surface over the
+      violet crystals is toxic waste (h_19563c4f, liquid-type 3; wrapper h_1b1bb811, key 1, over
+      h_e2f14539), not the chloride (h_1c711b16, liquid-type 5, key 200, the blue pool). Its texture's
+      alpha is 0 over most of it, so the crystals show through nearly as they are (95 79 147 without
+      the glare), and with a key of 1 and the frame buffer's alpha 255 everything seen through it
+      passes: white (246 240 252), as the code has it. `BF_GLARE_DEBUG=1` shows key 0 over
+      exactly the surface `BF_LIQUID_DEBUG=1` draws, 200 over the chloride. No take shows them.
   * Checked (#4): sdm_e10's pond from its start (`BF_MAP=sdm_e10 BF_CHARACTER=3
     BF_TEST_GOTO=74,5,60,5 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.4`): 59 57 28 near, the shimmer
     changing frame to frame and repeating after 2.00 s (30 frames at 15 fps: a mean change of 1.5
