@@ -656,9 +656,9 @@ EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
   nothing at the radius (the other grenades' rule; instant kill on the test map) and, if alive
   and not in the air, is thrown down back and up (3 m/s back, 4 m/s up: the demo's amounts;
   the recording's squadmate went up and back at +0.6 s, was down ~1 s and got up). A corpse
-  (or a body already down) is thrown up and out with the ragdoll's shot shove, brought up to
-  3 m/s along a line up through its pelvis (the recording threw a corpse into the air; the
-  shove's 3 m/s lifts it only ~0.1-0.4 m). The player's red tint comes with their strike.
+  (or a body already down) is thrown up and out: every body of its ragdoll brought up to 3 m/s
+  along the throw (`Ragdoll::fling`, #259, [ragdoll.md](ragdoll.md); the recording threw a corpse
+  into the air; 3 m/s lifts it only ~0.1-0.4 m). The player's red tint comes with their strike.
 * `BF_GRENADE_LOG` prints each bolt (to whom, how far, alive or dead), each strike (how long
   after the blast) and whether a corpse's shove hit; `BF_COMBAT_LOG` the damage and whether
   they were thrown down.

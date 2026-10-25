@@ -120,36 +120,15 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
 
 ## Death
 
-* **Limp.** The Shrikes have no death clip (enable-ragdoll-death true, no MT_DIE): the ragdoll
-  ([play.md](play.md), the death paragraph), with the game's bodies and joint limits
-  (`Ragdoll::new`'s `parts`, `enemies::ragdoll_parts`; answers.md Q6):
-  * **Bodies** (FUN_00127290): the game's ragdoll has a body for each of the character's hit
-    parts (its type's eleven `<collision>` bones: Bip01, Spine2, Head, the thighs, calves, upper
-    arms and forearms) and each of their ancestors up to the root. A bone below the lowest hit
-    part of its chain has none and stays as posed at death, rigid with the bone above: a
-    Shrike's HorseLink, foot and toes under the calf, its hands under the forearms. So the
-    digitigrade lower leg (Thigh -> Calf -> HorseLink -> Foot) keeps its bend from death, and
-    only the hip and the knee move. In the demo's point bodies: those bones are held to the bone
-    above, to the child it points at and to the one of them farthest off that line, at full
-    stiffness, and drawn turning with it.
-  * **Limits** (FUN_00113120, by the child bone's name, hard-coded, the same for every
-    character): the knee (Calf) is a one-way hinge, 0-90 degrees (its y range, -90..0; x and z
-    none), bent the way it was at death; the elbow (Forearm) likewise, 0-100 degrees (y,
-    -100..0); the hip (Thigh) swings at most 110 degrees forward, 60 back (y, -60..110) and 20
-    to either side (z, -20..20) of its way in the bind pose (the Heavy's thighs: 7 degrees
-    forward, 5 out). Not traced, so the demo's reading: which bend axis is which and their
-    signs (the joints' frames come from the parent node, FUN_00039510): the larger range is
-    taken as the forward swing, as a hip's is; a knee's or elbow's zero is straight, the hip's
-    the bind pose. A joint folded past its limit at death keeps that fold (not snapped open).
-    The shoulders', spine's, neck's and head's limits aren't applied (the demo's torso pieces
-    and head range stand in).
-  * **Not modelled:** the hip's twist (x, -45..45: the point bodies have no twist), and the
-    knee's and elbow's lock on their lower part's roll about its own line (a lock on the knee's
-    plane fought the floor and kept the body writhing, so the lower leg may roll about its line);
-    the game's masses (the root 9, the rest 4.5), damping (0.5 / 0.95) and start velocity (the
-    character's): the demo's point bodies fall as the squad's.
-  * The squad's ragdoll stays the demo's own (every bone moves, knees fold to ~120 degrees, its
-    hinges' limits the demo's), though the game's rule is the same for them: a follow-up.
+* **Limp.** The Shrikes have no death clip (enable-ragdoll-death true, no MT_DIE): the game's
+  ragdoll, the same for every character since #259 ([ragdoll.md](ragdoll.md)): a rigid body for
+  each hit part (the type's eleven `<collision>` bones: Bip01, Spine2, Head, the thighs, calves,
+  upper arms and forearms) and a ball for each of their ancestors, the game's masses, inertia,
+  damping and joint limits (FUN_00127290, FUN_00113120). A bone below the lowest hit part of its
+  chain has no body and keeps its pose at death under the bone above: a Shrike's HorseLink, foot
+  and toes under the calf, its hands under the forearms, so the digitigrade lower leg keeps its
+  bend from death and only the hip and the knee move. A frozen Shrike holds its pose 0.35 s,
+  then folds down.
 * **The death line.** The type's chatter library (`chatter-library`: shrike_light_chatter,
   shrike_heavy_chatter; dm_shrike_*_chatter in the deathmatch types), its tag e1213623, one of
   its three lines: the Heavy's h_04d16d90, h_00c08720, h_f6aa73af, the Soldier's h_0384c97d,
@@ -236,9 +215,8 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   personality's draw and refusals, the motions as they start and end, the drive every half
   second (position, speed, facing), the stamina shield, the death line picked (and how many of
   the set weren't said yet).
-* `BF_RAGDOLL_LOG=1` also prints, as an enemy's ragdoll is built, how many bones have bodies,
-  the bones rigid below each, its knees' and elbows' bends at death and the thighs' bind-pose
-  ways the hip limits are about.
+* `BF_RAGDOLL_LOG=1` prints, as a ragdoll is built, its bodies, pieces and joints, then how it
+  falls ([ragdoll.md](ragdoll.md), "Test hooks").
 * `BF_COMBAT_LOG=1` also prints each game-rule decal (its list, place, scale and alpha) and the
   stamina shield's share.
 
@@ -276,14 +254,13 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
   BF_ENEMY_LOG=1`, the dm Shadoon): its draw struck KNOCKDOWN out ("refused [65]") and played
   its stun.
 * **Death** (the range spot, `BF_TEST_NPC=0.3,h_1c5780f8,enemy,frozen,-54.5,35.8
-  BF_TEST_FREECAM=1.1,-49.5,31.0,36.4,90,-14 BF_NO_HUD=1 BF_RAGDOLL_LOG=1 BF_SOUND_LOG=1`, 90
-  frames): at the kill the green mist, the gun drops at the feet; the body goes limp, thrown back
-  1.4 m, the legs buckle and it lies folded on its side ~1.2 s after the hit (take 21: 1.1-1.3
-  s), at rest ~2 s after. Its lower legs keep their bend from death, the feet raised off the
-  floor; "ragdoll: 45 bones, 18 with bodies; rigid below: ... Bip01 L Calf +3, ... Bip01 L
-  Forearm +10 ...; bent at death: Bip01 L Calf 54 deg ...". The death line
-  h_04d16d90 plays on the frame of the killing hit's sound. The takes' resting bodies are too far
-  and dark to compare the legs' pose closely (takes 19 and 21: a low folded heap).
+  BF_TEST_FREECAM=1.1,-49.5,31.0,36.4,90,-14 BF_NO_HUD=1 BF_RAGDOLL_LOG=1 BF_SOUND_LOG=1`, 120
+  frames; #259's game ragdoll): at the kill the green mist, the gun drops at the feet; "ragdoll:
+  45 bones, 18 of the game's bodies (90.0 kg) in 12 pieces, 11 joints"; the body holds its pose
+  0.35 s, the legs buckle, it kneels and lies on its side 0.6 m from where it stood (the trunk
+  down at +1.4 s, take 21: +0.83), the limbs quiet by +4.5 s (takes: 1.5-1.8), frozen at +8 s.
+  Its lower legs keep their bend from death. The death line h_04d16d90 plays on the frame of the
+  killing hit's sound. The timings against takes 17-22: [ragdoll.md](ragdoll.md), "Verified".
 * **Death lines** (the same, four Heavies and then a Soldier spawned in turn at the same spot,
   `BF_TEST_NPC="0.3,h_1c5780f8,...;2.5,...;4.7,...;6.9,...;9.1,h_e9a41520,..." BF_ENEMY_LOG=1
   BF_SOUND_LOG=1`): the Heavies say h_04d16d90, h_f6aa73af, h_00c08720, then one of all three
@@ -325,11 +302,9 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
 * The stamina shield's shimmer (`pshield`: its emitters aren't run by the ALE player).
 * Footsteps of a driven enemy; its idle variations (the unalerted enemy's idle_general and
   idle_cautious, the AI's); its hurt lines.
-* Where the corpse rests: the takes' body-shot Heavies lay ~1.5-2 m behind their standing spot,
-  the head-shot one folded down in place; the demo's ragdoll throws them back ~1.4 m. The
-  game's masses, damping and the lower leg's roll lock (above) aren't the demo's.
-* The squad's ragdoll by the game's rule (its bodies and joint limits, FUN_00127290 /
-  FUN_00113120).
+* How the body falls: the demo's Shrikes fold down slower than the takes' and kneel before they
+  topple, where the takes' tumble sideways at once and lie still by ~1.5 s
+  ([ragdoll.md](ragdoll.md), "Not done").
 * The tester's notes against the takes: the green mist covers about 0.44 of the take's area; the
   Soldier's knock-down slot 1 (knockdown, 2.84 m to its right) throws it sideways; the second
   list's ray is taken level.

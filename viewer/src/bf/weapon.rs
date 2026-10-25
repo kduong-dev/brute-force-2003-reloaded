@@ -262,6 +262,12 @@ pub struct WeaponDef {
     /// (h_e9327576, the Therm Sweeper's, and h_fa69b507, the Sweeper V's); the iKhan-GPL's
     /// h_175a0adf and the breath objects don't (#239, play_missile.rs `falls`)
     pub no_gravity: bool,
+    /// bullet h_e39b994b: the weapon's push, the type's +0x234 that FUN_0022c4d0 copies into a
+    /// hit's record (+0x54; 2.0 for a blast's hit when it's 0). A ragdoll's shove takes it as its
+    /// factor (FUN_00127c60), and a blast pushes a corpse only when it's 1 or more (FUN_00224a90,
+    /// #259; todo/280-ragdoll answer §2.5: 2 on 28 bullets, 5 on 17, 4 on the two L-Shots, 0 on 10).
+    /// 0 when absent
+    pub push: f32,
 }
 
 impl WeaponDef {
@@ -490,6 +496,7 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             mirv_mode: bullet.and_then(|b| b.children.iter().find(|c| c.name == h("mirv"))).and_then(|m| m.attr(0x11F5_15C5))
                 .and_then(|v| v.as_i64().or(v.as_f32().map(|f| f as i64))).unwrap_or(0),
             no_gravity: find(0x11E7_D864).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
+            push: f32_of(bullet, 0xE39B_994B, 0.0),
         });
     }
     out

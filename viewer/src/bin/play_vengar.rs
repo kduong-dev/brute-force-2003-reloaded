@@ -13,7 +13,8 @@
 //!    with no hit part (play_damage.rs: on STANDARD an enemy takes 280, take08), the effect type
 //!    h_0dcd4fc7 on it (its sound; its ALE `vengar_hit` never starts), his type's h_1629a90a sound
 //!    (h_e4c94dfe), his charge line h_13601f7b through the chatter gate, and a kill throws the body
-//!    (FUN_000e00b0). Each hit sets the skill's pending cost to h_0461a627 (100), which his next
+//!    (FUN_000e00b0's shove on its ragdoll: 75 N s on every body along his velocity and up,
+//!    FUN_00127c60, play_ragdoll.rs). Each hit sets the skill's pending cost to h_0461a627 (100), which his next
 //!    frame's drain takes: one charge per activation (takes 08, 22: stamina 0 and the skill off
 //!    the tick after the hit). Walking (take23) or with the skill off (take24): nothing.
 //!  - **The Vengar view**, while the controlled character's Vengar is on (his on sets the vision
@@ -78,12 +79,16 @@ const DAMAGE_TYPE: i64 = 10;
 /// The chatter tag of a charge hit (FUN_00140a60 at 0x13c3fa): Brutus's block has probability 60,
 /// replay-delay 15 s, priority 5 (brutus_chatter.xml), through play_skills.rs's gate.
 const LINE_CHARGE: u32 = 0x1360_1F7B;
-/// A charge kill's knock-back (FUN_000e00b0 at 0x13c50c): along Brutus's velocity (char+0x470,
-/// x and z) and up by h_f5dae098 (2), the body's push here (play.rs `Ragdoll::new`) scaled by this.
-/// A fit to take22 (the trooper thrown forward against the tower ~3-4 m away and down at its
-/// foot in 0.8 s): FUN_000e00b0's two other values, h_0e406b26 2 and h_fa20e794 75, go into the
-/// ragdoll's impulse list, whose reader wasn't traced.
-const KNOCK_SCALE: f32 = 1.0;
+/// A charge kill's knock-back (FUN_000e00b0 at 0x13c50c, #259): a shove request on the body's
+/// ragdoll (`ragdoll::Shove`), along Brutus's velocity (char+0x470, x and z) and up by
+/// h_f5dae098 (2), with h_fa20e794 (75) and h_0e406b26 (2) as its magnitude and factor (#280's
+/// reading; which is which doesn't matter, FUN_00127c60 takes their product) and no part struck:
+/// min(0.5 x 75 x 2, 75) = 75 N s on every body (~15 m/s for the whole body), take22's trooper
+/// thrown against the tower. The same way is the hit's push (it aims the blood and throws the
+/// dropped guns, play.rs).
+fn knock_back(velocity: Vec3, cfg: &bf_viewer::bf::character::VengarSkill, at: Vec3) -> ragdoll::Shove {
+    ragdoll::Shove { bone: None, point: at, dir: Vec3::new(velocity.x, cfg.knock_up, velocity.z), magnitude: cfg.knock_force, kind: 0, factor: cfg.knock_weight }
+}
 
 /// How long the view's colour fade takes to go from its colour to none (s): the 0.6 FUN_000c6980 is
 /// given at both switches (0x13c08b on, 0x126e53 off; take06: 2.20-2.80 s and 20.17-20.80 s).
@@ -254,9 +259,13 @@ fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<
             // the damage (FUN_00223160: a bare record, no hit part, no shooter's factors)
             let mut hit = damage::Hit::new(cfg.damage, "the charge", DAMAGE_TYPE).source(who);
             let amount = hit.land(v, &game.0, &difficulty, now);
-            let push = (Vec3::new(velocity.x, cfg.knock_up, velocity.z)) * KNOCK_SCALE;
+            let shove = knock_back(velocity, &cfg, v.position);
             let before = v.health;
-            hurt(v, &game.0, amount, HURT_CHATTER, push, at.translation, -1);
+            hurt(v, &game.0, amount, HURT_CHATTER, shove.dir, at.translation, -1);
+            // a kill: the knock-back on its ragdoll, once it's built
+            if v.dead && before > 0.0 {
+                v.shoves.push(shove);
+            }
             if log {
                 println!("t={now:.2} {}: the charge hits {} at {:.2} m, {:.0} deg off his facing: {amount:.1} ({before:.1} -> {:.1} hp){}",
                          who_name(who, &game.0), unit_name(v), d2.sqrt(), d.normalize().dot(ahead).clamp(-1.0, 1.0).acos().to_degrees(),

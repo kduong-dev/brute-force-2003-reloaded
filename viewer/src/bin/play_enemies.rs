@@ -31,16 +31,16 @@
 //!    hit from the stamina first, the rest goes to the hit points in the same hit; the stamina
 //!    refills at the type's stamina-recovery a second (`refill`, FUN_0011a840 for a type with
 //!    h_e78efbb2).
-//!  - **Death** (answers.md Q6, Q8): the ragdoll's bodies are the hit parts' (`ragdoll_parts`,
-//!    FUN_00127290: play.rs `Ragdoll::new` keeps the bones below them rigid, with the game's
-//!    knee, elbow and hip limits, FUN_00113120); the death line starts in the death frame, none
-//!    of a type's three repeated before all are said (`death_cry`, FUN_001371f0).
+//!  - **Death** (answers.md Q6, Q8): the game's ragdoll, the same for every character since #259
+//!    (play_ragdoll.rs: bodies for the hit parts and their ancestors, FUN_00127290, the bones
+//!    below them carried rigidly, the joints' ranges FUN_00113120's); the death line starts in the
+//!    death frame, none of a type's three repeated before all are said (`death_cry`, FUN_001371f0).
 //!
 //! Test hooks: `BF_TEST_NPC_MOTION=<s>,<n|aim|all>,<motion>[,<x>,<z>[,relaxed]]` (play_testtools.rs
 //! reads it) drives an NPC in a motion type to a point; `BF_TEST_NPC`'s `frozen` behaviour stands
 //! an NPC with its brain off (the takes' trainer freeze: no reactions); `BF_ENEMY_LOG=1` prints
 //! the table, the draws, the motions, the drive (every half second), the shield and the death
-//! line; `BF_RAGDOLL_LOG=1` the ragdoll's bodies and limits.
+//! line; `BF_RAGDOLL_LOG=1` the ragdoll's bodies and limits (play_ragdoll.rs).
 
 use super::*;
 use bf_viewer::bf::character_type::{CharacterType, MOTION_TYPES};
@@ -324,17 +324,6 @@ pub fn plugin(app: &mut App) {
 /// Whether `u` is an enemy of a type of its own (`OTHER`), which this module runs.
 pub fn enemy(u: &Player) -> bool {
     u.character == OTHER
-}
-
-/// The bones an enemy's ragdoll gives bodies to, with their ancestors (FUN_00127290: the
-/// character's hit parts, char+0x4d8, its type's `<collision>` bones; play.rs `Ragdoll::new`):
-/// a Shrike's eleven, which leave the HorseLink, foot and toes rigid under the calf. Empty for
-/// the squad, whose ragdoll stays the demo's own.
-pub fn ragdoll_parts(game: &Game, u: &Player) -> Vec<u32> {
-    if !enemy(u) {
-        return vec![];
-    }
-    damage::hit_bones(game, u).iter().map(|b| b.bone).collect()
 }
 
 /// A map starts (play.rs `setup`): the chatter manager is the world's, so its history (`SAID`)

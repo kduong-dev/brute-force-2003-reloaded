@@ -176,6 +176,16 @@ pub struct Arena {
 /// would use.
 pub const FLAT_BODY: u32 = u32::MAX;
 
+/// A face of the level a ragdoll's body meets (`Arena::faces_near`, #259): its corners, the way
+/// it faces (its front by its winding, unit) and whether it's met from either side (a drawn
+/// triangle of a level without collision data, `Tri::two_sided`).
+#[derive(Clone, Copy, Debug)]
+pub struct Face {
+    pub v: [Vec3; 3],
+    pub n: Vec3,
+    pub two_sided: bool,
+}
+
 /// Who a character's sweep moves (`Arena::move_body`, `Arena::clear`, #292): FUN_0012cd10 builds
 /// the sweep's filter and passes by it (0x12d113-0x12d1c5). Its filter leaves out the bodies of
 /// the PID kinds 1, 3, 5, 6 and 7 (+0x10c = 0xea) and the objects of types 17, 19, 20, 22 and 24
@@ -1961,6 +1971,44 @@ impl Arena {
                     if convex_meet(points, &t.v) {
                         out.push(t.v);
                     }
+                }
+            }
+        }
+        out
+    }
+
+    /// The solid faces whose box meets `lo`..`hi`: what a ragdoll's bodies rest on and lean
+    /// against (#259, play_ragdoll.rs). Ipion's ragdoll bodies meet the world's static mesh and
+    /// the objects (the filter FUN_001695b0 lets them meet what isn't a character): the terrain,
+    /// the placed objects' parts and the blockers; not a hinter (a wall to the AI's characters
+    /// alone, `Mover`), a liquid, an open door's leaf, a broken object's (`solid`), nor a face of a
+    /// rock that faces into it (`Tri::inner`). Each by its front (`Tri::front`); a drawn triangle
+    /// of a level without collision data faces either way (`Face::two_sided`). With the flat
+    /// floor, its ground under the box as a face round it.
+    pub fn faces_near(&self, lo: Vec3, hi: Vec3) -> Vec<Face> {
+        let mut out = vec![];
+        if let Some(g) = self.flat.filter(|&g| lo.y <= g) {
+            let size = (hi - lo).max_element() + 1.0;
+            let corner = Vec3::new(lo.x - 1.0, g, lo.z - 1.0);
+            out.push(Face { v: [corner, corner + Vec3::Z * size * 3.0, corner + Vec3::X * size * 3.0], n: Vec3::Y, two_sided: false });
+        }
+        let (c0, c1) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
+        let mut seen = HashSet::new();
+        for x in c0.0..=c1.0 {
+            for z in c0.1..=c1.1 {
+                for &i in self.cells.get(&(x, z)).map_or(&[][..], |v| v.as_slice()) {
+                    if !seen.insert(i) {
+                        continue;
+                    }
+                    let t = &self.tris[i as usize];
+                    if !self.solid(t) || t.hinter || t.inner {
+                        continue;
+                    }
+                    let (tlo, thi) = (t.v[0].min(t.v[1]).min(t.v[2]), t.v[0].max(t.v[1]).max(t.v[2]));
+                    if tlo.cmpgt(hi).any() || thi.cmplt(lo).any() {
+                        continue;
+                    }
+                    out.push(Face { v: t.v, n: if t.two_sided { t.n } else { t.front }, two_sided: t.two_sided });
                 }
             }
         }

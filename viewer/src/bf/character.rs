@@ -2352,6 +2352,12 @@ impl Game {
         self.physics.get(&name).map(|(d, off)| super::collision::surface(d, *off)).unwrap_or_default()
     }
 
+    /// The mass centre of a collision surface by name (`collision::mass_centre`: the compact
+    /// surface's header, in its owner's frame), if it's loaded.
+    pub fn collision_mass_centre(&self, name: u32) -> Option<Vec3> {
+        self.physics.get(&name).and_then(|(d, off)| super::collision::mass_centre(d, *off))
+    }
+
     /// The collision surface an archetype names (`<h_f3f067ad h_051ac63e=N>`), if any.
     pub fn archetype_physics(&self, archetype: u32) -> Option<u32> {
         let (a, _) = self.archetype(archetype)?;
@@ -2709,6 +2715,10 @@ pub struct Character {
     /// makes a character's hit parts of (FUN_00114d00 builds each from the part's node), which
     /// a shot strikes (FUN_00115000 gives the part's bone)
     pub part_collision: Vec<Vec<[Vec3; 3]>>,
+    /// per bone, its part's collision surface's mass centre in the bone's frame (the .ipn compact
+    /// surface's header, `collision::mass_centre`), None for a part without one: a ragdoll's
+    /// hit-part body turns about it, as Ipion puts a body's core there (#259)
+    pub part_mass_centre: Vec<Option<Vec3>>,
     /// per bone, its part archetype's bounding sphere (`bounding_sphere`: the centre in the bone's
     /// own frame), None for a part without one (radius 0 in the data): what the liquid's splash
     /// takes (FUN_00221af0: its ray from the sphere's top, 2r down; a radius of at least the
@@ -2781,6 +2791,7 @@ impl Character {
         let (mut bind_rows, mut bind_pos, mut inverse_bind) = (vec![], vec![], vec![]);
         let mut hardpoints = HashMap::new();
         let mut part_collision = vec![];
+        let mut part_mass_centre = vec![];
         let mut part_spheres = vec![];
         for (bi, &(_, an)) in parts.iter().enumerate() {
             let (pa, _) = game.archetype(an).ok_or("part archetype not found")?;
@@ -2788,6 +2799,7 @@ impl Character {
                 hardpoints.entry(k).or_insert((bi, hp));
             }
             part_collision.push(game.archetype_physics(an).map(|s| game.collision(s).into_iter().map(|(t, _)| t).collect()).unwrap_or_default());
+            part_mass_centre.push(game.archetype_physics(an).and_then(|s| game.collision_mass_centre(s)));
             part_spheres.push(bounding_sphere(pa));
             let v = pa.child(H_INVBIND).and_then(|e| e.text.as_ref()).map(|t| t.floats()).unwrap_or_default();
             if v.len() < 12 {
@@ -2860,7 +2872,7 @@ impl Character {
         let default_face = face_anims.iter().position(|a| a.name == NEUTRAL_FACE)
             .or(if face_anims.is_empty() { None } else { Some(0) });
         Ok(Character { bones, parent, bind_rows, bind_pos, parent_point, child_point,
-                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision, part_spheres, bounds })
+                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision, part_mass_centre, part_spheres, bounds })
     }
 
     /// Index of the animation whose (hashed) name is `script`, e.g. "Sc_w1_run".

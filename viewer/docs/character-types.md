@@ -151,9 +151,10 @@ demo yet.
   == the name-keyed tables'").
 * **An enemy's own behaviour** (OTHER, #129: play_enemies.rs, [enemies.md](enemies.md)): its
   gait's and motions' clips from its type's MOTION table, its speeds, hit reactions by its
-  personality (`Game::personalities`, bf/personality.rs), the game's ragdoll bodies and leg
-  limits, its death line from its type's `chatter-library`, the deathmatch types' stamina
-  shield; a `BF_TEST_NPC` placement gives it the placement's weapons and personality.
+  personality (`Game::personalities`, bf/personality.rs), its death line from its type's
+  `chatter-library`, the deathmatch types' stamina shield; a `BF_TEST_NPC` placement gives it the
+  placement's weapons and personality. Its body at death is the game's ragdoll, every
+  character's since #259 ([ragdoll.md](ragdoll.md)).
 * What's still looked up by the slot's name, so reads nothing for OTHER: the rest of the
   chatter (an enemy says only its death line), skills, the scope and the camera.
 * Logs name a character by `unit_name` (its slot's name, or for OTHER its type's display name:

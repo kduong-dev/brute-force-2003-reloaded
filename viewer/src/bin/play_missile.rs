@@ -624,9 +624,8 @@ pub(super) fn root_point(u: &Player) -> Vec3 {
     let f = feet(u);
     let Some(l) = u.loaded.as_ref() else { return f - Vec3::Y * GROUND };
     if let Some(k) = &u.knock {
-        let root = l.model.parent.iter().position(|p| p.is_none()).and_then(|i| k.ragdoll.pos.get(i));
-        if let Some(&p) = root {
-            return k.ragdoll.origin + Quat::from_rotation_y(k.ragdoll.yaw) * p;
+        if let Some(p) = l.model.parent.iter().position(|p| p.is_none()).and_then(|i| k.ragdoll.bone_world(i)) {
+            return p;
         }
     }
     let height = u.layers.last().and_then(|x| l.model.anims.get(x.clip)).and_then(|a| a.root_height).unwrap_or(-GROUND);
@@ -838,11 +837,7 @@ fn blow(m: &Missile, struck: Option<Who>, surface: Option<Vec3>, mine: Option<En
 /// nearest first (the game's ball meets the ragdoll's own bodies; the shape is the demo's).
 fn lying_parts(u: &Player, at: Vec3) -> Vec<(f32, Vec3)> {
     let Some(k) = &u.knock else { return vec![] };
-    let turn = Quat::from_rotation_y(k.ragdoll.yaw);
-    let mut out: Vec<(f32, Vec3)> = k.ragdoll.pos.iter().map(|&p| {
-        let bone = k.ragdoll.origin + turn * p;
-        ((bone.distance(at) - LYING_RADIUS).max(0.0), bone)
-    }).collect();
+    let mut out: Vec<(f32, Vec3)> = k.ragdoll.bones_world().map(|bone| ((bone.distance(at) - LYING_RADIUS).max(0.0), bone)).collect();
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
 }
@@ -852,9 +847,8 @@ fn lying_parts(u: &Player, at: Vec3) -> Vec<(f32, Vec3)> {
 /// FUN_002278e0; the shape is the demo's).
 pub(super) fn ray_lying(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
     let r = &u.knock.as_ref()?.ragdoll;
-    let turn = Quat::from_rotation_y(r.yaw);
-    r.pos.iter().filter_map(|&p| {
-        let off = origin - (r.origin + turn * p);
+    r.bones_world().filter_map(|p| {
+        let off = origin - p;
         let b = off.dot(dir);
         let disc = b * b - (off.length_squared() - LYING_RADIUS * LYING_RADIUS);
         let t = -b - disc.max(0.0).sqrt();
@@ -1327,9 +1321,9 @@ fn shake(shake: &mut CameraShake, at: Vec3, eye: Vec3, def: &WeaponDef) {
 /// the roll, flat; Damage h_011cb154 true: the whole roll to half the radius, then (1 - 2 (d / r -
 /// 0.5))^2 of it, d to its root), with no hit part (FUN_00224a90 passes 0), x 0.7 on the shooter's
 /// own side (the shooter too), x the victim's step and damage-type factor (play_damage.rs); the
-/// player's view goes red. No living body is moved (FUN_00224a90 pushes only loose objects; the
-/// push given to `hurt_still` only aims the blood and throws a body it kills). Then the scorches
-/// and sounds due.
+/// player's view goes red. No living body is moved (FUN_00224a90 pushes only loose objects and a
+/// corpse's root body, `ragdoll::blast_corpse`; the push given to `hurt_still` only aims the blood
+/// and throws the guns of a body it kills). Then the scorches and sounds due.
 #[allow(clippy::too_many_arguments)]
 fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut state: ResMut<MissileState>,
                mut tint: ResMut<ScreenTint>, mut decals: ResMut<super::fx::DecalRequests>, test: Option<Res<super::testmap::TestMap>>,
@@ -1352,6 +1346,9 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
         let human = player.who() == b.owner;
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if u.dead {
+                // a corpse: the blast's push on its ragdoll's root body, by its roll, when the
+                // weapon pushes (FUN_00224a90, play_ragdoll.rs `blast_corpse`, #259)
+                ragdoll::blast_corpse(u, b.at, radius, b.roll, def.push);
                 continue;
             }
             // what of the body the blast's ball meets (FUN_00224a90: one of its collision-bone
@@ -1408,6 +1405,11 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             let away = Vec3::new(f.x - b.at.x, 0.0, f.z - b.at.z).normalize_or(Vec3::X);
             let before = u.health;
             hurt_still(u, &game.0, amount, away * BLAST_PUSH.0 + Vec3::Y * BLAST_PUSH.1, middle);
+            // (a kill's own shoves on the body, behind ragdoll::DEATH_SHOVE: the blast's record
+            // has no part, and a push of 2 when its weapon's is 0, FUN_0022c4d0)
+            if u.dead && before > 0.0 {
+                ragdoll::death_shoves(u, None, middle, away, amount, def.damage_type, if def.push > 0.0 { def.push } else { 2.0 });
+            }
             if k == 0 && u.health < before {
                 tint.0 = 0.0;
             }

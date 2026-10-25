@@ -451,10 +451,12 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
   * his type's sound h_1629a90a, h_e4c94dfe (`SkillData::hit_sound`, played as his skill sounds
     are), and his charge line h_13601f7b through the chatter gate (Brutus's block: probability
     60, replay-delay 15 s, priority 5);
-  * a kill throws the body (FUN_000e00b0: the push his velocity across and h_f5dae098 2 up; its
-    h_0e406b26 2 and h_fa20e794 75 go into the ragdoll's impulse list, whose reader wasn't
-    traced). The demo's ragdoll takes the push as is (`KNOCK_SCALE` 1, a fit to take22's trooper
-    thrown forward into the tower 3-4 m away);
+  * a kill throws the body (FUN_000e00b0 queues a shove on its ragdoll: along his velocity across
+    and h_f5dae098 2 up, h_fa20e794 75 and h_0e406b26 2 as its magnitude and factor, which
+    FUN_00127c60 applies as min(0.5 x 75 x 2, 75) = 75 N s on every body, #280; ~15 m/s for the
+    whole body: [ragdoll.md](ragdoll.md)). On the test map the body leaves at 13 m/s; against
+    e34's gate panel 3.8 m behind it's there in 0.3 s and slides down it, as take22's trooper
+    against the tower 3-4 m away;
   * the hit sets his pending cost to h_0461a627 100 (0x13c474): his next drain takes the rest of
     his stamina and the skill ends at 0 (takes 08, 22: stamina 0 and off the tick after the hit),
     so one charge per activation. Running into an enemy (take23) or dashing with the skill off
@@ -958,7 +960,8 @@ the takes' watch logs and frames:
 **Guessed or open (Brutus)**: the heat figures' texture, and so their colours and the pulse's
 shape (fits); the halo's weight; the vision pair's strength (`VISION_LIGHT`, a third of the code's
 white: m03_a comes out darker than take08, e01 a little lighter than take09); the kill's
-throw (`KNOCK_SCALE`); what the game's view does at a hand-over with Vengar on. On the first
+throw is the code's since #259 (ragdoll.md), its speed against take22's not measured (the tower
+stops it); what the game's view does at a hand-over with Vengar on. On the first
 switch of a session the figures are missing for two frames at 60 fps (their pipeline compiles),
 hidden by the red fade then. The spec's shots B6 (the cone, an enemy 45 degrees off), B7 (a
 grenade's blast on him, on and off) and B8 (a squadmate seen still at 3 and 15 m) weren't
