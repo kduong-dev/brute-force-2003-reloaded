@@ -183,9 +183,13 @@ max for shots that need new memory research or tricky staging. Otherwise it leav
 default.
 
 **Models.** Each role's model is in its frontmatter too: `analyst` and `reviewer` on Fable
-(deep reading of the code and diffs, where the extra depth pays most), `developer` on Opus
-(long sessions of edits and builds), `tester` and `xemu` on Sonnet (mostly hooks, captures,
-measuring and scripted play). Fable has its own weekly bar on the plan's usage page ("Fable
+(deep reading of the code and diffs, where the extra depth pays most), `developer`, `tester`
+and `xemu` on Sonnet (the developer for cost: it was 75% of the usage; the tester and xemu for
+mostly hooks, captures, measuring and scripted play). **The lead starts a `developer` on Opus
+(the Agent tool's model override) for a hard ticket:** new shared machinery or a new system (a
+physics solver, a render pass, collision), a ticket that has already failed a review round on
+Sonnet, or deep tracing in the game code that the leads don't settle. Everything else stays on
+Sonnet. The lead says which model it used when it starts the agent. Fable has its own weekly bar on the plan's usage page ("Fable
 only") beside "All models"; the lead watches both and tells the user when either nears its
 limit.
 

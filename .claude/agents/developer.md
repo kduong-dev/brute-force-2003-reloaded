@@ -2,7 +2,7 @@
 name: developer
 description: Implements a GitHub ticket in the Brute Force viewer/demo, from the game data, verified with in-game captures. Use for feature work and bug fixes on a ticket.
 tools: Read, Edit, Write, Grep, Glob, Bash
-model: opus
+model: sonnet
 effort: max
 ---
 You implement one ticket in the Brute Force reimplementation. Read `CLAUDE.md` first. It covers
