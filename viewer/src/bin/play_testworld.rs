@@ -10,7 +10,8 @@
 //!  - U: the music menu. "off", the map's own, or any level's music bank (data/sounds/<level>.xwb
 //!    with tracks), mixed as the game mixes a level's (play.rs `music_mix`: the music, its
 //!    ambience bed under it, by the Types of that level's sound bank). Left / Right: the previous
-//!    / next bank at once.
+//!    / next bank at once. The test map's own is m04_a's (TEST_MUSIC, #302), playing from its
+//!    start.
 //!  - L: the level menu: the test map, then the game's level list (common campaign-bf.xmb: the
 //!    squad deathmatch maps, the deathmatch arenas, the missions' zones). Enter loads the chosen
 //!    one without restarting: AppState::Switching tears the map down (`end_play`, as Backspace
@@ -46,6 +47,32 @@ const XWB_HEAD: u64 = 16 * 1024;
 /// How far the camera sees (m) under another level's sky: as far as on a level (setup's
 /// 5000). The flat floor's camera has Bevy's 1000, short of sdm_e34's sky (3.2 km across).
 const SKY_FAR: f32 = 5000.0;
+/// The test map's own music (#302): m04_a's bank, mixed as the music menu mixes any level's
+/// (play.rs `music_mix`: its music with its ambience bed under it), playing from the flat floor's
+/// start, and the music menu's "this map's own" there (the product owner's choice: the flat
+/// floor has none of its own).
+pub(super) const TEST_MUSIC: &str = "m04_a";
+
+/// The bank the music menu's "this map's own" plays on `map`: its own, the test map's TEST_MUSIC.
+fn own_bank(map: &str) -> String {
+    if map == "flat" { TEST_MUSIC.to_string() } else { map.to_string() }
+}
+
+/// Loads level `zone`'s music bank on a thread and mixes it as `setup` mixes a level's (play.rs
+/// `music_mix`, by the Types of that level's sound bank; without it the names decide).
+fn music_thread(zone: &str, schemas: SchemaSet) -> Mutex<Receiver<MusicLoad>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let name = zone.to_string();
+    std::thread::spawn(move || {
+        let dir = data_dir();
+        let load = Game::load_music(&dir, &name).map(|tracks| {
+            let bank = Game::sound_bank_of(&schemas, &dir, &name).unwrap_or_default();
+            super::music_mix(tracks, &bank)
+        });
+        let _ = tx.send(load);
+    });
+    Mutex::new(rx)
+}
 
 /// A level the menus list: its archive's name ("flat": the test map), the name the game gives
 /// it (`CampaignLevel::name`; a mission's zones by their archive too), its group, and whether
@@ -101,6 +128,9 @@ struct World {
     bank: Option<String>,
     /// whether the map's start has been logged (BF_TOOLS_LOG)
     audited: bool,
+    /// the music loading is the test map's own at its start (TEST_MUSIC): it comes in without a
+    /// message (nobody picked it)
+    music_quiet: bool,
 }
 
 /// The level switch asked for, and (once it's loading) the thread's result; where from; and the
@@ -250,7 +280,9 @@ fn scan(schemas: SchemaSet, levels: Vec<String>) -> Scan {
 }
 
 /// A map starts: the menus' state anew (nothing loading carries over), the level list (once a
-/// session) and the scan started; the level menu on this map.
+/// session) and the scan started; the level menu on this map. The test map's music (TEST_MUSIC)
+/// starts loading as the music menu loads a bank, and plays once it's in (`finish_loads`; not
+/// under BF_NO_MUSIC, and BF_MUTE loads and logs it but plays nothing, as with the menu).
 fn start_map(mut world: ResMut<World>, mut lists: ResMut<Lists>, game: Res<GameData>, current: Res<CurrentMap>, mut text: ResMut<WorldText>) {
     *world = World::default();
     text.0.clear();
@@ -268,6 +300,14 @@ fn start_map(mut world: ResMut<World>, mut lists: ResMut<Lists>, game: Res<GameD
     world.level_pick = lists.levels.iter().position(|e| e.zone == current.0).unwrap_or(0);
     world.sky = if current.0 == "flat" { "none".into() } else { format!("{}'s own", current.0) };
     world.music = world.sky.clone();
+    if current.0 == "flat" && std::env::var("BF_NO_MUSIC").is_err() {
+        world.music_loading = Some((TEST_MUSIC.into(), music_thread(TEST_MUSIC, game.0.schemas.clone())));
+        world.bank = Some(TEST_MUSIC.into());
+        world.music_quiet = true;
+        if std::env::var("BF_TOOLS_LOG").is_ok() || std::env::var("BF_SOUND_LOG").is_ok() {
+            println!("test map: its music, {TEST_MUSIC}'s bank, loading");
+        }
+    }
 }
 
 /// A level by name: its archive's name, else the first whose title contains it (any case).
@@ -446,8 +486,9 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             }
         }
     }
-    // music: off, or a level's bank (decoded and mixed on a thread)
-    if let (Some(_), Some((z, _))) = (&bank, &world.music_loading) {
+    // music: off, or a level's bank (decoded and mixed on a thread). (A pick while the test map's
+    // own loads at its start takes its place: that one is dropped)
+    if let (Some(_), Some((z, _)), false) = (&bank, &world.music_loading, world.music_quiet) {
         status.message = Some((format!("Still loading the music of {z}"), MESSAGE_TIME));
         if log {
             println!("test tools: music pick ignored: still loading the music of {z}");
@@ -457,10 +498,11 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
     if let Some(p) = bank {
         let zone = match p {
             Pick::None => None,
-            Pick::Own => Some(current.0.clone()).filter(|m| m != "flat"),
+            Pick::Own => Some(own_bank(&current.0)),
             Pick::Level(i) => Some(lists.levels[i].zone.clone()),
         };
         world.music_loading = None;
+        world.music_quiet = false;
         world.bank = zone.clone();
         match zone {
             None => {
@@ -474,18 +516,7 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                 status.message = Some(("Music off".into(), MESSAGE_TIME));
             }
             Some(z) => {
-                let (tx, rx) = std::sync::mpsc::channel();
-                let (name, schemas) = (z.clone(), game.0.schemas.clone());
-                std::thread::spawn(move || {
-                    let dir = data_dir();
-                    let load = Game::load_music(&dir, &name).map(|tracks| {
-                        // (the bank's Types: that level's sound bank; without it the names decide)
-                        let bank = Game::sound_bank_of(&schemas, &dir, &name).unwrap_or_default();
-                        super::music_mix(tracks, &bank)
-                    });
-                    let _ = tx.send(load);
-                });
-                world.music_loading = Some((z.clone(), Mutex::new(rx)));
+                world.music_loading = Some((z.clone(), music_thread(&z, game.0.schemas.clone())));
                 status.message = Some((format!("Loading the music of {z}"), MESSAGE_TIME));
             }
         }
@@ -566,14 +597,20 @@ fn finish_loads(mut commands: Commands, mut world: ResMut<World>, mut lists: Res
     let got = world.music_loading.as_ref().and_then(|(z, r)| poll(r).map(|x| (z.clone(), x)));
     if let Some((z, load)) = got {
         world.music_loading = None;
+        // (the test map's own at its start says nothing on screen: nobody picked it)
+        let quiet = std::mem::take(&mut world.music_quiet);
         match load {
             Ok(tracks) => {
                 for e in &music {
                     commands.entity(e).despawn();
                 }
                 let names: Vec<String> = tracks.iter().map(|t| format!("{} {}", t.2, t.0)).collect();
-                if log {
-                    println!("test tools: music of {z}: {}", names.join(", "));
+                // (BF_SOUND_LOG too: what plays, each track's share of the music volume, and
+                // whether BF_MUTE keeps it silent)
+                if log || std::env::var("BF_SOUND_LOG").is_ok() {
+                    let mix: Vec<String> = tracks.iter().map(|t| format!("{} {} x{:.2}", t.2, t.0, t.3)).collect();
+                    println!("test tools: music of {z}: {}{}", mix.join(", "),
+                             if std::env::var("BF_MUTE").is_ok() { " (BF_MUTE: not played)" } else { ", looping" });
                 }
                 if std::env::var("BF_MUTE").is_err() {
                     for (_, wav, label, k) in tracks {
@@ -581,11 +618,15 @@ fn finish_loads(mut commands: Commands, mut world: ResMut<World>, mut lists: Res
                     }
                 }
                 world.music = format!("{z}: {}", names.join(", "));
-                status.message = Some((format!("Music: {z}"), MESSAGE_TIME));
+                if !quiet {
+                    status.message = Some((format!("Music: {z}"), MESSAGE_TIME));
+                }
             }
             Err(e) => {
                 eprintln!("test tools: no music from {z}: {e}");
-                status.message = Some((format!("No music from {z}"), MESSAGE_TIME));
+                if !quiet {
+                    status.message = Some((format!("No music from {z}"), MESSAGE_TIME));
+                }
             }
         }
     }
@@ -659,6 +700,7 @@ fn world_text(tools: Res<Tools>, world: Res<World>, lists: Res<Lists>, current: 
             for k in window(world.music_pick, n) {
                 let label = match k {
                     0 => "off".to_string(),
+                    1 if current.0 == "flat" => format!("this map's own (the test map's: {TEST_MUSIC})"),
                     1 => format!("this map's own ({})", current.0),
                     k => title(lists.banks[k - 2].0),
                 };

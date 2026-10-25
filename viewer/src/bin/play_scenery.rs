@@ -541,8 +541,10 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 }
                 let [lo, hi] = if shot.damage[1] > 0.0 { shot.damage } else { [8.0, 10.0] };
                 // (the roll x the shooter's skill's factor, FUN_0022c940: Flint's doubled and
-                // scoped rolls; the gun's falloff over its range, play_shots.rs)
-                let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * super::skills::roll_factor(u) * shot.falloff_at(t);
+                // scoped rolls, and its power-ups', BRUTE's x2; the gun's falloff over its
+                // range, play_shots.rs)
+                let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * super::skills::roll_factor(u) * super::powerups::roll_factor(u)
+                    * shot.falloff_at(t);
                 let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
                 s.hits.push(PendingHit { delay: shot.delay(t), target: b, amount, damage_type: shot.damage_type, push });
             }
@@ -563,7 +565,8 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 .filter(|&(_, t)| t <= shot.dist + SHOT_SLACK).min_by(|a, b| a.1.total_cmp(&b.1));
             let Some((b, t)) = first else { continue };
             let [lo, hi] = if shot.damage[1] > 0.0 { shot.damage } else { [8.0, 10.0] };
-            let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * super::skills::roll_factor(u) * shot.falloff_at(t);
+            let amount = (lo + (hi - lo) * u.random(1000) as f32 / 1000.0) * super::skills::roll_factor(u) * super::powerups::roll_factor(u)
+                * shot.falloff_at(t);
             let push = Push { at: shot.origin + shot.dir * t, dir: shot.dir };
             s.hits.push(PendingHit { delay: shot.delay(t), target: b, amount, damage_type: shot.damage_type, push });
         }
@@ -829,8 +832,9 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 u.health -= amount;
             }
             if combat {
-                println!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} (x{:.2} the step) -> {:.1} / {:.0}", a.effect, unit_name(u),
-                         hit.step, u.health, u.max_health);
+                println!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} (x{:.2} the step{}) -> {:.1} / {:.0}", a.effect, unit_name(u),
+                         hit.step, if hit.victim_power != 1.0 { format!(", x{:.2} its power-up", hit.victim_power) } else { String::new() },
+                         u.health, u.max_health);
             }
             match a.victims.iter_mut().find(|v| v.0 == u.who()) {
                 Some(v) => { v.2 = a.age; v.3 += amount; }

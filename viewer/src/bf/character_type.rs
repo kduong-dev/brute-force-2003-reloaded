@@ -39,6 +39,10 @@ use super::weapon;
 /// "Shrike Soldier").
 const H_ENTRY: u32 = 0xE275_FB80;
 const H_LABEL: u32 = 0x1DD3_A49D;
+/// A character entry's HUD icons: its portrait (h_f9d94425, which FUN_00190330 puts at the parse
+/// record's +0x17c) and its dead skull (h_00c51907), as `Game::character_icons` reads them by name.
+const H_PORTRAIT: u32 = 0xF9D9_4425;
+const H_SKULL: u32 = 0x00C5_1907;
 /// The type's flag h_e78efbb2 (name not recovered; see `CharacterType::player_type`).
 const H_PLAYER_TYPE: u32 = 0xE78E_FBB2;
 /// The footstep type (h_072ab4af, an enum: the squad 1-4, the campaign Shrikes and hounds 0).
@@ -85,6 +89,9 @@ const H_AWARD_KIND: u32 = 0xE925_F48B;
 /// `<limit-weapon h_fb08d4c6>` (name not recovered; the parser FUN_00190030 puts it at the parse
 /// record's +0x374): the type's pickup mode, `CharacterType::pickup_mode`.
 const H_PICKUP_MODE: u32 = 0xFB08_D4C6;
+/// An `<overlay>`'s h_f6a410e6 (name not recovered; the overlay parser FUN_001958f0 puts it at
+/// the parse record's +0x3c): the character is held still while it plays, `Overlay::holds`.
+const H_HOLDS: u32 = 0xF6A4_10E6;
 
 /// The MT_ motion types by value, without their MT_ prefix (default.xbe's name table 0x3bfdac,
 /// values 0-49 in order; parser FUN_001876a0).
@@ -130,6 +137,18 @@ pub struct CharacterType {
     pub library: String,
     /// its display name: a string id (`<base h_1dd3a49d>`, into `Game::strings`), 0 none
     pub label: u32,
+    /// its HUD portrait (H_PORTRAIT, the parse record's +0x17c: FUN_00190330) and the skull its
+    /// place shows once it's dead (H_SKULL): texture names in common's library, 0 none. The
+    /// squad's four, some of the militia and mp_common's deathmatch types give them (those the
+    /// squad's skulls); the campaign's enemies leave them empty (#302)
+    pub portrait: u32,
+    pub skull: u32,
+    /// its camera block (`character::CameraOffsets`: the follow camera's boom and the death
+    /// camera's framing, FUN_0012eca0), None without one. The squad's are read by name too
+    /// (`Game::character_camera`); a test map squad member of another type takes its own (#302):
+    /// the deathmatch types a player's (sdm_shrike's Shrike Heavy 3.2 m at 1 degree, its Hunter
+    /// Lord 4 m at 5), the campaign's enemies 1.55 m at 10
+    pub camera: Option<super::character::CameraOffsets>,
     /// its model: the compound archetype `<base mesh-name>` (type+0xc4, FUN_00154a20)
     pub mesh: u32,
     /// motion-archetype as written ("ms_lf"), and its hash: the motion set's key in
@@ -191,7 +210,10 @@ pub struct CharacterType {
     /// `<limit-weapon h_fb08d4c6>`: how a picked-up gun chooses its slot and its pickup clip
     /// (FUN_00121ac0 and FUN_00121920 switch on the type's +0x15c; that it's this attribute,
     /// parse +0x374, is inferred from its values and the takes): 1 Flint and Hawk, 2 Brutus, 3
-    /// Tex; 0 without one (slot 1); 4 a type that can't pick guns up (FUN_000bf1e0)
+    /// Tex; 0 without one (slot 1); 4 a type that can't pick guns up (FUN_000bf1e0). The same
+    /// +0x15c picks the stance a gun is held in (FUN_0011aa20: by its slot for 1, its class for 2
+    /// and 3; play.rs `stance_for`) and moves Tex's stowed gun (3: FUN_00123fa0, play.rs
+    /// `StowPlaces`), #297
     pub pickup_mode: i64,
     /// `<speeds speed>`: crouch walk, walk, run, dash (m/s; type+0x6f8..0x704, read by
     /// FUN_0012c6c0); the demo moves by root motion
@@ -370,6 +392,14 @@ pub struct Overlay {
     /// overlay starts. 1 on every overlay of the squad's sets but the weapon pickups (Tex's 1.1,
     /// Flint's 1.2); 1 without
     pub speed: f32,
+    /// h_f6a410e6 (name not recovered): the character is held where it stands while the overlay
+    /// plays. The overlay parser FUN_001958f0 puts it at the parse record's +0x3c, FUN_001314c0
+    /// packs it into the runtime record's +0x3d bit 1 (0x131966-0x131986), and the stick's move
+    /// FUN_001195c0 skips the move and the turn while the playing overlay (char+0x214) has it
+    /// (0x11982f-0x11986b; a MOTION's +0x251 bit 5, its own h_f6a410e6, does the same: the crouch's
+    /// transitions and throw_grenade). True on `place_hi` and on every motion set's weapon pickups
+    /// (the DROP_* and PICKUP_* types), false on the rest; false without
+    pub holds: bool,
 }
 
 /// A hit bone: a motion set's `<collision><bones><bone name mass Damage recoil>` (FUN_00194d70;
@@ -613,6 +643,9 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
         archive: archive.to_string(),
         library: library.to_string(),
         label: name(part, H_LABEL),
+        portrait: name(e, H_PORTRAIT),
+        skull: name(e, H_SKULL),
+        camera: super::character::camera_offsets(e),
         mesh: name(part, h("mesh-name")),
         motion_archetype: motion.and_then(|v| v.as_str()).map(|s| s.trim().to_string())
             .unwrap_or_else(|| format!("h_{:08x}", motion.and_then(|v| v.as_hash()).unwrap_or(0))),
@@ -690,6 +723,7 @@ pub fn parse_motion_set(root: &Element, file: &str) -> MotionSet {
             script: strings(o, h("script")).into_iter().next().unwrap_or_default(),
             prefix: int(o, h("prefix-type")).unwrap_or(0),
             speed: num(o, h("speed")).unwrap_or(1.0),
+            holds: int(o, H_HOLDS).unwrap_or(0) != 0,
         }).collect(),
         hit_bones: root.child(h("collision")).and_then(|c| c.child(h("bones"))).map(|b| b.children_named(h("bone")).filter_map(|b| {
             Some(HitBone {
@@ -795,8 +829,9 @@ impl Game {
 
     /// The character type a test hook names (`s`, any case): its key as h_xxxxxxxx, its
     /// `<base name>` (brutus, mp_brutus), its display name (the first loaded of that name), or
-    /// `name@archive` (that archive's or that objecttypes library's: `@m09_a`, `@sdm_shrike`).
-    /// None if no loaded type matches.
+    /// `name@archive` (that archive's or that objecttypes library's: `@m09_a`, `@sdm_shrike`, or
+    /// both as the test tools' menus show them: `@mp_common/sdm_shrike`). None if no loaded type
+    /// matches.
     pub fn find_character_type(&self, s: &str) -> Option<u32> {
         let s = s.trim();
         if let Some(k) = s.strip_prefix("h_").and_then(|x| u32::from_str_radix(x, 16).ok()) {
@@ -809,10 +844,12 @@ impl Game {
             Some((l, a)) => (l.trim(), Some(a.trim())),
             None => (s, None),
         };
+        // (`@archive`, `@library`, or `@archive/library` as the test tools' menus show a type's
+        // place: `CharacterType::place`, #302)
         self.character_type_order.iter().copied().find(|k| {
             let t = &self.character_types[k];
             self.strings.get(&t.label).is_some_and(|n| n.eq_ignore_ascii_case(label))
-                && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a) || t.library.eq_ignore_ascii_case(a))
+                && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a) || t.library.eq_ignore_ascii_case(a) || t.place().eq_ignore_ascii_case(a))
         })
     }
 

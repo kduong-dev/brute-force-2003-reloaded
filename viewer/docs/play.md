@@ -13,7 +13,7 @@
 | Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` (held: asked for again each frame); `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time, as the key toggles. In Tex's berserk Z does nothing and the press is dropped ([skills.md](skills.md)) |
 | M | cycle the ground surface (changes footstep / landing / slide sounds) |
 | click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
-| 1-4 | take control of Brutus / Flint / Hawk / Tex: their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
+| 1-4 | take control of Brutus / Flint / Hawk / Tex (on the test map whoever holds their places, any type, or no one: the squad menu, T, #302, [testtools.md](testtools.md)): their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
 | G | use the item in the item box (the game's LT). A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.625 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw: 15 degrees above the camera's view (9 above the crosshair), a Frag at 17.8 m/s for a tap to 25.6 m/s full, the meter's bottom 30% throwing as a tap (#161: a full Frag looking 9 degrees down lands ~25 m out); the count drops at once, and the scope is left. A placed one (Roller, Sentry; m09_b's Thermo, #82): set down at the feet at the press. A Medkit (either): used at the press, "No need to heal" at full health. Nothing selected: "Inventory is empty". A Tab or B press while G is held drops the charge, and G does nothing more until it's let go. See **Grenades** and **The item box and the item list** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen and the Hat do nothing yet (#21), but Brutus is told "Cannot use" |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold [X] to activate panel." shows (the game's glyph line, X's glyph: E is the demo's X; [hints.md](hints.md)) and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
@@ -28,6 +28,18 @@
 
 A flat test floor for trying things out, only reachable with the `--test` flag. It opens
 straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`).
+
+* **Tex alone** (#302, the product owner's choice): the squad starts with the player's character
+  (Tex, or `BF_CHARACTER`'s) and its other three slots empty. The squad menu (T) puts any
+  character type in a slot, a real squad member (the formation, 1-4, the portraits and health
+  channels, the hand-over at a death), empties one, or changes the player's own type where they
+  stand ([testtools.md](testtools.md), "The squad"). `BF_TEST_FULL_SQUAD=1` starts with the four
+  as before, `BF_TEST_SQUAD=<type>,<type>...` with those; a hook that acts on the squad's members
+  (`BF_TEST_SELECT`, `BF_TEST_KILL`, `BF_TEST_TARGET` ...) starts it with the four too, so the
+  recipes written for them run as before. Any other map (the L menu's levels, `--test
+  BF_MAP=<level>`, the main game) keeps its own squad.
+* **m04_a's music** (#302): its bank plays from the start, mixed as the music menu (U) mixes any
+  level's (test_casp1_amb01, the ambience bed ambience19-2ch under it); U still changes it.
 
 * **Every hand weapon on a rack**, floating and turning in front of the start: the 27 weapon
   definitions with a clip whose model loads (one per model), from the first mission's data,
@@ -77,7 +89,15 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   squad member they hurt, in one hit. The player still takes normal damage.
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
   ragdoll, then the death camera and the hand-over to the next squad member (or, with nobody
-  left, the camera stays on the body). `BF_TEST_SUICIDE=<s>` presses it at that time.
+  left, the camera stays on the body; on the test map's floor the player respawns, below).
+  `BF_TEST_SUICIDE=<s>` presses it at that time. Its hurt is K's (`enemies::lethal`), so a type
+  with a stamina shield in the player's slot (a deathmatch Shrike, #302) dies too; so does
+  `BF_TEST_DIE`'s.
+* **Dying alone respawns** (#302, the demo's rule for the test map, not the game's): with nobody
+  to hand over to, 4 s after the death (the death camera's time to its hand-over) the player
+  comes back where it stood, a fresh one of its type, its view and the squad's inventory kept.
+  Only on the test map's floor, not on a level a test session loads ([testtools.md](testtools.md),
+  "The squad").
 * **The controls panel**, which the main game no longer shows: the keys (the tools' too) and
   the debug line (character, state, clip, surface, weapon), top left under the health bars. It
   starts hidden, with a small "H: help" at the bottom; H shows and hides it.
@@ -86,8 +106,8 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   was counted down only on maps with doors, so on the flat floor it stayed.
 * **Developer tools**: a free camera with a teleport (F), an NPC spawner (N), an object
   spawner (O, in the air from the free camera), any level's buildings and static scenery to put
-  down, drawn and solid as in their levels (P, #185), a sky picker (Y), a music picker (U) and a level
-  switch (L), which takes the test session to any level and back. On a level the rack and the
+  down, drawn and solid as in their levels (P, #185), the squad menu (T, #302), a sky picker (Y),
+  a music picker (U) and a level switch (L), which takes the test session to any level and back. On a level the rack and the
   pickup grid aren't there; the rest of this list is. `--test` with `BF_MAP=<level>` starts on
   that level. See [testtools.md](testtools.md).
 * **The map editor** (#191): F5 switches to its edit mode, out of the gunplay (no character, gun
@@ -136,7 +156,9 @@ full. The frame's middle stretches with them and its right cap follows their end
 switch resizes it (the picture's right cap ends 12 units past the bars, the game's frame ~9.4:
 the demo's frame is ~3 units longer on the right, #35 takes 01, 06, 19). The stamina bar's
 colours, trail and low-stamina blink, and the skill's name under it: [skills.md](skills.md).
-Without the tutorial's picture, the frame below is used.
+Without the tutorial's picture, the frame below is used. A HEALTH or STAMINA POWER walked over
+when it can't do anything flashes the bar it would fill amber, four times in 1.2 s (the bar
+widget's flash, 0x146900: `BarFlash`, [pickups.md](pickups.md) "Power-ups", #15).
 
 HUD textures found for the panels: the health / energy frame is built from its corner
 `h_0cdf5876` (32 × 16 end cap, mirrored four ways; it holds the step from the raised ends down to
@@ -157,7 +179,7 @@ leave gaps.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
 (the weapon's own icon from its definition, clip / the squad's reserve, or "clip Regen" for a
-recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](skills.md)), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
+recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](skills.md)), radar with the squad's portraits round it (Tex top, Hawk left, Flint right, Brutus bottom; only the members in the world: **Radar**, "The portraits"),
 the item box bottom right (`play_itembox.rs`, **The item box and the item list**), the message line under the middle (the HUD entry's message widget: "No need to heal", "Inventory is empty"; the body font at 12 in (192, 255, 255) with a shadow, its last 0.5 s fading, FUN_000b32d0 / 0xb33b0), and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
@@ -173,6 +195,30 @@ The squad's only sideways clips are dodge rolls, so aimed movement is legs-run p
 upper-body twist spread over the spine and head (`aim_chain` / `twist`). Movement is root
 motion: each frame the character moves by exactly what the playing clips' root channels move,
 crossfaded over 0.2 s, so speeds and footfalls match the original animations.
+Standing with the stick at rest, the controlled character keeps its heading (#294): only the
+stick's move and turn request and the aim turn it (FUN_001195c0 makes no request from a stick in
+its dead zone). The AI's characters settle to a heading of their own (`face_yaw`: a squadmate
+the leader's way, an enemy where its motion left it); a script's walk, a warp and a hit
+reaction's end leave one on the controlled character too, and it used to turn back to it at
+3.15 rad/s whenever it stood still (e34's opening walk; the tutorial's warps of Tex,
+trigger_warp_tex_patrol and trigger_warp_tex_to_vsquad). `BF_HEADING_LOG=1` prints the
+controlled character's heading every frame, what the step turned it, the aim's yaw, its place
+and what may turn it standing (the stick, the aim, the gun raised, a slide, a throw), with a
+`face_yaw` left on it. Standing still on slide-flagged ground built a slide up too, which
+turned the character downhill (maps.md, "Sliding": `stands_still`). Checked (#294), each of
+the four standing with no input, its heading unchanged to the fifth decimal:
+
+* at sdm_e34's start and on its 36° face at (23, 10) (`BF_TEST_GOTO=23,10,23,10`), 95 s each
+  in real time; before, Flint slid off the face at 41.6 s and Tex (another run) at 82.9 s,
+  each turning about 180°;
+* on that face at the capture's 15 fps (`BF_CAPTURE_FRAMES=900 BF_CAPTURE_EVERY=150`), 61.5 s:
+  before, Flint slid at 1.3 s; the place moves 0.7-2.3 cm (the idle's root sway);
+* after the tutorial's trigger_warp_tex_patrol (`BF_MAP=tutorial BF_TEST_GOTO=31,92,36,96
+  BF_TEST_GO_AT=4 "BF_TRIGGER_FIRE=h_095ae7a3,11,2"`): Tex runs to the goal and keeps the
+  heading he stops with (-1.99 rad, 5 s on), where before he turned back 140° to the warp's
+  (+1.55) over 0.85 s;
+* a run onto that face (#285's test, `BF_TEST_GOTO=30,10,-30,10`) still slides at 2.47 s.
+
 Jumping uses the game's named clips (`Sc_w1_jump_crouch/launch/fall/land`, `Sc_4leg_w1_jump_*`;
 names recovered from the motion scripts) with simple gravity; a jump pressed during a dodge is
 buffered for 0.4 s.
@@ -186,34 +232,66 @@ compound whose barrel spins), and the definition's fire rate, fire sounds and ra
 hangs from the trigger hand: the character's hand hardpoint lined up with the weapon's trigger
 grip hardpoint (both point + w-x-y-z quaternion). That pairing makes every squad weapon point
 straight ahead and level in the game's ready-pose clips, and puts the support hand on the
-foregrip in the carry clips. Locomotion follows the weapon's stance. Each character's two motion
-sets, `Sc_w1_*` and `Sc_w2_*` (idle, walk, run, dash, backpedal, reload, throw), belong to the
-weapon classes of its two slots (`<limit-weapon one="CLASS n" two="CLASS n">`, class = the
-weapon's `weapon-type`: 0 light, 1 medium, 2 heavy):
+foregrip in the carry clips. Locomotion follows the weapon's stance. Each character has two motion
+sets, `Sc_w1_*` and `Sc_w2_*` (idle, walk, run, dash, backpedal, reload, throw), and the game
+picks one every frame from the gun in hand (char+0x5b0, FUN_0011aa20) by the character type's
+pickup mode (`<limit-weapon h_fb08d4c6>`, the one that also chooses a picked-up gun's slot):
 
-| Character | `Sc_w1_*` | `Sc_w2_*` |
+| Character | pickup mode | the set |
 |---|---|---|
-| Brutus | medium | heavy |
-| Flint | medium | light |
-| Hawk | light | medium |
-| Tex | heavy | heavy |
+| Flint, Hawk | 1 | the slot's: slot 1 `Sc_w1_*`, slot 2 `Sc_w2_*` |
+| Brutus, Tex | 2, 3 | the gun's class (its `weapon-type`, WTYPE 0 pistol, 1 rifle, 2 cannon): `Sc_w2_*` for a cannon, `Sc_w1_*` for any other |
+| any other type | 0, 4 | `Sc_w1_*` |
 
-A gun takes the set of its class, else that of its slot. So Brutus holds his medium Bower 20 in
-his medium stance, like the Feral Cutter, though it's his second weapon. Arms then carry each gun
+So Brutus holds his rifle-class Bower 20 in his rifle stance, like the Feral Cutter, though it's
+his second weapon, and a rifle Tex picks up into his cannon's slot is held as a rifle (#297: the
+demo had keyed Tex's by the slot, from his `limit-weapon` slots, both "2 1"). Arms then carry each gun
 the way the game animates it (Tex's minigun low in both hands, Flint's LZR-10 one-handed), and
 aiming or firing switches to that set's `rp_*` ready-pose clips. The barrel is then turned onto the crosshair (yaw and pitch, two
 passes, over the spine bones that carry the arm), so shots leave along the barrel (within 1
-degree). The other weapon is stowed for its inventory slot: the weapon's holster hardpoint (`h_10ab40ac`,
-on every gun) on the character's stow hardpoint for that slot, which puts Tex's guns vertical on
-his ramps, Brutus's diagonally across his back, and Flint's and Hawk's sidearms barrel-down on
-the hip. Switching plays the character's own weapon-change overlay from its motion script (Flint and
+degree). The other weapon is stowed: the weapon's holster hardpoint (`h_10ab40ac`, on every gun) on
+one of the character's three stow hardpoints (`weapon::STOW`), the one its slot's holder is on
+(its place, `StowPlaces`, #297: the holders' +0x40 through their hardpoint getter 0x14ba70). Slot 1
+starts on 0xff4c691b and slot 2 on 0xf4ccf78c, which hang Brutus's first gun from his pelvis
+and his second diagonally across his back (on Bip01 Spine2), Flint's and Hawk's rifles across
+their backs and their sidearms barrel-down on the hip (Bip01 R Thigh); only Tex's places move. His draw swaps them (FUN_00123fa0) and his switch clips' events move
+them, so his stowed gun hangs vertical on his left ramp (0xff4c691b) whichever slot it's from, as
+the takes have it (#61 take04: the LZR-50 of his slot 2; #68 take02: the LZR-23, then the
+Minigun after Y), where the demo had hung slot 2's on his right ramp. Switching plays the character's own weapon-change overlay from its motion script (Flint and
 Hawk `Sc_w1_2_w2` / `Sc_w2_2_w1`, Brutus `Sc_w1_2_w2rifle` / `Sc_w2rifle_2_w1`, Tex
 `Sc_wc_rifle2cannon` / `Sc_wc_cannon2rifle`, whose ramps swing the gun over his shoulder) on the
 upper body over whatever the legs are doing. The clips carry timed events (an event channel of
 f32 time + name hash per event): at `drop_weapon` the held gun goes to its stow point, at the
 grab event the other one comes to the hand, each with the weapon's handling (`pickup-sound`)
-sound; no firing or aiming until the clip ends. Shots: muzzle flash and light,
+sound; no firing or aiming until the clip ends. Tex's clips swing his two ramps across his back
+(the left one up to his right shoulder with the gun to draw, 0.50-0.83 s; the right one out and
+over to his left side, 0.75-1.08 s; both back to rest between 1.25 and 1.33 s) and carry two more
+events: the gun let go goes on his right ramp at `drop_weapon` and rides it over, ed585109
+(1.20 s) hands it to Spine2's 0xe3307376, which sits where the left ramp rests, for the ramps'
+snap back, and f18780b8 (1.37-1.40 s) onto the left ramp (FUN_0014d500, FUN_0014d570). Shots: muzzle flash and light,
 recoil, tracers that fly to what the crosshair is on (ground or pillars) and a spark there.
+
+`BF_WEAPON_LOG=1` (pickups.md) prints, whenever it changes, where each gun hangs (in the hand, the
+second hand, or stowed at which hardpoint and bone) with its class and stance. Checked (#297) on
+the test map (`--test`), with it:
+
+* #61 take04's recreation (pickups.md, with `BF_TEST_SWITCH=10.0,13.0`): Tex's LZR-50 (slot 2)
+  hangs on his left ramp before the swap and after it, as at take04's 1.0 s and 9.0 s (it had hung
+  on his right one); after each Q the stowed gun is there again (the L-Shot-50 at 11.47 s, the
+  LZR-50 at 14.47 s), having gone right ramp, Spine2, left ramp at the clip's drop, 1.20 and
+  1.40 s;
+* #68 take02's switch (`BF_TEST_WEAPON="Confed LZR-23;RVG50 Minigun" BF_START_WEAPON=1
+  BF_TEST_GOTO=0,0,0,-1.5 BF_TEST_SWITCH=2.0,5.0`, every frame): the Minigun put on the right
+  ramp at the drop (2.53 s) and carried over to the left as the take's (from 22.15 s on the right,
+  22.55 s on the left; the demo's clip runs at its data's rate, slower than the take's: see
+  **The crosshair** below);
+* Tex swapping his Minigun for an MK-ASLT (`BF_TEST_GUN="MK-ASLT,3.6,0.3"`, the same weapons): the
+  rifle goes to slot 2 (`Sc_w_drop_cannon_pickup_rifle`) and is held in `Sc_w1_*` (it had been
+  `Sc_w2_*`: lower in the hands, as the Minigun; side view with `BF_VIEW_YAW=1.4
+  BF_TEST_TRIGGER=4.0-5.0`, the carry and the ready pose against the old build's);
+* Brutus (#52's recreation: the LZR-50 to slot 2 after the switch), Flint (an LZR-10 to slot 2)
+  and Hawk (a Saryl-23 to slot 1), each with two Qs after: their guns' hardpoints and stances as
+  before (each slot on its own, Flint's and Hawk's by the slot, Brutus's by the class).
 
 ### Radar (#228)
 
@@ -232,6 +310,25 @@ recoil, tracers that fly to what the crosshair is on (ground or pillars) and a s
 * **The squad**: its living members in the world as green blips (FUN_000ae7c0's friend, 90 200 40;
   take11's marines; they were yellow) at that scale, one beyond the range on the circle (the game
   draws a rim marker for it: FUN_000ae7c0 through FUN_000b0ad0, not done).
+* **The portraits** (#303): a squad slot shows its face, its follow-order tab and its health
+  channel only while a member is in the world in it (`slot_member`; a dead one keeps its skull: dead
+  members are still in the squad). A slot whose member the zone doesn't have shows nothing: the
+  level spawns only the zone's members (its `h_ed54d255` names the others, [campaign.md](campaign.md)),
+  so the tutorial and m01_a (h_ed54d255 "brutus hawk flint") show Tex alone, as take04 does
+  (`todo/28-tutorial`, 60 s: Tex's face, tab and channel, the other three places dark), and m01_b
+  ("hawk flint") Tex and Brutus. A member out of the world (`absent`: waiting for its spawn-trigger,
+  or its copy taken away by FUN_00209900) counts as missing too. In the game the HUD's squad list
+  (five entries at +0x34, one per slot by the type's +0x150) is kept each frame by FUN_000bd790:
+  FUN_000c8570 drops the characters gone, FUN_000c84e0 adds the new ones (which list it reads and
+  that the portraits draw from it aren't traced). The test map's emptied slots (#302) are the same
+  rule. Checked (30 frames each, standing at the leader's spawn): `BF_MAP=tutorial
+  BF_TEST_GOTO=46,-20,46,-20` and `BF_MAP=m01_a BF_TEST_GOTO=79.6,-100.5,79.6,-100.5` Tex alone,
+  as take04; `BF_MAP=m01_b BF_TEST_GOTO=24.4,-10.0,24.4,-10.0` Tex and Brutus; `BF_MAP=e40
+  BF_TEST_GOTO=-18.9,168.8,-18.9,168.8` and `BF_MAP=mp1` the four, as before; `BF_MAP=mp1
+  BF_TEST_DIE=1` (120 frames) Tex's skull at the top through the hand-over; `BF_DEATHMATCH=1` no
+  squad HUD, as before; `--test BF_TEST_GOTO=0,8,0,7.5` Tex alone, and with `BF_TEST_SQUAD="shrike
+  soldier@m09_a,flint" BF_TEST_KILL=1` the Shrike's "?" in Brutus's place, Flint's skull, Hawk's
+  place dark (#302's, unchanged).
 * **The other characters** (FUN_000ae7c0, radar-contact 1, or 6 for a boss): one within the range a
   record as an objective's (below), a friend green 90 200 40 (40 100 20), one whose team the
   viewer's is hostile to red 200 40 90 (100 20 40: take08's and take11's terrorists), anyone else
@@ -289,8 +386,8 @@ the near enemy, known to Flint, red; the far one (75 m) none; the friend green; 
 Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
 radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
 dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); the
-reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); the
-squad's portraits for members not in the world (the tutorial's Tex alone still shows four). A
+reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); which
+list of characters the HUD's squad list is kept from (FUN_000bd790, "The portraits" above). A
 test map dummy is no AI target, so nobody knows of a hostile dummy and it never shows.
 
 ### Ammo, reload and the crosshair (#114)
@@ -2632,13 +2729,17 @@ ambience, the music cues; 3D ones by DirectSound's distance law from the camera)
 
 Test hooks: `BF_AUTOPILOT=1` plays a scripted run (idle, run, turn, sprint, aimed walk,
 backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing on the run); `BF_TEST_EXPLOSION=1` sets off the selected grenade type 6 m ahead every 1.5 s; with `BF_TEST_GOTO`, `BF_TEST_THROW=<s>[,<hold s>,...]` holds the grenade button (G) at those times (see **Grenades** for the rest of its hooks); `BF_ANIM_PROBE=<script>,...` prints each character's clips by script name (duration, root motion over a cycle, the clip's own speed h_f9628571, events); `BF_DUMP_TEXTURE=<file>:<hex id>` writes a decoded texture (raw RGBA after a u32 width and height). `BF_AUTOPILOT_SPIN=<rad/s>` makes it look down and turn the camera during the standing fire; with `BF_CAPTURE=<dir>` it saves every frame at a
-fixed 15 fps. `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
+fixed 15 fps (`BF_CAPTURE_EVERY=<n>`: only every n-th, for a long run at that step whose logs
+are what's wanted, #294). `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
 and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `BF_DUMP_SOUNDS=<dir>` writes the character's jump and surface sounds as WAV files
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
 hardpoints, muzzles, fire sounds), then the map's definitions with more than one muzzle, and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
 character types, their motion sets' clips and the placements, and exits
 ([character-types.md](character-types.md)); `BF_SHOT_LOG=1` prints each shot's barrel and shot
-directions. Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the
+directions; `BF_FEET_LOG=1` prints, every frame, the controlled character's soles (the posed
+model's lowest skinned vertex) and its two foot bones over its ground, whether it moves, and the
+overlays playing with their times (a pickup, a use, a reload, a throw: #293's check of the
+pickup clips' feet). Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the
 start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
 something; held to +-60 degrees), `BF_CAMERA_DISTANCE` sets every character's boom,
 `BF_CAMERA_AIM_AT=x,y,z` turns the aim so the crosshair's ray passes through a point (the recipes
@@ -2656,9 +2757,11 @@ on a character goes:
 * **The roll** (FUN_0022c940): Damage min + U x (max - min), x a character shooter's skill's
   factor (its +0xec at 0x22c9a3; `Hit::skill`, the log's "x the shooter's skill"): Flint's x2 on
   15% of her rolls while her targeting is on and x1.5 scoped (0x13cc70, [skills.md](skills.md#flints-advanced-targeting-124));
-  1 for the others. Every roll a shooter makes takes it: a shot's on a body or a breakable
-  object, a missile's direct hit and its blast's own roll. The damage power-up's char+0x754
-  isn't in.
+  1 for the others; then x each of its modifiers' (char+0x55c, `Hit::power`, the log's "x the
+  shooter's power-up"): BRUTE POWER's x2 for its 45 s ([pickups.md](pickups.md), "Power-ups",
+  #15). Every roll a shooter makes takes them: a shot's on a body or a breakable object, a bolt's
+  and a ray's, a missile's direct hit and its blast's own roll. The Hat's char+0x754 (x4,
+  FUN_001478d0) isn't in.
 * **The hit record** (FUN_0022c4d0): a direct hit takes the roll, a blast its share of the
   blast's roll (half for h_011cb154 false, the Therm Sweeper's); then x the hit factor: an
   instant ray's range falloff (FUN_00230040, **Shots**) x FUN_00125940; a projectile's
@@ -2672,7 +2775,9 @@ on a character goes:
   shooter's own blast included).
 * **The victim** (0x125600, a character's combat-target vtable slot 0): x (1 - 0.1n) on an
   enemy team, x (1 + 0.1n) on the squad's, n the difficulty; then its skill's factor (Vengar's
-  0.85 while on, `Hit::victim_skill`, skills.md); then FUN_002232d0's factor for the damage type. Every hit on a character
+  0.85 while on, `Hit::victim_skill`, skills.md); then each of its modifiers' (`Hit::victim_power`,
+  "x the victim's power-up": FORCE POWER's x0.5 on any hit but a BLADED one, #15); then
+  FUN_002232d0's factor for the damage type. Every hit on a character
   reaches it: the guns' hits and blasts, the scenery's damage areas (FUN_0021ade0), falls
   (FUN_0012b740, DTYPE_NORMAL), FUN_00223160 (Brutus's charge), the damage plate's frames
   (FUN_001f8510, #228: [triggers.md](triggers.md), "The damage plate"). Only the trainer's `!hit` skips

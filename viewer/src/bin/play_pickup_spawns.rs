@@ -9,7 +9,7 @@
 //!  - a type without a collision body (its `collision-type` CT_NONE: the power-ups) stays where
 //!    the trigger puts it, with its idle effect: sdm_e34's STAMINA POWER at (-84.07, 29.78,
 //!    60.58), where todo/35-special-skills take20's live object lies, 2 m from its placement.
-//!    Taking a power-up is #15's;
+//!    Walking over one takes it (play_powerups.rs, #15);
 //!  - any other item (CT_CONVEX: a body the world's physics drops) lies on the ground under the
 //!    trigger as the level's own pickups do (play_pickups.rs `LatePickup`): medkits, fruit and DNA
 //!    canisters can be taken;

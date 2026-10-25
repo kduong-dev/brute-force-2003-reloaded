@@ -91,6 +91,12 @@ impl Reserve {
         *have += added;
         added
     }
+
+    /// A reserve holding `stacks` (ammo-type, rounds, stack limit), for the tests.
+    #[cfg(test)]
+    pub fn with(stacks: &[(i64, i64, i64)]) -> Self {
+        Reserve { rounds: stacks.iter().map(|&(t, n, _)| (t, n)).collect(), limits: stacks.iter().map(|&(t, _, l)| (t, l)).collect(), stocked: true }
+    }
 }
 
 /// How long (s) the HUD shows the held weapon's name over its count after a pickup, and the fade

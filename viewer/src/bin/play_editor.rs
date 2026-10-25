@@ -113,12 +113,13 @@ pub(super) struct Tool {
 }
 
 /// The tool registry: every editing tool's key and menu, in the help's order. The keys are the
-/// test tools' (#111, #116, #185), none of them the game's controls. A new tool adds its entry
-/// here and its `Panel`.
-pub(super) const TOOLS: [Tool; 6] = [
+/// test tools' (#111, #116, #185, #302), none of them the game's controls. A new tool adds its
+/// entry here and its `Panel`.
+pub(super) const TOOLS: [Tool; 7] = [
     Tool { key: KeyCode::KeyP, key_name: "P", panel: Panel::Scenery, name: "scenery", about: "any level's buildings and static scenery" },
     Tool { key: KeyCode::KeyO, key_name: "O", panel: Panel::Objects, name: "objects", about: "pickups, weapons, grenades, breakables" },
     Tool { key: KeyCode::KeyN, key_name: "N", panel: Panel::Npcs, name: "NPCs", about: "any character type, friend or enemy" },
+    Tool { key: KeyCode::KeyT, key_name: "T", panel: Panel::Squad, name: "squad", about: "any character type in each squad slot, or empty" },
     Tool { key: KeyCode::KeyY, key_name: "Y", panel: Panel::Sky, name: "sky", about: "any level's sky" },
     Tool { key: KeyCode::KeyU, key_name: "U", panel: Panel::Music, name: "music", about: "any level's music" },
     Tool { key: KeyCode::KeyL, key_name: "L", panel: Panel::Levels, name: "level", about: "the map to build on (what's placed goes)" },
@@ -434,7 +435,7 @@ fn to_edit(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut
     let Some(Switch::ToEdit(pose)) = editor.switch.take() else { return };
     let from = cam.single().copied().unwrap_or_default();
     let camera = pose.or(editor.camera).unwrap_or_else(|| FreeCam::from_transform(&from));
-    let (leader, members) = (player.character, squad.0.iter().filter(|m| m.in_squad()).count());
+    let (leader, members) = (unit_name(&player), squad.0.iter().filter(|m| m.in_squad()).count());
     bench(&mut commands, &mut player, &mut squad, &mut hits, camera.pos);
     tools.freecam = Some(camera);
     tools.panel = Panel::None;
@@ -446,21 +447,23 @@ fn to_edit(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut
     status.message = Some(("Editing: F5 plays from the pointer".into(), MESSAGE_TIME));
     if std::env::var("BF_TOOLS_LOG").is_ok() {
         println!("t {:.2}: edit mode: {} and the squad ({members}) out of the world, {} NPCs stay; the edit camera at {:.2} yaw {:.0} pitch {:.0} deg",
-                 player.sim_time, CHARACTERS[leader], squad.0.len(), camera.pos, camera.yaw.to_degrees(), camera.pitch.to_degrees());
+                 player.sim_time, leader, squad.0.len(), camera.pos, camera.yaw.to_degrees(), camera.pitch.to_degrees());
         log_placements(&placements);
     }
 }
 
 /// Into play (F5 in edit mode, BF_TEST_PLAY): a fresh squad, its leader the character who last
 /// led, at the place asked for (`player_at`, the others round them, `squad_around`) or at the
-/// map's start (`player_at_start`, `squad_at_start`); the NPCs stay after them in `Squad`. The
-/// edit camera is kept for coming back, the menus close, the squad's reserve is stocked again
-/// (play_ammo.rs `stock`), the mouse is captured, and the camera flies down to the follow camera.
+/// map's start (`player_at_start`, `squad_at_start`), its slots as the map's squad roster has
+/// them (play_testsquad.rs `Roster`: the map's start squad, as the squad menu changed it, #302);
+/// the NPCs stay after them in `Squad`. The edit camera is kept for coming back, the menus close,
+/// the squad's reserve is stocked again (play_ammo.rs `stock`), the mouse is captured, and the
+/// camera flies down to the follow camera.
 #[allow(clippy::too_many_arguments)]
 fn to_play(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut<Tools>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
            mut hits: ResMut<AiHits>, mut status: ResMut<UsePanel>, mode: Res<Mode>, placements: Res<Placements>,
            cam: Query<&Transform, With<MainCamera>>, mut windows: Query<&mut Window, With<PrimaryWindow>>,
-           spawns: Option<Res<super::triggers::SquadSpawns>>) {
+           (spawns, roster): (Option<Res<super::triggers::SquadSpawns>>, Option<Res<super::testsquad::Roster>>)) {
     let Some(Switch::ToPlay(spot)) = editor.switch.take() else { return };
     let from = cam.single().copied().unwrap_or_default();
     editor.camera = tools.freecam.take();
@@ -482,6 +485,10 @@ fn to_play(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut
         None => (super::player_at_start(leader, spawns), super::squad_at_start(leader, mode.deathmatch, spawns)),
     };
     p.sim_time = player.sim_time;
+    // (its slots as the roster has them: who's in them and their types, the leader's too)
+    if let Some(r) = roster.as_deref() {
+        super::testsquad::apply(r, &mut p, &mut members, mode.deathmatch);
+    }
     p.show_help = player.show_help;
     let (fresh, npcs) = (members.0.len(), squad.0.len());
     members.0.append(&mut squad.0);
@@ -495,7 +502,7 @@ fn to_play(mut commands: Commands, mut editor: ResMut<Editor>, mut tools: ResMut
     status.message = Some(("Playing: F5 goes back to editing".into(), MESSAGE_TIME));
     if std::env::var("BF_TOOLS_LOG").is_ok() {
         let place = spot.map_or("the map's start".to_string(), |(at, yaw)| format!("{at:.2} facing {:.0} deg", yaw.to_degrees()));
-        println!("t {:.2}: play from {place}: {} leads at {:.2}, {fresh} more in the squad, {npcs} NPCs", player.sim_time, CHARACTERS[leader],
+        println!("t {:.2}: play from {place}: {} leads at {:.2}, {fresh} more in the squad, {npcs} NPCs", player.sim_time, unit_name(&player),
                  player.position + Vec3::Y * GROUND);
         log_placements(&placements);
     }

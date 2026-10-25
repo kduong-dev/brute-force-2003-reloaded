@@ -3,7 +3,8 @@
 * **Health pickups** (`play_pickups.rs`). Placed `inventory-object`s whose item type (objecttypes
   `<inventory>`, `Game::items`) has function-type 5 or 19. Function-type is the game's IFSET_
   enum, named in default.xbe's table at 0x3be3cc: 5 IFSET_GENERIC_HEALING, 14 IFSET_AMMO_BOX,
-  16 IFSET_MINIGUN, 19 IFSET_POWERUP_MEDKIT, 20-23 the power-ups.
+  16 IFSET_MINIGUN, 19 IFSET_POWERUP_MEDKIT, 20-23 the power-ups. The power-ups (19 with an idle
+  effect, 20, 21) are `play_powerups.rs`'s: "Power-ups" below.
   * Medkit (h_f5123ace): taken by walking over it (within 1 m) into the squad's shared
     inventory, up to its stack-limit of 25, with its pickup-sound. When full, "<name> cannot
     pick up Medkit." shows and it stays.
@@ -105,8 +106,8 @@
     placed Medkit (60) gives, by its pickup-archetype, the inventory Medkit h_192d5337 (80):
     using one heals 80. What the placed one's own 60 is for isn't known.
   * Healing Garo Fruit (h_e711067e, function 19): eaten when walked over, +40, left alone at
-    full health. HEALTH / STAMINA POWER are also function 19, but they're power-ups with idle
-    effects and aren't taken yet.
+    full health. HEALTH / STAMINA POWER are also function 19, the orbs with idle effects: see
+    "Power-ups" below (#15).
   * A level's own taken pickup comes back after 30 s (a guess: the game removes what it takes,
     FUN_0011c170, and only spawn-triggers put pickups back). A spawn-trigger's copy (every pickup
     of the multiplayer maps) is removed for good, and its trigger's timer makes the next: see
@@ -239,6 +240,19 @@ and `todo/DNA + Weapon Pickups.mp4`.
     Flint's and Hawk's `Sc_w1_drop_pickup_w1` / `Sc_w2_drop_pickup_w2` by the slot (Flint's at
     1.2), Brutus's `Sc_w1_drop_pickup_w1` for either slot), once no other overlay plays; a use
     whose clip can't start gives up after 5 s;
+  * the clip is laid over the whole body, its root bone too (#293). Unlike the upper-body
+    overlays (a reload or a use_item animates 36-44 bones and no root), the squad's pickup clips
+    animate 51-68 bones, the legs and the root among them: it drops 0.42 m
+    (Brutus), 0.50 (Hawk), 0.59 (Tex) and 0.64 (Flint) as the character squats, and moves up to
+    0.3 m across over one planted foot (Tex's left foot steps out 0.38 m and back, Flint's steps
+    back). The demo had laid every bone but the root, as for the other overlays: the legs folded
+    under a body left at standing height, the soles up to 0.64 m off the ground (play.rs
+    `apply_overlay`'s `root`). The takes bend the whole body down to the gun with the feet on the
+    ground (#61 take04 6.6-7.1 s, #52 take04, take11 300.6-301.1 s);
+  * while it plays the character is held where it stands: the stick neither moves nor turns it
+    (FUN_001195c0 skips both while the playing overlay has h_f6a410e6, which every motion set's
+    pickup overlays have: `Overlay::holds`, `GunUse::holds_still`). So the clip always plays
+    standing, on every bone; before, a move during it laid the clip over the upper body only;
   * the gun is lowered, and there's no firing, aiming, reloading, switching, throwing or item use
     until the clip ends.
 * **The clip's events** (FUN_00117660):
@@ -253,7 +267,10 @@ and `todo/DNA + Weapon Pickups.mp4`.
     with 0), its name over its count on the HUD (play.md "The weapon's name after a pickup"), the
     switch's second sound (e1e97460), and the lying gun gone. The two sounds are the ones the
     takes have at the release and the grab (spectrograms: #52 take04 7.52 / 7.95 s, #61 take04
-    6.57 / 6.88 s, take11 300.73 s).
+    6.57 / 6.88 s, take11 300.73 s). The new gun is held in the stance of its class for Brutus
+    and Tex, of its slot for Flint and Hawk (play.md's table, FUN_0011aa20), and stowed where
+    its slot's holder hangs guns: for Tex his left ramp, whichever slot (#297: a rifle Tex took
+    in place of his Minigun had been held and stowed as the Minigun).
   * The prompt for the next gun is back from the grab, while the clip plays on.
 * **Walking over a lying gun** (FUN_0011c540 -> FUN_0011c170), any living squad member, the AI's
   too: within 1.8 m below and 1.0 m above its position and under 1.34 m across, a gun with rounds
@@ -288,14 +305,22 @@ and `todo/DNA + Weapon Pickups.mp4`.
     0.2-0.3 s longer than the take's. The clip rates are the data's (`speed`; the type's rate and
     the skill's factor, FUN_00150290's, are taken as 1), the hold the code's 0.3 s;
   * the shot list's open questions (leads §0): a part-used lying clip (the code reloads it at
-    once at the grab), the hold time's edge, a swap while scoped.
+    once at the grab), the hold time's edge, a swap while scoped;
+  * a pickup kneeling: the game plays the clip's `_cr` version there (FUN_0014fd50 takes the
+    crouch's suffixes in motion states 6 and 7), which all four have (Tex's
+    `Sc_w_drop_rifle_pickup_rifle_cr` 1.17 s, Brutus's `Sc_w1_drop_pickup_w1_cr` 1.00 s, Flint's
+    and Hawk's `Sc_w1_drop_pickup_w1_cr` / `Sc_w2_drop_pickup_w2_cr` 3.0-3.17 s, all whole-body);
+    the demo plays the standing clip over the kneel's upper body, as its other overlays (not
+    filmed).
 * **Test hooks:** `BF_TEST_GUN=<weapon>[,<ahead m>[,<right m>[,<rounds>]]][;...]` lays those
   guns round the controlled character's start, 3.5 m ahead by default (the takes' carrier was put
   there and killed), full unless given rounds; `BF_TEST_SWAP=<s>[,<s>...]` holds X 0.5 s from
   each time (`BF_TEST_USE=<s>` holds it 1 s); `BF_WEAPON_LOG=1` prints the lying guns, the
   target as it changes (its class, the slots' classes and the mode), each use, its clip, the
   release and the grab with the rounds and the reserve, the walk-overs and the dead's drops (with
-  their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies.
+  their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies, and (play.md)
+  where each gun hangs whenever that changes, with its class and stance;
+  `BF_FEET_LOG=1` (play.md) prints the soles' height every frame with the clip's time.
 * **Verified:**
   * the tutorial (`BF_MAP=tutorial BF_TEST_GOTO=-106.5,-43.5,-108.6,-40.6 BF_TEST_SWAP=3.0
     BF_WEAPON_LOG=1 BF_HINT_LOG=1`, 105 frames) against take11 299.5-301.4 s: "Hold [X] to swap
@@ -329,6 +354,34 @@ and `todo/DNA + Weapon Pickups.mp4`.
     them back); the tutorial run as above, the same times and counts; m04_a (`BF_MAP=m04_a
     BF_TEST_GOTO=-203.5,78.5,-205.4,77.6`): "Tex cannot pick up Breath Attack." and the red ring
     on the creature weapons, as the code reads.
+  * #293, the whole body: the #61 and #52 recreations above and Flint's and Hawk's
+    (`BF_CHARACTER=1 BF_TEST_GUN="Confed LZR-10,3.5,0.25" BF_TEST_WEAPON="L-Shot-50;Jax-iP"`,
+    `BF_CHARACTER=2 BF_TEST_GUN="Saryl-23,3.5,0.25" BF_TEST_WEAPON="Jax-iP;MK-ASLT"`, each with
+    `BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_SWAP=5.9 BF_FEET_LOG=1 BF_VIEW_YAW=1.4`, 125-135 frames):
+    each squats to the gun with its feet on the ground, on every frame of the clip the soles
+    within 3 cm of it (Tex -0.027 to +0.001 m, Flint -0.026 to +0.002, Hawk -0.016 to 0, Brutus
+    0, his hand dipping 6 cm under the floor's plane at the grab), where Tex's had been up to
+    0.58 m over it; the switch before Brutus's and Flint's pickup as before. With the stick
+    pushed from 6.4 s (`BF_TEST_GOTO=0,0,0,-8 BF_TEST_GO_AT=6.4 BF_TEST_GUN="L-Shot-50,1.6,0.3"`)
+    Tex stays where he stands through the clip (6.27-7.33 s) and sets off after it.
+  * #299, a swap moves rounds and makes none: the release keeps in the gun what the stack doesn't
+    take (0x118a09-0x118a22: FUN_0014ce90 returns how many went in, the gun's +0x1f8 less them)
+    and the grab takes the lying clip and what it lacks from the reserve (`release_rounds`,
+    `grab_rounds`, the unit test `the_swap_moves_rounds`). Eight swaps back and forth with
+    `BF_TEST_SWAP=3.0,6.0,...,24.0 BF_WEAPON_LOG=1`, the clip in hand, the lying gun's and the
+    reserve adding up the same after each: the tutorial's L-Shot-50 and MK-ASLT (the command
+    above: 548 of High ROF, 6 of 11mm); the test map's laid L-Shot-50 (`--test
+    BF_TEST_GOTO=0,0,0,-0.5 BF_TEST_WEAPON="MK-ASLT;Confed LZR-50" BF_TEST_GUN="L-Shot-50,1.6,0.3"
+    BF_TEST_RESERVE=10`: 58 and 16), and two MK-ASLTs with shots between (`BF_TEST_GUN="MK-ASLT,
+    1.6,0.3,20" BF_TEST_RESERVE=30 BF_TEST_TRIGGER=1.0-1.6,7.5-8.2,13.5-14.0`: 94, less each
+    burst); e34's placed iKhan-GPL against Tex's Jax-iC (`BF_MAP=e34
+    BF_TEST_GOTO=98.6,-47.0,98.6,-48.6`: the Jax-iC keeps its 36 with the Sonic stack full, the
+    iKhan its 16, its ammo-type 9 having no ammo item); a dead squad member's guns
+    (`--test BF_TEST_GOTO=0,0,0,0 BF_TEST_KILL=1 BF_TEST_SWAP=4.0,7.0,...`: Flint's L-Shot-50,
+    walked over first, its 6 into the reserve and back at the grab); sdm_e34's Saryl-45 copy
+    (the gun recipe in triggers.md, swaps every 3 s: 30 and 50 throughout, then the copy's
+    respawn at 22.85 s lays a new full one, as it should). The test map's rack, the copies'
+    respawns and the LZRs' recharge are the sources of new rounds.
 
 ## Pickups from spawn-triggers (#278)
 
@@ -351,7 +404,7 @@ and #129 take38 (mp1's walkway).
   * a type without a collision body (`collision-type` CT_NONE, the enum 0x3bd79c: the four
     power-ups' orb h_e9e61b85) stays at the transform with its idle effect: sdm_e34's STAMINA
     POWER at (-84.07, 29.78, 60.58), where take20's live object lies, 2 m from its placement
-    (-82.11, 32.06, 60.06). The power-ups can't be taken yet (#15);
+    (-82.11, 32.06, 60.06). Walking over one takes it ("Power-ups" below, #15);
   * another item (CT_CONVEX) lies on the ground under the transform, upright and tilted to the
     ground, loose, as the level's own pickups do ("Pickups are loose" above); medkits and fruit
     can be taken (no level has a DNA canister as a template). The multiplayer maps' triggers stand
@@ -371,8 +424,9 @@ and #129 take38 (mp1's walkway).
   after it was taken, fading in over ~0.3 s), its medkits 10 or 45 s, its guns 20 or 45 s, its
   ammo and grenades 10 or 20 s, BRUTE POWER 180 s, FORCE POWER 165 s, HEALTH POWER 30 s.
 * **Not done:** the copy's fall and its fade-in (take20's ~0.3 s; the spawn-trigger's h_eeae96e7
-  is 2 s, the demo draws no fade); taking ammo boxes, grenades and power-ups (the demo's walk-over
-  of items covers medkits, fruit and DNA canisters only: #17's "found, not in scope", #15); where
+  is 2 s, the demo draws no fade); taking ammo boxes and grenades (the demo's walk-over of items
+  covers medkits, fruit, DNA canisters and, since #15, the power-ups: #17's "found, not in
+  scope"); where
   the game's physics rests a gun copy (lying on its side is take38's look); the multiplayer maps'
   75 grenade pickups, item spawns `<h_1d1d4f05>` (types h_ecfe0d8c and h_15f9c51a, object-type
   24): their spawn-triggers fire and their relays bind, but `spawn_copy` copies inventory-objects
@@ -385,3 +439,116 @@ and #129 take38 (mp1's walkway).
   LZR-23 gone 20 s after the release; mp1's walkway against take38's player 2 view (the
   L-Shot-75 on its side at Flint's feet, the medkits 14 m on); the tutorial and e34's own pickups
   as before.
+
+## Power-ups (#15)
+
+`play_powerups.rs` (with `play_hud.rs`'s bar flash and `src/shell.wgsl`), from default.xbe's code
+(the addresses below, each in [code-map.md](code-map.md)) and checked against #35 take20
+(sdm_e34's STAMINA POWER) and #85 take28 / take29 (sdm_e34: a barrel at 1 m with and without FORCE
+POWER).
+
+* **What they are.** BRUTE POWER, FORCE POWER, HEALTH POWER and STAMINA POWER, the glowing orbs of
+  the multiplayer maps (none in the campaign): each a spawn-trigger's copy at the trigger's
+  transform with its idle effect ("Pickups from spawn-triggers" above). Their item sets, by
+  function-type: HEALTH and STAMINA POWER 19 IFSET_POWERUP_MEDKIT (h_0a811e94 health 50 / 0,
+  h_11884f2e stamina 0 / 50), BRUTE 20 IFSET_POWERUP_BRUTAL_DAMAGE (2 and 45), FORCE 21
+  IFSET_POWERUP_FORCE_SHIELD (50 and 45). sdm_e34 has one of each: BRUTE at (-0.70, 29.98,
+  83.69), HEALTH (-12.30, 29.58, 77.83), STAMINA (-84.07, 29.78, 60.58), FORCE (-49.16, 29.78,
+  38.85).
+* **Taking one** is a walk-over (FUN_0011c540 -> FUN_0011c170), by any living member of the squad,
+  the AI's too: the orb at most 1.8 m below and 1.0 m above the character's position (the hips) and
+  under 1.34 m across (dx^2 + dz^2 < 1.8), as for a lying gun.
+  * HEALTH and STAMINA POWER only when they can do something (their set's "can take", 0x148d40):
+    the character hurt, for HEALTH; its stamina below the most, for STAMINA. Refused, the HUD of
+    the player whose character it is flashes the bar it would fill (0x146900): the fill turns amber
+    (the bar widget's flash colour +0x59, bytes e6 aa 3c) four times, 0.15 s each, 0.3 s apart,
+    the first 0.15 s after the walk-over, and no new flash can start for 5 s more (its timer +0x48
+    runs 6.2 s). take20, walked over at full stamina (2.0-4.2 s): the stamina fill amber at
+    3.50-3.60, 3.80-3.90, 4.10-4.25 and 4.45-4.55 s. The amber is each texel's luminance x the
+    colour x 1.64, fitted to take20's pixels (the game's colour operation isn't traced; the
+    low-stamina blink's red fits the same). An AI member refused shows nothing.
+  * BRUTE and FORCE always (their sets' 0x280040).
+  * Taken: the item's pickup sound at the character (STAMINA h_e2824511, HEALTH h_e58a6855, BRUTE
+    h_1959b73b, FORCE h_f5581a7c; FUN_00146190), PICKUP_OBJECT from the copy (its trigger's relay
+    times the next one: sdm_e34's STAMINA and HEALTH POWER 30 s, BRUTE 180 s, FORCE 165 s), the
+    pickup line with its name ("STAMINA POWER", 4 s: take20 9.48-13.6 s), and it's taken out of
+    the world (FUN_000db3e0). Its idle effect's particles live out their lives where it was:
+    take20's blue glow at Tex's feet (9.4-9.9 s).
+* **HEALTH and STAMINA POWER** (0x148de0): health + 50 up to the most, or stamina + 50 up to the
+  most (take20: 21.60 -> 71.68). No chatter: the "healed" line is the medkit's set's (0x146f40).
+* **BRUTE and FORCE POWER** (FUN_00148b30): a modifier on the character for 45 s (h_11884f2e),
+  counted down each frame, alive or dead (FUN_0011a840). Taking one of a kind that's on only puts
+  its time back to 45 s (FUN_0011c170 at 0x11c458).
+  * BRUTE: every damage roll the character makes x2 (h_0a811e94; FUN_0022c940's hooks, 0x15f670):
+    its shots, bolts, rays and missiles, their blasts and its shots on scenery. **x2, not "quad
+    damage".**
+  * FORCE: every hit the character takes x0.5 (50 x 0.01), but a BLADED one (DTYPE 2) whole
+    (0x125600's hooks, 0x15f7c0): shots, blasts, damage areas, gas, liquids, falls. take28: a
+    radiation barrel at 1 m took 19.0 of Tex's 70 where take29's took 39.4 (x0.48).
+  * Both at once multiply. `BF_COMBAT_LOG` names them: "x the shooter's power-up 2.00", "x the
+    victim's power-up 0.50" (a damage area's line: "x0.50 its power-up").
+  * No HUD shows the time: nothing but those hooks reads the list.
+  * The "on" also sends a commentary cue (0x0f5428da BRUTE, 0xf9994826 FORCE) that every
+    commentary file lists with no sound and no text: nothing plays.
+* **The shell** (`ShellMaterial`, src/shell.wgsl). While a modifier lasts, its character's
+  material controllers of its kind (8 for BRUTE, 0x10 for FORCE) draw the body again with the
+  item's state-0 event material (`<events><event state="0" h_05db8834=..>`: BRUTE's h_1959b73b,
+  FORCE's h_f5581a7c), a wrapper of a shell material (class h_0112da6f):
+  * the body pushed out 0.03 m along its normals (`offset`); its guns aren't drawn so (take28's
+    gun stays grey);
+  * added to the picture (ONE / ONE): the texture x the colour, BRUTE's red arcs h_fab1de97 x 0.5,
+    FORCE's blue arcs h_0f91fbc8 x 0.8;
+  * the texture looked up by the surface's normal in view space and scrolled by the material's
+    clock, BRUTE's down 0.6 a second (`translate-v` -0.6), FORCE's up 0.8;
+  * the wrapper's glare key, BRUTE 120 and FORCE 150: what's brighter than that under the shell
+    blooms ([levels.md](levels.md), "The glare").
+  take28: "Tex glows blue-white" from start to end, his gun grey; so does the demo's. It shows from
+  the take's frame and stays 1 s past the modifier's end (the controllers' fade-out, which they're
+  drawn through). The game gives those controllers to the multiplayer squad types (mp_brutus,
+  mp_hawk, mp_tex, mp_flint) and not to the campaign's brutus and hawk; the demo's squad plays the
+  campaign types on every map, so it draws the shell on anyone. Each body wears an invisible
+  shell for 1 s as its model first shows, so bevy has built the shell's pipeline before a take
+  (without it the first shell came 1.1 s after its take).
+* **Not done, or not the game's yet:**
+  * the orbs' look: the icons' flares are GeneralApp_FacingType 2 (square to the particle's
+    motion) on sphere emitters throwing them out from the middle (0.025 m/s), faded near edge-on
+    (AngleFadeOut): a glowing ball, as take20 shows at 2.0 s. The demo lays them flat in the
+    emitter's frame (ale_fx.rs's perp rule): a flat disc, thin from a low camera. That's the
+    facing types' work (#286), not the power-ups';
+  * the reach against take20: the take came between 1.11 and 0.98 m across (the watch log's
+    positions at 9.29 and 9.34 s) where FUN_0011c170's 1.34 m would have taken it about 0.08 s
+    sooner; the refusal's flash (3.50 s, less xemu's ~0.13 s picture lag) fits 1.34 m. The code's
+    reach is used; what the take measures it from isn't known;
+  * the shell isn't fogged (the game's program fogs it by depth);
+  * BRUTE on the grenades: their damage is the demo's own rule (#112), not FUN_0022c940's roll;
+  * BRUTE's and FORCE's take and end aren't filmed: they're the code's (a shot list: BRUTE taken
+    in the open with the camera on the taker, a few shots into a target, then the 45 s out to the
+    shell's end; FORCE the same, with a hit taken).
+  * the shell during Brutus's Vengar view: the shell is made from the body's `StandardMaterial`
+    parts, which the view swaps to its heat material, so no shell shows while the view is on
+    (review of #15; multiplayer power-ups and the campaign skill rarely meet);
+  * a pickup line on the player's HUD when an AI squad member takes one: FUN_0011c6a0's line goes
+    to the player controlling the character (to every player of the squad with AL set); whether
+    an AI's take shows one isn't read (the tester of #15).
+* **Test hooks:** `BF_TEST_POWERUP=<brute|force|health|stamina|h_<type>>[@<s>][;...]` gives the
+  controlled character that power-up at that time (0.5 s by default) as a walk-over would, refused
+  (the bar flashing) when it can't take it: the map's (or the test map's) first item of that set,
+  HEALTH and STAMINA the orb that gives that. `BF_PICKUP_LOG=1` prints each power-up taken and what
+  it did, each modifier's end and the shells made; `BF_COMBAT_LOG=1` the factors on each hit.
+* **Verified:**
+  * take20 at full stamina (`BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_GOTO=-81.78,63.86,-84.6,59.8
+    BF_TEST_WALK=1 BF_TEST_GO_AT=0.5 BF_CAMERA_PITCH=-0.5`, 60 frames): Tex walks over it, it
+    stays; the stamina fill amber at 2.33-2.40, 2.60-2.73, 2.93-3.00 and 3.20-3.33 s, as take20's
+    four, the same amber against the same teal;
+  * the same with `BF_TEST_STAMINA=20@0.2 BF_PICKUP_LOG=1 BF_TRIGGER_LOG=1`: taken at 2.27 s
+    (stamina 72.48, +50), the orb gone, "STAMINA POWER" under Tex, the bar rising pale,
+    PICKUP_OBJECT to h_0021e47f (30 s); in real time (no capture) the next copy at 32.23 s;
+  * FORCE at take28's spot (`BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6
+    BF_TEST_HIT=2.0 BF_TEST_POWERUP=force@1.5 BF_COMBAT_LOG=1`): Tex took 20.0 of the barrel (40.0
+    without, scenery.md's take29 recreation), the shell from 1.53 s, the take's frame;
+  * BRUTE on the test map (`-- --test BF_CHARACTER=3 BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=0,8,0,7.3
+    BF_TEST_NPC=0.3,flint,enemy,dummy,0.15,3 BF_TEST_FIRE=hip BF_TEST_POWERUP=brute@2.0
+    BF_COMBAT_LOG=1`): 4.29 and 6.32 before the take, then "x the shooter's power-up 2.00" on
+    every hit, 9.61-12.48;
+  * BRUTE and FORCE together in the open (`BF_TEST_POWERUP="brute@0.5;force@2.0"`): the red shell,
+    then red and blue adding to white; "BRUTE POWER" over "FORCE POWER".

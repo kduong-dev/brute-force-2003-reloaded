@@ -139,6 +139,12 @@ const H_EFFECT_CAMERA: u32 = 0x1E40_FD68;
 const H_EFFECT_DISTANCE: u32 = 0xF639_899A;
 /// An archetype's centre point (`<h_e99750a9>x y z</h_e99750a9>`), see `Game::archetype_centre`.
 const H_ARCHETYPE_CENTRE: u32 = 0xE997_50A9;
+/// An object type's `<events><event>` record (0x1c bytes, its attribute parser FUN_00191ed0):
+/// `state` (h_0f8084c9, +0), the event's name field h_05db8834 (+8, a name: FUN_00238370) and its
+/// effect h_ed0c9fac (+0x10; state 1's is the idle effect, `Game::idle_effects`). An inventory
+/// type keeps the record of state n at its item data's +0x3c + 4n (FUN_00145fa0: type+0x19c for
+/// state 0), which a power-up's "on" reads (`ItemType::look`).
+const H_EVENT_NAME: u32 = 0x05DB_8834;
 /// Collision: the objects file's surface table, its entries (name, h_e9e44859 = offset in the
 /// .ipn) and the attribute an archetype / terrain block / blocker names its surface with.
 pub(crate) const H_PHYSICS_FILE: u32 = 0x104D_B1CD;
@@ -349,10 +355,6 @@ pub struct Game {
     pub weapons: HashMap<u32, WeaponDef>,
     /// character name -> starting inventory weapons
     pub character_weapons: HashMap<String, Vec<u32>>,
-    /// character name -> the weapon class (weapon-type: 0 light, 1 medium, 2 heavy) each of its
-    /// two weapon slots holds, from `<limit-weapon one="CLASS COUNT" two=..>`; the motion
-    /// sets Sc_w1_* / Sc_w2_* are the stances for those classes (Brutus: medium, heavy)
-    pub character_weapon_classes: HashMap<String, [i64; 2]>,
     /// character name -> chatter line tag -> voice line ids (common/characters/<name>_chatter)
     pub chatter: HashMap<String, HashMap<u32, Vec<u32>>>,
     /// character name -> chatter line tag -> the tag others answer it with (a block's
@@ -991,6 +993,19 @@ const H_CAMERA_BLOCK: u32 = 0x0D41_E5F1;
 const H_OFFSET_DEAD: u32 = 0xF13F_B0C4;
 const H_OFFSET_5: u32 = 0xE42D_50A5;
 
+/// A character entry's camera block (H_CAMERA_BLOCK, anywhere under the entry), if it has one:
+/// `Game::character_camera`'s by name, and each `CharacterType::camera` (#302).
+pub(crate) fn camera_offsets(e: &Element) -> Option<CameraOffsets> {
+    let c = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK)?;
+    let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
+        .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);
+    Some(CameraOffsets {
+        walk: v(h("offset-walk")), run: v(h("offset-run")), dash: v(h("offset-dash")),
+        ready: v(h("offset-ready")), h_e42d50a5: v(H_OFFSET_5), dead: v(H_OFFSET_DEAD),
+        snipe: v(h("offset-snipe")),
+    })
+}
+
 /// A squad character's special skill and stamina, from its objecttypes character entry
 /// (`common/objecttypes-common.xml` for the campaign squad, `mp_common/objecttypes-sdm_bf.xml`
 /// for squad deathmatch's, see `Game::load_squad_library`):
@@ -1173,6 +1188,11 @@ pub struct ItemType {
     /// for the ammo, grenades, medkits, OrgSen and Hat; false for "Alien Technology Acquired!",
     /// the power-ups, the DNA canisters (todo/196 leads §3.2)
     pub selectable: bool,
+    /// the h_05db8834 name of its state-0 `<event>` (type+0x19c, `H_EVENT_NAME`), 0 if none: BRUTE
+    /// POWER's h_1959b73b and FORCE POWER's h_f5581a7c, the materials (wrappers of the shell
+    /// materials h_e2e30593 and h_f3c269d3) their "on" gives the taker's material controllers
+    /// (0x15f610 / 0x15f760 -> FUN_002135a0). HEALTH and STAMINA POWER have no state-0 event
+    pub look: u32,
 }
 
 /// An item's group-type IG_DNA_CANNISTER (the IG_ name table 0x3be594, its last record: 9): a DNA
@@ -1364,7 +1384,6 @@ impl Game {
             strings: HashMap::new(),
             weapons: HashMap::new(),
             character_weapons: HashMap::new(),
-            character_weapon_classes: HashMap::new(),
             chatter: HashMap::new(),
             chatter_response: HashMap::new(),
             squad_leash: HashMap::new(),
@@ -1741,6 +1760,9 @@ impl Game {
                         gameflag: t.child(h("campaign-gameflag")).map(|g| name_list(g, h("gameflag"))).unwrap_or_default(),
                         use_type: int_of(t, 0x1EE2_F4ED),
                         selectable: t.attr(0x1852_AB6C).and_then(|v| v.as_i64()).is_none_or(|v| v != 0),
+                        look: t.child(h("events")).into_iter().flat_map(|ev| ev.children_named(h("event")))
+                            .find(|ev| ev.attr(h("state")).and_then(|v| v.as_i64()) == Some(0))
+                            .map(|ev| hash_of(ev.attr(H_EVENT_NAME))).filter(|&x| x != 0 && x != h("")).unwrap_or(0),
                     });
                 }
             }
@@ -1878,18 +1900,8 @@ impl Game {
                     let inventory = e.walk().into_iter().find(|x| x.name == h("inventory"))
                         .map(|i| weapon::hashes(i, h("weapon-name"))).unwrap_or_default();
                     self.character_weapons.insert(name.clone(), inventory);
-                    if let Some(l) = e.walk().into_iter().find(|x| x.name == h("limit-weapon")) {
-                        let class = |k: &str| l.attr(h(k)).and_then(|v| v.ints().first().copied()).unwrap_or(-1);
-                        self.character_weapon_classes.insert(name.clone(), [class("one"), class("two")]);
-                    }
-                    if let Some(c) = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK) {
-                        let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
-                            .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);
-                        self.character_camera.insert(name.clone(), CameraOffsets {
-                            walk: v(h("offset-walk")), run: v(h("offset-run")), dash: v(h("offset-dash")),
-                            ready: v(h("offset-ready")), h_e42d50a5: v(H_OFFSET_5), dead: v(H_OFFSET_DEAD),
-                            snipe: v(h("offset-snipe")),
-                        });
+                    if let Some(c) = camera_offsets(e) {
+                        self.character_camera.insert(name.clone(), c);
                     }
                     self.characters.push((name, mesh));
                 }

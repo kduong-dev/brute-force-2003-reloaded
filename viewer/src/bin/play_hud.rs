@@ -223,6 +223,13 @@ const BUBBLE_AT: [(f32, f32); 4] = [(96.0, 426.0), (176.0, 383.0), (45.0, 344.0)
 const SKULL_HUMAN: u32 = 0x1834_3E47;
 const SKULL_BRUTUS: u32 = 0x19DA_7869;
 const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
+/// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
+/// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,
+/// this tall (units) with its line's top this many heights above the place's centre, which
+/// centres the glyph on the place (the demo's choice: the game never shows one; at 0.55 the
+/// captures had it 2.5-3 units low).
+const UNKNOWN_CAP: f32 = 14.0;
+const UNKNOWN_TOP: f32 = 0.75;
 
 /// The crosshair: the held weapon's 64 x 64 texture drawn 1:1, centred at (320, 192); in the
 /// scope it moves to the middle, (320, 240), the same size. Measured for all 11 weapons in their
@@ -418,6 +425,62 @@ fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
 #[derive(Component)]
 struct PortraitArt(Handle<Image>, Rect);
 
+/// A face texture `id` as the HUD draws it: its image and its opaque box (texels with alpha over
+/// 40, rows as stored). The faces are packed into a corner of their 32 x 32 textures, so each is
+/// drawn cropped to that box, 1:1, centred on its place (PORTRAIT_CENTRE). Kept in `faces` by
+/// texture; None when the texture isn't found or is clear.
+fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, faces: &mut HashMap<u32, Option<(Handle<Image>, Rect)>>,
+            id: u32) -> Option<(Handle<Image>, Rect)> {
+    if let Some(art) = faces.get(&id) {
+        return art.clone();
+    }
+    let art = (|| {
+        let (w, h, px) = game.texture_rgba(id)?;
+        let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+        for (k, p) in px.chunks_exact(4).enumerate() {
+            if p[3] > 40 {
+                let (x, y) = (k as u32 % w, k as u32 / w);
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+            }
+        }
+        if x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        let handle = texture(game, images, cache, id)?;
+        Some((handle, Rect::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32)))
+    })();
+    faces.insert(id, art.clone());
+    art
+}
+
+/// What a squad slot's portrait place shows (`update_squad_hud`): its own face (`PortraitArt`:
+/// its own type); another face (#302: a squad type's in another's place, or another type's
+/// portrait from its data, `CharacterType::portrait`); nothing (a slot with no member in the
+/// world, `slot_member`: the members a zone doesn't have, #303, or the test map's emptied slots);
+/// or a "?" (a member whose type has no portrait). A dead member's skull goes over any of them.
+#[derive(Clone)]
+enum Face {
+    Own,
+    Other(Handle<Image>, Rect),
+    Empty,
+    Unknown,
+}
+
+/// Squad slot `c`'s member in the world: the controlled character or one of the squad's (not an
+/// NPC), alive or dead, but not one out of the world (`absent`: a member whose spawn-trigger
+/// hasn't spawned it, or whose copy the session took away, FUN_00209900). None for a slot whose
+/// member the zone doesn't have (#303: the level spawns only the zone's members, so the
+/// tutorial's and m01_a's squad is Tex alone, the zone's h_ed54d255 "brutus hawk flint"), and for
+/// the test map's emptied slots (#302). Such a slot has no face, follow tab or health channel.
+/// The game's HUD keeps a squad list of five entries (+0x34), one per slot by the character's
+/// type +0x150 (1-4): each frame FUN_000bd790 drops the characters no longer on the list it
+/// reads (FUN_000c8570) and adds the new ones (FUN_000c84e0), so a slot holds a character only
+/// once one is in the world (which list it reads, and that the portraits draw from it, aren't
+/// traced). take04 (`todo/28-tutorial`, 60 s) shows Tex's face alone, no tabs or channels.
+fn slot_member<'a>(player: &'a Player, squad: &'a Squad, c: usize) -> Option<&'a Player> {
+    std::iter::once(player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad() && !u.absent)
+}
+
 /// Generated HUD images: the squad health bars, the selection chevrons and the speech icon.
 #[derive(Resource, Default)]
 struct HudGen {
@@ -435,10 +498,17 @@ struct HudGen {
     bubble: Handle<Image>,
     /// skulls for the dead, by character
     skulls: [Handle<Image>; 4],
+    /// the faces drawn so far, by texture (`face_art`): the squad's four, and on the test map any
+    /// type's portrait a squad slot's member shows (#302)
+    faces: HashMap<u32, Option<(Handle<Image>, Rect)>>,
     /// the stamina bar's fill (ENERGY_FILL), remade mixed toward white by its brighten, and the
     /// texture's own texels it's made from
     stamina_fill: Handle<Image>,
     stamina_texels: Vec<u8>,
+    /// the health bar's fill (HEALTH_FILL) and its copy in the "full" flash's colour
+    /// (`flash_texels`, `BarFlash`), swapped in while the flash is tinted
+    health_fill: Option<Handle<Image>>,
+    health_flash: Option<Handle<Image>>,
 }
 
 /// The radar frame's four diagonal health channels, by character (see HEALTH_BARS): texel index
@@ -538,6 +608,70 @@ const TRAIL_DOWN: f32 = 12.0;
 /// once above 15% (take02, take03, take07, take11, take17: red 0.98-1.08 s, gaps 1.00-1.07 s).
 const LOW_STAMINA: f32 = 0.15;
 const BLINK_SPAN: f32 = 1.0;
+/// The bars' "full" flash (#15): a power-up the character can't take (its item set's "can take",
+/// 0x148d40: HEALTH POWER at full health, STAMINA POWER at full stamina) starts the flash of the
+/// bar it would fill, on the HUD of the player whose character it is (0x6ef00), through 0x146900:
+/// when the bar widget's timer +0x48 is 0 it's set to [0x40c8fc] 4 x +0xb0 0.3 + +0xb4 5.0 = 6.2
+/// s (FUN_000b6cc0 sets +0xb0 and +0xb4 for both bars). The bar's update counts it down to 0
+/// (FUN_000b76c0); while it's above +0xb4 the fill is drawn in +0x59's colour (0xff3caae6, both
+/// bars: FUN_000b6cc0, FUN_000b7bf0) on the half of each +0xb0 period FUN_000b73d0 picks
+/// (`flash_tinted`), so four 0.15 s flashes over 1.2 s, then 5 s before a walk-over can start
+/// another. #35 take20 (STAMINA POWER walked over at full stamina): the stamina fill amber at
+/// 3.50-3.60, 3.80-3.90, 4.10-4.25 and 4.45-4.55 s, 0.3 s apart.
+const FLASH_START: f32 = 4.0 * 0.3 + 5.0;
+const FLASH_QUIET: f32 = 5.0;
+const FLASH_PERIOD: f32 = 0.3;
+/// The flash's colour, the bytes of 0xff3caae6 as the HUD's draw takes them (R e6, G aa, B 3c: the
+/// low-stamina blink's a0 20 20 reads as red the same way), and how it tints the fill: each texel's
+/// luminance x the colour x FLASH_GAIN. A fit to take20: the amber fill against the teal one in the
+/// next frames (3.50 against 3.65 s), 1.64 over 600 texels (rms 15, 6, 19 levels), the same
+/// combine the low-stamina blink's red copy fits (LOW_GREEN: L x (160, 32, 32) / 255 x ~1.6).
+/// The game's colour operation isn't traced.
+const FLASH_TINT: [f32; 3] = [230.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0];
+const FLASH_GAIN: f32 = 1.64;
+
+/// The bars' "full" flash timers (the bar widgets' +0x48, see FLASH_START): the health bar's and
+/// the stamina bar's, s, 0 when not flashing. play_powerups.rs starts them.
+#[derive(Resource, Default)]
+pub(crate) struct BarFlash {
+    pub health: f32,
+    pub stamina: f32,
+}
+
+impl BarFlash {
+    /// 0x146900 on a bar's timer: a flash starts only when none runs.
+    pub fn start(timer: &mut f32) {
+        if *timer == 0.0 {
+            *timer = FLASH_START;
+        }
+    }
+}
+
+/// Whether a bar whose flash timer is `t` draws its fill in the flash's colour (FUN_000b73d0):
+/// above FLASH_QUIET, the part past it taken down by FLASH_PERIOD into (0, period], tinted when
+/// that's at least half a period below the period (|f - period| >= period / 2): the second half
+/// of each period as the timer counts down, so the first flash comes 0.15 s after the walk-over.
+fn flash_tinted(t: f32) -> bool {
+    if t <= FLASH_QUIET {
+        return false;
+    }
+    let mut f = t - FLASH_QUIET;
+    while f > FLASH_PERIOD {
+        f -= FLASH_PERIOD;
+    }
+    (f - FLASH_PERIOD).abs() >= FLASH_PERIOD * 0.5
+}
+
+/// A fill's texels in the flash's colour (FLASH_TINT): each texel's luminance x the colour x
+/// FLASH_GAIN, its alpha kept.
+fn flash_texels(px: &[u8]) -> Vec<u8> {
+    px.chunks_exact(4).flat_map(|c| {
+        let l = 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32;
+        let t = |k: usize| (l * FLASH_TINT[k] * FLASH_GAIN).round().clamp(0.0, 255.0) as u8;
+        [t(0), t(1), t(2), c[3]]
+    }).collect()
+}
+
 /// The skill's name under the bars (the HUD message widget h_1a5ceeb9, FUN_000c72b0 at hud+0xfc;
 /// text FUN_000c75c0, its font h_0c626fd5 at size 14), in the message blue (the takes' letter
 /// cores 189-197 206-212 242-249): the left edge, the line's top and the capital height, fitted
@@ -564,8 +698,8 @@ const LABEL_FADE: f32 = 3.0;
 /// trail or brighten carried over and the label shown or hidden (FUN_000b7940; take19 4.867 s).
 #[derive(Resource, Default)]
 pub(crate) struct StaminaBar {
-    /// the character it shows
-    who: Option<usize>,
+    /// the character it shows: its squad slot and type (a type change on the test map is a new one, #302)
+    who: Option<(usize, u32)>,
     /// the value (+0x34) and the shown value (+0x38, the trail's end), in hit points
     value: f32,
     shown: f32,
@@ -575,6 +709,8 @@ pub(crate) struct StaminaBar {
     /// the blink's wave (+0x40) and its way (+0x44)
     blink: f32,
     blink_dir: f32,
+    /// the fill image was last made in the "full" flash's colour (`BarFlash`)
+    drawn_flash: bool,
     /// the label: the skill's name (a string id), its opacity and the hold left after the off
     label: u32,
     label_alpha: f32,
@@ -647,8 +783,10 @@ enum SquadPart {
     Chevron(usize),
     /// speech icon beside a member's portrait while they talk (by character)
     Bubble(usize),
-    /// portrait (by character): dimmed when dead
+    /// portrait (by squad slot: its member's face, `Face`): its skull when dead
     Portrait(usize),
+    /// the "?" in a slot's place whose member's type has no portrait (UNKNOWN_CAP, #302)
+    Unknown(usize),
     MeterBox,
     MeterFill,
     MeterTick,
@@ -677,11 +815,13 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
         .init_resource::<NameLabel>()
         .init_resource::<StaminaBar>()
+        .init_resource::<BarFlash>()
         .init_resource::<RadarMarks>()
         .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities).in_set(HudSetup),
             (|mut commands: Commands| {
                 commands.insert_resource(NameLabel::default());
                 commands.insert_resource(StaminaBar::default());
+                commands.insert_resource(BarFlash::default());
             }).after(setup)))
         .init_resource::<HudGen>()
         // (after the death camera: its label and reticle show the frame it decides them)
@@ -837,6 +977,13 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                                                  bevy::asset::RenderAssetUsages::default()));
         gen.stamina_texels = px;
     }
+    // the health bar's fill in the "full" flash's colour (see `BarFlash`)
+    gen.health_flash = game.texture_rgba(HEALTH_FILL).map(|(w, h, px)| {
+        images.add(Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                              bevy::render::render_resource::TextureDimension::D2, flash_texels(&px),
+                              bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                              bevy::asset::RenderAssetUsages::default()))
+    });
     let stamina_fill = gen.stamina_fill.clone();
     let bar_frame = game.texture_rgba(BAR_FRAME_CORNER).map(|(w, h, px)| images.add(bar_frame(w, h, &px)));
     let mut tex = |name: u32| texture(game, &mut images, &mut cache, name);
@@ -853,6 +1000,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
 
     // ---- health (red) and energy (blue), top left: in the game's glossy frame ----
     let (red, blue, plus) = (tex(HEALTH_FILL), tex(ENERGY_FILL), tex(HEALTH_ICON));
+    gen.health_fill = red.clone();
     let (x0, y0, x1, y1) = BAR_FILL_RECT;
     let fill = |h: &Option<Handle<Image>>| ImageNode { rect: Some(Rect::new(x0, y0, x1, y1)), ..image(h, Color::WHITE) };
     gen.tutorial_frame = tutorial.is_some();
@@ -940,22 +1088,14 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
             commands.spawn((ChildOf(screen), at(57.5 + x0, 305.0 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9))));
         }
         for (i, &(cx, cy)) in PORTRAIT_CENTRE.iter().enumerate() {
-            let Some((w, h, px)) = game.texture_rgba(PORTRAITS[i]) else { continue };
-            // opaque bounding box (texture rows as stored)
-            let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
-            for (k, p) in px.chunks_exact(4).enumerate() {
-                if p[3] > 40 {
-                    let (x, y) = (k as u32 % w, k as u32 / w);
-                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
-                }
-            }
-            if x1 <= x0 || y1 <= y0 { continue }
-            let handle = texture(game, &mut images, &mut cache, PORTRAITS[i]).unwrap_or_default();
-            let (bw, bh) = ((x1 - x0) as f32, (y1 - y0) as f32);
-            let rect = Rect::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32);
+            let Some((handle, rect)) = face_art(game, &mut images, &mut cache, &mut gen.faces, PORTRAITS[i]) else { continue };
+            let (bw, bh) = (rect.width(), rect.height());
             commands.spawn((ChildOf(screen), at(cx - bw / 2.0, cy - bh / 2.0, bw, bh),
                             ImageNode { rect: Some(rect), ..flipped(handle.clone()) }, ZIndex(1),
                             SquadPart::Portrait(i), PortraitArt(handle, rect)));
+            // (a test map squad member whose type has no portrait: a "?" in its place, #302)
+            commands.spawn((ChildOf(screen), game_text("?", cx, cy - UNKNOWN_CAP * UNKNOWN_TOP, UNKNOWN_CAP, MESSAGE_BLUE, Align::Centre),
+                            ZIndex(1), SquadPart::Unknown(i), Visibility::Hidden));
         }
         for (i, &(cx, cy)) in TAB_CENTRE.iter().enumerate() {
             commands.spawn((ChildOf(screen), at(cx - 5.0, cy - 5.0, 10.0, 10.0), flipped(Handle::default()), Part::Tab(i)));
@@ -1028,22 +1168,30 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
 
 /// The stamina bar widget each frame (see `StaminaBar`): FUN_000b7850 sets the value (the
 /// brighten on a change), FUN_000b75a0 fades the brighten and moves the trail's end, FUN_000b76c0
-/// runs the blink. Then the fill image is remade mixed toward white by the brighten in sRGB (the
-/// takes' rising bar, (139-145, 183-186, 200-206), is the texture half way to white in sRGB,
-/// (144, 188, 206); Bevy mixes UI colours in linear light, which gives (188, 202, 214)), the
-/// frame's lower half is red while the blink is, and the skill's name label is kept.
-fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<StaminaBar>, gen: Res<HudGen>,
+/// runs the blink and counts the "full" flash down (both bars' timers, `BarFlash`). Then the fill
+/// image is remade mixed toward white by the brighten in sRGB (the takes' rising bar, (139-145,
+/// 183-186, 200-206), is the texture half way to white in sRGB, (144, 188, 206); Bevy mixes UI
+/// colours in linear light, which gives (188, 202, 214)), or in the flash's colour while it's
+/// tinted (`flash_tinted`), the frame's lower half is red while the blink is, and the skill's name
+/// label is kept.
+#[allow(clippy::too_many_arguments)]
+fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<StaminaBar>, gen: Res<HudGen>, mut flash: ResMut<BarFlash>,
                       mut images: ResMut<Assets<Image>>, mut frame: Query<(&FrameBlink, &mut ImageNode)>) {
     let dt = frame_dt(&time);
+    let flash = &mut *flash;
+    for t in [&mut flash.health, &mut flash.stamina] {
+        *t = (*t - dt).max(0.0);
+    }
+    let tinted = flash_tinted(flash.stamina);
     let max = player.max_health.max(1.0);
     // the HUD's value: stamina / max-stamina x max health, at least 1 when not 0 (FUN_000b7fb0)
     let v = player.stamina / player.max_stamina.max(1e-3) * max;
     let v = if v > 0.0 { v.clamp(1.0, max) } else { 0.0 };
     let name = player.skill.name().unwrap_or(0);
-    if bar.who != Some(player.character) {
-        // control passed (or the map began): the new character's, at once
+    if bar.who != Some((player.character, player.kind)) {
+        // control passed, the type changed (or the map began): the new character's, at once
         let on = player.skill.on;
-        *bar = StaminaBar { who: Some(player.character), value: v, shown: v, blink_dir: -1.0, drawn: -1.0, label: name,
+        *bar = StaminaBar { who: Some((player.character, player.kind)), value: v, shown: v, blink_dir: -1.0, drawn: -1.0, label: name,
                             label_alpha: if on { 1.0 } else { 0.0 }, label_hold: if on { LABEL_HOLD } else { 0.0 }, ..default() };
     } else {
         if v != bar.value {
@@ -1078,15 +1226,22 @@ fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<Stam
             bar.label_alpha = (bar.label_alpha - dt * LABEL_FADE).max(0.0);
         }
     }
-    if (bar.brighten - bar.drawn).abs() > 1e-3 {
+    if (bar.brighten - bar.drawn).abs() > 1e-3 || tinted != bar.drawn_flash {
         bar.drawn = bar.brighten;
+        bar.drawn_flash = tinted;
         let b = bar.brighten;
+        let flashed = tinted.then(|| flash_texels(&gen.stamina_texels));
         if let Some(data) = images.get_mut(&gen.stamina_fill).and_then(|i| i.data.as_mut()) {
-            for (o, i) in data.chunks_exact_mut(4).zip(gen.stamina_texels.chunks_exact(4)) {
-                for c in 0..3 {
-                    o[c] = (i[c] as f32 + (255.0 - i[c] as f32) * b).round() as u8;
+            match flashed {
+                Some(f) if f.len() == data.len() => data.copy_from_slice(&f),
+                _ => {
+                    for (o, i) in data.chunks_exact_mut(4).zip(gen.stamina_texels.chunks_exact(4)) {
+                        for c in 0..3 {
+                            o[c] = (i[c] as f32 + (255.0 - i[c] as f32) * b).round() as u8;
+                        }
+                        o[3] = i[3];
+                    }
                 }
-                o[3] = i[3];
             }
         }
     }
@@ -1222,7 +1377,9 @@ fn update_hud_widgets(
                 let icon = Some(PLAYER_ICON);
                 let h = icon.and_then(|icon| texture(&mut game.0, &mut images, &mut cache, icon));
                 let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad() && u.dead);
-                show(&mut vis, h.is_some() && !dead);
+                // (a slot with no member in the world has none, as it has no face: `slot_member`)
+                let empty = slot_member(&player, &squad, i).is_none();
+                show(&mut vis, h.is_some() && !dead && !empty);
                 if let (Some(mut img), Some(h)) = (img, h) {
                     if img.image != h { img.image = h; }
                 }
@@ -1342,16 +1499,21 @@ fn update_squad_hud(
     time: Res<Time>,
     player: Res<Player>,
     squad: Res<Squad>,
-    game: Res<GameData>,
+    mut game: ResMut<GameData>,
     mut gen: ResMut<HudGen>,
     mut images: ResMut<Assets<Image>>,
+    mut cache: ResMut<HudImages>,
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
+    flash: Res<BarFlash>,
     mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>,
                       Option<&mut BackgroundColor>, Option<&mut BorderColor>)>,
     mut name_text: Query<(&mut RecordText, &mut Visibility), (With<NameLabelText>, Without<SquadPart>)>,
 ) {
     let dt = frame_dt(&time);
+    // squad slot c's member in the world (the controlled character or one of the squad's, not an
+    // NPC: `slot_member`)
+    let member = |c: usize| slot_member(&player, &squad, c);
     // the name label (LABEL_SHOW): each new selection shows the name for LABEL_SHOW + LABEL_OUT
     // (0xc9440 from the select widget's choice, FUN_000c8cc0, its own timer after: it runs on past
     // the hand-over, which comes SELECT_TIME after the selection); whole from its first frame,
@@ -1373,7 +1535,9 @@ fn update_squad_hud(
             let share = (label.timer / LABEL_OUT).min(1.0);
             let k = 1.0 - share;
             let scale = LABEL_SCALE + LABEL_SWELL * k * k * k;
-            let name = CHARACTERS[label.character % CHARACTERS.len()].to_uppercase();
+            // (the slot's member's name: on the test map any type's, #302)
+            let name = member(label.character).map_or_else(|| CHARACTERS[label.character % CHARACTERS.len()].to_string(),
+                                                            |u| display_name(u, &game.0)).to_uppercase();
             if t.text != name {
                 t.text = name;
             }
@@ -1385,7 +1549,7 @@ fn update_squad_hud(
             t.alpha = LABEL_ALPHA * share;
         }
     }
-    let health = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad())
+    let health = |c: usize| member(c)
         .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
     let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
     let pct = |x: f32, y: f32, n: &mut Node| { n.left = Val::Percent(x / 6.4); n.top = Val::Percent(y / 4.8); };
@@ -1402,6 +1566,34 @@ fn update_squad_hud(
     let meter_shift = super::reticle::crosshair_centre(&player).y - CROSSHAIR_Y;
     let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c && m.in_squad()).map(|m| (c, m.position)));
     let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
+    // each slot's place: its member's face (`Face`), and its skull once it's dead (its type's: a
+    // squad type's own, another type's from its data, `CharacterType::skull`, else the human one)
+    // (a slot with no member in the world shows nothing: #303)
+    let looks: Vec<(Face, Option<Handle<Image>>)> = (0..PORTRAITS.len()).map(|c| {
+        let m = member(c);
+        let face = match m {
+            None => Face::Empty,
+            Some(u) if u.kind == squad_type(c) => Face::Own,
+            Some(u) => {
+                let id = match u.data_slot() {
+                    OTHER => game.0.character_type(u.kind).map_or(0, |t| t.portrait),
+                    d => PORTRAITS[d],
+                };
+                match (id != 0).then(|| face_art(&mut game.0, &mut images, &mut cache, &mut gen.faces, id)).flatten() {
+                    Some((h, r)) => Face::Other(h, r),
+                    None => Face::Unknown,
+                }
+            }
+        };
+        let skull = m.filter(|u| u.dead).map(|u| match u.data_slot() {
+            OTHER => {
+                let id = game.0.character_type(u.kind).map_or(0, |t| t.skull);
+                texture(&mut game.0, &mut images, &mut cache, if id != 0 { id } else { SKULL_HUMAN }).unwrap_or_default()
+            }
+            d => gen.skulls[d].clone(),
+        });
+        (face, skull)
+    }).collect();
     // the squad's blips: its living members in the world, not the NPCs the triggers or the test
     // tools spawned (the tutorial's terrorists showed as squad blips before #228)
     let members: Vec<&Player> = squad.0.iter().filter(|m| m.in_squad() && !m.dead && !m.absent && !m.stand_in).collect();
@@ -1450,16 +1642,29 @@ fn update_squad_hud(
                 }
             }
             SquadPart::Portrait(c) => {
-                if let (Some(mut img), Some(art)) = (img, art) {
-                    let (want, rect, color) = if dead(c) {
-                        (gen.skulls[c].clone(), None, SKULL_TINT)
-                    } else {
-                        (art.0.clone(), Some(art.1), Color::WHITE)
+                if let (Some(mut img), Some(art), Some((face, skull))) = (img, art, looks.get(c)) {
+                    // (the face and its box: the slot's own, or another one, centred in the place)
+                    let (own, box_) = match face {
+                        Face::Other(h, r) => ((h.clone(), *r), *r),
+                        _ => ((art.0.clone(), art.1), art.1),
+                    };
+                    show(&mut vis, skull.is_some() || matches!(face, Face::Own | Face::Other(..)));
+                    let (want, rect, color) = match skull {
+                        Some(s) => (s.clone(), None, SKULL_TINT),
+                        None => (own.0, Some(own.1), Color::WHITE),
                     };
                     if img.image != want { img.image = want; }
                     if img.rect != rect { img.rect = rect; }
                     img.color = color;
+                    let (cx, cy) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
+                    let want = at(cx - box_.width() / 2.0, cy - box_.height() / 2.0, box_.width(), box_.height());
+                    if node.width != want.width || node.height != want.height || node.left != want.left || node.top != want.top {
+                        (node.left, node.top, node.width, node.height) = (want.left, want.top, want.width, want.height);
+                    }
                 }
+            }
+            SquadPart::Unknown(c) => {
+                show(&mut vis, looks.get(c).is_some_and(|(face, skull)| matches!(face, Face::Unknown) && skull.is_none()));
             }
             SquadPart::Health(c) => {
                 let Some(f) = health(c) else { show(&mut vis, false); continue };
@@ -1480,6 +1685,14 @@ fn update_squad_hud(
                 let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
                 let width = if gen.tutorial_frame { bar_fill(player.health.clamp(0.0, player.max_health)) } else { bar_span().1 * f };
                 node.width = Val::Percent(width / 6.4);
+                // in the "full" flash's colour while it's tinted (`BarFlash`: a HEALTH POWER
+                // walked over at full health)
+                let want = if flash_tinted(flash.health) { gen.health_flash.clone() } else { gen.health_fill.clone() };
+                if let (Some(mut img), Some(want)) = (img, want) {
+                    if img.image != want {
+                        img.image = want;
+                    }
+                }
             }
             // the stamina bar's value and its trail, as `update_stamina_bar` keeps them
             SquadPart::PlayerStamina => {

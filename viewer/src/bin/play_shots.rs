@@ -697,14 +697,21 @@ fn test_weapon(mut done: Local<bool>, mut game: ResMut<GameData>, mut player: Re
     let Ok(want) = std::env::var("BF_TEST_WEAPON") else { return };
     let names: Vec<&str> = want.split(';').map(str::trim).filter(|n| !n.is_empty()).collect();
     let first: usize = if names.len() > 1 { 0 } else { std::env::var("BF_START_WEAPON").ok().and_then(|v| v.parse().ok()).unwrap_or(0) };
+    // (a leader of a type of its own, the test map's squad hooks' (#302): its own list, from its
+    // type's, so the name-keyed table's "" entry doesn't arm every such type after it)
+    if player.own_type() && player.enemy.weapons.is_none() {
+        player.enemy.weapons = Some(game.0.character_type(player.kind).map(|t| t.weapons.clone()).unwrap_or_default());
+    }
     for (k, name) in names.into_iter().enumerate() {
         let Some(key) = test_weapon_key(&game.0.weapons, name) else {
             warn!("BF_TEST_WEAPON: no weapon {name}");
             continue;
         };
         let slot = first + k;
-        let list = game.0.character_weapons.entry(CHARACTERS[player.character].to_string()).or_default();
-        if slot < list.len() { list[slot] = key } else { list.push(key) }
+        if !player.own_type() {
+            let list = game.0.character_weapons.entry(player.data_name().to_string()).or_default();
+            if slot < list.len() { list[slot] = key } else { list.push(key) }
+        }
         if let Some(list) = player.enemy.weapons.as_mut() {
             if slot < list.len() { list[slot] = key } else { list.push(key) }
         }
