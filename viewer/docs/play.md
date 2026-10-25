@@ -1757,26 +1757,46 @@ light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in fligh
 * Not checked again (generic): the dry fire and switch (take02), the pickups (take04, take05),
   the far enemies (take09, take10).
 
-### The guns of weapons batch 2 without footage (#66, #56, #64)
+### The guns of weapons batch 2 without footage (#56, #64), and the Rail CLVR's (#66)
 
 Nothing of their own to build: each fires through the shared machinery from its own data, and
 was run on the test map (`-- --test BF_NO_SQUAD=1 BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=4.5,20,4.5,20
 BF_TEST_NPC_HP=1.0,all,300 BF_SHOT_LOG=1 BF_COMBAT_LOG=1`, dm Shrike Soldiers frozen on the
-line). With no take, what it looks like and the numbers against the game are open; the shots
-that would settle them are listed with each (the draft's R1, R2 and I1 are in
+line). The Rail CLVR is compared below with #287's takes 14-17 (`todo/287-weapon-shots/`), which
+also hold the Ion Beamer's I1 shot (take22) and the MNR-7's (takes 18-21), filmed since and not
+compared here. Without a take, what the others look like and their numbers against the game are
+open; the shots that would settle them are listed with each (the draft's R1, R2 and I1 are in
 todo/drafts/done/bolt-ricochet-passthrough.md).
 
-**Rail CLVR** (#66; h_1b0310e6, heavy: Tex, `BF_TEST_WEAPON="Rail CLVR" BF_CAMERA_PITCH=-0.14
-BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,13;0.3,shrike soldier@dm,enemy,frozen,4.5,8"
-BF_TEST_TRIGGER=2.0-2.08,3.5-6.0`): the Rail RVR's ray and beam (§ Ricochet and pass-through, §
-Tracers and beams: rgun_perp_s, rgun_side_s and rgun_beam, railhit_s where it strikes) with its
-own data: 3 a second (held fire one every 0.33 s), clip 30, 11.5-15.5 BALLISTIC with no falloff,
-n1 1 and n2 500. Every ray strikes both Shrikes in line (their forearms: 8.1-10.5, the roll x 0.5
-x 1.4), goes into the ground 67-71 m out (its one wall) and on to its 90 m. Blocked on footage:
-the beam's look and its muzzle effect (h_ee51b13b), the rate and the reload against the game,
-the damage on a character (a take at a frozen enemy 7 m out with its HP logged), pass-through
-(shots R1, two frozen enemies in line at 7 and 12 m, and R2, one behind a placed object and one
-behind a level wall).
+**Rail CLVR** (#66; h_1b0310e6, heavy: Tex): the Rail RVR's ray and beam (§ Ricochet and
+pass-through, § Tracers and beams: its flight effect h_fa3b46ce plays the same three, rgun_perp_s,
+rgun_side_s and rgun_beam; its hit h_f79e1c48) with its own data: 3 a second, clip 30,
+11.5-15.5 BALLISTIC with no falloff, n1 1 and n2 500. Against #287's takes on m14_a, Tex at the
+start ledge (take14's spot):
+* Held fire one round every 0.33-0.40 s, 0.35 on average (`-- --test BF_MAP=m14_a BF_CHARACTER=3
+  BF_TEST_WEAPON="Rail CLVR" BF_TEST_GOTO=-106.0,-173.0,-106.0,-166.0 BF_TEST_GO_AT=100
+  BF_CAMERA_PITCH=-0.10 BF_TEST_TRIGGER=3.0-3.08,5.4-5.48,7.8-7.88,10.5-15.5 BF_SHOT_LOG=1`;
+  m14_a's squad spawn moves Tex off the GOTO's start, a few metres): take14's held fire (clip
+  26 -> 17 at game times 10.07-13.16) one every 0.339-0.346 s, 0.343 on average.
+* Damage on a frozen Shrike Soldier 7 m out (take16; the same with `BF_TEST_INSTANT_KILL=0
+  BF_TEST_NPC="0.3,shrike soldier@m14_a,enemy,frozen,-106.0,-166.0" BF_TEST_NPC_HP=1.0,all,300
+  BF_COMBAT_LOG=1`): 16.1-21.0 on the body (the roll x 1.4 on a x1 part; 12.9 on an upper arm),
+  take16's 16.98-20.52 on the body and 99.9 on the head (x5) of its first shot.
+* Pass-through (#287 take17: the Shrike 10 m out, then the object 7f20f200 behind it twice): the
+  RVR's rule, settled against takes 01-03 (§ Ricochet and pass-through, "Against #287's takes").
+  Here the ray goes through the Shrike, meets the ground 14 m out (walls 0) and again 35 m out
+  (-1), and stops.
+* Reload (`-- --test BF_NO_SQUAD=1 BF_CHARACTER=3 BF_TEST_WEAPON="Rail CLVR" BF_TEST_GOTO=0,-8,0,-8
+  BF_TEST_CLIP=3 BF_TEST_TRIGGER=2.5-4.0 BF_AMMO_LOG=1 BF_SOUND_LOG=1`): rounds at 2.73, 3.07
+  and 3.40, the reserve 400 -> 370 0.33 s after the last, and the clip full at the reload clip's
+  magazine-in (its sound) 1.00 s after that. take15's watch log: the rounds at 2.388 / 2.683 /
+  3.076, the reserve at 3.420 (+0.344), the clip 30 at 4.652 (+1.232). The magazine-in comes
+  0.23 s early: Tex's reload clip, as #63's MK found it (Tex's takes 1.1 and 1.2 s against the
+  demo's 1.00; Hawk's 1.0-1.1 match), not this gun's (found, not in scope).
+* Its beam: the RVR's, open (§ Tracers and beams, "Not matched"). In take14 it's a thin violet
+  line from Tex's head up to the reticle, with a few faint rings: its near part behind his head.
+* Not checked again (generic): the dry fire and the switch (take15: two clicks with the reserve
+  at 0, then Y to the Saryl-99 and back).
 
 **Ion Beamer** (#56; h_ea241276, medium: Flint, `BF_CHARACTER=1 BF_TEST_WEAPON="Ion Beamer"
 BF_CAMERA_PITCH=-0.2 BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,6;0.3,shrike
