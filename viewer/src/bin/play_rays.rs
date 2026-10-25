@@ -28,7 +28,7 @@
 //!    hit's, or the full range: the beam's length (play.rs `projectiles`).
 //!  - **Each hit** (FUN_00230400 builds the records; the damage handler 0x22d0b0 through
 //!    play_bolts.rs's `deal`): a direct hit, so a roll of its own (FUN_0022c4d0 -> FUN_0022c940,
-//!    from the game's random state, `GameRandom`, x the shooter's skill's factor), x the falloff
+//!    from the game's random state, `GameRandom`, x the shooter's skill's and power-ups' factors), x the falloff
 //!    at its distance over the range (FUN_00223780 with the Damage's mode: none for the Rails),
 //!    x the struck part on a character (FUN_00125940), x0.7 on the shooter's own side; then the
 //!    victim's step and type factor. The world plays its material's hit effect, debris and sound
@@ -107,11 +107,13 @@ fn pass_rays(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResM
                 Kind::Character => characters -= 1,
                 Kind::Object | Kind::Terrain => walls -= 1,
             }
-            // a direct hit's own roll (FUN_0022c4d0 -> FUN_0022c940), x the shooter's skill
+            // a direct hit's own roll (FUN_0022c4d0 -> FUN_0022c940), x the shooter's skill and
+            // power-ups
             let (lo, hi) = shot_rolls(&s);
             let roll = lo + (hi - lo) * chance.unit();
-            let skill = unit_mut(&mut player, &mut squad, owner).map_or(1.0, |(u, _)| skills::roll_factor(u));
-            let strike = Strike { shot: &s, owner, team, human, roll, skill, falloff: s.falloff_at(m.t) };
+            let (skill, power) = unit_mut(&mut player, &mut squad, owner)
+                .map_or((1.0, 1.0), |(u, _)| (skills::roll_factor(u), super::powerups::roll_factor(u)));
+            let strike = Strike { shot: &s, owner, team, human, roll, skill, power, falloff: s.falloff_at(m.t) };
             let what = deal(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, &strike, m, s.origin, s.dir,
                             &mut player, &mut squad, &mut chance, &mut holes, &mut mines, &mut objects, &difficulty, listener, instant_kill);
             let stops = walls < 0 || characters < 0;

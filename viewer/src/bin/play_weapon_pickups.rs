@@ -116,10 +116,11 @@ const RING_OUT: f32 = 2.0;
 const RING_NEW: f32 = 0.5;
 /// The walk-over's reach (FUN_0011c170): the gun at most WALK_DOWN below the character's position
 /// and WALK_UP above it ([-1.8, 1.0]), and dx^2 + dz^2 under WALK_ACROSS_SQ (1.8, about 1.34 m).
-/// (FUN_0011c540 gathers the candidates within 2.0 m of the world grid first.)
-const WALK_DOWN: f32 = 1.8;
-const WALK_UP: f32 = 1.0;
-const WALK_ACROSS_SQ: f32 = 1.8;
+/// (FUN_0011c540 gathers the candidates within 2.0 m of the world grid first.) The power-ups'
+/// walk-over is the same function's item path (play_powerups.rs `in_reach`).
+pub(super) const WALK_DOWN: f32 = 1.8;
+pub(super) const WALK_UP: f32 = 1.0;
+pub(super) const WALK_ACROSS_SQ: f32 = 1.8;
 /// The pickup clips' events, named by hashing (leads §4.3): release_weapon (the gun in hand let
 /// go) and grab_weapon (the new one taken). Clip times where a clip lacks one: the demo's.
 const EV_RELEASE_WEAPON: u32 = 0xE85F_3539;

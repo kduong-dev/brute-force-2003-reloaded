@@ -751,6 +751,12 @@ them):
     −87.6° about x to stand its arcs up.
   * Each particle keeps the appearance's turn at the moment it's born (about 220°/s), so the
     particles fan out round the icon.
+  * **Not the game's look** (#15): the icons' appearances are GeneralApp_FacingType 2 (square to
+    the particle's motion) with AngleFadeOut, on sphere emitters that throw their particles out
+    from the middle (0.025 m/s, 0.17-0.21 m out): the game's flares face out every way and fade
+    near edge-on, a glowing ball (#35 take20 at 2.0 s: an oval glow ~1 m across), where the
+    demo's lie flat, a disc thin from a low camera. The facing types are #286's.
+  * Walking over one takes it ([pickups.md](pickups.md), "Power-ups", #15).
 * **ALE blends (#228).** An appearance's blend pair (h_1daea8c0) is the PC's D3DBLEND (src,
   dest), which the game turns into the console's through the table at 0x4036b4 (0x2a6f00): 5,2
   (SRCALPHA, ONE) on 518 appearances, 5,6 (SRCALPHA, INVSRCALPHA) on 207, 3,2 (SRCCOLOR, ONE) on

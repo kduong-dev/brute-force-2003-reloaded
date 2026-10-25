@@ -10,7 +10,8 @@
 //!    shot's origin), along the shot (after the accuracy's turn), at the bullet's speed (+0x1c);
 //!    its life (+0x28, and +0x30 its start) the bullet's range in the holder's hands
 //!    (FUN_002324c0) over the speed; the damage roll made now (+0x20, FUN_0022c940: Damage
-//!    min..max, then the shooter's skill's factor, `skills::roll_factor`), with the shooter
+//!    min..max, then the shooter's skill's factor, `skills::roll_factor`, and its power-ups',
+//!    `powerups::roll_factor`), with the shooter
 //!    (+0x48) and its team (+0x6c). Its last checked point (+0x70) is the muzzle and its sweep
 //!    counter (byte +3) the pool's reset's 3 (FUN_00225000). The bullet's h_1835f15e,
 //!    h_fe4f3035 and h_11caf57b become its bytes +1 and +2 and its flag 0x20 (#238, below).
@@ -113,10 +114,11 @@ pub(super) struct Bolt {
     counter: u8,
     /// the last checked point (+0x70)
     last: Vec3,
-    /// the damage roll made at its launch (+0x20, FUN_0022c940) and the shooter's skill's factor
-    /// on it
+    /// the damage roll made at its launch (+0x20, FUN_0022c940), the shooter's skill's factor on
+    /// it and its power-ups' (BRUTE's x2, `powerups::roll_factor`)
     roll: f32,
     skill: f32,
+    power: f32,
     /// the hits it goes on after (#238, `after_hit`): byte +1 (n1, the bullet's h_1835f15e,
     /// `ShotData::object_hits`) and byte +2 (n2, h_fe4f3035, `ShotData::character_hits`), each
     /// the low byte of the int FUN_0022bac0 copies; and its flag 0x20 (h_11caf57b,
@@ -520,7 +522,7 @@ fn fly_bolts(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>
             b.pos = at - (at - from) * HIT_BACK;
             b.last = b.pos;
             let now = player.sim_time;
-            let strike = Strike { shot: &b.shot, owner: b.owner, team: b.team, human: b.human, roll: b.roll, skill: b.skill, falloff: 1.0 };
+            let strike = Strike { shot: &b.shot, owner: b.owner, team: b.team, human: b.human, roll: b.roll, skill: b.skill, power: b.power, falloff: 1.0 };
             let what = deal(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, &strike, met, from, dir,
                             &mut player, &mut squad, &mut chance, &mut holes, &mut mines, &mut objects, &difficulty, listener, instant_kill);
             let outcome = b.after_hit(met.what.kind(), met.id, met.normal);
@@ -558,7 +560,8 @@ fn fly_bolts(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>
 
 /// One hit to deal through the damage handler 0x22d0b0 (`deal`): the shot that made it, who fired
 /// it (their team, and whether the controlled character), the hit record's roll and the shooter's
-/// skill's factor on it, and an instant ray's falloff over its range (1 for a bolt).
+/// skill's and power-ups' factors on it, and an instant ray's falloff over its range (1 for a
+/// bolt).
 pub(super) struct Strike<'a> {
     pub shot: &'a Shot,
     pub owner: Who,
@@ -566,6 +569,7 @@ pub(super) struct Strike<'a> {
     pub human: bool,
     pub roll: f32,
     pub skill: f32,
+    pub power: f32,
     pub falloff: f32,
 }
 
@@ -580,8 +584,9 @@ pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf
     let s = k.shot;
     let at = from + dir * met.t;
     let now = player.sim_time;
-    // (the record: the roll x the shooter's skill x the falloff; a character's adds its part)
-    let record = k.roll * k.skill * k.falloff;
+    // (the record: the roll x the shooter's skill and power-ups x the falloff; a character's adds
+    // its part)
+    let record = k.roll * k.skill * k.power * k.falloff;
     // the bullet's own explosion where it strikes a body, a corpse or a Sentry (0x22d0b0 ->
     // FUN_0022cfc0, `shot_explosion`: the cutters' white star; a world hit's is world_hit's)
     let mut ale = ale;
@@ -612,7 +617,8 @@ pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf
             let Some((u, controlled)) = unit_mut(player, squad, who) else { return "hits a body that's gone".into() };
             // the struck part (FUN_00224320 asks FUN_00125940), x0.7 on the shooter's own side
             let bone = damage::struck_bone(u, game, from, dir, met.t);
-            let hit = damage::Hit::new(k.roll, "roll", s.damage_type).skill(k.skill).by(k.owner, k.team, u).falloff(k.falloff).struck(u, game, bone);
+            let hit = damage::Hit::new(k.roll, "roll", s.damage_type).skill(k.skill).power(k.power).by(k.owner, k.team, u).falloff(k.falloff)
+                .struck(u, game, bone);
             let landing = PendingHit { delay: 0.0, member: 0, hit, dir, local: at - u.position, ammo: s.ammo };
             let lying = knocked_down(u);
             // (the player's shot's rules on anyone but the controlled character: control may have
@@ -645,8 +651,8 @@ pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf
 
 /// This frame's bolts launched (FUN_0022bac0): each shooter's new shots of a bolt gun become bolts
 /// at the muzzle with their flight effect riding on them (play.rs `start_flight`), their damage
-/// roll made now (GameRandom, FUN_0022c940's draw) with the shooter's skill's factor, and their
-/// bullet's hit counts and pass flag (#238).
+/// roll made now (GameRandom, FUN_0022c940's draw) with the shooter's skill's and power-ups'
+/// factors, and their bullet's hit counts and pass flag (#238).
 #[allow(clippy::too_many_arguments)]
 fn launch_bolts(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut game: ResMut<GameData>,
                 mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut images: ResMut<Assets<Image>>,
@@ -659,6 +665,7 @@ fn launch_bolts(mut commands: Commands, mut player: ResMut<Player>, mut squad: R
             let (lo, hi) = shot_rolls(&s);
             let roll = lo + (hi - lo) * chance.unit();
             let skill = skills::roll_factor(u);
+            let power = super::powerups::roll_factor(u);
             let speed = s.speed.max(1.0);
             let life = s.range / speed;
             // (FUN_0022bac0 copies the ints' low bytes: pbVar2[1] = type+0x23c, [2] = +0x240)
@@ -666,9 +673,9 @@ fn launch_bolts(mut commands: Commands, mut player: ResMut<Player>, mut squad: R
             let (n1, n2) = (data.object_hits as u8, data.character_hits as u8);
             state.next += 1;
             let b = Bolt { shot: s, id: state.next, owner: u.who(), team: u.team, human: k == 0, pos: s.origin, dir: s.dir, speed, life,
-                           counter: SWEEP_TICKS, last: s.origin, roll, skill, n1, n2, pass: data.pass_through, skip: None, clock: 0.0, ticks: 0 };
+                           counter: SWEEP_TICKS, last: s.origin, roll, skill, power, n1, n2, pass: data.pass_through, skip: None, clock: 0.0, ticks: 0 };
             if log {
-                println!("t={now:.2} bolt {} launched by {} from {:.2} along {:.3} at {speed} m/s: roll {roll:.2} x skill {skill:.2}, life {life:.3} s (range {:.1} m), n1 {n1} n2 {n2}{}",
+                println!("t={now:.2} bolt {} launched by {} from {:.2} along {:.3} at {speed} m/s: roll {roll:.2} x skill {skill:.2} x power-up {power:.2}, life {life:.3} s (range {:.1} m), n1 {n1} n2 {n2}{}",
                          b.id, name(u), s.origin, s.dir, s.range, if b.pass { " passing through" } else { "" });
             }
             let e = commands.spawn((Transform::from_translation(s.origin).looking_to(s.dir, Vec3::Y), Visibility::default(), b, Name::new("bolt"))).id();
@@ -691,7 +698,7 @@ mod tests {
         let shot = Shot { weapon: 0, origin: Vec3::ZERO, dir: Vec3::NEG_Z, dist: range, hit: false, speed, flight: 0, hit_fx: 0, damage: [1.0, 2.0],
                           damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, falloff: 0, range, bolt: true, body: false, pass: false, scoped: false };
         Bolt { shot, id: 1, owner: Who::Squad(3), team: 0, human: true, pos: Vec3::ZERO, dir: Vec3::NEG_Z, speed, life: range / speed,
-               counter: SWEEP_TICKS, last: Vec3::ZERO, roll: 1.0, skill: 1.0, n1, n2, pass, skip: None, clock: 0.0, ticks: 0 }
+               counter: SWEEP_TICKS, last: Vec3::ZERO, roll: 1.0, skill: 1.0, power: 1.0, n1, n2, pass, skip: None, clock: 0.0, ticks: 0 }
     }
 
     /// The game frames a bolt that meets nothing sweeps on, each sweep's start (m from the
