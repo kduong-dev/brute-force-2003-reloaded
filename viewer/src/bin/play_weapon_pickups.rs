@@ -9,9 +9,21 @@
 //!  - **A lying gun** (`LyingGun`) is a level's weapon-object placement (object type 20 WEAPON,
 //!    reticule-action 2 RACT_PICKUP) that isn't a spawn-trigger's template (those are #278's), in
 //!    its placement's pose, or a gun a character let go of: the one a swap drops, and a dead
-//!    character's (release_weapon's dead path, FUN_00117660 at 0x118a4a: play.rs `update_weapons`),
-//!    which fall and tumble as the loose pickups do (play_pickups.rs `Thrown`). Taken, it's gone:
-//!    nothing puts a placed campaign weapon back (leads §4.6), so no respawn.
+//!    character's (the ragdoll's start FUN_00127290 drops both slots' guns, FUN_0014dfd0; and
+//!    release_weapon's dead path, FUN_00117660 at 0x118a64: play.rs `update_weapons`), which fall
+//!    and tumble as the loose pickups do (play_pickups.rs `Thrown`). Taken, it's gone: nothing
+//!    puts a placed campaign weapon back (leads §4.6), so no respawn.
+//!  - **A creature's weapons too** (class 7, ammo-count -1, the 7 mm dummy model h_ff18f12d:
+//!    m04_a's Psionic Blast x2 and Breath Attack at (-207, 44.5, 76.8), a dead Shrike Hound's
+//!    Breath Attack): nothing in the code sets them apart. A placement whose h_1cb7d5f2 is false
+//!    becomes a pickup (0x14a0f7 -> FUN_0014a170) whatever its class or model; the dead's slot
+//!    guns are dropped (FUN_0014dfd0) whatever they are; the object update hands every unheld
+//!    weapon to the use candidates (FUN_00157c40 -> FUN_000ba1c0: reticule-action set, +0x71 bit
+//!    0x10 from the weapon's constructor 0x22b757 and bit 0x20 out of a holder), and neither the
+//!    candidate loop (FUN_000bd180) nor the tracker (FUN_000bf1e0, FUN_000bf2f0) looks at a class,
+//!    a model or the rounds. The squad's holders refuse class 7 (FUN_000a9910), so the prompt is
+//!    the refusal with the red ring, on next to nothing to see. Not filmed: the shot would settle
+//!    it, and where the game rests a model-less one (the demo's ground, the placement's 44.5 m).
 //!  - **The target** (the HUD's use tracker FUN_000bf2f0 and its caller 0xbf110): of the lying
 //!    guns at most HEIGHT above or below the controlled character's position (its node, the hips)
 //!    and REACH across (last frame's at KEEP of its distance), in the front half of its aim
@@ -29,7 +41,12 @@
 //!  - **The ring** (`ring`; the ring widget 0x3a02e8, its update 0xa9bf0 and the reticle
 //!    controller's 0xa9510): it zooms in on a target from about 2.4 times its size, fading in
 //!    (`Ring::open`, `RING_IN`), and out again when there's none (`RING_OUT`); a new target takes it
-//!    at once if it was shown, and at half open at least if not (take11 291.8-292.4 s).
+//!    at once if it was shown, and at half open at least if not (take11 291.8-292.4 s). It sits on
+//!    the point the tracker keeps for its target (its +0x1c, FUN_000bf2f0's last argument):
+//!    FUN_0015a480's, the target's hardpoint h_10f81d34 if its model has one (a gate panel's
+//!    button), else its position. No weapon model has one (none of the 59 weapon types' meshes or
+//!    their parts, over every level), so it's the gun's position; the reach and the line of sight
+//!    are measured from FUN_0015a500's, h_ee389721 or the position, the same for a gun.
 //!  - **The hold**: X (E; `BF_TEST_SWAP`, `BF_TEST_USE`) held HOLD on a target that can be taken
 //!    starts the use (the player controller 0x1332a0 -> FUN_000a9710 -> FUN_0014a410 ->
 //!    FUN_00121670); once per press. On one that can't, the press only grumbles: the chatter line
@@ -53,7 +70,12 @@
 //!    sqrt(WALK_ACROSS_SQ) across, a gun with rounds whose ammo type some squad member's gun uses
 //!    gives them to the reserve (the rest kept), with the ammo item's pickup sound, PICKUP_OBJECT
 //!    from it and the line "<n>x <ammo>"; with the stack full nothing goes and the line reads
-//!    "<ammo> (full)" in red (the DNA video's "Bio Ammo (full)", then "2x Sonic Ammo").
+//!    "<ammo> (full)" in red (the DNA video's "Bio Ammo (full)", then "2x Sonic Ammo"). The guns
+//!    that count are what the members' slots hold (FUN_00122ed0 through FUN_0014dc50, the hand
+//!    holder for the slot in hand): not a slot a release has emptied until its grab. It runs
+//!    before the clips' events (`swap`), so it sees the frame's lying guns before a grab takes
+//!    one; and a gun a pickup has grabbed is gone for it (FUN_000db3e0 at the grab), the frame it
+//!    goes too.
 //!  - The AI never swaps guns (no goal of the game's does: leads §9).
 //!
 //! Test hooks: BF_TEST_GUN=<weapon>[,<ahead m>[,<right m>[,<rounds>]]][;...] lays those guns on
@@ -203,14 +225,17 @@ pub(super) struct Guns {
 
 /// The lying guns found once the level's objects are in; each frame after the panels (`doors`)
 /// and before the characters' step, the target, the prompt, the ring and the hold
-/// (`use_target`); after the step, the clips' events (`swap`, before the guns are placed on the
-/// bodies) and the walk-overs (`walk_over`, before the frame's sounds play).
+/// (`use_target`); after the step, the walk-overs (`walk_over`) and then the clips' events
+/// (`swap`), both before the frame's sounds play and the guns are placed on the bodies. The
+/// walk-over goes first: after a grab the new gun's ammo type counts, while the lying gun it came
+/// from is only queued to go, and the walk-over would take its rounds a second time (#17 review).
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| {
         commands.insert_resource(Guns { log: std::env::var("BF_WEAPON_LOG").is_ok(), ..default() });
     }).after(setup))
         .add_systems(Update, (find_guns, use_target).chain().after(doors).before(update_player).run_if(in_state(AppState::Playing)))
-        .add_systems(Update, (swap.before(update_weapons), walk_over.before(play_sounds)).after(update_player).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (walk_over, swap).chain().after(update_player).before(play_sounds).before(update_weapons)
+            .run_if(in_state(AppState::Playing)));
 }
 
 /// The level's lying guns, once its objects are in (as play_pickups.rs `find_pickups` waits for
@@ -319,11 +344,12 @@ fn limits(game: &Game, kind: u32) -> ([[i64; 2]; 2], i64) {
 
 /// Whether slot `slot`'s holder takes a gun of `class` (0x14baa0: the byte at the holder's
 /// +0x34 + the class): one of the slot's `limit-weapon` classes (not WTYPE_NONE), or any of the
-/// four the table holds (0-3) when the type gives none.
+/// nine the table holds (0-8, every byte set by the front's constructor 0x14c5d0) when the type
+/// gives none.
 fn slot_takes(classes: [[i64; 2]; 2], slot: usize, class: i64) -> bool {
     let c = classes[slot];
     if c == [-1, -1] {
-        return (0..4).contains(&class);
+        return (0..=WTYPE_NONE).contains(&class);
     }
     c.iter().any(|&x| x == class && x != WTYPE_NONE)
 }
@@ -668,8 +694,9 @@ fn swap(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Sq
 /// release_weapon (FUN_00117660 at 0x118a2b): the gun in hand's rounds into the reserve of its
 /// ammo type as far as its stack takes them (FUN_0022b580 the level's ammo item for the type,
 /// FUN_0014ce90), the rest kept; the gun let go where the hand holds it (the hand holder's
-/// +0x34(1), FUN_0014a170), falling and tumbling as a lying gun. Its slot keeps an empty stand-in
-/// until the grab. The HUD's weapon row leaving the hand plays the switch's first sound
+/// +0x34(1), 0x14af20: its item set's drop, FUN_0014a170), falling and tumbling as a lying gun.
+/// Its slot keeps an empty stand-in (`HeldWeapon::empty`) until the grab. The HUD's weapon row
+/// leaving the hand plays the switch's first sound
 /// (`SWITCH_SOUNDS`, FUN_000cbec0 through FUN_000bb220: the controlled character's only), as the
 /// takes have it at the release: #52 take04 7.52 s, #61 take04 6.57 s, take11 300.73 s, matched
 /// by spectrogram.
@@ -698,6 +725,7 @@ fn release(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &Game,
     (held.entity, held.flash, held.light) = (empty, empty, empty);
     held.spinners.clear();
     (held.in_hand, held.stowed, held.second_hand) = (None, None, None);
+    held.empty = true;
     if let Some(a) = p.ammo.get_mut(w) {
         *a = [0, 0];
     }
@@ -762,26 +790,41 @@ fn ammo_item(game: &Game, ammo_type: i64) -> Option<(u32, &bf_viewer::bf::charac
         .min_by_key(|(k, _)| **k).map(|(k, i)| (*k, i))
 }
 
+/// The ammo types of the guns in these slots, for the walk-over (FUN_00122ed0: what each slot's
+/// holder holds now, FUN_0014dc50 giving the hand holder for the slot in hand): a slot a release
+/// has emptied (`HeldWeapon::empty`) holds none.
+fn slot_ammo<'a>(weapons: impl Iterator<Item = &'a HeldWeapon>) -> Vec<i64> {
+    weapons.filter(|w| !w.empty).map(|w| w.def.ammo_type).collect()
+}
+
+/// Whether lying gun `e` is there for a walk-over this frame: shown, with rounds (FUN_0011c170:
+/// +0x1f8 above 0), and not one a pickup has grabbed (`grabbed`: gone at the grab, FUN_000db3e0,
+/// though its entity waits for the frame's commands).
+fn walkable(e: Entity, gun: &LyingGun, vis: Visibility, grabbed: &[Entity]) -> bool {
+    gun.clip > 0 && vis != Visibility::Hidden && !grabbed.contains(&e)
+}
+
 /// Squad members walking over a lying gun (FUN_0011c540 -> FUN_0011c170; see the module notes):
 /// its rounds into the reserve when someone in the squad has a gun of its ammo type, the pickup
-/// line, the ammo's pickup sound and PICKUP_OBJECT; "(full)" when nothing goes in.
+/// line, the ammo's pickup sound and PICKUP_OBJECT; "(full)" when nothing goes in. Before `swap`.
 #[allow(clippy::too_many_arguments)]
 fn walk_over(mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut reserve: ResMut<ammo::Reserve>,
              mut feed: ResMut<pickups::PickupFeed>, mut events: ResMut<triggers::TriggerEvents>, guns: Res<Guns>,
-             mut lying: Query<(&mut LyingGun, &Transform, &Visibility)>) {
-    // the squad's ammo types (FUN_00122ed0 over the squad: each member's two guns' ammo items)
-    let types: Vec<i64> = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| u.in_squad() && !u.dead)
-        .filter_map(|u| u.loaded.as_ref()).flat_map(|l| l.weapons.iter().map(|w| w.def.ammo_type)).collect();
+             mut lying: Query<(Entity, &mut LyingGun, &Transform, &Visibility)>) {
+    let units = || std::iter::once(&*player).chain(squad.0.iter());
+    // the squad's ammo types (FUN_00122ed0 over the squad: each living member's slots)
+    let types = slot_ammo(units().filter(|u| u.in_squad() && !u.dead).filter_map(|u| u.loaded.as_ref()).flat_map(|l| &l.weapons));
+    let grabbed: Vec<Entity> = units().filter_map(|u| u.gun_use.as_ref()).filter(|g| g.grabbed).map(|g| g.target).collect();
     for k in 0..=squad.0.len() {
         let u = if k == 0 { &mut *player } else { &mut squad.0[k - 1] };
         if u.dead || u.absent || !u.in_squad() || u.loaded.is_none() {
             continue;
         }
         let at = u.position;
-        // (the gun a pickup is taking too: FUN_0011c170 makes no exception; its rounds then come
-        // back from the reserve at the grab)
-        for (mut gun, g, vis) in &mut lying {
-            if gun.clip <= 0 || *vis == Visibility::Hidden {
+        // (the gun a pickup is about to take too: FUN_0011c170 makes no exception; its rounds then
+        // come back from the reserve at the grab)
+        for (e, mut gun, g, vis) in &mut lying {
+            if !walkable(e, &gun, *vis, &grabbed) {
                 continue;
             }
             let p = g.translation;
@@ -836,8 +879,41 @@ mod tests {
         assert!(takes(HAWK, 0) && takes(HAWK, 1) && !takes(HAWK, 2));
         assert!(takes(FLINT, 0) && takes(FLINT, 1) && !takes(FLINT, 2));
         assert!(!slot_takes(FLINT, 0, 8));
-        // no limit-weapon: every class in either slot
+        // no limit-weapon: every class of the nine bytes in either slot (0x14c5d0)
         assert!(slot_takes([[-1; 2]; 2], 1, 2));
+        assert!(slot_takes([[-1; 2]; 2], 0, 7) && !slot_takes([[-1; 2]; 2], 0, 9));
+        // a creature's weapon (class 7: m04_a's Psionic Blast) isn't the squad's to take
+        assert!([BRUTUS, FLINT, HAWK, TEX].iter().all(|&c| !slot_takes(c, 0, 7) && !slot_takes(c, 1, 7)));
+    }
+
+    /// A gun of `ammo_type` in a slot, or the stand-in a release leaves (`empty`).
+    fn held(ammo_type: i64, empty: bool) -> HeldWeapon {
+        HeldWeapon { def: WeaponDef { ammo_type, ..default() }, stance: 0, entity: Entity::PLACEHOLDER, spinners: vec![], light: Entity::PLACEHOLDER,
+                     data_light: false, flash: Entity::PLACEHOLDER, muzzle: Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY }, shell: None,
+                     fire_dir: Vec3::NEG_Z, in_hand: None, stowed: None, second_hand: None, empty }
+    }
+
+    /// The walk-over's ammo types are what the slots hold (FUN_00122ed0): between a release and
+    /// its grab the emptied slot's gun doesn't count (#17 review 2: a full stack's "(full)" line
+    /// every frame over the gun just dropped).
+    #[test]
+    fn an_emptied_slot_uses_no_ammo() {
+        let guns = [held(2, false), held(1, true)];
+        assert_eq!(slot_ammo(guns.iter()), vec![2]);
+        assert_eq!(slot_ammo([held(1, false)].iter()), vec![1]);
+    }
+
+    /// A gun a pickup has grabbed is gone for the walk-over that frame, though its entity waits
+    /// for the frame's commands (#17 review 1: the #61 recreation with 10 rounds in reserve read
+    /// "6 / 16", the L-Shot-50's 6 taken twice); a gun without rounds or hidden isn't there either.
+    #[test]
+    fn a_grabbed_gun_is_gone_for_the_walk_over() {
+        let (a, b) = (Entity::from_raw(1), Entity::from_raw(2));
+        let gun = LyingGun { kind: 0, clip: 6, name: 0 };
+        assert!(walkable(a, &gun, Visibility::Inherited, &[b]));
+        assert!(!walkable(a, &gun, Visibility::Inherited, &[a]));
+        assert!(!walkable(a, &LyingGun { clip: -1, ..gun }, Visibility::Inherited, &[]));
+        assert!(!walkable(a, &gun, Visibility::Hidden, &[]));
     }
 
     /// FUN_00121ac0's slot: Flint's pistol to slot 2 and rifle to 1; Brutus's cannon to 2 and rifle

@@ -1430,6 +1430,11 @@ struct HeldWeapon {
     /// and in the second hand (Tex's berserk): its trigger grip at the character's SECOND_HAND
     /// hardpoint, as the gun in hand's at TRIGGER_HAND (weapon.rs); None for a model without it
     second_hand: Option<(usize, Quat, Vec3)>,
+    /// no gun: the slot's stand-in from a weapon pickup's release_weapon to its grab_weapon
+    /// (play_weapon_pickups.rs `release`), the game's hand holder empty then (FUN_0014dc50 finds
+    /// the slot in hand there). Its `def` stays the let-go gun's; what counts the slots' guns
+    /// leaves it out (the walk-over's ammo types, FUN_00122ed0)
+    empty: bool,
 }
 
 /// A gun drawn into the second hand (Tex's berserk, play_skills.rs): the game's inventory
@@ -3563,6 +3568,7 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
             .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) }),
         shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
         data_light: game.effect_type_defs.get(&def.shots.muzzle_effect).is_some_and(|t| t.light != 0),
+        empty: false,
         def, entity, spinners, light, flash, muzzle, fire_dir,
     })
 }
@@ -7028,9 +7034,10 @@ fn update_weapons(
         // the dead let go of the gun in their hand: it falls from where it is, thrown a little
         // by what killed them, and tumbles like any loose object (see pickups::Thrown)
         // (and the one on their back: it would prop the body up, and the ragdoll can't feel it).
-        // Each then lies as a pickup with the rounds it had (release_weapon's dead path,
-        // FUN_00117660 at 0x118a4a: the dead's rounds stay in the gun; #17,
-        // play_weapon_pickups.rs)
+        // Each then lies as a pickup with the rounds it had: the ragdoll's start drops whatever
+        // both slots hold (FUN_00127290 -> FUN_0014dfd0, a creature's weapon too), and
+        // release_weapon's dead path (FUN_00117660 at 0x118a64) leaves the dead's rounds in the
+        // gun (#17, play_weapon_pickups.rs)
         if p.dead && !l.weapon_dropped {
             l.weapon_dropped = true;
             for (i, w) in l.weapons.iter().enumerate() {
