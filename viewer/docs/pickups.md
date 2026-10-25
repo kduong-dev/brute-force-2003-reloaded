@@ -158,9 +158,22 @@ and `todo/DNA + Weapon Pickups.mp4`.
     e34's iKhan-GPL at (98.6, 41.0, -49.4), the campaign's others (leads §1). A spawn-trigger's
     template isn't one: every multiplayer map's weapons, e34's Therm Sweeper, m02_a's second
     MK-ASLT and m02_c's iKhan-GPL are its copies' (#278), drawn where they're placed as before;
-  * the gun a swap drops, and a dead character's guns (both: release_weapon's dead path,
-    FUN_00117660 at 0x118a4a), with the rounds they had; they fall and tumble as the loose
-    pickups do ("Pickups are loose" above).
+  * the gun a swap drops, and a dead character's guns (the ragdoll's start, FUN_00127290, drops
+    whatever both slots hold, FUN_0014dfd0; release_weapon's dead path, FUN_00117660 at
+    0x118a64, does the same where a clip carries the event), with the rounds they had; they fall
+    and tumble as the loose pickups do ("Pickups are loose" above).
+  * a creature's weapons too, as the code has them: m04_a places Psionic Blast x2 and Breath
+    Attack (class 7, ammo-count -1, the 7 mm dummy model h_ff18f12d) at (-207, 44.5, 76.8), and a
+    dead Shrike Hound drops its Breath Attack. Nothing sets them apart: a placement whose
+    h_1cb7d5f2 is false becomes a pickup whatever its class or model (0x14a0f7 -> FUN_0014a170),
+    the dead's slot guns drop whatever they are (FUN_0014dfd0), the object update hands every
+    weapon out of a holder to the use candidates (FUN_00157c40 -> FUN_000ba1c0), and neither the
+    candidate loop (FUN_000bd180) nor the tracker (FUN_000bf1e0, FUN_000bf2f0) looks at a class,
+    a model or the rounds. The squad's holders refuse class 7, so walking there shows "Tex cannot
+    pick up Breath Attack." and the red ring over next to nothing. Not filmed (a shot at m04_a's
+    spot and over a dead hound would settle it); where the game rests a model-less one (its
+    collision-type is 0) isn't known: the demo puts it on the ground as every pickup, the
+    placement has it 2 m up.
   * Taken, a gun is gone for good: nothing puts a placed campaign weapon back (leads §4.6), so
     the medkits' guessed 30 s respawn isn't theirs.
 * **The target** (the HUD's use tracker FUN_000bf2f0 and its caller 0xbf110): of the lying guns
@@ -186,6 +199,16 @@ and `todo/DNA + Weapon Pickups.mp4`.
   the same way when there's no target; a new target takes it at once if it was in. Blue (23 53 d4)
   on one the character can use, red (a0 20 20) on one it can't, a lighter blue (3c 69 dc) while
   it's being picked up. The gate panels' ring is the same widget: 48 units, where it was 60.
+  * It sits on the point the tracker keeps for its target (its +0x1c from FUN_000bf2f0):
+    FUN_0015a480's, the target model's hardpoint h_10f81d34 if it has one (a gate panel's button:
+    play.rs `PANEL_BUTTON`), else the target's position. None of the 59 weapon types' models or
+    their parts has that hardpoint, so on a gun it's the gun's position, the middle of its model
+    (the L-Shot-50's bounding centre h_e99750a9 is 1 cm from it). The reach and the line of sight
+    are measured from FUN_0015a500's point, h_ee389721 or the position: the same for a gun.
+  * It's projected through the view the frame draws (the camera's Transform as the cameras have
+    just set it), not the GlobalTransform, which is the last frame's until PostUpdate: the ring
+    was a frame behind its target whenever the view moved (#17's review). The camera shake
+    (play_shake.rs) is added after and isn't followed.
 * **The hold**: X (E) held 0.3 s on the target (the player controller's +0x50, 0x1332a0 ->
   FUN_000a9710), once per press. On a gun the character can't take the press only grumbles: its
   chatter line f2ce8278, one time in ten.
@@ -222,6 +245,14 @@ and `todo/DNA + Weapon Pickups.mp4`.
   stack full nothing goes and the line reads "Sonic Ammo (full)" in red (a0 20 20), every frame
   it's walked over (the DNA video's "Bio Ammo (full)" and "2x Sonic Ammo"). In #61 and #52's
   takes nobody alive used the dropped guns' ammo: no line, as in the demo.
+  * The guns that count are what each member's slots hold now (FUN_00122ed0 through
+    FUN_0014dc50, which gives the hand holder for the slot in hand): between a release and its
+    grab that slot holds nothing (`HeldWeapon::empty`), so the gun just dropped doesn't count by
+    itself (no "(full)" line over it every frame with its stack full).
+  * It runs before the clips' events: on a grab's frame the lying gun is still there for it, but
+    the new gun's ammo type wasn't counted yet; a gun a pickup has grabbed is gone for it (#17's
+    review: the other way round, the grab's own gun was walked over the frame it was taken, its
+    rounds into the reserve a second time, "6 / 16" for "6 / 10").
 * **The AI never swaps guns**: no goal of the game's picks one up (leads §9).
 * **Not done, or not the game's yet:**
   * where a dropped gun lands: it falls from the hand with a small spin (the demo's; the game's
@@ -236,6 +267,10 @@ and `todo/DNA + Weapon Pickups.mp4`.
   * the game's slot left empty by a use cut short after the release: the demo takes the gun at
     once instead; a character with fewer than two guns doesn't pick into the empty slot;
   * BEFORE_USE_OBJECT (18) at the use's phase 2 isn't sent (nothing the levels have listens);
+  * the times against the takes (the tester's measures, #17's review): the demo's release and
+    grab come 0.1-0.2 s early, and Brutus's switch before his pickup (#52 take04) lasts about
+    0.2-0.3 s longer than the take's. The clip rates are the data's (`speed`; the type's rate and
+    the skill's factor, FUN_00150290's, are taken as 1), the hold the code's 0.3 s;
   * the shot list's open questions (leads §0): a part-used lying clip (the code reloads it at
     once at the grab), the hold time's edge, a swap while scoped.
 * **Test hooks:** `BF_TEST_GUN=<weapon>[,<ahead m>[,<right m>[,<rounds>]]][;...]` lays those
@@ -271,3 +306,9 @@ and `todo/DNA + Weapon Pickups.mp4`.
     of both guns with their rounds;
   * no regressions: the tutorial gate's panel (hints.md's command): its prompt, its ring (now
     48 units, zooming in), its use and the gate.
+  * after the review: #61's recreation with `BF_TEST_RESERVE=10` reads "L-Shot-50 6 / 10" from
+    the grab (Tex walks over the gun on the way in and takes its 6 into the 11mm stack, 10 -> 16,
+    "6x 11mm Ammo", since a gun in the test map's squad uses that ammo; the grab's reload takes
+    them back); the tutorial run as above, the same times and counts; m04_a (`BF_MAP=m04_a
+    BF_TEST_GOTO=-203.5,78.5,-205.4,77.6`): "Tex cannot pick up Breath Attack." and the red ring
+    on the creature weapons, as the code reads.

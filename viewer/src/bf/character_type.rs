@@ -82,7 +82,7 @@ const H_AWARD_ON_HIT: u32 = 0x0696_1311;
 const H_AWARD_TO_SQUAD: u32 = 0xF61E_CBAF;
 const H_AWARD_TO_OWN: u32 = 0x199F_F965;
 const H_AWARD_KIND: u32 = 0xE925_F48B;
-/// `<limit-weapon h_fb08d4c6>` (name not recovered; the parser 0x190030 puts it at the parse
+/// `<limit-weapon h_fb08d4c6>` (name not recovered; the parser FUN_00190030 puts it at the parse
 /// record's +0x374): the type's pickup mode, `CharacterType::pickup_mode`.
 const H_PICKUP_MODE: u32 = 0xFB08_D4C6;
 
@@ -182,7 +182,7 @@ pub struct CharacterType {
     /// `<limit-weapon one two>`: the weapon class each slot holds (the first number; -1 none)
     pub weapon_classes: [i64; 2],
     /// `<limit-weapon one="a b" two="c d">` whole: the weapon classes (WTYPE_: 0 pistol, 1 rifle,
-    /// 2 cannon; 8 none) each slot's holder takes (#17). The parser 0x190030 puts `one` in the
+    /// 2 cannon; 8 none) each slot's holder takes (#17). The parser FUN_00190030 puts `one` in the
     /// parse record's +0x4c list and `two` in +0x50; the holders' tables (front+0x34 and +0x78,
     /// one byte per class, all set by the front's constructor 0x14c5d0) are narrowed to them (the
     /// copy isn't located: inferred from the takes' refusals). The squad's (objecttypes-common):
@@ -364,7 +364,7 @@ pub struct Overlay {
     pub script: String,
     /// prefix-type: 0 the script is the whole name, else "Sc_" + stance + script
     pub prefix: i64,
-    /// `speed` (h_113d3e3c, the overlay parser 0x1958f0 puts it at the parse record's +0x28;
+    /// `speed` (h_113d3e3c, the overlay parser FUN_001958f0 puts it at the parse record's +0x28;
     /// FUN_001314c0 copies it to the runtime record's +0x44): the clip's playback rate, which
     /// FUN_00150290 multiplies by the type's rate (+0x29c) and the skill's (its +0xd0) as the
     /// overlay starts. 1 on every overlay of the squad's sets but the weapon pickups (Tex's 1.1,
