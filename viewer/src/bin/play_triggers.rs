@@ -1115,7 +1115,7 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         };
         let placement = placement_of(game, o).cloned();
         let feet = on_ground(point);
-        let mut m = Player::new((0..SQUAD).find(|&c| squad_type(c) == kind).unwrap_or(OTHER));
+        let mut m = Player::new(squad_of(kind));
         m.kind = kind;
         m.position = feet - Vec3::Y * GROUND;
         m.prev_xz = feet.xz();

@@ -54,6 +54,9 @@
 //!  - P: the scenery menu (play_testscenery.rs, #185): any level's buildings and static scenery,
 //!    with the object menu's see-through copy, turn and air placement, drawn as its level draws
 //!    it and joining the map's collision.
+//!  - T: the squad menu (play_testsquad.rs, #302): any character type the NPC menu offers in
+//!    each of the squad's four slots (real squad members, not NPCs), or a slot emptied; the
+//!    controlled character's own type changed in place.
 //!  - F5: the map editor's edit mode (play_editor.rs, #191): the squad leaves the world and the
 //!    camera flies free (the right mouse button held looks), the tools acting at the mouse
 //!    pointer; F5 again plays from where the pointer is. The menus' keys are the editor's tool
@@ -74,7 +77,8 @@ use bf_viewer::level_scene::Placed;
 pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a free camera, the tools at the mouse pointer; F5 again plays from there)\n\
                         F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
-                        P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level";
+                        P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level\n\
+                        T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty)";
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
 pub const ENEMY_TEAM: u8 = 1;
@@ -182,7 +186,8 @@ impl FreeCam {
     }
 }
 
-/// Which menu is open (Sky, Music, Levels: play_testworld.rs; Scenery: play_testscenery.rs).
+/// Which menu is open (Sky, Music, Levels: play_testworld.rs; Scenery: play_testscenery.rs;
+/// Squad: play_testsquad.rs).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(super) enum Panel {
     #[default]
@@ -193,6 +198,7 @@ pub(super) enum Panel {
     Music,
     Levels,
     Scenery,
+    Squad,
 }
 
 /// The player's aim and crouch, and whether the mouse was captured, before `read_input` (the free
@@ -353,6 +359,11 @@ pub(super) enum Hook {
     /// the edit mode's mouse pointer put at this place of the window (0..1 across and down
     /// from the top left), as if the mouse were there
     Pointer(Vec2),
+    /// T: the squad menu (play_testsquad.rs, #302)
+    SquadMenu,
+    /// the squad menu's Enter or Delete: squad slot `slot` (as the hook names it:
+    /// play_testsquad.rs `slot_named`) to the type `kind` names (`npc_kind`), None: emptied
+    SquadSlot { slot: String, kind: Option<String> },
 }
 
 impl std::fmt::Debug for FreeCam {
@@ -432,6 +443,11 @@ impl std::fmt::Debug for FreeCam {
 ///    Shift+F5, from the map's start). BF_TEST_POINTER=<s>,<x>,<y>: the edit mode's pointer at
 ///    that place of the window (0..1 across and down from the top left), as if the mouse were
 ///    there. In edit mode BF_TEST_FREECAM's pose moves the edit camera.
+///  - BF_TEST_SQUAD_MENU=<s>: T (the squad menu opens, play_testsquad.rs, #302).
+///    BF_TEST_SQUAD_SLOT=<s>,<slot>,<type|empty>[;...]: the squad menu's Enter or Delete: that
+///    squad slot (0-3 or brutus / flint / hawk / tex: its place, as BF_TEST_SELECT names it; `me`
+///    the controlled character's) gets that type (as BF_TEST_NPC names one) or is emptied; the
+///    controlled character's slot changes its type.
 ///
 /// Every hook but BF_TEST_LEVEL acts on one map of the session only (a switch would otherwise
 /// replay them on each map): the first, or the n-th with BF_TEST_ON_MAP=<n> (the tools on a map
@@ -492,7 +508,7 @@ pub(super) fn reset(mut tools: ResMut<Tools>, mut script: ResMut<Script>, mut hi
 /// The character type a hook or the menu names: a squad slot's (0-3) or any loaded type by name
 /// (`Game::find_character_type`: brutus, mp_brutus, a display name, `name@archive` or
 /// `name@library`, h_xxxxxxxx).
-fn npc_kind(game: &Game, s: &str) -> Option<u32> {
+pub(super) fn npc_kind(game: &Game, s: &str) -> Option<u32> {
     let s = s.trim();
     s.parse::<usize>().ok().filter(|&i| i < SQUAD).map(squad_type).or_else(|| game.find_character_type(s))
 }
@@ -502,11 +518,6 @@ fn npc_kind(game: &Game, s: &str) -> Option<u32> {
 fn npc_placement(game: &Game, s: &str) -> Option<bf_viewer::bf::character_type::Placement> {
     let k = s.trim().strip_prefix("h_").and_then(|x| u32::from_str_radix(x, 16).ok())?;
     game.placements.iter().find(|p| p.name == k && game.character_type(p.kind).is_some()).cloned()
-}
-
-/// The squad slot of character type `kind`: the squad member's whose type it is, else OTHER.
-fn slot_of(kind: u32) -> usize {
-    (0..SQUAD).find(|&c| squad_type(c) == kind).unwrap_or(OTHER)
 }
 
 /// `n`, `aim` or `all`.
@@ -649,6 +660,13 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     }
     for e in entries("BF_TEST_MUSIC") {
         add(num(&e, 0), e.get(1).map(|l| Hook::Music(l.clone())));
+    }
+    for e in entries("BF_TEST_SQUAD_MENU") {
+        add(num(&e, 0), Some(Hook::SquadMenu));
+    }
+    for e in entries("BF_TEST_SQUAD_SLOT") {
+        let kind = e.get(2).map(|k| (!k.eq_ignore_ascii_case("empty")).then(|| k.clone()));
+        add(num(&e, 0), e.get(1).zip(kind).map(|(slot, kind)| Hook::SquadSlot { slot: slot.clone(), kind }));
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
@@ -832,7 +850,7 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
                 tools.freecam = None;
                 status.message = Some((format!("Teleported to {:.1}, {:.1}", to.x, to.z), MESSAGE_TIME));
                 if std::env::var("BF_TOOLS_LOG").is_ok() {
-                    println!("t {:.2}: teleported {} to {to:.2}", player.sim_time, CHARACTERS[player.character]);
+                    println!("t {:.2}: teleported {} to {to:.2}", player.sim_time, unit_name(&player));
                 }
             }
             None => status.message = Some(("Nothing under the crosshair".into(), MESSAGE_TIME)),
@@ -842,15 +860,15 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
 
 /// The NPC menu's entries (label, character type), built once a map's data is in (`npc_list`).
 #[derive(Resource, Default)]
-pub(super) struct NpcList(Vec<(String, u32)>);
+pub(super) struct NpcList(pub(super) Vec<(String, u32)>);
 
 /// The character types the NPC menu offers (#128): the squad's four by name (each its slot's
 /// type), then every other type the loaded archives define whose model is loaded, by display
 /// name with where it's defined and its HP (41 militia definitions share 7 names: those tell
 /// them apart), and its key when two still read the same (as the object menu's entries).
-fn npc_list(game: &Game) -> Vec<(String, u32)> {
+pub(super) fn npc_list(game: &Game) -> Vec<(String, u32)> {
     let mut out: Vec<(String, u32)> = (0..SQUAD).map(|c| (title(CHARACTERS[c]), squad_type(c))).collect();
-    let mut others: Vec<(String, u32)> = game.character_type_order.iter().copied().filter(|&k| slot_of(k) == OTHER).filter_map(|k| {
+    let mut others: Vec<(String, u32)> = game.character_type_order.iter().copied().filter(|&k| squad_of(k) == OTHER).filter_map(|k| {
         let t = game.character_type(k)?;
         game.has_model(t).then(|| (format!("{} ({}, {} hp)", game.type_label(k), t.place(), t.hitpoints), k))
     }).collect();
@@ -867,11 +885,11 @@ fn npc_list(game: &Game) -> Vec<(String, u32)> {
 
 /// An NPC's name for the menu and the messages: its squad name ("Brutus") or its type's.
 fn npc_name(game: &Game, m: &Player) -> String {
-    if m.character == OTHER { game.type_label(m.kind) } else { title(CHARACTERS[m.character]) }
+    display_name(m, game)
 }
 
 /// "brutus" -> "Brutus".
-fn title(s: &str) -> String {
+pub(super) fn title(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
@@ -921,6 +939,21 @@ fn team_of(s: &str) -> Option<u8> {
     }
 }
 
+/// The NPC menu's list, made once a map's data is in (`npc_list`): the NPC menu's and the squad
+/// menu's (play_testsquad.rs, #302), whichever wants it first. BF_TOOLS_LOG prints its entries.
+pub(super) fn fill_npc_list(npcs: &mut NpcList, game: &Game) {
+    if !npcs.0.is_empty() {
+        return;
+    }
+    npcs.0 = npc_list(game);
+    if std::env::var("BF_TOOLS_LOG").is_ok() {
+        println!("NPC menu: {} entries", npcs.0.len());
+        for (label, k) in &npcs.0 {
+            println!("  {label} (h_{k:08x})");
+        }
+    }
+}
+
 /// The NPC menu (N: its key is the tool registry's, `editor::open_tools`) and the NPC keys (J,
 /// B, Delete) and hooks: spawn, switch team or behaviour, remove. Each NPC spawned is listed in
 /// the editor's `Placements` (its team and behaviour kept up to date there), and one removed is
@@ -930,16 +963,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
             mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>, game: Res<GameData>, mut npcs: ResMut<NpcList>,
             mut placements: ResMut<super::editor::Placements>) {
-    if npcs.0.is_empty() {
-        npcs.0 = npc_list(&game.0);
-        // BF_TOOLS_LOG: the menu's entries, once a map's list is made
-        if std::env::var("BF_TOOLS_LOG").is_ok() {
-            println!("NPC menu: {} entries", npcs.0.len());
-            for (label, k) in &npcs.0 {
-                println!("  {label} (h_{k:08x})");
-            }
-        }
-    }
+    fill_npc_list(&mut npcs, &game.0);
     let types = &npcs.0;
     let open = tools.panel == Panel::Npcs;
     let mut spawns: Vec<(u32, u8, bool, bool, Option<(Vec2, Option<f32>, Option<f32>)>, Option<bf_viewer::bf::character_type::Placement>)> = vec![];
@@ -1001,7 +1025,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         tools.spawned += 1;
         let id = tools.spawned;
         // a squad type is its slot's character; any other is OTHER with its own type
-        let mut m = Player::new(slot_of(kind));
+        let mut m = Player::new(squad_of(kind));
         m.kind = kind;
         m.position = Vec3::new(ground.x, ground.y - GROUND, ground.z);
         m.prev_xz = Vec2::new(ground.x, ground.z);
@@ -1524,11 +1548,12 @@ fn spawn_panel(mut commands: Commands) {
 }
 
 /// What the panel shows: the free camera's keys, or the open menu (the sky, music and level
-/// menus' text from play_testworld.rs, the scenery menu's from play_testscenery.rs); in edit
-/// mode with no menu open, the editor's help (play_editor.rs).
+/// menus' text from play_testworld.rs, the scenery menu's from play_testscenery.rs, the squad
+/// menu's from play_testsquad.rs); in edit mode with no menu open, the editor's help
+/// (play_editor.rs).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcList>, squad: Res<Squad>, world: Res<super::testworld::WorldText>,
-              scenery: Res<super::testscenery::SceneryText>, help: Res<super::editor::EditText>,
+              scenery: Res<super::testscenery::SceneryText>, help: Res<super::editor::EditText>, slots: Res<super::testsquad::SquadText>,
               mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
     let Ok((mut text, mut node)) = panel.single_mut() else { return };
     let mut s = String::new();
@@ -1591,6 +1616,12 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
                 s += "\n";
             }
             s += &scenery.0;
+        }
+        Panel::Squad => {
+            if !s.is_empty() {
+                s += "\n";
+            }
+            s += &slots.0;
         }
         Panel::None => {}
     }

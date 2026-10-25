@@ -23,9 +23,13 @@
 //!    an "H: help" hint.
 //!  - The developer tools (play_testtools.rs): a free camera with a teleport, an NPC spawner
 //!    and an object spawner; (play_testworld.rs) a sky and a music picker and a level switch;
-//!    and (play_testscenery.rs) any level's buildings and static scenery to place. On a level
-//!    the switch went to (or `--test` with BF_MAP) everything here but the rack and the grid
-//!    holds: the tools, instant kill, X, the grenade stacks, the help panel.
+//!    (play_testscenery.rs) any level's buildings and static scenery to place; and
+//!    (play_testsquad.rs) the squad menu. On a level the switch went to (or `--test` with BF_MAP)
+//!    everything here but the rack and the grid holds: the tools, instant kill, X, the grenade
+//!    stacks, the help panel.
+//!  - The squad starts with the player's character alone (Tex, or BF_CHARACTER's), the squad
+//!    menu (T) filling the other slots with any type (#302, play_testsquad.rs `start`), and m04_a's
+//!    music plays (play_testworld.rs `TEST_MUSIC`): the product owner's choices.
 //!  - The map editor (play_editor.rs, #191): F5 switches between editing (the squad out of the
 //!    world, a free camera, the tools at the mouse pointer) and playing. `--edit` in place of
 //!    `--test` starts the session editing.
@@ -74,6 +78,15 @@ pub struct TestMap {
 /// `--edit`).
 pub fn requested() -> bool {
     std::env::args().any(|a| a == FLAG) || super::editor::requested()
+}
+
+/// Whether the map being played is the test map itself: its flat floor in a test session
+/// (`--test`, `--edit`, a level switch back to it), not a level the session has loaded (`--test
+/// BF_MAP=<level>`, the L menu), whose squad and HUD stay the main game's. There the squad starts
+/// with the player's character alone and the HUD shows only the slots held (#302,
+/// play_testsquad.rs, play_hud.rs), and dying alone respawns (`testsquad::respawn`).
+pub fn on_test_floor(test: Option<&TestMap>, current: &CurrentMap) -> bool {
+    test.is_some() && current.0 == "flat"
 }
 
 /// Every level's weapon definitions and models, on top of the first mission's (only the
@@ -163,6 +176,7 @@ pub fn plugin(app: &mut App) {
     super::testtools::plugin(app);
     super::testworld::plugin(app);
     super::testscenery::plugin(app);
+    super::testsquad::plugin(app);
     super::editor::plugin(app);
     app.init_resource::<Rack>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))
@@ -285,7 +299,9 @@ fn toggle_instant_kill(keys: Res<ButtonInput<KeyCode>>, mut test: ResMut<TestMap
 }
 
 /// X: the controlled character dies on the spot, as from any other hurt (death cry, ragdoll,
-/// the death camera, the hand-over to the next squad member).
+/// the death camera, the hand-over to the next squad member). The hurt is `enemies::lethal`, as
+/// K's instant kill: its hit points, and the stamina a stamina shield takes first, for a type with
+/// one in the player's slot (a deathmatch Shrike, #302's squad menu).
 /// (test hook: BF_TEST_SUICIDE=<s> presses it at that time)
 fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: ResMut<Player>, mut tested: Local<bool>) {
     let test = std::env::var("BF_TEST_SUICIDE").ok().and_then(|v| v.parse::<f32>().ok())
@@ -293,7 +309,7 @@ fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: Res
     if (keys.just_pressed(KeyCode::KeyX) || test) && !player.dead {
         *tested |= test;
         let (at, back) = (player.position + Vec3::Y * 1.0, Quat::from_rotation_y(player.yaw) * Vec3::Z);
-        let all = player.health;
+        let all = super::enemies::lethal(&player);
         hurt(&mut player, &game.0, all, HURT_CHATTER, back * 2.0 + Vec3::Y, at, -1);
     }
 }

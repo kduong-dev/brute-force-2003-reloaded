@@ -39,6 +39,10 @@ use super::weapon;
 /// "Shrike Soldier").
 const H_ENTRY: u32 = 0xE275_FB80;
 const H_LABEL: u32 = 0x1DD3_A49D;
+/// A character entry's HUD icons: its portrait (h_f9d94425, which FUN_00190330 puts at the parse
+/// record's +0x17c) and its dead skull (h_00c51907), as `Game::character_icons` reads them by name.
+const H_PORTRAIT: u32 = 0xF9D9_4425;
+const H_SKULL: u32 = 0x00C5_1907;
 /// The type's flag h_e78efbb2 (name not recovered; see `CharacterType::player_type`).
 const H_PLAYER_TYPE: u32 = 0xE78E_FBB2;
 /// The footstep type (h_072ab4af, an enum: the squad 1-4, the campaign Shrikes and hounds 0).
@@ -133,6 +137,18 @@ pub struct CharacterType {
     pub library: String,
     /// its display name: a string id (`<base h_1dd3a49d>`, into `Game::strings`), 0 none
     pub label: u32,
+    /// its HUD portrait (H_PORTRAIT, the parse record's +0x17c: FUN_00190330) and the skull its
+    /// place shows once it's dead (H_SKULL): texture names in common's library, 0 none. The
+    /// squad's four, some of the militia and mp_common's deathmatch types give them (those the
+    /// squad's skulls); the campaign's enemies leave them empty (#302)
+    pub portrait: u32,
+    pub skull: u32,
+    /// its camera block (`character::CameraOffsets`: the follow camera's boom and the death
+    /// camera's framing, FUN_0012eca0), None without one. The squad's are read by name too
+    /// (`Game::character_camera`); a test map squad member of another type takes its own (#302):
+    /// the deathmatch types a player's (sdm_shrike's Shrike Heavy 3.2 m at 1 degree, its Hunter
+    /// Lord 4 m at 5), the campaign's enemies 1.55 m at 10
+    pub camera: Option<super::character::CameraOffsets>,
     /// its model: the compound archetype `<base mesh-name>` (type+0xc4, FUN_00154a20)
     pub mesh: u32,
     /// motion-archetype as written ("ms_lf"), and its hash: the motion set's key in
@@ -627,6 +643,9 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
         archive: archive.to_string(),
         library: library.to_string(),
         label: name(part, H_LABEL),
+        portrait: name(e, H_PORTRAIT),
+        skull: name(e, H_SKULL),
+        camera: super::character::camera_offsets(e),
         mesh: name(part, h("mesh-name")),
         motion_archetype: motion.and_then(|v| v.as_str()).map(|s| s.trim().to_string())
             .unwrap_or_else(|| format!("h_{:08x}", motion.and_then(|v| v.as_hash()).unwrap_or(0))),
@@ -810,8 +829,9 @@ impl Game {
 
     /// The character type a test hook names (`s`, any case): its key as h_xxxxxxxx, its
     /// `<base name>` (brutus, mp_brutus), its display name (the first loaded of that name), or
-    /// `name@archive` (that archive's or that objecttypes library's: `@m09_a`, `@sdm_shrike`).
-    /// None if no loaded type matches.
+    /// `name@archive` (that archive's or that objecttypes library's: `@m09_a`, `@sdm_shrike`, or
+    /// both as the test tools' menus show them: `@mp_common/sdm_shrike`). None if no loaded type
+    /// matches.
     pub fn find_character_type(&self, s: &str) -> Option<u32> {
         let s = s.trim();
         if let Some(k) = s.strip_prefix("h_").and_then(|x| u32::from_str_radix(x, 16).ok()) {
@@ -824,10 +844,12 @@ impl Game {
             Some((l, a)) => (l.trim(), Some(a.trim())),
             None => (s, None),
         };
+        // (`@archive`, `@library`, or `@archive/library` as the test tools' menus show a type's
+        // place: `CharacterType::place`, #302)
         self.character_type_order.iter().copied().find(|k| {
             let t = &self.character_types[k];
             self.strings.get(&t.label).is_some_and(|n| n.eq_ignore_ascii_case(label))
-                && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a) || t.library.eq_ignore_ascii_case(a))
+                && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a) || t.library.eq_ignore_ascii_case(a) || t.place().eq_ignore_ascii_case(a))
         })
     }
 

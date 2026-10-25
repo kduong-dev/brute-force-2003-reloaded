@@ -28,14 +28,14 @@ themselves (NPCs, objects, scenery, sky, music, level) are [testtools.md](testto
 | wheel (no menu open) | the camera's speed: x1.25 a notch, 1.5-96 m/s (6 at first), shown in the help |
 | the mouse pointer | where the tools act: the ray through it places, spawns and picks, and the menus' see-through copies follow it. With no pointer (the cursor off the window, or `BF_BACKGROUND`) the crosshair's place, marked with a small white cross; while looking, the cross stands where the pointer was |
 | left click | the open menu's click at the pointer (place, spawn, pick); a click on the panel isn't one in the world |
-| P O N Y U L | the tools (the registry, below): scenery, objects, NPCs, sky, music, level. The key again or Esc closes the menu |
+| P O N T Y U L | the tools (the registry, below): scenery, objects, NPCs, squad (#302: its slots, which the next play makes), sky, music, level. The key again or Esc closes the menu |
 | J / B / Delete | on the NPC under the pointer: team, fight or dummy, remove (Shift+Delete: all) |
 | F5 | play from the pointer (Shift+F5: from the map's start) |
 | H | hide or show the help |
 | Esc | closes the open menu, and nothing else |
 | Backspace | twice within 2 s: leave for the front end (the map isn't kept). In play too, in a test session; the first press says so |
 
-Nothing else leaves edit mode: F, the game's keys (1-4, X, V, G, T, Tab, Z, C, M) and the
+Nothing else leaves edit mode: F, the game's keys (1-4, X, V, G, Tab, Z, C, M) and the
 clicks that teleport in play's free camera do nothing there. A cyan ring with an arrow marks
 where F5 puts the squad's leader and the way they'll face (no menu open). The tools' messages
 show on a line at the bottom (the HUD's message line is hidden with the HUD).
@@ -88,7 +88,11 @@ the key asks for the switch (`edit_input`) and the state's change makes it (`to_
   triggers spawn or place the squad (the tutorial, e40, m09_a) only the members it has come, the
   map's start being each one's spawn ([triggers.md](triggers.md), #220), in the world at once
   once the level's start has run: they don't wait for a spawn-trigger that may have fired while
-  editing (#222, [cutscenes.md](cutscenes.md)). The NPCs stay after
+  editing (#222, [cutscenes.md](cutscenes.md)). Its slots are the map's roster's (#302,
+  `testsquad::Roster`, [testtools.md](testtools.md) "The squad": the map's start squad, the test
+  map's the player's character alone, as the squad menu has changed it since, in either mode):
+  `testsquad::apply` empties the slots it leaves empty and gives each its type, the leader's
+  too, a member it adds at its formation place round the leader. The NPCs stay after
   them in `Squad`. The squad is fresh each time: full health and stamina, a full clip, the start's
   grenades (play_grenade.rs `stock_inventory`) and the reserve stocked again (play_ammo.rs
   `stock`); a weapon taken from the rack stays in its slot (it's the session's data). The mouse is
@@ -168,7 +172,7 @@ from here as it starts.
 
 Captures at 15 fps (`BF_MUTE=1 BF_BACKGROUND=1`, `BF_TOOLS_LOG=1`), frames looked at:
 
-* **Edit, play, edit** on the flat floor (`--edit BF_TEST_FREECAM=0.3,4.5,10,40,0,-30
+* **Edit, play, edit** on the flat floor (`--edit BF_TEST_FULL_SQUAD=1 BF_TEST_FREECAM=0.3,4.5,10,40,0,-30
   BF_TEST_POINTER=0.3,0.5,0.65 BF_TEST_SCENERY_PLACE="0.5,sdm_e34:4,-14,-4,0"
   BF_TEST_PLACE="0.5,supply crate,9,20,0;0.5,radiation barrel,11,20,0;0.5,medkit,2,22,0"
   BF_TEST_NPC="0.5,brutus,enemy,fight,4.5,10;0.5,flint,enemy,dummy,0,14;0.5,hawk,friend,dummy,10,12"
@@ -201,7 +205,7 @@ Captures at 15 fps (`BF_MUTE=1 BF_BACKGROUND=1`, `BF_TOOLS_LOG=1`), frames looke
   camera's pose, the flight back and up, the scenery menu, Esc closing it and edit mode staying,
   play 72 m out along the crosshair's place (the flight down covers it in 0.75 s), and back to the
   flown pose ([0.00, 7.49, 22.54]).
-* **With Hawk's Stealth** (after #123 merged; the first run's hooks, `BF_CHARACTER=2
+* **With Hawk's Stealth** (after #123 merged; the first run's hooks with `BF_TEST_FULL_SQUAD=1`, `BF_CHARACTER=2
   BF_TEST_SKILL=4.5 BF_TEST_PLAY="3;10.5" BF_TEST_EDIT=9 BF_SKILL_LOG=1`): Hawk leads, her Stealth
   comes on in play and she fades; F5 takes her and the squad out with it on; the second play brings
   her back fresh, visible, her stamina full, from the same pointer ("hawk leads at [4.50, -1.05,
@@ -213,6 +217,14 @@ Captures at 15 fps (`BF_MUTE=1 BF_BACKGROUND=1`, `BF_TOOLS_LOG=1`), frames looke
   run with the object menu open (`BF_TEST_GOTO=6,30,6,29.5 BF_TEST_FIRE=1 BF_CAMERA_PITCH=-0.12
   BF_TEST_PLACE=... BF_TEST_PLACER=0.5,medkit`, 4 s): 58 of 60 frames identical, the other two a few
   pixels of the first frames' noise.
+* **The squad menu in edit mode** (#302; `--edit BF_TEST_SQUAD_MENU=0.5
+  BF_TEST_SQUAD_SLOT="1.0,1,shrike soldier@m09_a;1.5,me,hawk;1.8,me,empty" BF_TEST_PLAY=2.5,start
+  BF_TEST_EDIT=5.0`, 110 frames): the roster alone changes ("squad slot 2 (Flint's place): Shrike
+  Soldier (m09_a, 73 hp) (h_fcec1024), was empty (the roster, for play)", the leader's slot to
+  Hawk, its emptying refused: "The leader's slot can't be emptied"); Shift+F5 plays from the map's
+  start with Hawk leading in Tex's place (her face at the top of the radar, her camera) and the
+  Shrike Soldier in Flint's ("1 more in the squad"; a "?" at its place), and F5 takes them both
+  out again.
 * Not tested in a capture: the keys and the mouse themselves (F5, Shift+F5, the right button's
   look and the cursor put back, the wheel's speed, H, Esc, Backspace's second press, a click on the
   panel): agents run with `BF_BACKGROUND`, whose mouse events are dropped and whose window has no

@@ -481,12 +481,12 @@ fn can_take(p: &Player, game: &Game, class: i64) -> bool {
 }
 
 /// The character's name for the refusal ("Tex cannot pick up Jax-iP."): its type's display name
-/// (h_1dd3a49d), else its squad slot's name, capitalised.
+/// (h_1dd3a49d), else its type's squad name, capitalised.
 fn character_name(p: &Player, game: &Game) -> String {
     if let Some(s) = game.character_types.get(&p.kind).and_then(|t| game.strings.get(&t.label)).filter(|s| !s.is_empty()) {
         return s.clone();
     }
-    let mut c = CHARACTERS[p.character % CHARACTERS.len()].chars();
+    let mut c = p.data_name().chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
