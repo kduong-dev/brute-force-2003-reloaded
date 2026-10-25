@@ -4816,7 +4816,12 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 // the knocked down die where they lie
                 u.ragdoll = Some(match u.knock.take() {
                     // (one that dies knocked down is a corpse now: no blocker holds it, #298)
-                    Some(k) => k.ragdoll.as_body(world::Body::Thing),
+                    Some(k) => {
+                        if std::env::var("BF_RAGDOLL_LOG").is_ok() {
+                            println!("ragdoll {}: died knocked down, its body a thing's now (the level's blockers let it through)", unit_name(u));
+                        }
+                        k.ragdoll.as_body(world::Body::Thing)
+                    }
                     None => {
                         let start = ragdoll::Start::Death { velocity: death_velocity(u) };
                         ragdoll::Ragdoll::new(&l.model, &u.last_world, frame, &ragdoll::parts(&game.0, u), start, floor)
@@ -5495,7 +5500,11 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: 
         u.aim = false;
         u.quote_in = None;
         u.speaking = 0.0;
-        u.knock = None;
+        // (one lying limp from a knock-down dies where it lies: its ragdoll goes on as the corpse's,
+        // a thing's body now, update_player; one already getting up starts a ragdoll from its pose)
+        if !knocked_down(u) {
+            u.knock = None;
+        }
         // (an enemy's from its type's chatter, started now: play_enemies.rs)
         if enemies::enemy(u) {
             enemies::death_cry(u, game, DEATH_CHATTER);

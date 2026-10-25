@@ -70,6 +70,10 @@ charge point here.
   (FUN_00224a90, the same gathering as the living's).
 * **Where the corpse is**: its root body (0x1271a0 writes it into the character's node after
   each step): the death camera, the blood pool and the memory chip go by it.
+* **What it meets** (#298): the terrain and the placed objects. The level's invisible blockers
+  and hinters meet a character's body alone: Ipion's pair table at 0x3c01e8 pairs PID_BLOCKER and
+  PID_HINTER with PID_CHARACTER_PHANTOM and nothing else, and a ragdoll's bodies are PID_BONE, so
+  a corpse goes through them ([maps.md](maps.md), "Only a character meets them").
 
 ## The demo's model
 
@@ -97,6 +101,14 @@ charge point here.
   surface starts 3 cm under the floor). Friction 4 and restitution 0.04 everywhere. Bodies of
   one ragdoll don't meet each other, nor the living, the loose objects or the dropped guns (spec
   S2.5); the balls meet nothing, shots included.
+* **Blockers and hinters** (#298, `Ragdoll::as_body`, `arena::Body`): a corpse's ragdoll is a
+  thing's body, which `faces_near` and the floor under it (`floor_below`) take without the
+  level's blockers and hinters, so it falls and rolls through them; a knocked-down character's is
+  a character's, which keeps them (the demo stands the character up where its pelvis lies, so it
+  mustn't end the far side of a wall the living can't cross; the game's knock-down is a clip
+  that moves the character itself). One that dies while still limp from a knock-down dies where
+  it lies: its ragdoll goes on as the corpse's (the hit's `hurt` keeps the knock for it) and
+  becomes a thing's body; one already getting up starts a new ragdoll from its pose.
 * **The hold.** A body that stood still (under 5 cm/s) holds its pose 0.2 s (`REST_WAKE`) unless
   something pushes it first: a fit with no code behind it (the game's body is simulated from the
   build), its value from the four takes' marks (below).
@@ -148,7 +160,8 @@ takes the game's inertias, damping and sleep rule as they are, and reads the are
   about the joint's -y and -z takes the child's centre) and the start; then a line a frame for
   3 s and every half second after (the root's place and speed, the fastest body and spin, the
   trunk's lowest point over the floor, the worst joint gap, the contacts, how many bodies are
-  calm and still, asleep); each shove and blast, and each shot into a body (play.rs).
+  calm and still, asleep); each shove and blast, each shot into a body, and "died knocked down"
+  when a knocked-down body becomes a corpse (play.rs).
 * `BF_RAGDOLL_DRAW=1`: every ragdoll's bodies (green surfaces, yellow balls, the root's piece red)
   and joints (blue).
 * Deaths and knocks to watch: `BF_TEST_DIE=<s>` ([play.md](play.md)), `BF_TEST_KNOCK=<s>`
@@ -211,12 +224,24 @@ than 0.3 m/s or turning faster than 1 rad/s.
   beside it, "BRUTUS" shows at 4.5 s and control passes at 5.0 s, as squad.md has them.
 * **Other skeletons**: e34's level creatures that the squad killed (25 bones, a Spine3) built 19
   bodies in 13 pieces and fell like the rest.
+* **Through a hinter** (#298, after main's 9226a99 was merged in): Tex killed on sdm_e13's outer
+  lava shore, 2.4 m up the slope from the hinter band (`--test BF_MAP=sdm_e13 BF_NO_SQUAD=1
+  BF_TEST_GOTO=98.53,-92.63,115.84,-104.52 BF_TEST_DIE=1.6`) rolls down the shore through the
+  band: her root at (103.74, -96.26) at +4.5 s and on into the lava. With her corpse's body made
+  a character's (a test edit), the same fall stops against the band at (101.68, -94.56), where
+  the #298 run's Roller was pushed out by the old rule.
+* **Died knocked down** (`--test BF_MAP=flat BF_TEST_GOTO=0,8,0,8 BF_TEST_KNOCK=1.5
+  BF_TEST_DIE=1.55`): "ragdoll tex: died knocked down, its body a thing's now", the knock's
+  ragdoll going on as the corpse's, no new build. Before (main's rule too) the hit's `hurt`
+  dropped the knock, so the corpse's ragdoll was built anew from the pose before the knock.
 * `cargo test --bin bf_play ragdoll` (11): the joint table's names, the angles' round trip, a body
   resting, sliding and spinning to a stop, a bar resting at its stop (frozen within 1.5 s), a body
   sliding along two stops (its energy falling every step, then frozen), the pendulum's period,
   rocking dying down, a chain settling, the movement check's three rules (a still body frozen at
   the second check, 0.52 s; one creeping 6 mm a check frozen by the long rule after 4 s; one
-  going 2 cm a check never).
+  going 2 cm a check never). `cargo test --lib arena` (`ragdoll_faces_leave_blockers_to_characters`):
+  a blocker's and a hinter's walls are among a knocked-down character's ragdoll faces and not a
+  corpse's; an object's box is among both.
 
 ## Not done, fits and guesses
 

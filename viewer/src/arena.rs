@@ -243,9 +243,9 @@ pub enum Body {
     /// a character's: its sweep (`move_body`, `Mover`) and the floors that stand it, the
     /// blockers' and the hinters' among them (as before: every hinter of the data is an upright
     /// band with no floor, #292); and the demo's ragdoll of one knocked down, which it stands up
-    /// where the pelvis lies (play.rs `Ragdoll::body`)
+    /// where the pelvis lies (play_ragdoll.rs `Ragdoll::as_body`, `faces_near`)
     Character,
-    /// anything else: a grenade, a corpse's ragdoll bones (PID_BONE), a pickup or a lying gun, a
+    /// anything else: a grenade, a corpse's ragdoll bodies (PID_BONE), a pickup or a lying gun, a
     /// missile, a casing, a decal laid on a surface: whatever its kind, it isn't
     /// PID_CHARACTER_PHANTOM, so no blocker meets it
     Thing,
@@ -2482,6 +2482,29 @@ mod tests {
             let held = |who| a.move_body(Vec2::new(-3.0, 0.3), Vec2::new(0.0, 0.3), 0.4, 0.0, 1.9, 0.5, None, who).x < -1.3;
             assert!(held(Mover::Ai), "{kind}");
             assert_eq!(held(Mover::Player), !hinter, "{kind}");
+        }
+    }
+
+    /// #259 with #298: the faces a ragdoll's bodies meet (`faces_near`): a corpse's (`Body::Thing`)
+    /// leaves a blocker's and a hinter's out, so its pieces pass through them, a knocked-down
+    /// character's (`Body::Character`, which stands up where it lies) keeps them; an object's box
+    /// (no blocker) is met by both.
+    #[test]
+    fn ragdoll_faces_leave_blockers_to_characters() {
+        for (blocker, hinter) in [(true, false), (true, true), (false, false)] {
+            let mut a = arena_with(&box_tris(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)), true);
+            for t in a.tris.iter_mut() {
+                t.blocker = blocker;
+                t.hinter = hinter;
+            }
+            // (a ragdoll's box round the box's -x wall)
+            let (lo, hi) = (Vec3::new(-1.5, 0.5, -0.5), Vec3::new(-0.5, 1.5, 0.5));
+            let wall = |body: Body| a.faces_near(lo, hi, body).iter().filter(|f| f.v.iter().all(|v| (v.x + 1.0).abs() < 1e-4)).count();
+            let kind = format!("blocker {blocker}, hinter {hinter}");
+            assert!(wall(Body::Character) > 0, "{kind}");
+            assert_eq!(wall(Body::Thing) > 0, !blocker, "{kind}");
+            // (the flat ground under the box is everyone's)
+            assert!(a.faces_near(lo - Vec3::Y, hi, Body::Thing).iter().any(|f| f.n.y > 0.99 && f.v[0].y == 0.0), "{kind}");
         }
     }
 
