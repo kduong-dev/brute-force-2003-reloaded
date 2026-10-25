@@ -672,6 +672,38 @@ wash is whiter and the strands thinner and crisper than the recording's (its hal
 some of the master effect's random bolts climb a few metres into the air (its emitter tumbles
 them; the recording has a few such).
 
+## Thermo (#82)
+
+"Powerful timed explosive charge. Detonates 15 seconds after armed." Defined in m09_b alone
+(h_0141ea85, its label h_e9c9f9d2 "Thermo"): `timer` 15, group-type 3 (IG_EXPLOSIVE) item 2 (it
+comes between the Sentry (3, 1) and the Roller (3, 4) in the store's order), h_1ee2f4ed 2
+(IOU_PLACE_ON_GROUND), function-type 0 (no item set of its own), stack-limit 5, mass 23, its HUD
+icon h_0ebe1a32; its explosion h_08f5cb41: Damage 19.5-97.5, damage-type 10 (EXPLOSION),
+radius 3, core true. The level places it once, as a pickup (h_e04e05e1 at (-178.4, 58.3,
+126.5), levels-m09_b.xml 938; its pickup-amount 1).
+
+* Nothing of its own to build: it goes the placed types' way (**Placing** above). G sets it down
+  at the feet with the stance's place_hi clip (the count drops at the press), its fuse runs
+  from when it's down (the grenade's contact handler 0x149510 starts it, as every type's), and
+  15 s later it goes off with its effect type's ALE effects, light and sounds, its decal, and
+  the shared blast's damage (#112).
+* Its kit is made where the level defines it: `load_kits` takes in the grenade and explosive
+  types the level puts down to pick up (its item spawns, h_1d1d4f05), so m09_b loads the Thermo
+  (`8 grenade types: Frag, Gas, Sonic, Energy, Light, Sentry, Thermo, Roller`).
+* Blocked: the pickup that hands the squad its stack (the item spawns' pickups are #17's), and
+  what m09_b's mission does with it (its objectives and triggers, the campaign). Until then the
+  squad has none but by the test hooks.
+
+Checked (`BF_GRENADE_LOG=1 BF_COMBAT_LOG=1`): on m09_b (`-- --test BF_MAP=m09_b BF_CHARACTER=3
+BF_TEST_INV=Thermo:3 BF_TEST_GRENADE_TYPE=Thermo BF_TEST_THROW=2.0,0.1`) the press at 2.0 s drops
+the count 3 -> 2, the clip lets it go at 2.53 s, it's down 0.6 m from Tex at 2.93 s and goes off at
+18.00 s (15.07 s, a 15 fps step), Tex 1.1 m from it taking his share (14.7). On the test map with
+m09_b's data (`BF_TESTMAP_LEVELS=mp_common,mp1,mp2,mp3,mp4,mp6,mp7,mp8,m02_a,m09_a,sdm_e34,m09_b`,
+the same hooks, `BF_TEST_GOTO=0,30,0,60 BF_TEST_GO_AT=100 BF_TEST_INSTANT_KILL=0`, dm Shrike
+Soldiers frozen 1.8, 3.5 and 3.9 m from where it lies): the one at 1.8 m takes 97.5 x (1 - 1.83 / 3)
+x 1.4 = 53.2 (its stamina shield 25 of it), the two beyond 3 m nothing. The item box shows its
+icon, "Thermo" and the count. No take: what it looks like going off is the data's only.
+
 Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
 * `BF_TEST_GRENADE_TYPE=<label>` (any case, e.g. `Sonic`) selects that type at the start,
   giving a stack of it if none is carried.

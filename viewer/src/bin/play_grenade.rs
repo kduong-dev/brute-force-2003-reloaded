@@ -65,8 +65,11 @@ pub(super) const GRENADE_RADIUS: f32 = 0.06;
 /// puffs from about where it came down, frag/a 600-690)
 const RESTITUTION: f32 = 0.35;
 const GROUND_FRICTION: f32 = 0.3;
-/// h_1ee2f4ed: IOU_PLACE_ON_GROUND (Roller, Sentry; the XBE's IOU_ enum)
+/// h_1ee2f4ed: IOU_PLACE_ON_GROUND (Roller, Sentry, Thermo; the XBE's IOU_ enum)
 const USE_PLACE: i64 = 2;
+/// A level's item spawn element (h_1d1d4f05: the inventory-objects it puts down to pick up, the
+/// arena's PICKUP_ITEM): `load_kits` makes a kit for the grenade and explosive types among them.
+const ITEM_SPAWN: u32 = 0x1D1D_4F05;
 /// function-type IFSET_ROLLING_BOMB (the Roller: rolls off once set down)
 const ROLLING_BOMB: i64 = 13;
 /// The Roller's speed once down (m/s; 4.4-5.0 measured, straight ahead along the thrower's
@@ -349,7 +352,7 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
              mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
              ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut held: ResMut<Held>, mut tint: ResMut<ScreenTint>,
-             mut delayed: ResMut<DelayedBlastParts>, spawns: Option<Res<super::triggers::SquadSpawns>>) {
+             mut delayed: ResMut<DelayedBlastParts>, spawns: Option<Res<super::triggers::SquadSpawns>>, map: Option<Res<MapLevel>>) {
     held.0 = None;
     tint.0 = TINT_TIME;
     delayed.0.clear();
@@ -358,7 +361,11 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
     let usable = |d: &WeaponDef| d.projectile != 0 && d.icon != 0 && !d.label.is_empty() && !d.label.starts_with("h_");
     let mut defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
     let carried = spawns.iter().flat_map(|s| s.0.iter()).flat_map(|s| s.items.iter().map(|i| i.0));
-    for n in carried {
+    // and those the level puts down to pick up (its item spawns, h_1d1d4f05: m09_b's Thermo,
+    // h_e04e05e1, the type's only placement, #82), so a picked-up stack has its kit (the pickups
+    // that hand them out are #17's)
+    let laid: Vec<u32> = map.iter().flat_map(|m| m.0.iter()).flat_map(|l| l.objects.iter()).filter(|o| o.tag == ITEM_SPAWN).map(|o| o.kind).collect();
+    for n in carried.chain(laid) {
         let other = game.0.weapons.get(&n).filter(|d| matches!(d.group_type, 2 | 3) && usable(d))
             .filter(|d| !defs.iter().any(|k| k.label.eq_ignore_ascii_case(&d.label)));
         if let Some(d) = other.cloned() {
