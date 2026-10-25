@@ -453,9 +453,20 @@ or `cargo run --bin bf_level -- <map>`). What it took:
       toward 1 by its opacity (the game's REPLACE puts 255 there outright).
     * **Not keyed yet:** the game's other keyed surfaces, which multiply by their own frame buffer
       alpha, not worked out for them: the wrappers' values on self-lit glow shells (pickups' 50,
-      the memory chip's 60: the halo and the fill play_dna.rs couldn't account for), on lit glow
-      maps (h_1df292a1, 20-210) and on the glow shader's lamps (h_0e7658e4, sdm_e13's 0); the decal
-      types' byte +0x22 (FUN_00213fc0); the Vengar view's heat figure material (0xa8c80).
+      the memory chip's 60: the halo and the fill play_dna.rs couldn't account for; the placed
+      Sentry's red tips, 50, #300, which are opaque and so drawn in the world pass, where the
+      frame buffer's alpha is 1), on lit glow maps (h_1df292a1, 20-210) and on the glow shader's
+      lamps (h_0e7658e4, sdm_e13's 0); the decal types' byte +0x22 (FUN_00213fc0); the Vengar
+      view's heat figure material (0xa8c80).
+    * **Placed objects' untextured self-lit parts** (the shader h_f539fe8c with no texture, behind
+      a wrapper) are drawn as before #289 read the wrapper's value: their colour added to the
+      picture at that value / 255 (a flat one at full strength: the medkits' crosses). The game's
+      rule (FUN_0008fd20, `level_scene::self_lit`, which the models' materials follow since #300:
+      grenades.md, Sentry) is opaque for nine of the levels' thirteen such materials (the Sentry
+      pickup's blue lights; lamps; big planes on e01, m01_a, m01_b, m02_b, mp6, mp7 and sdm_e01,
+      some 30 x 25 m, which the demo draws faint or not at all: m01_a's blue h_ff823904 has the
+      value 0) and blended by their `alpha` for the other four (common's glass shells). Not
+      applied to the placed objects: no take shows those planes yet.
     * Test hooks: `BF_GLARE=0` adds nothing (the passes run with no weight), to compare;
       `BF_GLARE_DEBUG=1` shows the keys in place of the picture (grey: a key; white: none), `=2` the
       blur alone. bf_level draws the glare too.

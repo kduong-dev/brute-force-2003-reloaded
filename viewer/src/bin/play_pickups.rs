@@ -405,7 +405,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
                 + deep * (row as f32 - (rows as f32 - 1.0) / 2.0) * step.y;
             let pickup = &mut pickups.list[kits[i]];
             let (x, z) = (c.x + off.x, c.z + off.z);
-            let y = pickup.at.y - floor_y(pickup.at.x, pickup.at.z, pickup.at.y + 0.5) + floor_y(x, z, pickup.at.y + 0.5);
+            let y = pickup.at.y - floor_y(pickup.at.x, pickup.at.z, pickup.at.y + 0.5, world::Body::Thing) + floor_y(x, z, pickup.at.y + 0.5, world::Body::Thing);
             pickup.at = Vec3::new(x, y, z);
             if let Ok((_, _, mut t, _)) = placed.get_mut(pickup.entity) {
                 t.translation = pickup.at;
@@ -420,7 +420,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
         if p.tag != h("inventory-object") || game.0.idle_effects.contains_key(&p.kind) {
             continue;
         }
-        let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5);
+        let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5, world::Body::Thing);
         let mut body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: (t.translation.y - ground).max(0.0), moving: drop_in, kicked: 0.0,
                               rest: None, corners: local_points(e, &children, &parts, &meshes, t.scale), quiet: 0.0 };
         if drop_in {
@@ -787,8 +787,8 @@ fn hold_medkit(mut commands: Commands, player: Res<Player>, mut used: ResMut<Use
 fn ground_up(at: Vec3) -> Vec3 {
     let e = 0.15;
     let top = at.y + 0.5;
-    let dx = floor_y(at.x + e, at.z, top) - floor_y(at.x - e, at.z, top);
-    let dz = floor_y(at.x, at.z + e, top) - floor_y(at.x, at.z - e, top);
+    let dx = floor_y(at.x + e, at.z, top, world::Body::Thing) - floor_y(at.x - e, at.z, top, world::Body::Thing);
+    let dz = floor_y(at.x, at.z + e, top, world::Body::Thing) - floor_y(at.x, at.z - e, top, world::Body::Thing);
     let n = Vec3::new(-dx / (2.0 * e), 1.0, -dz / (2.0 * e)).normalize();
     if n.angle_between(Vec3::Y) > MAX_TILT { Vec3::Y } else { n }
 }
@@ -818,7 +818,7 @@ fn balanced(b: &Body, tr: &Transform) -> Option<Vec3> {
     let (lo, hi) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(l, u), v| (l.min(*v), u.max(*v)));
     let middle = tr.transform_point((lo + hi) * 0.5);
     let world: Vec<Vec3> = points.iter().map(|p| tr.transform_point(*p)).collect();
-    let height = |p: &Vec3| p.y - floor_y(p.x, p.z, p.y + 0.5);
+    let height = |p: &Vec3| p.y - floor_y(p.x, p.z, p.y + 0.5, world::Body::Thing);
     let low = world.iter().map(height).fold(f32::MAX, f32::min);
     let touching: Vec<Vec2> = world.iter().filter(|p| height(p) < low + CONTACT_GAP).map(|p| p.xz()).collect();
     let n = touching.len() as f32;
@@ -879,7 +879,7 @@ fn rigid_step(b: &mut Body, tr: &mut Transform, dt: f32) -> bool {
         for c in &corners {
             let r = rot * (*c - centre);
             let p = com + r;
-            let depth = floor_y(p.x, p.z, p.y + 0.5) - p.y;
+            let depth = floor_y(p.x, p.z, p.y + 0.5, world::Body::Thing) - p.y;
             if depth <= 0.0 {
                 continue;
             }
@@ -1020,7 +1020,7 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
             if let Some(rest) = b.rest {
                 tr.rotation = tr.rotation.slerp(rest, (1.0 - (-SETTLE_TURN * dt).exp()).min(1.0));
                 // (still on the ground as it turns)
-                tr.translation.y = floor_y(at.x, at.z, at.y + 0.3) + b.contact(tr.rotation);
+                tr.translation.y = floor_y(at.x, at.z, at.y + 0.3, world::Body::Thing) + b.contact(tr.rotation);
                 if tr.rotation.angle_between(rest) < 0.01 {
                     tr.rotation = rest;
                     b.rest = None;
@@ -1096,7 +1096,7 @@ fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut
     }
     for (e, p, mut t, drop_in, copy) in &mut placed {
         commands.entity(e).remove::<LatePickup>();
-        let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5);
+        let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5, world::Body::Thing);
         let body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: 0.0, moving: drop_in, kicked: 0.0,
                           rest: None, corners: local_points(e, &children, &parts, &meshes, t.scale), quiet: 0.0 };
         if !drop_in {

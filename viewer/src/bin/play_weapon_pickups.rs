@@ -322,7 +322,7 @@ fn find_guns(mut commands: Commands, mut guns: ResMut<Guns>, mut game: ResMut<Ga
         }
         let Some(def) = game.0.weapons.get(&p.kind) else { continue };
         commands.entity(e).insert(LyingGun { kind: p.kind, clip: def.ammo, name: p.name });
-        let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 1.0);
+        let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 1.0, world::Body::Thing);
         let low = lowest(e, t.rotation, &children, &parts, &meshes);
         if let Some(low) = low.filter(|l| t.translation.y + l < ground) {
             t.translation.y = ground - low;
@@ -348,7 +348,7 @@ fn find_guns(mut commands: Commands, mut guns: ResMut<Guns>, mut game: ResMut<Ga
         let clip = nums.get(2).map_or(def.ammo, |&n| n as i64);
         let (fwd, side) = (Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos()), Vec3::new(player.yaw.cos(), 0.0, -player.yaw.sin()));
         let feet = player.position + Vec3::Y * GROUND + fwd * ahead + side * right;
-        let at = Vec3::new(feet.x, floor_y(feet.x, feet.z, feet.y + 1.0) + TEST_DROP, feet.z);
+        let at = Vec3::new(feet.x, floor_y(feet.x, feet.z, feet.y + 1.0, world::Body::Thing) + TEST_DROP, feet.z);
         // (lying across the way ahead, a little tipped and turned apart from each other)
         let turn = Quat::from_rotation_y(player.yaw + 1.3 + 0.7 * k as f32) * Quat::from_rotation_z(1.4);
         let Some(e) = gun_model(&mut commands, &mut game.0, &mut assets, &def, Transform::from_translation(at).with_rotation(turn)) else { continue };

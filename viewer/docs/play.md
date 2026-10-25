@@ -128,7 +128,7 @@ game. For whoever you control, health also shows in the top-left bar. Grenade bl
 off to nothing at its radius; the thrower takes a flat share, see **Grenades**) and the hurt give a pain grunt (chatter e856009f). Friendly
 fire: your shots hit squadmates in the way (the weapon's damage, x0.7 on your own side, by the hit part struck and the difficulty: see **Damage**; they say "I'm hit" or "Careful!"
 / "Stop shooting at me!"), and the crosshair turns green while its centre is on one (see **The crosshair's colours**). At 0 health a
-character dies: death cry (chatter e1213623, `DEATH_CHATTER`: the game's CBT_DEAD handler FUN_00115f90 says it through FUN_00125f40 (0x125fb4) and the chatter gate (FUN_00140a60, 0x125fc9), or ed35ffae when the dying character's movement state +0x1f0 is 4, the state a landing leaves, FUN_0012b740: a death from a fall, inferred; the demo always says e1213623), the body goes limp as the game's ragdoll ([ragdoll.md](ragdoll.md), #259: a rigid body for each hit part and a small ball for each of their ancestors, joined with the game's joint limits, its masses, damping and 66 Hz step, every other bone, the face's among them, carried as it was at death; a body that stood still holds its pose 0.2 s (a fit), one that moved falls at once; a shot or a blast on a body moves it, and it bleeds where it's hit; `BF_TEST_DIE=<s>` drops the player dead at that time, once; `BF_TEST_DIE=1` at 1 s). Both their guns drop, the one in hand and the one on their back (the ragdoll's start drops whatever both slots hold, FUN_0014dfd0): each falls from where it was, thrown by half of what killed them plus a 1.5 m/s hop, and tumbles as a loose object (see "Pickups are loose"), then lies as a weapon pickup with the rounds it had (pickups.md "Weapon pickups", #17). Then the portrait greys out and the blip leaves
+character dies: death cry (chatter e1213623, `DEATH_CHATTER`: the game's CBT_DEAD handler FUN_00115f90 says it through FUN_00125f40 (0x125fb4) and the chatter gate (FUN_00140a60, 0x125fc9), or ed35ffae when the dying character's movement state +0x1f0 is 4, the state a landing leaves, FUN_0012b740: a death from a fall, inferred; the demo always says e1213623), the body goes limp as the game's ragdoll ([ragdoll.md](ragdoll.md), #259: a rigid body for each hit part and a small ball for each of their ancestors, joined with the game's joint limits, its masses, damping and 66 Hz step, every other bone, the face's among them, carried as it was at death; the level's invisible blockers and hinters don't hold a corpse: only a character's body meets them, so a knocked-down one, which stands up where its ragdoll lies, keeps them, #298; a body that stood still holds its pose 0.2 s (a fit), one that moved falls at once; a shot or a blast on a body moves it, and it bleeds where it's hit; `BF_TEST_DIE=<s>` drops the player dead at that time, once; `BF_TEST_DIE=1` at 1 s). Both their guns drop, the one in hand and the one on their back (the ragdoll's start drops whatever both slots hold, FUN_0014dfd0): each falls from where it was, thrown by half of what killed them plus a 1.5 m/s hop, and tumbles as a loose object (see "Pickups are loose"), then lies as a weapon pickup with the rounds it had (pickups.md "Weapon pickups", #17). Then the portrait greys out and the blip leaves
 the radar; if you die, the death camera circles your body and control passes to the next
 living member after 4 s (see **Death camera** below; `BF_TEST_KILL=<character>` makes the
 player shoot that member). The inventory is shared: the
@@ -1077,7 +1077,13 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   bio guns' green h_1ce6db03) laid on the
   surface it met: the map's collision triangle (`Arena::ray_normal`) or, on the flat test floor,
   the ground or a pillar's side. Up to 160 stay (a guess). A bolt's hole comes with its hit, on
-  its sweep (**Bolts and their hits** below).
+  its sweep (**Bolts and their hits** below). An instant shot, as a bolt's sweep and a missile,
+  passes through the level's invisible blockers and hinters to what's behind them (#298: the
+  weapons' filter, PID mask 0xfffffff8, leaves them out; maps.md, "Blockers and hinters"), and a
+  breakable object's own blocker no longer takes the hit meant for the object. A hole on a
+  breakable object goes with it when it breaks (#301: scenery.md, "Breaking"), the hole of the
+  shot that breaks it too: the shot finds the object with its hit (`Shot::breakable`), as the
+  game's hit record holds it.
 * **Muzzle effects**. The weapon's h_fd88830d effect type plays at its muzzle hardpoint once a
   frame in which it fired (the MK's orange flash and grey smoke); it replaces the plain flash
   quad on guns that have one. It takes the hardpoint's own frame (#73): FUN_00232060 attaches
@@ -2137,7 +2143,9 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   along the shot after the accuracy turn (accuracy 90 throughout: +-0.33 degrees) and flies
   **straight**: with h_07cdf040 and h_f69b7d4c false nothing steers it to a target or an aim
   point, so FUN_002266d0 steers it along its own velocity (flag 4) and holds it at 60 m/s, and
-  with `<mirv>` count and mode 0 it never splits. It goes off where it strikes the world, a body
+  with `<mirv>` count and mode 0 it never splits. It goes off where it strikes the world (not the
+  level's invisible blockers and hinters, which Ipion's pair table keeps off every body but a
+  character's: #298), a body
   or an object (a body struck takes a roll of 27-37 first), at its proximity fuse (Damage radius 9
   x 0.375 = 3.375 m), or where it is when its life runs out (range / speed = 200 / 60 = 3.33 s;
   h_f0a56297 0, so no second timer; h_0976a9dc). Its blast is 9 m: half a roll flat to every

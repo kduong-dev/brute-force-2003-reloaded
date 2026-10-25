@@ -452,7 +452,7 @@ fn scenery_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, mut pla
         let at = match p.at {
             Where::Spot(s) => s,
             Where::At(xz, up) => {
-                let below = Vec3::new(xz.x, floor_y(xz.x, xz.y, player.position.y + GROUND + FLOOR_FROM), xz.y);
+                let below = Vec3::new(xz.x, floor_y(xz.x, xz.y, player.position.y + GROUND + FLOOR_FROM, world::Body::Character), xz.y);
                 if up > super::testtools::AIR_MIN_HEIGHT { Spot::Air { at: below + Vec3::Y * up, below } } else { Spot::Ground(below) }
             }
         };

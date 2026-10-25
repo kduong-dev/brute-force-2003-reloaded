@@ -464,7 +464,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
     if test && player.sim_time >= *next_test && !kits.0.is_empty() {
         *next_test = player.sim_time + 1.5;
         let (x, z) = (player.position.x, player.position.z - 6.0);
-        throws.push(Thrown { pos: Vec3::new(x, floor_y(x, z, player.position.y + GROUND + 1.0) + GRENADE_RADIUS, z), velocity: Vec3::ZERO,
+        throws.push(Thrown { pos: Vec3::new(x, floor_y(x, z, player.position.y + GROUND + 1.0, world::Body::Thing) + GRENADE_RADIUS, z), velocity: Vec3::ZERO,
                              kind: selected.min(kits.0.len() - 1), landed: true });
     }
     for t in throws {
@@ -489,7 +489,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
         let fuse = if t.landed { 0.0 } else { kit.def.fuse.max(0.0) };
         if std::env::var("BF_GRENADE_LOG").is_ok() && !t.landed {
             let v = t.velocity;
-            let feet = floor_y(player.position.x, player.position.z, player.position.y + GROUND + 1.0);
+            let feet = floor_y(player.position.x, player.position.z, player.position.y + GROUND + 1.0, world::Body::Character);
             println!("t {:.2}: {} leaves the hand {:.2} m over the floor at the thrower's feet at {:.1} m/s, {:.1} degrees up (mass {:.1})", player.sim_time,
                      kit.def.label, t.pos.y - feet, v.length(), v.y.atan2(Vec2::new(v.x, v.z).length()).to_degrees(), kit.def.mass);
         }
@@ -658,7 +658,7 @@ fn fly_grenades(
                                                         label: kit.def.label.clone(), flat: false });
             // the Energy's damage comes with its bolts (play_energy.rs)
             if super::energy::releases_bolts(kit) {
-                bolts.0.push((g.kind, Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z), g.thrower));
+                bolts.0.push((g.kind, Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5, world::Body::Thing), at.z), g.thrower));
                 continue;
             }
             // the Sonic's comes with its ring (play_sonic.rs)
@@ -672,7 +672,7 @@ fn fly_grenades(
         g.velocity.y -= GRENADE_GRAVITY * dt;
         let speed = g.velocity.length();
         let mut pos = tr.translation + g.velocity * dt;
-        let floor = floor_y(pos.x, pos.z, tr.translation.y) + GRENADE_RADIUS;
+        let floor = floor_y(pos.x, pos.z, tr.translation.y, world::Body::Thing) + GRENADE_RADIUS;
         let mut hit = false;
         if pos.y < floor {
             pos.y = floor;
@@ -736,7 +736,7 @@ fn fly_grenades(
         // the map's objects: push out and bounce off
         if let Some(a) = world::arena() {
             let at = Vec2::new(pos.x, pos.z);
-            let q = a.push_out(at, GRENADE_RADIUS, pos.y - GRENADE_RADIUS, pos.y + GRENADE_RADIUS, 0.0);
+            let q = a.push_out(at, GRENADE_RADIUS, pos.y - GRENADE_RADIUS, pos.y + GRENADE_RADIUS, 0.0, world::Body::Thing);
             if q != at {
                 hit = true;
                 let n = (q - at).normalize_or_zero();
@@ -845,7 +845,7 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
 #[allow(clippy::too_many_arguments)]
 fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
          materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedBlastParts) -> f32 {
-    let ground = Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5), at.z);
+    let ground = Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5, world::Body::Thing), at.z);
     let mut burn: f32 = 0.0;
     if let Some(ale) = ale {
         for &effect in kit.blast_fx.effects.iter().chain([&kit.blast_fx.light]).filter(|&&e| e != 0) {

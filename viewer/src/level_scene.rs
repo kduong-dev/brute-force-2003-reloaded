@@ -839,7 +839,72 @@ const GLOW_TEXTURE: u32 = 0xE01B_AA40;
 /// button (h_f87dca06: glow 0.276 0.914 0.220) is one.
 const TINTED_GLOW_SHADER: u32 = 0x1DF2_92A1;
 /// Untextured glow material (pickups' glass shells): a colour constant and the wrapper's opacity.
+/// The self-lit shader (`self_lit`).
 pub const GLOW_SHELL: u32 = 0xF539_FE8C;
+/// The self-lit shader's constants that its render-state setup FUN_0008fd20 blends it by (its
+/// name table 0x8fa50 gives their places): `blend-mode` h_0f5ae13f (+0x80: 1 adds the colour,
+/// ONE / ONE), h_17aba73c (+0x6d: set, it's blended by its `alpha`), h_1a08f318 (+0x6e: set, it
+/// isn't), h_18954f8d (+0x6c: set, both faces are drawn) and `alpha` (+0x7c). Every untextured
+/// self-lit material of the 53 levels names all five.
+const SELF_LIT_BLEND_MODE: u32 = 0x0F5A_E13F;
+const SELF_LIT_BLENDED: u32 = 0x17AB_A73C;
+const SELF_LIT_UNBLENDED: u32 = 0x1A08_F318;
+const SELF_LIT_TWO_SIDED: u32 = 0x1895_4F8D;
+
+/// How the game blends an untextured self-lit material (`self_lit`, FUN_0008fd20).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SelfLitBlend {
+    /// drawn as it is, z written: `blend-mode` not 1 with h_17aba73c clear and `alpha` 1 (nine of
+    /// the levels' thirteen: the Sentry's lights, the medkits' crosses, lamps), or with h_1a08f318
+    /// set
+    Opaque,
+    /// SRCALPHA / INVSRCALPHA by its `alpha`, without z-writes (the other four: common's glass
+    /// shells, `alpha` 0.24 and 0.82)
+    Alpha(f32),
+    /// added, ONE / ONE (`blend-mode` 1: none untextured in the data)
+    Add,
+}
+
+/// An untextured self-lit material as the game draws it (`self_lit`, #300).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelfLit {
+    /// its h_e01baa40 constant, as stored (sRGB): the colour drawn (see `self_lit`)
+    pub colour: [f32; 3],
+    pub blend: SelfLitBlend,
+    /// both faces drawn (h_18954f8d)
+    pub two_sided: bool,
+    /// the glare key its wrapper's stencil value gives (`glare_key`): 50 / 255 on the Sentry's and
+    /// the Sentry pickup's lights
+    pub key: f32,
+}
+
+/// Material `id` as the game draws it, if it's an untextured self-lit one (GLOW_SHELL with no
+/// h_e01baa40 texture, behind its wrapper): its render-state setup FUN_0008fd20 binds the default
+/// white texture for a texture it hasn't (FUN_00062280) and pixel shader 0, texture x c0, so it's
+/// its h_e01baa40 colour lit by nothing, blended by its constants (`SelfLitBlend`). The placed
+/// Sentry's tips (h_0a08f6b5 -> h_f9761b6c: 0.757 0 0, the tutorial's takes 20 and 21 show them
+/// saturated red) and the Sentry pickup's (h_031724e6 -> h_0ed4a3dd: 0.098 0.342 0.829) are
+/// `blend-mode` 2, h_17aba73c 0, `alpha` 1: opaque, at full strength.
+pub fn self_lit(game: &Game, id: u32) -> Option<SelfLit> {
+    if game.material_texture(id).is_some() || game.material_type(id) != GLOW_SHELL {
+        return None;
+    }
+    let num = |param: u32, or: f32| game.material_constant(id, param).and_then(|v| v.first().copied()).unwrap_or(or);
+    let colour = game.material_constant(id, GLOW_TEXTURE).filter(|c| c.len() >= 3).map_or(GLOW_SHELL_DEFAULT, |c| [c[0], c[1], c[2]]);
+    let alpha = num(h("alpha"), 1.0);
+    let blend = if num(SELF_LIT_BLEND_MODE, 0.0) == 1.0 {
+        SelfLitBlend::Add
+    } else if (num(SELF_LIT_BLENDED, 0.0) == 0.0 && alpha >= 1.0) || num(SELF_LIT_UNBLENDED, 0.0) != 0.0 {
+        SelfLitBlend::Opaque
+    } else {
+        SelfLitBlend::Alpha(alpha)
+    };
+    Some(SelfLit { colour, blend, two_sided: num(SELF_LIT_TWO_SIDED, 0.0) != 0.0, key: glare_key(game, id) })
+}
+
+/// The colour of a self-lit material that names none (the demo's: a pale blue, as level_scene
+/// drew one before #300; none of the data's lacks it).
+const GLOW_SHELL_DEFAULT: [f32; 3] = [0.1, 0.35, 0.8];
 /// A flat untextured glow (the medkit's cross, h_031724e6: a 12-vertex quad on the case's top,
 /// wrapper opacity 50) isn't a see-through shell: it's drawn at full strength, as in
 /// todo/medkits glow.png where the crosses are bright blue. Flat: thinner than this (m).
@@ -1261,11 +1326,13 @@ fn material(game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<
     let mut mat = StandardMaterial { base_color: Color::srgb(0.6, 0.6, 0.6), perceptual_roughness: 0.9, reflectance: 0.2,
                                      unlit, fog_enabled: !unlit, ..default() };
     // untextured glow shells (pickups' glass): their glow colour, see-through by the wrapper's
-    // opacity, added to the picture
-    if game.material_texture(id).is_none() && game.material_type(id) == GLOW_SHELL {
-        let c = game.material_constant(id, 0xE01B_AA40).filter(|c| c.len() >= 3).map_or([0.1, 0.35, 0.8], |c| [c[0], c[1], c[2]]);
+    // opacity, added to the picture. (Not the game's rule, `self_lit`, which the models' materials
+    // follow since #300: the wrapper's value is the glare key, and nine of the thirteen such
+    // materials are opaque, the Sentry pickup's lights among them, but also big planes on e01,
+    // m01_a, m01_b, m02_b, mp6, mp7 and sdm_e01 that no take shows yet)
+    if let Some(s) = self_lit(game, id) {
         let a = game.material_constant(id, H_WRAP_ALPHA).and_then(|a| a.first().copied()).unwrap_or(255.0) / 255.0;
-        mat.base_color = Color::srgba(c[0], c[1], c[2], a);
+        mat.base_color = Color::srgba(s.colour[0], s.colour[1], s.colour[2], a);
         mat.alpha_mode = AlphaMode::Add;
         mat.unlit = true;
     }
@@ -1901,5 +1968,51 @@ mod tests {
         assert_eq!(lava_passes(2, 2, true, true), vec![(PS_ONE, BLEND_NONE, 1)]);
         assert_eq!(lava_passes(2, 1, true, false), vec![(PS_ONE, BLEND_NONE, 0)]);
         assert_eq!(lava_passes(0, 0, false, false), vec![]);
+    }
+
+    /// A materials file's `<Material>`: its name, type, texture parameters (param-id, texture
+    /// name) and constants (param-id, values), as the levels' files hold them.
+    fn material_element(name: u32, ty: u32, textures: &[(u32, &str)], constants: &[(&str, &[f32])]) -> crate::bf::bxml::Element {
+        use crate::bf::bxml::{Element, Value};
+        let el = |name: &str, attrs: Vec<(u32, Value)>| Element { name: h(name), attrs, children: vec![], text: None };
+        let param = |p: &str| u32::from_str_radix(p.trim_start_matches("h_"), 16).map_or(Value::Str(p.into()), Value::Hash);
+        let mut children: Vec<Element> = textures.iter().map(|&(p, t)| el("texture", vec![(h("param-id"), Value::Hash(p)), (h("texture-name"), Value::Str(t.into()))])).collect();
+        children.extend(constants.iter().map(|&(p, v)| el("constant", vec![(h("param-id"), param(p)),
+                                                                           (h("value"), Value::List(v.iter().map(|&x| Value::Float(x as f64)).collect()))])));
+        let mut m = el("Material", vec![(h("name"), Value::Hash(name)), (h("Type"), Value::Hash(ty))]);
+        m.children = vec![el("h_060d1a30", vec![])];
+        m.children[0].children = children;
+        m
+    }
+
+    /// #300: the self-lit rule (FUN_0008fd20) on the data's materials. The placed Sentry's lights
+    /// (the wrapper h_0a08f6b5, stencil 50, round h_f9761b6c: 0.757 0 0, `blend-mode` 2,
+    /// h_17aba73c 0, `alpha` 1, as sdm_e34's materials file has them) are opaque red with the key
+    /// 50 / 255; common's glass shell h_0fae6153 (`blend-mode` 0, `alpha` 0.243) is blended by its
+    /// alpha; `blend-mode` 1 adds; a textured self-lit material isn't one.
+    #[test]
+    fn the_sentrys_lights_are_opaque_red() {
+        use crate::bf::bxml::{Element, SchemaSet};
+        let mut game = Game::empty(SchemaSet::default());
+        let lights: &[(&str, &[f32])] = &[("h_e01baa40", &[0.757, 0.0, 0.0]), ("alpha", &[1.0]), ("h_0f5ae13f", &[2.0]), ("h_17aba73c", &[0.0]),
+                                          ("h_1a08f318", &[0.0]), ("h_18954f8d", &[0.0])];
+        let shell: &[(&str, &[f32])] = &[("h_e01baa40", &[0.149, 0.263, 0.584]), ("alpha", &[0.243]), ("h_0f5ae13f", &[0.0]),
+                                         ("h_17aba73c", &[0.0]), ("h_1a08f318", &[0.0]), ("h_18954f8d", &[0.0])];
+        let added: &[(&str, &[f32])] = &[("h_e01baa40", &[1.0, 0.5, 0.25]), ("alpha", &[1.0]), ("h_0f5ae13f", &[1.0])];
+        let wrapper = |name: u32, stencil: f32| material_element(name, 0xEB58_AB52, &[], &[("h_edca4b16", &[1.0]), ("h_e59d69a0", &[stencil])]);
+        let root = Element { name: h("materials"), attrs: vec![], children: vec![
+            wrapper(0x0A08_F6B5, 50.0), material_element(0xF976_1B6C, GLOW_SHELL, &[(GLOW_TEXTURE, "")], lights),
+            wrapper(0xF003_E4C8, 255.0), material_element(0x0FAE_6153, GLOW_SHELL, &[(GLOW_TEXTURE, "")], shell),
+            material_element(0x0000_0001, GLOW_SHELL, &[(GLOW_TEXTURE, "")], added),
+            material_element(0x0000_0002, GLOW_SHELL, &[(GLOW_TEXTURE, "h_10b2c8c9")], lights),
+        ], text: None };
+        game.add_materials(&root, |_| true);
+        // (`alpha` by its name's hash, the one 0x8fa50 compares for +0x7c)
+        assert_eq!(h("alpha"), 0xFABC_2B77);
+        assert_eq!(self_lit(&game, 0x0A08_F6B5), Some(SelfLit { colour: [0.757, 0.0, 0.0], blend: SelfLitBlend::Opaque, two_sided: false, key: 50.0 / 255.0 }));
+        assert_eq!(self_lit(&game, 0x0FAE_6153).map(|s| s.blend), Some(SelfLitBlend::Alpha(0.243)));
+        assert_eq!(self_lit(&game, 0xF003_E4C8).map(|s| (s.blend, s.key)), Some((SelfLitBlend::Alpha(0.243), 1.0)));
+        assert_eq!(self_lit(&game, 0x0000_0001).map(|s| s.blend), Some(SelfLitBlend::Add));
+        assert_eq!(self_lit(&game, 0x0000_0002), None);
     }
 }

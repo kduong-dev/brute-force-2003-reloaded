@@ -447,6 +447,11 @@ pub struct Ragdoll {
     /// the floor (world height) where the level has no collision (the test map's flat floor
     /// without scenery): where the feet were at death
     floor: f32,
+    /// whose body the level's queries are for (#298): a corpse's is a thing's, which the level's
+    /// blockers and hinters don't hold (its bodies are PID_BONE, which Ipion's pair table at
+    /// 0x3c01e8 keeps off them); a knocked-down character's a character's, which they do, as
+    /// it stands up where its pelvis lies (`as_body`)
+    body: world::Body,
     contacts: Vec<Contact>,
     /// the steps run (s), the movement check's clock, and the steps to its next check
     /// (`CHECK_EVERY`)
@@ -643,13 +648,21 @@ impl Ragdoll {
         }).collect();
         let root_frame0 = bodies[0].frame();
         let mut r = Ragdoll { bodies, joints, body_of, parent, local, frame, root_frame0, posed: vec![Mat4::IDENTITY; n], owed: 0.0, floor,
-                              contacts: vec![], clock: 0.0, countdown: CHECK_EVERY, asleep: wake_at.is_some(), wake_at, age: 0.0,
-                              names: model.bones[..n].to_vec() };
+                              body: bf_viewer::arena::Body::Thing, contacts: vec![], clock: 0.0, countdown: CHECK_EVERY, asleep: wake_at.is_some(),
+                              wake_at, age: 0.0, names: model.bones[..n].to_vec() };
         r.pose();
         if std::env::var("BF_RAGDOLL_LOG").is_ok() {
             r.log_build(start);
         }
         r
+    }
+
+    /// The same ragdoll, its body of kind `body` for the level's queries (#298): a corpse's is
+    /// `Body::Thing` (as `new` makes it), a knocked-down character's `Body::Character`, and one
+    /// that dies knocked down goes back to `Body::Thing` (play.rs).
+    pub fn as_body(mut self, body: world::Body) -> Self {
+        self.body = body;
+        self
     }
 
     /// Run it on by `dt` s of game time: as many 66 Hz steps as are owed, then the bones posed.
@@ -723,7 +736,7 @@ impl Ragdoll {
 
     /// The floor under `p` (world height): the level's, else the flat fallback.
     fn floor_under(&self, p: Vec3) -> f32 {
-        world::arena().and_then(|a| a.floor_below(p.x, p.z, p.y + 0.5)).map_or(self.floor, |f| f.0)
+        world::arena().and_then(|a| a.floor_below(p.x, p.z, p.y + 0.5, self.body)).map_or(self.floor, |f| f.0)
     }
 
     /// FUN_00127c60: a queued shove (`Shove`) on the built ragdoll, on each of the game's bodies.
@@ -1023,10 +1036,10 @@ impl Ragdoll {
         }
     }
 
-    /// This step's contacts: each body's points against the level's faces round it
-    /// (`Arena::faces_near`) that the body is in front of, over which the point is and near or
-    /// under (up to two faces a point, the nearest); where the level has no collision, the flat
-    /// fallback floor.
+    /// This step's contacts: each body's points against the level's faces round it that its
+    /// kind of body meets (`Arena::faces_near`: a corpse's leaves the blockers and hinters out,
+    /// #298), that the body is in front of, over which the point is and near or under (up to two
+    /// faces a point, the nearest); where the level has no collision, the flat fallback floor.
     fn find_contacts(&mut self) {
         self.contacts.clear();
         let arena = world::arena();
@@ -1039,7 +1052,7 @@ impl Ragdoll {
         let faces: Vec<Face> = match arena.as_deref() {
             Some(a) => {
                 let (lo, hi) = boxes.iter().fold((Vec3::MAX, Vec3::MIN), |(l, h), b| (l.min(b.0), h.max(b.1)));
-                a.faces_near(lo, hi)
+                a.faces_near(lo, hi, self.body)
             }
             None => vec![],
         };
@@ -1450,7 +1463,8 @@ mod tests {
     /// movement references where it is set up: `fresh`).
     fn test_ragdoll(bodies: Vec<Body>, joints: Vec<Joint>) -> Ragdoll {
         let mut r = Ragdoll { bodies, joints, body_of: vec![], parent: vec![], local: vec![], frame: Mat4::IDENTITY, root_frame0: Mat4::IDENTITY,
-                              posed: vec![], owed: 0.0, floor: 0.0, contacts: vec![], clock: 0.0, countdown: CHECK_EVERY, asleep: false, wake_at: None,
+                              posed: vec![], owed: 0.0, floor: 0.0, body: bf_viewer::arena::Body::Thing, contacts: vec![], clock: 0.0,
+                              countdown: CHECK_EVERY, asleep: false, wake_at: None,
                               age: 0.0, names: vec![] };
         fresh(&mut r);
         r

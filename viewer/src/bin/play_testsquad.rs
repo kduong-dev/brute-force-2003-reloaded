@@ -278,7 +278,7 @@ struct Change {
 fn fresh(c: usize, kind: u32, old: &Player, controlled: bool) -> Player {
     let mut p = Player::new(c);
     p.kind = kind;
-    let feet = floor_y(old.position.x, old.position.z, old.position.y + GROUND + STEP_UP);
+    let feet = floor_y(old.position.x, old.position.z, old.position.y + GROUND + STEP_UP, world::Body::Character);
     p.position = Vec3::new(old.position.x, feet - GROUND, old.position.z);
     p.prev_xz = p.position.xz();
     p.fall_from = feet;

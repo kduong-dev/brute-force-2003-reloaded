@@ -354,7 +354,7 @@ fn start_camera(player: &Player) -> FreeCam {
 fn play_spot(player: &Player, tools: &Tools) -> Option<(Vec3, f32)> {
     let c = tools.freecam?;
     let (origin, dir) = crosshair(player, tools);
-    let at = ground_point(origin, dir).unwrap_or_else(|| Vec3::new(c.pos.x, floor_y(c.pos.x, c.pos.z, c.pos.y), c.pos.z));
+    let at = ground_point(origin, dir).unwrap_or_else(|| Vec3::new(c.pos.x, floor_y(c.pos.x, c.pos.z, c.pos.y, world::Body::Character), c.pos.z));
     Some((at, c.yaw))
 }
 

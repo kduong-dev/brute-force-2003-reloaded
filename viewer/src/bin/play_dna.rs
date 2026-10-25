@@ -226,7 +226,7 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         .map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()).filter(|v| v.len() >= 2);
     if let Some(t) = test.filter(|t| !test_dropped.0 && player.sim_time >= t.get(2).copied().unwrap_or(0.5)) {
         test_dropped.0 = true;
-        let at = Vec3::new(t[0], floor_y(t[0], t[1], player.position.y + 2.0) + CHIP_HEIGHT[player.data_slot() % 4], t[1]);
+        let at = Vec3::new(t[0], floor_y(t[0], t[1], player.position.y + 2.0, world::Body::Thing) + CHIP_HEIGHT[player.data_slot() % 4], t[1]);
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {
             println!("BF_TEST_CHIP: a memory chip at {at:.2}, t {:.2}", player.sim_time);
@@ -240,7 +240,7 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         u.dna_done = true;
         // where they stood as they died, along the way they faced (forward is -z turned by yaw)
         let ahead = Vec3::new(-u.yaw.sin(), 0.0, -u.yaw.cos()) * CHIP_AHEAD;
-        let feet = floor_y(u.position.x, u.position.z, u.position.y + GROUND + 1.0);
+        let feet = floor_y(u.position.x, u.position.z, u.position.y + GROUND + 1.0, world::Body::Thing);
         let at = Vec3::new(u.position.x + ahead.x, feet + CHIP_HEIGHT[u.data_slot() % 4], u.position.z + ahead.z);
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {
