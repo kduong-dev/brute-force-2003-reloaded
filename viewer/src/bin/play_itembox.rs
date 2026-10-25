@@ -724,7 +724,7 @@ fn item_controls(time: Res<Time>, input: Res<ItemInput>, mut player: ResMut<Play
             // down, another each time it can (a Medkit after a Medkit until healed), never while
             // the use button's lock is held (0x134459)
             let can = p.using.is_none() && p.throwing.is_none() && p.reloading.is_none() && p.switching.is_none() && p.second.is_none()
-                && skills::lets_act(p) && item_usable(p, Item::Medkit);
+                && p.gun_use.is_none() && skills::lets_act(p) && item_usable(p, Item::Medkit);
             if (can || !b.black_used) && b.lock == UseLock::Free {
                 forced = true;
                 b.black_used = true;

@@ -42,6 +42,10 @@ const H_MUZZLE_REF: u32 = 0xF738_F302;
 const H_MUZZLE_REF_NAME: u32 = 0xE41C_B542;
 /// item base: HUD icon texture (+ its size, h_e2bc2c81 x h_f71189bb, 128 x 64 for guns)
 const H_HUD_ICON: u32 = 0xE5EC_3F1F;
+/// object base: the display name, a string id (h_1dd3a49d: `WeaponDef::display`)
+const H_DISPLAY_NAME: u32 = 0x1DD3_A49D;
+/// weapon: the magazine prop's archetype (h_0bfde1e8, name not recovered: `WeaponDef::magazine`)
+const H_MAGAZINE: u32 = 0x0BFD_E1E8;
 const H_RELOAD_SOUND: u32 = 0x0CBF_5B9C;
 /// weapon: the empty-fire sound (named by its use, a guess at the name): played by
 /// default.xbe's FUN_002327f0 when the trigger is pulled on an empty clip with nothing to
@@ -126,6 +130,15 @@ impl Hardpoint {
 pub struct WeaponDef {
     pub name: u32,
     pub label: String,
+    /// its display name: the inner base's h_1dd3a49d (H_DISPLAY_NAME) text, the label without one.
+    /// The use prompt names a lying gun by it ("Hold [X] to swap %s.", FUN_000aa600, #17); the
+    /// same as the label on every hand gun but m01's Feral Cutter, "Rusty Cutter"
+    pub display: String,
+    /// h_0bfde1e8 (H_MAGAZINE): the archetype of the gun's magazine prop (an object-type 19 type
+    /// with a mesh and no name; the reload's event drops one, 0x22d820: its data+0x174, inferred
+    /// from the data's pattern); 0 for "" (the iKhan-GPL and the built-in weapons). A gun with
+    /// none and no ammo-regen is offered with its rounds, "to swap %s. (%d shots)" (FUN_000aa600)
+    pub magazine: u32,
     pub weapon_type: i64,
     /// archetype of the model
     pub archetype: u32,
@@ -419,9 +432,12 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
         let f32_of = |e: Option<&&Element>, a: u32, d: f32| e.and_then(|e| e.attr(a)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(d);
         let label = find(h("stringtable-name")).and_then(|v| v.as_hash()).and_then(|s| strings.get(&s).cloned())
             .unwrap_or_else(|| format!("h_{name:08x}"));
+        let display = find(H_DISPLAY_NAME).and_then(|v| v.as_hash()).and_then(|s| strings.get(&s).cloned()).unwrap_or_else(|| label.clone());
         out.push(WeaponDef {
             name,
             label,
+            display,
+            magazine: w.attr(H_MAGAZINE).and_then(|v| v.as_hash()).filter(|&x| x != h("")).unwrap_or(0),
             weapon_type: w.attr(h("weapon-type")).and_then(|v| v.as_i64()).unwrap_or(0),
             archetype: find(h("mesh-name")).and_then(|v| v.as_hash()).unwrap_or(0),
             rate: f32_of(Some(&w), H_RATE, 2.0),

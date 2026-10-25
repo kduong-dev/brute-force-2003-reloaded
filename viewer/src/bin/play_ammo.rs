@@ -61,6 +61,8 @@ const DRY_VOLUME: f32 = 0.8;
 #[derive(Resource, Default)]
 pub struct Reserve {
     rounds: HashMap<i64, i64>,
+    /// each ammo-type's stack limit (`stack_limits`), kept from `stock`
+    limits: HashMap<i64, i64>,
     stocked: bool,
 }
 
@@ -76,6 +78,18 @@ impl Reserve {
         let took = n.min(*have).max(0);
         *have -= took;
         took
+    }
+
+    /// Adds up to `n` rounds of `ammo_type`, as far as its stack limit allows (FUN_0014ce90 ->
+    /// FUN_0014bfe0's clamp to the ammo item's stack-limit, type+0x180; #17: a dropped gun's clip, a
+    /// lying gun walked over); how many went in. A type without a limit (no ammo item for it: the
+    /// LZRs' 11) takes none.
+    pub fn add(&mut self, ammo_type: i64, n: i64) -> i64 {
+        let Some(&limit) = self.limits.get(&ammo_type) else { return 0 };
+        let have = self.rounds.entry(ammo_type).or_insert(0);
+        let added = n.min(limit - *have).max(0);
+        *have += added;
+        added
     }
 }
 
@@ -156,6 +170,7 @@ fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>,
     if test.is_none() {
         reserve.rounds.extend(store.ammo());
     }
+    reserve.limits = limits;
     reserve.stocked = true;
     if std::env::var("BF_AMMO_LOG").is_ok() {
         let mut list: Vec<_> = reserve.rounds.iter().collect();
@@ -230,7 +245,7 @@ pub fn test_trigger(mut player: ResMut<Player>, mut last_switch: Local<f32>, mut
 /// Whether `u` is up to a trigger pull: holding its gun, not mid-action (the fire block's own
 /// conditions in `step_player`, less the ammo).
 fn ready(u: &Player) -> bool {
-    u.holding && u.switching.is_none() && u.reloading.is_none() && u.throwing.is_none() && u.using.is_none()
+    u.holding && u.switching.is_none() && u.reloading.is_none() && u.throwing.is_none() && u.using.is_none() && u.gun_use.is_none()
         && !matches!(u.action, Action::Dodge { .. }) && !u.on_all_fours && !knocked_down(u)
 }
 
@@ -246,7 +261,7 @@ fn reload_and_dry_fire(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut
         if k == 0 {
             let dry = l.weapons.get(u.weapon).is_some_and(|w| w.def.ammo_regen <= 0.0 && reserve.get(w.def.ammo_type) == 0)
                 && u.ammo.get(u.weapon).is_some_and(|a| a[0] == 0 && a[1] == 0)
-                && u.reloading.is_none() && u.switching.is_none() && !u.dead && u.second.is_none();
+                && u.reloading.is_none() && u.switching.is_none() && u.gun_use.is_none() && !u.dead && u.second.is_none();
             let up = dry && (hint.0 || clicked || !u.fire);
             if log && up != hint.0 {
                 println!("t={:.2} switch hint {} (weapon {}, clip {:?}, fire {}, switching {}, reloading {})", u.sim_time, if up { "up" } else { "down" },
@@ -281,8 +296,10 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
     // (nor while the skill says the character isn't free, FUN_00117210 at 0x120e16 through its
     // +0x14: Flint's targeting on; her clip at 0 and the reload key end it first, and the reload
     // asked for follows)
+    // (nor during a weapon pickup, #17: its clip is the overlay that plays; a reload asked for
+    // follows it)
     let busy = u.reloading.is_some() || u.switching.is_some() || u.throwing.is_some() || u.using.is_some() || knocked_down(u)
-        || u.skill.toggling.is_some() || second || !super::skills::lets_act(u);
+        || u.skill.toggling.is_some() || u.gun_use.is_some() || second || !super::skills::lets_act(u);
     // a recharging gun never reloads (FUN_00120d40's ammo-regen branch, message 0x53); the test
     // map's NPCs (play_testtools.rs) aren't the squad: they reload from a bottomless reserve of
     // their own (the demo's choice)

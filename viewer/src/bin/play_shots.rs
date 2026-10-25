@@ -723,7 +723,7 @@ const WTYPE_DATA: i64 = 6;
 /// else by its label, any case. A label two definitions share takes the one that isn't
 /// WTYPE_DATA, then the lowest name: "iKhan-GPL" is the gun h_e9be70f0 every time, where the
 /// first the weapons' map gave was the vaporise blast h_1f4a5a0a about half the runs (#55).
-fn test_weapon_key(weapons: &HashMap<u32, WeaponDef>, name: &str) -> Option<u32> {
+pub(super) fn test_weapon_key(weapons: &HashMap<u32, WeaponDef>, name: &str) -> Option<u32> {
     let hex = u32::from_str_radix(name.trim_start_matches("h_").trim_start_matches("0x"), 16).ok();
     hex.filter(|k| weapons.contains_key(k)).or_else(|| {
         weapons.iter().filter(|(_, d)| d.label.eq_ignore_ascii_case(name)).min_by_key(|(k, d)| (d.weapon_type == WTYPE_DATA, **k)).map(|(k, _)| *k)

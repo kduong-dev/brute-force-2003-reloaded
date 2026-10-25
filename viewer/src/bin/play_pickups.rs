@@ -155,11 +155,41 @@ pub const FEED_TIME: f32 = 4.0;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PickupSystems;
 
-/// The pickup lines under the character: (item name, how many taken, seconds left). A count of 0
-/// or 1 shows the name alone (FUN_000ad790; the memory chip's message, play_dna.rs, is pushed
-/// with 0), from 2 "<n>x <name>".
+/// The pickup lines under the character (`FeedLine`).
 #[derive(Resource, Default)]
-pub struct PickupFeed(pub Vec<(String, i64, f32)>);
+pub struct PickupFeed(pub Vec<FeedLine>);
+
+/// A pickup line: the item's name, how many taken, seconds left, and whether it's the "(full)"
+/// form. A count of 0 or 1 shows the name alone (FUN_000ad790; the memory chip's message,
+/// play_dna.rs, is pushed with 0), from 2 "<n>x <name>". `full`: nothing could be taken, the
+/// stack being full (FUN_000ad790's count-0 form, L"%s %s" (0x40d744) with "(full)" h_f1416a07, in
+/// FUN_000b8820's red: #17, the walk-over of a lying gun, play_weapon_pickups.rs).
+pub struct FeedLine {
+    pub name: String,
+    pub count: i64,
+    pub left: f32,
+    pub full: bool,
+}
+
+impl PickupFeed {
+    /// A pickup of `n` of the item named `name` (FUN_000ad790): the same item's line counts up, any
+    /// other starts one, its time back to FEED_TIME. `n` 0 is a pickup that took nothing (its stack
+    /// full): the "(full)" form while the line's count is 0, its time put back each time; a line
+    /// that has a count keeps it, and its time runs on (0xad7b5: the time is set only for a count
+    /// above 0 or a total of 0).
+    pub fn add(&mut self, name: String, n: i64) {
+        match self.0.iter_mut().find(|l| l.name == name) {
+            Some(l) => {
+                l.count += n;
+                if n > 0 || l.count == 0 {
+                    l.left = FEED_TIME;
+                }
+                l.full = l.count == 0;
+            }
+            None => self.0.push(FeedLine { full: n == 0, name, count: n, left: FEED_TIME }),
+        }
+    }
+}
 
 /// The DNA canisters taken on this level, by item type, in order: the squad's inventory holds
 /// them in the game, where the end screen's DNA line finds one (0x83110, the game session's
@@ -443,9 +473,9 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
                 mut events: ResMut<super::triggers::TriggerEvents>, mut found: ResMut<DnaFound>) {
     let dt = frame_dt(&time);
     for line in &mut feed.0 {
-        line.2 -= dt;
+        line.left -= dt;
     }
-    feed.0.retain(|l| l.2 > 0.0);
+    feed.0.retain(|l| l.left > 0.0);
     // (the selection after an item runs out is play_itembox.rs's `settle`)
     // who's near enough: the player first, then any squad member running over it (their
     // medkits go in the squad's shared inventory, the player's; a fruit heals whoever eats it;
@@ -521,11 +551,7 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             }
             // the line: its display name (h_1dd3a49d), else its stringtable-name
             let name = game.0.strings.get(&item.message).cloned().filter(|_| item.message != 0).unwrap_or_else(|| item.label.clone());
-            let n = item.amount.max(1);
-            match feed.0.iter_mut().find(|l| l.0 == name) {
-                Some(l) => { l.1 += n; l.2 = FEED_TIME; }
-                None => feed.0.push((name, n, FEED_TIME)),
-            }
+            feed.add(name, item.amount.max(1));
             if let Ok(mut v) = vis.get_mut(p.entity) { *v = Visibility::Hidden; }
             if item.sound != 0 {
                 player.sound_queue.push((item.sound, 1.0));
@@ -554,7 +580,8 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>, game: Re
     };
     let stack = if test { Some(Item::Medkit) } else { selected.filter(|_| player.item_use) };
     let Some(stack) = stack else { return };
-    if player.dead || player.using.is_some() {
+    // (nor during a weapon pickup, #17: one overlay at a time, the demo's choice)
+    if player.dead || player.using.is_some() || player.gun_use.is_some() {
         return;
     }
     player.test_medkit_used |= test;

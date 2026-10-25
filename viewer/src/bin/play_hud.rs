@@ -22,9 +22,19 @@ const WEAPON_PANEL: u32 = 0xE11F_B292;
 const CROSSHAIR_TEX: u32 = 0x1D2A_68D0;
 const ENERGY_ICON: u32 = 0x1AC4_1530;
 
-/// The target ring: its size (units) and tint (capture: blue, ~63 units across at the panel).
-const RING_SIZE: f32 = 60.0;
-const RING_BLUE: Color = Color::srgba(0.16, 0.42, 1.0, 0.95);
+/// The target ring (the ring widget, vtable 0x3a02e8): its size once zoomed in (+0x94, 48.0 from
+/// its constructor 0xa9b90; take11's ring 48 units across on the L-Shot-50 and 47 at the gate's
+/// panel, #17, where this was 60 from an earlier fit), and how much bigger it starts: its update
+/// (0xa9bf0) draws it 48 x (1 + 1.5 (1 - c^4)) across at alpha c^4, c its zoom (`Ring::open`).
+const RING_SIZE: f32 = 48.0;
+const RING_GROW: f32 = 1.5;
+/// Its colours (0xa9bf0's bytes, the sprite's +0x2c red, +0x2d green, +0x2e blue): 23 53 d4 for a
+/// target the character can use (take11: (33-36, 80, 206) through the video), a0 20 20 for one it
+/// can't (#61 take04's red ring on the Jax-iP), 3c 69 dc while it's being used (take11 300.6-301.1:
+/// (60, 101, 210)).
+const RING_BLUE: Color = Color::srgb(0x23 as f32 / 255.0, 0x53 as f32 / 255.0, 0xD4 as f32 / 255.0);
+const RING_RED: Color = Color::srgb(0xA0 as f32 / 255.0, 0x20 as f32 / 255.0, 0x20 as f32 / 255.0);
+const RING_IN_USE: Color = Color::srgb(0x3C as f32 / 255.0, 0x69 as f32 / 255.0, 0xDC as f32 / 255.0);
 /// Pickup lines shown at once, and where they go: fixed on the screen, centred under the
 /// character's usual place, the status message above them (the capture's spacing: lines 29
 /// and 45 under the message).
@@ -45,6 +55,12 @@ const MESSAGE_TOP: f32 = 287.7;
 /// Strings: "switch to %s." (after the Y button's icon), "Regen".
 const S_SWITCH_TO: u32 = 0xFF01_7DF6;
 const S_REGEN: u32 = 0xE246_DE1D;
+/// A pickup line that took nothing, its stack full (#17): "<name> (full)", the word h_f1416a07
+/// (FUN_000ad790 at 0xad7d9), in FUN_000b8820's colour, bytes a0 20 20 (the line's +0x38 red,
+/// +0x3a green, +0x39 blue, as the message lines take them): the DNA video's "Bio Ammo (full)",
+/// measured (170, 42, 30) through the video's compression.
+const S_FULL: u32 = 0xF141_6A07;
+const FULL_RED: Color = Color::srgb(160.0 / 255.0, 32.0 / 255.0, 32.0 / 255.0);
 /// "[Y] switch to %s." once the held gun's clip and the reserve are both empty (FUN_00120d40
 /// posts message 0x52): top left under the health bar, pale blue (todo/49 take02 19 s; the same
 /// line as the pickup prompt). Here the key (Q) stands for the button's icon (the wall panel's
@@ -948,9 +964,10 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
 
     // (the item box, bottom right, is play_itembox.rs's)
 
-    // ---- a gate's wall panel in reach: the blue target ring (the reticle texture h_1d2a68d0) on
-    // the panel's button; its prompt, "Hold [X] to activate panel.", is a glyph line drawn with
-    // the hint lines (play_hints.rs `draw_prompt`) ----
+    // ---- a gate's wall panel or a lying gun in reach (#17): the target ring (the reticle texture
+    // h_1d2a68d0) on the panel's button or the gun; its prompt, "Hold [X] to activate panel.",
+    // "Hold [X] to swap L-Shot-50.", is a glyph line drawn with the hint lines (play_hints.rs
+    // `draw_prompt`) ----
     commands.spawn((ChildOf(screen), game_text("", SWITCH_HINT_X, SWITCH_HINT_TOP, SWITCH_HINT_CAP, MESSAGE_BLUE, Align::Left), Part::SwitchHint, Visibility::Hidden));
     // the special skill's name, under the bars while it's on (see `StaminaBar`)
     commands.spawn((ChildOf(screen), game_text("", LABEL_X, LABEL_TOP, LABEL_CAP, MESSAGE_BLUE, Align::Left), Part::SkillLabel, Visibility::Hidden));
@@ -1098,7 +1115,7 @@ fn update_hud_widgets(
     mut game: ResMut<GameData>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<HudImages>,
-    camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    camera: Query<(&Camera, &Transform), With<MainCamera>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut GameText>, Option<&mut Node>)>,
     stamina: Res<StaminaBar>,
@@ -1114,11 +1131,15 @@ fn update_hud_widgets(
     let mut order: Vec<usize> = (0..l.weapons.len()).collect();
     order.sort_by_key(|&i| (i != player.weapon, Some(i) != second));
     order.truncate(if list { WEAPON_ROWS } else if second.is_some() { 2 } else { 1 });
-    // a world point on the HUD's 640 x 480 screen (4:3, centred in the window)
+    // a world point on the HUD's 640 x 480 screen (4:3, centred in the window), through the view
+    // this frame draws: the camera's Transform as the cameras have just set it (it's a root, so
+    // that's its place in the world), not its GlobalTransform, which is the last frame's until
+    // PostUpdate propagates it and left the ring a frame behind its target while the view moves
+    // (#17's review; the shake, play_shake.rs, is added after and isn't followed)
     let on_screen = |p: Vec3| -> Option<Vec2> {
         let (cam, at) = camera.single().ok()?;
         let win = windows.single().ok()?;
-        let px = cam.world_to_viewport(at, p).ok()?;
+        let px = cam.world_to_viewport(&GlobalTransform::from(*at), p).ok()?;
         let unit = win.height() / 480.0;
         Some(Vec2::new((px.x - (win.width() - 640.0 * unit) / 2.0) / unit, px.y / unit))
     };
@@ -1131,8 +1152,14 @@ fn update_hud_widgets(
     // its fade at the end (1: full), and the icon faint under it meanwhile, coming back as it
     // fades
     let name_alpha = (held_name.0 / super::ammo::NAME_FADE).min(1.0);
-    // (FUN_000ad790: "%dx %s" from two in a row, the name alone for one, 0x40d734)
-    let feed_shown: Vec<String> = feed.0.iter().rev().take(FEED_LINES).rev().map(|(name, n, _)| if *n > 1 { format!("{n}x {name}") } else { name.clone() }).collect();
+    // (FUN_000ad790: "%dx %s" from two in a row, the name alone for one, 0x40d734; nothing taken
+    // with a stack full, "%s %s" (0x40d744) with "(full)", in FUN_000b8820's red, #17)
+    let full_word = game.0.strings.get(&S_FULL).cloned().unwrap_or("(full)".into());
+    let feed_shown: Vec<(String, Color)> = feed.0.iter().rev().take(FEED_LINES).rev().map(|l| match (l.full, l.count) {
+        (true, _) => (format!("{} {full_word}", l.name), FULL_RED),
+        (false, n) if n > 1 => (format!("{n}x {}", l.name), MESSAGE_BLUE),
+        _ => (l.name.clone(), MESSAGE_BLUE),
+    }).collect();
 
     for (part, mut vis, img, mut text, node) in &mut parts {
         let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
@@ -1145,9 +1172,17 @@ fn update_hud_widgets(
         match *part {
             Part::Panel(r) | Part::Icon(r) | Part::Name(r) | Part::Ammo(r) => {
                 let Some(&w) = order.get(r) else { show(&mut vis, false); continue };
+                // (a weapon pickup's release to its grab: nothing in the hand, the held row's panel
+                // empty, in its usual tint, take11 300.8-301.1 s; #17. The faint grey shape the
+                // take has over it there isn't drawn)
+                let gap = r == 0 && player.gun_use.as_ref().is_some_and(|u| u.hand_empty());
+                if gap && !matches!(*part, Part::Panel(_)) {
+                    show(&mut vis, false);
+                    continue;
+                }
                 let def = &l.weapons[w].def;
                 let clip = player.ammo.get(w).map_or(0, |a| a[0]);
-                let empty = clip == 0;
+                let empty = clip == 0 && !gap;
                 let tint = if held(w) { AMMO_ORANGE } else { MESSAGE_BLUE };
                 match *part {
                     Part::Panel(_) => {
@@ -1215,21 +1250,36 @@ fn update_hud_widgets(
                 set(text, &name, Some(MESSAGE_BLUE.with_alpha(stamina.label_alpha.powf(2.2))));
             }
             Part::Ring => {
-                // a usable gate panel's button only
-                let at = use_panel.target.filter(|_| player.scope < 0.5).and_then(on_screen);
+                // on a gate panel's button or a lying gun (#17), zooming in and out (`Ring`)
+                let ring = use_panel.ring;
+                let at = ring.at.filter(|_| player.scope < 0.5 && ring.open > 0.0).and_then(on_screen);
                 show(&mut vis, at.is_some());
+                let c4 = ring.open.powi(4);
+                let size = RING_SIZE * (1.0 + RING_GROW * (1.0 - c4));
                 if let (Some(c), Some(mut n)) = (at, node) {
-                    let want = at_box(c.x - RING_SIZE / 2.0, c.y - RING_SIZE / 2.0, RING_SIZE, RING_SIZE);
+                    let want = at_box(c.x - size / 2.0, c.y - size / 2.0, size, size);
                     if n.left != want.left || n.top != want.top || n.width != want.width {
                         (n.left, n.top, n.width, n.height) = (want.left, want.top, want.width, want.height);
+                    }
+                }
+                if let Some(mut img) = img {
+                    // (the console blends the stored sRGB values, Bevy in linear light, where the
+                    // same alpha looks brighter: raised to 2.2, as the skill's name's fade is)
+                    let colour = match ring.colour {
+                        super::RingColour::Usable => RING_BLUE,
+                        super::RingColour::Refused => RING_RED,
+                        super::RingColour::InUse => RING_IN_USE,
+                    }.with_alpha(c4.powf(2.2));
+                    if img.color != colour {
+                        img.color = colour;
                     }
                 }
             }
             Part::Feed(k) => {
                 let line = feed_shown.get(k);
                 show(&mut vis, line.is_some());
-                if let (Some(line), Some(mut t)) = (line, text) {
-                    if t.text != *line { t.text = line.clone(); }
+                if let Some((line, colour)) = line {
+                    set(text, line, Some(*colour));
                 }
             }
             Part::Crosshair => {

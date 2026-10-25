@@ -66,8 +66,10 @@ A world button in reach ("Hold [X] to activate panel.", the gate's wall panels) 
 its own: a HUD widget (vtable 0x3a02b4, its update 0xaa130) built as a hint line is (the same
 three texts, 0xc9b50; the body font at 14 points full screen): for a use that takes a hold
 (0xaad20), "Hold " and the ACTION_BUTTON's glyph (VB 6, X: FUN_000ca290), then the target's text
-(FUN_000aa600: a world button's "to activate %s." h_f9d29692, with its name; the other targets'
-pick-up, swap and disarm prompts are its other cases). It stands at the first hint line's place,
+(FUN_000aa600: a world button's "to activate %s." h_f9d29692, with its name; a lying gun's "to
+swap %s." h_f1285f72 or "to swap %s. (%d shots)" h_e456c40f, and, for one the character can't
+take, "%s cannot pick up %s." h_0ff85d29 with no "Hold " and no glyph: #17, pickups.md "Weapon
+pickups"; the disarm prompts are its other cases). It stands at the first hint line's place,
 (51, 85), 20 lower while the skill's name shows (the HUD's message widget, hud+0xfc), and 20 lower
 again for each of two tests of the first hint line (the player view's +0x3c read twice at
 0xaa2cd-0xaa2e8, where the second line's +0x40 would be expected: 40 under a first line). It
@@ -164,8 +166,11 @@ shows skips it: the plate disables timer464, starts timer391 and clears the co-o
   (`HudRoot`: hidden with the HUD in the editor's edit mode and while the letterbox's bars are
   in, play_script.rs). `BF_HINT_LOG=1` logs each line shown and cleared.
 * **The use prompt** (`draw_prompt`) is the same glyph line: "Hold [X] to activate panel." while
-  play.rs `doors` has a wall panel usable (not while scoped), lowered as above, steady. The ring
-  on the panel's button stays play_hud.rs's.
+  play.rs `doors` has a wall panel usable, or a lying gun's line while play_weapon_pickups.rs has
+  one targeted ("Hold [X] to swap L-Shot-50.", "Tex cannot pick up Jax-iP.": play.rs `Prompt`);
+  not while scoped, lowered as above, steady. The ring round the target is play_hud.rs's: 48
+  units once in, zooming in and out, blue, red on a gun the character can't take (pickups.md
+  "Weapon pickups", the ring widget 0xa9bf0).
 * **The virtual buttons** stand for the pad's: the demo's keys for the same actions, and a
   pad's buttons (none read under `BF_BACKGROUND`):
 
@@ -261,9 +266,11 @@ BF_MAP=tutorial BF_HINT_LOG=1 BF_TEST_GOTO=57.5,68.22,57.5,68.22 BF_TEST_FALL=37
   (OMT_PUSH_BUTTON) reaches its `push_button` animation event (FUN_00117660's case 0xf2cfbb92 at
   0x118b71: the use target at char+0x640, its vtable +0x138, 0x163060), but no clip in
   common.tgz, tutorial.tgz, mp_common.tgz or m01_a.tgz has that event: which clip plays and when
-  it fires isn't found. The prompt is the game's glyph line (above); the other targets' prompts
-  (FUN_000aa600's pick-up, swap and disarm cases, the mines' ring: #145) and the switch hint
-  ("[Y] switch to %s.", still play_hud.rs's text with Q) aren't.
+  it fires isn't found. (The X hold is 0.3 s for every target in the code: the player
+  controller's +0x50, 0x1332a0, which the weapon pickups use, #17; the panel's 0.5 is left as it
+  was.) The prompt is the game's glyph line (above); the other targets' prompts (FUN_000aa600's
+  disarm cases, the mines' ring: #145) and the switch hint ("[Y] switch to %s.", still
+  play_hud.rs's text with Q) aren't.
 * The other hints of the tutorial (the grenade plate, the mines, the sniper rifle) need the
   pickups and plates of later steps to fire on their own (#228); fired directly they draw.
 
