@@ -890,10 +890,10 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
         alpha_mode: AlphaMode::Blend, perceptual_roughness: 1.0, reflectance: 0.0, depth_bias: 40.0, ..default()
     });
     let turn = (state.random() * 2.0 - 1.0) * def.rotation.to_radians();
-    let y = floor_y(at.x, at.z, at.y + 0.5) + 0.01 + 0.004 * state.random();
+    let y = floor_y(at.x, at.z, at.y + 0.5, world::Body::Thing) + 0.01 + 0.004 * state.random();
     // laid along the ground's slope under its middle (a big scorch on a hillside would otherwise
     // sink into the slope)
-    let normal = world::arena().and_then(|a| a.floor_at(at.x, at.z, at.y + 0.5)).map(|f| f.1)
+    let normal = world::arena().and_then(|a| a.floor_below(at.x, at.z, at.y + 0.5, world::Body::Thing)).map(|f| f.1)
         .filter(|n| n.y > 0.5).unwrap_or(Vec3::Y);
     let e = commands.spawn((Mesh3d(fx.floor.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
                             Transform::from_translation(Vec3::new(at.x, y, at.z))
@@ -1002,8 +1002,8 @@ fn spawn_game_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets,
     let (at, normal) = match normal {
         Some(n) => (at + n.normalize_or(Vec3::Y) * lift, n.normalize_or(Vec3::Y)),
         None => {
-            let y = floor_y(at.x, at.z, at.y + 0.5) + lift;
-            let n = world::arena().and_then(|a| a.floor_at(at.x, at.z, at.y + 0.5)).map(|f| f.1).filter(|n| n.y > 0.5).unwrap_or(Vec3::Y);
+            let y = floor_y(at.x, at.z, at.y + 0.5, world::Body::Thing) + lift;
+            let n = world::arena().and_then(|a| a.floor_below(at.x, at.z, at.y + 0.5, world::Body::Thing)).map(|f| f.1).filter(|n| n.y > 0.5).unwrap_or(Vec3::Y);
             (Vec3::new(at.x, y, at.z), n.normalize())
         }
     };

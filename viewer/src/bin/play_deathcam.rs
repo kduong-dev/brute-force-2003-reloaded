@@ -112,7 +112,7 @@ pub fn plugin(app: &mut App) {
 /// above the feet) and the ground below it, which the orbit circles.
 fn body(p: &Player) -> (Vec3, Vec3) {
     let pelvis = p.body_at.unwrap_or(p.position + Vec3::Y * (p.height + GROUND + PELVIS_HEIGHT));
-    let floor = world::arena().and_then(|a| a.floor_below(pelvis.x, pelvis.z, pelvis.y + 0.5)).map_or(p.position.y + GROUND, |f| f.0);
+    let floor = world::arena().and_then(|a| a.floor_below(pelvis.x, pelvis.z, pelvis.y + 0.5, world::Body::Thing)).map_or(p.position.y + GROUND, |f| f.0);
     (pelvis, Vec3::new(pelvis.x, floor, pelvis.z))
 }
 

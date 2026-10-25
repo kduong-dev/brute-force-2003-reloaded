@@ -32,7 +32,8 @@ them):
   * Where they come from: `objects-<level>.ipn` holds them in the Ipion physics engine's format.
     The terrain blocks, the 23 invisible blockers and every placed object's parts each name
     theirs. Door leaves have their own and stop blocking while open. A blocker is a wall to
-    every character or, a hinter, to the AI's alone (#292, "Blockers and hinters" below).
+    every character or, a hinter, to the AI's alone (#292, "Blockers and hinters" below), and to
+    nothing else: grenades, ragdolls, pickups, shots and decals pass through (#298).
   * Material: every triangle carries one, a world-material id plus a slide flag.
   * Standing: characters stand on surfaces up to 65° (the game's ground limit), facing up by
     their winding, within a 0.5 m step; steeper surfaces are walls (#285: so is a surface facing
@@ -313,6 +314,40 @@ them):
       212, m09_x 210, the tutorial 51, m09_a 49, e16 31, sdm_m03 19, e13 18, e40 16, m09_c 14,
       sdm_e40 11, m07_c 1; m05_y's and m09_b's one hinter each is on no such ground; sdm_m07's six
       (a level with no terrain) aren't scanned. The fix takes the kind, so it covers every one.
+    * **Only a character meets them (#298).** Ipion's body-pair table at 0x3c01e8 (FUN_00169ab0:
+      a byte per pair of PID kinds, 0 never collide, 1 always, 255 ask the pair's own check;
+      code-map.md) pairs PID_BLOCKER (4) and PID_HINTER (6) with PID_CHARACTER_PHANTOM (10)
+      alone, and the one world query that takes them in is a character's sweep (the weapons'
+      leaves them out: play.md, "Bolts and their hits"). So the demo's other queries pass through
+      every blocker and hinter (`arena::Body::Thing`): a grenade's flight and its bounces off the
+      walls, a corpse's ragdoll bones (their floors and walls; a living character knocked down
+      keeps a character's, as the demo stands it up where its ragdoll's pelvis lies and the
+      game's knockdown moves the character itself), the floors that pickups, lying guns,
+      casings and memory chips settle and land on, a missile's and an instant shot's hit
+      (`Arena::ray_normal`, `ray_material`, `ray_breakable`: a breakable object's own blocker no
+      longer takes the shots meant for it, its collision does), the decals' surfaces and the
+      blasts' ground. What a character's body meets stays as it was (`Body::Character`): its sweep
+      (`Mover`), the floors it stands on, the spawns' places, the AI's ledge probe; so do the test
+      tools' and the editor's spots, which put down characters and objects alike. The cameras'
+      and the sight lines' rays
+      (`Arena::ray`: the crosshair's, the AI's eyes, a blast's line to a body, the death camera)
+      still stop at a blocker: which of them the game's filters leave out isn't traced.
+      * Before, a grenade or a Roller that ended a frame within its radius of a blocker's wall was
+        pushed out and bounced back (often not: at a grenade's speed a thin band is crossed between
+        two frames), and a blocker's top was a floor to a grenade, a ragdoll, a pickup and a
+        decal (sdm_e34's vehicles h_fc0ef12e have their blockers' tops 0.14 m over their roofs).
+      * Checked: `cargo test --lib arena` (`a_blocker_meets_characters_alone`: a blocker's and a
+        hinter's top, walls and rays against a thing and a character, and a plain object's box
+        against both). sdm_e13's band at the shore (`-- --test BF_MAP=sdm_e13 BF_NO_SQUAD=1
+        BF_NO_HUD=1 BF_TEST_GOTO=99.64,-92.92,115.84,-104.52 BF_TEST_GO_AT=100
+        BF_TEST_GRENADE_TYPE=Roller BF_TEST_THROW=1.0,0.1 BF_GRENADE_LOG=1 BF_CAPTURE_FPS=120
+        BF_TEST_FREECAM=0.5,104.82,35,-87.31,21.6,-24`): the Roller set down 3 m short of the
+        band rolls down the shore through it and into the lava at (105.88, -97.90) at 3.75 s;
+        with the walls met (the old rule, the same run) it was pushed out at the band at 2.68 s,
+        (101.78, -94.96), and rolled back up the shore. No pickup or lying gun of the 53 levels
+        starts over a blocker's floor (the floor under each is the same for a character and a
+        thing), so where the levels lay them is unchanged. sdm_e34's squad run
+        (`BF_TEST_GOTO=6,60,6,90`, 120 frames): the same frames as before, pixel for pixel.
   * **Holes (#292: the game's rule found, not applied; #296).** Where a character has nothing
     under it (no floor, no terrain too steep to stand on, no rock's flank: a hole in the level's
     collision, or past the terrain's edge), the demo puts it back where it stood, as at the edge

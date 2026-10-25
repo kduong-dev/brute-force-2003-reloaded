@@ -1,7 +1,9 @@
 //! A level as solid ground and walls, indexed by 2 m cell: the game's own collision surfaces
 //! (objects-<lvl>.ipn, see bf::collision) of the terrain blocks, the invisible blockers (a hinter
-//! among them a wall to the AI's characters alone, `Mover`, #292) and the placed objects' parts
-//! (door leaves switch off while open). Each triangle keeps its material:
+//! among them a wall to the AI's characters alone, `Mover`, #292; a blocker of either kind meets
+//! a character's body and nothing else: grenades, ragdolls, pickups, missiles, shots and decals
+//! pass through, `Body`, #298) and the placed objects' parts (door leaves switch off while
+//! open). Each triangle keeps its material:
 //! the world-material id, the slide flag and the indoor flag; and the placed object it's part
 //! of, if any (what the crosshair's centre ray is on, `ray_object`; whether the floor is indoors,
 //! `floor_kind`). A level without collision data falls back to the
@@ -112,7 +114,8 @@ struct Tri {
     /// no object and what a broken object leaves behind (`ray_object`)
     object: Option<u32>,
     /// one of a level's blockers (`<blocker physics-id ...>`, the invisible walls round its
-    /// objects), which the follow camera's wedge passes through (`hull_triangles`)
+    /// objects): only a character's body meets it (`Body`, #298); the follow camera's wedge and
+    /// the shots pass through it (`hull_triangles`, `ray_shot`)
     blocker: bool,
     /// a blocker of physics-id 6 (PID_HINTER, `bf::level::HINTER_PID`, #292): a wall to the
     /// characters the AI moves, not to one a player controls (FUN_0012cd10's sweep filter), so
@@ -214,6 +217,35 @@ impl Mover {
     /// Whether a wall of this triangle holds it: a hinter only the AI.
     fn meets(self, t: &Tri) -> bool {
         !t.hinter || self == Mover::Ai
+    }
+}
+
+/// Whose body a floor or wall query is for, as the level's invisible blockers (`Tri::blocker`:
+/// the bodies of PID_BLOCKER and PID_HINTER, a hinter among them) take it (#298). Ipion's pair
+/// table at 0x3c01e8 (FUN_00169ab0: a byte per pair of PID kinds, 0 never collide) pairs
+/// PID_BLOCKER (4) and PID_HINTER (6) with PID_CHARACTER_PHANTOM (10) alone, and the one sweep
+/// whose filter takes them in is a character's (FUN_0012cd10, `Mover`); the weapons' world query
+/// leaves them out (FUN_000df0a0 with 0xfffffff8, `ray_shot`). Before #298 every query met them:
+/// a grenade bounced off an out-of-bounds wall, a ragdoll was pushed off a hinter's band, and a
+/// pickup could come to rest on a blocker's top.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Body {
+    /// a character's: its sweep (`move_body`, `Mover`) and the floors that stand it, the
+    /// blockers' and the hinters' among them (as before: every hinter of the data is an upright
+    /// band with no floor, #292); and the demo's ragdoll of one knocked down, which it stands up
+    /// where the pelvis lies (play.rs `Ragdoll::body`)
+    Character,
+    /// anything else: a grenade, a corpse's ragdoll bones (PID_BONE), a pickup or a lying gun, a
+    /// missile, a casing, a decal laid on a surface: whatever its kind, it isn't
+    /// PID_CHARACTER_PHANTOM, so no blocker meets it
+    Thing,
+}
+
+impl Body {
+    /// Whether a query for this body meets triangle `t`: a blocker's (a hinter's among them) only
+    /// a character's.
+    fn meets(self, t: &Tri) -> bool {
+        self == Body::Character || !t.blocker
     }
 }
 
@@ -1300,10 +1332,11 @@ impl Arena {
             .filter_map(|t| Self::height_on(t, x, z)).chain(self.flat).reduce(f32::max)
     }
 
-    /// The highest floor at (x, z) no higher than `top`: terrain or an object's surface no
-    /// steeper than 65 degrees, with its normal.
-    pub fn floor_below(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3)> {
-        self.floor_at(x, z, top).map(|f| (f.0, f.1))
+    /// The highest floor at (x, z) no higher than `top` for `body`: terrain or an object's surface
+    /// no steeper than 65 degrees, with its normal; a blocker's top is a floor to a character
+    /// alone (`Body`, #298).
+    pub fn floor_below(&self, x: f32, z: f32, top: f32, body: Body) -> Option<(f32, Vec3)> {
+        self.floor_tri(x, z, top, body).map(|(y, t)| t.map_or((y, Vec3::Y), |t| (y, t.n)))
     }
 
     /// Where there's no floor (`floor_below`), the terrain under (x, z) no higher than `top` that
@@ -1365,34 +1398,35 @@ impl Arena {
         }).reduce(|a, b| if b.0 < a.0 { b } else { a })
     }
 
-    /// `floor_below` with the floor's collision material (world-material id | MATERIAL_SLIDE).
-    /// The flat floor's ground is level, of material 0.
+    /// A character's floor (`floor_below` for `Body::Character`) with its collision material
+    /// (world-material id | MATERIAL_SLIDE). The flat floor's ground is level, of material 0.
     pub fn floor_at(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3, u8)> {
-        self.floor_tri(x, z, top).map(|(y, t)| t.map_or((y, Vec3::Y, 0), |t| (y, t.n, t.material)))
+        self.floor_tri(x, z, top, Body::Character).map(|(y, t)| t.map_or((y, Vec3::Y, 0), |t| (y, t.n, t.material)))
     }
 
     /// The floor `floor_at` finds as a character's ground record keeps it (FUN_0012dab0): its
     /// collision material, whether it's the terrain's, and the level object it's part of (an
     /// index into `Level::objects`). The flat floor counts as terrain, of material 0.
     pub fn floor_kind(&self, x: f32, z: f32, top: f32) -> Option<(u8, bool, Option<u32>)> {
-        self.floor_tri(x, z, top).map(|(_, t)| t.map_or((0, true, None), |t| (t.material, t.terrain, t.object)))
+        self.floor_tri(x, z, top, Body::Character).map(|(_, t)| t.map_or((0, true, None), |t| (t.material, t.terrain, t.object)))
     }
 
-    /// The highest floor at (x, z) no higher than `top` and its triangle (None: the flat floor).
-    /// A floor faces up by its winding (#285): the game meets a triangle only from its front
-    /// (FUN_00152d20), so one wound down (the underside of a rock that isn't twinned) holds no
-    /// one up, and of a twin pair the floor is the one facing up, which carries the material and
-    /// the slide flag (`ray_material`; with both, a rounding tie picked either: e40's canyon rim
-    /// at (-54.23, 84.80), its twin facing down 4 µm higher, material 0). One facing up into its
-    /// own body's solid (`Tri::inner`: the twin of a rock's underside) isn't a floor: stood on, it
-    /// took a body walking at a rock's foot into the rock. A drawn triangle of a level without
-    /// collision data faces either way.
-    fn floor_tri(&self, x: f32, z: f32, top: f32) -> Option<(f32, Option<&Tri>)> {
+    /// The highest floor at (x, z) no higher than `top` for `body` and its triangle (None: the
+    /// flat floor). A floor faces up by its winding (#285): the game meets a triangle only from
+    /// its front (FUN_00152d20), so one wound down (the underside of a rock that isn't twinned)
+    /// holds no one up, and of a twin pair the floor is the one facing up, which carries the
+    /// material and the slide flag (`ray_material`; with both, a rounding tie picked either:
+    /// e40's canyon rim at (-54.23, 84.80), its twin facing down 4 µm higher, material 0). One
+    /// facing up into its own body's solid (`Tri::inner`: the twin of a rock's underside) isn't a
+    /// floor: stood on, it took a body walking at a rock's foot into the rock. A drawn triangle of
+    /// a level without collision data faces either way. A blocker's is a character's alone
+    /// (`Body`).
+    fn floor_tri(&self, x: f32, z: f32, top: f32, body: Body) -> Option<(f32, Option<&Tri>)> {
         let mut best: Option<(f32, Option<&Tri>)> = self.flat.filter(|&g| g <= top).map(|g| (g, None));
         for &i in self.near(x, z) {
             let t = &self.tris[i as usize];
             let up = if t.two_sided { t.n.y } else { t.front.y };
-            if up < FLOOR_NORMAL || t.inner || !self.solid(t) {
+            if up < FLOOR_NORMAL || t.inner || !self.solid(t) || !body.meets(t) {
                 continue;
             }
             if let Some(y) = Self::height_on(t, x, z).filter(|y| *y <= top) {
@@ -1479,9 +1513,10 @@ impl Arena {
 
     /// Push a body (radius `radius`, standing from `feet` to `head`) out of the walls: spheres
     /// at a few heights against the steep triangles near it. Returns the corrected (x, z). For
-    /// what isn't a character (a grenade, a ragdoll's bones) and a character's place before it's
-    /// in the world (the squad's spawn); a character's own moves are swept (`move_body`).
-    pub fn push_out(&self, p: Vec2, radius: f32, feet: f32, head: f32, step: f32) -> Vec2 {
+    /// what isn't a character (a grenade, a ragdoll's bones: `Body::Thing`, which the level's
+    /// blockers don't hold, #298) and a character's place before it's in the world (the squad's
+    /// spawn, `Body::Character`); a character's own moves are swept (`move_body`).
+    pub fn push_out(&self, p: Vec2, radius: f32, feet: f32, head: f32, step: f32, body: Body) -> Vec2 {
         let mut p = p;
         let lo = feet + step;
         let n = 3;
@@ -1494,7 +1529,7 @@ impl Arena {
                             continue;
                         }
                         let t = &self.tris[i as usize];
-                        if t.n.y.abs() >= FLOOR_NORMAL || !self.solid(t) {
+                        if t.n.y.abs() >= FLOOR_NORMAL || !self.solid(t) || !body.meets(t) {
                             continue;
                         }
                         let ty = (t.v[0].y.min(t.v[1].y).min(t.v[2].y), t.v[0].y.max(t.v[1].y).max(t.v[2].y));
@@ -1755,7 +1790,7 @@ impl Arena {
                 continue;
             }
             let p = at + d * (out + radius + ESCAPE_CLEAR);
-            let floor = self.floor_below(p.x, p.y, hi).map(|f| f.0);
+            let floor = self.floor_below(p.x, p.y, hi, Body::Character).map(|f| f.0);
             let stuck = self.inside_span(p, lo, hi).is_some() || floor.is_none_or(|g| (g - feet).abs() > hi - feet);
             if best.is_none_or(|(r, _, _)| (stuck, out) < r) {
                 best = Some(((stuck, out), p, floor));
@@ -1767,15 +1802,21 @@ impl Arena {
         }
     }
 
-    /// Distance along a ray to the terrain or an object, if within `max`.
+    /// Distance along a ray to the terrain, an object or one of the level's blockers, if within
+    /// `max`: the AI's ledge probe (a character's, which meets them), the cameras' and the
+    /// sight lines' rays. What a shot, a missile or a decal meets leaves the blockers out
+    /// (`ray_normal`, `ray_material`, `ray_breakable`, `ray_shot`: `Body`, #298).
     pub fn ray(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
         self.ray_tri(origin, dir, max).map(|(t, _)| t)
     }
 
-    /// `ray`, with the hit triangle's normal turned to face back along the ray (where a bullet
+    /// Where a shot's, a missile's or a decal's ray meets the world within `max`: the terrain or
+    /// an object, not the level's blockers (`Body::Thing`, #298: a missile is one of Ipion's
+    /// bodies, which the pair table keeps off them; an instant ray's filter, 0xfffffff8, leaves
+    /// them out), with the hit triangle's normal turned to face back along the ray (where a bullet
     /// hole lies, play_shots.rs); the flat floor's ground faces up.
     pub fn ray_normal(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
-        self.ray_tri(origin, dir, max).map(|(t, i)| {
+        self.ray_tri_where(origin, dir, max, |t| Body::Thing.meets(t)).map(|(t, i)| {
             let Some(i) = i else { return (t, Vec3::Y) };
             let v = &self.tris[i].v;
             let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or(Vec3::Y);
@@ -1783,27 +1824,31 @@ impl Arena {
         })
     }
 
-    /// `ray`, with the world-material id (the collision material's low bits, MATERIAL_ID) of the
-    /// triangle met from its front: what a shot's hit takes its effect, debris and sounds from
-    /// (FUN_0022cd80, FUN_0022b5b0: the hit record's +0x54). The terrain's triangles come in
-    /// twins with the same corners: the one facing up by its winding ((v1 - v0) x (v2 - v0))
-    /// carries the material and the flags, its back 0 and none (e34: all 15480 pairs DIRT 5 over
-    /// 0, the slide flag on 10462 of the fronts; e40's 20278 the same), and the ray, testing
-    /// both sides, met either. A face met from its front within FRONT_SLACK of the first face
-    /// met is taken; else that first face (a lone triangle wound the other way). The flat
-    /// floor's ground is material 0.
+    /// `ray_normal`'s hit (a shot's: the level's blockers left out), with the world-material id
+    /// (the collision material's low bits, MATERIAL_ID) of the triangle met from its front: what a
+    /// shot's hit takes its effect, debris and sounds from (FUN_0022cd80, FUN_0022b5b0: the hit
+    /// record's +0x54). The terrain's triangles come in twins with the same corners: the one
+    /// facing up by its winding ((v1 - v0) x (v2 - v0)) carries the material and the flags, its
+    /// back 0 and none (e34: all 15480 pairs DIRT 5 over 0, the slide flag on 10462 of the fronts;
+    /// e40's 20278 the same), and the ray, testing both sides, met either. A face met from its
+    /// front within FRONT_SLACK of the first face met is taken; else that first face (a lone
+    /// triangle wound the other way). The flat floor's ground is material 0.
     pub fn ray_material(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, u8)> {
         let id = |i: Option<usize>| i.map_or(0, |i| self.tris[i].material & MATERIAL_ID);
-        let first = self.ray_tri(origin, dir, max)?;
-        let front = self.ray_tri_where(origin, dir, max, |t| (t.v[1] - t.v[0]).cross(t.v[2] - t.v[0]).dot(dir) < 0.0)
+        let thing = |t: &Tri| Body::Thing.meets(t);
+        let first = self.ray_tri_where(origin, dir, max, thing)?;
+        let front = self.ray_tri_where(origin, dir, max, |t| thing(t) && (t.v[1] - t.v[0]).cross(t.v[2] - t.v[0]).dot(dir) < 0.0)
             .filter(|(t, _)| *t <= first.0 + FRONT_SLACK);
         Some(front.map_or((first.0, id(first.1)), |(t, i)| (t, id(i))))
     }
 
-    /// `ray`, with the breakable object it meets first (its index, see `breakable`), if the
-    /// nearest thing on the ray is one.
+    /// `ray_normal`'s hit (a shot's, a missile's or a decal's: the level's blockers left out,
+    /// #298), with the breakable object it meets first (its index, see `breakable`), if the
+    /// nearest thing on the ray is one. A breakable's own level blocker (`<blocker
+    /// object-instance>`) no longer stands for it: a shot strikes the object's own collision.
     pub fn ray_breakable(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
-        self.ray_tri(origin, dir, max).map(|(t, i)| (t, i.and_then(|i| self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize))))
+        self.ray_tri_where(origin, dir, max, |t| Body::Thing.meets(t))
+            .map(|(t, i)| (t, i.and_then(|i| self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize))))
     }
 
     /// `ray`, with the placed object it meets first (its index in `Level::objects`), if the
@@ -2012,7 +2057,8 @@ impl Arena {
         hit.map(|i| (best, i))
     }
 
-    /// Drop the level's pickups onto the floor below them (their mesh's bottom on it).
+    /// Drop the level's pickups onto the floor below them (their mesh's bottom on it): a thing's
+    /// floor, not a blocker's top (`Body::Thing`, #298).
     pub fn settle_pickups(&self, game: &Game, level: &mut Level) {
         let mut bottoms: HashMap<u32, f32> = HashMap::new();
         for o in level.objects.iter_mut().filter(|o| is_pickup(o.tag)) {
@@ -2024,7 +2070,7 @@ impl Arena {
                 continue;
             }
             let at = o.transform.w_axis;
-            if let Some((y, _)) = self.floor_below(at.x, at.z, at.y + 0.5) {
+            if let Some((y, _)) = self.floor_below(at.x, at.z, at.y + 0.5, Body::Thing) {
                 o.transform.w_axis.y = y - bottom * o.transform.y_axis.y;
             }
         }
@@ -2287,8 +2333,8 @@ mod tests {
     fn a_rock_faces_in_are_left_out() {
         let a = arena_with(&box_tris(Vec3::new(-1.0, 0.2, -1.0), Vec3::new(1.0, 2.0, 1.0)), true);
         assert_eq!(a.tris.iter().filter(|t| t.inner).count(), 12);
-        assert_eq!(a.floor_below(0.5, 0.1, 0.5).map(|f| f.0), Some(0.0));
-        assert_eq!(a.floor_below(0.5, 0.1, 2.4).map(|f| f.0), Some(2.0));
+        assert_eq!(a.floor_below(0.5, 0.1, 0.5, Body::Character).map(|f| f.0), Some(0.0));
+        assert_eq!(a.floor_below(0.5, 0.1, 2.4, Body::Character).map(|f| f.0), Some(2.0));
         assert!(a.tris.iter().filter(|t| t.inner).all(|t| t.front.dot((t.v[0] + t.v[1] + t.v[2]) / 3.0 - Vec3::new(0.0, 1.1, 0.0)) < 0.0));
         let m = go(&a, Vec2::new(-5.0, 0.1), Vec2::new(0.0, 0.1));
         assert!((m.x - -1.4).abs() < 0.01, "{m:?}");
@@ -2306,8 +2352,54 @@ mod tests {
         assert!((go(&a, Vec2::new(-3.0, 0.0), Vec2::new(3.0, 0.0)).x - -0.4).abs() < 0.01);
         assert!(go(&a, Vec2::new(3.0, 0.0), Vec2::new(-3.0, 0.0)).distance(Vec2::new(-3.0, 0.0)) < 1e-4);
         let b = arena_with(&box_tris(Vec3::new(-1.0, 0.5, -1.0), Vec3::new(1.0, 1.0, 1.0)), false);
-        assert_eq!(b.floor_below(0.2, 0.1, 0.8).map(|f| f.0), Some(0.0));
-        assert_eq!(b.floor_below(0.2, 0.1, 1.2).map(|f| f.0), Some(1.0));
+        assert_eq!(b.floor_below(0.2, 0.1, 0.8, Body::Character).map(|f| f.0), Some(0.0));
+        assert_eq!(b.floor_below(0.2, 0.1, 1.2, Body::Character).map(|f| f.0), Some(1.0));
+    }
+
+    /// #298: a level blocker (a twinned box, as the blockers round the levels' objects come) and a
+    /// hinter meet a character's body and nothing else (Ipion's pair table at 0x3c01e8 pairs
+    /// PID_BLOCKER and PID_HINTER with PID_CHARACTER_PHANTOM alone): its top is a character's floor
+    /// and not a thing's, which comes down on the ground under it; its walls push a character's
+    /// spawn out and leave a grenade or a bone where it is; a shot's, a missile's or a decal's ray
+    /// goes through it to what's behind (`ray_normal`, `ray_material`, `ray_breakable`), where the
+    /// characters' probes and the sight lines (`ray`) still stop at it. A plain object's box (no
+    /// blocker) holds both.
+    #[test]
+    fn a_blocker_meets_characters_alone() {
+        for (blocker, hinter) in [(true, false), (true, true), (false, false)] {
+            let mut a = arena_with(&box_tris(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0)), true);
+            // (a wall behind it, an object's, at x 4)
+            let first = a.tris.len();
+            for t in box_tris(Vec3::new(4.0, 0.0, -2.0), Vec3::new(4.5, 3.0, 2.0)) {
+                a.add(t, false, None, 0);
+                a.add([t[0], t[2], t[1]], false, None, 0);
+            }
+            a.new_body(first);
+            for t in a.tris.iter_mut().filter(|t| t.body == 0) {
+                t.blocker = blocker;
+                t.hinter = hinter;
+            }
+            let kind = format!("blocker {blocker}, hinter {hinter}");
+            assert_eq!(a.floor_below(0.3, 0.2, 2.5, Body::Character).map(|f| f.0), Some(2.0), "{kind}");
+            assert_eq!(a.floor_below(0.3, 0.2, 2.5, Body::Thing).map(|f| f.0), Some(if blocker { 0.0 } else { 2.0 }), "{kind}");
+            assert_eq!(a.floor_at(0.3, 0.2, 2.5).map(|f| f.0), Some(2.0), "{kind}");
+            let beside = Vec2::new(-1.05, 0.0);
+            let out = a.push_out(beside, 0.1, 0.5, 0.7, 0.0, Body::Character);
+            assert!((out.x - -1.1).abs() < 1e-3, "{kind}: {out:?}");
+            let thing = a.push_out(beside, 0.1, 0.5, 0.7, 0.0, Body::Thing);
+            assert_eq!(thing == beside, blocker, "{kind}: {thing:?}");
+            // (from x -3 along +x at 1 m: the box's face at -1, the wall's at 4)
+            let (from, dir) = (Vec3::new(-3.0, 1.0, 0.3), Vec3::X);
+            assert!(a.ray(from, dir, 20.0).is_some_and(|t| (t - 2.0).abs() < 1e-3), "{kind}");
+            let want = if blocker { 7.0 } else { 2.0 };
+            assert!(a.ray_normal(from, dir, 20.0).is_some_and(|(t, n)| (t - want).abs() < 1e-3 && n.x < -0.99), "{kind}");
+            assert!(a.ray_material(from, dir, 20.0).is_some_and(|(t, _)| (t - want).abs() < 1e-3), "{kind}");
+            assert!(a.ray_breakable(from, dir, 20.0).is_some_and(|(t, b)| (t - want).abs() < 1e-3 && b.is_none()), "{kind}");
+            // (a character's sweep, as #292 left it: the blocker holds both, a hinter the AI alone)
+            let held = |who| a.move_body(Vec2::new(-3.0, 0.3), Vec2::new(0.0, 0.3), 0.4, 0.0, 1.9, 0.5, None, who).x < -1.3;
+            assert!(held(Mover::Ai), "{kind}");
+            assert_eq!(held(Mover::Player), !hinter, "{kind}");
+        }
     }
 
     /// A rock under the step (0.5 m over the feet here) isn't a wall: the floor's to step up onto

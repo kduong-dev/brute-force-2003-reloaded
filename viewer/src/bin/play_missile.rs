@@ -1269,7 +1269,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     // dark decal shows through the demo's paler added fireball as a hard dark disc (#104). The
     // takes show it from ~0.85-1.0 s, once their fireball clears
     if def.decal != 0 {
-        let ground = floor_y(at.x, at.z, at.y + 0.5);
+        let ground = floor_y(at.x, at.z, at.y + 0.5, world::Body::Thing);
         if at.y - ground <= radius {
             state.scorches.push((DECAL_DELAY, def.decal, at));
         }

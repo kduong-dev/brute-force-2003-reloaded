@@ -116,7 +116,7 @@ fn make_copies(mut commands: Commands, mut copies: ResMut<PickupCopies>, mut gam
                         .fold(f32::MAX, f32::min)),
                     _ => None,
                 }).fold(f32::MAX, f32::min);
-            let ground = floor_y(at.translation.x, at.translation.z, at.translation.y + GROUND_ABOVE);
+            let ground = floor_y(at.translation.x, at.translation.z, at.translation.y + GROUND_ABOVE, world::Body::Thing);
             lying(at, if low.is_finite() { low } else { 0.0 }, ground)
         } else {
             at

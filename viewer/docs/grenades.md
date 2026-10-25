@@ -95,6 +95,10 @@ the thrower), each blast and decal, and a throw called off.
     and higher and its grenade lands farther (a tap at `BF_CAMERA_PITCH=-0.35` ~10 m out where it
     came down ~3 m), so their distances and who stood in a blast don't hold as written; they
     weren't run again. To land one close, aim lower (-0.6 rad: a tap ~5 m, by the launch above) or stand nearer.
+  * The level's invisible blockers and hinters don't stop it, nor hold it up: it flies, rolls and
+    comes down through them onto what's beyond (#298; Ipion's pair table keeps them off every
+    body but a character's: maps.md, "Blockers and hinters"). Before, one that ended a frame at a
+    blocker's wall bounced back off it, and one could come to rest on a blocker's top.
   * It keeps 0.3 of its speed along the ground per bounce, a value fitted to the Frag recording
     (resting near where it came down), not from the data: the game's is its physics material's,
     not traced (#161 leaves the bounces and the roll out). Bounces are

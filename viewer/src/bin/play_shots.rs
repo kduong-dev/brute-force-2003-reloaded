@@ -745,7 +745,7 @@ fn move_shells(mut commands: Commands, time: Res<Time>, mut shells: Query<(Entit
         }
         s.velocity.y -= SHELL_GRAVITY * dt;
         let next = tr.translation + s.velocity * dt;
-        let floor = floor_y(next.x, next.z, tr.translation.y + 0.3) + 0.01;
+        let floor = floor_y(next.x, next.z, tr.translation.y + 0.3, world::Body::Thing) + 0.01;
         if next.y < floor && s.velocity.y < 0.0 {
             s.velocity = Vec3::new(s.velocity.x, -s.velocity.y, s.velocity.z) * SHELL_BOUNCE;
             s.spin *= SHELL_BOUNCE;

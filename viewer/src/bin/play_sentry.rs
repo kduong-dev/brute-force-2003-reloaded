@@ -483,7 +483,7 @@ fn test_rig(mut player: ResMut<Player>, mut squad: ResMut<Squad>, kits: Option<R
         if let Some((p, face)) = goal.filter(|_| m.knock.is_none() && !m.dead) {
             m.position.x = p.x;
             m.position.z = p.z;
-            m.position.y = floor_y(p.x, p.z, p.y + 2.0) - GROUND;
+            m.position.y = floor_y(p.x, p.z, p.y + 2.0, world::Body::Character) - GROUND;
             m.prev_xz = Vec2::new(p.x, p.z);
             m.yaw = (-face.x).atan2(-face.z);
         }
