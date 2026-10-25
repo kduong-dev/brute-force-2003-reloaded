@@ -4220,6 +4220,20 @@ fn autopilot(player: &mut Player) -> bool {
     true
 }
 
+/// The heading a character standing without aiming settles to by itself (`step_player`): an AI
+/// one's `face_yaw` (a squadmate the leader's way, a cautious pause's sweep, an enemy where its
+/// motion left it, `ai_fire`'s target). None for the one a player controls (#294): its heading
+/// turns only by the stick's move and turn request or the aim, and with the stick no longer than
+/// 0.1 ([0x3a4ff0], `moving`'s) FUN_001195c0 makes none (0x119854-0x119863, on to 0x119efb), so
+/// it keeps its heading. A script's walk (play_script.rs `held_step`), a warp (play_triggers.rs
+/// `warp`) and a hit reaction's end (play_enemies.rs) leave a `face_yaw` on the controlled
+/// character too, which nothing cleared but a hand-over: it turned back to that heading at
+/// TURN_RATE x 0.35 whenever it stood still (e34's opening walk, the tutorial's warps of Tex:
+/// trigger_warp_tex_patrol, trigger_warp_tex_to_vsquad).
+fn settle_heading(p: &Player) -> Option<f32> {
+    p.face_yaw.filter(|_| !p.controlled)
+}
+
 /// Where the feet face while standing and aiming: toward the camera heading (less the held gun's
 /// yaw) until the gun is up, then wherever the gun is actually aimed. Looking down, the crosshair
 /// lands near the character and the gun's direction drifts from the camera heading as the view
@@ -5085,7 +5099,8 @@ const FACE_TOUCH: f32 = 0.02;
 fn slide(u: &mut Player, a: &world::Arena, g: f32, start: f32, n: Vec3, material: u8, dt: f32) {
     let here = Vec2::new(u.position.x, u.position.z);
     let own = here - u.prev_xz;
-    let moving = own.length() > 1e-3 && own.length() < 1.0;     // (not a spawn's jump)
+    // (the move the amount counts: none standing, `stands_still`)
+    let moving = !stands_still(u) && own.length() > 1e-3 && own.length() < 1.0;     // (not a spawn's jump)
     let flagged = world::Arena::slides(material);
     let s = u.slide_active as usize;
     let lo = SLIDE_COS[1 - s];
@@ -5153,6 +5168,20 @@ fn slide(u: &mut Player, a: &world::Arena, g: f32, start: f32, n: Vec3, material
         u.slide_yaw = (-down.x).atan2(-down.y);
     }
     u.sliding = SLIDE_HOLD;
+}
+
+/// Whether `u` stands with no ground move of its own this step, for the slide's amount (`slide`):
+/// idle on its feet or kneeling, not sliding, not knocked (MT_KNOCKDOWN moves by its root,
+/// FUN_0012cb40), no motion of an enemy's own playing. The game's slide update counts the step's
+/// ground move (FUN_0012cd10 hands FUN_0012c020 what FUN_0012c6c0 or FUN_0012cb40 moved the body
+/// by), and a standing character has none: MT_IDLE has no ground speed (FUN_0012c6c0) and isn't
+/// moved by its clip's root (FUN_0012cb40). So neither the idle clip's root sway, which the
+/// demo's root motion moves the body by, nor a push from a squadmate or a wall builds a slide up
+/// under a character standing on slide-flagged ground: one did, and slid off turned downhill
+/// with no input (#294: on sdm_e34's 36-degree face at (23, 10), Flint after 42 s, Tex after 83 s).
+fn stands_still(u: &Player) -> bool {
+    !u.slide_active && u.knock.is_none() && u.gait == Gait::Idle && matches!(u.action, Action::None | Action::Crouched)
+        && u.enemy.motion.is_none() && u.enemy.drive.is_none()
 }
 
 /// Lying limp (knocked down, before getting up).
@@ -6078,6 +6107,8 @@ fn toggle_weapon(p: &mut Player) -> bool {
 
 fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, transforms: &mut Query<&mut Transform>) {
     p.sim_time += dt;
+    // (the heading the step starts from, for BF_HEADING_LOG)
+    let yaw_was = p.yaw;
     if p.next_surface && !game.surfaces.is_empty() {
         p.surface = (p.surface + 1) % game.surfaces.len();
     }
@@ -6504,7 +6535,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             if upper_aim {
                 let goal = stand_aim_yaw(p, aim_yaw - off);
                 turn_to(&mut p.yaw, goal, TURN_RATE);
-            } else if let Some(f) = p.face_yaw {
+            } else if let Some(f) = settle_heading(p) {
                 turn_to(&mut p.yaw, f, TURN_RATE * 0.35);      // squadmates settle facing the leader's way
             }
             Gait::Idle
@@ -6530,6 +6561,16 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // a standing throw turns to where the crosshair is
     if p.throwing.is_some() && !moving && matches!(p.action, Action::None) {
         turn_to(&mut p.yaw, aim_yaw, TURN_RATE);
+    }
+    // test hook: BF_HEADING_LOG=1 prints, each frame, the controlled character's heading, how much
+    // the step turned it this frame, the aim's yaw and its place, with what may turn it standing:
+    // the stick, the aim (right mouse), the gun raised, a slide, a throw; and a `face_yaw` left
+    // on it, which it no longer settles to (`settle_heading`, #294)
+    if p.controlled && std::env::var("BF_HEADING_LOG").is_ok() {
+        let flags = [(moving, " moving"), (p.aim, " aim"), (upper_aim, " raised"), (sliding, " slide"), (p.throwing.is_some(), " throw")];
+        println!("t {:.3} {}: heading {:+.5} ({:+.6} this step), aim yaw {:+.5}, at {:.4}{}{}", p.sim_time, unit_name(p), p.yaw,
+                 wrap_angle(p.yaw - yaw_was), p.cam_yaw, p.position, flags.iter().filter(|f| f.0).map(|f| f.1).collect::<String>(),
+                 p.face_yaw.map_or(String::new(), |f| format!(" face_yaw {f:+.5}{}", if settle_heading(p).is_some() { " (settling)" } else { "" })));
     }
 
     // weapon up (ready pose) while aiming or firing, carried otherwise
@@ -7927,7 +7968,8 @@ fn move_tracers(mut commands: Commands, time: Res<Time>, fx: Res<Fx>,
 }
 
 /// BF_CAPTURE=<dir> (use with BF_AUTOPILOT): fixed 15 fps steps, saves every frame as
-/// <dir>/frame_NNN.png, then quits.
+/// <dir>/frame_NNN.png, then quits. BF_CAPTURE_EVERY=<n> saves only every n-th of them (a long
+/// run at the capture's step for its logs, #294), keeping their numbers.
 fn capture(mut commands: Commands, player: Res<Player>, mut frame: Local<usize>, mut exit: EventWriter<AppExit>) {
     let Ok(dir) = std::env::var("BF_CAPTURE") else { return };
     // (once the character is in; the map editor's stand-in never has a body to wait for)
@@ -7940,9 +7982,12 @@ fn capture(mut commands: Commands, player: Res<Player>, mut frame: Local<usize>,
         return;
     }
     let frames: usize = std::env::var("BF_CAPTURE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+    let every: usize = std::env::var("BF_CAPTURE_EVERY").ok().and_then(|s| s.parse().ok()).unwrap_or(1).max(1);
     if *frame < frames {
-        commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-            .observe(bevy::render::view::screenshot::save_to_disk(format!("{dir}/frame_{:03}.png", *frame)));
+        if *frame % every == 0 {
+            commands.spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+                .observe(bevy::render::view::screenshot::save_to_disk(format!("{dir}/frame_{:03}.png", *frame)));
+        }
     } else if *frame > frames + 20 {
         exit.write(AppExit::Success);
     }
@@ -8112,6 +8157,31 @@ mod tests {
         assert_eq!(ray.heard(entry, Vec3::ZERO), Some((0.5, Some(2.0))));
         let own_step = WorldSound { at: None, volume: Some(0.375), kind: KIND_STEP, ..splash(0.0) };
         assert_eq!(own_step.heard(entry, Vec3::new(100.0, 0.0, 0.0)), Some((0.375, None)));
+    }
+
+    /// #294: the controlled character settles to no heading of its own (a `face_yaw` a warp or a
+    /// script's walk left on it), an AI one to its `face_yaw`; a character standing (on its feet
+    /// or kneeling, not sliding) has no ground move for the slide, one walking, dodging or sliding
+    /// has.
+    #[test]
+    fn a_standing_character_keeps_its_heading_and_builds_no_slide() {
+        let mut p = Player::new(3);
+        p.face_yaw = Some(1.0);
+        p.controlled = true;
+        assert_eq!(settle_heading(&p), None);
+        p.controlled = false;
+        assert_eq!(settle_heading(&p), Some(1.0));
+        assert!(stands_still(&p));
+        p.action = Action::Crouched;
+        assert!(stands_still(&p));
+        p.gait = Gait::Walk;
+        assert!(!stands_still(&p));
+        p.gait = Gait::Idle;
+        p.action = Action::Dodge { left: true };
+        assert!(!stands_still(&p));
+        p.action = Action::None;
+        p.slide_active = true;
+        assert!(!stands_still(&p));
     }
 
     /// #229: the seed is the old product for the numbers that fitted, and a number past the old
