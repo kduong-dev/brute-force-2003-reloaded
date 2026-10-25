@@ -67,8 +67,10 @@ const RESTITUTION: f32 = 0.35;
 const GROUND_FRICTION: f32 = 0.3;
 /// h_1ee2f4ed: IOU_PLACE_ON_GROUND (Roller, Sentry, Thermo; the XBE's IOU_ enum)
 const USE_PLACE: i64 = 2;
-/// A level's item spawn element (h_1d1d4f05: the inventory-objects it puts down to pick up, the
-/// arena's PICKUP_ITEM): `load_kits` makes a kit for the grenade and explosive types among them.
+/// A level's item spawn element (h_1d1d4f05: the inventory-objects it puts down, the arena's
+/// PICKUP_ITEM; as pickups, or set down live with h_1cb7d5f2: the tutorial's and e16's, e34's and
+/// e40's mines, m09_b's Thermo): `load_kits` makes a kit for the grenade and explosive types among
+/// them.
 const ITEM_SPAWN: u32 = 0x1D1D_4F05;
 /// function-type IFSET_ROLLING_BOMB (the Roller: rolls off once set down)
 const ROLLING_BOMB: i64 = 13;
@@ -343,10 +345,15 @@ pub fn plugin(app: &mut App) {
             .run_if(in_state(AppState::Playing)));
 }
 
-/// The squad's grenade types (SQUAD_GRENADES, those the loaded levels define; then any other
-/// grenade or explosive the level's squad placements carry whose label none of those has: a
-/// Sentry defined only as h_f73de83d, m14_c and m14_d), their ALE effects compiled and their
-/// materials' render pipelines built ahead (`ale_fx::warm_up`).
+/// The squad's grenade types (SQUAD_GRENADES, those the loaded levels define), then any other
+/// grenade or explosive whose label none of those has that the level's squad placements carry (a
+/// Sentry defined only as h_f73de83d: m14_c and m14_d) or that the level puts down itself (its
+/// item spawns, #82), their ALE effects compiled and their materials' render pipelines built ahead
+/// (`ale_fx::warm_up`). The item spawns' rule is general; run on every level that puts down a type
+/// outside SQUAD_GRENADES (28: the campaign's and the arenas'), it adds a kit on four: m09_b's
+/// Thermo, and the Sentry h_f73de83d on e16, e34 and e40, which those three lay as live mines
+/// (h_1cb7d5f2): with its kit made, `place_mines` (play_sentry.rs) now arms them as the level
+/// loads (14, 6 and 7), where before #82 they had no kit and weren't placed.
 #[allow(clippy::too_many_arguments)]
 fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
@@ -361,9 +368,10 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
     let usable = |d: &WeaponDef| d.projectile != 0 && d.icon != 0 && !d.label.is_empty() && !d.label.starts_with("h_");
     let mut defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
     let carried = spawns.iter().flat_map(|s| s.0.iter()).flat_map(|s| s.items.iter().map(|i| i.0));
-    // and those the level puts down to pick up (its item spawns, h_1d1d4f05: m09_b's Thermo,
-    // h_e04e05e1, the type's only placement, #82), so a picked-up stack has its kit (the pickups
-    // that hand them out are #17's)
+    // and those the level puts down itself (its item spawns, h_1d1d4f05, as pickups or set down
+    // live with h_1cb7d5f2): m09_b's Thermo (h_e04e05e1, the type's only placement, set down, #82)
+    // and e16's, e34's and e40's Sentry mines (h_f73de83d), so a level's own mine is armed
+    // (`place_mines`) and a picked-up stack has its kit (the pickups that hand them out are #17's)
     let laid: Vec<u32> = map.iter().flat_map(|m| m.0.iter()).flat_map(|l| l.objects.iter()).filter(|o| o.tag == ITEM_SPAWN).map(|o| o.kind).collect();
     for n in carried.chain(laid) {
         let other = game.0.weapons.get(&n).filter(|d| matches!(d.group_type, 2 | 3) && usable(d))
@@ -372,8 +380,9 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
             defs.push(d);
         }
     }
-    // (BF_TEST_INV's grenade types the level defines but neither SQUAD_GRENADES nor its squad have:
-    // e34's Sentry h_f73de83d for #196's nine-stack pool, play_inventory.rs; the first by name)
+    // (BF_TEST_INV's grenade types the level defines but neither SQUAD_GRENADES, its squad nor its
+    // item spawns bring in, the first by name. #196's nine-stack pool on e34 (play_inventory.rs)
+    // asks for a Sentry, whose kit, h_f73de83d, e34's own mines now bring in above)
     if let Ok(v) = std::env::var("BF_TEST_INV") {
         for label in v.split(',').filter_map(|e| e.split_once(':')).map(|(n, _)| n.trim()) {
             if defs.iter().any(|k| k.label.eq_ignore_ascii_case(label)) {

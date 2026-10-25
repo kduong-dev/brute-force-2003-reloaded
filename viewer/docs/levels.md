@@ -585,7 +585,9 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     of 16 positional voices a frame (FUN_001793e0: here every one plays), and placing a sound in
     3D (every demo sound plays 2D at its distance's volume).
   * Checked with `BF_SOUND_LOG=1 BF_LIQUID_LOG=1` (BF_MUTE: nothing was played aloud; how they
-    sound is the user's check by ear):
+    sound is the user's check by ear; the Frags at sdm_e13's shore were thrown before #161 made
+    the throw the game's, which now goes faster and higher, so their splash distances don't hold
+    as written; not run again):
     * sdm_e13's lava, Brutus walking in to 2.6 m deep (`BF_MAP=sdm_e13 BF_CHARACTER=0
       BF_TEST_GOTO=-19.97,-122.80,-22.6,-102.0 BF_TEST_WALK=1 BF_TEST_HEALTH=5000`): his first
       four parts in without a splash and his steps silent (no surface found yet), then big

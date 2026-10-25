@@ -29,7 +29,9 @@
 //! Confed marines within its 3 m, but Tex, who handles mines, only sets it off stepping on it:
 //! take09 has him 0.84 m from the first for 8 s (71-79 s) before the disarm. Going off it sends
 //! DESTROYED to the triggers that listen to it (0x149520 at 0x1496fc: the tutorial's calculator471
-//! counts the three, which ends the mine lesson).
+//! counts the three, which ends the mine lesson). e16, e34 and e40 lay such mines too, of the
+//! Sentry h_f73de83d (14, 6 and 7): armed since `load_kits` makes their kit from the level's
+//! item spawns (#82); before, there was no kit for them there and they were left out.
 //!
 //! The demo has no enemies in the deathmatch: the squad is one team, so its mines only go off for
 //! a test hook's hostile (BF_TEST_HOSTILE), the test map's enemy NPCs (play_testtools.rs) or a

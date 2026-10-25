@@ -3,15 +3,15 @@
 Every grenade type comes from the loaded levels' `inventory-grenade` definitions (read into
 `WeaponDef`, `src/bf/weapon.rs`); nothing per type is hard-coded except which definitions the
 squad carries when several share a label (the Sentry has three, the Roller two: the ones the
-recordings show, `SQUAD_GRENADES`; a level that defines only another one its squad's
-placements carry takes that one, m14_c's and m14_d's Sentry h_f73de83d) and their order, which
-Tab steps through and the item box shows first: the game's store order, (category, index) = the
+recordings show, `SQUAD_GRENADES`; a level that defines only another one its squad's placements
+carry, or that it puts down itself, takes that one: m14_c's and m14_d's Sentry h_f73de83d, and the
+same Sentry that e16, e34 and e40 lay as live mines, see **Thermo**) and their order, which Tab
+steps through and the item box shows first: the game's store order, (category, index) = the
 group-type and h_e5f51266, Frag, Gas, Sonic, Energy, Light, Sentry, Roller (#281,
-[play.md](play.md) "Items: the squad's starting inventory"; BF_TEST_INV's grenade types the
-level defines but the squad doesn't carry are loaded too, #196). The squad carries only those
-seven. The Molotov (e01's h_f42e0faa, a labelled grenade with an icon) is the mutants'
-weapon (#78), not the squad's: its definition is read like the others' for an AI thrower to
-use. Per type:
+[play.md](play.md) "Items: the squad's starting inventory"; BF_TEST_INV's grenade types the level
+defines but the squad doesn't carry are loaded too, #196). The squad carries only those seven. The
+Molotov (e01's h_f42e0faa, a labelled grenade with an icon) is the mutants' weapon (#78), not the
+squad's: its definition is read like the others' for an AI thrower to use. Per type:
 
 | Field | Where | Frag |
 |---|---|---|
@@ -380,7 +380,9 @@ have none and were read in the disassembly):
   Tex only sets it off standing on it (above): take09 has him 0.84 m from the first for 8 s
   (71-79 s) before the disarm. Going off it sends DESTROYED to the triggers that listen to it
   (0x149520 at 0x1496fc): the tutorial's routers 446 and 470, and calculator471, which counts the
-  three to end the mine lesson.
+  three to end the mine lesson. The same rule arms e16's, e34's and e40's Sentry mines
+  (h_f73de83d: 14, 6 and 7) now that `load_kits` makes their kit (#82, **Thermo**); before, the
+  demo had no kit for them there and left them out. Not checked against those levels' footage.
 
 Its blast is the shared one (h_01f142eb: 62.5-88.5, type 10, radius 4; effect type h_0b69c2f2:
 exp-mine + light_explosion, 145f09e5; decal h_f5ccedb0). On sdm_e34 the squad's Sentry is still
@@ -679,37 +681,58 @@ them; the recording has a few such).
 comes between the Sentry (3, 1) and the Roller (3, 4) in the store's order), h_1ee2f4ed 2
 (IOU_PLACE_ON_GROUND), function-type 0 (no item set of its own), stack-limit 5, mass 23, its HUD
 icon h_0ebe1a32; its explosion h_08f5cb41: Damage 19.5-97.5, damage-type 10 (EXPLOSION),
-radius 3, core true. The level places it once, as a pickup (h_e04e05e1 at (-178.4, 58.3,
-126.5), levels-m09_b.xml 938; its pickup-amount 1).
+radius 3, core true. The level places it once (h_e04e05e1 at (-178.4, 58.3, 126.5),
+levels-m09_b.xml 938), and not as a pickup: it's set down live (h_1cb7d5f2) on the enemies' side
+(item-alignment 1), as the tutorial's mines and e16's, e34's and e40's Sentries are. The item
+object's handler (0x14a0a0) lets it go as a throw does (+0x1bc bit 1, its item set's +0x10,
+FUN_0014a150's steps). Whether its fuse then runs (a grenade's starts at its first contact,
+0x149510) or it waits for the squad isn't traced, and the demo doesn't place it (`place_mines`
+arms the Sentry types only).
 
 * Nothing of its own to build: it goes the placed types' way (**Placing** above). G sets it down
   at the feet with the stance's place_hi clip (the count drops at the press), its fuse runs
   from when it's down (the grenade's contact handler 0x149510 starts it, as every type's), and
   15 s later it goes off with its effect type's ALE effects, light and sounds, its decal, and
   the shared blast's damage (#112).
-* Its kit is made where the level defines it: `load_kits` takes in the grenade and explosive
-  types the level puts down to pick up (its item spawns, h_1d1d4f05), so m09_b loads the Thermo
-  (`8 grenade types: Frag, Gas, Sonic, Energy, Light, Sentry, Thermo, Roller`).
-* Blocked: the pickup that hands the squad its stack (the item spawns' pickups are #17's), and
-  what m09_b's mission does with it (its objectives and triggers, the campaign). Until then the
-  squad has none but by the test hooks.
+* Its kit is made where the level defines it: `load_kits` takes in the grenade and explosive types
+  a level puts down itself (its item spawns, h_1d1d4f05, as pickups or set down live), so m09_b
+  loads the Thermo (`8 grenade types: Frag, Gas, Sonic, Energy, Light, Sentry, Thermo, Roller`).
+  The rule is general, not the Thermo's. Run on each level that puts down a type outside the
+  squad's seven (28: e16, e23, e34, e40, m05_c, m07_c, m08_a, m08_b, m09_a-c, m09_x, m14_b, m14_c
+  and the fourteen arenas; `BF_MAP=<level>`, the kit list it prints), it adds a kit on four:
+  m09_b's Thermo, and the Sentry h_f73de83d on e16, e34 and e40 (6, 6 and 5 types, one more each
+  than before). On the others what they put down is loaded already under its label (another
+  definition of the Sentry or the Roller) or isn't a usable item. Those three levels lay that
+  Sentry as live mines, set down with h_1cb7d5f2: e16 14, e34 6 and e40 7, item-alignment 1 (the
+  enemies') but one of e34's, -1. With its kit made, `place_mines` (play_sentry.rs, #228) now arms
+  them as the level loads, as the game's handler does (0x14a0a0): `BF_SENTRY_LOG=1` on e34 prints
+  six "the level's mine ... armed" at t 0.00, h_0a8cb601 on team 0 and five on team 1, the
+  enemies', which go off for Brutus, Flint or Hawk within their 3 m and for Tex only stepping on
+  one, as the tutorial's do. Before #82 they had no kit there and weren't placed. Not checked
+  against footage of those levels.
+* Blocked: how the squad comes by one. The data has no Thermo pickup (its one placement is
+  the set-down charge above): pickups are #17's, disarming a set-down item #145. Also blocked:
+  what m09_b's mission does with the charge (its objectives and triggers, the campaign). Until
+  then the squad has none but by the test hooks.
 
 Checked (`BF_GRENADE_LOG=1 BF_COMBAT_LOG=1`): on m09_b (`-- --test BF_MAP=m09_b BF_CHARACTER=3
-BF_TEST_INV=Thermo:3 BF_TEST_GRENADE_TYPE=Thermo BF_TEST_THROW=2.0,0.1`) the press at 2.0 s drops
-the count 3 -> 2, the clip lets it go at 2.53 s, it's down 0.6 m from Tex at 2.93 s and goes off at
-18.00 s (15.07 s, a 15 fps step), Tex 1.1 m from it taking his share (14.7). On the test map with
-m09_b's data (`BF_TESTMAP_LEVELS=mp_common,mp1,mp2,mp3,mp4,mp6,mp7,mp8,m02_a,m09_a,sdm_e34,m09_b`,
-the same hooks, `BF_TEST_GOTO=0,30,0,60 BF_TEST_GO_AT=100 BF_TEST_INSTANT_KILL=0`, dm Shrike
-Soldiers frozen 1.8, 3.5 and 3.9 m from where it lies): the one at 1.8 m takes 97.5 x (1 - 1.83 / 3)
-x 1.4 = 53.2 (its stamina shield 25 of it), the two beyond 3 m nothing. The item box shows its
-icon, "Thermo" and the count. No take: what it looks like going off is the data's only.
+BF_TEST_INV=Thermo:3 BF_TEST_GRENADE_TYPE=Thermo BF_TEST_THROW=2.0,0.1`; m09_b starts in a
+letterbox that hides the HUD: `BF_TRIGGER_FIRE=trigger_letterbox468,USER_SIGNAL1,0.05` lifts it,
+the tester's) the press at 2.0 s drops the count 3 -> 2, the clip lets it go at 2.53 s, it's down
+0.6 m from Tex at 2.93 s and goes off at 18.00 s (15.07 s, a 15 fps step), Tex 1.1 m from it taking
+his share (14.7). On the test map with m09_b's data
+(`BF_TESTMAP_LEVELS=mp_common,mp1,mp2,mp3,mp4,mp6,mp7,mp8,m02_a,m09_a,sdm_e34,m09_b`, the same
+hooks, `BF_TEST_GOTO=0,30,0,60 BF_TEST_GO_AT=100 BF_TEST_INSTANT_KILL=0`, dm Shrike Soldiers frozen
+1.8, 3.5 and 3.9 m from where it lies): the one at 1.8 m takes 97.5 x (1 - 1.83 / 3) x 1.4 = 53.2
+(its stamina shield 25 of it), the two beyond 3 m nothing. The item box shows its icon, "Thermo"
+and the count. No take: what it looks like going off is the data's only.
 
 Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
 * `BF_TEST_GRENADE_TYPE=<label>` (any case, e.g. `Sonic`) selects that type at the start,
   giving a stack of it if none is carried.
-* `BF_TEST_THROW=<s>[,<hold s>][,<s>,<hold s>...]` holds G from s for hold s (default 0.6: a
-  full charge), as many times as given (a placed type: one per press). At 15 fps a hold under
-  one step (0.067 s) can fall between steps.
+* `BF_TEST_THROW=<s>[,<hold s>][,<s>,<hold s>...]` holds G from s for hold s (default
+  `CHARGE_TIME`, 0.625 s: a full charge), as many times as given (a placed type: one per press). At
+  15 fps a hold under one step (0.067 s) can fall between steps.
 * `BF_TEST_NEXT_GRENADE=<s>[,<s>...]` taps Tab (0.1 s) at each time: the next item (#196; it
   pressed the T key before, which stepped the grenade types only).
 * `BF_TEST_DETONATE=<s>` sets off every grenade out at that time. (The Sentry's own hooks:
@@ -735,9 +758,14 @@ recordings at 60 fps):
   frame.
 * Sonic: see **Sonic grenade**.
 * Light (`BF_TEST_GRENADE_TYPE=light`): see **Light grenade** above.
-* Hand-over during a throw (`BF_TEST_THROW=1.5,0.07 BF_TEST_SELECT=1,1.1`): the count drops to
-  9 at the button, control passes at 1.73 s before the grenade leaves the hand, `BF_GRENADE_LOG`
-  prints "throw cut short, grenade back (10 now)", the box shows 10 again and nothing is thrown.
+* Hand-over during a throw (`--test BF_TEST_GOTO=0,4,0,4 BF_TEST_THROW=1.5,0.07
+  BF_TEST_SELECT=1,1.6 BF_GRENADE_LOG=1`): the count drops to 9 at the button, control passes at
+  2.07 s, before the grenade would leave the hand (2.20 s without the hand-over), and
+  `BF_GRENADE_LOG` prints "t 2.07: throw cut short, grenade back (10 now)": nothing is thrown.
+  The recipe asked for the select at 1.1 s, which no longer shows it: the hand-over comes 0.5 s
+  after the ask (`SELECT_TIME`, 0.6 when this was written), at 1.6 s, as G is let go, and
+  depending on the frame it lands in the throw goes ahead (the tester's runs, on main's build and
+  #161's) or never starts (a run at 15 fps here).
 * Sentry (`BF_TEST_GRENADE_TYPE=Sentry`, ten presses 1 s apart): the box counts 10, 9 ... with
   no digit at 1, then shows Frag 10; `BF_TEST_NEXT_GRENADE=12.5,13` steps to Energy, then Gas.
 * Roller (`BF_TEST_GRENADE_TYPE=Roller BF_TEST_DETONATE=6 BF_SOUND_LOG=1`): down 0.97 s after

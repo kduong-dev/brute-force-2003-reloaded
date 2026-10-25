@@ -1072,7 +1072,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     the lower right to short of the reticle, with white rings along it, as take12 f195-f209.
   * The Rail RVR at e34's gate 10 m out (#67 take01's spot: `BF_MAP=e34 BF_CHARACTER=2
     BF_TEST_WEAPON="Rail RVR" BF_TEST_GOTO=-52.76,31.02,-52.9,31.5 BF_CAMERA_PITCH=-0.08
-    BF_TEST_TRIGGER=2.0-2.08`): the spark at the hit, red-violet arcs from it down toward the gun
+    BF_TEST_TRIGGER=2.0-2.08`; for the HUD on e34 add `BF_NO_SQUAD=1
+    BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05`, the start's letterbox off, camera.md, the
+    tester's): the spark at the hit, red-violet arcs from it down toward the gun
     turning blue over ~0.15 s, then blue sparks at the hit, as take01 f19-f41. The ray goes
     through the gate and stops at a wall 38.3 m out, the beam's length.
   * Not matched: in the L-Shot's scope the demo draws more rings than take12's three or four,
@@ -1573,7 +1575,8 @@ Against #287's takes (`todo/287-weapon-shots/`, take-log.md's hit logs: every ta
 game dealt, in order), on e34 with Hawk (`-- --test BF_MAP=e34 BF_CHARACTER=2
 BF_TEST_WEAPON="Rail RVR;Foley 356 Tact" BF_TEST_GO_AT=100 BF_TEST_INSTANT_KILL=0
 BF_TEST_NPC_HP=1.0,all,300 BF_TEST_TRIGGER=3.0-3.08,5.6-5.68 BF_SHOT_LOG=1 BF_COMBAT_LOG=1
-BF_SCENERY_LOG=1`):
+BF_SCENERY_LOG=1`; for the HUD add `BF_NO_SQUAD=1 BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05`,
+the start's letterbox off, camera.md, the tester's: take01's recipe gives the same hits with them):
 * **Two enemies in line** (take01: `BF_TEST_GOTO=-48.0,23.35,-49.61,30.16 BF_CAMERA_PITCH=-0.10
   BF_TEST_NPC="0.3,shrike heavy@e34,enemy,frozen,-49.61,30.16;0.3,h_e96829a0,enemy,frozen,-50.72,35.96"`):
   each ray hits the Heavy 6.0 m out, the Soldier 12.0 m out, then the base gate's leaf (breakable
@@ -1640,9 +1643,12 @@ campaign level whose squad spawn-triggers fire at once (m03_a) moves the charact
 **Feral Cutter** (#53, Brutus; `-- --test BF_MAP=m03_a BF_CHARACTER=0 BF_TEST_WEAPON="Feral Cutter"
 BF_TEST_GOTO=-182.6,-43.5,-186.90,-52.59 BF_TEST_GO_AT=100
 BF_TEST_FREECAM="0.3,-182.6,45,-41.88,0,-89.9" BF_TEST_TELEPORT=0.5 BF_TEST_FREECAM_OFF=0.7
-BF_CAMERA_PITCH=-0.05`, take01's spot, the stone tower 10 m out; the goal is #287 take07's first
-hit, where its blade left along bearing -115, 9 degrees right of Brutus's facing -124, which the
-recipe aimed at before #287):
+BF_CAMERA_PITCH=-0.05 BF_TEST_TRIGGER=3.0-3.08 BF_SHOT_LOG=1`, take01's spot, the stone tower 10 m
+out; the goal is #287 take07's first hit, where its blade left along bearing -115, 9 degrees right
+of Brutus's facing -124, which the recipe aimed at before #287). m03_a's squad spawn moves Brutus
+some 80 m from the GOTO's start, so every m03_a recipe here needs the three free-camera hooks: the
+camera straight down 45 m up over its spot at (x, z + 1.62), where the crosshair's ray, 6 degrees
+above the view's axis, meets the ground at (x, z); the teleport puts him there.
 * Each blade strikes the tower (an object, material 3) on its first sweep, 0.1 s after the shot
   (take01: the HUD's 29 -> 28 at f11 of 5.20 s on, the white star at f17), with the white star of
   its explosion and sparks (§ Bolts, "The bullet's explosion"), its ribbon drawn from the gun to
@@ -1659,10 +1665,15 @@ recipe aimed at before #287):
   another facet of the tower. It leaves the cutter's scorch (h_1801e63d).
 * A blade fired straight at a wall comes back past its owner and never hurts him (#287 takes
   10-13: Brutus's 105 hp all through, take13's second blade reaching the floor at his feet; the
-  sweep's filter leaves the shooter out, FUN_00225440's +0x48). The demo's
-  (`BF_TEST_GOTO=-182.73,-46.85,-188.07,-46.9 BF_CAMERA_PITCH=-0.10`, take13's spot, its freecam
-  and teleport as above) bounce off the wall (breakable 281) 4.4 m out back past Brutus to the
-  ground or their life's end, with no hit on him.
+  sweep's filter leaves the shooter out, FUN_00225440's +0x48). The demo's, at take13's spot
+  (the map, character and weapon above, `BF_TEST_GOTO=-182.73,-47.2,-188.07,-46.9
+  BF_TEST_GO_AT=100 BF_TEST_FREECAM="0.3,-182.73,45,-45.58,0,-89.9" BF_TEST_TELEPORT=0.5
+  BF_TEST_FREECAM_OFF=0.7 BF_CAMERA_PITCH=-0.35 BF_TEST_INSTANT_KILL=0
+  BF_TEST_TRIGGER=3.0-3.08,5.0-5.08,7.0-7.08 BF_SHOT_LOG=1 BF_COMBAT_LOG=1`, the tester's):
+  each blade strikes the wall (breakable 281) 4.4 m out at 0.1 s, comes straight back down
+  through where Brutus stands and meets the ground at his feet 5.8-6.6 m on at 0.2 s, with no
+  hit on him. The recipe before (Brutus at -46.85, pitch -0.10, the first spot's free camera)
+  sent its blades back past him, missing, so it didn't test the filter.
 * Held fire one blade every 0.38-0.47 s (2.5 a second; take01: 26 -> 18 in 3.5 s).
 * Reload (`--test BF_CHARACTER=0 BF_TEST_WEAPON=1545a4e4 BF_TEST_CLIP=3 BF_TEST_TRIGGER=2.5-7.0
   BF_AMMO_LOG=1`; the label also names the enemies' variant h_1bb3c9c7, so the hex): the clip
@@ -1670,7 +1681,9 @@ recipe aimed at before #287):
   last blade, and the clip reads 30 14 frames (0.93 s) later. take02's watch log: 3 -> 0 at
   2.735 / 3.136 / 3.537, the reserve 100 -> 70 at 3.939, the clip 30 at 4.944.
 * Damage on a frozen Filthy Mutant 9 m out in front of the tower (take03's spot; m03_a has no
-  Confed trooper type, take03's spawn: `BF_TEST_GOTO=-182.6,-43.5,-186.3,-51.7
+  Confed trooper type, take03's spawn: the map, character and weapon above,
+  `BF_TEST_GOTO=-182.6,-43.5,-186.3,-51.7 BF_TEST_GO_AT=100
+  BF_TEST_FREECAM="0.3,-182.6,45,-41.88,0,-89.9" BF_TEST_TELEPORT=0.5 BF_TEST_FREECAM_OFF=0.7
   BF_TEST_NPC="0.8,h_10a12c64,enemy,frozen,-186.3,-51.7" BF_TEST_NPC_HP=1.5,1,300
   BF_TEST_INSTANT_KILL=0 BF_CAMERA_PITCH=-0.27 BF_TEST_TRIGGER=3.0-3.08,4.5-4.58,6.0-6.08,7.5-7.58,9.0-11.0
   BF_COMBAT_LOG=1`): every blade lands on its chest (x1), 7.9-10.0 (the roll 5.625-7.875 x the
@@ -1723,7 +1736,9 @@ The bullet's `<mirv>` count 3 is dead data: its mode is 0, NO_MIRV, plan §2):
 **Rail RVR** (#67, Hawk; nothing of its own beyond the beam's spawn below: the pass-through
 (#238) and the beam (#237), from its data: an instant ray, 90 m, 2.5 a second, 13.25-18.25
 BALLISTIC with no falloff, n1 1, n2 500 and the pass flag, no scope; railhit_s with
-light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in flight):
+light_hit_rail where it strikes, rgun_perp_s, rgun_side_s and rgun_beam in flight; on e34 the
+start's letterbox hides the HUD: add `BF_NO_SQUAD=1 BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05`
+to the e34 recipes below for it, camera.md, the tester's):
 * The beam (§ Tracers and beams) at e34's gate 10 m out (take01's spot, `-- --test BF_MAP=e34
   BF_CHARACTER=2 BF_TEST_WEAPON="Rail RVR;Foley 356 Tact" BF_TEST_GOTO=-52.76,31.02,-52.9,31.5
   BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.08 BF_TEST_TRIGGER=2.0-2.08`; the Foley as the second gun
