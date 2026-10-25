@@ -90,6 +90,11 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
   ragdoll, then the death camera and the hand-over to the next squad member (or, with nobody
   left, the camera stays on the body). `BF_TEST_SUICIDE=<s>` presses it at that time.
+* **Dying alone respawns** (#302, the demo's rule for the test map, not the game's): with nobody
+  to hand over to, 4 s after the death (the death camera's time to its hand-over) the player
+  comes back where it stood, a fresh one of its type, its view and the squad's inventory kept.
+  Only on the test map's floor, not on a level a test session loads ([testtools.md](testtools.md),
+  "The squad").
 * **The controls panel**, which the main game no longer shows: the keys (the tools' too) and
   the debug line (character, state, clip, surface, weapon), top left under the health bars. It
   starts hidden, with a small "H: help" at the bottom; H shows and hides it.
@@ -360,9 +365,9 @@ Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigg
 radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
 dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); the
 reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); the
-squad's portraits for members not in the world (the tutorial's Tex alone still shows four; a
-test session's empty slot shows none, and a slot's member of another type its type's portrait
-or a "?": #302, [testtools.md](testtools.md) "The squad"). A
+squad's portraits for members not in the world (the tutorial's Tex alone still shows four, in a
+test session too; the test map's own empty slots show none, and a slot's member of another type
+its type's portrait or a "?": #302, [testtools.md](testtools.md) "The squad"). A
 test map dummy is no AI target, so nobody knows of a hostile dummy and it never shows.
 
 ### Ammo, reload and the crosshair (#114)

@@ -454,11 +454,11 @@ fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, 
 }
 
 /// What a squad slot's portrait place shows (`update_squad_hud`): its own face (`PortraitArt`:
-/// its own type, the main game's, or an empty slot outside a test session, as the tutorial's Tex
-/// alone still shows four); another face (on the test map, #302: a squad type's in another's
-/// place, or another type's portrait from its data, `CharacterType::portrait`); nothing (an empty
-/// slot in a test session); or a "?" (a member whose type has no portrait). A dead member's skull
-/// goes over any of them.
+/// its own type, the main game's, or an empty slot anywhere but the test map, as the tutorial's
+/// Tex alone still shows four, a test session's too); another face (#302: a squad type's in
+/// another's place, or another type's portrait from its data, `CharacterType::portrait`); nothing
+/// (an empty slot on the test map, `testmap::on_test_floor`); or a "?" (a member whose type has no
+/// portrait). A dead member's skull goes over any of them.
 #[derive(Clone)]
 enum Face {
     Own,
@@ -1250,7 +1250,7 @@ fn update_hud_widgets(
     reserve: Res<super::ammo::Reserve>,
     held_name: Res<super::ammo::HeldName>,
     (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
-    (squad, test): (Res<Squad>, Option<Res<super::testmap::TestMap>>),
+    (squad, test, current): (Res<Squad>, Option<Res<super::testmap::TestMap>>, Res<super::CurrentMap>),
     use_panel: Res<super::UsePanel>,
     feed: Res<super::pickups::PickupFeed>,
     mut game: ResMut<GameData>,
@@ -1363,8 +1363,10 @@ fn update_hud_widgets(
                 let icon = Some(PLAYER_ICON);
                 let h = icon.and_then(|icon| texture(&mut game.0, &mut images, &mut cache, icon));
                 let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad() && u.dead);
-                // (an empty slot of a test session's squad has none, as it has no face: #302)
-                let empty = test.is_some() && !std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad());
+                // (an empty slot of the test map's squad has none, as it has no face: #302; a level
+                // a test session loads keeps the main game's four)
+                let empty = super::testmap::on_test_floor(test.as_deref(), &current)
+                    && !std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad());
                 show(&mut vis, h.is_some() && !dead && !empty);
                 if let (Some(mut img), Some(h)) = (img, h) {
                     if img.image != h { img.image = h; }
@@ -1488,7 +1490,7 @@ fn update_squad_hud(
     mut game: ResMut<GameData>,
     mut gen: ResMut<HudGen>,
     mut images: ResMut<Assets<Image>>,
-    (mut cache, test): (ResMut<HudImages>, Option<Res<super::testmap::TestMap>>),
+    (mut cache, test, current): (ResMut<HudImages>, Option<Res<super::testmap::TestMap>>, Res<super::CurrentMap>),
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
     flash: Res<BarFlash>,
@@ -1553,10 +1555,12 @@ fn update_squad_hud(
     let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
     // each slot's place: its member's face (`Face`), and its skull once it's dead (its type's: a
     // squad type's own, another type's from its data, `CharacterType::skull`, else the human one)
+    // (the test map's empty slots show nothing; a level a test session loads keeps the four faces)
+    let floor = super::testmap::on_test_floor(test.as_deref(), &current);
     let looks: Vec<(Face, Option<Handle<Image>>)> = (0..PORTRAITS.len()).map(|c| {
         let m = member(c);
         let face = match m {
-            None if test.is_some() => Face::Empty,
+            None if floor => Face::Empty,
             None => Face::Own,
             Some(u) if u.kind == squad_type(c) => Face::Own,
             Some(u) => {

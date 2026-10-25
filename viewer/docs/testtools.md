@@ -117,9 +117,22 @@ a click is any left click off the panel, and F and its teleports do nothing.
     (`CharacterType::portrait`, h_f9d94425: the
     deathmatch types and some of the militia have one, common's textures), else a "?" in pale
     blue; its skull its type's (h_00c51907), else the human one.
-  * In a test session an empty slot shows no face, follow-order tab or health channel (in any
-    other session an empty slot still shows its own face, as the tutorial's Tex alone does:
-    play.md "Radar").
+  * On the test map (its flat floor: `testmap::on_test_floor`) an empty slot shows no face,
+    follow-order tab or health channel. On a level a test session loads (`--test
+    BF_MAP=<level>`, the L menu), as in the main game, an empty slot still shows its own face, as
+    the tutorial's Tex alone does (play.md "Radar"; the product owner's choice).
+  * **Dying alone** on the test map respawns the player (`testsquad::respawn`; the product owner's
+    rule for the test map, not the game's, where a lone death ends the mission): with nobody to
+    hand over to (no living squad member in the world, no hand-over under way), RESPAWN_TIME (4
+    s, the death camera's time to its hand-over) after the death it comes back where it stood
+    when it died, facing its way, a fresh one of its type (the menu's own-slot change: its body
+    taken away, its view, the hooks' clock and the squad's inventory kept; the guns, blood and
+    memory chip it left stay), and "Respawned" shows. The dead character's own clock stops, so
+    the wait counts the hooks' clock on: hooks due during it or after run on time. Only on the
+    test map's floor (a level a test session loads keeps the main game's rule: the camera stays on
+    the body), never for the editor's stand-in. `BF_TOOLS_LOG` prints "t 5.13: tex died alone:
+    respawned after 4 s at [-0.00, -1.05, 8.00], its heading -0 deg". Respawned beside the memory
+    chip it dropped (0.5 m ahead), it takes it at once.
   * The controlled character's slot changes its type in place: a fresh character of the new
     type where it stood, facing its way, with its view (the aim, the follow camera easing to the
     new boom), the hooks' clock, the help panel and the squad's inventory (its grenades refilled
@@ -127,7 +140,8 @@ a click is any left click off the panel, and F and its teleports do nothing.
     emptied. Any other change makes a fresh character too: full health, its type's guns.
   * Removing or adding a member moves `Squad`'s places, so the shots on their way are dropped
     (`AiHits`, as the NPC tool's removal does). In deathmatch (an arena, `BF_NO_SQUAD`) the map is
-    played alone: the menu changes only the player's type.
+    played alone: the menu changes only the player's type, and refuses a member ("No squad here:
+    the map is played alone"), in the editor's edit mode too.
   * The roster (`testsquad::Roster`): each map's slots as its start made them and the menu
     changed them. In the map editor's edit mode the squad is out of the world, so the menu changes
     the roster alone ("(when play starts)"), and play (F5) makes its fresh squad from it.
@@ -294,7 +308,7 @@ the background (#163)".
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |
-| `BF_TEST_NPC=<s>,<character>,<friend\|enemy\|neutral\|team>,<dummy\|fight\|frozen>[,<x>,<z>[,<y>[,<bearing>]]]` | spawn one at x, z or under the crosshair, facing the controlled character, or `bearing` when it's given (#167: degrees, the xemu watch logs' atan2(dz, dx), so 0 faces +x and 90 faces +z; an empty y keeps its default, `x,z,,90`); on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). Its team: friend 0, enemy 1, neutral 2 or a number 0-9 of the game's team table. The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`) or `name@library` (`shrike soldier@sdm_shrike`), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; else a placement of a loaded level by its name (`h_1c5780f8`: its type with the placement's weapons and personality, enemies.md); an unknown one is logged and skipped. `frozen`: a dummy with no hit reactions |
+| `BF_TEST_NPC=<s>,<character>,<friend\|enemy\|neutral\|team>,<dummy\|fight\|frozen>[,<x>,<z>[,<y>[,<bearing>]]]` | spawn one at x, z or under the crosshair, facing the controlled character, or `bearing` when it's given (#167: degrees, the xemu watch logs' atan2(dz, dx), so 0 faces +x and 90 faces +z; an empty y keeps its default, `x,z,,90`); on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). Its team: friend 0, enemy 1, neutral 2 or a number 0-9 of the game's team table. The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`), `name@library` (`shrike soldier@sdm_shrike`) or both as the menus show them (`hunter lord@mp_common/sdm_shrike`, #302), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; else a placement of a loaded level by its name (`h_1c5780f8`: its type with the placement's weapons and personality, enemies.md); an unknown one is logged and skipped. `frozen`: a dummy with no hit reactions |
 | `BF_TEST_NPC_MOTION=<s>,<n\|aim\|all>,<motion>[,<x>,<z>[,relaxed]]` | drive an enemy of a type of its own in a motion type (`walk`, `run`, `dash`, `move_left`, `backpedal`, `idle`, `dizzy`, `knockdown` ... or its MT_ number) to x, z, or in place: its MOTION table's clip, its type's speed (enemies.md, "Test hooks") |
 | `BF_TEST_NPC_TEAM`, `BF_TEST_NPC_FIGHT`, `BF_TEST_NPC_REMOVE` `=<s>,<n\|aim\|all>` | switch the team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or all. `BF_TEST_NPC_TEAM=<s>,<n\|aim\|all>,<team>` puts them on that team (named as for `BF_TEST_NPC`; one it doesn't know is skipped, with a warning) |
 | `BF_TEST_NPC_RADAR=<s>,<n\|aim\|all>,<value>` | give them that radar-contact (every character has 1), as #141's take08 rewrote the Shrike's: 2 or 4 turns the crosshair yellow with its centre on a friend or a neutral; a hostile skips the radar test (red in its lock box, else blue) |
@@ -311,16 +325,18 @@ the background (#163)".
 | `BF_TEST_LEVEL=<s>,<level>[;<s>,<level>...]` | switch to that level (`flat` or `test`: the test map). One entry per map in turn, each on its own map's clock: the first on the first map, the second on the map it switched to, and so on |
 | `BF_TEST_LEVEL_FAIL=<level>` | loading that level for a switch panics on its thread (the fall back to the map it came from) |
 | `BF_TEST_SQUAD_MENU=<s>` | T (the squad menu opens, or closes) |
-| `BF_TEST_SQUAD_SLOT=<s>,<slot>,<type\|empty>[;...]` | the squad menu's Enter or Delete (#302): that slot gets a fresh one of that type, or is emptied. The slot as `BF_TEST_SELECT` names a squad member, 0-3 (not the keys' 1-4) or `brutus` / `flint` / `hawk` / `tex` for its place, or `me` for the controlled character's (its type changes in place); the type as `BF_TEST_NPC` names one (`shrike soldier@m09_a`, `h_fcec1024`, `flint`). One it doesn't know is logged and skipped |
+| `BF_TEST_SQUAD_SLOT=<s>,<slot>,<type\|empty>[;...]` | the squad menu's Enter or Delete (#302): that slot gets a fresh one of that type, or is emptied. The slot as `BF_TEST_SELECT` names a squad member, 0-3 (not the keys' 1-4) or `brutus` / `flint` / `hawk` / `tex` for its place, or `me` for the controlled character's (its type changes in place); the type as `BF_TEST_NPC` names one (`shrike soldier@m09_a`, `hunter lord@mp_common/sdm_shrike` as the menu shows its place, `h_fcec1024`, `flint`). One it doesn't know (or whose model isn't loaded) is logged and skipped |
 | `BF_TEST_SQUAD=<entry>[,<entry>...]` | the test map's start squad beside the player's character (read as each flat-floor start is made, every one of the session): each entry a type as `BF_TEST_NPC` names one, a squad member's type into its own slot if that's free and any other into the first free slot in the keys' order, or `<slot>:<type>` into that slot (`3:shrike heavy@sdm_shrike` with Tex leading: he starts as one); `none`: nobody. Unknown types are logged and skipped |
 | `BF_TEST_FULL_SQUAD=1` | the test map starts with the four, as before #302 (over `BF_TEST_SQUAD`) |
 
-Without `BF_TEST_SQUAD`, a hook of the other pages that acts on the squad's members starts the
-test map with the four, as before #302, so the recipes written for them run as they did, each
-member at the place it had (`testsquad::SQUAD_HOOKS`: `BF_TEST_SELECT`, `BF_TEST_KILL`,
-`BF_TEST_TARGET`, `BF_TEST_SQUAD_SKILL`, `BF_TEST_HOSTILE`, `BF_TEST_MINE_FRIEND`). A recipe that
+Without `BF_TEST_SQUAD`, a hook of the other pages that acts on the squad's members, or a death
+whose recipes look at the hand-over after it, starts the test map with the four, as before #302,
+so the recipes written for them run as they did, each member at the place it had
+(`testsquad::SQUAD_HOOKS`: `BF_TEST_SELECT`, `BF_TEST_KILL`, `BF_TEST_TARGET`,
+`BF_TEST_SQUAD_SKILL`, `BF_TEST_HOSTILE`, `BF_TEST_MINE_FRIEND`, `BF_TEST_DIE`,
+`BF_TEST_SUICIDE`; `BF_TEST_SQUAD=none` with a death: a lone one, and the respawn). A recipe that
 wants the squad for anything else (the formation in the line of fire, the AI's fire, a blast's
-other victims, a hand-over after `BF_TEST_DIE` or `BF_TEST_SUICIDE`) adds `BF_TEST_FULL_SQUAD=1`.
+other victims) adds `BF_TEST_FULL_SQUAD=1`.
 `BF_TOOLS_LOG=1` prints the start squad and why ("test map: the squad at the start: 0 brutus, 1
 flint, 2 hawk, 3 tex (tex leads; BF_TEST_SELECT: the four)"), and each change of the menu ("t 1.00:
 squad slot 1 (Brutus's place): Shrike Soldier (m09_a, 73 hp) (h_fcec1024) at [1.50, -1.05,
@@ -344,7 +360,9 @@ the switch plays one: by the game's level list).
 "Verified").
 
 `BF_COMBAT_LOG=1` also names NPCs ("flint (NPC 1)") and prints each AI shot that meets a body
-("brutus (NPC 3) shoots hawk (1.2 m)"). `BF_ENEMY_LOG=1` prints an enemy's MOTION table, its hit
+("brutus (NPC 3) shoots hawk (1.2 m)"); a squad member, shooter or victim, by its type (a Shrike
+in Brutus's place: "Shrike Soldier -> ...", play.rs `who_name` by the roster's types, #302).
+`BF_ENEMY_LOG=1` prints an enemy's MOTION table, its hit
 reactions' draws, its motions and drives, its stamina shield and its death line (enemies.md).
 
 ## Verified
@@ -693,3 +711,27 @@ captures at 15 fps, frames looked at:
 * Not tested: the keys and the mouse themselves (T, Left / Right, Up / Down, the wheel, Page Up /
   Down, Enter, the click, Delete): the hooks drive the same code from the menu's asks on. V's "has
   no special skill" (the key's only). The music heard: under `BF_MUTE` only its log.
+
+After the review (the product owner's two decisions and the review's points), the same way:
+* A level in a test session (`--test BF_MAP=tutorial BF_TEST_GOTO=46,-20,46,-20`, 30 frames): the
+  tutorial's Tex alone with the four faces and their tabs, as on main; plain `--test`
+  (`BF_TEST_GOTO=0,8,0,7.5`): Tex's face alone.
+* A lone death (`BF_TEST_GOTO=0,8,0,7.5 BF_TEST_SQUAD=none BF_TEST_DIE=1 BF_TEST_HELP=3.0
+  BF_TEST_SQUAD_SLOT="7.0,0,hunter lord@mp_common/sdm_shrike" BF_COMBAT_LOG=1 BF_PICKUP_LOG=1`, 150
+  frames): Tex dies at 1.07 s (his skull at his place, the chip dropped), H's hook at 3.07 s on time
+  over the body, "t 5.13: tex died alone: respawned after 4 s at [-0.00, -1.05, 8.00]": standing
+  where he fell, "Respawned", his face back, full health; he takes his chip at once ("Memory Chip
+  Recovered!"); his old guns lie at his feet. The member hook at 7.07 s, on time ("squad slot 1
+  (Brutus's place): Hunter Lord (mp_common/sdm_shrike, 80 hp)": the menu's label form accepted),
+  its portrait at the bottom.
+* A death recipe (play.md's death box, `BF_TEST_DIE=2.0 BF_TEST_GRENADE_TYPE=Energy`, 140 frames):
+  "the squad at the start: 0 brutus, 1 flint, 2 hawk, 3 tex (tex leads; BF_TEST_DIE: the four)",
+  the death camera, "BRUTUS" and the cut to him with his box at full, no respawn.
+* The arena in edit mode (`--edit BF_MAP=mp1 BF_TEST_SQUAD_SLOT="1.0,0,flint;1.5,me,shrike
+  soldier@m09_a"`): "Flint refused: No squad here: the map is played alone", the leader's type
+  taken ("(the roster, for play)").
+* The combat log (`BF_TEST_SQUAD="shrike soldier@m09_a"` against an enemy Brutus set to fight):
+  "Shrike Soldier -> brutus (NPC 1): roll 6.67 ...", the squad member named by its type as shooter
+  and as victim.
+* The controls panel keeps main's first line ("tex idle clip 48 ..."); its 1-4 line names the four
+  and T.

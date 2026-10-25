@@ -80,6 +80,15 @@ pub fn requested() -> bool {
     std::env::args().any(|a| a == FLAG) || super::editor::requested()
 }
 
+/// Whether the map being played is the test map itself: its flat floor in a test session
+/// (`--test`, `--edit`, a level switch back to it), not a level the session has loaded (`--test
+/// BF_MAP=<level>`, the L menu), whose squad and HUD stay the main game's. There the squad starts
+/// with the player's character alone and the HUD shows only the slots held (#302,
+/// play_testsquad.rs, play_hud.rs), and dying alone respawns (`testsquad::respawn`).
+pub fn on_test_floor(test: Option<&TestMap>, current: &CurrentMap) -> bool {
+    test.is_some() && current.0 == "flat"
+}
+
 /// Every level's weapon definitions and models, on top of the first mission's (only the
 /// definitions with a clip are hand weapons). The test map's levels: BF_TESTMAP_LEVELS
 /// (comma-separated) overrides the list. Their data only, not their texture libraries

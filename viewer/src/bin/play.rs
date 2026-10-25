@@ -2683,10 +2683,12 @@ fn display_name(u: &Player, game: &Game) -> String {
 }
 
 /// A character's name for logs by its identity alone (a shooter, a gas cloud's or a damage
-/// area's victim): a squad member's slot name, or a test map NPC's type (`kind_name`) and number.
+/// area's victim): a squad member's by the type its slot holds (`kind_name`: the slot's own name
+/// in the main game), or a test map NPC's type and number.
 fn who_name(who: Who, game: &Game) -> String {
     match who {
-        Who::Squad(c) => CHARACTERS[c].to_string(),
+        // (by the type its slot holds: on the test map any, #302, play_testsquad.rs `slot_kind`)
+        Who::Squad(c) => testsquad::slot_kind(c).map_or_else(|| CHARACTERS[c].to_string(), |k| kind_name(k, game)),
         Who::Npc(n, kind) => format!("{} (NPC {n})", kind_name(kind, game)),
     }
 }
@@ -7568,10 +7570,10 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
          WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab next item (hold: the list, W/D S/A or the wheel)   B medkit   E use   V special skill   M surface   H hide\n\
-         click: mouse look, Esc release   1-4 take control of squad slot 1-4 (Brutus's / Flint's / Hawk's / Tex's place: T fills them)   G hold to charge a grenade\n\
+         click: mouse look, Esc release   1-4 take control of Brutus / Flint / Hawk / Tex (their places: T fills them with any type)   G hold to charge a grenade\n\
          test map: hold E at a weapon on the rack to swap it in   K instant kill: {}   X die\n\
          {}",
-        display_name(&player, &game.0), state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
+        unit_name(&player), state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
         if test.instant_kill { "on" } else { "off" }, testtools::HELP);
     if text.0 != s {
         text.0 = s;

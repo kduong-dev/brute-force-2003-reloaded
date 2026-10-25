@@ -829,8 +829,9 @@ impl Game {
 
     /// The character type a test hook names (`s`, any case): its key as h_xxxxxxxx, its
     /// `<base name>` (brutus, mp_brutus), its display name (the first loaded of that name), or
-    /// `name@archive` (that archive's or that objecttypes library's: `@m09_a`, `@sdm_shrike`).
-    /// None if no loaded type matches.
+    /// `name@archive` (that archive's or that objecttypes library's: `@m09_a`, `@sdm_shrike`, or
+    /// both as the test tools' menus show them: `@mp_common/sdm_shrike`). None if no loaded type
+    /// matches.
     pub fn find_character_type(&self, s: &str) -> Option<u32> {
         let s = s.trim();
         if let Some(k) = s.strip_prefix("h_").and_then(|x| u32::from_str_radix(x, 16).ok()) {
@@ -843,10 +844,12 @@ impl Game {
             Some((l, a)) => (l.trim(), Some(a.trim())),
             None => (s, None),
         };
+        // (`@archive`, `@library`, or `@archive/library` as the test tools' menus show a type's
+        // place: `CharacterType::place`, #302)
         self.character_type_order.iter().copied().find(|k| {
             let t = &self.character_types[k];
             self.strings.get(&t.label).is_some_and(|n| n.eq_ignore_ascii_case(label))
-                && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a) || t.library.eq_ignore_ascii_case(a))
+                && archive.is_none_or(|a| t.archive.eq_ignore_ascii_case(a) || t.library.eq_ignore_ascii_case(a) || t.place().eq_ignore_ascii_case(a))
         })
     }
 

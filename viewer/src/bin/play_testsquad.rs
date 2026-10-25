@@ -16,7 +16,10 @@
 //!  - **The start** (`start`, from play.rs `begin_play`): the test map (`--test`, `--edit`, and
 //!    the flat floor of a level switch) starts with the player's character (Tex, or
 //!    BF_CHARACTER's) alone; the hooks below give it more, and a recipe with one of the squad's own
-//!    hooks (SQUAD_HOOKS: BF_TEST_SELECT, BF_TEST_KILL, BF_TEST_TARGET ...) the four, as before.
+//!    hooks (SQUAD_HOOKS: BF_TEST_SELECT, BF_TEST_KILL, BF_TEST_TARGET ..., BF_TEST_DIE) the four,
+//!    as before.
+//!  - **A lone death** (`respawn`): on the test map, dying with nobody to hand over to brings the
+//!    player back where it stood RESPAWN_TIME later (the demo's rule).
 //!    Any other map keeps its own squad.
 //!  - **The menu** (T: its key is the tool registry's, play_editor.rs `TOOLS`; on any map of a
 //!    test session): Left / Right pick a slot, Up / Down (the wheel; Page Up / Down a page) a type,
@@ -72,7 +75,76 @@ pub(super) struct SquadText(pub(super) String);
 pub fn plugin(app: &mut App) {
     app.init_resource::<Menu>().init_resource::<SquadText>().init_resource::<Roster>()
         .add_systems(OnEnter(AppState::Playing), reset.after(setup).run_if(resource_exists::<super::testmap::TestMap>))
-        .add_systems(Update, squad_menu.after(read_input).after(super::editor::open_tools).before(squad_control).run_if(super::testtools::active));
+        .add_systems(Update, squad_menu.after(read_input).after(super::editor::open_tools).before(squad_control).run_if(super::testtools::active))
+        .add_systems(Update, respawn.after(super::deathcam::death_cam).before(update_hud).run_if(super::testtools::active))
+        .add_systems(Update, mirror_roster.run_if(in_state(AppState::Playing)));
+}
+
+/// How long (s) a lone death on the test map lasts before the player respawns (`respawn`): the
+/// death camera's time to its hand-over (play_deathcam.rs DEATH_CAM_TIME, 4 s), so a death lasts
+/// as long with or without a squad to hand over to. The demo's choice.
+const RESPAWN_TIME: f32 = 4.0;
+
+/// Dying alone on the test map respawns the player (#302; the product owner's rule for the test
+/// map, not the game's, where a lone death ends the mission): once the controlled character is
+/// dead with nobody to hand over to (no living squad member in the world, no hand-over under
+/// way: the death camera's next member, play_deathcam.rs), RESPAWN_TIME later it comes back where
+/// it stood, a fresh one of its type (`change` on its own slot: its body taken away, its view,
+/// the hooks' clock and the squad's inventory kept; the guns, blood and memory chip it left stay).
+/// The dead character's own clock stops (`step_player` counts it), so meanwhile this counts the
+/// hooks' clock on (`Player::sim_time`): the respawn and the hooks due during the wait and after it
+/// keep time. Only on the test map (`testmap::on_test_floor`; a level a test session loads keeps
+/// the main game's rule), and not for the map editor's stand-in (counted dead).
+#[allow(clippy::too_many_arguments)]
+fn respawn(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut hits: ResMut<AiHits>,
+           (test, current, mode): (Option<Res<super::testmap::TestMap>>, Res<CurrentMap>, Res<Mode>), mut status: ResMut<UsePanel>,
+           mut wait: Local<f32>) {
+    let alone = player.dead && !player.stand_in && player.select.is_none()
+        && !squad.0.iter().any(|m| !m.dead && !m.absent && m.in_squad() && m.loaded.is_some());
+    if !alone || !super::testmap::on_test_floor(test.as_deref(), &current) {
+        *wait = 0.0;
+        return;
+    }
+    let dt = frame_dt(&time);
+    player.sim_time += dt;
+    *wait += dt;
+    if *wait < RESPAWN_TIME {
+        return;
+    }
+    *wait = 0.0;
+    let (c, kind, who) = (player.character, player.kind, unit_name(&player));
+    let Ok(ch) = change(c, Some(kind), &mut player, &mut squad, mode.deathmatch) else { return };
+    for e in ch.gone {
+        commands.entity(e).despawn();
+    }
+    if ch.moved {
+        hits.0.clear();
+    }
+    status.message = Some(("Respawned".into(), MESSAGE_TIME));
+    if std::env::var("BF_TOOLS_LOG").is_ok() {
+        println!("t {:.2}: {who} died alone: respawned after {RESPAWN_TIME} s at {:.2}, its heading {:.0} deg", player.sim_time,
+                 player.position + Vec3::Y * GROUND, player.yaw.to_degrees());
+    }
+}
+
+/// Each squad slot's type as the map's roster has it, for the logs that know a squad member by its
+/// slot alone (play.rs `who_name`: the combat log's shooter, a blast's or a cloud's thrower): 0
+/// until a roster is made. Kept by `mirror_roster`.
+static SLOT_KINDS: [std::sync::atomic::AtomicU32; SQUAD] = [const { std::sync::atomic::AtomicU32::new(0) }; SQUAD];
+
+/// The type squad slot `c` holds on this map (`SLOT_KINDS`), if a roster says so.
+pub(super) fn slot_kind(c: usize) -> Option<u32> {
+    SLOT_KINDS.get(c).map(|k| k.load(std::sync::atomic::Ordering::Relaxed)).filter(|&k| k != 0)
+}
+
+/// Keeps `SLOT_KINDS` to the map's roster as it changes (a map's start, the squad menu).
+fn mirror_roster(roster: Res<Roster>) {
+    if !roster.is_changed() {
+        return;
+    }
+    for (slot, kind) in SLOT_KINDS.iter().zip(roster.0) {
+        slot.store(kind.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// A new map: the menu's picks anew (its slots are the map's: `begin_play` made its roster).
@@ -97,11 +169,14 @@ fn slot_named(s: &str, me: usize) -> Option<usize> {
     }
 }
 
-/// The test hooks that act on the squad's members (play.rs, play_skills.rs, play_sentry.rs): a
-/// recipe with one was written for the squad of four, before #302, so with one set the test map
-/// starts with the four (`start_roster`) and the recipe runs as it did, its members at the places
-/// they had.
-const SQUAD_HOOKS: [&str; 6] = ["BF_TEST_SELECT", "BF_TEST_KILL", "BF_TEST_TARGET", "BF_TEST_SQUAD_SKILL", "BF_TEST_HOSTILE", "BF_TEST_MINE_FRIEND"];
+/// The test hooks that act on the squad's members (play.rs, play_skills.rs, play_sentry.rs), and
+/// the two deaths whose recipes look at the hand-over after them (BF_TEST_DIE, play.rs; X's
+/// BF_TEST_SUICIDE, play_testmap.rs): a recipe with one was written for the squad of four, before
+/// #302, so with one set the test map starts with the four (`start_roster`) and the recipe runs
+/// as it did, its members at the places they had. (`BF_TEST_SQUAD=none` with them: a lone death,
+/// `respawn`.)
+const SQUAD_HOOKS: [&str; 8] = ["BF_TEST_SELECT", "BF_TEST_KILL", "BF_TEST_TARGET", "BF_TEST_SQUAD_SKILL", "BF_TEST_HOSTILE", "BF_TEST_MINE_FRIEND",
+                                "BF_TEST_DIE", "BF_TEST_SUICIDE"];
 
 /// The first of SQUAD_HOOKS that's set, if one is.
 fn squad_hook() -> Option<&'static str> {
@@ -343,10 +418,13 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
         let place = format!("slot {} ({}'s place)", c + 1, title(CHARACTERS[c]));
         let was = roster.0[c].map_or("empty".to_string(), |k| label(k, types, &game.0));
         let now = kind.map_or("empty".to_string(), |k| label(k, types, &game.0));
-        // edit mode: the squad is out of the world, the roster is what the next play makes
+        // edit mode: the squad is out of the world, the roster is what the next play makes (with
+        // play's refusals: the leader's slot not emptied, no member on a map played alone)
         let done = if tools.edit {
             if c == player.character && kind.is_none() {
                 Err("The leader's slot can't be emptied: give it a type".to_string())
+            } else if c != player.character && kind.is_some() && mode.deathmatch {
+                Err("No squad here: the map is played alone".to_string())
             } else {
                 Ok(())
             }
