@@ -128,8 +128,15 @@ pub fn spawn_model(commands: &mut Commands, game: &mut Game, model: &Character, 
 }
 
 /// A game material as a StandardMaterial: its colour texture, plus (with `shading`) the
-/// Color-Specular look where the texture's alpha marks the shiny areas.
+/// Color-Specular look where the texture's alpha marks the shiny areas. An untextured self-lit
+/// one (`level_scene::self_lit`: the placed Sentry's red tips, #300) is its colour lit by nothing,
+/// blended as the game's FUN_0008fd20 blends it (the Sentry's: opaque, at full strength); before
+/// #300 it was drawn plain grey and lit. (Its wrapper's glare key isn't written: a bevy standard
+/// material writes 1 to the picture's alpha, `crate::glare`.)
 pub fn material(game: &mut Game, assets: &mut ModelAssets, material: u32, shading: bool) -> Handle<StandardMaterial> {
+    if let Some(s) = crate::level_scene::self_lit(game, material) {
+        return assets.materials.add(self_lit_material(&s));
+    }
     let address = game.material_texture(material).map_or_else(Default::default, |t| game.texture_address(material, t));
     let mips = game.material_texture(material).and_then(|t| game.texture_mips(t));
     // opaque: the skin's alpha is a specular mask, not transparency
@@ -159,6 +166,25 @@ pub fn material(game: &mut Game, assets: &mut ModelAssets, material: u32, shadin
         }
     }
     assets.materials.add(mat)
+}
+
+/// An untextured self-lit material (`level_scene::self_lit`) as a StandardMaterial: its colour,
+/// unlit; opaque, see-through by its `alpha` or added, as its constants say (FUN_0008fd20); both
+/// faces drawn with h_18954f8d.
+fn self_lit_material(s: &crate::level_scene::SelfLit) -> StandardMaterial {
+    use crate::level_scene::SelfLitBlend;
+    let [r, g, b] = s.colour;
+    let (alpha, alpha_mode) = match s.blend {
+        SelfLitBlend::Opaque => (1.0, AlphaMode::Opaque),
+        SelfLitBlend::Alpha(a) => (a, AlphaMode::Blend),
+        SelfLitBlend::Add => (1.0, AlphaMode::Add),
+    };
+    let mut mat = StandardMaterial { base_color: Color::srgba(r, g, b, alpha), unlit: true, alpha_mode, ..default() };
+    if s.two_sided {
+        mat.double_sided = true;
+        mat.cull_mode = None;
+    }
+    mat
 }
 
 /// Mesh and material handles of static (unskinned) geosets, for spawning copies.

@@ -326,7 +326,7 @@ What each type does so far, and doesn't:
 | Light (#77) | timer 1.5; phosphor_grenade (a tall thin blue beam of upright streaks, the glow and sparks at its base) + light_phosphor (a blue-white point light, reach 18.8-24.3 m) burning 30 s as the data has them (the spike's rate drops to 0 at 29.45 s); ignition h_1080aaf1 and f5260e35 after 0.2 s; no damage, no decal, no tint, pickups left alone; the canister stays where it lies, its trail stopped, until the effects have run (31.1 s) | the end of the burn isn't recorded (the recording shows >= 15.1 s); the beam is paler and less solid than recorded and the base's white core smaller (see **Light grenade**); the sparks fly too far (no gravity field, #101); the light's strength not measured against the recording |
 | Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7; the damage comes with the ring, the thrower's falls off by 5 m, nobody is knocked down (see **Sonic grenade**) | the "Tech Upgrade"; the godrays (broad columns, not two narrow shafts), the ring (a wall, not a flat band), the decal's look |
 | Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s with its rolling sound, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking |
-| Sentry (#80) | set down (place_hi), lies there; goes off for a hostile within 3 m with no friend within 3 m, or when shot (see **Sentry**), or by a blast that takes its 1 hp (see **Interactive scenery**); exp-mine + light_explosion, h_145f09e5 | disarming an enemy's mine; the AI keeping clear of it; LEDs; the thrower's damage beyond the radius (below) |
+| Sentry (#80) | set down (place_hi), lies there with its red tips lit (#300); goes off for a hostile within 3 m with no friend within 3 m, or when shot (see **Sentry**), or by a blast that takes its 1 hp (see **Interactive scenery**); exp-mine + light_explosion, h_145f09e5 | disarming an enemy's mine; the AI keeping clear of it; the tips' glare; the thrower's damage beyond the radius (below) |
 
 Not done for any: ALE fields other than the Gas cloud's and the trail's rise (exp-lrg-air,
 the gravity and turbulence fields: #101); decals don't
@@ -387,6 +387,39 @@ have none and were read in the disassembly):
   three to end the mine lesson. The same rule arms e16's, e34's and e40's Sentry mines
   (h_f73de83d: 14, 6 and 7) now that `load_kits` makes their kit (#82, **Thermo**); before, the
   demo had no kit for them there and left them out. Not checked against those levels' footage.
+* **Its look: red tips, whoever set it down (#300).** The mine's model h_075885e5 (every Sentry
+  set down: the squad's h_e5f1f063, the levels' h_f73de83d, the AI's) has a lights geoset on
+  its four tips: the wrapper h_0a08f6b5 (stencil 50) round the self-lit material h_f9761b6c,
+  untextured, h_e01baa40 0.757 0 0, `blend-mode` 2, `alpha` 1, no scroll. The self-lit shader's
+  setup (FUN_0008fd20) binds the default white texture for none and draws it opaque, lit by
+  nothing: saturated red, steady (the tutorial's takes 20 and 21: the tips measure (167, 18, 26)
+  on average through the video's blur, up to (199, 41, 35); #80's t80_07 / t80_08, Tex's own on
+  m03_a: the same). Nothing colours a mine by its team: its on-placed (FUN_00147570) and its
+  updates write no effect, light or material, and no code tints a material at run time
+  (code-map.md, FUN_00201710). What does differ by who set it down is the HUD: the use ring (blue
+  on an enemy's, the disarm; red on your own, refused: FUN_00121860) and the crosshair's lock
+  (red on an enemy's only: FUN_000bf6d0), #145's. The blue Sentry the product owner saw is its
+  pickup form h_ecfe0d8c (model h_095daa18, lights h_031724e6 -> h_0ed4a3dd 0.098 0.342 0.829),
+  which only sdm_e34 (five) and mp8 (two) lay, as spawn-trigger templates: the demo copies no
+  grenade pickup yet (pickups.md, "Pickups from spawn-triggers"), and the level viewer draws them
+  as it draws placed glow shells, blue and see-through.
+  * The demo drew every untextured material of a model plain grey (`scene::material`); now an
+    untextured self-lit one is its colour, unlit, blended as FUN_0008fd20 says
+    (`level_scene::self_lit`). A scan of the 53 levels' object types and character types: the
+    Sentry's tips are the only such parts of the grenades, weapons, missiles and characters;
+    two debris pieces (h_fc5e4d5f and h_fd5c98c6, on 9 and 8 levels) carry a dark red one
+    (h_0049b1eb, 0.529 0.024 0.008, opaque), drawn so now when a broken object throws them; the
+    medkits' crosses are flat glows that play_pickups.rs and level_scene draw their own way, and
+    the placed objects' self-lit parts are level_scene's (unchanged: levels.md).
+  * Not done: the tips' glare. Their wrapper's stencil 50 is a glare key (#289: the bright pass
+    keeps the red's luminance, 0.226, over 50/255), but a bevy standard material writes 1 to the
+    picture's alpha; a keyed material would have to follow Hawk's fade and the Vengar view,
+    which swap standard materials. The takes show the halo faint at this size.
+  * Checked (`BF_MAP=tutorial BF_NO_SQUAD=1 BF_TEST_GOTO=92.6,-68.6,92.6,-80 BF_TEST_GO_AT=100
+    BF_CAMERA_PITCH=-0.35`, frame 24: the level's mines red-tipped where main's were grey; and
+    Tex's own on m03_a, `BF_MAP=m03_a BF_NO_SQUAD=1 BF_TEST_GOTO=-185.7,-39.1,-185.7,-30
+    BF_TEST_GO_AT=100 BF_TEST_GRENADE_TYPE=Sentry BF_TEST_THROW=1.0,0.1 BF_CAMERA_PITCH=-0.4`,
+    frame 43: at his left foot with four red tips, as t80_08 shows it).
 
 Its blast is the shared one (h_01f142eb: 62.5-88.5, type 10, radius 4; effect type h_0b69c2f2:
 exp-mine + light_explosion, 145f09e5; decal h_f5ccedb0). On sdm_e34 the squad's Sentry is still
