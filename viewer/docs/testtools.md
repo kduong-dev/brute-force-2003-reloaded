@@ -117,10 +117,9 @@ a click is any left click off the panel, and F and its teleports do nothing.
     (`CharacterType::portrait`, h_f9d94425: the
     deathmatch types and some of the militia have one, common's textures), else a "?" in pale
     blue; its skull its type's (h_00c51907), else the human one.
-  * On the test map (its flat floor: `testmap::on_test_floor`) an empty slot shows no face,
-    follow-order tab or health channel. On a level a test session loads (`--test
-    BF_MAP=<level>`, the L menu), as in the main game, an empty slot still shows its own face, as
-    the tutorial's Tex alone does (play.md "Radar"; the product owner's choice).
+  * An empty slot shows no face, follow-order tab or health channel, on the test map and on any
+    level alike (#303: the main game's rule for a slot with no member in the world, play.md
+    "Radar", "The portraits"; before it the test map's alone). A dead member keeps its skull.
   * **Dying alone** on the test map respawns the player (`testsquad::respawn`; the product owner's
     rule for the test map, not the game's, where a lone death ends the mission): with nobody to
     hand over to (no living squad member in the world, no hand-over under way), RESPAWN_TIME (4

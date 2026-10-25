@@ -454,17 +454,31 @@ fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, 
 }
 
 /// What a squad slot's portrait place shows (`update_squad_hud`): its own face (`PortraitArt`:
-/// its own type, the main game's, or an empty slot anywhere but the test map, as the tutorial's
-/// Tex alone still shows four, a test session's too); another face (#302: a squad type's in
-/// another's place, or another type's portrait from its data, `CharacterType::portrait`); nothing
-/// (an empty slot on the test map, `testmap::on_test_floor`); or a "?" (a member whose type has no
-/// portrait). A dead member's skull goes over any of them.
+/// its own type); another face (#302: a squad type's in another's place, or another type's
+/// portrait from its data, `CharacterType::portrait`); nothing (a slot with no member in the
+/// world, `slot_member`: the members a zone doesn't have, #303, or the test map's emptied slots);
+/// or a "?" (a member whose type has no portrait). A dead member's skull goes over any of them.
 #[derive(Clone)]
 enum Face {
     Own,
     Other(Handle<Image>, Rect),
     Empty,
     Unknown,
+}
+
+/// Squad slot `c`'s member in the world: the controlled character or one of the squad's (not an
+/// NPC), alive or dead, but not one out of the world (`absent`: a member whose spawn-trigger
+/// hasn't spawned it, or whose copy the session took away, FUN_00209900). None for a slot whose
+/// member the zone doesn't have (#303: the level spawns only the zone's members, so the
+/// tutorial's and m01_a's squad is Tex alone, the zone's h_ed54d255 "brutus hawk flint"), and for
+/// the test map's emptied slots (#302). Such a slot has no face, follow tab or health channel.
+/// The game's HUD keeps a squad list of five entries (+0x34), one per slot by the character's
+/// type +0x150 (1-4): each frame FUN_000bd790 drops the characters no longer on the list it
+/// reads (FUN_000c8570) and adds the new ones (FUN_000c84e0), so a slot holds a character only
+/// once one is in the world (which list it reads, and that the portraits draw from it, aren't
+/// traced). take04 (`todo/28-tutorial`, 60 s) shows Tex's face alone, no tabs or channels.
+fn slot_member<'a>(player: &'a Player, squad: &'a Squad, c: usize) -> Option<&'a Player> {
+    std::iter::once(player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad() && !u.absent)
 }
 
 /// Generated HUD images: the squad health bars, the selection chevrons and the speech icon.
@@ -1250,7 +1264,7 @@ fn update_hud_widgets(
     reserve: Res<super::ammo::Reserve>,
     held_name: Res<super::ammo::HeldName>,
     (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
-    (squad, test, current): (Res<Squad>, Option<Res<super::testmap::TestMap>>, Res<super::CurrentMap>),
+    squad: Res<Squad>,
     use_panel: Res<super::UsePanel>,
     feed: Res<super::pickups::PickupFeed>,
     mut game: ResMut<GameData>,
@@ -1363,10 +1377,8 @@ fn update_hud_widgets(
                 let icon = Some(PLAYER_ICON);
                 let h = icon.and_then(|icon| texture(&mut game.0, &mut images, &mut cache, icon));
                 let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad() && u.dead);
-                // (an empty slot of the test map's squad has none, as it has no face: #302; a level
-                // a test session loads keeps the main game's four)
-                let empty = super::testmap::on_test_floor(test.as_deref(), &current)
-                    && !std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad());
+                // (a slot with no member in the world has none, as it has no face: `slot_member`)
+                let empty = slot_member(&player, &squad, i).is_none();
                 show(&mut vis, h.is_some() && !dead && !empty);
                 if let (Some(mut img), Some(h)) = (img, h) {
                     if img.image != h { img.image = h; }
@@ -1490,7 +1502,7 @@ fn update_squad_hud(
     mut game: ResMut<GameData>,
     mut gen: ResMut<HudGen>,
     mut images: ResMut<Assets<Image>>,
-    (mut cache, test, current): (ResMut<HudImages>, Option<Res<super::testmap::TestMap>>, Res<super::CurrentMap>),
+    mut cache: ResMut<HudImages>,
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
     flash: Res<BarFlash>,
@@ -1499,8 +1511,9 @@ fn update_squad_hud(
     mut name_text: Query<(&mut RecordText, &mut Visibility), (With<NameLabelText>, Without<SquadPart>)>,
 ) {
     let dt = frame_dt(&time);
-    // squad slot c's member (the controlled character or one of the squad's, not an NPC)
-    let member = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad());
+    // squad slot c's member in the world (the controlled character or one of the squad's, not an
+    // NPC: `slot_member`)
+    let member = |c: usize| slot_member(&player, &squad, c);
     // the name label (LABEL_SHOW): each new selection shows the name for LABEL_SHOW + LABEL_OUT
     // (0xc9440 from the select widget's choice, FUN_000c8cc0, its own timer after: it runs on past
     // the hand-over, which comes SELECT_TIME after the selection); whole from its first frame,
@@ -1536,7 +1549,7 @@ fn update_squad_hud(
             t.alpha = LABEL_ALPHA * share;
         }
     }
-    let health = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad())
+    let health = |c: usize| member(c)
         .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
     let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
     let pct = |x: f32, y: f32, n: &mut Node| { n.left = Val::Percent(x / 6.4); n.top = Val::Percent(y / 4.8); };
@@ -1555,13 +1568,11 @@ fn update_squad_hud(
     let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
     // each slot's place: its member's face (`Face`), and its skull once it's dead (its type's: a
     // squad type's own, another type's from its data, `CharacterType::skull`, else the human one)
-    // (the test map's empty slots show nothing; a level a test session loads keeps the four faces)
-    let floor = super::testmap::on_test_floor(test.as_deref(), &current);
+    // (a slot with no member in the world shows nothing: #303)
     let looks: Vec<(Face, Option<Handle<Image>>)> = (0..PORTRAITS.len()).map(|c| {
         let m = member(c);
         let face = match m {
-            None if floor => Face::Empty,
-            None => Face::Own,
+            None => Face::Empty,
             Some(u) if u.kind == squad_type(c) => Face::Own,
             Some(u) => {
                 let id = match u.data_slot() {
