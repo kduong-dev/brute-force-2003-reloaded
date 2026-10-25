@@ -117,14 +117,14 @@ fn raise(p: &mut Player, in_time: f32) {
 /// aim flag, aim="false" in the motion set being its +0x250 bit 6, and an overlay's +0x3d bit 0):
 /// not in the crouch's transitions (stand2crouch, crouch2stand; the crouch itself can), a dash, a
 /// jump, a dodge, a dive, a slide or a grenade's throw (ms_tex.xml: 43 of its 83 motions can't),
-/// nor a reload (its overlay's, inferred from #35 take29), a weapon switch (FUN_00121670) or dead
-/// (FUN_00115d50). While it can't, the ready timer is held at 0 (`FireState::lower`; todo/126
-/// answers.md Q7, Q11).
+/// nor a reload (its overlay's, inferred from #35 take29), a weapon switch or a weapon pickup
+/// (FUN_00121670, the pickup's start: #17) or dead (FUN_00115d50). While it can't, the ready
+/// timer is held at 0 (`FireState::lower`; todo/126 answers.md Q7, Q11).
 fn can_aim(p: &Player) -> bool {
     let dash = matches!((p.action, p.gait), (Action::None, Gait::Sprint));
     let moving = matches!(p.action, Action::Crouching | Action::Rising | Action::Dodge { .. } | Action::Dive
         | Action::JumpCrouch | Action::JumpLaunch | Action::JumpFall | Action::JumpLand);
-    !(p.dead || dash || moving || p.slide_on || p.throwing.is_some() || p.reloading.is_some() || p.switching.is_some())
+    !(p.dead || dash || moving || p.slide_on || p.throwing.is_some() || p.reloading.is_some() || p.switching.is_some() || p.gun_use.is_some())
 }
 const TURN_RATE: f32 = 9.0;
 /// yaw (radians) the spine takes when aiming standing; the feet turn for the rest
@@ -741,6 +741,7 @@ fn main() {
         .add_plugins(camera::plugin)
         .add_plugins(inventory::plugin)
         .add_plugins(itembox::plugin)
+        .add_plugins(weapon_pickups::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -852,6 +853,8 @@ mod placed_fx;
 mod camera;
 #[path = "play_liquids.rs"]
 mod liquids;
+#[path = "play_weapon_pickups.rs"]
+mod weapon_pickups;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -891,17 +894,60 @@ struct Panel {
     used: bool,
 }
 
-/// The use key (E) and what it would act on now (see `doors`), and the status message shown at
-/// the character (text, seconds left).
+/// The use key (E) and what it would act on now (see `doors`, and play_weapon_pickups.rs for a
+/// lying gun, #17), and the status message shown at the character (text, seconds left).
 #[derive(Resource, Default)]
 pub struct UsePanel {
-    /// the prompt's object ("panel": the game's "Hold [X] to activate %s."), while one's usable
-    pub prompt: Option<&'static str>,
-    /// where the blue target ring goes (the panel's button, world)
+    /// the use prompt's line (play_hints.rs `draw_prompt`), while something's in reach
+    pub prompt: Option<Prompt>,
+    /// where the target ring goes (the panel's button, the lying gun; world)
     pub target: Option<Vec3>,
+    /// which target that is (a panel's index + 1, a lying gun's entity bits; 0 none): the ring
+    /// zooms in on a new one (`Ring`)
+    pub target_id: u64,
+    /// the target ring as the HUD draws it (play_weapon_pickups.rs `ring` moves it)
+    pub ring: Ring,
     /// how long use has been held on it (s)
     pub held: f32,
     pub message: Option<(String, f32)>,
+}
+
+/// The use prompt's line (the prompt widget's update FUN_000aa600, by its target's kind; the
+/// strings are play_hints.rs's).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Prompt {
+    /// a world button: "Hold [X] to activate %s." with its name (h_f9d29692)
+    Activate(&'static str),
+    /// a lying gun the character can take: "Hold [X] to swap %s." (h_f1285f72) with its display
+    /// name, or "... (%d shots)" (h_e456c40f) with its rounds for a gun with no magazine and no
+    /// ammo-regen (#17)
+    Swap { name: String, shots: Option<i64> },
+    /// a lying gun the character's slots can't take: "%s cannot pick up %s." (h_0ff85d29) with
+    /// the character's name and the gun's, no "Hold" and no button (#17)
+    Refuse { who: String, name: String },
+}
+
+/// The target ring (the reticle controller's ring widget, vtable 0x3a02e8, the texture h_1d2a68d0
+/// at 48 units: its build 0xa9ec0): where it is, how far in it has zoomed (`open`, its +0x8c,
+/// eased toward 1 with a target and 0 without: play_weapon_pickups.rs `ring`) and its colour.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ring {
+    pub at: Option<Vec3>,
+    pub open: f32,
+    /// the target it was last on (`UsePanel::target_id`)
+    pub on: u64,
+    pub colour: RingColour,
+}
+
+/// The ring's colour (its update 0xa9bf0): blue for a target the character can use
+/// (FUN_000a9910 agreeing), red for one it can't, a lighter blue while the character is using it
+/// (char+0x640: a weapon pickup under way, #17).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum RingColour {
+    #[default]
+    Usable,
+    Refused,
+    InUse,
 }
 
 /// Doors and gates move only when the level's anim-triggers play their clips (play_triggers.rs,
@@ -937,6 +983,9 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
             use_panel.message = None;
         }
     }
+    // (nothing in reach until a panel or a lying gun says so: play_weapon_pickups.rs runs after,
+    // on any map)
+    (use_panel.prompt, use_panel.target, use_panel.target_id) = (None, None, 0);
     let Some(mut doors) = doors else { return };
     let doors = &mut *doors;
     // a panel's button in reach and in view: one not used yet, whose doors (those its signal
@@ -951,8 +1000,9 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
     };
     let list = &doors.list;
     let target = doors.panels.iter().position(|p| !p.used && !(!p.opens.is_empty() && p.opens.iter().all(|&d| list[d].opening)) && usable(p));
-    use_panel.prompt = target.map(|_| "panel");
+    use_panel.prompt = target.map(|_| Prompt::Activate("panel"));
     use_panel.target = target.map(|i| doors.panels[i].at);
+    use_panel.target_id = target.map_or(0, |i| i as u64 + 1);
     use_panel.held = if target.is_some() && player.use_held { use_panel.held + dt } else { 0.0 };
     if let (Some(i), true) = (target, use_panel.held >= HOLD_TIME) {
         // its event to its listeners (0x163060: {its signal, data}, the user as the subject)
@@ -2208,6 +2258,10 @@ struct Player {
     /// it stood in its ready set last frame (the gun up: `step_player`), so a change of set is
     /// blended over the ready times (#140)
     ready_pose: bool,
+    /// a weapon pickup under way (#17, play_weapon_pickups.rs: the game's use of a lying gun,
+    /// char+0x640 and the use's state): the switch to the slot it goes to, then the drop-and-pickup
+    /// clip
+    gun_use: Option<weapon_pickups::GunUse>,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2269,6 +2323,7 @@ impl Player {
             sensor: Default::default(),
             controlled: false,
             ready_pose: false,
+            gun_use: None,
         }
     }
 
@@ -3458,6 +3513,60 @@ fn spawn_player(
     }
 }
 
+/// One gun of a character's inventory, for weapon slot `slot` (0 the first): its model under the
+/// character's `root` (hidden until `weapon_fx` places it), its muzzle flash and light, where it
+/// hangs in the hand and the second hand and where it's stowed for that slot (`model`'s
+/// hardpoints and the gun's), and its stance for the character's `classes` (`stance_for`). None
+/// when its model doesn't load. `spawn_unit`'s for the starting inventory; play_weapon_pickups.rs's
+/// for the gun a pickup puts in a slot (#17).
+#[allow(clippy::too_many_arguments)]
+fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, model: &Character, root: Entity, def: WeaponDef, slot: usize,
+                classes: Option<[i64; 2]>) -> Option<HeldWeapon> {
+    let wm = match WeaponModel::load(game, def.archetype) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!("{}: {e}", def.label);
+            return None;
+        }
+    };
+    let entity = commands.spawn((Transform::default(), Visibility::Hidden, Name::new(def.label.clone()), ChildOf(root))).id();
+    let mut spinners = vec![];
+    for part in &wm.parts {
+        let pe = commands.spawn((Transform::from_translation(part.offset).with_rotation(part.rotation), Visibility::Inherited, ChildOf(entity))).id();
+        spawn_static(commands, game, &part.geosets, assets, pe, true);
+        if let Some(axis) = part.spin_axis {
+            spinners.push((pe, axis, part.offset));
+        }
+    }
+    let muzzle = wm.hardpoints.get(&def.muzzle()).copied().unwrap_or(Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY });
+    let fire_dir = muzzle.rot * Vec3::NEG_Z;
+    let flash_mesh = assets.meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
+    let flash_mat = assets.materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.4),
+        emissive: LinearRgba::rgb(30.0, 18.0, 5.0), unlit: true, ..default() });
+    let flash = commands.spawn((
+        Mesh3d(flash_mesh), MeshMaterial3d(flash_mat), NotShadowCaster,
+        Transform::from_translation(muzzle.point + fire_dir * 0.07).looking_to(fire_dir, Vec3::Y)
+            .with_scale(Vec3::new(0.045, 0.045, 0.11)),
+        Visibility::Hidden, ChildOf(entity))).id();
+    let light = commands.spawn((
+        PointLight { intensity: 0.0, range: 6.0, color: Color::srgb(1.0, 0.75, 0.4), ..default() },
+        Transform::from_translation(muzzle.point + fire_dir * 0.1), ChildOf(entity))).id();
+    let held_at = |hand: u32| model.hardpoints.get(&hand).zip(wm.hardpoints.get(&weapon::TRIGGER_GRIP))
+        .map(|(&(bone, hand), grip)| { let (r, t) = hand.mount(grip); (bone, r, t) });
+    let in_hand = held_at(weapon::TRIGGER_HAND);
+    let stance = stance_for(classes, def.weapon_type, slot);
+    Some(HeldWeapon {
+        stance,
+        in_hand,
+        second_hand: held_at(weapon::SECOND_HAND),
+        stowed: weapon::STOW.get(slot).and_then(|k| model.hardpoints.get(k)).zip(wm.hardpoints.get(&weapon::HOLSTER))
+            .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) }),
+        shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
+        data_light: game.effect_type_defs.get(&def.shots.muzzle_effect).is_some_and(|t| t.light != 0),
+        def, entity, spinners, light, flash, muzzle, fire_dir,
+    })
+}
+
 /// Load a character and spawn it with its weapons and clips into `p`: its type's model (#128),
 /// and its data from the tables keyed by its slot's name where they have it (the squad's: the
 /// test map's rack changes `character_weapons`, a squad deathmatch map the skills), else from its
@@ -3521,9 +3630,6 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
         }
         None => vec![],
     };
-    let flash_mesh = assets.meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
-    let flash_mat = assets.materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.4),
-        emissive: LinearRgba::rgb(30.0, 18.0, 5.0), unlit: true, ..default() });
     let mut weapons = vec![];
     // (a character from a placement holds the placement's: an enemy spawned from one,
     // play_enemies.rs, or a squad member started at its spawn, play_triggers.rs `SquadSpawn::dress`)
@@ -3531,46 +3637,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let classes = game.character_weapon_classes.get(name).copied().or(ty.as_ref().map(|t| t.weapon_classes));
     for (slot, w) in inventory.into_iter().enumerate() {
         let Some(def) = game.weapons.get(&w).cloned() else { continue };
-        let wm = match WeaponModel::load(game, def.archetype) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("{}: {e}", def.label);
-                continue;
-            }
-        };
-        let entity = commands.spawn((Transform::default(), Visibility::Hidden, Name::new(def.label.clone()), ChildOf(root))).id();
-        let mut spinners = vec![];
-        for part in &wm.parts {
-            let pe = commands.spawn((Transform::from_translation(part.offset).with_rotation(part.rotation), Visibility::Inherited, ChildOf(entity))).id();
-            spawn_static(commands, game, &part.geosets, assets, pe, true);
-            if let Some(axis) = part.spin_axis {
-                spinners.push((pe, axis, part.offset));
-            }
+        if let Some(held) = build_weapon(commands, game, assets, &model, root, def, slot, classes) {
+            weapons.push(held);
         }
-        let muzzle = wm.hardpoints.get(&def.muzzle()).copied().unwrap_or(Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY });
-        let fire_dir = muzzle.rot * Vec3::NEG_Z;
-        let flash = commands.spawn((
-            Mesh3d(flash_mesh.clone()), MeshMaterial3d(flash_mat.clone()), NotShadowCaster,
-            Transform::from_translation(muzzle.point + fire_dir * 0.07).looking_to(fire_dir, Vec3::Y)
-                .with_scale(Vec3::new(0.045, 0.045, 0.11)),
-            Visibility::Hidden, ChildOf(entity))).id();
-        let light = commands.spawn((
-            PointLight { intensity: 0.0, range: 6.0, color: Color::srgb(1.0, 0.75, 0.4), ..default() },
-            Transform::from_translation(muzzle.point + fire_dir * 0.1), ChildOf(entity))).id();
-        let held_at = |hand: u32| model.hardpoints.get(&hand).zip(wm.hardpoints.get(&weapon::TRIGGER_GRIP))
-            .map(|(&(bone, hand), grip)| { let (r, t) = hand.mount(grip); (bone, r, t) });
-        let in_hand = held_at(weapon::TRIGGER_HAND);
-        let stance = stance_for(classes, def.weapon_type, slot);
-        weapons.push(HeldWeapon {
-            stance,
-            in_hand,
-            second_hand: held_at(weapon::SECOND_HAND),
-            stowed: weapon::STOW.get(slot).and_then(|k| model.hardpoints.get(k)).zip(wm.hardpoints.get(&weapon::HOLSTER))
-                .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) }),
-            shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
-            data_light: game.effect_type_defs.get(&def.shots.muzzle_effect).is_some_and(|t| t.light != 0),
-            def, entity, spinners, light, flash, muzzle, fire_dir,
-        });
     }
     info!("{label} weapons: {:?}", weapons.iter().map(|w| format!("{} (class {}, stance w{}) held by bone {}", w.def.label, w.def.weapon_type,
         w.stance + 1, w.in_hand.map(|(b, ..)| format!("{:08x}", model_bones[b])).unwrap_or("-".into()))).collect::<Vec<_>>());
@@ -4288,6 +4357,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 u.crouch_wanted = false;
                 u.switching = None;
                 u.cancel_throw();
+                // (a weapon pickup ends: FUN_000c4f10; play_weapon_pickups.rs `swap`)
+                if let Some(g) = u.gun_use.as_mut() {
+                    g.cancelled = true;
+                }
             }
         }
         if u.dead {
@@ -5862,7 +5935,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     // ---- weapons: switch and fire ----
     let armed = !l.weapons.is_empty();
-    if p.switch_pressed {
+    // (not the key's during a weapon pickup: its own switch is the use's, play_weapon_pickups.rs)
+    if p.switch_pressed && p.gun_use.is_none() {
         start_switch(p, l);
     }
     if p.switch_sound_in >= 0.0 {
@@ -5898,6 +5972,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.cooldown = 0.1;
         }
     }
+    // ---- a weapon pickup (#17): the slot it goes to into the hand, then the drop-and-pickup clip
+    // and its events (play_weapon_pickups.rs)
+    weapon_pickups::step(p, l, game, dt);
     p.hud_list -= dt;
     // ---- ammo: a reload (started by play_ammo.rs, which empties the clip at once: the HUD
     // shows 0, in red) plays the stance's reload clip; the clip is full again at its
@@ -5947,7 +6024,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // throw: #35 take26 20.5 s, LT throws nothing and the count stays; nor while the skill says
     // the character isn't free: the item use FUN_001210c0 asks FUN_00117210 for all but
     // IOU_JUST_USE, 0x121139, so not in Flint's targeting, `skills::lets_act`)
-    let can_throw = kind.is_some() && l.throw_hand.is_some() && p.throwing.is_none()
+    let can_throw = kind.is_some() && l.throw_hand.is_some() && p.throwing.is_none() && p.gun_use.is_none()
         && p.reloading.is_none() && p.using.is_none() && p.switching.is_none() && p.skill.toggling.is_none()
         && !skills::overlays_blocked(p) && skills::lets_act(p) && matches!(p.action, Action::None) && !p.on_all_fours;
     p.meter_after.1 = (p.meter_after.1 - dt).max(0.0);
@@ -6022,7 +6099,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     if !can_aim(p) {
         p.fire_state.lower();
     }
-    let gun_up = armed && p.reloading.is_none() && p.throwing.is_none()
+    // (nor during a weapon pickup, from the hold to the clip's end: the demo's, as for the other
+    // overlays; the game's use lowers the gun, char+0x7dc = 0 at FUN_00121670)
+    let gun_up = armed && p.reloading.is_none() && p.throwing.is_none() && p.gun_use.is_none()
         && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours;
     let clip_of = |p: &Player, w: usize| p.ammo.get(w).map_or(0, |a| a[0]);
     // the second hand's gun (Tex's berserk): the trigger fires it too, each gun while it has a
@@ -6312,6 +6391,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             apply_overlay(&mut pose, &l.model, game, c, t, standing, p.face_time);
         }
     }
+    // a weapon pickup's drop-and-pickup clip (#17, play_weapon_pickups.rs), as the others
+    if let Some((c, t)) = p.gun_use.as_ref().and_then(|u| u.overlay()) {
+        apply_overlay(&mut pose, &l.model, game, c, t, standing, p.face_time);
+    }
     if let Some(t) = &p.throwing {
         if let Some(c) = if t.place { &l.place_clips[t.slot] } else { &l.throw_clips[t.slot] } {
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, p.face_time);
@@ -6336,7 +6419,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // game's aim follows the flag isn't traced)
     let held = l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|h| (w, h)));
     let want_aim = if upper_aim && armed && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
-        && p.skill.toggling.is_none() { 1.0 } else { 0.0 };
+        && p.skill.toggling.is_none() && p.gun_use.is_none() { 1.0 } else { 0.0 };
     p.aim_weight += (want_aim - p.aim_weight) * (1.0 - (-10.0 * dt).exp());
     match held {
         Some((w, (hb, r, t))) if p.aim_weight > 0.01 && !l.arm_chain.is_empty() => {
@@ -6944,10 +7027,13 @@ fn update_weapons(
         let Some(mut l) = p.loaded.take() else { continue };
         // the dead let go of the gun in their hand: it falls from where it is, thrown a little
         // by what killed them, and tumbles like any loose object (see pickups::Thrown)
-        // (and the one on their back: it would prop the body up, and the ragdoll can't feel it)
+        // (and the one on their back: it would prop the body up, and the ragdoll can't feel it).
+        // Each then lies as a pickup with the rounds it had (release_weapon's dead path,
+        // FUN_00117660 at 0x118a4a: the dead's rounds stay in the gun; #17,
+        // play_weapon_pickups.rs)
         if p.dead && !l.weapon_dropped {
             l.weapon_dropped = true;
-            for w in &l.weapons {
+            for (i, w) in l.weapons.iter().enumerate() {
                 if visibility.get(w.entity).is_ok_and(|v| *v == Visibility::Hidden) {
                     continue;
                 }
@@ -6955,8 +7041,13 @@ fn update_weapons(
                     // (an enemy's drops at its feet, #129: the takes' guns lie at the standing spot)
                     let push = if enemies::enemy(p) { Vec3::ZERO } else { p.death_push * DROP_PUSH + Vec3::Y * DROP_HOP };
                     let spin = Vec3::new(p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0) * 0.1;
+                    let clip = p.ammo.get(i).map_or(0, |a| a[0]);
                     commands.entity(w.entity).remove::<ChildOf>()
-                        .insert((g.compute_transform(), pickups::Thrown { velocity: push, spin }));
+                        .insert((g.compute_transform(), pickups::Thrown { velocity: push, spin },
+                                 weapon_pickups::LyingGun { kind: w.def.name, clip, name: 0 }));
+                    if std::env::var("BF_WEAPON_LOG").is_ok() {
+                        println!("t {:.2}: {} dies and lets go of {} ({clip} rounds) at {:.2}", p.sim_time, unit_name(p), w.def.label, g.translation());
+                    }
                 }
                 if let Ok(mut v) = visibility.get_mut(w.flash) {
                     *v = Visibility::Hidden;

@@ -99,6 +99,14 @@ const S_HOLD: u32 = 0x1CC5_1F04;
 const PROMPT_KIND: i64 = 2;
 const PROMPT_VB: i64 = 6;
 const S_TO_ACTIVATE: u32 = 0xF9D2_9692;
+/// A lying gun's lines (FUN_000aa600's weapon case, #17): the character can take it (FUN_000aad20
+/// -> FUN_000a9910 agreeing), "Hold [X] to swap %s." (h_f1285f72, 0xaa789) or, for a gun with no
+/// magazine prop and no ammo-regen, "Hold [X] to swap %s. (%d shots)" (h_e456c40f, 0xaa774); it
+/// can't, "%s cannot pick up %s." (h_0ff85d29, 0xaa7e6), with no "Hold " and no glyph
+/// (FUN_000ca000 with the empty glyph): the words from the line's start (#61 take04 3.25 s).
+const S_TO_SWAP: u32 = 0xF128_5F72;
+const S_TO_SWAP_SHOTS: u32 = 0xE456_C40F;
+const S_CANNOT_PICK_UP: u32 = 0x0FF8_5D29;
 /// The use prompt stands at the first hint line's place, 20 lower while the HUD's message widget
 /// (hud+0xfc: the skill's name) shows, and 20 lower again for each of the update's two tests of
 /// the player view's +0x3c, the first hint line (0xaa292-0xaa2e8: the second test reads +0x3c again
@@ -277,13 +285,15 @@ struct HintHud {
 /// The frame's virtual buttons once a tutorial panel has taken the frame's presses (none reaches
 /// the gates under one) and before the objectives menu does (its opening on BACK must still let
 /// the BACK gate see it: take04's START hint 3 s of clock after the BACK press), and the AI events
-/// before the triggers' frame; the lines after it.
+/// before the triggers' frame; the lines after it, and after the use prompt's target is known
+/// (play.rs `doors`, play_weapon_pickups.rs `use_target`).
 pub fn plugin(app: &mut App) {
     app.init_resource::<HintLines>()
         .add_systems(OnEnter(AppState::Playing), build.after(setup))
         .add_systems(PreUpdate, buttons.after(InputSystem).after(super::panels::input).before(super::super::objectives::ObjectivesControls)
                      .run_if(in_state(AppState::Playing)))
-        .add_systems(Update, (ai_events.before(super::run), draw.after(super::run)).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (ai_events.before(super::run), draw.after(super::run).after(super::super::weapon_pickups::use_target))
+                     .run_if(in_state(AppState::Playing)));
 }
 
 /// The hint lines' nodes, hidden, in a HUD root of their own, and the icon atlas.
@@ -542,22 +552,37 @@ fn draw(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game:
     draw_prompt(&mut commands, &mut hud, &font.0, &game.0.strings, &mut nodes, &use_panel, &player, &stamina, shown.0[0]);
 }
 
-/// The use prompt (see PROMPT_KIND): a gate's wall panel in reach and in view (play.rs `doors`;
-/// none while scoped, as before), "Hold [X] to activate panel." at the first hint line's place,
-/// lowered for the skill's name and a first hint line (PROMPT_STEP), steady; rebuilt when its text
-/// or place changes.
+/// The prompt line's kind (2: "Hold " and the X glyph; 0: the words alone) and words for a
+/// prompt (`Prompt`, FUN_000aa600's cases), from the string table.
+fn prompt_words(prompt: &Prompt, strings: &HashMap<u32, String>) -> (i64, String) {
+    let text = |id: u32, fallback: &str| strings.get(&id).cloned().unwrap_or_else(|| fallback.to_string());
+    match prompt {
+        Prompt::Activate(what) => (PROMPT_KIND, text(S_TO_ACTIVATE, "to activate %s.").replacen("%s", what, 1)),
+        Prompt::Swap { name, shots: None } => (PROMPT_KIND, text(S_TO_SWAP, "to swap %s.").replacen("%s", name, 1)),
+        Prompt::Swap { name, shots: Some(n) } => (PROMPT_KIND, text(S_TO_SWAP_SHOTS, "to swap %s. (%d shots)").replacen("%s", name, 1)
+            .replacen("%d", &n.to_string(), 1)),
+        Prompt::Refuse { who, name } => (0, text(S_CANNOT_PICK_UP, "%s cannot pick up %s.").replacen("%s", who, 1).replacen("%s", name, 1)),
+    }
+}
+
+/// The use prompt (see PROMPT_KIND): a gate's wall panel in reach and in view (play.rs `doors`),
+/// "Hold [X] to activate panel.", or a lying gun's line (play_weapon_pickups.rs, #17: "Hold [X]
+/// to swap L-Shot-50.", "Tex cannot pick up Jax-iP."); none while scoped, as before. At the first
+/// hint line's place, lowered for the skill's name and a first hint line (PROMPT_STEP), steady;
+/// rebuilt when its text or place changes.
 #[allow(clippy::too_many_arguments)]
 fn draw_prompt(commands: &mut Commands, hud: &mut HintHud, font: &Handle<Image>, strings: &HashMap<u32, String>, nodes: &mut Query<&mut Visibility>,
                use_panel: &UsePanel, player: &Player, stamina: &super::super::hud::StaminaBar, first_line: bool) {
-    let want = use_panel.prompt.filter(|_| player.scope < 0.5).map(|what| {
-        let text = strings.get(&S_TO_ACTIVATE).cloned().unwrap_or("to activate %s.".into()).replace("%s", what);
+    let want = use_panel.prompt.as_ref().filter(|_| player.scope < 0.5).map(|prompt| {
+        let (kind, text) = prompt_words(prompt, strings);
         let drop = PROMPT_STEP * (stamina.label_shown() as u32 + 2 * first_line as u32) as f32;
-        (text, drop)
+        (kind, text, drop)
     });
-    if let Some((text, drop)) = want.as_ref().filter(|w| hud.prompt_drawn.as_ref() != Some(*w)) {
+    if let Some((kind, text, drop)) = want.as_ref().filter(|w| hud.prompt_drawn.as_ref() != Some(&(w.1.clone(), w.2))) {
         let parent = hud.prompt;
         commands.entity(parent).despawn_related::<Children>();
-        spawn_cells(commands, parent, layout(PROMPT_KIND, PROMPT_VB, text, strings), hud.corner + Vec2::Y * *drop, &hud.icons, font);
+        let vb = if *kind == 0 { 0 } else { PROMPT_VB };
+        spawn_cells(commands, parent, layout(*kind, vb, text, strings), hud.corner + Vec2::Y * *drop, &hud.icons, font);
         hud.prompt_drawn = Some((text.clone(), *drop));
     }
     if let Ok(mut v) = nodes.get_mut(hud.prompt) {

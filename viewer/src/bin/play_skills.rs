@@ -702,12 +702,12 @@ impl Toggling {
 /// Whether `u` is free to start a toggle (FUN_00117210: no action in the slot char+0x214 or a
 /// finished one, +0x225 clear, alive, no item held in +0x1fc / +0x200 of kind 0x2e or flagged
 /// +0x252 bit 1, then the skill's +0x14, `lets_act`). In the demo: alive, not knocked down, no
-/// grenade held (charging, `charge`), no reload, throw, medkit, weapon switch or toggle under way,
-/// and the skill's word. Only Tex's toggle (switching on, 0x13d5c4) and Hawk's (0x13cfd2) ask it;
-/// Brutus's (0x13bfe0) and Flint's (0x13cad0) don't.
+/// grenade held (charging, `charge`), no reload, throw, medkit, weapon switch, weapon pickup (#17)
+/// or toggle under way, and the skill's word. Only Tex's toggle (switching on, 0x13d5c4) and Hawk's
+/// (0x13cfd2) ask it; Brutus's (0x13bfe0) and Flint's (0x13cad0) don't.
 pub fn free_to_act(u: &Player) -> bool {
     !u.dead && !knocked_down(u) && u.charge <= 0.0 && u.reloading.is_none() && u.throwing.is_none() && u.using.is_none()
-        && u.switching.is_none() && u.skill.toggling.is_none() && lets_act(u)
+        && u.switching.is_none() && u.gun_use.is_none() && u.skill.toggling.is_none() && lets_act(u)
 }
 
 /// Whether `u`'s skill lets `u` start an action now (`SkillKind::lets_act`, the skill's +0x14 that

@@ -82,6 +82,9 @@ const H_AWARD_ON_HIT: u32 = 0x0696_1311;
 const H_AWARD_TO_SQUAD: u32 = 0xF61E_CBAF;
 const H_AWARD_TO_OWN: u32 = 0x199F_F965;
 const H_AWARD_KIND: u32 = 0xE925_F48B;
+/// `<limit-weapon h_fb08d4c6>` (name not recovered; the parser 0x190030 puts it at the parse
+/// record's +0x374): the type's pickup mode, `CharacterType::pickup_mode`.
+const H_PICKUP_MODE: u32 = 0xFB08_D4C6;
 
 /// The MT_ motion types by value, without their MT_ prefix (default.xbe's name table 0x3bfdac,
 /// values 0-49 in order; parser FUN_001876a0).
@@ -178,6 +181,18 @@ pub struct CharacterType {
     pub items: Vec<(u32, i64)>,
     /// `<limit-weapon one two>`: the weapon class each slot holds (the first number; -1 none)
     pub weapon_classes: [i64; 2],
+    /// `<limit-weapon one="a b" two="c d">` whole: the weapon classes (WTYPE_: 0 pistol, 1 rifle,
+    /// 2 cannon; 8 none) each slot's holder takes (#17). The parser 0x190030 puts `one` in the
+    /// parse record's +0x4c list and `two` in +0x50; the holders' tables (front+0x34 and +0x78,
+    /// one byte per class, all set by the front's constructor 0x14c5d0) are narrowed to them (the
+    /// copy isn't located: inferred from the takes' refusals). The squad's (objecttypes-common):
+    /// Brutus 1 8 / 2 1, Flint 1 8 / 0 8, Hawk 0 8 / 1 8, Tex 2 1 / 2 1; -1 where none is given
+    pub slot_classes: [[i64; 2]; 2],
+    /// `<limit-weapon h_fb08d4c6>`: how a picked-up gun chooses its slot and its pickup clip
+    /// (FUN_00121ac0 and FUN_00121920 switch on the type's +0x15c; that it's this attribute,
+    /// parse +0x374, is inferred from its values and the takes): 1 Flint and Hawk, 2 Brutus, 3
+    /// Tex; 0 without one (slot 1); 4 a type that can't pick guns up (FUN_000bf1e0)
+    pub pickup_mode: i64,
     /// `<speeds speed>`: crouch walk, walk, run, dash (m/s; type+0x6f8..0x704, read by
     /// FUN_0012c6c0); the demo moves by root motion
     pub speeds: [f32; 4],
@@ -349,6 +364,12 @@ pub struct Overlay {
     pub script: String,
     /// prefix-type: 0 the script is the whole name, else "Sc_" + stance + script
     pub prefix: i64,
+    /// `speed` (h_113d3e3c, the overlay parser 0x1958f0 puts it at the parse record's +0x28;
+    /// FUN_001314c0 copies it to the runtime record's +0x44): the clip's playback rate, which
+    /// FUN_00150290 multiplies by the type's rate (+0x29c) and the skill's (its +0xd0) as the
+    /// overlay starts. 1 on every overlay of the squad's sets but the weapon pickups (Tex's 1.1,
+    /// Flint's 1.2); 1 without
+    pub speed: f32,
 }
 
 /// A hit bone: a motion set's `<collision><bones><bone name mass Damage recoil>` (FUN_00194d70;
@@ -575,6 +596,12 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
     let inventory = e.child(h("inventory"));
     let limit = e.child(h("limit-weapon"));
     let class = |k: &str| limit.and_then(|l| l.attr(h(k))).and_then(|v| v.ints().first().copied()).unwrap_or(-1);
+    // (both numbers of a slot: the classes its holder takes, #17; each its own attribute in the
+    // document, as the speeds are, which the decoder's XML writes space-joined)
+    let classes = |k: &str| {
+        let v: Vec<i64> = limit.map(|l| all(l, h(k)).flat_map(|v| v.ints()).collect()).unwrap_or_default();
+        [v.first().copied().unwrap_or(-1), v.get(1).copied().unwrap_or(-1)]
+    };
     let speeds: Vec<f32> = e.child(h("speeds")).map(|s| all(s, h("speed")).flat_map(|v| v.floats()).collect()).unwrap_or_default();
     let cyl = e.child(h("cylinder-extents"));
     let offset = cyl.and_then(|c| c.child(h("offset"))).and_then(|o| o.text.as_ref()).map(|t| t.floats())
@@ -606,6 +633,8 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
         weapons: inventory.map(|i| weapon::hashes(i, h("weapon-name")).into_iter().filter(|&w| w != h("")).collect()).unwrap_or_default(),
         items: inventory.map(|i| counted(i.children_named(h("item")))).unwrap_or_default(),
         weapon_classes: [class("one"), class("two")],
+        slot_classes: [classes("one"), classes("two")],
+        pickup_mode: limit.and_then(|l| int(l, H_PICKUP_MODE)).unwrap_or(0),
         speeds: [0, 1, 2, 3].map(|i| speeds.get(i).copied().unwrap_or(0.0)),
         capsule: Capsule {
             radius: cyl.and_then(|c| num(c, h("radius"))).unwrap_or(0.0),
@@ -660,6 +689,7 @@ pub fn parse_motion_set(root: &Element, file: &str) -> MotionSet {
             motion_type: int(o, h("motion-type")).unwrap_or(0),
             script: strings(o, h("script")).into_iter().next().unwrap_or_default(),
             prefix: int(o, h("prefix-type")).unwrap_or(0),
+            speed: num(o, h("speed")).unwrap_or(1.0),
         }).collect(),
         hit_bones: root.child(h("collision")).and_then(|c| c.child(h("bones"))).map(|b| b.children_named(h("bone")).filter_map(|b| {
             Some(HitBone {
