@@ -33,9 +33,26 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   definitions with a clip whose model loads (one per model), from the first mission's data,
   the multiplayer archives (`mp_common`, `mp1`-`mp8`) and m02_a, which holds the three
   campaign-only ones (A10 Bioreactive, Confed LZR-50, Jax-iP); about 0.7 s. (m09_a adds the
-  Light grenade and sdm_e34 the missile rack for the object tool: about 1 s in all.) Walk into one
-  to take it into the held weapon's slot: the character is respawned carrying it, with a full
-  clip, and "Took <name>" shows.
+  Light grenade and sdm_e34 the missile rack for the object tool: about 1 s in all.) Each is a
+  lying gun with a full clip, as the game's weapon pickups ([pickups.md](pickups.md), "Weapon
+  pickups", #17): in reach (2.5 m across, 1.7 m up or down) the prompt offers the one most in
+  front, "Hold [X] to swap <name>." with the blue ring, or "<character> cannot pick up <name>."
+  with the red one for a class the character's slots don't take (Tex and Brutus refuse the
+  pistols, Hawk and Flint the cannons). X (E) held 0.3 s swaps it in with the character's
+  drop-and-pickup clip: the gun in hand drops at the feet (a lying gun too: its rounds go into the
+  reserve first, which starts full here, so it keeps them), the new one comes with its full clip
+  into the slot the game's rules pick (Tex's in hand; Flint's and Hawk's by class; Brutus's
+  cannons to slot 2), its name over its count. The rack puts a new one in its place at once, and
+  walking past it takes no rounds from it (`KeepClip`: the test map's convenience).
+  `BF_TEST_GOTO=0.8,-4.3,0.8,-6 BF_TEST_GO_AT=999 BF_TEST_SWAP=2.0` stands Tex at the first row's
+  fifth gun and swaps it.
+  * The gun dropped there never vanishes: the flat floor plays as a mission (it isn't a
+    multiplayer map in the game's level list), where a swap's dropped gun gets no vanish timer
+    ([pickups.md](pickups.md), "The vanish timers").
+  * The swap changes the guns a character holds, not its loadout (`Game::character_weapons`,
+    which the rack's old walk-in respawn rewrote): a character made anew has its original guns
+    again, as when play resumes from the map editor's edit mode (the squad comes back fresh,
+    [editor.md](editor.md)) or a level switch brings the squad back.
   * Loading every level (about 6 s) adds no others: the rest are the creatures' built-in
     weapons (no model), Feral Cutter (the same model as another) and the bioreactive death's
     vaporise blast h_1f4a5a0a, which carries the iKhan-GPL's name (a model under 0.1 m; the gun
@@ -65,8 +82,8 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   the debug line (character, state, clip, surface, weapon), top left under the health bars. It
   starts hidden, with a small "H: help" at the bottom; H shows and hides it.
   `BF_TEST_HELP=<s>[;<s>...]` presses H then.
-* The status message ("Took <weapon>", "Instant kill off", the tools' messages) goes after its
-  2 s here too: it was counted down only on maps with doors, so on the flat floor it stayed.
+* The status message ("Instant kill off", the tools' messages) goes after its 2 s here too: it
+  was counted down only on maps with doors, so on the flat floor it stayed.
 * **Developer tools**: a free camera with a teleport (F), an NPC spawner (N), an object
   spawner (O, in the air from the free camera), any level's buildings and static scenery to put
   down, drawn and solid as in their levels (P, #185), a sky picker (Y), a music picker (U) and a level
@@ -310,8 +327,7 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
     them from the zone before, with the save game's pool) keeps the full stacks too: the demo's
     stopgap until zones carry the reserve over (#231), as with none no gun could reload there.
     A zone whose placements carry any ammo keeps the carried-only rule.
-  * A respawn (the test map's rack) keeps the reserve; the new gun comes with a full clip. The
-    test map's NPCs reload from a bottomless reserve of their own.
+  * The test map's NPCs reload from a bottomless reserve of their own.
 * **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show
   "N Regen" (string `h_e246de1d`) and never reload. Their clip gains a round every ammo-regen
   seconds while it isn't full and the gun's own cooldown is out, held or stowed (FUN_0022ebc0),
@@ -367,7 +383,7 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
   through the throw: a thrown grenade has no crosshair of its own (#119; `todo/119` take01).
   Aiming and shots go through it (play.rs `CROSSHAIR_UP`). A
   weapon pickup hides it the same way, from the clip's release_weapon to its grab_weapon (take11
-  300.8-301.1 s; pickups.md "Weapon pickups", #17); the test map's rack has none.
+  300.8-301.1 s; pickups.md "Weapon pickups", #17), the test map's rack's swap too.
 
 Checked on the test map (`BF_TEST_GOTO=0,0,0,0`, `BF_CAPTURE`), measured against the takes in
 640 × 480 units:

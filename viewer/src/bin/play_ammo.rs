@@ -99,7 +99,8 @@ impl Reserve {
 pub const NAME_TIME: f32 = 2.85;
 pub const NAME_FADE: f32 = 0.3;
 
-/// The held weapon's name on the HUD after a pickup: seconds left (set by the test map's rack).
+/// The held weapon's name on the HUD after a pickup: seconds left (set by a weapon pickup's grab,
+/// play_weapon_pickups.rs `swap`: a lying gun's, the test map's rack's too).
 #[derive(Resource, Default)]
 pub struct HeldName(pub f32);
 

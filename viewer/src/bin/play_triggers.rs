@@ -33,9 +33,13 @@
 //!    re-armable one (h_0f95f576). A character copy stands on the ground under the transform
 //!    (the position setter's ray, `on_ground`). A squad-type character's copy the session
 //!    doesn't count in the squad is taken away at once (FUN_00209900, `Triggers::member_kept`,
-//!    reading the save-game slots of play_flags.rs). The copy sends SPAWNED to its listeners,
-//!    the trigger OPERATED to its targets; the triggers that list the spawn-trigger listen to its
-//!    copies.
+//!    reading the save-game slots of play_flags.rs). A pickup's copy is made by
+//!    play_pickup_spawns.rs (#278). The copy sends SPAWNED to its listeners, the trigger OPERATED
+//!    to its targets; the triggers that list the spawn-trigger listen to its copies.
+//!  * subject relay h_0cb602d0 (0x201310, #278): its entries unread, an event with a subject
+//!    binds the subject to its targets (FUN_001fe6c0: they listen to it) and goes on to them,
+//!    the binding undone after unless h_f49c30af (FUN_001fea10). The multiplayer maps' pickup
+//!    spawn-triggers so bind their copies to the timers that respawn them.
 //!  * gamevar-trigger (0x1ffc40, #221): OPERATE works out its operation (h_015914ab: ==, <, <=,
 //!    >, >=, A, the out flag's default, +, -, x, /) of its operands (a game flag, a constant,
 //!    random, the event's data) and writes it to its out operand (a game flag: play_flags.rs's
@@ -82,7 +86,8 @@
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
 //! copy's), a named breakable object broken (DESTROYED), a wall panel used (USE_OBJECT, play.rs
-//! `doors`), a pickup taken (PICKUP_OBJECT, play_pickups.rs).
+//! `doors`), a pickup taken (PICKUP_OBJECT, play_pickups.rs and play_weapon_pickups.rs: a placed
+//! one's or a spawn-trigger's copy's).
 //!
 //! Test hooks:
 //!  * BF_TRIGGER_LOG=1: every event a trigger or an object sends (who, the signal, its subject
@@ -392,6 +397,8 @@ enum ClassState {
     LevelOver { ends_mission: bool },
     /// zone-trigger (#226): h_14b0089f (+0x44), the next zone's file name
     Zone { next: String },
+    /// subject relay h_0cb602d0 (#278): h_f49c30af (+0x40), the binding kept (`Triggers::relay`)
+    Relay { keep: bool },
 }
 
 /// Which class a trigger runs as (for `update` and `deliver`).
@@ -419,6 +426,7 @@ enum Kind {
     LevelOver,
     Zone,
     Radar,
+    Relay,
 }
 
 /// A trigger as the game keeps it: its data (the entries' use counts are live) and +0x3d's bits:
@@ -444,8 +452,10 @@ enum Act {
     Spawn { trigger: usize, template: u32, copy: u32, at: Mat4, fade: f32 },
     /// a destroyer's object (FUN_00200d00 -> FUN_00200b70)
     Destroy { trigger: usize, object: u32 },
-    /// a warp-trigger's OPERATE (FUN_00200480): its objects to its world point (`warp`)
-    Warp { trigger: usize },
+    /// a warp-trigger's OPERATE (FUN_00200480): its objects to its world point (`warp`), as they
+    /// were at the OPERATE (the game warps them in its handler: a relay that unbinds its
+    /// occupant after the event has passed, `Triggers::relay`, mustn't empty the list first)
+    Warp { trigger: usize, objects: Vec<u32> },
 }
 
 /// A BF_TRIGGER_FIRE entry: when (sim time), an object's event (`@`) or a trigger's, whose, the
@@ -627,6 +637,7 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             Class::Score { amount, key, keyed, scaled, .. } => ClassState::Score { amount: *amount, key: *key, keyed: *keyed, scaled: *scaled },
             Class::LevelOver { ends_mission } => ClassState::LevelOver { ends_mission: *ends_mission },
             Class::Zone { next } => ClassState::Zone { next: next.clone() },
+            Class::Relay { keep } => ClassState::Relay { keep: *keep },
             Class::Other => cutscene_class(t),
         };
         // FUN_000dfe90 as the spawn-trigger links: its template counted once more, or -1 for
@@ -837,8 +848,8 @@ fn inside(volume: Volume, at: &Mat4, inv: &Mat4, a: &Actor) -> bool {
 fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut events: ResMut<TriggerEvents>, mut player: ResMut<Player>,
        mut squad: ResMut<Squad>, mut game: ResMut<GameData>, map: Res<MapLevel>, mut doors: Option<ResMut<Doors>>, spawns: Option<Res<SquadSpawns>>,
        mut fx: (Option<ResMut<bf_viewer::ale_fx::AleAssets>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-       mut placed: Query<(&Placed, &mut Visibility)>, mut hits: ResMut<AiHits>, mut campaign: ResMut<Campaign>,
-       mut cutscenes: ResMut<script::Cutscenes>) {
+       mut placed: Query<(&Placed, &mut Visibility)>, (mut hits, mut copies): (ResMut<AiHits>, ResMut<pickup_spawns::PickupCopies>),
+       mut campaign: ResMut<Campaign>, mut cutscenes: ResMut<script::Cutscenes>) {
     let Some(level) = map.0.as_ref() else { return };
     if tr.live.is_empty() {
         events.0.clear();
@@ -949,7 +960,8 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                     }
                 }
                 Act::Spawn { trigger, template, copy, at, fade } => {
-                    spawn_copy(&mut commands, &mut tr, &mut player, &mut squad, &mut game.0, level, spawns, &mut fx, trigger, template, copy, at, fade);
+                    spawn_copy(&mut commands, &mut tr, &mut player, &mut squad, &mut game.0, level, spawns, &mut fx, &mut copies, trigger, template, copy,
+                               at, fade);
                 }
                 Act::Destroy { trigger, object } => {
                     let by = tr.label(tr.live[trigger].t.name);
@@ -1001,7 +1013,7 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                         println!("t {now:.2}: {by}: nothing called {} to remove", tr.label(object));
                     }
                 }
-                Act::Warp { trigger } => warp(&mut tr, trigger, level, spawns, &mut player, &mut squad),
+                Act::Warp { trigger, objects } => warp(&mut tr, trigger, &objects, level, spawns, &mut player, &mut squad),
             }
         }
         if pass == script::Pass::Done {
@@ -1025,6 +1037,9 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
 ///    trigger's way;
 ///  * an effect object: its effect type's ALE effects at the transform, once each (a looping one
 ///    that the game keeps until a destroyer removes it plays its emitters once here);
+///  * a pickup (an inventory-object or a weapon-object, #278): a copy of it named `copy`, made
+///    from its hidden model by play_pickup_spawns.rs this frame (`copies`): a power-up where the
+///    transform puts it, an item on the ground under it, a weapon lying on its side there;
 ///  * anything else: not made (logged).
 /// A character stands on the ground under the transform (`on_ground`: the place call's position
 /// setter, 0x1154b0); an effect stays at the transform (a game object's place, 0x159b70, has no
@@ -1033,7 +1048,7 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
 #[allow(clippy::too_many_arguments)]
 fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, squad: &mut Squad, game: &mut Game, level: &Level, spawns: &SquadSpawns,
               fx: &mut (Option<ResMut<bf_viewer::ale_fx::AleAssets>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-              trigger: usize, template: u32, copy: u32, at: Mat4, fade: f32) {
+              copies: &mut pickup_spawns::PickupCopies, trigger: usize, template: u32, copy: u32, at: Mat4, fade: f32) {
     let now = tr.clock;
     let by = tr.label(tr.live[trigger].t.name);
     let point = at.w_axis.truncate();
@@ -1129,6 +1144,14 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         squad.0.push(m);
         return;
     }
+    // a pickup: its copy at the transform (#278, play_pickup_spawns.rs)
+    if o.tag == h("inventory-object") || o.tag == h("weapon-object") {
+        if tr.log {
+            println!("t {now:.2}: {by} spawns {} (a copy of {}, {} h_{:08x}) at {point:.2}", tr.label(copy), tr.label(template), tr.label(o.tag), o.kind);
+        }
+        copies.0.push(pickup_spawns::PickupCopy { template, copy, tag: o.tag, kind: o.kind, at, by });
+        return;
+    }
     let effects = game.object_types.get(&o.kind).filter(|k| k.object_type == OBJECT_EFFECT).and_then(|_| game.effect_types.get(&o.kind)).cloned();
     match (effects, fx.0.as_deref_mut()) {
         (Some(list), Some(ale)) => {
@@ -1208,6 +1231,7 @@ impl Triggers {
             ClassState::LevelOver { .. } => Kind::LevelOver,
             ClassState::Zone { .. } => Kind::Zone,
             ClassState::Radar { .. } => Kind::Radar,
+            ClassState::Relay { .. } => Kind::Relay,
         }
     }
 
@@ -1390,6 +1414,7 @@ impl Triggers {
             Kind::LevelOver => self.level_over(i, ev),
             Kind::Zone => self.zone(i, ev),
             Kind::Radar => self.radar_trigger(i, ev),
+            Kind::Relay => self.relay(i, ev),
             Kind::Other => self.other(i, ev),
         }
         self.depth -= 1;
@@ -1704,6 +1729,76 @@ impl Triggers {
                 *pending = true;
             }
             self.entry_used(i, j, &ev);
+        }
+    }
+
+    /// 0x201310: a subject relay (h_0cb602d0, #278). Disabled, its base actions (FUN_001ff0f0,
+    /// FUN_001ff000). Enabled, its entries aren't read: an event with a subject binds the subject
+    /// to each of its targets (FUN_001fe6c0, `bind`: they listen to it from now on), goes on to
+    /// them (FUN_001ff0a0), and without h_f49c30af the binding is undone (FUN_001fea10, `unbind`);
+    /// an event without a subject goes nowhere. On the multiplayer maps a pickup spawn-trigger
+    /// sends its OPERATED (the copy as the subject) through one to the timer that respawns it (644
+    /// of their 716 relays; triggers.md "Subject relays" counts the rest): sdm_e34's STAMINA POWER,
+    /// h_f069b2c2 -> h_f106c777 -> timer h_0021e47f (30 s), which so hears the copy's
+    /// PICKUP_OBJECT. The teleporter pads' plates go through one to a warp-trigger (the occupant
+    /// becomes what it warps; #236's).
+    fn relay(&mut self, i: usize, ev: Ev) {
+        if !self.live[i].enabled {
+            return self.base_and_after(i, &ev);
+        }
+        if ev.subject == 0 {
+            return;
+        }
+        let ClassState::Relay { keep } = self.live[i].state else { return };
+        let targets: Vec<usize> = self.live[i].t.targets.iter().filter_map(|t| self.by_name.get(t).copied()).collect();
+        for &k in &targets {
+            self.bind(k, ev.subject);
+        }
+        if self.log {
+            println!("t {:.2}: {} binds {} to {}{}", self.clock, self.who(i), self.label(ev.subject),
+                     targets.iter().map(|&k| self.label(self.live[k].t.name)).collect::<Vec<_>>().join(", "), if keep { "" } else { " (for this event)" });
+        }
+        self.send(i, ev);
+        if !keep {
+            for &k in &targets {
+                self.unbind(k, ev.subject);
+            }
+        }
+    }
+
+    /// FUN_001fe6c0: trigger `k` takes `object` as its first object and listens to it (the
+    /// object's vtable +0x100 adds it to its listeners), its old first object no longer heard
+    /// (FUN_001fb020's object loses it: FUN_000e0950).
+    fn bind(&mut self, k: usize, object: u32) {
+        let objects = &mut self.live[k].t.objects;
+        let old = objects.first().copied();
+        match objects.first_mut() {
+            Some(first) => *first = object,
+            None => objects.push(object),
+        }
+        if let Some(o) = old.filter(|&o| o != object) {
+            if let Some(list) = self.listeners.get_mut(&o) {
+                list.retain(|&x| x != k);
+            }
+        }
+        let list = self.listeners.entry(object).or_default();
+        if !list.contains(&k) {
+            list.push(k);
+        }
+    }
+
+    /// FUN_001fea10 (EAX the trigger): trigger `k` no longer has `object`: with fewer than two
+    /// objects its first is cleared (FUN_001fe6c0 with none), else that one is taken out of its
+    /// list (FUN_001facd0); either way the object stops being heard.
+    fn unbind(&mut self, k: usize, object: u32) {
+        let objects = &mut self.live[k].t.objects;
+        if objects.len() < 2 {
+            objects.clear();
+        } else {
+            objects.retain(|&o| o != object);
+        }
+        if let Some(list) = self.listeners.get_mut(&object) {
+            list.retain(|&x| x != k);
         }
     }
 
@@ -2084,7 +2179,10 @@ impl Triggers {
                 (ClassState::Letterbox { hide, .. }, act::STOP) => {
                     self.cutscene.push(script::Request::Letterbox { trigger: name, show: false, secs: *hide });
                 }
-                (ClassState::Warp { .. }, act::OPERATE) => self.acts.push(Act::Warp { trigger: i }),
+                (ClassState::Warp { .. }, act::OPERATE) => {
+                    let objects = self.live[i].t.objects.clone();
+                    self.acts.push(Act::Warp { trigger: i, objects });
+                }
                 _ => {
                     self.base_and_after(i, &ev);
                     continue;
@@ -2166,9 +2264,10 @@ const LETTERBOX_TIME: f32 = 0.5;
 /// orientation (a direction-point; the place call +0x50 with its whole transform, as a spawn's
 /// copy faces its trigger's -z) and as before when not (a world-point; the position setter +0x48);
 /// the controlled one's camera goes with it. A dead character isn't moved. The warp's fade-in
-/// (h_0ede4719), +0x264 = 5.0 and FUN_0004c5e0 (an AI reset) aren't done.
+/// (h_0ede4719), +0x264 = 5.0 and FUN_0004c5e0 (an AI reset) aren't done. `objects` are the
+/// trigger's as its OPERATE found them (`Act::Warp`).
 #[allow(clippy::too_many_arguments)]
-fn warp(tr: &mut Triggers, i: usize, level: &Level, spawns: &SquadSpawns, player: &mut Player, squad: &mut Squad) {
+fn warp(tr: &mut Triggers, i: usize, objects: &[u32], level: &Level, spawns: &SquadSpawns, player: &mut Player, squad: &mut Squad) {
     let now = tr.clock;
     let by = tr.label(tr.live[i].t.name);
     let ClassState::Warp { point, fade } = tr.live[i].state else { return };
@@ -2180,7 +2279,7 @@ fn warp(tr: &mut Triggers, i: usize, level: &Level, spawns: &SquadSpawns, player
     };
     let at = p.transform.w_axis.truncate();
     let yaw = p.oriented.then(|| yaw_of(&p.transform));
-    for o in tr.live[i].t.objects.clone() {
+    for &o in objects {
         let name = tr.warp_object(o, spawns);
         // (a squad member not spawned yet has no copy to warp)
         let unit = if player.trigger_name == name && name != 0 && !player.stand_in {
@@ -2219,5 +2318,64 @@ fn warp(tr: &mut Triggers, i: usize, level: &Level, spawns: &SquadSpawns, player
                      yaw.map_or(" (keeping its facing)".to_string(), |y| format!(" facing {:.0} deg", y.to_degrees())),
                      if fade > 0.0 { format!(" (its {fade} s fade-in not drawn)") } else { String::new() });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A live trigger named `name` of element `tag`, enabled, answering `entries` (signal, action:
+    /// every time) and sending to `targets`, in `state`.
+    fn live(tag: u32, name: u32, class: Class, state: ClassState, entries: &[(i64, i64)], targets: &[u32]) -> Live {
+        let entries = entries.iter().map(|&(signal, action)| data::Entry { kind: 0, signal, action, match_id: 0, disable_when_spent: false,
+                                                                         limit: i64::from(i32::MAX), used: 0, extra: vec![] }).collect();
+        let t = Trigger { tag, name, enabled: true, disable_after_entry: false, disable_after_event: false, die_after_event: false, dead: false, id: 0,
+                          entries, targets: targets.to_vec(), objects: vec![], transform: None, class, element: Default::default() };
+        Live { t, enabled: true, dead: false, die_once: false, disable_once: false, first_done: false, state }
+    }
+
+    /// sdm_e34's STAMINA POWER chain (#278) cut down to its relay and timer: the spawn-trigger's
+    /// OPERATED (the copy as the subject) through relay h_f106c777 (h_f49c30af) binds the copy to
+    /// timer h_0021e47f, so the copy's PICKUP_OBJECT starts it (0x201310, FUN_001fe6c0); the next
+    /// copy's OPERATED moves the binding to it.
+    #[test]
+    fn a_relay_binds_the_copy_to_its_timer() {
+        let (relay, timer) = (0xF106_C777, 0x0021_E47F);
+        let mut tr = Triggers::default();
+        tr.live.push(live(data::H_RELAY, relay, Class::Relay { keep: true }, ClassState::Relay { keep: true }, &[(sig::OPERATED, act::OPERATE)], &[timer]));
+        tr.live.push(live(h("timer-trigger"), timer, Class::Other,
+                          ClassState::Timer { running: false, looping: false, stops: true, initial: 30.0, current: 30.0, subject: 0 },
+                          &[(sig::PICKUP_OBJECT, act::OPERATE)], &[]));
+        tr.by_name.extend([(relay, 0), (timer, 1)]);
+        let copy = MADE_UP_COPY + 1;
+        tr.deliver(0, Ev { signal: sig::OPERATED, id: 0, subject: copy, data: -1 });
+        assert_eq!(tr.listeners.get(&copy), Some(&vec![1]));
+        assert_eq!(tr.live[1].t.objects, vec![copy]);
+        tr.object_event(copy, Ev { signal: sig::PICKUP_OBJECT, id: 0, subject: 0, data: -1 });
+        assert!(matches!(tr.live[1].state, ClassState::Timer { running: true, .. }));
+        let next = copy + 1;
+        tr.deliver(0, Ev { signal: sig::OPERATED, id: 0, subject: next, data: -1 });
+        assert_eq!(tr.listeners.get(&next), Some(&vec![1]));
+        assert!(tr.listeners.get(&copy).is_none_or(|l| l.is_empty()));
+        // (an event without a subject binds nothing)
+        tr.deliver(0, Ev::new(sig::OPERATED, 0));
+        assert_eq!(tr.live[1].t.objects, vec![next]);
+    }
+
+    /// Without h_f49c30af the binding lasts the event only (the teleporter pads' relays,
+    /// FUN_001fea10): the warp's OPERATE took its occupant as the event passed (`Act::Warp`), and
+    /// it has none after.
+    #[test]
+    fn a_relay_without_keep_unbinds_after() {
+        let (relay, warp) = (0x0000_0001, 0x0000_0002);
+        let mut tr = Triggers::default();
+        tr.live.push(live(data::H_RELAY, relay, Class::Relay { keep: false }, ClassState::Relay { keep: false }, &[], &[warp]));
+        tr.live.push(live(h("warp-trigger"), warp, Class::Other, ClassState::Warp { point: 0, fade: 0.0 }, &[(sig::ENTER_DETECTOR, act::OPERATE)], &[]));
+        tr.by_name.extend([(relay, 0), (warp, 1)]);
+        tr.deliver(0, Ev { signal: sig::ENTER_DETECTOR, id: 0, subject: 7, data: -1 });
+        assert!(matches!(&tr.acts[..], [Act::Warp { trigger: 1, objects }] if *objects == vec![7]));
+        assert!(tr.live[1].t.objects.is_empty());
+        assert!(tr.listeners.get(&7).is_none_or(|l| l.is_empty()));
     }
 }

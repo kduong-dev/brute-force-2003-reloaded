@@ -255,7 +255,7 @@ fn main() {
         .insert_resource(World { game, level, name })
         .init_resource::<Fly>()
         .add_plugins((bf_viewer::ale_fx::plugin, bf_viewer::level_scene::plugin))
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup, show_templates).chain())
         .add_systems(Update, (fly, screenshot, move_test_fx, turn_sky, run_liquid_clock))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
@@ -273,9 +273,10 @@ fn setup(mut commands: Commands, mut world: ResMut<World>, mut fly: ResMut<Fly>,
          mut buffers: ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>) {
     let World { game, level, .. } = &mut *world;
     let _doors = spawn_level(&mut commands, game, level, &mut meshes, &mut level_materials, &mut liquids, &mut buffers, &mut images);
-    // the power-ups' icons and other idle effects
+    // the power-ups' icons and other idle effects, the spawn-triggers' pickup templates' among
+    // them (`show_templates`: the viewer shows the pickups where they're placed)
     let mut fx = bf_viewer::ale_fx::AleAssets::new(&mut meshes);
-    let n = bf_viewer::ale_fx::spawn_idle_effects(&mut commands, game, level, &mut fx, &mut images, &mut materials);
+    let n = bf_viewer::ale_fx::spawn_idle_effects(&mut commands, game, level, &mut fx, &mut images, &mut materials, true);
     println!("{n} idle effects");
     // the level's placed effect objects: its flies, embers, fires, dust (#258); BF_NO_PLACED_FX
     // leaves them out
@@ -320,6 +321,20 @@ fn setup(mut commands: Commands, mut world: ResMut<World>, mut fly: ResMut<Fly>,
         commands.spawn((Transform::from_translation(at).with_rotation(turn), Visibility::default(),
                         bf_viewer::ale_fx::AleEffect::new(fx, 0.0, 1), FxMover(speed, at)));
     }
+}
+
+/// The spawn-triggers' pickup templates shown (level_scene.rs spawns them hidden: in the game they
+/// are out of the world until their triggers copy them, bf_play's play_pickup_spawns.rs, #278).
+/// The viewer has no trigger runtime and shows where a level's pickups sit, so every pickup of a
+/// multiplayer map is drawn where it's placed, as before #278 (levels.md). Runs once, after
+/// `setup`'s spawns are in.
+fn show_templates(mut templates: Query<&mut Visibility, With<bf_viewer::level_scene::SpawnTemplate>>) {
+    let mut n = 0;
+    for mut v in &mut templates {
+        *v = Visibility::Inherited;
+        n += 1;
+    }
+    println!("{n} spawn-trigger pickup templates shown where they're placed");
 }
 
 /// BF_FX_TEST: the test effect's speed (m/s, along its -z) and where it started (it loops over 6 m).

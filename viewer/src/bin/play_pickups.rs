@@ -31,9 +31,11 @@
 //! Each heals its item type's h_0a811e94 (see `ItemType`), up to the character's maximum: the
 //! fruit 40; a medkit what the carried item's says. The placed Medkit (h_f5123ace, 60) gives,
 //! by its pickup-archetype, the inventory Medkit h_192d5337 (80): so using one heals 80. (What
-//! the placed one's own 60 is for isn't known.) Taking one plays its pickup-sound; it comes back
-//! after RESPAWN s (the game's respawn time isn't found). Squad members running over one take it
-//! too: a medkit into the squad's shared inventory (the player's), a fruit for their own health.
+//! the placed one's own 60 is for isn't known.) Taking one plays its pickup-sound; a level's own
+//! comes back after RESPAWN s (a guess), a spawn-trigger's copy (every pickup of the multiplayer
+//! maps, play_pickup_spawns.rs, #278) is gone for good and its trigger's timer makes the next.
+//! Squad members running over one take it too: a medkit into the squad's shared inventory (the
+//! player's), a fruit for their own health.
 //!
 //! A DNA canister (#228; group-type 9, IG_DNA_CANNISTER: the tutorial's Confed Marine DNA
 //! h_f4933c12 in the base building) is taken as a squad member's feet come within DNA_REACH: its
@@ -70,7 +72,9 @@ const MEDKIT_SOUND: u32 = 0x1538_BAAD;
 /// Tex says his e707f108 with the use (spectrogram match), Brutus nothing at his.
 const HEALED_CHATTER: u32 = 0x12C3_5D69;
 const HEALED_CHANCE: usize = 30;
-/// How long a taken pickup stays away (s): a guess.
+/// How long a level's own taken pickup stays away (s): a guess. The game removes what it takes
+/// (FUN_0011c170), and only spawn-triggers put pickups back (#278: their copies don't use this,
+/// play_pickup_spawns.rs); the campaign's placed ones keep it until that's settled.
 const RESPAWN: f32 = 30.0;
 /// How near (m) the player's feet must come: across, and up or down.
 const REACH: f32 = 1.0;
@@ -213,13 +217,16 @@ struct Pickup {
     entity: Entity,
     kind: u32,
     /// its placement's name: taking it is a PICKUP_OBJECT from it to the triggers listening to it
-    /// (play_triggers.rs); 0 for one the test tools put down
+    /// (play_triggers.rs); a spawn-trigger's copy's name for a copy; 0 for one the test tools put
+    /// down
     name: u32,
     at: Vec3,
     /// seconds until it's back (0: there)
     gone: f32,
     /// the "cannot pick up" message has shown since the player came near
     told: bool,
+    /// a spawn-trigger's copy (play_pickup_spawns.rs `SpawnCopy`): taken, it's removed for good
+    copy: bool,
 }
 
 #[derive(Resource, Default)]
@@ -313,10 +320,13 @@ pub fn plugin(app: &mut App) {
 
 /// The level's health pickups, once its objects are spawned (their own Transform: placed objects
 /// are roots, and on their first frame the GlobalTransform isn't worked out yet), each medkit
-/// group laid out, and the used medkit's model.
+/// group laid out, and the used medkit's model. Not the spawn-triggers' templates (out of the
+/// world, `SpawnTemplate`) nor what's come since the map started (`LatePickup`: the triggers'
+/// copies, #278, are `late_pickups`').
 #[allow(clippy::too_many_arguments)]
 fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
-                mut used: ResMut<UsedMedkit>, mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>)>,
+                mut used: ResMut<UsedMedkit>,
+                mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>), (Without<bf_viewer::level_scene::SpawnTemplate>, Without<LatePickup>)>,
                 children: Query<&Children>, parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>,
                 mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
                 mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
@@ -336,7 +346,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
     pickups.list = placed.iter()
         .filter(|(_, p, _, _)| p.tag == h("inventory-object") && !game.0.idle_effects.contains_key(&p.kind)
             && game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT || i.group == IG_DNA_CANNISTER))
-        .map(|(entity, p, t, _)| Pickup { entity, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false })
+        .map(|(entity, p, t, _)| Pickup { entity, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false, copy: false })
         .collect();
     // the level's medkits, grouped by where they're placed
     let kits: Vec<usize> = (0..pickups.list.len())
@@ -468,7 +478,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
 }
 
 #[allow(clippy::too_many_arguments)]
-fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
+fn take_pickups(mut commands: Commands, time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickups>, mut player: ResMut<Player>,
                 mut squad: ResMut<Squad>, mut status: ResMut<UsePanel>, mut feed: ResMut<PickupFeed>, mut vis: Query<&mut Visibility>,
                 mut events: ResMut<super::triggers::TriggerEvents>, mut found: ResMut<DnaFound>) {
     let dt = frame_dt(&time);
@@ -539,10 +549,14 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
         };
         if taken {
             // (a DNA canister is gone for good: the unlock is once; the end screen names it,
-            // `DnaFound`)
-            p.gone = if dna { f32::INFINITY } else { RESPAWN };
+            // `DnaFound`. So is a spawn-trigger's copy, removed from the world: its trigger's
+            // timer makes the next, #278)
+            p.gone = if dna || p.copy { f32::INFINITY } else { RESPAWN };
             if dna {
                 found.0.push(p.kind);
+            }
+            if p.copy {
+                commands.entity(p.entity).despawn();
             }
             // a placed one: PICKUP_OBJECT to the triggers listening to it (play_triggers.rs)
             if p.name != 0 {
@@ -558,10 +572,13 @@ fn take_pickups(time: Res<Time>, game: Res<GameData>, mut pickups: ResMut<Pickup
             }
             if std::env::var("BF_PICKUP_LOG").is_ok() {
                 let by = if who == 0 { player.character } else { squad.0[who - 1].character };
-                println!("{} took {} at {:.1}: health {:.0}/{:.0}, medkits {}", CHARACTERS[by], item.label, p.at, player.health, player.max_health, player.medkits);
+                println!("t {:.2}: {} took {} h_{:08x} at {:.1}: health {:.0}/{:.0}, medkits {}{}", player.sim_time, CHARACTERS[by], item.label, p.name, p.at,
+                         player.health, player.max_health, player.medkits, if p.copy { " (a spawn-trigger's copy: removed)" } else { "" });
             }
         }
     }
+    // (the copies taken are out of the world)
+    pickups.list.retain(|p| !(p.copy && p.gone > 0.0));
 }
 
 /// The use key (G) with a Medkit selected (the 80-point (5, 0) stack, or the 60-point (5, 2) one:
@@ -1065,17 +1082,20 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
     }
 }
 
-/// The pickups placed since the map started (`LatePickup`), once the level's are in: each lies
-/// tilted to the ground under it, seated on its lowest point, loose (`Body`); one with `DropIn`
-/// (put in the air) falls from where it is instead, as it's turned. Medkits and fruit can be
-/// taken.
+/// The pickups placed since the map started (`LatePickup`: the test tools', and the
+/// spawn-triggers' copies, play_pickup_spawns.rs), once the level's are in: each lies tilted to
+/// the ground under it, seated on its lowest point, loose (`Body`); one with `DropIn` (put in the
+/// air) falls from where it is instead, as it's turned. Medkits and fruit can be taken (no level
+/// has a DNA canister as a spawn-trigger's template); a copy is gone for good once taken
+/// (`Pickup::copy`).
+#[allow(clippy::type_complexity)]
 fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut<Pickups>,
-                mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>), With<LatePickup>>,
+                mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>, Has<super::pickup_spawns::SpawnCopy>), With<LatePickup>>,
                 children: Query<&Children>, parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>, meshes: Res<Assets<Mesh>>) {
     if !pickups.ready {
         return;
     }
-    for (e, p, mut t, drop_in) in &mut placed {
+    for (e, p, mut t, drop_in, copy) in &mut placed {
         commands.entity(e).remove::<LatePickup>();
         let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5);
         let body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: 0.0, moving: drop_in, kicked: 0.0,
@@ -1089,7 +1109,12 @@ fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut
             commands.entity(e).insert(body);
         }
         if game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT) && !game.0.idle_effects.contains_key(&p.kind) {
-            pickups.list.push(Pickup { entity: e, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false });
+            pickups.list.push(Pickup { entity: e, kind: p.kind, name: p.name, at: t.translation, gone: 0.0, told: false, copy });
+            if std::env::var("BF_PICKUP_LOG").is_ok() {
+                let i = &game.0.items[&p.kind];
+                println!("pickup h_{:08x} {} h_{:08x} (function {}, stack {}, heals {}) at {:.1}{}", p.kind, i.label, p.name, i.function, i.stack_limit, i.health,
+                         t.translation, if copy { " (a spawn-trigger's copy)" } else { "" });
+            }
         }
     }
 }
