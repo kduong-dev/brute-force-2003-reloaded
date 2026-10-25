@@ -55,7 +55,7 @@ runtime offset; see the code map's rows for each).
 | `max_stamina`, `height_offset`, `turn_rate`, `player_type` | the attributes | type+0x224, +0x2ac, +0x2d0, +0x1a8 bit 0 | stamina for OTHER; the rest carried |
 | `ragdoll_death` | `enable-ragdoll-death` (h_f397278e) | type+0x34c bit 0, FUN_00115d50 at 0x115e1f | carried: false on the 9 Seer Priest types and the 1189-HP Shadoon (they have death clips, #133 / #134); everyone ragdolls in the demo |
 | `ai` | `<ai alignment-type personality-* vision-range half-fov squad-leash-dist>` | type+0x358, FUN_0001ff70 | the leash for OTHER; the team rule below |
-| `weapons`, `items`, `weapon_classes` | `<inventory weapon-name><item>`, `<limit-weapon>` | type+0x2d4.. | OTHER's weapons and stances |
+| `weapons`, `items`, `weapon_classes`, `slot_classes`, `pickup_mode` | `<inventory weapon-name><item>`, `<limit-weapon one two h_fb08d4c6>` | type+0x2d4.., +0x15c | OTHER's weapons; the slots' classes and the pickup mode for the weapon pickups (pickups.md); the mode picks every type's stances too, by the slot (1) or the class (2, 3), and moves Tex's stowed gun (3: play.md, #297); `weapon_classes` only printed |
 | `speeds` | `<speeds speed>`: crouch walk, walk, run, dash | type+0x6f8.., FUN_0012c6c0 | carried (the demo moves by root motion) |
 | `capsule` | `<cylinder-extents radius height crouch-height><offset>` | type+0x1d4.. | carried (the demo uses one cylinder, `BODY_RADIUS` / `BODY_HEIGHT`) |
 | `decals` | the two lists h_fb4bfc68 / h_efc2a874, up to 3 each | type+0x1b4 / +0x1c4, FUN_00124af0 | the blood decals (one of the list at random) |
@@ -124,10 +124,14 @@ demo yet.
 ## In play
 
 * `Player::kind` is a character's type (`Loaded::kind` the one its model was built from).
-  `Player::character` stays its squad slot, a `CHARACTERS` index, and squad-only rules stay
-  keyed to the four (portraits, skills, chips, the hand-over, chatter answers, Brutus not
-  kneeling). A character of any other type (a test map NPC) is slot `OTHER`, whose name is
-  empty.
+  `Player::character` stays its squad slot, a `CHARACTERS` index: its place on the HUD, its key
+  and its identity for the hand-over. What's read by the squad's names (chatter and its answers,
+  skills, the camera, the loadout, Brutus not kneeling, Flint's still scope, the chip's height) is
+  read by its type's squad character, `Player::data_slot` (`squad_of` its type): the slot's own in
+  the main game, but on the test map a slot may hold any type (#302, testtools.md "The squad").
+  A character of any other type (a test map NPC, or such a squad member) has data slot `OTHER`,
+  whose name is empty: "a type of its own" (`Player::own_type`), run by play_enemies.rs. Its
+  portrait, skull and camera block are its type's (`CharacterType::portrait`, `skull`, `camera`).
 * `spawn_unit` loads the model by type (`Character::load_type`: the mesh, the motion set's
   animation set, the face set). For the squad that's the model `Character::load` gives by name;
   `BF_DUMP_TYPES` compares the two (bones, geosets, clips and face clips). Its other data comes

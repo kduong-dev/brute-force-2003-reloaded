@@ -321,9 +321,11 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Update, refill.after(update_player).run_if(in_state(AppState::Playing)));
 }
 
-/// Whether `u` is an enemy of a type of its own (`OTHER`), which this module runs.
+/// Whether `u` is an enemy of a type of its own (none of the squad's four: `Player::own_type`),
+/// which this module runs: a test map NPC, a level's character, or on the test map a squad member
+/// of such a type (#302), which reacts, shields and dies as its type does whoever controls it.
 pub fn enemy(u: &Player) -> bool {
-    u.character == OTHER
+    u.own_type()
 }
 
 /// A map starts (play.rs `setup`): the chatter manager is the world's, so its history (`SAID`)
@@ -792,9 +794,10 @@ const SHIELD_LOOK_HEIGHT: f32 = 1.0;
 /// steps of exactly recovery / 10 (Soldier +0.5, Heavy +0.4, 0.14-0.29 s apart: B2) are frames
 /// whose dt the game capped at 0.1 s (FUN_00069270) while gdb paused the console between them.
 /// (The x4 while the byte char+0x5c is set isn't known: left out.)
-fn refill(time: Res<Time>, mut squad: ResMut<Squad>) {
+fn refill(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>) {
     let dt = frame_dt(&time);
-    for u in squad.0.iter_mut().filter(|u| enemy(u) && !u.dead && u.enemy.recovery > 0.0) {
+    // (the controlled character too: on the test map it may be such a type, #302)
+    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()).filter(|u| enemy(u) && !u.dead && u.enemy.recovery > 0.0) {
         let k = match u.enemy.motion.map(|m| m.mt) {
             Some(MT_DASH) => DASH_REFILL,
             Some(MT_CROUCH) => CROUCH_REFILL,

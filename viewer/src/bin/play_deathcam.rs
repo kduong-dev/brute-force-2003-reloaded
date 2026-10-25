@@ -171,7 +171,7 @@ pub(super) fn death_cam(time: Res<Time>, mut state: ResMut<DeathCam>, mut player
             }
         }
     }
-    let [up, back, _] = game.0.character_camera.get(CHARACTERS[player.character]).map(|c| c.dead)
+    let [up, back, _] = camera_offsets(&game.0, &player).map(|c| c.dead)
         .filter(|d| d[0] != 0.0 || d[1] != 0.0).unwrap_or(DEFAULT_OFFSET_DEAD);
     let mut yaw = o.yaw + DEATH_CAM_RATE * t + o.skip;
     // a wall leaves too little room here: skip ahead to the next heading with room (a cut); with

@@ -19,8 +19,9 @@
 //! then points straight ahead and level (within a few degrees) for every character, and in Tex's
 //! carry clips the support hand rests on the gun's FOREGRIP (2.7 cm off on average). A weapon not
 //! in hand is stowed the same way, its HOLSTER hardpoint on the character's STOW hardpoint for its
-//! inventory slot: Tex's ramps (vertical), across Brutus's back (diagonal), Flint's and Hawk's
-//! sidearms on the hip, barrel down.
+//! inventory slot's place: Tex's ramps (vertical; his stowed gun on the left one, whichever slot
+//! it's from), across Brutus's back (diagonal), Flint's and Hawk's sidearms on the hip, barrel
+//! down.
 
 use std::collections::HashMap;
 
@@ -103,8 +104,13 @@ pub const HOLSTER: u32 = 0x10AB_40AC;
 /// Character hand hardpoints: the trigger hand (on the +X hand bone) and the support hand.
 pub const TRIGGER_HAND: u32 = 0x1D4B_6D69;
 pub const SUPPORT_HAND: u32 = 0xF847_4385;
-/// Character stow hardpoints, one per inventory slot (on the back, or the hip for sidearms).
-pub const STOW: [u32; 2] = [0xFF4C_691B, 0xF4CC_F78C];
+/// Character stow hardpoints: the three places a weapon slot's holder can hang its gun (on the
+/// back, or the hip for sidearms), by the holder's place index (its +0x40), which the holder's
+/// hardpoint getter (vtable 0x39b318 +0x68, 0x14ba70) turns into the inventory front's +4
+/// (0xff4c691b), its +0x48 (0xf4ccf78c) or FUN_0014aa30's 0xe3307376. The front's constructor
+/// (0x14c5d0) starts slot 1 on the first and slot 2 on the second, and only Tex's switch moves
+/// them (play.rs `StowPlaces`, #297). Only Tex's model has the third (on Bip01 Spine2).
+pub const STOW: [u32; 3] = [0xFF4C_691B, 0xF4CC_F78C, 0xE330_7376];
 /// Character hardpoint of the second hand's gun (Tex's berserk): the inventory's second-hand
 /// holder (+0x178) names it (0x14c7b8, as +0x144's names TRIGGER_HAND at 0x14c791), and both hand
 /// holders (vtable 0x39b138) hold a weapon by its TRIGGER_GRIP (+0x6c = 0x14c5b0). Only Tex's

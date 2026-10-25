@@ -236,6 +236,19 @@ and `todo/DNA + Weapon Pickups.mp4`.
     Flint's and Hawk's `Sc_w1_drop_pickup_w1` / `Sc_w2_drop_pickup_w2` by the slot (Flint's at
     1.2), Brutus's `Sc_w1_drop_pickup_w1` for either slot), once no other overlay plays; a use
     whose clip can't start gives up after 5 s;
+  * the clip is laid over the whole body, its root bone too (#293). Unlike the upper-body
+    overlays (a reload or a use_item animates 36-44 bones and no root), the squad's pickup clips
+    animate 51-68 bones, the legs and the root among them: it drops 0.42 m
+    (Brutus), 0.50 (Hawk), 0.59 (Tex) and 0.64 (Flint) as the character squats, and moves up to
+    0.3 m across over one planted foot (Tex's left foot steps out 0.38 m and back, Flint's steps
+    back). The demo had laid every bone but the root, as for the other overlays: the legs folded
+    under a body left at standing height, the soles up to 0.64 m off the ground (play.rs
+    `apply_overlay`'s `root`). The takes bend the whole body down to the gun with the feet on the
+    ground (#61 take04 6.6-7.1 s, #52 take04, take11 300.6-301.1 s);
+  * while it plays the character is held where it stands: the stick neither moves nor turns it
+    (FUN_001195c0 skips both while the playing overlay has h_f6a410e6, which every motion set's
+    pickup overlays have: `Overlay::holds`, `GunUse::holds_still`). So the clip always plays
+    standing, on every bone; before, a move during it laid the clip over the upper body only;
   * the gun is lowered, and there's no firing, aiming, reloading, switching, throwing or item use
     until the clip ends.
 * **The clip's events** (FUN_00117660):
@@ -250,7 +263,10 @@ and `todo/DNA + Weapon Pickups.mp4`.
     with 0), its name over its count on the HUD (play.md "The weapon's name after a pickup"), the
     switch's second sound (e1e97460), and the lying gun gone. The two sounds are the ones the
     takes have at the release and the grab (spectrograms: #52 take04 7.52 / 7.95 s, #61 take04
-    6.57 / 6.88 s, take11 300.73 s).
+    6.57 / 6.88 s, take11 300.73 s). The new gun is held in the stance of its class for Brutus
+    and Tex, of its slot for Flint and Hawk (play.md's table, FUN_0011aa20), and stowed where
+    its slot's holder hangs guns: for Tex his left ramp, whichever slot (#297: a rifle Tex took
+    in place of his Minigun had been held and stowed as the Minigun).
   * The prompt for the next gun is back from the grab, while the clip plays on.
 * **Walking over a lying gun** (FUN_0011c540 -> FUN_0011c170), any living squad member, the AI's
   too: within 1.8 m below and 1.0 m above its position and under 1.34 m across, a gun with rounds
@@ -285,14 +301,22 @@ and `todo/DNA + Weapon Pickups.mp4`.
     0.2-0.3 s longer than the take's. The clip rates are the data's (`speed`; the type's rate and
     the skill's factor, FUN_00150290's, are taken as 1), the hold the code's 0.3 s;
   * the shot list's open questions (leads §0): a part-used lying clip (the code reloads it at
-    once at the grab), the hold time's edge, a swap while scoped.
+    once at the grab), the hold time's edge, a swap while scoped;
+  * a pickup kneeling: the game plays the clip's `_cr` version there (FUN_0014fd50 takes the
+    crouch's suffixes in motion states 6 and 7), which all four have (Tex's
+    `Sc_w_drop_rifle_pickup_rifle_cr` 1.17 s, Brutus's `Sc_w1_drop_pickup_w1_cr` 1.00 s, Flint's
+    and Hawk's `Sc_w1_drop_pickup_w1_cr` / `Sc_w2_drop_pickup_w2_cr` 3.0-3.17 s, all whole-body);
+    the demo plays the standing clip over the kneel's upper body, as its other overlays (not
+    filmed).
 * **Test hooks:** `BF_TEST_GUN=<weapon>[,<ahead m>[,<right m>[,<rounds>]]][;...]` lays those
   guns round the controlled character's start, 3.5 m ahead by default (the takes' carrier was put
   there and killed), full unless given rounds; `BF_TEST_SWAP=<s>[,<s>...]` holds X 0.5 s from
   each time (`BF_TEST_USE=<s>` holds it 1 s); `BF_WEAPON_LOG=1` prints the lying guns, the
   target as it changes (its class, the slots' classes and the mode), each use, its clip, the
   release and the grab with the rounds and the reserve, the walk-overs and the dead's drops (with
-  their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies.
+  their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies, and (play.md)
+  where each gun hangs whenever that changes, with its class and stance;
+  `BF_FEET_LOG=1` (play.md) prints the soles' height every frame with the clip's time.
 * **Verified:**
   * the tutorial (`BF_MAP=tutorial BF_TEST_GOTO=-106.5,-43.5,-108.6,-40.6 BF_TEST_SWAP=3.0
     BF_WEAPON_LOG=1 BF_HINT_LOG=1`, 105 frames) against take11 299.5-301.4 s: "Hold [X] to swap
@@ -326,6 +350,34 @@ and `todo/DNA + Weapon Pickups.mp4`.
     them back); the tutorial run as above, the same times and counts; m04_a (`BF_MAP=m04_a
     BF_TEST_GOTO=-203.5,78.5,-205.4,77.6`): "Tex cannot pick up Breath Attack." and the red ring
     on the creature weapons, as the code reads.
+  * #293, the whole body: the #61 and #52 recreations above and Flint's and Hawk's
+    (`BF_CHARACTER=1 BF_TEST_GUN="Confed LZR-10,3.5,0.25" BF_TEST_WEAPON="L-Shot-50;Jax-iP"`,
+    `BF_CHARACTER=2 BF_TEST_GUN="Saryl-23,3.5,0.25" BF_TEST_WEAPON="Jax-iP;MK-ASLT"`, each with
+    `BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_SWAP=5.9 BF_FEET_LOG=1 BF_VIEW_YAW=1.4`, 125-135 frames):
+    each squats to the gun with its feet on the ground, on every frame of the clip the soles
+    within 3 cm of it (Tex -0.027 to +0.001 m, Flint -0.026 to +0.002, Hawk -0.016 to 0, Brutus
+    0, his hand dipping 6 cm under the floor's plane at the grab), where Tex's had been up to
+    0.58 m over it; the switch before Brutus's and Flint's pickup as before. With the stick
+    pushed from 6.4 s (`BF_TEST_GOTO=0,0,0,-8 BF_TEST_GO_AT=6.4 BF_TEST_GUN="L-Shot-50,1.6,0.3"`)
+    Tex stays where he stands through the clip (6.27-7.33 s) and sets off after it.
+  * #299, a swap moves rounds and makes none: the release keeps in the gun what the stack doesn't
+    take (0x118a09-0x118a22: FUN_0014ce90 returns how many went in, the gun's +0x1f8 less them)
+    and the grab takes the lying clip and what it lacks from the reserve (`release_rounds`,
+    `grab_rounds`, the unit test `the_swap_moves_rounds`). Eight swaps back and forth with
+    `BF_TEST_SWAP=3.0,6.0,...,24.0 BF_WEAPON_LOG=1`, the clip in hand, the lying gun's and the
+    reserve adding up the same after each: the tutorial's L-Shot-50 and MK-ASLT (the command
+    above: 548 of High ROF, 6 of 11mm); the test map's laid L-Shot-50 (`--test
+    BF_TEST_GOTO=0,0,0,-0.5 BF_TEST_WEAPON="MK-ASLT;Confed LZR-50" BF_TEST_GUN="L-Shot-50,1.6,0.3"
+    BF_TEST_RESERVE=10`: 58 and 16), and two MK-ASLTs with shots between (`BF_TEST_GUN="MK-ASLT,
+    1.6,0.3,20" BF_TEST_RESERVE=30 BF_TEST_TRIGGER=1.0-1.6,7.5-8.2,13.5-14.0`: 94, less each
+    burst); e34's placed iKhan-GPL against Tex's Jax-iC (`BF_MAP=e34
+    BF_TEST_GOTO=98.6,-47.0,98.6,-48.6`: the Jax-iC keeps its 36 with the Sonic stack full, the
+    iKhan its 16, its ammo-type 9 having no ammo item); a dead squad member's guns
+    (`--test BF_TEST_GOTO=0,0,0,0 BF_TEST_KILL=1 BF_TEST_SWAP=4.0,7.0,...`: Flint's L-Shot-50,
+    walked over first, its 6 into the reserve and back at the grab); sdm_e34's Saryl-45 copy
+    (the gun recipe in triggers.md, swaps every 3 s: 30 and 50 throughout, then the copy's
+    respawn at 22.85 s lays a new full one, as it should). The test map's rack, the copies'
+    respawns and the LZRs' recharge are the sources of new rounds.
 
 ## Pickups from spawn-triggers (#278)
 

@@ -213,13 +213,13 @@ pub fn hit_bones<'a>(game: &'a Game, u: &Player) -> &'a [HitBone] {
     game.hit_bones(u.kind).unwrap_or(&[])
 }
 
-/// The victim type's `damage-multiplier` (h_e7e9fcd3, type+0x220): its squad slot's entry
+/// The victim type's `damage-multiplier` (h_e7e9fcd3, type+0x220): its type's squad name's entry
 /// first (`Game::character_damage_multiplier`: the campaign squad's 0.62, or on a squad
 /// deathmatch map the sdm_bf squad's 1, which `load_squad_library` puts there), else its type's
 /// (#128: a test map NPC of any other type; OTHER's empty name has no entry), 1 if neither has
 /// one.
 pub fn damage_multiplier(game: &Game, u: &Player) -> f32 {
-    game.character_damage_multiplier.get(CHARACTERS[u.character]).copied()
+    game.character_damage_multiplier.get(u.data_name()).copied()
         .or(game.character_type(u.kind).map(|t| t.damage_multiplier)).unwrap_or(1.0)
 }
 

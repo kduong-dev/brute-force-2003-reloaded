@@ -355,10 +355,6 @@ pub struct Game {
     pub weapons: HashMap<u32, WeaponDef>,
     /// character name -> starting inventory weapons
     pub character_weapons: HashMap<String, Vec<u32>>,
-    /// character name -> the weapon class (weapon-type: 0 light, 1 medium, 2 heavy) each of its
-    /// two weapon slots holds, from `<limit-weapon one="CLASS COUNT" two=..>`; the motion
-    /// sets Sc_w1_* / Sc_w2_* are the stances for those classes (Brutus: medium, heavy)
-    pub character_weapon_classes: HashMap<String, [i64; 2]>,
     /// character name -> chatter line tag -> voice line ids (common/characters/<name>_chatter)
     pub chatter: HashMap<String, HashMap<u32, Vec<u32>>>,
     /// character name -> chatter line tag -> the tag others answer it with (a block's
@@ -997,6 +993,19 @@ const H_CAMERA_BLOCK: u32 = 0x0D41_E5F1;
 const H_OFFSET_DEAD: u32 = 0xF13F_B0C4;
 const H_OFFSET_5: u32 = 0xE42D_50A5;
 
+/// A character entry's camera block (H_CAMERA_BLOCK, anywhere under the entry), if it has one:
+/// `Game::character_camera`'s by name, and each `CharacterType::camera` (#302).
+pub(crate) fn camera_offsets(e: &Element) -> Option<CameraOffsets> {
+    let c = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK)?;
+    let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
+        .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);
+    Some(CameraOffsets {
+        walk: v(h("offset-walk")), run: v(h("offset-run")), dash: v(h("offset-dash")),
+        ready: v(h("offset-ready")), h_e42d50a5: v(H_OFFSET_5), dead: v(H_OFFSET_DEAD),
+        snipe: v(h("offset-snipe")),
+    })
+}
+
 /// A squad character's special skill and stamina, from its objecttypes character entry
 /// (`common/objecttypes-common.xml` for the campaign squad, `mp_common/objecttypes-sdm_bf.xml`
 /// for squad deathmatch's, see `Game::load_squad_library`):
@@ -1375,7 +1384,6 @@ impl Game {
             strings: HashMap::new(),
             weapons: HashMap::new(),
             character_weapons: HashMap::new(),
-            character_weapon_classes: HashMap::new(),
             chatter: HashMap::new(),
             chatter_response: HashMap::new(),
             squad_leash: HashMap::new(),
@@ -1892,18 +1900,8 @@ impl Game {
                     let inventory = e.walk().into_iter().find(|x| x.name == h("inventory"))
                         .map(|i| weapon::hashes(i, h("weapon-name"))).unwrap_or_default();
                     self.character_weapons.insert(name.clone(), inventory);
-                    if let Some(l) = e.walk().into_iter().find(|x| x.name == h("limit-weapon")) {
-                        let class = |k: &str| l.attr(h(k)).and_then(|v| v.ints().first().copied()).unwrap_or(-1);
-                        self.character_weapon_classes.insert(name.clone(), [class("one"), class("two")]);
-                    }
-                    if let Some(c) = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK) {
-                        let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
-                            .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);
-                        self.character_camera.insert(name.clone(), CameraOffsets {
-                            walk: v(h("offset-walk")), run: v(h("offset-run")), dash: v(h("offset-dash")),
-                            ready: v(h("offset-ready")), h_e42d50a5: v(H_OFFSET_5), dead: v(H_OFFSET_DEAD),
-                            snipe: v(h("offset-snipe")),
-                        });
+                    if let Some(c) = camera_offsets(e) {
+                        self.character_camera.insert(name.clone(), c);
                     }
                     self.characters.push((name, mesh));
                 }

@@ -61,7 +61,10 @@
 //!    if it isn't there (the normal switch clip, re-asked every frame: #52 take04's both panels);
 //!    then, with no other overlay playing and the character free, the type's drop-and-pickup
 //!    overlay (`pickup_motion`, FUN_00121920; the motion set's `<overlay>` of that motion type,
-//!    at its `speed`). An undefined one, or a use that can't start, gives up after USE_TIMEOUT.
+//!    at its `speed`), laid over the whole body, its root bone too, with the character held where
+//!    it stands while it plays (its h_f6a410e6, `GunUse::holds_still`; play.rs `apply_overlay`
+//!    and `step_player`, #293). An undefined one, or a use that can't start, gives up after
+//!    USE_TIMEOUT.
 //!  - **The clip's events** (FUN_00117660; `swap`): at release_weapon the gun in hand's rounds go
 //!    into the squad's reserve of its ammo type as far as the stack takes them, and the gun drops
 //!    as a lying gun with the rest; at grab_weapon PICKUP_OBJECT goes from the lying gun to the
@@ -242,16 +245,26 @@ impl GunUse {
     pub(super) fn overlay(&self) -> Option<(&OverlayClip, f32)> {
         self.clip.as_ref().map(|c| (&c.overlay, self.time))
     }
+
+    /// Whether its clip plays and holds the character where it stands (its `<overlay>`'s
+    /// h_f6a410e6, `Overlay::holds`, which every motion set's pickup overlays have): the stick's
+    /// move FUN_001195c0 skips the move and the turn while the playing overlay (char+0x214) has
+    /// it (0x11982f-0x11986b). play.rs `step_player` (#293).
+    pub fn holds_still(&self) -> bool {
+        self.clip.as_ref().is_some_and(|c| c.holds && self.time < c.overlay.duration)
+    }
 }
 
-/// A drop-and-pickup clip as it plays: the overlay, its rate (the `<overlay>`'s speed), and its
-/// release_weapon and grab_weapon times (the clip's own seconds).
+/// A drop-and-pickup clip as it plays: the overlay, its rate (the `<overlay>`'s speed), its
+/// release_weapon and grab_weapon times (the clip's own seconds), and whether it holds the
+/// character still (the `<overlay>`'s h_f6a410e6, `GunUse::holds_still`).
 struct PickupClip {
     overlay: OverlayClip,
     name: String,
     speed: f32,
     release: f32,
     grab: f32,
+    holds: bool,
 }
 
 /// The lying guns' state: whether the level's have been found, the target last frame (its
@@ -457,7 +470,7 @@ fn pickup_clip(p: &Player, l: &Loaded, game: &Game, u: &GunUse) -> Option<Pickup
     let overlay = overlay_clip(&l.model, game, &name, l.feet)?;
     let release = overlay.event(EV_RELEASE_WEAPON).unwrap_or(overlay.duration * 0.25);
     let grab = overlay.event(EV_GRAB_WEAPON).unwrap_or(overlay.duration * 0.55);
-    Some(PickupClip { overlay, name, speed: o.speed.max(0.01), release, grab })
+    Some(PickupClip { overlay, name, speed: o.speed.max(0.01), release, grab, holds: o.holds })
 }
 
 /// Whether `p` can take a gun of `class` now (FUN_000a9910 for a weapon): not scoped (char+0x7a8),
@@ -468,12 +481,12 @@ fn can_take(p: &Player, game: &Game, class: i64) -> bool {
 }
 
 /// The character's name for the refusal ("Tex cannot pick up Jax-iP."): its type's display name
-/// (h_1dd3a49d), else its squad slot's name, capitalised.
+/// (h_1dd3a49d), else its type's squad name, capitalised.
 fn character_name(p: &Player, game: &Game) -> String {
     if let Some(s) = game.character_types.get(&p.kind).and_then(|t| game.strings.get(&t.label)).filter(|s| !s.is_empty()) {
         return s.clone();
     }
-    let mut c = CHARACTERS[p.character % CHARACTERS.len()].chars();
+    let mut c = p.data_name().chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
@@ -758,11 +771,8 @@ fn release(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &Game,
     }
     let w = p.weapon;
     let Some(held) = l.weapons.get_mut(w) else { return };
-    let mut clip = p.ammo.get(w).map_or(0, |a| a[0]);
     let ammo_type = held.def.ammo_type;
-    if ammo_item(game, ammo_type).is_some() {
-        clip -= reserve.add(ammo_type, clip);
-    }
+    let clip = release_rounds(reserve, ammo_type, p.ammo.get(w).map_or(0, |a| a[0]), ammo_item(game, ammo_type).is_some());
     let at = globals.get(held.entity).map_or(Transform::from_translation(p.position), |g| g.compute_transform());
     let spin = Vec3::new(p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0, p.random(100) as f32 - 50.0) * (DROP_SPIN / 50.0);
     commands.entity(held.entity).remove::<ChildOf>().insert((at, Visibility::Inherited, pickups::Thrown { velocity: Vec3::ZERO, spin },
@@ -779,7 +789,7 @@ fn release(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &Game,
     let empty = commands.spawn((Transform::default(), Visibility::Hidden, ChildOf(l.root))).id();
     (held.entity, held.flash, held.light) = (empty, empty, empty);
     held.spinners.clear();
-    (held.in_hand, held.stowed, held.second_hand) = (None, None, None);
+    (held.in_hand, held.stow, held.second_hand) = (None, [None; 3], None);
     held.empty = true;
     if let Some(a) = p.ammo.get_mut(w) {
         *a = [0, 0];
@@ -806,21 +816,19 @@ fn grab(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &mut Game
     }
     commands.entity(u.target).despawn();
     let Some(def) = game.weapons.get(&gun.kind).cloned() else { return };
-    let classes = game.character_weapon_classes.get(CHARACTERS[p.character]).copied()
-        .or(game.character_types.get(&p.kind).map(|t| t.weapon_classes));
-    let Some(held) = build_weapon(commands, game, assets, &l.model, l.root, def, u.slot, classes) else { return };
+    // (its stance by the type's pickup mode, `stance_for`: Tex's rifle in his cannon's slot held as
+    // a rifle, #297)
+    let mode = limits(game, p.kind).1;
+    let Some(held) = build_weapon(commands, game, assets, &l.model, l.root, def, u.slot, mode) else { return };
     let (size, ammo_type, regen) = (held.def.ammo.max(1), held.def.ammo_type, held.def.ammo_regen);
     if let Some(old) = l.weapons.get(u.slot) {
         commands.entity(old.entity).despawn();
     }
-    let label = held.def.label.clone();
+    let (label, stance) = (held.def.label.clone(), held.stance);
     l.weapons[u.slot] = held;
     // the switch clips go by the guns' classes (Tex's Sc_wc_<from>2<to>, Brutus's w2rifle / cannon)
     l.switch_clips = [switch_clip(&l.model, game, &l.weapons, 0), switch_clip(&l.model, game, &l.weapons, 1)];
-    let mut clip = gun.clip.max(0);
-    if regen <= 0.0 && clip < size && ammo_item(game, ammo_type).is_some() {
-        clip += reserve.take(ammo_type, size - clip);
-    }
+    let clip = grab_rounds(reserve, ammo_type, gun.clip, size, regen > 0.0, ammo_item(game, ammo_type).is_some());
     if let Some(a) = p.ammo.get_mut(u.slot) {
         *a = [clip, 0];
     }
@@ -832,9 +840,31 @@ fn grab(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &mut Game
     p.weapon_dirty = true;
     p.fire_state.reset_burst(0);
     if log {
-        println!("t {:.2}: {} grabs {label} into slot {}: {clip} rounds (the lying gun's {}), reserve type {ammo_type} {}", p.sim_time, unit_name(p),
-                 u.slot + 1, gun.clip, reserve.get(ammo_type));
+        println!("t {:.2}: {} grabs {label} into slot {} (stance w{}): {clip} rounds (the lying gun's {}), reserve type {ammo_type} {}", p.sim_time,
+                 unit_name(p), u.slot + 1, stance + 1, gun.clip, reserve.get(ammo_type));
     }
+}
+
+/// release_weapon's rounds (0x118a09-0x118a22): the gun's `clip` into the reserve of its
+/// `ammo_type` as far as the stack takes them (FUN_0014ce90 returns how many went in), when the
+/// level has an ammo item for the type (`stacked`, FUN_0022b580); what the gun keeps, the rest.
+/// With the grab's `grab_rounds` and the walk-over's take a swap only moves rounds: the clip, the
+/// reserve and the lying guns' clips add up to what they did (#299; `the_swap_moves_rounds`).
+fn release_rounds(reserve: &mut ammo::Reserve, ammo_type: i64, clip: i64, stacked: bool) -> i64 {
+    if stacked { clip - reserve.add(ammo_type, clip) } else { clip }
+}
+
+/// grab_weapon's rounds (0x117f62 on: the new gun's clip set to the lying gun's, then
+/// FUN_0022daf0 with 0): the `lying` gun's clip, topped up at once from the reserve of its
+/// `ammo_type` with what it lacks of the clip's `size`, as far as the reserve has it; nothing for
+/// a recharging gun (the LZRs, `regen`) or a type without an ammo item (`stacked`). The new
+/// gun's clip.
+fn grab_rounds(reserve: &mut ammo::Reserve, ammo_type: i64, lying: i64, size: i64, regen: bool, stacked: bool) -> i64 {
+    let clip = lying.max(0);
+    if regen || !stacked || clip >= size {
+        return clip;
+    }
+    clip + reserve.take(ammo_type, size - clip)
 }
 
 /// The level's ammo item for an ammo-type (FUN_0022b580: the world's ammo item table at
@@ -979,7 +1009,7 @@ mod tests {
     fn held(ammo_type: i64, empty: bool) -> HeldWeapon {
         HeldWeapon { def: WeaponDef { ammo_type, ..default() }, stance: 0, entity: Entity::PLACEHOLDER, spinners: vec![], light: Entity::PLACEHOLDER,
                      data_light: false, flash: Entity::PLACEHOLDER, muzzle: Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY }, shell: None,
-                     fire_dir: Vec3::NEG_Z, in_hand: None, stowed: None, second_hand: None, empty }
+                     fire_dir: Vec3::NEG_Z, in_hand: None, stow: [None; 3], second_hand: None, empty }
     }
 
     /// The walk-over's ammo types are what the slots hold (FUN_00122ed0): between a release and
@@ -1003,6 +1033,27 @@ mod tests {
         assert!(!walkable(a, &gun, Visibility::Inherited, &[a]));
         assert!(!walkable(a, &LyingGun { clip: -1, ..gun }, Visibility::Inherited, &[]));
         assert!(!walkable(a, &gun, Visibility::Hidden, &[]));
+    }
+
+    /// The clip holds the character where it stands while it plays, when its overlay says so
+    /// (h_f6a410e6, FUN_001195c0; #293): not before it starts (the switch before it moves
+    /// freely), nor once it's over, nor for an overlay without the flag.
+    #[test]
+    fn the_clip_holds_the_character_while_it_plays() {
+        let clip = |holds| PickupClip { overlay: OverlayClip { clip: 0, duration: 1.0, events: vec![], mask: vec![], upper: vec![], whole: vec![] },
+                                        name: String::new(), speed: 1.0, release: 0.2, grab: 0.6, holds };
+        let mut u = GunUse { target: Entity::PLACEHOLDER, slot: 0, class: 1, timeout: USE_TIMEOUT, clip: None, time: 0.0, released: false,
+                             grabbed: false, release_due: false, grab_due: false, cancelled: false };
+        assert!(!u.holds_still());
+        u.clip = Some(clip(true));
+        assert!(u.holds_still());
+        u.time = 0.99;
+        assert!(u.holds_still());
+        u.time = 1.0;
+        assert!(!u.holds_still());
+        u.time = 0.5;
+        u.clip = Some(clip(false));
+        assert!(!u.holds_still());
     }
 
     /// FUN_00121ac0's slot: Flint's pistol to slot 2 and rifle to 1; Brutus's cannon to 2 and rifle
@@ -1037,5 +1088,56 @@ mod tests {
         // the target not in hand: types no squad set defines
         assert_eq!(pickup_motion(1, 2, 1, 1, 0), 20);
         assert_eq!(pickup_motion(3, 2, 1, 1, 2), 18);
+    }
+
+    /// #299: a swap moves rounds and makes none. Swapping back and forth over the same two guns
+    /// (release_weapon's `release_rounds`, grab_weapon's `grab_rounds`), with the walk-over's
+    /// take and some firing between, keeps the clip in hand, the lying gun's and the reserve
+    /// adding up to what they did: with room in the stack, with the stack full (the gun let go
+    /// keeps what it can't take), for a type without an ammo item (the LZRs: no reserve, the
+    /// clips go with the guns) and with the lying clip already full (no reload).
+    #[test]
+    fn the_swap_moves_rounds() {
+        // (ammo-type, its clip size, whether the level has its ammo item, the reserve's rounds
+        // and stack limit, the clips in hand and lying)
+        for (ammo_type, size, stacked, have, limit, hand, lying) in
+            [(2, 48, true, 30, 600, 44, 20), (2, 48, true, 600, 600, 48, 48), (2, 48, true, 590, 600, 40, 7), (11, 99, false, 0, 0, 50, 99),
+             (1, 6, true, 0, 50, 6, 6)] {
+            let stacks = [(ammo_type, have, limit)];
+            let mut reserve = ammo::Reserve::with(if stacked { &stacks[..] } else { &[] });
+            let (mut hand, mut lying) = (hand, lying);
+            let total = |hand: i64, lying: i64, reserve: &ammo::Reserve| hand + lying + reserve.get(ammo_type);
+            let mut start = total(hand, lying, &reserve);
+            for k in 0..12 {
+                // a few rounds fired between swaps leave the count
+                if k % 4 == 2 {
+                    let shots = hand.min(5);
+                    hand -= shots;
+                    start -= shots;
+                }
+                // the swap: the gun in hand let go, the lying one taken
+                let dropped = release_rounds(&mut reserve, ammo_type, hand, stacked);
+                assert!((0..=hand).contains(&dropped));
+                hand = grab_rounds(&mut reserve, ammo_type, lying, size, !stacked, stacked);
+                assert!(hand <= size.max(lying));
+                lying = dropped;
+                assert_eq!(total(hand, lying, &reserve), start, "type {ammo_type}, swap {k}");
+                // standing on it: the walk-over takes the lying gun's rounds as far as the stack has room
+                if stacked && k % 3 == 1 {
+                    lying -= reserve.add(ammo_type, lying);
+                    assert_eq!(total(hand, lying, &reserve), start, "type {ammo_type}, walk-over after swap {k}");
+                }
+            }
+        }
+        // a full lying clip takes nothing from the reserve; an empty one what it lacks
+        let mut reserve = ammo::Reserve::with(&[(2, 30, 600)]);
+        assert_eq!(grab_rounds(&mut reserve, 2, 48, 48, false, true), 48);
+        assert_eq!(reserve.get(2), 30);
+        assert_eq!(grab_rounds(&mut reserve, 2, 0, 48, false, true), 30);
+        assert_eq!(reserve.get(2), 0);
+        // the stack full: the gun let go keeps its rounds
+        let mut reserve = ammo::Reserve::with(&[(2, 595, 600)]);
+        assert_eq!(release_rounds(&mut reserve, 2, 48, true), 43);
+        assert_eq!(reserve.get(2), 600);
     }
 }

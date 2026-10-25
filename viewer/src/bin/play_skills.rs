@@ -1998,7 +1998,7 @@ fn switched(u: &mut Player, env: &mut Env, sound: u32, line: u32) {
 /// FUN_00140cd0 -> FUN_00126460), and it plays the next frame (the manager's update starts it;
 /// the samples have no silence before the voice, 0-0.07 s).
 fn skill_line(u: &mut Player, env: &mut Env, tag: u32) -> String {
-    let (game, name) = (env.game, CHARACTERS[u.character % CHARACTERS.len()]);
+    let (game, name) = (env.game, u.data_name());
     if u.dead {
         return "silent (the speaker is dead)".into();
     }
