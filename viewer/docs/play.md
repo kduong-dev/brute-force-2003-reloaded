@@ -179,7 +179,7 @@ leave gaps.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
 (the weapon's own icon from its definition, clip / the squad's reserve, or "clip Regen" for a
-recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](skills.md)), radar with the squad's four portraits round it (Tex top, Hawk left, Flint right, Brutus bottom),
+recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](skills.md)), radar with the squad's portraits round it (Tex top, Hawk left, Flint right, Brutus bottom; only the members in the world: **Radar**, "The portraits"),
 the item box bottom right (`play_itembox.rs`, **The item box and the item list**), the message line under the middle (the HUD entry's message widget: "No need to heal", "Inventory is empty"; the body font at 12 in (192, 255, 255) with a shadow, its last 0.5 s fading, FUN_000b32d0 / 0xb33b0), and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
@@ -310,6 +310,25 @@ the test map (`--test`), with it:
 * **The squad**: its living members in the world as green blips (FUN_000ae7c0's friend, 90 200 40;
   take11's marines; they were yellow) at that scale, one beyond the range on the circle (the game
   draws a rim marker for it: FUN_000ae7c0 through FUN_000b0ad0, not done).
+* **The portraits** (#303): a squad slot shows its face, its follow-order tab and its health
+  channel only while a member is in the world in it (`slot_member`; a dead one keeps its skull: dead
+  members are still in the squad). A slot whose member the zone doesn't have shows nothing: the
+  level spawns only the zone's members (its `h_ed54d255` names the others, [campaign.md](campaign.md)),
+  so the tutorial and m01_a (h_ed54d255 "brutus hawk flint") show Tex alone, as take04 does
+  (`todo/28-tutorial`, 60 s: Tex's face, tab and channel, the other three places dark), and m01_b
+  ("hawk flint") Tex and Brutus. A member out of the world (`absent`: waiting for its spawn-trigger,
+  or its copy taken away by FUN_00209900) counts as missing too. In the game the HUD's squad list
+  (five entries at +0x34, one per slot by the type's +0x150) is kept each frame by FUN_000bd790:
+  FUN_000c8570 drops the characters gone, FUN_000c84e0 adds the new ones (which list it reads and
+  that the portraits draw from it aren't traced). The test map's emptied slots (#302) are the same
+  rule. Checked (30 frames each, standing at the leader's spawn): `BF_MAP=tutorial
+  BF_TEST_GOTO=46,-20,46,-20` and `BF_MAP=m01_a BF_TEST_GOTO=79.6,-100.5,79.6,-100.5` Tex alone,
+  as take04; `BF_MAP=m01_b BF_TEST_GOTO=24.4,-10.0,24.4,-10.0` Tex and Brutus; `BF_MAP=e40
+  BF_TEST_GOTO=-18.9,168.8,-18.9,168.8` and `BF_MAP=mp1` the four, as before; `BF_MAP=mp1
+  BF_TEST_DIE=1` (120 frames) Tex's skull at the top through the hand-over; `BF_DEATHMATCH=1` no
+  squad HUD, as before; `--test BF_TEST_GOTO=0,8,0,7.5` Tex alone, and with `BF_TEST_SQUAD="shrike
+  soldier@m09_a,flint" BF_TEST_KILL=1` the Shrike's "?" in Brutus's place, Flint's skull, Hawk's
+  place dark (#302's, unchanged).
 * **The other characters** (FUN_000ae7c0, radar-contact 1, or 6 for a boss): one within the range a
   record as an objective's (below), a friend green 90 200 40 (40 100 20), one whose team the
   viewer's is hostile to red 200 40 90 (100 20 40: take08's and take11's terrorists), anyone else
@@ -367,10 +386,8 @@ the near enemy, known to Flint, red; the far one (75 m) none; the friend green; 
 Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
 radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
 dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); the
-reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); the
-squad's portraits for members not in the world (the tutorial's Tex alone still shows four, in a
-test session too; the test map's own empty slots show none, and a slot's member of another type
-its type's portrait or a "?": #302, [testtools.md](testtools.md) "The squad"). A
+reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); which
+list of characters the HUD's squad list is kept from (FUN_000bd790, "The portraits" above). A
 test map dummy is no AI target, so nobody knows of a hostile dummy and it never shows.
 
 ### Ammo, reload and the crosshair (#114)
