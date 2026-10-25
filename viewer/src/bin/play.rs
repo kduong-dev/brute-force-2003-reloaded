@@ -3581,9 +3581,8 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
 }
 
 /// Load a character and spawn it with its weapons and clips into `p`: its type's model (#128),
-/// and its data from the tables keyed by its slot's name where they have it (the squad's: the
-/// test map's rack changes `character_weapons`, a squad deathmatch map the skills), else from its
-/// type (OTHER's).
+/// and its data from the tables keyed by its slot's name where they have it (the squad's: a
+/// squad deathmatch map's skills), else from its type (OTHER's).
 fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: &mut ModelAssets) {
     let name = CHARACTERS[p.character];
     let ty = game.character_types.get(&p.kind).cloned();
@@ -7029,7 +7028,7 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
         "{}   {}   {}{}   {}{}\n\
          WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab next item (hold: the list, W/D S/A or the wheel)   B medkit   E use   V special skill   M surface   H hide\n\
          click: mouse look, Esc release   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
-         test map: walk into a weapon on the rack to take it into the held slot   K instant kill: {}   X die\n\
+         test map: hold E at a weapon on the rack to swap it in   K instant kill: {}   X die\n\
          {}",
         CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
         if test.instant_kill { "on" } else { "off" }, testtools::HELP);

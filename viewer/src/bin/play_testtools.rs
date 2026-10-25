@@ -42,8 +42,9 @@
 //!    there drops (play_pickups.rs's physics), scenery hangs where it's put (#116).
 //!    - A pickup is a level's inventory-object, as the test map's grid (play_pickups.rs:
 //!      `LatePickup`): medkits and fruit can be taken, everything is loose.
-//!    - A weapon lies on its side; walking into it takes it, as from the rack (play_testmap.rs),
-//!      and it's gone.
+//!    - A weapon lies on its side, a lying gun with a full clip as the rack's (#17,
+//!      play_weapon_pickups.rs): the prompt offers it, X held swaps it in, and it's gone; walked
+//!      over, a squad member takes its rounds as from any lying gun.
 //!    - A grenade lies as modelled; walking over it adds one of its type, up to its stack-limit
 //!      (the test map starts with a full stack, so only once some are used).
 //!    - Breakable scenery (BREAKABLES: the radiation barrel, the missile rack, the supply crate)
@@ -1290,7 +1291,9 @@ fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, pla
             }
         }
         Kind::Weapon(key) => {
-            commands.entity(root).insert((super::testmap::RackWeapon(key), super::testmap::Lying));
+            // (a lying gun with a full clip, #17's: the prompt offers it, X swaps it in)
+            let clip = game.weapons.get(&key).map_or(0, |d| d.ammo);
+            commands.entity(root).insert(super::weapon_pickups::LyingGun { kind: key, clip, name: 0 });
             if air {
                 commands.entity(root).insert(fall());
             }

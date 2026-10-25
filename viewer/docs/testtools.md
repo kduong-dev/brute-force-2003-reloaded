@@ -90,7 +90,9 @@ a click is any left click off the panel, and F and its teleports do nothing.
     seats it on its lowest point, upright as modelled): medkits and fruit can be taken,
     everything is loose. Two entries of one name (the placed and the carried Medkit, two Bio
     Ammo) carry their hash;
-  * a weapon lies on its side; walking into it takes it as from the rack, and it's gone;
+  * a weapon lies on its side, a lying gun with a full clip as the rack's (#17): the prompt
+    offers it, X held swaps it in (the gun in hand dropped at the feet), and it's gone; walked
+    over, a squad member using its ammo type takes its rounds, as from any lying gun;
   * a grenade lies as modelled; walking over it (within 1 m) adds one of its type up to its
     stack-limit ("Took Sentry"), else "<type>: full" (the test map starts with full stacks);
   * **breakable scenery**: the radiation barrel (h_e04e5a0e), the missile rack (h_fbdcd828)
@@ -327,7 +329,8 @@ higher: where they land and who stands in a blast don't hold as written; not run
   (`BF_TEST_GOTO=4.5,30,4.5,12 BF_TEST_HEALTH=50 BF_TEST_GRENADE_TYPE=Sentry BF_TEST_THROW=0.3,0.1
   BF_TEST_PLACE="0.2,medkit h_f5123ace,4.5,26,0;0.2,sentry,4.5,22,0;0.2,Saryl-45,4.5,18,30"`):
   the Medkit goes into the inventory, "Took Sentry" (9 to 10), "Took Saryl-45" (the character
-  respawned with it, 30 / 300).
+  respawned with it, 30 / 300; since the rack's swap, the Saryl-45 is a lying gun the prompt
+  offers instead).
 * Breakable scenery: `BF_TEST_GOTO=6,30,6,29.5 BF_TEST_FIRE=1 BF_CAMERA_PITCH=-0.12
   BF_TEST_PLACE="0.2,missile rack,6,18,0;0.2,radiation barrel,3.5,18,0;0.2,radiation
   barrel,9.5,17,0;0.2,supply crate,1.5,15,0" BF_SCENERY_LOG=1`: Tex's first shot stops on the

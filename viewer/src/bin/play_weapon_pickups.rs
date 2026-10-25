@@ -178,6 +178,11 @@ pub fn death_vanish(mission: bool, squad: bool) -> Option<f32> {
     }
 }
 
+/// A lying gun the walk-over leaves alone (`walk_over`): the test map's rack, whose guns keep
+/// their full clips for the swap (play_testmap.rs). Not the game's: a test convenience.
+#[derive(Component)]
+pub struct KeepClip;
+
 /// A gun lying in the world (see the module notes): the game's weapon object out of any holder
 /// (its +0x1b0 clear, reticule-action +0x79 = 2: FUN_0014a170). Its entity is a root (a placed
 /// object, or a gun taken off a character), so its `Transform` is where it is in the world.
@@ -856,11 +861,12 @@ fn walkable(e: Entity, gun: &LyingGun, vis: Visibility, grabbed: &[Entity]) -> b
 /// Squad members walking over a lying gun (FUN_0011c540 -> FUN_0011c170; see the module notes):
 /// its rounds into the reserve when someone in the squad has a gun of its ammo type, the pickup
 /// line, the ammo's pickup sound and PICKUP_OBJECT, and outside a mission its vanish timer
-/// (VANISH_WALKED); "(full)" when nothing goes in. Before `swap`.
+/// (VANISH_WALKED); "(full)" when nothing goes in. Before `swap`. Not the test map's rack
+/// (`KeepClip`).
 #[allow(clippy::too_many_arguments)]
 fn walk_over(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut reserve: ResMut<ammo::Reserve>,
              mut feed: ResMut<pickups::PickupFeed>, mut events: ResMut<triggers::TriggerEvents>, guns: Res<Guns>,
-             mut lying: Query<(Entity, &mut LyingGun, &Transform, &Visibility)>) {
+             mut lying: Query<(Entity, &mut LyingGun, &Transform, &Visibility), Without<KeepClip>>) {
     let units = || std::iter::once(&*player).chain(squad.0.iter());
     // the squad's ammo types (FUN_00122ed0 over the squad: each living member's slots)
     let types = slot_ammo(units().filter(|u| u.in_squad() && !u.dead).filter_map(|u| u.loaded.as_ref()).flat_map(|l| &l.weapons));

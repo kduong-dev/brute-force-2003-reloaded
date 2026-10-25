@@ -253,8 +253,7 @@ fn start(mut commands: Commands, game: Res<GameData>, spawns: Option<Res<super::
 
 /// The squad's items, once the controlled character is loaded: its grenades (again after a
 /// respawn, play.rs `spawn_unit`, which empties them: a respawn starts with the start's), and once
-/// per squad its Medkits and other items (`Player::stocked`: a respawn on the test map's rack keeps
-/// the Medkits taken). From the store where placements start the squad (`StartStore`); on the test
+/// per squad its Medkits and other items (`Player::stocked`: a respawn keeps the Medkits taken). From the store where placements start the squad (`StartStore`); on the test
 /// map a full stack (stack-limit) of every grenade type; on a map without placements
 /// START_GRENADES Frags (or of its first type without the Frag). The first time, the item box's
 /// selection: the first listable stack in the store's order (the front's starts at none and
