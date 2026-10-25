@@ -415,16 +415,25 @@ pub(super) fn ray_placed(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
 }
 
 /// Every placed breakable's box a ray (from `origin` along unit `dir`) meets within `max`, how far
-/// along, with the breakable (its list index, as `ObjectHit::target` takes it): a bolt's sweep and
-/// a pass-through ray strike them there (play_bolts.rs, play_rays.rs).
+/// along, with the breakable (its list index, as `ObjectHit::target` takes it): a bolt's sweep
+/// strikes them there (play_bolts.rs).
 pub(super) fn rays_placed(origin: Vec3, dir: Vec3, max: f32) -> Vec<(f32, usize)> {
-    PLACED_BOXES.lock().unwrap().iter().filter_map(|(i, place, bx)| ray_box(place, *bx, origin, dir).map(|t| (t, *i)))
+    PLACED_BOXES.lock().unwrap().iter().filter_map(|(i, place, bx)| ray_box(place, *bx, origin, dir).map(|(t, _)| (t, *i)))
         .filter(|&(t, _)| t > 0.0 && t <= max).collect()
 }
 
+/// Every crossing of a placed breakable's box a ray (from `origin` along unit `dir`) makes within
+/// `max`: where it goes in and where it comes out, each with the breakable and whether it's the
+/// way out. A pass-through ray's multi-hit query meets a closed object at both (play_rays.rs,
+/// `Arena::ray_shot_all`, #287).
+pub(super) fn crossings_placed(origin: Vec3, dir: Vec3, max: f32) -> Vec<(f32, usize, bool)> {
+    PLACED_BOXES.lock().unwrap().iter().filter_map(|(i, place, bx)| ray_box(place, *bx, origin, dir).map(|(t0, t1)| (t0, t1, *i)))
+        .flat_map(|(t0, t1, i)| [(t0, i, false), (t1, i, true)]).filter(|&(t, _, _)| t > 0.0 && t <= max).collect()
+}
+
 /// How far along a ray (from `origin` along unit `dir`) it enters a box (`lo`..`hi` in the frame
-/// `place`), if it does.
-fn ray_box(place: &Transform, (lo, hi): (Vec3, Vec3), origin: Vec3, dir: Vec3) -> Option<f32> {
+/// `place`) and leaves it, if it meets it.
+fn ray_box(place: &Transform, (lo, hi): (Vec3, Vec3), origin: Vec3, dir: Vec3) -> Option<(f32, f32)> {
     let inv = place.compute_affine().inverse();
     let (o, d) = (inv.transform_point3(origin), inv.transform_vector3(dir));
     let (mut t0, mut t1) = (0.0f32, f32::MAX);
@@ -441,7 +450,7 @@ fn ray_box(place: &Transform, (lo, hi): (Vec3, Vec3), origin: Vec3, dir: Vec3) -
     }
     // (the local ray's length per world metre is |d|: the same t, as the transform has no scale
     // but the object's own; a scaled one's t is in its units, close enough for a hit test)
-    (t0 <= t1).then_some(t0)
+    (t0 <= t1).then_some((t0, t1))
 }
 
 /// A debris type's model: each part's placement, middle and meshes.
@@ -540,7 +549,7 @@ fn hit_scenery(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
         let shots: Vec<Shot> = u.shots.iter().filter(|s| !s.swept()).copied().collect();
         for shot in shots {
             let first = s.list.iter().enumerate().filter(|(_, b)| matches!(b.state, State::Intact))
-                .filter_map(|(i, b)| b.bounds.and_then(|bx| ray_box(&b.place, bx, shot.origin, shot.dir)).map(|t| (i, t)))
+                .filter_map(|(i, b)| b.bounds.and_then(|bx| ray_box(&b.place, bx, shot.origin, shot.dir)).map(|(t, _)| (i, t)))
                 .filter(|&(_, t)| t <= shot.dist + SHOT_SLACK).min_by(|a, b| a.1.total_cmp(&b.1));
             let Some((b, t)) = first else { continue };
             let [lo, hi] = if shot.damage[1] > 0.0 { shot.damage } else { [8.0, 10.0] };

@@ -1107,7 +1107,9 @@ BF_TEST_WEAPON="L-Shot-75;Jax-iP" BF_TEST_GOTO=-52.96,30.96,-53.09,31.44 -- --te
 BF_TEST_NPC="0.3,shrike heavy,enemy,dummy,-54.84,37.70" BF_TEST_NPC_HP=1.0,1,999`), with
 `BF_SKILL_LOG`, `BF_TARGETING_LOG`, `BF_RETICLE_LOG`, `BF_COMBAT_LOG`, 15 fps captures set beside
 the takes' frames at the same scale (scripts in the developer's scratchpad). The squad left out:
-the demo's formation stands it between Flint and the Shrike.
+the demo's formation stands it between Flint and the Shrike. (**Not free to act**'s Frag below
+was thrown before #161 made the throw the game's: its landing time doesn't hold as written. Not
+run again.)
 
 * **take15** (the L-Shot; `BF_TEST_SWEEP="0.5,1.0,24;4.0,4.5,-24;8.5,9.0,24;11.0,11.5,-24"`, the
   takes' 12-degree turns, `BF_TEST_SKILL=2,21`): on at the press; the Shrike locked at once 82

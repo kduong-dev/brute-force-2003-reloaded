@@ -17,7 +17,8 @@
 //!    Roller) and h_1ee2f4ed how it's used (3 IOU_THROW_TO_USE, 2 IOU_PLACE_ON_GROUND);
 //!  - an object event (state 7, h_fa04e025 = e43166d1): the sound heard as the meter appears.
 //!
-//! Thrown types: hold the button to charge (the HUD meter, full in 0.6 s), let go to throw: the
+//! Thrown types: hold the button to charge (the HUD meter, full in 0.625 s), let go to throw (15
+//! degrees above the aim, at the charge's push over the type's mass: `throw_velocity`, #161): the
 //! count drops at once (one game frame after the button in the recordings), the stance's throw
 //! clip takes the grenade in hand at its reach event (its trail and hiss start then: ~0.33 s
 //! after the button) and lets go at its release event. It bounces silently and goes off when its
@@ -40,23 +41,37 @@ use super::*;
 use super::damage::{footage_squad_step, Difficulty, Hit};
 use bf_viewer::bf::character::EffectType;
 
-/// throw speed range (m/s) over the charge, and extra upward angle over the crosshair (radians).
-/// Fitted to the Frag recording, not from the data: the grenade leaves the hand 0.60-0.63 s
-/// after the button and goes off 1.65-1.78 s after that, so with the 1.5 s fuse from the first
-/// contact it's down 0.13-0.28 s after it leaves the hand, a few metres ahead where the camera
-/// looks down (frag/a 588-602): a fast throw, aimed below the crosshair (a negative lob).
-const MIN_THROW: f32 = 12.0;
-const MAX_THROW: f32 = 20.0;
-const THROW_LOB: f32 = -0.25;
-const GRENADE_GRAVITY: f32 = 9.8;
+/// A throw's impulse at no charge and its charge term (N s): FUN_00122ea0 returns 16 + 7 x for
+/// x = p^2 (0x3a4ff4 16, 0x3a501c 7), the release event's push (`throw_velocity`). The AI's 12
+/// + 18 x (0x3a5020, 0x3a5024, with char+0x748 bit 2, set only by its grenade goal at 0x353ce) is
+/// the enemies' (#110, #78), not done.
+const THROW_IMPULSE: f32 = 16.0;
+const THROW_IMPULSE_CHARGE: f32 = 7.0;
+/// How far above the aim a throw leaves (rad): the release event (FUN_00117660 at 0x117be4)
+/// turns (0, sin 15, -cos 15) (0x3e84816f 0.2588, 0xbf774539 -0.9659) by the aim frame
+/// (char+0x5bc, FUN_0001f9c0): 15 degrees above the aim's forward, whatever the charge.
+const THROW_UP: f32 = 15.0 * std::f32::consts::PI / 180.0;
+/// The release moves the grenade this far (m) along (0, sin 15, -cos 15) in the world's axes
+/// before the push (0x3ecccccd 0.4): the offset isn't turned by the aim, a quirk of the code
+/// (#161's leads), so it goes 0.39 m toward the world's -z and 0.10 m up whichever way it's
+/// thrown.
+const THROW_NUDGE: f32 = 0.4;
+/// The physics world's gravity (m/s^2): FUN_0016a250 makes the Ipion world with (0, -9.81, 0)
+/// (0x16a4a7, 0x16a4c7).
+const GRENADE_GRAVITY: f32 = 9.81;
 pub(super) const GRENADE_RADIUS: f32 = 0.06;
 /// bounce: vertical restitution, horizontal speed kept per bounce (the demo's; the friction
 /// fitted so a fast throw comes to rest near where it lands, as the recording's does: its trail
 /// puffs from about where it came down, frag/a 600-690)
 const RESTITUTION: f32 = 0.35;
 const GROUND_FRICTION: f32 = 0.3;
-/// h_1ee2f4ed: IOU_PLACE_ON_GROUND (Roller, Sentry; the XBE's IOU_ enum)
+/// h_1ee2f4ed: IOU_PLACE_ON_GROUND (Roller, Sentry, Thermo; the XBE's IOU_ enum)
 const USE_PLACE: i64 = 2;
+/// A level's item spawn element (h_1d1d4f05: the inventory-objects it puts down, the arena's
+/// PICKUP_ITEM; as pickups, or set down live with h_1cb7d5f2: the tutorial's and e16's, e34's and
+/// e40's mines, m09_b's Thermo): `load_kits` makes a kit for the grenade and explosive types among
+/// them.
+const ITEM_SPAWN: u32 = 0x1D1D_4F05;
 /// function-type IFSET_ROLLING_BOMB (the Roller: rolls off once set down)
 const ROLLING_BOMB: i64 = 13;
 /// The Roller's speed once down (m/s; 4.4-5.0 measured, straight ahead along the thrower's
@@ -120,12 +135,41 @@ pub(super) const BLAST_QUIET: f32 = 0.3;
 /// thrower to use.
 const SQUAD_GRENADES: [u32; 7] = [0x060F_95F7, 0xE8C6_7904, 0xEC0B_F28F, 0x0CC3_C2C8, 0xFD1A_966D, 0xE5F1_F063, 0xFBA7_C475];
 
-/// Throw velocity for a charge of `power` (0..1) toward the crosshair ray, lowered by
-/// THROW_LOB, aimed between 0.8 rad down and 1.2 rad up.
-pub fn throw_velocity(ray: Vec3, power: f32) -> Vec3 {
-    let flat = Vec3::new(ray.x, 0.0, ray.z).normalize_or(Vec3::NEG_Z);
-    let pitch = (ray.y.clamp(-1.0, 1.0).asin() + THROW_LOB).clamp(-0.8, 1.2);
-    (flat * pitch.cos() + Vec3::Y * pitch.sin()) * (MIN_THROW + (MAX_THROW - MIN_THROW) * power.clamp(0.0, 1.0))
+/// The charge a throw's power counts from: the player controller's 0.3 (0x3a50b0).
+const POWER_FROM: f32 = 0.3;
+/// The least power a throw has (0x1348c0-0x134945: the clamp's low end, 0.01).
+const POWER_LEAST: f32 = 0.01;
+
+/// A throw's power from the charge `c` the button was let go at (the player controller 0x1332a0
+/// at 0x1348fd-0x134941): clamp((c - 0.3) / 0.7, 0.01, 1) (0.3 at 0x3a50b0, 1 / 0.7 the double at
+/// 0x3a54c8), kept at char+0x7f0 by the item use (FUN_000abf60 -> FUN_00121170). A hold under
+/// 0.1875 s throws at 0.01: the meter's bottom 30% throws no farther than a tap.
+pub fn throw_power(c: f32) -> f32 {
+    ((c - POWER_FROM) / (1.0 - POWER_FROM)).clamp(POWER_LEAST, 1.0)
+}
+
+/// A thrown grenade's velocity at the throw clip's release event (FUN_00117660 at 0x117be4): the
+/// push J = THROW_IMPULSE + THROW_IMPULSE_CHARGE x p^2 (FUN_00122ea0, p the throw's `power`,
+/// `throw_power`) along the aim frame `aim` x (0, sin 15, -cos 15) (THROW_UP), given to the
+/// grenade's first body at the hand's point through Ipion's push (FUN_002b3bc0), whose speed
+/// changes by J over the body's mass: the item type's `mass` (`WeaponDef::mass`, h_1a19ff7a: the
+/// Frag and the Light 0.9, the Energy, the Gas and the Sonic 1.0; FUN_001590a0 builds the body
+/// with it). So a Frag leaves at 17.8-25.6 m/s, an Energy at 16.0-23.0. No ray and no crosshair
+/// point in it: the game doesn't aim the throw at the crosshair. The off-centre push's spin isn't
+/// kept (the demo spins its grenades its own way). Not done: Ipion's speed damping, read as 0.1
+/// in FUN_00158f80's body template (-10% of the speed a second; an inference from Ipion's
+/// defaults, #161's leads: #119 take01 fits with or without it, 25.1 against 26.3 m).
+pub fn throw_velocity(aim: Quat, power: f32, mass: f32) -> Vec3 {
+    let impulse = THROW_IMPULSE + THROW_IMPULSE_CHARGE * power * power;
+    let dir = aim * Vec3::new(0.0, THROW_UP.sin(), -THROW_UP.cos());
+    // (a definition without a mass: 1 kg, `WeaponDef::mass`'s own default)
+    dir * impulse / if mass > 0.0 { mass } else { 1.0 }
+}
+
+/// The release's move of the grenade before its push: THROW_NUDGE along (0, sin 15, -cos 15) in
+/// the world's axes (0x117be4-0x117e60, unturned).
+pub fn throw_nudge() -> Vec3 {
+    Vec3::new(0.0, THROW_UP.sin(), -THROW_UP.cos()) * THROW_NUDGE
 }
 
 /// One grenade type: its item definition, its explosion, their effect types and its model.
@@ -329,16 +373,21 @@ pub fn plugin(app: &mut App) {
             .run_if(in_state(AppState::Playing)));
 }
 
-/// The squad's grenade types (SQUAD_GRENADES, those the loaded levels define; then any other
-/// grenade or explosive the level's squad placements carry whose label none of those has: a
-/// Sentry defined only as h_f73de83d, m14_c and m14_d), their ALE effects compiled and their
-/// materials' render pipelines built ahead (`ale_fx::warm_up`).
+/// The squad's grenade types (SQUAD_GRENADES, those the loaded levels define), then any other
+/// grenade or explosive whose label none of those has that the level's squad placements carry (a
+/// Sentry defined only as h_f73de83d: m14_c and m14_d) or that the level puts down itself (its
+/// item spawns, #82), their ALE effects compiled and their materials' render pipelines built ahead
+/// (`ale_fx::warm_up`). The item spawns' rule is general; run on every level that puts down a type
+/// outside SQUAD_GRENADES (28: the campaign's and the arenas'), it adds a kit on four: m09_b's
+/// Thermo, and the Sentry h_f73de83d on e16, e34 and e40, which those three lay as live mines
+/// (h_1cb7d5f2): with its kit made, `place_mines` (play_sentry.rs) now arms them as the level
+/// loads (14, 6 and 7), where before #82 they had no kit and weren't placed.
 #[allow(clippy::too_many_arguments)]
 fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
              mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
              ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut held: ResMut<Held>, mut tint: ResMut<ScreenTint>,
-             mut delayed: ResMut<DelayedBlastParts>, spawns: Option<Res<super::triggers::SquadSpawns>>) {
+             mut delayed: ResMut<DelayedBlastParts>, spawns: Option<Res<super::triggers::SquadSpawns>>, map: Option<Res<MapLevel>>) {
     held.0 = None;
     tint.0 = TINT_TIME;
     delayed.0.clear();
@@ -347,15 +396,21 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
     let usable = |d: &WeaponDef| d.projectile != 0 && d.icon != 0 && !d.label.is_empty() && !d.label.starts_with("h_");
     let mut defs: Vec<WeaponDef> = SQUAD_GRENADES.iter().filter_map(|n| game.0.weapons.get(n)).filter(|d| usable(d)).cloned().collect();
     let carried = spawns.iter().flat_map(|s| s.0.iter()).flat_map(|s| s.items.iter().map(|i| i.0));
-    for n in carried {
+    // and those the level puts down itself (its item spawns, h_1d1d4f05, as pickups or set down
+    // live with h_1cb7d5f2): m09_b's Thermo (h_e04e05e1, the type's only placement, set down, #82)
+    // and e16's, e34's and e40's Sentry mines (h_f73de83d), so a level's own mine is armed
+    // (`place_mines`) and a picked-up stack has its kit (the pickups that hand them out are #17's)
+    let laid: Vec<u32> = map.iter().flat_map(|m| m.0.iter()).flat_map(|l| l.objects.iter()).filter(|o| o.tag == ITEM_SPAWN).map(|o| o.kind).collect();
+    for n in carried.chain(laid) {
         let other = game.0.weapons.get(&n).filter(|d| matches!(d.group_type, 2 | 3) && usable(d))
             .filter(|d| !defs.iter().any(|k| k.label.eq_ignore_ascii_case(&d.label)));
         if let Some(d) = other.cloned() {
             defs.push(d);
         }
     }
-    // (BF_TEST_INV's grenade types the level defines but neither SQUAD_GRENADES nor its squad have:
-    // e34's Sentry h_f73de83d for #196's nine-stack pool, play_inventory.rs; the first by name)
+    // (BF_TEST_INV's grenade types the level defines but neither SQUAD_GRENADES, its squad nor its
+    // item spawns bring in, the first by name. #196's nine-stack pool on e34 (play_inventory.rs)
+    // asks for a Sentry, whose kit, h_f73de83d, e34's own mines now bring in above)
     if let Ok(v) = std::env::var("BF_TEST_INV") {
         for label in v.split(',').filter_map(|e| e.split_once(':')).map(|(n, _)| n.trim()) {
             if defs.iter().any(|k| k.label.eq_ignore_ascii_case(label)) {
@@ -432,6 +487,12 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
         let rolling = (kit.def.function_type == ROLLING_BOMB && !t.landed).then(|| Quat::from_rotation_y(player.yaw) * Vec3::NEG_Z);
         let spin = if kit.placed() { Vec3::ZERO } else { t.velocity.cross(Vec3::Y).normalize_or(Vec3::X) * -12.0 };
         let fuse = if t.landed { 0.0 } else { kit.def.fuse.max(0.0) };
+        if std::env::var("BF_GRENADE_LOG").is_ok() && !t.landed {
+            let v = t.velocity;
+            let feet = floor_y(player.position.x, player.position.z, player.position.y + GROUND + 1.0);
+            println!("t {:.2}: {} leaves the hand {:.2} m over the floor at the thrower's feet at {:.1} m/s, {:.1} degrees up (mass {:.1})", player.sim_time,
+                     kit.def.label, t.pos.y - feet, v.length(), v.y.atan2(Vec2::new(v.x, v.z).length()).to_degrees(), kit.def.mass);
+        }
         commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, spin, thrower: player.character, rolling,
                                             roll_sound: 0.0, launched: player.sim_time, wet: false });
     }
@@ -852,5 +913,39 @@ fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, m
     let step = &quad.0[now];
     if mat.0 != *step {
         mat.0 = step.clone();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #161: the power by the charge (0x1348fd-0x134941): 0.01 for any charge up to 0.3 (a hold
+    /// under 0.19 s at 1.6 a second), 1 at the full meter, linear between.
+    #[test]
+    fn a_throws_power_counts_from_three_tenths_of_the_charge() {
+        assert_eq!(throw_power(0.0), POWER_LEAST);
+        assert_eq!(throw_power(0.3), POWER_LEAST);
+        assert!((throw_power(0.64) - 0.4857).abs() < 1e-3);
+        assert!((throw_power(1.0) - 1.0).abs() < 1e-6);
+    }
+
+    /// #161: a full Frag (0.9 kg) leaves at 25.6 m/s and a tap at 17.8, an Energy (1 kg) full at
+    /// 23.0, each 15 degrees above the aim: level aim, 15 up; aimed 9 degrees down, 6 up; turned
+    /// with the aim's yaw.
+    #[test]
+    fn a_throw_leaves_fifteen_degrees_above_the_aim_at_its_push_over_its_mass() {
+        let up = |v: Vec3| v.y.atan2(Vec2::new(v.x, v.z).length()).to_degrees();
+        let level = throw_velocity(Quat::IDENTITY, 1.0, 0.9);
+        assert!((level.length() - 25.556).abs() < 0.01, "{}", level.length());
+        assert!((up(level) - 15.0).abs() < 1e-3 && level.z < 0.0 && level.x.abs() < 1e-5);
+        assert!((throw_velocity(Quat::IDENTITY, 0.01, 0.9).length() - 17.778).abs() < 0.01);
+        assert!((throw_velocity(Quat::IDENTITY, 1.0, 1.0).length() - 23.0).abs() < 1e-3);
+        let down = throw_velocity(Quat::from_euler(EulerRot::YXZ, 0.0, -9f32.to_radians(), 0.0), 1.0, 0.9);
+        assert!((up(down) - 6.0).abs() < 1e-3);
+        let turned = throw_velocity(Quat::from_euler(EulerRot::YXZ, std::f32::consts::FRAC_PI_2, 0.0, 0.0), 1.0, 0.9);
+        assert!(turned.x < -24.0 && turned.z.abs() < 1e-4, "{turned}");
+        // (no mass in the definition: 1 kg)
+        assert!((throw_velocity(Quat::IDENTITY, 1.0, 0.0).length() - 23.0).abs() < 1e-3);
     }
 }

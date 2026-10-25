@@ -122,7 +122,11 @@ pub(super) fn random(seed: &mut u32) -> f32 {
 struct WeaponFire {
     /// current accuracy (weapon+0x1dc); None until the gun is first used: it starts at its cap
     accuracy: Option<f32>,
-    /// tracer counter (weapon+0x290)
+    /// tracer counter (weapon+0x290). A new weapon object starts it at 0 (its constructor
+    /// FUN_0022d330 zeroes it at 0x22d419, and only FUN_002317e0 writes it after), so a new gun's
+    /// first round carries the tracer (this `Default`), and only its own rounds move it after: a
+    /// reload or a switch doesn't. #63 take01's first tracer on its second tap is the snapshot's
+    /// counter: its MK had fired 3k + 2 rounds before the take (#287)
     tracer: i64,
     /// casings owed (weapon+0x208)
     shells: f32,

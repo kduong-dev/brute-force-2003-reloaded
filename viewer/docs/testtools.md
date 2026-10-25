@@ -277,7 +277,9 @@ reactions' draws, its motions and drives, its stamina shield and its death line 
 
 ## Verified
 
-Test map, captures at 15 fps, frames looked at:
+Test map, captures at 15 fps, frames looked at (the Frag at a rack, the Energy and Sonic, and the
+Frag beside a dummy were thrown before #161 made the throw the game's, which now goes faster and
+higher: where they land and who stands in a blast don't hold as written; not run again):
 * Help: hidden at the start with "H: help"; `BF_TEST_HELP=2` shows the panel with the tools'
   line.
 * Free camera and teleport (`BF_TEST_GOTO=0,10,0,10 BF_TEST_FREECAM=1.5,6,5,16,20,-30
