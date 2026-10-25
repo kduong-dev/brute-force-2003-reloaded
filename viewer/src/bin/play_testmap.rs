@@ -299,7 +299,9 @@ fn toggle_instant_kill(keys: Res<ButtonInput<KeyCode>>, mut test: ResMut<TestMap
 }
 
 /// X: the controlled character dies on the spot, as from any other hurt (death cry, ragdoll,
-/// the death camera, the hand-over to the next squad member).
+/// the death camera, the hand-over to the next squad member). The hurt is `enemies::lethal`, as
+/// K's instant kill: its hit points, and the stamina a stamina shield takes first, for a type with
+/// one in the player's slot (a deathmatch Shrike, #302's squad menu).
 /// (test hook: BF_TEST_SUICIDE=<s> presses it at that time)
 fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: ResMut<Player>, mut tested: Local<bool>) {
     let test = std::env::var("BF_TEST_SUICIDE").ok().and_then(|v| v.parse::<f32>().ok())
@@ -307,7 +309,7 @@ fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: Res
     if (keys.just_pressed(KeyCode::KeyX) || test) && !player.dead {
         *tested |= test;
         let (at, back) = (player.position + Vec3::Y * 1.0, Quat::from_rotation_y(player.yaw) * Vec3::Z);
-        let all = player.health;
+        let all = super::enemies::lethal(&player);
         hurt(&mut player, &game.0, all, HURT_CHATTER, back * 2.0 + Vec3::Y, at, -1);
     }
 }

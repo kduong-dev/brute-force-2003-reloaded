@@ -89,7 +89,10 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   squad member they hurt, in one hit. The player still takes normal damage.
 * **X kills the controlled character** on the spot, as any hurt does: the death cry and
   ragdoll, then the death camera and the hand-over to the next squad member (or, with nobody
-  left, the camera stays on the body). `BF_TEST_SUICIDE=<s>` presses it at that time.
+  left, the camera stays on the body; on the test map's floor the player respawns, below).
+  `BF_TEST_SUICIDE=<s>` presses it at that time. Its hurt is K's (`enemies::lethal`), so a type
+  with a stamina shield in the player's slot (a deathmatch Shrike, #302) dies too; so does
+  `BF_TEST_DIE`'s.
 * **Dying alone respawns** (#302, the demo's rule for the test map, not the game's): with nobody
   to hand over to, 4 s after the death (the death camera's time to its hand-over) the player
   comes back where it stood, a fresh one of its type, its view and the squad's inventory kept.

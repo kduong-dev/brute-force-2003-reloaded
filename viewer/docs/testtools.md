@@ -735,3 +735,7 @@ After the review (the product owner's two decisions and the review's points), th
   and as victim.
 * The controls panel keeps main's first line ("tex idle clip 48 ..."); its 1-4 line names the four
   and T.
+* A lone death of a type with a stamina shield (`BF_TEST_GOTO=0,8,0,7.5 BF_TEST_SQUAD="3:shrike
+  heavy@sdm_shrike" BF_TEST_SUICIDE=1.0`, 110 frames): before, X's hurt of its hit points went to
+  the shield and it lived; with `enemies::lethal` it falls at 1.07 s, and "t 5.07: Shrike Heavy died
+  alone: respawned after 4 s at [0.00, -1.05, 8.00]", "Respawned" over it standing where it fell.

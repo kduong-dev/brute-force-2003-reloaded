@@ -3132,12 +3132,13 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
     }
     // test hook: BF_TEST_DIE=<s> - the player drops dead at that time (BF_TEST_DIE=1: at 1 s),
-    // shoved sideways. Once: the member who takes over lives on.
+    // shoved sideways. Once: the member who takes over lives on. (The hurt is `enemies::lethal`,
+    // so a type with a stamina shield in the player's slot dies too: #302's test map)
     let die_at = std::env::var("BF_TEST_DIE").ok().map(|v| v.parse::<f32>().unwrap_or(1.0));
     if die_at.is_some_and(|at| player.sim_time > at) && !player.dead && !test_died.0 {
         test_died.0 = true;
         let (at, side) = (player.position + Vec3::Y, Vec3::new(player.yaw.cos(), 0.0, -player.yaw.sin()));
-        let all = player.health;
+        let all = enemies::lethal(&player);
         hurt(&mut player, &game.0, all, HURT_CHATTER, side * 5.0 + Vec3::Y * 2.0, at, -1);
     }
     // dead: the death camera (play_deathcam) picks the next living member near its end
