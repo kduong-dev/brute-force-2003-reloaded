@@ -387,7 +387,7 @@ fn find_holes(a: &world::Arena, map: &str, seeds: &[Vec3], file: Option<&str>) {
     for j in 0..h {
         for i in 0..w {
             let (x, z, k) = (lo.x + i as f32 + 0.5, lo.y + j as f32 + 0.5, j * w + i);
-            if let Some((g, _)) = a.floor_below(x, z, 1e4) {
+            if let Some((g, _)) = a.floor_below(x, z, 1e4, world::Body::Character) {
                 (kind[k], height[k]) = (1, g);
                 for b in a.holding(Vec2::new(x, z), None, 0.5, g, g + BODY_HEIGHT, STEP_UP, None, world::Mover::Ai) {
                     walls[k] |= match a.body_kind(b) {
@@ -629,14 +629,15 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     if let Some(g) = test_goto() {
         // a 5th value starts at that height (on the floor below it), e.g. on a roof; with no
         // floor below, on the steep face there if there's one (#264: it slides down it)
-        let face = g.get(4).and_then(|&y| world::arena().filter(|a| a.floor_below(g[0], g[1], y).is_none())
+        let face = g.get(4).and_then(|&y| world::arena().filter(|a| a.floor_below(g[0], g[1], y, world::Body::Character).is_none())
             .and_then(|a| a.slope_below(g[0], g[1], y)));
         // (without a height: on the terrain there, or, with no terrain there, on the highest
         // floor: #292, m14_c's squad spawn at (-167.14, 87.95) stands on an object's floor with
         // no terrain under it, where the feet came out at GROUND, -1.05 m, under the floor)
         let ground = match g.get(4) {
-            Some(&y) => world::arena().and_then(|a| a.floor_below(g[0], g[1], y)).map_or(y, |f| f.0),
-            None => world::arena().and_then(|a| a.ground(g[0], g[1]).or_else(|| a.floor_below(g[0], g[1], f32::MAX).map(|f| f.0))).unwrap_or(GROUND),
+            Some(&y) => world::arena().and_then(|a| a.floor_below(g[0], g[1], y, world::Body::Character)).map_or(y, |f| f.0),
+            None => world::arena().and_then(|a| a.ground(g[0], g[1]).or_else(|| a.floor_below(g[0], g[1], f32::MAX, world::Body::Character).map(|f| f.0)))
+                .unwrap_or(GROUND),
         };
         p.position = Vec3::new(g[0], ground + 1.0 - GROUND, g[1]);
         p.yaw = (-(g[2] - g[0])).atan2(-(g[3] - g[1]));
@@ -647,7 +648,7 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
             return p;
         }
     }
-    p.position.y = floor_y(p.position.x, p.position.z, p.position.y + GROUND) - GROUND;
+    p.position.y = floor_y(p.position.x, p.position.z, p.position.y + GROUND, world::Body::Character) - GROUND;
     p.prev_xz = Vec2::new(p.position.x, p.position.z);
     p
 }
@@ -698,8 +699,8 @@ fn squad_at_start(start: usize, deathmatch: bool, spawns: &triggers::SquadSpawns
 /// there, as `squad_around` puts the others.
 fn player_at(start: usize, at: Vec3, yaw: f32) -> Player {
     let mut p = Player::new(start);
-    let xz = world::arena().map_or(at.xz(), |a| a.push_out(at.xz(), BODY_RADIUS, at.y, at.y + BODY_HEIGHT, STEP_UP));
-    let feet = floor_y(xz.x, xz.y, at.y + STEP_UP);
+    let xz = world::arena().map_or(at.xz(), |a| a.push_out(at.xz(), BODY_RADIUS, at.y, at.y + BODY_HEIGHT, STEP_UP, world::Body::Character));
+    let feet = floor_y(xz.x, xz.y, at.y + STEP_UP, world::Body::Character);
     p.position = Vec3::new(xz.x, feet - GROUND, xz.y);
     p.prev_xz = xz;
     p.fall_from = feet;
@@ -744,11 +745,11 @@ fn place_in_formation(m: &mut Player, origin: Option<(Vec3, f32)>, place: usize)
         None => Vec3::new(f.x, 0.0, f.y),
     };
     if let Some(a) = world::arena() {
-        let feet = floor_y(m.position.x, m.position.z, top);
-        let q = a.push_out(Vec2::new(m.position.x, m.position.z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP);
+        let feet = floor_y(m.position.x, m.position.z, top, world::Body::Character);
+        let q = a.push_out(Vec2::new(m.position.x, m.position.z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, world::Body::Character);
         m.position = Vec3::new(q.x, 0.0, q.y);
     }
-    m.position.y = floor_y(m.position.x, m.position.z, top) - GROUND;
+    m.position.y = floor_y(m.position.x, m.position.z, top, world::Body::Character) - GROUND;
     m.prev_xz = Vec2::new(m.position.x, m.position.z);
     m.surface = usize::MAX;
 }
@@ -759,7 +760,7 @@ fn place_in_formation(m: &mut Player, origin: Option<(Vec3, f32)>, place: usize)
 fn test_target(m: &mut Player) {
     if let (true, Some(g)) = (std::env::var("BF_TEST_TARGET").is_ok(), test_goto()) {
         m.position = Vec3::new(g[0], 0.0, g[1] - 8.0);
-        m.position.y = floor_y(m.position.x, m.position.z, 200.0) - GROUND;
+        m.position.y = floor_y(m.position.x, m.position.z, 200.0, world::Body::Character) - GROUND;
         m.prev_xz = Vec2::new(m.position.x, m.position.z);
     }
 }
@@ -1417,10 +1418,11 @@ fn test_goto() -> Option<Vec<f32>> {
         .filter(|g| g.len() >= 4)
 }
 
-/// The floor's height at (x, z) no higher than `top`: the map's terrain or an object's floor,
-/// else the flat test floor.
-fn floor_y(x: f32, z: f32, top: f32) -> f32 {
-    world::arena().and_then(|a| a.floor_below(x, z, top)).map_or(GROUND, |f| f.0)
+/// The floor's height at (x, z) no higher than `top` for `body`: the map's terrain or an object's
+/// floor, else the flat test floor. A blocker's top is a character's floor alone: a grenade, a
+/// pickup, a casing or a decal comes down on what's under it (`world::Body`, #298).
+fn floor_y(x: f32, z: f32, top: f32, body: world::Body) -> f32 {
+    world::arena().and_then(|a| a.floor_below(x, z, top, body)).map_or(GROUND, |f| f.0)
 }
 
 #[derive(Resource)]
@@ -2253,6 +2255,11 @@ struct Shot {
     /// meets (play_shots.rs)
     decal: u32,
     normal: Vec3,
+    /// the breakable object the shot meets `dist` m out, if it's one (its list index,
+    /// play_scenery.rs `struck_at`): found at the shot, as the game's hit record holds the
+    /// object struck (FUN_0022c4a0); the hole lies on it and goes with it (play_fx.rs
+    /// `tie_decals`, #301), though the hit may have broken it by the time the hole is laid
+    breakable: Option<usize>,
     /// the Damage's falloff mode (h_fb124e6c) over the bullet's range (`Shot::falloff_at`)
     falloff: i64,
     range: f32,
@@ -4813,7 +4820,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 let push = Quat::from_rotation_y(-u.yaw) * (push + u.last_velocity);
                 // (the model stands raised by its sole lift: the ragdoll starts where it's drawn;
                 // an enemy's has the game's bodies and joint limits, play_enemies.rs)
-                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push, &enemies::ragdoll_parts(&game.0, u)).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw);
+                let ragdoll = Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push, &enemies::ragdoll_parts(&game.0, u)).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw)
+                    .as_body(world::Body::Character);
                 u.knock = Some(Knock { ragdoll, time: 0.0, lying: None });
                 u.thud = false;
                 u.action = Action::None;
@@ -4831,7 +4839,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 let push = Quat::from_rotation_y(-u.yaw) * (u.death_push + u.last_velocity);
                 // the knocked down die where they lie
                 u.ragdoll = Some(match u.knock.take() {
-                    Some(k) => k.ragdoll,
+                    Some(k) => k.ragdoll.as_body(world::Body::Thing),
                     None => Ragdoll::new(&l.model, &u.last_world, GROUND - u.height - u.lift_now, push, &enemies::ragdoll_parts(&game.0, u)).placed(u.position + Vec3::Y * (u.height + u.lift_now), u.yaw),
                 });
             }
@@ -4843,7 +4851,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                     let closest = r.pairs.iter().map(|&(a, b)| r.pos[a].distance(r.pos[b])).fold(f32::MAX, f32::min);
                     let turn = Quat::from_rotation_y(r.yaw);
                     let below = r.pos.iter().map(|&p| { let w = r.origin + turn * p;
-                        world::arena().and_then(|a| a.floor_below(w.x, w.z, w.y + 0.4)).map_or(0.0, |f| w.y - f.0) }).fold(f32::MAX, f32::min);
+                        world::arena().and_then(|a| a.floor_below(w.x, w.z, w.y + 0.4, r.body)).map_or(0.0, |f| w.y - f.0) }).fold(f32::MAX, f32::min);
                     let worst = r.hinge_sides.iter().filter_map(|&(a, b, c, f, side)| {
                         let axes = r.frames[f].and_then(|fr| torso_axes(&r.pos, fr))?;
                         let n = axes.0 * side.x + axes.1 * side.y + axes.2 * side.z;
@@ -5665,6 +5673,12 @@ struct Ragdoll {
     /// which way the hips' frame's third axis (right x up) points: 1 forward, -1 back (the
     /// body faces -z in its frame at the start)
     hips_forward: f32,
+    /// whose floors and walls its bones keep to (#298): a corpse's are a thing's (the game's
+    /// ragdoll bones are bodies of PID_BONE, which Ipion's pair table keeps off the level's
+    /// blockers and hinters); a living character's knocked down, a character's, as before #298
+    /// (the demo stands it up where its pelvis lies, `Knock`, and the game's own knockdown
+    /// moves the character, whose sweep its blockers hold)
+    body: world::Body,
 }
 
 impl Ragdoll {
@@ -5894,7 +5908,14 @@ impl Ragdoll {
         let rest_offset = (0..n).map(|i| model.parent[i].filter(|&p| p < n).map_or(pos[i], |p| rest_rot[p].inverse() * (pos[i] - pos[p]))).collect();
         let flesh = flesh(model, world, &pos, &aim);
         Ragdoll { pos, prev, rest_rot, rest_offset, aim, links, ranges, frames, hinge_sides, still: 0, floor, origin: Vec3::ZERO, yaw: 0.0, pairs, flesh, rolls: 0,
-                  bodied, twist, swings, hips_forward }
+                  bodied, twist, swings, hips_forward, body: world::Body::Thing }
+    }
+
+    /// This ragdoll as a knocked-down living character's (`body`: a character's walls and
+    /// floors), or back to a corpse's when it dies where it lies.
+    fn as_body(mut self, body: world::Body) -> Self {
+        self.body = body;
+        self
     }
 
     /// Place its frame in the world (the body's root: position + height, turned by yaw), so
@@ -5988,7 +6009,7 @@ impl Ragdoll {
         let arena = world::arena();
         let floors: Vec<f32> = self.pos.iter().map(|&p| {
             let w = self.origin + turn * p;
-            arena.as_ref().and_then(|a| a.floor_below(w.x, w.z, w.y + RAGDOLL_STEP_UP)).map_or(self.floor, |f| f.0 - self.origin.y)
+            arena.as_ref().and_then(|a| a.floor_below(w.x, w.z, w.y + RAGDOLL_STEP_UP, self.body)).map_or(self.floor, |f| f.0 - self.origin.y)
         }).collect();
         for _ in 0..10 {
             // hinges bend one way: a joint on the wrong side of its limb's line goes back to it
@@ -6072,7 +6093,7 @@ impl Ragdoll {
         if let Some(a) = arena.as_deref() {
             for (p, q) in self.pos.iter_mut().zip(self.prev.iter_mut()) {
                 let w = self.origin + turn * *p;
-                let out = a.push_out(Vec2::new(w.x, w.z), RAGDOLL_SELF_RADIUS, w.y - 0.05, w.y + 0.05, 0.0);
+                let out = a.push_out(Vec2::new(w.x, w.z), RAGDOLL_SELF_RADIUS, w.y - 0.05, w.y + 0.05, 0.0, self.body);
                 if (out - Vec2::new(w.x, w.z)).length_squared() > 1e-8 {
                     let moved = back * Vec3::new(out.x - w.x, 0.0, out.y - w.z);
                     *p += moved;
@@ -7158,7 +7179,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 p.shots.push(Shot { weapon: w.def.name, origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
                                     flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
                                     damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type, ammo: w.def.ammo_type,
-                                    decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff,
+                                    decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1),
+                                    breakable: hit.and_then(|(t, _)| scenery::struck_at(origin, dir, t)), falloff: w.def.shots.falloff,
                                     // (the falloff runs over the bullet's range in the holder's
                                     // hands, FUN_00230040 at 0x2302ef)
                                     range: reach,
@@ -8048,9 +8070,10 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             }
         }
         if s.hit {
-            // the bullet's hole or scorch where it met the world (play_fx.rs)
+            // the bullet's hole or scorch where it met the world, on the breakable object it met
+            // there if it was one (play_fx.rs)
             if s.decal != 0 {
-                holes.0.push((s.decal, at, s.normal));
+                holes.0.push((s.decal, at, s.normal, s.breakable));
             }
             world_hit(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, &s, at, &mut chance, listener, &mut player, None);
         }
@@ -8499,7 +8522,7 @@ mod tests {
     #[test]
     fn a_beam_spans_the_ray() {
         let shot = |dist: f32, scoped: bool| Shot { weapon: 0, origin: Vec3::new(1.0, 2.0, 3.0), dir: Vec3::NEG_Z, dist, hit: true, speed: INSTANT_SHOT,
-                                                    flight: 0, hit_fx: 0, damage: [1.0, 2.0], damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z,
+                                                    flight: 0, hit_fx: 0, damage: [1.0, 2.0], damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, breakable: None,
                                                     falloff: 0, range: 300.0, bolt: false, body: false, pass: false, scoped };
         let (place, sp) = beam_line(&shot(27.0, false));
         assert!(place.translation.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-6);

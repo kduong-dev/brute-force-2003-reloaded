@@ -78,6 +78,10 @@
       eases flush onto the face it stopped on over about 0.25 s, keeping its heading,
       instead of snapping upright.
     * Moving ones push off the others.
+    * The ground it settles, tumbles and rests on is a thing's: the level's invisible blockers'
+      tops aren't floors to it (#298: only a character's body meets them; maps.md, "Blockers and
+      hinters"). No pickup or lying gun of the 53 levels starts over one, so the level's own
+      lie where they did; a thrown or dropped one no longer stops on one.
     * The bounce, friction, drag and thresholds are the demo's choices, not the game's.
   * The medkit sound is h_1538baad, the Sound whose file is h_15331992 (named "92193315":
     those bytes as stored in sounds-<level>.xmb), the same in all 54 levels' banks, 1.5 s.

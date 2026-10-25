@@ -84,7 +84,7 @@ fn test_drop(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, mut don
     if *done < times.len() && player.sim_time >= times[*done] && kind < kits.0.len() {
         *done += 1;
         let (x, z) = (player.position.x, player.position.z);
-        let pos = Vec3::new(x, floor_y(x, z, player.position.y + GROUND + 1.0) + super::grenade::GRENADE_RADIUS, z);
+        let pos = Vec3::new(x, floor_y(x, z, player.position.y + GROUND + 1.0, world::Body::Thing) + super::grenade::GRENADE_RADIUS, z);
         player.thrown.push(Thrown { pos, velocity: Vec3::ZERO, kind, landed: true });
     }
 }

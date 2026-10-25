@@ -755,7 +755,7 @@ pub(super) fn aim_word(tools: &Tools) -> &'static str {
 pub(super) fn ground_point(origin: Vec3, dir: Vec3) -> Option<Vec3> {
     let t = ray_hit(origin, dir, PICK_RANGE)?;
     let p = origin + dir * t;
-    Some(Vec3::new(p.x, floor_y(p.x, p.z, p.y + 0.5), p.z))
+    Some(Vec3::new(p.x, floor_y(p.x, p.z, p.y + 0.5, world::Body::Character), p.z))
 }
 
 /// Puts the controlled character on the ground at `to`, facing `yaw` with the camera behind
@@ -840,7 +840,7 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
     }
     if let (Some(camera), Some(c)) = (port, tools.freecam) {
         let to = if camera {
-            Some(Vec3::new(c.pos.x, floor_y(c.pos.x, c.pos.z, c.pos.y), c.pos.z))
+            Some(Vec3::new(c.pos.x, floor_y(c.pos.x, c.pos.z, c.pos.y, world::Body::Character), c.pos.z))
         } else {
             ground_point(c.pos, c.ray())
         };
@@ -1015,7 +1015,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
     let (origin, dir) = crosshair(&player, &tools);
     for (kind, team, fight, frozen, at, placed) in spawns {
         let ground = match at {
-            Some((p, from, _)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0)), p.y)),
+            Some((p, from, _)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0), world::Body::Character), p.y)),
             None => ground_point(origin, dir),
         };
         let Some(ground) = ground else {
@@ -1290,7 +1290,7 @@ pub(super) fn spot_at(origin: Vec3, dir: Vec3, freecam: bool, air: f32) -> Optio
     let wall = ray_hit(origin, dir, PICK_RANGE).unwrap_or(PICK_RANGE);
     let t = air.min(wall - AIR_CLEAR).max(0.0);
     let at = origin + dir * t;
-    let below = Vec3::new(at.x, floor_y(at.x, at.z, at.y + AIR_MIN_HEIGHT), at.z);
+    let below = Vec3::new(at.x, floor_y(at.x, at.z, at.y + AIR_MIN_HEIGHT, world::Body::Character), at.z);
     Some(if at.y - below.y < AIR_MIN_HEIGHT { Spot::Ground(below) } else { Spot::Air { at, below } })
 }
 
@@ -1368,7 +1368,7 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             Hook::Place { object: None, .. } => click = true,
             Hook::Place { object: Some(o), at } => match (find_entry(&list.0, o), at) {
                 (Some(i), Some((p, yaw, up))) => {
-                    let below = Vec3::new(p.x, floor_y(p.x, p.y, player.position.y + GROUND + 50.0), p.y);
+                    let below = Vec3::new(p.x, floor_y(p.x, p.y, player.position.y + GROUND + 50.0, world::Body::Character), p.y);
                     let spot = if *up > AIR_MIN_HEIGHT { Spot::Air { at: below + Vec3::Y * *up, below } } else { Spot::Ground(below) };
                     direct.push((i, spot, *yaw));
                 }

@@ -225,7 +225,7 @@ const GROUND_PROBE: f32 = 50.0;
 /// arena's floors no steeper than 65 degrees, as its movement stands on) stands for the ray's
 /// hit.
 pub fn on_ground(at: Vec3) -> Vec3 {
-    let y = world::arena().and_then(|a| a.floor_below(at.x, at.z, at.y)).map(|f| f.0).filter(|&y| at.y - y <= GROUND_PROBE);
+    let y = world::arena().and_then(|a| a.floor_below(at.x, at.z, at.y, world::Body::Character)).map(|f| f.0).filter(|&y| at.y - y <= GROUND_PROBE);
     Vec3::new(at.x, y.unwrap_or(at.y), at.z)
 }
 
