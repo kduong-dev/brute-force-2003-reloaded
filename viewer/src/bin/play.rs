@@ -358,15 +358,16 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
 /// BF_FIND_HOLES (#292): the map seen from above, a metre at a time over its terrain's extent, as
 /// a character walking it finds it (the ground loop's tests, `update_player`): a floor under it
 /// at some height (`Arena::floor_below`, the highest), else terrain too steep to stand on
-/// (`slope_below`) or a rock's flank (`flank_below`), else nothing: a hole, which a character
-/// falls through (`void_fall`; before #292 the demo put it back where it stood, an invisible wall
-/// round the hole). On each floor, the walls within half a metre of the point at a body's heights
-/// over it (`Arena::holding`, as the AI meets them: the hinters too), by what they are. What can be
-/// walked to from where characters start (`seeds`: from a metre's middle to the next one's, a
-/// step up of at most CLIMB_CELL on a floor, half a metre onto or off steep ground, any drop, and
-/// no wall in the way of a body of SCAN_RADIUS (the player's sweep, closed doors among the walls);
-/// one floor a metre, the highest; the slides on slide-flagged ground not counted) is counted
-/// apart: an upper bound on what the player can reach. Prints the counts, then in connected runs
+/// (`slope_below`) or a rock's flank (`flank_below`), else nothing: a hole, where the demo puts a
+/// character back where it stood, an invisible wall round the hole (the game would let it fall:
+/// maps.md "Holes", not applied pending #296). On each floor, the walls within half a metre of
+/// the point at a body's heights over it (`Arena::holding`, as the AI meets them: the hinters
+/// too), by what they are. What can be walked to from where characters start (`seeds`: from a
+/// metre's middle to the next one's, a step up of at most CLIMB_CELL on a floor, half a metre
+/// onto or off steep ground, any drop, and no wall in the way of a body of SCAN_RADIUS (the
+/// player's sweep, closed doors among the walls); one floor a metre, the highest; the slides on
+/// slide-flagged ground not counted) is counted apart: an upper bound on what the player can
+/// reach. Prints the counts, then in connected runs
 /// the holes' rims (hole cells beside a floor or a slope) beside ground walked to and the
 /// hinters' walls on ground walked to; with a file, writes the picture (a binary PPM, a pixel a
 /// metre, -z up): floors grey by height (darker where not walked to), steep terrain red, flanks
@@ -616,9 +617,12 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
         // floor below, on the steep face there if there's one (#264: it slides down it)
         let face = g.get(4).and_then(|&y| world::arena().filter(|a| a.floor_below(g[0], g[1], y).is_none())
             .and_then(|a| a.slope_below(g[0], g[1], y)));
+        // (without a height: on the terrain there, or, with no terrain there, on the highest
+        // floor: #292, m14_c's squad spawn at (-167.14, 87.95) stands on an object's floor with
+        // no terrain under it, where the feet came out at GROUND, -1.05 m, under the floor)
         let ground = match g.get(4) {
             Some(&y) => world::arena().and_then(|a| a.floor_below(g[0], g[1], y)).map_or(y, |f| f.0),
-            None => world::arena().and_then(|a| a.ground(g[0], g[1])).unwrap_or(GROUND),
+            None => world::arena().and_then(|a| a.ground(g[0], g[1]).or_else(|| a.floor_below(g[0], g[1], f32::MAX).map(|f| f.0))).unwrap_or(GROUND),
         };
         p.position = Vec3::new(g[0], ground + 1.0 - GROUND, g[1]);
         p.yaw = (-(g[2] - g[0])).atan2(-(g[3] - g[1]));
@@ -4608,10 +4612,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // the floor under the feet; else one under the body's middle part (a rim it's half
             // over, a sliver of steep ground beside a floor: FUN_0012b950's ledge grace, LEDGE_GRACE,
             // #264); else terrain too steep to stand on, which they fall onto and slide down
-            // (`slide_on_face`, #264); neither: a hole in the level's collision, which they fall
-            // through (`void_fall`, #292). A rock's steep flank under the body's middle more than
-            // a step over that floor is ground too steep to stand on as well (#285,
-            // `Arena::flank_below`; not for one the AI steers, which keeps to floors)
+            // (`slide_on_face`, #264); neither: the edge of the map, so back where they were (a
+            // hole in the level's collision, which the game would let them fall through: #292,
+            // maps.md "Holes", not applied pending #296). A rock's steep flank under the body's
+            // middle more than a step over that floor is ground too steep to stand on as well
+            // (#285, `Arena::flank_below`; not for one the AI steers, which keeps to floors)
             let top = feet + STEP_UP;
             let floor = a.floor_at(u.position.x, u.position.z, top)
                 .or_else(|| (!steered).then(|| a.floor_around(u.position.x, u.position.z, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, top)).flatten());
@@ -4621,19 +4626,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let slope = if floor.is_none() { a.slope_below(u.position.x, u.position.z, top) } else { None };
             let Some((g, n, material, steep)) = flank.map(|(g, n)| (g, n, 0, true)).or(floor.map(|(g, n, m)| (g, n, m, false)))
                 .or(slope.map(|(g, n)| (g, n, 0, true))) else {
-                // (nothing under it at any height: before #292 the demo put it back where it
-                // stood, as at the edge of the map, an invisible wall round every hole; one out of
-                // the world yet, `Player::absent`, stays where it is, as the sweep leaves it)
-                if u.absent {
-                    u.position.x = u.prev_xz.x;
-                    u.position.z = u.prev_xz.y;
-                    continue;
-                }
-                void_fall(u, feet, air);
-                if player_first && i == 0 {
-                    frame_log(u);
-                }
-                u.prev_xz = Vec2::new(u.position.x, u.position.z);
+                held_log(u, "no floor, face or flank under it: the edge of the map, or a hole (#292)");
+                u.position.x = u.prev_xz.x;
+                u.position.z = u.prev_xz.y;
                 continue;
             };
             // a step up that would raise the body into a wall (a rock overhanging the slope it's
@@ -4758,8 +4753,8 @@ fn inside_log(a: &world::Arena, u: &Player) {
 const HELD_SHORT: f32 = 0.01;
 
 /// BF_HELD_LOG=1 (#292): the controlled character put back where it stood this frame by the
-/// ground loop, and why (a step up into a wall, a rock's solid). `walls` prints its sweep's stops
-/// and what held them (`Arena::holding`).
+/// ground loop, and why (no floor, face or flank under it; a step up into a wall; a rock's
+/// solid). `walls` prints its sweep's stops and what held them (`Arena::holding`).
 fn held_log(u: &Player, why: &str) {
     if u.controlled && std::env::var("BF_HELD_LOG").is_ok() {
         let feet = u.position.y + GROUND + u.height.max(0.0);
@@ -4848,49 +4843,6 @@ fn slide_on_face(u: &mut Player, g: f32, n: Vec3, feet: f32, air: bool) {
     }
     u.face = Some(n);
     u.height = 0.0;
-}
-
-/// How low (m) a living character falls before the game stops it: a game object's update
-/// (FUN_00157c40, a character's at 0x11cb94) refuses one whose transform's y is under -500
-/// (0x3a5524, compared at 0x157c61; a dead character's goes on), and the character's update
-/// (FUN_0011caa0) then returns at once (0x11cb9d), its physics step with it: it hangs there.
-const OUT_OF_WORLD: f32 = -500.0;
-/// How far under OUT_OF_WORLD (m) the demo puts the floor a character in the void falls toward
-/// (`void_fall`): more than a frame's fall at the speed a fall reaches there (about 140 m/s after
-/// 550 m, 14 m in the longest frame the demo steps, 0.1 s), so it never lands on it. The demo's.
-const VOID_DEPTH: f32 = 100.0;
-
-/// A character with nothing under it at any height (#292; the ground loop, `update_player`): a
-/// hole in the level's collision, or past the terrain's edge (sdm_e34's chasm, x 44-70, z -5 to
-/// 16, beside the valley's floor; `BF_FIND_HOLES` maps them). The game has no edge there: its sweep
-/// meets nothing and sets the falling flag (FUN_00153810, 0x1539de), and past the ledge grace
-/// (FUN_0012b950) the character falls. On its feet it steps off as off a ledge (JUMP_FALL, its
-/// speed carried, its take-off height kept), on a face it leaves it, in the air it falls on,
-/// toward a floor VOID_DEPTH under OUT_OF_WORLD; there it hangs, as the game stops updating it:
-/// no landing and no fall damage. Before, the demo put it back where it stood, as at the edge of
-/// the map: an invisible wall round every hole. Its feet at `feet`, `air` if it was in the air.
-fn void_fall(u: &mut Player, feet: f32, air: bool) {
-    if !air {
-        u.action = Action::JumpFall;
-        u.vy = 0.0;
-        u.air_velocity = Vec3::new(u.last_velocity.x, 0.0, u.last_velocity.z);
-        u.fall_from = feet;
-        if std::env::var("BF_SLIDE_LOG").is_ok() {
-            println!("t {:.2}: {} steps off into the void at {:.2}", u.sim_time, unit_name(u), Vec3::new(u.position.x, feet, u.position.z));
-        }
-    }
-    u.face = None;
-    u.was_air = true;
-    if feet <= OUT_OF_WORLD {
-        // (where the game stops it)
-        u.vy = 0.0;
-        u.air_velocity = Vec3::ZERO;
-        u.position.x = u.prev_xz.x;
-        u.position.z = u.prev_xz.y;
-    }
-    let floor = OUT_OF_WORLD - VOID_DEPTH;
-    u.position.y = floor - GROUND;
-    u.height = feet.max(OUT_OF_WORLD) - floor;
 }
 
 /// The move `m` (m: this frame's velocity x dt) against a steep face of normal `n`: its part
@@ -5077,11 +5029,11 @@ fn slide(u: &mut Player, a: &world::Arena, g: f32, start: f32, n: Vec3, material
         slid + (here - slid) * w
     };
     // blocked: the game ends the slide when the sweep achieves under a tenth of the move asked
-    // (FUN_0012cd10 -> FUN_0012bf40): a wall, or flat slide-flagged ground, where the slide only
-    // presses down into the floor. The slide's move swept as the character's own is
-    // (`Arena::move_body`, #285: not into a rock at the canyon's foot), from the feet where it
-    // starts (from the ground the own move reached, down a slope, the slope's twin facing into
-    // the ground would have the feet in front of it and push them back up)
+    // (FUN_0012cd10 -> FUN_0012bf40): a wall, the edge of the map, or flat slide-flagged
+    // ground, where the slide only presses down into the floor. The slide's move swept as the
+    // character's own is (`Arena::move_body`, #285: not into a rock at the canyon's foot), from
+    // the feet where it starts (from the ground the own move reached, down a slope, the slope's
+    // twin facing into the ground would have the feet in front of it and push them back up)
     let asked = to - u.prev_xz;
     let to = a.move_body(u.prev_xz, to, BODY_RADIUS, start, start + BODY_HEIGHT, STEP_UP, None, world::Mover::of(u.controlled));
     let kept = if asked.length() > 1e-5 { ((to - u.prev_xz).length() / asked.length()).min(1.0) } else { 1.0 };
@@ -5090,16 +5042,6 @@ fn slide(u: &mut Player, a: &world::Arena, g: f32, start: f32, n: Vec3, material
     match floor {
         Some((g2, _, _)) if across >= SLIDE_BLOCKED * mv.length() => u.position = Vec3::new(to.x, g2 - GROUND, to.y),
         _ => {
-            // (off the floor over a hole, nothing under it at any height: the slide carries it
-            // there and it falls at the slide's speed, `void_fall`; #292, where it stopped at the
-            // rim)
-            if floor.is_none() && across >= SLIDE_BLOCKED * mv.length() && dt > 0.0 && a.floor_below(to.x, to.y, 1e4).is_none()
-                && a.slope_below(to.x, to.y, 1e4).is_none() && a.flank_below(to.x, to.y, 1e4).is_none() {
-                u.position.x = to.x;
-                u.position.z = to.y;
-                u.last_velocity = Vec3::new(mv.x, 0.0, mv.z) / dt;
-                void_fall(u, g, false);
-            }
             u.slide_active = false;
             u.slide_amount = 0.0;
             u.slide_vel = Vec3::ZERO;

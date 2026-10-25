@@ -1052,7 +1052,9 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         };
         // (BF_TEST_GOTO's start is the controlled character's, #292: the spawn names it and brings
         // it into the world, and leaves it where the hook put it; it moved it before, so the hook's
-        // start was lost on the levels whose spawn-triggers place the squad, m14_a-c, m09_c, m05_a)
+        // start was lost on the 25 levels whose spawn-triggers place the squad at the level's
+        // start: m01_b, m02_a-c, m03_a-c, m04_c, m05_a-d, m05_x, m05_y, m07_b, m07_c, m08_a, m08_b,
+        // m09_b, m09_c, m09_x and m14_a-d)
         if controlled && super::test_goto().is_some() {
             u.trigger_name = copy;
             let came = std::mem::take(&mut u.absent);

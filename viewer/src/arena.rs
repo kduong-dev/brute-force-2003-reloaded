@@ -187,9 +187,11 @@ pub enum Mover {
     /// FUN_00112800's test; bf_play's `Player::controlled`): the level's hinters (`Tri::hinter`)
     /// don't hold it, and its move is swept in 4 passes (0x3c05dc)
     Player,
-    /// one the AI moves (a follower, an enemy, a cutscene's walk): the hinters hold it (unless its
-    /// brain's +0x3c4 has bit 12, set while its route jumps between world points, FUN_00026520:
-    /// the demo's AI walks no routes), and it's swept in 3 passes (0x12d183)
+    /// one the AI moves (a follower, an enemy, another member's cutscene walk; the controlled
+    /// character's own cutscene walk stays `Player`, whether or not the game's hold clears the
+    /// player slot's flag): the hinters hold it (unless its brain's +0x3c4 has bit 12, set while
+    /// its route jumps between world points, FUN_00026520: the demo's AI walks no routes), and it's
+    /// swept in 3 passes (0x12d183)
     Ai,
 }
 

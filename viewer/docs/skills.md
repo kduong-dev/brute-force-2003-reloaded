@@ -931,7 +931,9 @@ the takes' watch logs and frames:
   (take24): no hit, his stamina as it was.
 * **The view**, frames beside the takes': e34 at take06's spot (`BF_MAP=e34 BF_CAMERA_DISTANCE=6
   BF_TEST_GOTO=-55.78,30.28,-55.91,30.76 BF_TEST_SKILL=2.0`), m03_a at take08's tower
-  (`BF_MAP=m03_a BF_TEST_GOTO=-182.6,-43.5,-185.16,-48.93 BF_TEST_GO_AT=99 BF_TEST_SKILL=2.0`),
+  (`BF_MAP=m03_a BF_TEST_GOTO=-220.74,-123.17,-185.16,-48.93 BF_TEST_GO_AT=99 BF_TEST_SKILL=2.0`:
+  Tex's spawn, where the view was taken when the start read `-182.6,-43.5`, which the spawn
+  overrode before #292),
   e01 at night (take09: `BF_MAP=e01 BF_TEST_GOTO=-14.8,103.66,-18.16,116.76 BF_TEST_GO_AT=99
   BF_TEST_SKILL=2.0`) and the test map with a friend and two enemies (`BF_NO_SQUAD=1
   BF_TEST_NPC="0.5,tex,friend,dummy,7,13;0.5,shrike soldier@m09_a,enemy,dummy,2,8;0.5,hawk,enemy,dummy,4,4"`):

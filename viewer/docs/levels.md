@@ -180,8 +180,10 @@ all below.
         brighter than the take's and so more contrasty without the bump already. The rock behind
         Tex (frame 330, take03 24 s) shows the take's fine relief, no specks (no pixel of the run
         both twice as bright and 40 luma brighter than without the bump).
-      * m03_a's sand (`BF_MAP=m03_a BF_CHARACTER=0 BF_TEST_GOTO=-182.6,-43.5,-188.2,-51.8
-        BF_TEST_GO_AT=100`, frame 15, against take01 at 1.0 s, the view not matched): 2.61 /
+      * m03_a's sand (`BF_MAP=m03_a BF_CHARACTER=0 BF_TEST_GOTO=-221.61,-113.87,-188.2,-51.8
+        BF_TEST_GO_AT=100`, frame 15, against take01 at 1.0 s, the view not matched; the start is
+        Brutus's spawn, where the run was made when it read `-182.6,-43.5`, which the spawn
+        overrode before #292: the same view, his body now turned to the goal): 2.61 /
         2.46 / 1.69 and 6.50 / 6.03 / 5.48 (the take's 2.01 / 2.20 / 2.44 and 3.01 / 3.71 / 3.27;
         1.23 / 1.21 / 1.18 and 5.84 / 5.17 / 5.28 without); the ripples are there as in the take,
         on sand 3 times as bright.
