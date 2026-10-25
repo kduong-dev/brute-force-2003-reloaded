@@ -1721,11 +1721,12 @@ impl Triggers {
     /// FUN_001ff000). Enabled, its entries aren't read: an event with a subject binds the subject
     /// to each of its targets (FUN_001fe6c0, `bind`: they listen to it from now on), goes on to
     /// them (FUN_001ff0a0), and without h_f49c30af the binding is undone (FUN_001fea10, `unbind`);
-    /// an event without a subject goes nowhere. On the multiplayer maps every pickup spawn-trigger
-    /// sends its OPERATED (the copy as the subject) through one to the timer that respawns it:
-    /// sdm_e34's STAMINA POWER, h_f069b2c2 -> h_f106c777 -> timer h_0021e47f (30 s), which so
-    /// hears the copy's PICKUP_OBJECT. The teleporter pads' plates go through one to a warp-trigger
-    /// (the occupant becomes what it warps; #236's).
+    /// an event without a subject goes nowhere. On the multiplayer maps a pickup spawn-trigger
+    /// sends its OPERATED (the copy as the subject) through one to the timer that respawns it (644
+    /// of their 716 relays; triggers.md "Subject relays" counts the rest): sdm_e34's STAMINA POWER,
+    /// h_f069b2c2 -> h_f106c777 -> timer h_0021e47f (30 s), which so hears the copy's
+    /// PICKUP_OBJECT. The teleporter pads' plates go through one to a warp-trigger (the occupant
+    /// becomes what it warps; #236's).
     fn relay(&mut self, i: usize, ev: Ev) {
         if !self.live[i].enabled {
             return self.base_and_after(i, &ev);

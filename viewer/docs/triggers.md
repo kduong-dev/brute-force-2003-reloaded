@@ -250,8 +250,15 @@ h_015914ab, and three operands as it keeps them: `out`, A (`<h_1554ca7a>`) and B
 ## Subject relays
 
 #278. The class h_0cb602d0 (its name isn't in the data; vtable 0x395308, parser FUN_002012c0,
-handler 0x201310): 644 on the multiplayer maps carry the pickups' respawns, the rest are the
-teleporter pads' (plate -> relay -> warp) and the campaign's AI and destroyer hand-offs.
+handler 0x201310). The multiplayer maps have 716 (mp1-mp4, mp6-mp8 and the seven sdm_ maps):
+* 645 keep their binding (h_f49c30af) and send to timers only: 644 hear a spawn-trigger whose
+  template is a pickup (394 inventory-objects, 175 weapon-objects, 75 item spawns
+  `<h_1d1d4f05>`), the pickups' respawns; one in mp7 nothing sends to;
+* 39 keep it and send to routers: mp1-mp8's power-up spot pickers;
+* 32 don't keep it: the teleporter pads (plate -> relay -> warp).
+
+The campaign's 122 are its teleporter pads and its AI and destroyer hand-offs; with m04_c's plate
+relay to a timer, the levels have 646 relays that keep their binding and send to timers only.
 
 * **What it does** (0x201310). Disabled, its base actions. Enabled, it doesn't read its entries:
   an event with a subject binds that subject to each of its targets (FUN_001fe6c0: the target's

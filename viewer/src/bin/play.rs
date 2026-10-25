@@ -3168,9 +3168,10 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         }).collect();
         commands.insert_resource(Doors { list, panels });
         commands.insert_resource(UsePanel::default());
-        // the power-ups' icons (their idle effects)
+        // the power-ups' icons (their idle effects); a spawn-trigger's template's start with its
+        // copies (play_pickup_spawns.rs, #278)
         let n = if std::env::var("BF_NO_IDLE_FX").is_ok() { 0 } else {
-            bf_viewer::ale_fx::spawn_idle_effects(&mut commands, &mut game.0, level, &mut ale, &mut images, &mut materials)
+            bf_viewer::ale_fx::spawn_idle_effects(&mut commands, &mut game.0, level, &mut ale, &mut images, &mut materials, false)
         };
         println!("{n} idle effects (power-up icons)");
         // the level's placed effect objects: its flies, embers, fires, dust (#258,

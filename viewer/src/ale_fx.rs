@@ -1807,15 +1807,17 @@ fn beams(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, 
 }
 
 /// Start the idle effects of the level's placed objects (the power-ups' icons: object type ->
-/// idle effect type -> its ALE effects). Returns how many started. Not a spawn-trigger's
-/// template's: it isn't in the world, its copies start their own where the trigger puts them
-/// (bf_play's play_pickup_spawns.rs, #278: every power-up of the multiplayer maps).
+/// idle effect type -> its ALE effects). Returns how many started. A spawn-trigger's template's
+/// only with `templates`: in the game it isn't in the world, and its copies start their own where
+/// the trigger puts them (bf_play's play_pickup_spawns.rs, #278: every power-up of the multiplayer
+/// maps), so bf_play leaves them out; the level viewer (bf_level) shows the pickups where they're
+/// placed, their icons with them.
 pub fn spawn_idle_effects(commands: &mut Commands, game: &mut Game, level: &crate::bf::level::Level, assets: &mut AleAssets,
-                          images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) -> usize {
+                          images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>, templates: bool) -> usize {
     let mut n = 0;
-    let templates = level.spawn_templates();
+    let template = level.spawn_templates();
     for (i, o) in level.objects.iter().enumerate() {
-        if templates.contains(&o.name) {
+        if !templates && template.contains(&o.name) {
             continue;
         }
         let Some(list) = game.idle_effects.get(&o.kind).and_then(|t| game.effect_types.get(t)).cloned() else { continue };

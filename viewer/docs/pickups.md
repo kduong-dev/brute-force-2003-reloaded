@@ -369,7 +369,10 @@ and #129 take38 (mp1's walkway).
 * **Not done:** the copy's fall and its fade-in (take20's ~0.3 s; the spawn-trigger's h_eeae96e7
   is 2 s, the demo draws no fade); taking ammo boxes, grenades and power-ups (the demo's walk-over
   of items covers medkits, fruit and DNA canisters only: #17's "found, not in scope", #15); where
-  the game's physics rests a gun copy (lying on its side is take38's look).
+  the game's physics rests a gun copy (lying on its side is take38's look); the multiplayer maps'
+  75 grenade pickups, item spawns `<h_1d1d4f05>` (types h_ecfe0d8c and h_15f9c51a, object-type
+  24): their spawn-triggers fire and their relays bind, but `spawn_copy` copies inventory-objects
+  and weapon-objects only, so none shows (none did before either: #230 hid them as templates).
 * **Test hooks:** `BF_PICKUP_LOG=1` (or `BF_TRIGGER_LOG`, `BF_WEAPON_LOG`) prints each copy made
   (its trigger, name, template, type, place and kind), the item copies listed and each taken.
 * **Verified** ([triggers.md](triggers.md) "Verified" has the commands): sdm_e34's 54 copies at

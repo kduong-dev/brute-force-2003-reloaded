@@ -3,7 +3,12 @@
 `cargo run --release --bin bf_level -- [level]` draws a level from the original archives:
 terrain, every placed object (game objects, pickups) at its transform, the sky, and the level's
 fog, with the power-ups' icons and the level's placed effect objects running (its flies,
-embers, fires, steam and dust: maps.md "Placed effect objects", #258). The default is `sdm_e34`,
+embers, fires, steam and dust: maps.md "Placed effect objects", #258). The spawn-triggers'
+pickup templates are among them, icons and all: every pickup of the multiplayer maps (sdm_e34's
+54, its four power-ups) shows where the level places it, though in the game, and in bf_play,
+it's out of the world and its trigger's copies appear at the trigger instead ([pickups.md](pickups.md),
+"Pickups from spawn-triggers", #278). The viewer runs no triggers. Its other templates
+(characters, effects: [triggers.md](triggers.md), "Spawn-triggers", #230) aren't drawn. The default is `sdm_e34`,
 the squad deathmatch map "Battle of Bulgar" (SDM Level 5 in
 campaign-bf.xml). Right-drag looks around, W/A/S/D/Q/E fly (Shift for faster), 1-9 jump to the
 level's own flyby cameras and 0 to an overview, F toggles fog, P prints the view. Test hooks:

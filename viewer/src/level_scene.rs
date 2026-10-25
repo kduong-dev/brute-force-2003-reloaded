@@ -869,8 +869,8 @@ pub struct Placed {
 /// A spawn-trigger's pickup template (an inventory-object or weapon-object its h_1299668b names,
 /// #278): out of the world (FUN_000dfe90 takes it out as its trigger links), so hidden; its
 /// entity is kept as the model the trigger's copies are made from (bf_play's
-/// play_pickup_spawns.rs), placed where the level puts it. The other templates aren't spawned at
-/// all (#230).
+/// play_pickup_spawns.rs), placed where the level puts it. The level viewer (bf_level), which runs
+/// no triggers, shows it there. The other templates aren't spawned at all (#230).
 #[derive(Component)]
 pub struct SpawnTemplate;
 
