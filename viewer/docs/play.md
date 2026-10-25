@@ -1795,8 +1795,10 @@ start ledge (take14's spot):
 * Held fire one round every 0.33-0.40 s, 0.35 on average (`-- --test BF_MAP=m14_a BF_CHARACTER=3
   BF_TEST_WEAPON="Rail CLVR" BF_TEST_GOTO=-106.0,-173.0,-106.0,-166.0 BF_TEST_GO_AT=100
   BF_CAMERA_PITCH=-0.10 BF_TEST_TRIGGER=3.0-3.08,5.4-5.48,7.8-7.88,10.5-15.5 BF_SHOT_LOG=1`;
-  m14_a's squad spawn moves Tex off the GOTO's start, a few metres): take14's held fire (clip
-  26 -> 17 at game times 10.07-13.16) one every 0.339-0.346 s, 0.343 on average.
+  these runs had Tex at m14_a's squad spawn, (-104.3, -163.1), which moved him off the GOTO's
+  start before #292; the start is kept since, 10 m from there, so the Shrike below is 7 m out
+  where it was 3 m; the Rail's damage has no falloff and its timing no place): take14's held
+  fire (clip 26 -> 17 at game times 10.07-13.16) one every 0.339-0.346 s, 0.343 on average.
 * Damage on a frozen Shrike Soldier 7 m out (take16; the same with `BF_TEST_INSTANT_KILL=0
   BF_TEST_NPC="0.3,shrike soldier@m14_a,enemy,frozen,-106.0,-166.0" BF_TEST_NPC_HP=1.0,all,300
   BF_COMBAT_LOG=1`): 16.1-21.0 on the body (the roll x 1.4 on a x1 part; 12.9 on an upper arm),

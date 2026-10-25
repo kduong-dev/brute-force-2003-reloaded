@@ -195,6 +195,10 @@ Squad movement and deaths follow the game's own data and the captures:
     liquid between a wingman and its place: the demo steers straight, so the wingman waits at
     the shore there (on sdm_e13 the squad starting across the lava from a leader moved by a test
     hook stays where it starts).
+  * The level's hinters (#292, maps.md "Blockers and hinters") are walls to the AI's characters
+    and not to the player's: sdm_e13's band round its outer lava shore holds the wingmen there
+    as the game's AI is held, while the player walks through it into the lava. Its inner lava has
+    no band; there this shore stop is what keeps them out.
   * Checked: `BF_MAP=sdm_e13 BF_CHARACTER=0 BF_START=9 BF_TEST_GOTO=-9.9,-111.3,-21.44,-105
     BF_TEST_GO_AT=4 BF_TEST_HEALTH=5000 BF_LIQUID_LOG=1` (`BF_VIEW_YAW=3.14159` to look back):
     Brutus walks into the lava, Tex and Hawk crouch at the shore and Flint stands on the rock
