@@ -13,7 +13,7 @@
 | Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` (held: asked for again each frame); `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time, as the key toggles. In Tex's berserk Z does nothing and the press is dropped ([skills.md](skills.md)) |
 | M | cycle the ground surface (changes footstep / landing / slide sounds) |
 | click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
-| 1-4 | take control of Brutus / Flint / Hawk / Tex: their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
+| 1-4 | take control of Brutus / Flint / Hawk / Tex (on the test map whoever holds their places, any type, or no one: the squad menu, T, #302, [testtools.md](testtools.md)): their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
 | G | use the item in the item box (the game's LT). A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.625 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw: 15 degrees above the camera's view (9 above the crosshair), a Frag at 17.8 m/s for a tap to 25.6 m/s full, the meter's bottom 30% throwing as a tap (#161: a full Frag looking 9 degrees down lands ~25 m out); the count drops at once, and the scope is left. A placed one (Roller, Sentry; m09_b's Thermo, #82): set down at the feet at the press. A Medkit (either): used at the press, "No need to heal" at full health. Nothing selected: "Inventory is empty". A Tab or B press while G is held drops the charge, and G does nothing more until it's let go. See **Grenades** and **The item box and the item list** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen and the Hat do nothing yet (#21), but Brutus is told "Cannot use" |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold [X] to activate panel." shows (the game's glyph line, X's glyph: E is the demo's X; [hints.md](hints.md)) and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
@@ -28,6 +28,18 @@
 
 A flat test floor for trying things out, only reachable with the `--test` flag. It opens
 straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`).
+
+* **Tex alone** (#302, the product owner's choice): the squad starts with the player's character
+  (Tex, or `BF_CHARACTER`'s) and its other three slots empty. The squad menu (T) puts any
+  character type in a slot, a real squad member (the formation, 1-4, the portraits and health
+  channels, the hand-over at a death), empties one, or changes the player's own type where they
+  stand ([testtools.md](testtools.md), "The squad"). `BF_TEST_FULL_SQUAD=1` starts with the four
+  as before, `BF_TEST_SQUAD=<type>,<type>...` with those; a hook that acts on the squad's members
+  (`BF_TEST_SELECT`, `BF_TEST_KILL`, `BF_TEST_TARGET` ...) starts it with the four too, so the
+  recipes written for them run as before. Any other map (the L menu's levels, `--test
+  BF_MAP=<level>`, the main game) keeps its own squad.
+* **m04_a's music** (#302): its bank plays from the start, mixed as the music menu (U) mixes any
+  level's (test_casp1_amb01, the ambience bed ambience19-2ch under it); U still changes it.
 
 * **Every hand weapon on a rack**, floating and turning in front of the start: the 27 weapon
   definitions with a clip whose model loads (one per model), from the first mission's data,
@@ -86,8 +98,8 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   was counted down only on maps with doors, so on the flat floor it stayed.
 * **Developer tools**: a free camera with a teleport (F), an NPC spawner (N), an object
   spawner (O, in the air from the free camera), any level's buildings and static scenery to put
-  down, drawn and solid as in their levels (P, #185), a sky picker (Y), a music picker (U) and a level
-  switch (L), which takes the test session to any level and back. On a level the rack and the
+  down, drawn and solid as in their levels (P, #185), the squad menu (T, #302), a sky picker (Y),
+  a music picker (U) and a level switch (L), which takes the test session to any level and back. On a level the rack and the
   pickup grid aren't there; the rest of this list is. `--test` with `BF_MAP=<level>` starts on
   that level. See [testtools.md](testtools.md).
 * **The map editor** (#191): F5 switches to its edit mode, out of the gunplay (no character, gun
@@ -348,7 +360,9 @@ Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigg
 radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
 dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); the
 reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); the
-squad's portraits for members not in the world (the tutorial's Tex alone still shows four). A
+squad's portraits for members not in the world (the tutorial's Tex alone still shows four; a
+test session's empty slot shows none, and a slot's member of another type its type's portrait
+or a "?": #302, [testtools.md](testtools.md) "The squad"). A
 test map dummy is no AI target, so nobody knows of a hostile dummy and it never shows.
 
 ### Ammo, reload and the crosshair (#114)

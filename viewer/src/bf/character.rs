@@ -993,6 +993,19 @@ const H_CAMERA_BLOCK: u32 = 0x0D41_E5F1;
 const H_OFFSET_DEAD: u32 = 0xF13F_B0C4;
 const H_OFFSET_5: u32 = 0xE42D_50A5;
 
+/// A character entry's camera block (H_CAMERA_BLOCK, anywhere under the entry), if it has one:
+/// `Game::character_camera`'s by name, and each `CharacterType::camera` (#302).
+pub(crate) fn camera_offsets(e: &Element) -> Option<CameraOffsets> {
+    let c = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK)?;
+    let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
+        .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);
+    Some(CameraOffsets {
+        walk: v(h("offset-walk")), run: v(h("offset-run")), dash: v(h("offset-dash")),
+        ready: v(h("offset-ready")), h_e42d50a5: v(H_OFFSET_5), dead: v(H_OFFSET_DEAD),
+        snipe: v(h("offset-snipe")),
+    })
+}
+
 /// A squad character's special skill and stamina, from its objecttypes character entry
 /// (`common/objecttypes-common.xml` for the campaign squad, `mp_common/objecttypes-sdm_bf.xml`
 /// for squad deathmatch's, see `Game::load_squad_library`):
@@ -1887,14 +1900,8 @@ impl Game {
                     let inventory = e.walk().into_iter().find(|x| x.name == h("inventory"))
                         .map(|i| weapon::hashes(i, h("weapon-name"))).unwrap_or_default();
                     self.character_weapons.insert(name.clone(), inventory);
-                    if let Some(c) = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK) {
-                        let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
-                            .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);
-                        self.character_camera.insert(name.clone(), CameraOffsets {
-                            walk: v(h("offset-walk")), run: v(h("offset-run")), dash: v(h("offset-dash")),
-                            ready: v(h("offset-ready")), h_e42d50a5: v(H_OFFSET_5), dead: v(H_OFFSET_DEAD),
-                            snipe: v(h("offset-snipe")),
-                        });
+                    if let Some(c) = camera_offsets(e) {
+                        self.character_camera.insert(name.clone(), c);
                     }
                     self.characters.push((name, mesh));
                 }

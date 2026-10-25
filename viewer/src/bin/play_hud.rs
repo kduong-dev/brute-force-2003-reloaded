@@ -223,6 +223,13 @@ const BUBBLE_AT: [(f32, f32); 4] = [(96.0, 426.0), (176.0, 383.0), (45.0, 344.0)
 const SKULL_HUMAN: u32 = 0x1834_3E47;
 const SKULL_BRUTUS: u32 = 0x19DA_7869;
 const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
+/// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
+/// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,
+/// this tall (units) with its line's top this many heights above the place's centre, which
+/// centres the glyph on the place (the demo's choice: the game never shows one; at 0.55 the
+/// captures had it 2.5-3 units low).
+const UNKNOWN_CAP: f32 = 14.0;
+const UNKNOWN_TOP: f32 = 0.75;
 
 /// The crosshair: the held weapon's 64 x 64 texture drawn 1:1, centred at (320, 192); in the
 /// scope it moves to the middle, (320, 240), the same size. Measured for all 11 weapons in their
@@ -418,6 +425,48 @@ fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
 #[derive(Component)]
 struct PortraitArt(Handle<Image>, Rect);
 
+/// A face texture `id` as the HUD draws it: its image and its opaque box (texels with alpha over
+/// 40, rows as stored). The faces are packed into a corner of their 32 x 32 textures, so each is
+/// drawn cropped to that box, 1:1, centred on its place (PORTRAIT_CENTRE). Kept in `faces` by
+/// texture; None when the texture isn't found or is clear.
+fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, faces: &mut HashMap<u32, Option<(Handle<Image>, Rect)>>,
+            id: u32) -> Option<(Handle<Image>, Rect)> {
+    if let Some(art) = faces.get(&id) {
+        return art.clone();
+    }
+    let art = (|| {
+        let (w, h, px) = game.texture_rgba(id)?;
+        let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+        for (k, p) in px.chunks_exact(4).enumerate() {
+            if p[3] > 40 {
+                let (x, y) = (k as u32 % w, k as u32 / w);
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+            }
+        }
+        if x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        let handle = texture(game, images, cache, id)?;
+        Some((handle, Rect::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32)))
+    })();
+    faces.insert(id, art.clone());
+    art
+}
+
+/// What a squad slot's portrait place shows (`update_squad_hud`): its own face (`PortraitArt`:
+/// its own type, the main game's, or an empty slot outside a test session, as the tutorial's Tex
+/// alone still shows four); another face (on the test map, #302: a squad type's in another's
+/// place, or another type's portrait from its data, `CharacterType::portrait`); nothing (an empty
+/// slot in a test session); or a "?" (a member whose type has no portrait). A dead member's skull
+/// goes over any of them.
+#[derive(Clone)]
+enum Face {
+    Own,
+    Other(Handle<Image>, Rect),
+    Empty,
+    Unknown,
+}
+
 /// Generated HUD images: the squad health bars, the selection chevrons and the speech icon.
 #[derive(Resource, Default)]
 struct HudGen {
@@ -435,6 +484,9 @@ struct HudGen {
     bubble: Handle<Image>,
     /// skulls for the dead, by character
     skulls: [Handle<Image>; 4],
+    /// the faces drawn so far, by texture (`face_art`): the squad's four, and on the test map any
+    /// type's portrait a squad slot's member shows (#302)
+    faces: HashMap<u32, Option<(Handle<Image>, Rect)>>,
     /// the stamina bar's fill (ENERGY_FILL), remade mixed toward white by its brighten, and the
     /// texture's own texels it's made from
     stamina_fill: Handle<Image>,
@@ -632,8 +684,8 @@ const LABEL_FADE: f32 = 3.0;
 /// trail or brighten carried over and the label shown or hidden (FUN_000b7940; take19 4.867 s).
 #[derive(Resource, Default)]
 pub(crate) struct StaminaBar {
-    /// the character it shows
-    who: Option<usize>,
+    /// the character it shows: its squad slot and type (a type change on the test map is a new one, #302)
+    who: Option<(usize, u32)>,
     /// the value (+0x34) and the shown value (+0x38, the trail's end), in hit points
     value: f32,
     shown: f32,
@@ -717,8 +769,10 @@ enum SquadPart {
     Chevron(usize),
     /// speech icon beside a member's portrait while they talk (by character)
     Bubble(usize),
-    /// portrait (by character): dimmed when dead
+    /// portrait (by squad slot: its member's face, `Face`): its skull when dead
     Portrait(usize),
+    /// the "?" in a slot's place whose member's type has no portrait (UNKNOWN_CAP, #302)
+    Unknown(usize),
     MeterBox,
     MeterFill,
     MeterTick,
@@ -1020,22 +1074,14 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
             commands.spawn((ChildOf(screen), at(57.5 + x0, 305.0 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9))));
         }
         for (i, &(cx, cy)) in PORTRAIT_CENTRE.iter().enumerate() {
-            let Some((w, h, px)) = game.texture_rgba(PORTRAITS[i]) else { continue };
-            // opaque bounding box (texture rows as stored)
-            let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
-            for (k, p) in px.chunks_exact(4).enumerate() {
-                if p[3] > 40 {
-                    let (x, y) = (k as u32 % w, k as u32 / w);
-                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
-                }
-            }
-            if x1 <= x0 || y1 <= y0 { continue }
-            let handle = texture(game, &mut images, &mut cache, PORTRAITS[i]).unwrap_or_default();
-            let (bw, bh) = ((x1 - x0) as f32, (y1 - y0) as f32);
-            let rect = Rect::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32);
+            let Some((handle, rect)) = face_art(game, &mut images, &mut cache, &mut gen.faces, PORTRAITS[i]) else { continue };
+            let (bw, bh) = (rect.width(), rect.height());
             commands.spawn((ChildOf(screen), at(cx - bw / 2.0, cy - bh / 2.0, bw, bh),
                             ImageNode { rect: Some(rect), ..flipped(handle.clone()) }, ZIndex(1),
                             SquadPart::Portrait(i), PortraitArt(handle, rect)));
+            // (a test map squad member whose type has no portrait: a "?" in its place, #302)
+            commands.spawn((ChildOf(screen), game_text("?", cx, cy - UNKNOWN_CAP * UNKNOWN_TOP, UNKNOWN_CAP, MESSAGE_BLUE, Align::Centre),
+                            ZIndex(1), SquadPart::Unknown(i), Visibility::Hidden));
         }
         for (i, &(cx, cy)) in TAB_CENTRE.iter().enumerate() {
             commands.spawn((ChildOf(screen), at(cx - 5.0, cy - 5.0, 10.0, 10.0), flipped(Handle::default()), Part::Tab(i)));
@@ -1128,10 +1174,10 @@ fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<Stam
     let v = player.stamina / player.max_stamina.max(1e-3) * max;
     let v = if v > 0.0 { v.clamp(1.0, max) } else { 0.0 };
     let name = player.skill.name().unwrap_or(0);
-    if bar.who != Some(player.character) {
-        // control passed (or the map began): the new character's, at once
+    if bar.who != Some((player.character, player.kind)) {
+        // control passed, the type changed (or the map began): the new character's, at once
         let on = player.skill.on;
-        *bar = StaminaBar { who: Some(player.character), value: v, shown: v, blink_dir: -1.0, drawn: -1.0, label: name,
+        *bar = StaminaBar { who: Some((player.character, player.kind)), value: v, shown: v, blink_dir: -1.0, drawn: -1.0, label: name,
                             label_alpha: if on { 1.0 } else { 0.0 }, label_hold: if on { LABEL_HOLD } else { 0.0 }, ..default() };
     } else {
         if v != bar.value {
@@ -1204,7 +1250,7 @@ fn update_hud_widgets(
     reserve: Res<super::ammo::Reserve>,
     held_name: Res<super::ammo::HeldName>,
     (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
-    squad: Res<Squad>,
+    (squad, test): (Res<Squad>, Option<Res<super::testmap::TestMap>>),
     use_panel: Res<super::UsePanel>,
     feed: Res<super::pickups::PickupFeed>,
     mut game: ResMut<GameData>,
@@ -1317,7 +1363,9 @@ fn update_hud_widgets(
                 let icon = Some(PLAYER_ICON);
                 let h = icon.and_then(|icon| texture(&mut game.0, &mut images, &mut cache, icon));
                 let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad() && u.dead);
-                show(&mut vis, h.is_some() && !dead);
+                // (an empty slot of a test session's squad has none, as it has no face: #302)
+                let empty = test.is_some() && !std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad());
+                show(&mut vis, h.is_some() && !dead && !empty);
                 if let (Some(mut img), Some(h)) = (img, h) {
                     if img.image != h { img.image = h; }
                 }
@@ -1437,9 +1485,10 @@ fn update_squad_hud(
     time: Res<Time>,
     player: Res<Player>,
     squad: Res<Squad>,
-    game: Res<GameData>,
+    mut game: ResMut<GameData>,
     mut gen: ResMut<HudGen>,
     mut images: ResMut<Assets<Image>>,
+    (mut cache, test): (ResMut<HudImages>, Option<Res<super::testmap::TestMap>>),
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
     flash: Res<BarFlash>,
@@ -1448,6 +1497,8 @@ fn update_squad_hud(
     mut name_text: Query<(&mut RecordText, &mut Visibility), (With<NameLabelText>, Without<SquadPart>)>,
 ) {
     let dt = frame_dt(&time);
+    // squad slot c's member (the controlled character or one of the squad's, not an NPC)
+    let member = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad());
     // the name label (LABEL_SHOW): each new selection shows the name for LABEL_SHOW + LABEL_OUT
     // (0xc9440 from the select widget's choice, FUN_000c8cc0, its own timer after: it runs on past
     // the hand-over, which comes SELECT_TIME after the selection); whole from its first frame,
@@ -1469,7 +1520,9 @@ fn update_squad_hud(
             let share = (label.timer / LABEL_OUT).min(1.0);
             let k = 1.0 - share;
             let scale = LABEL_SCALE + LABEL_SWELL * k * k * k;
-            let name = CHARACTERS[label.character % CHARACTERS.len()].to_uppercase();
+            // (the slot's member's name: on the test map any type's, #302)
+            let name = member(label.character).map_or_else(|| CHARACTERS[label.character % CHARACTERS.len()].to_string(),
+                                                            |u| display_name(u, &game.0)).to_uppercase();
             if t.text != name {
                 t.text = name;
             }
@@ -1498,6 +1551,34 @@ fn update_squad_hud(
     let meter_shift = super::reticle::crosshair_centre(&player).y - CROSSHAIR_Y;
     let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c && m.in_squad()).map(|m| (c, m.position)));
     let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
+    // each slot's place: its member's face (`Face`), and its skull once it's dead (its type's: a
+    // squad type's own, another type's from its data, `CharacterType::skull`, else the human one)
+    let looks: Vec<(Face, Option<Handle<Image>>)> = (0..PORTRAITS.len()).map(|c| {
+        let m = member(c);
+        let face = match m {
+            None if test.is_some() => Face::Empty,
+            None => Face::Own,
+            Some(u) if u.kind == squad_type(c) => Face::Own,
+            Some(u) => {
+                let id = match u.data_slot() {
+                    OTHER => game.0.character_type(u.kind).map_or(0, |t| t.portrait),
+                    d => PORTRAITS[d],
+                };
+                match (id != 0).then(|| face_art(&mut game.0, &mut images, &mut cache, &mut gen.faces, id)).flatten() {
+                    Some((h, r)) => Face::Other(h, r),
+                    None => Face::Unknown,
+                }
+            }
+        };
+        let skull = m.filter(|u| u.dead).map(|u| match u.data_slot() {
+            OTHER => {
+                let id = game.0.character_type(u.kind).map_or(0, |t| t.skull);
+                texture(&mut game.0, &mut images, &mut cache, if id != 0 { id } else { SKULL_HUMAN }).unwrap_or_default()
+            }
+            d => gen.skulls[d].clone(),
+        });
+        (face, skull)
+    }).collect();
     // the squad's blips: its living members in the world, not the NPCs the triggers or the test
     // tools spawned (the tutorial's terrorists showed as squad blips before #228)
     let members: Vec<&Player> = squad.0.iter().filter(|m| m.in_squad() && !m.dead && !m.absent && !m.stand_in).collect();
@@ -1546,16 +1627,29 @@ fn update_squad_hud(
                 }
             }
             SquadPart::Portrait(c) => {
-                if let (Some(mut img), Some(art)) = (img, art) {
-                    let (want, rect, color) = if dead(c) {
-                        (gen.skulls[c].clone(), None, SKULL_TINT)
-                    } else {
-                        (art.0.clone(), Some(art.1), Color::WHITE)
+                if let (Some(mut img), Some(art), Some((face, skull))) = (img, art, looks.get(c)) {
+                    // (the face and its box: the slot's own, or another one, centred in the place)
+                    let (own, box_) = match face {
+                        Face::Other(h, r) => ((h.clone(), *r), *r),
+                        _ => ((art.0.clone(), art.1), art.1),
+                    };
+                    show(&mut vis, skull.is_some() || matches!(face, Face::Own | Face::Other(..)));
+                    let (want, rect, color) = match skull {
+                        Some(s) => (s.clone(), None, SKULL_TINT),
+                        None => (own.0, Some(own.1), Color::WHITE),
                     };
                     if img.image != want { img.image = want; }
                     if img.rect != rect { img.rect = rect; }
                     img.color = color;
+                    let (cx, cy) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
+                    let want = at(cx - box_.width() / 2.0, cy - box_.height() / 2.0, box_.width(), box_.height());
+                    if node.width != want.width || node.height != want.height || node.left != want.left || node.top != want.top {
+                        (node.left, node.top, node.width, node.height) = (want.left, want.top, want.width, want.height);
+                    }
                 }
+            }
+            SquadPart::Unknown(c) => {
+                show(&mut vis, looks.get(c).is_some_and(|(face, skull)| matches!(face, Face::Unknown) && skull.is_none()));
             }
             SquadPart::Health(c) => {
                 let Some(f) = health(c) else { show(&mut vis, false); continue };

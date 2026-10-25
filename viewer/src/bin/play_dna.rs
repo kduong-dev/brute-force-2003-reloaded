@@ -85,8 +85,9 @@ const CHIP_SORT_BIAS: f32 = 1000.0;
 /// the code: the drop's spawn code wasn't traced (its <h_0f77963d inventory-drop> is read at
 /// 0x156666 of FUN_00156390, every game object's attribute parser, placements included).
 const CHIP_AHEAD: f32 = 0.5;
-/// The chip's middle over the dead character's feet (m), by CHARACTERS index (brutus, flint,
-/// hawk, tex). Tex 1.098 (take01 standing, take02 kneeling: the same) and Hawk 0.925 (0.92-0.93,
+/// The chip's middle over the dead character's feet (m), by CHARACTERS index of its type
+/// (`Player::data_slot`: brutus, flint, hawk, tex; a type of its own on the test map, #302, takes
+/// Brutus's, OTHER % 4: a guess for a type never measured). Tex 1.098 (take01 standing, take02 kneeling: the same) and Hawk 0.925 (0.92-0.93,
 /// two deaths) are read from the game's memory. Brutus and Flint weren't measured: theirs are
 /// the depth of their bind pose's lowest vertex under the model's origin (1.016, 1.064), which
 /// is Hawk's measured value within 2 mm (0.927) but not Tex's (1.204): a guess. What sets it per
@@ -225,7 +226,7 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         .map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()).filter(|v| v.len() >= 2);
     if let Some(t) = test.filter(|t| !test_dropped.0 && player.sim_time >= t.get(2).copied().unwrap_or(0.5)) {
         test_dropped.0 = true;
-        let at = Vec3::new(t[0], floor_y(t[0], t[1], player.position.y + 2.0) + CHIP_HEIGHT[player.character % 4], t[1]);
+        let at = Vec3::new(t[0], floor_y(t[0], t[1], player.position.y + 2.0) + CHIP_HEIGHT[player.data_slot() % 4], t[1]);
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {
             println!("BF_TEST_CHIP: a memory chip at {at:.2}, t {:.2}", player.sim_time);
@@ -240,7 +241,7 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         // where they stood as they died, along the way they faced (forward is -z turned by yaw)
         let ahead = Vec3::new(-u.yaw.sin(), 0.0, -u.yaw.cos()) * CHIP_AHEAD;
         let feet = floor_y(u.position.x, u.position.z, u.position.y + GROUND + 1.0);
-        let at = Vec3::new(u.position.x + ahead.x, feet + CHIP_HEIGHT[u.character % 4], u.position.z + ahead.z);
+        let at = Vec3::new(u.position.x + ahead.x, feet + CHIP_HEIGHT[u.data_slot() % 4], u.position.z + ahead.z);
         spawn_chip(&mut commands, &chip, at);
         if std::env::var("BF_PICKUP_LOG").is_ok() {
             println!("{} dropped a memory chip at {at:.2} (t {:.2}): body at {:.2}, feet {feet:.2}, yaw {:.2}",
@@ -265,12 +266,12 @@ fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
               mut feed: ResMut<super::pickups::PickupFeed>, chips: Query<(Entity, &Transform), With<Chip>>) {
     let Some(chip) = chip else { return };
     // (index 0 the player, then the squad; test map NPCs never take one)
-    let feet: Vec<(usize, usize, Vec3)> = std::iter::once(&*player).chain(squad.0.iter()).enumerate()
+    let feet: Vec<(usize, String, Vec3)> = std::iter::once(&*player).chain(squad.0.iter()).enumerate()
         .filter(|(_, u)| !u.dead && u.in_squad())
-        .map(|(i, u)| (i, u.character, u.position + Vec3::Y * GROUND)).collect();
+        .map(|(i, u)| (i, unit_name(u), u.position + Vec3::Y * GROUND)).collect();
     for (e, t) in &chips {
         let at = t.translation;
-        let Some(&(i, who, f)) = feet.iter().find(|(_, _, f)| f.distance(at) < REACH) else { continue };
+        let Some((i, who, f)) = feet.iter().find(|(_, _, f)| f.distance(at) < REACH).cloned() else { continue };
         commands.entity(e).despawn();
         // the sound is the taker's: play_sounds makes a squadmate's quieter with distance
         if chip.sound != 0 {
@@ -280,7 +281,7 @@ fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
         // a line of its own, without a count (n 0, see play_hud.rs)
         feed.0.push(super::pickups::FeedLine { name: chip.message.clone(), count: 0, left: super::pickups::FEED_TIME, full: false });
         if std::env::var("BF_PICKUP_LOG").is_ok() {
-            println!("{} took a memory chip at {at:.2} (t {:.2}) from {:.2} m across, {:.2} m 3D: {:?}", CHARACTERS[who], player.sim_time,
+            println!("{who} took a memory chip at {at:.2} (t {:.2}) from {:.2} m across, {:.2} m 3D: {:?}", player.sim_time,
                      Vec2::new(at.x - f.x, at.z - f.z).length(), f.distance(at), chip.message);
         }
     }

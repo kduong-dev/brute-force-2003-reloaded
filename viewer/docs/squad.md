@@ -11,6 +11,11 @@ Squad movement and deaths follow the game's own data and the captures:
   down (EVT_SHOT_BLOCKED_BY_FRIEND), sidestep now and then when you shoot them
   (EVT_DAMAGED_BY_PC -> GOAL_DODGE) and dive away from a grenade that lands near them
   (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip).
+* **The test map's squad** (#302, play_testsquad.rs, [testtools.md](testtools.md) "The squad"):
+  it starts with the player's character alone, and its squad menu (T) puts any character type in
+  any of the four slots. The slot (`Player::character`) is the place on the HUD, the key and the
+  identity for the hand-over; what this page reads by a character's name (chatter, skills, the
+  camera, Brutus not kneeling) goes by its type (`Player::data_slot`), the same in the main game.
 * **The tutorial's Confed marines** (#227, [brain.md](brain.md)): the V-squad's two follow Tex
   with this follow, from the formation places after the squad's own, see by their sensor (80 m,
   90 degrees either way) and fire with the AI's aim (accuracy 0.6). In take11 they trailed Tex

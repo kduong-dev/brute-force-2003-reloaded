@@ -23,9 +23,13 @@
 //!    an "H: help" hint.
 //!  - The developer tools (play_testtools.rs): a free camera with a teleport, an NPC spawner
 //!    and an object spawner; (play_testworld.rs) a sky and a music picker and a level switch;
-//!    and (play_testscenery.rs) any level's buildings and static scenery to place. On a level
-//!    the switch went to (or `--test` with BF_MAP) everything here but the rack and the grid
-//!    holds: the tools, instant kill, X, the grenade stacks, the help panel.
+//!    (play_testscenery.rs) any level's buildings and static scenery to place; and
+//!    (play_testsquad.rs) the squad menu. On a level the switch went to (or `--test` with BF_MAP)
+//!    everything here but the rack and the grid holds: the tools, instant kill, X, the grenade
+//!    stacks, the help panel.
+//!  - The squad starts with the player's character alone (Tex, or BF_CHARACTER's), the squad
+//!    menu (T) filling the other slots with any type (#302, play_testsquad.rs `start`), and m04_a's
+//!    music plays (play_testworld.rs `TEST_MUSIC`): the product owner's choices.
 //!  - The map editor (play_editor.rs, #191): F5 switches between editing (the squad out of the
 //!    world, a free camera, the tools at the mouse pointer) and playing. `--edit` in place of
 //!    `--test` starts the session editing.
@@ -163,6 +167,7 @@ pub fn plugin(app: &mut App) {
     super::testtools::plugin(app);
     super::testworld::plugin(app);
     super::testscenery::plugin(app);
+    super::testsquad::plugin(app);
     super::editor::plugin(app);
     app.init_resource::<Rack>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))

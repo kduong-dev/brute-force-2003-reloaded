@@ -348,12 +348,14 @@ pub fn view(p: &Player) -> (Vec3, Quat) {
     (p.rig.pivot + turn * (p.rig.dir * p.rig.distance), turn)
 }
 
-/// `character`'s boom from its type's offset-walk (the camera block h_0d41e5f1, FUN_0012eca0): its
+/// `p`'s boom from its type's offset-walk (the camera block h_0d41e5f1, FUN_0012eca0; play.rs
+/// `camera_offsets`: the squad's by name, so a squad type in another's slot on the test map keeps
+/// its own, and another type's its own, #302): its
 /// distance (m; BF_CAMERA_DISTANCE overrides it) and its direction in the aim frame, (sin yaw cos
 /// el, sin el, cos yaw cos el) from its elevation and yaw (degrees). Tex 3.9 m at 0.9, Brutus 3.4
 /// at 7, Flint 3.2 at 1, Hawk 2.9 at 1.5 (take01 / 10-12: 3.915 / 3.420 / 3.225 / 2.919 level).
-fn boom_of(game: &Game, character: usize) -> (f32, Vec3) {
-    let walk = CHARACTERS.get(character).and_then(|n| game.character_camera.get(*n)).map(|c| c.walk).unwrap_or([0.0; 3]);
+fn boom_of(game: &Game, p: &Player) -> (f32, Vec3) {
+    let walk = camera_offsets(game, p).map(|c| c.walk).unwrap_or([0.0; 3]);
     let (d, dir) = if walk == [0.0; 3] {
         (DEFAULT_BOOM, Vec3::Z)
     } else {
@@ -378,7 +380,7 @@ fn wanted_pivot(p: &Player) -> Vec3 {
 /// plus the aim shift along the crosshair's ray (in the aim frame, as the camera's own frame is);
 /// scoped, both blended by the scope's progress toward the scope's camera.
 fn params(p: &Player, game: &Game) -> (Vec3, Vec3) {
-    let (d, dir) = boom_of(game, p.character);
+    let (d, dir) = boom_of(game, p);
     let dolly = 1.0 + DOLLY_PER_PITCH * p.cam_pitch;
     let mut boom = dir * (d * dolly);
     let s = (p.rig.shift * SHIFT_RAMP).clamp(0.0, 1.0);
@@ -470,7 +472,7 @@ fn wall_test(pivot: Vec3, back: Vec3, d: f32) -> (f32, Wall) {
 /// no aim shift): the distance it may have and the boom it wants (play.rs `clear_follow_yaw`, the
 /// hand-over's choice of heading).
 pub fn room_at(p: &Player, game: &Game, yaw: f32) -> (f32, f32) {
-    let (d, dir) = boom_of(game, p.character);
+    let (d, dir) = boom_of(game, p);
     let full = d * (1.0 + DOLLY_PER_PITCH * p.cam_pitch);
     let turn = Quat::from_euler(EulerRot::YXZ, yaw, p.cam_pitch, 0.0);
     (wall_test(wanted_pivot(p), turn * dir, full).0, full)
@@ -503,8 +505,8 @@ fn alpha_for(c: f32) -> f32 {
     (ALPHA_FLOOR - ALPHA_STEP) * (1.0 - x * x) + ALPHA_STEP
 }
 
-/// The bounding sphere's radius the body's fade takes (m), by squad slot (Brutus, Flint, Hawk,
-/// Tex), round the scene node (`sphere`). Fits [F] to the takes' alpha (a72c) through the model
+/// The bounding sphere's radius the body's fade takes (m), by the type's squad character
+/// (`Player::data_slot`: Brutus, Flint, Hawk, Tex), round the scene node (`sphere`). Fits [F] to the takes' alpha (a72c) through the model
 /// (FUN_0006d240 + FUN_0011be80) over their steady rows, the centre on the node: Tex 1.28 (takes
 /// 01-05, 09, 13, 14, 17, 20: 3,190 rows, rms 0.0035, none misjudged), Flint 1.13 (take11: rms
 /// 0.0005, 1.0-1.16 all fit), Hawk 0.97 (take12: 0.85-1.0 fit), Brutus 1.0 (take10: 1.1 and up
@@ -518,7 +520,7 @@ const FADE_RADIUS: [f32; SQUAD] = [1.0, 1.13, 0.97, 1.28];
 /// the squad's; another's the model's union (`Character::bounds`) radius.
 fn sphere(u: &Player) -> Option<(Vec3, f32)> {
     let l = u.loaded.as_ref()?;
-    let radius = FADE_RADIUS.get(u.character).copied().or(l.model.bounds.map(|b| b.1))?;
+    let radius = FADE_RADIUS.get(u.data_slot()).copied().or(l.model.bounds.map(|b| b.1))?;
     Some((missile::root_point(u), radius))
 }
 

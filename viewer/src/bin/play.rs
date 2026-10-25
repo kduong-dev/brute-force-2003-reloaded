@@ -68,10 +68,12 @@ use bf_viewer::bf::level::Level;
 const CHARACTERS: [&str; 5] = ["brutus", "flint", "hawk", "tex", ""];
 /// How many of CHARACTERS are the squad: the slots control passes between.
 const SQUAD: usize = 4;
-/// The slot of a character of any other type (a test map NPC, #128), whose own data is its type's
-/// (`Player::kind`: its model, HP, weapons, flesh, decals, and its damage, play_damage.rs). Its
-/// name is empty: what's still looked up by slot name (chatter, skills, the scope and camera)
-/// finds nothing there, so it says nothing and has no skill.
+/// The CHARACTERS index of a character of any other type: a test map NPC's slot (#128), and the
+/// data slot (`Player::data_slot`) of any character whose type isn't one of the squad's four (a
+/// test map squad member of another type, #302), whose own data is its type's (`Player::kind`:
+/// its model, HP, weapons, flesh, decals, and its damage, play_damage.rs). Its name is empty:
+/// what's still looked up by the squad's names (chatter, skills, the scope and camera) finds
+/// nothing there, so it says nothing and has no skill.
 const OTHER: usize = 4;
 /// The crossfade between two gait or action clips (s): the demo's (the game's MOTION
 /// `transition`s aren't read here); a change between the carried and the ready set takes the
@@ -554,13 +556,25 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
                  difficulty.step(testtools::ENEMY_TEAM), difficulty.step(0));
     }
     commands.insert_resource(difficulty);
+    // (the test map of a test session: its own start squad, below)
+    let test_map = testmap::requested() && map == "flat";
     commands.insert_resource(CurrentMap(map));
     // a level whose squad its spawn-triggers spawn starts each member at its own (#102,
     // play_triggers.rs), led by BF_CHARACTER's if the level has them
     let spawns = level.as_ref().map(|l| triggers::squad_spawns(&game, l)).unwrap_or_default();
     let start = spawns.leader(std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % SQUAD);
-    commands.insert_resource(player_at_start(start, &spawns));
-    commands.insert_resource(squad_at_start(start, deathmatch, &spawns));
+    let mut player = player_at_start(start, &spawns);
+    let mut squad = squad_at_start(start, deathmatch, &spawns);
+    // the test map starts with the player's character alone, or the squad its hooks ask for
+    // (#302, play_testsquad.rs); any other map with its own squad
+    if test_map {
+        testsquad::start(&game, &mut player, &mut squad, deathmatch);
+    }
+    // (the map's squad slots, which the test tools' squad menu changes and the map editor's play
+    // makes its squad from)
+    commands.insert_resource(testsquad::Roster::of(&player, &squad));
+    commands.insert_resource(player);
+    commands.insert_resource(squad);
     commands.insert_resource(spawns);
     commands.insert_resource(GameData(game));
     commands.insert_resource(MapLevel(level));
@@ -707,30 +721,47 @@ fn squad_around(start: usize, origin: Option<(Vec3, f32)>, deathmatch: bool, spa
         if let Some(s) = spawns.of(c) {
             s.dress(&mut m);
         }
-        let f = FORMATION[slot % FORMATION.len()];
-        let top = origin.map_or(GROUND, |(at, _)| at.y + 1.0);
-        m.position = match origin {
-            Some((at, yaw)) => Vec3::new(at.x, 0.0, at.z) + Quat::from_rotation_y(yaw) * Vec3::new(f.x * 0.5, 0.0, f.y * 0.5),
-            None => Vec3::new(f.x, 0.0, f.y),
-        };
-        if let Some(a) = world::arena() {
-            let feet = floor_y(m.position.x, m.position.z, top);
-            let q = a.push_out(Vec2::new(m.position.x, m.position.z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP);
-            m.position = Vec3::new(q.x, 0.0, q.y);
+        place_in_formation(&mut m, origin, slot);
+        if slot == 0 {
+            test_target(&mut m);
         }
-        // test hook: BF_TEST_TARGET=1 stands the first squadmate 8 m in front of a
-        // BF_TEST_GOTO start (in the line of fire, for BF_TEST_FIRE)
-        let mut top = top;
-        if let (0, true, Some(g)) = (slot, std::env::var("BF_TEST_TARGET").is_ok(), test_goto()) {
-            m.position = Vec3::new(g[0], 0.0, g[1] - 8.0);
-            top = 200.0;
-        }
-        m.position.y = floor_y(m.position.x, m.position.z, top) - GROUND;
-        m.prev_xz = Vec2::new(m.position.x, m.position.z);
-        m.surface = usize::MAX;
         m
     }).collect();
     Squad(if deathmatch { vec![] } else { members })
+}
+
+/// Puts squad member `m` at formation place `place` (FORMATION) round `origin` (a place and the
+/// way it faces; None: the flat floor's origin, facing -z): half the formation's spacing round a
+/// place (a map's start, the map editor's play from here), its whole spacing round the flat
+/// floor's origin; on the floor (under `origin`'s height + 1 m) and out of the walls there.
+/// `squad_around`'s, and the test map's squad menu's for a member it adds (#302,
+/// play_testsquad.rs).
+fn place_in_formation(m: &mut Player, origin: Option<(Vec3, f32)>, place: usize) {
+    let f = FORMATION[place % FORMATION.len()];
+    let top = origin.map_or(GROUND, |(at, _)| at.y + 1.0);
+    m.position = match origin {
+        Some((at, yaw)) => Vec3::new(at.x, 0.0, at.z) + Quat::from_rotation_y(yaw) * Vec3::new(f.x * 0.5, 0.0, f.y * 0.5),
+        None => Vec3::new(f.x, 0.0, f.y),
+    };
+    if let Some(a) = world::arena() {
+        let feet = floor_y(m.position.x, m.position.z, top);
+        let q = a.push_out(Vec2::new(m.position.x, m.position.z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP);
+        m.position = Vec3::new(q.x, 0.0, q.y);
+    }
+    m.position.y = floor_y(m.position.x, m.position.z, top) - GROUND;
+    m.prev_xz = Vec2::new(m.position.x, m.position.z);
+    m.surface = usize::MAX;
+}
+
+/// Test hook: BF_TEST_TARGET=1 stands `m`, the first squadmate, 8 m in front of a BF_TEST_GOTO
+/// start (in the line of fire, for BF_TEST_FIRE), on the floor under 200 m. `squad_around`'s,
+/// and the test map's start squad's (play_testsquad.rs `start`).
+fn test_target(m: &mut Player) {
+    if let (true, Some(g)) = (std::env::var("BF_TEST_TARGET").is_ok(), test_goto()) {
+        m.position = Vec3::new(g[0], 0.0, g[1] - 8.0);
+        m.position.y = floor_y(m.position.x, m.position.z, 200.0) - GROUND;
+        m.prev_xz = Vec2::new(m.position.x, m.position.z);
+    }
 }
 
 /// The entities there were when a map began: everything else is the map's, removed when it
@@ -995,6 +1026,8 @@ mod testtools;
 mod testworld;
 #[path = "play_testscenery.rs"]
 mod testscenery;
+#[path = "play_testsquad.rs"]
+mod testsquad;
 #[path = "play_editor.rs"]
 mod editor;
 #[path = "play_menu.rs"]
@@ -2241,14 +2274,17 @@ struct Shot {
 
 #[derive(Resource)]
 struct Player {
-    /// the squad slot (a CHARACTERS index): who of the four this is, or OTHER
+    /// the squad slot (a CHARACTERS index): whose of the four places it holds, its portrait's place
+    /// on the HUD, its key (1-4) and its identity for the hand-over (`Who::Squad`); a test map
+    /// NPC's is its type's squad character, or OTHER
     character: usize,
     /// its character type (#128: a `Game::character_types` key, the hash of the type's `<base
-    /// name>`): the squad's own (`squad_type`), or a test map NPC's of any type. Its model,
-    /// clips, HP, weapons, flesh and decals come from it
+    /// name>`): a squad member's is its slot's own (`squad_type`) in the main game, any on the test
+    /// map (#302, play_testsquad.rs); a test map NPC's any. Its model, clips, HP, weapons, flesh
+    /// and decals come from it, and its data from the squad's tables by `data_slot`
     kind: u32,
-    /// its name for logs (`unit_name`), set by `spawn_unit`: its squad slot's ("brutus"), or for
-    /// OTHER its type's display name (`Game::type_label`); "" before it's spawned. Kept here
+    /// its name for logs (`unit_name`), set by `spawn_unit`: its type's squad name ("brutus"), or
+    /// for a type of its own its display name (`Game::type_label`); "" before it's spawned. Kept here
     /// rather than in `Loaded`, which the update systems take out of the Player while they step it
     name: String,
     loaded: Option<Loaded>,
@@ -2593,22 +2629,57 @@ fn squad_type(c: usize) -> u32 {
     CHARACTERS.get(c).filter(|n| !n.is_empty()).map_or(0, |n| bf_viewer::bf::hash::h(n))
 }
 
-/// A character's name for logs: as spawned (`Player::name`: its squad slot's, "brutus", or for
-/// OTHER its type's display name), before that its slot's name or its type's key.
+/// The squad character whose data a character of type `kind` has (the CHARACTERS name its
+/// name-keyed tables go by: chatter, skills, camera, loadout): the squad member's whose type it
+/// is, else OTHER (a type of its own). In the main game a squad member's is its slot; on the test
+/// map a slot may hold any type (#302, play_testsquad.rs), and a test map NPC's slot is this.
+fn squad_of(kind: u32) -> usize {
+    (0..SQUAD).find(|&c| squad_type(c) == kind).unwrap_or(OTHER)
+}
+
+/// A character's name for logs: as spawned (`Player::name`: its type's squad name, "brutus", or
+/// another type's display name), before that its type's squad name or its key.
 fn unit_name(u: &Player) -> String {
     if !u.name.is_empty() {
         u.name.clone()
-    } else if u.character == OTHER {
+    } else if u.own_type() {
         format!("h_{:08x}", u.kind)
     } else {
-        CHARACTERS[u.character].to_string()
+        u.data_name().to_string()
     }
 }
 
-/// `unit_name` by character type alone: a squad type's slot name ("flint"), any other type's
-/// display name (`Game::type_label`).
+/// `unit_name` by character type alone: a squad type's name ("flint"), any other type's display
+/// name (`Game::type_label`).
 fn kind_name(kind: u32, game: &Game) -> String {
-    (0..SQUAD).find(|&c| squad_type(c) == kind).map_or_else(|| game.type_label(kind), |c| CHARACTERS[c].to_string())
+    match squad_of(kind) {
+        OTHER => game.type_label(kind),
+        c => CHARACTERS[c].to_string(),
+    }
+}
+
+/// `p`'s camera block (`CameraOffsets`: its follow camera's boom, play_camera.rs `boom_of`, and
+/// the death camera's framing, play_deathcam.rs): a squad type's by its name
+/// (`Game::character_camera`, which a squad deathmatch map's library sets), a type of its own's
+/// its type's (`CharacterType::camera`: FUN_0012eca0 reads the type's; #302, a test map squad
+/// member may be any type). None without one.
+fn camera_offsets<'a>(game: &'a Game, p: &Player) -> Option<&'a bf_viewer::bf::character::CameraOffsets> {
+    if p.own_type() {
+        game.character_type(p.kind).and_then(|t| t.camera.as_ref())
+    } else {
+        game.character_camera.get(p.data_name())
+    }
+}
+
+/// A character's name as the screen shows it: a squad type's capitalised ("Flint"), any other
+/// type's display name ("Shrike Soldier"). The test map's menus and messages, the squad switch's
+/// label (play_hud.rs) and the refusal of a medkit (play_pickups.rs).
+fn display_name(u: &Player, game: &Game) -> String {
+    if u.own_type() {
+        return game.type_label(u.kind);
+    }
+    let mut c = u.data_name().chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
 /// A character's name for logs by its identity alone (a shooter, a gas cloud's or a damage
@@ -2693,10 +2764,30 @@ impl Player {
         self.meter_after = (0.0, 0.0);
     }
 
-    /// One of the squad (Brutus, Flint, Hawk, Tex as the game has them), not a test map NPC: the
-    /// one control can pass to, shown on the HUD's portraits.
+    /// One of the squad (Brutus, Flint, Hawk, Tex as the game has them; on the test map any type
+    /// in their slots, #302), not a test map NPC: the one control can pass to, shown on the HUD's
+    /// portraits.
     fn in_squad(&self) -> bool {
         self.npc.is_none()
+    }
+
+    /// The squad character whose data it has (`squad_of` its type): its slot in the main game,
+    /// OTHER for a type of its own. What the tables keyed by the squad's names are read by,
+    /// where `character` is the slot (its HUD place, its key, the hand-over).
+    fn data_slot(&self) -> usize {
+        squad_of(self.kind)
+    }
+
+    /// Its type's squad name ("brutus"), the key of the name-keyed tables (`Game::chatter`,
+    /// `character_skills`, `character_camera` ...); "" for a type of its own, which finds none.
+    fn data_name(&self) -> &'static str {
+        CHARACTERS[self.data_slot()]
+    }
+
+    /// A type of its own (none of the squad's four): its data is its type's (`spawn_unit`), its
+    /// behaviour play_enemies.rs's, and it has no skill, voice lines or squad portrait.
+    fn own_type(&self) -> bool {
+        self.data_slot() == OTHER
     }
 
     /// Who this is, for effects that reach a character later (Energy bolts, Sonic rings): a
@@ -2839,7 +2930,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
             }
             m.idle_left -= dt;
         }
-        m.crouch_wanted = m.character != 0 && m.still_time > KNEEL_AFTER + m.kneel_jitter && !m.idle_cautious;
+        m.crouch_wanted = m.data_slot() != 0 && m.still_time > KNEEL_AFTER + m.kneel_jitter && !m.idle_cautious;
     }
     m.face_yaw = Some(heading);
     let cautious = m.idle_cautious && m.move_input == Vec2::ZERO;
@@ -3914,12 +4005,13 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
 }
 
 /// Load a character and spawn it with its weapons and clips into `p`: its type's model (#128),
-/// and its data from the tables keyed by its slot's name where they have it (the squad's: a
-/// squad deathmatch map's skills), else from its type (OTHER's).
+/// and its data from the tables keyed by its type's squad name where they have it (the squad's:
+/// a squad deathmatch map's skills), else from its type (a type of its own's, whatever slot it
+/// holds: #302).
 fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: &mut ModelAssets) {
-    let name = CHARACTERS[p.character];
+    let name = p.data_name();
     let ty = game.character_types.get(&p.kind).cloned();
-    let label = if p.character == OTHER { game.type_label(p.kind) } else { name.to_string() };
+    let label = if p.own_type() { game.type_label(p.kind) } else { name.to_string() };
     // (the squad's by type is its model by name: BF_DUMP_TYPES compares the two)
     let model = match ty.as_ref().map_or_else(|| Character::load(game, name, 0), |t| Character::load_type(game, t, 0)) {
         Ok(m) => m,
@@ -3932,7 +4024,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     // its type's MOTION table resolved to its clips; an enemy's gait clips come from it (#129,
     // play_enemies.rs), the squad keeps the clips by name
     let mut motions = enemies::Motions::default();
-    if let (OTHER, Some(t)) = (p.character, ty.as_ref()) {
+    if let (true, Some(t)) = (p.own_type(), ty.as_ref()) {
         motions = enemies::motions(&model, game, t);
         enemies::table_clips(&mut clips, &motions, game, t);
         clips.root_stand_in = root_stand_ins(&model, &clips.slots, clips.special.as_ref());
@@ -5342,13 +5434,14 @@ fn body_thud(position: Vec3, yaw: f32, height: f32, r: &Ragdoll, thud: &mut bool
 }
 
 /// Have `u` say a random line of a chatter set (after `delay` s), unless they are already talking.
-/// The squad's lines are their names' chatter files. An enemy (OTHER) says only its death line
-/// (`enemies::death_cry`): the takes' Shrikes said nothing on the hits before the kill.
+/// The squad's lines are their names' chatter files (by type: a squad type in another's slot says
+/// its own). A type of its own (an enemy, or such a squad member on the test map) says only its
+/// death line (`enemies::death_cry`): the takes' Shrikes said nothing on the hits before the kill.
 fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
-    if u.speaking > 0.0 || u.quote_in.is_some() || u.character == OTHER {
+    if u.speaking > 0.0 || u.quote_in.is_some() || u.own_type() {
         return;
     }
-    let lines: Vec<u32> = game.chatter.get(CHARACTERS[u.character]).and_then(|c| c.get(&tag))
+    let lines: Vec<u32> = game.chatter.get(u.data_name()).and_then(|c| c.get(&tag))
         .map(|v| v.iter().copied().filter(|&id| game.sounds.has(id)).collect()).unwrap_or_default();
     if !lines.is_empty() {
         let k = u.random(lines.len());
@@ -5418,7 +5511,7 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: 
         }
         // the answer comes once the cry is over
         let cry = u.quote_in.map_or(1.5, |(_, id)| game.sounds.pcm(id).map_or(1.5, |(r, s)| s.len() as f32 / r as f32));
-        if let Some(&r) = game.chatter_response.get(CHARACTERS[u.character]).and_then(|m| m.get(&DEATH_CHATTER)) {
+        if let Some(&r) = game.chatter_response.get(u.data_name()).and_then(|m| m.get(&DEATH_CHATTER)) {
             if u.random(DEATH_RESPONSE_CHANCE) == 0 {
                 u.death_response = Some((cry + 0.4, r));
             }
@@ -7358,7 +7451,7 @@ fn follow_camera(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // the aim's wander in the scope (none for Flint)
     let t = player.sim_time;
     let wander = Vec2::new((0.9 * t).sin() + 0.45 * (2.3 * t + 0.7).sin(), 0.8 * (1.3 * t + 1.1).sin() + 0.35 * (2.9 * t).sin());
-    player.sway = if player.character == STILL_SNIPER { Vec2::ZERO } else { wander * SWAY * player.scope };
+    player.sway = if player.data_slot() == STILL_SNIPER { Vec2::ZERO } else { wander * SWAY * player.scope };
     // the character's scope sounds: the in sound with each level gone up (FUN_00124340 at the
     // press: the type's +0x260), the out sound as it leaves (FUN_001249b0: +0x264)
     if level != player.scope_heard {
@@ -7475,10 +7568,10 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
     let s = format!(
         "{}   {}   {}{}   {}{}\n\
          WASD move   Shift sprint   Ctrl walk   Space jump   C dodge   Z crouch   Right mouse aim   Left mouse fire   Q switch weapon   R reload (demo)   G use item   Tab next item (hold: the list, W/D S/A or the wheel)   B medkit   E use   V special skill   M surface   H hide\n\
-         click: mouse look, Esc release   1-4 take control of Brutus / Flint / Hawk / Tex   G hold to charge a grenade\n\
+         click: mouse look, Esc release   1-4 take control of squad slot 1-4 (Brutus's / Flint's / Hawk's / Tex's place: T fills them)   G hold to charge a grenade\n\
          test map: hold E at a weapon on the rack to swap it in   K instant kill: {}   X die\n\
          {}",
-        CHARACTERS[player.character], state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
+        display_name(&player, &game.0), state, clip, if player.aim { "   [aiming]" } else { "" }, surf, weapon,
         if test.instant_kill { "on" } else { "off" }, testtools::HELP);
     if text.0 != s {
         text.0 = s;

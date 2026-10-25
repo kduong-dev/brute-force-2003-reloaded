@@ -124,10 +124,14 @@ demo yet.
 ## In play
 
 * `Player::kind` is a character's type (`Loaded::kind` the one its model was built from).
-  `Player::character` stays its squad slot, a `CHARACTERS` index, and squad-only rules stay
-  keyed to the four (portraits, skills, chips, the hand-over, chatter answers, Brutus not
-  kneeling). A character of any other type (a test map NPC) is slot `OTHER`, whose name is
-  empty.
+  `Player::character` stays its squad slot, a `CHARACTERS` index: its place on the HUD, its key
+  and its identity for the hand-over. What's read by the squad's names (chatter and its answers,
+  skills, the camera, the loadout, Brutus not kneeling, Flint's still scope, the chip's height) is
+  read by its type's squad character, `Player::data_slot` (`squad_of` its type): the slot's own in
+  the main game, but on the test map a slot may hold any type (#302, testtools.md "The squad").
+  A character of any other type (a test map NPC, or such a squad member) has data slot `OTHER`,
+  whose name is empty: "a type of its own" (`Player::own_type`), run by play_enemies.rs. Its
+  portrait, skull and camera block are its type's (`CharacterType::portrait`, `skull`, `camera`).
 * `spawn_unit` loads the model by type (`Character::load_type`: the mesh, the motion set's
   animation set, the face set). For the squad that's the model `Character::load` gives by name;
   `BF_DUMP_TYPES` compares the two (bones, geosets, clips and face clips). Its other data comes

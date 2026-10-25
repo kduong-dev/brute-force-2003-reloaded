@@ -1,4 +1,4 @@
-# Test map developer tools (`src/bin/play_testtools.rs`, #111; `src/bin/play_testworld.rs`, #116; `src/bin/play_testscenery.rs`, #185)
+# Test map developer tools (`src/bin/play_testtools.rs`, #111; `src/bin/play_testworld.rs`, #116; `src/bin/play_testscenery.rs`, #185; `src/bin/play_testsquad.rs`, #302)
 
 Demo tooling for trying features out on the test map ([play.md](play.md), "Test map"),
 not the game: the keys, speeds and layout are the demo's choices, none of them used by the
@@ -18,6 +18,7 @@ a click is any left click off the panel, and F and its teleports do nothing.
 | F | **free camera** on / off (in play). Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl (or E / Q): up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
 | N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
 | J / B / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / remove it. Shift+Delete removes every NPC. (In a test session B is this tool's, not the Black button's Medkit shortcut it is in play: `BF_TEST_ITEM_INPUT`'s `black` drives that here, [play.md](play.md) **The item box and the item list**) |
+| T | **squad menu** (#302): the squad's four slots, its places round the radar and the keys 1-4 that take control of them (Brutus's, Flint's, Hawk's, Tex's), each with who holds it ("(empty)", a type, DEAD, "(you)"). Left / Right picks a slot, Up / Down or the wheel (Page Up / Down: a page) a character type, any the NPC menu offers (the four, then all 128 of the test map); click or Enter puts a fresh one of that type in the slot: a real squad member (below), and in your own slot you become it where you stand. Delete empties the slot (not yours: "Your own slot can't be emptied"). T or Esc closes it |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
 | P | **scenery menu** (#185): every level's buildings and static scenery (2,412 pieces of 53 levels, below), by level, each by its type's name (a hash) with its size, parts and how many its level places, the largest first. Up / Down picks, Page Up / Down jumps a level; a see-through copy stands at the crosshair, the wheel turns it 15 degrees a notch; click or Enter puts one there, drawn as its level draws it and solid as there, and the menu stays open for more. P or Esc closes it. In the free camera the copy hangs on the crosshair's ray as the object menu's does (Shift + the wheel: how far), a yellow ring at its foot, and it's put where it hangs |
 | Y | **sky menu**: none, the map's own, or the sky of any level whose level file names one; click or Enter shows it over the map in place of its own, with that level's background colour |
@@ -27,7 +28,8 @@ a click is any left click off the panel, and F and its teleports do nothing.
 * **NPCs** are `Player`s added at the end of the squad with `npc` set, so everything that acts
   on the squad acts on them: the player's shots (with instant kill), blasts, Sentries,
   ragdolls, blood. They aren't in the formation, can't be taken control of (1-4, the hand-over
-  after a death) and don't show on the portraits, health bars or speech icons. Friends are on
+  after a death) and don't show on the portraits, health bars or speech icons (the squad menu's
+  members do: **The squad**, below). Friends are on
   the squad's team (0), enemies on `ENEMY_TEAM` (1); the hooks can put one on any of the game's
   ten teams, `neutral` (2, ALIGN_NEUTRAL) among them, and give it a radar-contact (#141).
   * An enemy sets off the squad's Sentries. The crosshair turns red on an enemy in its lock box
@@ -85,6 +87,50 @@ a click is any left click off the panel, and F and its teleports do nothing.
     NPC's number): Energy bolts and Sonic rings land on the body they were drawn to, and the
     thrower's own share of a Frag, Gas, Energy or Sonic blast is the squad thrower's only, not an
     NPC's of the same character.
+* **The squad** (`play_testsquad.rs`, #302; the product owner's choices, not the game's: its squad
+  is always Brutus, Flint, Hawk and Tex, each in its own place):
+  * The test map starts with the player's character alone (Tex, or `BF_CHARACTER`'s), its
+    other three slots empty, on every start of the flat floor (`--test`, `--edit`, a level
+    switch back to it). Any other map keeps its own squad (the four, or a level's squad spawns),
+    and so does a session started on a level (`--test BF_MAP=<level>`).
+  * A slot is one of the squad's four places (`Player::character`): its portrait's place round
+    the radar (Brutus's bottom, Flint's right, Hawk's left, Tex's top), its health channel, its
+    speech icon and the key (1-4) that takes control of it. The menu fills it with any type, as
+    a real squad member, not an NPC: it gets a formation place (FORMATION by its place in
+    `Squad`, where the members come before the NPCs) and the squad AI, control passes to it (1-4,
+    `BF_TEST_SELECT`, the death camera's hand-over: the first living member in `Squad`'s order),
+    the HUD shows it, it takes the squad's pickups and memory chips and drops a chip when it
+    dies, and the controls panel names it. A new member appears at half its formation place's
+    spacing round the leader, facing the leader's way; one replaced keeps the old one's place
+    (a dead one's where it stood), facing its way.
+  * Its data is its type's (play.rs `Player::data_slot`; the main game's squad members are their
+    slots' types, so nothing changes there): a squad type in another's place is still itself
+    (its skill, voice lines, camera, scope, Brutus not kneeling, its own face on the HUD at that
+    place). Any other type is "a type of its own", as an NPC of it: its model, clips, HP, weapons,
+    flesh, decals and damage are its type's; its behaviour is play_enemies.rs's (its hit
+    reactions by its personality, its stamina shield, refilled for the controlled one too, its
+    ragdoll, its death line), it has no skill (V says "<name> has no special skill") and says
+    nothing but its death line, and its follow camera and death camera framing are its type's
+    camera block (`CharacterType::camera`, FUN_0012eca0: sdm_shrike's Shrike Heavy 3.2 m at 1
+    degree, its Hunter Lord 4 m at 5, the campaign's Shrikes 1.55 m at 10, so close that the
+    body turns see-through with the camera's fade). Its portrait is its type's
+    (`CharacterType::portrait`, h_f9d94425: the
+    deathmatch types and some of the militia have one, common's textures), else a "?" in pale
+    blue; its skull its type's (h_00c51907), else the human one.
+  * In a test session an empty slot shows no face, follow-order tab or health channel (in any
+    other session an empty slot still shows its own face, as the tutorial's Tex alone does:
+    play.md "Radar").
+  * The controlled character's slot changes its type in place: a fresh character of the new
+    type where it stood, facing its way, with its view (the aim, the follow camera easing to the
+    new boom), the hooks' clock, the help panel and the squad's inventory (its grenades refilled
+    to the start's as its body is made, as at a respawn). A dead one comes back alive. It can't be
+    emptied. Any other change makes a fresh character too: full health, its type's guns.
+  * Removing or adding a member moves `Squad`'s places, so the shots on their way are dropped
+    (`AiHits`, as the NPC tool's removal does). In deathmatch (an arena, `BF_NO_SQUAD`) the map is
+    played alone: the menu changes only the player's type.
+  * The roster (`testsquad::Roster`): each map's slots as its start made them and the menu
+    changed them. In the map editor's edit mode the squad is out of the world, so the menu changes
+    the roster alone ("(when play starts)"), and play (F5) makes its fresh squad from it.
 * **Objects**, put on the ground at the crosshair turned the way the copy shows:
   * a pickup is a level's inventory-object as the grid's (`play_pickups.rs`: `LatePickup`
     seats it on its lowest point, upright as modelled): medkits and fruit can be taken,
@@ -182,6 +228,13 @@ a click is any left click off the panel, and F and its teleports do nothing.
   ambience bed under it at 80%, all beds if it has no music), looping at the music volume. The
   map's own music is stopped first (`LevelMusic`). `BF_MUTE` loads and logs but plays nothing.
   As with skies, picks while a bank loads are ignored.
+  * The test map's own music is m04_a's bank (#302, `TEST_MUSIC`: test_casp1_amb01 with the
+    ambience bed ambience19-2ch under it at 80%), loaded so as the flat floor starts and playing
+    from about a second in, without a message; "this map's own" plays it again there, and Left /
+    Right step from it. A pick while it's still loading takes its place. `BF_NO_MUSIC` leaves it
+    off. `BF_TOOLS_LOG` or `BF_SOUND_LOG` print "test map: its music, m04_a's bank, loading" and
+    then "test tools: music of m04_a: music test_casp1_amb01 x1.00, ambience ambience19-2ch x0.80,
+    looping" ("(BF_MUTE: not played)" under `BF_MUTE`).
 * **Level switch**: `AppState::Switching` between the maps. Leaving runs `end_play` (every
   entity the map spawned, its sounds and its collision go, as on Backspace), a loading screen
   shows while the level loads on a thread as the front end loads one, plus the test map's
@@ -257,11 +310,27 @@ the background (#163)".
 | `BF_TEST_MUSIC=<s>,<level\|off\|map\|next\|prev>` | that level's music bank, off, the map's own, or the next / previous bank of the list (Right / Left) |
 | `BF_TEST_LEVEL=<s>,<level>[;<s>,<level>...]` | switch to that level (`flat` or `test`: the test map). One entry per map in turn, each on its own map's clock: the first on the first map, the second on the map it switched to, and so on |
 | `BF_TEST_LEVEL_FAIL=<level>` | loading that level for a switch panics on its thread (the fall back to the map it came from) |
+| `BF_TEST_SQUAD_MENU=<s>` | T (the squad menu opens, or closes) |
+| `BF_TEST_SQUAD_SLOT=<s>,<slot>,<type\|empty>[;...]` | the squad menu's Enter or Delete (#302): that slot gets a fresh one of that type, or is emptied. The slot as `BF_TEST_SELECT` names a squad member, 0-3 (not the keys' 1-4) or `brutus` / `flint` / `hawk` / `tex` for its place, or `me` for the controlled character's (its type changes in place); the type as `BF_TEST_NPC` names one (`shrike soldier@m09_a`, `h_fcec1024`, `flint`). One it doesn't know is logged and skipped |
+| `BF_TEST_SQUAD=<entry>[,<entry>...]` | the test map's start squad beside the player's character (read as each flat-floor start is made, every one of the session): each entry a type as `BF_TEST_NPC` names one, a squad member's type into its own slot if that's free and any other into the first free slot in the keys' order, or `<slot>:<type>` into that slot (`3:shrike heavy@sdm_shrike` with Tex leading: he starts as one); `none`: nobody. Unknown types are logged and skipped |
+| `BF_TEST_FULL_SQUAD=1` | the test map starts with the four, as before #302 (over `BF_TEST_SQUAD`) |
 
-The hooks of this page (`BF_TEST_HELP` too) but `BF_TEST_LEVEL` act on one map of the
-session only (a switch would otherwise replay them on each map): the first, or the n-th with
-`BF_TEST_ON_MAP=<n>`. `BF_TEST_LEVEL` has an entry per map. The other test hooks (play.md and
-the other pages) don't follow `BF_TEST_ON_MAP`; each keeps its own behaviour across a switch:
+Without `BF_TEST_SQUAD`, a hook of the other pages that acts on the squad's members starts the
+test map with the four, as before #302, so the recipes written for them run as they did, each
+member at the place it had (`testsquad::SQUAD_HOOKS`: `BF_TEST_SELECT`, `BF_TEST_KILL`,
+`BF_TEST_TARGET`, `BF_TEST_SQUAD_SKILL`, `BF_TEST_HOSTILE`, `BF_TEST_MINE_FRIEND`). A recipe that
+wants the squad for anything else (the formation in the line of fire, the AI's fire, a blast's
+other victims, a hand-over after `BF_TEST_DIE` or `BF_TEST_SUICIDE`) adds `BF_TEST_FULL_SQUAD=1`.
+`BF_TOOLS_LOG=1` prints the start squad and why ("test map: the squad at the start: 0 brutus, 1
+flint, 2 hawk, 3 tex (tex leads; BF_TEST_SELECT: the four)"), and each change of the menu ("t 1.00:
+squad slot 1 (Brutus's place): Shrike Soldier (m09_a, 73 hp) (h_fcec1024) at [1.50, -1.05,
+11.25], was empty").
+
+The hooks of this page (`BF_TEST_HELP` too) but `BF_TEST_LEVEL`, `BF_TEST_SQUAD` and
+`BF_TEST_FULL_SQUAD` act on one map of the session only (a switch would otherwise replay them on
+each map): the first, or the n-th with `BF_TEST_ON_MAP=<n>`. `BF_TEST_LEVEL` has an entry per
+map. The other test hooks (play.md and the other pages) don't follow `BF_TEST_ON_MAP`; each keeps
+its own behaviour across a switch:
 * on every map, on its clock: those read as a map starts or each frame, e.g. `BF_TEST_GOTO`,
   `BF_CAMERA_*`, `BF_TEST_HEALTH`, `BF_TEST_KILL` (it fires at the squad member
   on whichever map); `BF_TEST_DIE` once per map (`TestDied` is reset with each one);
@@ -291,7 +360,7 @@ higher: where they land and who stands in a blast don't hold as written; not run
   from the flown-to pose meets the floor, with the follow camera behind him. `camera` put him
   under the camera (30, 40). (With a `BF_TEST_GOTO` goal off the start the autopilot walks him
   back: use one equal to the start.)
-* NPCs (`BF_TEST_GOTO=4.5,24,4.5,23.5 BF_TEST_FREECAM=0.5,17,2.5,14,90,-10
+* NPCs (`BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=4.5,24,4.5,23.5 BF_TEST_FREECAM=0.5,17,2.5,14,90,-10
   BF_TEST_NPC="1,flint,enemy,dummy,1.5,15;1,hawk,friend,dummy,7.5,16;3,brutus,enemy,fight,4.5,9"
   BF_TEST_NPC_FIGHT=8,1 BF_TEST_NPC_TEAM=11,1 BF_TEST_NPC_REMOVE="13,2;14.5,all"
   BF_COMBAT_LOG=1`): the two dummies stand facing Tex and nobody fires at them; enemy Brutus
@@ -318,7 +387,7 @@ higher: where they land and who stands in a blast don't hold as written; not run
   (mp_common/dm, 80 hp)" ..., "(1 of 55 character types)". The NPC run above, captured with
   main's build and this one: the same frames (within the noise of two runs of main's) and the
   same combat log, the spawn lines now naming the type.
-* Sentry (`BF_TEST_GRENADE_TYPE=Sentry BF_TEST_GOTO=4.5,24,4.5,24 BF_TEST_THROW=1,0.1
+* Sentry (`BF_TEST_FULL_SQUAD=1 BF_TEST_GRENADE_TYPE=Sentry BF_TEST_GOTO=4.5,24,4.5,24 BF_TEST_THROW=1,0.1
   BF_TEST_FREECAM="2.5,30,3,40,30,-25;8,9.5,2.5,29,30,-22" BF_TEST_TELEPORT=3,camera
   BF_TEST_NPC=9,flint,enemy,dummy,4.5,22 BF_SENTRY_LOG=1`): Tex sets one down, is teleported
   away with the squad following, an enemy Flint dummy is spawned 1.6 m from it and it goes off
@@ -350,7 +419,7 @@ higher: where they land and who stands in a blast don't hold as written; not run
   residual 106 at 2.93 s, 10 from 3.33 s on, the standing aim's own) and his shots follow the
   crosshair (dir along the ray), where before the fix they stayed on the old target for 6 s and
   more.
-* Energy and Sonic (`BF_TEST_GRENADE_TYPE=Energy` / `Sonic BF_TEST_GOTO=4.5,24,4.5,24
+* Energy and Sonic (`BF_TEST_FULL_SQUAD=1 BF_TEST_GRENADE_TYPE=Energy` / `Sonic BF_TEST_GOTO=4.5,24,4.5,24
   BF_CAMERA_PITCH=-0.4 BF_TEST_THROW=1.5,0.3
   BF_TEST_NPC="0.5,flint,enemy,dummy,4.5,18;0.5,tex,enemy,dummy,6,16;0.5,hawk,friend,dummy,3,15"
   BF_TEST_INSTANT_KILL=0 BF_COMBAT_LOG=1`): each bolt and ring lands on its own body, the NPCs
@@ -382,7 +451,7 @@ captures at 15 fps, frames looked at:
   BF_TEST_NPC="0.5,h_12073efa,enemy,dummy,-0.75,14;..."`, 1.5 m apart): each stands in its idle
   with its model, skin and LZR-23: the Red Hands' red-marked armour, the Terrorists' black, the
   Subversives' olive.
-* Fights (`BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=6,30,6,30 BF_TEST_FREECAM=0.3,6,7,36,0,-25`, each
+* Fights (`BF_TEST_FULL_SQUAD=1 BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=6,30,6,30 BF_TEST_FREECAM=0.3,6,7,36,0,-25`, each
   `enemy,fight` 14 m in front of the squad): e05's Red Hand, m03_c's Terrorist and m08_a's
   Subversive fire on Tex ("Red Hand (NPC 1) -> tex: ... = 2.15"), the squad fires back, and each
   dies (ragdoll, blood) with its death line from terrorist_chatter ("Red Hand's death line
@@ -441,7 +510,7 @@ looked at:
 * The medkit's copy didn't show in the air (and by the same cause on the ground): its texture's alpha is a
   shine mask (about 0), which the see-through copy took for coverage. The copy of an opaque
   surface now keeps its colours only (its texture with full alpha).
-* Switching (`BF_TEST_LEVEL="3.5,sdm_e34;3,flat;3,sdm_e10;3,m01_a;3,flat"`, with an enemy
+* Switching (`BF_TEST_FULL_SQUAD=1 BF_TEST_LEVEL="3.5,sdm_e34;3,flat;3,sdm_e10;3,m01_a;3,flat"`, with an enemy
   Flint, a supply crate, a medkit in the air, sdm_e10's sky, sdm_e40's music and the free
   camera on the first map): six maps in a row, no panic. Each "left <map>: 6 entities remain (6
   from before it, 0 of its own), 0 sounds"; each new one starts with "6 from before it", its own
@@ -504,8 +573,8 @@ grenade), frames looked at:
   light (and from 49 m away, its fog: 25 to 90 m, where sdm_e34's starts at 50).
 * Collision, on the flat floor, with Bulgar's Kingman silo (sdm_e34:4, h_ebace085, 15 m across,
   14 m tall):
-  * Tex running at it from 32 m (`BF_TEST_GOTO=4.5,10,4.5,-60
-    BF_TEST_SCENERY_PLACE="0.3,sdm_e34:4,4.5,-30,0" BF_MOVE_LOG=1`) stops at its wall (z -22.5,
+  * Tex running at it from 32 m (`BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=4.5,10,4.5,-60
+    BF_TEST_SCENERY_PLACE="0.3,sdm_e34:4,4.5,-30,0" BF_MOVE_LOG=1`; the squad since #302) stops at its wall (z -22.5,
     its face -22.4) and stays there, running into it; Flint stops beside him. (At the capture's
     0.4 m steps he ends about 0.1 m from the wall rather than his 0.4 m radius: the arena's
     push-out, on a level's walls the same.)
@@ -518,7 +587,8 @@ grenade), frames looked at:
   * A Frag thrown at its wall from 4.4 m (`BF_TEST_GRENADE_TYPE=Frag BF_TEST_THROW=2,0.8
     BF_CAMERA_PITCH=0.1 BF_CAPTURE_FPS=60 BF_GRENADE_LOG=1`): "down 0.50 s after leaving the
     hand, 2.2 m from the thrower", back off the wall; the same throw without it, 11.1 m.
-  * Bulgar's 39 m rock ridge (sdm_e34:1): Brutus and Hawk climbed it ("hawk walks off a ledge ...
+  * Bulgar's 39 m rock ridge (sdm_e34:1; the squad's members with `BF_TEST_FULL_SQUAD=1` since
+    #302): Brutus and Hawk climbed it ("hawk walks off a ledge ...
     4.8 m to the floor"); Tex, running into its steep end, went into it: a slope steeper than
     about 51 degrees (under the 65-degree wall limit, so not a wall) rises more than the 0.5 m
     step in one 0.4 m capture step. That's the demo's floor rule on any level. Since #285
@@ -555,3 +625,71 @@ grenade), frames looked at:
   hooks drive the same code. Missiles and the AI's sight at a piece (they meet the world through
   `hit_normal` and `ray_hit`, as the shots and the teleport's crosshair above do). A piece lit by
   a mission's lamps.
+
+The squad and the music (#302), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_TOOLS_LOG=1`,
+captures at 15 fps, frames looked at:
+* The start (`BF_TEST_GOTO=0,8,0,8 BF_SOUND_LOG=1`): "test map: the squad at the start: 3 tex (tex
+  leads)", the audit's "squad 0 (0 NPCs)"; the radar has Tex's face at the top alone, the other
+  three places dark (no face, tab or health channel). "test map: its music, m04_a's bank,
+  loading", then about 1.5 s in "test tools: music of m04_a: music test_casp1_amb01 x1.00,
+  ambience ambience19-2ch x0.80 (BF_MUTE: not played)".
+* Filling (`BF_TEST_SQUAD_MENU=0.5 BF_TEST_SQUAD_SLOT="1.0,0,shrike soldier@m09_a;1.5,2,shrike
+  heavy@sdm_shrike;2.0,1,hawk"`): each one made at its formation place round Tex ("squad slot 1
+  (Brutus's place): Shrike Soldier (m09_a, 73 hp) (h_fcec1024) at [1.50, -1.05, 11.25], was
+  empty"), with its type's model, clips and gun; the radar a "?" at Brutus's place (m09_a's
+  Shrike Soldier has no portrait), sdm_shrike's Shrike Heavy's portrait at Hawk's, Hawk's face at
+  Flint's, the four health channels; the panel lists the slots and the types. Seen from above
+  (`BF_TEST_SQUAD="shrike heavy@sdm_shrike,shrike soldier@m09_a"` beside NPCs of the same two
+  types, `BF_TEST_FREECAM`): the members solid, in formation behind the NPCs, the same models.
+* Control (`BF_TEST_SQUAD="shrike soldier@m09_a" BF_TEST_SELECT=0,1.0 BF_TEST_GOTO=0,8,0,-20
+  BF_TEST_GO_AT=3.0 BF_MOVE_LOG=1`): "SHRIKE SOLDIER" with the chevrons toward Brutus's place, the
+  cut at 1.5 s; from 3 s it runs to the goal on its MOTION table's run (clip 38, about 5 m/s),
+  behind it its type's camera (1.55 m at 10 degrees, so close the body fades), Tex following.
+* The player's type (`BF_TEST_SQUAD=flint BF_TEST_SQUAD_SLOT="2.0,me,shrike heavy@sdm_shrike"
+  BF_TEST_GOTO=0,8,0,-20`): Tex, running, becomes the deathmatch Shrike Heavy where he was ([-0.01,
+  -1.05, 3.83]), on his heading, and it runs on to the goal on its own run (clip 37); the camera
+  eases to its 3.2 m boom, the bars to its 55 HP, the weapon panel to its gun (80 / 600), its
+  portrait at Tex's place; "You're Shrike Heavy (mp_common/sdm_shrike, 55 hp) now", and at the
+  rack "Shrike Heavy cannot pick up Rail RVR."; Flint follows.
+* Death and hand-over (`BF_TEST_SQUAD="shrike soldier@m09_a,flint" BF_TEST_SELECT=0,1.0
+  BF_TEST_DIE=3.0 BF_ENEMY_LOG=1 BF_PICKUP_LOG=1`): the controlled Shrike dies with its type's death
+  line ("Shrike Soldier's death line fb465ea7 of 3"), drops a memory chip, the death camera circles
+  it with the skull at its place, "TEX" and the chevrons up, and control passes to Tex, who takes
+  the chip.
+* Emptying and replacing (`BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=0,8,0,7.5
+  BF_TEST_SQUAD_SLOT="1.0,me,empty;1.5,1,empty;2.0,2,shrike heavy@sdm_shrike;2.5,0,flint"
+  BF_TEST_KILL=2 BF_COMBAT_LOG=1`): "Your own slot can't be emptied: give it a type"; Hawk killed
+  (her skull), Flint's slot emptied (her face, tab and channel gone), the dead Hawk replaced by a
+  Shrike Heavy where she fell (its portrait and channel back; it takes her chip), which Tex's fire
+  kills (its death line f80210fa, its chip, the human skull), and Brutus's place given Flint (her
+  face at the bottom).
+* The editor's edit mode: editor.md, "The squad menu in edit mode".
+* A level (`BF_MAP=sdm_e34 BF_TEST_GOTO=-44.4,15.5,-44.6,15.1 BF_TEST_SQUAD="3:shrike heavy@sdm_shrike"
+  BF_TEST_SQUAD_SLOT="1.0,0,shrike soldier@m09_a" BF_TEST_LEVEL="2.5,flat"`): sdm_e34 keeps its four
+  ("squad 3"; `BF_TEST_SQUAD` is the test map's), Brutus replaced by the Shrike Soldier ("?" at his
+  place); the switch back starts the test map with the Shrike Heavy leading alone in Tex's place
+  ("squad 0"), and m04_a's music loading.
+* The panels (`BF_TEST_GOTO=0,8,0,7.5 BF_TEST_HELP=0.5 BF_TEST_SQUAD="shrike soldier@m09_a"
+  BF_TEST_SQUAD_SLOT="1.0,me,feral outcast" BF_TEST_SQUAD_MENU=1.5`): the controls panel's first line
+  "Feral Outcast idle ...", its 1-4 line and the tools' T line; "You're Feral Outcast (mp_common/dm,
+  75 hp) now", the dm feral's portrait at Tex's place.
+* Unchanged, against main's build (a6b3af4, the same hooks): sdm_e34's `BF_TEST_GOTO=0,0,0,-20
+  BF_TEST_FIRE=1 BF_TEST_HIT=2` (75 frames) frame for frame. The test map with
+  `BF_TEST_FULL_SQUAD=1`: the NPC run above (135 frames) with the same combat log (51 lines), the
+  frames the same but for a tracer's streak at frames 59-64 (effects' seeds follow entity numbers:
+  the HUD's four "?" are new entities); the death and hand-over (`BF_TEST_DIE=1`, 100 frames) with
+  the same chip lines, the frames but for the chevrons' phase (it runs on real time) and the blood
+  mist's particles. Recipes with a squad hook and no flag: pickups.md's dead squad member's guns
+  (`BF_TEST_KILL=1 BF_TEST_SWAP=4.0,7.0`), grenades.md's hand-over during a throw
+  (`BF_TEST_SELECT=1,1.6`), skills.md's crosshair on the stealthed Hawk (`BF_TEST_HOSTILE=hawk
+  BF_TEST_SQUAD_SKILL=hawk,2.0`) and this page's hand-over (`BF_TEST_SELECT=0,2.2`): their logs
+  main's line for line but for the loading times; the crosshair run's 75 frames the same, the
+  others but for a few dozen pixels where the members, running through the pickup grid at the
+  start, kick a loose item a little differently (the order of two systems Bevy leaves open, which
+  the new systems shift: two runs of either build agree there).
+* `cargo test --bin bf_play`: the slot changes (`play_testsquad.rs` tests: the controlled slot
+  changed in place and not emptied, a member replaced or removed, an empty slot filled before the
+  NPCs at its formation place, a roster applied).
+* Not tested: the keys and the mouse themselves (T, Left / Right, Up / Down, the wheel, Page Up /
+  Down, Enter, the click, Delete): the hooks drive the same code from the menu's asks on. V's "has
+  no special skill" (the key's only). The music heard: under `BF_MUTE` only its log.
