@@ -5,7 +5,9 @@
 //!  1. **The roll** (FUN_0022c940): Damage min + U x (max - min), then x a character shooter's
 //!     skill's +0xec (`Hit::skill`, play_skills.rs `roll_factor`: Flint's x2 on 15% of her rolls
 //!     while her targeting is on, x1.5 scoped; 1 for the others), a missile's blast's own roll
-//!     too. The shooter's power-up factor (char+0x754) isn't in the demo.
+//!     too; then each of the shooter's modifiers' +0x10 (char+0x55c: `Hit::power`,
+//!     play_powerups.rs `roll_factor`: BRUTE POWER's x2 while it lasts, #15). The Hat's factor
+//!     (char+0x754, FUN_001478d0) isn't in the demo.
 //!  2. **The hit record** (FUN_0022c4d0): a direct hit takes the roll, a blast's share its part
 //!     of the blast's roll (play_missile.rs), then x the hit factor:
 //!     - an instant ray (FUN_00230040): its range falloff (play_shots.rs) x FUN_00125940;
@@ -23,8 +25,10 @@
 //!     charge). It takes x (1 - 0.1n) for a victim on an enemy team and x (1 + 0.1n) for the
 //!     squad's, n the difficulty (`Difficulty`; STANDARD -4: enemies x1.4, the squad x0.6); then
 //!     its skill's factor (vtable +0xd8 at 0x125747, `Hit::victim_skill`: Brutus's Vengar 0.85
-//!     while on, #122, play_skills.rs `damage_factor`); then FUN_002232d0's factor for the damage type
-//!     (h_142be76f, `CharacterType::vulnerability`).
+//!     while on, #122, play_skills.rs `damage_factor`); then each of its modifiers' +0x14
+//!     (char+0x55c, at 0x12573f: `Hit::victim_power`, play_powerups.rs `damage_factor`: FORCE
+//!     POWER's x0.5 on every hit but a BLADED one, #15); then FUN_002232d0's factor for the damage
+//!     type (h_142be76f, `CharacterType::vulnerability`).
 //!     The victim's data is its character type's (`Player::kind`, #128): its hit parts, its
 //!     factors, and its damage-multiplier when its squad slot has none of its own. Only the
 //!     trainer's `!hit` calls FUN_002232d0 directly (the one direct call is 0x1257c0, in
@@ -491,6 +495,9 @@ pub struct Hit {
     /// the shooter's skill's factor on a roll (FUN_0022c940 asks its +0xec: Flint's doubled and
     /// scoped rolls, 0x13cc70); 1 for anything else
     pub skill: f32,
+    /// the shooter's modifiers' factor on the roll (FUN_0022c940 after the skill: each one's +0x10,
+    /// BRUTE POWER's x2, 0x15f670; play_powerups.rs `roll_factor`); 1 for anything else
+    pub power: f32,
     /// who dealt it (None: a fall, a damage area)
     pub by: Option<Who>,
     /// an instant ray's range falloff (FUN_00230040 -> FUN_00223780); 1 for anything else
@@ -506,6 +513,9 @@ pub struct Hit {
     /// the victim's skill's factor (0x125600 at 0x125747, its vtable +0xd8: Brutus's Vengar 0.85
     /// while on, else 1; play_skills.rs `damage_factor`), once it reaches them
     pub victim_skill: f32,
+    /// the victim's modifiers' factor (0x125600 at 0x12573f, each one's +0x14: FORCE POWER's x0.5
+    /// on a hit that isn't BLADED, 0x15f7c0; play_powerups.rs `damage_factor`), once it reaches them
+    pub victim_power: f32,
     /// the damage type (`Damage damage-type`), and the victim's factor for it (FUN_002232d0) once
     /// it reaches them
     pub damage_type: i64,
@@ -515,13 +525,20 @@ pub struct Hit {
 impl Hit {
     /// A hit of `base` (`kind`, for the log) of damage type `damage_type`, with no other factor yet.
     pub fn new(base: f32, kind: &'static str, damage_type: i64) -> Self {
-        Hit { base, kind, skill: 1.0, by: None, falloff: 1.0, part: None, friendly: 1.0, step: 1.0, difficulty: None, victim_skill: 1.0,
-              damage_type, vulnerability: 1.0 }
+        Hit { base, kind, skill: 1.0, power: 1.0, by: None, falloff: 1.0, part: None, friendly: 1.0, step: 1.0, difficulty: None, victim_skill: 1.0,
+              victim_power: 1.0, damage_type, vulnerability: 1.0 }
     }
 
     /// The shooter's skill's factor on its roll (`skills::roll_factor`, FUN_0022c940's +0xec).
     pub fn skill(mut self, factor: f32) -> Self {
         self.skill = factor;
+        self
+    }
+
+    /// The shooter's modifiers' factor on its roll (`powerups::roll_factor`, FUN_0022c940's
+    /// +0x55c hooks).
+    pub fn power(mut self, factor: f32) -> Self {
+        self.power = factor;
         self
     }
 
@@ -555,28 +572,29 @@ impl Hit {
         self
     }
 
-    /// The hit reaching `u`: their step (0x125600, by their team), their skill's factor (0x125747)
-    /// and their factor for the damage type (FUN_002232d0). The amount.
+    /// The hit reaching `u`: their step (0x125600, by their team), their skill's factor
+    /// (0x125747), their modifiers' (0x12573f) and their factor for the damage type
+    /// (FUN_002232d0). The amount.
     pub fn on(&mut self, u: &Player, game: &Game, difficulty: &Difficulty) -> f32 {
         self.step = difficulty.step(u.team);
         self.difficulty = Some(*difficulty);
         self.victim_skill = skills::damage_factor(u);
+        self.victim_power = powerups::damage_factor(u, self.damage_type);
         self.vulnerability = vulnerability(game, u, self.damage_type);
         self.amount()
     }
 
     /// The hit record's damage (FUN_0022c4d0's, before the victim's own factors): the roll x the
-    /// shooter's skill x the falloff x FUN_00125940's hit part x the own side's share. The damage
-    /// handler 0x22d0b0 hands it (the record's +8) to FUN_0022cd80, whose hit effect takes 0.036
-    /// of it as its user parameter (play_fx.rs `flesh_sp`).
+    /// shooter's skill and modifiers x the falloff x FUN_00125940's hit part x the own side's
+    /// share. The damage handler 0x22d0b0 hands it (the record's +8) to FUN_0022cd80, whose hit
+    /// effect takes 0.036 of it as its user parameter (play_fx.rs `flesh_sp`).
     pub fn record(&self) -> f32 {
-        self.base * self.skill * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly
+        self.base * self.skill * self.power * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly
     }
 
     /// The amount: every factor's product.
     pub fn amount(&self) -> f32 {
-        self.base * self.skill * self.falloff * self.part.map_or(1.0, |p| p.factor()) * self.friendly * self.step * self.victim_skill
-            * self.vulnerability
+        self.record() * self.step * self.victim_skill * self.victim_power * self.vulnerability
     }
 
     /// `on`, then the log line (BF_COMBAT_LOG), at sim time `now`. The amount.
@@ -596,6 +614,9 @@ impl Hit {
         let mut s = format!("t {now:.2}: {} -> {victim}: {} {:.2}", self.by.map_or("-".into(), |w| who_name(w, game)), self.kind, self.base);
         if self.skill != 1.0 {
             s += &format!(" x the shooter's skill {:.2}", self.skill);
+        }
+        if self.power != 1.0 {
+            s += &format!(" x the shooter's power-up {:.2}", self.power);
         }
         if self.falloff != 1.0 {
             s += &format!(" x falloff {:.3}", self.falloff);
@@ -619,6 +640,9 @@ impl Hit {
         }
         if self.victim_skill != 1.0 {
             s += &format!(" x the victim's skill {:.2}", self.victim_skill);
+        }
+        if self.victim_power != 1.0 {
+            s += &format!(" x the victim's power-up {:.2}", self.victim_power);
         }
         s += &format!(" x type {} {:.2} = {:.2}", self.damage_type, self.vulnerability, self.amount());
         println!("{s}");

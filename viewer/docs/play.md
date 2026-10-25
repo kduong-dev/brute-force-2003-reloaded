@@ -136,7 +136,9 @@ full. The frame's middle stretches with them and its right cap follows their end
 switch resizes it (the picture's right cap ends 12 units past the bars, the game's frame ~9.4:
 the demo's frame is ~3 units longer on the right, #35 takes 01, 06, 19). The stamina bar's
 colours, trail and low-stamina blink, and the skill's name under it: [skills.md](skills.md).
-Without the tutorial's picture, the frame below is used.
+Without the tutorial's picture, the frame below is used. A HEALTH or STAMINA POWER walked over
+when it can't do anything flashes the bar it would fill amber, four times in 1.2 s (the bar
+widget's flash, 0x146900: `BarFlash`, [pickups.md](pickups.md) "Power-ups", #15).
 
 HUD textures found for the panels: the health / energy frame is built from its corner
 `h_0cdf5876` (32 × 16 end cap, mirrored four ways; it holds the step from the raised ends down to
@@ -2650,9 +2652,11 @@ on a character goes:
 * **The roll** (FUN_0022c940): Damage min + U x (max - min), x a character shooter's skill's
   factor (its +0xec at 0x22c9a3; `Hit::skill`, the log's "x the shooter's skill"): Flint's x2 on
   15% of her rolls while her targeting is on and x1.5 scoped (0x13cc70, [skills.md](skills.md#flints-advanced-targeting-124));
-  1 for the others. Every roll a shooter makes takes it: a shot's on a body or a breakable
-  object, a missile's direct hit and its blast's own roll. The damage power-up's char+0x754
-  isn't in.
+  1 for the others; then x each of its modifiers' (char+0x55c, `Hit::power`, the log's "x the
+  shooter's power-up"): BRUTE POWER's x2 for its 45 s ([pickups.md](pickups.md), "Power-ups",
+  #15). Every roll a shooter makes takes them: a shot's on a body or a breakable object, a bolt's
+  and a ray's, a missile's direct hit and its blast's own roll. The Hat's char+0x754 (x4,
+  FUN_001478d0) isn't in.
 * **The hit record** (FUN_0022c4d0): a direct hit takes the roll, a blast its share of the
   blast's roll (half for h_011cb154 false, the Therm Sweeper's); then x the hit factor: an
   instant ray's range falloff (FUN_00230040, **Shots**) x FUN_00125940; a projectile's
@@ -2666,7 +2670,9 @@ on a character goes:
   shooter's own blast included).
 * **The victim** (0x125600, a character's combat-target vtable slot 0): x (1 - 0.1n) on an
   enemy team, x (1 + 0.1n) on the squad's, n the difficulty; then its skill's factor (Vengar's
-  0.85 while on, `Hit::victim_skill`, skills.md); then FUN_002232d0's factor for the damage type. Every hit on a character
+  0.85 while on, `Hit::victim_skill`, skills.md); then each of its modifiers' (`Hit::victim_power`,
+  "x the victim's power-up": FORCE POWER's x0.5 on any hit but a BLADED one, #15); then
+  FUN_002232d0's factor for the damage type. Every hit on a character
   reaches it: the guns' hits and blasts, the scenery's damage areas (FUN_0021ade0), falls
   (FUN_0012b740, DTYPE_NORMAL), FUN_00223160 (Brutus's charge), the damage plate's frames
   (FUN_001f8510, #228: [triggers.md](triggers.md), "The damage plate"). Only the trainer's `!hit` skips

@@ -943,6 +943,7 @@ fn main() {
         .add_plugins(itembox::plugin)
         .add_plugins(weapon_pickups::plugin)
         .add_plugins(pickup_spawns::plugin)
+        .add_plugins(powerups::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1058,6 +1059,8 @@ mod liquids;
 mod weapon_pickups;
 #[path = "play_pickup_spawns.rs"]
 mod pickup_spawns;
+#[path = "play_powerups.rs"]
+mod powerups;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -2253,6 +2256,9 @@ struct Player {
     stamina: f32,
     max_stamina: f32,
     skill: skills::Skill,
+    /// its power-ups (#15, play_powerups.rs): the modifiers BRUTE and FORCE POWER put on it (the
+    /// game's list at char+0x55c) and the shells their material controllers draw it with
+    powers: powerups::Powers,
     dead: bool,
     /// the body once dead (physics on the skeleton)
     ragdoll: Option<Ragdoll>,
@@ -2518,7 +2524,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -4409,14 +4415,16 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             shot.hit = false;
             shot.body = true;
             // it lands when the shot gets there (`Shot::delay`): a roll x the shooter's skill's
-            // factor (Flint's doubled and scoped rolls) x the falloff over the range
-            // (play_shots.rs) x the hit part struck, x0.7 on the own side (play_damage.rs)
+            // factor (Flint's doubled and scoped rolls) and its power-ups' (BRUTE's x2) x the
+            // falloff over the range (play_shots.rs) x the hit part struck, x0.7 on the own side
+            // (play_damage.rs)
             let (lo, hi) = shot_rolls(shot);
             let factor = skills::roll_factor(&mut player);
+            let power = powerups::roll_factor(&player);
             let m = &mut squad.0[i];
             let roll = lo + (hi - lo) * m.random(1000) as f32 / 1000.0;
             let bone = damage::struck_bone(m, &game.0, shot.origin, shot.dir, t);
-            let hit = damage::Hit::new(roll, "roll", shot.damage_type).skill(factor).by(shooter, team, m).falloff(shot.falloff_at(t))
+            let hit = damage::Hit::new(roll, "roll", shot.damage_type).skill(factor).power(power).by(shooter, team, m).falloff(shot.falloff_at(t))
                 .struck(m, &game.0, bone);
             let local = shot.origin + shot.dir * t - m.position;
             player.pending_hits.push(PendingHit { delay: shot.delay(t), member: i, hit, dir: shot.dir, local, ammo: shot.ammo });
@@ -4469,14 +4477,15 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 shot.dist = t;
                 shot.hit = false;
                 shot.body = true;
-                // a roll x the shooter's skill's factor x the falloff x the hit part struck, x0.7 on
-                // the own side (play_damage.rs)
+                // a roll x the shooter's skill's factor and its power-ups' x the falloff x the hit
+                // part struck, x0.7 on the own side (play_damage.rs)
                 let roll = lo + (hi - lo) * squad.0[k].random(1000) as f32 / 1000.0;
                 let factor = skills::roll_factor(&mut squad.0[k]);
+                let power = powerups::roll_factor(&squad.0[k]);
                 let (shooter, team) = (squad.0[k].who(), squad.0[k].team);
                 let victim = if i == 0 { &*player } else { &squad.0[i - 1] };
                 let bone = damage::struck_bone(victim, &game.0, shot.origin, shot.dir, t);
-                let hit = damage::Hit::new(roll, "roll", damage_type).skill(factor).by(shooter, team, victim).falloff(shot.falloff_at(t))
+                let hit = damage::Hit::new(roll, "roll", damage_type).skill(factor).power(power).by(shooter, team, victim).falloff(shot.falloff_at(t))
                     .struck(victim, &game.0, bone);
                 let local = shot.origin + shot.dir * t - at;
                 if std::env::var("BF_COMBAT_LOG").is_ok() {

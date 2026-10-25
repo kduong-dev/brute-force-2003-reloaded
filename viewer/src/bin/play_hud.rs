@@ -439,6 +439,10 @@ struct HudGen {
     /// texture's own texels it's made from
     stamina_fill: Handle<Image>,
     stamina_texels: Vec<u8>,
+    /// the health bar's fill (HEALTH_FILL) and its copy in the "full" flash's colour
+    /// (`flash_texels`, `BarFlash`), swapped in while the flash is tinted
+    health_fill: Option<Handle<Image>>,
+    health_flash: Option<Handle<Image>>,
 }
 
 /// The radar frame's four diagonal health channels, by character (see HEALTH_BARS): texel index
@@ -538,6 +542,70 @@ const TRAIL_DOWN: f32 = 12.0;
 /// once above 15% (take02, take03, take07, take11, take17: red 0.98-1.08 s, gaps 1.00-1.07 s).
 const LOW_STAMINA: f32 = 0.15;
 const BLINK_SPAN: f32 = 1.0;
+/// The bars' "full" flash (#15): a power-up the character can't take (its item set's "can take",
+/// 0x148d40: HEALTH POWER at full health, STAMINA POWER at full stamina) starts the flash of the
+/// bar it would fill, on the HUD of the player whose character it is (0x6ef00), through 0x146900:
+/// when the bar widget's timer +0x48 is 0 it's set to [0x40c8fc] 4 x +0xb0 0.3 + +0xb4 5.0 = 6.2
+/// s (FUN_000b6cc0 sets +0xb0 and +0xb4 for both bars). The bar's update counts it down to 0
+/// (FUN_000b76c0); while it's above +0xb4 the fill is drawn in +0x59's colour (0xff3caae6, both
+/// bars: FUN_000b6cc0, FUN_000b7bf0) on the half of each +0xb0 period FUN_000b73d0 picks
+/// (`flash_tinted`), so four 0.15 s flashes over 1.2 s, then 5 s before a walk-over can start
+/// another. #35 take20 (STAMINA POWER walked over at full stamina): the stamina fill amber at
+/// 3.50-3.60, 3.80-3.90, 4.10-4.25 and 4.45-4.55 s, 0.3 s apart.
+const FLASH_START: f32 = 4.0 * 0.3 + 5.0;
+const FLASH_QUIET: f32 = 5.0;
+const FLASH_PERIOD: f32 = 0.3;
+/// The flash's colour, the bytes of 0xff3caae6 as the HUD's draw takes them (R e6, G aa, B 3c: the
+/// low-stamina blink's a0 20 20 reads as red the same way), and how it tints the fill: each texel's
+/// luminance x the colour x FLASH_GAIN. A fit to take20: the amber fill against the teal one in the
+/// next frames (3.50 against 3.65 s), 1.64 over 600 texels (rms 15, 6, 19 levels), the same
+/// combine the low-stamina blink's red copy fits (LOW_GREEN: L x (160, 32, 32) / 255 x ~1.6).
+/// The game's colour operation isn't traced.
+const FLASH_TINT: [f32; 3] = [230.0 / 255.0, 170.0 / 255.0, 60.0 / 255.0];
+const FLASH_GAIN: f32 = 1.64;
+
+/// The bars' "full" flash timers (the bar widgets' +0x48, see FLASH_START): the health bar's and
+/// the stamina bar's, s, 0 when not flashing. play_powerups.rs starts them.
+#[derive(Resource, Default)]
+pub(crate) struct BarFlash {
+    pub health: f32,
+    pub stamina: f32,
+}
+
+impl BarFlash {
+    /// 0x146900 on a bar's timer: a flash starts only when none runs.
+    pub fn start(timer: &mut f32) {
+        if *timer == 0.0 {
+            *timer = FLASH_START;
+        }
+    }
+}
+
+/// Whether a bar whose flash timer is `t` draws its fill in the flash's colour (FUN_000b73d0):
+/// above FLASH_QUIET, the part past it taken down by FLASH_PERIOD into (0, period], tinted when
+/// that's at least half a period below the period (|f - period| >= period / 2): the second half
+/// of each period as the timer counts down, so the first flash comes 0.15 s after the walk-over.
+fn flash_tinted(t: f32) -> bool {
+    if t <= FLASH_QUIET {
+        return false;
+    }
+    let mut f = t - FLASH_QUIET;
+    while f > FLASH_PERIOD {
+        f -= FLASH_PERIOD;
+    }
+    (f - FLASH_PERIOD).abs() >= FLASH_PERIOD * 0.5
+}
+
+/// A fill's texels in the flash's colour (FLASH_TINT): each texel's luminance x the colour x
+/// FLASH_GAIN, its alpha kept.
+fn flash_texels(px: &[u8]) -> Vec<u8> {
+    px.chunks_exact(4).flat_map(|c| {
+        let l = 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32;
+        let t = |k: usize| (l * FLASH_TINT[k] * FLASH_GAIN).round().clamp(0.0, 255.0) as u8;
+        [t(0), t(1), t(2), c[3]]
+    }).collect()
+}
+
 /// The skill's name under the bars (the HUD message widget h_1a5ceeb9, FUN_000c72b0 at hud+0xfc;
 /// text FUN_000c75c0, its font h_0c626fd5 at size 14), in the message blue (the takes' letter
 /// cores 189-197 206-212 242-249): the left edge, the line's top and the capital height, fitted
@@ -575,6 +643,8 @@ pub(crate) struct StaminaBar {
     /// the blink's wave (+0x40) and its way (+0x44)
     blink: f32,
     blink_dir: f32,
+    /// the fill image was last made in the "full" flash's colour (`BarFlash`)
+    drawn_flash: bool,
     /// the label: the skill's name (a string id), its opacity and the hold left after the off
     label: u32,
     label_alpha: f32,
@@ -677,11 +747,13 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
         .init_resource::<NameLabel>()
         .init_resource::<StaminaBar>()
+        .init_resource::<BarFlash>()
         .init_resource::<RadarMarks>()
         .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities).in_set(HudSetup),
             (|mut commands: Commands| {
                 commands.insert_resource(NameLabel::default());
                 commands.insert_resource(StaminaBar::default());
+                commands.insert_resource(BarFlash::default());
             }).after(setup)))
         .init_resource::<HudGen>()
         // (after the death camera: its label and reticle show the frame it decides them)
@@ -837,6 +909,13 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                                                  bevy::asset::RenderAssetUsages::default()));
         gen.stamina_texels = px;
     }
+    // the health bar's fill in the "full" flash's colour (see `BarFlash`)
+    gen.health_flash = game.texture_rgba(HEALTH_FILL).map(|(w, h, px)| {
+        images.add(Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                              bevy::render::render_resource::TextureDimension::D2, flash_texels(&px),
+                              bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                              bevy::asset::RenderAssetUsages::default()))
+    });
     let stamina_fill = gen.stamina_fill.clone();
     let bar_frame = game.texture_rgba(BAR_FRAME_CORNER).map(|(w, h, px)| images.add(bar_frame(w, h, &px)));
     let mut tex = |name: u32| texture(game, &mut images, &mut cache, name);
@@ -853,6 +932,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
 
     // ---- health (red) and energy (blue), top left: in the game's glossy frame ----
     let (red, blue, plus) = (tex(HEALTH_FILL), tex(ENERGY_FILL), tex(HEALTH_ICON));
+    gen.health_fill = red.clone();
     let (x0, y0, x1, y1) = BAR_FILL_RECT;
     let fill = |h: &Option<Handle<Image>>| ImageNode { rect: Some(Rect::new(x0, y0, x1, y1)), ..image(h, Color::WHITE) };
     gen.tutorial_frame = tutorial.is_some();
@@ -1028,13 +1108,21 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
 
 /// The stamina bar widget each frame (see `StaminaBar`): FUN_000b7850 sets the value (the
 /// brighten on a change), FUN_000b75a0 fades the brighten and moves the trail's end, FUN_000b76c0
-/// runs the blink. Then the fill image is remade mixed toward white by the brighten in sRGB (the
-/// takes' rising bar, (139-145, 183-186, 200-206), is the texture half way to white in sRGB,
-/// (144, 188, 206); Bevy mixes UI colours in linear light, which gives (188, 202, 214)), the
-/// frame's lower half is red while the blink is, and the skill's name label is kept.
-fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<StaminaBar>, gen: Res<HudGen>,
+/// runs the blink and counts the "full" flash down (both bars' timers, `BarFlash`). Then the fill
+/// image is remade mixed toward white by the brighten in sRGB (the takes' rising bar, (139-145,
+/// 183-186, 200-206), is the texture half way to white in sRGB, (144, 188, 206); Bevy mixes UI
+/// colours in linear light, which gives (188, 202, 214)), or in the flash's colour while it's
+/// tinted (`flash_tinted`), the frame's lower half is red while the blink is, and the skill's name
+/// label is kept.
+#[allow(clippy::too_many_arguments)]
+fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<StaminaBar>, gen: Res<HudGen>, mut flash: ResMut<BarFlash>,
                       mut images: ResMut<Assets<Image>>, mut frame: Query<(&FrameBlink, &mut ImageNode)>) {
     let dt = frame_dt(&time);
+    let flash = &mut *flash;
+    for t in [&mut flash.health, &mut flash.stamina] {
+        *t = (*t - dt).max(0.0);
+    }
+    let tinted = flash_tinted(flash.stamina);
     let max = player.max_health.max(1.0);
     // the HUD's value: stamina / max-stamina x max health, at least 1 when not 0 (FUN_000b7fb0)
     let v = player.stamina / player.max_stamina.max(1e-3) * max;
@@ -1078,15 +1166,22 @@ fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<Stam
             bar.label_alpha = (bar.label_alpha - dt * LABEL_FADE).max(0.0);
         }
     }
-    if (bar.brighten - bar.drawn).abs() > 1e-3 {
+    if (bar.brighten - bar.drawn).abs() > 1e-3 || tinted != bar.drawn_flash {
         bar.drawn = bar.brighten;
+        bar.drawn_flash = tinted;
         let b = bar.brighten;
+        let flashed = tinted.then(|| flash_texels(&gen.stamina_texels));
         if let Some(data) = images.get_mut(&gen.stamina_fill).and_then(|i| i.data.as_mut()) {
-            for (o, i) in data.chunks_exact_mut(4).zip(gen.stamina_texels.chunks_exact(4)) {
-                for c in 0..3 {
-                    o[c] = (i[c] as f32 + (255.0 - i[c] as f32) * b).round() as u8;
+            match flashed {
+                Some(f) if f.len() == data.len() => data.copy_from_slice(&f),
+                _ => {
+                    for (o, i) in data.chunks_exact_mut(4).zip(gen.stamina_texels.chunks_exact(4)) {
+                        for c in 0..3 {
+                            o[c] = (i[c] as f32 + (255.0 - i[c] as f32) * b).round() as u8;
+                        }
+                        o[3] = i[3];
+                    }
                 }
-                o[3] = i[3];
             }
         }
     }
@@ -1347,6 +1442,7 @@ fn update_squad_hud(
     mut images: ResMut<Assets<Image>>,
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
+    flash: Res<BarFlash>,
     mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>,
                       Option<&mut BackgroundColor>, Option<&mut BorderColor>)>,
     mut name_text: Query<(&mut RecordText, &mut Visibility), (With<NameLabelText>, Without<SquadPart>)>,
@@ -1480,6 +1576,14 @@ fn update_squad_hud(
                 let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
                 let width = if gen.tutorial_frame { bar_fill(player.health.clamp(0.0, player.max_health)) } else { bar_span().1 * f };
                 node.width = Val::Percent(width / 6.4);
+                // in the "full" flash's colour while it's tinted (`BarFlash`: a HEALTH POWER
+                // walked over at full health)
+                let want = if flash_tinted(flash.health) { gen.health_flash.clone() } else { gen.health_fill.clone() };
+                if let (Some(mut img), Some(want)) = (img, want) {
+                    if img.image != want {
+                        img.image = want;
+                    }
+                }
             }
             // the stamina bar's value and its trail, as `update_stamina_bar` keeps them
             SquadPart::PlayerStamina => {

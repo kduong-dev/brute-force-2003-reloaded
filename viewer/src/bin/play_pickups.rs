@@ -10,7 +10,7 @@
 //!    reticule-action 2 path of the game's prompt code) and it stays where it is.
 //!  - Healing Garo Fruit (h_e711067e, function-type 19 = IFSET_POWERUP_MEDKIT): eaten as it's
 //!    walked over; left alone at full health. The HEALTH / STAMINA POWER power-ups share
-//!    function-type 19 but have an idle effect: they're #15's, not handled here.
+//!    function-type 19 but have an idle effect: they're play_powerups.rs's (#15), not handled here.
 //!
 //! Each pickup adds a line under the character, "<n>x <name>" (counted up while more of the
 //! same are taken: the capture's "22x 11mm Ammo", "3x Medkit" -> "4x Medkit"), gone after
