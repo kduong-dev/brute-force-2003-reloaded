@@ -1115,7 +1115,7 @@ fn update_hud_widgets(
     mut game: ResMut<GameData>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<HudImages>,
-    camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    camera: Query<(&Camera, &Transform), With<MainCamera>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut GameText>, Option<&mut Node>)>,
     stamina: Res<StaminaBar>,
@@ -1131,11 +1131,15 @@ fn update_hud_widgets(
     let mut order: Vec<usize> = (0..l.weapons.len()).collect();
     order.sort_by_key(|&i| (i != player.weapon, Some(i) != second));
     order.truncate(if list { WEAPON_ROWS } else if second.is_some() { 2 } else { 1 });
-    // a world point on the HUD's 640 x 480 screen (4:3, centred in the window)
+    // a world point on the HUD's 640 x 480 screen (4:3, centred in the window), through the view
+    // this frame draws: the camera's Transform as the cameras have just set it (it's a root, so
+    // that's its place in the world), not its GlobalTransform, which is the last frame's until
+    // PostUpdate propagates it and left the ring a frame behind its target while the view moves
+    // (#17's review; the shake, play_shake.rs, is added after and isn't followed)
     let on_screen = |p: Vec3| -> Option<Vec2> {
         let (cam, at) = camera.single().ok()?;
         let win = windows.single().ok()?;
-        let px = cam.world_to_viewport(at, p).ok()?;
+        let px = cam.world_to_viewport(&GlobalTransform::from(*at), p).ok()?;
         let unit = win.height() / 480.0;
         Some(Vec2::new((px.x - (win.width() - 640.0 * unit) / 2.0) / unit, px.y / unit))
     };
