@@ -61,7 +61,10 @@
 //!    if it isn't there (the normal switch clip, re-asked every frame: #52 take04's both panels);
 //!    then, with no other overlay playing and the character free, the type's drop-and-pickup
 //!    overlay (`pickup_motion`, FUN_00121920; the motion set's `<overlay>` of that motion type,
-//!    at its `speed`). An undefined one, or a use that can't start, gives up after USE_TIMEOUT.
+//!    at its `speed`), laid over the whole body, its root bone too, with the character held where
+//!    it stands while it plays (its h_f6a410e6, `GunUse::holds_still`; play.rs `apply_overlay`
+//!    and `step_player`, #293). An undefined one, or a use that can't start, gives up after
+//!    USE_TIMEOUT.
 //!  - **The clip's events** (FUN_00117660; `swap`): at release_weapon the gun in hand's rounds go
 //!    into the squad's reserve of its ammo type as far as the stack takes them, and the gun drops
 //!    as a lying gun with the rest; at grab_weapon PICKUP_OBJECT goes from the lying gun to the
@@ -241,16 +244,26 @@ impl GunUse {
     pub(super) fn overlay(&self) -> Option<(&OverlayClip, f32)> {
         self.clip.as_ref().map(|c| (&c.overlay, self.time))
     }
+
+    /// Whether its clip plays and holds the character where it stands (its `<overlay>`'s
+    /// h_f6a410e6, `Overlay::holds`, which every motion set's pickup overlays have): the stick's
+    /// move FUN_001195c0 skips the move and the turn while the playing overlay (char+0x214) has
+    /// it (0x11982f-0x11986b). play.rs `step_player` (#293).
+    pub fn holds_still(&self) -> bool {
+        self.clip.as_ref().is_some_and(|c| c.holds && self.time < c.overlay.duration)
+    }
 }
 
-/// A drop-and-pickup clip as it plays: the overlay, its rate (the `<overlay>`'s speed), and its
-/// release_weapon and grab_weapon times (the clip's own seconds).
+/// A drop-and-pickup clip as it plays: the overlay, its rate (the `<overlay>`'s speed), its
+/// release_weapon and grab_weapon times (the clip's own seconds), and whether it holds the
+/// character still (the `<overlay>`'s h_f6a410e6, `GunUse::holds_still`).
 struct PickupClip {
     overlay: OverlayClip,
     name: String,
     speed: f32,
     release: f32,
     grab: f32,
+    holds: bool,
 }
 
 /// The lying guns' state: whether the level's have been found, the target last frame (its
@@ -456,7 +469,7 @@ fn pickup_clip(p: &Player, l: &Loaded, game: &Game, u: &GunUse) -> Option<Pickup
     let overlay = overlay_clip(&l.model, game, &name, l.feet)?;
     let release = overlay.event(EV_RELEASE_WEAPON).unwrap_or(overlay.duration * 0.25);
     let grab = overlay.event(EV_GRAB_WEAPON).unwrap_or(overlay.duration * 0.55);
-    Some(PickupClip { overlay, name, speed: o.speed.max(0.01), release, grab })
+    Some(PickupClip { overlay, name, speed: o.speed.max(0.01), release, grab, holds: o.holds })
 }
 
 /// Whether `p` can take a gun of `class` now (FUN_000a9910 for a weapon): not scoped (char+0x7a8),
@@ -1002,6 +1015,27 @@ mod tests {
         assert!(!walkable(a, &gun, Visibility::Inherited, &[a]));
         assert!(!walkable(a, &LyingGun { clip: -1, ..gun }, Visibility::Inherited, &[]));
         assert!(!walkable(a, &gun, Visibility::Hidden, &[]));
+    }
+
+    /// The clip holds the character where it stands while it plays, when its overlay says so
+    /// (h_f6a410e6, FUN_001195c0; #293): not before it starts (the switch before it moves
+    /// freely), nor once it's over, nor for an overlay without the flag.
+    #[test]
+    fn the_clip_holds_the_character_while_it_plays() {
+        let clip = |holds| PickupClip { overlay: OverlayClip { clip: 0, duration: 1.0, events: vec![], mask: vec![], upper: vec![], whole: vec![] },
+                                        name: String::new(), speed: 1.0, release: 0.2, grab: 0.6, holds };
+        let mut u = GunUse { target: Entity::PLACEHOLDER, slot: 0, class: 1, timeout: USE_TIMEOUT, clip: None, time: 0.0, released: false,
+                             grabbed: false, release_due: false, grab_due: false, cancelled: false };
+        assert!(!u.holds_still());
+        u.clip = Some(clip(true));
+        assert!(u.holds_still());
+        u.time = 0.99;
+        assert!(u.holds_still());
+        u.time = 1.0;
+        assert!(!u.holds_still());
+        u.time = 0.5;
+        u.clip = Some(clip(false));
+        assert!(!u.holds_still());
     }
 
     /// FUN_00121ac0's slot: Flint's pistol to slot 2 and rifle to 1; Brutus's cannon to 2 and rifle

@@ -2632,7 +2632,10 @@ and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (defini
 hardpoints, muzzles, fire sounds), then the map's definitions with more than one muzzle, and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the
 character types, their motion sets' clips and the placements, and exits
 ([character-types.md](character-types.md)); `BF_SHOT_LOG=1` prints each shot's barrel and shot
-directions. Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the
+directions; `BF_FEET_LOG=1` prints, every frame, the controlled character's soles (the posed
+model's lowest skinned vertex) and its two foot bones over its ground, whether it moves, and the
+overlays playing with their times (a pickup, a use, a reload, a throw: #293's check of the
+pickup clips' feet). Camera hooks ([camera.md](camera.md)): `BF_CAMERA_YAW` / `BF_CAMERA_PITCH` set the
 start (with `BF_TEST_GOTO`, `BF_CAMERA_PITCH` holds the pitch throughout, e.g. to fire down at
 something; held to +-60 degrees), `BF_CAMERA_DISTANCE` sets every character's boom,
 `BF_CAMERA_AIM_AT=x,y,z` turns the aim so the crosshair's ray passes through a point (the recipes

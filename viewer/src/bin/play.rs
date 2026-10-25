@@ -1667,10 +1667,13 @@ struct OverlayClip {
     clip: usize,
     duration: f32,
     events: Vec<(f32, u32)>,
-    /// every bone the clip animates (used standing still)
+    /// every bone the clip animates but the root (used standing still)
     mask: Vec<bool>,
     /// the same without the legs and pelvis (used on the move, so the legs keep running)
     upper: Vec<bool>,
+    /// every bone the clip animates, its root bone too (used standing still for a clip laid over
+    /// the whole body, `apply_overlay`'s `root`: the weapon pickups', #293)
+    whole: Vec<bool>,
 }
 
 impl OverlayClip {
@@ -3664,8 +3667,9 @@ fn switch_clip(model: &Character, game: &Game, weapons: &[HeldWeapon], to: usize
     Some(SwitchClip { clip, duration: a.duration, drop, grab, mask })
 }
 
-/// A reload / throw clip by name with its events, and its bone masks (all animated bones; and
-/// without the legs and pelvis: everything from the feet up to where the two legs meet).
+/// A reload / throw clip by name with its events, and its bone masks (all animated bones but the
+/// root; without the legs and pelvis too: everything from the feet up to where the two legs
+/// meet; and all animated bones, the root among them).
 fn overlay_clip(model: &Character, game: &Game, name: &str, feet: [usize; 2]) -> Option<OverlayClip> {
     let clip = model.anim_by_name(name)?;
     let a = &model.anims[clip];
@@ -3675,21 +3679,35 @@ fn overlay_clip(model: &Character, game: &Game, name: &str, feet: [usize; 2]) ->
     let legs: Vec<usize> = l.iter().chain(&r).copied().filter(|b| !hips.contains(b)).collect();
     let mut mask = vec![false; model.bones.len()];
     let mut upper = vec![false; model.bones.len()];
+    let mut whole = vec![false; model.bones.len()];
     for (bone, _) in &a.targets {
         if let Some(i) = model.bones.iter().position(|b| b == bone) {
             mask[i] = model.parent[i].is_some();
             upper[i] = mask[i] && !hips.contains(&i) && !ancestors(i).iter().any(|b| legs.contains(b));
+            whole[i] = true;
         }
     }
-    Some(OverlayClip { clip, duration: a.duration, events: game.events(a.event_channel), mask, upper })
+    Some(OverlayClip { clip, duration: a.duration, events: game.events(a.event_channel), mask, upper, whole })
 }
 
-/// Blend an overlay clip at time `t` onto `pose`, fading in and out over FADE.
-fn apply_overlay(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &OverlayClip, t: f32, full: bool, face_time: f32) {
+/// Blend an overlay clip at time `t` onto `pose`, fading in and out over FADE: standing still
+/// (`full`) every bone it animates, else its upper body. With `root` too, standing, its root
+/// bone as well, the clip's own (its height and its offset over the feet, which the locomotion's
+/// root keeps at 0 across: root motion moves the entity instead): a clip laid over the whole
+/// body. The weapon pickups' (#293): their clips animate 51-68 bones of the squad's skeletons,
+/// the legs and the root among them, where a reload or a use_item animates 36-44 and no root; and
+/// in the takes the whole body follows them, bending down to the gun with the feet on the ground
+/// (#61 take04 6.6-7.1 s, #52 take04, take11 300.6-301.1 s; how the game's animation player
+/// mixes an overlay channel isn't traced). Their root drops 0.42-0.64 m and moves up to 0.3 m
+/// across, which keeps one foot planted to the millimetre (Tex's left steps out 0.38 m and back);
+/// without it the legs folded under a body left standing, the soles up to 0.64 m off the ground
+/// (the clips posed at 17 times each over the idle; with it they stay within 3 cm of it in play,
+/// BF_FEET_LOG).
+fn apply_overlay(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &OverlayClip, t: f32, full: bool, root: bool, face_time: f32) {
     let t = t.min(c.duration - 1e-3);
     let k = (t / FADE).min((c.duration - t) / FADE).clamp(0.0, 1.0);
     let over = model.pose(game, c.clip, t, model.default_face, face_time);
-    for (b, m) in (if full { &c.mask } else { &c.upper }).iter().enumerate() {
+    for (b, m) in (match (full, root) { (true, true) => &c.whole, (true, false) => &c.mask, _ => &c.upper }).iter().enumerate() {
         if *m {
             let (q0, t0) = pose[b];
             let q1 = if q0.dot(over[b].0) < 0.0 { -over[b].0 } else { over[b].0 };
@@ -6081,7 +6099,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let fwd = Vec3::new(-p.cam_yaw.sin(), 0.0, -p.cam_yaw.cos());
     let right = Vec3::new(p.cam_yaw.cos(), 0.0, -p.cam_yaw.sin());
     let input = p.move_input;
-    let moving = input.length() > 0.1;
+    // (no move from the stick while a weapon pickup's clip holds the character where it stands:
+    // FUN_001195c0 skips the move and the turn while the playing overlay has h_f6a410e6,
+    // `weapon_pickups::GunUse::holds_still`, #293)
+    let moving = input.length() > 0.1 && !p.gun_use.as_ref().is_some_and(|u| u.holds_still());
     let dir = if moving { (right * input.x + fwd * input.y).normalize() } else { Vec3::ZERO };
     let dir_yaw = (-dir.x).atan2(-dir.z);
     let turn_to = |yaw: &mut f32, want: f32, rate: f32| {
@@ -6643,27 +6664,28 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let standing = !moving && matches!(p.action, Action::None);
     if let Some(r) = &p.reloading {
         if let Some(c) = &l.reload_clips[stance_of(l, r.weapon)] {
-            apply_overlay(&mut pose, &l.model, game, c, r.time, standing, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, r.time, standing, false, p.face_time);
         }
     }
     if let Some(t) = p.using {
         if let Some(c) = &l.use_clips[stance_of(l, p.weapon)] {
-            apply_overlay(&mut pose, &l.model, game, c, t, standing, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, t, standing, false, p.face_time);
         }
     }
-    // a weapon pickup's drop-and-pickup clip (#17, play_weapon_pickups.rs), as the others
+    // a weapon pickup's drop-and-pickup clip (#17, play_weapon_pickups.rs): the whole body, its
+    // root too (#293); the character is held still while it plays (`moving` above)
     if let Some((c, t)) = p.gun_use.as_ref().and_then(|u| u.overlay()) {
-        apply_overlay(&mut pose, &l.model, game, c, t, standing, p.face_time);
+        apply_overlay(&mut pose, &l.model, game, c, t, standing, true, p.face_time);
     }
     if let Some(t) = &p.throwing {
         if let Some(c) = if t.place { &l.place_clips[t.slot] } else { &l.throw_clips[t.slot] } {
-            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false, p.face_time);
         }
     }
     // the skill's toggle overlay (play_skills.rs times it and switches at its event)
     if let Some(t) = &p.skill.toggling {
         if let Some(c) = &l.skill_clips[t.slot()][t.stance] {
-            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false, p.face_time);
         }
     }
     if let Some(w) = l.weapons.get(p.weapon) {
@@ -6775,6 +6797,19 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     let world = l.model.world(&pose);
     p.last_world.clone_from(&world);
+    // test hook: BF_FEET_LOG=1 prints, each frame, the controlled character's soles (the posed
+    // model's lowest skinned vertex, `lowest_vertex`) and its two foot bones over its ground (the
+    // floor GROUND under its node), with the overlays playing and their times (#293)
+    if p.controlled && std::env::var("BF_FEET_LOG").is_ok() {
+        let up = p.height + p.lift_now - GROUND;
+        let overlays: Vec<String> = [p.gun_use.as_ref().and_then(|u| u.overlay()).map(|(c, t)| ("pickup", t, c.duration)),
+                                     p.using.zip(l.use_clips[stance_of(l, p.weapon)].as_ref()).map(|(t, c)| ("use", t, c.duration)),
+                                     p.reloading.as_ref().and_then(|r| l.reload_clips[stance_of(l, r.weapon)].as_ref().map(|c| ("reload", r.time, c.duration))),
+                                     p.throwing.as_ref().map(|t| (if t.place { "place" } else { "throw" }, t.time, 0.0))]
+            .into_iter().flatten().map(|(n, t, d)| format!(" {n} {t:.2} / {d:.2} s")).collect();
+        println!("t {:.2} {}: soles {:+.3} m over its ground, foot bones {:.3} {:.3}{}{}", p.sim_time, unit_name(p), lowest_vertex(&l.model, &world) + up,
+                 world[l.feet[0]].w_axis.y + up, world[l.feet[1]].w_axis.y + up, if moving { " moving" } else { "" }, overlays.concat());
+    }
 
     // ---- grenade release: from the throwing hand, 15 degrees above the aim (the release event,
     // FUN_00117660 at 0x117be4; `grenade::throw_velocity`) ----

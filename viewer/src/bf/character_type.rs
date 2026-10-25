@@ -85,6 +85,9 @@ const H_AWARD_KIND: u32 = 0xE925_F48B;
 /// `<limit-weapon h_fb08d4c6>` (name not recovered; the parser FUN_00190030 puts it at the parse
 /// record's +0x374): the type's pickup mode, `CharacterType::pickup_mode`.
 const H_PICKUP_MODE: u32 = 0xFB08_D4C6;
+/// An `<overlay>`'s h_f6a410e6 (name not recovered; the overlay parser FUN_001958f0 puts it at
+/// the parse record's +0x3c): the character is held still while it plays, `Overlay::holds`.
+const H_HOLDS: u32 = 0xF6A4_10E6;
 
 /// The MT_ motion types by value, without their MT_ prefix (default.xbe's name table 0x3bfdac,
 /// values 0-49 in order; parser FUN_001876a0).
@@ -370,6 +373,14 @@ pub struct Overlay {
     /// overlay starts. 1 on every overlay of the squad's sets but the weapon pickups (Tex's 1.1,
     /// Flint's 1.2); 1 without
     pub speed: f32,
+    /// h_f6a410e6 (name not recovered): the character is held where it stands while the overlay
+    /// plays. The overlay parser FUN_001958f0 puts it at the parse record's +0x3c, FUN_001314c0
+    /// packs it into the runtime record's +0x3d bit 1 (0x131966-0x131986), and the stick's move
+    /// FUN_001195c0 skips the move and the turn while the playing overlay (char+0x214) has it
+    /// (0x11982f-0x11986b; a MOTION's +0x251 bit 5, its own h_f6a410e6, does the same: the crouch's
+    /// transitions and throw_grenade). True on `place_hi` and on every motion set's weapon pickups
+    /// (the DROP_* and PICKUP_* types), false on the rest; false without
+    pub holds: bool,
 }
 
 /// A hit bone: a motion set's `<collision><bones><bone name mass Damage recoil>` (FUN_00194d70;
@@ -690,6 +701,7 @@ pub fn parse_motion_set(root: &Element, file: &str) -> MotionSet {
             script: strings(o, h("script")).into_iter().next().unwrap_or_default(),
             prefix: int(o, h("prefix-type")).unwrap_or(0),
             speed: num(o, h("speed")).unwrap_or(1.0),
+            holds: int(o, H_HOLDS).unwrap_or(0) != 0,
         }).collect(),
         hit_bones: root.child(h("collision")).and_then(|c| c.child(h("bones"))).map(|b| b.children_named(h("bone")).filter_map(|b| {
             Some(HitBone {
