@@ -28,9 +28,9 @@
 //! Two constants aren't used. `time-scale` (h_01590d7a, 0.4) is mapped to +0x58 by FUN_0008fa50,
 //! but none of the shader's own functions read it; scaling the scroll's time step wouldn't move
 //! where it stops anyway. The wrapper's h_e59d69a0 (60) goes to the render state at +0x294 of
-//! the state cache through FUN_0009e960, which flags the material when it isn't 255; which
-//! state that is isn't established (alpha-test reference is a guess: as one, with the
-//! footage's distant chip filled, it can't be cutting at 60/255), so it's left out.
+//! the state cache through FUN_0009e960, which flags the material when it isn't 255: it's
+//! STENCILREF, the key of the game's glare (#289, bf_viewer::glare), which the chip doesn't
+//! write here yet (see below).
 //!
 //! Not matched: the footage's chip is fuller and brighter than this material can draw. In
 //! todo/43-memory-chip it's a filled box with a darker circuit pattern, (19, 79, 28) over dark
@@ -41,8 +41,12 @@
 //! red 165 over 60, with a soft halo. The pixel program can't raise red past the background
 //! (texture red 45 x 0.36), and the texture's own five mip levels (box averages, alpha about
 //! 0.16-0.2 at every level; the chain it's drawn with) don't fill it, so that light comes from
-//! something outside this material: not found (in the DNA footage the Light grenades' beams are
-//! nearby; at 9.4 s a soldier walking through the chip is lit the same whitish cyan).
+//! something outside this material: the glare (#289, viewer/docs/levels.md "The glare"), which
+//! keeps the pixels whose stencil is the chip's 60 and whose luminance is above 60 / 255, blurs
+//! them and adds 2.35 times them back: over the dark sand the chip's (19, 79, 28) is under the
+//! key and nothing is added; over the lit rock it's above, every channel rises and the halo
+//! spreads. The chip doesn't key the demo's glare yet: the glare also multiplies by the frame
+//! buffer's alpha, which this blend leaves at a value not worked out.
 //!
 //! The ALE effect the demo drew before (h_ee11d51f powerup_pill + light_powerup_pill) is the DNA
 //! canister's (mesh h_e3e4caad, "Alien Technology Acquired!"), not this.

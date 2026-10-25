@@ -264,6 +264,7 @@ pub type LiquidMaterial = ExtendedMaterial<StandardMaterial, LiquidSurface>;
 
 /// A liquid surface's textures and constants (`LiquidMaterial`, `liquid_materials`).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+#[bind_group_data(LiquidKey)]
 pub struct LiquidSurface {
     #[uniform(100)]
     pub params: LiquidParams,
@@ -292,8 +293,8 @@ mod liquid_params {
     #![allow(dead_code)]
     use bevy::{prelude::*, render::render_resource::ShaderType};
 
-    /// A liquid surface's constants (src/liquid.wgsl `Liquid`).
-    #[derive(Clone, Copy, Debug, Default, Reflect, ShaderType)]
+    /// A liquid surface's constants (src/liquid.wgsl `Liquid`). The default has no glare key.
+    #[derive(Clone, Copy, Debug, Reflect, ShaderType)]
     pub struct LiquidParams {
         /// the game's pixel shader it draws with (`level_scene`'s PS_*: BF_LavaMaterial's 0x27 -
         /// 0x2c, the water's 0x2f; 0 the BF_LIQUID_DEBUG white)
@@ -315,15 +316,82 @@ mod liquid_params {
         /// in `color0` (pixel shader 0x2b's tint of texture-1)
         pub color0: Vec4,
         pub color1: Vec4,
+        /// the glare's key its pixels write (`glare_key`): its wrapper's stencil value / 255, 1
+        /// for none
+        pub key: f32,
+    }
+
+    impl Default for LiquidParams {
+        fn default() -> Self {
+            LiquidParams { shader: 0, blend: 0, layer: 0, clock: 0.0, coords0: Vec4::ZERO, coords1: Vec4::ZERO, anim0: Vec4::ZERO,
+                           anim1: Vec4::ZERO, color0: Vec4::ZERO, color1: Vec4::ZERO, key: 1.0 }
+        }
     }
 }
 pub use liquid_params::LiquidParams;
+
+/// What a liquid's pipeline depends on beyond bevy's own (`LiquidSurface::specialize`): how its
+/// output is blended and whether it writes a glare key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LiquidKey {
+    blend: u32,
+    keyed: bool,
+}
+
+impl From<&LiquidSurface> for LiquidKey {
+    fn from(surface: &LiquidSurface) -> Self {
+        LiquidKey { blend: surface.params.blend, keyed: surface.params.key < 1.0 }
+    }
+}
+
+/// The glare's key a material writes (`crate::glare`): its wrapper's h_e59d69a0 / 255, the
+/// stencil value the wrapper's draw sets for what it wraps (0x9ea90 -> FUN_0009e960: the
+/// reference STENCILPASS REPLACE writes), which the glare's bright pass reads as a luminance
+/// threshold: lava 60 (sdm_e13) or 95 (the tutorial, e40), sludge 200, toxic waste 1, water 255
+/// (none). 1 (none) for a material no wrapper names a value for: the world pass's own 255
+/// (FUN_000d4180).
+pub fn glare_key(game: &Game, id: u32) -> f32 {
+    game.material_constant(id, H_WRAP_ALPHA).and_then(|v| v.first().copied()).map_or(1.0, |s| (s / 255.0).clamp(0.0, 1.0))
+}
 
 const LIQUID_SHADER_HANDLE: Handle<Shader> = weak_handle!("2c41a7d3-8e5b-4b6f-b0c2-93d1f5e7a604");
 
 impl MaterialExtension for LiquidSurface {
     fn fragment_shader() -> ShaderRef {
         LIQUID_SHADER_HANDLE.into()
+    }
+
+    /// Where its pixels' glare key goes (`glare_key`; the picture's alpha carries it, see
+    /// `crate::glare`): the game's stencil REPLACE writes the key wherever the surface is drawn,
+    /// whatever its blend. Opaque, the shader writes it as its alpha (GLARE_KEY). Added (ONE /
+    /// ONE, which reads no alpha), it does too, with the colour added as it is and the alpha
+    /// replaced (bevy's own additive blend takes the alpha to make its colour). A blend that needs
+    /// the surface's own alpha (SRCALPHA / INVSRCALPHA, ONE / INVSRCALPHA) can't carry another
+    /// value in it: a keyed one writes 0 there, the nearest any blend can write (toxic waste's 1 /
+    /// 255; m02_a's two-pass lava's 20 / 255), and an unkeyed one (the water) blends it as bevy
+    /// does, which keeps 1 over 1.
+    fn specialize(_pipeline: &MaterialExtensionPipeline, descriptor: &mut RenderPipelineDescriptor, _layout: &MeshVertexBufferLayoutRef,
+                  key: MaterialExtensionKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
+        use bevy::render::render_resource::{BlendComponent, BlendFactor, BlendOperation, BlendState};
+        let LiquidKey { blend, keyed } = key.bind_group_data;
+        let Some(fragment) = descriptor.fragment.as_mut() else { return Ok(()) };
+        let component = |src_factor, dst_factor| BlendComponent { src_factor, dst_factor, operation: BlendOperation::Add };
+        match blend {
+            BLEND_NONE => fragment.shader_defs.push("GLARE_KEY".into()),
+            BLEND_ADD if keyed => {
+                fragment.shader_defs.push("GLARE_KEY".into());
+                for target in fragment.targets.iter_mut().flatten().filter(|t| t.blend.is_some()) {
+                    target.blend = Some(BlendState { color: component(BlendFactor::One, BlendFactor::One), alpha: component(BlendFactor::One, BlendFactor::Zero) });
+                }
+            }
+            BLEND_ALPHA | BLEND_PREMULTIPLIED if keyed => {
+                for blend in fragment.targets.iter_mut().flatten().filter_map(|t| t.blend.as_mut()) {
+                    blend.alpha = component(BlendFactor::Zero, BlendFactor::Zero);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
 
@@ -337,8 +405,9 @@ impl MaterialExtension for LiquidSurface {
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct LiquidClock(pub f32);
 
-/// The level materials (`LevelMaterial`, `LiquidMaterial`), their shaders, and the liquids' clock
-/// (`LiquidClock`).
+/// The level materials (`LevelMaterial`, `LiquidMaterial`), their shaders, the liquids' clock
+/// (`LiquidClock`), and the glare their keys feed (`crate::glare`, run by every camera with
+/// `console_look`).
 pub fn plugin(app: &mut App) {
     let mut shaders = app.world_mut().resource_mut::<Assets<Shader>>();
     shaders.insert(&LAMP_SHADER, Shader::from_wgsl(include_str!("lamps.wgsl"), file!()));
@@ -346,6 +415,7 @@ pub fn plugin(app: &mut App) {
     app.add_plugins((MaterialPlugin::<LevelMaterial>::default(), MaterialPlugin::<LiquidMaterial>::default()))
         .init_resource::<LiquidClock>()
         .add_systems(PostUpdate, run_liquid_clocks);
+    crate::glare::plugin(app);
 }
 
 /// Each liquid material's clock: its start + the level's `LiquidClock`, once the clock has moved.
@@ -540,7 +610,8 @@ fn ramp_image(images: &mut Assets<Image>, ramp: &[u8; RAMP_TEXELS]) -> Handle<Im
 /// +0x30, blend-mode-1 h_f3c8bfa2 +0x34, lifetime +0x38), its passes by `lava_passes`, unlit
 /// (no vertex light: pixel shader 0x2b's v0 is the constant `key`, FUN_00091fe0's slot 24). The
 /// wrapper material's h_e59d69a0 (lava 60, sludge 200) is the stencil value its pixels write for
-/// the game's glare pass (answer-spec Q4), not an opacity: left out with that pass.
+/// the game's glare (answer-spec Q4), not an opacity: written as the glare's key (`glare_key`,
+/// `crate::glare`, #289).
 ///
 /// Test hooks: BF_LIQUID_TEX=<hex> puts one texture on every liquid layer; BF_LIQUID_DEBUG=1 draws
 /// every liquid surface solid white; BF_LIQUID_LOG=1 prints each material's constants.
@@ -569,7 +640,7 @@ fn liquid_materials(game: &mut Game, images: &mut Assets<Image>, liquids: &mut A
     // (frame count, rate: the material's own for the water, FUN_00092d10; else the texture's)
     let anim = |l: &Option<(Handle<Image>, u32, f32)>, rate: Option<f32>, divided: bool|
         Vec4::new(l.as_ref().map_or(1.0, |x| x.1 as f32), rate.or(l.as_ref().map(|x| x.2)).unwrap_or(0.0), if divided { 1.0 } else { 0.0 }, 0.0);
-    let mut params = LiquidParams::default();
+    let mut params = LiquidParams { key: glare_key(game, id), ..default() };
     let (passes, start) = if water {
         params.coords0 = coords(game, ["scale-u", "scale-v"], ["translate-u", "translate-v"]);
         params.coords1 = coords(game, ["scale-u-1", "scale-v-1"], ["translate-u-1", "translate-v-1"]);
@@ -1024,11 +1095,13 @@ pub fn follow_sky(camera: Query<&GlobalTransform, With<Camera3d>>, mut sky: Quer
     }
 }
 
-/// The camera's look, as the console drew it: no tone mapping, and an exposure at which a
-/// light of 1.0 (a white directional light of PI lux, or ambient brightness 1) shows a texture
-/// as it is (Bevy scales light by 1 / (1.2 x 2^ev100)).
-pub fn console_look() -> (bevy::core_pipeline::tonemapping::Tonemapping, bevy::render::camera::Exposure) {
-    (bevy::core_pipeline::tonemapping::Tonemapping::None, bevy::render::camera::Exposure { ev100: (1.0f32 / 1.2).log2() })
+/// The camera's look, as the console drew it: no tone mapping, an exposure at which a light of
+/// 1.0 (a white directional light of PI lux, or ambient brightness 1) shows a texture as it is
+/// (Bevy scales light by 1 / (1.2 x 2^ev100)), and the glare over the keyed surfaces
+/// (`crate::glare`, #289).
+pub fn console_look() -> (bevy::core_pipeline::tonemapping::Tonemapping, bevy::render::camera::Exposure, crate::glare::Glare) {
+    (bevy::core_pipeline::tonemapping::Tonemapping::None, bevy::render::camera::Exposure { ev100: (1.0f32 / 1.2).log2() },
+     crate::glare::Glare::default())
 }
 
 /// Point lights tuned for Bevy's default camera exposure (ev100 9.7) keep their look under

@@ -590,14 +590,17 @@ fn heat_figures(mut commands: Commands, view: Res<VengarView>, player: Res<Playe
     }
 }
 
-/// The Vengar pass in the render graph: after the tone mapping (none here), before the HUD.
+/// The Vengar pass in the render graph: after the tone mapping (none here), before the glare
+/// (the game runs the glare after the view's world pass and the heat figures in vision mode 2,
+/// FUN_000e81e0 0xe8917; bf_viewer::glare) and the HUD.
 struct PassPlugin;
 
 impl Plugin for PassPlugin {
     fn build(&self, app: &mut App) {
         let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
         render.add_render_graph_node::<ViewNodeRunner<VengarNode>>(Core3d, VengarLabel)
-            .add_render_graph_edges(Core3d, (Node3d::Tonemapping, VengarLabel, Node3d::EndMainPassPostProcessing));
+            .add_render_graph_edges(Core3d, (Node3d::Tonemapping, VengarLabel, Node3d::EndMainPassPostProcessing))
+            .add_render_graph_edge(Core3d, VengarLabel, bf_viewer::glare::GlareLabel);
     }
 
     fn finish(&self, app: &mut App) {

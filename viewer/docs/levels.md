@@ -14,8 +14,9 @@ archetype>` (each part's geosets: offset, bounds, normals, winding, UV direction
 `BF_TEX_LOG=1|squad` (where each texture came from, below).
 In bf_level and bf_play: `BF_NO_DETAIL=1` (the terrain without its detail texture),
 `BF_NO_BUMP=1` (the terrain without its bump map), `BF_ANISOTROPY=<1-16>` (the world textures'
-anisotropy; the game's is none) and `BF_SKY_TIME=<s>` (the sky's clock started that far into the
-level), all below.
+anisotropy; the game's is none), `BF_SKY_TIME=<s>` (the sky's clock started that far into the
+level), `BF_GLARE=0` (no glare) and `BF_GLARE_DEBUG=1|2` (the glare's keys, or its blur alone),
+all below.
 
 * Terrain vertices (type h_ef44f398) carry no float position. Slot 8 of the game's vertex
   format table gives the layout: SHORT2, packed normal, two float2 UVs, NORMSHORT3, 2 bytes.
@@ -405,16 +406,63 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     `BF_LIQUID_DEBUG=1` draws every liquid surface solid white; `BF_LIQUID_LOG=1` lists a map's
     liquid surfaces and materials (constants, passes, frames, the ramp against the archive's) and
     the other objects wearing a liquid material.
-  * **Not drawn: the glare.** The takes' lava is brighter and yellower than these shaders give:
-    take01 of #146 (2 s, the stream on sdm_e13) 254 134 30, its brightest tenth 254 193 31, where
-    the demo's (`BF_MAP=sdm_e13 BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.80,-19.97,-110,25.09
-    BF_TEST_GO_AT=100`, frame 19) is 217 86 9, brightest 237 111 9; take08 of #28 (165 s, the
-    tutorial's pit) 171 106 62, brightest 252 201 97, against the demo's 88 59 51, 151 87 67. Even
-    the lava texture's brightest texels x v0 (236 108 13) fall short, so something is laid over
-    it: the glare (FUN_000e5f60 / FUN_000e5d40), which the game runs when a material writes a
-    stencil value other than 255 (lava 60): a bright pass of the picture (pixel shader 0x1f keeps
-    what's brighter than a threshold), blurred into 24 offset copies, added ONE / ONE (code map).
-    The demo has no glare yet (its own ticket); the x2 it drew before stood in for it.
+  * **The glare (#289).** The takes' lava is brighter and yellower than these shaders give, up to
+    flat yellow close by, and glows onto the dark bank: the game's glare, a bloom laid over the
+    picture after the world (`src/glare.rs`, `src/glare.wgsl`; the code map's rows for
+    FUN_000e5f60, FUN_000e5d40, FUN_000e47b0, FUN_000e49d0).
+    * **The keys.** Every pixel the world pass draws writes a stencil value (FUN_000d4180: REPLACE,
+      reference 255, over a stencil cleared to 255 at 0xd9ea4); a wrapper material's draw sets the
+      reference to its h_e59d69a0 for what it wraps (0x9ea90 -> FUN_0009e960). Liquids: lava 60
+      (sdm_e13), 95 (the tutorial, e40), 80 (sdm_m07, m02, m04, m07, mp7), 20 (m02_a's two-pass
+      lava); sludge 200; toxic waste 1; chloride 150 / 200 (m14_c); water and e05 / e13's h_eabb45fa
+      255.
+    * **The passes.** (1) The back buffer and the depth-stencil buffer, read as a texture whose
+      alpha is the stencil byte, into the 320 x 240 target h_0796c3b0: pixel shader 0x1f keeps a
+      texel's colour where its luminance (0.299, 0.587, 0.114) is above stencil / 255, else black,
+      so the stencil value is a luminance threshold and 255 never passes (x the frame buffer's
+      alpha, 1 for the lava and sludge shaders). (2) 24 copies of that into the 160 x 120 target
+      h_0575b9b9, 1, 2 and 3 steps of 0.006 of the screen out in eight directions, each x 25 / 255
+      (trunc(0.1 x 255): FUN_000e47b0), added ONE / ONE: 2.35 times the kept picture, saturating
+      at 255. (3) That target stretched over the picture, added ONE / ONE (FUN_000e5d40). After the
+      decals, before the refraction copy; in the normal view and in the Vengar view (after its
+      world pass), on every level whenever a keyed surface was drawn.
+    * **Here:** a keyed liquid writes its stencil value / 255 as its alpha (liquid.wgsl
+      `GLARE_KEY`); every other surface leaves the picture's alpha at 1. After the tone mapping
+      and the Vengar pass, a post pass reads the key from the alpha: the bright pass into a target
+      of 240 rows (each texel the average of the pixels it covers, in the picture's sRGB values,
+      then kept above its key), the blur into one of 120 rows (the steps as a share of the game's
+      4:3 screen), added to the picture's sRGB values and clamped; the picture's alpha goes back
+      to 1. The frame buffer's alpha (the game's second factor) is taken as 1. A liquid added ONE /
+      ONE (chloride) writes its key too; one whose blend needs its own alpha (toxic waste's ONE /
+      INVSRCALPHA, m02_a's SRCALPHA / INVSRCALPHA) writes 0, the nearest a blend can write (toxic
+      waste's 1 / 255 exactly enough; m02_a's 20 / 255 not). A blend over the whole view must keep
+      the alpha: the grenades' red damage tint quad does (play_grenade.rs `KeepAlpha`: bevy's
+      multiply wrote 1 over every key). Something see-through drawn over a liquid raises its key
+      toward 1 by its opacity (the game's REPLACE puts 255 there outright).
+    * **Not keyed yet:** the game's other keyed surfaces, which multiply by their own frame buffer
+      alpha, not worked out for them: the wrappers' values on self-lit glow shells (pickups' 50,
+      the memory chip's 60: the halo and the fill play_dna.rs couldn't account for), on lit glow
+      maps (h_1df292a1, 20-210) and on the glow shader's lamps (h_0e7658e4, sdm_e13's 0); the decal
+      types' byte +0x22 (FUN_00213fc0); the Vengar view's heat figure material (0xa8c80).
+    * Test hooks: `BF_GLARE=0` adds nothing (the passes run with no weight), to compare;
+      `BF_GLARE_DEBUG=1` shows the keys in place of the picture (grey: a key; white: none), `=2` the
+      blur alone. bf_level draws the glare too.
+    * Checked against #146's takes at Brutus's start on sdm_e13 (`BF_MAP=sdm_e13 BF_CHARACTER=0
+      BF_TEST_GOTO=-19.97,-122.80,-19.97,-110,25.09 BF_TEST_GO_AT=100`, frames 5-20), the lava near
+      the camera (a box on the stream's near side): the demo 255 182 29, brightest tenth 255 238 31
+      (without the glare 182 55 9, 210 76 10); takes 02 and 03 standing at the same place (0.5-4.5
+      s) 253 189-190 28, brightest 254 253 33; take01 252 120 26, brightest 254 185 29 (its lava's
+      pattern darker there: the clocks differ). Close to it the takes go flat yellow (take03 14 s
+      and 23.9 s: 246-252 209-215 27-30) and the lava glows a few pixels onto the bank and over
+      Brutus's outline, as the demo's does. The tutorial's pit (take08 of #28, 163.5-165.5 s, Tex at
+      46.3, -25.9: `BF_MAP=tutorial BF_TEST_GOTO=45.6,-25.5,46.26,-25.92`, frames 25-29): orange
+      blobs with yellow cores glowing over the grey crust; the right-hand lava 124 80 51, brightest
+      252 184 80 (without 89 56 41, 187 89 40), the take's 168 103 60, brightest 252 200 94 (its
+      framing has more lava and less crust). sdm_e34's start (30 frames) and the e40 sea view
+      below (20 frames) are pixel for pixel main's. sdm_m03's sludge from bf_level's start view is
+      fogged under its key (88 67 65): nothing added. In the Vengar view (the sdm_e13 start with
+      `BF_TEST_SKILL=0.5`) the lava, greyed by the view's world pass first, glares to white: the
+      code's order, which no take shows.
   * Checked (#4): sdm_e10's pond from its start (`BF_MAP=sdm_e10 BF_CHARACTER=3
     BF_TEST_GOTO=74,5,60,5 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.4`): 59 57 28 near, the shimmer
     changing frame to frame and repeating after 2.00 s (30 frames at 15 fps: a mean change of 1.5

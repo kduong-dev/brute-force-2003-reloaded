@@ -259,7 +259,34 @@ pub struct ScreenTint(pub f32);
 
 /// The tint's quad in front of the camera (multiplied into the 3D picture).
 #[derive(Component)]
-struct TintQuad(Vec<Handle<StandardMaterial>>);
+struct TintQuad(Vec<Handle<TintMaterial>>);
+
+/// The tint's material: bevy's standard one, multiplied (AlphaMode::Multiply), leaving the
+/// picture's alpha as it was (`KeepAlpha`).
+type TintMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, KeepAlpha>;
+
+/// `TintMaterial`'s extension: nothing of its own but its pipeline. The picture's alpha carries
+/// the glare's keys until the glare reads them after the 3D picture (bf_viewer::glare, #289);
+/// bevy's multiply blend writes the quad's alpha over them (1, over the whole view), which put
+/// the glare out wherever the quad is: always, as it stays shown. The console's red damage tint
+/// is the view's colour fade, drawn over the finished picture, glare and all.
+#[derive(Asset, bevy::render::render_resource::AsBindGroup, Reflect, Debug, Clone, Default)]
+struct KeepAlpha {}
+
+impl bevy::pbr::MaterialExtension for KeepAlpha {
+    /// The blend's alpha keeps what's there (ZERO / ONE); the colour's is bevy's multiply.
+    fn specialize(_pipeline: &bevy::pbr::MaterialExtensionPipeline, descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+                  _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef, _key: bevy::pbr::MaterialExtensionKey<Self>)
+                  -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        use bevy::render::render_resource::{BlendComponent, BlendFactor, BlendOperation};
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            for blend in fragment.targets.iter_mut().flatten().filter_map(|t| t.blend.as_mut()) {
+                blend.alpha = BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add };
+            }
+        }
+        Ok(())
+    }
+}
 
 /// A canister left where it went off while its effects burn (see `stays`): seconds left, and its
 /// type's label for BF_GRENADE_LOG ("canister gone").
@@ -292,7 +319,8 @@ struct PendingDamage {
 pub struct GrenadeSystems;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Held>()
+    app.add_plugins(MaterialPlugin::<TintMaterial> { prepass_enabled: false, shadows_enabled: false, ..default() })
+        .init_resource::<Held>()
         .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
@@ -792,10 +820,11 @@ fn tint_factor(s: f32) -> f32 {
 /// the hurt, back to 1 over TINT_TIME. (The picture blends in linear light: a stored-value factor
 /// s is the linear factor srgb(s), what `Color::srgb` gives.) One material per TINT_STEPS level,
 /// swapped in (a material's new colour reaches the screen a frame late, a swap at once); the
-/// quad stays shown, white when there's no tint (shown on the hurt, it came a frame late too).
+/// quad stays shown, white when there's no tint (shown on the hurt, it came a frame late too),
+/// leaving the picture's alpha (the glare's keys) alone (`TintMaterial`).
 fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, mut meshes: ResMut<Assets<Mesh>>,
-        mut materials: ResMut<Assets<StandardMaterial>>,
-        mut quads: Query<(&TintQuad, &mut MeshMaterial3d<StandardMaterial>)>,
+        mut materials: ResMut<Assets<TintMaterial>>,
+        mut quads: Query<(&TintQuad, &mut MeshMaterial3d<TintMaterial>)>,
         camera: Query<Entity, With<MainCamera>>) {
     // the recording's factor at this time (linear between its game frames)
     let f = tint.0 * 30.0;
@@ -809,8 +838,11 @@ fn tint(mut commands: Commands, time: Res<Time>, mut tint: ResMut<ScreenTint>, m
         if let Ok(cam) = camera.single() {
             let steps = (0..=TINT_STEPS).map(|i| {
                 let s = tint_factor(TINT_LOW + (1.0 - TINT_LOW) * i as f32 / TINT_STEPS as f32);
-                materials.add(StandardMaterial { base_color: Color::linear_rgb(1.0, s, s), unlit: true, fog_enabled: false,
-                                                 alpha_mode: AlphaMode::Multiply, cull_mode: None, ..default() })
+                materials.add(TintMaterial {
+                    base: StandardMaterial { base_color: Color::linear_rgb(1.0, s, s), unlit: true, fog_enabled: false,
+                                             alpha_mode: AlphaMode::Multiply, cull_mode: None, ..default() },
+                    extension: KeepAlpha {},
+                })
             }).collect::<Vec<_>>();
             commands.spawn((Mesh3d(meshes.add(Rectangle::new(4.0, 4.0))), MeshMaterial3d(steps[now].clone()), TintQuad(steps),
                             NotShadowCaster, Transform::from_xyz(0.0, 0.0, -TINT_DEPTH), Visibility::Inherited, ChildOf(cam)));

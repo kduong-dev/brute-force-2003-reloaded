@@ -14,7 +14,8 @@
 //     (t0 x color + t1 x color-1) / 2 x v0, alpha the ramp at the vertex's own height in its
 //     mesh; v0 the vertex light, the level's ambient and its two directional lights (`water_light`).
 // A layer may be an animated texture: its frames are the layers of a 2D array, played in a loop
-// on the material's clock (`frame`).
+// on the material's clock (`frame`). Its alpha carries the glare's key where the blend lets it
+// (GLARE_KEY: the wrapper's stencil value, #289, src/glare.wgsl).
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -51,6 +52,8 @@ struct Liquid {
     // the water's color and color-1; BF_LavaMaterial's v0 in color0
     color0: vec4<f32>,
     color1: vec4<f32>,
+    // the glare's key (level_scene::glare_key): the wrapper's stencil value / 255, 1 for none
+    key: f32,
 }
 
 @group(2) @binding(100) var<uniform> liquid: Liquid;
@@ -173,6 +176,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #else
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, colour);
+#ifdef GLARE_KEY
+    // the stencil value its pixels write, which the glare reads from the picture's alpha
+    // (src/glare.wgsl; opaque or added: LiquidSurface::specialize)
+    out.color.a = liquid.key;
+#endif
 #endif
     return out;
 }
