@@ -1339,6 +1339,14 @@ impl Arena {
         self.floor_tri(x, z, top, body).map(|(y, t)| t.map_or((y, Vec3::Y), |t| (y, t.n)))
     }
 
+    /// The breakable object (its index, see `breakable`) whose surface is the floor a thing finds
+    /// at (x, z) no higher than `top` (`floor_below` for `Body::Thing`), while it's whole (its own
+    /// triangles, not what it leaves behind): what a decal laid on the ground there lies on
+    /// (play_fx.rs, #301).
+    pub fn floor_breakable(&self, x: f32, z: f32, top: f32) -> Option<usize> {
+        self.floor_tri(x, z, top, Body::Thing).and_then(|(_, t)| t?.piece.filter(|p| !p.1).map(|p| p.0 as usize))
+    }
+
     /// Where there's no floor (`floor_below`), the terrain under (x, z) no higher than `top` that
     /// is too steep to stand on (steeper than 65 degrees, not upright), with its normal: the
     /// terrain is a height field, so a pit's wall or a cliff's face is still the ground there,
@@ -2354,6 +2362,32 @@ mod tests {
         let b = arena_with(&box_tris(Vec3::new(-1.0, 0.5, -1.0), Vec3::new(1.0, 1.0, 1.0)), false);
         assert_eq!(b.floor_below(0.2, 0.1, 0.8, Body::Character).map(|f| f.0), Some(0.0));
         assert_eq!(b.floor_below(0.2, 0.1, 1.2, Body::Character).map(|f| f.0), Some(1.0));
+    }
+
+    /// #301: a decal laid on a whole breakable object's top lies on it (`floor_breakable`), on the
+    /// ground once it's broken; a decal's ray back to its face finds it (`ray_breakable`); its
+    /// level blocker's top (a box 0.1 m over it) is no decal's floor.
+    #[test]
+    fn a_decal_lies_on_a_whole_breakable() {
+        let mut a = arena_with(&box_tris(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 1.0, 1.0)), true);
+        let first = a.tris.len();
+        for t in box_tris(Vec3::new(-1.1, 0.0, -1.1), Vec3::new(1.1, 1.1, 1.1)) {
+            a.add(t, false, None, 0);
+            a.add([t[0], t[2], t[1]], false, None, 0);
+        }
+        a.new_body(first);
+        a.broken.push(AtomicBool::new(false));
+        a.dead.push(AtomicBool::new(false));
+        for t in &mut a.tris {
+            t.piece = Some((0, false));
+            t.blocker = t.body == 1;
+        }
+        assert_eq!(a.floor_breakable(0.3, 0.2, 1.5), Some(0));
+        assert_eq!(a.floor_below(0.3, 0.2, 1.5, Body::Thing).map(|f| f.0), Some(1.0));
+        assert_eq!(a.ray_breakable(Vec3::new(-1.05, 0.5, 0.2), Vec3::X, 0.1).and_then(|(_, b)| b), Some(0));
+        a.set_broken(0, true);
+        assert_eq!(a.floor_breakable(0.3, 0.2, 1.5), None);
+        assert_eq!(a.floor_below(0.3, 0.2, 1.5, Body::Thing).map(|f| f.0), Some(0.0));
     }
 
     /// #298: a level blocker (a twinned box, as the blockers round the levels' objects come) and a

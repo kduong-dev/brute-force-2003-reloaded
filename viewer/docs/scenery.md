@@ -68,6 +68,21 @@
     start ([triggers.md](triggers.md), #220). A placed effect object attached to it (a
     `<parent Type="1">` link: e01's barrel fires on their barrels) goes as it breaks
     (FUN_0021a700; maps.md "Placed effect objects", #258).
+    **The decals on it go with it** (#301): the bullet holes, scorches and blood laid on its
+    surface vanish the frame after its model goes (the end of the break, as the game's
+    countdown ends it: FUN_0015ae30), or after a destroyer hides it. The game keeps a decal laid
+    on an object with it: the hole and scorch (FUN_0022ca20) and the blood decals (FUN_00124af0,
+    FUN_00124f60) hand the decal manager (FUN_00213e60) the object struck or stood on, which
+    clips the decal to that object's own nodes (FUN_00214710) and keeps a weak pointer to the
+    object in its record (FUN_00213770); the tick loop destroys the broken object
+    (FUN_000db3e0), whose destructor clears every weak pointer to it (FUN_001553f0 ->
+    FUN_0008f720), and the decal manager's next update frees each decal whose object is gone
+    (FUN_00217430). Nothing follows the remains (a new object: the rack's stand). The demo ties a
+    decal to the breakable whose collision it lies on as it's laid (play_fx.rs `tie_decals`:
+    the floor under a ground decal, `Arena::floor_breakable`, or what a short ray back along a
+    hole's normal meets, `Arena::ray_breakable`; on the flat floor the test tools' boxes) and
+    despawns it with the model (`untie_decals`). Decals on the world and on objects that don't
+    break, or haven't, stay as they were. Before, they hung in the air where the object had been.
     By the entry type's object-type:
     * 0, a compound: each part flies off as a loose tumbling body (play_pickups.rs' rigid
       body). A crate's go out from the hit, along it and up. An explosive object's go out from
@@ -120,7 +135,8 @@
   * **Not done**:
     * intact objects aren't pushed (the takes: they never move, they break);
     * the objects' `h_f2990a77` light lists aren't removed (empty on every sdm_e34 object);
-    * loose pickups or scorch decals resting on a broken object stay where they were;
+    * loose pickups resting on a broken object stay where they were (its decals go with it since
+      #301, above);
     * no score popup ("+1200") and no objective signals;
     * no damage markers on the HUD (the HUD has none yet).
   * **Doesn't match yet**:
@@ -136,6 +152,13 @@
     * `BF_SCENERY_LOG=1` lists the breakable objects and logs each hit, break, spawn and area;
     * `BF_COMBAT_LOG=1` prints each area tick's damage and the victim's difficulty step.
   * **Verified**:
+    * #301, a crate's holes (`BF_MAP=sdm_e34 BF_NO_SQUAD=1 BF_TEST_GOTO=-42.37,22.5,-42.37,40
+      BF_TEST_GO_AT=100 BF_CAMERA_AIM_AT=-42.37,29.4,28.3 BF_TEST_TRIGGER=1.0-1.9 BF_TEST_HIT=3.0
+      BF_TEST_HIT_NEAR=-42.37,28.89 BF_SCENERY_LOG=1`): two bolts strike crate 206 (4.94 and
+      5.54 of its 25 hp) and leave their holes on its face; the test hit breaks it at 3.07 s, its
+      model goes at 3.20 s and both decals with it ("decal ... goes with the object it lay on");
+      on main the holes hung in the air where its face had been (frames 49 and 69, 3.27 and
+      4.6 s).
     * #263, e23's door: shot with Tex's gun (`BF_MAP=e23 BF_TEST_GOTO=37,0.5,37,0.5
       BF_CAMERA_AIM_AT=44.0,22.5,0.5 BF_TEST_TRIGGER=2.0-5.0 BF_SCENERY_LOG=1
       BF_TRIGGER_LOG=1`): 13.8, 13.4, 13.1 (type 6, x1) -> 0 at 3.13 s, "sends DESTROYED

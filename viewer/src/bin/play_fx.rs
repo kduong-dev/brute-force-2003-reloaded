@@ -669,6 +669,27 @@ struct Decal {
     multiply: bool,
 }
 
+/// Where a decal was laid this frame, for `tie_decals` to find what it lies on: its point, and
+/// for one laid on a surface the shot met, that surface's normal (None: on the floor under the
+/// point, as `spawn_decal_alpha` and `spawn_game_decal` lay it).
+#[derive(Component)]
+struct LaidAt {
+    at: Vec3,
+    normal: Option<Vec3>,
+}
+
+/// The model of the breakable object a decal lies on (#301; play_scenery.rs `Scenery::model`):
+/// the decal goes when the object does (`untie_decals`).
+#[derive(Component)]
+struct OnObject(Entity);
+
+/// How far in front of a decal's surface (m) `tie_decals` looks back along its normal for the
+/// surface (the demo's: past the decal's own lift, 0.01-0.014 m, well inside any object).
+const DECAL_PROBE: f32 = 0.05;
+/// How far above a floor decal's point (m) its floor is looked for: as `spawn_decal_alpha` and
+/// `spawn_game_decal` look for the floor they lay it on.
+const DECAL_FLOOR_ABOVE: f32 = 0.5;
+
 /// A point light run by a light effect: its particles' ages.
 #[derive(Component)]
 struct GlowLight {
@@ -705,8 +726,62 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<DecalRequests>()
         .init_resource::<HoleRequests>()
         .add_systems(OnEnter(AppState::Playing), setup_fx.after(snapshot_entities))
-        .add_systems(Update, (spawn_fx, requested_decals, requested_holes, emit, animate_fx).chain().in_set(FxSystems).after(update_player).before(play_sounds)
-            .run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (spawn_fx, requested_decals, requested_holes, tie_decals, untie_decals, emit, animate_fx).chain().in_set(FxSystems)
+            .after(update_player).before(play_sounds).run_if(in_state(AppState::Playing)));
+}
+
+/// The decals laid this frame (`LaidAt`) on a breakable object tied to its model (`OnObject`,
+/// #301). The game's decal manager keeps a decal laid on an object with it: a bullet hole's
+/// (FUN_0022ca20), a blast's scorch and the blood decals (FUN_00124af0 under the body,
+/// FUN_00124f60 behind it) all hand FUN_00213e60 the object struck or stood on, whose decal
+/// FUN_00214710 clips to that object's own nodes and FUN_00213770 keeps with a weak pointer to
+/// the object (+4, FUN_0008f6a0); one on the terrain is the world's, kept by none. Found here as
+/// the decal's own query found its surface: the floor a thing comes down on under its point
+/// (`Arena::floor_breakable`), or what a short ray back along its normal meets
+/// (`Arena::ray_breakable`; on the flat floor, the boxes of the test tools' breakables,
+/// `scenery::rays_placed`). Decals on the world, on the other objects (they never go) and on
+/// what a broken object leaves behind (a game object of its own that stays) are left as they
+/// are.
+fn tie_decals(mut commands: Commands, laid: Query<(Entity, &LaidAt)>, scenery: Res<super::scenery::Scenery>) {
+    if laid.is_empty() {
+        return;
+    }
+    let arena = world::arena();
+    for (e, l) in &laid {
+        commands.entity(e).remove::<LaidAt>();
+        let under = match l.normal {
+            None => arena.as_ref().and_then(|a| a.floor_breakable(l.at.x, l.at.z, l.at.y + DECAL_FLOOR_ABOVE)),
+            Some(n) => {
+                let (from, back) = (l.at + n * DECAL_PROBE, -n);
+                arena.as_ref().and_then(|a| a.ray_breakable(from, back, 2.0 * DECAL_PROBE)).and_then(|(_, b)| b)
+                    .or_else(|| super::scenery::rays_placed(from, back, 2.0 * DECAL_PROBE).into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, i)| i))
+            }
+        };
+        if let Some(model) = under.and_then(|b| scenery.model(b)) {
+            commands.entity(e).insert(OnObject(model));
+        }
+    }
+}
+
+/// A decal tied to an object (`OnObject`, #301) goes with it: once its model is despawned (the
+/// end of its break, play_scenery.rs `break_scenery`: where the game's countdown ends it,
+/// FUN_0015ae30, and the tick loop takes it out and destroys it, FUN_000db3e0, whose destructor
+/// FUN_001553f0 clears every weak pointer to it, FUN_0008f720; the decal manager's next update,
+/// FUN_002173a0 -> FUN_00213f40, frees a decal whose object is gone, FUN_00217430) or hidden (a
+/// destroyer-trigger's removal, play_triggers.rs). Nothing follows its remains: they're a new
+/// object.
+fn untie_decals(mut commands: Commands, mut state: ResMut<FxState>, decals: Query<(Entity, &OnObject)>, objects: Query<&Visibility, Without<Decal>>) {
+    for (e, on) in &decals {
+        if objects.get(on.0).is_ok_and(|v| *v != Visibility::Hidden) {
+            continue;
+        }
+        commands.entity(e).despawn();
+        state.decals.retain(|&x| x != e);
+        state.holes.retain(|&x| x != e);
+        if std::env::var("BF_SCENERY_LOG").is_ok() {
+            println!("decal {e} goes with the object it lay on");
+        }
+    }
 }
 
 /// The decals asked for (`DecalRequests`), their textures loaded the first time, at the scale
@@ -767,7 +842,7 @@ fn requested_holes(mut commands: Commands, mut game: ResMut<GameData>, fx: Optio
                                 Transform::from_translation(at + normal * (0.01 + 0.004 * state.random()))
                                     .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(turn))
                                     .with_scale(Vec3::new(def.width * HOLE_SCALE, 1.0, def.height * HOLE_SCALE)),
-                                Decal { age: 0.0, def: def.clone(), material, multiply: false })).id();
+                                Decal { age: 0.0, def: def.clone(), material, multiply: false }, LaidAt { at, normal: Some(normal) })).id();
         state.holes.push_back(e);
         while state.holes.len() > MAX_HOLES {
             if let Some(old) = state.holes.pop_front() {
@@ -899,7 +974,7 @@ fn spawn_decal_alpha(commands: &mut Commands, state: &mut FxState, fx: &FxAssets
                             Transform::from_translation(Vec3::new(at.x, y, at.z))
                                 .with_rotation(Quat::from_rotation_arc(Vec3::Y, normal.normalize()) * Quat::from_rotation_y(turn))
                                 .with_scale(Vec3::new(def.width * scale, 1.0, def.height * scale)),
-                            Decal { age: 0.0, def: def.clone(), material, multiply: false })).id();
+                            Decal { age: 0.0, def: def.clone(), material, multiply: false }, LaidAt { at, normal: None })).id();
     state.decals.push_back(e);
     while state.decals.len() > MAX_DECALS {
         if let Some(old) = state.decals.pop_front() {
@@ -999,6 +1074,7 @@ fn spawn_game_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets,
     });
     let turn = (state.random() * 2.0 - 1.0) * def.rotation.to_radians();
     let lift = 0.01 + 0.004 * state.random();
+    let laid = LaidAt { at, normal: normal.map(|n| n.normalize_or(Vec3::Y)) };
     let (at, normal) = match normal {
         Some(n) => (at + n.normalize_or(Vec3::Y) * lift, n.normalize_or(Vec3::Y)),
         None => {
@@ -1011,7 +1087,7 @@ fn spawn_game_decal(commands: &mut Commands, state: &mut FxState, fx: &FxAssets,
     let e = commands.spawn((Mesh3d(fx.floor.clone()), MeshMaterial3d(material.clone()), NotShadowCaster,
                             Transform::from_translation(at).with_rotation(Quat::from_rotation_arc(Vec3::Y, normal) * Quat::from_rotation_y(turn))
                                 .with_scale(size),
-                            Decal { age: 0.0, def, material, multiply: true })).id();
+                            Decal { age: 0.0, def, material, multiply: true }, laid)).id();
     state.decals.push_back(e);
     while state.decals.len() > MAX_DECALS {
         if let Some(old) = state.decals.pop_front() {

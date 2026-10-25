@@ -255,6 +255,16 @@ pub(super) struct Scenery {
     reach: Vec<(Vec3, f32, i64)>,
 }
 
+impl Scenery {
+    /// The drawn model of breakable `b` (its list index: the arena's breakable number, or past
+    /// them a test tool's), while it stands: whole, or dead without a debris list (#263); None
+    /// once it's breaking (its collision gone) or gone. What a decal laid on it goes with
+    /// (play_fx.rs `tie_decals`, #301).
+    pub(super) fn model(&self, b: usize) -> Option<Entity> {
+        self.list.get(b).filter(|x| matches!(x.state, State::Intact | State::Dead)).and_then(|x| x.entity)
+    }
+}
+
 /// A loose piece of a broken object: seconds left, and its own scale (it shrinks away at the end).
 #[derive(Component)]
 struct DebrisPiece {
