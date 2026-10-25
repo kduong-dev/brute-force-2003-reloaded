@@ -257,11 +257,19 @@ pub(super) struct Scenery {
 
 impl Scenery {
     /// The drawn model of breakable `b` (its list index: the arena's breakable number, or past
-    /// them a test tool's), while it stands: whole, or dead without a debris list (#263); None
-    /// once it's breaking (its collision gone) or gone. What a decal laid on it goes with
-    /// (play_fx.rs `tie_decals`, #301).
+    /// them a test tool's) until it's gone: whole, dead without a debris list (#263), or breaking
+    /// until its countdown ends (`break_scenery`). What a decal laid on it goes with (play_fx.rs
+    /// `tie_decals`, #301): the game's object lives until then (FUN_0015ae30), so the shot that
+    /// breaks it lays its hole on it too.
     pub(super) fn model(&self, b: usize) -> Option<Entity> {
-        self.list.get(b).filter(|x| matches!(x.state, State::Intact | State::Dead)).and_then(|x| x.entity)
+        self.list.get(b).filter(|x| !matches!(x.state, State::Gone)).and_then(|x| x.entity)
+    }
+
+    /// Whether breakable `b` is gone: its break over (`break_scenery`), or taken away by a
+    /// destroyer-trigger as the level started (`find_scenery`). A shot's hole laid on it
+    /// afterwards goes at once (play_fx.rs `tie_decals`).
+    pub(super) fn gone(&self, b: usize) -> bool {
+        self.list.get(b).is_some_and(|x| matches!(x.state, State::Gone))
     }
 }
 
@@ -284,9 +292,13 @@ pub fn plugin(app: &mut App) {
         }).after(setup))
         // (after the grenades: a blast's damage reaches the scenery on the frame the
         // characters take it)
+        // (before the hit effects: this frame's hits are dealt before their holes are laid, as
+        // the game's damage handler does, 0x22d0b0, and a model taken away takes its decals on
+        // the same frame, play_fx.rs `tie_decals`, `untie_decals`, #301)
         // (the mines set off before they're handed to the next frame's shots)
         .add_systems(Update, (find_scenery, late_scenery, hit_scenery, break_scenery, area_damage, set_off_mines, debris_life).chain()
-            .after(super::grenade::GrenadeSystems).before(super::sentry::publish_targets).before(play_sounds).run_if(in_state(AppState::Playing)));
+            .after(super::grenade::GrenadeSystems).before(super::fx::FxSystems).before(super::sentry::publish_targets).before(play_sounds)
+            .run_if(in_state(AppState::Playing)));
 }
 
 /// The map's breakable objects, once its objects are spawned: their placed models, hitpoints,
@@ -430,6 +442,18 @@ pub(super) fn ray_placed(origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
 pub(super) fn rays_placed(origin: Vec3, dir: Vec3, max: f32) -> Vec<(f32, usize)> {
     PLACED_BOXES.lock().unwrap().iter().filter_map(|(i, place, bx)| ray_box(place, *bx, origin, dir).map(|(t, _)| (t, *i)))
         .filter(|&(t, _)| t > 0.0 && t <= max).collect()
+}
+
+/// The breakable object a shot's ray (from `origin` along unit `dir`) met where it met the world,
+/// `t` m on, if it was one: its list index, as `ObjectHit::target` takes it. The arena's
+/// (`Arena::ray_breakable`) or on the flat test floor a test tool's box (`rays_placed`), within
+/// SHOT_SLACK of `t`. Found with the shot (play.rs `Shot::breakable`), as the game's hit record
+/// holds the object struck, which FUN_0022ca20 lays the shot's hole on (FUN_0022c4a0): the hole
+/// goes with it (play_fx.rs `tie_decals`, #301).
+pub(super) fn struck_at(origin: Vec3, dir: Vec3, t: f32) -> Option<usize> {
+    let there = |x: f32| (x - t).abs() <= SHOT_SLACK;
+    world::arena().and_then(|a| a.ray_breakable(origin, dir, t + SHOT_SLACK)).filter(|&(x, _)| there(x)).and_then(|(_, b)| b)
+        .or_else(|| rays_placed(origin, dir, t + SHOT_SLACK).into_iter().filter(|&(x, _)| there(x)).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, i)| i))
 }
 
 /// Every crossing of a placed breakable's box a ray (from `origin` along unit `dir`) makes within
@@ -913,5 +937,38 @@ fn debris_life(mut commands: Commands, time: Res<Time>, mut pieces: Query<(Entit
         if p.left < DEBRIS_SHRINK {
             tr.scale = p.scale * (p.left / DEBRIS_SHRINK);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A breakable keeps its model for the decals laid on it (play_fx.rs `tie_decals`) until it's
+    /// gone: whole, dead without a debris list, and breaking, as the shot that breaks it lays its
+    /// hole after the break (#301). Gone, it has none, and a hole laid on it then goes at once.
+    #[test]
+    fn a_breaking_object_holds_its_decals_until_it_goes() {
+        let model = Entity::from_raw(7);
+        let breakable = |state, entity| Breakable { name: 0, kind: 0, place: Transform::IDENTITY, centre: Vec3::ZERO, entity, hp: 0.0, state,
+                                                    breaks: true, push: Push { at: Vec3::ZERO, dir: Vec3::ZERO }, explosive: false, bounds: None };
+        let s = Scenery {
+            list: vec![breakable(State::Intact, Some(model)), breakable(State::Dead, Some(model)),
+                       breakable(State::Breaking { countdown: 0.1, queue: vec![] }, Some(model)),
+                       // (its break over, `break_scenery` took its model; one a destroyer-trigger
+                       // removed as the level started keeps its hidden model)
+                       breakable(State::Gone, None), breakable(State::Gone, Some(model))],
+            ..default()
+        };
+        for b in 0..3 {
+            assert_eq!(s.model(b), Some(model), "breakable {b}");
+            assert!(!s.gone(b), "breakable {b}");
+        }
+        for b in 3..5 {
+            assert_eq!(s.model(b), None, "breakable {b}");
+            assert!(s.gone(b), "breakable {b}");
+        }
+        assert_eq!(s.model(9), None);
+        assert!(!s.gone(9));
     }
 }

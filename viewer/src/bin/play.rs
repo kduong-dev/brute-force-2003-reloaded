@@ -2255,6 +2255,11 @@ struct Shot {
     /// meets (play_shots.rs)
     decal: u32,
     normal: Vec3,
+    /// the breakable object the shot meets `dist` m out, if it's one (its list index,
+    /// play_scenery.rs `struck_at`): found at the shot, as the game's hit record holds the
+    /// object struck (FUN_0022c4a0); the hole lies on it and goes with it (play_fx.rs
+    /// `tie_decals`, #301), though the hit may have broken it by the time the hole is laid
+    breakable: Option<usize>,
     /// the Damage's falloff mode (h_fb124e6c) over the bullet's range (`Shot::falloff_at`)
     falloff: i64,
     range: f32,
@@ -7174,7 +7179,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 p.shots.push(Shot { weapon: w.def.name, origin, dir, dist: hit.map_or(range, |h| h.0), hit: hit.is_some(), speed,
                                     flight: if pellet.tracer { w.def.flight_effect } else { 0 }, hit_fx: w.def.hit_effect,
                                     damage: [w.def.damage_min.min(w.def.damage), w.def.damage], damage_type: w.def.damage_type, ammo: w.def.ammo_type,
-                                    decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1), falloff: w.def.shots.falloff,
+                                    decal: w.def.decal, normal: hit.map_or(-dir, |h| h.1),
+                                    breakable: hit.and_then(|(t, _)| scenery::struck_at(origin, dir, t)), falloff: w.def.shots.falloff,
                                     // (the falloff runs over the bullet's range in the holder's
                                     // hands, FUN_00230040 at 0x2302ef)
                                     range: reach,
@@ -8064,9 +8070,10 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
             }
         }
         if s.hit {
-            // the bullet's hole or scorch where it met the world (play_fx.rs)
+            // the bullet's hole or scorch where it met the world, on the breakable object it met
+            // there if it was one (play_fx.rs)
             if s.decal != 0 {
-                holes.0.push((s.decal, at, s.normal));
+                holes.0.push((s.decal, at, s.normal, s.breakable));
             }
             world_hit(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, &s, at, &mut chance, listener, &mut player, None);
         }
@@ -8515,7 +8522,7 @@ mod tests {
     #[test]
     fn a_beam_spans_the_ray() {
         let shot = |dist: f32, scoped: bool| Shot { weapon: 0, origin: Vec3::new(1.0, 2.0, 3.0), dir: Vec3::NEG_Z, dist, hit: true, speed: INSTANT_SHOT,
-                                                    flight: 0, hit_fx: 0, damage: [1.0, 2.0], damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z,
+                                                    flight: 0, hit_fx: 0, damage: [1.0, 2.0], damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, breakable: None,
                                                     falloff: 0, range: 300.0, bolt: false, body: false, pass: false, scoped };
         let (place, sp) = beam_line(&shot(27.0, false));
         assert!(place.translation.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-6);

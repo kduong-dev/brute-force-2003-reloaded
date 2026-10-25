@@ -1082,7 +1082,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   passes through the level's invisible blockers and hinters to what's behind them (#298: the
   weapons' filter, PID mask 0xfffffff8, leaves them out; maps.md, "Blockers and hinters"), and a
   breakable object's own blocker no longer takes the hit meant for the object. A hole on a
-  breakable object goes with it when it breaks (#301: scenery.md, "Breaking").
+  breakable object goes with it when it breaks (#301: scenery.md, "Breaking"), the hole of the
+  shot that breaks it too: the shot finds the object with its hit (`Shot::breakable`), as the
+  game's hit record holds it.
 * **Muzzle effects**. The weapon's h_fd88830d effect type plays at its muzzle hardpoint once a
   frame in which it fired (the MK's orange flash and grey smoke); it replaces the plain flash
   quad on guns that have one. It takes the hardpoint's own frame (#73): FUN_00232060 attaches

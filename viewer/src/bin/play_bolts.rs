@@ -598,12 +598,13 @@ pub(super) fn deal(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf
     }
     match met.what {
         What::World { material, terrain, breakable } => {
-            // the bullet's hole, the material's hit effect, debris and sound, a breakable
-            // object's damage
+            // the bullet's hole (on the breakable object it struck, which this hit may break:
+            // the hole goes with it, play_fx.rs `tie_decals`), the material's hit effect, debris
+            // and sound, a breakable object's damage
             if s.decal != 0 {
-                holes.0.push((s.decal, at, met.normal));
+                holes.0.push((s.decal, at, met.normal, breakable));
             }
-            let hit = Shot { origin: from, dir, dist: met.t, hit: true, normal: met.normal, ..*s };
+            let hit = Shot { origin: from, dir, dist: met.t, hit: true, normal: met.normal, breakable, ..*s };
             if let Some(ale) = ale {
                 world_hit(commands, game, ale, images, materials, &hit, at, chance, listener, player, Some((record, material)));
             }
@@ -696,7 +697,7 @@ mod tests {
     /// / `speed`, the hit counts `n1`, `n2` and the pass flag.
     fn bolt(speed: f32, range: f32, n1: u8, n2: u8, pass: bool) -> Bolt {
         let shot = Shot { weapon: 0, origin: Vec3::ZERO, dir: Vec3::NEG_Z, dist: range, hit: false, speed, flight: 0, hit_fx: 0, damage: [1.0, 2.0],
-                          damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, falloff: 0, range, bolt: true, body: false, pass: false, scoped: false };
+                          damage_type: 0, ammo: 0, decal: 0, normal: Vec3::Z, breakable: None, falloff: 0, range, bolt: true, body: false, pass: false, scoped: false };
         Bolt { shot, id: 1, owner: Who::Squad(3), team: 0, human: true, pos: Vec3::ZERO, dir: Vec3::NEG_Z, speed, life: range / speed,
                counter: SWEEP_TICKS, last: Vec3::ZERO, roll: 1.0, skill: 1.0, power: 1.0, n1, n2, pass, skip: None, clock: 0.0, ticks: 0 }
     }

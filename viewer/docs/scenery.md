@@ -69,7 +69,7 @@
     `<parent Type="1">` link: e01's barrel fires on their barrels) goes as it breaks
     (FUN_0021a700; maps.md "Placed effect objects", #258).
     **The decals on it go with it** (#301): the bullet holes, scorches and blood laid on its
-    surface vanish the frame after its model goes (the end of the break, as the game's
+    surface vanish on the frame its model goes (the end of the break, as the game's
     countdown ends it: FUN_0015ae30), or after a destroyer hides it. The game keeps a decal laid
     on an object with it: the hole and scorch (FUN_0022ca20) and the blood decals (FUN_00124af0,
     FUN_00124f60) hand the decal manager (FUN_00213e60) the object struck or stood on, which
@@ -78,11 +78,21 @@
     (FUN_000db3e0), whose destructor clears every weak pointer to it (FUN_001553f0 ->
     FUN_0008f720), and the decal manager's next update frees each decal whose object is gone
     (FUN_00217430). Nothing follows the remains (a new object: the rack's stand). The demo ties a
-    decal to the breakable whose collision it lies on as it's laid (play_fx.rs `tie_decals`:
-    the floor under a ground decal, `Arena::floor_breakable`, or what a short ray back along a
-    hole's normal meets, `Arena::ray_breakable`; on the flat floor the test tools' boxes) and
-    despawns it with the model (`untie_decals`). Decals on the world and on objects that don't
-    break, or haven't, stay as they were. Before, they hung in the air where the object had been.
+    shot's hole to the breakable its shot met, found with the hit as the game's hit record holds
+    it (FUN_0022c4a0): a bolt's sweep, or an instant shot's ray at the shot
+    (`Shot::breakable`, play_scenery.rs `struck_at`). So the shot that breaks an object takes
+    its own hole with it: the damage comes first, as the game's damage handler (0x22d0b0) sends
+    it before it lays the hole, and a breaking object keeps its model, and its decals, until its
+    countdown ends (`Scenery::model`). A hole laid after its object has gone goes at once (an
+    instant ray's comes a few frames after its damage). Other decals (blood, a blast's scorch)
+    are tied to the breakable whose collision they lie on as they're laid (play_fx.rs
+    `tie_decals`: the floor under a ground decal, `Arena::floor_breakable`, or what a short ray
+    back along its normal meets, `Arena::ray_breakable`; on the flat floor the test tools'
+    boxes). A decal goes when its model is despawned (`untie_decals`); the scenery's systems run
+    before the hit effects' (`fx::FxSystems`), so on the same frame. Decals on the world and on
+    objects that don't break, or haven't, stay as they were. Before, they hung in the air where
+    the object had been, and after the review the shot that broke an object could still leave
+    its own hole there: the hit and the hole's tie ran in either order.
     By the entry type's object-type:
     * 0, a compound: each part flies off as a loose tumbling body (play_pickups.rs' rigid
       body). A crate's go out from the hit, along it and up. An explosive object's go out from
@@ -159,6 +169,15 @@
       model goes at 3.20 s and both decals with it ("decal ... goes with the object it lay on");
       on main the holes hung in the air where its face had been (frames 49 and 69, 3.27 and
       4.6 s).
+    * #301, the shot that breaks it (the review's case): the same spot with
+      `BF_TEST_TRIGGER=1.0-6.0 BF_SHOT_LOG=1` and no test hit. Tex's bolts take 4.94, 5.54, 6.03,
+      6.46 and 6.83 off the crate; the fifth breaks it at 3.00 s, its hole is laid on it after
+      the break, and at 3.13 s the model goes with all five holes, the killing one's too: the
+      capture's next frame (46) shows the floor where the crate stood, no hole in the air, and
+      the later bolts' holes on the floor behind it stay. An instant ray
+      (`BF_TEST_WEAPON=MK-ASLT BF_TEST_TRIGGER=1.0-3.0`): nine
+      rounds, the ninth breaks it at 2.20 s; the eight holes laid by then go with the model at
+      2.33 s, and the ninth's, laid at 2.40 s after the crate has gone, goes at once.
     * #263, e23's door: shot with Tex's gun (`BF_MAP=e23 BF_TEST_GOTO=37,0.5,37,0.5
       BF_CAMERA_AIM_AT=44.0,22.5,0.5 BF_TEST_TRIGGER=2.0-5.0 BF_SCENERY_LOG=1
       BF_TRIGGER_LOG=1`): 13.8, 13.4, 13.1 (type 6, x1) -> 0 at 3.13 s, "sends DESTROYED
