@@ -1610,7 +1610,8 @@ struct SlotClips {
 /// A weapon the character carries.
 struct HeldWeapon {
     def: WeaponDef,
-    /// the stance (motion set Sc_w1_* = 0, Sc_w2_* = 1) for its class, see `stance_for`
+    /// the stance (motion set Sc_w1_* = 0, Sc_w2_* = 1) it's held in, by its class or its slot
+    /// as the character's type has it: see `stance_for`
     stance: usize,
     /// weapon root (child of the hand or back joint)
     entity: Entity,
@@ -1627,9 +1628,10 @@ struct HeldWeapon {
     shell: Option<Hardpoint>,
     /// fire direction in the weapon's frame
     fire_dir: Vec3,
-    /// placement under a joint (bone, rotation, translation): in hand / stowed for its slot
+    /// placement under a joint (bone, rotation, translation): in hand, and stowed at each of the
+    /// character's stow hardpoints (`weapon::STOW`; its slot's place picks one, `StowPlaces`)
     in_hand: Option<(usize, Quat, Vec3)>,
-    stowed: Option<(usize, Quat, Vec3)>,
+    stow: [Option<(usize, Quat, Vec3)>; 3],
     /// and in the second hand (Tex's berserk): its trigger grip at the character's SECOND_HAND
     /// hardpoint, as the gun in hand's at TRIGGER_HAND (weapon.rs); None for a model without it
     second_hand: Option<(usize, Quat, Vec3)>,
@@ -1985,6 +1987,10 @@ struct SwitchClip {
     drop: f32,
     /// the hand takes the other gun
     grab: f32,
+    /// its events that move the stowed guns between their places (`StowPlaces::event`), with
+    /// their times: Tex's four Sc_wc_* clips' ed585109 at 1.20 s and f18780b8 at 1.37-1.40 s (no
+    /// other squad clip has one: BF_ANIM_PROBE over the four's clips)
+    stow_events: Vec<(f32, u32)>,
     /// bones the overlay moves
     mask: Vec<bool>,
 }
@@ -1995,6 +2001,99 @@ struct Switching {
     time: f32,
     dropped: bool,
     grabbed: bool,
+}
+
+/// Where each weapon slot hangs its gun while it isn't in a hand (#297): the game's slot holders'
+/// place index (their +0x40), which the holder's hardpoint getter (vtable 0x39b318 +0x68,
+/// 0x14ba70) turns into one of the character's stow hardpoints, `weapon::STOW` (0 the inventory
+/// front's +4, 1 its +0x48, 2 FUN_0014aa30's); and the front's +0x1c8 bit 1, set when the places
+/// are laid out for slot 1 in hand. The front's constructor (0x14c5d0) puts slot 1 on place 0 and
+/// slot 2 on place 1 (0x14c6d6, 0x14c705) with the bit clear (0x14c83c), and only Tex moves them:
+/// the draw's check (`draw`) and his switch clips' events (`event`). So Brutus, Flint and Hawk
+/// keep each slot on its own hardpoint, and Tex's stowed gun hangs at 0xff4c691b, his left
+/// ramp, whichever slot it's from (#61 take04: the LZR-50 of his slot 2; #68 take02 21-23 s: the
+/// LZR-23, then the Minigun after the switch), where the demo had hung slot 2's on his right one.
+/// His switch clips swing the ramps across his back (Sc_wc_cannon2rifle in model space: the left
+/// ramp to his right shoulder over 0.50-0.83 s with the gun to draw, the right ramp out and over
+/// to his left side over 0.75-1.08 s, both back to rest between 1.25 and 1.33 s), so the gun let
+/// go at drop_weapon goes on the right ramp (place 1) and rides it over to his left; ed585109
+/// (1.20 s) hands it to Spine2's 0xe3307376 (place 2), which sits where the left ramp rests, for
+/// the ramps' snap back, and f18780b8 (1.37-1.40 s) onto the left ramp (#68 take02: the Minigun on
+/// his right ramp from 22.15 s, on his left one from 22.55 s).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct StowPlaces {
+    /// each slot's place, an index into `weapon::STOW`
+    place: [usize; 2],
+    /// the front's +0x1c8 bit 1
+    swapped: bool,
+}
+
+impl Default for StowPlaces {
+    /// The front's constructor's (0x14c5d0): slot 1 on place 0, slot 2 on place 1, the bit clear.
+    fn default() -> Self {
+        StowPlaces { place: [0, 1], swapped: false }
+    }
+}
+
+/// The clip events that move the stowed guns (FUN_00117660's switch): 1a4ed2bf (0x118213, its
+/// handler 0x11828a: `swap`; no squad clip has it), ed585109 (0x118b96: `advance`) and f18780b8
+/// (0x118bfd: `settle`).
+const EV_STOW_SWAP: u32 = 0x1A4E_D2BF;
+const EV_STOW_ADVANCE: u32 = 0xED58_5109;
+const EV_STOW_SETTLE: u32 = 0xF187_80B8;
+
+impl StowPlaces {
+    /// FUN_0014d470: the bit toggled, and each slot on place 0 moved to 1 and on 1 to 0 (on 2 it
+    /// stays).
+    fn swap(&mut self) {
+        self.swapped = !self.swapped;
+        for p in &mut self.place {
+            *p = match *p { 0 => 1, 1 => 0, k => k };
+        }
+    }
+
+    /// FUN_0014d500: each slot one place on, 0 to 1 and 1 to 2 (2 stays).
+    fn advance(&mut self) {
+        for p in &mut self.place {
+            *p = (*p + 1).min(2);
+        }
+    }
+
+    /// FUN_0014d570: the bit toggled, and a slot on place 2 back to 0.
+    fn settle(&mut self) {
+        self.swapped = !self.swapped;
+        for p in &mut self.place {
+            if *p == 2 {
+                *p = 0;
+            }
+        }
+    }
+
+    /// The draw's check (FUN_00123fa0 at 0x12415c-0x12418b, at the character's activation): for
+    /// pickup mode 3 (the type's +0x15c: Tex) a swap when the bit isn't whether slot 1 (`in_hand`
+    /// 0, the first) is the one in hand.
+    fn draw(&mut self, mode: i64, in_hand: usize) {
+        if mode == 3 && self.swapped != (in_hand == 0) {
+            self.swap();
+        }
+    }
+
+    /// A clip event (`EV_STOW_*`); whether it was one of them.
+    fn event(&mut self, id: u32) -> bool {
+        match id {
+            EV_STOW_SWAP => self.swap(),
+            EV_STOW_ADVANCE => self.advance(),
+            EV_STOW_SETTLE => self.settle(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// The stow hardpoint (`weapon::STOW` index) weapon `slot` (0 the first) hangs at; None past
+    /// the two slots.
+    fn of(&self, slot: usize) -> Option<usize> {
+        self.place.get(slot).copied()
+    }
 }
 
 struct Loaded {
@@ -2185,6 +2284,8 @@ struct Player {
     /// false between a switch's drop and grab: both guns are stowed
     holding: bool,
     switching: Option<Switching>,
+    /// where each slot hangs its gun when it isn't in a hand (Tex's move, #297)
+    stow: StowPlaces,
     /// the gun drawn into the second hand (Tex's berserk, play_skills.rs), fired with the gun in
     /// hand
     second: Option<SecondGun>,
@@ -2521,7 +2622,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), dead: false, ragdoll: None, death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -3621,14 +3722,20 @@ fn foot_ranges(model: &Character, game: &Game, clips: &Clips, feet: [usize; 2]) 
     out
 }
 
-/// The stance a weapon is held in: the motion set (Sc_w1_* / Sc_w2_*) of the slot whose class
-/// (the character's limit-weapon) matches the weapon's class, so Brutus holds his medium Bower 20
-/// in his medium stance though it's his second weapon; by its slot when both or neither match.
-fn stance_for(classes: Option<[i64; 2]>, class: i64, slot: usize) -> usize {
-    match classes {
-        Some([a, b]) if a != b && class == a => 0,
-        Some([a, b]) if a != b && class == b => 1,
-        _ => slot.min(1),
+/// The stance a gun of `class` (its WTYPE) in weapon slot `slot` (0 the first) is held in: the
+/// motion set, Sc_w1_* 0 and Sc_w2_* 1, the game's char+0x5b0 less one, which it sets every frame
+/// from the gun in hand (FUN_0011aa20 at 0x11ab6f-0x11abee; the draw FUN_00123fa0 at
+/// 0x124106-0x124133 and the switch clips' grab events the same) by the character type's pickup
+/// `mode` (+0x15c, `limit-weapon` h_fb08d4c6): 1 (Flint, Hawk) the slot's; 2 and 3 (Brutus, Tex)
+/// its class's, the second for a cannon (WTYPE 2) and the first for any other; any other mode the
+/// first. So Brutus holds his Bower 20, a rifle, in his rifle stance though it's his second
+/// weapon, and a rifle Tex picks up into his cannon's slot is held as a rifle (#297: the demo had
+/// keyed Tex's by the slot, his two `limit-weapon` slots both reading "2 1").
+fn stance_for(mode: i64, class: i64, slot: usize) -> usize {
+    match mode {
+        1 => slot.min(1),
+        2 | 3 => usize::from(class == 2),
+        _ => 0,
     }
 }
 
@@ -3658,13 +3765,14 @@ fn switch_clip(model: &Character, game: &Game, weapons: &[HeldWeapon], to: usize
     let ev = game.events(a.event_channel);
     let drop = ev.iter().find(|e| e.1 == EV_DROP_WEAPON).map(|e| e.0).unwrap_or(a.duration * 0.3);
     let grab = ev.iter().find(|e| EV_GRAB.contains(&e.1) && e.0 > drop).map(|e| e.0).unwrap_or(a.duration * 0.65);
+    let stow_events = ev.iter().copied().filter(|e| [EV_STOW_SWAP, EV_STOW_ADVANCE, EV_STOW_SETTLE].contains(&e.1)).collect();
     let mut mask = vec![false; model.bones.len()];
     for (bone, _) in &a.targets {
         if let Some(i) = model.bones.iter().position(|b| b == bone) {
             mask[i] = model.parent[i].is_some();
         }
     }
-    Some(SwitchClip { clip, duration: a.duration, drop, grab, mask })
+    Some(SwitchClip { clip, duration: a.duration, drop, grab, stow_events, mask })
 }
 
 /// A reload / throw clip by name with its events, and its bone masks (all animated bones but the
@@ -3746,13 +3854,13 @@ fn spawn_player(
 
 /// One gun of a character's inventory, for weapon slot `slot` (0 the first): its model under the
 /// character's `root` (hidden until `weapon_fx` places it), its muzzle flash and light, where it
-/// hangs in the hand and the second hand and where it's stowed for that slot (`model`'s
-/// hardpoints and the gun's), and its stance for the character's `classes` (`stance_for`). None
-/// when its model doesn't load. `spawn_unit`'s for the starting inventory; play_weapon_pickups.rs's
-/// for the gun a pickup puts in a slot (#17).
+/// hangs in the hand and the second hand and at each stow hardpoint (`model`'s hardpoints and the
+/// gun's), and its stance in that slot for the character type's pickup `mode` (`stance_for`).
+/// None when its model doesn't load. `spawn_unit`'s for the starting inventory;
+/// play_weapon_pickups.rs's for the gun a pickup puts in a slot (#17).
 #[allow(clippy::too_many_arguments)]
 fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, model: &Character, root: Entity, def: WeaponDef, slot: usize,
-                classes: Option<[i64; 2]>) -> Option<HeldWeapon> {
+                mode: i64) -> Option<HeldWeapon> {
     let wm = match WeaponModel::load(game, def.archetype) {
         Ok(m) => m,
         Err(e) => {
@@ -3785,13 +3893,13 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
     let held_at = |hand: u32| model.hardpoints.get(&hand).zip(wm.hardpoints.get(&weapon::TRIGGER_GRIP))
         .map(|(&(bone, hand), grip)| { let (r, t) = hand.mount(grip); (bone, r, t) });
     let in_hand = held_at(weapon::TRIGGER_HAND);
-    let stance = stance_for(classes, def.weapon_type, slot);
+    let stance = stance_for(mode, def.weapon_type, slot);
     Some(HeldWeapon {
         stance,
         in_hand,
         second_hand: held_at(weapon::SECOND_HAND),
-        stowed: weapon::STOW.get(slot).and_then(|k| model.hardpoints.get(k)).zip(wm.hardpoints.get(&weapon::HOLSTER))
-            .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) }),
+        stow: weapon::STOW.map(|k| model.hardpoints.get(&k).zip(wm.hardpoints.get(&weapon::HOLSTER))
+            .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) })),
         shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
         data_light: game.effect_type_defs.get(&def.shots.muzzle_effect).is_some_and(|t| t.light != 0),
         empty: false,
@@ -3865,10 +3973,12 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     // (a character from a placement holds the placement's: an enemy spawned from one,
     // play_enemies.rs, or a squad member started at its spawn, play_triggers.rs `SquadSpawn::dress`)
     let inventory = p.enemy.weapons.clone().or(game.character_weapons.get(name).cloned()).or(ty.as_ref().map(|t| t.weapons.clone())).unwrap_or_default();
-    let classes = game.character_weapon_classes.get(name).copied().or(ty.as_ref().map(|t| t.weapon_classes));
+    // its type's pickup mode (`limit-weapon` h_fb08d4c6, type+0x15c): how its guns choose their
+    // stance (`stance_for`) and, for Tex's, where his stowed gun hangs (`StowPlaces::draw`)
+    let mode = ty.as_ref().map_or(0, |t| t.pickup_mode);
     for (slot, w) in inventory.into_iter().enumerate() {
         let Some(def) = game.weapons.get(&w).cloned() else { continue };
-        if let Some(held) = build_weapon(commands, game, assets, &model, root, def, slot, classes) {
+        if let Some(held) = build_weapon(commands, game, assets, &model, root, def, slot, mode) {
             weapons.push(held);
         }
     }
@@ -3886,6 +3996,10 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.weapon_dirty = true;
     p.holding = true;
     p.switching = None;
+    // a new inventory front's stow places, then the draw's check (#297: Tex's stowed gun on his
+    // left ramp)
+    p.stow = StowPlaces::default();
+    p.stow.draw(mode, p.weapon);
     p.second = None;
     p.reloading = None;
     // new weapon objects: their accuracy, tracer counters, burst and casings start afresh
@@ -6252,8 +6366,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
     if let Some(sw) = p.switching.as_mut() {
+        let before = sw.time;
         sw.time += dt;
         let clip = l.switch_clips[sw.to].as_ref().unwrap();
+        // the events that move the stowed guns (Tex's: `StowPlaces`, #297), at their times
+        for &(t, id) in &clip.stow_events {
+            if before < t && t <= sw.time && p.stow.event(id) {
+                p.weapon_dirty = true;
+            }
+        }
         let (mut drop_now, mut grab_now) = (false, false);
         if !sw.dropped && sw.time >= clip.drop {
             sw.dropped = true;
@@ -7436,11 +7557,29 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             // at their stow points
             let drawn = i == p.weapon && p.holding;
             let second = p.second.is_some_and(|s| s.weapon == i);
-            let place = if drawn { w.in_hand } else if second { w.second_hand.or(w.stowed) } else { w.stowed };
+            // (stowed: at its slot's place, `StowPlaces`)
+            let stow_at = p.stow.of(i);
+            let stowed = stow_at.and_then(|k| w.stow[k]);
+            let place = if drawn { w.in_hand } else if second { w.second_hand.or(stowed) } else { stowed };
             // a gun put away (the second hand's at berserk's end) leaves no flash or light on
             if !drawn && !second {
                 if let Ok(mut v) = visibility.get_mut(w.flash) { *v = Visibility::Hidden; }
                 if let Ok(mut light) = lights.get_mut(w.light) { light.intensity = 0.0; }
+            }
+            // test hook: BF_WEAPON_LOG=1 (play_weapon_pickups.rs's) also prints where each gun
+            // hangs whenever that changes (in the hand, the second hand, or at which stow
+            // hardpoint) and the stance it's held in
+            if std::env::var("BF_WEAPON_LOG").is_ok() {
+                let at = match (drawn, second, stow_at) {
+                    _ if w.empty => "none (a pickup's stand-in)".to_string(),
+                    (true, ..) => "in the hand".to_string(),
+                    (_, true, _) => "in the second hand".to_string(),
+                    (_, _, Some(k)) => format!("stowed at {:08x}{}", weapon::STOW[k],
+                                               stowed.map_or(" (not on this model)".to_string(), |(b, ..)| format!(" (bone {:08x})", l.model.bones[b]))),
+                    _ => "not placed".to_string(),
+                };
+                println!("t {:.2}: {}'s slot {} {} (class {}, stance w{}): {at}", p.sim_time, unit_name(p), i + 1, w.def.label, w.def.weapon_type,
+                         w.stance + 1);
             }
             match place {
                 Some((bone, r, t)) => {
@@ -8075,7 +8214,7 @@ fn dump_weapons(game: &Game) {
     println!("{} weapon definitions, {} strings", game.weapons.len(), game.strings.len());
     for &name in &CHARACTERS[..SQUAD] {
         let hand = Character::load(game, name, 0).ok().map(|m| {
-            [weapon::TRIGGER_HAND, weapon::SUPPORT_HAND, weapon::STOW[0], weapon::STOW[1]].iter()
+            [weapon::TRIGGER_HAND, weapon::SUPPORT_HAND].iter().chain(&weapon::STOW)
                 .map(|k| format!("{k:08x}:{}", m.hardpoints.get(k).map(|(b, _)| format!("bone {:08x}", m.bones[*b])).unwrap_or("-".into())))
                 .collect::<Vec<_>>().join(" ")
         }).unwrap_or_default();
@@ -8182,6 +8321,60 @@ mod tests {
         p.action = Action::None;
         p.slide_active = true;
         assert!(!stands_still(&p));
+    }
+
+    /// #297 (FUN_0011aa20): Flint's and Hawk's guns (pickup mode 1) take their slot's stance,
+    /// Brutus's and Tex's (2, 3) their class's, so a rifle in Tex's second slot is held as a
+    /// rifle; a type of any other mode holds everything in the first.
+    #[test]
+    fn a_gun_takes_its_stance_by_the_pickup_mode() {
+        // (WTYPE: 0 pistol, 1 rifle, 2 cannon)
+        assert_eq!([stance_for(1, 1, 0), stance_for(1, 0, 1), stance_for(1, 2, 1)], [0, 1, 1]);
+        for mode in [2, 3] {
+            assert_eq!([stance_for(mode, 1, 0), stance_for(mode, 1, 1), stance_for(mode, 2, 0), stance_for(mode, 2, 1)], [0, 0, 1, 1]);
+        }
+        assert_eq!([stance_for(0, 2, 1), stance_for(4, 1, 1)], [0, 0]);
+    }
+
+    /// #297 (0x14c5d0, FUN_00123fa0, FUN_0014d470 / d500 / d570): each slot keeps its own stow
+    /// hardpoint but Tex's, whose stowed gun is on place 0 (0xff4c691b, his left ramp) whichever
+    /// slot is drawn; his switch clip's events take the gun let go from place 1 through 2 to 0.
+    #[test]
+    fn tex_stows_on_his_left_ramp_whichever_slot() {
+        // Brutus, Flint, Hawk: no swap at the draw, slot 1 on place 0 and slot 2 on 1
+        for mode in [1, 2] {
+            for in_hand in [0, 1] {
+                let mut s = StowPlaces::default();
+                s.draw(mode, in_hand);
+                assert_eq!(s.place, [0, 1]);
+            }
+        }
+        // Tex drawn with slot 1: slot 2's gun on place 0
+        let mut s = StowPlaces::default();
+        s.draw(3, 0);
+        assert_eq!((s.place, s.swapped), ([1, 0], true));
+        // his switch to slot 2: slot 1's gun goes on place 1 at the drop, then the clip's events
+        // (ed585109 at 1.20 s, f18780b8 at 1.37-1.40 s) take it through 2 to 0
+        assert!(s.event(EV_STOW_ADVANCE));
+        assert_eq!(s.place, [2, 1]);
+        assert!(s.event(EV_STOW_SETTLE));
+        assert_eq!((s.place, s.swapped), ([0, 1], false));
+        // the draw finds them laid out for slot 2 in hand: nothing to do; and back to slot 1
+        s.draw(3, 1);
+        assert_eq!(s.place, [0, 1]);
+        s.event(EV_STOW_ADVANCE);
+        s.event(EV_STOW_SETTLE);
+        assert_eq!((s.place, s.swapped), ([1, 0], true));
+        // drawn with slot 2 (BF_START_WEAPON=1): slot 1's gun on place 0 as it is
+        let mut s = StowPlaces::default();
+        s.draw(3, 1);
+        assert_eq!(s.place, [0, 1]);
+        // the swap event, and an event that isn't one
+        s.event(EV_STOW_SWAP);
+        assert_eq!((s.place, s.swapped), ([1, 0], true));
+        assert!(!s.event(EV_DROP_WEAPON));
+        assert_eq!(s.of(1), Some(0));
+        assert_eq!(s.of(2), None);
     }
 
     /// #229: the seed is the old product for the numbers that fitted, and a number past the old

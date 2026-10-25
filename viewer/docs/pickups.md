@@ -262,7 +262,10 @@ and `todo/DNA + Weapon Pickups.mp4`.
     with 0), its name over its count on the HUD (play.md "The weapon's name after a pickup"), the
     switch's second sound (e1e97460), and the lying gun gone. The two sounds are the ones the
     takes have at the release and the grab (spectrograms: #52 take04 7.52 / 7.95 s, #61 take04
-    6.57 / 6.88 s, take11 300.73 s).
+    6.57 / 6.88 s, take11 300.73 s). The new gun is held in the stance of its class for Brutus
+    and Tex, of its slot for Flint and Hawk (play.md's table, FUN_0011aa20), and stowed where
+    its slot's holder hangs guns: for Tex his left ramp, whichever slot (#297: a rifle Tex took
+    in place of his Minigun had been held and stowed as the Minigun).
   * The prompt for the next gun is back from the grab, while the clip plays on.
 * **Walking over a lying gun** (FUN_0011c540 -> FUN_0011c170), any living squad member, the AI's
   too: within 1.8 m below and 1.0 m above its position and under 1.34 m across, a gun with rounds
@@ -310,7 +313,8 @@ and `todo/DNA + Weapon Pickups.mp4`.
   each time (`BF_TEST_USE=<s>` holds it 1 s); `BF_WEAPON_LOG=1` prints the lying guns, the
   target as it changes (its class, the slots' classes and the mode), each use, its clip, the
   release and the grab with the rounds and the reserve, the walk-overs and the dead's drops (with
-  their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies;
+  their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies, and (play.md)
+  where each gun hangs whenever that changes, with its class and stance;
   `BF_FEET_LOG=1` (play.md) prints the soles' height every frame with the clip's time.
 * **Verified:**
   * the tutorial (`BF_MAP=tutorial BF_TEST_GOTO=-106.5,-43.5,-108.6,-40.6 BF_TEST_SWAP=3.0

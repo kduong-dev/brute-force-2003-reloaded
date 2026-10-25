@@ -194,7 +194,10 @@ pub struct CharacterType {
     /// `<limit-weapon h_fb08d4c6>`: how a picked-up gun chooses its slot and its pickup clip
     /// (FUN_00121ac0 and FUN_00121920 switch on the type's +0x15c; that it's this attribute,
     /// parse +0x374, is inferred from its values and the takes): 1 Flint and Hawk, 2 Brutus, 3
-    /// Tex; 0 without one (slot 1); 4 a type that can't pick guns up (FUN_000bf1e0)
+    /// Tex; 0 without one (slot 1); 4 a type that can't pick guns up (FUN_000bf1e0). The same
+    /// +0x15c picks the stance a gun is held in (FUN_0011aa20: by its slot for 1, its class for 2
+    /// and 3; play.rs `stance_for`) and moves Tex's stowed gun (3: FUN_00123fa0, play.rs
+    /// `StowPlaces`), #297
     pub pickup_mode: i64,
     /// `<speeds speed>`: crouch walk, walk, run, dash (m/s; type+0x6f8..0x704, read by
     /// FUN_0012c6c0); the demo moves by root motion

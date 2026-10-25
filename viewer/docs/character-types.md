@@ -55,7 +55,7 @@ runtime offset; see the code map's rows for each).
 | `max_stamina`, `height_offset`, `turn_rate`, `player_type` | the attributes | type+0x224, +0x2ac, +0x2d0, +0x1a8 bit 0 | stamina for OTHER; the rest carried |
 | `ragdoll_death` | `enable-ragdoll-death` (h_f397278e) | type+0x34c bit 0, FUN_00115d50 at 0x115e1f | carried: false on the 9 Seer Priest types and the 1189-HP Shadoon (they have death clips, #133 / #134); everyone ragdolls in the demo |
 | `ai` | `<ai alignment-type personality-* vision-range half-fov squad-leash-dist>` | type+0x358, FUN_0001ff70 | the leash for OTHER; the team rule below |
-| `weapons`, `items`, `weapon_classes` | `<inventory weapon-name><item>`, `<limit-weapon>` | type+0x2d4.. | OTHER's weapons and stances |
+| `weapons`, `items`, `weapon_classes`, `slot_classes`, `pickup_mode` | `<inventory weapon-name><item>`, `<limit-weapon one two h_fb08d4c6>` | type+0x2d4.., +0x15c | OTHER's weapons; the slots' classes and the pickup mode for the weapon pickups (pickups.md); the mode picks every type's stances too, by the slot (1) or the class (2, 3), and moves Tex's stowed gun (3: play.md, #297); `weapon_classes` only printed |
 | `speeds` | `<speeds speed>`: crouch walk, walk, run, dash | type+0x6f8.., FUN_0012c6c0 | carried (the demo moves by root motion) |
 | `capsule` | `<cylinder-extents radius height crouch-height><offset>` | type+0x1d4.. | carried (the demo uses one cylinder, `BODY_RADIUS` / `BODY_HEIGHT`) |
 | `decals` | the two lists h_fb4bfc68 / h_efc2a874, up to 3 each | type+0x1b4 / +0x1c4, FUN_00124af0 | the blood decals (one of the list at random) |

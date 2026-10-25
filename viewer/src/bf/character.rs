@@ -349,10 +349,6 @@ pub struct Game {
     pub weapons: HashMap<u32, WeaponDef>,
     /// character name -> starting inventory weapons
     pub character_weapons: HashMap<String, Vec<u32>>,
-    /// character name -> the weapon class (weapon-type: 0 light, 1 medium, 2 heavy) each of its
-    /// two weapon slots holds, from `<limit-weapon one="CLASS COUNT" two=..>`; the motion
-    /// sets Sc_w1_* / Sc_w2_* are the stances for those classes (Brutus: medium, heavy)
-    pub character_weapon_classes: HashMap<String, [i64; 2]>,
     /// character name -> chatter line tag -> voice line ids (common/characters/<name>_chatter)
     pub chatter: HashMap<String, HashMap<u32, Vec<u32>>>,
     /// character name -> chatter line tag -> the tag others answer it with (a block's
@@ -1364,7 +1360,6 @@ impl Game {
             strings: HashMap::new(),
             weapons: HashMap::new(),
             character_weapons: HashMap::new(),
-            character_weapon_classes: HashMap::new(),
             chatter: HashMap::new(),
             chatter_response: HashMap::new(),
             squad_leash: HashMap::new(),
@@ -1878,10 +1873,6 @@ impl Game {
                     let inventory = e.walk().into_iter().find(|x| x.name == h("inventory"))
                         .map(|i| weapon::hashes(i, h("weapon-name"))).unwrap_or_default();
                     self.character_weapons.insert(name.clone(), inventory);
-                    if let Some(l) = e.walk().into_iter().find(|x| x.name == h("limit-weapon")) {
-                        let class = |k: &str| l.attr(h(k)).and_then(|v| v.ints().first().copied()).unwrap_or(-1);
-                        self.character_weapon_classes.insert(name.clone(), [class("one"), class("two")]);
-                    }
                     if let Some(c) = e.walk().into_iter().find(|x| x.name == H_CAMERA_BLOCK) {
                         let v = |k: u32| c.child(k).and_then(|o| o.text.as_ref()).map(|t| t.floats()).filter(|f| f.len() >= 3)
                             .map_or([0.0; 3], |f| [f[0], f[1], f[2]]);

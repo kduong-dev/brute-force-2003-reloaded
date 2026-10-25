@@ -791,7 +791,7 @@ fn release(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &Game,
     let empty = commands.spawn((Transform::default(), Visibility::Hidden, ChildOf(l.root))).id();
     (held.entity, held.flash, held.light) = (empty, empty, empty);
     held.spinners.clear();
-    (held.in_hand, held.stowed, held.second_hand) = (None, None, None);
+    (held.in_hand, held.stow, held.second_hand) = (None, [None; 3], None);
     held.empty = true;
     if let Some(a) = p.ammo.get_mut(w) {
         *a = [0, 0];
@@ -818,14 +818,15 @@ fn grab(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &mut Game
     }
     commands.entity(u.target).despawn();
     let Some(def) = game.weapons.get(&gun.kind).cloned() else { return };
-    let classes = game.character_weapon_classes.get(CHARACTERS[p.character]).copied()
-        .or(game.character_types.get(&p.kind).map(|t| t.weapon_classes));
-    let Some(held) = build_weapon(commands, game, assets, &l.model, l.root, def, u.slot, classes) else { return };
+    // (its stance by the type's pickup mode, `stance_for`: Tex's rifle in his cannon's slot held as
+    // a rifle, #297)
+    let mode = limits(game, p.kind).1;
+    let Some(held) = build_weapon(commands, game, assets, &l.model, l.root, def, u.slot, mode) else { return };
     let (size, ammo_type, regen) = (held.def.ammo.max(1), held.def.ammo_type, held.def.ammo_regen);
     if let Some(old) = l.weapons.get(u.slot) {
         commands.entity(old.entity).despawn();
     }
-    let label = held.def.label.clone();
+    let (label, stance) = (held.def.label.clone(), held.stance);
     l.weapons[u.slot] = held;
     // the switch clips go by the guns' classes (Tex's Sc_wc_<from>2<to>, Brutus's w2rifle / cannon)
     l.switch_clips = [switch_clip(&l.model, game, &l.weapons, 0), switch_clip(&l.model, game, &l.weapons, 1)];
@@ -844,8 +845,8 @@ fn grab(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &mut Game
     p.weapon_dirty = true;
     p.fire_state.reset_burst(0);
     if log {
-        println!("t {:.2}: {} grabs {label} into slot {}: {clip} rounds (the lying gun's {}), reserve type {ammo_type} {}", p.sim_time, unit_name(p),
-                 u.slot + 1, gun.clip, reserve.get(ammo_type));
+        println!("t {:.2}: {} grabs {label} into slot {} (stance w{}): {clip} rounds (the lying gun's {}), reserve type {ammo_type} {}", p.sim_time,
+                 unit_name(p), u.slot + 1, stance + 1, gun.clip, reserve.get(ammo_type));
     }
 }
 
@@ -991,7 +992,7 @@ mod tests {
     fn held(ammo_type: i64, empty: bool) -> HeldWeapon {
         HeldWeapon { def: WeaponDef { ammo_type, ..default() }, stance: 0, entity: Entity::PLACEHOLDER, spinners: vec![], light: Entity::PLACEHOLDER,
                      data_light: false, flash: Entity::PLACEHOLDER, muzzle: Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY }, shell: None,
-                     fire_dir: Vec3::NEG_Z, in_hand: None, stowed: None, second_hand: None, empty }
+                     fire_dir: Vec3::NEG_Z, in_hand: None, stow: [None; 3], second_hand: None, empty }
     }
 
     /// The walk-over's ammo types are what the slots hold (FUN_00122ed0): between a release and
