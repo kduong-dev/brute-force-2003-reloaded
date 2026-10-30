@@ -36,6 +36,9 @@
 //!  patrols     the patrol points (`<patrol-point>`, and `<patrol-first-point>` the head of a
 //!              chain), linked forward and back, grouped by their iD (`PatrolPoint`): the AI's
 //!              patrol routes (bf_play's play_brain.rs, #227)
+//!  points      every world point, all kinds (`<world-point>`, `<cover-point>` ...), with its
+//!              flags, radius and links (`WorldPoint`): the Move To cursor's snap (bf_play's
+//!              play_squad_menu.rs, #319) and the routes' graph (#242)
 //!  effects     the effect objects (`<effect-object>`, object-type 17) with their own
 //!              attributes: lifetime, distance from the camera, the object they're attached to
 //!              (`EffectObject`); started where they're placed (ale_fx `spawn_placed_effects`,
@@ -186,6 +189,51 @@ pub struct PatrolPoint {
     /// base chain has 1 on its four points by the gate, the rest -1
     pub radius: f32,
 }
+
+/// A world point of the level: any of its point elements (`<world-point>`, the AI's navigation
+/// points, type h_f95afb93, 1015 on e34; `<cover-point>`, `<door-point>`, `<patrol-point>`,
+/// `<progress-point>` ... 19 kinds in the game's levels, every one carrying the three flags
+/// below and only they), as the world point factory FUN_000ee070 makes each (the plain world point
+/// FUN_00059b60, which the others build on) and the world keeps every one, whatever its kind, in
+/// its list at world+0x110 (FUN_000daa10's add for object type 14, OT_WPOINT: each kind's case
+/// puts it there, some in a second list too). The Move To cursor snaps to them (#319,
+/// play_squad_menu.rs, FUN_0004d630 on world+0x110); #242's routes walk their links.
+#[derive(Clone, Debug)]
+pub struct WorldPoint {
+    pub name: u32,
+    /// the element's type, h_ff8051ee (h_f95afb93 a plain world point, h_126f47a3 a cover point,
+    /// h_efd397a1 a patrol point ...: FUN_000ee070's switch)
+    pub kind: u32,
+    /// its `<position>`
+    pub at: Vec3,
+    /// the object's +0x24 as the attribute handler FUN_000ecdc0 leaves it: `iD` in the low 12
+    /// bits, h_09aeb0fa bit 13, h_0bb771a2 bit 14, h_1346678f bit 15 (FUN_00059b60 sets 14 and
+    /// clears 12, 13 and 15 first; every point in the data has all three). Its upper half holds
+    /// 0xffff from the constructor (+0x26), as #33 take08's reads show (ffff4000)
+    pub flags: u32,
+    /// h_e6564e8a (+0x20): its own arrival radius (-1 none; 0.3 at least when 0-0.25)
+    pub radius: f32,
+    /// h_e3439383 (+0x2c, FUN_0020d220): the points it links to, by name (the route graph #242
+    /// walks: FUN_000594a0 reads the neighbours through +0x30)
+    pub links: Vec<u32>,
+}
+
+impl WorldPoint {
+    /// +0x24 bit 14: h_0bb771a2 (true on every point of the data but none).
+    pub const BIT_14: u32 = 1 << 14;
+    /// +0x24 bit 15: h_1346678f (true on a few: 8 of e34's 1015 world points, 18 of its cover
+    /// points).
+    pub const BIT_15: u32 = 1 << 15;
+    /// +0x24 bit 13: h_09aeb0fa (false on every point of the data).
+    pub const BIT_13: u32 = 1 << 13;
+}
+
+/// A world point's three flags and the 12 bits of its iD (FUN_000ecdc0, see `WorldPoint::flags`).
+const H_POINT_BIT_14: u32 = 0x0BB7_71A2;
+const H_POINT_BIT_13: u32 = 0x09AE_B0FA;
+const H_POINT_BIT_15: u32 = 0x1346_678F;
+/// A world point's links (FUN_000ecdc0's h_e3439383, read through FUN_0020d220 into +0x2c).
+const H_POINT_LINKS: u32 = 0xE343_9383;
 
 /// A placed effect object (`<effect-object h_ff8051ee=TYPE name lifetime h_0e528ccb ..>
 /// <transform><parent Type parent>`): an object of an effect type (objecttypes `<effect>`,
@@ -459,6 +507,8 @@ pub struct Level {
     pub max_score: f32,
     /// the level's patrol points, both kinds, in the file's order (`PatrolPoint`)
     pub patrols: Vec<PatrolPoint>,
+    /// every world point of the level, all kinds, in the file's order (`WorldPoint`)
+    pub points: Vec<WorldPoint>,
     /// the level's effect objects, in the file's order (`EffectObject`; they're in `objects`
     /// too, with no mesh archetype)
     pub effect_objects: Vec<EffectObject>,
@@ -872,6 +922,22 @@ impl Level {
                 radius: number(e, H_POINT_RADIUS, -1.0),
             })
         }).collect();
+        // every world point (#319): the elements with a point's flag h_0bb771a2 and a position
+        // (FUN_000ecdc0's attributes), whatever their kind
+        let points = all.iter().filter(|e| e.attr(H_POINT_BIT_14).is_some()).filter_map(|e| {
+            let p = floats(e.child(h("position")));
+            let bit = |k: u32, b: u32| if e.attr(k).and_then(|v| v.as_i64()).is_some_and(|v| v != 0) { b } else { 0 };
+            let id = e.attr(h("iD")).and_then(|v| v.as_i64()).unwrap_or(0) as u32 & 0xfff;
+            let radius = number(e, H_POINT_RADIUS, -1.0);
+            Some(WorldPoint {
+                name: hash(e, h("name")),
+                kind: hash(e, H_TYPE),
+                at: (p.len() >= 3).then(|| Vec3::new(p[0], p[1], p[2]))?,
+                flags: 0xffff_0000 | id | bit(H_POINT_BIT_13, WorldPoint::BIT_13) | bit(H_POINT_BIT_14, WorldPoint::BIT_14) | bit(H_POINT_BIT_15, WorldPoint::BIT_15),
+                radius: if (0.0..0.25).contains(&radius) { 0.3 } else { radius },
+                links: triggers::object_list(e, H_POINT_LINKS),
+            })
+        }).collect();
         // the effect objects with their own attributes (0x21c000) and their link (an empty
         // parent is the empty name's hash: none)
         let effect_objects = all.iter().filter(|e| e.name == H_EFFECT_OBJECT).filter_map(|e| {
@@ -891,7 +957,7 @@ impl Level {
         let follow_camera = hash(root, H_FOLLOW_CAMERA);
         Ok(Level { terrain, objects, sky, sky_at, sky_spin, background, fog, ambient, cameras, terrain_collision, blockers, lights, lamps, other_lights,
                    terrain_ambient, character_ambient, follow_camera, terrain_half, terrain_light, buttons, triggers, radar_triggers, camera_objects,
-                   paths, max_score, patrols, effect_objects })
+                   paths, max_score, patrols, points, effect_objects })
     }
 
     /// The directional lights FUN_000dcc10 puts in the indoor pair (`indoor`) or the outdoor one:

@@ -986,6 +986,7 @@ fn main() {
         .add_plugins(vision::plugin)
         .add_plugins(faces::plugin)
         .add_plugins(chatter::plugin)
+        .add_plugins(squad_menu::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1123,6 +1124,8 @@ mod item_pickups;
 mod vision;
 #[path = "play_chatter.rs"]
 mod chatter;
+#[path = "play_squad_menu.rs"]
+mod squad_menu;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -4246,14 +4249,9 @@ fn read_input(
         script::held_step(&mut player, frame_dt(&time));
         return;
     }
-    // 1-4: hand control to that squad member (after their name shows, see squad_control); not
-    // while dead: the death camera hands over when it ends (whether the game lets you cut it
-    // short isn't recorded: a guess)
-    for (i, k) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4].iter().enumerate() {
-        if keys.just_pressed(*k) && i != player.character && !player.dead {
-            player.select = Some((i, SELECT_TIME));
-        }
-    }
+    // (1-4, the d-pad, are play_squad_menu.rs's: a tap hands control to that squad member, after
+    // their name shows, see squad_control; held 0.25 s they select the member for the Squad
+    // Command menu, #319)
     // (the AI's target is the AI's: whoever is controlled aims at the crosshair)
     player.ai_target = None;
     player.next_surface = keys.just_pressed(KeyCode::KeyM);
@@ -6836,7 +6834,8 @@ fn capture_step() -> f32 {
 }
 
 /// The game's clock stopped under a menu: the objectives menu (play_objectives.rs), a tutorial
-/// panel (play_panels.rs) or the item list (play_itembox.rs). The game's app clock [[0x469b54]+0x38] stops while one is open
+/// panel (play_panels.rs), the item list (play_itembox.rs) or the Squad Command menu
+/// (play_squad_menu.rs). The game's app clock [[0x469b54]+0x38] stops while one is open
 /// (take04's watch log: clk 60275 from the press at 62.6 s to the B at 74.5 s). `frame_dt` is 0
 /// meanwhile, so nothing in the world moves (the characters, the triggers' timers, the effects'
 /// clock), and `read_input` takes no input. Each menu holds a bit of its own (PAUSE_OBJECTIVES,
@@ -6851,6 +6850,10 @@ const PAUSE_PANELS: u32 = 2;
 /// session's pause through the app, 0x7a320) while the list is open in single player; #196 take02's
 /// app clock still from the open to the release, take03's grenade hanging in the air.
 const PAUSE_ITEMS: u32 = 4;
+/// The Squad Command menu's hold on the clock (play_squad_menu.rs, #319): FUN_000c10d0 pauses
+/// the game (the app's vtable +0x10) as the menu opens in single player, FUN_000c1150 lets go at
+/// its fade-out's end; #33 take01's session clock still from 2.44 to 6.96 s.
+const PAUSE_SQUAD: u32 = 8;
 
 /// Stops (`on`) or lets go of the game's clock for one of its holders (a PAUSE_ bit; see PAUSED).
 fn set_paused(by: u32, on: bool) {

@@ -13,7 +13,8 @@
 | Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` (held: asked for again each frame); `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time, as the key toggles. In Tex's berserk Z does nothing and the press is dropped ([skills.md](skills.md)) |
 | M | cycle the ground surface (changes footstep / landing / slide sounds) |
 | click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
-| 1-4 | take control of Brutus / Flint / Hawk / Tex (on the test map whoever holds their places, any type, or no one: the squad menu, T, #302, [testtools.md](testtools.md)): their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`, through the chatter gate: 100%, a 30 s replay delay, [chatter.md](chatter.md); their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
+| 1-4 | take control of Brutus / Flint / Hawk / Tex (on the test map whoever holds their places, any type, or no one: the squad menu, T, #302, [testtools.md](testtools.md)): their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`, through the chatter gate: 100%, a 30 s replay delay, [chatter.md](chatter.md); their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself. That's a tap (let go within 0.25 s: the game's d-pad, #319); held 0.25 s the key selects that member for the **Squad Command** menu instead, and with the menu open a tap toggles a member: see the next row |
+| 1-4 held, then I L K J B V | the Squad Command menu (the game's d-pad held, #319; [squad.md](squad.md), "The Squad Command menu"): held 0.25 s, 1-4 select a member (the radar's portrait turns orange in its bracket, its blip pale) and the menu opens over the paused game, fading in over 0.3 s, the radar sliding to its middle; with it open 1-4 toggle members. Then the orders (the game's face buttons and Black / White in their places): I Stand Ground (Y), L Fire At Will (B), K Cover Me (A), J Move To (X), B Medkit (Black; its heal isn't done, #329), V Toggle Ability (White). Esc or Backspace closes it (BACK). While it's open no other key reaches the game (I opens no objectives menu, Backspace leaves no map). J brings up the Move To cursor with the game running: it snaps to the level's world point nearest the crosshair's ray as the mouse turns the view; the left button or E sends the member there, the right button or Esc cancels. A pad (not under `BF_BACKGROUND`) has the game's own buttons |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
 | G | use the item in the item box (the game's LT). A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.625 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw: 15 degrees above the camera's view (9 above the crosshair), a Frag at 17.8 m/s for a tap to 25.6 m/s full, the meter's bottom 30% throwing as a tap (#161: a full Frag looking 9 degrees down lands ~25 m out); the count drops at once, and the scope is left. A placed one (Roller, Sentry; m09_b's Thermo, #82): set down at the feet at the press. A Medkit (either): used at the press, "No need to heal" at full health. Nothing selected: "Inventory is empty". A Tab or B press while G is held drops the charge, and G does nothing more until it's let go. See **Grenades** and **The item box and the item list** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen is put on at the press (Tex, Hawk and Flint: its clip, then the thermal view) and taken off at the next (#21, [pickups.md](pickups.md), "OrgSen"), Brutus is told "Cannot use", and the Hat does nothing yet |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold [X] to activate panel." shows (the game's glyph line, X's glyph: E is the demo's X; [hints.md](hints.md)) and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
@@ -369,6 +370,20 @@ the test map (`--test`), with it:
   pixel of its 640 x 480). It was drawn inverted, its corner inside, before the fix round.
 * The dots and markers are drawn on the CPU into an image over the radar (256 x 256, two pixels a
   unit), redrawn each frame while there's any.
+* **Under the Squad Command menu** (#319, play_squad_menu.rs; [squad.md](squad.md), "The Squad
+  Command menu"): a member selected for an order is drawn 200 200 200 on the radar (FUN_000ae7c0
+  for one FUN_000c86d0 says is flagged), its portrait in the selection's orange (0xc4280's ff a0
+  6a: the face's brightness in it, a fit to take01 and take03, where a plain multiply leaves a
+  blue face grey: `selected_face`) and bracketed, the bracket closed toward the radar (the part
+  0x1207a43b: h_ff5d4d4f above and below, h_fdec2fc6 left and right, mirrored by 0x3c8ca8's
+  negative sizes: `SELECT_FRAMES`). A d-pad press flashes the three chevrons at the portrait
+  pressed, the outer two fading first, the last gone 0.25 s on (FUN_000c4dd0, FUN_000c4cd0). The
+  radar, its portraits and what's on them are one panel (the game's widget 0xc2d40,
+  `RadarPanel`) that slides from its corner to the screen's middle less its width and 20 as the
+  menu fades in, 1 - (1 - fade / 0.3)^3 of the way (FUN_000c2be0: 116 right and 120 up), and
+  back as it fades out; it draws over the menu's darkening backdrop (`RADAR_Z`). Checked against
+  take01 (4.0 s) and take03 (3.9 s, three selected): the faces, brackets and the pale middle
+  dot, the panel at the take's place within the demo's own 2-4 units.
 
 Verified (the tutorial, `BF_TEST_GOTO=10.64,44.15,22.28,34.31` into the first patrol's circle,
 [triggers.md](triggers.md) "Test hooks"; crops of the radar against take07 and take03): the first
@@ -391,7 +406,7 @@ the near enemy, known to Flint, red; the far one (75 m) none; the friend green; 
 
 Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
 radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
-dots' size; the squad's rim markers (above) and their white when selected (FUN_000c86d0); the
+dots' size; the squad's rim markers (above) and their 200 200 200 when selected (FUN_000c86d0); the
 reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); which
 list of characters the HUD's squad list is kept from (FUN_000bd790, "The portraits" above). A
 test map dummy is no AI target, so nobody knows of a hostile dummy and it never shows.
@@ -854,6 +869,10 @@ At alpha 229 / 255 (FUN_000c6280's 0.9 x 255; it was 0.95). The console blends i
 sRGB values, Bevy's UI in linear light, so each is drawn as the colour that gives the game's
 result over a dark ground, as the grenade meter's orange is. The demo's own green on a squadmate
 (77 255 89, no source) is gone: the game's is the code's 68 220 68, by its own rule.
+Under the Squad Command menu (#319) FUN_000c6280 takes FUN_000c17c0's share too: the
+crosshair fades out as the menu fades in (1 - fade / 0.3) and is gone while the Move To cursor is
+up (take01, take08); the item box's widget takes the same share (0xabdb5: `play_itembox.rs`
+`draw`).
 
 * **The lock** (the target selection's FUN_000bf7a0, the best kept by FUN_000bfe40): any living
   character but the player when
