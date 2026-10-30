@@ -33,14 +33,16 @@
 //!    h_e78efbb2).
 //!  - **Death** (answers.md Q6, Q8): the game's ragdoll, the same for every character since #259
 //!    (play_ragdoll.rs: bodies for the hit parts and their ancestors, FUN_00127290, the bones
-//!    below them carried rigidly, the joints' ranges FUN_00113120's); the death line starts in the
-//!    death frame, none of a type's three repeated before all are said (`death_cry`, FUN_001371f0).
+//!    below them carried rigidly, the joints' ranges FUN_00113120's); the death line from its
+//!    type's chatter library, through the chatter gate in the death frame, none of a type's three
+//!    repeated before all are said (play_chatter.rs: FUN_00125f40, FUN_001371f0).
 //!
 //! Test hooks: `BF_TEST_NPC_MOTION=<s>,<n|aim|all>,<motion>[,<x>,<z>[,relaxed]]` (play_testtools.rs
 //! reads it) drives an NPC in a motion type to a point; `BF_TEST_NPC`'s `frozen` behaviour stands
 //! an NPC with its brain off (the takes' trainer freeze: no reactions); `BF_ENEMY_LOG=1` prints
 //! the table, the draws, the motions, the drive (every half second), the shield and the death
-//! line; `BF_RAGDOLL_LOG=1` the ragdoll's bodies and limits (play_ragdoll.rs).
+//! line (as it starts, play_chatter.rs); `BF_RAGDOLL_LOG=1` the ragdoll's bodies and limits
+//! (play_ragdoll.rs).
 
 use super::*;
 use bf_viewer::bf::character_type::{CharacterType, MOTION_TYPES};
@@ -106,16 +108,6 @@ const STUN_COOLDOWNS: [f32; 2] = [2.0, 4.0];
 /// How far short of a drive's goal (m) the hook lets go, besides what the slide covers (the
 /// demo's).
 const ARRIVE: f32 = 0.15;
-/// The chatter lines said so far, per chatter library and tag: the chatter manager's history
-/// (mgr+0x28, FUN_001411e0; FUN_00136fc0 -> FUN_001371f0 picks among the lines not said yet, and
-/// once only said ones are left clears it, FUN_00141580, and picks again). One per map, as the
-/// manager is per world: emptied as a map starts (`new_world`). The skill lines keep the same
-/// rule in play_skills.rs's `LineHistory`; this one is a static because `hurt`, which says the
-/// death line, has no resources at hand (and a system of its own to empty it moved the other
-/// map-start systems' order, and with it a few pixels of the squad's captures). Only the
-/// enemies' death lines go through it (`death_cry`); the squad's picks stay the demo's (play.rs
-/// `say`).
-static SAID: std::sync::Mutex<Vec<(String, u32, u32)>> = std::sync::Mutex::new(Vec::new());
 
 /// A character's MOTION table resolved to its clips (see the module notes), built at spawn.
 #[derive(Default, Debug)]
@@ -326,44 +318,6 @@ pub fn plugin(app: &mut App) {
 /// of such a type (#302), which reacts, shields and dies as its type does whoever controls it.
 pub fn enemy(u: &Player) -> bool {
     u.own_type()
-}
-
-/// A map starts (play.rs `setup`): the chatter manager is the world's, so its history (`SAID`)
-/// starts empty.
-pub fn new_world() {
-    SAID.lock().unwrap_or_else(|e| e.into_inner()).clear();
-}
-
-/// `u`'s death line (chatter tag `tag`, e1213623), started now: the game says it in the death
-/// frame (the CBT_DEAD handler FUN_00115f90, after the death FUN_00115d50, calls FUN_00125f40 at
-/// 0x116028, which says it through the chatter gate FUN_00140a60; no
-/// delay, answers.md Q8: the takes' 0.15-0.35 s was the capture's audio latency). From its type's
-/// chatter-library (#129: `shrike_light_chatter`, `dm_shrike_heavy_chatter`...; the entry's flag
-/// h_eb640008 lets the dead speak), picked the game's way (FUN_001371f0): at random among the
-/// lines not said yet on the map (`SAID`), so a Shrike's three all come before one repeats.
-pub fn death_cry(u: &mut Player, game: &Game, tag: u32) {
-    let Some(library) = game.character_type(u.kind).map(|t| t.chatter.trim_end_matches("_chatter").to_string()) else { return };
-    let lines: Vec<u32> = game.chatter.get(&library).and_then(|c| c.get(&tag))
-        .map(|v| v.iter().copied().filter(|&id| game.sounds.has(id)).collect()).unwrap_or_default();
-    if lines.is_empty() {
-        return;
-    }
-    let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
-    let unsaid = |said: &Vec<(String, u32, u32)>| -> Vec<u32> {
-        lines.iter().copied().filter(|&id| !said.iter().any(|(l, t, s)| *l == library && *t == tag && *s == id)).collect()
-    };
-    let mut left = unsaid(&said);
-    if left.is_empty() {
-        said.retain(|(l, t, _)| !(*l == library && *t == tag));
-        left = lines.clone();
-    }
-    let id = left[u.random(left.len())];
-    said.push((library.clone(), tag, id));
-    if std::env::var("BF_ENEMY_LOG").is_ok() {
-        println!("{}'s death line {id:08x} of {} ({} not said yet)", unit_name(u), lines.len(), left.len());
-    }
-    u.sound_queue.push((id, 1.0));
-    u.speaking = game.sounds.pcm(id).map_or(1.0, |(rate, s)| s.len() as f32 / rate as f32);
 }
 
 /// Whether `u` is reacting to a hit (its event due, or the reaction playing): a hit meanwhile

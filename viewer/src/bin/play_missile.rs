@@ -1226,7 +1226,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         let amount = if instant && bl.human && !controlled { enemies::lethal(u).max(amount) } else { amount };
         let push = Vec3::new(bl.dir.x, 0.0, bl.dir.z).normalize_or(Vec3::Z) * HIT_PUSH.0 + Vec3::Y * HIT_PUSH.1;
         let before = u.health;
-        hurt_still(u, game, amount, push, bl.at);
+        hurt_still(u, game, amount, &hit, push, bl.at);
         if controlled && u.health < before {
             tint.0 = 0.0;
         }
@@ -1280,10 +1280,11 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
 /// `hurt` without the knockdown it may start (play.rs's rule for a hit of KNOCKDOWN_DAMAGE or
 /// more): no missile hit or blast in the takes moved its victim (Tex hurt by his own blasts,
 /// takes 10-16; frozen enemies hit directly and by blasts, takes 06, 18, 19, 23). The game's
-/// knockdown rule isn't traced. A kill still throws the body (the death push).
-fn hurt_still(u: &mut Player, game: &Game, amount: f32, push: Vec3, at: Vec3) {
+/// knockdown rule isn't traced. A kill still throws the body (the death push). `hit` says whose it
+/// is for the hurt line (play_chatter.rs: Tex's own blast, ff44e83f).
+fn hurt_still(u: &mut Player, game: &Game, amount: f32, hit: &damage::Hit, push: Vec3, at: Vec3) {
     let asked = u.knock_request.is_some();
-    hurt(u, game, amount, HURT_CHATTER, push, at, -1);
+    hurt(u, game, amount, chatter::Cause::hit(hit), push, at, -1);
     if !asked && !u.dead && u.knock_request.take().is_some() && std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("  (not knocked down after all: a missile's hit, play_missile.rs)");
     }
@@ -1409,7 +1410,7 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             let amount = if instant && human && k != 0 { enemies::lethal(u).max(amount) } else { amount };
             let away = Vec3::new(f.x - b.at.x, 0.0, f.z - b.at.z).normalize_or(Vec3::X);
             let before = u.health;
-            hurt_still(u, &game.0, amount, away * BLAST_PUSH.0 + Vec3::Y * BLAST_PUSH.1, middle);
+            hurt_still(u, &game.0, amount, &hit, away * BLAST_PUSH.0 + Vec3::Y * BLAST_PUSH.1, middle);
             // (a kill's own shoves on the body, behind ragdoll::DEATH_SHOVE: the blast's record
             // has no part, and a push of 2 when its weapon's is 0, FUN_0022c4d0)
             if u.dead && before > 0.0 {

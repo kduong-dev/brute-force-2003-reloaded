@@ -125,15 +125,19 @@ fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
                 // squad already, divided out before the victim's step and damage-type factor
                 // (play_damage.rs; no log line: it's dealt every frame)
                 let base = rate * inside / super::damage::footage_squad_step(&game.0);
-                let poisoned = super::damage::Hit::new(base, "gas", kit.blast.damage_type).source(Who::Squad(c.thrower)).on(u, &game.0, &difficulty);
+                let mut hit = super::damage::Hit::new(base, "gas", kit.blast.damage_type).source(Who::Squad(c.thrower));
+                let poisoned = hit.on(u, &game.0, &difficulty);
                 // (the thrower is the squad's: a test map NPC of their character isn't them)
                 let amount = if kill && u.who() != Who::Squad(c.thrower) { enemies::lethal(u) } else { poisoned };
                 if amount >= u.health {
                     // its last breath: dies as from any hurt
-                    hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y, u.position, -1);
+                    hurt(u, &game.0, amount, chatter::Cause::hit(&hit), Vec3::Y, u.position, -1);
                     // (without the hurt's blood: the recording's gassed Tex falls without any)
                     u.blood.pop();
                 } else {
+                    // (each frame's share a hit through the handler all the same: its hurt line,
+                    // FUN_00125ad0, the gas cough 0feee721 or the thrower's own or a friend's)
+                    chatter::hurt_line(u, chatter::Cause::hit(&hit), amount);
                     u.health -= amount;
                 }
                 match c.victims.iter_mut().find(|v| v.0 == u.who()) {

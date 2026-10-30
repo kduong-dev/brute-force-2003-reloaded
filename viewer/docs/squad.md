@@ -241,7 +241,8 @@ Squad movement and deaths follow the game's own data and the captures:
     last 2.5 m at a walk (the game runs instead while the member stands in one of the level's
     +0x114 prisms, FUN_0004cb60: what those volumes are isn't traced, so the demo dashes; the
     leads' "a run with an enemy known" misread the test); within 2 m of the point (FUN_00045fa0's
-    walk at 2.0) it's GUARD and says e635ecc6 (`say()`; #155 moves the lines onto the gate). A
+    walk at 2.0) it's GUARD and asks e635ecc6 of the chatter gate (chatter.md; its block:
+    probability 100, no replay delay, priority 6, a 3 s wait, heard at any distance). A
     walk that stalls (0.1 m in 1 s, after its first second) ends the same way (a failed walk,
     0x46256); a liquid that burns stops it at the shore. The controlled character on its way is
     passed with 1.2 m of room (the way bends beside him until he's behind): the game routes round
@@ -296,7 +297,12 @@ Squad movement and deaths follow the game's own data and the captures:
     1.9 m off (take08 1.5 m) and arrives 3.1 s after the order (take08 4.2 s, her run slower).
     With Tex right on her line (`BF_TEST_GOTO=-82.16,-85.05,...`): she bends round him 1.5 m off
     (frame 176) and arrives at the same time. (Before #318's third round she waited 7 s behind
-    him and stood her ground: the wait-then-GUARD rule, dropped.)
+    him and stood her ground: the wait-then-GUARD rule, dropped.) Through the chatter gate (after
+    #155, `BF_CHATTER_LOG=1`): at the first point her e635ecc6 is said (variant 14c84c28, priority
+    6, 7 m off); at the second, ordered at 10 s, a timed mute of e34's opening radio lines refuses
+    it, as it refuses every line; ordered at 32 s, after them, she arrives 3.1 s later and it's
+    said with take08's own sound, 0fc11d92 (the set's other variant: each is said before one
+    repeats), the HUD's speech icon by her portrait for its 1.3 s (frames 527-547).
   * Fire At Will (take10: `--test BF_TEST_ORDER=all,fire@1 "BF_TEST_NPC=3.0,shrike
     soldier,enemy,fight,-60,-79,,0" BF_TEST_NPC_HP=3.5,1,250 BF_TEST_INSTANT_KILL=0`, the Shrike
     facing away): the first hit 0.6 s after it appears, dead 2.5 s after (take10: the first
@@ -316,6 +322,9 @@ Squad movement and deaths follow the game's own data and the captures:
     (on Stand Ground, a0) as its target at 0.67 s, and EVT_SQUAD_IMA_TARGET grants her combat
     at 0.80 s, before its first bite (1.07 s, which knocks her down); she fires from 2.67 s, her
     shots grant Brutus and Flint (EVT_SQUAD_MATE_FIRING, 2.60 s), and they kill it at 3.6 s.
+    After #155's merge the same up to the bite, then her first shot and the others' grant at
+    2.47 s and its death at 3.1 s: her hurt line no longer takes a draw from her random state
+    (the chatter has its own), so her later draws differ.
   * Stand Ground to a member kneeling in the follow (`BF_TEST_GOTO=-83.39,-82.79,-87.2,-75.8,27
     BF_TEST_GO_AT=999 BF_TEST_ORDER=flint,guard@9`): Flint stays down through the order (frames
     126-160; the watch log "kneel" in every row), no stand-up and kneel again.
@@ -392,14 +401,18 @@ Squad movement and deaths follow the game's own data and the captures:
   the top so it topples: the demo's start) for 0.7 s, thuds on the ground
   (the surface's landing sound) and gets back up over 0.45 s where it lies - the game uses
   Ipion physics for this (its constraint messages are in default.xbe, with MT_KNOCKDOWN).
-* Death: the death cry (chatter e1213623 - the captures' deaths match its lines), a thud, a
+* Death: the death cry (chatter e1213623 - the captures' deaths match its lines; ed35ffae for a
+  fall's), a thud, a
   limp body that stays on a blood pool (the character's other decal, h_16d327fd), blood
   splashed round where they fall (the hit's blood effects sprayed up, and five of their hit
   splats on the ground within 1.4 m: the demo's choice, the game's own death blood isn't
   known; Flint's decals are dark grey, 50,50,50, in the data: she's a synthetic), their memory
-  chip beside where they fell (below), and - half the time, as the data says - a surviving
-  squadmate's answer from the dead member's response tag ("Brutus is down!", "They've taken out
-  Hawk."). On the radar the portrait becomes the member's own skull (the characters'
+  chip beside where they fell (below). Every line goes through the chatter gate and its one
+  queue ([chatter.md](chatter.md): the hurt lines, the death cry, the killer's line). The death
+  cry's response picks the nearest teammate for its "X is down" reply ("Brutus is down!",
+  "They've taken out Hawk."), whose variants need the alert value 0 where every squad member's
+  is 10: so, as the code reads, no reply is heard (the demo said one half the time before #155;
+  the xemu take A3 settles it). On the radar the portrait becomes the member's own skull (the characters'
   h_00c51907 icon) and the member's tab and health bar go.
 * **Memory chip** (`play_dna.rs`, #43; what the demo called "the DNA"). Each squad
   character-object's `<h_0f77963d inventory-drop>` is item h_f50f94f9 (function-type 18,

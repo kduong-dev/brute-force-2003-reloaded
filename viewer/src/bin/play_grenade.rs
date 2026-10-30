@@ -891,7 +891,7 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
         return None;
     }
     hit.report(u, game, now);
-    hurt(u, game, dealt, HURT_CHATTER, (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
+    hurt(u, game, dealt, chatter::Cause::hit(&hit), (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
     // (a kill's own shoves on the body, behind ragdoll::DEATH_SHOVE: the blast's record has no
     // part, and a push of 2 when its weapon's is 0, FUN_0022c4d0)
     if u.dead {

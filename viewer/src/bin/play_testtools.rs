@@ -29,7 +29,7 @@
 //!      player only: the AI never fires at it (the product owner's choice: the squad shoots only
 //!      enemies set to fight). One set to fight stays put (but dives from a grenade, as the
 //!      squad does) and aims and fires at any hostile in sight with the squad AI's fire
-//!      (`ai_fire`), and the squad AI fires back (`hostile_in_sight`): a squadmate's shots stop
+//!      (`ai_fire`), and the squad AI fires back (play_brain.rs `glance`): a squadmate's shots stop
 //!      at the first body in their way, as the player's do. NPCs take no pickups.
 //!    - Outside the menu J switches the team of the NPC under the crosshair, B its behaviour,
 //!      Delete removes it; Shift+Delete removes every NPC.

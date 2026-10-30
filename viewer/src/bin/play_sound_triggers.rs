@@ -79,12 +79,13 @@ const PAUSED: u8 = 2;
 const ZONE_RAMP: f32 = 4.0;
 /// A character's line heard from another character: as play.rs `play_sounds` hears a squad
 /// member's sounds, quieter with the distance from the player, 1 - d / SPEAKER_HEARD (at least
-/// SPEAKER_FLOOR), x SPEAKER_SHARE (the demo's mixing, not the game's: a stub).
-const SPEAKER_HEARD: f32 = 35.0;
+/// SPEAKER_FLOOR), x SPEAKER_SHARE (the demo's mixing, not the game's: a stub). The chatter's
+/// voices too (play_chatter.rs `voice_start`).
+pub(crate) const SPEAKER_HEARD: f32 = 35.0;
 /// The least share of a line said by another character (play.rs `play_sounds`' 0.15).
-const SPEAKER_FLOOR: f32 = 0.15;
+pub(crate) const SPEAKER_FLOOR: f32 = 0.15;
 /// Another character's line at most this share (play.rs `play_sounds`' 0.8).
-const SPEAKER_SHARE: f32 = 0.8;
+pub(crate) const SPEAKER_SHARE: f32 = 0.8;
 /// The rolloff curve every 3D voice gets as it's made (FUN_00181770 for a buffer, 0x1836eb for a
 /// stream: IDirectSound*_SetRolloffCurve with the five gains at 0x38dae8), spread evenly from
 /// the min distance to the max (see `distance_gain`).
@@ -249,7 +250,7 @@ pub(crate) struct Dialog {
     /// its name, for the logs
     name: String,
     /// h_e725a1a5 (+0x48), handed to the character's line (FUN_001267b0's EDX): the squad's
-    /// chatter hushed while it plays (not modelled)
+    /// chatter hushed while it plays (play_chatter.rs `Chatter::hush`)
     hush: bool,
     /// the line's length (`SoundBank::length`): how long its character speaks
     length: f32,
@@ -402,9 +403,12 @@ impl Radio {
     }
 
     /// FUN_00179ec0 over `dt`: the playing line's time goes down (its voice let go once it has
-    /// ended), and with none playing the next waiting one starts. `voices_made` hands out voice
-    /// handles; `log` names what it plays.
-    fn update(&mut self, dt: f32, now: f32, acts: &mut Vec<VoiceAct>, voices_made: &mut u32, sounds: &SoundBank, log: bool) {
+    /// ended), and with none playing the next waiting one starts, hushing the chatter for its
+    /// length when it has the flag (0x17a046-0x17a064: FUN_00141100 keyed by its sound, into
+    /// `hushes`). `voices_made` hands out voice handles; `log` names what it plays.
+    #[allow(clippy::too_many_arguments)]
+    fn update(&mut self, dt: f32, now: f32, acts: &mut Vec<VoiceAct>, hushes: &mut Vec<(u32, Option<f32>)>, voices_made: &mut u32, sounds: &SoundBank,
+              log: bool) {
         if self.playing {
             let left = match &mut self.current {
                 Some(c) => {
@@ -427,6 +431,10 @@ impl Radio {
         }
         let Some(line) = self.lines.pop_front() else { return };
         self.current = Some(line);
+        // (its voice or none, the hush comes: 0x17a024 jumps to the test at 0x17a046)
+        if line.hush {
+            hushes.push((line.sound, Some(line.left)));
+        }
         if line.sound == 0 || line.left <= 0.0 {
             if let Some(c) = &mut self.current {
                 c.left = 0.0;
@@ -439,7 +447,7 @@ impl Radio {
         self.playing = true;
         if log {
             println!("t {now:.2}: the dialog queue plays {} (ticket {}, {:.2} s){}", sound_name(sounds, line.sound), line.ticket, line.left,
-                     if line.hush { "; it would hush the squad's chatter (FUN_00141100: not modelled)" } else { "" });
+                     if line.hush { "; it hushes the squad's chatter (FUN_00141100)" } else { "" });
         }
         acts.push(VoiceAct::Start { voice: self.voice, sound: line.sound, looping: false, volume: None, from: Heard::Everywhere, fade_in: 0.0, fade_out: 0.0,
                                     music: false, by: "the dialog queue".into() });
@@ -454,6 +462,10 @@ impl Radio {
 pub(crate) struct SoundWorld {
     radio: Radio,
     acts: Vec<VoiceAct>,
+    /// the chatter mutes asked for this frame (the lines with the hush flag h_e725a1a5): a key and
+    /// its length (FUN_00141100), or None to take the key's off (FUN_00141180); `voices` hands
+    /// them to the chatter manager (play_chatter.rs `Chatter::hush`)
+    hushes: Vec<(u32, Option<f32>)>,
     /// voice handles handed out so far (the sound system's, DAT_00469988 counting up)
     voices_made: u32,
     /// the listener: the character the camera follows (FUN_00178c10, `listener`); None before the
@@ -568,12 +580,12 @@ fn log_sounds(tr: Res<Triggers>) {
                 };
                 println!("sound-trigger {}: {} {:.2} s, Type {}, {place}{}{}{}{}{}{}", tr.label(l.t.name), s.name, s.length, d.kind,
                          if d.looping { ", looping" } else { "" }, if d.near { format!(", within {} m of a player", s.max_distance()) } else { String::new() },
-                         if s.music { ", a music-bank track" } else { "" }, if d.hush { ", hushes the chatter (not modelled)" } else { "" },
+                         if s.music { ", a music-bank track" } else { "" }, if d.hush { ", hushes the chatter (a timed mute)" } else { "" },
                          if s.library.is_none() { ", not in the banks" } else { "" }, if l.enabled { "" } else { " (disabled)" });
             }
             ClassState::Dialog(d) => {
                 println!("dialog-trigger {}: {} {:.2} s, said by {}{}", tr.label(l.t.name), d.name, d.length,
-                         l.t.objects.first().map_or("no one".to_string(), |&o| tr.label(o)), if d.hush { ", hushes the chatter (not modelled)" } else { "" });
+                         l.t.objects.first().map_or("no one".to_string(), |&o| tr.label(o)), if d.hush { ", hushes the chatter (a timed mute)" } else { "" });
             }
             _ => {}
         }
@@ -749,8 +761,9 @@ impl Triggers {
 
     /// FUN_002062a0: sound-trigger `i` starts its sound, and with `voice` its voice too: a
     /// one-shot still playing or a looping one isn't restarted; otherwise it's stopped at once,
-    /// and at a volume over 0 its time is its sound's length and it plays (FUN_002060c0); at 0 a
-    /// one-shot is off.
+    /// and at a volume over 0 its time is its sound's length and it plays (FUN_002060c0), the
+    /// squad's chatter hushed for that time when it has h_e725a1a5 (0x206343-0x206360:
+    /// FUN_00141100 keyed by the trigger's +4, an object's name); at 0 a one-shot is off.
     fn sound_start(&mut self, i: usize, voice: bool) {
         let (clock, log, who) = (self.clock, self.log, self.who(i));
         let Some(s) = self.sound_of(i) else { return };
@@ -773,6 +786,11 @@ impl Triggers {
             s.playing = true;
             if voice {
                 self.sound_voice(i, vol);
+            }
+            let key = self.live[i].t.name;
+            if let Some(s) = self.sound_of(i).filter(|s| s.data.hush) {
+                let left = s.left;
+                self.sound.hushes.push((key, Some(left)));
             }
         }
         if let Some(s) = self.sound_of(i) {
@@ -815,8 +833,10 @@ impl Triggers {
 
     /// FUN_002063c0: sound-trigger `i` stopped: its voice (`at_once`, or fading out) unless it's
     /// playing out, its queued line taken back (a ticket 0 stays: the game checks +0x48 against
-    /// 0), its time ended; its "queued" bit stays.
+    /// 0), its chatter mute taken off when it has h_e725a1a5 (0x20640a-0x206422: FUN_00141180), its
+    /// time ended; its "queued" bit stays.
     fn sound_stop(&mut self, i: usize, at_once: bool) {
+        let key = self.live[i].t.name;
         let ClassState::Sound(s) = &mut self.live[i].state else { return };
         let world = &mut self.sound;
         if s.voice != 0 && !s.play_out {
@@ -826,6 +846,9 @@ impl Triggers {
         if s.ticket != 0 {
             world.radio.cancel(s.ticket, &mut world.acts);
             s.ticket = 0;
+        }
+        if s.data.hush {
+            world.hushes.push((key, None));
         }
         s.state = STOPPED;
         s.left = 0.0;
@@ -1067,6 +1090,12 @@ impl Triggers {
                         }
                         self.sound.acts.push(VoiceAct::Start { voice: d.voice, sound: d.dialog, looping: false, volume: None, from: Heard::Speaker(speaker),
                                                                fade_in: 0.0, fade_out: 0.0, music: false, by: who });
+                        // its hush flag: the chatter hushed for the line's length (FUN_001267b0 ->
+                        // FUN_001435d0's FUN_00141100 at 0x14379d, keyed by the character's +4,
+                        // its name, xor the line); its stop takes nothing off (FUN_00143570)
+                        if d.hush && d.length > 0.0 {
+                            self.sound.hushes.push((speaker ^ d.dialog, Some(d.length)));
+                        }
                     }
                 }
                 act::STOP | act::STOP_DIALOG => {
@@ -1224,13 +1253,14 @@ impl MusicBank {
 /// started (the sound banks' sounds, the music bank's tracks through the music volume, marked
 /// LevelMusic), stopped, their volume set, paused, moved; then each voice's volume (its distance
 /// from the listener, as `listener` found it; its fades). Where the characters are
-/// is kept for the triggers' next frame. BF_MUTE: nothing plays; BF_NO_MUSIC and deathmatch
-/// (which plays without music, play.rs `setup`): no music-bank track. BF_SOUND_LOG: each voice
-/// as it starts and stops.
+/// is kept for the triggers' next frame. The chatter mutes the lines asked for go to the chatter
+/// manager (play_chatter.rs). BF_MUTE: nothing plays; BF_NO_MUSIC and deathmatch (which plays
+/// without music, play.rs `setup`): no music-bank track. BF_SOUND_LOG: each voice as it starts
+/// and stops.
 #[allow(clippy::too_many_arguments)]
 fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game: Res<GameData>, current: Res<CurrentMap>, mode: Res<Mode>,
           player: Res<Player>, squad: Res<Squad>, mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>, mut bank: Local<MusicBank>,
-          mut playing: Query<(Entity, &mut TriggerVoice, Option<&mut AudioSink>)>) {
+          mut chatter: ResMut<chatter::Chatter>, mut playing: Query<(Entity, &mut TriggerVoice, Option<&mut AudioSink>)>) {
     if tr.live.is_empty() {
         return;
     }
@@ -1239,7 +1269,11 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
     let now = tr.clock;
     // the dialog queue
     let world = &mut tr.sound;
-    world.radio.update(dt, now, &mut world.acts, &mut world.voices_made, &game.0.sounds, tr.log);
+    world.radio.update(dt, now, &mut world.acts, &mut world.hushes, &mut world.voices_made, &game.0.sounds, tr.log);
+    // the chatter mutes
+    for (key, length) in world.hushes.drain(..) {
+        chatter.hush(key, length);
+    }
     // where the listener and the characters are
     let here = player.position + Vec3::Y * GROUND;
     let listener = tr.sound.listener.unwrap_or(here);

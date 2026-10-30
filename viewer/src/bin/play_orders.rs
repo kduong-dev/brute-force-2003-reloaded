@@ -96,8 +96,10 @@ const PASS_CLEAR: f32 = 1.2;
 const HAND_OVER_FAR: f32 = 50.0;
 const HOLD_NEAR: f32 = 5.0;
 /// The line on reaching the Move To point (GOAL_MOVE_OUT's end, FUN_00045fa0 through the gate
-/// FUN_00140a60): e635ecc6, a block in all four chatter files. Take08: Hawk's gate call 0.15 s
-/// before the watch log shows her GUARD, her sound 0fc11d92 0.3 s after.
+/// FUN_00140a60, play_chatter.rs `say`): e635ecc6, a block in all four chatter files, probability
+/// 100, no replay delay, priority 6, a 3 s wait, heard at any distance (todo/36-squad-voice
+/// leads.md's tag table). Take08: Hawk's gate call 0.15 s before the watch log shows her GUARD,
+/// her sound 0fc11d92 0.3 s after.
 const LINE_ARRIVED: u32 = 0xE635_ECC6;
 /// The base goal each mode draws (its personality's EVT_BASE: the GOAL_ name table 0x3bcbb0),
 /// for the log: GOAL_WINGMAN_FOLLOW 75, GOAL_IDLE_VARY 2, GOAL_MOVE_OUT 72.
@@ -192,7 +194,7 @@ pub fn gate(u: &Player, target: Option<Vec3>, toward: Option<Vec3>) -> (Option<V
 pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, game: &Game) {
     match m.command.mode {
         Mode::Guard => guard(m, dt, target, toward),
-        Mode::MoveOut => move_out(m, leader, dt, target, toward, game),
+        Mode::MoveOut => move_out(m, leader, dt, target, toward),
         _ => {
             let pauses = pauses(m, game);
             squad_ai(m, leader, slot, heading, dt, target, toward, &pauses);
@@ -243,13 +245,13 @@ fn guard(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
 /// (the game's route round it: the wait FUN_00041870 makes when there's none isn't done, #242).
 /// ENEMY_SEEN draws GOAL_ATTACK_MOVE_OUT: the same walk facing the target, firing once combat is
 /// allowed. Without a point (none given) the route is to its own place: it's there, GUARD at once.
-fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, game: &Game) {
+fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
     let now = m.sim_time;
     let here = m.position;
     let to = m.command.point.map_or(Vec2::ZERO, |p| p.xz() - here.xz());
     let dist = to.length();
     if dist < MOVE_OUT_ARRIVE {
-        arrive(m, game, now, if m.command.point.is_some() { "reaches" } else { "has no" }, dist);
+        arrive(m, now, if m.command.point.is_some() { "reaches" } else { "has no" }, dist);
         guard(m, dt, target, toward);
         return;
     }
@@ -263,7 +265,7 @@ fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, towa
         m.command.stalled += dt;
     }
     if m.command.stalled >= STALL_TIME {
-        arrive(m, game, now, "stalls", dist);
+        arrive(m, now, "stalls", dist);
         guard(m, dt, target, toward);
         return;
     }
@@ -320,16 +322,16 @@ fn pass_round(here: Vec2, point: Vec2, blocker: Option<Vec2>) -> Vec2 {
 }
 
 /// MOVE_OUT's end (FUN_00045fa0's tail, and its failed walk at 0x46256): the point given up
-/// (brain+0x8ac = 0), GUARD by the full mode change, and the line e635ecc6. `why` and `dist` for
-/// the log.
-fn arrive(m: &mut Player, game: &Game, now: f32, why: &str, dist: f32) {
+/// (brain+0x8ac = 0), GUARD by the full mode change, and the line e635ecc6 asked of the chatter
+/// gate (play_chatter.rs `say`). `why` and `dist` for the log.
+fn arrive(m: &mut Player, now: f32, why: &str, dist: f32) {
     if log_level() > 0 {
-        println!("t={now:.2} order {}: {why} the Move To point ({dist:.1} m off, at ({:.1}, {:.1})): GUARD, says e635ecc6", unit_name(m), m.position.x,
+        println!("t={now:.2} order {}: {why} the Move To point ({dist:.1} m off, at ({:.1}, {:.1})): GUARD, asks e635ecc6", unit_name(m), m.position.x,
                  m.position.z);
     }
     set(m, Mode::Guard, None);
     m.command.point = None;
-    say(m, game, LINE_ARRIVED, QUOTE_DELAY);
+    chatter::say(m, LINE_ARRIVED);
 }
 
 /// `u`'s mode set to `mode` (`Command::set_mode`, FUN_00018040) and, when it changed, its goals

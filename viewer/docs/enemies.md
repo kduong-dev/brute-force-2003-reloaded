@@ -137,10 +137,12 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   the death frame (the CBT_DEAD handler FUN_00115f90, after the death FUN_00115d50, calls
   FUN_00125f40 at 0x116028, through the chatter gate FUN_00140a60; no delay in the code, answers.md Q8: the takes' 0.15-0.35 s was the capture's
   audio latency). The pick is the game's (FUN_00136fc0 -> FUN_001371f0): at random among the
-  lines not said yet on the map (the chatter manager's history, one per world, cleared once all
-  are said), so a type's three all come before one repeats (`enemies::death_cry`, `SAID`; the
-  skill lines' `LineHistory` keeps the same rule). An enemy says nothing else: the takes'
-  Shrikes cried only at the kill, though their files have hurt lines.
+  lines not said yet on the map (the chatter manager's history, one per world and chatter set,
+  cleared once all are said), so a type's three all come before one repeats. Since #155 it goes
+  through the demo's one gate and queue like every line ([chatter.md](chatter.md)): the
+  Shrikes' blocks keep the default 45 m cut and 15 m step (the squad's death cries have
+  neither), so a Shrike dying over 45 m from the player is silent. An enemy says nothing else:
+  the takes' Shrikes cried only at the kill, though their files have hurt lines.
 * **The deathmatch types' lines** (the dm Heavy's h_0c60112d, h_f6aa73af, h_1bc9d69a) are in
   mp_common's sound banks (`sounds-dm`, `sounds-sdm_shrike`), streamed from their own language
   wave banks (ml-sounds/en/dm-en.tgz, sdm_shrike-en.tgz): the test map attaches them

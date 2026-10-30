@@ -196,41 +196,30 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
   doesn't cut the start sound (take08: Brutus's 6.1 s rumble plays on).
 * Each switch sends a chatter tag (on h_1c0514bd; off with stamina left h_09087c9c; off at 0
   h_ee0a5cbc, the stamina tested at 0x10e40d; leads.md had the two off tags swapped) through the
-  game's chatter gate, FUN_00140a60 (`skill_line`; the analyst's
-  `todo/35-special-skills/answer-120-chatter.md`). Each `<chatter_line>` block gives it its
-  values (`Game::chatter_blocks`, read with the parser's defaults, FUN_0019cd70), the same for
-  the four: `probability` 50, `replay-delay` 10 / 20 / 30 s, `priority` 1 / 1 / 5. In the code's
-  order:
-  * **Replay delay** (FUN_001263e0): once a character has said the tag it can't say it again for
-    its replay-delay (started when the line is said, FUN_00140cd0 -> FUN_00126460; counted down by
-    the character update, FUN_0011c100). Per character: Hawk's line doesn't hold Tex's.
-  * **Distance**: beyond 45 m of the player's character no line (FUN_001409a0); beyond 15 m a step
-    of priority less (FUN_001409c0), so a squadmate more than 15 m away never says the on and off
-    lines (priority 1 -> 0, refused). The player's own lines are at 0 m.
-  * **Condition** (FUN_001372c0, FUN_00137360): the block's condition value must lie in one of
-    its variants' ranges (each sound_id's h_0ab96f95 / h_16087610, 0..100 when not given). The on
-    line's kind is the default (0): any variant. The off line with stamina left tests char+0x5a8,
-    which only ever holds 0 in default.xbe: Tex's and Brutus's variants need 2..100, Hawk's
-    1..100, so only Flint (no ranges) says it. The line at 0 tests FUN_0001b460, read as the
-    enemies the character is fighting (inferred): Hawk's variants need 1..100, so she says it only
-    in a fight. The demo counts 1 while a hostile is in the speaker's sight (`hostile_in_sight`, by its sensor):
-    **a guess**; the main game has no enemies yet, so she never says it there.
-  * **Roll**: `probability` % (FUN_001374c0): 50. `BF_SKILL_CHATTER=<percent>` sets it.
-  * **Variant**: picked at random among those that fit and haven't been said yet; when all have,
-    the list starts over (FUN_001371f0; per character and tag, `LineHistory`, one per map).
-  * **A dead speaker is silent** (FUN_0013fab0): the line of the death's off isn't heard.
-  * **The queue: a stand-in.** The game has one chatter queue for everyone: a playing line of the
-    same or lower priority makes a new one wait (up to the block's 5 s), a waiting line of the same
-    or higher priority refuses it (FUN_00141020, FUN_00140a40). The demo refuses a skill line while
-    its speaker is talking or has a line due (its own `say()` check), and nothing else.
-  * The line starts the next frame: the code has no delay of its own (the manager's update starts
-    it), and the samples have no silence before the voice (0-0.07 s); the takes' 0.03-0.5 s from
-    the switch to the voice isn't explained (a wait behind another line, inferred).
+  game's chatter gate, FUN_00140a60, and its one queue, as every line does since #155
+  ([chatter.md](chatter.md): the checks in the code's order, the queue, the voice). Their blocks
+  are the same for the four: `probability` 50, `replay-delay` 10 / 20 / 30 s, `priority` 1 / 1 /
+  5, a 5 s wait. What that makes of the skill lines:
+  * the replay delay holds a character's line, not another's (Hawk's doesn't hold Tex's);
+  * a squadmate more than 15 m from the player never says the on and off lines (priority 1, a
+    step less: 0, refused); the player's own lines are at 0 m;
+  * the on line's condition kind is the default (0): any variant. The off line with stamina left
+    tests char+0x5a8, which only ever holds 0 in default.xbe: Tex's and Brutus's variants need
+    2..100, Hawk's 1..100, so only Flint (no ranges) says it. The line at 0 tests FUN_0001b460,
+    read as the enemies the character is fighting (inferred): Hawk's variants need 1..100, so
+    she says it only in a fight (the demo's count is a guess, chatter.md);
+  * `BF_SKILL_CHATTER=<percent>` sets their chance;
+  * a dead speaker is silent (FUN_0013fab0): the line of the death's off isn't heard;
+  * the line goes in the frame of the switch, at once with nothing of its priority playing (the
+    code has no delay of its own, and the samples no silence before the voice, 0-0.07 s); the
+    takes' 0.03-0.5 s from the switch to the voice isn't explained (a wait behind another line,
+    inferred).
 * What the takes heard fits: the on line 13 times in 26 for Tex, Hawk and Flint (50%); the off
   line 3 in 6 for Flint and never for the others (0 of 17); the line at 0 never for Hawk (out of a
   fight). Brutus's on line was never heard (0 of 9): the code doesn't explain it; his 6.1 s start
-  rumble may have hidden it (answer-120-chatter 1.6). The other lines (`hurt`'s, the follow line,
-  the death cry) still go through `say()` without the gate: a ticket of their own.
+  rumble may have hidden it (answer-120-chatter 1.6). Through the gate (#155: 26 of Tex's
+  switches on the test map, `BF_TEST_SKILL` every 14 s) the on line was said 14 times and the
+  off line with stamina left never.
 
 ## HUD
 
@@ -817,8 +806,8 @@ Hawk: 1..100); the line at 0 by Tex, Brutus and Flint, not Hawk (no fight).
 * The name's letter cores span x 56.7-130.0, y 89.6-103.6 ("Berserker"; take01 56.7-130.0, 90.0-103.3);
   "Vengar" 56.7-108.0 against take06's 55.3-110.0 (the demo's font isn't the game's).
 
-**Guessed or open**: the chatter queue (a stand-in) and the fight count for the line at 0 (a
-guess); Brutus's unheard on line; what holds the name 0.15 s; which message widgets push the name
+**Guessed or open**: the fight count for the line at 0 (a guess, [chatter.md](chatter.md));
+Brutus's unheard on line; what holds the name 0.15 s; which message widgets push the name
 down; the blink's colour operation (the red copy matches the takes' pixels); the ×4 refill;
 Brutus and Flint at the 10% threshold (code only); the demo's choices under "The toggle"; the
 demo's frame is ~3 units longer on the right than the game's (the tutorial picture's proportions,
