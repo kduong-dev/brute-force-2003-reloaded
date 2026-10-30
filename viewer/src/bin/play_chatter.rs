@@ -23,7 +23,8 @@
 //!    the playing lines of its priority or lower, FUN_00140f80) or left waiting (mgr+4, +8).
 //!  - **The lines the demo says**: the hurt lines by FUN_00125ad0's table (`hurt_tag`), the death
 //!    cry and the killer's line (FUN_00125f40, `Ask::Death`), the follow line at a hand-over
-//!    (FUN_0005cc20, play.rs `squad_control`), the medkit's (0x146f40, play_pickups.rs), the
+//!    (FUN_0005cc20, play.rs `squad_control`), the Move To arrival's (FUN_00045fa0,
+//!    play_orders.rs `arrive`), the medkit's (0x146f40, play_pickups.rs), the
 //!    refused gun's (FUN_000a9910, play_weapon_pickups.rs), the skill lines (FUN_0010e470 /
 //!    FUN_0010e3e0, play_skills.rs) and Brutus's charge hit (FUN_0013c1c0, play_vengar.rs). A
 //!    type of its own (an enemy's) says only its death cry: the #129 takes' Shrikes said nothing
@@ -136,7 +137,7 @@ const CONDITION_HEALTH: u32 = 0xE638_46DE;
 const CONDITION_ALERT: u32 = 0xE8F6_4B20;
 /// h_19690a85: the ammo ratio (`ammo_ratio`) x 100.
 const CONDITION_AMMO: u32 = 0x1969_0A85;
-/// h_e3bdaee0: the brain's mode (MODE_FOLLOW_VALUE).
+/// h_e3bdaee0: the brain's mode (`mode_value`).
 const CONDITION_MODE: u32 = 0xE3BD_AEE0;
 /// The alert value (FUN_00137360's h_e8f64b20): a brain's +0x770 0 gives 10, 3 gives 20, no
 /// brain 0. +0x770 is 0 from the brain's constructor (0x16b86) and 3 only after GOAL_PATROL's
@@ -146,10 +147,20 @@ const CONDITION_MODE: u32 = 0xE3BD_AEE0;
 /// destructors, 0x111ede / 0x112e80). So 10 for everyone, and the "X is down" replies' 0..0
 /// variants never fit (leads §2.4).
 const ALERT_VALUE: i64 = 10;
-/// FUN_00137360's value for the brain's mode 1 (Cover Me, follow): 30 (3 gives 20, 4 40, 5 10).
-/// The demo's squad always follows (the orders are #33's); other characters' modes aren't kept
-/// (0).
-const MODE_FOLLOW_VALUE: i64 = 30;
+/// FUN_00137360's value for the brain's mode (h_e3bdaee0, brain+0x58): FOLLOW (Cover Me) 30,
+/// GUARD (Stand Ground) 20, WINGMAN (Fire At Will) 40, MOVE_OUT (Move To) 10, FREEWILL and
+/// FORMATION 0. A squad member's mode is its `Player::command`'s (play_brain.rs `Command`, set by
+/// the orders, play_orders.rs); other characters' modes aren't kept there (0). No squad block
+/// uses the kind (todo/36-squad-voice leads.md §2.5).
+fn mode_value(mode: brain::Mode) -> i64 {
+    match mode {
+        brain::Mode::Follow => 30,
+        brain::Mode::Guard => 20,
+        brain::Mode::Wingman => 40,
+        brain::Mode::MoveOut => 10,
+        brain::Mode::Freewill | brain::Mode::Formation => 0,
+    }
+}
 /// The morale mix's weights (FUN_001264a0): the hit points 0.4 (0x3a51fc), the stamina 0.2
 /// (0x3a4f90), the clip and the skill 0.1 (0x3a4ff0) each, char+0x5a8 x 0.2 0.2 (always 0); the
 /// clip term without a gun in hand, and the skill's while off, 0.75 (0x3f400000).
@@ -586,7 +597,7 @@ fn condition(u: &Player, me: usize, kind: u32, held: Option<Who>, ctx: &Ctx) -> 
         CONDITION_HEALTH => if u.max_health > 0.0 { (u.health / u.max_health * 100.0) as i64 } else { 0 },
         CONDITION_ALERT => ALERT_VALUE,
         CONDITION_AMMO => (ammo_ratio(u, ctx.reserve) * 100.0) as i64,
-        CONDITION_MODE => if u.in_squad() { MODE_FOLLOW_VALUE } else { 0 },
+        CONDITION_MODE => if u.in_squad() { mode_value(u.command.mode) } else { 0 },
         _ => (morale(u) * 100.0) as i64,
     }
 }

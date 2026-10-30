@@ -378,7 +378,8 @@ whose recipes look at the hand-over after it, starts the test map with the four,
 so the recipes written for them run as they did, each member at the place it had
 (`testsquad::SQUAD_HOOKS`: `BF_TEST_SELECT`, `BF_TEST_KILL`, `BF_TEST_TARGET`,
 `BF_TEST_SQUAD_SKILL`, `BF_TEST_HOSTILE`, `BF_TEST_MINE_FRIEND`, `BF_TEST_DIE`,
-`BF_TEST_SUICIDE`; `BF_TEST_SQUAD=none` with a death: a lone one, and the respawn). A recipe that
+`BF_TEST_SUICIDE`, and `BF_TEST_ORDER`, the squad's orders, #318: [squad.md](squad.md) **Squad
+commands**; `BF_TEST_SQUAD=none` with a death: a lone one, and the respawn). A recipe that
 wants the squad for anything else (the formation in the line of fire, the AI's fire, a blast's
 other victims) adds `BF_TEST_FULL_SQUAD=1`.
 `BF_TOOLS_LOG=1` prints the start squad and why ("test map: the squad at the start: 0 brutus, 1

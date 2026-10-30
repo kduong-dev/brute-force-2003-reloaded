@@ -81,6 +81,12 @@
 //!    character of a squad a player controls takes no difficulty step: the marines' 60 is 0.6.
 //!    The gun's own spread takes the placement's bonus too (play_shots.rs).
 //!
+//!  - **The command mode** (`Command`, #318): every character's brain has one (brain+0x58, the
+//!    PCMD_ enum, name table 0x3bd210), which picks its personality from its type's `<ai>` and
+//!    what its base goal does. The squad starts in FOLLOW with combat and cover allowed (the
+//!    constructor 0x16ff0); the Squad Command menu's orders and the hand-over change it
+//!    (play_orders.rs, which runs what each mode does for the squad's AI).
+//!
 //! Test hooks: `BF_BRAIN_LOG=1` (each brain at its spawn, its goals, routes and points reached,
 //! its contacts found, lost and forgotten, who shot at it); `BF_TEST_AIM_HOSTILE=<s>` (from that
 //! time the controlled character aims at the nearest hostile it can see and fires: the takes' aim
@@ -89,6 +95,7 @@
 use super::*;
 use bf_viewer::bf::character_type::{CharacterType, Placement, PlacementAi};
 use bf_viewer::bf::level::PatrolPoint;
+use bf_viewer::bf::personality;
 use bf_viewer::bf::triggers::{Class, Trigger};
 
 /// EVT_BASE (3, the EVT_ name table 0x3bdb9c): the event every brain has, whose personality
@@ -147,6 +154,197 @@ const ACCURACY_STEP: f32 = 0.05;
 /// search isn't traced, and the demo walks straight lines.
 const STALL_PROGRESS: f32 = 0.1;
 const STALL_TIME: f32 = 1.0;
+
+/// A brain's command mode (brain+0x58: the PCMD_ name table 0x3bd210, 12-byte records after the
+/// GOAL_ table; -1 INVALID, 6 BASE_MAX / IDLE and 7 SCRIPT_GOAL aren't kept here: the trainer's
+/// freeze and the scripts' own goal). Which personality of the type's `<ai>` the brain runs is
+/// the mode's (`TypeAi::personalities` in this order). The Squad Command menu's orders
+/// (FUN_000c1280): Stand Ground GUARD, Fire At Will WINGMAN, Cover Me FOLLOW, Move To MOVE_OUT.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Mode {
+    Freewill,
+    /// the squad's start (the brain's constructor, 0x17734)
+    #[default]
+    Follow,
+    Formation,
+    Guard,
+    Wingman,
+    MoveOut,
+}
+
+impl Mode {
+    /// The mode of PCMD_ number `n`.
+    pub fn from_index(n: usize) -> Option<Mode> {
+        [Mode::Freewill, Mode::Follow, Mode::Formation, Mode::Guard, Mode::Wingman, Mode::MoveOut].get(n).copied()
+    }
+
+    /// Its PCMD_ number: brain+0x58's value, and the place of its personality in the type's list.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Its name in the table (the takes' watch logs print the number).
+    pub fn name(self) -> &'static str {
+        ["FREEWILL", "FOLLOW", "FORMATION", "GUARD", "WINGMAN", "MOVE_OUT"][self.index()]
+    }
+}
+
+/// The allow flags (brain+0x464): bit 0 allow_combat, which the attack check needs to fire
+/// (FUN_00024f80 refuses at 0x250c5 without it, unless the current goal is flagged, FUN_00022e20:
+/// none of the squad's), and bit 1 allow_cover (GOAL_ATTACK_COVER's and the cover goals' starts).
+pub const ALLOW_COMBAT: u8 = 1;
+pub const ALLOW_COVER: u8 = 2;
+/// How long an event's grant of combat lasts (s): the quick goal h_f0233972 starts the timer at
+/// brain+0x468 with 10.0 (0x41200000 at 0x3a74b: FUN_000124f0 sets its time left +0x46c and its
+/// length +0x474, and +0x470 bit 0, running), and the attack check starts it again with 10.0 at
+/// each shot while it runs (0x254ae-0x254cf: its time left over 0, 0x3a4f88). Take12: granted at
+/// 14.41 s, Tex's burst to 15.6 s, cleared at 29.06-29.16 s (the watch log's game clock: 11.6 s
+/// after the grant).
+pub const GRANT_TIME: f32 = 10.0;
+
+/// A brain's command state (#318): its mode (brain+0x58), allow flags (+0x464) and their grant's
+/// timer (+0x468), and the Move To point (+0x8ac). Every character carries one; the squad's AI
+/// runs by it (play_orders.rs), the level characters' brains don't read it yet (they keep their
+/// own personality, `Brain`). Not touched while a player controls the character: its brain idles
+/// and keeps its mode for when control passes on (FUN_00018230 keeps it and sets the allow flags
+/// by it again, `released`; FUN_000c8e80 resets only MOVE_OUT, play_orders.rs).
+#[derive(Clone, Debug)]
+pub struct Command {
+    /// the mode
+    pub mode: Mode,
+    /// the allow flags (ALLOW_COMBAT, ALLOW_COVER)
+    pub allow: u8,
+    /// the grant's time left (s), None while its timer is stopped
+    pub grant: Option<f32>,
+    /// MOVE_OUT's point (brain+0x8ac; the demo's: the order's x, z on the floor)
+    pub point: Option<Vec3>,
+    /// the events posted to it since its last update (bit n: EVT_ n), its share of the brain's
+    /// event queue (+0x404): play_orders.rs `update` takes them through its personality
+    pub events: u64,
+    /// time in its mode (s): GUARD's kneel waits on it (play_orders.rs)
+    pub since: f32,
+    /// MOVE_OUT's walk: the nearest it has come to the point (m) and how long it hasn't come
+    /// closer (the demo's stall rule, play_orders.rs `move_out`)
+    pub best: f32,
+    pub stalled: f32,
+    /// the character's rounds fired (`Player::shots_fired`) when last looked at: a change is a
+    /// round fired since (the demo's bookkeeping for play_orders.rs `mate_firing`)
+    pub rounds: u32,
+}
+
+impl Default for Command {
+    /// A fresh brain's (the constructor FUN_00016ff0, 0x16ff0-0x17734): mode FOLLOW for a squad
+    /// type (6 first, then 1 when the type's +0x1a8 bit 0 is set: the four and the marines; others
+    /// get FREEWILL, but only the squad runs by this), and allow_combat and allow_cover set by the
+    /// constructor's own `| 3` at its start, not by FUN_00018000 (which would clear them for
+    /// FOLLOW): every take's fresh e34 start reads mode 1, allow a3, and take11's members fight at
+    /// once from it. The grant's timer stopped.
+    fn default() -> Self {
+        Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, rounds: 0 }
+    }
+}
+
+impl Command {
+    /// The mode change (FUN_00018040, inlined at its other sites; mode in EAX): skipped when the
+    /// brain is in `mode` already, but for MOVE_OUT, which takes the new point. FREEWILL becomes
+    /// WINGMAN for a squad brain (+0x3c4 bit 8, every brain this runs for); WINGMAN stops the
+    /// grant's timer (+0x46c / +0x474 zeroed, +0x470 = (& 0xfa) | 2); MOVE_OUT stores the point.
+    /// Then the allow flags by the new mode (FUN_00018000), and the goal stack and event queues
+    /// emptied and the base goal drawn again (FUN_00039f00, FUN_00055b50, FUN_00015fe0,
+    /// FUN_0001a4e0: here its walk and pause start over, play_orders.rs `order`). True when it
+    /// changed.
+    pub fn set_mode(&mut self, mode: Mode, point: Option<Vec3>) -> bool {
+        if self.mode == mode && mode != Mode::MoveOut {
+            return false;
+        }
+        let mode = if mode == Mode::Freewill { Mode::Wingman } else { mode };
+        if mode == Mode::Wingman {
+            self.grant = None;
+        }
+        if mode == Mode::MoveOut {
+            self.point = point;
+        }
+        self.mode = mode;
+        self.allow_by_mode();
+        self.events = 0;
+        self.since = 0.0;
+        self.best = f32::MAX;
+        self.stalled = 0.0;
+        true
+    }
+
+    /// The allow flags by the mode (FUN_00018000): FREEWILL and WINGMAN set allow_combat and
+    /// allow_cover (and clear +0x3c4 bit 0); FOLLOW, GUARD and MOVE_OUT clear them; FORMATION
+    /// leaves them.
+    fn allow_by_mode(&mut self) {
+        match self.mode {
+            Mode::Freewill | Mode::Wingman => self.allow |= ALLOW_COMBAT | ALLOW_COVER,
+            Mode::Follow | Mode::Guard | Mode::MoveOut => self.allow &= !(ALLOW_COMBAT | ALLOW_COVER),
+            Mode::Formation => {}
+        }
+    }
+
+    /// Control passing on from its character (FUN_0008a720 -> FUN_00018230): the mode kept, and for
+    /// a squad brain the allow flags set by it again (FUN_00018000 at FUN_00018230's end): one left
+    /// in FOLLOW, GUARD or MOVE_OUT holds fire until an event allows it. #33 take02: Tex's a3 went
+    /// a0 at the hand-over to Hawk (2.96 s), Hawk's a3 a0 when she was left in turn (6.47 s). The
+    /// events posted while it was controlled are dropped with it (its brain idled: the last
+    /// frame's would otherwise grant combat a frame after the reset).
+    pub fn released(&mut self) {
+        self.allow_by_mode();
+        self.events = 0;
+    }
+
+    /// The quick goal h_f0233972 (FUN_0003a4a0 at 0x3a744): allow_combat set and the grant's timer
+    /// started at GRANT_TIME.
+    pub fn grant_combat(&mut self) {
+        self.allow |= ALLOW_COMBAT;
+        self.grant = Some(GRANT_TIME);
+    }
+
+    /// The quick goal h_ea874132 (0x3a64e): allow_cover set (no timer).
+    pub fn allow_cover(&mut self) {
+        self.allow |= ALLOW_COVER;
+    }
+
+    /// Its own shot (the attack check's tail, 0x254ae): a running grant starts again at GRANT_TIME.
+    pub fn fired(&mut self) {
+        if self.grant.is_some_and(|t| t > 0.0) {
+            self.grant = Some(GRANT_TIME);
+        }
+    }
+
+    /// Whether it may fire (allow_combat, FUN_00024f80's test at 0x250c5).
+    pub fn may_fire(&self) -> bool {
+        self.allow & ALLOW_COMBAT != 0
+    }
+
+    /// Queue event `event` (EVT_ n, under 64) for its next update.
+    pub fn post(&mut self, event: i64) {
+        if (0..64).contains(&event) {
+            self.events |= 1 << event;
+        }
+    }
+
+    /// One frame (`dt` s) of its clocks: the time in its mode, and the grant's timer, which run
+    /// out clears allow_combat outside WINGMAN (the AI update FUN_0001afe0, 0x1b1ff-0x1b235: a
+    /// squad brain not in mode 4 whose +0x470 has bits 0 and 1, running and run out). True when
+    /// the grant ran out this frame.
+    pub fn tick(&mut self, dt: f32) -> bool {
+        self.since += dt;
+        let Some(t) = self.grant else { return false };
+        let t = t - dt;
+        if t > 0.0 {
+            self.grant = Some(t);
+            return false;
+        }
+        self.grant = None;
+        if self.mode != Mode::Wingman {
+            self.allow &= !ALLOW_COMBAT;
+        }
+        true
+    }
+}
 
 /// The brains run inside play.rs's `update_player` (`sense`, `think`, `attacked`, `held`); the
 /// plugin adds the aim helper hook, between the frame's input and the characters' step.
@@ -398,6 +596,26 @@ pub fn knows_enemy(u: &Player) -> bool {
     u.brain.is_some() && !u.sensor.contacts.is_empty()
 }
 
+/// The squad member a hostile brain has as its target is told so (#318): the target pick
+/// (FUN_0004a860, 0x4aadd-0x4aafa) posts EVT_ENEMY_SEEN with the target to its own brain whenever
+/// none is queued, and the message handler's case for it (0x3e45a-0x3e49b) posts
+/// EVT_SQUAD_IMA_TARGET (43) to that target's brain when it's a character of a squad type
+/// (type+0x1a8 bit 0). The follow, guard and moveout personalities grant combat on 43, so a
+/// member an enemy has picked out fights back (play_orders.rs `update`) for as long as it's the
+/// target. Posted every frame here (its queue keeps one of each), after the frame's sense steps
+/// (`sense`'s target); the controlled character's is dropped (its brain idles). Not by one a
+/// script holds (`held`: no brain meanwhile, char+0x834 bit 0), nor by the test map's NPCs
+/// (BF_TEST_NPC: no brain at all), only by the level's characters.
+pub fn tell_targets(player: &mut Player, squad: &mut [Player]) {
+    let targets: Vec<Who> = squad.iter().filter(|u| !u.dead && !u.absent && !u.held && u.script_walk.is_empty()).filter_map(target).collect();
+    for who in targets {
+        let u = if player.who() == who { Some(&mut *player) } else { squad.iter_mut().find(|u| u.who() == who) };
+        if let Some(u) = u.filter(|u| u.in_squad() && u.brain.is_none()) {
+            u.command.post(personality::EVT_SQUAD_IMA_TARGET);
+        }
+    }
+}
+
 /// The nearest of `seen` (places in `sight` and distances) within `range` (m, the held gun's: the
 /// shot's own test; the attack check doesn't test it, FUN_00024f80).
 pub fn nearest_within(seen: &[(usize, f32)], range: f32) -> Option<(usize, f32)> {
@@ -589,7 +807,9 @@ const H_LOCOMOTION: u32 = 0xF27D_26C9;
 /// EVT_USER1). With no enemy known before, it goes home after the fight (EVT_RETURN_HOME,
 /// posted with them). Its next sense makes the shooter a contact. An AI with no brain (the
 /// squad's, the test map's NPCs) learns its shooter from a hit only, EVT_DAMAGED's 0x3ea02 path
-/// (`glance`): a near miss tells it nothing.
+/// (`glance`): a near miss tells it nothing. The squad's AI gets the hit as EVT_DAMAGED and the
+/// near miss as EVT_SHOT_AT for its command mode's personality (`Command::post`; #318: the
+/// follow, guard and moveout personalities grant combat on them, play_orders.rs `update`).
 pub fn attacked(u: &mut Player, by: Who, hit: bool) {
     if u.dead {
         return;
@@ -597,6 +817,9 @@ pub fn attacked(u: &mut Player, by: Who, hit: bool) {
     let me = u.who();
     let knows = !u.sensor.contacts.is_empty();
     if u.brain.is_none() {
+        if by != me && u.in_squad() {
+            u.command.post(if hit { personality::EVT_DAMAGED } else { personality::EVT_SHOT_AT });
+        }
         if hit && by != me {
             u.sensor.shot_by = Some(by);
         }
@@ -687,7 +910,9 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
         // (with nothing to fire at, turned to a contact's last place, as the alert below)
         let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
         let toward = if target.is_none() { m.sensor.toward(eye) } else { None };
-        squad_ai(m, leader, slot, heading, dt, target, toward);
+        // (its idle pauses: its wingman personality's EVT_IDLE_VARY_DATA draw)
+        let pauses = game.personality_entry(b.personality, personality::EVT_IDLE_VARY_DATA).map(|e| e.pauses()).unwrap_or_default();
+        squad_ai(m, leader, slot, heading, dt, target, toward, &pauses);
         aim(m, target, accuracy);
         m.brain = Some(b);
         return;

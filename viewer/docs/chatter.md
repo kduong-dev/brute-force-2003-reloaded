@@ -1,7 +1,8 @@
 # Chatter: the voice lines and their one gate (#155)
 
 Every voice line a character says (a hurt grunt, a death cry, a kill line, the follow line at a
-hand-over, the medkit's "healed" line, the refused gun's grumble, the skill lines) goes through
+hand-over, the line on reaching a Move To point, the medkit's "healed" line, the refused gun's
+grumble, the skill lines) goes through
 one gate and one queue for the whole world, as default.xbe's do: its 50 line call sites all call
 FUN_00140a60 with the chatter manager the world owns (world+0xbe8, FUN_00140870). The values
 come from each line's block in the speaker's chatter file. `src/bin/play_chatter.rs`; the
@@ -64,8 +65,9 @@ In the code's order; the first that fails refuses the line, and nothing is remem
      is set only by the brain's constructor and cleared only by the character's destructors);
    * the ammo ratio (h_19690a85, FUN_001265c0): the gun in hand's reserve over its clip size
      (a recharging gun: its clip x 5 over its size), x 0.2, held to 0..1, x 100;
-   * the brain's mode (h_e3bdaee0): 30 for a squad member (Cover Me: the demo's squad always
-     follows), 0 for the rest;
+   * the brain's mode (h_e3bdaee0): a squad member's by its command mode (squad.md, "Squad
+     commands"): Cover Me 30, Stand Ground 20, Fire At Will 40, Move To 10, the others 0; 0 for
+     the rest (no squad block uses it);
    * any other kind: the morale mix (FUN_001264a0): 0.4 health + 0.2 stamina + 0.1 the clip
      (1 full, 0 not, 0.75 without a gun) + 0.1 the skill (1 on, 0.75 off), x 100;
 8. the roll: (the LCG mod 100) + 1 over `probability` fails (no draw at 100 or more; the
@@ -114,7 +116,8 @@ game's is 3D at the character).
 | hurt lines (FUN_00125ad0's table) | every hit that reaches the hit points (CBT_DAMAGED), by the record: no attacker character and +0x5c bit 2 (falls, liquids) ef32191d; the victim's own (its blast, its gas) ff44e83f; a friend's e2d9fb13; else DTYPE_GAS 0feee721; else crossing a quarter of the max health downward 01e1dcd0, a half fab0be98, a hit of 15% of the max or less e856009f, a bigger one 0ae8104e | play.rs `hurt`, `burn` (each liquid frame's share too), the gas's and damage areas' and plates' per-frame hits; the attacker from the hit's shooter; a friend is one of the victim's team, a team not hostile to itself (the attacker's +0x1b4 vtable +0xc4, 0x3d2c0, as FUN_0004b960) |
 | death cry | FUN_00125f40 in the death frame: e1213623, or ed35ffae when its movement state is 4 (a landing: inferred) | `Cause::fall` for a fall's death; Flint has no ed35ffae block, so a fall kills her silently. An enemy's from its type's chatter library |
 | kill line | FUN_00125f40: a killer hostile to the victim, when their player slots differ (the victim's against the hit record's +0x1c, the shooter's: so one of the two is a player's, and an AI's kill of an AI draws none), says 13601f7b when its skill's vtable +8 says so (Tex's berserk, Flint's targeting on), else 02da3fee | the killer the hit names (`damage::Hit::by`); the controlled character has the one slot (as it is at the kill: a stand-in for the shooter's at the shot). Tex's, Brutus's and Flint's 02da3fee variants all need 1..100 enemies fought, which the victim makes in the death frame; Hawk has 0..0 ones too |
-| follow | FUN_0005cc20: the one handed over from, in mode 1 (Cover Me) | play.rs `squad_control` |
+| follow | FUN_0005cc20: the one handed over from, in mode 1 (Cover Me) | play.rs `squad_control`, whatever the mode (the other modes' lines are #320's) |
+| Move To's arrival | FUN_00045fa0: a member on Move To reaching its point, or its walk failing (0x46256): e635ecc6, then GUARD | play_orders.rs `arrive` ([squad.md](squad.md), "Squad commands") |
 | healed | 0x146f40, only when the medkit adds health: 12c35d69 (f832ad27 for a healer whose squad has no player) | play_pickups.rs: 10%, a 30 s replay delay, priority 1 |
 | can't take that gun | FUN_000a9910 | play_weapon_pickups.rs: 100%, a 10 s replay delay |
 | skill on / off / off at 0 | FUN_0010e470 / FUN_0010e3e0 | play_skills.rs ([skills.md](skills.md)) |

@@ -1140,6 +1140,15 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         m.cam_yaw = yaw;
         m.face_yaw = Some(yaw);
         m.team = placement.as_ref().map_or(t.ai.alignment, |p| p.team(Some(&t))).clamp(0, 9) as u8;
+        // test hook (#318): BF_TEST_NO_HOSTILES=1 makes no character of another side than the
+        // player's, as the #33 takes' snapshots had them (todo/33-squad-commands notes.md: every
+        // spawn-trigger disarmed, every enemy killed), to stage the squad alone on a campaign level
+        if std::env::var("BF_TEST_NO_HOSTILES").is_ok() && m.team != player.team {
+            if tr.log {
+                println!("t {now:.2}: {by} would spawn {} ({}, team {}): BF_TEST_NO_HOSTILES, none made", tr.label(copy), game.type_label(kind), m.team);
+            }
+            return;
+        }
         tr.npcs_made += 1;
         let id = NPC_IDS + tr.npcs_made;
         m.npc = Some(testtools::Npc { id, fight: true, face: yaw });

@@ -76,6 +76,8 @@ const H_ACCURACY: u32 = 0x0728_37BB;
 const H_VISION_OWN: u32 = 0x11CD_DD9F;
 const H_FIELD_OF_VIEW: u32 = 0x1B23_27A0;
 const H_AI_ACCURACY: u32 = 0x12A0_4758;
+/// A type `<ai>`'s h_e3d8aeef: the EVT_SQUAD_MATE_FIRING radius (`TypeAi::mate_radius`).
+const H_AI_MATE_RADIUS: u32 = 0xE3D8_AEEF;
 const H_DROPS: u32 = 0x0F77_963D;
 const H_AMMO_ITEM: u32 = 0x10DD_6DB2;
 /// A type's death award `<base><h_1edc28b5 ..>` and its attributes in the parse record's order
@@ -289,9 +291,15 @@ pub struct TypeAi {
     /// alignment-type: its team (the ALIGN_ enum, `TEAMS`; type+0x3b0), the team of a placement
     /// that gives none (0x10fa60). Every enemy species is 1 (SHRIKE)
     pub alignment: i64,
-    /// personality-freewill, -follow, -formation, -guard, -wingman (`common/ai/personality`
-    /// names), 0 none
-    pub personalities: [u32; 5],
+    /// personality-freewill, -follow, -formation, -guard, -wingman and -moveout (h_fd187ea7, the
+    /// name recovered by hashing; `common/ai/personality` names), 0 none: in the order of the
+    /// brain's command modes they serve (PCMD_ 0-5, the name table 0x3bd210; #318)
+    pub personalities: [u32; 6],
+    /// h_e3d8aeef (the type parser FUN_00188470 puts it at the record's +0x80, FUN_0001ff70 at the
+    /// AI settings' +0x44): how near (m) a squad mate firing must be for this character to get
+    /// EVT_SQUAD_MATE_FIRING (FUN_00045530 compares the squared distance with its square). 20 on
+    /// the four
+    pub mate_radius: f32,
     /// vision-range (m) and half-fov (degrees)
     pub vision_range: f32,
     pub half_fov: f32,
@@ -641,8 +649,9 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
     });
     let ai = e.child(h("ai")).map(|a| TypeAi {
         alignment: int(a, h("alignment-type")).unwrap_or(ALIGN_NONE),
-        personalities: ["personality-freewill", "personality-follow", "personality-formation", "personality-guard", "personality-wingman"]
-            .map(|k| name(a, h(k))),
+        personalities: ["personality-freewill", "personality-follow", "personality-formation", "personality-guard", "personality-wingman",
+                        "personality-moveout"].map(|k| name(a, h(k))),
+        mate_radius: num(a, H_AI_MATE_RADIUS).unwrap_or(0.0),
         vision_range: num(a, h("vision-range")).unwrap_or(0.0),
         half_fov: num(a, h("half-fov")).unwrap_or(0.0),
         squad_leash: num(a, h("squad-leash-dist")).unwrap_or(0.0),
