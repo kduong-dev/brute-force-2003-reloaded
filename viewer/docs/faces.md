@@ -108,10 +108,17 @@ controller's pose is written over the bones last.
 * **In the world only**: a squad member a spawn-trigger hasn't spawned yet (`Player::absent`) isn't
   ticked, though its step runs (the controlled one's does, for the game's clock): the game's
   controller comes with the copy the trigger makes, so the blink's phase is the arrival (below).
-* **Alive only**: `step_player` runs for a living character, as the game ticks the controller from
-  the character's update (0x11dc7b: bit 0 of char+0x70 clear). A dead character's ragdoll starts
-  from the pose it last stood in (`last_world`), so its face stays as it died; a knocked-down one
-  that is still alive isn't ticked in the demo (the game's would blink on, a gap).
+* **Alive only, once a frame**: `step_player` runs for a living character, as the game ticks the
+  controller from the character's update (0x11dc7b: bit 0 of char+0x70 clear). A dead character's
+  ragdoll starts from the pose it last stood in (`last_world`), so its face stays as it died. **A
+  knocked-down living character** gets no step while its ragdoll lies (0.7 s), but its controller
+  ticks all the same (`faces::tick`, from `update_player`): its clock, its line's time and weights
+  and its blink run on, the face not drawn (the ragdoll writes the bones, holding the face it fell
+  with). The get-up (0.45 s) steps it twice a frame (`update_player`'s knock-down); the second
+  step draws the face without ticking it (`step_player`'s `tick_face`). So a line said as a hit
+  knocks its speaker down runs on its own time, and the mouth shows where the line is once the
+  get-up draws it again. (The game's knock-down is a clip that leaves the face bones to the
+  controller, so its mouth would be seen moving through it: a difference of the demo's ragdoll.)
 * **Cutscenes**: a held character is stepped like any other, so Tex in the second patrol's close
   shot blinks on its schedule.
 
@@ -317,6 +324,9 @@ close-up aimed at Brutus's hunched head with `BF_CLOSEUP` (the same frame is bla
 * `BF_TEST_SPEAK=<s>,<who>,<sound>[;...]` (play_chatter.rs): at `s` seconds `who` says the sound (its
   hex id) on its voice, as a chatter line's sound starts but with no gate: its mouth follows the line.
   `--test BF_TEST_SPEAK=1.0,me,05410be5 BF_TEST_FACE_CAM=0.5,me,0.7` is Tex's skill-on line close up.
+  The sound must be in the map's banks: a level's own line (take07's `ec50fb88` is the tutorial's)
+  has no length on another map, so it says for 0 s and moves nothing (`BF_FACE_LOG` says so); the
+  common bank's squad lines are everywhere.
 * `BF_TEST_FACE=<s>,<who>,<viseme>,<weight>[;...]`: at `s` seconds (the controlled character's clock) set a
   viseme's weight on `who` (`me` the controlled one, a squad name or 0-3, `all`) in its **test pose**
   (`Face::test`, not the game's): while one of its weights is over 0 the blend shows the test pose in
@@ -447,7 +457,9 @@ the expressions' slice (#326; the fade is built, nothing sets an expression):
   that was read; no take could read it). Brutus's lids are unread (take02).
 * The first blink after a spawn was not caught on screen (no take logged one): the staggered phases
   are what show it.
-* A knocked-down but living character's face isn't ticked, and during the get-up the step runs twice a
-  frame (a gap in the knock-down's code, `update_player`), so its blink clock runs fast for a second.
+* A knocked-down living character's face ticks once a frame but isn't drawn while it lies (above):
+  the game's mouth would be seen moving through its knock-down clip. The rest of the get-up's
+  second step in a frame (its clock, its clips) is the knock-down code's gap, `update_player`, not
+  the face's.
 * A face bone missing from the model would stop the game's writes altogether (FUN_00143820's count
   test); the demo leaves that bone out. None of the data's models misses one.

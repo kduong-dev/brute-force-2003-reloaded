@@ -193,7 +193,11 @@ its first 20 s.
 * `BF_TEST_SPEAK=<s>,<who>,<sound>[;...]`: at `s` seconds (the controlled character's clock) `who`
   (`me`, a squad name or 0-3, `all`) says the sound (its hex id, `h_` or not) on its voice at priority
   10, as a line's sound starts (`voice_start`: the voice, the speech icon, the mouth) but with no gate
-  or line; a character not in the world is left out. The lip-sync's test ([faces.md](faces.md)).
+  or line; a character not in the world is left out. The lip-sync's test ([faces.md](faces.md)). The
+  sound has to be in the map's loaded banks, its library entry (the tracks) and its file (the
+  length): a line of a level's own bank says for 0 s elsewhere and moves nothing (the log shows the
+  0 s). On the test map use a squad line of the common bank (Tex's skill-on line `05410be5`); take07's
+  dialog line `ec50fb88` is the tutorial's (`BF_MAP=tutorial`).
 * `BF_SKILL_CHATTER=<percent>` the skill lines' chance ([skills.md](skills.md)),
   `BF_TEST_HEALED=1` the medkit line's ([pickups.md](pickups.md)).
 * `BF_SOUND_LOG=1` prints each voice started ("sound <id> vol <v> (the voice of <name>:

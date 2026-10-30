@@ -4600,10 +4600,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // input reaches it, play_script.rs `blocks_input`)
     if !player.dead && !knocked_down(&player) {
         if let Some(l) = player.loaded.take() {
-            step_player(&mut player, &l, &game.0, kits, dt, &mut transforms);
+            step_player(&mut player, &l, &game.0, kits, dt, true, &mut transforms);
             move_log(&player, &l, dt);
             player.loaded = Some(l);
         }
+    } else if !player.dead {
+        // knocked down: no step, the ragdoll has the body (below), but its face controller ticks
+        // as every living character's does (play_faces.rs `tick`)
+        faces::tick(&mut player, dt);
     }
     // who can see whom (the squad AI and the test map's NPCs fire only at a hostile in sight)
     let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
@@ -4621,6 +4625,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
         if m.dead || knocked_down(m) {
+            // (knocked down, alive: its face controller ticks all the same, play_faces.rs `tick`)
+            if !m.dead {
+                faces::tick(m, dt);
+            }
             continue;
         }
         // one out of the world yet, waiting for its spawn-trigger (#222): no AI and no step, its
@@ -4677,7 +4685,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             orders::think(m, &player, slot, heading, dt, target, toward, &game.0);
         }
         let Some(l) = m.loaded.take() else { continue };
-        step_player(m, &l, &game.0, kits, dt, &mut transforms);
+        step_player(m, &l, &game.0, kits, dt, true, &mut transforms);
         // (only the player's grenades are launched)
         m.thrown.clear();
         m.loaded = Some(l);
@@ -4955,7 +4963,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 let w = ((k.time - KNOCK_DOWN_TIME) / GET_UP_TIME).clamp(0.0, 1.0);
                 let w = w * w * (3.0 - 2.0 * w);
                 let still = std::mem::replace(&mut u.move_input, Vec2::ZERO);
-                step_player(u, &l, &game.0, &[], dt, &mut transforms);
+                // (a second step in the frame: its face has ticked already, in the first step or,
+                // the frame the get-up starts, as one knocked down; here it's only drawn)
+                step_player(u, &l, &game.0, &[], dt, false, &mut transforms);
                 u.move_input = still;
                 if let Some(lying) = &k.lying {
                     for (e, (q0, t0)) in l.joints.iter().zip(lying) {
@@ -5805,7 +5815,12 @@ fn toggle_weapon(p: &mut Player) -> bool {
     started
 }
 
-fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, transforms: &mut Query<&mut Transform>) {
+/// One character's step of the frame: its clock, input, motion, clips and pose, the face over the
+/// body (`faces::step`), written to its joints. `tick_face`: whether its face controller ticks in
+/// it too; false for a second step in the same frame (a knock-down's get-up, `update_player`),
+/// whose face has ticked once already: the game ticks each living character's controller once an
+/// update (FUN_0011caa0 at 0x11dc87).
+fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, tick_face: bool, transforms: &mut Query<&mut Transform>) {
     p.sim_time += dt;
     // (the heading the step starts from, for BF_HEADING_LOG)
     let yaw_was = p.yaw;
@@ -6498,7 +6513,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- the face: the controller's pose on the face bones, the blink's on the lids, after the
     // body's layers, overlays and aim (play_faces.rs, #255): the game's body clips never move
     // them ----
-    faces::step(p, l, game, dt, &mut pose);
+    faces::step(p, l, game, if tick_face { dt } else { 0.0 }, &mut pose);
 
     // ---- move: root motion on the ground, ballistic in the air ----
     let facing = Quat::from_rotation_y(p.yaw);

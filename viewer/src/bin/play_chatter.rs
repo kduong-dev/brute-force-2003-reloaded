@@ -1190,9 +1190,12 @@ impl Chatter {
     /// BF_TEST_SPEAK=<s>,<who>,<sound>[;...]: at `s` seconds (the controlled character's clock)
     /// `who` (`me`, a squad name or 0-3, `all`; play_faces.rs `is_whom`) says `sound` (its hex
     /// id) on its voice at the top priority, as a chatter line's sound starts (`voice_start`: the
-    /// voice, the speech icon, the face's lip-sync) but with no gate or line: the lip-sync's test
-    /// (a dialog line's mouth, take07's h_ec50fb88, on any map). A character not in the world is
-    /// left out. BF_CHATTER_LOG logs each.
+    /// voice, the speech icon, the face's lip-sync) but with no gate or line: the lip-sync's test.
+    /// The sound must be in the map's loaded banks (its library entry has the tracks, its file the
+    /// length): a level's own line, such as take07's h_ec50fb88 (the tutorial's), says for 0 s on
+    /// another map and moves nothing; the common bank's squad lines (Tex's skill-on line
+    /// 05410be5) are everywhere. A character not in the world is left out. BF_CHATTER_LOG logs
+    /// each, with the sound's length.
     fn test_speak(&mut self, all: &mut [&mut Player], pending: &mut Vec<TestSpeak>, ctx: &Ctx) {
         if pending.is_empty() {
             return;

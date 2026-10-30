@@ -37,11 +37,14 @@
 //!    cycle runs on from it, so characters made apart blink apart (the squad's copies, 0.5 s
 //!    apart in e34, as the takes' controllers are) and ones made together blink together. A
 //!    character not in the world yet (`Player::absent`) isn't ticked (`step`).
-//!  - **Alive only**: the game ticks the controller from the character's update while it lives
-//!    (FUN_0011caa0, 0x11dc7b), so `step` runs in `step_player`: a dead character's face keeps
-//!    the pose it died with (the ragdoll starts from `last_world`, which has it), a cutscene's
-//!    characters blink like the rest. A knocked-down (alive) character's isn't ticked here: the
-//!    ragdoll holds the pose from the knock.
+//!  - **Alive only, once a frame**: the game ticks the controller from the character's update
+//!    while it lives (FUN_0011caa0, 0x11dc7b), so `step` runs in `step_player`: a dead
+//!    character's face keeps the pose it died with (the ragdoll starts from `last_world`, which
+//!    has it), a cutscene's characters blink like the rest. A knocked-down living character has
+//!    no step while its ragdoll lies, but its controller ticks all the same (`tick`): its line and
+//!    its blink run on their time, not drawn (the ragdoll holds the face it fell with), and the
+//!    get-up draws the face where they are by then; the get-up's second step of a frame draws it
+//!    without a second tick.
 //!
 //! **The lip-sync** (#325): the weights, 22 floats in the VE_ order (`face::VISEME_NAMES`: 0-14
 //! the mouth shapes, 15-21 the expressions), come from the line being said. Every speech path
@@ -331,10 +334,12 @@ pub fn speak(u: &mut Player, sounds: &SoundBank, sound: u32, ago: f32, by: &str)
     let said = u.facial.speak(sounds, sound, ago);
     if std::env::var("BF_FACE_LOG").is_ok() {
         let length = sounds.length(sound).unwrap_or(0.0);
+        // (a library entry whose file the map's banks lack has no length: it ends at once)
+        let short = if length > 0.0 { "" } else { ", no length (its file isn't in the loaded banks): it ends at once" };
         let what = match (&u.facial.tracks, said) {
             (_, false) => "not in the sound library: only stopped".to_string(),
-            (Some(t), _) => format!("{length:.3} s, {} viseme track{}", t.tracks.len(), if t.tracks.len() == 1 { "" } else { "s" }),
-            (None, _) => format!("{length:.3} s, no speech block: the face isn't moved"),
+            (Some(t), _) => format!("{length:.3} s, {} viseme track{}{short}", t.tracks.len(), if t.tracks.len() == 1 { "" } else { "s" }),
+            (None, _) => format!("{length:.3} s, no speech block: the face isn't moved{short}"),
         };
         println!("t={:.2} {}: says h_{sound:08x} ({what}; {by})", u.sim_time, unit_name(u));
     }
@@ -374,26 +379,47 @@ static COST_SPEAKING: AtomicU32 = AtomicU32::new(0);
 /// squad's four are copies made 0.5 s apart in e34's opening, and the takes' controllers show it
 /// (todo/255 take01-03, measured: each controller's clock +0x40 against the session's clock puts
 /// its start at 9.16 s for Flint, 9.63 Brutus, 10.14 Hawk and 10.64 Tex, and their blinks are
-/// 1.48, 1.01 and 0.51 s ahead of Tex's in the four-second cycle). BF_FACE_LOG: its blinks, and
-/// while it speaks its weights each tick, and the line's end; BF_FACE_COST: the step's time.
+/// 1.48, 1.01 and 0.51 s ahead of Tex's in the four-second cycle). A `dt` of 0 draws the face
+/// without a tick (a knock-down's get-up steps twice in a frame, `step_player`'s `tick_face`).
+/// BF_FACE_LOG: its blinks, and while it speaks its weights each tick, and the line's end;
+/// BF_FACE_COST: the step's time.
 pub fn step(p: &mut Player, l: &Loaded, game: &Game, dt: f32, pose: &mut [(Quat, Vec3)]) {
     let Some(table) = &l.model.face else { return };
     if p.absent {
         return;
     }
     let started = costing().then(std::time::Instant::now);
+    run(p, table, dt, "");
+    p.facial.apply(table, game, pose);
+    count(started, p);
+}
+
+/// A knocked-down living character's face for this frame (`update_player`, which gives it no step
+/// while the ragdoll has its body): its controller ticks all the same, for the game ticks every
+/// living character's controller from its update (FUN_0011caa0 at 0x11dc87; 0x11dc7b tests only
+/// the dead bit), so a line said as the hit knocks it down runs on its own time; nothing is drawn
+/// (the ragdoll writes the bones), and once the get-up draws the face again it shows where the
+/// line is by then. (The game's knock-down is a clip, which leaves the face bones to the
+/// controller, so its mouth would be seen moving: the demo's ragdoll holds the face it fell with.)
+pub fn tick(p: &mut Player, dt: f32) {
+    let Some(l) = p.loaded.take() else { return };
+    if let Some(table) = l.model.face.as_ref().filter(|_| !p.absent) {
+        let started = costing().then(std::time::Instant::now);
+        run(p, table, dt, " (knocked down, not drawn)");
+        count(started, p);
+    }
+    p.loaded = Some(l);
+}
+
+/// The controller's tick with BF_FACE_LOG's lines (each blink; while a line speaks its weights;
+/// the line's end), `note` after the character's name.
+fn run(p: &mut Player, table: &FaceTable, dt: f32, note: &str) {
     let was = p.facial.talking();
     let blinked = p.facial.tick(table, dt);
-    p.facial.apply(table, game, pose);
-    if let Some(t0) = started {
-        COST_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        COST_STEPS.fetch_add(1, Ordering::Relaxed);
-        COST_SPEAKING.fetch_add(p.facial.talking().is_some() as u32, Ordering::Relaxed);
-    }
     if dt <= 0.0 || std::env::var("BF_FACE_LOG").is_err() {
         return;
     }
-    let name = unit_name(p);
+    let name = format!("{}{note}", unit_name(p));
     if blinked {
         println!("t={:.2} {name}: blink {}", p.sim_time, p.facial.blinks);
     }
@@ -404,9 +430,17 @@ pub fn step(p: &mut Player, l: &Loaded, game: &Game, dt: f32, pose: &mut [(Quat,
     }
 }
 
+/// BF_FACE_COST: a step's time since `started`, and whether its face spoke, into the tally.
+fn count(started: Option<std::time::Instant>, p: &Player) {
+    let Some(t0) = started else { return };
+    COST_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    COST_STEPS.fetch_add(1, Ordering::Relaxed);
+    COST_SPEAKING.fetch_add(p.facial.talking().is_some() as u32, Ordering::Relaxed);
+}
+
 /// BF_FACE_COST: each second of the controlled character's clock, the faces' steps' time (the
-/// controller's tick and the pose written: `step`) over the frames since the last report, the
-/// steps a frame and how many spoke.
+/// controller's tick and the pose written: `step`; a knocked-down one's tick, `tick`) over the
+/// frames since the last report, the steps a frame and how many spoke.
 fn report_cost(player: Res<Player>, mut since: Local<(f32, u32)>) {
     if !costing() {
         return;
@@ -805,6 +839,10 @@ mod tests {
         for _ in 0..6 {
             f.tick(&t, dt);
             seen.push((f.weights[0], f.talking().is_some()));
+            // (a tick of no time, the get-up's second step of a frame, moves nothing on)
+            let was = f.talking();
+            f.tick(&t, 0.0);
+            assert_eq!(f.talking(), was);
         }
         // read at 0.1, 0.2, 0.3, 0.4 s; the fifth tick takes 0.45 s left under 0
         let want = [(0.0, true), (0.5, true), (1.0, true), (0.5, true), (0.0, false), (0.0, false)];
