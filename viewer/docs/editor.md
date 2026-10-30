@@ -59,6 +59,7 @@ command line needed:
 | left click | the open menu's click at the pointer (place, spawn, pick); a click on the panel isn't one in the world |
 | P O N T Y U L | the tools (the registry, below): scenery, objects, NPCs, squad (#302: its slots, which the next play makes), sky, music, level. The key again or Esc closes the menu |
 | J / B / Delete | on the NPC under the pointer: team, fight or dummy, remove (Shift+Delete: all) |
+| Home | put back the pickups taken in play (the test map's grid and the ones the object tool put down, each where it was; `BF_TEST_RESET_PICKUPS`, [testtools.md](testtools.md) "Putting pickups back") |
 | F5 | play from the pointer (Shift+F5: from the map's start) |
 | H | hide or show the help |
 | Esc | closes the open menu, and nothing else |
@@ -144,8 +145,10 @@ the key asks for the switch (`edit_input`) and the state's change makes it (`to_
 
 **The map as it is, both ways.** Nothing placed is lost in either direction: the switch doesn't
 touch the map. What was broken, taken or killed in play stays so: a broken barrel is gone, an NPC
-killed lies where it fell. Pickups come back on their own timer as on a level (play_pickups.rs:
-taken, hidden, back after their respawn time). The squad isn't the map's: it leaves with its
+killed lies where it fell. A taken pickup stays gone, as on a level (#18: nothing puts one back;
+a spawn-trigger's copy comes again by its trigger's timer, pickups.md); Home puts back the test
+map's grid and the object tool's pickups where they were, in either mode
+([testtools.md](testtools.md)). The squad isn't the map's: it leaves with its
 bodies (the guns they dropped, their blood and their memory chips stay) and comes back fresh. To
 start again from the edited state, #188's save and load will do it; until then, what play changed
 stays.
@@ -164,9 +167,11 @@ stays.
   world (an object's or a piece's, marked `PlacedId`; an NPC is `Squad`'s, by its number). The
   object, scenery and NPC tools add to it; J / B and their hooks keep an NPC's team and behaviour
   there; Delete strikes an NPC off (taken off the map, not lost). `track` follows what play does:
-  `Here`, `Dead` (an NPC's body) or `Gone` (its root is no more: broken, a weapon or grenade taken;
-  an NPC no longer in `Squad`). A thing that drops comes to rest elsewhere: its root has where it is
-  now. The list is a map's: a level switch starts the next one empty.
+  `Here`, `Dead` (an NPC's body) or `Gone` (its root is no more: broken, a pickup, weapon or
+  grenade taken; an NPC no longer in `Squad`). A pickup Home puts back keeps its number and is
+  `Here` again (`Placements::remake`: the new root, marked `PlacedId` with it). A thing that drops
+  comes to rest elsewhere: its root has where it is now. The list is a map's: a level switch
+  starts the next one empty.
 * **`Tools`** (play_testtools.rs) now carries the edit mode (`edit`), the pointer (`pointer`,
   `aspect`), the frame's click in the world (`click`, made once in `before_input`) and the camera's
   speed; `crosshair()` is the ray every tool acts along (the pointer's in edit mode).

@@ -41,12 +41,15 @@
 //!    (AIR_DISTANCE, Shift + the wheel), a line down to where it will land: a loose one placed
 //!    there drops (play_pickups.rs's physics), scenery hangs where it's put (#116).
 //!    - A pickup is a level's inventory-object, as the test map's grid (play_pickups.rs:
-//!      `LatePickup`): medkits and fruit can be taken, everything is loose.
+//!      `LatePickup`): walked over it is taken as on a map (the medkits and fruit, the ammo
+//!      boxes and grenade packs, the OrgSen, the power-ups) and gone for good; everything is
+//!      loose. Home puts the taken ones back where they were (play_testpickups.rs).
 //!    - A weapon lies on its side, a lying gun with a full clip as the rack's (#17,
 //!      play_weapon_pickups.rs): the prompt offers it, X held swaps it in, and it's gone; walked
 //!      over, a squad member takes its rounds as from any lying gun.
-//!    - A grenade lies as modelled; walking over it adds one of its type, up to its stack-limit
-//!      (the test map starts with a full stack, so only once some are used).
+//!    - A grenade lies as modelled; walking over it (the walk-over's reach, `powerups::in_reach`)
+//!      adds one of its type, up to its stack-limit (the test map starts with a full stack, so
+//!      only once some are used).
 //!    - Breakable scenery (BREAKABLES: the radiation barrel, the missile rack, the supply crate)
 //!      joins play_scenery.rs's list as a map's does (`LateBreakable`): shots, blasts and other
 //!      objects' damage areas break it, it explodes and chains. With no collision on the flat
@@ -61,6 +64,9 @@
 //!    camera flies free (the right mouse button held looks), the tools acting at the mouse
 //!    pointer; F5 again plays from where the pointer is. The menus' keys are the editor's tool
 //!    registry's (`editor::TOOLS`), and what they put down is listed in its `Placements`.
+//!  - Home: puts back every pickup taken on the map (play_testpickups.rs): the test map's grid
+//!    and the ones the object tool put down, each where it was. Taken pickups are gone for good,
+//!    as on a level; this is the test map's way to try them again.
 //!
 //! Not done: the enemy species' own behaviour (#110's sub-issues: their reactions, blood, death
 //! clips), moving NPCs, removing placed objects, saving a layout.
@@ -78,7 +84,8 @@ pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a 
                         F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
                         P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level\n\
-                        T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty)";
+                        T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty)\n\
+                        Home: put back every pickup taken (the grid's, and the ones placed with O), where they were";
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
 pub const ENEMY_TEAM: u8 = 1;
@@ -104,10 +111,6 @@ pub(super) const TURN_STEP: f32 = std::f32::consts::PI / 12.0;
 /// on dark and light ground alike.
 pub(super) const GHOST_ALPHA: f32 = 0.6;
 pub(super) const GHOST_GLOW: LinearRgba = LinearRgba::rgb(0.05, 0.15, 0.2);
-/// How near (m, across; up or down) the feet must come to take a grenade off the ground:
-/// play_pickups.rs's REACH / REACH_UP.
-const GRENADE_REACH: f32 = 1.0;
-const GRENADE_REACH_UP: f32 = 1.5;
 /// How many lines of the object list show at once.
 pub(super) const LIST_LINES: usize = 9;
 /// How long a tool's message shows (s): the test map's.
@@ -364,6 +367,8 @@ pub(super) enum Hook {
     /// the squad menu's Enter or Delete: squad slot `slot` (as the hook names it:
     /// play_testsquad.rs `slot_named`) to the type `kind` names (`npc_kind`), None: emptied
     SquadSlot { slot: String, kind: Option<String> },
+    /// Home: every pickup taken is put back where it was (play_testpickups.rs)
+    ResetPickups,
 }
 
 impl std::fmt::Debug for FreeCam {
@@ -448,6 +453,8 @@ impl std::fmt::Debug for FreeCam {
 ///    squad slot (0-3 or brutus / flint / hawk / tex: its place, as BF_TEST_SELECT names it; `me`
 ///    the controlled character's) gets that type (as BF_TEST_NPC names one) or is emptied; the
 ///    controlled character's slot changes its type.
+///  - BF_TEST_RESET_PICKUPS=<s>[;<s>...]: Home (play_testpickups.rs): every pickup taken on the
+///    map is put back where it was, the grid's and the object tool's.
 ///
 /// Every hook but BF_TEST_LEVEL acts on one map of the session only (a switch would otherwise
 /// replay them on each map): the first, or the n-th with BF_TEST_ON_MAP=<n> (the tools on a map
@@ -667,6 +674,9 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     for e in entries("BF_TEST_SQUAD_SLOT") {
         let kind = e.get(2).map(|k| (!k.eq_ignore_ascii_case("empty")).then(|| k.clone()));
         add(num(&e, 0), e.get(1).zip(kind).map(|(slot, kind)| Hook::SquadSlot { slot: slot.clone(), kind }));
+    }
+    for e in entries("BF_TEST_RESET_PICKUPS") {
+        add(num(&e, 0), Some(Hook::ResetPickups));
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
@@ -1296,12 +1306,14 @@ pub(super) fn spot_at(origin: Vec3, dir: Vec3, freecam: bool, air: f32) -> Optio
 
 /// Puts entry `i` at `spot` turned `yaw` (see the module's notes for each kind), and lists it in
 /// the editor's `Placements` (its root marked with its number). In the air, a loose one drops
-/// from there (`DropIn`, or `Thrown` from rest: play_pickups.rs's physics) and scenery hangs.
+/// from there (`DropIn`, or `Thrown` from rest: play_pickups.rs's physics) and scenery hangs. A
+/// pickup is also put on the `shelf`, so Home can put it back where it was if it's taken.
 #[allow(clippy::too_many_arguments)]
-fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, placements: &mut super::editor::Placements, list: &[Entry], i: usize,
-         spot: Spot, yaw: f32) {
+fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, placements: &mut super::editor::Placements,
+         shelf: &mut super::testpickups::Shelf, list: &[Entry], i: usize, spot: Spot, yaw: f32) {
     let e = &list[i];
-    let root = commands.spawn((placed_at(e, spot.at(), yaw), Visibility::default(), Name::new(format!("placed {}", e.label)))).id();
+    let (pose, name) = (placed_at(e, spot.at(), yaw), format!("placed {}", e.label));
+    let root = commands.spawn((pose, Visibility::default(), Name::new(name.clone()))).id();
     let id = placements.add(super::editor::Thing::Object { label: e.label.clone(), kind: e.kind }, spot.at(), yaw, matches!(spot, Spot::Air { .. }),
                             Some(root));
     commands.entity(root).insert(super::editor::PlacedId(id));
@@ -1313,6 +1325,7 @@ fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, pla
             if air {
                 commands.entity(root).insert(super::pickups::DropIn);
             }
+            shelf.put(kind, pose, air, &name, root, Some(id));
         }
         Kind::Weapon(key) => {
             // (a lying gun with a full clip, #17's: the prompt offers it, X swaps it in)
@@ -1343,7 +1356,8 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                kits: Option<Res<grenade::GrenadeKits>>, mut list: ResMut<Catalogue>, script: Res<Script>, mut status: ResMut<UsePanel>,
                (mut ghosts, mut gizmos): (Query<(&mut Transform, &mut Visibility), With<Ghost>>, Gizmos),
                mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
-               mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>, mut placements: ResMut<super::editor::Placements>) {
+               mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+               (mut placements, mut shelf): (ResMut<super::editor::Placements>, ResMut<super::testpickups::Shelf>)) {
     if list.0.is_empty() {
         let Some(kits) = kits else { return };
         list.0 = catalogue(&game.0, &kits);
@@ -1416,7 +1430,7 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         }
     }
     for (i, at, yaw) in direct {
-        place(&mut commands, &mut game.0, &mut assets, &mut placements, &list.0, i, at, yaw);
+        place(&mut commands, &mut game.0, &mut assets, &mut placements, &mut shelf, &list.0, i, at, yaw);
         status.message = Some((format!("Placed {}", list.0[i].label), MESSAGE_TIME));
         if log {
             let how = match at {
@@ -1463,15 +1477,16 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
 }
 
 /// Walking over a grenade put on the ground takes it: one more of its type, up to the type's
-/// stack-limit ("Took <type>"; full, it stays and "<type>: full" shows once).
+/// stack-limit ("Took <type>"; full, it stays and "<type>: full" shows once). It is within reach
+/// as any pickup is, by the game's walk-over (FUN_0011c170: `powerups::in_reach` of the
+/// character's position, 1.34 m across and -1.8..+1.0 m up).
 fn take_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Option<Res<grenade::GrenadeKits>>, mut status: ResMut<UsePanel>,
                  lying: Query<(Entity, &GroundGrenade, &Transform)>, mut told: Local<Option<Entity>>) {
     let Some(kits) = kits else { return };
     if player.dead {
         return;
     }
-    let feet = player.position + Vec3::Y * GROUND;
-    let near = lying.iter().find(|(_, _, t)| t.translation.xz().distance(feet.xz()) < GRENADE_REACH && (t.translation.y - feet.y).abs() < GRENADE_REACH_UP);
+    let near = lying.iter().find(|(_, _, t)| super::powerups::in_reach(player.position, t.translation));
     let Some((e, g, _)) = near else {
         *told = None;
         return;

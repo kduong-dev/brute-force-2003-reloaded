@@ -12,12 +12,18 @@
 //    offset copies, FUN_000e47b0 with 0.006 at 0x40cfc8), added outside the figures; the weight is
 //    fitted to the takes;
 //  - the view's colour fade (FUN_000c6980: 0.6 s, level 1, colour ff 00 00): the picture times
-//    the fade colour mixed toward white by the level.
+//    the fade colour mixed toward white by the level;
+//  - the OrgSen's view (vision mode 1, #21; FUN_000e6a70 in the world's place, FUN_000a45a0 for the
+//    scan lines after the figures): the world pass maps the picture's luminance onto a thermal
+//    palette, and the scan lines, on both cameras, multiply the picture by a cycle every four lines
+//    of the game's 480. The materials aren't in the data (the vision object's, FUN_000a42d0, are
+//    made of their classes' defaults): the palette and the lines are fitted to take10 of
+//    todo/18-ammo-pickups (its measurements are at `thermal` and `scan_lines`).
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 
 struct Pass {
-    // 1 on the world camera while the view is Vengar's
+    // on the world camera: 1 while the view is Vengar's, 2 while it's the OrgSen's
     world: f32,
     // the colour fade's level, 1 at a switch falling to 0
     fade: f32,
@@ -25,6 +31,12 @@ struct Pass {
     glow: f32,
     // the view's width over its height
     aspect: f32,
+    // 1: the OrgSen's scan lines (both cameras)
+    scan: f32,
+    // the scan lines' cycle in the game's lines, its phase in cycles, and the lines in the view
+    period: f32,
+    phase: f32,
+    rows: f32,
 };
 
 @group(0) @binding(0) var screen: texture_2d<f32>;
@@ -56,11 +68,56 @@ fn tap(uv: vec2<f32>, scale: f32) -> vec3<f32> {
     return 0.25 * (at(p + vec2<f32>(-d.x, -d.y)) + at(p + vec2<f32>(d.x, -d.y)) + at(p + vec2<f32>(-d.x, d.y)) + at(p + d));
 }
 
+// The OrgSen's thermal map (vision mode 1's world pass): the picture's luminance (the sRGB values
+// the console works in) onto a palette of dark blue-purple rising to violet-magenta. The stops are
+// the mean colour of take10's picture (sdm_e13, Tex's half, the OrgSen on, the six capture rows of
+// a scan cycle averaged, which the cycle's mean 0.635 darkens: divided by it here) binned by the
+// luminance of the same view a few seconds before, the camera still: (38, 22, 68) at black, blue
+// 85 to 157 and red 44 to 96 through the greys, and the lava's bright orange (luminance over 0.7)
+// saturating at (237, 64, 239). That binning wasn't a clean function (the vision lights change the
+// lighting: the correlation 0.6), so the stops are the monotone envelope of it; the lights'
+// strength is play_vengar.rs's VISION_LIGHT fit. The luminance is raised to THERMAL_GAMMA first:
+// the demo's vision-lit terrain is darker than take10's (the blue's 10th / 50th / 90th percentile
+// 46 / 53 / 92 against 43 / 72 / 104, the scan lines' cycle averaged), and 0.75 puts them at 54 /
+// 71 / 106.
+const THERMAL_GAMMA: f32 = 0.75;
+
+fn thermal(l: f32) -> vec3<f32> {
+    var stops = array<vec4<f32>, 9>(
+        vec4<f32>(0.00, 38.0, 22.0, 68.0),
+        vec4<f32>(0.08, 44.0, 22.0, 85.0),
+        vec4<f32>(0.16, 58.0, 23.0, 118.0),
+        vec4<f32>(0.26, 77.0, 23.0, 146.0),
+        vec4<f32>(0.36, 96.0, 24.0, 160.0),
+        vec4<f32>(0.50, 132.0, 35.0, 192.0),
+        vec4<f32>(0.62, 167.0, 46.0, 217.0),
+        vec4<f32>(0.72, 230.0, 63.0, 239.0),
+        vec4<f32>(1.00, 239.0, 65.0, 239.0));
+    let x = pow(clamp(l, 0.0, 1.0), THERMAL_GAMMA);
+    for (var i = 0; i < 8; i++) {
+        let a = stops[i];
+        let b = stops[i + 1];
+        if x <= b.x {
+            return mix(a.yzw, b.yzw, (x - a.x) / (b.x - a.x)) / 255.0;
+        }
+    }
+    return stops[8].yzw / 255.0;
+}
+
+// The scan lines' factor at `uv_y`: the picture times 0.635 + 0.365 sin(2 pi (y / period - phase)), y
+// the line of the game's 480 (take10: a cycle of six capture rows, 0.27 darkest, 1.0 brightest).
+fn scan_lines(uv_y: f32) -> f32 {
+    let y = uv_y * settings.rows;
+    return 0.635 + 0.365 * sin(6.2831853 * (y / settings.period - settings.phase));
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let here = textureSample(screen, screen_sampler, in.uv);
     var c = to_gamma(here.rgb);
-    if settings.world > 0.5 {
+    if settings.world > 1.5 {
+        c = thermal(dot(c, vec3<f32>(0.299, 0.587, 0.114)));
+    } else if settings.world > 0.5 {
         let t0 = tap(in.uv, 1.0);
         let t1 = tap(in.uv, 0.985);
         let t2 = tap(in.uv, 0.97);
@@ -90,5 +147,8 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         c += (1.0 - here.a) * settings.glow * sum;
     }
     c *= mix(vec3<f32>(1.0), vec3<f32>(1.0, 0.0, 0.0), settings.fade);
+    if settings.scan > 0.5 {
+        c *= scan_lines(in.uv.y);
+    }
     return vec4<f32>(to_linear(c), here.a);
 }

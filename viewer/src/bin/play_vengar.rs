@@ -28,7 +28,27 @@
 //!    and his hostiles, dim for his friends) with a halo; the HUD on top. Each switch, on and off,
 //!    starts the view's colour fade: the picture times red, back to white in 0.6 s (FUN_000c6980).
 //!
-//! Test hooks: `BF_TEST_SKILL`, `BF_TEST_GOTO` with `BF_TEST_SPRINT` (the dash) and
+//!  - **The OrgSen's view, vision mode 1** (#21, play_vision.rs: the carried OrgSen on the face
+//!    holder sets the character's vision mode 1, 0x1479f0, where Vengar's on sets 2): the same
+//!    renderer branch (FUN_000e81e0), which for mode 1 runs its own world pass (FUN_000e6a70) in place of
+//!    mode 2's blur, draws the living *and the dead* characters over it with mode 1's materials
+//!    and the glare (the lists 0x41b690 / 0x41b518, FUN_000e7850: the +0x70 bit 0 test is mode 2's
+//!    branch only), and ends with a full-screen quad of a material of the vision object (FUN_000a45a0;
+//!    blend ZERO / INVSRCALPHA). The world is lit by the same two vision lights (FUN_000dcc10 takes them
+//!    for any view whose mode isn't 0) and the terrain keyed as in mode 2. What the passes' materials
+//!    look like isn't in the data (the vision objects' four materials are made of their classes'
+//!    defaults, FUN_000a42d0): take10 of todo/18-ammo-pickups shows it, a **thermal view**: the world
+//!    in dark blue-purple rising to magenta (the lava), the characters yellow at their middle going
+//!    orange-red toward the rims (the sphere-mapped ramp of the heat figures again, no pulse), a
+//!    halo round them, and over everything dark scan lines, one cycle each 4 pixels of the game's 480
+//!    lines. The switch is at once, with no colour fade (the picture changes between two frames of
+//!    take10, at the attach_item event, and back at the take-off). The palette, the figures' colours
+//!    and the scan lines' profile are fitted to that take (their measurements are at `THERMAL`, `SCAN`
+//!    and src/vengar.wgsl); the figures are drawn against the world's depth, so one behind a ridge
+//!    isn't shown (take10: an enemy 11 m away and 6 m higher behind the rock ridge wasn't).
+//!
+//! Test hooks: `BF_THERMAL_RAW=1` (the OrgSen's view without its thermal map: the vision-lit picture
+//! it is fitted on), `BF_TEST_SKILL`, `BF_TEST_GOTO` with `BF_TEST_SPRINT` (the dash) and
 //! `BF_TEST_GO_AT=<s>` (when the goto sets off: take08's dash at 4 s), and the test map's
 //! `BF_TEST_NPC` / `BF_TEST_NPC_HP` (a frozen enemy to charge, as takes 08 and 22);
 //! `BF_SKILL_LOG=1` prints each charge hit, each switch of the view, and the hit points of
@@ -106,6 +126,9 @@ const VISION_LIGHT: f32 = 0.35;
 const HEAT_LAYER: usize = 1;
 /// The halo's weight for each of its 24 taps (vengar.wgsl): a fit to take09 (Brutus's edge at 8.0
 /// s: the halo adds about (69, 47, 0) a step out and (27, 20, 0) two steps out, nothing at three).
+/// The OrgSen's view (vision mode 1, #21) draws the same halo with the same weight (`view_state`
+/// gives `GLOW` to the heat camera in any mode): it is Vengar's, **not measured on take10**
+/// (the OrgSen's footage), so the thermal figures' glow in mode 1 is an unchecked carry-over.
 const GLOW: f32 = 0.07;
 /// A heat figure's look (heat.wgsl): the colour at the middle of its ramp and at its far end
 /// (sRGB 0-1), the curve's power, and where the ramp starts and ends (distances of the texture
@@ -118,6 +141,28 @@ const GLOW: f32 = 0.07;
 type Look = ([f32; 3], [f32; 3], f32, [f32; 2]);
 const BRIGHT: Look = ([1.0, 1.0, 0.02], [0.89, 0.18, 0.0], 1.0, [0.2, 0.6]);
 const DIM: Look = ([0.51, 0.29, 0.01], [0.33, 0.07, 0.0], 1.0, [0.2, 0.6]);
+/// The OrgSen's heat figures (vision mode 1, #21): the same radial ramp as `BRIGHT`, fitted to
+/// take10's torso of Tex (x 611-710 across a row at y 230 of the 1280 x 720 take, 8.0 s): yellow-white
+/// at the middle (240, 227, 62), orange-red at the rim (182, 76, 41), its green climbing about
+/// linearly from the rim in (87 at |n.x| 0.92, 116 at 0.8, 143 at 0.68, 155 at 0.56, 189 at 0.44,
+/// 195 at 0.32, 208 at 0.2, 217 at 0.08, 227 at the middle): `power` 1.15, over the whole half
+/// range (0 to 0.5). The colours are the take's (the mode 1 character material's class defaults
+/// aren't in the data), no scroll: take10's figures don't pulse (their mean colour drifts a few
+/// percent over seconds, not by the Vengar figures' 1.0 s swing). Their halo is not fitted at all:
+/// mode 1 reuses Vengar's `GLOW` (a fit to take09, unmeasured on take10).
+const THERMAL: Look = ([0.94, 0.89, 0.25], [0.74, 0.27, 0.12], 1.15, [0.0, 0.5]);
+/// What the mode 1 characters carry (h_e4b5147f, the vision object's second material, FUN_000e7320):
+/// take10's gun in Tex's hand is a dithered dark purple and red, not the body's yellow. The colours
+/// are those, a fit (the dither isn't drawn).
+const CARRIED: Look = ([0.55, 0.12, 0.30], [0.30, 0.05, 0.22], 1.0, [0.0, 0.5]);
+/// The scan lines over the whole picture in mode 1 (the vision object's quad, FUN_000a45a0: its blend
+/// ZERO / INVSRCALPHA, so the picture times (1 - alpha)): from take10, a cycle every 4 pixels of the
+/// game's 480 lines (6 pixels of the 1.5 x capture: the same rows from 135.3 to 159 in the capture's
+/// half), the picture times 0.27 at its darkest and 1.0 at its brightest, as `0.635 + 0.365 sin(2 pi
+/// (y / 4 - 0.03))` for y the game line (src/vengar.wgsl `scan_lines`): 0.27, 0.58, 0.86, 1.0, 0.68,
+/// 0.38 over the six capture rows of a cycle (take10 8.0 s, a column of Tex's torso, the body's own
+/// shading taken out against the cycle's mean). A fit: the quad's texture isn't in the data.
+const SCAN: [f32; 3] = [4.0, 0.03, 480.0];
 /// The heat figures' pulse: the material scrolls its texture down by its speed (+0x1c) times its
 /// time (+0x18), which the material library's update adds each frame's time to (0x25cf30, from
 /// FUN_001ea830): FUN_000a8610 puts the product in the vertex shader's texture offset (c28.y,
@@ -304,6 +349,9 @@ fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<
 /// fade (the view's +0xec object, FUN_000c6980).
 #[derive(Resource, Default)]
 struct VengarView {
+    /// the view's vision mode: 2 Vengar's, 1 the OrgSen's (`vision::mode`), 0 none
+    mode: u8,
+    /// a mode that isn't 0: the vision lights, the keyed terrain and the heat figures' camera
     on: bool,
     /// the fade's level: 1 in the frame of a switch, falling by 1 / FADE_TIME a second
     fade: f32,
@@ -333,11 +381,17 @@ pub struct HeatMaterial {
 }
 
 impl HeatMaterial {
-    /// One of the two looks (BRIGHT, DIM).
+    /// One of the looks (BRIGHT, DIM, THERMAL, CARRIED), its ramp's offset at `SCROLL_MID`.
     fn new(look: Look) -> Self {
         let (m, e, power, [from, to]) = look;
         HeatMaterial { heat: HeatParams { middle: Vec4::new(m[0], m[1], m[2], 1.0), edge: Vec4::new(e[0], e[1], e[2], power),
                                           ramp: Vec4::new(from, to, SCROLL_MID, 0.0) } }
+    }
+
+    /// The same without the offset: the OrgSen's figures don't scroll (`THERMAL`).
+    fn still(mut self) -> Self {
+        self.heat.ramp.z = 0.0;
+        self
     }
 }
 
@@ -355,14 +409,22 @@ mod pass {
     /// What a camera's Vengar pass does this frame (vengar.wgsl `Pass`).
     #[derive(Component, Clone, Copy, Default, Debug, ExtractComponent, ShaderType)]
     pub struct VengarPass {
-        /// 1: the world pass (the main camera while the view is Vengar's)
+        /// 1: Vengar's world pass (the main camera while the view is his), 2: the OrgSen's
+        /// thermal map (the main camera while the view is mode 1)
         pub world: f32,
         /// the colour fade's level
         pub fade: f32,
-        /// the halo's weight a tap (the heat camera while the view is Vengar's)
+        /// the halo's weight a tap (the heat camera while the view is a vision mode)
         pub glow: f32,
         /// the view's width over its height
         pub aspect: f32,
+        /// 1: the OrgSen's scan lines (both cameras: the heat camera's figures and halo are
+        /// under them too)
+        pub scan: f32,
+        /// the scan lines' cycle (the game's lines), its phase (cycles) and the lines in the view
+        pub period: f32,
+        pub phase: f32,
+        pub rows: f32,
     }
 
     /// A heat figure's colours (heat.wgsl `Heat`).
@@ -416,29 +478,44 @@ fn follow_projection(main: Query<&Projection, (With<MainCamera>, Without<HeatCam
     }
 }
 
-/// The view's state for this frame: on while the controlled character's Vengar is (his on and
-/// off, and the death handler's off, switch it); the colour fade from each switch of the same
-/// character's (FUN_000c6980 from his on 0x13c090, and from FUN_00126df0 at 0x126e58 when the view
-/// was Vengar's), not at a hand-over (the demo's choice: what the game's view does when control
-/// passes with Vengar on isn't traced). Each camera's pass settings follow.
+/// The view's state for this frame: its vision mode, the controlled character's (`vision::mode`: 2
+/// while Brutus's Vengar is on, his on and off, and the death handler's off, switch it; 1 with the
+/// OrgSen on, play_vision.rs); the red colour fade from each switch of Vengar's, by the same
+/// character (FUN_000c6980 from his on 0x13c090, and from FUN_00126df0 at 0x126e58 when the view
+/// was at 2: the OrgSen's on and off have none), not at a hand-over (the demo's choice: what the
+/// game's view does when control passes with a mode on isn't traced). Each camera's pass settings
+/// follow.
 fn view_state(time: Res<Time>, player: Res<Player>, mut view: ResMut<VengarView>, windows: Query<&Window, With<PrimaryWindow>>,
               mut passes: Query<(&mut VengarPass, Has<HeatCamera>)>) {
     let dt = frame_dt(&time);
-    let on = skills::vengar_on(&player);
+    let mode = vision::mode(&player);
     let viewer = player.loaded.is_some().then(|| player.who());
     view.clock += dt;
     view.fade = (view.fade - dt / FADE_TIME).max(0.0);
-    if view.viewer.is_some() && view.viewer == viewer && on != view.on {
+    if view.viewer.is_some() && view.viewer == viewer && (mode == 2) != (view.mode == 2) {
         view.fade = 1.0;
         if std::env::var("BF_SKILL_LOG").is_ok() {
-            println!("t={:.2} {}: the Vengar view {}, the red fade from 1", player.sim_time, unit_name(&player), if on { "on" } else { "off" });
+            println!("t={:.2} {}: the Vengar view {}, the red fade from 1", player.sim_time, unit_name(&player), if mode == 2 { "on" } else { "off" });
         }
     }
-    view.on = on;
+    if mode != view.mode && std::env::var("BF_SKILL_LOG").is_ok() && view.viewer == viewer {
+        println!("t={:.2} {}: vision mode {} -> {mode}", player.sim_time, unit_name(&player), view.mode);
+    }
+    view.mode = mode;
+    view.on = mode != 0;
     view.viewer = viewer;
     let aspect = windows.single().map(|w| w.width() / w.height().max(1.0)).unwrap_or(4.0 / 3.0);
     for (mut p, heat) in &mut passes {
-        *p = VengarPass { world: (on && !heat) as u8 as f32, fade: view.fade, glow: if on && heat { GLOW } else { 0.0 }, aspect };
+        // (the world passes are the main camera's; the heat camera's are the halo and the scan lines)
+        // (BF_THERMAL_RAW=1: the OrgSen's view without its thermal map, the vision-lit picture the
+        // map is fitted on, with the figures and the scan lines)
+        let world = match (mode, heat) {
+            (2, false) => 1.0,
+            (1, false) if std::env::var("BF_THERMAL_RAW").is_err() => 2.0,
+            _ => 0.0,
+        };
+        *p = VengarPass { world, fade: view.fade, glow: if view.on && heat { GLOW } else { 0.0 }, aspect,
+                          scan: f32::from(mode == 1), period: SCAN[0], phase: SCAN[1], rows: SCAN[2] };
     }
 }
 
@@ -559,18 +636,25 @@ fn vision_terrain(mut commands: Commands, view: Res<VengarView>, map: Res<MapLev
     }
 }
 
-/// The characters as heat figures while the view is Vengar's: every living character's meshes
-/// (not the unlit muzzle flash) go to the heat camera's layer with the bright look (the viewer
-/// and his hostiles) or the dim one (his friends: the team table, as 0xa88ea-0xa890c reads it
-/// through FUN_000a8520); the dead are drawn as the world is (0xe7acd, 0xe735d), and everyone
-/// once the view is off.
+/// The characters as heat figures while the view is a vision mode's: in Vengar's (2) every living
+/// character's meshes (not the unlit muzzle flash) go to the heat camera's layer with the bright
+/// look (the viewer and his hostiles) or the dim one (his friends: the team table, as
+/// 0xa88ea-0xa890c reads it through FUN_000a8520); the dead are drawn as the world is (0xe7acd,
+/// 0xe735d). In the OrgSen's (1, #21) every character's, the dead too (0xe7acd is mode 2's branch
+/// alone: FUN_000e7850 hands a character to the vision lists in mode 1 whatever its +0x70 bit 0),
+/// in the one `THERMAL` look, the guns in their hands in `CARRIED` (FUN_000e7320: mode 1's +8 for the
+/// body, +0xc for what it carries). Everyone as they were once the view is off.
 #[allow(clippy::too_many_arguments)]
 fn heat_figures(mut commands: Commands, view: Res<VengarView>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
                 plain: Query<&MeshMaterial3d<StandardMaterial>, Without<Heated>>, heated: Query<(&Heated, &MeshMaterial3d<HeatMaterial>)>,
-                standard: Res<Assets<StandardMaterial>>, mut assets: ResMut<Assets<HeatMaterial>>, mut looks: Local<Option<[Handle<HeatMaterial>; 2]>>) {
-    let [bright, dim] = looks.get_or_insert_with(|| [assets.add(HeatMaterial::new(BRIGHT)), assets.add(HeatMaterial::new(DIM))]).clone();
-    // the pulse: both looks' texture offset now (the one material, k aside)
-    if view.on {
+                standard: Res<Assets<StandardMaterial>>, mut assets: ResMut<Assets<HeatMaterial>>,
+                mut looks: Local<Option<[Handle<HeatMaterial>; 4]>>) {
+    let [bright, dim, thermal, carried] =
+        looks.get_or_insert_with(|| [(BRIGHT, true), (DIM, true), (THERMAL, false), (CARRIED, false)]
+            .map(|(l, scrolls)| assets.add(if scrolls { HeatMaterial::new(l) } else { HeatMaterial::new(l).still() }))).clone();
+    // the pulse: Vengar's looks' texture offset now (the one material, k aside); the OrgSen's don't
+    // scroll
+    if view.mode == 2 {
         for look in [&bright, &dim] {
             if let Some(m) = assets.get_mut(look) {
                 m.heat.ramp.z = scroll(view.clock);
@@ -580,8 +664,21 @@ fn heat_figures(mut commands: Commands, view: Res<VengarView>, player: Res<Playe
     let viewer = player.who();
     for u in std::iter::once(&*player).chain(squad.0.iter()) {
         let Some(l) = &u.loaded else { continue };
-        let want = (view.on && !u.dead).then(|| if u.who() == viewer || damage::hostile(u.team, player.team) { &bright } else { &dim });
+        // the guns in this character's hands (their meshes, for mode 1's second material: take10's
+        // Saryl-99 in Tex's hand is the dithered purple and red, while the Minigun on his back reads
+        // as part of the yellow figure)
+        let guns: std::collections::HashSet<Entity> = if view.mode == 1 {
+            let in_hand = [u.holding.then_some(u.weapon), u.second.map(|s| s.weapon)].into_iter().flatten();
+            in_hand.filter_map(|k| l.weapons.get(k)).flat_map(|w| std::iter::once(w.entity).chain(children.iter_descendants(w.entity))).collect()
+        } else {
+            Default::default()
+        };
         for e in children.iter_descendants(l.root) {
+            let want = match view.mode {
+                2 if !u.dead => Some(if u.who() == viewer || damage::hostile(u.team, player.team) { &bright } else { &dim }),
+                1 => Some(if guns.contains(&e) { &carried } else { &thermal }),
+                _ => None,
+            };
             match (want, plain.get(e), heated.get(e)) {
                 (Some(m), Ok(own), _) if !standard.get(&own.0).is_some_and(|s| s.unlit) => {
                     commands.entity(e).insert((Heated(own.0.clone()), MeshMaterial3d(m.clone()), RenderLayers::layer(HEAT_LAYER)))
@@ -631,7 +728,7 @@ impl ViewNode for VengarNode {
 
     fn run(&self, _graph: &mut RenderGraphContext, context: &mut RenderContext, (target, pass, index): QueryItem<Self::ViewQuery>,
            world: &World) -> Result<(), NodeRunError> {
-        if pass.world <= 0.0 && pass.fade <= 0.0 && pass.glow <= 0.0 {
+        if pass.world <= 0.0 && pass.fade <= 0.0 && pass.glow <= 0.0 && pass.scan <= 0.0 {
             return Ok(());
         }
         let pipes = world.resource::<PassPipeline>();

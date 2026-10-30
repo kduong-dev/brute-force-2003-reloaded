@@ -60,8 +60,9 @@ pub struct PickupCopies(pub Vec<PickupCopy>);
 
 /// A spawn-trigger's copy of a pickup (see the module notes): taken, it's removed from the world
 /// for good (FUN_0011c170 removes an item it takes; FUN_00117660's grab_weapon the gun,
-/// FUN_000db3e0), where the level's own pickups come back after play_pickups.rs's guessed
-/// RESPAWN: the trigger's own chain makes its next copy.
+/// FUN_000db3e0), as a level's own pickup is (#18: nothing puts one back, and the old 30 s
+/// RESPAWN guess in play_pickups.rs is gone). What comes after a copy is taken is the trigger's
+/// own chain: its timer makes the next copy.
 #[derive(Component)]
 pub struct SpawnCopy;
 

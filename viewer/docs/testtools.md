@@ -29,6 +29,7 @@ a click is any left click off the panel, and F and its teleports do nothing.
 | Y | **sky menu**: none, the map's own, or the sky of any level whose level file names one; click or Enter shows it over the map in place of its own, with that level's background colour |
 | U | **music menu**: off, the map's own, or any level's music bank, mixed as the game mixes a level's (its music with its ambience bed under it); click or Enter plays it; Left / Right: the previous / next bank at once |
 | L | **level menu**: the test map, the squad deathmatch maps, the deathmatch arenas and every mission zone, from the game's level list; click or Enter loads it in the same window, the tools with it |
+| Home | **put back the pickups taken** (`play_testpickups.rs`): every pickup of the test map's grid and every one the object tool put down that has been taken is made again where it was put, and "2 pickups put back" shows. Works in play and in edit mode. See **Putting pickups back**, below |
 
 * **NPCs** are `Player`s added at the end of the squad with `npc` set, so everything that acts
   on the squad acts on them: the player's shots (with instant kill), blasts, Sentries,
@@ -152,14 +153,19 @@ a click is any left click off the panel, and F and its teleports do nothing.
     the roster alone ("(when play starts)"), and play (F5) makes its fresh squad from it.
 * **Objects**, put on the ground at the crosshair turned the way the copy shows:
   * a pickup is a level's inventory-object as the grid's (`play_pickups.rs`: `LatePickup`
-    seats it on its lowest point, upright as modelled): medkits and fruit can be taken,
-    everything is loose. Two entries of one name (the placed and the carried Medkit, two Bio
-    Ammo) carry their hash;
+    seats it on its lowest point, upright as modelled): walked over, it's taken as on a map
+    (the medkits and fruit, the DNA canister, the ammo boxes and grenade packs, the OrgSen, the
+    power-ups) and gone for good; everything is loose. Home puts the taken ones back where they
+    were (**Putting pickups back**, below). Two entries of one name (the placed and the carried
+    Medkit, two Bio Ammo) carry their hash;
   * a weapon lies on its side, a lying gun with a full clip as the rack's (#17): the prompt
     offers it, X held swaps it in (the gun in hand dropped at the feet), and it's gone; walked
     over, a squad member using its ammo type takes its rounds, as from any lying gun;
-  * a grenade lies as modelled; walking over it (within 1 m) adds one of its type up to its
-    stack-limit ("Took Sentry"), else "<type>: full" (the test map starts with full stacks);
+  * a grenade lies as modelled; walking over it adds one of its type up to its stack-limit
+    ("Took Sentry"), else "<type>: full" (the test map starts with full stacks). It's in reach as
+    any pickup is, by the game's walk-over (FUN_0011c170, `powerups::in_reach`: 1.34 m across,
+    1.8 m below to 1.0 m above the character's position). (It was 1 m across and 1.5 m up or
+    down, copied from the medkits' old reach, until #18's review had the pickups' reach unified.)
   * **breakable scenery**: the radiation barrel (h_e04e5a0e), the missile rack (h_fbdcd828)
     and the supply crate (h_09a6856d), sdm_e34's kinds (see "Interactive scenery"), standing
     as modelled. One put down joins `play_scenery.rs`'s list as a map's does (its
@@ -175,6 +181,37 @@ a click is any left click off the panel, and F and its teleports do nothing.
   on whatever face it lands on, not on its side). Breakable scenery hangs where it's put: a
   level's scenery never moves, and its box (shots, the crosshair) and its blast are where it
   hangs; its debris falls from there. The follow camera keeps the ground placement.
+* **Putting pickups back** (`play_testpickups.rs`, the **Home** key; the product owner's request
+  on #18's review, with #19 and #21; the demo's own, no footage): a taken pickup is gone for good
+  as on a level ([pickups.md](pickups.md), "A taken pickup is gone for good"), so the grid's
+  pickups and those put down with the object tool could be taken once each. Home brings them
+  back, on the test map only: the game's levels keep the game's rule.
+  * **Which**: the `Shelf` lists every pickup the test map put out, in the order put out: the grid's
+    (44 with the default levels, `spawn_test_map`) and each one the object tool puts down (`place`),
+    a pickup being an inventory-object. A new map starts with an empty shelf. A level the session
+    switched to (L) has only the object tool's: its own pickups are the level's and stay taken. A
+    lying gun or a grenade put down with the tool isn't on it (the rack restocks its own guns as
+    they're taken; place the others again), nor breakable scenery.
+  * **What it does**: each piece whose pickup is gone from the world is made again by the same code
+    that made the grid's (`testpickups::spawn_pickup`), at the pose it was put out in: the grid's
+    drop pose (0.3 m up, tipped and turned: it falls and settles as it did: the two medkits compared
+    frame by frame came to rest in the same place and pose as the first time), the object tool's
+    spot turned as the copy showed (on the ground, or in the air to drop again). It joins the map's
+    pickups as one placed after the map started (`LatePickup`: `late_pickups` seats it, gives it its
+    loose body and lists the medkits, fruit and DNA canisters as takeable; `take_items` (the ammo
+    boxes and grenade packs) and `take_powerups` find it as they find any), so it can be taken
+    again, and Home again after. A pickup still there isn't touched (not moved, not doubled). "N
+    pickups put back" shows (the edit mode's status line too; "No pickup to put back" when none was
+    taken). A character in reach when one comes back takes it at once, as the game's box does when
+    its timer returns it.
+  * One the object tool put down keeps its number in the editor's `Placements`: `track` showed
+    it `Gone` when it was taken and shows it `Here` again (`Placements::remake`, editor.md).
+  * It works in play, in the free camera and in the editor's edit mode (the squad out of the
+    world: the pickups drop and lie as they will; F5 to play from there takes them again).
+  * `BF_TEST_RESET_PICKUPS=<s>[;<s>...]` presses it at those times (hooks, below);
+    `BF_TOOLS_LOG=1` prints "t 3.40: 2 of 46 pickups put back: Medkit at [3.00, -0.98, -3.00],
+    Medkit at [4.50, 1.08, -3.00]" ("0 of 46" for none taken) and the editor's placements
+    changing.
 * **Scenery** (`play_testscenery.rs`, #185, the first part of the map creation epic #190): any
   level's buildings and static scenery, on the test map or on any level the session is on.
   * Which pieces (`src/bf/pieces.rs`): a level file's `<game-object>` whose object type's
@@ -321,6 +358,7 @@ the background (#163)".
 | `BF_TEST_PLACER=<s>,<object>[,<yaw>]` | O with that object picked (its label in any case, else the first containing it), turned that way |
 | `BF_TEST_PLACE=<s>[,<object>,<x>,<z>[,<yaw>[,<height>]]]` | the object menu's click (at the crosshair: in the air in the free camera); or that object put at x, z, `height` m above the ground (in the air) |
 | `BF_TEST_AIR=<s>,<m>` | the free camera's air distance (Shift + the wheel) |
+| `BF_TEST_RESET_PICKUPS=<s>[;<s>...]` | Home: every pickup taken on the map is put back where it was (the grid's and the object tool's; "Putting pickups back", above). A hook of the first map, or `BF_TEST_ON_MAP`'s, like the others of this page |
 | `BF_TEST_SCENERY_MENU=<s>` | P (the scenery menu opens; its list is read the first time) |
 | `BF_TEST_SCENERY=<s>,<level>:<piece>[,<yaw>]` | P with that piece picked, turned that way: `<piece>` its type's or archetype's `h_xxxxxxxx`, or its place in the level's list (0 the largest): `sdm_e34:h_0baf091a`, `e06:0`; without `<level>:`, the first level's that has that type |
 | `BF_TEST_SCENERY_PLACE=<s>[,<level>:<piece>[,<x>,<z>[,<yaw>[,<height>]]]]` | the scenery menu's click (the picked piece at the crosshair: in the air in the free camera); or that piece at the crosshair; or put at x, z turned that way, `height` m above the floor there (found under 50 m above the controlled character, as `BF_TEST_PLACE`'s: a roof if a piece is there), where it hangs. Each is placed once its piece is built |
@@ -458,8 +496,33 @@ higher: where they land and who stands in a blast don't hold as written; not run
   noise); on the test map the Sentry's
   `BF_TEST_HOSTILE=flint,4,0,0.5` run logs the same checks and blast (a few pixels of smoke
   differ: effect seeds come from entity numbers, and the tools add an entity).
+* Putting pickups back (Home, `BF_TEST_RESET_PICKUPS`; `BF_PICKUP_LOG=1 BF_TOOLS_LOG=1`, frames
+  looked at). The grid's two medkits (`BF_TEST_GOTO=0,0,0,0
+  BF_TEST_FREECAM='0.5,-1.4,2.5,-12,0,-36.5;1.8,<same>;2.7,<same>' BF_TEST_TELEPORT='1.2;2.4,camera;4.5'
+  BF_TEST_RESET_PICKUPS=3.3`: the free camera 5.6 m off looking at their spot, Tex teleported onto
+  it, away and back): both lie on the floor in frame 8; Tex lands on them at 1.20 s and takes
+  them ("2x Medkit", medkits 2; the spot is bare in frame 28); he is teleported 6 m off at 2.40 s;
+  the hook at 3.33 s puts both back ("2 of 44 pickups put back: Medkit at [-2.10, -0.75, -17.60],
+  Medkit at [-0.70, -0.75, -17.60]"; "2 pickups put back" under the camera from frame 50): they
+  fall and come to rest where and as the first ones did (frame 66 against the frames 15-70 of a
+  run with no take: the same two poses, the same places), and the teleport back at 4.53 s takes
+  them again ("4x Medkit" with the earlier line's two, medkits 4). The same with the grid's DNA
+  canister (a camera at `2.1,2.5,-9`: taken at 1.27 s, put back at 3.40 s, listed again by
+  `late_pickups`, taken at 4.60 s) and with the object tool's pickups
+  (`BF_TEST_PLACE='0.2,medkit h_f5123ace,3,-3,0;0.2,medkit h_192d5337,4.5,-3,0,2.0'`, the second
+  dropped from 2 m: taken at 1.27 s and the editor's placements 1 and 2 `Gone` at 1.33 s; put
+  back at 3.40 s, the second dropping again from 2 m (frames 58-60), both `Here` at 3.47 s; taken
+  again at 4.60 s and `Gone`; the dropped one came to rest at 4.9, -2.9 both times). In the edit
+  mode (`BF_TEST_EDIT=1.8,-1.4,2.5,-12,0,-36.5 BF_TEST_RESET_PICKUPS=2.5 BF_TEST_PLAY=3.5`): "2
+  pickups put back" on the edit status line at 2.53 s with both medkits on the floor in the edit
+  camera's view; F5 plays from the pointer's place and Tex takes them at 3.67 s. On a level
+  (`BF_TEST_GOTO=-51.7,82.1,-51.7,82.1 BF_TEST_LEVEL='0.5,sdm_e34' BF_TEST_ON_MAP=2
+  BF_TEST_PLACE='1.0,medkit h_f5123ace,-52.4,82.1,0'`): the medkit placed there is taken at 1.07
+  s, "1 of 1 pickups put back" at 3.07 s (the shelf has the placed one alone; the level's own
+  stay taken) and it's taken again at 3.20 s. With nothing taken: "0 of 46 pickups put back" and
+  nothing moves.
 * Not tested in a capture: the keys themselves (the hooks drive the same code, but the key
-  and mouse handling is only read, not run), PageUp / PageDown, Shift+Delete.
+  and mouse handling is only read, not run; Home included), PageUp / PageDown, Shift+Delete.
 
 Every character type (#180), `--test` with `BF_TOOLS_LOG=1 BF_COMBAT_LOG=1 BF_ENEMY_LOG=1`,
 captures at 15 fps, frames looked at:

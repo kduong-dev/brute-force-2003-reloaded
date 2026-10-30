@@ -12,7 +12,9 @@
 //!  - One of every pickup type with a model (`Game::items`, one per model) is dropped in a
 //!    grid behind the rack, upright but tipped a little, settling as it would, a
 //!    level's inventory-object as far as play_pickups.rs is concerned: medkits and fruit are
-//!    taken and used as on a map; the rest are loose objects.
+//!    taken and used as on a map; the rest are loose objects. A taken one is gone for good, as on
+//!    a map; Home puts back every one taken, the object tool's too, where it was
+//!    (play_testpickups.rs).
 //!  - The squad carries a full stack (stack-limit) of every grenade type the levels define
 //!    (play_grenade.rs: Frag, Gas, Sonic, Energy, Light, Sentry, Roller, the game's store
 //!    order); T steps through them.
@@ -36,8 +38,6 @@
 //!    `--test` starts the session editing.
 
 use super::*;
-use bf_viewer::bf::hash::h;
-use bf_viewer::level_scene::Placed;
 
 /// The command-line flag that opens the test map; the map editor's flag opens it too, in edit
 /// mode (play_editor.rs `FLAG`).
@@ -66,6 +66,8 @@ const TEST_LEVELS: [&str; 11] = ["mp_common", "mp1", "mp2", "mp3", "mp4", "mp6",
 /// How high (m) the pickups are dropped from, and how far (rad) each is tipped either way.
 const DROP_HEIGHT: f32 = 0.3;
 const DROP_TIP: f32 = 0.2;
+/// The grid pickups' entity name (the demo's), kept by the pickup reset's put-back.
+const GRID_NAME: &str = "test pickup";
 /// How long a test-map message shows (s).
 const MESSAGE_TIME: f32 = 2.0;
 
@@ -187,6 +189,7 @@ pub fn plugin(app: &mut App) {
     super::testworld::plugin(app);
     super::testscenery::plugin(app);
     super::testsquad::plugin(app);
+    super::testpickups::plugin(app);
     super::editor::plugin(app);
     app.init_resource::<Rack>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))
@@ -251,10 +254,12 @@ pub(super) fn pickup_types(game: &bf_viewer::bf::character::Game) -> Vec<(u32, S
 /// can switch to a level, play_testworld.rs). The controls panel starts hidden (H).
 #[allow(clippy::too_many_arguments)]
 fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player: ResMut<Player>, current: Res<CurrentMap>, mut rack: ResMut<Rack>,
-                  mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
-                  mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
+                  mut shelf: ResMut<super::testpickups::Shelf>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
+                  mut images: ResMut<Assets<Image>>, mut bindposes: ResMut<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>) {
     player.show_help = false;
     rack.0.clear();
+    // (a new map's shelf of pickups starts empty, whatever the map: the object tool fills it)
+    shelf.clear();
     if current.0 != "flat" {
         return;
     }
@@ -280,13 +285,11 @@ fn spawn_test_map(mut commands: Commands, mut game: ResMut<GameData>, mut player
         let at = Vec3::new(x, GROUND + DROP_HEIGHT, ITEMS_Z - row as f32 * ITEMS_STEP);
         let seed = |k: f32| ((placed as f32 + 1.0) * k).sin().fract().abs() * 2.0 - 1.0;
         let turn = Quat::from_euler(EulerRot::YXZ, seed(12.9898) * std::f32::consts::PI, seed(78.233) * DROP_TIP, seed(37.719) * DROP_TIP);
-        let root = commands.spawn((Transform::from_translation(at).with_rotation(turn), Visibility::default(),
-                                   Placed { tag: h("inventory-object"), kind, name: 0 }, super::pickups::DropIn,
-                                   Name::new("test pickup"))).id();
-        for part in &model.parts {
-            let pe = commands.spawn((Transform::from_translation(part.offset).with_rotation(part.rotation), Visibility::Inherited, ChildOf(root))).id();
-            spawn_static(&mut commands, &mut game.0, &part.geosets, &mut assets, pe, true);
-        }
+        // (found at the map's start like a level's own; Home puts it back where it was if it is
+        // taken, play_testpickups.rs)
+        let pose = Transform::from_translation(at).with_rotation(turn);
+        let root = super::testpickups::spawn_pickup(&mut commands, &mut game.0, &mut assets, kind, &model, pose, true, false, GRID_NAME);
+        shelf.put(kind, pose, true, GRID_NAME, root, None);
         placed += 1;
     }
     println!("test map: {n} weapons on the rack, {placed} pickups");

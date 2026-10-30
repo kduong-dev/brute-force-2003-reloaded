@@ -15,7 +15,7 @@
 | click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex (on the test map whoever holds their places, any type, or no one: the squad menu, T, #302, [testtools.md](testtools.md)): their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with a follow line ("I'm right behind you", "Following at a distance"...: chatter set f415ab02, from the shared voice bank `ml-sounds/en/common-en.tgz`; their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
-| G | use the item in the item box (the game's LT). A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.625 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw: 15 degrees above the camera's view (9 above the crosshair), a Frag at 17.8 m/s for a tap to 25.6 m/s full, the meter's bottom 30% throwing as a tap (#161: a full Frag looking 9 degrees down lands ~25 m out); the count drops at once, and the scope is left. A placed one (Roller, Sentry; m09_b's Thermo, #82): set down at the feet at the press. A Medkit (either): used at the press, "No need to heal" at full health. Nothing selected: "Inventory is empty". A Tab or B press while G is held drops the charge, and G does nothing more until it's let go. See **Grenades** and **The item box and the item list** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen and the Hat do nothing yet (#21), but Brutus is told "Cannot use" |
+| G | use the item in the item box (the game's LT). A thrown grenade (Frag, Energy, Gas, Light, Sonic): hold to charge (the orange meter right of the crosshair, full in 0.625 s, held 0.5 s after the charge ends then fading out by 1 s; the held gun's crosshair stays as it is), let go to throw: 15 degrees above the camera's view (9 above the crosshair), a Frag at 17.8 m/s for a tap to 25.6 m/s full, the meter's bottom 30% throwing as a tap (#161: a full Frag looking 9 degrees down lands ~25 m out); the count drops at once, and the scope is left. A placed one (Roller, Sentry; m09_b's Thermo, #82): set down at the feet at the press. A Medkit (either): used at the press, "No need to heal" at full health. Nothing selected: "Inventory is empty". A Tab or B press while G is held drops the charge, and G does nothing more until it's let go. See **Grenades** and **The item box and the item list** below. A zone starts with the grenades, medkits and items its squad's placements carry, pooled (see **Items: the squad's starting inventory**); the OrgSen is put on at the press (Tex, Hawk and Flint: its clip, then the thermal view) and taken off at the next (#21, [pickups.md](pickups.md), "OrgSen"), Brutus is told "Cannot use", and the Hat does nothing yet |
 | E (hold) | use: a gate's wall panel, from in front of it within 2.5 m, looking at it: "Hold [X] to activate panel." shows (the game's glyph line, X's glyph: E is the demo's X; [hints.md](hints.md)) and a blue ring marks its button; held 0.5 s, the gate opens and stays open. See "Gates and their wall panels" |
 | Tab | the item box (the game's B button): a tap (let go within 0.25 s) steps to the next item carried, in the store's order (every grenade type, the Sentry and the Roller, the Medkit, the 60-point Medkit, the OrgSen, the Hat), round to the first; held 0.25 s, the item list opens round the box and the game pauses until Tab is let go: W or D (or the wheel up) the next item, S or A (or the wheel down) the previous, a step at once and another every 0.25 s while held; nothing else reaches the character meanwhile (movement, look, fire, G, the 1-4 keys). The item scrolled to stays. With a Medkit selected, G heals ("No need to heal" at full health). See **The item box and the item list** |
 | I | in a mission, the MISSION OBJECTIVES menu (the game's BACK; the pad's Back too): the mission's objectives, " (completed)" or " (failed)" after each as its flags say; the game's clock stops under it. I again, Enter or Space (the pad's A or B) close it; while it's up no key or mouse press reaches the game (the closing one included). See [campaign.md](campaign.md) |
@@ -77,7 +77,10 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     0.2 rad, so each settles as it would. A crate lands on its base; the Garo fruit (modelled
     on its point) and the cards (on their edges) fall over onto their sides.
   * They're inventory-objects as on a map, so medkits and fruit work as in "Health pickups",
-    and everything is loose (kicked, thrown by blasts, tumbling).
+    and everything is loose (kicked, thrown by blasts, tumbling). The ammo boxes, grenade packs
+    and the OrgSen are taken as on a map too ([pickups.md](pickups.md)), and a taken pickup is
+    gone for good: **Home** puts back every one taken (the grid's and the object tool's), where
+    it was (`BF_TEST_RESET_PICKUPS=<s>`; [testtools.md](testtools.md), "Putting pickups back").
 * **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Gas,
   Sonic, Energy, Light, Sentry, Roller (the game's store order, #281). m09_a is
   loaded for the Light (only in m09_a/b/c/x). Tab steps through them. See **Grenades**.
@@ -426,6 +429,13 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
     stopgap until zones carry the reserve over (#231), as with none no gun could reload there.
     A zone whose placements carry any ammo keeps the carried-only rule.
   * The test map's NPCs reload from a bottomless reserve of their own.
+  * **The reserve grows by walking over the ammo boxes** (#18, [pickups.md](pickups.md), "Ammo
+    boxes"): a box's `pickup-amount` into the stack of its ammo-type up to the stack-limit, the
+    panel's "clip / reserve" following in the same moment (take01: 38 / 100 -> 38 / 125), the
+    line "25x Particle Ammo" on the HUD, or "Particle Ammo (full)" in red with the box staying
+    when the stack is at its limit (the player's own character only: an AI squadmate on a full
+    box shows nothing). `BF_TEST_AMMO=<ammo-type or ammo name>:<n>[,...]` sets the reserves at
+    the start.
 * **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show
   "N Regen" (string `h_e246de1d`) and never reload. Their clip gains a round every ammo-regen
   seconds while it isn't full and the gun's own cooldown is out, held or stowed (FUN_0022ebc0),
@@ -569,8 +579,11 @@ Appendix A lists every campaign zone).
   stack of every grenade type, the deathmatch maps 3 Frags (the sdm loadout is #144's).
 * **The OrgSen and the Hat** are items of the box (their type's h_1852ab6c lists them; "Alien
   Technology Acquired!" is carried but not listed), with their own icons and names, the count
-  shown from 2 as for every item (the game's box: #196 take26). What they do is #21's (the
-  OrgSen) and the Hat's own: G with one selected does nothing yet. A character whose skill
+  shown from 2 as for every item (the game's box: #196 take26). The OrgSen's use is #21's
+  (G puts it on with the `bring2face` clip and, at its attach_item event, vision mode 1: the
+  thermal view, the lock through walls; G again takes it off at once: [pickups.md](pickups.md),
+  "OrgSen"; the squad picks one up on sdm_e13); the Hat's is its own: G with it selected does
+  nothing yet. A character whose skill
   refuses its use type can't use it (the skill's +0x1c: Brutus's FUN_0013c160 refuses
   IOU_ATTACH_TO_FACE, the OrgSen, and IOU_ATTACH_TO_EQUIP_SLOT, the Hat): his box shows it red
   with the icon grey, and G says "Cannot use" (h_e784869e), as #196 take26 shows.
@@ -594,7 +607,7 @@ Appendix A lists every campaign zone).
   own placements carry (m03_b, m03_c, m08_b: no item, and the reserve's full stacks, the stopgap
   above); the order of the joins and the mode's
   clear on a zone whose squad is placed in the world (m07_a, m09_a: the demo takes the
-  placements', a live read would settle it); the OrgSen's and the Hat's uses; a Hat picked up (only medkits, fruit and DNA canisters are taken).
+  placements', a live read would settle it); the Hat's use (the OrgSen's is #21's, pickups.md); a Hat picked up (nothing takes it: the pickups taken are medkits, fruit, DNA canisters, ammo, the grenade packs and the OrgSen).
 * **The switch sounds in a cutscene** (#282): the controlled character's scripted toggle makes
   them, as the demo plays them (e40's Tex at 7.7 s, e34's at 17.98 s). From the code: the squad's
   HUD entries, with their weapon panels, update every frame of play unless a modal menu is open
@@ -716,6 +729,14 @@ widget (FUN_000ab8d0, its update 0xabc60 / FUN_000ac220) and the inventory front
   0xad0c0 don't test the slot's hidden flag): with Sonic selected and Energy and Roller NEW, the
   hidden up 2's Roller takes Roller's NEW and the left 1 that shows Roller has no label (code
   only: no take has a short list with NEW stacks).
+  * **A pickup and NEW** (#19, #21): the flag is set only by the stack's constructors (FUN_0014ac90
+    and its twin 0x14b540; nothing sets it when a stack is typed or emptied again), so a pickup
+    needs no NEW of its own. A stack nobody has shown yet, a Gas stack of 0 that a pack fills or
+    the OrgSen's, still has it: the first frame the box shows it "NEW" blinks beside its count
+    (take04: "NEW Gas 3", then 6 and "NEW 9" as the packs come in a half second apart, the
+    label's 2 s on from the first; take09: "NEW OrgSen"). A stack that ran out and is filled again
+    shows none. A pickup doesn't move the selection but into an empty box: with nothing selected
+    the box takes the first stack, the pack's (take04: "Gas" selected by the first pack).
 * **The messages**: the item ones show for 3 s (FUN_000bcfe0(entry, 3.0)), restarted by each
   press, on the message line (above): "Inventory is empty", "No Medkits", "No need to heal",
   "Cannot use", "Not ready". take26's "Cannot use" stays on through presses 3 s apart (on 6.2

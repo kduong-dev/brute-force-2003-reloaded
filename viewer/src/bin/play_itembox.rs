@@ -187,7 +187,7 @@ pub fn plugin(app: &mut App) {
             item_input.after(read_input).after(super::testtools::gate_input),
             item_controls.after(item_input).after(squad_control).before(update_player),
             settle.after(update_player).after(super::pickups::PickupSystems).after(super::grenade::GrenadeSystems)
-                .after(super::inventory::use_other),
+                .after(super::inventory::use_other).after(super::item_pickups::take_items),
             widget.after(settle).before(play_sounds),
             draw.after(widget),
         ).run_if(in_state(AppState::Playing)));

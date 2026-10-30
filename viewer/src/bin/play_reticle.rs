@@ -26,7 +26,11 @@
 //!       skill's: 0.4 of the screen each way at s = 1 (its +0xc4 and +0x100, play_skills.rs
 //!       `lock_shares`, `lock_box`), 128 x 96 units;
 //!     - a ray from the camera to it (SIGHT_RANGE m) meets that character first, or nothing
-//!       (FUN_000becf0);
+//!       (FUN_000becf0). **With the OrgSen on** (vision mode 1, play_vision.rs) and a gun in hand
+//!       whose bullet passes through what it hits (the Rail RVR, the Rail CLVR, the Saryl-45:
+//!       h_11caf57b), a character within SEE_THROUGH m of the controlled one needs no ray: the lock
+//!       sees through walls (FUN_000bf5a0 sets the selector's +0x50, FUN_000bfeb0 is the shortcut
+//!       FUN_000bf7a0 takes in the ray's place, 0xbfbf3);
 //!     - it's visible enough: its visibility (its skill's +0xe4, `skills::visibility`) at least
 //!       LOCK_VISIBILITY, 0.1 (FUN_000bf6d0): a stealthed Hawk on another team isn't locked,
 //!       nor under the centre (step 2).
@@ -50,7 +54,9 @@
 //!     - anything else, or nothing: blue.
 //!  3. **The tint** (0xc6380, FUN_000bbd70): red with a lock, else as the centre ray said; a
 //!     step on the frame it changes (the takes: no fade).
-//!  4. **The aim** (0xc5b90 -> FUN_0011e9d0, char+0x804): with a lock, the point the controlled
+//!  4. **The aim** (0xc5b90 -> FUN_0011e9d0, char+0x804): with the OrgSen on and a target, its
+//!     point whatever the world between (0xc5720 copies the selection's point into the aim and
+//!     returns before its world ray: `orgsen` in `update_reticle`); else, with a lock, the point the controlled
 //!     character's guns aim at (`Reticle::aim`, play.rs `Player::lock_aim`; FUN_0011aa20 gives it
 //!     to each gun, FUN_0022e5b0 aims the muzzle at it): the centre ray's point when the ray meets
 //!     the locked body (0xc59fe), else the lock's aim point (0xc5330 -> 0xc5170: the selection's).
@@ -134,6 +140,10 @@ const COST_MAX: f32 = 309.0;
 const DEPTH_MAX: f32 = 206.0;
 /// The lock's sight ray (m): FUN_000bf7a0 hands FUN_000becf0 256.0 (0x43800000).
 const SIGHT_RANGE: f32 = 256.0;
+/// How near (m) a character must be to the controlled one to be locked without the sight ray while
+/// the OrgSen is on and the gun's bullet passes through (FUN_000bfeb0: the squared distance between
+/// their positions under 5625.0 at 0xbfeee, 75 squared).
+const SEE_THROUGH: f32 = 75.0;
 /// The centre ray's length with no gun in hand (m): 0xc57d9 (256.0, 0x43800000).
 const NO_GUN_RANGE: f32 = 256.0;
 /// FUN_00232520: a burst of pellets (no delay between its shots, more than one: the Bower 20's
@@ -383,6 +393,13 @@ fn box_score(at: Vec2, centre: Vec2, half: Vec2) -> (f32, f32) {
     (score, wide)
 }
 
+/// FUN_000bfeb0: whether a character `distance` m from the controlled one needs no sight ray:
+/// the selector's flag (`see_through`: the OrgSen on and the gun's bullet passing through,
+/// FUN_000bf5a0) and its squared distance under 5625.0, 75 m.
+fn sees_through(see_through: bool, distance: f32) -> bool {
+    see_through && distance * distance < SEE_THROUGH * SEE_THROUGH
+}
+
 /// FUN_000becf0 from FUN_000bf7a0: whether the ray from the camera through `point`
 /// (SIGHT_RANGE m) meets `target`'s body before anything else, or meets nothing. The world or
 /// another body first hides it.
@@ -431,7 +448,7 @@ fn name(u: &Player) -> String {
 /// The selection's lock this frame and its aim point (see the module's notes, step 1); with
 /// `notes` (BF_RETICLE_LOG) a note on each hostile for the log, made only then.
 #[allow(clippy::too_many_arguments)]
-fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option<LockGun>, options: &ReticuleOptions,
+fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option<LockGun>, see_through: bool, options: &ReticuleOptions,
           kept: Option<Who>, mut notes: Option<&mut Vec<String>>) -> Option<(Who, Vec3)> {
     // (FUN_000bf7a0 needs a gun in hand)
     let LockGun { lock_box, reach, muzzle } = gun?;
@@ -472,7 +489,9 @@ fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option
             note(&|| format!("{}: outside, or not first", place()));
             continue;
         }
-        if !in_sight(view.at, aim, u.who(), squad) {
+        // (FUN_000bfeb0: with the OrgSen on and a pass-through gun, a character within SEE_THROUGH m
+        // of the controlled one is seen whatever stands between)
+        if !sees_through(see_through, player.position.distance(u.position)) && !in_sight(view.at, aim, u.who(), squad) {
             note(&|| format!("{}: hidden", place()));
             continue;
         }
@@ -526,7 +545,10 @@ pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<G
     // (BF_RETICLE_LOG: the notes on each hostile, made only for the log)
     let log = std::env::var("BF_RETICLE_LOG").ok();
     let mut notes = log.as_ref().map(|_| vec![]);
-    let selected = select(&player, &squad, &view, centre, gun, &options, reticle.kept, notes.as_mut());
+    // FUN_000bf5a0: the OrgSen on (vision mode 1) and the gun in hand's bullet passing through
+    let orgsen = vision::mode(&player) == 1;
+    let see_through = orgsen && held.is_some_and(|w| w.def.shots.pass_through);
+    let selected = select(&player, &squad, &view, centre, gun, see_through, &options, reticle.kept, notes.as_mut());
     let chosen = selected.map(|s| s.0);
     // the centre ray (0xc5720), cut at the gun's range in her hands (FUN_002324c0) or 256 m with
     // none
@@ -578,7 +600,8 @@ pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<G
         Some((t, Under::Body(i))) if reticle.lock == Some(squad.0[i].who()) => Some(view.at + ray * t),
         _ => None,
     };
-    reticle.aim = on_lock.or(selected.map(|s| s.1));
+    // (0xc5720 in vision mode 1 with a target: the selection's point, no world ray)
+    reticle.aim = if orgsen { selected.map(|s| s.1).or(on_lock) } else { on_lock.or(selected.map(|s| s.1)) };
     // BF_RETICLE_LOG: on a change of the tint, the lock or what the centre ray is on (2: every
     // frame)
     let (Some(log), Some(notes)) = (log, notes) else { return };
@@ -667,5 +690,22 @@ fn test_radar(mut map: ResMut<MapLevel>) {
         for o in level.objects.iter().filter(|o| YELLOW_CONTACTS.contains(&o.radar_contact)) {
             println!("radar-contact {}: h_{:08x} (type h_{:08x}) at {:.2}", o.radar_contact, o.name, o.kind, o.transform.w_axis.truncate());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FUN_000bfeb0: with the OrgSen on and a pass-through gun, a character is seen through the
+    /// world when its squared distance from the controlled one is under 5625 (75 m, not 75.0
+    /// itself); without either condition the sight ray decides.
+    #[test]
+    fn the_orgsen_sees_through_within_75_m() {
+        assert!(sees_through(true, 10.0));
+        assert!(sees_through(true, 74.9));
+        assert!(!sees_through(true, 75.0));
+        assert!(!sees_through(true, 120.0));
+        assert!(!sees_through(false, 10.0));
     }
 }

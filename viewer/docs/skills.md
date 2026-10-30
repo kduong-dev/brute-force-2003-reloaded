@@ -495,6 +495,12 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
     and 20.17-20.80 s). Death ends the skill in its frame, so the view fades back from red there
     (take30). A hand-over to or from a character with Vengar on swaps the view without a fade:
     the demo's choice, not traced.
+* **The same view machinery is the OrgSen's, vision mode 1** (#21, [pickups.md](pickups.md),
+  "OrgSen"; `vision::mode` gives the view its mode, 2 for this skill's, 1 for an OrgSen on the
+  face): the renderer's branch for mode 1 draws the same lights and the keyed terrain, its own
+  world pass in place of the blur (a thermal palette), the heat camera's figures for every
+  character, the dead too, in one yellow-to-orange look, and scan lines over both cameras, with
+  no red fade at its switches (`VengarPass::world` 2, `scan`; `THERMAL`, `CARRIED`, `SCAN`).
 * Not in the demo: his `spirit` overlay (never played from the button, #120); the ALE effects
   `vengar` and `vengar_heal` (who plays them for Brutus wasn't found, and the takes show neither);
   the health bar's brighten while he heals; his kind-0x100 material controllers.

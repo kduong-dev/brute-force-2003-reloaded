@@ -926,7 +926,13 @@ fn walk_over(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResM
             }
             let name = game.0.strings.get(&item.message).cloned().filter(|_| item.message != 0).unwrap_or_else(|| item.label.clone());
             let added = reserve.add(ammo_type, gun.clip);
-            feed.add(name.clone(), added);
+            // (nothing fitting shows "(full)" to the player who controls the character alone,
+            // FUN_0011c6a0 with AL clear at 0x11c40c, shared with the item path: an AI squadmate
+            // on a full stack shows nothing, take08 of #18; rounds taken show on the HUD whoever
+            // takes them)
+            if added > 0 || k == 0 {
+                feed.add(name.clone(), added);
+            }
             if added == 0 {
                 continue;
             }
