@@ -158,8 +158,11 @@ a click is any left click off the panel, and F and its teleports do nothing.
   * a weapon lies on its side, a lying gun with a full clip as the rack's (#17): the prompt
     offers it, X held swaps it in (the gun in hand dropped at the feet), and it's gone; walked
     over, a squad member using its ammo type takes its rounds, as from any lying gun;
-  * a grenade lies as modelled; walking over it (within 1 m) adds one of its type up to its
-    stack-limit ("Took Sentry"), else "<type>: full" (the test map starts with full stacks);
+  * a grenade lies as modelled; walking over it adds one of its type up to its stack-limit
+    ("Took Sentry"), else "<type>: full" (the test map starts with full stacks). It's in reach as
+    any pickup is, by the game's walk-over (FUN_0011c170, `powerups::in_reach`: 1.34 m across,
+    1.8 m below to 1.0 m above the character's position). (It was 1 m across and 1.5 m up or
+    down, copied from the medkits' old reach, until #18's review had the pickups' reach unified.)
   * **breakable scenery**: the radiation barrel (h_e04e5a0e), the missile rack (h_fbdcd828)
     and the supply crate (h_09a6856d), sdm_e34's kinds (see "Interactive scenery"), standing
     as modelled. One put down joins `play_scenery.rs`'s list as a map's does (its

@@ -603,7 +603,9 @@ and checked against that folder's take09 (taking it) and take10 (using it), sdm_
   red fade is Vengar's alone). The palette, the figures' ramp and the scan lines' profile are
   **fits** to take10 (the materials are made of their classes' defaults and are in no archive,
   FUN_000a42d0; the numbers are at `vengar.wgsl`'s `thermal` and `scan_lines` and
-  `play_vengar.rs`'s `THERMAL`, `CARRIED` and `SCAN`, with the measurements): against take10's
+  `play_vengar.rs`'s `THERMAL`, `CARRIED` and `SCAN`, with the measurements). **The halo is not
+  one of them**: mode 1 draws Vengar's (`play_vengar.rs`'s `GLOW`, 0.07 a tap, a fit to #122
+  take09's Brutus), and its size and strength were never measured on take10. Against take10's
   terrain (the cycle averaged) the demo's mean is (37, 15, 70) for (36, 14, 73), its 10th / 50th /
   90th percentiles blue 50 / 66 / 94 for 43 / 72 / 104. `BF_THERMAL_RAW=1` shows the vision-lit
   picture the palette is fitted on. The figures are drawn against the world's depth, so

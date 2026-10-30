@@ -126,6 +126,9 @@ const VISION_LIGHT: f32 = 0.35;
 const HEAT_LAYER: usize = 1;
 /// The halo's weight for each of its 24 taps (vengar.wgsl): a fit to take09 (Brutus's edge at 8.0
 /// s: the halo adds about (69, 47, 0) a step out and (27, 20, 0) two steps out, nothing at three).
+/// The OrgSen's view (vision mode 1, #21) draws the same halo with the same weight (`view_state`
+/// gives `GLOW` to the heat camera in any mode): it is Vengar's, **not measured on take10**
+/// (the OrgSen's footage), so the thermal figures' glow in mode 1 is an unchecked carry-over.
 const GLOW: f32 = 0.07;
 /// A heat figure's look (heat.wgsl): the colour at the middle of its ramp and at its far end
 /// (sRGB 0-1), the curve's power, and where the ramp starts and ends (distances of the texture
@@ -145,8 +148,9 @@ const DIM: Look = ([0.51, 0.29, 0.01], [0.33, 0.07, 0.0], 1.0, [0.2, 0.6]);
 /// 195 at 0.32, 208 at 0.2, 217 at 0.08, 227 at the middle): `power` 1.15, over the whole half
 /// range (0 to 0.5). The colours are the take's (the mode 1 character material's class defaults
 /// aren't in the data), no scroll: take10's figures don't pulse (their mean colour drifts a few
-/// percent over seconds, not by the Vengar figures' 1.0 s swing).
-const THERMAL: Look = ([0.94, 0.89, 0.25], [0.74, 0.27, 0.12], 1.15, [0.0, 0.5]);
+/// percent over seconds, not by the Vengar figures' 1.0 s swing). Their halo is not fitted at all:
+/// mode 1 reuses Vengar's `GLOW` (a fit to take09, unmeasured on take10).
+const THERMAL: Look =([0.94, 0.89, 0.25], [0.74, 0.27, 0.12], 1.15, [0.0, 0.5]);
 /// What the mode 1 characters carry (h_e4b5147f, the vision object's second material, FUN_000e7320):
 /// take10's gun in Tex's hand is a dithered dark purple and red, not the body's yellow. The colours
 /// are those, a fit (the dither isn't drawn).

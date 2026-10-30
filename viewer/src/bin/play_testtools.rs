@@ -45,8 +45,9 @@
 //!    - A weapon lies on its side, a lying gun with a full clip as the rack's (#17,
 //!      play_weapon_pickups.rs): the prompt offers it, X held swaps it in, and it's gone; walked
 //!      over, a squad member takes its rounds as from any lying gun.
-//!    - A grenade lies as modelled; walking over it adds one of its type, up to its stack-limit
-//!      (the test map starts with a full stack, so only once some are used).
+//!    - A grenade lies as modelled; walking over it (the walk-over's reach, `powerups::in_reach`)
+//!      adds one of its type, up to its stack-limit (the test map starts with a full stack, so
+//!      only once some are used).
 //!    - Breakable scenery (BREAKABLES: the radiation barrel, the missile rack, the supply crate)
 //!      joins play_scenery.rs's list as a map's does (`LateBreakable`): shots, blasts and other
 //!      objects' damage areas break it, it explodes and chains. With no collision on the flat
@@ -104,10 +105,6 @@ pub(super) const TURN_STEP: f32 = std::f32::consts::PI / 12.0;
 /// on dark and light ground alike.
 pub(super) const GHOST_ALPHA: f32 = 0.6;
 pub(super) const GHOST_GLOW: LinearRgba = LinearRgba::rgb(0.05, 0.15, 0.2);
-/// How near (m, across; up or down) the feet must come to take a grenade off the ground:
-/// play_pickups.rs's REACH / REACH_UP.
-const GRENADE_REACH: f32 = 1.0;
-const GRENADE_REACH_UP: f32 = 1.5;
 /// How many lines of the object list show at once.
 pub(super) const LIST_LINES: usize = 9;
 /// How long a tool's message shows (s): the test map's.
@@ -1463,15 +1460,16 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
 }
 
 /// Walking over a grenade put on the ground takes it: one more of its type, up to the type's
-/// stack-limit ("Took <type>"; full, it stays and "<type>: full" shows once).
+/// stack-limit ("Took <type>"; full, it stays and "<type>: full" shows once). It is within reach
+/// as any pickup is, by the game's walk-over (FUN_0011c170: `powerups::in_reach` of the
+/// character's position, 1.34 m across and -1.8..+1.0 m up).
 fn take_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Option<Res<grenade::GrenadeKits>>, mut status: ResMut<UsePanel>,
                  lying: Query<(Entity, &GroundGrenade, &Transform)>, mut told: Local<Option<Entity>>) {
     let Some(kits) = kits else { return };
     if player.dead {
         return;
     }
-    let feet = player.position + Vec3::Y * GROUND;
-    let near = lying.iter().find(|(_, _, t)| t.translation.xz().distance(feet.xz()) < GRENADE_REACH && (t.translation.y - feet.y).abs() < GRENADE_REACH_UP);
+    let near = lying.iter().find(|(_, _, t)| super::powerups::in_reach(player.position, t.translation));
     let Some((e, g, _)) = near else {
         *told = None;
         return;
