@@ -1988,10 +1988,36 @@ its violet hit at each) and stops at the first Shrike (16.2 on an upper arm, the
 "Penetrates armour" is its damage-type 6 (PARTICLE) against each target type's factor (generic,
 `play_damage.rs`); "some types of walls" are the objects the code lets it through (a placed
 object, a gate, a crate, a broken object's remains: the ray result's kind 2), never the terrain,
-which ends it. Blocked on footage: shot I1 (a bolt through a crate or gate leaf into a frozen
-enemy, and at a frozen enemy with another behind), the bolt's and its hit's look
-(paralyzer_bul_master, paralyzer_hit_master with light_hit_energy), its rate, reload and damage
-against the game, and which of a level's walls it goes through (a take at a level wall).
+which ends it. Against #287 take22 (#56), at its spot on m09_a (`-- --test BF_MAP=m09_a
+BF_CHARACTER=0 BF_NO_SQUAD=1 BF_TEST_WEAPON="Ion Beamer" BF_TEST_GOTO=-181.8,-221.4,-167.0,-221.3
+BF_TEST_GO_AT=100 BF_TEST_FREECAM="0.3,-181.8,76.6,-219.78,0,-89.9" BF_TEST_TELEPORT=0.5
+BF_TEST_FREECAM_OFF=0.7 BF_TEST_NPC="0.9,shrike soldier@m09_a,enemy,frozen,-167.5,-221.3,66"
+BF_TEST_NPC_HP=1.5,1,300 BF_TEST_INSTANT_KILL=0 BF_CAMERA_PITCH=-0.19
+BF_TEST_TRIGGER=3.0-3.25,5.5-5.75,8.0-8.25 BF_SHOT_LOG=1 BF_COMBAT_LOG=1 BF_CAPTURE_FPS=60`; the
+Shrike spawned from 66 m up, as at 61-62 the floor search under it misses the bench and finds one
+at -1):
+* The first bolt passes the bench's spike (breakable 183, take22's 7f1f6600) 6.1 m out on its
+  first sweep, 0.1 s after the shot (n1 5 -> 4), and strikes the Shrike 12.8 m out on its second,
+  0.2 s: take22's HP readings, the spike's then the Shrike's 0.09 s apart on every shot (FUN_00225440's
+  sweep each third game frame, 10 m a sweep at 100 m/s). One roll serves both: the demo's first,
+  14.44, is take22's first, the Shrike's 20.2 its 20.21 (x 1.4); the next 15.04 and 14.87 give
+  21.1 and 20.8 (take22: 16.59 -> 23.24, 16.34 x 5 -> 114.35 on the head, 16.74 -> 23.44, 14.57 ->
+  20.39). Nothing is dealt less for the pass (no attenuation on that path, take22).
+* The look (frames 192-221 at 60 fps; take22 f004-f034 of 3.95 s on): a small violet flash on
+  the spike at +0.1 s, then a blue-white glow at the Shrike from +0.2 s with fine white arcs
+  forking off it, ~0.3 s (take22's bright blue-white pixels by the reticle: on at 4.20-4.30 s, off
+  at 4.567; the demo's over frames 204-222). No streak in flight in either. The demo's glow is
+  larger and softer (its lit pixels peak ~1.5 times take22's).
+* The fire sound h_1733d6e2 with each shot (`BF_SOUND_LOG`); its HUD icon h_e9e20036 (128 x 64)
+  and dashed-circle crosshair h_17e53364 as take22's.
+* Open: the demo's spike breaks on the first bolt (breakable 183's own hit points), where take22's
+  trainer raised the spike's to 1000, so the later bolts find it gone (no hook sets an object's
+  hit points). Not filmed (blocked on #56's shot list: take23's
+  hit log was lost and is being re-recorded): where the bolt ends (at the character, n2 0, or on
+  the rock 1.5 m behind), a second character in line, a level wall or gate leaf, the terrain;
+  held fire, the reload, the dry fire and the switch (the data's 2 a second through FUN_0022f0e0,
+  the generic reload); the flight voices h_e297c1ef / h_f099a0c3 (the bolt's in-flight voice
+  isn't played, answers-batch1 §3).
 
 **MNR-7 Bio** (#64; h_e671e0f8, light: Hawk, `BF_CHARACTER=2 BF_TEST_WEAPON="MNR-7 Bio"
 BF_CAMERA_PITCH=-0.16 BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,10"
