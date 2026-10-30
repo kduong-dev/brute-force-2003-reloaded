@@ -1248,37 +1248,76 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
       FUN_002df730). The demo repeats a flagged curve from 0 over its last key's time
       (`Curve::at`) and runs straight between keys. rgun_perp_s's life (48: back and forth) and
       tracer_snipe's (16: repeat) come within a few hundredths of a second either way.
+    * **The other beams a game frame at a time** (#287; ale_fx.rs, the beam ticks in `emit`).
+      The beams on the demo's count (the Rails' ribbon rgun_beam, the MK's, Kman's and Minigun's
+      tracer, the L-Shots' trail) carried their rate's fraction over each render frame, so at 60
+      frames a second the ribbon's first render frame held 0.9 of a point, and its first point
+      left a frame later, 7 m out (the tester's 60 fps side capture: the ribbon ~0.12 s late); at
+      30 it left the muzzle. They now step a game frame at a time, as FUN_00065800 runs, each
+      frame's batch read at its start: at any render rate the shot's first game frame puts the
+      ribbon's first point at the muzzle and the next two a game frame out along its emitter's
+      move (`BF_ALE_LOG`: "rgun_beam pair 0: t 0.000 ... emits 1", then "t 0.033 ... emits 2"),
+      as take05 f190 shows it from the muzzle. At 30 frames a second nothing changes (the cliff
+      and the L-Shot-75 recipes, pixel for pixel against the build before); at 60 the L-Shot's
+      trail and the MK's tracer look as before (the trail's smoke cards a little moved, the MK
+      39 pixels in 160 frames).
     * Checked from the side, take05's staging on e34 (`-- --test BF_MAP=e34 BF_CHARACTER=2
       BF_NO_SQUAD=1 BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05 BF_TEST_WEAPON="Rail RVR;Foley
       356 Tact" BF_TEST_GOTO=-40,22,-50,22 BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.14
       BF_TEST_NPC="0.3,shrike heavy@e34,enemy,frozen,-50,22" BF_TEST_NPC_HP=1.0,1,3000
       BF_TEST_INSTANT_KILL=0 BF_TEST_FREECAM=1.0,-44.4,30.6,6.5,180,-5 BF_TEST_TRIGGER=2.0-2.08
-      BF_CAPTURE_FPS=60 BF_ALE_LOG=1`, frames 128-144): "rgun_perp_s pair 0: t 0.033 ... emits 16"
-      each game frame to 0.233 s; the arcs from a few metres out to past the Heavy, red turning
-      blue; the ring ticks only past the Heavy, where the view is 25-30 degrees off square. Before,
-      the rings drew ellipses all along the beam and the arcs came from the muzzle. From behind at
-      take06's spot (the recipe above, frames 64-70 at 30 fps) the first frame's rings run out
-      along the ray from the gun, as take06 f019's few rings from the gun to the reticle.
+      BF_CAPTURE_FPS=60 BF_ALE_LOG=1`, frames 129-147): in the shot's first game frame the blue
+      ribbon from the muzzle and the red arcs from a few metres out to past the Heavy, as take05
+      f190; "rgun_perp_s pair 0: t 0.033 ... emits 16" each game frame to 0.233 s; the arcs turn
+      blue and run out along the ray. From behind at take06's spot (`-- --test BF_MAP=e40
+      BF_CHARACTER=2 BF_TEST_WEAPON="Rail RVR;Foley 356 Tact" BF_TEST_GOTO=-16.2,152.68,-16.69,152.58
+      BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.05 BF_TEST_TRIGGER=2.0-2.08`, frames 64-78 at 30 fps;
+      with `BF_TEST_FREECAM=1.5,-15.15,28.16,153.33,79.6,-3.2` the camera stands where take06's
+      does, 2.2 m behind the muzzle, 0.6 m left of it and 0.5 m above, its picture's muzzle at the
+      lower right) the first game frame's rings run out along the ray from the gun: five of 20-45
+      px (1280 x 720) 2-8 m out, as take06 f168's four of 15-60 px.
   * Not matched (#287, open):
-    * **From behind, a bulb of rings remains** round the beam's start (#67 take01's gate, take06's
-      cliff), smaller than before. The camera and the stance differ there: in #67 take01 f023 the
-      game's camera sits close behind Hawk, her head (115 px across) between it and the gun at her
-      right shoulder, so it hides the beam's first metres and only small far rings show above it;
-      the demo's camera is farther back with the gun near the line of sight (the muzzle 20 px right
-      of and 55 px below the reticle at e40, take06's 135 and 178), so the near rings show whole,
-      concentric round the reticle. That's the follow camera's and the stance's (camera.md), not the
-      beam's.
-    * From the side the beam lasts longer: take05's arcs are gone on its fourth game frame (f017
-      of 3.0 s on: 4658, 4606 and 3415 lit pixels, then 448), where the demo's fade over ~0.25 s,
-      their data life (InitLifeSpan 0.165-0.213 s, alpha 0.94 from 14 to 82% of it). take05 is the
-      AI Hawk's shot; take06, the player's, shows the beam five game frames or more from behind.
-      What cuts take05's off isn't found (not rgun-mkill, which sweeps out too slowly by its curve,
-      0.31 m behind the muzzle to 8.7 m out over 0.04-0.46 s).
+    * **Too many and too bright rings after the first game frame.** At take06's camera the demo's
+      rings make a tube of ~10 large white-blue rings from the second game frame on (frames 66-69
+      of the free-camera run), where take06 f170-f175 shows faint ring outlines behind the red
+      arcs; from the side its rings show past the Heavy, where take05 shows none (the spec's
+      erratum, §2: ~41 px/m there, the core 0.22-0.24 m, the ring ticks 0.3-0.6 m). The count
+      (16 a game frame), the cube's strew, the sizes (0.165-1.0 m across) and the lives
+      (InitLifeSpan 0.05-0.17 s, back and forth) are the data's through FUN_00065800 and 0x64e30.
+      What the demo draws differently: the added rings' faint colour (0.27, 0.35, 0.72) is summed
+      as linear light (#104 / #165's blend: grenades.md "The look and the additive blend"),
+      brighter than the console's sum in stored values on a dark ground; and the light of the
+      shot, whose luminance rise is 1.9 times take05's, over 8 frames against its 6 (the
+      tester's measure). Past the Heavy the take's ray ends sooner: its hit log has the 40 HP
+      object 7f1daa00 right after the Heavy on every shot, twice on the first (n1 1 spent: the
+      ray's end, its far kill plane), most likely the Heavy's gun (a weapon's `<combat-target
+      hitpoints="40">`); the demo's rays don't meet a held gun (not in scope), so its beam runs on
+      to the terrain or the full 90 m, and its rings past the Heavy, 25-40 degrees off square,
+      stay whole.
+    * **The arcs stay red longer.** In both takes the side arcs are red only in the shot's first
+      one or two game frames (take05 f190, take06 f170-f172) and blue after along the whole beam:
+      from the side gone after 3 game frames (take05 f196), from behind after ~8 (take06 f185,
+      blue arcs at the far end to the last). The demo adds a red arc each game frame for 5 (the
+      side emitter's 45.6 a second until 0.19 s, as FUN_00065800 counts it), so red shows for ~5
+      game frames, and from the side the beam lasts ~8 where take05's lasts 3. What stops the side
+      emitter's later arcs, or turns them blue at once, isn't found: FUN_00065800, the particle
+      update 0x2a17b0 (each particle aged once a game frame), its draw FUN_002a1a50, the effect
+      object's tick 0x21b7a0 and its slot update FUN_0021a850 (each node updated once a game
+      frame, through the ALE manager's 0x2a5460) were read for it, and rgun-mkill sweeps out too
+      slowly by its curve (0.31 m behind the muzzle to 8.7 m out over 0.04-0.46 s). A code
+      question, or a live count of the side emitter's spawns (0x64e30) in a Rail shot.
+    * **From behind in the demo's own camera, a bulb of rings** round the beam's start (#67
+      take01's gate, take06's cliff): the gun sits behind Hawk's head (the muzzle 20 px right of
+      and 55 px below the reticle at e40, take06's 135 and 178), so the beam runs down the line
+      of sight, its rings nest round the reticle and its arcs, seen end-on, vanish. That's the
+      follow camera's and the stance's (camera.md), not the beam's: at take06's camera (above)
+      the beam runs from the gun at the lower right to the reticle, as the take's.
     * A white glow at a Rail's hit on a body (light_hit_rail's point light, 0.68-4.2 m, 2.83 m back
-      along the shot, with wmat_fleshit_rail's white flares) where take05 shows the Heavy's green
-      splash; and at a wall from behind, the small far rings and railhit_s's early slow flares
-      (0.95 s lives, 0.08-2 m/s for the first 0.08 s) pile into a white ring at the hit for
-      ~0.2 s, where take01 shows blue sparks.
+      along the shot, with wmat_fleshit_rail's white flares: every flesh row of the world
+      materials, 21 and 23-26, gives the Rail's ammo-type 5 h_15bd992f) where take05 shows the
+      Heavy's green splash only; and at a wall from behind, the small far rings and railhit_s's
+      early slow flares (0.95 s lives, 0.08-2 m/s for the first 0.08 s) pile into a white ring at
+      the hit for ~0.2 s, where take01 shows blue sparks.
     * In the L-Shot's scope the demo draws more rings than take12's three or four, and a smoke
       cloud far denser than its faint haze, along the line to the reticle where take12's gathers
       at the lower right near the gun. No new footage of it: its trail keeps the demo's count

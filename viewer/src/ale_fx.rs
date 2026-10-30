@@ -556,7 +556,8 @@ pub struct Compiled {
     /// the same effects, the Therm Sweeper's trail, explosion and launch dust and the triggers'
     /// effects, and the Rails' beam (GAME_COUNT_BEAMS, #287). Every other
     /// effect keeps the demo's count (a rate's fraction carried over each render frame, an emit
-    /// count's burst at the start) and no LOD, until checked against its own captures.
+    /// count's burst at the start) and no LOD, until checked against its own captures; the other
+    /// beams carry it over each game frame instead, read at the frame's start (#287).
     pub counted: bool,
     /// Its emitters keep their particles in the effect's frame, so they travel with it, except
     /// an emitter under the builtin node (WORLD_NODE_FLAG) whose appearance hangs at the root,
@@ -699,7 +700,8 @@ pub struct AleEffect {
     lod: f32,
     /// per pair: the emitter's time of its last batch (`game_count`)
     last: Vec<f32>,
-    /// the game frames its counted emitters have run (GAME_FRAME)
+    /// the game frames its counted emitters have run (GAME_FRAME), or a beam's on the demo's
+    /// count (stepped a game frame at a time since #287)
     ticks: u32,
 }
 
@@ -1429,6 +1431,15 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 fx.ticks += 1;
                 ticks.push(fx.ticks);
             }
+        } else if compiled.beam {
+            // a beam on the demo's count steps a game frame at a time too (FUN_00065800 runs
+            // once a game frame), each frame read at its start: those starting in this render
+            // frame (the slack keeps the next frame's start, which this frame's end can land a
+            // hair past, for the next)
+            while fx.ticks as f32 * GAME_FRAME < fx.t + dt - 1e-5 {
+                fx.ticks += 1;
+                ticks.push(fx.ticks);
+            }
         }
         let (from, from_turn) = fx.prev.unwrap_or((place.translation, place.rotation));
         let start = fx.t;
@@ -1455,6 +1466,30 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     // other counted effects keep the game frame they were checked with)
                     let (span, ages) = if compiled.beam { (elapsed, elapsed) } else { (GAME_FRAME, 0.0) };
                     batches.push(Batch { n, t, span, from: share(at - GAME_FRAME), to: share(at), age: start - at, born: at, carried: None, ages });
+                }
+            } else if compiled.beam {
+                // the demo's count a game frame at a time, read at the frame's start (#287):
+                // whatever the render rate, the Rails' ribbon (rgun_beam) puts its first point
+                // at the muzzle in the shot's first game frame and the next ones out along the
+                // emitter's first game frame's move, as at 30 frames a second, where at 60 the
+                // first render frame's 0.9 of a point carried over and the ribbon started 7 m
+                // out (#287 take05 f190 has it from the muzzle)
+                for &k in &ticks {
+                    let at = (k - 1) as f32 * GAME_FRAME;
+                    if fx.once && at >= lifespan {
+                        break;
+                    }
+                    let t = at % lifespan;
+                    let rate = em.curve(RATE, sp, t).unwrap_or(0.0).max(0.0);
+                    let initial = em.int(INITIAL).unwrap_or(0).max(0) as usize;
+                    // (no rate and no initial count: one particle when it starts, a gun's tracer)
+                    let mut n = if k == 1 { if initial == 0 && rate == 0.0 { 1 } else { initial } } else { 0 };
+                    fx.acc[i] += rate * GAME_FRAME;
+                    n += fx.acc[i] as usize;
+                    fx.acc[i] = fx.acc[i].fract();
+                    // born at the game frame's start, within this render frame: placed back by
+                    // its age at the render frame's start, as a counted batch is (`carried` None)
+                    batches.push(Batch { n, t, span: GAME_FRAME, from: share(at), to: share(at + GAME_FRAME), age: start - at, born: at, carried: None, ages: 0.0 });
                 }
             } else {
                 if fx.once && fx.t >= lifespan {
