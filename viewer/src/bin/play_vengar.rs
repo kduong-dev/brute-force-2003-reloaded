@@ -150,7 +150,7 @@ const DIM: Look = ([0.51, 0.29, 0.01], [0.33, 0.07, 0.0], 1.0, [0.2, 0.6]);
 /// aren't in the data), no scroll: take10's figures don't pulse (their mean colour drifts a few
 /// percent over seconds, not by the Vengar figures' 1.0 s swing). Their halo is not fitted at all:
 /// mode 1 reuses Vengar's `GLOW` (a fit to take09, unmeasured on take10).
-const THERMAL: Look =([0.94, 0.89, 0.25], [0.74, 0.27, 0.12], 1.15, [0.0, 0.5]);
+const THERMAL: Look = ([0.94, 0.89, 0.25], [0.74, 0.27, 0.12], 1.15, [0.0, 0.5]);
 /// What the mode 1 characters carry (h_e4b5147f, the vision object's second material, FUN_000e7320):
 /// take10's gun in Tex's hand is a dithered dark purple and red, not the body's yellow. The colours
 /// are those, a fit (the dither isn't drawn).
