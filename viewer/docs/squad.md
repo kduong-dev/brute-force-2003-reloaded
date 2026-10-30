@@ -195,8 +195,8 @@ Squad movement and deaths follow the game's own data and the captures:
   mode on `play_brain.rs`'s `Command`; todo/33-squad-commands leads §1-§6, its takes take01-13;
   every function in [code-map.md](code-map.md), "AI"). Each squad member's brain has a command
   mode (brain+0x58, the PCMD_ table 0x3bd210), which picks its personality and so what it does.
-  The Squad Command menu (#319) and its lines (#320) give the orders; `BF_TEST_ORDER` gives them
-  without the menu.
+  The Squad Command menu (#319) gives the orders and says their line (#320, below);
+  `BF_TEST_ORDER` gives them without the menu or its line.
 
   | Order (menu button) | Mode | Personality | Base goal | The demo |
   |---|---|---|---|---|
@@ -257,8 +257,15 @@ Squad movement and deaths follow the game's own data and the captures:
     character keeps its mode while a player controls it, for when control passes on; the one
     left has its allow flags set by that mode again (FUN_00018230's FUN_00018000), so left in
     FOLLOW it holds fire until an event allows it (take02: Tex a3 to a0 at the hand-over to
-    Hawk, Hawk a3 to a0 when left in turn). The line the one left says by its mode, and the
-    answers, are #320's (the demo still says the follow line f415ab02).
+    Hawk, Hawk a3 to a0 when left in turn).
+    **The lines** (#320, chatter.md "Lines of several parts"): the one left, if alive, says by
+    its mode, through the chatter gate as control passes: Cover Me f415ab02 ("I'm right behind
+    you"), Stand Ground 0e69bfe5, or e635ecc6 when the one taken is over 50 m away (the far case
+    above has set it to Stand Ground), Fire At Will 15dc4e2d, and Move To, the other modes, nothing
+    (`hand_over_tag`). In the far case the members it re-ordered answer, joined to that line:
+    those set to Stand Ground e97ce7fd, those sent moving out ed05c0d7 for the first and e97ce7fd
+    for the rest (the far case isn't filmed; #36 take13 and take14's were near). Replay delay 30 s
+    (the blocks'), so tapping back and forth says it once.
   * **Not done.** The game's follow itself (#331 for the squad, #243 for the marines:
     FUN_00020b10's state machine): in FOLLOW the
     takes' squad trails Tex's dash at 12-16 m and stops about 9 m behind him (take04), where the
@@ -280,7 +287,8 @@ Squad movement and deaths follow the game's own data and the captures:
   watch logs. `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
   snapshot had them. The test map's NPCs (`BF_TEST_NPC`) have no brain, so they never post
   EVT_SQUAD_IMA_TARGET: only the level's characters do (a staged NPC enemy is the takes' frozen
-  one in that, whether it fights or not).
+  one in that, whether it fights or not). `BF_TEST_ORDER` says no order line (the menu's, #320:
+  drive that with `BF_TEST_COMMAND` below, whose log `BF_CHATTER_LOG=1` shows the line's parts).
 
   Verified (`BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps; e34 staged as the takes, Tex at
   (-83.39, -82.79): `BF_MAP=e34 BF_TEST_GOTO=-83.39,-82.79,...,27 BF_TEST_NO_HOSTILES=1
@@ -396,6 +404,22 @@ Squad movement and deaths follow the game's own data and the captures:
     once its input lock is let go (inferred). While the menu is open it takes the frame's presses
     from the keys, the mouse and a pad alike (the pad's BACK opens no objectives menu:
     campaign.md).
+  * **The order line** (#320; FUN_000c1630 after FUN_000c1280, `play_chatter.rs` `order_line`,
+    [chatter.md](chatter.md) "Lines of several parts"): for Stand Ground, Fire At Will, Cover Me
+    and Move To (the cursor's accept too), whenever any selected member was handled, whether its
+    mode changed or not (Cover Me to one already in FOLLOW still says it), the controlled
+    character says one line, its parts one after another: the members' names, or "everyone"
+    when he's ordered every other member (two or more), the order's phrase, then each member's
+    answer. The members go in the squad list's slot order (Tex, Flint, Brutus, Hawk), not the order
+    they were selected in; the giver's own selection adds no name or answer. The game's clock is
+    held while the menu fades out, so the first sound comes with the first running frame.
+    Verified against #36 take12 and #33 take03, take05, take06 and take08 (chatter.md): the names
+    (116501dc Flint, f0c93785 Brutus, f5359692 Hawk, fb962749 Tex, 181b6433 a marine), the phrases
+    (Stand Ground e104fe49, Fire At Will f5041bd5, Cover Me 1cdff35c, Move To f8046684), the
+    answer eaf3546f and the parts' starts to within 0.05 s of the sum of the sounds' lengths +
+    0.2 s. After a Fire At Will, the first time a member's follow sets off to its place it says
+    1ecaeb98 ("on my way", 75%, once per order): the game's follow state 9, here the formation's
+    set-off, a stand-in until #331.
   * **The Move To cursor** (HUD+0x44, FUN_000bd860; the game runs meanwhile). Each frame
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
     level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the
@@ -418,7 +442,7 @@ Squad movement and deaths follow the game's own data and the captures:
   * **Not done**: a dead controlled character's press switching at once (0xc809c: the demo's
     death camera hands over by itself); split screen (the small layout 0x3c8fd8, no pause, the
     radar hidden while selecting); the tutorial's gates on the d-pad (FUN_000ba320 ids 11 and 14,
-    #265); the order lines (#320); Medkit's heal (#329); the backdrop's and the texts' fades as
+    #265); Medkit's heal (#329); the backdrop's and the texts' fades as
     the console's sRGB blend (drawn in linear light, a 0.3 s difference); what the cursor's
     input lock (FUN_000be240's FUN_001e7850) and the player state +0xa0 bits 0 and 2 stop while
     it's up: the demo takes the cursor's own keys only (E, Escape, the mouse buttons), WASD and
@@ -434,6 +458,25 @@ Squad movement and deaths follow the game's own data and the captures:
   the selection (the takes' `sel` digits: game slots 0-4, Tex 1, Flint 2, Brutus 3, Hawk 4), the
   menu's opening and closing, each order, the cursor's point (its index, name, type and flags)
   and the accept.
+
+  Verified for the order line and the hand-over's lines (#320; `BF_MUTE=1 BF_BACKGROUND=1
+  BF_TEST_FULL_SQUAD=1 BF_CHATTER_LOG=1 BF_SOUND_LOG=1 BF_SQUAD_MENU_LOG=1`, the test map,
+  captures at 15 fps; chatter.md has the rows and the comparison with the takes' game clocks):
+  take12's `BF_TEST_COMMAND="2:flint:0.4;
+  3:stand;10:brutus:0.4;11:fire;18:hawk:0.4;19:stand;26:hawk:0.4;27:cover"` (and on e34 with
+  `BF_TEST_NO_HOSTILES=1 BF_TEST_GOTO=-83.39,-82.79,-83.39,-82.79,27 BF_TEST_GO_AT=999` and the
+  times 28 s later, past its radio mutes): each order one line, Tex's name call, his phrase and
+  the member's answer, 0.07 s after the order, its parts 0.5-2.5 s apart by their lengths;
+  take03's (`2:hawk:0.4;2.9:brutus;3.5:flint;4.1:brutus;5:stand;11:hawk:0.4;11.9:brutus;
+  12.5:flint;13.5:cover`): Flint and Hawk by name, then "everyone" for all three, the answers in
+  slot order; the cursor's Move To (`2:hawk:0.4;2.5:flint:0.4;3.3:move;5:accept`
+  `BF_TEST_CURSOR_AT=10,45`): both names, f8046684, both answers.
+  The hand-over (`BF_TEST_COMMAND="2:hawk:0.1;6:tex:0.1;10:brutus:0.4;11:stand;17:brutus:0.1;
+  21:tex:0.1"`, take13's): f415ab02 for Tex and Hawk in Cover Me, refused the third time by the
+  replay delay, 0e69bfe5 for Brutus on Stand Ground; the far case (`BF_MAP=e34 BF_SCRIPT=off
+  BF_TEST_NO_HOSTILES=1 BF_TEST_GOTO=-83.39,-82.79,-25,-78,27 BF_TEST_SPRINT=4
+  BF_TEST_ORDER=hawk,guard@2 BF_TEST_SELECT=2,26`): Tex e635ecc6, Brutus ed05c0d7 and Flint
+  e97ce7fd joined.
 
   Verified (`BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps; e34 staged as the takes, Tex at
   (-83.39, -82.79) facing the take's Move To point: `BF_MAP=e34

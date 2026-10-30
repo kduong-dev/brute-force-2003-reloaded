@@ -230,6 +230,14 @@ pub struct Command {
     /// the character's rounds fired (`Player::shots_fired`) when last looked at: a change is a
     /// round fired since (the demo's bookkeeping for play_orders.rs `mate_firing`)
     pub rounds: u32,
+    /// brain+0x3c4 bit 0: the follow's walk line, "on my way" (1ecaeb98), has been said for this
+    /// order. FUN_00021b70, the follow's walk to its place, says it once and sets the bit;
+    /// WINGMAN's mode change and its allow flags (FUN_00018040, FUN_00018000) clear it, and so does
+    /// EVT_LEADER_KILLED (not modelled). The demo starts it set: the game's constructor leaves it
+    /// clear, so a fresh level's first follow walk would say the line too, but every take started
+    /// from a snapshot taken mid-play with the squad already walking and none said it before an
+    /// order (#33 take04: a 40 m follow walk, no line); `start_walk`.
+    pub walk_said: bool,
 }
 
 impl Default for Command {
@@ -240,7 +248,8 @@ impl Default for Command {
     /// FOLLOW): every take's fresh e34 start reads mode 1, allow a3, and take11's members fight at
     /// once from it. The grant's timer stopped.
     fn default() -> Self {
-        Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, rounds: 0 }
+        Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, rounds: 0,
+                  walk_said: true }
     }
 }
 
@@ -274,11 +283,14 @@ impl Command {
     }
 
     /// The allow flags by the mode (FUN_00018000): FREEWILL and WINGMAN set allow_combat and
-    /// allow_cover (and clear +0x3c4 bit 0); FOLLOW, GUARD and MOVE_OUT clear them; FORMATION
-    /// leaves them.
+    /// allow_cover (and clear +0x3c4 bit 0, `walk_said`); FOLLOW, GUARD and MOVE_OUT clear them;
+    /// FORMATION leaves them.
     fn allow_by_mode(&mut self) {
         match self.mode {
-            Mode::Freewill | Mode::Wingman => self.allow |= ALLOW_COMBAT | ALLOW_COVER,
+            Mode::Freewill | Mode::Wingman => {
+                self.allow |= ALLOW_COMBAT | ALLOW_COVER;
+                self.walk_said = false;
+            }
             Mode::Follow | Mode::Guard | Mode::MoveOut => self.allow &= !(ALLOW_COMBAT | ALLOW_COVER),
             Mode::Formation => {}
         }
@@ -312,6 +324,14 @@ impl Command {
         if self.grant.is_some_and(|t| t > 0.0) {
             self.grant = Some(GRANT_TIME);
         }
+    }
+
+    /// The follow starts a walk to its place (FUN_00021b70, the follow's state 9, the gate call at
+    /// 0x21cba: `if bit 0 clear { set it; say 1ecaeb98 }`): true the first time since the bit was
+    /// cleared, when the line is to be said (through the gate: 75%, a 20 s replay delay, priority
+    /// 2).
+    pub fn start_walk(&mut self) -> bool {
+        !std::mem::replace(&mut self.walk_said, true)
     }
 
     /// Whether it may fire (allow_combat, FUN_00024f80's test at 0x250c5).
