@@ -83,15 +83,16 @@ const TEST_UP: f32 = 1.0;
 /// objectives menu's legends are the same style's (play_objectives.rs).
 pub(crate) const ICON12_ATLAS: u32 = 0x0E23_3FAD;
 /// The 12-point record's line height (its +4): a glyph's cell is one more tall (FUN_000ccd20).
-const ICON12_LINE: f32 = 16.0;
+pub(crate) const ICON12_LINE: f32 = 16.0;
 /// The 12-point record's glyphs 'A' to 'J' (from its +0x1c, 0x18 bytes each, read from
 /// default.xbe): the cell's corners on the atlas in pixels, one texel left of and above the
 /// record's (FUN_000ccd20 takes one of the record's texels, 128 x 256 here, off each corner:
 /// (coordinate x size - 1) / size), then the offset, width and advance. A, B, C, D are the A, B, X
 /// and Y buttons, as the 16-point glyphs (play_hints.rs ICON_GLYPHS). The discs reach above their
 /// cells, so they're drawn cut flat on top, as the takes show them. E's cell, starting a texel left
-/// of the atlas, is clamped to its edge.
-const ICON12_GLYPHS: [(char, f32, f32, f32, f32, i8, u8, u8); 10] = [
+/// of the atlas, is clamped to its edge. The Squad Command menu's rows draw theirs from it too
+/// (play_squad_menu.rs, FUN_000ca360's 12 points, #319).
+pub(crate) const ICON12_GLYPHS: [(char, f32, f32, f32, f32, i8, u8, u8); 10] = [
     ('A', 27.22, 33.13, 44.35, 50.20, 1, 16, 17),
     ('B', 45.36, 33.13, 62.50, 50.20, 1, 16, 17),
     ('C', 63.50, 33.13, 80.64, 50.20, 1, 16, 17),

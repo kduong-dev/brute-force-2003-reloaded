@@ -372,16 +372,19 @@ the background (#163)".
 | `BF_TEST_SQUAD_SLOT=<s>,<slot>,<type\|empty>[;...]` | the squad menu's Enter or Delete (#302): that slot gets a fresh one of that type, or is emptied. The slot as `BF_TEST_SELECT` names a squad member, 0-3 (not the keys' 1-4) or `brutus` / `flint` / `hawk` / `tex` for its place, or `me` for the controlled character's (its type changes in place); the type as `BF_TEST_NPC` names one (`shrike soldier@m09_a`, `hunter lord@mp_common/sdm_shrike` as the menu shows its place, `h_fcec1024`, `flint`). One it doesn't know (or whose model isn't loaded) is logged and skipped |
 | `BF_TEST_SQUAD=<entry>[,<entry>...]` | the test map's start squad beside the player's character (read as each flat-floor start is made, every one of the session): each entry a type as `BF_TEST_NPC` names one, a squad member's type into its own slot if that's free and any other into the first free slot in the keys' order, or `<slot>:<type>` into that slot (`3:shrike heavy@sdm_shrike` with Tex leading: he starts as one); `none`: nobody. Unknown types are logged and skipped |
 | `BF_TEST_FULL_SQUAD=1` | the test map starts with the four, as before #302 (over `BF_TEST_SQUAD`) |
+| `BF_TEST_COMMAND="<s>:<what>[:<hold s>];..."` | the Squad Command menu's buttons (#319, any map; [squad.md](squad.md) **The Squad Command menu**): `<what>` a member (brutus / flint / hawk / tex or 0-3) holds its d-pad key (1-4) `<hold>` s (0.1, a tap: the hand-over; 0.4 selects and opens the menu), `stand` / `fire` / `cover` / `move` / `medkit` / `toggle` (or y / b / a / x / black / white) presses that order's key, `back` Esc, `accept` / `cancel` the Move To cursor's; on the hooks' clock (the sim time plus the time the menu's pause held it). With it the test map starts with the four (below) |
+| `BF_TEST_CURSOR_AT=<x>,<z>` | the Move To cursor takes the floor at x, z as its centre ray's point, as aiming there would (it snaps to the world point nearest, if that's on the screen). `BF_SQUAD_MENU_LOG=1` logs the menu: the level's world points at the start, the selection, the orders, the cursor's point |
 
 Without `BF_TEST_SQUAD`, a hook of the other pages that acts on the squad's members, or a death
 whose recipes look at the hand-over after it, starts the test map with the four, as before #302,
 so the recipes written for them run as they did, each member at the place it had
 (`testsquad::SQUAD_HOOKS`: `BF_TEST_SELECT`, `BF_TEST_KILL`, `BF_TEST_TARGET`,
 `BF_TEST_SQUAD_SKILL`, `BF_TEST_HOSTILE`, `BF_TEST_MINE_FRIEND`, `BF_TEST_DIE`,
-`BF_TEST_SUICIDE`, and `BF_TEST_ORDER`, the squad's orders, #318: [squad.md](squad.md) **Squad
-commands**; `BF_TEST_SQUAD=none` with a death: a lone one, and the respawn). A recipe that
-wants the squad for anything else (the formation in the line of fire, the AI's fire, a blast's
-other victims) adds `BF_TEST_FULL_SQUAD=1`.
+`BF_TEST_SUICIDE`, `BF_TEST_ORDER`, the squad's orders, #318: [squad.md](squad.md) **Squad
+commands**, and `BF_TEST_COMMAND`, the Squad Command menu's buttons, #319: [squad.md](squad.md)
+**The Squad Command menu**; `BF_TEST_SQUAD=none` with a death: a lone one, and the respawn). A
+recipe that wants the squad for anything else (the formation in the line of fire, the AI's fire,
+a blast's other victims) adds `BF_TEST_FULL_SQUAD=1`.
 `BF_TOOLS_LOG=1` prints the start squad and why ("test map: the squad at the start: 0 brutus, 1
 flint, 2 hawk, 3 tex (tex leads; BF_TEST_SELECT: the four)"), and each change of the menu ("t 1.00:
 squad slot 1 (Brutus's place): Shrike Soldier (m09_a, 73 hp) (h_fcec1024) at [1.50, -1.05,

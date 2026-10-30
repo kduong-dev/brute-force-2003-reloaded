@@ -1108,7 +1108,7 @@ fn slot_at(s: usize, open: f32) -> Vec2 {
 /// (0xad0c0's blink and fade).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn draw(boxed: Res<ItemBox>, player: Res<Player>, mut game: ResMut<GameData>, kits: Option<Res<GrenadeKits>>, mut images: ResMut<Assets<Image>>,
-        mut cache: ResMut<HudImages>,
+        mut cache: ResMut<HudImages>, menu: Res<super::squad_menu::SquadMenu>,
         mut parts: Query<(&Part, &mut Visibility, Option<&mut Node>, Option<&mut ImageNode>, Option<&mut RecordText>)>) {
     let (b, p) = (&*boxed, &*player);
     let kits = kits.as_deref();
@@ -1116,7 +1116,10 @@ fn draw(boxed: Res<ItemBox>, player: Res<Player>, mut game: ResMut<GameData>, ki
     let rgb = |c: [u8; 3]| Color::srgb_u8(c[0], c[1], c[2]);
     // (no box without a character: the editor's stand-in)
     let shown = |s: usize| p.loaded.is_some() && !p.stand_in && b.slots[s].pair.is_some() && !b.slots[s].hidden && (s == 0 || b.open > 0.0);
-    let alpha = |s: usize| b.fade * if s == 0 { 1.0 } else { b.open * b.open * b.open };
+    // (the widget's alpha under the Squad Command menu, FUN_000c17c0 at 0xabdb5: gone as the menu
+    // fades in, none while the Move To cursor is up, #319)
+    let share = menu.hud_share();
+    let alpha = |s: usize| b.fade * share * if s == 0 { 1.0 } else { b.open * b.open * b.open };
     for (part, mut vis, node, img, text) in &mut parts {
         let set_vis = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
         match *part {

@@ -307,9 +307,13 @@ fn toggle(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<
     let playing = editing.is_none_or(|m| *m.get() != editor::EditorMode::Edit);
     let forced = std::mem::take(&mut menu.close);
     // (not while a cutscene has the world: FUN_0008c8c0 opens no menu while its +0xc50 bit 4 is
-    // set, play_script.rs; the press is lost, as take03's START in the opening)
+    // set, play_script.rs; the press is lost, as take03's START in the opening. Nor under another
+    // menu that holds the game's clock: the item list and the Squad Command menu lock the player's
+    // game input, BACK's binding among it (FUN_000ac080, FUN_000c11f0 -> FUN_001e7820), and a
+    // tutorial panel takes the frame's presses; the pad's BACK closing the Squad Command menu
+    // opens nothing, #319)
     let want = if menu.open { !(back || close || closes_itself || forced) } else {
-        (back || test_open) && campaign.in_mission && playing && !script::in_cutscene()
+        (back || test_open) && campaign.in_mission && playing && !script::in_cutscene() && !paused_by_other(PAUSE_OBJECTIVES)
     };
     if test_open {
         menu.test_done = true;

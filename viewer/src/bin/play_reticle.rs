@@ -221,6 +221,14 @@ pub struct Reticle {
     /// the scope on its depth (FUN_000702a0's cam+0x1f8, through FUN_000621c0), which sizes
     /// Flint's scope overlay (play_scope_view.rs)
     pub depth: f32,
+    /// the centre ray's point itself (the controller's +0xb8): what the ray meets, else the point
+    /// at its full range. The Move To cursor snaps to the world point nearest it (#319,
+    /// play_squad_menu.rs: the cursor is a reticle controller too, FUN_000bd860 over
+    /// FUN_000c4f60, whose update runs this ray, 0xc5720)
+    pub point: Vec3,
+    /// the camera as this frame drew it (`View`), for what's projected onto the HUD: the cursor's
+    /// "inside the screen" test (0xbdef0)
+    pub(super) view: Option<View>,
     kept: Option<Who>,
     /// the tint, lock and what's under the centre that BF_RETICLE_LOG printed last
     logged: String,
@@ -228,7 +236,7 @@ pub struct Reticle {
 
 impl Default for Reticle {
     fn default() -> Self {
-        Reticle { tint: Tint::Blue, lock: None, aim: None, alpha: ALPHA, depth: 0.0, kept: None, logged: String::new() }
+        Reticle { tint: Tint::Blue, lock: None, aim: None, alpha: ALPHA, depth: 0.0, point: Vec3::ZERO, view: None, kept: None, logged: String::new() }
     }
 }
 
@@ -514,11 +522,13 @@ fn select(player: &Player, squad: &Squad, view: &View, centre: Vec2, gun: Option
 /// The reticle each frame (see the module's notes).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, map: Res<MapLevel>,
-                  camera: Query<(&Transform, &Projection), With<MainCamera>>, mut reticle: ResMut<Reticle>, marker: Res<targeting::Marker>) {
+                  camera: Query<(&Transform, &Projection), With<MainCamera>>, mut reticle: ResMut<Reticle>, marker: Res<targeting::Marker>,
+                  menu: Res<super::squad_menu::SquadMenu>) {
     // the alpha (FUN_000c6280): 0.9 through the skill's +0xfc, here the share it leaves of the
-    // marker's last fill (Flint's targeting: 1 - the fill), raised to the sRGB look of a fade as
-    // the marker's (a fade's share of the game's 229)
-    let share = skills::crosshair_alpha(&player, 1.0, marker.fill);
+    // marker's last fill (Flint's targeting: 1 - the fill), times FUN_000c17c0's share under the
+    // Squad Command menu (gone as it fades in, none while the Move To cursor is up: #319), raised
+    // to the sRGB look of a fade as the marker's (a fade's share of the game's 229)
+    let share = skills::crosshair_alpha(&player, 1.0, marker.fill) * menu.hud_share();
     reticle.alpha = ALPHA * share.clamp(0.0, 1.0).powf(FADE_SRGB);
     let Ok((tr, Projection::Perspective(pp))) = camera.single() else { return };
     if player.dead || player.loaded.is_none() {
@@ -556,7 +566,9 @@ pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<G
     let ray = view.through(centre).normalize();
     let under = under_ray(view.at, ray, range, &squad);
     // its point's depth (+0xb8: what it meets, else the full range's end)
-    reticle.depth = view.depth(view.at + ray * under.map_or(range, |(t, _)| t));
+    reticle.point = view.at + ray * under.map_or(range, |(t, _)| t);
+    reticle.depth = view.depth(reticle.point);
+    reticle.view = Some(view);
     let level = map.0.as_ref();
     let mut state = Tint::Blue;
     let mut direct = None;

@@ -176,8 +176,8 @@ pub fn slot_named(s: &str, me: usize) -> Option<usize> {
 /// #302, so with one set the test map starts with the four (`start_roster`) and the recipe runs
 /// as it did, its members at the places they had. (`BF_TEST_SQUAD=none` with them: a lone death,
 /// `respawn`.)
-const SQUAD_HOOKS: [&str; 9] = ["BF_TEST_SELECT", "BF_TEST_KILL", "BF_TEST_TARGET", "BF_TEST_SQUAD_SKILL", "BF_TEST_HOSTILE", "BF_TEST_MINE_FRIEND",
-                                "BF_TEST_DIE", "BF_TEST_SUICIDE", "BF_TEST_ORDER"];
+const SQUAD_HOOKS: [&str; 10] = ["BF_TEST_SELECT", "BF_TEST_KILL", "BF_TEST_TARGET", "BF_TEST_SQUAD_SKILL", "BF_TEST_HOSTILE", "BF_TEST_MINE_FRIEND",
+                                 "BF_TEST_DIE", "BF_TEST_SUICIDE", "BF_TEST_ORDER", "BF_TEST_COMMAND"];
 
 /// The first of SQUAD_HOOKS that's set, if one is.
 fn squad_hook() -> Option<&'static str> {
