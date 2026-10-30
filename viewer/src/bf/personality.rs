@@ -20,9 +20,16 @@
 //! (every personality names one that exists, or none at the root), h_e146dc86 the priority (the
 //! squad's EVT_SHOT_AT 20.15, docs/squad.md), h_0054cf83 a goal's weight (the comment above);
 //! h_f167afaa the priority's decay a second (exactly 86.86, and 0, don't decay: the AI step
-//! FUN_0001b4b0), and `<h_e5d8ff78><spawn-events event>` the events an entry posts in turn
-//! (FUN_0003a200). The brain builds its runtime entries with FUN_0004ece0 (todo/129-shrikes
+//! FUN_0001b4b0), `<h_e5d8ff78><spawn-events event>` the events an entry posts in turn
+//! (FUN_0003a200), and `<h_f48f8744><h_edf09800 quick-goal float_value goal>` its quick goals:
+//! settings the entry makes on the brain as it's taken (FUN_0003a4a0, by the quick goal's hash:
+//! `QuickGoal`). The brain builds its runtime entries with FUN_0004ece0 (todo/129-shrikes
 //! answers.md, Q1).
+//!
+//! A squad member's personality follows its command mode (#318, the brain's PCMD_ mode at
+//! brain+0x58: the type's `<ai>` names one per mode, `TypeAi::personalities`): the four's follow
+//! h_169b2725, guard h_155e52d6, moveout h_0f69b8b2, and the wingman h_ea20a17d their empty
+//! wingman ones inherit.
 
 use std::collections::HashMap;
 
@@ -57,6 +64,30 @@ const H_SPAWNS: u32 = 0xE5D8_FF78;
 /// response": KNOCKDOWN 1 : STUN 1 at priority 100).
 pub const EVT_DAMAGED_NO_ENEMIES: i64 = 30;
 pub const EVT_USER2: i64 = 70;
+/// The events that grant a squad member combat (the EVT_ name table 0x3bdb98): EVT_DAMAGED (13),
+/// EVT_SHOT_AT (24) and EVT_SQUAD_MATE_FIRING (44, posted by FUN_00045530 to every other squad
+/// member within its type's h_e3d8aeef of a squad-type character firing). The follow, guard and
+/// moveout personalities map each to GOAL_NOOP (or a dodge) with the quick goal QG_ALLOW_COMBAT
+/// ("allow combat - only if mate is within radius", the data's note on 44).
+pub const EVT_DAMAGED: i64 = 13;
+pub const EVT_SHOT_AT: i64 = 24;
+pub const EVT_SQUAD_MATE_FIRING: i64 = 44;
+/// EVT_IDLE_VARY_DATA (63): GOAL_IDLE_VARY's draw of its next pause: IDLE_VARY_DATA_PAUSE (97),
+/// _PAUSE_CAUTIOUS (98), _PAUSE_CROUCH (99), each with its length in a QG_IDLE_TIME quick goal.
+pub const EVT_IDLE_VARY_DATA: i64 = 63;
+pub const GOAL_PAUSE: i64 = 97;
+pub const GOAL_PAUSE_CAUTIOUS: i64 = 98;
+pub const GOAL_PAUSE_CROUCH: i64 = 99;
+/// The quick goals (FUN_0003a4a0, by the hash in `quick-goal`): h_f0233972 sets allow_combat
+/// (brain+0x464 bit 0) and starts its 10 s timer at brain+0x468 (0x3a744); h_ea874132 sets
+/// allow_cover (bit 1, 0x3a64e); h_ed46a645 gives an idle pause (its `goal`) its length (its
+/// `float_value`, s: GOAL_IDLE_VARY's draw, not handled by FUN_0003a4a0).
+pub const QG_ALLOW_COMBAT: u32 = 0xF023_3972;
+pub const QG_ALLOW_COVER: u32 = 0xEA87_4132;
+pub const QG_IDLE_TIME: u32 = 0xED46_A645;
+/// An entry's quick goal list (h_f48f8744) and a quick goal of it (h_edf09800).
+const H_QUICK_GOALS: u32 = 0xF48F_8744;
+const H_QUICK_GOAL: u32 = 0xEDF0_9800;
 
 /// A personality (see the module notes).
 #[derive(Clone, Debug, Default)]
@@ -81,9 +112,38 @@ pub struct EventEntry {
     pub goals: Vec<(i64, f32)>,
     /// the events it posts in turn (`spawn-events`), in the file's order
     pub spawns: Vec<i64>,
+    /// its quick goals, in the file's order
+    pub quick: Vec<QuickGoal>,
+}
+
+/// A quick goal of an event entry (`<h_edf09800 quick-goal float_value goal>`): a setting the
+/// entry makes on the brain (FUN_0003a4a0 by `name`: QG_ALLOW_COMBAT, QG_ALLOW_COVER ...), with
+/// its value and the goal it's for when it has them (QG_IDLE_TIME's pause lengths).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QuickGoal {
+    /// the `quick-goal` hash
+    pub name: u32,
+    /// `float_value`
+    pub value: Option<f32>,
+    /// `goal`: the GOAL_ number it's for
+    pub goal: Option<i64>,
 }
 
 impl EventEntry {
+    /// Whether it has the quick goal `name`.
+    pub fn has_quick(&self, name: u32) -> bool {
+        self.quick.iter().any(|q| q.name == name)
+    }
+
+    /// The idle pauses of an EVT_IDLE_VARY_DATA entry: each goal with its weight and its length (s,
+    /// its QG_IDLE_TIME quick goal's value; 0 when none gives one).
+    pub fn pauses(&self) -> Vec<(i64, f32, f32)> {
+        self.goals.iter().map(|&(g, w)| {
+            let len = self.quick.iter().find(|q| q.name == QG_IDLE_TIME && q.goal == Some(g)).and_then(|q| q.value).unwrap_or(0.0);
+            (g, w, len)
+        }).collect()
+    }
+
     /// A goal drawn as the data's comment says, and as FUN_00054c40 does: the weights summed per
     /// goal, a number `u` (uniform in 0..1) times the sum, and walking the goal ids upward the first
     /// whose running total reaches it; with every weight 0, the first goal (the data's fallbacks).
@@ -127,6 +187,11 @@ pub fn parse_personalities(root: &Element) -> HashMap<u32, Personality> {
             goals: e.children_named(H_GOAL).map(|g| (g.attr(h("goal")).and_then(|v| v.as_i64()).unwrap_or(-1), num(g, H_WEIGHT))).collect(),
             spawns: e.child(H_SPAWNS).map(|s| s.children_named(h("spawn-events")).filter_map(|x| x.attr(h("event")).and_then(|v| v.as_i64())).collect())
                 .unwrap_or_default(),
+            quick: e.child(H_QUICK_GOALS).map(|l| l.children_named(H_QUICK_GOAL).map(|q| QuickGoal {
+                name: name(q, h("quick-goal")),
+                value: q.attr(h("float_value")).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))),
+                goal: q.attr(h("goal")).and_then(|v| v.as_i64()),
+            }).collect()).unwrap_or_default(),
         }).collect()).unwrap_or_default();
         (name(p, h("name")), Personality { parent: name(p, H_PARENT), events })
     }).collect()
@@ -151,5 +216,30 @@ impl Game {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #318: an EVT_IDLE_VARY_DATA entry's pauses take their lengths from its h_ed46a645 quick
+    /// goals by goal (the follow personality h_169b2725's: crouch 15 s, cautious 12 s, pause 6 s),
+    /// and an entry's quick goals are found by name.
+    #[test]
+    fn idle_pauses_and_quick_goals() {
+        let q = |name, value, goal| QuickGoal { name, value, goal };
+        let e = EventEntry {
+            event: EVT_IDLE_VARY_DATA,
+            goals: vec![(GOAL_PAUSE_CROUCH, 1.0), (GOAL_PAUSE_CAUTIOUS, 1.0), (GOAL_PAUSE, 1.0)],
+            quick: vec![q(QG_IDLE_TIME, Some(15.0), Some(99)), q(QG_IDLE_TIME, Some(12.0), Some(98)), q(QG_IDLE_TIME, Some(6.0), Some(97))],
+            ..Default::default()
+        };
+        assert_eq!(e.pauses(), vec![(99, 1.0, 15.0), (98, 1.0, 12.0), (97, 1.0, 6.0)]);
+        assert!(e.has_quick(QG_IDLE_TIME));
+        assert!(!e.has_quick(QG_ALLOW_COMBAT));
+        let grant = EventEntry { event: EVT_SQUAD_MATE_FIRING, quick: vec![q(QG_ALLOW_COMBAT, None, None)], ..Default::default() };
+        assert!(grant.has_quick(QG_ALLOW_COMBAT));
+        assert!(!grant.has_quick(QG_ALLOW_COVER));
     }
 }

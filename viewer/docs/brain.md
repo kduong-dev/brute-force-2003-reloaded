@@ -15,6 +15,12 @@ are #197's answer (`todo/197-ai-sight/answer.md`). The personalities are
 `common/ai/personality.xmb` (`bf/personality.rs`). One thing is the demo's choice: a walk given
 up where it's stuck (below).
 
+A brain also has a command mode (brain+0x58, the PCMD_ table 0x3bd210: FREEWILL, FOLLOW, GUARD,
+WINGMAN, MOVE_OUT ...), which picks the personality it runs from its type's `<ai>`; the squad's
+orders set it (#318: `play_brain.rs`'s `Command`, run for the squad's AI by `play_orders.rs`,
+[squad.md](squad.md) **Squad commands**). The level characters below keep the personality they
+spawn with; the marines' mode isn't read yet.
+
 ## The spawn: its home
 
 A spawn-trigger's copy gets its brain as it's made (FUN_000dfd90 -> FUN_00017b60, then
