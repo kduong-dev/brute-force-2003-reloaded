@@ -751,15 +751,44 @@ fn water_opaque(mesh: &Mesh, ramp: &[u8; RAMP_TEXELS]) -> bool {
 /// The level's point light at `p` from every direction (linear colour: each lamp's colour x
 /// (1 - distance / range)), for what isn't a `LevelMaterial` (the characters): the outdoor pair's
 /// lamps, as a character's light-usage is LU_OUTDOOR (535 of the 542 placed ones; FUN_0009f0b0
-/// takes the lamps of its pair, `LevelLamp`).
-pub fn lamp_light_at(level: &Level, p: Vec3) -> Vec3 {
+/// takes the lamps of its pair, `LevelLamp`), except those in `off`: the lamps whose object has
+/// gone (their indices in `Level::lamps`, #308: `lamp_off` for the materials).
+pub fn lamp_light_at(level: &Level, off: &HashSet<usize>, p: Vec3) -> Vec3 {
     if std::env::var("BF_NO_LAMPS").is_ok() {
         return Vec3::ZERO;
     }
-    level.lamps.iter().filter(|l| l.outdoor).filter_map(|l| {
+    level.lamps.iter().enumerate().filter(|(i, l)| l.outdoor && !off.contains(i)).filter_map(|(_, l)| {
         let d = l.at.distance(p);
         (d < l.range).then(|| Vec3::from(l.color.map(|c| Color::srgb(c, c, c).to_linear().red)) * (1.0 - d / l.range))
     }).sum()
+}
+
+/// The level materials' light buffer (`light_buffer`, shared by all of a level's `LevelMaterial`s),
+/// kept by `spawn_level` for what puts a lamp out later (`lamp_off`, #308).
+#[derive(Resource)]
+pub struct LevelLamps(pub Handle<ShaderStorageBuffer>);
+
+/// Puts lamp `lamp` (its index in `Level::lamps`, and in `light_buffer`) out in `buffer`: its
+/// colour zeroed, which `lamps.wgsl` then adds nothing for. The materials' bind groups hold the
+/// buffer as it was prepared, so they're touched after (`touch_materials`). A lamp past the
+/// buffer's end (BF_NO_LAMPS leaves them all out) is left.
+pub fn lamp_off(buffer: &mut ShaderStorageBuffer, lamp: usize) {
+    let at = LIGHTS_HEADER + LAMP_SIZE * lamp + LAMP_COLOUR;
+    if let Some(bytes) = buffer.data.as_mut().and_then(|d| d.get_mut(at..at + 12)) {
+        bytes.fill(0);
+    }
+}
+
+/// Where a lamp's linear colour starts in its `light_buffer` record (lamps.wgsl `Lamp`: its place
+/// and range, 16 bytes, then the colour).
+const LAMP_COLOUR: usize = 16;
+
+/// Marks every level material changed, so their bind groups are made again from the light
+/// buffer as it stands (a changed `ShaderStorageBuffer` is sent to the GPU on its own, but the
+/// bind groups made before keep the old buffer: with a lamp put out in the buffer alone, the
+/// scenery stayed lit by it). Returns how many there are.
+pub fn touch_materials(materials: &mut Assets<LevelMaterial>) -> usize {
+    materials.iter_mut().count()
 }
 
 /// The level materials' lights (`Lamps`): `level`'s pairs and point lights, or none (the flat
@@ -1587,6 +1616,7 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     commands.insert_resource(LiquidClock(0.0));
     let lava_key = level.objects_key().map_or([0.0; 3], |l| l.color);
     let lamps = Lamps { lamps: buffers.add(light_buffer(level)), ..default() };
+    commands.insert_resource(LevelLamps(lamps.lamps.clone()));
     // (the placed objects' indoor-lit materials, `indoor_material`)
     let mut indoor_cache = HashMap::new();
     let mut indoor_parts = 0;
@@ -2014,5 +2044,25 @@ mod tests {
         assert_eq!(self_lit(&game, 0xF003_E4C8).map(|s| (s.blend, s.key)), Some((SelfLitBlend::Alpha(0.243), 1.0)));
         assert_eq!(self_lit(&game, 0x0000_0001).map(|s| s.blend), Some(SelfLitBlend::Add));
         assert_eq!(self_lit(&game, 0x0000_0002), None);
+    }
+
+    /// #308: a lamp put out loses its colour in the light buffer, and only that: its place, range,
+    /// falloff and pairs, and every other lamp's record, stay as they were; a lamp the buffer
+    /// doesn't hold (BF_NO_LAMPS leaves them all out) is left alone.
+    #[test]
+    fn a_lamp_put_out_loses_only_its_colour() {
+        let mut bytes = vec![0u8; LIGHTS_HEADER + 3 * LAMP_SIZE];
+        for (i, b) in bytes.iter_mut().enumerate().skip(LIGHTS_HEADER) {
+            *b = (i % 250) as u8 + 1;
+        }
+        let mut buffer = ShaderStorageBuffer::new(&bytes, RenderAssetUsages::default());
+        lamp_off(&mut buffer, 1);
+        let mut expect = bytes.clone();
+        let colour = LIGHTS_HEADER + LAMP_SIZE + LAMP_COLOUR;
+        expect[colour..colour + 12].fill(0);
+        assert_eq!(buffer.data.as_deref(), Some(&expect[..]));
+        let mut buffer = ShaderStorageBuffer::new(&bytes, RenderAssetUsages::default());
+        lamp_off(&mut buffer, 3);
+        assert_eq!(buffer.data.as_deref(), Some(&bytes[..]));
     }
 }

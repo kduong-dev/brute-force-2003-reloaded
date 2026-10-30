@@ -64,7 +64,7 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | input h_e2b9c3a2 (37) | Enabled, TRUE to its targets every frame its virtual button is held on any pad (#224) | 0x2008a0 |
 | menu (10) | OPERATE opens its game-options menu over the game (a tutorial panel) and sends OPERATED; the panel's A and Y send MENU_ACCEPT / MENU_Y_BUTTON, then FINISHED once it's closed (#224) | 0x2082d0, 0x208430 |
 | event (2) | An AI event about an object it listens to whose number is its `event-id`: EVENT_MATCH, then it disables itself (#224) | 0x202dd0 |
-| destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
+| destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy; an effect object, whose particles go with it; a lamp, which goes out: #308), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31), evaluate (6) | Their base actions only: a waypoint trigger marks AI route points; the evaluate-triggers' random tests pick ambient lines (both no-ops here) | |
 | gamevar (15) | See "Gamevar-triggers" | 0x1ffc40, FUN_001ffb80 |
 | script (10) | OPERATE asks its script's player (by `script-name`) to play it from the start, pause, resume or stop, by its entry's `<script command>`; the start waits for the player's update, so two in a frame start it once (#222: [cutscenes.md](cutscenes.md)) | 0x205000, FUN_00204ec0, FUN_00204e40 |
@@ -670,6 +670,26 @@ the log read and the frames looked at:
 * **Destroyers**: m09_a's trigger_destroyer556 (`BF_TRIGGER_FIRE=h_039f8930,USER1,2`) removes
   trigger_spawn2's Shrike; no level's destroyer lists a squad member, so the guard against
   removing one isn't exercised by the data.
+  * **What a destroyer takes** (#308; code-map FUN_00200b70). Of the objects the game's
+    destroyers list (h_0b6b92ba), by the data: 1019 point lights in 25 levels (the mission
+    levels' lamps, each behind a router that listens to its fixture's DESTROYED: m04_c's 140, m07_a's
+    139, m07_b's 115, m02_c's 105 ...), 152 spawn-triggers' copies, 54 game objects, 32 effect
+    objects (31 with a duration of 0, one with 0.8 s), 5 characters. A lamp is taken out of the
+    world at once; the demo put none out before (it logged "removes the placed ..."), so a shot
+    fixture's lamp stayed lit for good: now `LampsOut::put_out` (play_lamps.rs). m08_a:
+    `BF_MAP=m08_a BF_NO_SQUAD=1 BF_TEST_GOTO=-33.9,124.0,-33.9,124.0,26.0
+    BF_CAMERA_AIM_AT=-33.9,22.8,130.9 BF_TEST_HIT=3.0 BF_TEST_HIT_NEAR=-33.9,130.9
+    BF_TRIGGER_LOG=1 BF_LINK_LOG=1`: the lamp post h_ec4a51ce (1 hp) breaks at 3.07 s,
+    "trigger_destroyer166 removes the lamp h_f31fce33", the lamp goes out a frame on and the
+    crate beside it, lit by it, falls from 38 to 20.5 mean red (once the fixture's own burst
+    has gone); m04_c's h_ff9dba99 (40 hp, 3 debris) takes h_fcfdc60a the same way. An effect
+    object is destroyed at the next tick (a duration under 0.01 sets its parameter to the end and
+    ends it, FUN_0021c3e0): its particles and lights go on that frame (`TakenAway`), where the
+    demo used to let them fade (e34's tutorial pointer's glow for 0.9 s). The one destroyer
+    with a duration (m07_c's h_1c810669: 0.8 s from 1 to 0 on an effect) ramps the effect's
+    user parameter first: not done, it's taken at once. A game object with a debris list is
+    killed by the destroyer in the game, so it breaks and sends its DESTROYED; the demo hides
+    it without debris (unchanged here).
 * **Sound- and dialog-triggers (#223)**, `BF_MUTE=1` with `BF_TRIGGER_LOG=1 BF_SOUND_LOG=1`
   unless said:
   * the tutorial's opening lines, fired at the script's times (the `BF_TRIGGER_FIRE` above, 10

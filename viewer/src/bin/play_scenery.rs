@@ -280,6 +280,11 @@ struct DebrisPiece {
     scale: Vec3,
 }
 
+/// The scenery's systems on a frame (`plugin`): what hangs on an object taken out of the world
+/// (play_placed_fx.rs, play_lamps.rs) runs after them, on the frame the object goes.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct SceneryStep;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Scenery>()
         .init_resource::<ObjectBlasts>()
@@ -297,7 +302,7 @@ pub fn plugin(app: &mut App) {
         // the same frame, play_fx.rs `tie_decals`, `untie_decals`, #301)
         // (the mines set off before they're handed to the next frame's shots)
         .add_systems(Update, (find_scenery, late_scenery, hit_scenery, break_scenery, area_damage, set_off_mines, debris_life).chain()
-            .after(super::grenade::GrenadeSystems).before(super::fx::FxSystems).before(super::sentry::publish_targets).before(play_sounds)
+            .in_set(SceneryStep).after(super::grenade::GrenadeSystems).before(super::fx::FxSystems).before(super::sentry::publish_targets).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
 
@@ -778,6 +783,10 @@ fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Sc
         if done {
             if let Some(e) = s.list[i].entity.take() {
                 commands.entity(e).despawn();
+            }
+            // (taken out of the world, FUN_0015ae30 -> FUN_000db3e0: what hangs on it goes, #308)
+            if let Some(a) = world::arena() {
+                a.set_gone(i);
             }
             s.list[i].state = State::Gone;
             if log {

@@ -160,6 +160,10 @@ pub struct Arena {
     /// breakable objects, in level object order: dead or not (their hit points run out: broken
     /// for one with a debris list, still standing for one without, #263)
     dead: Vec<AtomicBool>,
+    /// breakable objects, in level object order: taken out of the world or not (the end of a
+    /// break's countdown, FUN_0015ae30 -> FUN_000db3e0, or a destroyer-trigger, #308): what
+    /// the effects and lamps hung on an object go with
+    gone: Vec<AtomicBool>,
     /// level object index -> its breakable index
     breakable_of: HashMap<usize, u32>,
     /// the flat test floor's ground: a plane at this height under every point, terrain (an
@@ -895,7 +899,7 @@ impl Johnson {
 
 impl Arena {
     fn new(game: &Game, level: &Level) -> Arena {
-        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
+        let mut a = Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![], gone: vec![],
                             breakable_of: HashMap::new(), flat: None, bodies: 0, spans: vec![], solid_shell: vec![] };
         // breakable objects (with hit points, #263), numbered in level object order (and by name,
         // for their blockers)
@@ -905,6 +909,7 @@ impl Arena {
                 let b = a.broken.len() as u32;
                 a.broken.push(AtomicBool::new(false));
                 a.dead.push(AtomicBool::new(false));
+                a.gone.push(AtomicBool::new(false));
                 a.breakable_of.insert(i, b);
                 if o.name != 0 {
                     by_name.insert(o.name, b);
@@ -1126,7 +1131,7 @@ impl Arena {
     /// The flat test floor as an arena: nothing but its ground, a plane at `ground` under every
     /// point (see `flat`).
     pub fn flat(ground: f32) -> Arena {
-        Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![],
+        Arena { cells: HashMap::new(), tris: vec![], starts: vec![], doors: vec![], liquids: vec![], broken: vec![], dead: vec![], gone: vec![],
                 breakable_of: HashMap::new(), flat: Some(ground), bodies: 0, spans: vec![], solid_shell: vec![] }
     }
 
@@ -1140,7 +1145,7 @@ impl Arena {
     fn duplicate(&self) -> Arena {
         let flags = |v: &[AtomicBool]| v.iter().map(|b| AtomicBool::new(b.load(Ordering::Relaxed))).collect();
         Arena { cells: self.cells.clone(), tris: self.tris.clone(), starts: self.starts.clone(), doors: flags(&self.doors), liquids: self.liquids.clone(),
-                broken: flags(&self.broken), dead: flags(&self.dead), breakable_of: self.breakable_of.clone(), flat: self.flat, bodies: self.bodies,
+                broken: flags(&self.broken), dead: flags(&self.dead), gone: flags(&self.gone), breakable_of: self.breakable_of.clone(), flat: self.flat, bodies: self.bodies,
                 spans: self.spans.clone(), solid_shell: self.solid_shell.clone() }
     }
 
@@ -1212,6 +1217,21 @@ impl Arena {
     /// Whether breakable `b` has died (`set_dead`).
     pub fn is_dead(&self, b: usize) -> bool {
         self.dead.get(b).is_some_and(|x| x.load(Ordering::Relaxed))
+    }
+
+    /// Breakable `b` is taken out of the world (#308): its break's countdown is out
+    /// (play_scenery.rs, FUN_0015ae30 -> FUN_000db3e0) or a destroyer-trigger took it away
+    /// (play_triggers.rs). The effects and lamps hung on it go on that frame (play_placed_fx.rs,
+    /// play_lamps.rs): `Arena::set_broken` is earlier, its collision going at the break.
+    pub fn set_gone(&self, b: usize) {
+        if let Some(x) = self.gone.get(b) {
+            x.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether breakable `b` has been taken out of the world (`set_gone`).
+    pub fn is_gone(&self, b: usize) -> bool {
+        self.gone.get(b).is_some_and(|x| x.load(Ordering::Relaxed))
     }
 
     /// The liquid at (x, z) whose surface is above `feet`: its surface height and type.
@@ -2427,6 +2447,7 @@ mod tests {
         a.new_body(first);
         a.broken.push(AtomicBool::new(false));
         a.dead.push(AtomicBool::new(false));
+        a.gone.push(AtomicBool::new(false));
         for t in &mut a.tris {
             t.piece = Some((0, false));
             t.blocker = t.body == 1;
@@ -2437,6 +2458,28 @@ mod tests {
         a.set_broken(0, true);
         assert_eq!(a.floor_breakable(0.3, 0.2, 1.5), None);
         assert_eq!(a.floor_below(0.3, 0.2, 1.5, Body::Thing).map(|f| f.0), Some(0.0));
+    }
+
+    /// #308: a breakable taken out of the world (`set_gone`: the end of its break, or a
+    /// destroyer's removal) is told apart from one that is only broken (`set_broken`, its
+    /// collision going at the start of the break); one no breakable has is never gone, and a copy
+    /// keeps what was set.
+    #[test]
+    fn a_breakable_is_gone_apart_from_broken() {
+        let mut a = Arena::flat(0.0);
+        for _ in 0..2 {
+            a.broken.push(AtomicBool::new(false));
+            a.dead.push(AtomicBool::new(false));
+            a.gone.push(AtomicBool::new(false));
+        }
+        a.set_broken(0, true);
+        assert!(a.is_broken(0) && !a.is_gone(0));
+        a.set_gone(0);
+        assert!(a.is_gone(0) && !a.is_gone(1));
+        a.set_gone(7);
+        assert!(!a.is_gone(7));
+        let copy = a.duplicate();
+        assert!(copy.is_gone(0) && !copy.is_gone(1));
     }
 
     /// #298: a level blocker (a twinned box, as the blockers round the levels' objects come) and a
