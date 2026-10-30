@@ -1033,6 +1033,8 @@ mod testworld;
 mod testscenery;
 #[path = "play_testsquad.rs"]
 mod testsquad;
+#[path = "play_testpickups.rs"]
+mod testpickups;
 #[path = "play_editor.rs"]
 mod editor;
 #[path = "play_menu.rs"]

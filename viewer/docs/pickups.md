@@ -113,13 +113,19 @@
     nothing re-adds it, so a campaign level's own medkit or box never comes back. It came back
     after 30 s before #18, a guess the code contradicts. Only a spawn-trigger's copy (every
     pickup of the multiplayer maps) is replaced, by its trigger's timer: see "Pickups from
-    spawn-triggers" (#278).
+    spawn-triggers" (#278). **The test map has its own way back** (the demo's, not the game's
+    rule): its pickup grid and the pickups put down with its object tool can only be taken once,
+    so **Home** puts back every one taken, where it was and as it was put
+    (`play_testpickups.rs`; [testtools.md](testtools.md), "Putting pickups back";
+    `BF_TEST_RESET_PICKUPS=<s>`). A level's own pickups never come back, on a level the test
+    session switched to included.
   * **The walk-over's reach** (#18): every pickup is taken by the same FUN_0011c540 ->
     FUN_0011c170, every living member of a player's squad against it each frame, the AI's too:
     the pickup at most 1.8 m below and 1.0 m above the character's position (its pelvis) and
     dx^2 + dz^2 under 1.8 (1.34 m across): `powerups::in_reach` for all of them. The medkits and
     fruit used to take 1.0 m across and 1.5 up or down, the DNA canister 1.3 m.
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
+    `BF_TEST_RESET_PICKUPS=<s>[;<s>...]` presses the test map's Home (the taken pickups back).
     `BF_TEST_HEALTH=<hp>` starts hurt (above the most, with the most raised to it: #152's lava
     runs at 5000, as #146's take03). `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds Tab from the start (the item list open, the game paused).
     `BF_TEST_ITEM=<label>` selects a carried item at the start and `BF_TEST_ITEM_USE=<s>` presses

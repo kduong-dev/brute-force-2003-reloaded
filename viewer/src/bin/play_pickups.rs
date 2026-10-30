@@ -1074,9 +1074,10 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
 /// The pickups placed since the map started (`LatePickup`: the test tools', and the
 /// spawn-triggers' copies, play_pickup_spawns.rs), once the level's are in: each lies tilted to
 /// the ground under it, seated on its lowest point, loose (`Body`); one with `DropIn` (put in the
-/// air) falls from where it is instead, as it's turned. Medkits and fruit can be taken (no level
-/// has a DNA canister as a spawn-trigger's template); a copy is gone for good once taken
-/// (`Pickup::copy`).
+/// air) falls from where it is instead, as it's turned. Medkits, fruit and DNA canisters can be
+/// taken, as `find_pickups` lists the level's (no level has a DNA canister as a spawn-trigger's
+/// template; the test map's grid has one, which its Home key puts back after it's taken:
+/// play_testpickups.rs); a copy is gone for good once taken (`Pickup::copy`).
 #[allow(clippy::type_complexity)]
 fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut<Pickups>,
                 mut placed: Query<(Entity, &Placed, &mut Transform, Has<DropIn>, Has<super::pickup_spawns::SpawnCopy>), With<LatePickup>>,
@@ -1097,7 +1098,8 @@ fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut
         if !game.0.idle_effects.contains_key(&p.kind) {
             commands.entity(e).insert(body);
         }
-        if game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT) && !game.0.idle_effects.contains_key(&p.kind) {
+        if game.0.items.get(&p.kind).is_some_and(|i| i.function == MEDKIT || i.function == FRUIT || i.group == IG_DNA_CANNISTER)
+            && !game.0.idle_effects.contains_key(&p.kind) {
             pickups.list.push(Pickup { entity: e, kind: p.kind, name: p.name, at: t.translation, told: false, copy });
             if std::env::var("BF_PICKUP_LOG").is_ok() {
                 let i = &game.0.items[&p.kind];

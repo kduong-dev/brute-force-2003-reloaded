@@ -291,6 +291,17 @@ impl Placements {
         }
     }
 
+    /// A placed thing made again at its place (play_testpickups.rs: a taken pickup put back):
+    /// `entity` is its new root, which the caller marks `PlacedId(id)`. It reads as not seen yet,
+    /// so `track` takes it for `Here` until it finds the new root (the commands that make it are
+    /// still to come), and it stops being `Gone`.
+    pub(super) fn remake(&mut self, id: u32, entity: Entity) {
+        if let Some(p) = self.list.iter_mut().find(|p| p.id == id) {
+            p.entity = Some(entity);
+            p.seen = false;
+        }
+    }
+
     /// An NPC taken off the map (Delete, the hooks): struck off the list.
     pub(super) fn remove_npc(&mut self, npc: u32) {
         self.list.retain(|p| !matches!(p.thing, Thing::Npc { id, .. } if id == npc));
@@ -677,6 +688,7 @@ fn help_text(tools: Res<Tools>, editor: Res<Editor>, placements: Res<Placements>
             }
             let at = aim_word(&tools);
             s += &format!("J / B / Delete: the NPC under {at}: team / fight / remove\n");
+            s += "Home: put back the pickups taken (the grid's, and the placed ones)\n";
             s += &format!("F5: play from {at} (Shift+F5: from the map's start)\n");
             s += "Esc: close a menu   H: hide this help   Backspace twice: leave\n";
         } else {

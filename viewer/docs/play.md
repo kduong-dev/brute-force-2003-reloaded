@@ -77,7 +77,10 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
     0.2 rad, so each settles as it would. A crate lands on its base; the Garo fruit (modelled
     on its point) and the cards (on their edges) fall over onto their sides.
   * They're inventory-objects as on a map, so medkits and fruit work as in "Health pickups",
-    and everything is loose (kicked, thrown by blasts, tumbling).
+    and everything is loose (kicked, thrown by blasts, tumbling). The ammo boxes, grenade packs
+    and the OrgSen are taken as on a map too ([pickups.md](pickups.md)), and a taken pickup is
+    gone for good: **Home** puts back every one taken (the grid's and the object tool's), where
+    it was (`BF_TEST_RESET_PICKUPS=<s>`; [testtools.md](testtools.md), "Putting pickups back").
 * **Every squad grenade type**, a full stack of each (its stack-limit, 10): Frag, Gas,
   Sonic, Energy, Light, Sentry, Roller (the game's store order, #281). m09_a is
   loaded for the Light (only in m09_a/b/c/x). Tab steps through them. See **Grenades**.
