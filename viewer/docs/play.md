@@ -3035,22 +3035,34 @@ Tex's gait by one hook each:
   138-170) that flickers between two states by up to 12 levels over 5 to 90 pixels, in main
   against main as in main against this (frame 150: main's first run against the other three;
   frame 160: this build's two against main's two).
-* take15 (todo/36-squad-voice F1, footsteps in the audio only, no step log): Tex walks at stick
+* take15 (todo/36-squad-voice F1; the footsteps are in the audio only, no step log, and the audio is
+  dual-mono: its two channels are one signal, so it can't show where a step is): Tex walks at stick
   (0.5, 0.5) 2-6 s (MT_WALK 47 and MT_MOVE_RIGHT_SLOW 33: factor 0.5), crouches without moving 7-12.5
-  s, runs from 13.1 s and dashes from 13.4 s (MT_RUN 34, MT_DASH 8: 1.0). The 3.5-10 kHz band's step
-  transients above the quiet background (17.6-18.9 s) are 0.55e-3 on average for the walk's 8 steps
-  and 1.12e-3 and 1.24e-3 for the dash's 9 and the run's 1: 2.0 to 2.3 times, where 0.75 against
-  0.375 is 2.0 (the demo's old volumes were 1.7 and 2.4 times). The squad's steps mix in, the steps
-  are barely above the take's hiss, and no pitch spread can be read from it: it fits the gait
-  ratio and says no more.
+  s, runs from 13.1 s and dashes from 13.4 s (MT_RUN 34, MT_DASH 8: 1.0). The developer's reading of
+  the 3.5-10 kHz band's step transients above the quiet background (17.6-18.9 s) was 0.55e-3 on
+  average for the walk's 8 steps and 1.1e-3 to 1.2e-3 for the dash's 9 and the run's 1: about
+  twice. The tester's sensitivity runs on the same take give 1.55 to 2.65 by band and detection
+  threshold and 2.9 to 3.4 by band power, and the estimator can't tell main's old volumes (1.7 and
+  2.4 times) from the rule's (2.0). So the take is consistent with the dash's steps being at least
+  about twice the walk's, and no more than that: the rule rests on the asm (FUN_00119020), and the
+  take can't confirm the 0.75, the falloff or the pitch spread (the steps are barely above its
+  hiss, the squad's steps are mixed in, and with one channel there's no panning to tell 2D from 3D).
 
 Guessed or open: the gait of the aimed side steps and of the crouched back and side steps (above);
 the foot events themselves (the game's come from its clips, the demo's from feet planting); whether
-a cutscene's camera makes the controlled character's step 3D at x1.0 (FUN_00112790's second gate,
-FUN_0008b880, isn't traced); the sound manager's queue and its budget of 16 positional voices
+a cutscene camera takes the controller's view out of the view manager's slots, which would make the
+controlled character's step 3D at x1.0 (FUN_00112790's second gate: FUN_0008b790 finds the
+controller's view, FUN_00072b60 asks whether it's in the manager's seven slots, FUN_0008b880 whether
+its team plays on; the script camera 101 leaves the view in its slot, per the code map's
+FUN_00072b60 row); the sound manager's queue and its budget of 16 positional voices
 (FUN_001793e0: every step plays); that every character starts with the same random state, so their
 k-th steps have the same variant and pitch (the game's one shared stream doesn't); how it sounds
 (muted: by ear is the user's check); the wet footprint decal (char+0x418, not in the demo).
+
+The shot that would settle the level, the place and the pitch (the tester's tightened F1): the squad
+on Stand Ground far away, about 30 steps each of walk, crouch-walk and dash on one surface, plus an AI
+member at 3, 6 and 9 m, captured in stereo (the stereo and the distances are for the 2D place and the
+falloff, the 30 steps for the level and the pitch spread).
 
 ### Damage: the difficulty step and the hit parts (#127)
 
