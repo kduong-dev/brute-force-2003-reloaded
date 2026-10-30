@@ -3221,8 +3221,10 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     orders::hand_over(&mut player, &mut squad.0, i);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.others, player.stocked, player.item) = inventory;
-    // (the one taken stops moving out: FUN_000c8e80)
+    // (the one taken stops moving out: FUN_000c8e80; the one left has its allow flags set by its
+    // mode again: FUN_00018230)
     orders::taken(&mut player);
+    orders::released(&mut squad.0[i]);
     // (a script's walk was its brain's goal: under the player's control it has none)
     player.script_walk.clear();
     // the switch sound, at the cut (a capture: the same sound at every hand-over)
@@ -4706,8 +4708,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // the squad tells each other of its targets (FUN_00045090, after the sense step)
     brain::broadcast(&mut player, &mut squad.0, &held, &sight, dt, clock);
     // (#318) a squad member's rounds fired this frame: EVT_SQUAD_MATE_FIRING to the others near it
-    // (FUN_00045530), its own grant of combat renewed (play_orders.rs)
+    // (FUN_00045530), its own grant of combat renewed (play_orders.rs); and one a hostile brain has
+    // as its target gets EVT_SQUAD_IMA_TARGET (its EVT_ENEMY_SEEN case, play_brain.rs)
     orders::mate_firing(&mut player, &mut squad.0, &game.0);
+    brain::tell_targets(&mut player, &mut squad.0);
     // friendly fire: the player's shots this frame stop at the first teammate in their way
     let (shooter, team) = (player.who(), player.team);
     let now = player.sim_time;

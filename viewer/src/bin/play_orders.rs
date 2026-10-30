@@ -13,27 +13,30 @@
 //!      PAUSE_CROUCH: it kneels where it stands and stays (`guard`).
 //!    - **Fire At Will** (WINGMAN) and **Cover Me** (FOLLOW): GOAL_WINGMAN_FOLLOW, at the code's
 //!      8, 10, 7, 7, 4 m for WINGMAN against 1.4 times them for FOLLOW (FUN_00020b10). The demo's
-//!      follow is still its own formation (play.rs `squad_ai`, FORMATION: #243 is the game's
-//!      state machine), so FOLLOW keeps it as it was and WINGMAN closes it in by 1 / 1.4
+//!      follow is still its own formation (play.rs `squad_ai`, FORMATION: #331 is the game's
+//!      state machine for the squad, #243 for the marines), so FOLLOW keeps it as it was and
+//!      WINGMAN closes it in by 1 / 1.4
 //!      (`spacing`).
-//!    - **Move To** (MOVE_OUT): GOAL_MOVE_OUT walks to the point at the dash (a run with an enemy
-//!      known), and within 2 m it's GUARD, with the line e635ecc6 (`move_out`). The game's route
-//!      over the world points is #242's: here a straight walk, given up (GUARD, e635ecc6, as a
-//!      failed walk is, 0x46256) when it stalls; a player's character standing in its way for
-//!      7 s sets GUARD too (FUN_00041870).
+//!    - **Move To** (MOVE_OUT): GOAL_MOVE_OUT walks to the point at the dash, and within 2 m it's
+//!      GUARD, with the line e635ecc6 (`move_out`). The game's route over the world points is
+//!      #242's: here a straight walk, given up (GUARD, e635ecc6, as a failed walk is, 0x46256)
+//!      when it stalls; a player's character standing in its way for 7 s sets GUARD too
+//!      (FUN_00041870).
 //!  - **Holding fire.** Without allow_combat the attack check refuses to fire (FUN_00024f80 at
 //!    0x250c5, after raising the gun): such a member turns to its target, gun up, and holds fire
 //!    (`gate`). An event whose entry in the mode's personality has the quick goal h_f0233972
 //!    grants combat for 10 s (play_brain.rs `GRANT_TIME`), each of its own shots starting the
-//!    10 s again: being hit (EVT_DAMAGED), shot at (EVT_SHOT_AT), or a squad mate firing within
-//!    the member's h_e3d8aeef, 20 m (EVT_SQUAD_MATE_FIRING, `mate_firing`), in FOLLOW, GUARD and
-//!    MOVE_OUT alike. So after Cover Me the squad holds fire until it's fired on or one of the
-//!    squad (the player too) opens up; a fresh squad (combat allowed from the start) and Fire At
-//!    Will engage at once.
-//!  - **The hand-over** (`hand_over`, FUN_0005cc20, and `taken`, FUN_000c8e80): handed from a
-//!    character more than 50 m from the one taken, the one left stands its ground (GUARD) and
-//!    the members following it hold too within 5 m of where it is, else move out to it; the one
-//!    taken in MOVE_OUT is set to GUARD for when control passes on again.
+//!    10 s again: being hit (EVT_DAMAGED), shot at (EVT_SHOT_AT), being a hostile brain's target
+//!    (EVT_SQUAD_IMA_TARGET, play_brain.rs `tell_targets`), or a squad mate firing within the
+//!    member's h_e3d8aeef, 20 m (EVT_SQUAD_MATE_FIRING, `mate_firing`), in FOLLOW, GUARD and
+//!    MOVE_OUT alike. So after Cover Me the squad holds fire until an enemy picks one of it out,
+//!    it's fired on or one of the squad (the player too) opens up; a fresh squad (combat allowed
+//!    from the start) and Fire At Will engage at once.
+//!  - **The hand-over** (`hand_over`, FUN_0005cc20, `taken`, FUN_000c8e80, and `released`,
+//!    FUN_00018230): handed from a character more than 50 m from the one taken, the one left
+//!    stands its ground (GUARD) and the members following it hold too within 5 m of where it is,
+//!    else move out to it; the one taken in MOVE_OUT is set to GUARD for when control passes on
+//!    again; the one left has its allow flags set by its mode again (in FOLLOW: holding fire).
 //!
 //! Test hooks: `BF_TEST_ORDER=<member>,<mode>[,<x>,<z>][@<s>][;...]` gives orders without the
 //! menu (`test_orders`); `BF_ORDER_LOG=1` logs the mode changes, grants and arrivals, `=2` also a
@@ -55,7 +58,7 @@ pub fn plugin(app: &mut App) {
 /// mode, is PCMD_FOLLOW. The demo's formation (play.rs FORMATION, SLOT_START, SLOT_DASH) was
 /// measured from the squad in its default mode, FOLLOW, so in WINGMAN its places and the
 /// distances it sets off and dashes at are those times 8 / 11.2. (What the five distances do in
-/// the game's follow: code-map.md's FUN_00020b10 row; the demo's follow doesn't run them, #243.)
+/// the game's follow: code-map.md's FUN_00020b10 row; the demo's follow doesn't run them, #331.)
 const WINGMAN_SPACING: f32 = 8.0 / 11.2;
 /// GUARD's kneel, this long after the mode change (s): a fit. The takes' Hawk began her
 /// stand2crouch 0.24 s of game time after Stand Ground (take07) and 0.52 s after arriving at a
@@ -163,6 +166,7 @@ fn event_name(ev: i64) -> String {
     match ev {
         personality::EVT_DAMAGED => "EVT_DAMAGED".into(),
         personality::EVT_SHOT_AT => "EVT_SHOT_AT".into(),
+        personality::EVT_SQUAD_IMA_TARGET => "EVT_SQUAD_IMA_TARGET".into(),
         EVT_SQUAD_MATE_FIRING => "EVT_SQUAD_MATE_FIRING".into(),
         _ => format!("event {ev}"),
     }
@@ -197,8 +201,10 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
 
 /// GUARD (Stand Ground): GOAL_IDLE_VARY where it stands, its one pause PAUSE_CROUCH (the guard
 /// personality h_155e52d6's EVT_IDLE_VARY_DATA: 15 s, drawn again): it kneels GUARD_KNEEL after
-/// the mode change and stays down (Brutus stands, as in the follow: play.rs `squad_ai`), keeping
-/// the way it faces. ENEMY_SEEN draws GOAL_ATTACK_GUARD_AND_COVER: it fires from where it is once
+/// the mode change and stays down (Brutus stands, as in the follow: play.rs `squad_ai`); one
+/// kneeling already (in the follow's crouch pause, or the controlled character left crouched in
+/// the hand-over's far case) stays down, its pause carried into the crouch, keeping the way it
+/// faces. ENEMY_SEEN draws GOAL_ATTACK_GUARD_AND_COVER: it fires from where it is once
 /// combat is allowed (`gate`). Its personality takes no dodge (EVT_DAMAGED_BY_PC and
 /// EVT_SHOT_BLOCKED_BY_FRIEND have negative priorities there): it doesn't step out of the
 /// leader's line of fire nor sidestep his hits.
@@ -211,7 +217,7 @@ fn guard(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
     m.dodge_request = None;
     m.still_time += dt;
     m.idle_pause = GOAL_PAUSE_CROUCH;
-    m.crouch_wanted = m.data_slot() != 0 && m.command.since >= GUARD_KNEEL;
+    m.crouch_wanted = m.data_slot() != 0 && (m.crouch_wanted || m.command.since >= GUARD_KNEEL);
     // (its own way: its "camera" along its facing, level)
     m.cam_yaw = m.yaw;
     m.cam_pitch = 0.0;
@@ -226,8 +232,10 @@ fn guard(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
 }
 
 /// MOVE_OUT (Move To): GOAL_MOVE_OUT's walk to the point (FUN_00045fa0), straight here (#242 has
-/// the routes): at the dash, a run while it knows an enemy (FUN_0004d970 mode 4, 3 with
-/// brain+0x3c4 bit 10, a contact known), the last MOVE_OUT_WALK m at a walk. Within
+/// the routes): at the dash (FUN_0004d970 mode 4), the last MOVE_OUT_WALK m at a walk. (The game
+/// runs instead while brain+0x3c4 bit 10 is set: the character inside one of the level record's
+/// +0x114 prisms, FUN_0004cb60 / FUN_000e6e00; what those volumes are isn't read, so the demo
+/// dashes. The leads read the bit as "an enemy known": it isn't.) Within
 /// MOVE_OUT_ARRIVE m it's GUARD (the full mode change) and says e635ecc6. Given up, GUARD with
 /// e635ecc6 too: when the walk stalls, or (silently) when a player's character has stood in its
 /// way BLOCK_TIME s (FUN_00041870); not on into a liquid that burns (play_liquids.rs, as the
@@ -297,7 +305,7 @@ fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, towa
     } else {
         let (fwd, right) = (Vec2::new(-m.cam_yaw.sin(), -m.cam_yaw.cos()), Vec2::new(m.cam_yaw.cos(), -m.cam_yaw.sin()));
         m.move_input = Vec2::new(way.dot(right), way.dot(fwd));
-        m.sprint = !brain::knows_any(m) && dist > MOVE_OUT_WALK;
+        m.sprint = dist > MOVE_OUT_WALK;
         m.walk = dist < MOVE_OUT_WALK;
     }
     m.switch_pressed = false;
@@ -339,8 +347,10 @@ fn set(u: &mut Player, mode: Mode, point: Option<Vec3>) -> bool {
 /// GUARD, Fire At Will WINGMAN, Cover Me FOLLOW, Move To MOVE_OUT with its point): the ordering
 /// player's character becomes its leader (FUN_0005bda0: in the demo every member follows the
 /// controlled character already), then the mode change, skipped for a mode it has (the menu's
-/// `!=` tests for 0-2; MOVE_OUT goes through to the new point). A dead member, or one out of the
-/// world, takes none (FUN_000c8470). `now`: the log's clock. True when the mode changed.
+/// `!=` tests for 0-2; MOVE_OUT goes through to the new point). A dead member takes none: the
+/// selection refuses it (FUN_000c8470: none or dead, char+0x70 bit 0, or held by another player's
+/// controller, or not in slots 1-4 of the squad list), and the demo also passes over one out of
+/// the world (`Player::absent`). `now`: the log's clock. True when the mode changed.
 pub fn order(u: &mut Player, mode: Mode, point: Option<Vec3>, now: f32) -> bool {
     if u.dead || u.absent || !u.in_squad() {
         return false;
@@ -432,6 +442,17 @@ pub fn taken(u: &mut Player) {
     }
 }
 
+/// The one control has left (`u`, an AI member now): its brain released (FUN_0008a720 ->
+/// FUN_00018230), its mode kept and its allow flags set by it again (`Command::released`): left in
+/// FOLLOW it holds fire until an event allows it (#33 take02).
+pub fn released(u: &mut Player) {
+    let was = u.command.allow;
+    u.command.released();
+    if log_level() > 0 && was != u.command.allow {
+        println!("t={:.2} order {}: left by the player in {}: allow {was:x} -> {:x}", u.sim_time, unit_name(u), u.command.mode.name(), u.command.allow);
+    }
+}
+
 /// One BF_TEST_ORDER entry: who (None: everyone but the controlled character, the menu's
 /// "everyone" selection), the mode, MOVE_OUT's point (x, z) and when (s).
 #[derive(Clone, Debug)]
@@ -491,18 +512,19 @@ fn parse_orders(v: &str) -> Vec<TestOrder> {
 /// controlled character) in `<mode>` (`mode_named`: guard, wingman, follow, moveout or 0-5);
 /// Move To's point is x, z on the floor there. E.g. `BF_TEST_ORDER="all,fire@1;all,cover@3"`
 /// (take12's Fire At Will, then Cover Me), `BF_TEST_ORDER=hawk,move,-70.8,-79.5@2` (take08's).
-/// No lines are said (#320).
-fn test_orders(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut done: Local<Vec<bool>>) {
-    let Ok(v) = std::env::var("BF_TEST_ORDER") else { return };
-    let orders = parse_orders(&v);
-    done.resize(orders.len(), false);
+/// No lines are said (#320). The hook is read once, at the first frame: each order with whether
+/// it's been given (a bad entry is logged that once).
+fn test_orders(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut orders: Local<Option<Vec<(TestOrder, bool)>>>) {
+    let orders = orders.get_or_insert_with(|| {
+        std::env::var("BF_TEST_ORDER").map_or(vec![], |v| parse_orders(&v).into_iter().map(|o| (o, false)).collect())
+    });
     let now = player.sim_time;
     let me = player.character;
-    for (k, o) in orders.iter().enumerate() {
-        if done[k] || now < o.at {
+    for (o, done) in orders.iter_mut() {
+        if *done || now < o.at {
             continue;
         }
-        done[k] = true;
+        *done = true;
         let slot = o.who.as_deref().map(|w| testsquad::slot_named(w, me));
         if slot.is_some_and(|s| s.is_none()) {
             println!("BF_TEST_ORDER: no squad member \"{}\": skipped", o.who.as_deref().unwrap_or(""));
@@ -640,6 +662,44 @@ mod tests {
         assert_eq!(mode_named("cover"), Some(Mode::Follow));
         assert_eq!(mode_named("Stand"), Some(Mode::Guard));
         assert_eq!(mode_named("7"), None);
+    }
+
+    /// A member kneeling when it's set to GUARD stays down (no stand-up and kneel again); one
+    /// standing kneels GUARD_KNEEL after the order; Brutus stays on his feet.
+    #[test]
+    fn stand_ground_keeps_a_kneel() {
+        let dt = 1.0 / 15.0;
+        let mut kneeling = Player::new(2);
+        kneeling.crouch_wanted = true;
+        assert!(set(&mut kneeling, Mode::Guard, None));
+        guard(&mut kneeling, dt, None, None);
+        assert!(kneeling.crouch_wanted);
+        let mut standing = Player::new(2);
+        assert!(set(&mut standing, Mode::Guard, None));
+        guard(&mut standing, dt, None, None);
+        assert!(!standing.crouch_wanted);
+        standing.command.tick(GUARD_KNEEL);
+        guard(&mut standing, dt, None, None);
+        assert!(standing.crouch_wanted);
+        let mut brutus = Player::new(0);
+        brutus.crouch_wanted = true;
+        set(&mut brutus, Mode::Guard, None);
+        brutus.command.tick(GUARD_KNEEL);
+        guard(&mut brutus, dt, None, None);
+        assert!(!brutus.crouch_wanted);
+    }
+
+    /// The character the player leaves has its allow flags set by its mode again (FUN_00018230):
+    /// FOLLOW's a3 goes a0 (take02), WINGMAN keeps both.
+    #[test]
+    fn a_member_left_by_the_player_has_its_flags_set_by_its_mode() {
+        let mut c = Command::default();
+        assert!(c.may_fire());
+        c.released();
+        assert_eq!(c.allow, 0);
+        c.set_mode(Mode::Wingman, None);
+        c.released();
+        assert_eq!(c.allow, ALLOW_COMBAT | ALLOW_COVER);
     }
 
     /// WINGMAN's formation is FOLLOW's times 8 / 11.2 (FUN_00020b10's two sets).

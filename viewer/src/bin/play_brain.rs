@@ -206,8 +206,8 @@ pub const GRANT_TIME: f32 = 10.0;
 /// timer (+0x468), and the Move To point (+0x8ac). Every character carries one; the squad's AI
 /// runs by it (play_orders.rs), the level characters' brains don't read it yet (they keep their
 /// own personality, `Brain`). Not touched while a player controls the character: its brain idles
-/// and keeps its mode for when control passes on (FUN_00018230 keeps it; FUN_000c8e80 resets only
-/// MOVE_OUT, play_orders.rs).
+/// and keeps its mode for when control passes on (FUN_00018230 keeps it and sets the allow flags
+/// by it again, `released`; FUN_000c8e80 resets only MOVE_OUT, play_orders.rs).
 #[derive(Clone, Debug)]
 pub struct Command {
     /// the mode
@@ -285,6 +285,14 @@ impl Command {
             Mode::Follow | Mode::Guard | Mode::MoveOut => self.allow &= !(ALLOW_COMBAT | ALLOW_COVER),
             Mode::Formation => {}
         }
+    }
+
+    /// Control passing on from its character (FUN_0008a720 -> FUN_00018230): the mode kept, and for
+    /// a squad brain the allow flags set by it again (FUN_00018000 at FUN_00018230's end): one left
+    /// in FOLLOW, GUARD or MOVE_OUT holds fire until an event allows it. #33 take02: Tex's a3 went
+    /// a0 at the hand-over to Hawk (2.96 s), Hawk's a3 a0 when she was left in turn (6.47 s).
+    pub fn released(&mut self) {
+        self.allow_by_mode();
     }
 
     /// The quick goal h_f0233972 (FUN_0003a4a0 at 0x3a744): allow_combat set and the grant's timer
@@ -580,11 +588,22 @@ pub fn knows_enemy(u: &Player) -> bool {
     u.brain.is_some() && !u.sensor.contacts.is_empty()
 }
 
-/// Whether `u`'s sensor knows a hostile (a contact), brain or not: GOAL_MOVE_OUT's run instead
-/// of the dash (brain+0x3c4 bit 10, FUN_0004cb60: one of its contact records passes
-/// FUN_000e6e00; an enemy known, inferred), play_orders.rs.
-pub fn knows_any(u: &Player) -> bool {
-    !u.sensor.contacts.is_empty()
+/// The squad member a hostile brain has as its target is told so (#318): the target pick
+/// (FUN_0004a860, 0x4aadd-0x4aafa) posts EVT_ENEMY_SEEN with the target to its own brain whenever
+/// none is queued, and the message handler's case for it (0x3e45a-0x3e49b) posts
+/// EVT_SQUAD_IMA_TARGET (43) to that target's brain when it's a character of a squad type
+/// (type+0x1a8 bit 0). The follow, guard and moveout personalities grant combat on 43, so a
+/// member an enemy has picked out fights back (play_orders.rs `update`) for as long as it's the
+/// target. Posted every frame here (its queue keeps one of each), after the frame's sense steps
+/// (`sense`'s target); the controlled character's is dropped (its brain idles).
+pub fn tell_targets(player: &mut Player, squad: &mut [Player]) {
+    let targets: Vec<Who> = squad.iter().filter(|u| !u.dead && !u.absent).filter_map(target).collect();
+    for who in targets {
+        let u = if player.who() == who { Some(&mut *player) } else { squad.iter_mut().find(|u| u.who() == who) };
+        if let Some(u) = u.filter(|u| u.in_squad() && u.brain.is_none()) {
+            u.command.post(personality::EVT_SQUAD_IMA_TARGET);
+        }
+    }
 }
 
 /// The nearest of `seen` (places in `sight` and distances) within `range` (m, the held gun's: the

@@ -72,6 +72,10 @@ pub const EVT_USER2: i64 = 70;
 pub const EVT_DAMAGED: i64 = 13;
 pub const EVT_SHOT_AT: i64 = 24;
 pub const EVT_SQUAD_MATE_FIRING: i64 = 44;
+/// EVT_SQUAD_IMA_TARGET (43): a hostile brain's EVT_ENEMY_SEEN handling (its message handler's
+/// case 0x3e45a-0x3e49b) posts it to the character it has as its target when that's of a squad
+/// type; the follow, guard and moveout personalities grant combat on it too.
+pub const EVT_SQUAD_IMA_TARGET: i64 = 43;
 /// EVT_IDLE_VARY_DATA (63): GOAL_IDLE_VARY's draw of its next pause: IDLE_VARY_DATA_PAUSE (97),
 /// _PAUSE_CAUTIOUS (98), _PAUSE_CROUCH (99), each with its length in a QG_IDLE_TIME quick goal.
 pub const EVT_IDLE_VARY_DATA: i64 = 63;

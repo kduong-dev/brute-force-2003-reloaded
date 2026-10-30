@@ -217,36 +217,46 @@ Squad movement and deaths follow the game's own data and the captures:
   * **Allow combat.** Without it the attack check refuses to fire (FUN_00024f80 at 0x250c5) after
     raising the gun: the member turns to its target, gun up, and holds fire. An event whose entry
     in the mode's personality has the quick goal h_f0233972 allows combat for 10 s: being hit
-    (EVT_DAMAGED), shot at (EVT_SHOT_AT, a hostile's shot within 1.5 m) or a squad member firing
+    (EVT_DAMAGED), shot at (EVT_SHOT_AT, a hostile's shot within 1.5 m), being a hostile brain's
+    target (EVT_SQUAD_IMA_TARGET: the brain's EVT_ENEMY_SEEN case, 0x3e45a, posts it to its
+    target whenever it takes the event, so a member an enemy has picked out fights back before
+    any shot; a frozen enemy, brain mode 6, posts none, as take12's) or a squad member firing
     within 20 m of it (EVT_SQUAD_MATE_FIRING, the type's h_e3d8aeef; the controlled character's
     shots count: FUN_0022f060), in FOLLOW, GUARD and MOVE_OUT alike (MOVE_OUT has no EVT_SHOT_AT
-    entry: being shot at alone doesn't). Each of
-    its own shots starts the 10 s again; when they run out, outside WINGMAN, combat is taken
-    back (the AI update, 0x1b1ff). That holds for a fresh member too after its first fight
-    (take11: a3 to a2 about 10 s after it). EVT_SQUAD_IMA_TARGET, ENEMY_NEAR and
-    FRIENDLY_SHOT_AT (43, 45, 46) grant it in the data too, but their posters aren't found:
-    not posted.
+    entry: being shot at alone doesn't). Each of its own shots starts the 10 s again; when they
+    run out, outside WINGMAN, combat is taken back (the AI update, 0x1b1ff). That holds for a
+    fresh member too after its first fight (take11: a3 to a2 about 10 s after it).
+    EVT_SQUAD_ENEMY_NEAR and FRIENDLY_SHOT_AT (45, 46) grant it in the data too, but their
+    posters aren't found: not posted.
   * **Fire At Will** (WINGMAN) keeps the follow, closer: the formation's places and the
     distances it sets off (3 m) and dashes (8 m) at, times 8 / 11.2 (FUN_00020b10's set for
     WINGMAN against FOLLOW's 1.4 times it), and combat allowed for as long as the mode lasts.
   * **Stand Ground** (GUARD): kneels 0.3 s after the order (a fit: take07 0.24 s, take08 0.52 s
-    of game time) and stays, its facing kept, Brutus standing; no dodges, no stepping out of the
+    of game time), or stays down if it was kneeling already (the follow's crouch pause, or the
+    controlled character left crouched), and stays, its facing kept, Brutus standing; no dodges,
+    no stepping out of the
     leader's line of fire (the guard personality's entries for them are off). It fires from its
     spot at what it sees once combat is allowed.
-  * **Move To** (MOVE_OUT): runs straight to the point (#242 has the routes) at the dash, a run
-    while it knows an enemy, the last 2.5 m at a walk; within 2 m of the point (FUN_00045fa0's
+  * **Move To** (MOVE_OUT): runs straight to the point (#242 has the routes) at the dash, the
+    last 2.5 m at a walk (the game runs instead while the member stands in one of the level's
+    +0x114 prisms, FUN_0004cb60: what those volumes are isn't traced, so the demo dashes; the
+    leads' "a run with an enemy known" misread the test); within 2 m of the point (FUN_00045fa0's
     walk at 2.0) it's GUARD and says e635ecc6 (`say()`; #155 moves the lines onto the gate). A
     walk that stalls (0.1 m in 1 s, after its first second) ends the same way (a failed walk,
     0x46256); the controlled character standing in its way within 8 m for 7 s sets GUARD
     silently (FUN_00041870); a liquid that burns stops it at the shore. A member with no point
     is at it: GUARD at once.
-  * **The hand-over** (FUN_0005cc20, FUN_000c8e80): handing control from a character more than
-    50 m from the one taken sets it to GUARD, and each other AI member in FOLLOW or WINGMAN to
-    GUARD within 5 m of where it stands, else MOVE_OUT to there (the game's point is its world
-    point). The one taken, if it was moving out, is set to GUARD. A character keeps its mode
-    while a player controls it, for when control passes on. The line the one left says by its
-    mode, and the answers, are #320's (the demo still says the follow line f415ab02).
-  * **Not done.** The game's follow itself (#243, FUN_00020b10's state machine): in FOLLOW the
+  * **The hand-over** (FUN_0005cc20, FUN_000c8e80, FUN_00018230): handing control from a
+    character more than 50 m from the one taken sets it to GUARD, and each other AI member in
+    FOLLOW or WINGMAN to GUARD within 5 m of where it stands, else MOVE_OUT to there (the game's
+    point is its world point). The one taken, if it was moving out, is set to GUARD. A
+    character keeps its mode while a player controls it, for when control passes on; the one
+    left has its allow flags set by that mode again (FUN_00018230's FUN_00018000), so left in
+    FOLLOW it holds fire until an event allows it (take02: Tex a3 to a0 at the hand-over to
+    Hawk, Hawk a3 to a0 when left in turn). The line the one left says by its mode, and the
+    answers, are #320's (the demo still says the follow line f415ab02).
+  * **Not done.** The game's follow itself (#331 for the squad, #243 for the marines:
+    FUN_00020b10's state machine): in FOLLOW the
     takes' squad trails Tex's dash at 12-16 m and stops about 9 m behind him (take04), where the
     demo's formation keeps 1-5 m off him running and stops 4-11 m off, ahead of him (the five
     distances' roles are in the code map's FUN_00020b10 row); WINGMAN's members going on ahead
@@ -288,6 +298,15 @@ Squad movement and deaths follow the game's own data and the captures:
     (EVT_SHOT_AT), his shots grant Flint and Hawk at 4.87 s (EVT_SQUAD_MATE_FIRING).
   * Cover Me from the start (take11: `BF_TEST_ORDER=all,cover@1`): "FOLLOW already: nothing
     changes (allow 3)", and they kill the Shrike at once.
+  * A live enemy's target (e34 with its enemies, no `BF_TEST_NO_HOSTILES`:
+    `BF_TEST_GOTO=-60,-79,-60,-79,30 BF_TEST_ORDER=all,guard@0.3 BF_BRAIN_LOG=1
+    BF_COMBAT_LOG=1`, Tex 33 m off the squad): the Shrike Hound spawned beside them takes Hawk
+    (on Stand Ground, a0) as its target at 0.67 s, and EVT_SQUAD_IMA_TARGET grants her combat
+    at 0.80 s, before its first bite (1.07 s, which knocks her down); she fires from 2.67 s, her
+    shots grant Brutus and Flint (EVT_SQUAD_MATE_FIRING, 2.60 s), and they kill it at 3.6 s.
+  * Stand Ground to a member kneeling in the follow (`BF_TEST_GOTO=-83.39,-82.79,-87.2,-75.8,27
+    BF_TEST_GO_AT=999 BF_TEST_ORDER=flint,guard@9`): Flint stays down through the order (frames
+    126-160; the watch log "kneel" in every row), no stand-up and kneel again.
   * The hand-over's far case (`BF_TEST_GOTO=-83.39,-82.79,-25,-78,27 BF_TEST_SPRINT=4
     BF_TEST_ORDER=hawk,guard@2 BF_TEST_SELECT=2,14`): at 54 m Tex goes GUARD and kneels, Brutus
     (5.9 m off him) and Flint (11 m) move out to his spot and hold there. Taking Hawk while she
@@ -295,14 +314,14 @@ Squad movement and deaths follow the game's own data and the captures:
     the hand-over.
   * Unchanged without an order: the tutorial's marines (brain.md's recipe,
     `BF_MAP=tutorial BF_TEST_GOTO=-15.6,-87.4,-60,-75 BF_TEST_GO_AT=14`, 420 frames) and e34's
-    follow (take04's run, 255 frames) captured with main's build and this one: no pixel more
-    than 20 levels apart in any frame, the only differences inside the farcast's glow (particle
-    noise). The follow's idle draw (FOLLOW's plain pause) comes after the first 15 s crouch.
+    follow (take04's run, 255 frames) captured with main's build and this one (and again after
+    the review's changes): no pixel more than 20 levels apart in any frame, the only differences
+    inside the farcast's glow (particle noise). The follow's idle draw (FOLLOW's plain pause)
+    comes after the first 15 s crouch.
   * The follow distances by mode (take05's run with Tex dashing, `BF_TEST_SPRINT=9`): running
     the demo's FOLLOW keeps 2-5 m off Tex and WINGMAN 1-4 m (means by member), at rest 5-6 m and
-    4-5 m; the takes'
-    are 12-16 m (FOLLOW) and 5-10 m (WINGMAN) running, about 9 m at rest in FOLLOW: the follow's
-    own (#243), see **Not done**.
+    4-5 m; the takes' are 12-16 m (FOLLOW) and 5-10 m (WINGMAN) running, about 9 m at rest in
+    FOLLOW: the follow's own (#331), see **Not done**.
 * **Liquids that burn** (#1, play_liquids.rs `burning_ahead`, `steps_into_burning`). A wingman
   doesn't walk into lava, sludge or toxic waste (a liquid whose character rate h_e0489ea0 is
   above 0, the one that hurts: levels.md, "What a liquid does to a character"): with ground in
