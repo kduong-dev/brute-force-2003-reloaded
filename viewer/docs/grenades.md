@@ -704,7 +704,7 @@ the explosion h_faced66c (Damage 39-71.5, damage-type 7 = DTYPE_SONIC, radius 10
 type h_0c18f6cc: grenade_sonic (sonic_grenade: the dome and ring; sonic_grenade_flash: godray
 shafts) with light_sonic_grenade and the sound f36fb063 at the first blast frame; decal
 h_fb24bcb7; its trail grenade_trail with f6dbdb17. Measured from the recording
-(todo/Sonic Grenade.mp4, the reference and tester agents' frames; the second blast at frame
+(todo/reference/Sonic Grenade.mp4, the reference and tester agents' frames; the second blast at frame
 449, camera still): a glowing dome growing from +0.03 s, flattening into a ground ring at
 ~0.25-0.3 s, godray shafts +0.27-0.85 s, the glow gone by ~1 s; hits at +0.17 s (~2 m),
 +0.23 s and +0.47 s; no camera shake.
