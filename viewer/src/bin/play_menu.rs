@@ -1,24 +1,28 @@
 //! The front end, after the game's own (todo/ video): the title (START), the main menu
-//! (CAMPAIGN, DEATHMATCH, SQUAD DEATHMATCH, the demo's EDITOR, OPTIONS, CREDITS) and SELECT
-//! MISSION, a carousel of the chosen mode's maps from the game's level list (campaign-bf.xmb
-//! `Type`: the deathmatch arenas mp*, the squad deathmatch maps sdm_*) with each one's name,
-//! planet and description.
+//! (CAMPAIGN, the demo's MULTIPLAYER and EDITOR, OPTIONS, CREDITS) and SELECT MISSION, a
+//! carousel of the chosen mode's maps from the game's level list (campaign-bf.xmb `Type`: the
+//! deathmatch arenas mp*, the squad deathmatch maps sdm_*) with each one's name, planet and
+//! description.
 //! Over the menu's background movie (data/movies/menuBack.bik, as frames in
 //! ../decompiled/movies/menuBack), with the game's logo, title bar, fonts, button icons,
 //! strings, style colours (common/game-options-en.xmb), menu music (menu_dub1) and menu sounds
 //! (the global-sounds of game-options, played from the common sound bank).
 //!
 //! CAMPAIGN leads on to the campaign path (CAMPAIGN TYPE to JOIN CAMPAIGN, then a new campaign's
-//! first mission: play_campaign_menus.rs, #226); DEATHMATCH and SQUAD DEATHMATCH to their maps
-//! (the game's mode panel, split-screen / System Link, is skipped). Choosing a map shows the
-//! LOADING screen while the map loads on a thread, then plays it in the same window (deathmatch
-//! alone, without the radar). In the game, Backspace comes back here, to the map it left.
+//! first mission: play_campaign_menus.rs, #226). MULTIPLAYER (#310, the demo's own entry: the game
+//! lists DEATHMATCH and SQUAD DEATHMATCH on its main menu) opens a submenu drawn like CAMPAIGN
+//! TYPE (play_multiplayer_menu.rs) with those two; each goes on to its maps (the game's mode
+//! panel, split-screen / System Link, is skipped). Choosing a map shows the LOADING screen while
+//! the map loads on a thread, then plays it in the same window (deathmatch alone, without the
+//! radar). In the game, Backspace comes back here, to the map it left: SELECT MISSION, and Back
+//! from it the submenu on that mode, and Back from the submenu the main menu on MULTIPLAYER.
 //! EDITOR (#193, the demo's own entry) shows LOADING too, then opens the map editor
 //! (play_editor.rs) on the test map in its edit mode, as `--edit` does; leaving it (Backspace
 //! twice) comes back to the main menu on EDITOR.
 //!
 //! Keys: arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back (Esc at
-//! the title quits), the pad's START is START (JOIN CAMPAIGN); the mouse picks and clicks.
+//! the title quits), the pad's START is START (JOIN CAMPAIGN); the mouse picks and clicks (the
+//! main menu and the MULTIPLAYER submenu, not the campaign path).
 //!
 //! Test hook BF_MENU_PRESS=<key>@<s>[;...] presses keys (a, b, x, y, up, down, left, right, start)
 //! that many seconds after the menu first opens; with BF_CAPTURE=<dir> each menu frame is saved as
@@ -64,7 +68,8 @@ const S_BACK: u32 = 0xF1E0_6461;
 /// The main menu's CAMPAIGN (its words' string): the campaign path (play_campaign_menus.rs).
 const S_CAMPAIGN: u32 = 0xEA6C_B1B3;
 /// A main menu entry's words: a string of the game's string table, or the demo's own (EDITOR,
-/// which the game hasn't: #193).
+/// which the game hasn't: #193; MULTIPLAYER, its own grouping of the game's two deathmatch
+/// modes: #310).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Say {
     Game(u32),
@@ -81,30 +86,40 @@ impl Say {
     }
 }
 
-/// The main menu's EDITOR (#193): the demo's own entry, after SQUAD DEATHMATCH. It opens the map
+/// The main menu's MULTIPLAYER (#310): the demo's own entry, second after CAMPAIGN. The game
+/// lists DEATHMATCH and SQUAD DEATHMATCH on its main menu; the demo groups them under this one,
+/// which opens a submenu of the two (play_multiplayer_menu.rs). Its word is the demo's (the game's
+/// own "Multiplayer", h_eb279513, is a debug-config label), drawn as the game's entries are.
+const MULTIPLAYER: Say = Say::Demo("MULTIPLAYER");
+/// MULTIPLAYER's description line: the demo's own text, shown where the game's entries show theirs.
+const MULTIPLAYER_ABOUT: Say = Say::Demo("Play a deathmatch in an arena, or lead your squad in a squad deathmatch.");
+/// The main menu's EDITOR (#193): the demo's own entry, after MULTIPLAYER. It opens the map
 /// editor (play_editor.rs) on the test map. Its word is the demo's (the game has no editor),
 /// drawn as the game's entries are.
 const EDITOR: Say = Say::Demo("EDITOR");
 /// EDITOR's description line: the demo's own text, shown where the game's entries show theirs.
 const EDITOR_ABOUT: Say = Say::Demo("Build your own map on the test level: place buildings, objects and characters, then play it with your squad.");
-/// The main menu: label, description, and the map list it leads to (a level kind; 0: none:
-/// CAMPAIGN's path, EDITOR, OPTIONS (not here), CREDITS).
-const MAIN: [(Say, Say, u32); 6] = [
-    (Say::Game(0xEA6C_B1B3), Say::Game(0xF35A_957D), 0),                      // CAMPAIGN
-    (Say::Game(0x1D31_7BBA), Say::Game(0x163F_7C9D), LEVEL_DEATHMATCH),       // DEATHMATCH
-    (Say::Game(0x1865_3C47), Say::Game(0x1E9F_F6EB), LEVEL_SQUAD_DEATHMATCH), // SQUAD\nDEATHMATCH
-    (EDITOR, EDITOR_ABOUT, 0),                                                // EDITOR (the demo's)
-    (Say::Game(0x1EB0_7CA1), Say::Game(0xFB11_75B6), 0),                      // OPTIONS
-    (Say::Game(0xE94A_3EF6), Say::Game(0x0CEB_37E1), 0),                      // CREDITS
+/// The main menu: label and description. CAMPAIGN opens the campaign path, MULTIPLAYER its
+/// submenu (DEATHMATCH and SQUAD DEATHMATCH, which lead on to their maps), EDITOR the map editor
+/// and CREDITS the credits; OPTIONS isn't in the demo (the error sound).
+const MAIN: [(Say, Say); 5] = [
+    (Say::Game(0xEA6C_B1B3), Say::Game(0xF35A_957D)), // CAMPAIGN
+    (MULTIPLAYER, MULTIPLAYER_ABOUT),                 // MULTIPLAYER (the demo's)
+    (EDITOR, EDITOR_ABOUT),                           // EDITOR (the demo's)
+    (Say::Game(0x1EB0_7CA1), Say::Game(0xFB11_75B6)), // OPTIONS
+    (Say::Game(0xE94A_3EF6), Say::Game(0x0CEB_37E1)), // CREDITS
 ];
 /// Layout (game-options, 640 x 480): the menu words are right-aligned in boxes ending at
 /// x 279 (main) / 278 (title), centred in them: (top, height) of each box. The game's tops are
-/// 100, 160, 220 (SQUAD DEATHMATCH, two lines, 80 tall), 320 and 380 (OPTIONS, CREDITS). The
-/// demo's EDITOR (#193) takes 320, the first free slot under SQUAD DEATHMATCH's box (220-300),
-/// the one-line entries' 60 spacing; OPTIONS and CREDITS move down to 380 and 440 for it (the
-/// product owner's choice: an EDITOR at 280 would sit 2 units under SQUAD DEATHMATCH's second
-/// line).
-const MAIN_BOXES: [(f32, f32); 6] = [(100.0, 40.0), (160.0, 40.0), (220.0, 80.0), (320.0, 40.0), (380.0, 40.0), (440.0, 40.0)];
+/// 100, 160, 220 (SQUAD DEATHMATCH, two lines, 80 tall), 320 and 380 (OPTIONS, CREDITS): a
+/// one-line entry's box is 40 tall, 60 from its neighbour's. The demo's five entries (#310) are
+/// all one line, so they take that 60 pitch from the game's first top, evenly: 100, 160, 220, 280,
+/// 340. CAMPAIGN, MULTIPLAYER (where DEATHMATCH was) and EDITOR (where SQUAD DEATHMATCH began) sit
+/// at the game's tops; OPTIONS and CREDITS at 280 and 340, not the game's 320 and 380: the game's
+/// 20-unit gap under SQUAD DEATHMATCH's second line is gone with it, and keeping 320 and 380 would
+/// leave the entries unevenly spaced (or start CAMPAIGN at 140). CREDITS' box ends at 380, 100
+/// above the screen's bottom edge (#193 had pushed it to 440-480, where its echo was clipped).
+const MAIN_BOXES: [(f32, f32); 5] = [(100.0, 40.0), (160.0, 40.0), (220.0, 40.0), (280.0, 40.0), (340.0, 40.0)];
 const TITLE_BOXES: [(f32, f32); 2] = [(194.0, 40.0), (246.0, 40.0)];
 const MAIN_RIGHT: f32 = 279.0;
 const TITLE_RIGHT: f32 = 278.0;
@@ -246,14 +261,18 @@ enum Screen {
     Loading,
     /// a screen of the campaign path (play_campaign_menus.rs)
     Campaign(campaign::Step),
+    /// the MULTIPLAYER submenu (#310, play_multiplayer_menu.rs): DEATHMATCH and SQUAD DEATHMATCH
+    Multiplayer,
 }
 
-/// The front end's state: the screen, the main menu's selection, SELECT MISSION's level kind and
-/// its map per kind, and the campaign path's choices.
+/// The front end's state: the screen, the main menu's selection, the MULTIPLAYER submenu's,
+/// SELECT MISSION's level kind and its map per kind, and the campaign path's choices.
 #[derive(Resource, Default)]
 struct Menu {
     screen: Screen,
     main: usize,
+    /// the MULTIPLAYER submenu's entry (`multiplayer::MODES`: 0 DEATHMATCH, 1 SQUAD DEATHMATCH)
+    multi: usize,
     kind: u32,
     pick: HashMap<u32, usize>,
     path: campaign::Path,
@@ -324,10 +343,12 @@ struct Ui {
     movie: Entity,
 }
 
-/// Something to point at: a main menu entry, or a map of the carousel (offset from the middle).
+/// Something to point at: a main menu entry, an entry of the MULTIPLAYER submenu (its index in
+/// `multiplayer::MODES`), or a map of the carousel (offset from the middle).
 #[derive(Component, Clone, Copy)]
 enum Item {
     Main(usize),
+    Mode(usize),
     Carousel(i32),
 }
 
@@ -666,6 +687,10 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
                 menu.main = i;
                 play(&mut commands, &sfx, SND_MOVE);
             }
+            (Item::Mode(i), Screen::Multiplayer) if i != menu.multi => {
+                menu.multi = i;
+                play(&mut commands, &sfx, SND_MOVE);
+            }
             (Item::Carousel(d), Screen::Missions) if click && d != 0 => {
                 asked.left = d < 0;
                 asked.right = d > 0;
@@ -712,20 +737,19 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
                 menu.path = p;
                 play(&mut commands, &sfx, SND_SELECT);
                 play(&mut commands, &sfx, SND_OPEN);
+            } else if asked.select && MAIN[menu.main].0 == MULTIPLAYER {
+                // the submenu of the two deathmatch modes, on its first (play_multiplayer_menu.rs)
+                multiplayer::open(&mut menu);
+                play(&mut commands, &sfx, SND_SELECT);
+                play(&mut commands, &sfx, SND_OPEN);
             } else if asked.select {
-                let kind = MAIN[menu.main].2;
-                if assets.maps.get(&kind).is_some_and(|m| !m.is_empty()) {
-                    menu.kind = kind;
-                    menu.screen = Screen::Missions;
-                    play(&mut commands, &sfx, SND_SELECT);
-                    play(&mut commands, &sfx, SND_OPEN);
-                } else {
-                    play(&mut commands, &sfx, SND_ERROR);
-                }
+                // (OPTIONS: not in the demo)
+                play(&mut commands, &sfx, SND_ERROR);
             } else if asked.back {
                 menu.screen = Screen::Title;
             }
         }
+        Screen::Multiplayer => multiplayer::input(&mut commands, &mut menu, &asked, &sfx, &assets),
         Screen::Missions => {
             let n = assets.maps.get(&menu.kind).map_or(0, |m| m.len());
             if n == 0 {
@@ -742,7 +766,8 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
                 let map = assets.maps[&kind][at].file.clone();
                 start_loading(&mut commands, &mut menu, &mut next, &map, kind == LEVEL_DEATHMATCH, false);
             } else if asked.back {
-                menu.screen = Screen::Main;
+                // (the submenu, on the mode these maps are of)
+                multiplayer::back_to(&mut menu);
             }
         }
         Screen::Loading => {}
@@ -1149,9 +1174,12 @@ fn open_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>, media: R
     // (the main menu opens on its first entry, CAMPAIGN: take01 at 2 s)
     let mut menu = Menu { screen: Screen::Title, main: 0, kind: LEVEL_SQUAD_DEATHMATCH, pick: HashMap::new(), ..default() };
     if let Some(Return { map: Some(map), deathmatch, .. }) = ret.as_deref() {
+        // back from a map: its SELECT MISSION (Back from there goes to the MULTIPLAYER submenu on
+        // that map's mode, and from there to the main menu on MULTIPLAYER: #310)
         menu.screen = Screen::Missions;
         menu.kind = if *deathmatch { LEVEL_DEATHMATCH } else { LEVEL_SQUAD_DEATHMATCH };
-        menu.main = MAIN.iter().position(|m| m.2 == menu.kind).unwrap_or(2);
+        menu.main = MAIN.iter().position(|m| m.0 == MULTIPLAYER).unwrap_or(1);
+        menu.multi = multiplayer::mode_of(menu.kind);
         let at = assets.maps.get(&menu.kind).and_then(|m| m.iter().position(|x| &x.file == map)).unwrap_or(0);
         menu.pick.insert(menu.kind, at);
     }
@@ -1220,6 +1248,11 @@ fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Ass
         Screen::Campaign(step) => {
             if let Some(cm) = cm.as_deref() {
                 campaign::build(&mut commands, screen, cm, &assets.strings, &sfx, step, &menu.path, clock.now, opened);
+            }
+        }
+        Screen::Multiplayer => {
+            if let Some(cm) = cm.as_deref() {
+                multiplayer::build(&mut commands, screen, cm, &assets.strings, &sfx, menu.multi, clock.now, opened);
             }
         }
         Screen::Title | Screen::Main => {
@@ -1678,9 +1711,12 @@ fn animate(mut commands: Commands, time: Res<Time>, clock: Res<Clock>, assets: O
 }
 
 /// Test hooks: BF_MENU_SHOT=<file.png> saves the menu and quits; BF_MENU_SCREEN=title | main |
-/// dm | sdm | editor (or the campaign path's campaign | profile | slot | name | difficulty | join)
-/// shows that screen and BF_MENU_PICK=<n> selects entry n of it first (`editor`: the main menu on
-/// EDITOR). BF_MENU_GO plays the selected map, or, on EDITOR, opens the map editor.
+/// multiplayer | dm | sdm | editor (or the campaign path's campaign | profile | slot | name |
+/// difficulty | join) shows that screen and BF_MENU_PICK=<n> selects entry n of it first (`main`:
+/// 0 CAMPAIGN, 1 MULTIPLAYER, 2 EDITOR, 3 OPTIONS, 4 CREDITS; `multiplayer`, the submenu: 0
+/// DEATHMATCH, 1 SQUAD DEATHMATCH; `dm` and `sdm`, SELECT MISSION: the map; `editor`: the main
+/// menu on EDITOR). BF_MENU_GO plays the selected map (on `multiplayer`: the picked mode's first),
+/// or, on EDITOR, opens the map editor.
 #[allow(clippy::too_many_arguments)]
 fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu>>, assets: Option<Res<Assets2>>,
         mut exit: EventWriter<AppExit>, mut next: ResMut<NextState<super::AppState>>, state: Res<State<super::AppState>>,
@@ -1716,6 +1752,12 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                     menu.screen = Screen::Main;
                     menu.main = MAIN.iter().position(|m| m.0 == EDITOR).unwrap_or(0);
                 }
+                // the MULTIPLAYER submenu (#310) on its entry BF_MENU_PICK
+                Ok("multiplayer") => {
+                    menu.screen = Screen::Multiplayer;
+                    menu.main = MAIN.iter().position(|m| m.0 == MULTIPLAYER).unwrap_or(0);
+                    menu.multi = pick.unwrap_or(0).min(multiplayer::MODES.len() - 1);
+                }
                 Ok(kind @ ("dm" | "sdm")) => {
                     menu.screen = Screen::Missions;
                     menu.kind = if kind == "dm" { LEVEL_DEATHMATCH } else { LEVEL_SQUAD_DEATHMATCH };
@@ -1730,6 +1772,12 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                 }
                 _ => {}
             }
+        }
+        if *frames == 3 && go && menu.screen == Screen::Multiplayer {
+            // (BF_MENU_GO on the submenu chooses its entry: that mode's maps, whose first the next
+            // step plays)
+            menu.kind = multiplayer::MODES[menu.multi.min(multiplayer::MODES.len() - 1)].kind;
+            menu.screen = Screen::Missions;
         }
         if *frames == 4 && go && menu.screen == Screen::Missions {
             match assets.maps.get(&menu.kind).and_then(|v| v.get(menu.pick.get(&menu.kind).copied().unwrap_or(0) % v.len().max(1))) {
@@ -1768,21 +1816,31 @@ pub fn wanted() -> bool {
 #[path = "play_campaign_menus.rs"]
 mod campaign;
 
+/// The MULTIPLAYER submenu (#310): DEATHMATCH and SQUAD DEATHMATCH, drawn like CAMPAIGN TYPE.
+#[path = "play_multiplayer_menu.rs"]
+mod multiplayer;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The main menu's order (#193): CAMPAIGN first (the menu opens on it), EDITOR right after
-    /// SQUAD DEATHMATCH and before OPTIONS, at y 320; the entries before it keep the game's
-    /// boxes, OPTIONS and CREDITS move down 60 for it.
+    /// The main menu's entries (#193, #310): CAMPAIGN first (the menu opens on it), then the demo's
+    /// MULTIPLAYER and EDITOR, then the game's OPTIONS and CREDITS.
     #[test]
-    fn editor_after_squad_deathmatch() {
+    fn main_menu_order() {
         assert_eq!(MAIN.len(), MAIN_BOXES.len());
-        assert_eq!(MAIN[0].0, Say::Game(S_CAMPAIGN));
-        let editor = MAIN.iter().position(|m| m.0 == EDITOR).expect("EDITOR");
-        assert_eq!(MAIN[editor - 1].2, LEVEL_SQUAD_DEATHMATCH);
-        assert_eq!(MAIN_BOXES[editor], (320.0, 40.0));
-        assert_eq!(MAIN_BOXES, [(100.0, 40.0), (160.0, 40.0), (220.0, 80.0), (320.0, 40.0), (380.0, 40.0), (440.0, 40.0)]);
-        assert_eq!(MAIN.last().map(|m| m.0), Some(Say::Game(S_CREDITS)));
+        let words: Vec<Say> = MAIN.iter().map(|m| m.0).collect();
+        assert_eq!(words, [Say::Game(S_CAMPAIGN), MULTIPLAYER, EDITOR, Say::Game(0x1EB0_7CA1), Say::Game(S_CREDITS)]);
+    }
+
+    /// The main menu's five one-line entries (#310) sit at the game's 60-unit pitch from its first
+    /// top, 100, with its one-line boxes' 40 height, and CREDITS' box ends well above the screen's
+    /// bottom edge, where #193's pushed it.
+    #[test]
+    fn main_menu_is_evenly_spaced() {
+        assert_eq!(MAIN_BOXES, [(100.0, 40.0), (160.0, 40.0), (220.0, 40.0), (280.0, 40.0), (340.0, 40.0)]);
+        assert!(MAIN_BOXES.windows(2).all(|w| w[1].0 - w[0].0 == 60.0));
+        let (top, height) = MAIN_BOXES[MAIN_BOXES.len() - 1];
+        assert!(top + height <= SCREEN.y - 100.0);
     }
 }
