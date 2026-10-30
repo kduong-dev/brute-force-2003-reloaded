@@ -851,7 +851,14 @@ them):
   * **Taken away** by a destroyer-trigger that names one (play_triggers.rs takes them in with
     its copies: e34's six tutorial pointers, e40's io tablet glow ...), or with the breakable
     object it's attached to (`<parent Type="1">`, FUN_0021a700: e01's barrel fires go when
-    their barrels break). A hardpoint link (Type 2: the torches) doesn't take it away.
+    their barrels have gone, on the frame the model does). Either way the effect object is
+    destroyed, and every particle and light it had made goes with it on that frame (#308:
+    `ale_fx::TakenAway`; the game's destructor takes every node of its ALE effects out of the
+    manager, FUN_0021a4d0 -> FUN_0021c700 with AL 0, so none lives out). A hardpoint link
+    (Type 2: the torches and sconces) doesn't take it away (FUN_0021a700 acts on a type 1 link
+    only), but the holder's removal stops the effects it lists (FUN_0015a1d0): the emitters go and
+    the particles out finish, so the flame dies down and its light fades. What the game does, and
+    how it was checked: [scenery.md](scenery.md) "What hangs on an object when it goes", #308.
   * **Drawn** with the game's particle rules (the triggers' effects' shapes, count once a game
     frame, facing and LOD; the shapes are the table at 0x402a4c, where a shape-2 quad spans -1 to
     +1 of its Scale, twice the demo's own quad, and a shape-3 one stands on its particle) and
@@ -904,7 +911,9 @@ them):
     is placed with a life under 90 days), each alchemy entry's own max-life (the slot's +8,
     which FUN_0021a850 reads: FLT_MAX on nearly every entry, 10 s on h_f90c728a's in m01_a/b
     and m05_b/y, 207 and 600 s on a few in e01, m01_a and sdm_e01; the demo runs them on), the
-    lights levels hang on them (`<parent>` light objects of type h_09020c30: #143's).
+    lights levels hang on them (`<parent>` light objects of type h_09020c30: #143's; the game
+    drives one such light-object from the light effect, FUN_0021d270, where the demo draws a
+    point light per particle: levels.md "Linked lights").
   * **Checked** (scratchpad t258dev):
     * The tutorial's landing spot (take03 30-33 s: `BF_MAP=tutorial
       BF_TEST_GOTO=65.55,74.03,55.6,73.05 BF_TEST_GO_AT=999`): dark winged flies dart about the
@@ -918,7 +927,9 @@ them):
       curtain, as take08 (the orange light on the hill there is #143's).
     * e34: `BF_TRIGGER_FIRE=h_f211fe52,6,4.0` removes the tutorial pointer by (69.2, -92.5)
       ("removes the effect h_f3bee12f"). e01: `BF_TEST_HIT=5.0 BF_TEST_HIT_NEAR=-110.96,51.77`
-      breaks the fire barrel, and its fire goes with it.
+      breaks the fire barrel, and its fire goes with it. Since #308 the particles and lights
+      go on the same frame (scenery.md, "Verified": before, the pointer's glow faded over 0.9 s
+      after its removal and a barrel's lights for 1.3 s after its break).
     * The tutorial's opening: the lava bursts and the farcast come once each, as before (the
       templates are left to the triggers); e40, sdm_e34 and the test map play as before.
     * m01_a loaded three times in one test session (`--test` with

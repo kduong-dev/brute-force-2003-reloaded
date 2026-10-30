@@ -110,6 +110,14 @@ pub struct Placement {
     /// the ALIGN_ numbers): 1 (the enemies') on the tutorial's mines, -1 on its pickups; -1
     /// without one
     pub alignment: i64,
+    /// a game object's `<static-effects objects>` (h_1e6b3e1a, name by hashing): the effect
+    /// objects it keeps pointers to, 8 at most (its +0x88 + 8 x n weak pointers, which the
+    /// attribute handler 0x156390 resolves by name, FUN_000d6ac0). FUN_0015a1d0 stops each as the
+    /// object leaves the world (FUN_001586a0). Every name listed in the game's data is an effect
+    /// object linked back to its lister (117 by a type 1 link, 278 by a type 2); 50 type 2
+    /// effects and one type 1 are in no list (all but two on holders that never go: 0 or 40 hp,
+    /// no debris list). Empty for the other tags
+    pub static_effects: Vec<u32>,
 }
 
 /// A level camera-object (`<camera-object name h_1435f288 h_19bc8fdf h_125978e4><transform>`,
@@ -207,9 +215,13 @@ pub struct EffectObject {
     /// the other link types): FUN_0015ed30 moves it with that object, and FUN_0021a700 takes it
     /// away once that object is gone (its link's object pointer cleared, the object's +0x10c bit
     /// 1 clear). e01's barrel fires sit on its breakable barrels so (118 placements have such a
-    /// link). A Type 2 link (a hardpoint of an object: 328 placements, the torches and sconces)
-    /// doesn't take it away
+    /// link)
     pub parent: u32,
+    /// the object whose hardpoint it sits at, by a `<parent Type="2" parent=NAME>` link (0 for
+    /// none): the torches and sconces (328 placements). FUN_0021a700 doesn't take such an effect
+    /// away when its object is gone, but the object's own removal stops its static effects
+    /// (FUN_0015a1d0, from FUN_001586a0): the emitters go and the particles out finish
+    pub holder: u32,
 }
 
 /// light-usage LU_INDOOR (the LU_ name table 0x3bf954: LU_NONE 0, LU_INDOOR 1, LU_OUTDOOR 2,
@@ -341,6 +353,12 @@ pub struct LevelLamp {
     /// h_1f416687: lights what the outdoor pair lights (characters, LU_OUTDOOR on 535 of the
     /// 542 placed ones)
     pub outdoor: bool,
+    /// the placed object it hangs on by a `<parent>` link of type 1 or 2 (0 for none, or for a
+    /// parent that isn't a placed object): the light-object's tick (0x14f1d0) takes it away once
+    /// its link's object is gone (FUN_0015ed30 returns 1), so the lamp goes out with that object
+    /// (`bf_play`'s play_lamps.rs). 15 lamps hang on a breakable one: the torches' glows (m01_a,
+    /// m01_b, m05_b, m05_y, e05, m08_a) and m14_d's three
+    pub parent: u32,
 }
 
 /// A light-object the demo doesn't draw: its type, its name and why.
@@ -353,9 +371,11 @@ pub struct OtherLight {
 /// Why a light-object isn't drawn (`OtherLight`): an effect object's light. 373 point lights
 /// (all 159 h_09020c30, 214 h_e81ba579) hang on an effect-object (`<parent Type="1">`, at its
 /// origin): the effect types that carry one name its type (their h_f8c6a8b4) and an ALE
-/// light-effect, which drives it (an inference, as `ale_fx` reads the effects' light; their own
+/// light-effect, which drives it (the light binds to its parent effect as it's made, 0x14f370 ->
+/// FUN_0021c1c0, and FUN_0021d270 sets its colour from the light effect each update; their own
 /// colour is 1 1 1 and range 10 on every one). The placed effect objects run their light-effect
 /// as lights of their own (ale_fx `spawn_placed_effects`, #258), so these aren't drawn again.
+/// They go as their effect object does (their tick, 0x14f1d0).
 pub const EFFECT_LIGHT: &str = "its effect object's light (drawn by the effect's light-effect, #258)";
 /// Why a light-object isn't drawn: a spot light (LT_SPOT; none in the game's data).
 pub const SPOT_LIGHT: &str = "a spot light";
@@ -561,6 +581,9 @@ const H_PARENT: u32 = h("parent");
 /// link (a `<HARDPOINT name>` of the parent) moves it to that node, where its own transform
 /// already has it (e05's light 1.5 m over its parent's origin), so it keeps that.
 const PARENT_OBJECT: i64 = 1;
+/// A `<parent>` link to a hardpoint of an object (FUN_0015ed30's type 2): the torches' and
+/// sconces' flames and lamps sit on one.
+const PARENT_HARDPOINT: i64 = 2;
 
 /// A level <transform>: the 3 x 3 rotation row by row (columns are the object's axes: the
 /// level's cameras come out level and looking down -z), then the position.
@@ -689,7 +712,8 @@ impl Level {
                                      radar_contact, light_usage, oriented,
                                      radius: e.attr(H_POINT_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(-1.0),
                                      placed: e.attr(H_ITEM_PLACED).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
-                                     alignment: e.attr(h("item-alignment")).and_then(|v| v.as_i64()).unwrap_or(-1) });
+                                     alignment: e.attr(h("item-alignment")).and_then(|v| v.as_i64()).unwrap_or(-1),
+                                     static_effects: triggers::object_list(e, h("static-effects")) });
         }
         // the radar-triggers; those that operate on the level's start (an entry on
         // TRIG_SIG_FIRST_UPDATE with TRIG_ACT_OPERATE, enabled) set their objects' value now, in
@@ -783,11 +807,19 @@ impl Level {
                 }),
                 Some(LT_POINT) => {
                     let num = |n: &str| e.attr(h(n)).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
+                    // the placed object it hangs on, by either kind of link: the light-object's
+                    // tick (0x14f1d0) removes it when FUN_0015ed30 says its link's object is gone
+                    let holder = e.child(H_PARENT)
+                        .filter(|p| matches!(p.attr(h("Type")).and_then(|v| v.as_i64()), Some(PARENT_OBJECT | PARENT_HARDPOINT)))
+                        .map(|p| hash(p, h("parent")))
+                        .filter(|&n| n != 0 && n != h("") && objects.iter().any(|o| o.name == n && o.tag != H_EFFECT_OBJECT))
+                        .unwrap_or(0);
                     lamps.push(LevelLamp {
                         kind, name, color, indoor, outdoor,
                         at: placed.w_axis.truncate(),
                         range: num("range").unwrap_or(10.0),
                         falloff: num("falloff").map_or(3, |f| f as i64),
+                        parent: holder,
                     });
                 }
                 Some(LT_SPOT) => other_lights.push(other(SPOT_LIGHT)),
@@ -843,7 +875,8 @@ impl Level {
         // the effect objects with their own attributes (0x21c000) and their link (an empty
         // parent is the empty name's hash: none)
         let effect_objects = all.iter().filter(|e| e.name == H_EFFECT_OBJECT).filter_map(|e| {
-            let link = e.child(H_PARENT).filter(|p| p.attr(h("Type")).and_then(|v| v.as_i64()) == Some(PARENT_OBJECT));
+            let link = |kind: i64| e.child(H_PARENT).filter(|p| p.attr(h("Type")).and_then(|v| v.as_i64()) == Some(kind))
+                .map(|p| hash(p, h("parent"))).filter(|&n| n != h("")).unwrap_or(0);
             let num = |k: u32| e.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
             Some(EffectObject {
                 name: hash(e, h("name")),
@@ -851,7 +884,8 @@ impl Level {
                 transform: transform(&floats(e.child(h("transform"))))?,
                 lifetime: num(H_EFFECT_LIFETIME),
                 distance: num(H_EFFECT_DISTANCE),
-                parent: link.map(|p| hash(p, h("parent"))).filter(|&n| n != h("")).unwrap_or(0),
+                parent: link(PARENT_OBJECT),
+                holder: link(PARENT_HARDPOINT),
             })
         }).collect();
         let follow_camera = hash(root, H_FOLLOW_CAMERA);

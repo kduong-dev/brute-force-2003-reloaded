@@ -848,7 +848,8 @@ fn inside(volume: Volume, at: &Mat4, inv: &Mat4, a: &Actor) -> bool {
 fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut events: ResMut<TriggerEvents>, mut player: ResMut<Player>,
        mut squad: ResMut<Squad>, mut game: ResMut<GameData>, map: Res<MapLevel>, mut doors: Option<ResMut<Doors>>, spawns: Option<Res<SquadSpawns>>,
        mut fx: (Option<ResMut<bf_viewer::ale_fx::AleAssets>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-       mut placed: Query<(&Placed, &mut Visibility)>, (mut hits, mut copies): (ResMut<AiHits>, ResMut<pickup_spawns::PickupCopies>),
+       mut placed: Query<(&Placed, &mut Visibility)>,
+       (mut hits, mut copies, mut lamps): (ResMut<AiHits>, ResMut<pickup_spawns::PickupCopies>, ResMut<lamps::LampsOut>),
        mut campaign: ResMut<Campaign>, mut cutscenes: ResMut<script::Cutscenes>) {
     let Some(level) = map.0.as_ref() else { return };
     if tr.live.is_empty() {
@@ -983,8 +984,10 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                             println!("t {now:.2}: {by} removes {}", tr.label(object));
                         }
                     } else if let Some(list) = tr.effects.remove(&object) {
+                        // (an effect object taken out of the world is destroyed, its particles
+                        // and lights with it: ale_fx `TakenAway`, #308)
                         for e in list {
-                            commands.entity(e).try_despawn();
+                            commands.entity(e).try_insert(bf_viewer::ale_fx::TakenAway);
                         }
                         if tr.log {
                             println!("t {now:.2}: {by} removes the effect {}", tr.label(object));
@@ -992,6 +995,14 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                     } else if std::iter::once(&*player).chain(squad.0.iter()).any(|m| m.trigger_name == object) {
                         if tr.log {
                             println!("t {now:.2}: {by}: {} is a squad member: not removed", tr.label(object));
+                        }
+                    } else if let Some(i) = level.lamps.iter().position(|l| l.name == object) {
+                        // a lamp (a point light-object: 1019 over 25 levels are named by a
+                        // destroyer, their fixtures' DESTROYED behind a router): taken out of the
+                        // world at once, FUN_00200b70 -> FUN_000db3e0 (play_lamps.rs, #308)
+                        lamps.put_out(i);
+                        if tr.log {
+                            println!("t {now:.2}: {by} removes the lamp {}", tr.label(object));
                         }
                     } else if let Some(i) = level.objects.iter().position(|o| o.name == object) {
                         // a placed object: no longer drawn; a breakable's collision goes with it
@@ -1003,8 +1014,13 @@ fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut ev
                             }
                         }
                         let breaks = game.0.breakable(level.objects[i].kind).is_some();
-                        if let Some(b) = bf_viewer::arena::arena().filter(|_| breaks).and_then(|a| a.breakable(i).map(|b| (a, b))) {
-                            b.0.set_broken(b.1, true);
+                        if let Some(b) = bf_viewer::arena::arena().and_then(|a| a.breakable(i).map(|b| (a, b))) {
+                            if breaks {
+                                b.0.set_broken(b.1, true);
+                            }
+                            // (taken out of the world, FUN_000db3e0: the effects and lamps hung on
+                            // it go with it, #308)
+                            b.0.set_gone(b.1);
                         }
                         if tr.log {
                             println!("t {now:.2}: {by} removes the placed {} (h_{:08x})", tr.label(object), level.objects[i].kind);

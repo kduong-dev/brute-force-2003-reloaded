@@ -973,6 +973,7 @@ fn main() {
         .add_plugins(script::plugin)
         .add_plugins(brain::plugin)
         .add_plugins(placed_fx::plugin)
+        .add_plugins(lamps::plugin)
         .add_plugins(camera::plugin)
         .add_plugins(inventory::plugin)
         .add_plugins(itembox::plugin)
@@ -1096,6 +1097,8 @@ mod script;
 mod brain;
 #[path = "play_placed_fx.rs"]
 mod placed_fx;
+#[path = "play_lamps.rs"]
+mod lamps;
 #[path = "play_camera.rs"]
 mod camera;
 #[path = "play_liquids.rs"]
@@ -1302,9 +1305,10 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
 /// `LevelMaterial`); a character's materials are bevy's own, so each takes the light at its chest
 /// from every direction, as its texture added to the picture (emissive), at CHARACTER_LAMP of it
 /// (about the average N.L over a body). A body's stealth copies (play_stealth.rs `BodyCopy`)
-/// have materials of their own and are passed over.
+/// have materials of their own and are passed over. The lamps put out with their object
+/// (play_lamps.rs, #308) give none.
 #[allow(clippy::too_many_arguments)]
-fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
+fn lamp_characters(map: Res<MapLevel>, out: Res<lamps::LampsOut>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
                    parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), (With<Mesh3d>, Without<stealth::BodyCopy>)>,
                    mut materials: ResMut<Assets<StandardMaterial>>, mut last: Local<HashMap<Entity, Vec3>>) {
     let Some(level) = &map.0 else { return };
@@ -1313,7 +1317,7 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
     }
     for u in std::iter::once(&*player).chain(squad.0.iter()) {
         let Some(l) = &u.loaded else { continue };
-        let light = bf_viewer::level_scene::lamp_light_at(level, u.position + Vec3::Y * CHEST) * CHARACTER_LAMP;
+        let light = bf_viewer::level_scene::lamp_light_at(level, &out.off, u.position + Vec3::Y * CHEST) * CHARACTER_LAMP;
         // (only when it changes: a changed material is sent to the GPU again)
         if last.get(&l.root).is_some_and(|v| v.distance(light) < 0.005) {
             continue;
