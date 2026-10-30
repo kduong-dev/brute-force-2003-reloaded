@@ -315,6 +315,33 @@ const PERP_OUT_CONES: [&str; 1] = ["sonic_grenade.emt"];
 /// AngleFadeOut appearances (all of them under `Compiled::placed` and `Compiled::beam`, see
 /// `Pair::axial`), and a beam's facing 2 as a perp quad.
 const FACING: u32 = 0xE354_2300;
+/// GeneralApp_AngleFadeOut's fade (#287), as the particle vertex shader 0x3b8bf8 draws it
+/// (instructions 64-91): its alpha x clamp((|cos| - ANGLE_FADE_GONE) x ANGLE_FADE_SCALE, 0, 1)
+/// squared, for the cosine between the quad's normal and the way to the eye. FUN_002a1a50 sets
+/// the two constants at 0x2a1c9d when the appearance's flag (its node +0x40 bit 1) is set: 0.0872
+/// (0x3db27eb6, cos 85 degrees) and 3.9237 (0x407b1d2a, 1 / (cos 70 - cos 85)); otherwise -1 and 1,
+/// which never fade. So a ring is whole seen more than 20 degrees off edge-on and gone within 5:
+/// the Rails' rings (rgun_perp_s.app) from the side, as #287 take05 shows them (a few short ticks
+/// near the beam's ends, where the view isn't square to it). Drawn for the beams' perp quads
+/// (`Pair::fade`); every other effect keeps the demo's unfaded quads, as checked.
+const ANGLE_FADE_GONE: f32 = 0.0872;
+const ANGLE_FADE_SCALE: f32 = 3.9237;
+/// The beams emitted by the game's count and clock (`Compiled::counted`, #287): the Rails' rings
+/// and side arcs (rgun_perp_s, which holds both emitters; the RVR's and the CLVR's flight
+/// effect), checked against #287 take05 (the side view: the arcs start 3.3 m out in their first
+/// game frame, the rings strewn over the cube's 14.2 m) and #67 take06 f019 (the rings' first
+/// frame: a few spread from the gun to the reticle). Not the Rails' ribbon, rgun_beam: under the
+/// game's count its first batch, three points spread back 2/3 of its emitter's first 13.9 m move
+/// at most, would start it 4.6 m out, where take05 f011 shows the blue ribbon from the muzzle (how
+/// the beam appearance h_1f55f13e joins its ribbon, and from where, isn't traced). Nor the other
+/// guns' tracers and trails (tracer, tracer_snipe): the game's count gives the MK's tracer.emt
+/// eight streaks in its first update (its four emit-count keys) where the demo's draws one, and
+/// none was checked against a take with it.
+const GAME_COUNT_BEAMS: [&str; 1] = ["rgun_perp_s"];
+/// The steps the angle fade is drawn in (the demo's: its materials are shared per life step, so a
+/// faded quad takes the material of its fade level, 1 / FADE_LEVELS apart; under half a step it
+/// isn't drawn).
+const FADE_LEVELS: usize = 4;
 /// GeneralApp_ShapeType (the appearance's +0x48): which of the game's particle shapes the quad
 /// is. The table at 0x402a4c lists them (FUN_002b1bb0 registers each with FUN_002b1bf0, into
 /// 0x443658; the appearance's draw picks its own at 0x2a1a7e), each a vertex list scaled by the
@@ -421,11 +448,24 @@ pub struct Pair {
     app: Node,
     /// materials by life step, then by flipbook frame (one frame for a still texture)
     steps: Vec<Vec<Handle<StandardMaterial>>>,
+    /// a beam's GeneralApp_AngleFadeOut quad (see ANGLE_FADE_GONE): its materials at each fade
+    /// level below whole (level 1 to FADE_LEVELS - 1 of FADE_LEVELS), each like `steps`; empty for
+    /// every other pair
+    fade: Vec<Vec<Vec<Handle<StandardMaterial>>>>,
     /// an animated texture's frames per second
     fps: f32,
     /// how the flipbook's frame is picked (see TEX_FRAME)
     frame: FrameMode,
     perp: bool,
+    /// a beam's facing-2 quad (see FACING), drawn as the shader builds it (#287): in the plane
+    /// square to its particle's own motion, turned in it by its Rotate; one born still keeps the
+    /// perp quad's plane, square to its emitter's +y. Where a beam emitter throws its particles
+    /// along the ray (the Rails' rings, the L-Shots' rings and smoke, within 0.3 degrees) that's
+    /// the plane the demo's perp quad lay in before; the Rails' muzzle ring
+    /// (rail_mflash_ring_Cone.emt, thrown out 73.7 degrees off the ray) now stands round the
+    /// muzzle edge-on to the ray where it lay square to it, a disc of glows facing the camera
+    /// from behind the shooter
+    square: bool,
     /// the game's shape of its quad (see SHAPE): 2 or 3 where the effect is compiled with
     /// `Compiled::shapes`, else 5 (the demo's quad)
     shape: u32,
@@ -514,7 +554,7 @@ pub struct Compiled {
     /// Emitted by the game's count, once a game frame (FUN_00065800, `game_count`,
     /// GAME_FRAME), and drawn at the effect's distance LOD (see LOD_TAN, EMIT_LOD, APP_LOD):
     /// the same effects, the Therm Sweeper's trail, explosion and launch dust and the triggers'
-    /// effects. Every other
+    /// effects, and the Rails' beam (GAME_COUNT_BEAMS, #287). Every other
     /// effect keeps the demo's count (a rate's fraction carried over each render frame, an emit
     /// count's burst at the start) and no LOD, until checked against its own captures.
     pub counted: bool,
@@ -556,8 +596,18 @@ pub struct Compiled {
     /// (stun_beam_s's, the placed effects' xleaves_rustle_kill and slava-cavern-kill.fld), until
     /// checked against their own captures. A beam's appearances are turned by their facing type
     /// as the game's shader does (see FACING: 3 along their motion, `Pair::axial`; 2 square to
-    /// it, as perp quads) and drawn with the game's shapes (`shapes`), and its particles start
-    /// where the game's spawn puts them (`game_spawn`); its count stays the demo's.
+    /// it, as perp quads, faded edge-on where they're AngleFadeOut ones, `Pair::fade`) and drawn
+    /// with the game's shapes (`shapes`), and its particles start where the game's spawn puts them
+    /// (`game_spawn`). Since #287 the Rails' (GAME_COUNT_BEAMS) is emitted as FUN_00065800 does
+    /// it (`counted`, `game_count`): once a 30 Hz game frame, its emitters' curves (the cube's
+    /// height among them, 0x64d60) read at their time after that frame's step (0x2a5b10 runs
+    /// first), and each batch's particles aged and placed back along the emitter's move since its
+    /// last batch, the newest at the emitter (0x65ca2-0x65ce5, `Batch::ages`). With the demo's
+    /// count (a render frame's batch at the frame's start) its first rings were all strewn over the
+    /// cube's 6.4 m at time 0, 32 of them in a 15 fps capture, a bulb of rings round the gun; the
+    /// game's first 16 go over its 14.2 m one game frame in, and its side arcs start 3.3 m out,
+    /// where the side emitter is then, as #287 take05 shows them. The other beams keep the demo's
+    /// count.
     pub beam: bool,
 }
 
@@ -673,6 +723,11 @@ struct Batch {
     /// the demo's count: the rate's fraction carried in (a steady light spaces its particles by
     /// it, `steady_rate`)
     carried: Option<f32>,
+    /// the emitter's time since its last batch, over which a beam's batch is aged (#287): in
+    /// FUN_00065800's spawn loop (0x65ca2-0x65ce5) particle k of n is born that x (1 - k / n) old,
+    /// the newest new, and the spawn (0x64e30) moves it on along its way by its speed x that age.
+    /// 0 for the other effects, whose batches are born together, as they were checked
+    ages: f32,
 }
 
 #[derive(Component)]
@@ -917,11 +972,11 @@ impl AleAssets {
     #[allow(clippy::too_many_arguments)]
     fn compile(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                effect: u32, recorded: bool, facing: bool, ride: bool, placed: bool, beam: bool) -> Option<Compiled> {
-        // the game's particle shapes (see SHAPE, `Compiled::shapes`), and its count
-        // (`Compiled::counted`)
-        let counted = recorded && facing;
-        let shapes = counted || beam;
         let e = game.effects.effects.get(&effect)?.clone();
+        // the game's particle shapes (see SHAPE, `Compiled::shapes`), and its count
+        // (`Compiled::counted`: the Rails' beam's too, GAME_COUNT_BEAMS, #287)
+        let counted = (recorded && facing) || (beam && GAME_COUNT_BEAMS.contains(&e.name.as_str()));
+        let shapes = counted || beam;
         let node = |game: &Game, i: u32| e.refs.iter().find(|r| r.3 == i).and_then(|r| game.effects.nodes.get(&r.1)).cloned();
         let node_name = |i: u32| e.refs.iter().find(|r| r.3 == i).map_or(0, |r| r.1);
         let mut pairs = vec![];
@@ -947,7 +1002,7 @@ impl AleAssets {
                 let child = app.string(SPAWN_EFFECT).filter(|n| !n.is_empty())
                     .and_then(|n| self.load_as(game, images, materials, h(n), recorded, facing, ride, placed, beam));
                 if let Some(child) = child {
-                    pairs.push(Pair { perp: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fps: 0.0,
+                    pairs.push(Pair { perp: false, square: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fade: vec![], fps: 0.0,
                                       frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None, vertical: false });
                 }
                 continue;
@@ -982,7 +1037,7 @@ impl AleAssets {
                 })).collect();
                 let material = mats[0].clone();
                 let fps = book.map_or(0.0, |b| b.fps);
-                pairs.push(Pair { perp: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![mats], fps,
+                pairs.push(Pair { perp: false, square: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![mats], fade: vec![], fps,
                                   frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields, rise: None, vertical: false });
                 continue;
             }
@@ -990,7 +1045,7 @@ impl AleAssets {
                 continue;
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
-                pairs.push(Pair { perp: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fps: 0.0,
+                pairs.push(Pair { perp: false, square: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fade: vec![], fps: 0.0,
                                   frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![], rise: None, vertical: false });
                 continue;
             }
@@ -1012,19 +1067,32 @@ impl AleAssets {
             };
             // The Xbox adds sprites to the picture's stored (gamma) values; taking an added
             // sprite's texels and colour as linear amounts adds about what the console did
-            // (see play_fx.rs).
-            let steps = (0..STEPS).map(|i| {
-                let k = (i as f32 + 0.5) / STEPS as f32;
-                // (SRCCOLOR: the colour squared, the texture's texels too; ONE and SRCCOLOR don't
-                // read the alpha)
-                let [r, g, b] = app.color(COLOR, 0.0, k).unwrap_or([1.0; 3]).map(|c| if source == Source::Colour { c * c } else { c });
-                let a = if source == Source::Alpha { app.floats(ALPHA, 0.0, k).unwrap_or(1.0).clamp(0.0, 1.0) } else { 1.0 };
-                frames.iter().map(|&uv| materials.add(StandardMaterial {
-                    base_color: if additive { Color::linear_rgba(r, g, b, a) } else { Color::srgba(r, g, b, a) },
-                    base_color_texture: texture.clone(), uv_transform: uv, unlit: true, double_sided: true, cull_mode: None,
-                    fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
-                })).collect()
-            }).collect();
+            // (see play_fx.rs). `faded` is the angle fade's share of the alpha (see
+            // ANGLE_FADE_GONE), 1 for the plain materials.
+            let life_steps = |materials: &mut Assets<StandardMaterial>, faded: f32| -> Vec<Vec<Handle<StandardMaterial>>> {
+                (0..STEPS).map(|i| {
+                    let k = (i as f32 + 0.5) / STEPS as f32;
+                    // (SRCCOLOR: the colour squared, the texture's texels too; ONE and SRCCOLOR don't
+                    // read the alpha)
+                    let [r, g, b] = app.color(COLOR, 0.0, k).unwrap_or([1.0; 3]).map(|c| if source == Source::Colour { c * c } else { c });
+                    let a = if source == Source::Alpha { app.floats(ALPHA, 0.0, k).unwrap_or(1.0).clamp(0.0, 1.0) * faded } else { 1.0 };
+                    frames.iter().map(|&uv| materials.add(StandardMaterial {
+                        base_color: if additive { Color::linear_rgba(r, g, b, a) } else { Color::srgba(r, g, b, a) },
+                        base_color_texture: texture.clone(), uv_transform: uv, unlit: true, double_sided: true, cull_mode: None,
+                        fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
+                    })).collect()
+                }).collect()
+            };
+            let steps = life_steps(materials, 1.0);
+            // a beam's AngleFadeOut quad drawn by an alpha source (the fade is the vertex alpha's,
+            // which a ONE or SRCCOLOR source doesn't read): its fade levels (see ANGLE_FADE_GONE).
+            // A facing-3 quad in a beam (the tracer's streak, the Rails' side arcs: none of them
+            // fades) is left as it was
+            let fade = if beam && app.flag(PERP) && source == Source::Alpha && facing_type_of(&app) != Some(3) {
+                (1..FADE_LEVELS).map(|level| life_steps(materials, level as f32 / FADE_LEVELS as f32)).collect()
+            } else {
+                vec![]
+            };
             let streak = app.flag(MOTION_BLUR);
             let frame = if recorded { FrameMode::of(&app) } else { FrameMode::Play };
             let rise = (recorded && !app.flag(PERP) && !streak && upright(&app)).then(|| offset_end(&app));
@@ -1036,19 +1104,19 @@ impl AleAssets {
             // and a beam's on all of them, as the draw reads it (0x2a1de6 picks the shader's
             // selector by the facing alone): e01's barrel and trash fires, m01_a's braziers, the
             // tracer's streak and the Rails' side arcs
-            let facing_type = match app.params.get(&FACING) { Some(crate::bf::ale::Value::U32(k)) => Some(*k), _ => None };
+            let facing_type = facing_type_of(&app);
             let axial = (beam || (facing && (placed || app.flag(PERP)))) && facing_type == Some(3);
-            // and a beam's facing 2, the plane square to the particle's motion, as the demo's perp
-            // quad (flat across its emitter's +y, which is the way each beam emitter throws its
-            // particles: along the ray), whether or not it fades edge-on (the L-Shots' rings,
-            // tracer_snipe_perp.app)
-            let (perp, streak) = if axial { (false, false) } else if spark { (false, true) } else { (app.flag(PERP) || (beam && facing_type == Some(2)), streak) };
+            // and a beam's facing 2, the plane square to the particle's motion (`Pair::square`; a
+            // perp quad, flat across its emitter's +y, while it doesn't move), whether or not it
+            // fades edge-on (the L-Shots' rings, tracer_snipe_perp.app)
+            let square = !axial && !spark && beam && facing_type == Some(2);
+            let (perp, streak) = if axial { (false, false) } else if spark { (false, true) } else { (app.flag(PERP) || square, streak) };
             let vertical = recorded && VERTICAL_STREAKS.contains(&app.name.as_str());
             let shape = match app.params.get(&SHAPE) {
                 Some(crate::bf::ale::Value::U32(k @ (2 | 3))) if shapes => *k,
                 _ => 5,
             };
-            pairs.push(Pair { perp, axial, shape, attached, streak, emitter, app, steps, fps: book.map_or(0.0, |b| b.fps), frame,
+            pairs.push(Pair { perp, square, axial, shape, attached, streak, emitter, app, steps, fade, fps: book.map_or(0.0, |b| b.fps), frame,
                               beam: None, light: false, fields, child: None, rise, vertical });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted, ride, placed, beam })
@@ -1162,6 +1230,21 @@ fn under_world_node(e: &crate::bf::ale::Effect, index: u32) -> bool {
     false
 }
 
+/// GeneralApp_AngleFadeOut's share of a quad's alpha (see ANGLE_FADE_GONE) for the cosine between
+/// its plane's normal and the way to the eye (either side).
+fn angle_fade(cos: f32) -> f32 {
+    ((cos.abs() - ANGLE_FADE_GONE) * ANGLE_FADE_SCALE).clamp(0.0, 1.0).powi(2)
+}
+
+/// An appearance's GeneralApp_FacingType (see FACING; stored as a u32, parameter type 4), if it
+/// has one.
+fn facing_type_of(app: &Node) -> Option<u32> {
+    match app.params.get(&FACING) {
+        Some(crate::bf::ale::Value::U32(k)) => Some(*k),
+        _ => None,
+    }
+}
+
 /// Every key value of a float animation (all its sparam items).
 fn float_keys(app: &Node, p: u32) -> Vec<f32> {
     match app.params.get(&p) {
@@ -1232,9 +1315,10 @@ fn spread(fx: &mut AleEffect, lo: f32, hi: f32) -> Vec3 {
 /// time keeps piling up only while nothing comes and the frequency isn't 0. So a low-rate
 /// emitter makes far fewer particles than its rate (the launch dust's 18 a second for 0.43 s
 /// give one card), and exp-rocket-flash's keys 3.59 at 0.076 s and 2.26 at 0.16 s give 2 and
-/// 1. For the effects compiled with `Compiled::counted`. Returns the count and the emitter's
-/// time it's born at.
-fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, at: f32, fresh: bool) -> (usize, f32) {
+/// 1. For the effects compiled with `Compiled::counted`. Returns the count, the emitter's
+/// time it's born at, and the time since the emitter's last batch (the span its particles are
+/// aged over, 0x65a87-0x65a99 and 0x65c1a-0x65c33: elapsed / count a particle).
+fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, at: f32, fresh: bool) -> (usize, f32, f32) {
     // the emitter's own time: once, up to its lifespan; else it starts its lifespan again, its
     // last batch's time going back to 0. The demo's choice: the game's loop of an emitter's time
     // isn't traced (it may stop it at its lifespan instead). The trail's 4 s emitters are the
@@ -1261,7 +1345,7 @@ fn game_count(fx: &mut AleEffect, i: usize, em: &Node, lifespan: f32, at: f32, f
     if n > 0.0 || freq == 0.0 {
         fx.last[i] = t1;
     }
-    (n as usize, t1)
+    (n as usize, t1, t1 - t0)
 }
 
 fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
@@ -1365,8 +1449,12 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     if fx.once && at - GAME_FRAME >= lifespan {
                         break;
                     }
-                    let (n, t) = game_count(&mut fx, i, em, lifespan, at, k == 1);
-                    batches.push(Batch { n, t, span: GAME_FRAME, from: share(at - GAME_FRAME), to: share(at), age: start - at, born: at, carried: None });
+                    let (n, t, elapsed) = game_count(&mut fx, i, em, lifespan, at, k == 1);
+                    // (a beam's batch spreads over the emitter's time since its last batch, in
+                    // place and age, as FUN_00065800 spreads every batch, `Batch::ages`; the
+                    // other counted effects keep the game frame they were checked with)
+                    let (span, ages) = if compiled.beam { (elapsed, elapsed) } else { (GAME_FRAME, 0.0) };
+                    batches.push(Batch { n, t, span, from: share(at - GAME_FRAME), to: share(at), age: start - at, born: at, carried: None, ages });
                 }
             } else {
                 if fx.once && fx.t >= lifespan {
@@ -1389,7 +1477,7 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                 fx.acc[i] += rate * dt;
                 n += fx.acc[i] as usize;
                 fx.acc[i] = fx.acc[i].fract();
-                batches.push(Batch { n, t, span: dt, from: 0.0, to: 1.0, age: 0.0, born: fx.t, carried: Some(carried) });
+                batches.push(Batch { n, t, span: dt, from: 0.0, to: 1.0, age: 0.0, born: fx.t, carried: Some(carried), ages: 0.0 });
             }
             for b in batches {
                 let n = b.n;
@@ -1511,9 +1599,11 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     // a steady light's particles start at the moment within the frame the rate says
                     // they're due, so they come at even spacing (see `steady_rate`); a game frame's
                     // batch is born at its end
+                    // (a beam's batch is aged over the emitter's time since its last batch, the
+                    // newest new: `Batch::ages`)
                     let age = match (steady_rate(&compiled, pair), b.carried) {
                         (Some(rate), Some(carried)) => -((j + 1) as f32 - carried) / rate,
-                        _ => b.age,
+                        _ => b.age + b.ages * (1.0 - g),
                     };
                     // a game frame's batch, born before this render frame's end, starts back by
                     // its age (negative) along its way: `animate` moves every particle by the
@@ -1704,6 +1794,10 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             let (s, c) = app.floats(ROTATE, p.sp, k).unwrap_or(0.0).sin_cos();
             let (x, y) = (side * c - along * s, side * s + along * c);
             Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y)))
+        } else if pair.square && moving.length_squared() > 1e-12 {
+            // a beam's facing 2 (`Pair::square`): its plane square to its motion, turned in it by
+            // its Rotate (the shader's facing-2 frame, 0x3b8bf8)
+            Quat::from_rotation_arc(Vec3::Z, moving.normalize()) * spin
         } else if pair.perp {
             turn * p.frame * spin
         } else if pair.vertical && !pair.streak {
@@ -1721,6 +1815,19 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         // (the game's shape 2 spans -1..1 of its Scale, see SHAPE)
         let across = if pair.shape == 2 { 2.0 } else { 1.0 };
         tr.scale = Vec3::new(width * across, height * across, 1.0);
+        // a beam's AngleFadeOut quad (`Pair::fade`): its fade by the angle between its plane's
+        // normal and the way to the eye (see ANGLE_FADE_GONE), in FADE_LEVELS steps; none left,
+        // it isn't drawn
+        let level = if pair.fade.is_empty() {
+            FADE_LEVELS
+        } else {
+            let cos = (tr.rotation * Vec3::Z).dot((eye - tr.translation).normalize_or_zero());
+            (angle_fade(cos) * FADE_LEVELS as f32).round() as usize
+        };
+        if level == 0 {
+            tr.scale = Vec3::ZERO;
+            continue;
+        }
         let step = ((k * STEPS as f32) as usize).min(STEPS - 1);
         let frames = pair.steps[step].len();
         let frame = match pair.frame {
@@ -1728,9 +1835,9 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             FrameMode::Hold(v) => ((v * frames as f32) as usize).min(frames - 1),
             FrameMode::Life => ((app.floats(TEX_FRAME, p.sp, k).unwrap_or(0.0).clamp(0.0, 1.0) * frames as f32) as usize).min(frames - 1),
         };
-        if step * 1000 + frame != p.step {
-            p.step = step * 1000 + frame;
-            mat.0 = pair.steps[step][frame].clone();
+        if level * 100_000 + step * 1000 + frame != p.step {
+            p.step = level * 100_000 + step * 1000 + frame;
+            mat.0 = if level >= FADE_LEVELS { pair.steps[step][frame].clone() } else { pair.fade[level - 1][step][frame].clone() };
         }
     }
 }
@@ -1945,4 +2052,23 @@ pub fn spawn_placed_effects(commands: &mut Commands, game: &mut Game, level: &cr
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GeneralApp_AngleFadeOut (#287): whole seen square or up to 20 degrees off edge-on, nothing
+    /// within 5, either side of the quad; between, the shader's squared ramp.
+    #[test]
+    fn angle_fade_runs_from_twenty_degrees_to_five() {
+        let at = |deg: f32| angle_fade(deg.to_radians().sin());
+        assert_eq!(at(90.0), 1.0);
+        assert!((at(20.0) - 1.0).abs() < 1e-3);
+        assert_eq!(at(5.0), 0.0);
+        assert_eq!(at(0.0), 0.0);
+        assert!((angle_fade(-0.2) - angle_fade(0.2)).abs() < 1e-6);
+        let mid = at(12.0);
+        assert!(mid > 0.1 && mid < 0.5, "{mid}");
+    }
 }
