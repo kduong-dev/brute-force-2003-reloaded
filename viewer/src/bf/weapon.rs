@@ -41,8 +41,15 @@ const H_MUZZLE_REF: u32 = 0xF738_F302;
 /// the muzzle block's h_e41cb542: a list of hardpoint names (the weapon data's vector at
 /// +0x140; see `WeaponDef::muzzles`)
 const H_MUZZLE_REF_NAME: u32 = 0xE41C_B542;
-/// item base: HUD icon texture (+ its size, h_e2bc2c81 x h_f71189bb, 128 x 64 for guns)
+/// item base: HUD icon texture (+ its size, h_e2bc2c81 x h_f71189bb: `H_ICON_WIDTH`)
 const H_HUD_ICON: u32 = 0xE5EC_3F1F;
+/// item base: the HUD icon's width and height in HUD units (FUN_001920d0, the item base's
+/// attribute setter, stores them at the item data's +0x19c and +0x1a0 beside the icon): 128 x 64
+/// on the rifles and heavy guns, 64 x 64 on the five pistols (weapon-type 0: the Saryl-23, Foley,
+/// MNR-7 Bio, LZR-10 and Jax-iP; every level's objecttypes agree) and on the weapon-type 6
+/// definitions nobody holds (#64; `WeaponDef::icon_size`)
+const H_ICON_WIDTH: u32 = 0xE2BC_2C81;
+const H_ICON_HEIGHT: u32 = 0xF711_89BB;
 /// object base: the display name, a string id (h_1dd3a49d: `WeaponDef::display`)
 const H_DISPLAY_NAME: u32 = 0x1DD3_A49D;
 /// weapon: the magazine prop's archetype (h_0bfde1e8, name not recovered: `WeaponDef::magazine`)
@@ -168,6 +175,11 @@ pub struct WeaponDef {
     pub pickup_sound: u32,
     /// HUD icon texture (0 if none)
     pub icon: u32,
+    /// the HUD icon's size (HUD units: H_ICON_WIDTH x H_ICON_HEIGHT; [0, 0] where the data has
+    /// none). The game draws the icon at it: #287 take18's MNR-7 icon, 64 x 64, is half the width
+    /// of the 128 x 64 slot the demo stretched every gun's into (#64). All five pistols name
+    /// 64 x 64; the rifles and heavy guns 128 x 64
+    pub icon_size: [f32; 2],
     /// seconds (0 in most definitions: the game times reloads by animation)
     pub reload_time: f32,
     pub reload_sound: u32,
@@ -463,6 +475,8 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
             },
             pickup_sound: find(h("pickup-sound")).and_then(|v| v.as_hash()).unwrap_or(0),
             icon: find(H_HUD_ICON).and_then(|v| v.as_hash()).unwrap_or(0),
+            icon_size: all.iter().find(|e| e.attr(H_HUD_ICON).is_some())
+                .map_or([0.0; 2], |e| [f32_of(Some(e), H_ICON_WIDTH, 0.0), f32_of(Some(e), H_ICON_HEIGHT, 0.0)]),
             reload_time: f32_of(Some(&w), h("reload-time"), 0.0),
             reload_sound: hashes(w, H_RELOAD_SOUND).first().copied().unwrap_or(0),
             empty_sound: hashes(w, H_EMPTY_SOUND).first().copied().filter(|&x| x != h("")).unwrap_or(0),
