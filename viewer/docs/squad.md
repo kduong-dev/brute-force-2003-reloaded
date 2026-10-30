@@ -266,9 +266,9 @@ Squad movement and deaths follow the game's own data and the captures:
     distances' roles are in the code map's FUN_00020b10 row); WINGMAN's members going on ahead
     of Tex and drifting 16-30 m off at rest (take05). The cover points that put a member of
     mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit's heal (#329; Toggle
-    Ability is the menu's, #319, below), Move To's routes and its wait when there's none round a player's character in the
-    way (#242), the GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the
-    spot).
+    Ability is the menu's, #319, below), Move To's routes and its wait when there's none round a
+    player's character in the way (#242), the GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the
+    demo's fire from the spot).
 
   Test hooks: `BF_TEST_ORDER=<member>,<mode>[,<x>,<z>][@<s>][;...]` gives each order at its time
   (1 s without one) as the menu does: `<member>` 0-3 or brutus / flint / hawk / tex, `me`, or
@@ -384,20 +384,37 @@ Squad movement and deaths follow the game's own data and the captures:
     h_11d6f86a; the entry just given stays whole as the menu fades out (h_15262e1b) and the game
     runs again at the fade's end. BACK clears the selection: h_15262e1b and h_ffbe0bb9. Stand
     Ground, Fire At Will and Cover Me go to the controlled character's own brain too when it's
-    selected (it keeps the mode for when control passes on).
+    selected (it keeps the mode for when control passes on). **The closing sound h_15262e1b**
+    (here, at the cursor's end, and after an order) is the code's (pushed for FUN_000bb220 at
+    0xc0f73, 0xc0fe7, 0xc113e and 0xbd962) but in none of the game's sound libraries (no
+    sounds-*.xml names it, nor its bytes reversed; the other six, the press, on, off, open, order
+    and emptied ones, are common's): the demo asks for it and hears nothing. Whether the game
+    hears anything there isn't known: take01 has two onsets at BACK, 6.47 and 6.73 s, their ids
+    not logged. **Medkit's button is the item box's Black too** (B, the demo's Black, play.md):
+    held on past the menu's fade-out (0.3 s) it reaches the item box once the game runs again,
+    which uses the player's own Medkit (or says "No need to heal"), as the game's held Black would
+    once its input lock is let go (inferred). While the menu is open it takes the frame's presses
+    from the keys, the mouse and a pad alike (the pad's BACK opens no objectives menu:
+    campaign.md).
   * **The Move To cursor** (HUD+0x44, FUN_000bd860; the game runs meanwhile). Each frame
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
-    level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the crosshair's centre ray's point
-    (`play_reticle.rs` `Reticle::point`) whose flags pass (+0x24 bit 14 set: h_0bb771a2; bit 15
-    clear: h_1346678f; +0x28 bit 2, set on every point: FUN_00059b60) and that projects inside
-    the 640 x 480 (FUN_0004d630, the filter 0xbdef0); with none (the view on the sky) the
-    controlled character's place, and then A gives Cover Me (the +0xcc branch). Its marker, the
-    object type h_18709e83's three-sided pyramid (mesh h_fa39b375, drawn as the level's objects
-    are), stands on it turning a radian a second; "Look to select position", "[A] accept" and
-    "[B] cancel" fade in at (191, 403-421) as the menu goes; the crosshair and the item box stay
-    hidden. Accept (the left button, E, the pad's A) sends Move To with the point and hides it
-    (h_11d6f86a, h_15262e1b); cancel (the right button, Escape, B) or an empty selection hides it
-    (h_15262e1b), nothing ordered.
+    level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the
+    crosshair's centre ray's point (`play_reticle.rs` `Reticle::point`) whose flags pass (+0x24
+    bit 14 set: h_0bb771a2; bit 15 clear: h_1346678f; +0x28 bit 2, set on every point:
+    FUN_00059b60) and that projects inside the 640 x 480 (FUN_0004d630, the filter 0xbdef0);
+    with none (the view on the sky) the controlled character's place, and then A gives Cover Me
+    (the +0xcc branch). Its marker, the object type h_18709e83's three-sided pyramid (mesh
+    h_fa39b375, drawn as the level's objects are), stands on it turning a radian a second; "Look
+    to select position", "[A] accept" and "[B] cancel" fade in at (191, 403-421) as the menu
+    goes; the crosshair and the item box stay hidden. Accept (the left button, E, the pad's A)
+    sends Move To with the point and hides it (h_11d6f86a, h_15262e1b); cancel (the right
+    button, Escape, B) or an empty selection hides it (h_15262e1b), nothing ordered. A cutscene
+    starting while it's up hides its rows and its marker, and no press reaches it meanwhile; it's
+    back after, on the point the view then shows (the demo's choice: what the game's cursor does
+    under a cutscene isn't traced). The menu's and the cursor's root is shown all along, as the
+    item box's is, and goes
+    with the rest of the HUD (the letterbox, the map editor's edit mode): the scope's frame and
+    Flint's overlay draw only while every part of the HUD is shown (play_scope_view.rs).
   * **Not done**: a dead controlled character's press switching at once (0xc809c: the demo's
     death camera hands over by itself); split screen (the small layout 0x3c8fd8, no pause, the
     radar hidden while selecting); the tutorial's gates on the d-pad (FUN_000ba320 ids 11 and 14,
@@ -446,10 +463,22 @@ Squad movement and deaths follow the game's own data and the captures:
   * take09 (`"...2:hawk:0.4;3:move;6:cancel"`): cancelled, the selection empty, nobody ordered;
     Toggle Ability (`9:hawk:0.4;10:toggle`) switches Hawk's stealth on as the game resumes;
     Medkit (`13:hawk:0.4;14:medkit`) logged only.
-  * The keys (`cargo test --bin bf_play squad_menu`, `the_keys`): 1-4 held and pressed, the
-    order keys in the game's order, Backspace; the open menu taking the frame's presses (I
-    opens no objectives menu); the cursor's E and left button let go (no use, no fire). The
-    live keyboard and a pad weren't driven (the runs are in the background).
+  * The keys and the pad (`cargo test --bin bf_play squad_menu`, `the_keys`, `the_pad`): 1-4
+    held and pressed, the order keys in the game's order, Backspace; the open menu taking the
+    frame's presses, the pad's too (I or the pad's BACK opens no objectives menu); the cursor's
+    E, left button and the pad's A let go (no use, no fire). The live keyboard and a pad weren't
+    driven (the runs are in the background, with no pad).
+  * A cutscene under the cursor (`BF_MAP=m09_a BF_TEST_GOTO=-177.12,-223.64,-177.12,-223.64
+    BF_TEST_NO_HOSTILES=1 BF_SCRIPT=m09_a_startup,6 BF_SCRIPT_LOG=1
+    "BF_TEST_COMMAND=1:brutus:0.5;2:move"`): the map opens under its letterbox, so the menu and
+    the cursor's rows are hidden with the HUD (the game's HUD alpha by the bars, which every
+    top-level widget's draw takes: cutscenes.md) while the marker stands in the world (frame
+    60); the script's 122 at 6.07 s hides the marker (the cursor's point, still taken along the
+    cutscene camera's ray, isn't drawn in the middle of its shots: frames 108-405); its 123 at
+    26.0 s brings the marker back and, as the bars go, the rows with the HUD (frames 407-419).
+  * The rest of the HUD: the scope's pass (Flint's L-Shot-75 on e40's cliff, play.md's recipe
+    without `--test`, `BF_SCOPE_VIEW_LOG=1`) fades its overlay in to 1.0, as on main; with the
+    menu's root hidden while the menu is closed, as #319's first commit had it, it stayed at 0.
 * **Liquids that burn** (#1, play_liquids.rs `burning_ahead`, `steps_into_burning`). A wingman
   doesn't walk into lava, sludge or toxic waste (a liquid whose character rate h_e0489ea0 is
   above 0, the one that hurts: levels.md, "What a liquid does to a character"): with ground in

@@ -55,6 +55,7 @@ use brain::Mode;
 
 use super::fonts::{record_text, Across, RecordText, Record, BODY10, BODY12, BODY16};
 use super::hud::{flipped, texture, HudImages, HudRoot};
+use super::triggers::panels::{ICON12_ATLAS, ICON12_GLYPHS, ICON12_LINE};
 use super::*;
 
 // ---- the squad list (vtable 0x39f264: FUN_000c7cf0) ----
@@ -87,7 +88,13 @@ const FLASH_FALL: f32 = 2.0;
 const FADE: f32 = 0.3;
 /// The menu's sounds (FUN_000bb220, the HUD's 2D player): open (FUN_000c0940), an order
 /// (FUN_000c0d90, the cursor's A), closing (FUN_000c1120, FUN_000c0d90's close and FUN_000bd930,
-/// none while the cursor is up) and the selection emptied (FUN_000c0940's second).
+/// none while the cursor is up) and the selection emptied (FUN_000c0940's second). The closing
+/// one, h_15262e1b (pushed at 0xc0f73, 0xc0fe7, 0xc113e, 0xbd962), is in none of the game's sound
+/// libraries (no sounds-*.xml names it, nor its bytes reversed; the other six, these and the
+/// list's, are common's): the demo asks for it as the code does and hears nothing (BF_SOUND_LOG
+/// shows it at the default volume, found nowhere). Whether the game hears anything there isn't
+/// known: take01 has two onsets at BACK, 6.47 and 6.73 s, their ids not logged (h_ffbe0bb9's and
+/// what else, if anything).
 const S_OPEN: u32 = 0x1BDC_87D1;
 const S_ORDER: u32 = 0x11D6_F86A;
 const S_CLOSE: u32 = 0x1526_2E1B;
@@ -141,22 +148,9 @@ const GLYPH_GAP: f32 = 4.0;
 /// by FUN_000c9d70's table 0xc9ee4) and "Close Menu"'s ({20}: BACK), as the icon font's letters.
 const GIVE_GLYPHS: [char; 6] = ['A', 'B', 'C', 'D', 'J', 'I'];
 const CLOSE_GLYPHS: [char; 1] = ['H'];
-/// The button icon font at 12 points (FUN_000ca360 with 0: h_0e38a4ca's record 0x3c5fe8, its
-/// line 16, registered on the atlas h_0e233fad, 128 x 256, at v x 1 + 0 by FUN_000cd5d0): its
-/// glyphs for A, B, X (C), Y (D), BACK (H), White (I) and Black (J), read from default.xbe: the
-/// cell's corners on the atlas in pixels, each taken a texel in as the renderer samples them
-/// ((size x coordinate - 1) / size, FUN_000ccd20), then the offset, width and advance.
-const ICON_ATLAS_12: u32 = 0x0E23_3FAD;
-const ICON_LINE_12: f32 = 16.0;
-const ICON_GLYPHS_12: [(char, f32, f32, f32, f32, i8, u8, u8); 7] = [
-    ('A', 27.22, 33.13, 44.35, 50.20, 1, 16, 17),
-    ('B', 45.36, 33.13, 62.50, 50.20, 1, 16, 17),
-    ('C', 63.50, 33.13, 80.64, 50.20, 1, 16, 17),
-    ('D', 81.65, 33.13, 98.78, 50.20, 1, 16, 17),
-    ('H', 53.43, 50.20, 74.59, 67.27, 3, 20, 23),
-    ('I', 75.60, 50.20, 90.72, 67.27, 1, 14, 15),
-    ('J', 91.72, 50.20, 106.84, 67.27, 1, 14, 15),
-];
+// (the glyphs: the button icon font at 12 points, FUN_000ca360 with 0: h_0e38a4ca's record
+// 0x3c5fe8 on its atlas h_0e233fad, play_panels.rs ICON12_GLYPHS, the tutorial panels' legends'
+// own: A, B, X (C), Y (D), BACK (H), White (I) and Black (J))
 /// The backdrop (0x17f9dd32, FUN_000c67b0: the whole screen, no texture) multiplies the picture
 /// under it, the HUD's bars and panels too, by a grey (0xba950 mode 3: DESTCOLOR / ZERO) of
 /// (1 - k) x 175 + 80 with k = (fade / 0.3)^2 (FUN_000c09a0): 80 / 255 when open. take01 measured
@@ -612,11 +606,12 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The frame's menu buttons (`MenuInput`) from the keys, a pad and the hooks; and, while the menu
-/// is open, the frame's presses taken from everything else (as the objectives menu does: Escape,
-/// Backspace or I closing it don't free the mouse, leave the map or open the objectives); while
-/// the cursor is up its own buttons (E, Escape, the two mouse buttons) taken and let go, so they
-/// neither use, free the mouse, fire nor aim.
-fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, pads: Query<&Gamepad>, player: Res<Player>,
+/// is open, the frame's presses taken from everything else, the keys', the mouse's and the pads'
+/// (as the objectives menu does: Escape, Backspace, I or the pad's BACK closing it don't free the
+/// mouse, leave the map or open the objectives); while the cursor is up its own buttons (E,
+/// Escape, the two mouse buttons, the pad's A and B) taken and let go, so they neither use, free
+/// the mouse, fire nor aim.
+fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut pads: Query<&mut Gamepad>, player: Res<Player>,
               mut menu: ResMut<SquadMenu>, mut input: ResMut<MenuInput>) {
     let m = &mut *menu;
     let mut i = MenuInput::default();
@@ -665,6 +660,13 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
         for b in clicked {
             mouse.clear_just_pressed(b);
         }
+        for mut p in &mut pads {
+            let d = p.digital_mut();
+            let pressed: Vec<GamepadButton> = d.get_just_pressed().copied().collect();
+            for b in pressed {
+                d.clear_just_pressed(b);
+            }
+        }
     } else if m.cursor {
         for k in [KeyCode::KeyE, KeyCode::Escape] {
             keys.clear_just_pressed(k);
@@ -673,6 +675,13 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
         for b in [MouseButton::Left, MouseButton::Right] {
             mouse.clear_just_pressed(b);
             mouse.release(b);
+        }
+        for mut p in &mut pads {
+            let d = p.digital_mut();
+            for b in [GamepadButton::South, GamepadButton::East] {
+                d.clear_just_pressed(b);
+                d.release(b);
+            }
         }
     }
 }
@@ -920,12 +929,13 @@ fn find_point(time: Res<Time>, mut menu: ResMut<SquadMenu>, player: Res<Player>,
 
 // ---- drawing ----
 
-/// The menu's and the cursor's nodes (`spawn_menu`): the root (over the HUD, MENU_Z), the
-/// backdrop, the menu's texts and entries, the cursor's rows; the record texts and glyph cells
-/// with the alpha each takes.
+/// The menu's and the cursor's nodes (`spawn_menu`): the backdrop, the menu's texts and entries,
+/// the cursor's rows; the record texts and glyph cells with the alpha each takes. Their root (over
+/// the HUD, MENU_Z) is a `HudRoot` left shown, as the item box's and the hints' are: what hides
+/// the HUD (the letterbox, the map editor) hides it, and play_scope_view.rs draws its pass only
+/// while every `HudRoot` is shown.
 #[derive(Resource)]
 struct MenuNodes {
-    root: Entity,
     backdrop: Entity,
     menu: Entity,
     cursor: Entity,
@@ -947,9 +957,9 @@ enum Fades {
     Cursor,
 }
 
-/// An icon font glyph's cell, by its letter (ICON_GLYPHS_12).
+/// A 12-point icon font glyph's cell, by its letter (play_panels.rs ICON12_GLYPHS).
 fn icon_glyph(c: char) -> Option<&'static (char, f32, f32, f32, f32, i8, u8, u8)> {
-    ICON_GLYPHS_12.iter().find(|g| g.0 == c)
+    ICON12_GLYPHS.iter().find(|g| g.0 == c)
 }
 
 /// A string of icon glyphs' width (the pen's travel: offset and advance each, FUN_000ccae0).
@@ -976,7 +986,7 @@ fn spawn_row(commands: &mut Commands, parent: Entity, at: Vec2, glyphs: &[char],
             let Some(&(_, x0, y0, x1, y1, offset, width, advance)) = icon_glyph(c) else { continue };
             let x = pen + offset as f32;
             let e = commands.spawn((ImageNode { rect: Some(Rect::new(x0, y0, x1, y1)), ..ImageNode::new(icons.clone()) },
-                                    super::hud::at(x, at.y + GLYPH_DROP, width as f32 + 1.0, ICON_LINE_12 + 1.0), ChildOf(parent))).id();
+                                    super::hud::at(x, at.y + GLYPH_DROP, width as f32 + 1.0, ICON12_LINE + 1.0), ChildOf(parent))).id();
             images.push((e, fades));
             pen = x + advance as f32;
         }
@@ -999,14 +1009,14 @@ fn spawn_menu(mut commands: Commands, mut game: ResMut<GameData>, mut images: Re
                                                   text(S_CLOSE_MENU, "Close Menu"));
     let (look, accept, cancel) = (text(S_LOOK, "Look to select position"), text(S_ACCEPT, "accept"), text(S_CANCEL, "cancel"));
     let labels: Vec<String> = ENTRY_LABELS.iter().zip(ENTRY_NAMES).map(|(&id, name)| text(id, name)).collect();
-    let icons = game.0.texture_rgba(ICON_ATLAS_12).map(|(w, h, px)| images.add(Image::new(
+    let icons = game.0.texture_rgba(ICON12_ATLAS).map(|(w, h, px)| images.add(Image::new(
         bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         bevy::render::render_resource::TextureDimension::D2, px,
         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())));
     let entry_icons: Vec<Option<Handle<Image>>> = ENTRY_ICONS.iter().map(|&id| texture(&mut game.0, &mut images, &mut cache, id)).collect();
     let full = || Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0),
                          height: Val::Percent(100.0), ..default() };
-    let root = commands.spawn((HudRoot, Name::new("squad command menu"), GlobalZIndex(MENU_Z), Visibility::Hidden,
+    let root = commands.spawn((HudRoot, Name::new("squad command menu"), GlobalZIndex(MENU_Z),
                                Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0),
                                       justify_content: JustifyContent::Center, ..default() })).id();
     let backdrop = commands.spawn((full(), BackgroundColor(Color::NONE), Visibility::Hidden, ChildOf(root))).id();
@@ -1053,7 +1063,7 @@ fn spawn_menu(mut commands: Commands, mut game: ResMut<GameData>, mut images: Re
     spawn_row(&mut commands, cursor, CURSOR_ROWS_AT, &['A'], &accept, &icons, Fades::Cursor, &mut texts, &mut imgs);
     let accept_w = row_width(&['A'], &accept, &BODY12);
     spawn_row(&mut commands, cursor, CURSOR_ROWS_AT + Vec2::X * (accept_w + CURSOR_ROW_GAP), &['B'], &cancel, &icons, Fades::Cursor, &mut texts, &mut imgs);
-    commands.insert_resource(MenuNodes { root, backdrop, menu, cursor, texts, images: imgs });
+    commands.insert_resource(MenuNodes { backdrop, menu, cursor, texts, images: imgs });
 }
 
 /// The cursor's marker (0xbe5e0): its type's model, the level's objects' way (level_scene.rs
@@ -1091,14 +1101,19 @@ fn spawn_marker(mut commands: Commands, mut game: ResMut<GameData>, map: Res<Map
     bf_viewer::level_scene::spawn_object_parts(&mut commands, &parts, root, |p| p.material.clone());
 }
 
-/// The menu and the cursor drawn: the root shown while either is up; the backdrop's darkening
-/// and the texts' and icons' alphas by the fade (FUN_000c09a0, 0xc19d0, 0xbdce0); the marker at
-/// the cursor's point, turned.
+/// The menu and the cursor drawn: the menu, the backdrop and the cursor's rows shown while each is
+/// up; the backdrop's darkening and the texts' and icons' alphas by the fade (FUN_000c09a0,
+/// 0xc19d0, 0xbdce0); the marker at the cursor's point, turned. While a cutscene runs the cursor's
+/// rows and its marker are hidden, and back after it (the demo's choice: what the game's cursor
+/// does under a cutscene isn't traced; its rows would go with the HUD under the letterbox anyway,
+/// and the marker is in the world). The menu holds the game's clock while it's open, and doesn't
+/// open under a cutscene (`squad_menu`'s `live`).
 #[allow(clippy::type_complexity)]
 fn draw(menu: Res<SquadMenu>, nodes: Option<Res<MenuNodes>>, marker: Option<Res<Marker>>, mut vis: Query<&mut Visibility>,
         mut texts: Query<&mut RecordText>, mut images: Query<&mut ImageNode>, mut colours: Query<&mut BackgroundColor>,
         mut places: Query<&mut Transform>) {
     let m = &*menu;
+    let cursor = m.cursor && !script::in_cutscene();
     let mut show = |e: Entity, on: bool| {
         if let Ok(mut v) = vis.get_mut(e) {
             let want = if on { Visibility::Inherited } else { Visibility::Hidden };
@@ -1108,8 +1123,8 @@ fn draw(menu: Res<SquadMenu>, nodes: Option<Res<MenuNodes>>, marker: Option<Res<
         }
     };
     if let Some(mk) = marker.as_ref() {
-        show(mk.0, m.cursor);
-        if m.cursor {
+        show(mk.0, cursor);
+        if cursor {
             if let Ok(mut t) = places.get_mut(mk.0) {
                 let want = Transform::from_translation(m.cursor_at).with_rotation(Quat::from_rotation_y(m.marker_turn));
                 if *t != want {
@@ -1119,12 +1134,10 @@ fn draw(menu: Res<SquadMenu>, nodes: Option<Res<MenuNodes>>, marker: Option<Res<
         }
     }
     let Some(n) = nodes else { return };
-    let up = m.up();
-    show(n.root, up);
     show(n.menu, m.open);
-    show(n.cursor, m.cursor);
+    show(n.cursor, cursor);
     show(n.backdrop, m.open && m.fade > 0.0);
-    if !up {
+    if !m.up() {
         return;
     }
     // FUN_000c09a0: k = (fade / 0.3)^2; the backdrop's grey (1 - k) x 175 + 80, the texts at
@@ -1346,6 +1359,48 @@ mod tests {
         assert!(i.accept && !i.cancel);
         assert!(!app.world().resource::<ButtonInput<KeyCode>>().pressed(KeyCode::KeyE));
         assert!(!app.world().resource::<ButtonInput<MouseButton>>().pressed(MouseButton::Left));
+    }
+
+    /// The pad (#319's review): closed, its presses stay for the others (BACK for the objectives
+    /// menu, play_objectives.rs); open, the menu reads its BACK and orders and takes them, so the
+    /// objectives menu, reading after, sees no BACK; with the cursor up its A is the accept, taken
+    /// and let go.
+    #[test]
+    fn the_pad() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default()).insert_resource(ButtonInput::<MouseButton>::default())
+            .insert_resource(Player::new(3)).insert_resource(SquadMenu::default()).insert_resource(MenuInput::default())
+            .add_systems(Update, menu_input);
+        let pad = app.world_mut().spawn(Gamepad::default()).id();
+        let press = |app: &mut App, buttons: &[GamepadButton]| {
+            let mut g = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+            let d = g.digital_mut();
+            d.reset_all();
+            for &b in buttons {
+                d.press(b);
+            }
+        };
+        press(&mut app, &[GamepadButton::Select, GamepadButton::DPadLeft]);
+        app.update();
+        let i = *app.world().resource::<MenuInput>();
+        assert_eq!((i.dpad, i.dpad_down), ([false, false, true, false], [false, false, true, false]));
+        assert!(app.world().get::<Gamepad>(pad).unwrap().just_pressed(GamepadButton::Select), "closed, the press stays");
+        app.world_mut().resource_mut::<SquadMenu>().open = true;
+        press(&mut app, &[GamepadButton::Select, GamepadButton::North]);
+        app.update();
+        let i = *app.world().resource::<MenuInput>();
+        assert_eq!((i.order, i.back), (Some(STAND), true));
+        let g = app.world().get::<Gamepad>(pad).unwrap();
+        assert!(!g.just_pressed(GamepadButton::Select) && !g.just_pressed(GamepadButton::North), "open, the menu takes them");
+        {
+            let mut m = app.world_mut().resource_mut::<SquadMenu>();
+            (m.open, m.cursor) = (false, true);
+        }
+        press(&mut app, &[GamepadButton::South]);
+        app.update();
+        let i = *app.world().resource::<MenuInput>();
+        assert!(i.accept && !i.cancel);
+        assert!(!app.world().get::<Gamepad>(pad).unwrap().pressed(GamepadButton::South), "the cursor's A, let go");
     }
 
     /// The rows' widths: "Give Order"'s six glyphs are A, B, X and Y (18 each with their offset)

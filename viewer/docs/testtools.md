@@ -382,9 +382,9 @@ so the recipes written for them run as they did, each member at the place it had
 `BF_TEST_SQUAD_SKILL`, `BF_TEST_HOSTILE`, `BF_TEST_MINE_FRIEND`, `BF_TEST_DIE`,
 `BF_TEST_SUICIDE`, `BF_TEST_ORDER`, the squad's orders, #318: [squad.md](squad.md) **Squad
 commands**, and `BF_TEST_COMMAND`, the Squad Command menu's buttons, #319: [squad.md](squad.md)
-**The Squad Command menu**; `BF_TEST_SQUAD=none` with a death: a lone one, and the respawn). A recipe that
-wants the squad for anything else (the formation in the line of fire, the AI's fire, a blast's
-other victims) adds `BF_TEST_FULL_SQUAD=1`.
+**The Squad Command menu**; `BF_TEST_SQUAD=none` with a death: a lone one, and the respawn). A
+recipe that wants the squad for anything else (the formation in the line of fire, the AI's fire,
+a blast's other victims) adds `BF_TEST_FULL_SQUAD=1`.
 `BF_TOOLS_LOG=1` prints the start squad and why ("test map: the squad at the start: 0 brutus, 1
 flint, 2 hawk, 3 tex (tex leads; BF_TEST_SELECT: the four)"), and each change of the menu ("t 1.00:
 squad slot 1 (Brutus's place): Shrike Soldier (m09_a, 73 hp) (h_fcec1024) at [1.50, -1.05,
