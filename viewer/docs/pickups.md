@@ -173,7 +173,7 @@
 `play_weapon_pickups.rs`, written from default.xbe's code (the addresses below; the reading is
 `todo/17-weapon-pickups/leads.md`'s) and checked against take11 of `todo/28-tutorial` (the
 tutorial's L-Shot-50), `todo/61-l-shot-50` take04 (Tex), `todo/52-confed-lzr-50` take04 (Brutus)
-and `todo/DNA + Weapon Pickups.mp4`.
+and `todo/reference/DNA + Weapon Pickups.mp4`.
 
 * **What lies.** A gun is never taken by walking over it; X takes it. Lying guns are:
   * a level's weapon-object placements (object type 20 WEAPON, reticule-action 2 RACT_PICKUP),

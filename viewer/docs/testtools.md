@@ -347,6 +347,7 @@ the background (#163)".
 |---|---|
 | `BF_TEST_FREECAM=<s>[,<x>,<y>,<z>,<yaw>,<pitch>]` | F: the free camera from where the camera is, or put there. `BF_TEST_FREECAM_OFF=<s>`: F again. In the editor's edit mode the pose moves the edit camera |
 | `BF_TEST_EDIT`, `BF_TEST_PLAY`, `BF_TEST_POINTER` | the map editor's F5 both ways and its mouse pointer ([editor.md](editor.md), "Test hooks") |
+| `BF_TEST_FACE_CAM=<s>,<who>[,<m>[,<rise>]]` | the free camera put `m` metres in front of a character's face and kept there as its head moves (`who`: `me`, a squad name, 0-3): [faces.md](faces.md) (#255) |
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |

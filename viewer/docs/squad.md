@@ -151,7 +151,7 @@ Squad movement and deaths follow the game's own data and the captures:
   first frame, then over the last 0.3 s its alpha falls to 0 and it swells to 1 + 3k^3 times
   (k the share of that 0.3 s gone: 4x at its end; 0xc9690). Control passes 0.5 s after the
   selection (the select widget's countdown, FUN_000c8760's +0x7c: `SELECT_TIME`, which was 0.6),
-  so the swell runs across the cut. The recordings (`Friendly Fire 2 + Death Cam.mp4`) agree:
+  so the swell runs across the cut. The recordings (`todo/reference/Friendly Fire 2 + Death Cam.mp4`) agree:
   "BRUTUS" from 22.867 s, whole and the same size from its first frame, fading from 23.267 s,
   the cut at 23.367 s; "HAWK" from 31.847 s (3.5 s after the death: FUN_000c9170's 3.5 s), fading
   from about 32.23 s, the cut at 32.333 s; their ink 272.0-368.7 x 230-251 for HAWK and

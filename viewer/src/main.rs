@@ -22,6 +22,7 @@ use bevy::{
     render::mesh::skinning::SkinnedMeshInverseBindposes,
 };
 use bf_viewer::bf::character::{Character, Game};
+use bf_viewer::bf::face::{self, FACE_OVER_HEAD, HEAD_BONE};
 use bf_viewer::scene::{spawn_model, ModelAssets, RootBone};
 
 const CHARACTERS: [&str; 4] = ["brutus", "flint", "hawk", "tex"];
@@ -66,8 +67,8 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.12, 0.13, 0.16)))
         .insert_resource(AmbientLight { brightness: 120.0, ..default() })
         .insert_resource(GameData(game))
-        .insert_resource(Viewer { character: start, anim: 0, time: 0.0, face: None, face_time: 0.0, paused: false, speed: 1.0,
-                                 shading: std::env::var("BF_FLAT").is_err(), spawned: None })
+        .insert_resource(Viewer { character: start, anim: 0, time: 0.0, face: FaceView::Game, face_time: 0.0, paused: false, speed: 1.0,
+                                 shading: std::env::var("BF_FLAT").is_err(), spawned: None, head_y: None })
         .add_systems(Startup, setup)
         .add_systems(Update, (spawn_character, controls, animate, apply_lighting, orbit_camera, update_hud, auto_screenshot).chain())
         .run();
@@ -96,14 +97,30 @@ fn dump(game: Game, args: &[String]) {
 #[derive(Resource)]
 struct GameData(Game);
 
+/// What the viewer lays on the face bones. The faces are modelled mid-speech, so the game always
+/// writes them (play_faces.rs): never the bind pose.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FaceView {
+    /// the game's face at rest: `Sc_base` on the face bones and the blink clip's last key on the
+    /// lids, which is what a character's face controller shows once its first blink (at its first
+    /// tick) is over (`FaceTable::write_rest`)
+    Game,
+    /// the bind pose's face (the model as exported, mid-speech)
+    Raw,
+    /// one clip of the face set (`Character::face_anims`), held at its first key if it is a pose
+    Clip(usize),
+}
+
 #[derive(Resource)]
 struct Viewer {
     character: usize,
     anim: usize,
     time: f32,
-    /// face clip index (None = raw bind face); reset to the character's neutral face on load
-    face: Option<usize>,
+    /// what is laid on the face bones; reset to the game's rest face on load
+    face: FaceView,
     face_time: f32,
+    /// where the head bone is (model space, up): what `BF_CLOSEUP` aims at
+    head_y: Option<f32>,
     /// game shading (specular mask, glossiness, 3-point lighting) vs the plain flat look
     shading: bool,
     paused: bool,
@@ -235,10 +252,12 @@ fn spawn_character(
     if !same_character {
         viewer.anim = std::env::var("BF_ANIM").ok().and_then(|s| s.parse().ok()).unwrap_or(0).min(model.anims.len().saturating_sub(1));
         viewer.time = 0.0;
+        // test hook: BF_FACE=none the raw bind face, a number that face clip, anything else (or
+        // nothing) the game's rest face
         viewer.face = match std::env::var("BF_FACE").as_deref() {
-            Ok("none") => None,                                   // test hook: raw bind face
-            Ok(n) => n.parse().ok().or(model.default_face),
-            Err(_) => model.default_face,
+            Ok("none") => FaceView::Raw,
+            Ok(n) => n.parse().ok().filter(|&c| c < model.face_anims.len()).map_or(FaceView::Game, FaceView::Clip),
+            Err(_) => FaceView::Game,
         };
         viewer.face_time = 0.0;
     }
@@ -256,13 +275,29 @@ fn animate(time: Res<Time>, mut viewer: ResMut<Viewer>, game: Res<GameData>, mut
     let duration = sp.model.anims.get(anim).map(|a| a.duration).unwrap_or(1.0).max(1e-3);
     let t = (viewer.time + dt) % duration;
     let face_t = viewer.face_time + dt;
-    let pose = sp.model.pose(&game.0, anim, t, viewer.face, face_t);
+    let pose = match viewer.face {
+        FaceView::Clip(c) => sp.model.pose(&game.0, anim, t, Some(c), face_t),
+        FaceView::Raw => sp.model.pose(&game.0, anim, t, None, 0.0),
+        FaceView::Game => {
+            let mut pose = sp.model.pose(&game.0, anim, t, None, 0.0);
+            if let Some(table) = &sp.model.face {
+                table.write_rest(&game.0, &mut pose);
+            }
+            pose
+        }
+    };
     for (e, (q, p)) in sp.joints.iter().zip(&pose) {
         if let Ok(mut tr) = transforms.get_mut(*e) {
             tr.rotation = *q;
             tr.translation = *p;
         }
     }
+    // (BF_CLOSEUP follows the head bone, as posed)
+    let head_y = std::env::var("BF_CLOSEUP").ok().and_then(|_| {
+        let i = sp.model.bones.iter().position(|&b| b == HEAD_BONE)?;
+        Some(sp.model.world(&pose)[i].w_axis.y)
+    });
+    viewer.head_y = head_y;
     viewer.time = t;
     viewer.face_time = face_t;
 }
@@ -288,12 +323,19 @@ fn controls(keys: Res<ButtonInput<KeyCode>>, mut viewer: ResMut<Viewer>, mut cam
     }
     let faces = viewer.spawned.as_ref().map(|s| s.model.face_anims.len()).unwrap_or(0);
     if faces > 0 {
-        // cycle through "none" (raw bind face) and every face clip
-        let cur = viewer.face.map(|f| f as isize).unwrap_or(-1);
+        // cycle through the game's face, the raw bind face and every face clip
+        let cur = match viewer.face {
+            FaceView::Game => 0,
+            FaceView::Raw => 1,
+            FaceView::Clip(c) => c as isize + 2,
+        };
         let step = keys.just_pressed(KeyCode::KeyE) as isize - keys.just_pressed(KeyCode::KeyQ) as isize;
         if step != 0 {
-            let next = (cur + 1 + step).rem_euclid(faces as isize + 1) - 1;
-            viewer.face = (next >= 0).then_some(next as usize);
+            viewer.face = match (cur + step).rem_euclid(faces as isize + 2) {
+                0 => FaceView::Game,
+                1 => FaceView::Raw,
+                c => FaceView::Clip(c as usize - 2),
+            };
             viewer.face_time = 0.0;
         }
     }
@@ -322,13 +364,14 @@ fn controls(keys: Res<ButtonInput<KeyCode>>, mut viewer: ResMut<Viewer>, mut cam
 }
 
 fn orbit_camera(time: Res<Time>, buttons: Res<ButtonInput<MouseButton>>, motion: Res<AccumulatedMouseMotion>,
-                scroll: Res<AccumulatedMouseScroll>, roots: Query<&GlobalTransform, With<RootBone>>,
+                scroll: Res<AccumulatedMouseScroll>, roots: Query<&GlobalTransform, With<RootBone>>, viewer: Res<Viewer>,
                 mut cameras: Query<(&mut OrbitCamera, &mut Transform)>) {
-    // follow the skeleton root horizontally so root motion stays in frame
+    // follow the skeleton root horizontally so root motion stays in frame (and with BF_CLOSEUP the
+    // head bone up and down)
     let root = roots.iter().next().map(|t| t.translation());
     for (mut cam, mut transform) in &mut cameras {
         if let Some(r) = root {
-            let goal = Vec3::new(r.x, cam.target.y, r.z);
+            let goal = Vec3::new(r.x, viewer.head_y.map_or(cam.target.y, |y| y + FACE_OVER_HEAD), r.z);
             // follow tightly; snap when a looping clip with root motion jumps back to its start
             if cam.target.distance(goal) > 1.5 {
                 cam.target = goal;
@@ -378,9 +421,11 @@ fn update_hud(viewer: Res<Viewer>, mut hud: Query<&mut Text, With<Hud>>) {
         Some(sp) if !sp.model.anims.is_empty() => {
             let a = &sp.model.anims[viewer.anim];
             let face = match viewer.face {
-                Some(f) => format!("face {}/{}{}", f + 1, sp.model.face_anims.len(),
-                                   if Some(f) == sp.model.default_face { " (neutral)" } else { "" }),
-                None => "face: raw bind".into(),
+                FaceView::Game => "face: the game's rest face (Sc_base, the blink's lids)".to_string(),
+                FaceView::Raw => "face: raw bind".to_string(),
+                FaceView::Clip(f) => format!("face clip {}/{} {}{}", f + 1, sp.model.face_anims.len(),
+                                             sp.model.face_anims.get(f).map_or(String::new(), |a| face::clip_name(a.name).unwrap_or(format!("h_{:08x}", a.name))),
+                                             if Some(f) == sp.model.default_face { " (the rest pose)" } else { "" }),
             };
             format!(
                 "{name}  [{}/{}]  h_{:08x}  {:.2}/{:.2}s{}  speed x{}   {face}   (original data files)\n\

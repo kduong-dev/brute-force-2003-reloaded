@@ -30,6 +30,7 @@ use super::archive::Archive;
 use super::bxml::{self, Element, Value};
 use super::character::{skill_data, Character, Game, SkillData};
 use super::collision::MATERIAL_ID;
+use super::face::FaceParams;
 use super::hash::h;
 use super::level;
 use super::weapon;
@@ -94,6 +95,14 @@ const H_PICKUP_MODE: u32 = 0xFB08_D4C6;
 /// An `<overlay>`'s h_f6a410e6 (name not recovered; the overlay parser FUN_001958f0 puts it at
 /// the parse record's +0x3c): the character is held still while it plays, `Overlay::holds`.
 const H_HOLDS: u32 = 0xF6A4_10E6;
+/// A type's `<face>` attributes and list (names not recovered; FUN_001901a0: the blink interval
+/// h_09109ae2 into the parse record's +0x394, the blink chance h_f5a7b9d2 into +0x398;
+/// FUN_00190210 starts the list h_e42866a1 and FUN_001900f0 reads each h_fa110e09 record, `enum`
+/// and `scale`): see `FaceParams`.
+const H_BLINK_INTERVAL: u32 = 0x0910_9AE2;
+const H_BLINK_CHANCE: u32 = 0xF5A7_B9D2;
+const H_VISEME_SCALES: u32 = 0xE428_66A1;
+const H_VISEME_SCALE: u32 = 0xFA11_0E09;
 
 /// The MT_ motion types by value, without their MT_ prefix (default.xbe's name table 0x3bfdac,
 /// values 0-49 in order; parser FUN_001876a0).
@@ -160,6 +169,9 @@ pub struct CharacterType {
     /// `<face viseme-file>`: the animation set of its face clips (brutusface on the ferals,
     /// seerface, militiaface ...), 0 none (Shrikes, hounds)
     pub face_set: u32,
+    /// the rest of its `<face>`: the blink interval and chance and the visemes it stretches
+    /// (`face::FaceParams`, #255)
+    pub face: FaceParams,
     /// chatter-library (h_f18a456f): its voice lines' file (characters/<x>.xmb), "" none
     /// (FUN_001304b0)
     pub chatter: String,
@@ -601,6 +613,19 @@ fn counted<'a>(list: impl Iterator<Item = &'a Element>) -> Vec<(u32, i64)> {
     }).collect()
 }
 
+/// A type's `<face>` (FUN_001901a0 reads its attributes, FUN_00190210 and FUN_001900f0 the list):
+/// the blink interval h_09109ae2, the blink chance h_f5a7b9d2 and the stretch list h_e42866a1 of
+/// `<h_fa110e09 enum scale>` records (the `enum` the `viseme-type`, the VE_ table's value).
+fn face_params(f: &Element) -> FaceParams {
+    let default = FaceParams::default();
+    FaceParams {
+        blink_interval: num(f, H_BLINK_INTERVAL).unwrap_or(default.blink_interval),
+        blink_chance: num(f, H_BLINK_CHANCE).unwrap_or(default.blink_chance),
+        scales: f.child(H_VISEME_SCALES).map(|l| l.children_named(H_VISEME_SCALE)
+            .filter_map(|s| Some((usize::try_from(int(s, h("enum"))?).ok()?, num(s, h("scale"))?))).collect()).unwrap_or_default(),
+    }
+}
+
 /// A character type from its objecttypes entry `e` (`<h_e275fb80 motion-archetype ..>`), read
 /// from `archive`'s library `library`; None when it has no `<base mesh-name><base name>`.
 pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<CharacterType> {
@@ -660,6 +685,7 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
             .unwrap_or_else(|| format!("h_{:08x}", motion.and_then(|v| v.as_hash()).unwrap_or(0))),
         motion_set: motion.and_then(|v| match v { Value::Str(s) => Some(h(s.trim())), v => v.as_hash() }).unwrap_or(0),
         face_set: e.child(h("face")).map_or(0, |f| name(f, h("viseme-file"))),
+        face: e.child(h("face")).map(face_params).unwrap_or_default(),
         chatter: text(e, h("chatter-library")),
         hitpoints: combat.and_then(|c| num(c, h("hitpoints"))).unwrap_or(0.0),
         target_type: combat.and_then(|c| int(c, h("target-type"))).unwrap_or(0),
@@ -922,7 +948,10 @@ impl Game {
             let clips = self.anim_sets.get(&set).map_or(0, |a| a.len());
             let model = if models {
                 match Character::load_type(self, t, 0) {
-                    Ok(c) => format!("{} bones, {} LOD0 vertices, {} face clips", c.bones.len(), c.geosets.iter().map(|g| g.positions.len()).sum::<usize>(), c.face_anims.len()),
+                    Ok(c) => format!("{} bones, {} LOD0 vertices, {} face clips{}", c.bones.len(), c.geosets.iter().map(|g| g.positions.len()).sum::<usize>(), c.face_anims.len(),
+                                     // (#255: the face table's bones and the lids the blink moves)
+                                     c.face.as_ref().map_or(String::new(), |f| format!(" (face table: {} bones, blink {} lids every {} s)", f.bones.len(),
+                                                                                       f.blink.as_ref().map_or(0, |b| b.tracks.len()), f.blink_interval))),
                     Err(e) => { no_model += 1; format!("NOT LOADED: {e}") }
                 }
             } else {

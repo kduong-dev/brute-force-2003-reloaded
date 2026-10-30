@@ -91,7 +91,8 @@ charge point here.
   bend and starts every joint inside its range.
 * **Bones without a body** (the feet, toes, hands and fingers below the lowest hit part, a
   Shrike's HorseLink, and every bone of the face, the hair and the props) keep their pose at
-  death under their parent, and a bone with a body takes its body's turn at its own place under
+  death under their parent (the face's is what the face controller last wrote, the blink's lids
+  at the point in the clip they were: [faces.md](faces.md)), and a bone with a body takes its body's turn at its own place under
   its parent: no bone stretches or slides against its neighbours, so faces and limbs don't morph
   as the verlet body's did.
 * **Contacts.** Each body's points (its hit parts' surfaces' corners, at most 26 a part) against
