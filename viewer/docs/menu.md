@@ -33,29 +33,36 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
   sub-menus are, made from **CAMPAIGN TYPE's items** (game-options `h_f9728897`, the menu the
   game's CAMPAIGN entry opens; the same helpers draw both, `play_campaign_menus.rs`):
   * the panel (`h_ff6b96da`), the typed title (484 × 38 at (90, 50), style `h_189b1ae9`), the
-    SINGLE XBOX CONSOLE heading band (70, 118), the group's first two buttons (200 × 20 at (80,
-    152) and (80, 180), style `h_ea5acf71`: `color-normal`, the selected one in `color-selected`
-    with its echo), each button's description in the box at (314, 118), 216 × 254 (style
-    `h_15405823`, shown with its button: its buddy-control), and the A SELECT and B BACK legends.
-    Places, styles and animations are the data's (the buttons slide in, the texts fade in, the
-    title types out, the selected button echoes: as CAMPAIGN TYPE's). The sounds are the ones
-    CAMPAIGN TYPE's code plays: the first button's slide as the screen opens, the move sound as
-    the selection moves, the error sound at the ends, select and open as a map list opens.
+    group's first two buttons (200 × 20 at (80, 152) and (80, 180), style `h_ea5acf71`:
+    `color-normal`, the selected one in `color-selected` with its echo), each button's
+    description in the box at (314, 118), 216 × 254 (style `h_15405823`, shown with its button:
+    its buddy-control), and the A SELECT and B BACK legends. Places, styles and animations are
+    the data's (the buttons slide in, the texts fade in, the title types out, the selected button
+    echoes: as CAMPAIGN TYPE's). The sounds are the ones CAMPAIGN TYPE's code plays: the first
+    button's slide as the screen opens, the move sound as the selection moves, the error sound at
+    the ends, select and open as a map list opens.
   * The demo's choices, all the words and what's left out: the title says MULTIPLAYER; the two
     buttons are **DEATHMATCH and SQUAD DEATHMATCH**, in the game's words: the first buttons of
     its own DEATHMATCH and SQUAD DEATHMATCH panels (`h_f4475e09`, `h_0e51acdd`, one line each as
     CAMPAIGN TYPE's buttons are: the main menu's `h_18653c47` has a line break for its two-line
     box), with the descriptions the game's main menu gives the two entries (`h_163f7c9d`,
     `h_1e9ff6eb`; their line breaks, made for the main menu's 270-unit box, are made spaces so the
-    216-unit box wraps them). No RESUME LAST, and no SYSTEM LINK group (no saves, no network
-    play). The SINGLE XBOX CONSOLE heading stays: both modes are played on the one console here.
+    216-unit box wraps them). No RESUME LAST, and no System Link group (no saves, no network
+    play).
+  * **No heading band** (the product owner's choice). CAMPAIGN TYPE's two bands, SINGLE XBOX
+    CONSOLE (`h_1cc9f852`, at (70, 118)) and SYSTEM LINK (`h_0e49a355`, at (70, 246)), are both
+    left out of the submenu: the descriptions shown with the buttons are the game's main-menu
+    texts, and they mention System Link ("Play head-to-head, up to 4 players on one Xbox
+    console, or up to 8 players over System Link"), which a SINGLE XBOX CONSOLE band over them
+    would contradict. The buttons stay where CAMPAIGN TYPE's data puts them, (80, 152) and (80,
+    180), not moved up into the band's place, so the panel is bare above them.
   * A goes on to SELECT MISSION for the mode (the game's mode panel, split-screen / System Link,
     is still skipped, as it was from the main menu). Up and down move, B (Esc, Backspace) goes
     back to the main menu on MULTIPLAYER, with no sound of its own. SELECT MISSION's B goes back
     to the submenu **on that mode**; in a map, Backspace still comes back to its SELECT MISSION,
     so B, B walks on to the submenu and the main menu on MULTIPLAYER. The submenu opens on
-    DEATHMATCH each time it's entered from the main menu (as CAMPAIGN TYPE opens on its first
-    button).
+    DEATHMATCH every time it's entered from the main menu (the product owner's choice; CAMPAIGN
+    TYPE too opens on its first button). Coming back from SELECT MISSION it's on that mode.
   * The mouse works here as on the main menu (CAMPAIGN TYPE's screens take none): each button has
     an invisible target on its data box; pointing at it selects it (the move sound) and a click
     selects it and goes on. The pad's d-pad, A and B and START (which selects) are the others'.
@@ -110,7 +117,7 @@ stepping its own value by one (the map carousel scrolling), sends `h_ebf26601` (
 | SELECT MISSION | the panel h_e462c760 (7 splash_screen textures at alpha 180, at (66, 50)); the carousel's arrow h_158f87c1 stretched to 20 × 128 (the right one mirrored); title 153 209 251 in the heading font, no outline, typed; map name 153 209 251 (body font 16 pt); recommended players (dm-data `h_0398b8bf` min/max, `Recommended for %d - %d players.`; none on the squad deathmatch maps), planet and description 148 198 149 (14 pt) |
 | Loading screen | game-options' LOADING menu (`h_f6551df5`): a 256 × 256 ring at (192, 112) on black, four mirrored quarters of `h_06477be9` or `h_1ec0f086` (the ring with its big blocks on the diagonals / on the axes), shown in turn every 0.1 s (a capture), "LOADING" (`h_0f28682d`) in the heading font, no movie or music. Shown while the map loads |
 | Layout | game-options' item positions: words right-aligned in boxes ending at x 279 (main menu tops 100, 160, 220 (80 tall), then 320, 380 in the game; the demo's five one-line entries at 100, 160, 220, 280, 340: see Layout above); logo at its own 512 × 256 (title (194, 106), main (194, 18)); description box (312, 240) |
-| MULTIPLAYER submenu | CAMPAIGN TYPE's items (game-options `h_f9728897`: panel `h_ff6b96da`, typed title, SINGLE XBOX CONSOLE heading, the first two buttons and their descriptions, A / B legends), their places, styles, animations and sounds; the demo's own words for the title and the main menu's entry (`Say::Demo`), the game's for DEATHMATCH (`h_f4475e09`), SQUAD DEATHMATCH (`h_0e51acdd`) and their descriptions (`h_163f7c9d`, `h_1e9ff6eb`) |
+| MULTIPLAYER submenu | CAMPAIGN TYPE's items (game-options `h_f9728897`: panel `h_ff6b96da`, typed title, the first two buttons and their descriptions, A / B legends; not its two heading bands), their places, styles, animations and sounds; the demo's own words for the title and the main menu's entry (`Say::Demo`), the game's for DEATHMATCH (`h_f4475e09`), SQUAD DEATHMATCH (`h_0e51acdd`) and their descriptions (`h_163f7c9d`, `h_1e9ff6eb`) |
 | Animations | translation-anim: items slide in from y 240 (0.25 s); color-anim: fade in (0.5 s); select-anim: the selected word's echo grows (from the word's middle) to 1.7× and fades from alpha 150 in 50 185 250 (0.5 s), then pulsing every 0.3 s while the word stays selected or hovered; the logo slides up from the title's place into the main menu; panel titles type out (0.125 s a letter); their sounds `h_e8ace091` / `h_e1abd007` (splash_screen) |
 | Logo, title bar | splash_screen textures h_f1e0ac39, h_190a4ea7 |
 | Previews | the level list's `texture-name` (splash_screen) |
@@ -226,12 +233,18 @@ MULTIPLAYER was checked that way (#310), in captures and screenshots of the reci
 (`BF_MENU_SCREEN=main`, `BF_MENU_PICK=0` to `4`: CREDITS well clear of the bottom edge, its echo
 whole, its description "See the roster of the 23rd Special Forces."); the submenu with
 DEATHMATCH and with SQUAD DEATHMATCH selected, set beside the game's CAMPAIGN TYPE (take01 at
-7.5 s and the demo's `BF_MENU_SCREEN=campaign`: same panel, title, heading band, button and
-description places, fonts, colours and echo); the full runs through DEATHMATCH to mp1 and through
-SQUAD DEATHMATCH to sdm_e40 (SELECT MISSION, LOADING, the map with the squad and the radar); B at
-every step (map -> SELECT MISSION on that map -> the submenu on that mode -> the main menu on
-MULTIPLAYER -> the title); EDITOR and CAMPAIGN (CAMPAIGN TYPE, B back to the main menu on
-CAMPAIGN) reached as before; `BF_MENU_SCREEN=dm|sdm` with `BF_MENU_GO` landing on the same maps.
+7.5 s and the demo's `BF_MENU_SCREEN=campaign`: same panel, title, button and description
+places, fonts, colours and echo; the heading bands are the one thing left out, and the two
+buttons are at the same places with and without them); the full runs through DEATHMATCH to mp1
+and through SQUAD DEATHMATCH to sdm_e40 (SELECT MISSION, LOADING, the map with the squad and the
+radar); B at every step (map -> SELECT MISSION on that map -> the submenu on that mode -> the
+main menu on MULTIPLAYER -> the title); EDITOR and CAMPAIGN (CAMPAIGN TYPE, B back to the main
+menu on CAMPAIGN) reached as before; `BF_MENU_SCREEN=dm|sdm` with `BF_MENU_GO` landing on the
+same maps. Unit tests (`cargo test --bin bf_play`): the submenu's derived menu (CAMPAIGN TYPE's
+first two buttons in their places, no heading, the other buttons gone), its modes and Back
+mapping, the main menu's order and even spacing, and that a map's `Return` is spent once the menu
+has opened on it (a second `open_menu` opens on the title: a stale one would reopen that map's
+SELECT MISSION after a later way into the menu that leaves nothing, a campaign's last briefing).
 The mouse can't be captured (`BF_BACKGROUND` drops the mouse's events), so its path was run with a
 temporary probe (removed again): the hit boxes were at the buttons' data boxes in screen units
 ((80, 152) and (80, 180), 200 × 20), and a simulated hover on SQUAD DEATHMATCH moved the

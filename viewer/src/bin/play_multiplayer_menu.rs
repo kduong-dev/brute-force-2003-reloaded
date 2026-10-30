@@ -5,12 +5,11 @@
 //! The screen is CAMPAIGN TYPE's (game-options h_f9728897, the menu the game's CAMPAIGN entry
 //! opens: play_campaign_menus.rs), made from that menu's own items so it looks and moves as the
 //! game's sub-menus do: the panel (picture set h_ff6b96da), the typed title (style h_189b1ae9,
-//! 484 x 38 at (90, 50)), the SINGLE XBOX CONSOLE heading (h_1cc9f852, a band at (70, 118) in
-//! style h_e8b4c2d6), the group's first two buttons (200 x 20 at (80, 152) and (80, 180), style
-//! h_ea5acf71: no font of its own, so the body font at 14 points; `color-normal`, the selected
-//! one in `color-selected` with its echo), each button's description (216 x 254 at (314, 118),
-//! style h_15405823, shown with its button: its buddy-control) and the A SELECT and B BACK
-//! legends (86, 410) and (242, 410). Their animations are the items' own (translation-
+//! 484 x 38 at (90, 50)), the group's first two buttons (200 x 20 at (80, 152) and (80, 180),
+//! style h_ea5acf71: no font of its own, so the body font at 14 points; `color-normal`, the
+//! selected one in `color-selected` with its echo), each button's description (216 x 254 at
+//! (314, 118), style h_15405823, shown with its button: its buddy-control) and the A SELECT and
+//! B BACK legends (86, 410) and (242, 410). Their animations are the items' own (translation-
 //! anims sliding the buttons in, color-anim fading the texts in, the title typed, select-anim
 //! echoing the selected button) and play on the menu's clock as CAMPAIGN TYPE's do; so do the
 //! sounds: the first button's slide sound as the screen opens, h_ed2b5e99 as the selection moves
@@ -25,10 +24,18 @@
 //!    main menu's SQUAD DEATHMATCH, h_18653c47, is two lines for its two-line box), and the
 //!    descriptions the game's main menu gives the two entries (h_163f7c9d, h_1e9ff6eb), their line
 //!    breaks (made for the main menu's 270-unit box) made spaces so the 216-unit box wraps them;
-//!  * no RESUME LAST, no System Link group: the demo has no saves and no network play.
+//!  * no RESUME LAST, no System Link group: the demo has no saves and no network play;
+//!  * no heading band: CAMPAIGN TYPE's SINGLE XBOX CONSOLE band (h_1cc9f852, at (70, 118) in
+//!    style h_e8b4c2d6) is dropped along with its SYSTEM LINK one: the product owner's choice.
+//!    The descriptions are the game's main-menu texts and they mention System Link ("... or up
+//!    to 8 players over System Link"), which a SINGLE XBOX CONSOLE band over them would
+//!    contradict. The buttons stay where CAMPAIGN TYPE's data puts them, (80, 152) and (80, 180),
+//!    not moved up into the band's place.
 //! Each entry goes on to SELECT MISSION for its mode (the game's mode panel, split-screen /
 //! System Link, is skipped, as it was from the main menu). Back from SELECT MISSION returns
-//! here, on that mode; Back from here returns to the main menu on MULTIPLAYER.
+//! here, on that mode; Back from here returns to the main menu on MULTIPLAYER. It opens on
+//! DEATHMATCH each time it is entered from the main menu (the product owner's choice; CAMPAIGN
+//! TYPE too opens on its first button).
 //!
 //! The mouse works here as on the main menu (CAMPAIGN TYPE's screens take no mouse): each button
 //! has an invisible target on its own box; pointing at it selects it, a click selects and goes on.
@@ -59,9 +66,11 @@ const S_DEATHMATCH_ABOUT: u32 = 0x163F_7C9D;
 /// SQUAD DEATHMATCH's description: the one the game's main menu shows for it (h_1e9ff6eb, "Fight
 /// against friends, each commanding different squads. ...").
 const S_SQUAD_DEATHMATCH_ABOUT: u32 = 0x1E9F_F6EB;
-/// CAMPAIGN TYPE's SYSTEM LINK heading (item name h_0e49a355, at (70, 246) in game-options
-/// h_f9728897): the second group, which the submenu leaves out.
-const I_SYSTEM_LINK: u32 = 0x0E49_A355;
+/// The style of CAMPAIGN TYPE's two group headings (h_e8b4c2d6: a fill band under a right-aligned
+/// text): SINGLE XBOX CONSOLE (item h_1cc9f852, at (70, 118) in game-options h_f9728897) and SYSTEM
+/// LINK (h_0e49a355, at (70, 246)). The submenu has neither: no network play, and the product
+/// owner dropped the first too, since the descriptions it would head mention System Link.
+const STYLE_HEADING: u32 = 0xE8B4_C2D6;
 /// The style of CAMPAIGN TYPE's five descriptions (h_15405823), the static texts shown with a button.
 const STYLE_ABOUT: u32 = 0x1540_5823;
 
@@ -100,15 +109,15 @@ pub fn back_to(menu: &mut Menu) {
     menu.main = main_entry();
 }
 
-/// MULTIPLAYER's place on the main menu.
-fn main_entry() -> usize {
+/// MULTIPLAYER's place on the main menu (every lookup of it goes through here, so they agree).
+pub(super) fn main_entry() -> usize {
     MAIN.iter().position(|m| m.0 == MULTIPLAYER).unwrap_or(0)
 }
 
 /// The submenu's menu, made of CAMPAIGN TYPE's (`base`): its items but for the buttons past the
-/// first `MODES.len()` and their descriptions, and the SYSTEM LINK heading; the kept buttons say
-/// the modes' words and their descriptions the modes' texts. Everything else of an item (place,
-/// size, style, animations, buddies) is CAMPAIGN TYPE's.
+/// first `MODES.len()` and their descriptions, and the group headings (STYLE_HEADING); the kept
+/// buttons say the modes' words and their descriptions the modes' texts. Everything else of an
+/// item (place, size, style, animations, buddies) is CAMPAIGN TYPE's.
 fn derive(base: &GameMenu) -> GameMenu {
     let buddies: Vec<&Vec<u32>> = base.items.iter().filter_map(|i| match &i.kind {
         ItemKind::Button { buddies, .. } => Some(buddies),
@@ -130,7 +139,7 @@ fn derive(base: &GameMenu) -> GameMenu {
             ItemKind::Text(id) => {
                 if let Some(k) = kept.iter().position(|&n| n == item.name) {
                     *id = MODES[k].about;
-                } else if dropped.contains(&item.name) || item.name == I_SYSTEM_LINK {
+                } else if dropped.contains(&item.name) || item.style == STYLE_HEADING {
                     continue;
                 }
             }
@@ -228,7 +237,7 @@ mod tests {
             items: vec![
                 button(0x02B3_42D3, 0x06E5_E6D8, 0xEA3D_AF3C), button(0x0024_5356, 0xF7E9_5A5E, 0xF4A5_6B36), button(0x1B74_4C5F, 0xE558_0964, 0x1632_AC3F),
                 button(0xFE2C_7D14, 0xEF9D_D11D, 0x1412_FA83), button(0xED7A_7EC2, 0xFCCB_D2CB, 0x0744_F955),
-                text(0x08E7_9DB2, campaign::STYLE_TYPED, 0xF6AD_E596), text(0x1CC9_F852, 0xE8B4_C2D6, 0xEE9A_A66D), text(I_SYSTEM_LINK, 0xE8B4_C2D6, 0xF30D_DF1D),
+                text(0x08E7_9DB2, campaign::STYLE_TYPED, 0xF6AD_E596), text(0x1CC9_F852, STYLE_HEADING, 0xEE9A_A66D), text(0x0E49_A355, STYLE_HEADING, 0xF30D_DF1D),
                 text(0xEA3D_AF3C, STYLE_ABOUT, 0x186B_7D31), text(0xF4A5_6B36, STYLE_ABOUT, 0xF7C4_F81F), text(0x1632_AC3F, STYLE_ABOUT, 0x1A83_55C0),
                 text(0x1412_FA83, STYLE_ABOUT, 0x1919_859B), text(0x0744_F955, STYLE_ABOUT, 0x0A4F_864D),
                 item(0x0FBE_73AA, 0, ItemKind::Picture { set: 0xFF6B_96DA, piece: None }, &[]),
@@ -238,9 +247,10 @@ mod tests {
         }
     }
 
-    /// The derived menu keeps CAMPAIGN TYPE's first two buttons, in their places, as DEATHMATCH and
-    /// SQUAD DEATHMATCH with their descriptions, and the title, the first heading, the panel and
-    /// the legends; the other three buttons, their descriptions and the SYSTEM LINK heading go.
+    /// The derived menu keeps CAMPAIGN TYPE's first two buttons, in their places (not moved up
+    /// into the first heading's), as DEATHMATCH and SQUAD DEATHMATCH with their descriptions, and
+    /// the title, the panel and the legends; the other three buttons, their descriptions and both
+    /// heading bands (SINGLE XBOX CONSOLE and SYSTEM LINK) go.
     #[test]
     fn derives_from_campaign_type() {
         let base = campaign_type();
@@ -254,10 +264,11 @@ mod tests {
         let about = |name: u32| menu.items.iter().find(|i| i.name == name).map(|i| match i.kind { ItemKind::Text(id) => id, _ => 0 });
         assert_eq!(about(0xEA3D_AF3C), Some(S_DEATHMATCH_ABOUT));
         assert_eq!(about(0xF4A5_6B36), Some(S_SQUAD_DEATHMATCH_ABOUT));
-        for gone in [0x1632_AC3F, 0x1412_FA83, 0x0744_F955, I_SYSTEM_LINK, 0x1B74_4C5F, 0xFE2C_7D14, 0xED7A_7EC2] {
-            assert!(about(gone).is_none(), "{gone:08x} stays");
+        for gone in [0x1632_AC3F, 0x1412_FA83, 0x0744_F955, 0x1CC9_F852, 0x0E49_A355, 0x1B74_4C5F, 0xFE2C_7D14, 0xED7A_7EC2] {
+            assert!(menu.items.iter().all(|i| i.name != gone), "{gone:08x} stays");
         }
-        for kept in [0x08E7_9DB2, 0x1CC9_F852, 0x0FBE_73AA, 0x0499_CE0B, 0x0E82_04A4] {
+        assert!(menu.items.iter().all(|i| i.style != STYLE_HEADING));
+        for kept in [0x08E7_9DB2, 0x0FBE_73AA, 0x0499_CE0B, 0x0E82_04A4] {
             assert!(menu.items.iter().any(|i| i.name == kept), "{kept:08x} goes");
         }
         // (the first button keeps its slide-in animation, the one with the sound)

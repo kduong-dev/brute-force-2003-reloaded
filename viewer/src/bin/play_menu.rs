@@ -1175,10 +1175,13 @@ fn open_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>, media: R
     let mut menu = Menu { screen: Screen::Title, main: 0, kind: LEVEL_SQUAD_DEATHMATCH, pick: HashMap::new(), ..default() };
     if let Some(Return { map: Some(map), deathmatch, .. }) = ret.as_deref() {
         // back from a map: its SELECT MISSION (Back from there goes to the MULTIPLAYER submenu on
-        // that map's mode, and from there to the main menu on MULTIPLAYER: #310)
+        // that map's mode, and from there to the main menu on MULTIPLAYER: #310). It's spent: a
+        // later way into the menu that leaves nothing (a campaign's last briefing, play_briefing.rs
+        // `Then::Menu`) must open on the title, not on this map's list again
+        commands.remove_resource::<Return>();
         menu.screen = Screen::Missions;
         menu.kind = if *deathmatch { LEVEL_DEATHMATCH } else { LEVEL_SQUAD_DEATHMATCH };
-        menu.main = MAIN.iter().position(|m| m.0 == MULTIPLAYER).unwrap_or(1);
+        menu.main = multiplayer::main_entry();
         menu.multi = multiplayer::mode_of(menu.kind);
         let at = assets.maps.get(&menu.kind).and_then(|m| m.iter().position(|x| &x.file == map)).unwrap_or(0);
         menu.pick.insert(menu.kind, at);
@@ -1755,7 +1758,7 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                 // the MULTIPLAYER submenu (#310) on its entry BF_MENU_PICK
                 Ok("multiplayer") => {
                     menu.screen = Screen::Multiplayer;
-                    menu.main = MAIN.iter().position(|m| m.0 == MULTIPLAYER).unwrap_or(0);
+                    menu.main = multiplayer::main_entry();
                     menu.multi = pick.unwrap_or(0).min(multiplayer::MODES.len() - 1);
                 }
                 Ok(kind @ ("dm" | "sdm")) => {
@@ -1842,5 +1845,28 @@ mod tests {
         assert!(MAIN_BOXES.windows(2).all(|w| w[1].0 - w[0].0 == 60.0));
         let (top, height) = MAIN_BOXES[MAIN_BOXES.len() - 1];
         assert!(top + height <= SCREEN.y - 100.0);
+    }
+
+    /// A map's `Return` is spent as the menu opens on it (#310 review): a later way into the menu
+    /// that leaves nothing behind (a campaign's last briefing, play_briefing.rs `Then::Menu`)
+    /// opens on the title, not on that map's SELECT MISSION again.
+    #[test]
+    fn a_return_is_spent_once_the_menu_has_opened_on_it() {
+        use bevy::ecs::system::RunSystemOnce;
+        let font = || AtlasFont::new(Handle::default(), HashMap::new());
+        let mut world = World::new();
+        world.insert_resource(Assets::<Image>::default());
+        world.insert_resource(NextState::<super::super::AppState>::default());
+        world.insert_resource(MenuMedia { music: None, frames: Arc::new(Frames::Held(vec![])) });
+        world.insert_resource(Assets2 { maps: HashMap::new(), strings: HashMap::new(), font: font(), body: font(), buttons: Handle::default(),
+                                        button_rects: vec![], logo: None, panel: vec![], arrow: None, ring: vec![] });
+        world.insert_resource(Return { map: Some("mp1".into()), deathmatch: true, main: false, editor: false });
+        world.run_system_once(open_menu).expect("open_menu");
+        let menu = world.resource::<Menu>();
+        assert_eq!((menu.screen, menu.kind, menu.main), (Screen::Missions, LEVEL_DEATHMATCH, multiplayer::main_entry()));
+        assert!(world.get_resource::<Return>().is_none());
+        // (the next way in leaves nothing behind)
+        world.run_system_once(open_menu).expect("open_menu");
+        assert_eq!(world.resource::<Menu>().screen, Screen::Title);
     }
 }
