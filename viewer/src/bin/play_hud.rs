@@ -61,8 +61,9 @@ const S_REGEN: u32 = 0xE246_DE1D;
 /// measured (170, 42, 30) through the video's compression.
 const S_FULL: u32 = 0xF141_6A07;
 const FULL_RED: Color = Color::srgb(160.0 / 255.0, 32.0 / 255.0, 32.0 / 255.0);
-/// A weapon row's icon size (HUD units) where its item names none: 128 x 64, every gun's but the
-/// MNR-7 Bio's 64 x 64 (`WeaponDef::icon_size`, #64). Its top left is (463, the row's y - 25).
+/// A weapon row's icon size (HUD units) where its item names none: 128 x 64, the rifles' and
+/// heavy guns'. The five pistols (weapon-type 0: the Saryl-23, Foley, MNR-7 Bio, LZR-10 and
+/// Jax-iP) name 64 x 64 (`WeaponDef::icon_size`, #64). Its top left is (463, the row's y - 25).
 const WEAPON_ICON: [f32; 2] = [128.0, 64.0];
 /// "[Y] switch to %s." once the held gun's clip and the reserve are both empty (FUN_00120d40
 /// posts message 0x52): top left under the health bar, pale blue (todo/49 take02 19 s; the same
