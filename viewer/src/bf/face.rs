@@ -190,7 +190,7 @@ impl FaceTable {
     /// The table of a model whose clips' face set is `face` (`Character::face_anims`): the game's
     /// FUN_00142df0 and FUN_00142cb0. `bones` is the model's skeleton (`Character::bones`). None
     /// when the set has no `Sc_base` (a type without a face set; the game would crash on a set
-    /// without one, which none of the 36 face sets in the data is).
+    /// without one, which none of the 39 face sets in the data is).
     pub fn build(game: &Game, bones: &[u32], face: &[AnimDef], params: &FaceParams) -> Option<FaceTable> {
         let base_clip = face.iter().find(|a| a.name == SC_BASE)?;
         // the bone list and the base pose: Sc_base's targets in order, their first keys
@@ -254,6 +254,15 @@ impl FaceTable {
     /// viseme's difference times the weight (FUN_00144e20). So the mouth is a chain of blends
     /// of absolute poses, not a sum of offsets; a weight of 1 shows the viseme's clip exactly.
     /// `out` is cleared and filled with one entry per face bone.
+    ///
+    /// One quirk of the game's is kept: a viseme's record is a copy of the base, so a bone its clip
+    /// doesn't name holds the base's own value. For a rotation bone that pulls the running value
+    /// back toward the base by the weight; for a translation bone the value stands as its
+    /// "difference", so the base's absolute position is added again, weighted. The skip test
+    /// (`close`) is what keeps either from happening while nothing has moved the bone; once an
+    /// earlier viseme has, the running value no longer matches and it does. No face set in the
+    /// data can meet it (all 39 were checked: no viseme leaves out a bone that an earlier one
+    /// names, `base`, which moves nothing, apart), so it never shows; it would on a set that did.
     pub fn blend(&self, weights: &[f32; VISEMES], out: &mut Vec<[f32; 4]>) {
         out.clear();
         out.extend_from_slice(&self.base);

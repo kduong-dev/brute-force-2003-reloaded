@@ -22,8 +22,14 @@
 //!    the interval the game tests a random number against the type's chance (0.05), but its
 //!    number runs 0 to 131072 (unscaled, over dt x 30), so the test passes about once in 2.6
 //!    million frames: here it never does, and the blink is a regular cycle of the interval plus
-//!    up to a frame. The clip drives its lids (the bones of `Sc_blink` that aren't face bones);
-//!    after it ends they stay at its last key, as the nodes keep what the clip last wrote.
+//!    up to a frame (the takes' face logs, todo/255 take01-03, confirm it: every controller's
+//!    +0x4c resets every 4.0 s). The clip drives its lids (the bones of `Sc_blink` that aren't
+//!    face bones); after it ends they stay at its last key, as the nodes keep what the clip last
+//!    wrote.
+//!  - **The phase is when the character was made**: the first blink is the first tick and the
+//!    cycle runs on from it, so characters made apart blink apart (the squad's copies, 0.5 s
+//!    apart in e34, as the takes' controllers are) and ones made together blink together. A
+//!    character not in the world yet (`Player::absent`) isn't ticked (`step`).
 //!  - **Alive only**: the game ticks the controller from the character's update while it lives
 //!    (FUN_0011caa0, 0x11dc7b), so `step` runs in `step_player`: a dead character's face keeps
 //!    the pose it died with (the ragdoll starts from `last_world`, which has it), a cutscene's
@@ -44,6 +50,8 @@
 //!    to 1) on `who`: `me` (the controlled character), a squad name or 0-3 (`tex`, `2`), or
 //!    `all`. It stays until another entry changes it. The mouth at a weight of 1 shows the
 //!    viseme's clip, which bf_viewer's Q / E shows too (a check of the blend, `Face::tick`).
+//!    With every weight back at 0 the face keeps the last pose blended (the game's idle
+//!    controller writes nothing): set `base` to 1 to go back to the rest face.
 //!  - `BF_TEST_FACE_CAM=<s>,<who>[,<m>[,<rise>]][;...]`: at `s` seconds the free camera goes `m`
 //!    metres (0.8) in front of `who`'s face, `rise` m (0) higher (negative: lower), looking at it
 //!    (`who` as above, the first it names), and stays there as the head moves: the close-ups for
@@ -130,9 +138,20 @@ impl Face {
 
 /// A character's face for this frame, on its final body pose (`step_player` calls it after the
 /// aim): ticked by `dt`, the blink logged under BF_FACE_LOG. A model without a face is left as
-/// it is.
+/// it is, and so is a character **not in the world yet** (`Player::absent`: a squad member whose
+/// spawn-trigger hasn't made its copy; the controlled one's step runs all the same, for the game's
+/// clock). The game makes a controller with the copy (0x112b37 / 0x12f848) and ticks it from the
+/// copy's first update, with its blink clock at 10 s, so the first blink is the arrival and the
+/// four-second cycle runs from there: **a character's blink phase is when it was made**. The
+/// squad's four are copies made 0.5 s apart in e34's opening, and the takes' controllers show it
+/// (todo/255 take01-03, measured: each controller's clock +0x40 against the session's clock puts
+/// its start at 9.16 s for Flint, 9.63 Brutus, 10.14 Hawk and 10.64 Tex, and their blinks are
+/// 1.48, 1.01 and 0.51 s ahead of Tex's in the four-second cycle).
 pub fn step(p: &mut Player, l: &Loaded, game: &Game, dt: f32, pose: &mut [(Quat, Vec3)]) {
     let Some(table) = &l.model.face else { return };
+    if p.absent {
+        return;
+    }
     if p.facial.tick(table, dt) && std::env::var("BF_FACE_LOG").is_ok() {
         println!("t={:.2} {}: blink {}", p.sim_time, unit_name(p), p.facial.blinks);
     }
@@ -140,8 +159,8 @@ pub fn step(p: &mut Player, l: &Loaded, game: &Game, dt: f32, pose: &mut [(Quat,
 }
 
 /// A character spawned (`spawn_unit`): its controller made afresh for its model (the game makes
-/// one with the character, FUN_00112ae0 at 0x112b37 and FUN_0012f440 at 0x12f848). BF_FACE_LOG
-/// prints what its table holds, under its `name`.
+/// one with the character: 0x112ae0, the character vtable's +0x9c, at 0x112b37, and FUN_0012f440
+/// for a spawned copy at 0x12f848). BF_FACE_LOG prints what its table holds, under its `name`.
 pub fn spawned(p: &mut Player, name: &str, model: &Character, game: &Game) {
     p.facial = model.face.as_ref().map_or_else(Face::default, Face::new);
     if std::env::var("BF_FACE_LOG").is_ok() {
@@ -407,6 +426,30 @@ mod tests {
                 let gap = w[1] - w[0];
                 assert!(gap > interval - 1e-3 && gap < interval + dt * 1.5, "interval {interval}, dt {dt}: a gap of {gap}");
             }
+        }
+    }
+
+    /// The phase is the first tick (todo/255 take01-03: the squad's four, whose controllers started
+    /// 0.5 s apart, blink 0.5 s apart in the same four-second cycle): two faces made alike and first
+    /// ticked 15 ticks (0.5 s) apart blink 15 ticks apart, at every cycle.
+    #[test]
+    fn a_faces_blinks_follow_its_first_tick() {
+        let t = table(4.0);
+        let dt = 1.0 / 30.0;
+        let (mut a, mut b) = (Face::new(&t), Face::new(&t));
+        let (mut at, mut bt) = (vec![], vec![]);
+        for n in 0..600usize {
+            if a.tick(&t, dt) {
+                at.push(n);
+            }
+            if n >= 15 && b.tick(&t, dt) {
+                bt.push(n);
+            }
+        }
+        assert_eq!((at[0], bt[0]), (0, 15), "each blinks at its first tick");
+        assert!(at.len() >= 4 && at.len() == bt.len(), "{at:?} {bt:?}");
+        for (x, y) in at.iter().zip(&bt) {
+            assert_eq!(y - x, 15);
         }
     }
 
