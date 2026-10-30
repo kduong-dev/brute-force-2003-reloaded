@@ -238,14 +238,18 @@ Squad movement and deaths follow the game's own data and the captures:
   the top so it topples: the demo's start) for 0.7 s, thuds on the ground
   (the surface's landing sound) and gets back up over 0.45 s where it lies - the game uses
   Ipion physics for this (its constraint messages are in default.xbe, with MT_KNOCKDOWN).
-* Death: the death cry (chatter e1213623 - the captures' deaths match its lines), a thud, a
+* Death: the death cry (chatter e1213623 - the captures' deaths match its lines; ed35ffae for a
+  fall's), a thud, a
   limp body that stays on a blood pool (the character's other decal, h_16d327fd), blood
   splashed round where they fall (the hit's blood effects sprayed up, and five of their hit
   splats on the ground within 1.4 m: the demo's choice, the game's own death blood isn't
   known; Flint's decals are dark grey, 50,50,50, in the data: she's a synthetic), their memory
-  chip beside where they fell (below), and - half the time, as the data says - a surviving
-  squadmate's answer from the dead member's response tag ("Brutus is down!", "They've taken out
-  Hawk."). On the radar the portrait becomes the member's own skull (the characters'
+  chip beside where they fell (below). Every line goes through the chatter gate and its one
+  queue ([chatter.md](chatter.md): the hurt lines, the death cry, the killer's line). The death
+  cry's response picks the nearest teammate for its "X is down" reply ("Brutus is down!",
+  "They've taken out Hawk."), whose variants need the alert value 0 where every squad member's
+  is 10: so, as the code reads, no reply is heard (the demo said one half the time before #155;
+  the xemu take A3 settles it). On the radar the portrait becomes the member's own skull (the characters'
   h_00c51907 icon) and the member's tab and health bar go.
 * **Memory chip** (`play_dna.rs`, #43; what the demo called "the DNA"). Each squad
   character-object's `<h_0f77963d inventory-drop>` is item h_f50f94f9 (function-type 18,

@@ -298,7 +298,9 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   distance (-1: the library entry's `h_fd40e332` and `falloff`); `volume` (h_eff0deab, 0-100; -1:
   the entry's own h_eff0deab, 0-1, or 1 without one); h_1f625953 / h_05cad875 its voice's fade-in
   / fade-out (s); h_15bc1769 "only while a player is within its `max-distance`"; h_e725a1a5 the
-  squad's chatter hushed while it plays (not modelled); `HARDPOINT` and `priority` (h_e146dc86)
+  squad's chatter hushed while it plays (a timed mute for its length, keyed by the trigger, taken
+  off at its stop: FUN_002062a0 / FUN_002063c0; the dialog queue's lines and a dialog-trigger's
+  line hush it the same way: [chatter.md](chatter.md), "Timed mutes"); `HARDPOINT` and `priority` (h_e146dc86)
   aren't read by these paths.
 * **A sound's length** is the sound system's (its vtable +0x64, 0x17f620): the file's size over
   its format's bytes a second (FUN_00183c30: Xbox ADPCM counts 36 bytes a channel for each whole
@@ -520,8 +522,9 @@ update 0x1fa7e0) and FUN_001f8510, FUN_001f8420.
   A negative amount heals each occupant by it x dt, up to the most, with no falloff and no test
   (FUN_001f8510's other branch).
 * **Not a weapon's hit**: no hit part, no damage-multiplier, no push, and no blood (take15 shows
-  none). The first hit on a character since the plate was enabled goes through the demo's `hurt`
-  (its grunt); the rest come off its hit points directly, unless one would kill it. Enabled
+  none). The first hit on a character since the plate was enabled goes through the demo's `hurt`;
+  the rest come off its hit points directly, unless one would kill it. Each asks its hurt line
+  of the chatter gate (a bare record: the line by the hit points; [chatter.md](chatter.md)). Enabled
   again, it starts again (`BF_TRIGGER_FIRE=trigger_damage_plate524,USER1,2` after its second:
   the first hit through `hurt` once more).
 * **The tutorial's** trigger_damage_plate524 at (27.9, 17.4, 67.6): BALLISTIC 20 a second,
@@ -817,11 +820,9 @@ the log read and the frames looked at:
     the west pit's bursts (every 4 / 6 s) and the east pit's loop play on from the start (heard
     only within their 40 m: the rolloff curve);
     `BF_TRIGGER_FIRE="trigger_router443,USER2,6.575;trigger_router441,USER2,11.025"` sends them.
-  * The squad's chatter isn't hushed by an h_e725a1a5 line (FUN_00141100 / FUN_00141180 on the
-    chatter manager world+0xbe8: while its list isn't empty no chatter is said, and the first
-    line stops the chatter playing at priority 10 or under).
   * A dialog-trigger's line is a plain sound, not the character's voice (its priority 10 over
-    chatter, its mouth); Bratton's lines have no radio filter.
+    chatter, its mouth); Bratton's lines have no radio filter. (Its hush flag mutes the chatter,
+    #155: [chatter.md](chatter.md).)
   * 3D voices are a volume only (the demo's sounds have no left and right) and have no reverb:
     the level's I3DL2 environment (the world's +0xb54, the sound system's +0x78) and each 3D
     voice's send to it, the world's indoor or outdoor amount as its listener stands (0x17f390),

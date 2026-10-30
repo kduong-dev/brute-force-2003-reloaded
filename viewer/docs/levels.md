@@ -551,8 +551,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     (0x221780 -> 0x125600; play.rs `burn` through `take_hit`): a stamina shield takes it first,
     nothing in a cutscene or out of the world, the difficulty step (the multiplayer maps none;
     STANDARD's squad x0.6), Vengar, the type's factor, BF_COMBAT_LOG's line. It floors nobody.
-    Only an entry hit may draw a hurt line (the demo's rule: take03 has no sound between the foot
-    events while Brutus stands burning, todo/5-liquid-sounds leads §4.1).
+    Each hit asks its hurt line of the chatter gate (#155, [chatter.md](chatter.md): a record
+    with no attacker and +0x5c bit 2, ef32191d, 50% with a 20 s replay delay), so one is said at
+    the entry and none after while the character stands burning (todo/5-liquid-sounds leads
+    §4.1: no sound between the foot events in take03; §4.3: a voice-like burst after the first
+    entry hit in both takes).
     Its blood is the game's decals alone (FUN_00124a70: the entry hits are big enough, the
     shares never; the spray straight up), and a death in a liquid leaves out the demo's death
     spray (play_fx.rs). The game frames run between the drawn ones with the parts' lowest points

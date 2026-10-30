@@ -227,7 +227,7 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
         if thrower {
             u.knock_cooldown = cooldown.max(1.0);
         }
-        hurt(u, &game.0, damage, HURT_CHATTER, throw, body_place(u) + Vec3::Y, -1);
+        hurt(u, &game.0, damage, chatter::Cause::hit(&hit), throw, body_place(u) + Vec3::Y, -1);
         u.knock_cooldown = if thrower { cooldown } else { u.knock_cooldown };
         if leader {
             tint.0 = 0.0;

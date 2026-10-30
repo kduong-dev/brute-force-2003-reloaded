@@ -27,8 +27,9 @@
 //!    takes' 30), Vengar's 0.85 and the type's factor; no hit part. It floors nobody (take03:
 //!    thirteen entry hits of 30, Brutus walking on), and draws no blood but FUN_00124a70's
 //!    decals, which the entry hits are big enough for and the per-frame shares never
-//!    (play_fx.rs). Only an entry hit may draw a hurt line (the demo's: take03 has no sound
-//!    between the foot events while Brutus stands burning, todo/5-liquid-sounds leads §4.1).
+//!    (play_fx.rs). Each hit asks its hurt line of the chatter gate (play_chatter.rs: a record with
+//!    no attacker and +0x5c bit 2, ef32191d, 50%, its 20 s replay delay): so one at the entry and
+//!    none after while the character stands burning (todo/5-liquid-sounds leads §4.1, §4.3).
 //!  - **Splashes** (#5, FUN_00221af0 0x221ca9-0x221dc2). A part going in casts its surface ray
 //!    (FUN_00222480: from the top of its bounding sphere, `Character::part_spheres`, 2r straight
 //!    down against that liquid, `Arena::liquid_below`). Meeting the surface, the character keeps
@@ -77,8 +78,9 @@ use bf_viewer::bf::character::{LiquidType, LIQUID_BIG_SPLASH, LIQUID_CHARACTER_R
 use damage::PartBody;
 
 /// DTYPE_FLAME, the damage type the liquid's update gives its hits (the record's +4, 0x221780;
-/// the DTYPE_ table's 5): what a character type's factors are looked up by (FUN_002232d0).
-const DTYPE_FLAME: i64 = 5;
+/// the DTYPE_ table's 5): what a character type's factors are looked up by (FUN_002232d0), and
+/// the record play.rs `burn` hands the chatter gate.
+pub(super) const DTYPE_FLAME: i64 = 5;
 
 /// FUN_00221ec0: a wade entry rings at most this often (s; 0x3a4f90, against the liquid's clock).
 const RING_EVERY: f32 = 0.2;
@@ -297,7 +299,7 @@ fn game_frame(u: &mut Player, game: &Game, a: &world::Arena, difficulty: &damage
         let mut hit = damage::Hit::new(if entered { rate } else { rate * shots::TICK }, "liquid", DTYPE_FLAME);
         let amount = if entered { hit.land(u, game, difficulty, at) } else { hit.on(u, game, difficulty) };
         let point = u.position + Vec3::Y * GROUND;
-        burn(u, game, amount, point, entered);
+        burn(u, game, amount, point);
         if log && entered {
             println!("t {at:.2}: {} {} of its parts in liquid {l} (type {kind}): a part in, hit {amount:.2}: {:.2} hp", unit_name(u),
                      u.wading.count(), u.health);

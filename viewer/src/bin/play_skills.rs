@@ -17,8 +17,9 @@
 //!  - **On and off** (FUN_0010e470 / FUN_0010e3e0, shared): switching on needs 10% of the
 //!    maximum stamina, and a refused press shows and plays nothing; each switch plays the type's
 //!    start / end sound for the controlled character only (FUN_0010e7a0) and sends a chatter tag
-//!    (on; off with stamina left; off at 0) through the game's chatter gate (`skill_line`: each
-//!    block's probability, replay delay, condition, distance and priority).
+//!    (on; off with stamina left; off at 0) through the game's chatter gate (play_chatter.rs: each
+//!    block's probability, replay delay, condition, distance and priority, and the world's one
+//!    queue).
 //!  - **What ends a skill**: the toggle again, stamina at 0, death (the death handler calls the
 //!    deactivate, 0x115df5), and each skill's own ends (its `update`). Handing control over
 //!    doesn't: the skill stays on and drains on the character you left (take19).
@@ -79,27 +80,16 @@ const ACTIVATE_SHARE: f32 = 0.1;
 /// x2.000).
 const DASH_REFILL: f32 = 0.25;
 const CROUCH_REFILL: f32 = 2.0;
-/// The chatter tags, sent through the chatter gate (FUN_00140a60, see `skill_line`): switched
-/// on (FUN_0010e470, 0x10e4c7); off with stamina left (FUN_0010e3e0, 0x10e425); off at 0
-/// (0x10e442). Heard in the takes on 13 of 35 ons (Tex, Hawk and Flint 13 of 26, Brutus 0 of 9),
-/// 3 of 23 offs with stamina left (all Flint's), 2 of 9 offs at 0 (spec Part 1 section 4).
+/// The chatter tags, sent through the chatter gate (FUN_00140a60, play_chatter.rs): switched on
+/// (FUN_0010e470, 0x10e4c7); off with stamina left (FUN_0010e3e0, 0x10e425); off at 0 (0x10e442).
+/// Heard in the takes on 13 of 35 ons (Tex, Hawk and Flint 13 of 26, Brutus 0 of 9), 3 of 23 offs
+/// with stamina left (all Flint's), 2 of 9 offs at 0 (spec Part 1 section 4). The off line with
+/// stamina left tests char+0x5a8, which only ever gets 0 in default.xbe (answer-120-chatter
+/// section 2), so its variants needing 1 or 2 and up (Tex, Brutus, Hawk) are never said and
+/// Flint's (no range) are; the line at 0 tests the enemies the speaker fights (FUN_0001b460).
 const LINE_ON: u32 = 0x1C05_14BD;
 const LINE_OFF: u32 = 0x0908_7C9C;
 const LINE_EMPTY: u32 = 0xEE0A_5CBC;
-/// The condition kinds of the off lines (a block's h_ff361b85, FUN_00137360): the off line with
-/// stamina left tests char+0x5a8, which only ever gets 0 in default.xbe (the constructor 0x11118a,
-/// FUN_0010e470 at 0x10e4ed, FUN_00119560 at 0x1195ac: answer-120-chatter section 2), so its
-/// variants needing 1 or 2 and up (Tex, Brutus, Hawk) are never said and Flint's (no range) are;
-/// the line at 0 tests FUN_0001b460, a count of the speaker's brain's targets, read as the
-/// enemies it's fighting (inferred).
-const CONDITION_COUNTER: u32 = 0xE7FA_D8D2;
-const CONDITION_FIGHTING: u32 = 0x12B7_4A88;
-/// The gate's distances from the speaker to the nearest player-controlled character
-/// (0x8d660): beyond LINE_FAR_STEP a line loses a step of priority (FUN_001409c0, 15.0 at
-/// 0x3a500c; a priority-1 line, the on and off lines, is then refused), beyond LINE_FAR_CUT it
-/// isn't said (FUN_001409a0, 45.0 at 0x3a5010). The player's own lines are at 0.
-const LINE_FAR_STEP: f32 = 15.0;
-const LINE_FAR_CUT: f32 = 45.0;
 /// The skill sounds' volume (0x10e5b0 / 0x10e5e0 play them at 100, x0.01 at 0x3a4f98).
 const SOUND_VOLUME: f32 = 1.0;
 /// The animation events that switch a skill (FUN_00117660, the event handler): Tex's on
@@ -236,6 +226,14 @@ pub trait SkillKind: Send + Sync {
     /// Every frame, on or off, while alive (vtable +0xc0). True sends the toggle command: the
     /// skill's own ends (Tex's other gun dry, Flint's clip dry: their tickets).
     fn update(&mut self, _u: &mut Player, _dt: f32) -> bool {
+        false
+    }
+    /// Whether the character's kill is the skill's (vtable +8, which the death's lines FUN_00125f40
+    /// ask of the killer's skill at 0x126030): its kill line is then h_13601f7b, else h_02da3fee
+    /// (play_chatter.rs). Brutus's says no (0x20e200, the base's here); Tex's and Flint's while on
+    /// (0x13c8e0: +0x1c bit 0 with an owner); Hawk's (0x13d300) while on with the inventory's
+    /// +0x130 item of the type her +0x134 names, which the demo doesn't carry: no.
+    fn special_kill(&self, _u: &Player) -> bool {
         false
     }
     /// Whether the switch key, the reload key and the black button end the skill while it's on,
@@ -401,11 +399,6 @@ pub struct Skill {
     /// Tex's at 0x13d6ca (FUN_0012eab0(type, 45, 1)), under his toggle's overlay, not at its event;
     /// Flint's by returning 2 with a rifle (0x13cbd5; the command handler's request, 0x1224ee)
     pub special_motions: bool,
-    /// the character's chatter replay delays: tag -> seconds before it can say that tag again
-    /// (the game's map at char+0x7f4: started when a line is said, FUN_00126460, counted down by
-    /// FUN_0011c100 from the character update). Only the skill lines use it so far; it's here,
-    /// not on `Player`, for that reason alone.
-    pub replay: HashMap<u32, f32>,
     /// stamina the skill's own action took this frame, drained with the next frame's drain: Brutus's
     /// charge hit (skill+0x2c = the h_0461a627 100 at 0x13c474; his drain 0x13c570 adds it, his
     /// update clears it, 0x13c0fd). Set by play_vengar.rs, which reaches the other characters
@@ -741,6 +734,12 @@ pub fn ended_by_actions(u: &Player) -> bool {
 /// vtable +0xd8 at 0x125747): Vengar's 0.85 while on, else 1.
 pub fn damage_factor(u: &Player) -> f32 {
     u.skill.kind.as_ref().map_or(1.0, |k| k.damage_factor(u))
+}
+
+/// Whether a kill by `u` is its skill's (`SkillKind::special_kill`, the vtable +8 FUN_00125f40
+/// asks at 0x126030): its kill line h_13601f7b over h_02da3fee (play_chatter.rs). No skill, no.
+pub fn special_kill(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.special_kill(u))
 }
 
 /// Whether `u`'s skill is Brutus's Spirit of Vengar and it's on (play_vengar.rs: the charge, the
@@ -1083,6 +1082,11 @@ impl SkillKind for Berserker {
         u.skill.on && u.second.is_some_and(|s| u.ammo.get(s.weapon).is_some_and(|a| a[0] == 0))
     }
 
+    /// A kill in berserk is the skill's (0x13c8e0).
+    fn special_kill(&self, u: &Player) -> bool {
+        u.skill.on
+    }
+
     fn ended_by_actions(&self) -> bool {
         true
     }
@@ -1173,7 +1177,7 @@ impl SkillKind for Vengar {
 ///    (skill+0x28) climbing back toward 1 at stealth-level-recovery-rate, 4 a second
 ///    (FUN_0013d1a0, clamped 0..1).
 ///  - **Visibility** (+0xe4, 0x13d200): 1 - factor x level, what the AI's sight and the target
-///    selection read (play.rs `hostile_in_sight`, play_reticle.rs): 1 visible, about 0 stealthed.
+///    selection read (play_brain.rs `Sensor::scan`, play_reticle.rs): 1 visible, about 0 stealthed.
 ///  - **A shot** (+0xb0, 0x13d0a0), each round while on: the factor to 0, so she's fully visible
 ///    to them and back in 0.25 s (takes 12, 13: the factor 0 -> 1 in 0.25-0.3 s), and her stamina
 ///    less 2 x the gun's Damage max (the Saryl-23 27.0: 27.1 a shot). The skill stays on unless
@@ -1437,6 +1441,11 @@ impl SkillKind for Targeting {
         gun_in_hand(u).is_some() && u.ammo.get(u.weapon).is_some_and(|a| a[0] == 0)
     }
 
+    /// A kill with the targeting on is the skill's (0x13c8e0, Tex's function too).
+    fn special_kill(&self, u: &Player) -> bool {
+        u.skill.on
+    }
+
     fn ended_by_actions(&self) -> bool {
         true
     }
@@ -1526,13 +1535,6 @@ impl Default for SkillHooks {
     }
 }
 
-/// The skill lines' variants already said, by character (chatter set) and tag: the game's
-/// manager keeps them per chatter set and tag (mgr+0x28, FUN_001411e0 / FUN_001412c0) so a
-/// character goes through all of a tag's variants before one repeats (FUN_001371f0, which clears
-/// them, FUN_00141580, once every matching one is said). One per map, as the manager is per world.
-#[derive(Resource, Default)]
-pub struct LineHistory(HashMap<(usize, u32), Vec<u32>>);
-
 /// The skill key and test hooks before the movement, every character's skill after it (so the
 /// refill sees this frame's motion, and its sounds play this frame). The key comes after the
 /// hand-over (`squad_control`), so a press in the frame control passes goes to the new character,
@@ -1540,10 +1542,8 @@ pub struct LineHistory(HashMap<(usize, u32), Vec<u32>>);
 /// switch and reload presses it may turn into the toggle.
 pub fn plugin(app: &mut App) {
     app.init_resource::<SkillHooks>()
-        .init_resource::<LineHistory>()
         .add_systems(OnEnter(AppState::Playing), |mut commands: Commands| {
             commands.insert_resource(SkillHooks::default());
-            commands.insert_resource(LineHistory::default());
         })
         .add_systems(Update, (
             skill_input.after(read_input).after(squad_control).after(ammo::test_trigger).before(update_player),
@@ -1665,16 +1665,9 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
 
 /// What a character's skill step needs from outside the character.
 struct Env<'a> {
-    game: &'a Game,
     /// it's the one the player controls (its skill sounds play)
     controlled: bool,
     log: bool,
-    /// for its chatter lines: its place in `sight` (0 the player, then the squad's order), who can
-    /// see whom (`sight_list`), its distance to the player's character, and the variants said
-    me: usize,
-    sight: &'a [Seen],
-    distance: f32,
-    history: &'a mut LineHistory,
     /// the squad's ammo (for the skill's own methods, `Outside`)
     reserve: &'a mut ammo::Reserve,
 }
@@ -1686,34 +1679,18 @@ impl Env<'_> {
     }
 }
 
-/// A skill line `tag` from `u` through the chatter gate (`skill_line`) from outside a skill's
-/// step: Brutus's charge line h_13601f7b (FUN_0013c1c0 at 0x13c3fa, play_vengar.rs). `me` is `u`'s
-/// place in `sight` (0 the player's character), `distance` its distance to the player's. What came
-/// of it, for the log.
-#[allow(clippy::too_many_arguments)]
-pub fn line(u: &mut Player, game: &Game, history: &mut LineHistory, reserve: &mut ammo::Reserve, me: usize,
-            sight: &[Seen], distance: f32, tag: u32) -> String {
-    let mut env = Env { game, controlled: me == 0, log: false, me, sight, distance, history, reserve };
-    skill_line(u, &mut env, tag)
-}
-
 /// Every character's skill and stamina, after the movement (so the refill sees this frame's
 /// motion): the controlled one first, then the squad (the AI's, as the game runs it for
 /// everyone). Logs each half second with BF_SKILL_LOG.
-#[allow(clippy::too_many_arguments)]
-pub fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut history: ResMut<LineHistory>,
-                     mut reserve: ResMut<ammo::Reserve>, mut last_log: Local<f32>) {
+pub fn update_skills(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut reserve: ResMut<ammo::Reserve>,
+                     mut last_log: Local<f32>) {
     let dt = frame_dt(&time);
     let log = std::env::var("BF_SKILL_LOG").is_ok();
-    // (the order the AI's sight uses: the player, then the squad, NPCs included)
-    let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
-    let at = player.position;
-    let mut env = Env { game: &game.0, controlled: true, log, me: 0, sight: &sight, distance: 0.0, history: &mut *history, reserve: &mut *reserve };
+    let mut env = Env { controlled: true, log, reserve: &mut *reserve };
     step(&mut player, &mut env, dt);
     follow_cloak(&mut player, dt);
-    for (k, m) in squad.0.iter_mut().enumerate().filter(|(_, m)| m.in_squad()) {
-        let mut env = Env { game: &game.0, controlled: false, log, me: k + 1, sight: &sight, distance: m.position.distance(at), history: &mut *history,
-                            reserve: &mut *reserve };
+    for m in squad.0.iter_mut().filter(|m| m.in_squad()) {
+        let mut env = Env { controlled: false, log, reserve: &mut *reserve };
         step(m, &mut env, dt);
         follow_cloak(m, dt);
     }
@@ -1762,15 +1739,10 @@ fn refill_factor(u: &Player) -> f32 {
     }
 }
 
-/// One character's skill this frame: its chatter replay delays, the death handler's off, the
-/// overlay's switch, the toggle command asked for, then the stamina update as FUN_0011a840 runs
-/// it.
+/// One character's skill this frame: the death handler's off, the overlay's switch, the toggle
+/// command asked for, then the stamina update as FUN_0011a840 runs it. (Its chatter replay delays
+/// are play_chatter.rs's.)
 fn step(u: &mut Player, env: &mut Env, dt: f32) {
-    // the replay delays run down (FUN_0011c100, from the character update)
-    u.skill.replay.retain(|_, left| {
-        *left -= dt;
-        *left > 0.0
-    });
     // the material controllers' frame (FUN_00210560, from the character update at 0x11cc80,
     // before the stamina update's skill update at 0x11cedb), the dead's too: one switched off by
     // the death fades back in. The invisibility controller's here; the body's, which follows it,
@@ -1958,94 +1930,20 @@ fn deactivate(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env) {
 /// A switch's sound and line. The sound plays in 2D at full volume for the controlled
 /// character only (FUN_0010e7a0 asks FUN_00112790; take18: an AI Hawk's switches are silent);
 /// it isn't cut by the next switch (take08). The line goes through the chatter gate
-/// (`skill_line`).
+/// (play_chatter.rs, the same frame: its block's probability, 50 for the skill lines, or
+/// BF_SKILL_CHATTER=<percent>; its replay delay, condition, distance, priority and the queue). A
+/// dead speaker's (the death's off) is silent there (FUN_0013fab0).
 fn switched(u: &mut Player, env: &mut Env, sound: u32, line: u32) {
     if env.controlled && sound != 0 {
         u.sound_queue.push((sound, SOUND_VOLUME));
     }
-    let said = skill_line(u, env, line);
+    chatter::say_with(u, line, std::env::var("BF_SKILL_CHATTER").ok().and_then(|v| v.parse::<i64>().ok()));
     if env.log {
         let what = if u.skill.on { "on" } else { "off" };
-        println!("t={:.2} {}: skill {what} at stamina {:.2}; sound {}; line {line:08x}: {said}", u.sim_time,
-                 unit_name(u), u.stamina,
+        println!("t={:.2} {}: skill {what} at stamina {:.2}; sound {}; line {line:08x} asked of the chatter gate (BF_CHATTER_LOG: what came of it)",
+                 u.sim_time, unit_name(u), u.stamina,
                  if env.controlled && sound != 0 { format!("{sound:08x}") } else { "none".into() });
     }
-}
-
-/// The game's chatter gate (FUN_00140a60, todo/35-special-skills/answer-120-chatter.md section
-/// 1.3) for a skill line `tag` from `u`, with its block's values (`ChatterBlock`); what came of
-/// it, for the log. In the code's order:
-///  * the speaker's replay delay for the tag running (FUN_001263e0): refused;
-///  * no block for the tag: refused;
-///  * beyond 45 m of the player's character (FUN_001409a0, the block's h_19be8951): refused;
-///  * the condition: its value (FUN_00137360, by the block's kind) must lie in a variant's range
-///    (FUN_001372c0). The skill lines' kinds: none (0); char+0x5a8 (CONDITION_COUNTER: always 0,
-///    so Tex's, Brutus's and Hawk's off lines are never said); the enemies it's fighting
-///    (CONDITION_FIGHTING, FUN_0001b460), for which the demo counts 1 while a hostile is in the
-///    speaker's sight (`hostile_in_sight`), **a guess** (only Hawk's variants need it, 1..100);
-///  * the roll, `probability` % (FUN_001374c0; 50 for the skill lines). BF_SKILL_CHATTER=<percent>
-///    sets it;
-///  * the priority, a step less beyond 15 m (FUN_001409c0, h_f1cb4e63); 0 is refused (a
-///    squadmate's on and off lines, priority 1);
-///  * the game's one shared queue (a playing line of equal or lower priority delays it up to the
-///    block's 5 s, a waiting line of equal or higher priority refuses it: FUN_00141020,
-///    FUN_00140a40) isn't modelled: the demo's stand-in is the speaker's own `say()` check, refused
-///    while that character is talking or has a line due;
-///  * a dead speaker stays silent (FUN_0013fab0).
-///
-/// Said, a variant whose range holds the value is picked at random among those not said yet
-/// (`LineHistory`), the speaker's replay delay for the tag starts (`replay-delay`, 10 / 20 / 30 s:
-/// FUN_00140cd0 -> FUN_00126460), and it plays the next frame (the manager's update starts it;
-/// the samples have no silence before the voice, 0-0.07 s).
-fn skill_line(u: &mut Player, env: &mut Env, tag: u32) -> String {
-    let (game, name) = (env.game, u.data_name());
-    if u.dead {
-        return "silent (the speaker is dead)".into();
-    }
-    if let Some(left) = u.skill.replay.get(&tag) {
-        return format!("refused (its replay delay, {left:.1} s left)");
-    }
-    let Some(block) = game.chatter_blocks.get(name).and_then(|b| b.get(&tag)) else { return "refused (no block)".into() };
-    if block.far_cut && env.distance > LINE_FAR_CUT {
-        return format!("refused ({:.0} m from the player)", env.distance);
-    }
-    let value = match block.condition {
-        CONDITION_FIGHTING => hostile_in_sight(u, env.me, env.sight).is_some() as i64,
-        // char+0x5a8, never counted up in the game
-        CONDITION_COUNTER => 0,
-        // the default kind's value (and any other kind's: none of the skill lines has one)
-        _ => 0,
-    };
-    let fits: Vec<u32> = block.variants.iter().filter(|&&(id, lo, hi)| (lo..=hi).contains(&value) && game.sounds.has(id))
-        .map(|&(id, _, _)| id).collect();
-    if fits.is_empty() {
-        return format!("refused (no variant for the condition value {value}, kind {:08x})", block.condition);
-    }
-    let probability = std::env::var("BF_SKILL_CHATTER").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(block.probability);
-    if probability < 100 && u.random(100) as i64 + 1 > probability {
-        return format!("not rolled ({probability}%)");
-    }
-    let priority = block.priority - (block.far_step && env.distance > LINE_FAR_STEP) as i64;
-    if priority <= 0 {
-        return format!("refused (priority 0, {:.0} m from the player)", env.distance);
-    }
-    // (the stand-in for the game's queue)
-    if u.speaking > 0.0 || u.quote_in.is_some() {
-        return "refused (the speaker is talking)".into();
-    }
-    let said = env.history.0.entry((u.character, tag)).or_default();
-    let mut fresh: Vec<u32> = fits.iter().copied().filter(|id| !said.contains(id)).collect();
-    if fresh.is_empty() {
-        said.clear();
-        fresh = fits;
-    }
-    let id = fresh[u.random(fresh.len())];
-    said.push(id);
-    if block.replay_delay > 0.0 {
-        u.skill.replay.insert(tag, block.replay_delay);
-    }
-    u.quote_in = Some((0.0, id));
-    format!("said {id:08x} ({probability}%, replay delay {:.0} s)", block.replay_delay)
 }
 
 #[cfg(test)]
