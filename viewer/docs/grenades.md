@@ -565,9 +565,12 @@ set's, IFSET_ROLLING_BOMB (function-type 13, vtable 0x39ba60; every function is 
 * **Walls** stop it dead (no bounce): its move along the ground is swept with a ray first (a thin
   gate leaf let the push-out send it through), and it stays against the wall, pressed toward
   its point (takes 17 / 18).
-* **The level's own Rollers**: m09_a sets one down live as it loads (h_0bde6982, item-alignment 1,
-  `place_mines`); the item handler 0x14a0a0 lets it go with no placer, so its point is 50 m back
-  along its own frame's third column, its side the enemies'. The other levels' (e16, e23, e34,
+* **The level's own Rollers** are left out for now, pending #316: m09_a sets one down live as it
+  loads (h_0bde6982, item-alignment 1), which the item handler 0x14a0a0 lets go with no placer (its
+  point 50 m back along its own frame's third column), but its side is in doubt: FUN_00148720
+  copies the item's team into the helper once, at the let-go, and if 0x14a0a0 lets it go before
+  `item-alignment` is applied, the helper's team stays -1 and it never seeks. So `place_mines`
+  skips it and the level's own model of it stands as before. The other levels' (e16, e23, e34,
   m05_b, m09_x, m14_a, m14_c, m14_d) are spawn-trigger templates, out of the world until a copy
   is made, which the demo's spawn copies don't do for items.
 
@@ -869,8 +872,9 @@ prop that goes off on its own. The leads and the takes are `todo/82-thermo-grena
   clock, which was taken ~2.7 s into the cinematic, then 15.0 s to the blast at 21.3 s). With
   `BF_TEST_GOTO` or `BF_SCRIPT` (no start scripts) it goes off 15.0 s after the load. Going off it
   sends DESTROYED as the level's mines do (nothing listens). The rule is every live grenade item
-  the level sets down, not the Thermo's: the Sentries as before, m09_a's Roller (see **Roller**);
-  a spawn-trigger's template stays out of the world (none of the Sentries is one).
+  the level sets down, not the Thermo's: the Sentries as before, but not a Roller (m09_a's one is
+  left out pending #316, see **Roller**); a spawn-trigger's template stays out of the world (none
+  of the Sentries is one).
 * **Its blast**: the effect type h_fbdd1258 has the Roller's h_013b3ca8's content (the Frag's six
   ALE effects, light_explosion, h_065168c9), at 3 m, plus the impact sound h_16611581; no
   per-material ground puff (its explosion's h_0cbcb8f2 is empty, where the Roller's has dirt and

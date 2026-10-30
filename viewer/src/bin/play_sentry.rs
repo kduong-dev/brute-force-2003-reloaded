@@ -165,13 +165,15 @@ pub fn plugin(app: &mut App) {
 /// armed as it loads, the item handler 0x14a0a0: +0x1bc bit 1 and its item set's let-go +0x10) is
 /// down where it's placed, on its `item-alignment`'s team, owned by nobody, its fuse running from
 /// the load (its body settles on the floor: a first contact). A Sentry type gets its check
-/// (`Mine`); a Roller its seek helper with no placer (FUN_00148720: the point back along its own
-/// frame, play_roller.rs: m09_a's one); the rest only the fuse (m09_b's Thermo h_e04e05e1: 15 s,
-/// held by its startup cinematic's cutscene bit until the script's 123 at 9.0 s, so it goes off 24 s
-/// after the level's start, todo/82 leads Round 2 Q1). A spawn-trigger's template isn't in the
-/// world (FUN_000dfe90 takes it out as the trigger links): e16's, e23's, e34's ... Roller templates
-/// stay out (the demo's spawn copies make characters and pickups only). The level's own model of
-/// it is hidden (the grenade is drawn in its place): the one of its name, or for an unnamed one the
+/// (`Mine`); the rest only the fuse (m09_b's Thermo h_e04e05e1: 15 s, held by its startup
+/// cinematic's cutscene bit until the script's 123 at 9.0 s, so it goes off 24 s after the level's
+/// start, todo/82 leads Round 2 Q1). A Roller (m09_a's h_0bde6982) is left out for now, its level
+/// model shown as before: which side its seek helper takes is in doubt (#316: FUN_00148720 copies
+/// the item's team once, at the let-go; if 0x14a0a0 lets it go before `item-alignment` is applied,
+/// the helper's team stays -1 and it never seeks). A spawn-trigger's template isn't in the world
+/// (FUN_000dfe90 takes it out as the trigger links): e16's, e23's, e34's ... Roller templates stay
+/// out (the demo's spawn copies make characters and pickups only). The level's own model of it is
+/// hidden (the grenade is drawn in its place): the one of its name, or for an unnamed one the
 /// nearest of its type within MODEL_REACH across. BF_SENTRY_LOG=1 lists them.
 fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<GrenadeKits>>, player: Res<Player>, mut mines: ResMut<PlacedMines>,
                mut scenery: Query<(&bf_viewer::level_scene::Placed, &Transform, &mut Visibility)>) {
@@ -187,6 +189,13 @@ fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<Gren
     for o in level.objects.iter().filter(|o| o.placed && !templates.contains(&o.name)) {
         let Some(kind) = kits.0.iter().position(|k| k.def.name == o.kind) else { continue };
         let kit = &kits.0[kind];
+        // (a level's own Roller: left out until #316 settles its side, see above)
+        if kit.def.function_type == super::roller::ROLLING_BOMB {
+            if log {
+                println!("t {:.2}: the level's Roller h_{:08x} left out (#316: its side in doubt)", player.sim_time, o.name);
+            }
+            continue;
+        }
         let e = kit.spawn_model(&mut commands, Transform::from_matrix(o.transform), None);
         // (its team: item-alignment, +0x1c0; the ALIGN_ numbers are the demo's team numbers)
         let team = o.alignment.clamp(0, 9) as u8;
@@ -194,8 +203,6 @@ fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<Gren
         let at = o.transform.w_axis.truncate();
         if kit.def.function_type == PROXIMITY_EXPLOSIVE {
             commands.entity(e).insert(Mine { check: 0.0, team });
-        } else if kit.def.function_type == super::roller::ROLLING_BOMB {
-            commands.entity(e).insert(super::roller::Roller::let_go(kit, at, None, o.transform.z_axis.truncate(), team, None, player.sim_time));
         }
         mines.list.push((e, o.name));
         // the level's model of it: by its name, else (unnamed) the nearest of its type

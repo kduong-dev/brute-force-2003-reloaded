@@ -32,8 +32,9 @@
 //! A wall stops it with no bounce; it stays against it, pressed toward the point.
 //!
 //! The level's own Rollers (an item object of the type set down live, h_1cb7d5f2: m09_a's one; the
-//! others are spawn-trigger templates the demo doesn't copy) are let go by the item handler
-//! 0x14a0a0 with no placer: the point 50 m back along their own frame (play_sentry.rs `place_mines`).
+//! others are spawn-trigger templates the demo doesn't copy) are left out for now (play_sentry.rs
+//! `place_mines`): the item handler 0x14a0a0 lets one go with no placer (FUN_00148720: the point
+//! 50 m back along its own frame), but which side its helper takes is in doubt (#316).
 //!
 //! Test hooks: BF_ROLLER_LOG=1 prints the let-go, every check (the search's candidates, the sight
 //! line and what blocks it, the point), each ground contact, and the proximity blast; =2 also the
@@ -150,7 +151,8 @@ impl Roller {
     /// h_11884f2e m along `aim`, the placer's horizontal aim forward (0x10fbf0: the aim frame's
     /// forward flattened to the level), or with no placer back along the item's own frame's third
     /// column (`own_z`); a check due in FIRST_CHECK s; no target; the bomb on `team`, skipping
-    /// `owner` in its search.
+    /// `owner` in its search. (Nothing lets one go with no placer yet: the levels' own Rollers are
+    /// left out until #316.)
     pub(super) fn let_go(kit: &GrenadeKit, at: Vec3, aim: Option<Vec3>, own_z: Vec3, team: u8, owner: Option<Who>, now: f32) -> Roller {
         let radius = if kit.def.seek_radius > 0.0 { kit.def.seek_radius } else { DEFAULT_RADIUS };
         let researches = if kit.def.proximity_radius > 0.0 { kit.def.proximity_radius as i32 } else { DEFAULT_RESEARCHES };
