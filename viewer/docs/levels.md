@@ -640,10 +640,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     never sounds in a liquid, and before any splash has found the surface (char+0x414 still -1)
     every step is silent. Its volume is max(min(depth, 1), the skill's noise) x the gait's factor
     (1.0 running or dashing, 0.5 walking, 0.35 the crouch walk) x 0.75 for the controlled
-    character, whose own step plays 2D (inferred: FUN_00119020 puts its point where the cull reads
-    none); another's plays at its foot; the pitch U x 0.7 - 0.35 octaves. The first step after
-    coming out still plays the wading step the last frame in left (the code's order); the ground's
-    come back from the next.
+    character, whose own step plays 2D (FUN_00119020 puts its point in the request's second slot,
+    where neither the cull nor the voice reads a position: play.md, "Footsteps (#324)", which
+    gives the ground's step the same rule); another's plays at its foot; the pitch U x 0.7 - 0.35
+    octaves. The first step after coming out still plays the wading step the last frame in left
+    (the code's order); the ground's come back from the next.
   * **Objects** (`object_enters`). A grenade (play_grenade.rs) or a missile (play_missile.rs) going
     into a liquid, from out of every one, at h_1f6de6f9 (0.4 m/s) or faster, splashes where its
     body crosses the surface, by its mesh archetype's radius (`Game::archetype_sphere`): the five
@@ -684,7 +685,8 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     * sdm_e10's pond (water: `BF_MAP=sdm_e10 BF_CHARACTER=3 BF_TEST_GOTO=74,5,74,-30
       BF_TEST_WALK=1`): wading steps (fa93070a) from 0.60 to 0.31 m deep, silent at 0.25, 0.17,
       0.10 and 0 m, the first step out still the wading step, then the ground's (fe306c9e,
-      e5393d24) at 0.35. With `BF_TEST_GOTO=74,5,74,5 BF_TEST_TARGET=1` Brutus stands in it 8 m
+      e5393d24) at 0.35 (0.38 since #324: the walk's 0.5 x 0.75; the wading steps' lines are the
+      same as before it, volume, pitch and time). With `BF_TEST_GOTO=74,5,74,5 BF_TEST_TARGET=1` Brutus stands in it 8 m
       off: his five big splashes (0d339af9) heard at 0.54-0.66 by the distance.
     * Brutus at sdm_e13's shore (`BF_TEST_GOTO=-20.6,-117.5,-20.62,-117.0`): `BF_TEST_THROW=1.0,0.05
       BF_CAMERA_PITCH=-0.2` lobs a Frag in at 15.1 m/s, a small splash (1eb5691c, the B recording) 5.3 m off at 1.00;
@@ -696,7 +698,8 @@ or `cargo run --bin bf_level -- <map>`). What it took:
       not heard.
   * Not filmed: every water item is **code only, needs a take**: which of the B and D recordings
     plays for each event on water, the silence in the shallows (0.25 m), the player's own step 2D
-    and a squadmate's at its foot, a grenade into water, a ray through it (todo/5 shot list).
+    and a squadmate's at its foot (the 2D read in the code since #324, play.md, "Footsteps"), a
+    grenade into water, a ray through it (todo/5 shot list).
     The lava's are checked against take03's offline audio analysis only (todo/5 leads §4: a burst
     within 0.06 s of each foot event waist-deep; no burst for the first four parts in), which
     can't tell the lava's big splash from its wading step (one recording). The idle animation's

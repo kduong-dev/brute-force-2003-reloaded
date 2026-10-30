@@ -50,7 +50,9 @@
 //!    play.rs's foot events ask `step`: the wading step when the surface of the last splash is
 //!    over 0.25 m above the foot, no step sound at all when it isn't, the ground's only out of
 //!    the liquids. Nothing plays for going under, staying under, getting out or burning
-//!    (todo/5-liquid-sounds leads §2.5).
+//!    (todo/5-liquid-sounds leads §2.5). `step` is the function's whole request, the ground's
+//!    step too (#324): the gait's factor, the controlled character's 2D x 0.75 and the random
+//!    pitch are the same for both.
 //!  - **Objects** (FUN_00221af0's OBJECT bodies: grenades, play_grenade.rs, and missiles,
 //!    play_missile.rs; `object_enters`). One going in, when it wasn't in a liquid already, at
 //!    h_1f6de6f9 (0.4 m/s) or faster, splashes by its model's bounding radius (the grenades' 0.081
@@ -69,9 +71,9 @@
 //!
 //! Test hooks: BF_LIQUID_LOG=1 prints each character's parts in a liquid as the count changes, its
 //! entry hits, its splashes, rings and wading steps, and its hit points each second in one;
-//! BF_SOUND_LOG=1 prints each liquid sound with its volume, pitch and distance (play.rs
-//! `play_sounds`); BF_TEST_WALK=1 makes BF_TEST_GOTO walk, as the takes' half-stick (play.rs
-//! `autopilot`).
+//! BF_SOUND_LOG=1 prints each liquid sound and each footstep with its volume, pitch and distance,
+//! a footstep's with its gait factor too (play.rs `play_sounds`); BF_TEST_WALK=1 makes
+//! BF_TEST_GOTO walk, as the takes' half-stick (play.rs `autopilot`).
 
 use super::*;
 use bf_viewer::bf::character::{LiquidType, LIQUID_BIG_SPLASH, LIQUID_CHARACTER_RATE, LIQUID_SPLASH, LIQUID_WADE};
@@ -95,11 +97,17 @@ const SPLASH_PITCH: (f32, f32) = (0.1, 0.05);
 /// FUN_00119020 (0x1191bb): a step in a liquid makes no sound while the surface of the last splash
 /// is this high or less above the foot (m; 0x3a5028).
 const WADE_DEPTH: f32 = 0.25;
-/// FUN_00119020 (0x119256): the controlled character's own step's share of its volume (0x3a510c).
+/// FUN_00119020 (0x119256): the controlled character's own step's share of its volume (0x3a510c),
+/// a wading step's and a ground step's alike.
 const OWN_STEP: f32 = 0.75;
 /// FUN_00119020 (0x119290-0x1192a4): a step's pitch, U x the first - the second (octaves;
-/// 0x3a5154, 0x3a5478): +-0.35 octave.
+/// 0x3a5154, 0x3a5478): +-0.35 octave, a wading step's and a ground step's alike.
 const STEP_PITCH: (f32, f32) = (0.7, 0.35);
+/// The resolution of the draw a step takes from the character's random state, for its pick and
+/// its pitch (`Player::unit`'s own, 2^24: a float's mantissa; FUN_00233b90 keeps 23 bits). The
+/// pick of four sounds, `draw % 4`, is the state's low two bits, as FUN_0012af30's (0x119173) and
+/// `Player::random(4)`'s were.
+const DRAW_STEPS: usize = 1 << 24;
 
 /// char+0x414 before a splash has found a surface: -1 (#146's take03 watch log, `surf` -1 until
 /// the first surface hit at 9.90 s). Nothing resets it after.
@@ -356,7 +364,7 @@ pub fn splash(to: &mut Player, t: &LiquidType, slot: usize, p: Vec3) {
     }
     if t.sounds[slot] != 0 {
         let pitch = to.unit() * SPLASH_PITCH.0 - SPLASH_PITCH.1;
-        to.world_sounds.push(WorldSound { id: t.sounds[slot], at: Some(p), volume: Some(SPLASH_VOLUME), pitch, kind: KIND_SPLASH });
+        to.world_sounds.push(WorldSound { id: t.sounds[slot], at: Some(p), volume: Some(SPLASH_VOLUME), pitch, kind: KIND_SPLASH, gait: 0.0 });
     }
 }
 
@@ -404,35 +412,51 @@ fn wade(u: &mut Player, a: &world::Arena, bodies: &[PartBody], at: f32, log: boo
     u.wading.entries = entries;
 }
 
-/// What a foot event plays (`step`).
-pub enum Step {
-    /// the ground's step sound (play.rs's pick from the surface's list)
-    Ground,
-    /// the liquid's wading step
-    Wade(WorldSound),
-    /// nothing
-    Silent,
-}
-
-/// What a foot event of `u`'s plays, its foot (the bone) at `foot`, as FUN_00119020 picks it
-/// (0x11914f-0x1192c5; todo/5-liquid-sounds leads §2.3):
-///  - its wading step (`Wading::sound`, char+0x410) is taken, and cleared; without one, out of the
-///    liquids (char+0x104 0) the ground's step plays, in one nothing does;
+/// The sound request FUN_00119020 makes for a foot event of `u`'s, its foot (the bone) at `foot`,
+/// `ground` the surface's step sounds for the character's footstep type (0x119146-0x1192c5; the
+/// liquid branch todo/5-liquid-sounds leads §2.3, the ground's #324, todo/36-squad-voice leads §5).
+/// None for no sound:
+///  - the id: its wading step (`Wading::sound`, char+0x410) is taken, and cleared; without one,
+///    out of the liquids (char+0x104 0) one of the ground's sounds is picked (FUN_0012af30: one of
+///    the four by the random state's low two bits, 0x119173-0x11917b; here `Player::random`), in
+///    one nothing is;
 ///  - in a liquid the step is silent while the surface of the last splash (`Wading::surface`,
 ///    char+0x414) is WADE_DEPTH or less above the foot, and at least min(depth, 1) loud otherwise;
-///  - its volume: max(that, the skill's noise, `skills::noise`) x the gait's factor (`gait`) x
-///    OWN_STEP for the controlled character, whose own step plays 2D (FUN_00119020 writes its
-///    point into the block's +0x10 slot, which the cull reads as no position: inferred), another's
-///    at its foot; its pitch U x 0.7 - 0.35 octaves (STEP_PITCH).
+///  - its volume, wading or on the ground alike: max(that, the skill's noise, `skills::noise`; on
+///    the ground the noise alone, 1.0 but for a stealthed Hawk's quarter) x the gait's factor
+///    (`gait`) x OWN_STEP for the controlled character (FUN_00112790), at 0x119240-0x11925c and
+///    0x11926e-0x119282. It is the request's own volume (+0x48, its set byte +0x4c): it replaces
+///    the library entry's, so no step has a loudness of the bank's;
+///  - its place: the controlled character's own step has none, and plays 2D: FUN_00119020 puts the
+///    foot's point into the block's second slot (+0x10, set byte +0x1c: 0x119244, `lea eax,
+///    [esp+0x88]`) and not the first (+0, set byte +0xc, 0x11926a), FUN_00179250 makes no cull of
+///    a request whose +0xc byte is clear (0x1792f6-0x179302) and FUN_0017ec80 plays a voice
+///    without that position 2D (mode 2, 0x17ecae-0x17ecb4: its three-dimensional branch needs the
+///    +0xc byte and a min distance over 0): the point in the second slot only serves the reverb
+///    send's indoors test (FUN_0017f390). Another's step is positional at its foot, heard by the
+///    library entry's distances (`WorldSound::heard`), as the liquids' sounds are;
+///  - its pitch U x 0.7 - 0.35 octaves (STEP_PITCH), a draw of U in [0, 1) as the game's FUN_00233b90
+///    gives it.
+///
+/// The game draws twice from its one random stream, the ground's pick and then U (FUN_00233b90,
+/// after FUN_0012af30). The demo spends **one** draw of the character's own random state on both
+/// (`Player::random`, as `Player::unit` takes it: the pick is its low bits, U its value): it
+/// spent one draw on the pick alone before #324 and one on a wading step's pitch alone (#5), and
+/// that state also rolls the character's damage, dodges, knock-downs and its AI's delays and
+/// choices, which a second draw every step would move. No draw for a step that makes no sound.
 ///
 /// So the first step after coming out still plays the wading step the last frame in left, at the
 /// noise's volume (no depth then: the code's order). The foot events are play.rs's (feet planting
 /// on the move; the game's clips' own events, the idle's among them, aren't read).
-pub fn step(u: &mut Player, foot: Vec3) -> Step {
-    let id = std::mem::take(&mut u.wading.sound);
+pub fn step(u: &mut Player, foot: Vec3, ground: &[u32]) -> Option<WorldSound> {
+    let wading = std::mem::take(&mut u.wading.sound);
     let inside = in_liquid(u);
-    if id == 0 && !inside {
-        return Step::Ground;
+    let mut id = wading;
+    let mut draw = None;
+    if id == 0 && !inside && !ground.is_empty() {
+        let r = u.random(DRAW_STEPS);
+        id = ground[r % ground.len()];
+        draw = Some(r);
     }
     let mut base = skills::noise(u);
     let depth = u.wading.surface - foot.y;
@@ -442,20 +466,22 @@ pub fn step(u: &mut Player, foot: Vec3) -> Step {
                 let why = if u.wading.surface == NO_SURFACE { "no splash has found the surface yet".to_string() } else { format!("{depth:.2} m under the surface") };
                 println!("t {:.2}: {} steps in a liquid, {why}: no step sound", u.sim_time, unit_name(u));
             }
-            return Step::Silent;
+            return None;
         }
         base = base.max(depth.min(1.0));
     }
     if id == 0 {
-        return Step::Silent;
+        return None;
     }
-    let volume = base * gait(u) * if u.controlled { OWN_STEP } else { 1.0 };
-    let pitch = u.unit() * STEP_PITCH.0 - STEP_PITCH.1;
-    if std::env::var("BF_LIQUID_LOG").is_ok() {
+    let gait = gait(u);
+    let volume = base * gait * if u.controlled { OWN_STEP } else { 1.0 };
+    let r = draw.unwrap_or_else(|| u.random(DRAW_STEPS));
+    let pitch = r as f32 / DRAW_STEPS as f32 * STEP_PITCH.0 - STEP_PITCH.1;
+    if wading != 0 && std::env::var("BF_LIQUID_LOG").is_ok() {
         println!("t {:.2}: {} wades a step {depth:.2} m under the surface{}: sound {id:08x} vol {volume:.2} pitch {pitch:+.2}", u.sim_time,
                  unit_name(u), if inside { "" } else { " (out of it now)" });
     }
-    Step::Wade(WorldSound { id, at: (!u.controlled).then_some(foot), volume: Some(volume), pitch, kind: KIND_STEP })
+    Some(WorldSound { id, at: (!u.controlled).then_some(foot), volume: Some(volume), pitch, kind: KIND_STEP, gait })
 }
 
 /// The gait's factor on a step's volume, FUN_00119020 (0x119059-0x1190a4) by the motion type
@@ -498,4 +524,127 @@ pub fn object_enters(a: &world::Arena, wet: &mut bool, from: Vec3, to: Vec3, bod
     let at = from.lerp(to, k);
     let slot = if radius >= t.big_radius { LIQUID_BIG_SPLASH } else { LIQUID_SPLASH };
     Some((t, Vec3::new(at.x, surface, at.z), slot))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The four ground sounds a test foot event picks among.
+    const GROUND: [u32; 4] = [0xa1, 0xa2, 0xa3, 0xa4];
+
+    /// A character of the squad's type 3 on the ground in `gait` and `action`, controlled or not.
+    fn walker(gait: Gait, action: Action, controlled: bool) -> Player {
+        let mut u = Player::new(3);
+        u.gait = gait;
+        u.action = action;
+        u.controlled = controlled;
+        u
+    }
+
+    /// #324 (FUN_00119020 0x119059-0x11927b): a ground step's volume is the skill's noise (1.0) x
+    /// the gait's factor (1.0 dashing or running, 0.35 crouch-walking, 0.5 else) x 0.75 for the
+    /// controlled character, whose own step has no place (2D); another's is at its foot with the
+    /// factor alone. The sound is one of the ground's, the pitch in -0.35..0.35 octaves.
+    #[test]
+    fn a_ground_step_is_the_gaits_share_and_2d_for_the_controlled_character() {
+        let foot = Vec3::new(1.0, 2.0, 3.0);
+        let side = Gait::Side { left: true, back: false };
+        let cases = [
+            (Gait::Walk, Action::None, 0.5),
+            (Gait::WalkBack, Action::None, 0.5),
+            (side, Action::None, 0.5),
+            (Gait::Run, Action::None, 1.0),
+            (Gait::RunBack, Action::None, 1.0),
+            (Gait::Sprint, Action::None, 1.0),
+            (Gait::Walk, Action::Crouched, 0.35),
+            (Gait::Idle, Action::Dodge { left: true }, 0.5),
+        ];
+        for (gait, action, factor) in cases {
+            for controlled in [true, false] {
+                let mut u = walker(gait, action, controlled);
+                for _ in 0..50 {
+                    let s = step(&mut u, foot, &GROUND).expect("a step on the ground");
+                    assert!(GROUND.contains(&s.id), "{gait:?} {action:?}: {:x}", s.id);
+                    assert_eq!(s.kind, KIND_STEP);
+                    assert_eq!(s.gait, factor, "{gait:?} {action:?}");
+                    let volume = s.volume.expect("a footstep asks its own volume");
+                    let want = factor * if controlled { 0.75 } else { 1.0 };
+                    assert!((volume - want).abs() < 1e-6, "{gait:?} {action:?} controlled {controlled}: {volume} for {want}");
+                    assert_eq!(s.at, (!controlled).then_some(foot), "{gait:?} {action:?} controlled {controlled}");
+                    assert!((-0.35..0.35).contains(&s.pitch), "pitch {}", s.pitch);
+                }
+            }
+        }
+    }
+
+    /// #324 (FUN_00233b90's draw x 0.7 - 0.35, 0x119290-0x1192a4): the pitch of a character's
+    /// steps spreads over the whole of -0.35..0.35 octaves, evenly, and its sound is each of the
+    /// ground's four.
+    #[test]
+    fn the_steps_pitch_spreads_evenly_over_the_octaves() {
+        let mut u = walker(Gait::Run, Action::None, true);
+        let (mut bins, mut ids) = ([0u32; 7], [0u32; 4]);
+        for _ in 0..1400 {
+            let s = step(&mut u, Vec3::ZERO, &GROUND).unwrap();
+            bins[(((s.pitch + 0.35) / 0.1) as usize).min(6)] += 1;
+            ids[(s.id - 0xa1) as usize] += 1;
+        }
+        // (1400 steps: 200 a bin, 350 a sound)
+        assert!(bins.iter().all(|&n| (130..270).contains(&n)), "{bins:?}");
+        assert!(ids.iter().all(|&n| (270..430).contains(&n)), "{ids:?}");
+    }
+
+    /// #324: heard by a footstep's library entry (falloff 1, max distance 10, volume 0.1: every
+    /// footstep sound of e34's library), the controlled character's step is 2D at its own volume
+    /// wherever the listener is, and the entry's 0.1 never counts; another's is full to 2.8 m, 0.375
+    /// at 4.6 m, 0.125 at 6.4 m and not heard from 10 m.
+    #[test]
+    fn a_step_is_heard_by_the_footstep_entrys_distances() {
+        let entry = Some(bf_viewer::bf::audio::SoundParams { min_distance: 1.0, max_distance: 10.0, volume: 0.1 });
+        let mut tex = walker(Gait::Run, Action::None, true);
+        let own = step(&mut tex, Vec3::new(40.0, 0.0, 0.0), &GROUND).unwrap();
+        let (v, d) = own.heard(entry, Vec3::ZERO).unwrap();
+        assert!((v - 0.75).abs() < 1e-6 && d.is_none(), "{v} {d:?}");
+        let mut mate = walker(Gait::Run, Action::None, false);
+        for (metres, want) in [(1.0, 1.0), (2.4, 1.0), (4.6, 0.375), (6.4, 0.125), (8.2, 0.0625)] {
+            let s = step(&mut mate, Vec3::new(metres, 0.0, 0.0), &GROUND).unwrap();
+            let (v, d) = s.heard(entry, Vec3::ZERO).unwrap();
+            assert!((v - want).abs() < 1e-3 && d.is_some(), "{metres} m: {v} for {want}");
+        }
+        assert!(step(&mut mate, Vec3::new(10.0, 0.0, 0.0), &GROUND).unwrap().heard(entry, Vec3::ZERO).is_none());
+    }
+
+    /// FUN_00119020's branches (0x119146-0x1191c6): in a liquid only the wading step plays, and
+    /// only over WADE_DEPTH of surface, never the ground's; out of one the step it left is taken
+    /// once, and the ground's come back; without ground sounds there's nothing to pick. The wading
+    /// step has the gait and the 2D / 3D rule as the ground's has.
+    #[test]
+    fn a_step_in_a_liquid_is_the_wading_step_or_silent() {
+        let wading = 0xbeef;
+        let mut u = walker(Gait::Run, Action::None, true);
+        u.wading.parts = vec![(0, Some(0))];
+        u.wading.surface = 1.0;
+        // 0.6 m under the surface: the wading step, at the controlled run's share
+        u.wading.sound = wading;
+        let s = step(&mut u, Vec3::new(0.0, 0.4, 0.0), &GROUND).unwrap();
+        assert_eq!((s.id, s.at, s.gait), (wading, None, 1.0));
+        assert!((s.volume.unwrap() - 0.75).abs() < 1e-6);
+        // taken: the next one has none, and in a liquid the ground's doesn't play
+        assert!(step(&mut u, Vec3::new(0.0, 0.4, 0.0), &GROUND).is_none());
+        // at WADE_DEPTH or less over the foot: silent even with a wading step waiting
+        u.wading.sound = wading;
+        assert!(step(&mut u, Vec3::new(0.0, 1.0 - WADE_DEPTH, 0.0), &GROUND).is_none());
+        // out of it: the step it left plays once (another's, at its foot, at the gait's share) ...
+        u.wading.parts.clear();
+        u.controlled = false;
+        u.wading.sound = wading;
+        let foot = Vec3::new(5.0, 0.0, 5.0);
+        let s = step(&mut u, foot, &GROUND).unwrap();
+        assert_eq!((s.id, s.at, s.gait), (wading, Some(foot), 1.0));
+        assert!((s.volume.unwrap() - 1.0).abs() < 1e-6);
+        // ... then the ground's, and none when the surface has none
+        assert!(GROUND.contains(&step(&mut u, foot, &GROUND).unwrap().id));
+        assert!(step(&mut u, foot, &[]).is_none());
+    }
 }

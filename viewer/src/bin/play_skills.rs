@@ -1188,8 +1188,8 @@ impl SkillKind for Vengar {
 ///  - **An item** (+0x104, 0x13d340) while on: 5, and 10 more placed or thrown (take13: a Sonic
 ///    thrown, 15.1; she stays invisible and the skill on); nothing for the Power Blade's
 ///    IOU_SKILL_MELEE_ATTACK.
-///  - **Noise** (+0xe8, 0x13d210): 0.25 + 0.75 x her visibility on her footsteps (play.rs
-///    `step_player`; and the movement noise the game's AI hears, FUN_0001aeb0, which the demo's
+///  - **Noise** (+0xe8, 0x13d210): 0.25 + 0.75 x her visibility on her footsteps (play_liquids.rs
+///    `step`; and the movement noise the game's AI hears, FUN_0001aeb0, which the demo's
 ///    AI doesn't).
 ///  - **Hold fire** (+0x108, 0x13d3f0): while on, the AI's attack check refuses her (play.rs
 ///    `update_player` gives her no target): an AI Hawk doesn't shoot while stealthed.
