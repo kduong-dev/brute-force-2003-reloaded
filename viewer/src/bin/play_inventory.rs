@@ -33,11 +33,13 @@
 //!    maps START_GRENADES Frags (their sdm types' loadout is #144's), and the reserve full stacks
 //!    of every ammo-type (play_ammo.rs).
 //!  - **What the items do.** The grenades and the Medkits as before (play_grenade.rs,
-//!    play_pickups.rs: the 60-point (5, 2) one too, an `Other` that heals). The OrgSen's and the
-//!    Hat's uses are #21's: G with one selected does nothing yet, but for a character whose skill
-//!    refuses its use type (Brutus: the OrgSen's IOU_ATTACH_TO_FACE, the Hat's
-//!    IOU_ATTACH_TO_EQUIP_SLOT, his skill's +0x1c 0x13c160), who is told "Cannot use"
-//!    (h_e784869e; #196 take26) and whose box shows it red.
+//!    play_pickups.rs: the 60-point (5, 2) one too, an `Other` that heals). The OrgSen's use is
+//!    play_vision.rs's (#21: put on with its clip, taken off at the next press); the Hat's is
+//!    its own ticket's: G with it selected does nothing yet. A character whose skill refuses a use
+//!    type (Brutus: the OrgSen's IOU_ATTACH_TO_FACE, the Hat's IOU_ATTACH_TO_EQUIP_SLOT, his
+//!    skill's +0x1c 0x13c160) is told "Cannot use" (h_e784869e; #196 take26) and his box shows it
+//!    red. The squad picks up more of an item by walking over it (`put_other`,
+//!    play_item_pickups.rs: the OrgSen on sdm_e13).
 //!  - **The first item shown** (#196): the first listable stack in the store's (category, index)
 //!    order (the front's selection starts at none and FUN_0014db60 steps it to the first): e34's
 //!    Sonic 4, e40's Frag 5, the tutorial's Frag 3; its NEW flag cleared, every other stack's set
@@ -208,7 +210,7 @@ impl StartStore {
 
 /// An item of the squad's store that isn't ammo, a grenade or the Medkit (5, 0) (`Player::others`,
 /// in the store's (category, index) order): the 60-point Medkit (5, 2), the OrgSen, the Hat,
-/// "Alien Technology Acquired!". What the OrgSen and the Hat do is their own tickets' (#21).
+/// "Alien Technology Acquired!". The OrgSen's use is play_vision.rs's (#21); the Hat's isn't in.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Carried {
     /// its item type (a `Game::items` key)
@@ -225,7 +227,7 @@ pub struct Carried {
 
 impl Carried {
     /// The item of type `kind` (`count` of it), as the store's item data has it.
-    fn of(game: &Game, kind: u32, count: i64) -> Option<Carried> {
+    pub fn of(game: &Game, kind: u32, count: i64) -> Option<Carried> {
         let i = item_info(game, kind)?;
         let heals = game.items.get(&kind).is_some_and(|t| t.function == IFSET_GENERIC_HEALING);
         Some(Carried { kind, count, listed: i.listed, use_type: i.use_type, heals })
@@ -343,6 +345,31 @@ pub fn stock(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, test: O
     }
 }
 
+/// The squad's other items as a pickup fills them (the walk-over's FUN_0014ce90 -> FUN_0014bfe0,
+/// play_item_pickups.rs): `n` of item type `kind` into its stack held to the type's stack-limit
+/// ([type+0x180]), the stack made in the store's (category, index) order when the squad has none
+/// (the OrgSen's (6, 0) after the Medkit (5, 2)); how many went in (0 for a stack at its limit, or
+/// an item type the store doesn't know).
+pub fn put_other(p: &mut Player, game: &Game, kind: u32, n: i64) -> i64 {
+    let Some(info) = item_info(game, kind) else { return 0 };
+    let key = |k: u32| item_info(game, k).map_or((i64::MAX, 0), |i| (i.group, i.index));
+    match p.others.iter().position(|c| c.kind == kind) {
+        Some(at) => {
+            let added = n.min(info.limit - p.others[at].count).max(0);
+            p.others[at].count += added;
+            added
+        }
+        None => {
+            let added = n.min(info.limit).max(0);
+            if let (true, Some(c)) = (added > 0, Carried::of(game, kind, added)) {
+                let at = p.others.iter().position(|o| key(o.kind) > key(kind)).unwrap_or(p.others.len());
+                p.others.insert(at, c);
+            }
+            added
+        }
+    }
+}
+
 /// The squad's stack a test hook names (BF_TEST_ITEM, BF_TEST_INV_NEW): a grenade type's label,
 /// Medkit (the (5, 0) stack), Medkit60 (the (5, 2) one), another listed item's label (OrgSen,
 /// Hat), any case.
@@ -361,7 +388,9 @@ fn named(p: &Player, game: &Game, kits: &GrenadeKits, name: &str) -> Option<Item
 /// The item type of the first (by name) listed type of `game` whose item data `want` takes.
 fn type_where(game: &Game, want: impl Fn(&ItemInfo) -> bool) -> Option<u32> {
     let mut kinds: Vec<u32> = game.items.keys().copied().filter(|&k| item_info(game, k).is_some_and(|i| i.listed && want(&i))).collect();
-    kinds.sort_unstable();
+    // (a carried type before the pickup that gives it: the OrgSen h_11433446, which the squad
+    // carries, before h_05a87396, which lies in the world and names it as its pickup-archetype)
+    kinds.sort_by_key(|k| (game.items.get(k).is_some_and(|i| i.gives != 0), *k));
     kinds.first().copied()
 }
 
@@ -420,8 +449,8 @@ pub fn item_label(game: &Game, kits: &GrenadeKits, p: &Player, item: Item) -> St
 /// controller shows it at the press when "can use now" says no, FUN_000bcfe0(entry, 3.0) at
 /// 0x13496a) for the item messages' 3 s from each press (play_itembox.rs MESSAGE_TIME; #196
 /// take26: on through presses 3 s apart, its ink gone 2.8 s of the game's clock after the last,
-/// as the demo's 2.87 s); for anyone else the use is the item's own ticket (#21: the OrgSen) and
-/// nothing happens yet.
+/// as the demo's 2.87 s); for anyone else the use is the item's own: the OrgSen's is
+/// play_vision.rs's (#21), the Hat's isn't in yet.
 pub fn use_other(player: Res<Player>, mut status: ResMut<UsePanel>, game: Res<GameData>) {
     let Some(Item::Other(kind)) = player.item else { return };
     if !player.item_use || player.dead {
@@ -437,7 +466,8 @@ pub fn use_other(player: Res<Player>, mut status: ResMut<UsePanel>, game: Res<Ga
         }
         status.message = Some((text, super::itembox::MESSAGE_TIME));
     } else if log {
-        println!("t={:.2} {}: {label} (use type {}): its use isn't in yet (#21)", player.sim_time, unit_name(&player), c.use_type);
+        println!("t={:.2} {}: {label} (use type {}): the character can use it ({})", player.sim_time, unit_name(&player), c.use_type,
+                 if c.use_type == super::vision::IOU_ATTACH_TO_FACE { "play_vision.rs puts it on or takes it off" } else { "its use isn't in yet: the Hat's" });
     }
 }
 

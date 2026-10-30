@@ -1,5 +1,5 @@
 //! The walk-over's item path for the pickups that put something in the squad's store: the ammo
-//! boxes (#18), the grenade packs (#19) and, in the commit after them, the OrgSen (#21). Read
+//! boxes (#18), the grenade packs (#19) and the OrgSen (#21). Read
 //! from default.xbe (the addresses are in the comments and in viewer/docs/code-map.md; the reading
 //! is todo/18-ammo-pickups/leads.md's) and checked against that folder's takes 01-10 (sdm_e34 and
 //! sdm_e13, xemu): the amounts, the lines, the full stack, the AI squadmate and the respawns.
@@ -43,6 +43,13 @@
 //! line is the grenade's display name, "3x Gas Grenades" (h_1dd3a49d of the type FUN_00146340
 //! gives, not the pack's "Bio Ammo").
 //!
+//! **The OrgSen** (#21): the one pickup type that names an item of the squad's other stacks: h_05a87396
+//! (function-type 0, group-type 6, pickup-amount 1, stack-limit 1) on sdm_e13's two spawn-triggers,
+//! whose pickup-archetype h_11433446 is the OrgSen the squad carries (function-type 12
+//! IFSET_VISION_ASSIST, the (6, 0) stack, stack-limit 1, `Player::others`): "OrgSen", and "OrgSen
+//! (full)" in red with the pickup staying when the squad has one (take09). What it does once carried
+//! is play_vision.rs's.
+//!
 //! The line is the HUD's pickup feed (play_pickups.rs `PickupFeed`: two pickups of one kind
 //! within its 4 s are one line with the sum: take03's two Rail boxes "20x Rail Ammo", take04's
 //! three Gas packs "3x", "6x", "9x").
@@ -65,6 +72,9 @@ use bf_viewer::level_scene::{Placed, SpawnTemplate};
 /// IFSET_AMMO_BOX (default.xbe's IFSET_ name table at 0x3be3cc, counted from IFSET_NONE 0): an ammo
 /// item's function-type, whose h_e5f51266 is the ammo-type it feeds (play_ammo.rs `STACK_LIMITS`).
 const IFSET_AMMO_BOX: i64 = 14;
+/// IFSET_NONE, the base set (the table's 0-4 and 9 all take the base's 0x146410): the function-type
+/// of the grenade packs and the placed OrgSen, whose "can take" is 0x280040 (always).
+const IFSET_BASE: i64 = 0;
 
 /// The squad's stack a pickup fills (its key: the given type's group-type and h_e5f51266,
 /// FUN_00149d30).
@@ -75,6 +85,9 @@ enum Stack {
     /// grenades of a type (its name: `WeaponDef::name`): the demo's grenade kit of it, categories 2
     /// IG_GRENADE and 3 IG_EXPLOSIVE (`Player::grenades`, in the kits' order)
     Grenades(u32),
+    /// an item of the squad's other stacks (`Player::others`, play_inventory.rs `put_other`): the
+    /// OrgSen's type h_11433446, (6, 0)
+    Carried(u32),
 }
 
 /// What walking over a pickup of item type `kind` gives (`gift`): the stack, how many of it
@@ -106,10 +119,15 @@ fn gift(game: &Game, kind: u32) -> Option<Gift> {
     // a pack: its pickup-archetype is a grenade (an `<inventory-grenade>` type, read with the
     // weapons: group-type 2 IG_GRENADE or 3 IG_EXPLOSIVE); the line names the grenade, its
     // display name "Gas Grenades" (h_1dd3a49d), else its label
-    if item.gives != 0 {
-        let def = game.weapons.get(&item.gives).filter(|d| matches!(d.group_type, 2 | 3))?;
-        let name = if def.display.is_empty() { def.label.clone() } else { def.display.clone() };
-        return Some(Gift { stack: Stack::Grenades(item.gives), amount: item.amount.max(1), name, sound: item.sound });
+    // (only the base set's: the Medkit's, function-type 5, has its own "can take", play_pickups.rs's)
+    if item.gives != 0 && item.function == IFSET_BASE {
+        if let Some(def) = game.weapons.get(&item.gives).filter(|d| matches!(d.group_type, 2 | 3)) {
+            let name = if def.display.is_empty() { def.label.clone() } else { def.display.clone() };
+            return Some(Gift { stack: Stack::Grenades(item.gives), amount: item.amount.max(1), name, sound: item.sound });
+        }
+        // the OrgSen: the pickup's archetype is an `<inventory>` item of its own, the one carried
+        let carried = game.items.get(&item.gives)?;
+        return Some(Gift { stack: Stack::Carried(item.gives), amount: item.amount.max(1), name: line_name(game, carried), sound: item.sound });
     }
     None
 }
@@ -124,6 +142,7 @@ fn fit(have: i64, limit: i64, n: i64) -> i64 {
 /// character's grenade counts (categories 2 and 3: the squad's one pool lives on the player,
 /// whoever of the squad walks over the pickup, as the Medkits do), and the kits that name them.
 struct Store<'a> {
+    game: &'a Game,
     reserve: &'a mut ammo::Reserve,
     player: &'a mut Player,
     kits: Option<&'a GrenadeKits>,
@@ -147,6 +166,7 @@ impl Store<'_> {
                 *have += added;
                 Some(added)
             }
+            Stack::Carried(kind) => Some(super::inventory::put_other(self.player, self.game, kind, amount)),
         }
     }
 
@@ -159,6 +179,8 @@ impl Store<'_> {
                 format!("{} grenades now {}", at.and_then(|k| self.kits.map(|g| g.0[k].def.label.clone())).unwrap_or_default(),
                         at.and_then(|k| self.player.grenades.get(k)).copied().unwrap_or(0))
             }
+            Stack::Carried(kind) => format!("{} now {}", self.game.items.get(&kind).map_or("item", |i| i.label.as_str()),
+                                            self.player.others.iter().find(|c| c.kind == kind).map_or(0, |c| c.count)),
         }
     }
 }
@@ -192,7 +214,7 @@ pub fn take_items(mut commands: Commands, game: Res<GameData>, mut player: ResMu
                 continue;
             }
             reached = true;
-            let mut store = Store { reserve: &mut reserve, player: &mut player, kits: kits.as_deref() };
+            let mut store = Store { game: &game.0, reserve: &mut reserve, player: &mut player, kits: kits.as_deref() };
             let Some(added) = store.add(gift.stack, gift.amount) else { break };
             let now = if log { store.describe(gift.stack) } else { String::new() };
             let u = if k == 0 { &mut *player } else { &mut squad.0[k - 1] };

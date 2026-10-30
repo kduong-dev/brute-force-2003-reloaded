@@ -603,6 +603,7 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>, game: Re
         // IOU_USE_IN_HAND, which FUN_001210c0 asks FUN_00117210 for, 0x121139, so not in Flint's
         // targeting, `skills::lets_act`; where the two lines above are posted isn't traced)
         player.using = Some(0.0);
+        player.use_face = false;
         player.use_stack = stack;
         // the item use's skill call as its overlay is queued (FUN_00121170 -> +0x104, the medkit's
         // IOU_USE_IN_HAND): a stealthed Hawk's 5 stamina
@@ -616,7 +617,8 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>, game: Re
 fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<Player>, mut used: ResMut<UsedMedkit>,
                joints: Query<&GlobalTransform>) {
     let stack = player.use_stack;
-    if !player.item_used || item_count(&player, stack) <= 0 {
+    // (the OrgSen's bring2face clip has the frame's `item_used` too, at its attach_item: play_vision.rs)
+    if !player.item_used || player.use_face || item_count(&player, stack) <= 0 {
         return;
     }
     let kind = match stack {
@@ -757,7 +759,7 @@ fn spawn_model(commands: &mut Commands, used: &UsedMedkit, transform: Transform,
 /// The medkit in the throwing hand while the use_item clip has it.
 fn hold_medkit(mut commands: Commands, player: Res<Player>, mut used: ResMut<UsedMedkit>) {
     let Some(l) = player.loaded.as_ref() else { return };
-    match (player.item_in_hand, used.held, l.throw_hand) {
+    match (player.item_in_hand && !player.use_face, used.held, l.throw_hand) {
         (true, None, Some((bone, point))) => {
             let e = spawn_model(&mut commands, &used, Transform::from_translation(point), Some(l.joints[bone]));
             used.held = Some(e);
