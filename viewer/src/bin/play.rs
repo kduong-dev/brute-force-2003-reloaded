@@ -984,6 +984,7 @@ fn main() {
         .add_plugins(powerups::plugin)
         .add_plugins(item_pickups::plugin)
         .add_plugins(vision::plugin)
+        .add_plugins(faces::plugin)
         .add_plugins(chatter::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
@@ -1004,6 +1005,8 @@ fn main() {
 
 #[path = "play_hud.rs"]
 mod hud;
+#[path = "play_faces.rs"]
+mod faces;
 #[path = "play_grenade.rs"]
 mod grenade;
 #[path = "play_gas.rs"]
@@ -2295,7 +2298,10 @@ struct Player {
     vy: f32,
     air_velocity: Vec3,
     last_velocity: Vec3,
-    face_time: f32,
+    /// its face controller (the game's char+0x5b8: the viseme weights, the face bones' pose, the
+    /// blink's clock; play_faces.rs, #255): made with the character (`spawn_unit`), ticked by its
+    /// step while it lives. Not `face`, which is the steep terrain face it stands on (#264)
+    facial: faces::Face,
     sim_time: f32,
     // input (filled by read_input)
     move_input: Vec2,
@@ -2714,7 +2720,7 @@ impl Player {
         Self {
             character, kind: squad_type(character), name: String::new(), loaded: None, position: Vec3::ZERO, yaw: 0.0, layers: vec![], gait: Gait::Idle,
             action: Action::None, action_left: 0.0, on_all_fours: false,
-            height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
+            height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, facial: Default::default(), sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
             weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
@@ -3938,10 +3944,10 @@ fn overlay_clip(model: &Character, game: &Game, name: &str, feet: [usize; 2]) ->
 /// without it the legs folded under a body left standing, the soles up to 0.64 m off the ground
 /// (the clips posed at 17 times each over the idle; with it they stay within 3 cm of it in play,
 /// BF_FEET_LOG).
-fn apply_overlay(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &OverlayClip, t: f32, full: bool, root: bool, face_time: f32) {
+fn apply_overlay(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &OverlayClip, t: f32, full: bool, root: bool) {
     let t = t.min(c.duration - 1e-3);
     let k = (t / FADE).min((c.duration - t) / FADE).clamp(0.0, 1.0);
-    let over = model.pose(game, c.clip, t, model.default_face, face_time);
+    let over = model.pose(game, c.clip, t, None, 0.0);
     for (b, m) in (match (full, root) { (true, true) => &c.whole, (true, false) => &c.mask, _ => &c.upper }).iter().enumerate() {
         if *m {
             let (q0, t0) = pose[b];
@@ -4050,6 +4056,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             return;
         }
     };
+    // its face controller (the game's, made with the character: play_faces.rs)
+    faces::spawned(p, &label, &model, game);
     let mut clips = pick_clips(&model, game);
     // its type's MOTION table resolved to its clips; an enemy's gait clips come from it (#129,
     // play_enemies.rs), the squad keeps the clips by name
@@ -4152,7 +4160,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     }));
     // the throwing hand: whichever hand moves further between reaching for the grenade and letting go
     let throw_hand = throw_clips[0].as_ref().and_then(|c| {
-        let at = |t: f32| model.world(&model.pose(game, c.clip, t, model.default_face, 0.0));
+        let at = |t: f32| model.world(&model.pose(game, c.clip, t, None, 0.0));
         let (reach, release) = (c.event(EV_REACH).unwrap_or(0.2), c.event(EV_RELEASE).unwrap_or(c.duration * 0.55));
         let (a, b) = (at(reach), at(release));
         [weapon::TRIGGER_HAND, weapon::SUPPORT_HAND].iter().filter_map(|k| model.hardpoints.get(k))
@@ -6354,7 +6362,6 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- advance clips: root motion and poses ----
     let mut delta = Vec3::ZERO;
     let mut poses = vec![];
-    p.face_time += dt;
     for layer in p.layers.iter_mut() {
         let d = l.model.anims[layer.clip].duration.max(1e-3);
         let dt = dt * layer.rate;
@@ -6366,7 +6373,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             delta += clip_root_delta(&l.model, game, c, layer.clip, layer.time, dt) * layer.weight;
             layer.time = (layer.time + dt) % d;
         }
-        let mut pose = l.model.pose(game, layer.clip, layer.time, l.model.default_face, p.face_time);
+        let mut pose = l.model.pose(game, layer.clip, layer.time, None, 0.0);
         pose[0].1.x = 0.0;                                   // root motion moves the entity instead
         pose[0].1.z = 0.0;
         poses.push((pose, layer.weight));
@@ -6394,7 +6401,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         if let Some(clip) = &l.switch_clips[sw.to] {
             let t = sw.time.min(clip.duration - 1e-3);
             let k = (t / FADE).min((clip.duration - t) / FADE).clamp(0.0, 1.0);
-            let over = l.model.pose(game, clip.clip, t, l.model.default_face, p.face_time);
+            let over = l.model.pose(game, clip.clip, t, None, 0.0);
             for (b, m) in clip.mask.iter().enumerate() {
                 if *m {
                     let (q0, t0) = pose[b];
@@ -6408,28 +6415,28 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let standing = !moving && matches!(p.action, Action::None);
     if let Some(r) = &p.reloading {
         if let Some(c) = &l.reload_clips[stance_of(l, r.weapon)] {
-            apply_overlay(&mut pose, &l.model, game, c, r.time, standing, false, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, r.time, standing, false);
         }
     }
     if let Some(t) = p.using {
         if let Some(c) = if p.use_face { &l.face_clips } else { &l.use_clips }[stance_of(l, p.weapon)].as_ref() {
-            apply_overlay(&mut pose, &l.model, game, c, t, standing, false, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, t, standing, false);
         }
     }
     // a weapon pickup's drop-and-pickup clip (#17, play_weapon_pickups.rs): the whole body, its
     // root too (#293); the character is held still while it plays (`moving` above)
     if let Some((c, t)) = p.gun_use.as_ref().and_then(|u| u.overlay()) {
-        apply_overlay(&mut pose, &l.model, game, c, t, standing, true, p.face_time);
+        apply_overlay(&mut pose, &l.model, game, c, t, standing, true);
     }
     if let Some(t) = &p.throwing {
         if let Some(c) = if t.place { &l.place_clips[t.slot] } else { &l.throw_clips[t.slot] } {
-            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false);
         }
     }
     // the skill's toggle overlay (play_skills.rs times it and switches at its event)
     if let Some(t) = &p.skill.toggling {
         if let Some(c) = &l.skill_clips[t.slot()][t.stance] {
-            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false, p.face_time);
+            apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false);
         }
     }
     if let Some(w) = l.weapons.get(p.weapon) {
@@ -6486,6 +6493,11 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             locomotion::twist(&l.model, &mut pose, &l.aim_chain, p.twist)
         }
     }
+
+    // ---- the face: the controller's pose on the face bones, the blink's on the lids, after the
+    // body's layers, overlays and aim (play_faces.rs, #255): the game's body clips never move
+    // them ----
+    faces::step(p, l, game, dt, &mut pose);
 
     // ---- move: root motion on the ground, ballistic in the air ----
     let facing = Quat::from_rotation_y(p.yaw);
@@ -7725,18 +7737,7 @@ fn dump_sounds(game: &mut Game, character: usize, dir: &str) {
     println!("{name}: footstep type {footstep}, jump sound {jump:08x}; {} surfaces", game.surfaces.len());
     if let Ok(model) = Character::load(game, name, 0) {
         let clips = pick_clips(&model, game);
-        if let Some(fi) = model.default_face {
-            let f = &model.face_anims[fi];
-            let idle = clips.loco.idle.unwrap_or(0);
-            let base = model.pose(game, idle, 0.0, Some(fi), 0.0);
-            let motion: Vec<String> = (0..24).map(|k| {
-                let t = f.duration * k as f32 / 24.0;
-                let p = model.pose(game, idle, 0.0, Some(fi), t);
-                let d = p.iter().zip(&base).map(|(a, b)| a.0.angle_between(b.0)).fold(0.0, f32::max);
-                format!("{:.0}", d.to_degrees())
-            }).collect();
-            println!("face clip {fi}/{} dur {:.2}s max bone deg over clip: {}", model.face_anims.len(), f.duration, motion.join(" "));
-        }
+        println!("{}", faces::describe(name, &model));
         let (feet, rest) = find_feet(&model, game, clips.loco.idle);
         if let Some(run) = clips.loco.run {
             let d = model.anims[run].duration;
