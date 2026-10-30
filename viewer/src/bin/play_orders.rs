@@ -19,9 +19,9 @@
 //!      (`spacing`).
 //!    - **Move To** (MOVE_OUT): GOAL_MOVE_OUT walks to the point at the dash, and within 2 m it's
 //!      GUARD, with the line e635ecc6 (`move_out`). The game's route over the world points is
-//!      #242's: here a straight walk, given up (GUARD, e635ecc6, as a failed walk is, 0x46256)
-//!      when it stalls; a player's character standing in its way for 7 s sets GUARD too
-//!      (FUN_00041870).
+//!      #242's: here a straight walk, passing the controlled character when it's in the way (the
+//!      game's route round a squadmate, FUN_00041870 -> FUN_000594a0), given up (GUARD,
+//!      e635ecc6, as a failed walk is, 0x46256) when it stalls.
 //!  - **Holding fire.** Without allow_combat the attack check refuses to fire (FUN_00024f80 at
 //!    0x250c5, after raising the gun): such a member turns to its target, gun up, and holds fire
 //!    (`gate`). An event whose entry in the mode's personality has the quick goal h_f0233972
@@ -81,14 +81,15 @@ const MOVE_OUT_WALK: f32 = 2.5;
 const STALL_PROGRESS: f32 = 0.1;
 const STALL_TIME: f32 = 1.0;
 const STALL_GRACE: f32 = 1.0;
-/// FUN_00041870 (from the AI update): a squadmate within BLOCK_NEAR m whose direction from the
-/// member and the member's way to its point have a dot over BLOCK_DOT stands in its way; when
-/// it's a player's character (FUN_00112800) the member waits, counting brain+0xdc, and after
-/// BLOCK_TIME s in MOVE_OUT it's GUARD (its line h_12d51a1c has no block in the squad's chatter
-/// files: silent). (Another squadmate gets a route round it, FUN_000594a0: here the collision.)
-const BLOCK_NEAR: f32 = 8.0;
-const BLOCK_DOT: f32 = 0.75;
-const BLOCK_TIME: f32 = 7.0;
+/// MOVE_OUT passes the controlled character with this much room (m) when its straight way would
+/// take it closer: the demo's stand-in, until #242's routes, for the route round a squadmate in
+/// its way. FUN_00041870 (from the AI update) finds one within 8 m whose direction and the
+/// member's way have a dot over 0.75, and gets a route round it (FUN_000594a0); only with no route
+/// and a player's character in the way (FUN_00112800) does the member wait, counting brain+0xdc,
+/// and after 7 s in MOVE_OUT it's GUARD with h_12d51a1c (no block: silent). In open ground there's
+/// a route, so take08's Hawk ran past Tex at 1.5 m without a pause: the wait isn't done. The
+/// room: two bodies' radii (play.rs BODY_RADIUS) and 0.4 m, the demo's.
+const PASS_CLEAR: f32 = 1.2;
 /// The hand-over's far case (FUN_0005cc20): the character left and the one taken more than this
 /// apart (m; 2500, its square, at 0x3a5348), and a follower of the one left within HOLD_NEAR m
 /// (25 at 0x3a5030) of its world point holds there rather than moving out to it.
@@ -237,14 +238,13 @@ fn guard(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
 /// +0x114 prisms, FUN_0004cb60 / FUN_000e6e00; what those volumes are isn't read, so the demo
 /// dashes. The leads read the bit as "an enemy known": it isn't.) Within
 /// MOVE_OUT_ARRIVE m it's GUARD (the full mode change) and says e635ecc6. Given up, GUARD with
-/// e635ecc6 too: when the walk stalls, or (silently) when a player's character has stood in its
-/// way BLOCK_TIME s (FUN_00041870); not on into a liquid that burns (play_liquids.rs, as the
-/// follow), which stalls it. ENEMY_SEEN draws GOAL_ATTACK_MOVE_OUT: the same walk facing the
-/// target, firing once combat is allowed. Without a point (none given) the route is to its own
-/// place: it's there, GUARD at once.
+/// e635ecc6 too, when the walk stalls; not on into a liquid that burns (play_liquids.rs, as the
+/// follow), which stalls it. The controlled character on its way is passed with PASS_CLEAR of room
+/// (the game's route round it: the wait FUN_00041870 makes when there's none isn't done, #242).
+/// ENEMY_SEEN draws GOAL_ATTACK_MOVE_OUT: the same walk facing the target, firing once combat is
+/// allowed. Without a point (none given) the route is to its own place: it's there, GUARD at once.
 fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, game: &Game) {
     let now = m.sim_time;
-    let log = log_level() > 0;
     let here = m.position;
     let to = m.command.point.map_or(Vec2::ZERO, |p| p.xz() - here.xz());
     let dist = to.length();
@@ -253,28 +253,13 @@ fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, towa
         guard(m, dt, target, toward);
         return;
     }
-    let way = to / dist;
-    // a player's character in the way: it stands and waits (FUN_00041870)
-    let off = leader.position.xz() - here.xz();
-    let blocking = !leader.dead && off.length() < BLOCK_NEAR && off.length() > 1e-3 && off.normalize().dot(way) > BLOCK_DOT;
-    if blocking {
-        m.command.blocked += dt;
-        if m.command.blocked >= BLOCK_TIME {
-            if log {
-                println!("t={now:.2} order {}: {} has stood in its way {BLOCK_TIME} s: GUARD (its line h_12d51a1c has no block: silent)", unit_name(m),
-                         unit_name(leader));
-            }
-            set(m, Mode::Guard, None);
-            guard(m, dt, target, toward);
-            return;
-        }
-    } else {
-        m.command.blocked = 0.0;
-    }
-    // the walk's progress: given up after STALL_TIME s without coming closer (not while it waits)
+    // (past the controlled character when it's on the way)
+    let blocker = (!leader.dead && !leader.absent).then(|| leader.position.xz());
+    let way = pass_round(here.xz(), here.xz() + to, blocker);
+    // the walk's progress: given up after STALL_TIME s without coming closer
     if dist < m.command.best - STALL_PROGRESS {
         (m.command.best, m.command.stalled) = (dist, 0.0);
-    } else if !blocking && m.command.since > STALL_GRACE {
+    } else if m.command.since > STALL_GRACE {
         m.command.stalled += dt;
     }
     if m.command.stalled >= STALL_TIME {
@@ -298,7 +283,7 @@ fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, towa
     m.aim = target.is_some() || turned;
     ai_fire(m, target, dt);
     let shore = world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, way));
-    if blocking || shore {
+    if shore {
         m.move_input = Vec2::ZERO;
         m.sprint = false;
         m.walk = false;
@@ -312,6 +297,26 @@ fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, towa
     m.reload_pressed = false;
     m.throw_held = false;
     m.next_surface = false;
+}
+
+/// MOVE_OUT's way (a unit vector in x, z) from `here` to `point` past `blocker` (the controlled
+/// character, if it's in the world): straight, but with the blocker ahead (before the point)
+/// within PASS_CLEAR of the straight line, aimed beside it, PASS_CLEAR off it on the far side of
+/// the line, until it's behind. The demo's stand-in for the game's route round it (see
+/// PASS_CLEAR).
+fn pass_round(here: Vec2, point: Vec2, blocker: Option<Vec2>) -> Vec2 {
+    let to = point - here;
+    let dist = to.length().max(1e-4);
+    let straight = to / dist;
+    let Some(b) = blocker else { return straight };
+    let off = b - here;
+    let (ahead, side) = (off.dot(straight), straight.perp_dot(off));
+    if ahead <= 0.0 || ahead >= dist || side.abs() >= PASS_CLEAR {
+        return straight;
+    }
+    let across = Vec2::new(-straight.y, straight.x);
+    let beside = b - across * if side >= 0.0 { PASS_CLEAR } else { -PASS_CLEAR };
+    (beside - here).normalize_or(straight)
 }
 
 /// MOVE_OUT's end (FUN_00045fa0's tail, and its failed walk at 0x46256): the point given up
@@ -700,6 +705,34 @@ mod tests {
         c.set_mode(Mode::Wingman, None);
         c.released();
         assert_eq!(c.allow, ALLOW_COMBAT | ALLOW_COVER);
+    }
+
+    /// Move To past the controlled character (round 3's failure: take08's geometry, Tex nearly on
+    /// Hawk's way, made her wait 7 s and stand her ground). Her straight way from her kneel
+    /// (-89, -86.4) to the point (-70.8, -79.5) passes Tex at (-83.39, -82.79) 1.39 m off, room
+    /// enough: straight on, as take08's Hawk ran past him. With him right on the line the way
+    /// bends to pass him PASS_CLEAR off, and runs straight again once he's behind, or off the
+    /// line, or beyond the point.
+    #[test]
+    fn move_to_passes_the_controlled_character() {
+        let (point, tex) = (Vec2::new(-70.8, -79.5), Vec2::new(-83.39, -82.79));
+        let start = Vec2::new(-89.0, -86.4);
+        let straight = (point - start).normalize();
+        assert_eq!(pass_round(start, point, Some(tex)), straight);
+        // (head on: 6.5 m ahead on the line)
+        let ahead = start + straight * 6.5;
+        let way = pass_round(start, point, Some(ahead));
+        assert!(way.dot(straight) < 0.999 && way.dot(straight) > 0.9);
+        let miss = (ahead - start).perp_dot(way).abs();
+        assert!((miss - PASS_CLEAR).abs() < 0.05, "passes {miss:.2} m off");
+        // past him: straight again; nobody in the way, the point before him, or him off the line:
+        // straight
+        let past = ahead + straight;
+        let on = |way: Vec2, to: Vec2| way.dot(to.normalize()) > 0.9999;
+        assert!(on(pass_round(past, point, Some(ahead)), point - past));
+        assert!(on(pass_round(start, point, None), straight));
+        assert!(on(pass_round(start, start + straight * 3.0, Some(ahead)), straight));
+        assert!(on(pass_round(start, point, Some(ahead + Vec2::new(-straight.y, straight.x) * 3.0)), straight));
     }
 
     /// WINGMAN's formation is FOLLOW's times 8 / 11.2 (FUN_00020b10's two sets).

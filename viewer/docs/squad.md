@@ -243,9 +243,12 @@ Squad movement and deaths follow the game's own data and the captures:
     leads' "a run with an enemy known" misread the test); within 2 m of the point (FUN_00045fa0's
     walk at 2.0) it's GUARD and says e635ecc6 (`say()`; #155 moves the lines onto the gate). A
     walk that stalls (0.1 m in 1 s, after its first second) ends the same way (a failed walk,
-    0x46256); the controlled character standing in its way within 8 m for 7 s sets GUARD
-    silently (FUN_00041870); a liquid that burns stops it at the shore. A member with no point
-    is at it: GUARD at once.
+    0x46256); a liquid that burns stops it at the shore. The controlled character on its way is
+    passed with 1.2 m of room (the way bends beside him until he's behind): the game routes round
+    a squadmate in the way (FUN_00041870 -> FUN_000594a0) and only with no route waits, then
+    goes GUARD silently after 7 s for a player's character; in open ground there's a route
+    (take08's Hawk ran past Tex 1.5 m off without a pause), so the wait waits on #242's routes.
+    A member with no point is at it: GUARD at once.
   * **The hand-over** (FUN_0005cc20, FUN_000c8e80, FUN_00018230): handing control from a
     character more than 50 m from the one taken sets it to GUARD, and each other AI member in
     FOLLOW or WINGMAN to GUARD within 5 m of where it stands, else MOVE_OUT to there (the game's
@@ -262,8 +265,9 @@ Squad movement and deaths follow the game's own data and the captures:
     distances' roles are in the code map's FUN_00020b10 row); WINGMAN's members going on ahead
     of Tex and drifting 16-30 m off at rest (take05). The cover points that put a member of
     mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit and Toggle Ability
-    (#319), the 7 s blocked count by a squadmate (routed round in the game), the GUARD fight's
-    own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the spot).
+    (#319), Move To's routes and its wait when there's none round a player's character in the
+    way (#242), the GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the
+    spot).
 
   Test hooks: `BF_TEST_ORDER=<member>,<mode>[,<x>,<z>][@<s>][;...]` gives each order at its time
   (1 s without one) as the menu does: `<member>` 0-3 or brutus / flint / hawk / tex, `me`, or
@@ -273,7 +277,9 @@ Squad movement and deaths follow the game's own data and the captures:
   goal, allow flags (a grant's time left), place, distance to the controlled character and what
   it's doing (fire, dash / run / walk, aim: the gun up holding fire, kneel, stand), as the takes'
   watch logs. `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
-  snapshot had them.
+  snapshot had them. The test map's NPCs (`BF_TEST_NPC`) have no brain, so they never post
+  EVT_SQUAD_IMA_TARGET: only the level's characters do (a staged NPC enemy is the takes' frozen
+  one in that, whether it fights or not).
 
   Verified (`BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps; e34 staged as the takes, Tex at
   (-83.39, -82.79): `BF_MAP=e34 BF_TEST_GOTO=-83.39,-82.79,...,27 BF_TEST_NO_HOSTILES=1
@@ -284,7 +290,13 @@ Squad movement and deaths follow the game's own data and the captures:
   * Move To (take08: `BF_TEST_ORDER=hawk,move,-70.8,-79.5@8`): m5 g72 a0, 15 m in 2.4 s at her
     dash (7.2 m/s; take08 6.0 run, 6.6 dash), GUARD 1.8 m short of the point (take08 1.9-2.0),
     her e635ecc6 sound 14c84c28 0.13 s later (take08's was 0fc11d92, the block's other), kneeling
-    0.4 s after arriving (take08 0.52 s).
+    0.4 s after arriving (take08 0.52 s). From take08's own kneel, with Tex nearly on her way
+    (`BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999
+    "BF_TEST_ORDER=hawk,move,-89.5,-87.8@1;hawk,move,-70.8,-79.5@10"`): she stands, runs past Tex
+    1.9 m off (take08 1.5 m) and arrives 3.1 s after the order (take08 4.2 s, her run slower).
+    With Tex right on her line (`BF_TEST_GOTO=-82.16,-85.05,...`): she bends round him 1.5 m off
+    (frame 176) and arrives at the same time. (Before #318's third round she waited 7 s behind
+    him and stood her ground: the wait-then-GUARD rule, dropped.)
   * Fire At Will (take10: `--test BF_TEST_ORDER=all,fire@1 "BF_TEST_NPC=3.0,shrike
     soldier,enemy,fight,-60,-79,,0" BF_TEST_NPC_HP=3.5,1,250 BF_TEST_INSTANT_KILL=0`, the Shrike
     facing away): the first hit 0.6 s after it appears, dead 2.5 s after (take10: the first

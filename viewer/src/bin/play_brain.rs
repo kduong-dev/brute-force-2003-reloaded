@@ -223,11 +223,10 @@ pub struct Command {
     pub events: u64,
     /// time in its mode (s): GUARD's kneel waits on it (play_orders.rs)
     pub since: f32,
-    /// MOVE_OUT's walk: the nearest it has come to the point (m), how long it hasn't come closer,
-    /// and how long a player's character has stood in its way (brain+0xdc, FUN_00041870)
+    /// MOVE_OUT's walk: the nearest it has come to the point (m) and how long it hasn't come
+    /// closer (the demo's stall rule, play_orders.rs `move_out`)
     pub best: f32,
     pub stalled: f32,
-    pub blocked: f32,
     /// the character's rounds fired (`Player::shots_fired`) when last looked at: a change is a
     /// round fired since (the demo's bookkeeping for play_orders.rs `mate_firing`)
     pub rounds: u32,
@@ -241,8 +240,7 @@ impl Default for Command {
     /// FOLLOW): every take's fresh e34 start reads mode 1, allow a3, and take11's members fight at
     /// once from it. The grant's timer stopped.
     fn default() -> Self {
-        Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, blocked: 0.0,
-                  rounds: 0 }
+        Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, rounds: 0 }
     }
 }
 
@@ -272,7 +270,6 @@ impl Command {
         self.since = 0.0;
         self.best = f32::MAX;
         self.stalled = 0.0;
-        self.blocked = 0.0;
         true
     }
 
@@ -290,9 +287,12 @@ impl Command {
     /// Control passing on from its character (FUN_0008a720 -> FUN_00018230): the mode kept, and for
     /// a squad brain the allow flags set by it again (FUN_00018000 at FUN_00018230's end): one left
     /// in FOLLOW, GUARD or MOVE_OUT holds fire until an event allows it. #33 take02: Tex's a3 went
-    /// a0 at the hand-over to Hawk (2.96 s), Hawk's a3 a0 when she was left in turn (6.47 s).
+    /// a0 at the hand-over to Hawk (2.96 s), Hawk's a3 a0 when she was left in turn (6.47 s). The
+    /// events posted while it was controlled are dropped with it (its brain idled: the last
+    /// frame's would otherwise grant combat a frame after the reset).
     pub fn released(&mut self) {
         self.allow_by_mode();
+        self.events = 0;
     }
 
     /// The quick goal h_f0233972 (FUN_0003a4a0 at 0x3a744): allow_combat set and the grant's timer
@@ -595,9 +595,11 @@ pub fn knows_enemy(u: &Player) -> bool {
 /// (type+0x1a8 bit 0). The follow, guard and moveout personalities grant combat on 43, so a
 /// member an enemy has picked out fights back (play_orders.rs `update`) for as long as it's the
 /// target. Posted every frame here (its queue keeps one of each), after the frame's sense steps
-/// (`sense`'s target); the controlled character's is dropped (its brain idles).
+/// (`sense`'s target); the controlled character's is dropped (its brain idles). Not by one a
+/// script holds (`held`: no brain meanwhile, char+0x834 bit 0), nor by the test map's NPCs
+/// (BF_TEST_NPC: no brain at all), only by the level's characters.
 pub fn tell_targets(player: &mut Player, squad: &mut [Player]) {
-    let targets: Vec<Who> = squad.iter().filter(|u| !u.dead && !u.absent).filter_map(target).collect();
+    let targets: Vec<Who> = squad.iter().filter(|u| !u.dead && !u.absent && !u.held && u.script_walk.is_empty()).filter_map(target).collect();
     for who in targets {
         let u = if player.who() == who { Some(&mut *player) } else { squad.iter_mut().find(|u| u.who() == who) };
         if let Some(u) = u.filter(|u| u.in_squad() && u.brain.is_none()) {
