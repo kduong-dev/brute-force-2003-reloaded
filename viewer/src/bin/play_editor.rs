@@ -43,6 +43,11 @@
 //!  - **The start**: a test session starts in play (`--test`, so every test hook runs as it
 //!    did); `--edit` in its place starts it in edit mode, the edit camera behind and above the
 //!    map's start. F5 or the hooks switch.
+//!  - **From the front end** (#193): the main menu's EDITOR (play_menu.rs) loads the test map
+//!    behind LOADING and opens it in edit mode as `--edit` does (`open_from_menu`: the test
+//!    session's state, `FromMenu`); leaving (Backspace twice) comes back to the main menu on
+//!    EDITOR, and the front end ends that session (`leave_for_menu`: nothing of it stays). The
+//!    front end puts the mode back to Play for any session.
 //!
 //! Test hooks (play_testtools.rs `read_hooks`, on the controlled character's clock, which the
 //! stand-in carries on): BF_TEST_EDIT=<s>[,<x>,<y>,<z>,<yaw>,<pitch>] (F5 in play: edit mode,
@@ -57,6 +62,9 @@ use super::testtools::{aim_word, crosshair, ground_point, FreeCam, Hook, Panel, 
 
 /// The command-line flag that starts a test session in edit mode (in place of `--test`).
 const FLAG: &str = "--edit";
+/// The map the editor opens on (`--test`, `--edit`, the front end's EDITOR): the flat test
+/// floor (play.rs `load_map`'s name for it).
+pub const TEST_LEVEL: &str = "flat";
 /// How long the camera's flight between the edit camera and the follow camera takes (s; the
 /// demo's choice, eased in and out).
 const FLIGHT_TIME: f32 = 0.75;
@@ -100,6 +108,49 @@ pub enum EditorMode {
 /// Whether the command line asks to start in edit mode (`--edit`, a test session).
 pub fn requested() -> bool {
     std::env::args().any(|a| a == FLAG)
+}
+
+/// The map editor was opened from the front end's EDITOR (#193; play_menu.rs): a test session of
+/// its own, from that choice until the front end is back (`leave_for_menu`). Leaving it
+/// (Backspace twice, play.rs `back_to_menu`) goes to the main menu on EDITOR.
+#[derive(Resource)]
+pub struct FromMenu;
+
+/// EDITOR's map has loaded (play_menu.rs `finish_loading`, with AppState::Playing): a test session
+/// begins as `--edit` begins one. The test map's state (`TestMap`, instant kill on, as
+/// BF_TEST_INSTANT_KILL leaves it), a fresh session (`testtools::Session`: the hooks are read for
+/// its first map, as on `--edit`; the editor's help shown) and edit mode, set with the map's
+/// start so its `start_map` takes the squad out at once. The map was loaded with the test map's
+/// data (`testmap::load_weapon_data`) and as a test session's (`LoadedMap::test`: its own squad).
+pub fn open_from_menu(commands: &mut Commands, mode: &mut NextState<EditorMode>) {
+    commands.insert_resource(TestMap::for_session());
+    commands.insert_resource(FromMenu);
+    commands.insert_resource(super::testtools::Session::default());
+    commands.insert_resource(Editor::default());
+    mode.set(EditorMode::Edit);
+}
+
+/// The front end is back (AppState::Menu): the editor's mode goes back to Play, so the next map
+/// from the menu plays (#191's review: a mission after `--edit` or F5 started in edit mode). A
+/// session opened from EDITOR (`FromMenu`) ends: its test map state goes (unless the command line
+/// made this a test session, `--test` / `--edit`, which keeps its own), so CAMPAIGN and the modes
+/// play as they do without it.
+fn leave_for_menu(mut commands: Commands, mode: Res<State<EditorMode>>, mut next: ResMut<NextState<EditorMode>>, from_menu: Option<Res<FromMenu>>) {
+    if *mode.get() != EditorMode::Play {
+        next.set(EditorMode::Play);
+    }
+    if from_menu.is_none() {
+        return;
+    }
+    commands.remove_resource::<FromMenu>();
+    if !super::testmap::requested() {
+        commands.remove_resource::<TestMap>();
+        commands.insert_resource(super::testtools::Session::default());
+        commands.insert_resource(Editor::default());
+    }
+    if std::env::var("BF_TOOLS_LOG").is_ok() {
+        println!("map editor: left for the front end (the session opened from EDITOR ends)");
+    }
 }
 
 /// An editing tool: its key (and how the help names it), the panel it opens, its name and what
@@ -306,6 +357,7 @@ struct PointerMark;
 pub fn plugin(app: &mut App) {
     app.insert_state(if requested() { EditorMode::Edit } else { EditorMode::Play })
         .init_resource::<Editor>().init_resource::<EditText>().init_resource::<Placements>()
+        .add_systems(OnEnter(AppState::Menu), leave_for_menu)
         .add_systems(OnEnter(AppState::Playing), start_map.after(super::testtools::reset).run_if(resource_exists::<TestMap>))
         .add_systems(OnEnter(EditorMode::Edit), to_edit.run_if(super::testtools::active))
         .add_systems(OnEnter(EditorMode::Play), to_play.run_if(super::testtools::active))

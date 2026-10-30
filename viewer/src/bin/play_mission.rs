@@ -481,7 +481,7 @@ pub fn go(commands: &mut Commands, next: &mut NextState<AppState>, game: &bf_vie
         }
         Go::Quit => {
             // FUN_00084f50: the session's end, the front end (the main menu, take10)
-            commands.insert_resource(menu::Return { map: None, deathmatch: false, main: true });
+            commands.insert_resource(menu::Return { map: None, deathmatch: false, main: true, editor: false });
             next.set(AppState::Menu);
         }
     }

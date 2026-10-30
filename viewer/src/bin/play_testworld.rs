@@ -752,10 +752,10 @@ fn load_level(to: &str, deathmatch: bool) -> LevelLoad {
         let mut game = super::load_game()?;
         let level = super::load_map(&mut game, "flat");
         super::testmap::load_weapon_data(&mut game);
-        return Ok((LoadedMap { game, level, deathmatch: false, map: "flat".into() }, Some(format!("{to} didn't load: the test map instead"))));
+        return Ok((LoadedMap { game, level, deathmatch: false, map: "flat".into(), test: true }, Some(format!("{to} didn't load: the test map instead"))));
     }
     super::testmap::load_weapon_data(&mut game);
-    Ok((LoadedMap { game, level, deathmatch, map: to.into() }, None))
+    Ok((LoadedMap { game, level, deathmatch, map: to.into(), test: true }, None))
 }
 
 /// The switch begins (the map is gone: `end_play`): what's left is logged (BF_TOOLS_LOG: only

@@ -1,7 +1,8 @@
 //! The front end, after the game's own (todo/ video): the title (START), the main menu
-//! (CAMPAIGN, DEATHMATCH, SQUAD DEATHMATCH, OPTIONS, CREDITS) and SELECT MISSION, a carousel of
-//! the chosen mode's maps from the game's level list (campaign-bf.xmb `Type`: the deathmatch
-//! arenas mp*, the squad deathmatch maps sdm_*) with each one's name, planet and description.
+//! (CAMPAIGN, DEATHMATCH, SQUAD DEATHMATCH, the demo's EDITOR, OPTIONS, CREDITS) and SELECT
+//! MISSION, a carousel of the chosen mode's maps from the game's level list (campaign-bf.xmb
+//! `Type`: the deathmatch arenas mp*, the squad deathmatch maps sdm_*) with each one's name,
+//! planet and description.
 //! Over the menu's background movie (data/movies/menuBack.bik, as frames in
 //! ../decompiled/movies/menuBack), with the game's logo, title bar, fonts, button icons,
 //! strings, style colours (common/game-options-en.xmb), menu music (menu_dub1) and menu sounds
@@ -12,6 +13,9 @@
 //! (the game's mode panel, split-screen / System Link, is skipped). Choosing a map shows the
 //! LOADING screen while the map loads on a thread, then plays it in the same window (deathmatch
 //! alone, without the radar). In the game, Backspace comes back here, to the map it left.
+//! EDITOR (#193, the demo's own entry) shows LOADING too, then opens the map editor
+//! (play_editor.rs) on the test map in its edit mode, as `--edit` does; leaving it (Backspace
+//! twice) comes back to the main menu on EDITOR.
 //!
 //! Keys: arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back (Esc at
 //! the title quits), the pad's START is START (JOIN CAMPAIGN); the mouse picks and clicks.
@@ -59,18 +63,48 @@ const S_SELECT: u32 = 0x15A0_733A;
 const S_BACK: u32 = 0xF1E0_6461;
 /// The main menu's CAMPAIGN (its words' string): the campaign path (play_campaign_menus.rs).
 const S_CAMPAIGN: u32 = 0xEA6C_B1B3;
+/// A main menu entry's words: a string of the game's string table, or the demo's own (EDITOR,
+/// which the game hasn't: #193).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Say {
+    Game(u32),
+    Demo(&'static str),
+}
+
+impl Say {
+    /// The words: the string table's, or the demo's.
+    fn text(self, strings: &HashMap<u32, String>) -> String {
+        match self {
+            Say::Game(id) => strings.get(&id).cloned().unwrap_or_default(),
+            Say::Demo(s) => s.to_string(),
+        }
+    }
+}
+
+/// The main menu's EDITOR (#193): the demo's own entry, after SQUAD DEATHMATCH. It opens the map
+/// editor (play_editor.rs) on the test map. Its word is the demo's (the game has no editor),
+/// drawn as the game's entries are.
+const EDITOR: Say = Say::Demo("EDITOR");
+/// EDITOR's description line: the demo's own text, shown where the game's entries show theirs.
+const EDITOR_ABOUT: Say = Say::Demo("Build your own map on the test level: place buildings, objects and characters, then play it with your squad.");
 /// The main menu: label, description, and the map list it leads to (a level kind; 0: none:
-/// CAMPAIGN's path, OPTIONS (not here), CREDITS).
-const MAIN: [(u32, u32, u32); 5] = [
-    (0xEA6C_B1B3, 0xF35A_957D, 0),                      // CAMPAIGN
-    (0x1D31_7BBA, 0x163F_7C9D, LEVEL_DEATHMATCH),       // DEATHMATCH
-    (0x1865_3C47, 0x1E9F_F6EB, LEVEL_SQUAD_DEATHMATCH), // SQUAD\nDEATHMATCH
-    (0x1EB0_7CA1, 0xFB11_75B6, 0),                      // OPTIONS
-    (0xE94A_3EF6, 0x0CEB_37E1, 0),                      // CREDITS
+/// CAMPAIGN's path, EDITOR, OPTIONS (not here), CREDITS).
+const MAIN: [(Say, Say, u32); 6] = [
+    (Say::Game(0xEA6C_B1B3), Say::Game(0xF35A_957D), 0),                      // CAMPAIGN
+    (Say::Game(0x1D31_7BBA), Say::Game(0x163F_7C9D), LEVEL_DEATHMATCH),       // DEATHMATCH
+    (Say::Game(0x1865_3C47), Say::Game(0x1E9F_F6EB), LEVEL_SQUAD_DEATHMATCH), // SQUAD\nDEATHMATCH
+    (EDITOR, EDITOR_ABOUT, 0),                                                // EDITOR (the demo's)
+    (Say::Game(0x1EB0_7CA1), Say::Game(0xFB11_75B6), 0),                      // OPTIONS
+    (Say::Game(0xE94A_3EF6), Say::Game(0x0CEB_37E1), 0),                      // CREDITS
 ];
 /// Layout (game-options, 640 x 480): the menu words are right-aligned in boxes ending at
-/// x 279 (main) / 278 (title), centred in them: (top, height) of each box.
-const MAIN_BOXES: [(f32, f32); 5] = [(100.0, 40.0), (160.0, 40.0), (220.0, 80.0), (320.0, 40.0), (380.0, 40.0)];
+/// x 279 (main) / 278 (title), centred in them: (top, height) of each box. The game's tops are
+/// 100, 160, 220 (SQUAD DEATHMATCH, two lines, 80 tall), 320 and 380 (OPTIONS, CREDITS). The
+/// demo's EDITOR (#193) takes 320, the first free slot under SQUAD DEATHMATCH's box (220-300),
+/// the one-line entries' 60 spacing; OPTIONS and CREDITS move down to 380 and 440 for it (the
+/// product owner's choice: an EDITOR at 280 would sit 2 units under SQUAD DEATHMATCH's second
+/// line).
+const MAIN_BOXES: [(f32, f32); 6] = [(100.0, 40.0), (160.0, 40.0), (220.0, 80.0), (320.0, 40.0), (380.0, 40.0), (440.0, 40.0)];
 const TITLE_BOXES: [(f32, f32); 2] = [(194.0, 40.0), (246.0, 40.0)];
 const MAIN_RIGHT: f32 = 279.0;
 const TITLE_RIGHT: f32 = 278.0;
@@ -664,10 +698,14 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
                     }
                     None => play(&mut commands, &sfx, SND_ERROR),
                 }
-            } else if asked.select && MAIN[menu.main].0 == S_CREDITS {
+            } else if asked.select && MAIN[menu.main].0 == Say::Game(S_CREDITS) {
                 play(&mut commands, &sfx, SND_SELECT);
                 start_credits(&mut commands);
-            } else if asked.select && MAIN[menu.main].0 == S_CAMPAIGN {
+            } else if asked.select && MAIN[menu.main].0 == EDITOR {
+                // the map editor on the test map, behind the LOADING screen (#193)
+                play(&mut commands, &sfx, SND_SELECT);
+                start_editor(&mut commands, &mut menu, &mut next);
+            } else if asked.select && MAIN[menu.main].0 == Say::Game(S_CAMPAIGN) {
                 // the campaign path (play_campaign_menus.rs)
                 let (screen, p) = campaign::open();
                 menu.screen = screen;
@@ -702,7 +740,7 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
             } else if asked.select {
                 play(&mut commands, &sfx, SND_SELECT);
                 let map = assets.maps[&kind][at].file.clone();
-                start_loading(&mut commands, &mut menu, &mut next, &map, kind == LEVEL_DEATHMATCH);
+                start_loading(&mut commands, &mut menu, &mut next, &map, kind == LEVEL_DEATHMATCH, false);
             } else if asked.back {
                 menu.screen = Screen::Main;
             }
@@ -728,12 +766,14 @@ struct MenuMedia {
 }
 
 /// Coming back from a map: which, so SELECT MISSION shows it; or (`main`, the end screen's Quit,
-/// #226) the main menu, on CAMPAIGN (take10 at 228 s).
+/// #226) the main menu, on CAMPAIGN (take10 at 228 s); or (`editor`, leaving the map editor
+/// opened from EDITOR, #193) the main menu, on EDITOR.
 #[derive(Resource, Default)]
 pub struct Return {
     pub map: Option<String>,
     pub deathmatch: bool,
     pub main: bool,
+    pub editor: bool,
 }
 
 /// A zone to load behind the LOADING screen as the menu opens (the mission flow's, #226: after a
@@ -748,17 +788,21 @@ pub fn load_next(commands: &mut Commands, next: &mut NextState<super::AppState>,
     next.set(super::AppState::Menu);
 }
 
-/// The map loading on a thread (its result arrives here) and which it is.
+/// The map loading on a thread (its result arrives here) and which it is; `editor`: the map
+/// editor's test map (EDITOR, #193).
 #[derive(Resource)]
 struct Pending {
     result: std::sync::Mutex<std::sync::mpsc::Receiver<Result<super::LoadedMap, String>>>,
     map: String,
     deathmatch: bool,
+    editor: bool,
 }
 
 /// Show the loading screen and load `map` on a thread (the game data, the level, its collision);
-/// `finish_loading` plays it once it's there.
-fn start_loading(commands: &mut Commands, menu: &mut Menu, next: &mut NextState<super::AppState>, map: &str, deathmatch: bool) {
+/// `finish_loading` plays it once it's there. `editor`: the map editor's session (EDITOR), with
+/// the test map's data on top as `--test` loads it (play_testmap.rs `load_weapon_data`: every
+/// weapon, grenade and character type its tools offer).
+fn start_loading(commands: &mut Commands, menu: &mut Menu, next: &mut NextState<super::AppState>, map: &str, deathmatch: bool, editor: bool) {
     menu.screen = Screen::Loading;
     next.set(super::AppState::Loading);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -766,11 +810,21 @@ fn start_loading(commands: &mut Commands, menu: &mut Menu, next: &mut NextState<
     std::thread::spawn(move || {
         let loaded = super::load_game().map(|mut game| {
             let level = super::load_map(&mut game, &name);
-            super::LoadedMap { game, level, deathmatch, map: name }
+            if editor {
+                super::testmap::load_weapon_data(&mut game);
+            }
+            super::LoadedMap { game, level, deathmatch, map: name, test: editor }
         });
         let _ = tx.send(loaded);
     });
-    commands.insert_resource(Pending { result: std::sync::Mutex::new(rx), map: map.to_string(), deathmatch });
+    commands.insert_resource(Pending { result: std::sync::Mutex::new(rx), map: map.to_string(), deathmatch, editor });
+}
+
+/// EDITOR (#193): the LOADING screen, and the map editor's test map (the flat floor, as `--edit`
+/// opens it) loading behind it; `finish_loading` opens the editor on it (play_editor.rs
+/// `open_from_menu`).
+fn start_editor(commands: &mut Commands, menu: &mut Menu, next: &mut NextState<super::AppState>) {
+    start_loading(commands, menu, next, super::editor::TEST_LEVEL, false, true);
 }
 
 /// Starting up: the game data (and the menu's, and the opening movies) being read on a thread.
@@ -1043,20 +1097,26 @@ fn close_boot(mut commands: Commands, parts: Query<Entity, With<BootPart>>) {
     commands.remove_resource::<BootScreen>();
 }
 
-/// The map has loaded: play it (or, if it couldn't, back to its list).
-fn finish_loading(mut commands: Commands, pending: Option<Res<Pending>>, mut next: ResMut<NextState<super::AppState>>) {
+/// The map has loaded: play it, or (EDITOR) open the map editor on it (or, if it couldn't, back
+/// to its list, or to EDITOR).
+fn finish_loading(mut commands: Commands, pending: Option<Res<Pending>>, mut next: ResMut<NextState<super::AppState>>,
+                  mut mode: ResMut<NextState<super::editor::EditorMode>>) {
     let Some(pending) = pending else { return };
     let got = pending.result.lock().ok().and_then(|r| r.try_recv().ok());
     let Some(got) = got else { return };
     commands.remove_resource::<Pending>();
     match got {
         Ok(map) => {
+            if pending.editor {
+                super::editor::open_from_menu(&mut commands, &mut mode);
+            }
             super::begin_play(&mut commands, map);
             next.set(super::AppState::Playing);
         }
         Err(e) => {
             eprintln!("menu: couldn't load {}: {e}", pending.map);
-            commands.insert_resource(Return { map: Some(pending.map.clone()), deathmatch: pending.deathmatch, main: false });
+            let map = (!pending.editor).then(|| pending.map.clone());
+            commands.insert_resource(Return { map, deathmatch: pending.deathmatch, main: false, editor: pending.editor });
             next.set(super::AppState::Menu);
         }
     }
@@ -1101,16 +1161,22 @@ fn open_menu(mut commands: Commands, mut images: ResMut<Assets<Image>>, media: R
         menu.screen = Screen::Main;
         menu.main = 0;
     }
+    if ret.as_deref().is_some_and(|r| r.editor) {
+        // back from the map editor opened from EDITOR (#193): the main menu, on EDITOR
+        commands.remove_resource::<Return>();
+        menu.screen = Screen::Main;
+        menu.main = MAIN.iter().position(|m| m.0 == EDITOR).unwrap_or(0);
+    }
     if credits.is_some() {
         // back from the credits: the main menu, on CREDITS
         commands.remove_resource::<FromCredits>();
         menu.screen = Screen::Main;
-        menu.main = MAIN.iter().position(|m| m.0 == S_CREDITS).unwrap_or(0);
+        menu.main = MAIN.iter().position(|m| m.0 == Say::Game(S_CREDITS)).unwrap_or(0);
     }
     if let Some(LoadNext(map)) = load.as_deref() {
         // a zone to load: LOADING at once
         commands.remove_resource::<LoadNext>();
-        start_loading(&mut commands, &mut menu, &mut next, map, false);
+        start_loading(&mut commands, &mut menu, &mut next, map, false, false);
     }
     commands.insert_resource(menu);
 }
@@ -1166,7 +1232,7 @@ fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Ass
                                 Slide { from, home: home.y }, ChildOf(screen)));
             }
             let (words, boxes, right): (Vec<(String, bool)>, &[(f32, f32)], f32) = if main {
-                (MAIN.iter().enumerate().map(|(i, m)| (s(m.0), i == menu.main)).collect(), &MAIN_BOXES, MAIN_RIGHT)
+                (MAIN.iter().enumerate().map(|(i, m)| (m.0.text(&assets.strings), i == menu.main)).collect(), &MAIN_BOXES, MAIN_RIGHT)
             } else {
                 (vec![(s(S_START), true), (s(S_DEMOS), false)], &TITLE_BOXES, TITLE_RIGHT)
             };
@@ -1193,7 +1259,7 @@ fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Ass
                 commands.entity(c).insert(ChildOf(screen));
             }
             if main {
-                let about = assets.body.paragraph(&mut commands, &s(MAIN[menu.main].1), BODY_CAP, Look::outlined(ABOUT), ABOUT_WIDTH,
+                let about = assets.body.paragraph(&mut commands, &MAIN[menu.main].1.text(&assets.strings), BODY_CAP, Look::outlined(ABOUT), ABOUT_WIDTH,
                                                   at(ABOUT_AT.x, ABOUT_AT.y));
                 commands.entity(about).insert(ChildOf(screen));
             }
@@ -1612,8 +1678,9 @@ fn animate(mut commands: Commands, time: Res<Time>, clock: Res<Clock>, assets: O
 }
 
 /// Test hooks: BF_MENU_SHOT=<file.png> saves the menu and quits; BF_MENU_SCREEN=title | main |
-/// dm | sdm (or the campaign path's campaign | profile | slot | name | difficulty | join) shows
-/// that screen and BF_MENU_PICK=<n> selects entry n of it first. BF_MENU_GO plays the selected map.
+/// dm | sdm | editor (or the campaign path's campaign | profile | slot | name | difficulty | join)
+/// shows that screen and BF_MENU_PICK=<n> selects entry n of it first (`editor`: the main menu on
+/// EDITOR). BF_MENU_GO plays the selected map, or, on EDITOR, opens the map editor.
 #[allow(clippy::too_many_arguments)]
 fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu>>, assets: Option<Res<Assets2>>,
         mut exit: EventWriter<AppExit>, mut next: ResMut<NextState<super::AppState>>, state: Res<State<super::AppState>>,
@@ -1641,8 +1708,13 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                 Ok("loading") => menu.screen = Screen::Loading,
                 Ok("credits") => {
                     menu.screen = Screen::Main;
-                    menu.main = MAIN.iter().position(|m| m.0 == S_CREDITS).unwrap_or(0);
+                    menu.main = MAIN.iter().position(|m| m.0 == Say::Game(S_CREDITS)).unwrap_or(0);
                     start_credits(&mut commands);
+                }
+                // the main menu on EDITOR (#193; BF_MENU_GO chooses it)
+                Ok("editor") => {
+                    menu.screen = Screen::Main;
+                    menu.main = MAIN.iter().position(|m| m.0 == EDITOR).unwrap_or(0);
                 }
                 Ok(kind @ ("dm" | "sdm")) => {
                     menu.screen = Screen::Missions;
@@ -1663,12 +1735,15 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
             match assets.maps.get(&menu.kind).and_then(|v| v.get(menu.pick.get(&menu.kind).copied().unwrap_or(0) % v.len().max(1))) {
                 Some(m) => {
                     let (file, solo) = (m.file.clone(), menu.kind == LEVEL_DEATHMATCH);
-                    start_loading(&mut commands, &mut menu, &mut next, &file, solo);
+                    start_loading(&mut commands, &mut menu, &mut next, &file, solo, false);
                 }
                 None => {
                     exit.write(AppExit::Success);
                 }
             }
+        }
+        if *frames == 4 && go && menu.screen == Screen::Main && MAIN[menu.main].0 == EDITOR {
+            start_editor(&mut commands, &mut menu, &mut next);
         }
     }
     let Some(file) = file else { return };
@@ -1692,3 +1767,22 @@ pub fn wanted() -> bool {
 /// The campaign path's screens (CAMPAIGN TYPE to JOIN CAMPAIGN).
 #[path = "play_campaign_menus.rs"]
 mod campaign;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The main menu's order (#193): CAMPAIGN first (the menu opens on it), EDITOR right after
+    /// SQUAD DEATHMATCH and before OPTIONS, at y 320; the entries before it keep the game's
+    /// boxes, OPTIONS and CREDITS move down 60 for it.
+    #[test]
+    fn editor_after_squad_deathmatch() {
+        assert_eq!(MAIN.len(), MAIN_BOXES.len());
+        assert_eq!(MAIN[0].0, Say::Game(S_CAMPAIGN));
+        let editor = MAIN.iter().position(|m| m.0 == EDITOR).expect("EDITOR");
+        assert_eq!(MAIN[editor - 1].2, LEVEL_SQUAD_DEATHMATCH);
+        assert_eq!(MAIN_BOXES[editor], (320.0, 40.0));
+        assert_eq!(MAIN_BOXES, [(100.0, 40.0), (160.0, 40.0), (220.0, 80.0), (320.0, 40.0), (380.0, 40.0), (440.0, 40.0)]);
+        assert_eq!(MAIN.last().map(|m| m.0), Some(Say::Game(S_CREDITS)));
+    }
+}
