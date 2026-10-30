@@ -4,10 +4,26 @@
 capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to the window.
 
 * **Title.** START (DEMOS is shown but not here).
-* **Main menu.** CAMPAIGN, DEATHMATCH, SQUAD DEATHMATCH, OPTIONS, CREDITS, opening on CAMPAIGN
-  (take01 at 2 s), with the selected word white over a faint, larger echo, and its description
-  beside the logo. CAMPAIGN leads to the campaign path, DEATHMATCH and SQUAD DEATHMATCH to their
-  maps (the game's mode panel, split-screen / System Link, is skipped), CREDITS to the credits.
+* **Main menu.** CAMPAIGN, DEATHMATCH, SQUAD DEATHMATCH, EDITOR (the demo's, below), OPTIONS,
+  CREDITS, opening on CAMPAIGN (take01 at 2 s), with the selected word white over a faint, larger
+  echo, and its description beside the logo. CAMPAIGN leads to the campaign path, DEATHMATCH and
+  SQUAD DEATHMATCH to their maps (the game's mode panel, split-screen / System Link, is skipped),
+  EDITOR to the map editor, CREDITS to the credits.
+* **EDITOR** (#193, `play_menu.rs` `EDITOR`): the demo's own entry, not the game's. Its word
+  and its description line ("Build your own map on the test level: place buildings, objects and
+  characters, then play it with your squad.") are the demo's text, drawn in the game's font,
+  colours, outline, layout and animations as the others are, with their sounds (moving onto it,
+  selecting it). Its box is (320, 40), right-aligned at x 279 like the rest, the 60 spacing of
+  the one-line entries.
+  Choosing it shows the LOADING screen while the flat test map loads on a thread with the test
+  map's data (`testmap::load_weapon_data`, as `--test` loads it), then opens the map editor on it
+  in edit mode, as `--edit` does ([editor.md](editor.md), "From the front end"). Leaving the
+  editor (Backspace twice, in edit mode or in play) comes back to the main menu on EDITOR.
+  **OPTIONS and CREDITS moved down** for it, from game-options' 320 and 380 to 380 and 440:
+  SQUAD DEATHMATCH's box is two lines (220-300), so game-options leaves no free slot after it
+  (the "gap" at 280 is inside its box: an EDITOR there sat 2 units under SQUAD DEATHMATCH's
+  second line). The product owner chose to move the two entries; CREDITS' box then ends at 480, the
+  screen's bottom. CAMPAIGN, DEATHMATCH and SQUAD DEATHMATCH keep the game's places.
 * **The campaign path** (#226, `play_campaign_menus.rs`): CAMPAIGN TYPE, SELECT PROFILE, SELECT
   CAMPAIGN, ENTER NAME, SELECT DIFFICULTY and JOIN CAMPAIGN, drawn from their game-options menus
   in the game's font records with their own animations; START on JOIN CAMPAIGN starts a new
@@ -48,7 +64,7 @@ stepping its own value by one (the map carousel scrolling), sends `h_ebf26601` (
 | Colours | game-options' menu-style: words normal 30 110 150, selected 215 236 251; descriptions 153 209 251; every style's outline (`h_ed70ff4f`) black, drawn as a 1-unit outline plus drop shadow |
 | SELECT MISSION | the panel h_e462c760 (7 splash_screen textures at alpha 180, at (66, 50)); the carousel's arrow h_158f87c1 stretched to 20 × 128 (the right one mirrored); title 153 209 251 in the heading font, no outline, typed; map name 153 209 251 (body font 16 pt); recommended players (dm-data `h_0398b8bf` min/max, `Recommended for %d - %d players.`; none on the squad deathmatch maps), planet and description 148 198 149 (14 pt) |
 | Loading screen | game-options' LOADING menu (`h_f6551df5`): a 256 × 256 ring at (192, 112) on black, four mirrored quarters of `h_06477be9` or `h_1ec0f086` (the ring with its big blocks on the diagonals / on the axes), shown in turn every 0.1 s (a capture), "LOADING" (`h_0f28682d`) in the heading font, no movie or music. Shown while the map loads |
-| Layout | game-options' item positions: words right-aligned in boxes ending at x 279; logo at its own 512 × 256 (title (194, 106), main (194, 18)); description box (312, 240) |
+| Layout | game-options' item positions: words right-aligned in boxes ending at x 279 (main menu tops 100, 160, 220 (80 tall), then 320, 380 in the game; the demo's EDITOR takes 320 and OPTIONS and CREDITS move to 380 and 440); logo at its own 512 × 256 (title (194, 106), main (194, 18)); description box (312, 240) |
 | Animations | translation-anim: items slide in from y 240 (0.25 s); color-anim: fade in (0.5 s); select-anim: the selected word's echo grows (from the word's middle) to 1.7× and fades from alpha 150 in 50 185 250 (0.5 s), then pulsing every 0.3 s while the word stays selected or hovered; the logo slides up from the title's place into the main menu; panel titles type out (0.125 s a letter); their sounds `h_e8ace091` / `h_e1abd007` (splash_screen) |
 | Logo, title bar | splash_screen textures h_f1e0ac39, h_190a4ea7 |
 | Previews | the level list's `texture-name` (splash_screen) |
@@ -109,10 +125,14 @@ the menu screenshot hooks skip them too and count frames from the menu, unless `
 When the menu is skipped: whenever `BF_MAP` or a test hook (`BF_CAPTURE`, `BF_TEST_GOTO`, …) is
 set, or with `BF_NO_MENU=1` (`BF_MENU_PRESS` without `BF_MAP` shows it, with `BF_CAPTURE` too).
 Test hooks: `BF_MENU_SHOT=<file.png>` saves the menu and quits;
-`BF_MENU_SCREEN=title|main|dm|sdm|loading` (or the campaign path's
-`campaign|profile|slot|name|difficulty|join`) with `BF_MENU_PICK=<n>` picks the screen and entry;
+`BF_MENU_SCREEN=title|main|dm|sdm|loading|editor` (or the campaign path's
+`campaign|profile|slot|name|difficulty|join`) with `BF_MENU_PICK=<n>` picks the screen and entry
+(the main menu's entries: 0 CAMPAIGN, 1 DEATHMATCH, 2 SQUAD DEATHMATCH, 3 EDITOR, 4 OPTIONS,
+5 CREDITS; `editor` is the main menu on EDITOR);
 `BF_MENU_SHOT_FRAME=<n>` takes the shot at frame n (screenshots step a fixed 1/60 s a frame, to
-catch the animations); `BF_MENU_GO=1` plays the picked map (the screenshot hook runs on into it); `BF_TEST_BACK=<n>` goes back to the menu after n frames of a map.
+catch the animations); `BF_MENU_GO=1` plays the picked map, or on EDITOR opens the map editor (the
+screenshot hook runs on into it); `BF_TEST_BACK=<n>` goes back to the menu after n frames of a map
+(of the map editor too; under `BF_CAPTURE` the first 60 frames of a run are its warm-up, uncaptured).
 `BF_MENU_PRESS=<key>@<s>[;...]` presses keys (`a`, `b`, `x`, `y`, `up`, `down`, `left`, `right`,
 `start`) that many seconds after the menu first opens, one a frame (the opening movies are
 skipped); with `BF_CAPTURE=<dir>` each menu frame is saved as `menu_NNN.png`, a fixed 1/15 s a
@@ -123,7 +143,21 @@ frame, and the run goes on through a briefing (`brief_NNN.png`) into the map (`f
 # the campaign path to JOIN CAMPAIGN on take01's timeline, 470 menu frames
 BF_MENU_PRESS="a@0.5;a@2.0;a@4.7;a@7.3;a@12.5;a@15.7;a@18.3;a@27.8" BF_MENU_FRAMES=470 BF_CAPTURE=cap \
   BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# EDITOR, the map editor, back to the menu after 130 frames, then DEATHMATCH's first arena
+# (the presses' clock runs in the menu and LOADING only: the second set waits out the loading)
+BF_MENU_PRESS="a@0.5;down@1.0;down@1.5;down@2.0;a@3.0;up@30;up@30.5;a@31.5;a@33" BF_TEST_BACK=130 \
+  BF_CAPTURE=cap BF_CAPTURE_FRAMES=140 BF_MENU_FRAMES=3000 BF_TOOLS_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# a screenshot in the editor, opened from the menu's EDITOR
+BF_MENU_SCREEN=editor BF_MENU_GO=1 BF_MENU_SHOT=editor.png BF_MENU_SHOT_FRAME=900 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 ```
+
+EDITOR was checked that way (#193): the main menu with EDITOR selected (its echo and
+description) and moved through; LOADING (menu frames 36-241 of the second recipe), the
+editor in edit mode (the help panel, F5's ring, no squad: "edit mode from the start: the edit
+camera at [0.00, 3.95, 9.00]", as on `--edit`), back on the main menu with EDITOR selected,
+its items sliding in, then DEATHMATCH, SELECT MISSION and the arena (mp1) loading with no test
+map line in the log and no controls panel. The same with the campaign path after it (presses
+shifted by 30.5 s): a new campaign on the tutorial, the mission flow in the campaign mode.
 
 Record texts (the campaign path's, the end screen's, the status line) are made before the UI's
 frame starts (`play_fonts.rs` runs before bevy_ui's Prepare and Stack sets and the visibility

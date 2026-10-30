@@ -533,12 +533,14 @@ const CLIMB_CELL: f32 = 2.15;
 /// gap. The scan's own.
 const SCAN_RADIUS: f32 = 0.25;
 
-/// A loaded map, ready to play: the data, its level, and the mode.
+/// A loaded map, ready to play: the data, its level, and the mode; `test`: in a test session
+/// (`--test`, `--edit`, the front end's EDITOR, #193), whose test map starts with its own squad.
 pub struct LoadedMap {
     pub game: Game,
     pub level: Option<Level>,
     pub deathmatch: bool,
     pub map: String,
+    pub test: bool,
 }
 
 /// The map being played (Backspace returns to it in the menu).
@@ -548,7 +550,7 @@ struct CurrentMap(String);
 /// Put a loaded map in place to play (its resources; `setup` and the plugins spawn it as
 /// AppState::Playing begins).
 pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
-    let LoadedMap { game, level, deathmatch, map } = map;
+    let LoadedMap { game, level, deathmatch, map, test } = map;
     // the difficulty every hit on a character is stepped by (play_damage.rs)
     let difficulty = damage::Difficulty::for_session(&game, &map);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
@@ -557,7 +559,7 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     }
     commands.insert_resource(difficulty);
     // (the test map of a test session: its own start squad, below)
-    let test_map = testmap::requested() && map == "flat";
+    let test_map = test && map == editor::TEST_LEVEL;
     commands.insert_resource(CurrentMap(map));
     // a level whose squad its spawn-triggers spawn starts each member at its own (#102,
     // play_triggers.rs), led by BF_CHARACTER's if the level has them
@@ -905,7 +907,7 @@ fn main() {
         // game's level list, play_testworld.rs `arena`)
         let deathmatch = std::env::var("BF_NO_SQUAD").is_ok() || std::env::var("BF_DEATHMATCH").is_ok()
             || (test_map && testworld::arena(&game, &map));
-        loaded = Some(LoadedMap { game, level, deathmatch, map: map.clone() });
+        loaded = Some(LoadedMap { game, level, deathmatch, map: map.clone(), test: test_map });
     }
     let mut app = App::new();
     // (BF_BACKGROUND / BF_WINDOW_MONITOR shape the window, and the first leaves the gamepads
@@ -936,8 +938,7 @@ fn main() {
         // straight into the map (BF_MAP or a test hook)
         app.insert_state(AppState::Playing);
         if test_map {
-            // (test hook: BF_TEST_INSTANT_KILL=0 starts with it off, as K turns it)
-            app.insert_resource(testmap::TestMap { instant_kill: std::env::var("BF_TEST_INSTANT_KILL").map_or(true, |v| v != "0") });
+            app.insert_resource(testmap::TestMap::for_session());
         }
         let mut commands = app.world_mut().commands();
         begin_play(&mut commands, l);
@@ -1393,11 +1394,13 @@ const LEAVE_CONFIRM: f32 = 2.0;
 
 /// Backspace: back to the map menu (bf_play starts again there). In a test session (the map
 /// editor's, play_editor.rs) only a second press within LEAVE_CONFIRM s leaves, so a stray key
-/// doesn't throw away what was built.
+/// doesn't throw away what was built. The map editor opened from the front end's EDITOR (#193,
+/// `editor::FromMenu`) goes back to the main menu on EDITOR (its session ends there:
+/// play_editor.rs `leave_for_menu`).
 #[allow(clippy::too_many_arguments)]
 fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>, mode: Res<Mode>, map: Res<CurrentMap>,
                 mut commands: Commands, mut frames: Local<u32>, test_map: Option<Res<testmap::TestMap>>, time: Res<Time<Real>>,
-                mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>) {
+                mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>, from_menu: Option<Res<editor::FromMenu>>) {
     // test hook: BF_TEST_BACK=<n> goes back after n frames of the map
     *frames += 1;
     let test = std::env::var("BF_TEST_BACK").ok().and_then(|v| v.parse::<u32>().ok()) == Some(*frames);
@@ -1411,7 +1414,9 @@ fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppS
     if leave || test {
         *armed = None;
         *frames = 0;
-        commands.insert_resource(menu::Return { map: Some(map.0.clone()), deathmatch: mode.deathmatch, main: false });
+        let editor = from_menu.is_some();
+        let map = (!editor).then(|| map.0.clone());
+        commands.insert_resource(menu::Return { map, deathmatch: mode.deathmatch, main: false, editor });
         next.set(AppState::Menu);
     }
 }

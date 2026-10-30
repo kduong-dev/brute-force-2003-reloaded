@@ -1,5 +1,6 @@
 //! The test map (`cargo run --bin bf_play -- --test`): the flat test floor, straight in with no
-//! boot screen or menu, for trying things out. Only reachable by that command.
+//! boot screen or menu, for trying things out. Reachable by that command (or `--edit`), and from
+//! the front end's EDITOR (#193), which opens it in the map editor's edit mode.
 //!
 //!  - Every hand weapon (a `Game::weapons` definition with a clip, whose model loads; one per
 //!    model), from the first mission's and the multiplayer levels' data, floats on a rack in
@@ -68,10 +69,19 @@ const DROP_TIP: f32 = 0.2;
 /// How long a test-map message shows (s).
 const MESSAGE_TIME: f32 = 2.0;
 
-/// The test map is being played (inserted only when it was asked for): instant kill on or off.
+/// The test map is being played (inserted only when it was asked for: `--test`, `--edit`, or the
+/// front end's EDITOR for its session, play_editor.rs `open_from_menu`): instant kill on or off.
 #[derive(Resource, Clone, Copy)]
 pub struct TestMap {
     pub instant_kill: bool,
+}
+
+impl TestMap {
+    /// A test session's start: instant kill on (test hook: BF_TEST_INSTANT_KILL=0 starts with it
+    /// off, as K turns it).
+    pub fn for_session() -> TestMap {
+        TestMap { instant_kill: std::env::var("BF_TEST_INSTANT_KILL").map_or(true, |v| v != "0") }
+    }
 }
 
 /// Whether the test map was asked for on the command line (`--test`, or the map editor's

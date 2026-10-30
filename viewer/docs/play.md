@@ -113,10 +113,12 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 * **The map editor** (#191): F5 switches to its edit mode, out of the gunplay (no character, gun
   or HUD; a free camera, the right mouse button held looks; the tools at the mouse pointer), and
   F5 again plays from where the pointer is, the camera flying down to the squad and back up after.
-  `cargo run --bin bf_play -- --edit` starts the session editing. See [editor.md](editor.md).
+  `cargo run --bin bf_play -- --edit` starts the session editing, and so does the front end's
+  EDITOR (#193). See [editor.md](editor.md).
 * **Backspace** leaves for the front end only when pressed twice within 2 s in a test session (a
-  stray key doesn't throw away what was built); the first press says so. `BF_TEST_BACK` still goes
-  at once.
+  stray key doesn't throw away what was built); the first press says so, and the controls panel's
+  tools line names it. `BF_TEST_BACK` still goes at once. A session opened from EDITOR comes back
+  to the main menu on EDITOR, its test-map state gone.
 
 ## Health, HUD, locomotion, weapons and sounds
 

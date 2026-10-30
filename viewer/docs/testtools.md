@@ -8,7 +8,12 @@ left) lists them all. They work on any map of a test session: `--test` starts on
 
 The map editor ([editor.md](editor.md), #191) is these tools' home: F5 switches to its edit mode
 (no character in the world, the edit camera, the tools at the mouse pointer) and back to play,
-and `--edit` starts the session there. The menus' keys below are its tool registry's (`TOOLS`,
+and `--edit` starts the session there. The front end's EDITOR (#193, [menu.md](menu.md)) starts
+one too, without the command line: a test session of its own, as `--edit`'s (the test map's
+data, `TestMap`, the tools' session, edit mode), from that choice until the front end is back
+(Backspace twice), when its state goes (editor.md, "From the front end"). The hooks below run in
+it as on `--edit` (its first map), driven from the menu with `BF_MENU_PRESS` or
+`BF_MENU_SCREEN=editor BF_MENU_GO=1`. The menus' keys below are its tool registry's (`TOOLS`,
 `open_tools`), the same in both modes; what the menus put down is listed in its `Placements`.
 In edit mode "the crosshair" below is the mouse pointer (the crosshair's place with no pointer),
 a click is any left click off the panel, and F and its teleports do nothing.
