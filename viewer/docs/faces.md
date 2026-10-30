@@ -147,6 +147,20 @@ do when nothing writes them again; inferred: no take could read it, Tex's lids r
 has them and Brutus's can't be read through his brow). Before the first blink the lids are the model's
 own (the bind pose) and the first tick ends that.
 
+**The clip is eased in, which the demo doesn't do yet.** FUN_00143d10 sets a 0.1 in the play
+request's +0x10, and the node controller reads it (0x2536f0): it builds a **transition**, the game's
+own word ("transition, ease = ..., t = ...", the string at 0x404df8), from the node's pose to
+`Sc_blink`'s channel, the channel's weight smoothstep(t / 0.1) (0x280330; the request's bit 2 asks for
+the smoothstep, 0x39a848 = 3.0). So it is a **fade-in over 0.1 s, not a start delay**: the clip's own
+time runs from 0, the lids are at its value from 0.1 s on (the peak, 44.5 degrees for Tex's big lids,
+doesn't move) and before that they lag it: for Tex's big lid 6 % of the peak at 1/30 s and 46 % at
+2/30 s against the bare clip's 23 % and 62 %, so 10 % shut comes 0.025 s later, 20 % 0.020 s, half
+0.013 s, 80 % 0.004 s (worked from the clip's keys, linear in angle between them). The demo plays
+the clip bare (the blink's timing stays as measured; the ease is a small follow-up on
+`FaceTable::write_blink`), so its lids start 0.02 s early. That is a third of the tester's 0.07 s against take01; the rest is not
+explained by the code (guesses: the log samples at 15 Hz and sees a reset up to 0.067 s late, and a
+frame or two between the controller's tick and the animation's update, none measured).
+
 **Hawk doesn't blink.** The face controller flags every face bone's node, the binder skips flagged
 nodes, and Hawk's `Sc_base` lists her four lid bones (the 22 bones of her list: four more than Flint's
 and Tex's). So by the code `Sc_blink` finds no node to bind on her: it plays, and nothing moves. (Her
@@ -261,13 +275,19 @@ and the 22 weights). For the expressions' slice (#326; nothing of it is built he
 ## Not done, and what's guessed
 
 * **The lip-sync and the expressions**: the library's viseme tracks (`bf/audio.rs`), the speak and
-  stop calls on every speech path, the expression fade and Tex's berserk face are the next slices.
-  `Face::weights` is where they write.
+  stop calls on every speech path, the expression fade and Tex's berserk face are the next slices
+  (#325, #326). `Face::weights` is where they write, and the speech path is there already: #155's
+  chatter (`chatter.md`) starts and stops every line on a character with `Chatter::voice_start` and
+  `voice_stop` (the game's FUN_001435d0 and FUN_00143570 on its face controller), keeps the sound in
+  `Player::voice`, the line's priority in `Player::voice_priority` and the time left in
+  `Player::speaking` (the controller's +0x50), and ends a line by time in `voice_tick`. None of it
+  touches `Player::facial` (this page's `Face`) yet: the lip-sync slice calls the face from those
+  three places.
 * The blink's cycle, its phase by the character's first tick, and Hawk's missing blink are measured
   now (above). Still inferred: the held last key after a blink (nothing resets the nodes in the code
-  that was read; no take could read it). The play request's fields (a 0.1 beside the rate of 1.0 that
-  FUN_00143d10 sets) don't blend the clip in as far as the code that binds it shows. Brutus's lids
-  are unread (take02).
+  that was read; no take could read it). The 0.1 in the play request is the clip's ease-in, a fade
+  over 0.1 s (§ The blink): not applied, the lids close about 0.02 s early in the first tenth of a
+  second. Brutus's lids are unread (take02).
 * The first blink after a spawn was not caught on screen (no take logged one): the staggered phases
   are what show it.
 * A knocked-down but living character's face isn't ticked, and during the get-up the step runs twice a

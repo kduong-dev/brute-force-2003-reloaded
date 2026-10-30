@@ -249,8 +249,7 @@ fn facing(u: &Player) -> Vec3 {
 /// notes).
 #[allow(clippy::too_many_arguments)]
 fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut game: ResMut<GameData>,
-          difficulty: Res<damage::Difficulty>, mut history: ResMut<skills::LineHistory>, mut reserve: ResMut<ammo::Reserve>,
-          mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut images: ResMut<Assets<Image>>,
+          difficulty: Res<damage::Difficulty>, mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut images: ResMut<Assets<Image>>,
           mut materials: ResMut<Assets<StandardMaterial>>) {
     let log = std::env::var("BF_SKILL_LOG").is_ok();
     let cfg = game.0.combat_skills.vengar;
@@ -306,7 +305,7 @@ fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<
             let amount = hit.land(v, &game.0, &difficulty, now);
             let shove = knock_back(velocity, &cfg, v.position);
             let before = v.health;
-            hurt(v, &game.0, amount, HURT_CHATTER, shove.dir, at.translation, -1);
+            hurt(v, &game.0, amount, chatter::Cause::hit(&hit), shove.dir, at.translation, -1);
             // a kill: the knock-back on its ragdoll, once it's built
             if v.dead && before > 0.0 {
                 v.shoves.push(shove);
@@ -320,21 +319,18 @@ fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<
         if hits == 0 {
             continue;
         }
-        // his own, a hit each: the line through the chatter gate (its replay delay keeps a second
-        // one quiet) and his type's sound (FUN_0010e7a0 with 100, positional: 2D for the player's
-        // character); then the pending cost (0x13c474: set, not added)
-        let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
-        let here = player.position;
+        // his own, a hit each: the line through the chatter gate (play_chatter.rs: its replay
+        // delay keeps a second one quiet) and his type's sound (FUN_0010e7a0 with 100, positional:
+        // 2D for the player's character); then the pending cost (0x13c474: set, not added)
         let u = unit(&mut player, &mut squad, i);
         let sound = u.skill.data.as_ref().map_or(0, |d| d.hit_sound);
-        let distance = u.position.distance(here);
         for _ in 0..hits {
-            let said = skills::line(u, &game.0, &mut history, &mut reserve, i, &sight, distance, LINE_CHARGE);
+            chatter::say(u, LINE_CHARGE);
             if sound != 0 {
                 u.sound_queue.push((sound, 1.0));
             }
             if log {
-                println!("t={:.2} {}: line {LINE_CHARGE:08x}: {said}", u.sim_time, unit_name(u));
+                println!("t={:.2} {}: line {LINE_CHARGE:08x} asked of the chatter gate (BF_CHATTER_LOG: what came of it)", u.sim_time, unit_name(u));
             }
         }
         u.skill.pending = cfg.charge_cost;

@@ -280,6 +280,11 @@ struct DebrisPiece {
     scale: Vec3,
 }
 
+/// The scenery's systems on a frame (`plugin`): what hangs on an object taken out of the world
+/// (play_placed_fx.rs, play_lamps.rs) runs after them, on the frame the object goes.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct SceneryStep;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Scenery>()
         .init_resource::<ObjectBlasts>()
@@ -297,7 +302,7 @@ pub fn plugin(app: &mut App) {
         // the same frame, play_fx.rs `tie_decals`, `untie_decals`, #301)
         // (the mines set off before they're handed to the next frame's shots)
         .add_systems(Update, (find_scenery, late_scenery, hit_scenery, break_scenery, area_damage, set_off_mines, debris_life).chain()
-            .after(super::grenade::GrenadeSystems).before(super::fx::FxSystems).before(super::sentry::publish_targets).before(play_sounds)
+            .in_set(SceneryStep).after(super::grenade::GrenadeSystems).before(super::fx::FxSystems).before(super::sentry::publish_targets).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
 
@@ -779,6 +784,10 @@ fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Sc
             if let Some(e) = s.list[i].entity.take() {
                 commands.entity(e).despawn();
             }
+            // (taken out of the world, FUN_0015ae30 -> FUN_000db3e0: what hangs on it goes, #308)
+            if let Some(a) = world::arena() {
+                a.set_gone(i);
+            }
             s.list[i].state = State::Gone;
             if log {
                 println!("t {now:.2}: breakable {i} (h_{name:08x}) gone");
@@ -846,13 +855,17 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             }
             let first = !a.victims.iter().any(|v| v.0 == u.who());
             if first || amount >= u.health {
-                // hurt as by a blast (a grunt, blood); dies from it as from any hurt
+                // hurt as by a blast (blood, its hurt line); dies from it as from any hurt (the
+                // area's record from FUN_0021ade0 taken as one with no attacker character: not
+                // traced)
                 let away = Vec3::new(u.position.x - a.at.x, 0.0, u.position.z - a.at.z).normalize_or(Vec3::X);
-                hurt(u, &game.0, amount, HURT_CHATTER, away * 3.0 + Vec3::Y * 2.0, middle, -1);
+                hurt(u, &game.0, amount, chatter::Cause::bare(a.damage.damage_type), away * 3.0 + Vec3::Y * 2.0, middle, -1);
                 if k == 0 {
                     tint.0 = 0.0;
                 }
             } else {
+                // (a hit through the handler all the same: its hurt line, FUN_00125ad0)
+                chatter::hurt_line(u, chatter::Cause::bare(a.damage.damage_type), amount);
                 u.health -= amount;
             }
             if combat {

@@ -25,7 +25,10 @@
 //!    up to a frame (the takes' face logs, todo/255 take01-03, confirm it: every controller's
 //!    +0x4c resets every 4.0 s). The clip drives its lids (the bones of `Sc_blink` that aren't
 //!    face bones); after it ends they stay at its last key, as the nodes keep what the clip last
-//!    wrote.
+//!    wrote. The game eases the clip in over 0.1 s (a transition from the lids' pose, the weight
+//!    smoothstep(t / 0.1): the request's +0x10, read at 0x2536f0): the lids show the clip from 0.1
+//!    s on and lag it before, so 20 % shut comes 0.02 s later than the bare clip's. The demo
+//!    plays the clip bare (a follow-up, `bf/face.rs`' `write_blink`).
 //!  - **The phase is when the character was made**: the first blink is the first tick and the
 //!    cycle runs on from it, so characters made apart blink apart (the squad's copies, 0.5 s
 //!    apart in e34, as the takes' controllers are) and ones made together blink together. A
@@ -39,7 +42,13 @@
 //! **The weights are the hook** the next slices drive: `Face::weights`, 22 floats in the VE_
 //! order (`face::VISEME_NAMES`: 0-14 the mouth shapes, 15-21 the expressions), each 0 to 1. The
 //! lip-sync will write the sound's tracks into them (FUN_0017aa30), the expression fade
-//! (FUN_001438d0) the last seven.
+//! (FUN_001438d0) the last seven. The speech side is #155's (`play_chatter.rs`), already in
+//! place and not wired here: `Chatter::voice_start` / `voice_stop` begin and end a line on a
+//! character (the game's FUN_001435d0 / FUN_00143570 on its face controller), `voice_tick` runs
+//! its time out, and `Player::voice` (the sound), `Player::voice_priority` and
+//! `Player::speaking` (the time left, the controller's +0x50) hold what it says. `Player::facial`
+//! (this module's `Face`) is separate from them; the lip-sync slice (#325) makes those three
+//! calls drive `Face::weights`.
 //!
 //! Test hooks:
 //!  - `BF_FACE_LOG=1` prints each face made (its bones, its blink, its stretch list) and each

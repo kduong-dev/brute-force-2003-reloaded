@@ -551,8 +551,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     (0x221780 -> 0x125600; play.rs `burn` through `take_hit`): a stamina shield takes it first,
     nothing in a cutscene or out of the world, the difficulty step (the multiplayer maps none;
     STANDARD's squad x0.6), Vengar, the type's factor, BF_COMBAT_LOG's line. It floors nobody.
-    Only an entry hit may draw a hurt line (the demo's rule: take03 has no sound between the foot
-    events while Brutus stands burning, todo/5-liquid-sounds leads §4.1).
+    Each hit asks its hurt line of the chatter gate (#155, [chatter.md](chatter.md): a record
+    with no attacker and +0x5c bit 2, ef32191d, 50% with a 20 s replay delay), so one is said at
+    the entry and none after while the character stands burning (todo/5-liquid-sounds leads
+    §4.1: no sound between the foot events in take03; §4.3: a voice-like burst after the first
+    entry hit in both takes).
     Its blood is the game's decals alone (FUN_00124a70: the entry hits are big enough, the
     shares never; the spray straight up), and a death in a liquid leaves out the demo's death
     spray (play_fx.rs). The game frames run between the drawn ones with the parts' lowest points
@@ -764,7 +767,38 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     link's offset (FUN_0015f0b0, FUN_0015ed30); 373 point lights (all 159 h_09020c30, 214
     h_e81ba579, white, range 10) hang on effect objects, whose effect types name them and run
     them with an ALE light-effect: the placed effects draw those lights (#258), so these aren't
-    drawn again. A `<parent Type="2">` (a hardpoint) keeps its own transform.
+    drawn again. A `<parent Type="2">` (a hardpoint) keeps its own transform. The light-object
+    binds to its effect object as it's made (0x14f370 -> FUN_0021c1c0 -> FUN_0021d040 when its
+    parent is an effect object, object-type 17) and the light effect sets its colour each update
+    (FUN_0021d270: the appearance's current value into the light's +0xf0..+0xf8 and +0x8c, lit
+    while it's above 0.1 and the colour's square over 0.000361); the demo draws a point light
+    for each of the light effect's particles instead (strength: #272).
+  * **Lights that go with their object** (#308). A light-object's tick (0x14f1d0, vtable +0x6c;
+    every light is in the world's update list, 0x14f2a0 -> 0x1554d0) asks its link
+    (FUN_0015ed30) whether its object is still there and returns 0, to be taken out of the
+    world (FUN_000d9840 -> FUN_000db3e0), when that returns 1, which it does for a link whose
+    object pointer is clear, whatever the link's type (and for a type 2 link whose hardpoint isn't
+    in the parent's model, FUN_00236e00). The object's destructor clears the pointer
+    (FUN_001553f0 -> FUN_0008f720), so a light goes a tick after its object: the 373 on effect
+    objects after the effect object they hang on (which goes with its own parent, a barrel's
+    fire; `ale_fx::TakenAway`), and the **lamps hung on a game object** (`LevelLamp::parent`:
+    type 1 or 2 to a placed object that isn't an effect; 15 on breakable objects over 7
+    levels: the torches' glows on m01_a / m01_b / m05_b / m05_y's holders (h_ff23484f 10 hp,
+    h_1149a76f 25 hp), e05's and m08_a's one each (1 hp), m14_d's three capsules, 16 more on
+    the 40 hp sconces that only die and stay) the moment their object has been taken out of
+    the world (`Arena::is_gone`). play_lamps.rs puts those out in the light buffer the level
+    materials read (`lamp_off`: its colour zeroed, then the materials are marked changed
+    a frame on so their bind groups take the new buffer: `touch_materials`; without that the
+    scenery stayed lit) and for the characters (`lamp_light_at`'s `off`). Not applied: a link
+    with no object at all takes its light away at its first tick in the same way (7 lamps: m14_d's
+    six with an empty parent name, `enable-static` false, and e16's h_e8169f89), and so would a
+    hardpoint the parent's model lacks (not checked); the demo draws those lamps as before.
+    Checked on m01_a's sconce (scenery.md "Verified": the lamp's glow on the railing goes with
+    the holder), `BF_LINK_LOG=1` logging each lamp as it goes out. A **destroyer-trigger** takes
+    lamps out of the world at once too (FUN_00200b70 -> FUN_000db3e0): the mission levels name
+    1019 over 25 levels, each fixture's DESTROYED to a router to a destroyer to its lamp (m04_c:
+    140; triggers.md "What a destroyer takes"). The demo ran those chains and left every lamp
+    lit; now each goes out as its destroyer runs (`LampsOut::put_out`).
   * `BF_LIGHT_LOG=1` lists every light-object (name, type, kind, pairs, colour, strength,
     direction or place), the two pairs and FUN_000dcc10's slots for each (`Level::slots`: the
     outdoor slot 0 is the bump map's light and the lava's v0), the ambients, the ones not drawn

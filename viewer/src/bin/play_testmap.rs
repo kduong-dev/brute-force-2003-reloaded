@@ -117,7 +117,7 @@ pub fn load_weapon_data(game: &mut bf_viewer::bf::character::Game) {
     // (the first mission's surfaces and their footsteps, as on any map)
     game.surfaces = surfaces;
     // mp_common's deathmatch types speak from its sound banks' language wave banks (their death
-    // lines: #129, play_enemies.rs `death_cry`)
+    // cries: #129, through the chatter gate, play_chatter.rs `Ask::Death`)
     if list.split(',').any(|l| l == "mp_common") {
         match game.load_bank_streams(&data_dir(), "mp_common", "en") {
             Ok(n) => println!("test map: {n} streamed sounds of mp_common's banks"),
@@ -323,7 +323,7 @@ fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: Res
         *tested |= test;
         let (at, back) = (player.position + Vec3::Y * 1.0, Quat::from_rotation_y(player.yaw) * Vec3::Z);
         let all = super::enemies::lethal(&player);
-        hurt(&mut player, &game.0, all, HURT_CHATTER, back * 2.0 + Vec3::Y, at, -1);
+        hurt(&mut player, &game.0, all, chatter::Cause::bare(0), back * 2.0 + Vec3::Y, at, -1);
     }
 }
 

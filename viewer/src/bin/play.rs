@@ -973,6 +973,7 @@ fn main() {
         .add_plugins(script::plugin)
         .add_plugins(brain::plugin)
         .add_plugins(placed_fx::plugin)
+        .add_plugins(lamps::plugin)
         .add_plugins(camera::plugin)
         .add_plugins(inventory::plugin)
         .add_plugins(itembox::plugin)
@@ -982,6 +983,7 @@ fn main() {
         .add_plugins(item_pickups::plugin)
         .add_plugins(vision::plugin)
         .add_plugins(faces::plugin)
+        .add_plugins(chatter::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1099,6 +1101,8 @@ mod script;
 mod brain;
 #[path = "play_placed_fx.rs"]
 mod placed_fx;
+#[path = "play_lamps.rs"]
+mod lamps;
 #[path = "play_camera.rs"]
 mod camera;
 #[path = "play_liquids.rs"]
@@ -1113,6 +1117,8 @@ mod powerups;
 mod item_pickups;
 #[path = "play_vision.rs"]
 mod vision;
+#[path = "play_chatter.rs"]
+mod chatter;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1305,9 +1311,10 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
 /// `LevelMaterial`); a character's materials are bevy's own, so each takes the light at its chest
 /// from every direction, as its texture added to the picture (emissive), at CHARACTER_LAMP of it
 /// (about the average N.L over a body). A body's stealth copies (play_stealth.rs `BodyCopy`)
-/// have materials of their own and are passed over.
+/// have materials of their own and are passed over. The lamps put out with their object
+/// (play_lamps.rs, #308) give none.
 #[allow(clippy::too_many_arguments)]
-fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
+fn lamp_characters(map: Res<MapLevel>, out: Res<lamps::LampsOut>, player: Res<Player>, squad: Res<Squad>, children: Query<&Children>,
                    parts: Query<&MeshMaterial3d<StandardMaterial>>, drawn: Query<(), (With<Mesh3d>, Without<stealth::BodyCopy>)>,
                    mut materials: ResMut<Assets<StandardMaterial>>, mut last: Local<HashMap<Entity, Vec3>>) {
     let Some(level) = &map.0 else { return };
@@ -1316,7 +1323,7 @@ fn lamp_characters(map: Res<MapLevel>, player: Res<Player>, squad: Res<Squad>, c
     }
     for u in std::iter::once(&*player).chain(squad.0.iter()) {
         let Some(l) = &u.loaded else { continue };
-        let light = bf_viewer::level_scene::lamp_light_at(level, u.position + Vec3::Y * CHEST) * CHARACTER_LAMP;
+        let light = bf_viewer::level_scene::lamp_light_at(level, &out.off, u.position + Vec3::Y * CHEST) * CHARACTER_LAMP;
         // (only when it changes: a changed material is sent to the GPU again)
         if last.get(&l.root).is_some_and(|v| v.distance(light) < 0.005) {
             continue;
@@ -1856,23 +1863,14 @@ pub const METER_TIME: f32 = 1.0;
 /// recordings agree: "BRUTUS" shows at 22.867 s and the cut is at 23.367 s in `Friendly Fire 2
 /// + Death Cam.mp4`, "HAWK" at 31.847 s and 32.333 s. (It was 0.6, unmeasured.)
 const SELECT_TIME: f32 = 0.5;
-/// chatter line set the character you hand over from says as they drop back into the squad
-/// ("I'm right behind you", "Following at a distance", ...: line_tag f415ab02 in all four
-/// <name>_chatter files; the capture's switches transcribe and match to these, said by the
-/// previous character right at the camera cut)
+/// The line the character you hand over from says as they drop back into the squad ("I'm right
+/// behind you", "Following at a distance", ...: line_tag f415ab02 in all four <name>_chatter
+/// files; the capture's switches transcribe and match to these, said by the previous character
+/// right at the camera cut). The game's hand-over (FUN_0005cc20, 0x5d067) says it for the one
+/// left in mode 1, Cover Me (the demo's squad always follows), through the chatter gate
+/// (play_chatter.rs): probability 100, replay delay 30 s, priority 5, a 3 s wait, heard at any
+/// distance.
 const FOLLOW_CHATTER: u32 = 0xF415_AB02;
-/// pain grunts ("Ugh", "Ahh": line_tag e856009f, transcribed) said when hurt by a blast
-const HURT_CHATTER: u32 = 0xE856_009F;
-/// "I'm hit!" (0ae8104e) and, shot by a teammate, "Careful!" / "Stop shooting at me!" (e2d9fb13,
-/// friendly_fire)
-const HIT_CHATTER: u32 = 0x0AE8_104E;
-const FRIENDLY_FIRE_CHATTER: u32 = 0xE2D9_FB13;
-/// the death cry: line_tag e1213623 ("No!", "They finally got me.", "Sorry guys." - the
-/// capture's two deaths match Brutus's us00569 and Hawk's us0010 in this set). Its block's
-/// response names the line a surviving squadmate answers with ("Brutus is down!", "They've taken
-/// out Hawk."...: 0ace9296 / 0cceddf8 / ea52e942 / efc7d9fe), said at the data's 50% chance
-const DEATH_CHATTER: u32 = 0xE121_3623;
-const DEATH_RESPONSE_CHANCE: usize = 2;
 /// a single hit this hard can knock a character down (the L-Shot's 23-27 and Bower's 16-20 can,
 /// the rifles' 2-13 can't; capture: L-Shot hits floor a squadmate for ~0.6 s before they get up)
 const KNOCKDOWN_DAMAGE: f32 = 15.0;
@@ -1885,7 +1883,6 @@ const GET_UP_TIME: f32 = 0.45;
 pub const DIVE_RADIUS: f32 = 6.0;
 /// characters' height for shots (m above the ground)
 const BODY_HEIGHT: f32 = 1.9;
-const QUOTE_DELAY: f32 = 0.05;
 /// characters' collision radius (m)
 const BODY_RADIUS: f32 = 0.4;
 /// wingman places (x right, z back, in the frame of the leader's heading), by member: the
@@ -2386,9 +2383,20 @@ struct Player {
     thrown: Vec<grenade::Thrown>,
     /// control is passing to this squad member (character index) in this many seconds
     select: Option<(usize, f32)>,
-    /// a voice line to say in this many seconds
-    quote_in: Option<(f32, u32)>,
-    /// seconds left of the voice line being said (the HUD shows their speech icon)
+    /// the voice lines asked of the chatter gate this frame (play_chatter.rs `update` runs them)
+    asks: Vec<chatter::Ask>,
+    /// its chatter replay delays: tag -> seconds before it may say that tag again (the game's map
+    /// at char+0x7f4: started when a line is said, FUN_00140cd0 -> FUN_00126460; counted down by
+    /// FUN_0011c100 from the character update)
+    replay: HashMap<u32, f32>,
+    /// the sound its voice is saying (its face controller's, char+0x5b8: FUN_001435d0 starts one,
+    /// FUN_00143570 stops it; play_chatter.rs `Chatter::voice_start`), None while it's quiet
+    voice: Option<u32>,
+    /// the priority of the line its voice is on (char+0x81c, set as a chatter sound starts,
+    /// FUN_0013fab0; 0 while it's quiet, 0x11cc37)
+    voice_priority: i64,
+    /// seconds left of the voice line being said (the face controller's +0x50; the HUD shows their
+    /// speech icon)
     speaking: f32,
     /// hitpoints (the character's combat-target hitpoints at the start)
     health: f32,
@@ -2417,8 +2425,6 @@ struct Player {
     /// character in e34 read 1 live in #141). The crosshair turns yellow on a 2 or a 4
     /// (play_reticle.rs): only a test hook sets one (BF_TEST_NPC_RADAR, play_testtools.rs)
     radar_contact: u8,
-    /// seconds before the next "I'm hit" line
-    hurt_quiet: f32,
     /// knocked down: limp, then getting up (requested with the hit's push)
     knock: Option<Knock>,
     knock_request: Option<Vec3>,
@@ -2469,8 +2475,6 @@ struct Player {
     slide_on: bool,
     slide_fx: Option<Entity>,
     pool_done: bool,
-    /// the line a surviving squadmate says about this death, due in this many seconds
-    death_response: Option<(f32, u32)>,
     /// squad AI fire: wait before joining in, and the current burst / pause
     ai_delay: f32,
     ai_burst: bool,
@@ -2707,7 +2711,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, facial: Default::default(), sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, quote_in: None, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, hurt_quiet: 0.0, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, death_response: None, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -2863,7 +2867,7 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
 
 /// Squad AI: keep to a formation place round the leader (run / sprint to catch up, walk the
 /// last bit) and look where the leader looks. They shoot only at an enemy they can see
-/// (`target`, from `hostile_in_sight`). Reloads happen by themselves (empty clip).
+/// (`target`, from its sight: play_brain.rs `glance`, a brain's `sense`). Reloads happen by themselves (empty clip).
 fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
     let f = FORMATION[slot % FORMATION.len()];
     let mut goal = leader.position + Quat::from_rotation_y(heading) * Vec3::new(f.x, 0.0, f.y);
@@ -2948,7 +2952,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         m.cam_yaw = leader.cam_yaw + sweep;
         m.face_yaw = Some(heading + sweep);
     }
-    // squadmates only aim and shoot at an enemy they can see (`hostile_in_sight`) - never just
+    // squadmates only aim and shoot at an enemy they can see (play_brain.rs `glance`) - never just
     // because the player fires. The main game has no enemies yet, so they hold fire; the test
     // map's enemy NPCs (play_testtools.rs) are the only targets. (Nor while their skill says hold
     // fire: `update_player` leaves the target out then)
@@ -2964,7 +2968,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     m.next_surface = false;
 }
 
-/// An AI character's fire at `target` (a hostile's chest, from `hostile_in_sight`): it faces it
+/// An AI character's fire at `target` (a hostile's chest, from its sight: play_brain.rs `glance` or `sense`): it faces it
 /// and the gun is turned onto it (`ai_target`); it picks a random moment to open up, then fires
 /// in bursts and pauses of its own length. Without a target it holds fire. (The squad AI's
 /// existing burst timing; the aim is exact: the demo's choice, no spread is read.)
@@ -3031,7 +3035,7 @@ const AI_AIM_HEIGHT: f32 = 1.1;
 /// own floor, `step_player`'s `range.max(20)`).
 const AI_MIN_RANGE: f32 = 20.0;
 
-/// How a character can be seen, for `hostile_in_sight` (`sight_list`).
+/// How a character can be seen, for the AI's sight (play_brain.rs `Sensor::scan`; `sight_list`).
 #[derive(Clone, Copy, Debug)]
 struct Seen {
     /// who it is (a level character's brain keeps its contacts by it: play_brain.rs)
@@ -3053,7 +3057,7 @@ struct Seen {
     visibility: f32,
 }
 
-/// How each character can be seen (`Seen`), in the order `hostile_in_sight`'s `me` counts: the
+/// How each character can be seen (`Seen`), in the order the AI's sight counts its `me`: the
 /// player, then the squad.
 fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
     units.map(|u| Seen {
@@ -3069,17 +3073,12 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
 /// The nearest hostile `m` (unit `me` of `sight`: 0 the player, then the squad's order) sees now,
 /// its place in `sight` and its distance, when it's within the held gun's reach (`ai_range`): by
 /// its sensor (play_brain.rs `Sensor::scan`, #197: its sight distance x 1.15 for a contact x
-/// the target's visibility, its field of view, the ray), without changing what it knows. For a
-/// skill line's "fighting" condition (play_skills.rs); the AI itself sees by `brain::glance` or
-/// `brain::sense`. Never anyone in the main game but the level's characters on another side;
-/// BF_TEST_HOSTILE's held squadmate isn't a target either.
+/// the target's visibility, its field of view, the ray), without changing what it knows. The
+/// chatter's "fighting" condition counts the same scan's hostiles (play_chatter.rs `condition`);
+/// the AI itself sees by `brain::glance` or `brain::sense`. Never anyone in the main game but the
+/// level's characters on another side; BF_TEST_HOSTILE's held squadmate isn't a target either.
 fn nearest_hostile(m: &Player, me: usize, sight: &[Seen]) -> Option<(usize, f32)> {
     brain::nearest_within(&m.sensor.scan(m, me, sight), ai_range(m))
-}
-
-/// The chest of the nearest hostile `m` can see (`nearest_hostile`).
-fn hostile_in_sight(m: &Player, me: usize, sight: &[Seen]) -> Option<Vec3> {
-    nearest_hostile(m, me, sight).map(|(i, _)| sight[i].chest)
 }
 
 /// How far (m) `m`'s AI fires: its held weapon's range, at least AI_MIN_RANGE. The shot's own
@@ -3094,37 +3093,8 @@ fn ai_range(m: &Player) -> f32 {
 /// joins the squad AI.
 fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut test_died: ResMut<TestDied>) {
     let dt = frame_dt(&time);
-    // voice lines due (whoever says them; the HUD shows their speech icon while they talk)
-    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        u.speaking -= dt;
-        if let Some((left, id)) = u.quote_in {
-            u.quote_in = if left - dt > 0.0 { Some((left - dt, id)) } else {
-                u.sound_queue.push((id, 1.0));
-                u.speaking = game.0.sounds.pcm(id).map_or(1.0, |(rate, s)| s.len() as f32 / rate as f32);
-                None
-            };
-        }
-    }
-    // a squadmate answers a death ("Brutus is down!"): a living member who isn't talking
-    let mut answers = vec![];
-    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        // (not for a test map NPC, nor by one)
-        if !u.in_squad() {
-            u.death_response = None;
-        }
-        if let Some((left, tag)) = u.death_response {
-            u.death_response = if left - dt > 0.0 { Some((left - dt, tag)) } else { answers.push((u.character, tag)); None };
-        }
-    }
-    for (dead, tag) in answers {
-        let mut alive: Vec<&mut Player> = std::iter::once(&mut *player).chain(squad.0.iter_mut())
-            .filter(|u| !u.dead && !u.absent && u.in_squad() && u.character != dead && u.speaking <= 0.0 && u.quote_in.is_none()).collect();
-        if !alive.is_empty() {
-            let n = alive.len();
-            let k = alive[0].random(n);
-            say(alive[k], &game.0, tag, 0.0);
-        }
-    }
+    // (the voice lines, their speech icon's time and a death's reply are the chatter's:
+    // play_chatter.rs)
     // test hook: BF_TEST_KILL=<character> - from 1 s, turn to that squad member and keep firing
     if let Some(c) = std::env::var("BF_TEST_KILL").ok().and_then(|v| v.parse::<usize>().ok()) {
         if let Some(m) = squad.0.iter().find(|m| m.character == c && m.in_squad()) {
@@ -3145,7 +3115,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         test_died.0 = true;
         let (at, side) = (player.position + Vec3::Y, Vec3::new(player.yaw.cos(), 0.0, -player.yaw.sin()));
         let all = enemies::lethal(&player);
-        hurt(&mut player, &game.0, all, HURT_CHATTER, side * 5.0 + Vec3::Y * 2.0, at, -1);
+        hurt(&mut player, &game.0, all, chatter::Cause::bare(0), side * 5.0 + Vec3::Y * 2.0, at, -1);
     }
     // dead: the death camera (play_deathcam) picks the next living member near its end
     let Some((c, left)) = player.select else { return };
@@ -3212,10 +3182,11 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // (a tap still owed its shot doesn't go on firing for the one handed over from)
         m.fire_state.drop_pull();
     }
-    // the character handed over from drops back with a follow line (unless they're dead)
+    // the character handed over from drops back with a follow line (unless they're dead), through
+    // the chatter gate (FUN_0005cc20 at 0x5d067)
     let left_behind = &mut squad.0[i];
     if !left_behind.dead {
-        say(left_behind, &game.0, FOLLOW_CHATTER, QUOTE_DELAY);
+        chatter::say(left_behind, FOLLOW_CHATTER);
     }
 }
 
@@ -3543,8 +3514,9 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
          mut buffers: ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>) {
     let mut ale = bf_viewer::ale_fx::AleAssets::new(&mut meshes);
     info!("ALE library: {} effects, {} nodes", game.0.effects.effects.len(), game.0.effects.nodes.len());
-    // a new world: the enemies' chatter history starts empty (play_enemies.rs)
-    enemies::new_world();
+    // a new world: a new chatter manager (world+0xbe8, FUN_00140870 as the world is made): no line
+    // playing or waiting, no mute, the variant history empty (play_chatter.rs)
+    commands.insert_resource(chatter::Chatter::default());
     // the slide dust, ready before anyone slides
     if let Some(&fx) = game.0.effect_types.get(&SLIDE_EFFECT).and_then(|l| l.first()) {
         ale.load(&mut game.0, &mut images, &mut materials, fx);
@@ -4502,7 +4474,7 @@ fn land_ai_shot(u: &mut Player, h: &PendingHit, game: &Game, difficulty: &damage
     let amount = hit.land(u, game, difficulty, now);
     let bled = u.blood.len();
     let alive = !u.dead;
-    hurt(u, game, amount, HURT_CHATTER, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+    hurt(u, game, amount, chatter::Cause::hit(&hit), Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
     // (a kill's own shoves on the body: behind ragdoll::DEATH_SHOVE)
     if alive && u.dead {
         ragdoll::death_shoves(u, hit.bone(), at, h.dir, amount, hit.damage_type, hit.push);
@@ -4516,19 +4488,18 @@ fn land_ai_shot(u: &mut Player, h: &PendingHit, game: &Game, difficulty: &damage
 }
 
 /// A shot of the controlled character's landing on squad member (or NPC) `m`
-/// (`Player::pending_hits`, and a bolt's hit, play_bolts.rs): as `land_ai_shot`, but the hurt line
-/// is mostly a grunt, now and then "I'm hit" or a word about friendly fire; the test map's instant
-/// kill makes one hit enough (a stamina shield's share too); and shot by the player they sidestep
-/// one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE).
+/// (`Player::pending_hits`, and a bolt's hit, play_bolts.rs): as `land_ai_shot` (a squadmate's
+/// hurt line the friendly fire one, e2d9fb13, by FUN_00125ad0's table: play_chatter.rs); the test
+/// map's instant kill makes one hit enough (a stamina shield's share too); and shot by the player
+/// they sidestep one time in three (EVT_DAMAGED_BY_PC -> GOAL_DODGE).
 fn land_player_shot(m: &mut Player, h: &PendingHit, game: &Game, difficulty: &damage::Difficulty, now: f32, instant_kill: bool) {
-    let tag = match m.random(6) { 0 => FRIENDLY_FIRE_CHATTER, 1 => HIT_CHATTER, _ => HURT_CHATTER };
     let at = m.position + h.local;
     let mut hit = h.hit;
     let amount = hit.land(m, game, difficulty, now);
     let amount = if instant_kill { enemies::lethal(m).max(amount) } else { amount };
     let bled = m.blood.len();
     let alive = !m.dead;
-    hurt(m, game, amount, tag, Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
+    hurt(m, game, amount, chatter::Cause::hit(&hit), Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
     // (a kill's own shoves on the body: behind ragdoll::DEATH_SHOVE)
     if alive && m.dead {
         ragdoll::death_shoves(m, hit.bone(), at, h.dir, amount, hit.damage_type, hit.push);
@@ -4801,9 +4772,6 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         let Some(m) = squad.0.get_mut(h.member) else { continue };
         land_player_shot(m, &h, &game.0, &difficulty, now, instant_kill);
     }
-    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        u.hurt_quiet -= dt;
-    }
     // shots hitting a body on the ground push it (anyone's: the dead, and the knocked down; a
     // bolt's on its sweep, play_bolts.rs): the demo's placeholder (play_ragdoll.rs `Ragdoll::shot`)
     let shots: Vec<(Vec3, Vec3, f32)> = std::iter::once(&*player).chain(squad.0.iter())
@@ -5058,7 +5026,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                         let at = u.position + Vec3::Y * 0.2;
                         // (DTYPE_NORMAL, through the character's handler: the step, play_damage.rs)
                         let amount = damage::Hit::new(most * k * k, "fall", FALL_DAMAGE_TYPE).land(u, &game.0, &difficulty, now);
-                        hurt(u, &game.0, amount, HURT_CHATTER, Vec3::Y * 2.0, at, -1);
+                        // (no attacker, +0x5c bit 2: the hurt line ef32191d, a death ed35ffae)
+                        hurt(u, &game.0, amount, chatter::Cause::fall(FALL_DAMAGE_TYPE), Vec3::Y * 2.0, at, -1);
                     }
                     u.fall_from = g;
                 }
@@ -5475,27 +5444,12 @@ fn body_thud(r: &ragdoll::Ragdoll, thud: &mut bool, body_at: &mut Option<Vec3>, 
     }
 }
 
-/// Have `u` say a random line of a chatter set (after `delay` s), unless they are already talking.
-/// The squad's lines are their names' chatter files (by type: a squad type in another's slot says
-/// its own). A type of its own (an enemy, or such a squad member on the test map) says only its
-/// death line (`enemies::death_cry`): the takes' Shrikes said nothing on the hits before the kill.
-fn say(u: &mut Player, game: &Game, tag: u32, delay: f32) {
-    if u.speaking > 0.0 || u.quote_in.is_some() || u.own_type() {
-        return;
-    }
-    let lines: Vec<u32> = game.chatter.get(u.data_name()).and_then(|c| c.get(&tag))
-        .map(|v| v.iter().copied().filter(|&id| game.sounds.has(id)).collect()).unwrap_or_default();
-    if !lines.is_empty() {
-        let k = u.random(lines.len());
-        u.quote_in = Some((delay, lines[k]));
-    }
-}
-
-/// Damage `u` (hit at `at`, world, by `ammo`, -1 for a blast): blood; at 0 they die (death cry, the body goes limp with
-/// `push`, a surviving squadmate may answer); a hard hit can knock them down; otherwise they
-/// grunt or say a line of `tag` now and then.
-fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64) {
-    take_hit(u, game, amount, tag, push, at, ammo, false, true);
+/// Damage `u` (hit at `at`, world, by `ammo`, -1 for a blast; `cause` what its record says of
+/// whom and how, play_chatter.rs `Cause`): blood; its hurt line through the chatter gate (by
+/// FUN_00125ad0's table); at 0 they die (the death cry and the killer's line, the body goes limp
+/// with `push`); a hard hit can knock them down.
+fn hurt(u: &mut Player, game: &Game, amount: f32, cause: chatter::Cause, push: Vec3, at: Vec3, ammo: i64) {
+    take_hit(u, game, amount, cause, push, at, ammo, false);
 }
 
 /// A liquid's hit on `u` (play_liquids.rs), at `at` (the record's point: the character's
@@ -5503,18 +5457,20 @@ fn hurt(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3
 /// liquid sends every one to it, 0x221780), but it floors nobody (take03 of #146: thirteen entry
 /// hits of 30 left Brutus walking) and its blood is the game's decals alone (`Bleed::burn`:
 /// FUN_00124a70 runs after any hit on a character, but there's no weapon's impact: no particles,
-/// no hit effect or sound). No push (the record's direction is straight down, 0x221780). `entry`:
-/// the whole rate as a part goes in, which may draw a hurt line as `hurt`'s hits do; a frame's
-/// share draws none (the demo's: take03 has no sound between the foot events while Brutus
-/// stands burning, todo/5-liquid-sounds leads §4.1; the game's chatter gate isn't modelled here).
-fn burn(u: &mut Player, game: &Game, amount: f32, at: Vec3, entry: bool) {
-    take_hit(u, game, amount, HURT_CHATTER, Vec3::ZERO, at, -1, true, entry);
+/// no hit effect or sound). No push (the record's direction is straight down, 0x221780). Each
+/// hit, the entry's and every frame's share, asks its hurt line (a liquid's record: no attacker,
+/// +0x5c bit 2, ef32191d): its 20 s replay delay keeps it to one, at the entry (todo/5-liquid-sounds
+/// leads §4.3: a 0.5-0.7 s voice-like burst after the first entry hit in both takes, and nothing
+/// between the foot events after it while Brutus stands burning).
+fn burn(u: &mut Player, game: &Game, amount: f32, at: Vec3) {
+    take_hit(u, game, amount, chatter::Cause::liquid(liquids::DTYPE_FLAME), Vec3::ZERO, at, -1, true);
 }
 
-/// `hurt` and `burn`'s hit: `liquid` for a liquid's (`burn`), `speaks` whether it may draw a hurt
-/// line (`tag`).
+/// `hurt` and `burn`'s hit: `liquid` for a liquid's (`burn`). Its hurt line is asked before the hit
+/// points go down (CBT_DAMAGED: FUN_00125ad0 reads them before FUN_002232d0 takes the hit off),
+/// the death's lines after.
 #[allow(clippy::too_many_arguments)]
-fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: Vec3, ammo: i64, liquid: bool, speaks: bool) {
+fn take_hit(u: &mut Player, game: &Game, amount: f32, cause: chatter::Cause, push: Vec3, at: Vec3, ammo: i64, liquid: bool) {
     // (nor while a cutscene has the world: the damage handler 0x125600 leaves at once while the
     // world's +0xc50 bit 4 is set, play_script.rs; nor one not in the world yet)
     if u.dead || amount <= 0.0 || script::in_cutscene() || u.absent {
@@ -5522,12 +5478,13 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: 
     }
     let dir = push.normalize_or(Vec3::Y);
     // an enemy's stamina shield takes it first (#129, play_enemies.rs: the deathmatch Shrikes');
-    // one it takes whole draws no blood (the shield's look instead)
+    // one it takes whole draws no blood (the shield's look instead) and no CBT_DAMAGED
     let amount = enemies::absorb(u, game, amount);
     if amount <= 0.0 {
         u.blood.push(Bleed { at, dir, ammo, a: 0.0, hp_left: u.health, shielded: true, record: None, burn: liquid });
         return;
     }
+    chatter::hurt_line(u, cause, amount);
     u.health = (u.health - amount).max(0.0);
     // (the game's blood decals size by the amount over the type's damage-multiplier, and by the
     // hit points left after it: FUN_00124a70, play_fx.rs)
@@ -5542,26 +5499,14 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: 
         u.death_push = push;
         u.fire = false;
         u.aim = false;
-        u.quote_in = None;
-        u.speaking = 0.0;
         // (one lying limp from a knock-down dies where it lies: its ragdoll goes on as the corpse's,
         // a thing's body now, update_player; one already getting up starts a ragdoll from its pose)
         if !knocked_down(u) {
             u.knock = None;
         }
-        // (an enemy's from its type's chatter, started now: play_enemies.rs)
-        if enemies::enemy(u) {
-            enemies::death_cry(u, game, DEATH_CHATTER);
-        } else {
-            say(u, game, DEATH_CHATTER, 0.0);
-        }
-        // the answer comes once the cry is over
-        let cry = u.quote_in.map_or(1.5, |(_, id)| game.sounds.pcm(id).map_or(1.5, |(r, s)| s.len() as f32 / r as f32));
-        if let Some(&r) = game.chatter_response.get(u.data_name()).and_then(|m| m.get(&DEATH_CHATTER)) {
-            if u.random(DEATH_RESPONSE_CHANCE) == 0 {
-                u.death_response = Some((cry + 0.4, r));
-            }
-        }
+        // the death's lines (FUN_00125f40): its cry, an enemy's from its type's chatter library
+        // too, and its killer's line; a teammate's reply is the cry's response (play_chatter.rs)
+        chatter::death(u, cause);
         return;
     }
     // a hard hit floors them now and then (not right after getting up); an enemy reacts by its
@@ -5577,10 +5522,6 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, tag: u32, push: Vec3, at: 
                 println!("  knocked down: {}", unit_name(u));
             }
         }
-    }
-    if speaks && u.hurt_quiet <= 0.0 {
-        say(u, game, tag, 0.05);
-        u.hurt_quiet = 0.8;
     }
 }
 

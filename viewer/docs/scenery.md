@@ -65,9 +65,8 @@
     A named one that a level trigger listens to sends DESTROYED as it breaks; one a
     destroyer-trigger removes is hidden and set broken the same way, without debris, and one
     removed as the level starts (the tutorial's four h_0247aefb props) is gone from the list's
-    start ([triggers.md](triggers.md), #220). A placed effect object attached to it (a
-    `<parent Type="1">` link: e01's barrel fires on their barrels) goes as it breaks
-    (FUN_0021a700; maps.md "Placed effect objects", #258).
+    start ([triggers.md](triggers.md), #220). The effects and lamps a level hangs on it go with
+    it, on the frame its model does (**What hangs on an object**, below, #308).
     **The decals on it go with it** (#301): the bullet holes, scorches and blood laid on its
     surface vanish on the frame its model goes (the end of the break, as the game's
     countdown ends it: FUN_0015ae30), or after a destroyer hides it. The game keeps a decal laid
@@ -104,6 +103,74 @@
     * 17, an effect object: its ALE effects and light effect at the object's centre, its sounds
       (barrel 14295eb1, rack 14d0b600, crate fa344138), and its damage areas. Loose pickups and
       debris near it are thrown (`pickups::Blasts`).
+  * **What hangs on an object when it goes** (#308). A level hangs placed effect objects (fires,
+    torches' flames) and light-objects (lamps) on its objects, by a `<parent>` link of type 1 (the
+    object itself: e01's 30 barrel fires) or type 2 (a hardpoint of its model: the torches and
+    sconces). They go, or die down, when the object has gone from the world: the end of its
+    break's countdown (FUN_0015ae30, the same frame its model is taken away) or a destroyer's
+    removal (`Arena::set_gone`, set by `break_scenery` and play_triggers.rs). Before #308 the demo
+    despawned a barrel's effect entity at the *start* of the break and left what it had made to
+    live out (its light particles for 1.3 s: 7 point lights within 3 m at the break, 5 at 0.2 s
+    on, 2 at 0.8 s, the last out at 1.3 s), left a torch's flame burning in the air where its
+    holder had been and its lamp lit for good. From the code: the world removes an object with
+    FUN_000db3e0, which runs the object's vtable +0xa0 first (for a game object FUN_001586a0,
+    0x39ae98; the items' and the other classes' tables hold it too), and its destructor then
+    clears every weak pointer to it (FUN_001553f0 -> FUN_0008f720):
+    * **its static effects are stopped** (FUN_0015a1d0, from FUN_001586a0): the up to 8 effect
+      objects its `<static-effects objects>` names (h_1e6b3e1a; the object's +0x88 + 8 x n
+      pointers) each get FUN_0021c700 with AL 1, and the pointer is cleared. Every name in any
+      object's list in the game's data is an effect object linked back to it (117 by a type 1
+      link, 278 by a type 2). The stop has each ALE effect of the effect object, and its light
+      effect, take its emitters out of the ALE manager (the instance's 0x2abcd0 with the mask 1:
+      the nodes whose flag +0x90 bit 1 is set, the emitter class's) and set its appearances'
+      time to the end (0x2ab9a0 with FLT_MAX and the mask 4: SetTime, which puts each past its
+      lifespan). No more particles are made, and the ones out finish their lives. That last is
+      a reading: an emitter births into another node (the appearance, by the data's pairing:
+      FUN_00065800 asks the node at its +0x94 whether it's finished), and that the appearance
+      finishes only once its particles are out, rather than at once, rests on the takes: a
+      bolt's trail fades where it was laid when its bolt ends (play.md § Bolts and their hits),
+      which is the same stop;
+    * **a type 1 effect is then destroyed**: its next tick's follow step (FUN_0021a700) finds the
+      link's object gone, and for a type 1 link returns 0 with the effect's +0x10c bit 1 clear
+      (the placed ones'; set, it detaches instead, FUN_0021c700 with AL 1: what sets it isn't
+      traced), so the world destroys it (FUN_0021a4d0 ->
+      FUN_0021c700 with AL 0): every node of its ALE effects and its light effect is taken out
+      (0x2abcd0 with the mask 7), the particles and lights with them, none left to live out.
+      The light-object hung on it goes at its next tick (below). The game takes a tick for each
+      step: its fire is gone one frame after its object and its light one more; here they go
+      together, with the model. `ale_fx::TakenAway` despawns the effect and every particle,
+      ribbon and carried effect it made (`take_away`, first in the PostUpdate chain, so none is
+      born that frame);
+    * **a type 2 effect only dies down**: FUN_0021a700 acts on a type 1 link only (it tests the
+      link's +0xc against 1), so a hardpoint effect is never taken away by its parent's going: it
+      stays in the world, empty. Its emitters are stopped by the first step, and the flame goes as
+      its last particles do (the sconce's over ~0.6 s here) and the light effect's light with
+      them. Here `AleEffect::active` is cleared (the same: an inactive effect makes no new
+      particles and those out finish). Only the effects the holder lists: 50 of the 328 type 2
+      placements are in no list (all but two on holders that never go, 0 or 40 hp with no
+      debris list; m05_y's two on a breakable torch), and burn on, as the game's do;
+    * **a lamp goes at once**: a light-object's tick (0x14f1d0) asks its link (FUN_0015ed30) whether
+      its object is still there and returns 0, to be taken out of the world, when that says 1,
+      whatever the link's type (levels.md "Lights that go with their object"). So the torches' glows (a point light
+      on the holder's hardpoint, m01_a / m01_b / m05_b / m05_y / e05 / m08_a) and m14_d's three
+      capsule lamps (a type 1 link: the capsule itself) go out with their object: 15 lamps over 7
+      levels hang on a breakable one (16 more on the 40 hp sconces that only die and stay).
+      play_lamps.rs puts them out in the level materials' light buffer and for the
+      characters' (`LampsOut`);
+    * **a lamp a destroyer names goes out the same way**, and these are the many: the mission
+      levels' lamp posts and fixtures (1019 lamps over 25 levels, m04_c's 140) each have a router
+      listening to the fixture's DESTROYED and a destroyer behind it, which takes the light out
+      at once (FUN_00200b70 -> FUN_000db3e0). The demo ran the chain and logged "removes the
+      placed ...", leaving the lamp lit: now it goes out as the destroyer runs (play_triggers.rs
+      `Act::Destroy`, `LampsOut::put_out`; triggers.md "What a destroyer takes").
+    The object's other list, `<h_f2990a77 objects>` (the **static-lights**: the sconce lists its
+    lamp), looks like the lights that light *it* rather than ones it owns: the one reader that
+    takes an object's own, 0xe98a0, hands it to FUN_000dc840 with the object's place, and
+    FUN_0009f0b0 takes the same getters (vtable +0x110 / +0x114) of the world's own light
+    holder. Nothing that was read removes those lights when the object goes (inferred).
+    FUN_0015ed30 also returns 1 for a link with no object at all (an empty parent name) and for a
+    type 2 link whose hardpoint isn't a node of the parent's model (FUN_00236e00 finds none), so
+    a light-object so linked is taken away at its first tick: not applied (see **Not done**).
   * **Damage areas**, the effect object's own code (FUN_0021ade0): starting 0.1 s after the
     effect (the takes' first HP loss) for `duration` seconds.
     * Who: every target within `range` of the object's centre, measured in 3D to the
@@ -144,7 +211,14 @@
       40.0 (the take's 39.4).
   * **Not done**:
     * intact objects aren't pushed (the takes: they never move, they break);
-    * the objects' `h_f2990a77` light lists aren't removed (empty on every sdm_e34 object);
+    * the objects' `h_f2990a77` lists are the lights that light them (not read: the level
+      materials light them by the pair's lamps), see above; empty on every sdm_e34 object;
+    * lamps the game takes away at their first tick, for a link with no object: 7 lamps have an
+      empty parent name (m14_d's six, type 1, `enable-static` false; e16's h_e8169f89, type 2),
+      and any type 2 lamp whose hardpoint isn't in its parent's model (not checked); the game's
+      code puts them out as it does a lamp whose object has gone. They're drawn as they were,
+      like e16's effect h_1f4f877f (a type 1 link to nothing: FUN_0021a700 returns 0 for it at
+      its first tick), which the demo runs. No take shows either (found for #308, not changed);
     * loose pickups resting on a broken object stay where they were (its decals go with it since
       #301, above);
     * no score popup ("+1200") and no objective signals;
@@ -160,8 +234,43 @@
       (or `BF_TEST_HIT_NEAR=<x>,<z>`) with 50 ballistic at those times, as the takes' gdb call
       did: one with a debris list, or with `BF_TEST_HIT_ANY=1` any with hit points (#263);
     * `BF_SCENERY_LOG=1` lists the breakable objects and logs each hit, break, spawn and area;
+    * `BF_LINK_LOG=1` logs what hangs on an object as it goes (#308): each placed effect taken
+      away or stopped, each lamp put out (and the level materials bound to the light buffer
+      again), and ten times a second the point lights alive and their summed intensity, within
+      3 m of `BF_LINK_AT=<x>,<z>` when that's set (and only then);
     * `BF_COMBAT_LOG=1` prints each area tick's damage and the victim's difficulty step.
   * **Verified**:
+    * #308, e01's fire barrel (`BF_MAP=e01 BF_NO_SQUAD=1 BF_TEST_GOTO=-110.96,58,-110.96,58
+      BF_CAMERA_AIM_AT=-110.96,41.2,51.77 BF_TEST_HIT=3.0 BF_TEST_HIT_NEAR=-110.96,51.77
+      BF_SCENERY_LOG=1 BF_LINK_LOG=1 BF_LINK_AT=-110.96,51.77`, scratchpad t308dev): it breaks at
+      3.07 s, its pieces come at 3.07, its effect at 3.13, the model goes at 3.20 and "placed
+      effect h_0b5e92c7 (2 effects) taken away with its object" is logged on that same frame (the
+      fire and its light effect). The point lights within 3 m: 6-8 until then and none from 3.27
+      s (the build before: 5, 4, 3, 2, 1 until 4.33 s). The frames are the build before's pixel
+      for pixel until the break, and after it differ in a few particle pixels only: the barrel's
+      own burst covers the picture for 0.7 s, and the baked ground takes no point lights.
+    * #308, m01_a's sconce h_0b35bbce (10 hp, a flame and a lamp on its hardpoint;
+      `BF_MAP=m01_a BF_NO_SQUAD=1 BF_TEST_GOTO=41.5,42,41.5,42,92.0
+      BF_CAMERA_AIM_AT=41.7,91.0,37.0 BF_TEST_HIT=3.0 BF_TEST_HIT_NEAR=41.27,37.64 BF_LINK_LOG=1
+      BF_LINK_AT=41.3,37.6`): it breaks at 3.07 s and is gone at 3.20, where "placed effect
+      h_f860925e (2 effects) stopped with the object that holds it" and "lamp h_eec3373e goes out
+      with its object" are logged; the flame near the crosshair dies down over ~0.6 s and the
+      point lights within 3 m (2-3, their intensity ~50 in all) are gone by 3.47 s. The build before left both for
+      good: the flame hung in the air at 6.6 s and the lamp lit the wooden railing's top edge
+      (the railing's region 79.5 red against 79.3 after; 79.46 when only the buffer changed and
+      the materials weren't touched, `touch_materials`). m14_d's three capsule lamps
+      (`BF_MAP=m14_d BF_TEST_HIT=3.0 BF_TEST_HIT_NEAR=40.73,-50.35`) go out with their capsules
+      at 3.40 s and (the chain reaction's two) 3.93 s, logged: the view from the floor shows no
+      difference, as the lamps light little from there.
+    * #308, a destroyer's lamp (m08_a's lamp post h_ec4a51ce, 1 hp; m04_c's h_ff9dba99, 40 hp):
+      "trigger_destroyer166 removes the lamp h_f31fce33" on the frame the router passes the
+      post's DESTROYED, and the lamp goes out in the same frame (recipe and numbers in
+      triggers.md "What a destroyer takes").
+    * #308, a destroyer (e34's tutorial pointer, `BF_MAP=e34 BF_NO_SQUAD=1
+      BF_TEST_GOTO=69.2,-84,69.2,-84,31.0 BF_CAMERA_AIM_AT=69.22,29.9,-92.54
+      BF_TRIGGER_FIRE=h_f211fe52,6,4.0 BF_TRIGGER_LOG=1`): its purple glow is gone on the frame
+      the destroyer removes it (4.07 s: "removes the effect h_f3bee12f"); before, the particles
+      it had made faded over the next 0.9 s.
     * #301, a crate's holes (`BF_MAP=sdm_e34 BF_NO_SQUAD=1 BF_TEST_GOTO=-42.37,22.5,-42.37,40
       BF_TEST_GO_AT=100 BF_CAMERA_AIM_AT=-42.37,29.4,28.3 BF_TEST_TRIGGER=1.0-1.9 BF_TEST_HIT=3.0
       BF_TEST_HIT_NEAR=-42.37,28.89 BF_SCENERY_LOG=1`): two bolts strike crate 206 (4.94 and

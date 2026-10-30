@@ -31,8 +31,12 @@
 //! appearance's size (m) and whose strength is its colour x alpha x size, as the hand-made DNA
 //! light in play_fx.rs reads light_powerup_pill. (The effect types with a light-effect also
 //! list a light object type in h_f8c6a8b4: h_09020c30, a point light of range 10, for the
-//! Therm Sweeper's muzzle and explosion. That the light effect drives it is an inference from
-//! the data; the code isn't traced.)
+//! Therm Sweeper's muzzle and explosion. The game's light effect drives one such light-object
+//! per effect object: a level's light linked to the effect object by `<parent Type="1">` binds
+//! to it as it's made (0x14f370 -> FUN_0021c1c0 -> FUN_0021d040), and each update takes the
+//! light effect's current colour and size into it (FUN_0021d270). The demo draws every particle
+//! as a point light instead (the strength question is #272's). The light goes as its effect
+//! object does, as the particles do here: `TakenAway`, `AleEffect::active`, #308.)
 //!
 //! The level's placed effect objects (`spawn_placed_effects`, #258: the tutorial's flies,
 //! butterflies and lava embers, other levels' fires, torches and dust storms) run from the
@@ -41,7 +45,7 @@
 //! turbulence fields push them about (CLASS_TURBULENCE). A camera-attached one is kept at the
 //! camera (`FollowCamera`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy::{
@@ -803,7 +807,7 @@ impl Count {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Seq>()
-        .add_systems(PostUpdate, (follow_camera, start_late, emit, animate, beams).chain().before(TransformSystem::TransformPropagate))
+        .add_systems(PostUpdate, (take_away, follow_camera, start_late, emit, animate, beams).chain().before(TransformSystem::TransformPropagate))
         .add_systems(Update, end_warm_up);
 }
 
@@ -838,6 +842,49 @@ fn follow_camera(camera: Query<&Transform, (With<Camera3d>, Without<ChildOf>, Wi
 /// seven effects at 2 s) is the one placed so.
 #[derive(Component)]
 pub struct StartAfter(pub f32);
+
+/// Marks the effect entities of a placed effect object the game destroys (#308): its destructor
+/// (FUN_0021a4d0) runs FUN_0021c700 with AL 0, which has each of its slots' ALE effects, and its
+/// light effect, take every node out of the ALE manager at once (the effect instance's 0x2abcd0
+/// with the mask 7: emitters, fields and appearances), so the particles it had made and the
+/// lights its light effect drove are gone on that frame, none left to live out (the effect
+/// object's tick returns 0 once its parent is gone, FUN_0021a700; a destroyer-trigger's object
+/// is taken the same way). `take_away` despawns the entities with everything they made. An
+/// effect that's only stopped (FUN_0021c700 with AL 1, a torch's when its holder goes: its
+/// emitters are taken out, its appearances kept) is `AleEffect::active` false instead.
+#[derive(Component)]
+pub struct TakenAway;
+
+/// Despawns the effects marked `TakenAway` and every particle and ribbon they made, and the
+/// effects carried by those particles (an effect appearance's) with theirs. Runs first, so a
+/// taken effect makes no more particles this frame.
+fn take_away(mut commands: Commands, taken: Query<Entity, With<TakenAway>>, particles: Query<(Entity, &AleParticle)>,
+             strips: Query<(Entity, &BeamStrip)>, children: Query<&Children>) {
+    if taken.is_empty() {
+        return;
+    }
+    let mut gone: HashSet<Entity> = taken.iter().collect();
+    // (a particle that carries an effect of its own: that effect goes with it, and so does what
+    // it made)
+    for (e, p) in &particles {
+        if gone.contains(&p.source) {
+            gone.extend(children.iter_descendants(e));
+        }
+    }
+    for (e, p) in &particles {
+        if gone.contains(&p.source) {
+            commands.entity(e).try_despawn();
+        }
+    }
+    for (e, s) in &strips {
+        if gone.contains(&s.source) {
+            commands.entity(e).try_despawn();
+        }
+    }
+    for e in taken.iter() {
+        commands.entity(e).try_despawn();
+    }
+}
 
 /// Starts the effects whose wait (`StartAfter`) is over.
 fn start_late(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, mut late: Query<(Entity, &mut StartAfter, &mut AleEffect)>) {
@@ -1996,11 +2043,13 @@ pub fn spawn_idle_effects(commands: &mut Commands, game: &mut Game, level: &crat
 pub const PLACED_VARIANTS: &str = "BF_PLACED_FX_VARIANTS";
 
 /// A placed effect object started (`spawn_placed_effects`): its name (what a destroyer-trigger
-/// names it by), the object it's attached to (`EffectObject::parent`, 0 for none) and the
-/// entities its ALE effects run on.
+/// names it by), the object it's attached to (`EffectObject::parent`, 0 for none), the object
+/// whose hardpoint it sits at (`EffectObject::holder`, 0 for none) and the entities its ALE
+/// effects run on.
 pub struct PlacedEffect {
     pub name: u32,
     pub parent: u32,
+    pub holder: u32,
     pub entities: Vec<Entity>,
 }
 
@@ -2031,8 +2080,8 @@ pub struct PlacedEffect {
 /// tick calls FUN_0021c500 instead of taking it away, 0x21b9bb), and each alchemy entry's own
 /// max-life (the slot's +8, which FUN_0021a850 reads: FLT_MAX on nearly every entry, 10 s on
 /// h_f90c728a's in m01_a/b and m05_b/y; they run on). An object attached to another
-/// (`PlacedEffect::parent`) is left to the caller to take away with it (bf_play's
-/// play_placed_fx.rs). BF_LEVEL_DUMP lists them.
+/// (`PlacedEffect::parent`, `holder`) is left to the caller to take away or stop with it
+/// (bf_play's play_placed_fx.rs). BF_LEVEL_DUMP lists them.
 pub fn spawn_placed_effects(commands: &mut Commands, game: &mut Game, level: &crate::bf::level::Level, assets: &mut AleAssets,
                             images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) -> Vec<PlacedEffect> {
     let templates = level.spawn_templates();
@@ -2083,7 +2132,7 @@ pub fn spawn_placed_effects(commands: &mut Commands, game: &mut Game, level: &cr
             entities.push(e.id());
         }
         if !entities.is_empty() {
-            out.push(PlacedEffect { name: o.name, parent: o.parent, entities });
+            out.push(PlacedEffect { name: o.name, parent: o.parent, holder: o.holder, entities });
         }
     }
     out

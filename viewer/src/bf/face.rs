@@ -299,7 +299,10 @@ impl FaceTable {
 
     /// The blink's lids `t` seconds into the clip (held at its last key from its end on: the
     /// nodes keep what the clip last wrote), on a skeleton's local transforms: what the
-    /// animation player does with the bound targets of `Sc_blink`.
+    /// animation player does with the bound targets of `Sc_blink`. The clip's own value: the game
+    /// also eases it in over 0.1 s (its play request's +0x10, a transition from the lid's earlier
+    /// pose with the weight smoothstep(t / 0.1), 0x2536f0 and 0x280330), so a lid there shows the
+    /// clip from 0.1 s on and lags it before; this doesn't apply that yet.
     pub fn write_blink(&self, game: &Game, t: f32, pose: &mut [(Quat, Vec3)]) {
         let Some(blink) = &self.blink else { return };
         for &(bone, channel) in &blink.tracks {
