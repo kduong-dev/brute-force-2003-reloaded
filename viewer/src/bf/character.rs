@@ -357,9 +357,6 @@ pub struct Game {
     pub character_weapons: HashMap<String, Vec<u32>>,
     /// character name -> chatter line tag -> voice line ids (common/characters/<name>_chatter)
     pub chatter: HashMap<String, HashMap<u32, Vec<u32>>>,
-    /// character name -> chatter line tag -> the tag others answer it with (a block's
-    /// `response` / response_id: e.g. a death cry -> "<name> is down!")
-    pub chatter_response: HashMap<String, HashMap<u32, u32>>,
     /// character name -> the AI's squad-leash-dist (m): how far a squadmate strays from the leader
     pub squad_leash: HashMap<String, f32>,
     /// character name -> the breathing heard while it looks through a scope (`<h_12501487
@@ -419,7 +416,7 @@ pub struct Game {
     /// panels, which its menu-triggers open; `menus::GameMenus`)
     pub menus: super::menus::GameMenus,
     /// character name -> chatter line tag -> what the game's chatter gate reads of its block (see
-    /// `ChatterBlock`; play_skills.rs's skill lines go through it)
+    /// `ChatterBlock`; every line the demo says goes through it, play_chatter.rs)
     pub chatter_blocks: HashMap<String, HashMap<u32, ChatterBlock>>,
     /// ground decals of objecttypes `<decal>`, by name
     pub decals: HashMap<u32, DecalDef>,
@@ -1094,9 +1091,11 @@ const H_SKILL_HIT_SOUND: u32 = 0x1629_A90A;
 
 /// What the game's chatter gate (FUN_00140a60) reads of a `<chatter_line>` block (h_f74e6a16,
 /// `common/characters/<name>_chatter.xml`), with the defaults the parser sets (FUN_0019cd70; the
-/// header's attributes FUN_0019ca10, the variants FUN_0019c5d0, copied into the runtime record by
-/// FUN_00136ab0). For the skill lines: probability 50, replay-delay 10 / 20 / 30 s, priority 1 /
-/// 1 / 5 (on, off with stamina left, off at 0). todo/35-special-skills/answer-120-chatter.md.
+/// header's attributes FUN_0019ca10, the children FUN_0019cbc0, the variants FUN_0019c5d0, copied
+/// into the runtime record by FUN_00136ab0). For the skill lines: probability 50, replay-delay
+/// 10 / 20 / 30 s, priority 1 / 1 / 5 (on, off with stamina left, off at 0).
+/// todo/35-special-skills/answer-120-chatter.md, todo/36-squad-voice/leads.md §1; the gate and
+/// its queue are play_chatter.rs's (#155).
 #[derive(Clone, Debug)]
 pub struct ChatterBlock {
     /// `probability` (h_ead503b2, name recovered by hashing): the gate's roll in % (FUN_001374c0:
@@ -1114,9 +1113,52 @@ pub struct ChatterBlock {
     /// player (FUN_001409c0); h_19be8951 (default true): not said beyond 45 m (FUN_001409a0)
     pub far_step: bool,
     pub far_cut: bool,
+    /// h_eecb5362 (not recovered; default true; the runtime record's +0x48 bit 0): as it starts
+    /// the line cuts off the playing lines of its priority or lower (FUN_00140cd0 ->
+    /// FUN_00140f80)
+    pub cuts_off: bool,
+    /// h_183b88ed (not recovered; default 2.0; record +0x50): the longest the line waits behind
+    /// the playing ones (s), else it's refused (FUN_00140a60)
+    pub max_wait: f32,
+    /// h_1800c848 (not recovered; default false; record +0x48 bit 1, the line's +0xc bit 2):
+    /// playing, it makes no new line wait (FUN_00141020 passes it over)
+    pub nobody_waits: bool,
+    /// h_f4744ab4 (not recovered; default false; record +0x48 bit 2, the line's +0xc bit 3): it
+    /// can't be cut off (FUN_00140f80 passes it over)
+    pub uncuttable: bool,
+    /// the block's `flags` (f1d9afc7, of the `line-flag-type` enum) hold h_eb640008 (record +0x54
+    /// bit 1, FUN_00136ab0): its sound is said though the speaker is dead (FUN_0013fab0 reads it
+    /// from the event's +0x28), its response fires too (0x13fe50, the event's +0x44 bit 0). The
+    /// death cries' (e1213623, ed35ffae) in every file that has them
+    pub dead_speaks: bool,
     /// the sound variants: id and the condition value's range (h_0ab96f95 min, 0 when not given;
     /// h_16087610 max, 100), in the file's order
     pub variants: Vec<(u32, i64, i64)>,
+    /// its `<response>` children (record +0x3c, 0x2c-byte entries; FUN_001406f0 makes the line's
+    /// response event from those whose range holds the speaker's condition value)
+    pub responses: Vec<ChatterResponse>,
+}
+
+/// One `<response>` of a chatter block (edf673d2): who answers the line and with what, once the
+/// speaker's sound ends (FUN_001406f0, FUN_0013fbf0; todo/36-squad-voice/leads.md §1, §2.6).
+#[derive(Clone, Debug)]
+pub struct ChatterResponse {
+    /// `valid_targets` (h_15bde0bd, recovered by hashing): the responders, a row of the table at
+    /// 0x3c0488 (h_07b939a0 the speaker's teammates nearest first, the death cries')
+    pub targets: u32,
+    /// `response_flags` (the squad's status asks' h_fcc29cfe; FUN_001367e0 tests its bits 0 and
+    /// 1: every responder, the plain gate): 0 when not given
+    pub flags: u32,
+    /// `target_flags` (0c6af329's h_f0fa205a): the answer's part doesn't move the line's running
+    /// total on (FUN_0013fbf0 passes FUN_001400d0 the flag's inverse; inferred); 0 when not given
+    pub target_flags: u32,
+    /// the range of the speaker's condition value it answers (its h_0ab96f95 / h_16087610:
+    /// FUN_001370f0); 0..100 when not given, as a variant's (assumed: the response's parse
+    /// defaults weren't read)
+    pub min: i64,
+    pub max: i64,
+    /// its `response_tag`s' `response_id`s: one is picked at random (FUN_001367e0)
+    pub tags: Vec<u32>,
 }
 
 /// A chatter block's condition kind when it gives none (FUN_0019cd70's default; FUN_00137360
@@ -1127,8 +1169,15 @@ pub const CHATTER_CONDITION_NONE: u32 = 0x1409_C600;
 const H_CHATTER_CONDITION: u32 = 0xFF36_1B85;
 const H_CHATTER_FAR_STEP: u32 = 0xF1CB_4E63;
 const H_CHATTER_FAR_CUT: u32 = 0x19BE_8951;
+const H_CHATTER_CUTS_OFF: u32 = 0xEECB_5362;
+const H_CHATTER_MAX_WAIT: u32 = 0x183B_88ED;
+const H_CHATTER_NOBODY_WAITS: u32 = 0x1800_C848;
+const H_CHATTER_UNCUTTABLE: u32 = 0xF474_4AB4;
 const H_CHATTER_MIN: u32 = 0x0AB9_6F95;
 const H_CHATTER_MAX: u32 = 0x1608_7610;
+/// The `flags` value that lets a dead speaker say the line (record +0x54 bit 1; FUN_00136ab0
+/// maps 0xfa81809a to bit 0 and this to bit 1).
+pub const CHATTER_DEAD_SPEAKS: u32 = 0xEB64_0008;
 
 /// A motion set's skill toggle overlays (`ms_<name>.xmb`, `<overlay motion-type=..>`): [on, off],
 /// the entries of OMT_SPECIAL_ON (44) and OMT_SPECIAL_OFF (43), each its script and whether the
@@ -1385,7 +1434,6 @@ impl Game {
             weapons: HashMap::new(),
             character_weapons: HashMap::new(),
             chatter: HashMap::new(),
-            chatter_response: HashMap::new(),
             squad_leash: HashMap::new(),
             character_snipe_sound: HashMap::new(),
             character_scope_sounds: HashMap::new(),
@@ -1510,16 +1558,12 @@ impl Game {
             }
             let Some(root) = self.parse(ar, &n)? else { continue };
             let mut lines: HashMap<u32, Vec<u32>> = HashMap::new();
-            let mut responses: HashMap<u32, u32> = HashMap::new();
             let mut blocks: HashMap<u32, ChatterBlock> = HashMap::new();
             for block in root.walk().into_iter().filter(|e| e.name == 0xF74E_6A16) {
                 let all = block.walk();
                 let Some(tag) = all.iter().find_map(|e| e.attr(h("line_tag"))).and_then(|v| v.as_hash()) else { continue };
                 let ids = all.iter().filter_map(|e| e.attr(h("sound_id")).and_then(|v| v.as_hash()));
                 lines.entry(tag).or_default().extend(ids);
-                if let Some(r) = all.iter().find_map(|e| e.attr(h("response_id"))).and_then(|v| v.as_hash()) {
-                    responses.insert(tag, r);
-                }
                 // the gate's values: the header beside the line_tag, and each sound_id with its
                 // range (a later block with the same tag is dropped, as FUN_001352a0 does)
                 let Some(head) = all.iter().find(|e| e.attr(h("line_tag")).is_some()) else { continue };
@@ -1528,6 +1572,25 @@ impl Game {
                     let id = e.attr(h("sound_id")).and_then(|v| v.as_hash())?;
                     Some((id, int(e, H_CHATTER_MIN, 0), int(e, H_CHATTER_MAX, 100)))
                 }).collect();
+                // the `flags` list (a list value, or one hash), wherever the block carries it
+                let holds = |v: &Value, x: u32| match v {
+                    Value::List(l) => l.iter().any(|i| i.as_hash() == Some(x)),
+                    v => v.as_hash() == Some(x),
+                };
+                let dead_speaks = all.iter().filter_map(|e| e.attr(h("flags"))).any(|v| holds(v, CHATTER_DEAD_SPEAKS));
+                // the `<response>`s: who answers, with which tags, for which of the speaker's values
+                let responses = all.iter().filter(|e| e.name == h("response")).map(|r| {
+                    let inner = r.walk();
+                    let hash = |k: u32| r.attr(k).and_then(|v| v.as_hash()).unwrap_or(0);
+                    ChatterResponse {
+                        targets: hash(h("valid_targets")),
+                        flags: hash(h("response_flags")),
+                        target_flags: hash(h("target_flags")),
+                        min: inner.iter().find_map(|e| e.attr(H_CHATTER_MIN)).and_then(|v| v.as_i64()).unwrap_or(0),
+                        max: inner.iter().find_map(|e| e.attr(H_CHATTER_MAX)).and_then(|v| v.as_i64()).unwrap_or(100),
+                        tags: inner.iter().filter_map(|e| e.attr(h("response_id")).and_then(|v| v.as_hash())).collect(),
+                    }
+                }).collect();
                 blocks.entry(tag).or_insert(ChatterBlock {
                     probability: int(head, h("probability"), 100),
                     replay_delay: head.attr(h("replay-delay")).and_then(|v| v.as_f32()).unwrap_or(0.0),
@@ -1535,11 +1598,16 @@ impl Game {
                     condition: head.attr(H_CHATTER_CONDITION).and_then(|v| v.as_hash()).unwrap_or(CHATTER_CONDITION_NONE),
                     far_step: int(head, H_CHATTER_FAR_STEP, 1) != 0,
                     far_cut: int(head, H_CHATTER_FAR_CUT, 1) != 0,
+                    cuts_off: int(head, H_CHATTER_CUTS_OFF, 1) != 0,
+                    max_wait: head.attr(H_CHATTER_MAX_WAIT).and_then(|v| v.as_f32()).unwrap_or(2.0),
+                    nobody_waits: int(head, H_CHATTER_NOBODY_WAITS, 0) != 0,
+                    uncuttable: int(head, H_CHATTER_UNCUTTABLE, 0) != 0,
+                    dead_speaks,
                     variants,
+                    responses,
                 });
             }
             self.chatter.insert(who.clone(), lines);
-            self.chatter_response.insert(who.clone(), responses);
             self.chatter_blocks.insert(who, blocks);
         }
         Ok(())

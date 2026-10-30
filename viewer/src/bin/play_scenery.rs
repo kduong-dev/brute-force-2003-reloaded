@@ -846,13 +846,17 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
             }
             let first = !a.victims.iter().any(|v| v.0 == u.who());
             if first || amount >= u.health {
-                // hurt as by a blast (a grunt, blood); dies from it as from any hurt
+                // hurt as by a blast (blood, its hurt line); dies from it as from any hurt (the
+                // area's record from FUN_0021ade0 taken as one with no attacker character: not
+                // traced)
                 let away = Vec3::new(u.position.x - a.at.x, 0.0, u.position.z - a.at.z).normalize_or(Vec3::X);
-                hurt(u, &game.0, amount, HURT_CHATTER, away * 3.0 + Vec3::Y * 2.0, middle, -1);
+                hurt(u, &game.0, amount, chatter::Cause::bare(a.damage.damage_type), away * 3.0 + Vec3::Y * 2.0, middle, -1);
                 if k == 0 {
                     tint.0 = 0.0;
                 }
             } else {
+                // (a hit through the handler all the same: its hurt line, FUN_00125ad0)
+                chatter::hurt_line(u, chatter::Cause::bare(a.damage.damage_type), amount);
                 u.health -= amount;
             }
             if combat {

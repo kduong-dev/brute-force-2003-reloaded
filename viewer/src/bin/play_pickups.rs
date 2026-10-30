@@ -69,11 +69,16 @@ const S_NO_MEDKITS: u32 = 0xF450_2B28;
 /// 92193315, its bytes as stored in sounds-<level>.xmb), id h_1538baad in all 54 levels'
 /// banks, 1.5 s.
 const MEDKIT_SOUND: u32 = 0x1538_BAAD;
-/// The relieved line after a medkit: line_tag 12c35d69 in each <name>_chatter file, whose
-/// block's h_ea21ae4b is 30 (read as the chance, %). In todo/medic + intenvory use case.mp4
-/// Tex says his e707f108 with the use (spectrogram match), Brutus nothing at his.
+/// The relieved line after a medkit (0x146f40, when the heal adds health): line_tag 12c35d69 for
+/// a healer whose squad has a member with a player's slot (FUN_0005c0a0: the demo's medkits are
+/// the controlled character's, so always), else f832ad27. Through the chatter gate
+/// (play_chatter.rs): its block's `probability` 10, `replay-delay` 30 s, priority 1 (so a
+/// squadmate over 15 m away never says it), a 5 s wait, and its variants by the enemies the
+/// healer fights (h_12b74a88: Tex and Brutus one out of a fight, Hawk none, Flint two). (The 30
+/// this read as the chance is the replay delay: answer-120-chatter, "found, not in scope".) In
+/// todo/medic + intenvory use case.mp4 Tex says his e707f108 with the use (spectrogram match),
+/// Brutus nothing at his.
 const HEALED_CHATTER: u32 = 0x12C3_5D69;
-const HEALED_CHANCE: usize = 30;
 // How near a squad member must come to take a pickup is the walk-over's, FUN_0011c170's: at most
 // 1.8 m below and 1.0 m above its position and under 1.34 m across (`powerups::in_reach`), the
 // same for the medkits, the fruit and the DNA canisters (#18). They had 1.0 m across and 1.5 up
@@ -612,8 +617,9 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>, game: Re
 }
 
 /// The use_item clip's use event: one of the stack in use taken (`Player::use_stack`), heal by
-/// its type's h_0a811e94 (the 80-point Medkit's 80, the other's 60), the sound, now and then a
-/// "healed" line, and let the medkit go.
+/// its type's h_0a811e94 (the 80-point Medkit's 80, the other's 60), the sound, the "healed" line
+/// asked of the chatter gate when the heal added health, and let the medkit go.
+/// BF_TEST_HEALED=1: the line's chance 100%.
 fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<Player>, mut used: ResMut<UsedMedkit>,
                joints: Query<&GlobalTransform>) {
     let stack = player.use_stack;
@@ -634,11 +640,14 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
         }
     };
     let heal = game.0.items.get(&kind).map_or(60.0, |i| i.health);
+    let before = player.health;
     player.health = (player.health + heal).min(player.max_health);
     player.sound_queue.push((MEDKIT_SOUND, 1.0));
-    // test hook: BF_TEST_HEALED=1 always says it
-    if player.random(100) < HEALED_CHANCE || std::env::var("BF_TEST_HEALED").is_ok() {
-        say(&mut player, &game.0, HEALED_CHATTER, 0.0);
+    // the "healed" line, only when the heal added health (0x146f40, 0x146fa0-0x146fdf); test hook:
+    // BF_TEST_HEALED=1 passes its roll
+    let healed = player.health > before;
+    if healed {
+        chatter::say_with(&mut player, HEALED_CHATTER, std::env::var("BF_TEST_HEALED").is_ok().then_some(100));
     }
     // the medkit leaves the hand: forward of the character, a little up, tumbling
     let hand = player.loaded.as_ref().and_then(|l| l.throw_hand.map(|(bone, point)| (l.joints[bone], point)))
@@ -655,8 +664,9 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
         commands.entity(old).despawn();
     }
     if std::env::var("BF_PICKUP_LOG").is_ok() {
-        println!("used a medkit (h_{kind:08x}): health {:.0}/{:.0}, {} left; sound h_{MEDKIT_SOUND:08x} (in the bank: {}), healed line: {:?}, dropped at {hand:.2}",
-                 player.health, player.max_health, item_count(&player, stack), game.0.sounds.has(MEDKIT_SOUND), player.quote_in);
+        println!("used a medkit (h_{kind:08x}): health {:.0}/{:.0}, {} left; sound h_{MEDKIT_SOUND:08x} (in the bank: {}), healed line {}, dropped at {hand:.2}",
+                 player.health, player.max_health, item_count(&player, stack), game.0.sounds.has(MEDKIT_SOUND),
+                 if healed { "asked of the chatter gate" } else { "not asked (no health added)" });
     }
 }
 

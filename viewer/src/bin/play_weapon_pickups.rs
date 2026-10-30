@@ -129,10 +129,11 @@ pub(super) const WALK_ACROSS_SQ: f32 = 1.8;
 const EV_RELEASE_WEAPON: u32 = 0xE85F_3539;
 const EV_GRAB_WEAPON: u32 = 0x1303_B7C4;
 /// The refusal's grumble: the chatter line f2ce8278 (FUN_000a9910 with its argument 1, the X
-/// press, -> FUN_00140a60), which every squad chatter file has with h_ea21ae4b 10, read as the
-/// chance (%) as the medkit's healed line is (play_pickups.rs HEALED_CHANCE).
+/// press, -> FUN_00140a60), through the chatter gate (play_chatter.rs): every squad chatter file's
+/// block has `probability` 100 and `replay-delay` 10 s (the 10 was read as a 10% chance before
+/// #155), priority 1 and a 0.5 s wait. Asked at the hold's end here; todo/36-squad-voice
+/// leads.md §2.3 places FUN_000a9910's call at the X press (#36's use lines settle it).
 const REFUSE_CHATTER: u32 = 0xF2CE_8278;
-const REFUSE_CHANCE: usize = 10;
 /// WTYPE_NONE: a `limit-weapon` class that takes nothing, and the class FUN_00121920 gives an
 /// empty hand.
 const WTYPE_NONE: i64 = 8;
@@ -586,8 +587,8 @@ pub(super) fn use_target(mut commands: Commands, time: Res<Time>, mut guns: ResM
                         use_panel.ring.colour = RingColour::InUse;
                         commands.entity(e).remove::<Vanish>();
                     }
-                } else if player.random(100) < REFUSE_CHANCE {
-                    say(&mut player, &game.0, REFUSE_CHATTER, 0.0);
+                } else {
+                    chatter::say(&mut player, REFUSE_CHATTER);
                 }
             }
         }

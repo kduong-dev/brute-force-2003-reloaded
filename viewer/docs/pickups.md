@@ -85,10 +85,13 @@
     * The bounce, friction, drag and thresholds are the demo's choices, not the game's.
   * The medkit sound is h_1538baad, the Sound whose file is h_15331992 (named "92193315":
     those bytes as stored in sounds-<level>.xmb), the same in all 54 levels' banks, 1.5 s.
-    30% of the time the character also says a line of their "healed" chatter (line_tag
-    12c35d69, whose block's h_ea21ae4b is 30), with the sound. In todo/medic + intenvory use
-    case.mp4 Tex says e707f108 at his use and Brutus nothing at his. `BF_TEST_HEALED=1` always
-    says the line.
+    When the heal adds health the character also asks the chatter gate for their "healed" line
+    (line_tag 12c35d69; 0x146f40, [chatter.md](chatter.md)): its block's `probability` 10, its
+    `replay-delay` 30 s (the 30 this page read as the chance before #155), priority 1 (so a
+    squadmate over 15 m away never says it) and its variants by the enemies the healer fights
+    (Tex and Brutus have one out of a fight, Hawk none, Flint two). In todo/medic + intenvory use
+    case.mp4 Tex says e707f108 at his use and Brutus nothing at his. `BF_TEST_HEALED=1` passes
+    its roll.
   * Each pickup adds a line below the middle of the screen (FUN_000ad790, one of the HUD's
     three): the item's display name (h_1dd3a49d; its stringtable-name without one) alone for the
     first, "<n>x <name>" (the format at 0x40d734) once more of the same are taken while it's up;
@@ -243,7 +246,8 @@ and `todo/DNA + Weapon Pickups.mp4`.
     (play_shake.rs) is added after and isn't followed.
 * **The hold**: X (E) held 0.3 s on the target (the player controller's +0x50, 0x1332a0 ->
   FUN_000a9710), once per press. On a gun the character can't take the press only grumbles: its
-  chatter line f2ce8278, one time in ten.
+  chatter line f2ce8278 through the chatter gate (its block: 100%, a 10 s replay delay: the 10
+  this page read as a one-in-ten chance before #155; [chatter.md](chatter.md)).
 * **The use** (FUN_00121670, then the use update FUN_00120290):
   * the slot it goes to by the type's pickup mode (`limit-weapon` h_fb08d4c6, FUN_00121ac0):
     Flint and Hawk (1) the first slot that takes the class; Brutus (2) a cannon to slot 2, a

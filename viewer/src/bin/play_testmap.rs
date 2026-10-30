@@ -323,7 +323,7 @@ fn suicide(keys: Res<ButtonInput<KeyCode>>, game: Res<GameData>, mut player: Res
         *tested |= test;
         let (at, back) = (player.position + Vec3::Y * 1.0, Quat::from_rotation_y(player.yaw) * Vec3::Z);
         let all = super::enemies::lethal(&player);
-        hurt(&mut player, &game.0, all, HURT_CHATTER, back * 2.0 + Vec3::Y, at, -1);
+        hurt(&mut player, &game.0, all, chatter::Cause::bare(0), back * 2.0 + Vec3::Y, at, -1);
     }
 }
 

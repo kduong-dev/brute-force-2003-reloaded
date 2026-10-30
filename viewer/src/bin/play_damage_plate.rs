@@ -26,9 +26,11 @@
 //! no 122, so the world's cutscene bit is off and the handler deals it.
 //!
 //! The hit isn't a weapon's: no hit part, no damage-multiplier (FUN_00125940 is the weapons' record
-//! builder's), no push. The first hit on a character goes through play.rs `hurt` (its grunt, but no
-//! blood: take15 shows none); the rest of its frames' small amounts come off its hit points
-//! directly, as play_scenery.rs's damage areas do, unless one would kill it. Not done: the HUD's
+//! builder's), no push. The first hit on a character goes through play.rs `hurt` (but no blood:
+//! take15 shows none); the rest of its frames' small amounts come off its hit points directly, as
+//! play_scenery.rs's damage areas do, unless one would kill it. Each asks its hurt line of the
+//! chatter gate (play_chatter.rs: a bare record, no attacker, the line by the hit points; the
+//! replay delays keep it to the first or two). Not done: the HUD's
 //! damage direction indicator (FUN_000b2ef0, FUN_000b3010), which take15 shows on all four sides,
 //! and the health bar's flash (viewer/docs/triggers.md, "Not done").
 //!
@@ -155,9 +157,11 @@ fn deal(mut tr: ResMut<Triggers>, mut player: ResMut<Player>, mut squad: ResMut<
             // (no push: the record's is 0, FUN_00222f60's; and no blood: take15 shows none on Tex
             // through the plate's second, 7.25-8.3 s, as the demo's burning liquids draw none)
             let bled = u.blood.len();
-            hurt(u, &game.0, amount, HURT_CHATTER, Vec3::ZERO, middle, -1);
+            hurt(u, &game.0, amount, chatter::Cause::bare(h.damage_type), Vec3::ZERO, middle, -1);
             u.blood.truncate(bled);
         } else {
+            // (a hit through the handler all the same: its hurt line, FUN_00125ad0)
+            chatter::hurt_line(u, chatter::Cause::bare(h.damage_type), amount);
             u.health -= amount;
         }
         let entry = victims.0.entry(key).or_insert((0.0, now));
