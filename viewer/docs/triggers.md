@@ -371,7 +371,11 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   sends FINISHED at once; a living one says the line (FUN_001267b0) and the update sends
   FINISHED once it's said (FUN_00126810). Here the line plays as a plain sound at the character
   (full for the player's, quieter with distance for another's, as the demo's character sounds
-  are). With no such character in the world an entry does nothing, not even counted.
+  are), and the character's face says it: its mouth follows the line's viseme tracks
+  (FUN_001435d0 at 0x1267d1; a STOP stops it, FUN_001267f0; `speakers` puts both on the face after
+  the characters' step, as the game's trigger loop comes after the objects' ticks: #325,
+  [faces.md](faces.md), "Lip-sync"). The world's dialog queue has no speaker and moves no face.
+  With no such character in the world an entry does nothing, not even counted.
 * **Music**: a level's music bank's tracks are its sound-triggers' sounds (resource-type 2), played
   through the music volume and marked as the level's music ([maps.md](maps.md), "Music").
 * **One music voice** (#254): a sound of Type h_f92fb2b9 is class 1 (the library loader,

@@ -1,8 +1,9 @@
 //! Faces (issue #255): what a character's face shows in play, as default.xbe's face controller
 //! (char+0x5b8, FUN_00143380) drives it. The game plays no face clip while a character talks: the
 //! controller writes the face bones' joints every frame from the 22 viseme weights over the base
-//! pose (`Sc_base`), and only the blink is a clip. This first slice has the controller and the
-//! blink; the weights stay 0 until the lip-sync and the expressions drive them.
+//! pose (`Sc_base`), and only the blink is a clip. The first slice made the controller and the
+//! blink; the second (#325) the lip-sync: a line's viseme tracks drive the mouth's weights while
+//! it is said. The expressions' weights fade as the game's do, but nothing sets one yet (#326).
 //!
 //!  - **The table** (`bf/face.rs`, FUN_00142cb0 and FUN_00142df0): per model, the face bones from
 //!    `Sc_base`, its pose, and the 22 `Sc_<viseme>` poses with the type's scales.
@@ -12,9 +13,11 @@
 //!    and `step` puts the controller's pose on them after every layer, overlay and aim turn of
 //!    the body.
 //!  - **At rest** the face shows the base pose, written at the controller's construction
-//!    (FUN_00143380's last call) and again by every blend while a weight is up; with every weight
-//!    0 the game writes nothing, so the bones keep the last pose written (FUN_001439b0 leaves
-//!    them when nothing shows): the same here (`Face::output`).
+//!    (FUN_00143380's last call). The blend (FUN_001439b0) writes the face only while something
+//!    shows: a line being said with its tracks, or an expression that isn't BASE. Otherwise it
+//!    stops the line (FUN_00143570: the mouth's weights zeroed) and writes nothing, so the bones
+//!    keep the last pose written: the same here (`Face::output`). So a line that ends with its
+//!    mouth half open leaves it so until the next line (take07's ends with `if` at 0.44).
 //!  - **The blink** (FUN_00143d10): the clock `since_blink` counts up each tick, starting at 10 s
 //!    (0x41200000, set by the constructor) so the first blink comes at the first tick. Once the
 //!    clip's length (0.333 s) is behind it, a time over the type's blink interval (h_09109ae2:
@@ -25,41 +28,63 @@
 //!    up to a frame (the takes' face logs, todo/255 take01-03, confirm it: every controller's
 //!    +0x4c resets every 4.0 s). The clip drives its lids (the bones of `Sc_blink` that aren't
 //!    face bones); after it ends they stay at its last key, as the nodes keep what the clip last
-//!    wrote. The game eases the clip in over 0.1 s (a transition from the lids' pose, the weight
-//!    smoothstep(t / 0.1): the request's +0x10, read at 0x2536f0): the lids show the clip from 0.1
-//!    s on and lag it before, so 20 % shut comes 0.02 s later than the bare clip's. The demo
-//!    plays the clip bare (a follow-up, `bf/face.rs`' `write_blink`).
+//!    wrote. The clip is eased in over 0.1 s (a transition from the lids' pose, the weight
+//!    smoothstep(t / 0.1): the request's +0x10, read at 0x2536f0, FUN_00280180 and 0x280330): the
+//!    lids show the clip from 0.1 s on and lag it before (`bf/face.rs` `write_blink`), from the
+//!    model's own lids at the first blink and from the clip's last key, where the last one left
+//!    them, at the others.
 //!  - **The phase is when the character was made**: the first blink is the first tick and the
 //!    cycle runs on from it, so characters made apart blink apart (the squad's copies, 0.5 s
 //!    apart in e34, as the takes' controllers are) and ones made together blink together. A
 //!    character not in the world yet (`Player::absent`) isn't ticked (`step`).
-//!  - **Alive only**: the game ticks the controller from the character's update while it lives
-//!    (FUN_0011caa0, 0x11dc7b), so `step` runs in `step_player`: a dead character's face keeps
-//!    the pose it died with (the ragdoll starts from `last_world`, which has it), a cutscene's
-//!    characters blink like the rest. A knocked-down (alive) character's isn't ticked here: the
-//!    ragdoll holds the pose from the knock.
+//!  - **Alive only, once a frame**: the game ticks the controller from the character's update
+//!    while it lives (FUN_0011caa0, 0x11dc7b), so `step` runs in `step_player`: a dead
+//!    character's face keeps the pose it died with (the ragdoll starts from `last_world`, which
+//!    has it), a cutscene's characters blink like the rest. A knocked-down living character has
+//!    no step while its ragdoll lies, but its controller ticks all the same (`tick`): its line and
+//!    its blink run on their time, not drawn (the ragdoll holds the face it fell with), and the
+//!    get-up draws the face where they are by then; the get-up's second step of a frame draws it
+//!    without a second tick.
 //!
-//! **The weights are the hook** the next slices drive: `Face::weights`, 22 floats in the VE_
-//! order (`face::VISEME_NAMES`: 0-14 the mouth shapes, 15-21 the expressions), each 0 to 1. The
-//! lip-sync will write the sound's tracks into them (FUN_0017aa30), the expression fade
-//! (FUN_001438d0) the last seven. The speech side is #155's (`play_chatter.rs`), already in
-//! place and not wired here: `Chatter::voice_start` / `voice_stop` begin and end a line on a
-//! character (the game's FUN_001435d0 / FUN_00143570 on its face controller), `voice_tick` runs
-//! its time out, and `Player::voice` (the sound), `Player::voice_priority` and
-//! `Player::speaking` (the time left, the controller's +0x50) hold what it says. `Player::facial`
-//! (this module's `Face`) is separate from them; the lip-sync slice (#325) makes those three
-//! calls drive `Face::weights`.
+//! **The lip-sync** (#325): the weights, 22 floats in the VE_ order (`face::VISEME_NAMES`: 0-14
+//! the mouth shapes, 15-21 the expressions), come from the line being said. Every speech path
+//! with a speaker ends in the controller's speak, FUN_001435d0 (`speak`, `Face::speak`): it stops
+//! what the controller was saying (FUN_00143570, `stop`: the mouth's weights zeroed), keeps the
+//! sound library entry's viseme tracks (+4: the entry's +0x1c, `bf/audio.rs` `Visemes`), speaks
+//! for the sound's length (+0x54, +0x50) and notes its clock (+0x44 = +0x40). Each tick
+//! (FUN_001437d0) the clock goes on and the time left down; while it is over 0 the blend writes
+//! the tracks at the time since the line began into the mouth's weights (FUN_0017aa30), the rest
+//! keeping theirs, and blends the poses by them. Nothing is read from the audio. The paths:
+//!  - **chatter** (`play_chatter.rs` `Chatter::voice_start` / `voice_stop`, the sound event's
+//!    start FUN_0013fab0 -> 0x13fb31 and its stop 0x13fbde): every squad and enemy line;
+//!  - **a dialog-trigger's line** (`play_sound_triggers.rs` `speakers`: FUN_001267b0 -> 0x1267d1,
+//!    its STOP FUN_001267f0 -> FUN_00143570), a cutscene's on-camera lines among them;
+//!  - **not** the world's dialog queue (the radio: Bratton's lines), which has no speaker.
+//!
+//!  The two paths come at different places in the game's world update (FUN_000d9a20): the
+//!  chatter manager's update (0xd9ac7) before the objects' ticks (0xd9d0b), so a chatter line's
+//!  mouth moves in the frame its sound starts; the scripts' update (0xd9d18, whose 103 signals a
+//!  dialog-trigger) and the triggers' loop (0xd9d20) after them, so a dialog line's moves from the
+//!  next (take07's log: the controller read with the line just begun, +0x44 = +0x40, between two
+//!  frames). The demo's chatter runs after the characters' step, so it backs its line's start and
+//!  time left up by the frame (`ago`); the dialog lines are put on the faces after the step too
+//!  (`speakers`), as the game's are.
 //!
 //! Test hooks:
-//!  - `BF_FACE_LOG=1` prints each face made (its bones, its blink, its stretch list) and each
-//!    blink as it starts.
+//!  - `BF_FACE_LOG=1` prints each face made (its bones, its blink, its stretch list), each blink
+//!    as it starts, each line said or stopped, and the weights each tick while a line speaks
+//!    (`t=12.07 tex: h_ec50fb88 at 0.0667 s, 2.980 s left: if=0.179`: the time since its start
+//!    and its time left, the controller's +0x40 - +0x44 and +0x50).
 //!  - `BF_FACE_CHECK=1` prints, for each face made, how closely its table reproduces the clips
 //!    it was read from (`check`).
+//!  - `BF_FACE_COST=1` prints, each second, the faces' share of the frame (their steps' time).
+//!  - `BF_TEST_SPEAK` (play_chatter.rs) has a character say a sound at a time.
 //!  - `BF_TEST_FACE=<s>,<who>,<viseme>,<weight>[;...]`: at `s` seconds set a viseme's weight (0
 //!    to 1) on `who`: `me` (the controlled character), a squad name or 0-3 (`tex`, `2`), or
-//!    `all`. It stays until another entry changes it. The mouth at a weight of 1 shows the
-//!    viseme's clip, which bf_viewer's Q / E shows too (a check of the blend, `Face::tick`).
-//!    With every weight back at 0 the face keeps the last pose blended (the game's idle
+//!    `all`. A test pose (`Face::test`): while one of its weights is over 0 the blend shows it in
+//!    place of the controller's weights, and it stays until another entry changes it. The mouth
+//!    at a weight of 1 shows the viseme's clip, which bf_viewer's Q / E shows too (a check of the
+//!    blend). With every weight back at 0 the face keeps the last pose blended (the game's idle
 //!    controller writes nothing): set `base` to 1 to go back to the rest face.
 //!  - `BF_TEST_FACE_CAM=<s>,<who>[,<m>[,<rise>]][;...]`: at `s` seconds the free camera goes `m`
 //!    metres (0.8) in front of `who`'s face, `rise` m (0) higher (negative: lower), looking at it
@@ -67,23 +92,36 @@
 //!    a captured face, whatever height the head is and however the idle turns it. Brutus's head
 //!    hangs forward and low: `1.1,-0.3` frames it.
 
-use bf_viewer::bf::face::{self, FaceTable, Kind, VISEMES};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::OnceLock;
+
+use bf_viewer::bf::audio::{SoundBank, Visemes};
+use bf_viewer::bf::face::{self, FaceTable, Kind, MOUTH_VISEMES, VISEMES};
 
 use super::*;
 
 /// The blink clock at a controller's construction (FUN_00143380: `+0x4c = 0x41200000`, 10.0): far
 /// over any type's interval, so the first tick blinks.
 const FIRST_BLINK_CLOCK: f32 = 10.0;
+/// How fast an expression's weight moves (FUN_001438d0: 2.0 a second, [0x40c934]): 0.5 s from
+/// nothing to full, and back. todo/255 take04's log has Tex's angry weight rising 0.12-0.13 a 15 Hz
+/// row and full in 0.5-0.6 s.
+const FADE_RATE: f32 = 2.0;
+/// EFE_BASE (the EFE_ table 0x3be030: 1), the expression a controller starts with (FUN_00143380:
+/// +0x58 = +0x5c = 1): no weight of its own (`Sc_base` is the base pose), so a face showing it
+/// shows no expression (FUN_001438d0 returns "shown isn't BASE"). An expression e's weight is
+/// 15 + e (the map 0x3c0340: EFE_ANGRY 0 is `angry`, 15).
+const BASE: usize = 1;
 
 /// A character's face controller (the game's object at char+0x5b8, 0x64 bytes): the 22 weights,
-/// the pose the face bones show and the blink's clock. The model's table (`Character::face`)
-/// holds the data; this holds what changes.
+/// the pose the face bones show, the line it says and the blink's clock. The model's table
+/// (`Character::face`) holds the data; this holds what changes.
 #[derive(Clone, Debug)]
 pub struct Face {
     /// the viseme weights (the controller's +0x34 array, 22 floats), in `face::VISEME_NAMES`'
-    /// order, 0 to 1 (one above 1 counts as 1, one below 0 as 0): what the lip-sync and the
-    /// expressions write. All 0 in this slice but the test hook's
-    pub weights: [f32; VISEMES],
+    /// order, 0 to 1 (one above 1 counts as 1, one below 0 as 0): the line's tracks write the
+    /// mouth's (0-14) and the expression fade the last seven
+    weights: [f32; VISEMES],
     /// the pose the face bones show now, one entry per face bone (the output pose, +0x24): the
     /// base at the start, the last blend's after
     output: Vec<[f32; 4]>,
@@ -93,35 +131,165 @@ pub struct Face {
     blinked: bool,
     /// how many blinks have started (the log's count)
     blinks: u32,
+    /// the controller's clock (+0x40): every tick's dt, from 0 at its construction
+    clock: f32,
+    /// the sound it says (the game keeps its voice at +0: here the sound, for the log), None once
+    /// stopped
+    sound: Option<u32>,
+    /// the line's viseme tracks (+4: its sound library entry's +0x1c), None for a sound without
+    /// a speech block or once stopped
+    tracks: Option<Arc<Visemes>>,
+    /// the clock at the line's start (+0x44)
+    start: f32,
+    /// the line's time left (+0x50: the sound's length, run down by the ticks)
+    left: f32,
+    /// speaking (+0x54): set by the speak, cleared by the tick that takes `left` to 0 or under, or
+    /// by a stop
+    speaking: bool,
+    /// the expression it heads to (+0x58) and the one it shows (+0x5c), EFE_ values: BASE at
+    /// the start. Nothing sets them yet (#326: Tex's berserk, the expression-trigger, the
+    /// chatter's events), so the fade (`fade`) is idle
+    target: usize,
+    shown: usize,
+    /// BF_TEST_FACE's pose: while one of its weights is over 0, the blend shows it in place of
+    /// the controller's (a test hook's, not the game's)
+    test: Option<[f32; VISEMES]>,
 }
 
 impl Default for Face {
     /// A character with no face: nothing to show.
     fn default() -> Self {
-        Face { weights: [0.0; VISEMES], output: vec![], since_blink: FIRST_BLINK_CLOCK, blinked: false, blinks: 0 }
+        Face { weights: [0.0; VISEMES], output: vec![], since_blink: FIRST_BLINK_CLOCK, blinked: false, blinks: 0, clock: 0.0, sound: None, tracks: None,
+               start: 0.0, left: 0.0, speaking: false, target: BASE, shown: BASE, test: None }
     }
 }
 
 impl Face {
     /// FUN_00143380: a controller for a model with face table `table`: every weight 0, the base
-    /// pose as the output (the constructor applies it with FUN_00143820), the blink due at once.
+    /// pose as the output (the constructor applies it with FUN_00143820), the blink due at once,
+    /// the expression BASE.
     pub fn new(table: &FaceTable) -> Face {
         Face { output: table.base.clone(), ..Face::default() }
     }
 
-    /// One tick (FUN_001437d0; `dt` 0 does nothing, as FUN_00143d10's guard): the blend while
-    /// something shows (FUN_001439b0: with nothing showing the game leaves the bones as they
-    /// are), then the blink's clock (FUN_00143d10). Returns whether a blink started.
+    /// Whether it has a face to drive: a model without a face table (`Face::default`) has no
+    /// controller in the game (FUN_00112ae0 makes none: its lines play on its voice alone).
+    fn has_table(&self) -> bool {
+        !self.output.is_empty()
+    }
+
+    /// FUN_001435d0, the controller's part: it stops what it was saying (FUN_00143570), then, if
+    /// the sound library has `sound` (FUN_0017beb0: else nothing more, and false), keeps the
+    /// entry's viseme tracks (+4 = the entry's +0x1c), speaks (+0x54) for the sound's length (+0x50:
+    /// the sound system's vtable +0x64, `SoundBank::length`) and notes the clock (+0x44 = +0x40).
+    /// `ago` is how long before now, in its clock, the line began: the frame's dt for a speak that
+    /// comes after this frame's tick but stands for one before it (the chatter's: the game's
+    /// manager update, 0xd9ac7, runs before the objects' ticks, 0xd9d0b), so its start is that much
+    /// earlier and its time left that much shorter, as that tick would have left them; 0 for one
+    /// that comes after the tick in the game too (a dialog-trigger's, from the triggers' loop,
+    /// 0xd9d20). The voice (the audio) is the caller's.
+    pub fn speak(&mut self, sounds: &SoundBank, sound: u32, ago: f32) -> bool {
+        self.stop();
+        if sounds.params(sound).is_none() {
+            return false;
+        }
+        self.say(sound, sounds.visemes(sound), sounds.length(sound).unwrap_or(0.0), ago);
+        true
+    }
+
+    /// The line `speak` starts, once stopped: `sound` with its `tracks`, `length` s long, begun
+    /// `ago` s before now in the clock (its start and its time left both that much back).
+    fn say(&mut self, sound: u32, tracks: Option<Arc<Visemes>>, length: f32, ago: f32) {
+        self.sound = Some(sound);
+        self.tracks = tracks;
+        self.speaking = true;
+        self.left = length - ago;
+        self.start = self.clock - ago;
+    }
+
+    /// FUN_00143570, the controller's part: the line dropped (+0 the voice, +4 the tracks, +0x50,
+    /// +0x54 all 0) and the 15 mouth weights zeroed; the expressions' are left to their fade. The
+    /// face itself isn't written: it keeps the last pose until something shows again.
+    pub fn stop(&mut self) {
+        self.sound = None;
+        self.tracks = None;
+        self.left = 0.0;
+        self.speaking = false;
+        self.weights[..MOUTH_VISEMES].fill(0.0);
+    }
+
+    /// The line it is saying, while it speaks (+0x54 and +0x50 over 0): the sound, the time since
+    /// it began (+0x40 - +0x44) and its time left.
+    fn talking(&self) -> Option<(u32, f32, f32)> {
+        self.sound.filter(|_| self.speaking && self.left > 0.0).map(|s| (s, self.clock - self.start, self.left))
+    }
+
+    /// FUN_001438d0, the expression fade: with the shown expression the target, its weight rises
+    /// FADE_RATE a second to 1 (BASE has none to raise); otherwise the shown one's falls FADE_RATE
+    /// a second to 0, and there the target is shown. True while the shown one isn't BASE.
+    fn fade(&mut self, dt: f32) -> bool {
+        if self.shown == self.target {
+            if self.target != BASE {
+                let w = &mut self.weights[MOUTH_VISEMES + self.target];
+                *w = (*w + FADE_RATE * dt).min(1.0);
+            }
+        } else {
+            let w = &mut self.weights[MOUTH_VISEMES + self.shown];
+            *w = (*w - FADE_RATE * dt).max(0.0);
+            if *w == 0.0 {
+                self.shown = self.target;
+            }
+        }
+        self.shown != BASE
+    }
+
+    /// FUN_001439b0, the blend: speaking is +0x54 with +0x50 over 0; the expression fades (`fade`)
+    /// and says whether one shows. With neither, the line is stopped (0x143cf3: FUN_00143570) and
+    /// nothing written; speaking a sound without tracks and no expression, nothing either. Else the
+    /// output starts from the base pose, a speaking line's tracks write their weights at the time
+    /// since it began (FUN_0017aa30: `Visemes::write`), and the visemes are blended in order by the
+    /// weights (`FaceTable::blend`). A test pose (BF_TEST_FACE) with a weight up is blended in
+    /// their place.
+    fn blend(&mut self, table: &FaceTable, dt: f32) {
+        let speaking = self.speaking && self.left > 0.0;
+        let expression = self.fade(dt);
+        if let Some(w) = self.test.filter(|w| w.iter().any(|&x| x > 0.0)) {
+            table.blend(&w, &mut self.output);
+            return;
+        }
+        if !expression {
+            if !speaking {
+                self.stop();
+                return;
+            }
+            if self.tracks.is_none() {
+                return;
+            }
+        }
+        if speaking {
+            if let Some(tracks) = &self.tracks {
+                tracks.write(self.clock - self.start, &mut self.weights);
+            }
+        }
+        table.blend(&self.weights, &mut self.output);
+    }
+
+    /// One tick (FUN_001437d0; `dt` 0 does nothing, as FUN_00143d10's guard): the clock goes on
+    /// (+0x40), a line's time left down (+0x50; at 0 or under it no longer speaks, 0x1437ee-
+    /// 0x1437f9), then the blend (FUN_001439b0, `blend`) and the blink's clock (FUN_00143d10).
+    /// Returns whether a blink started.
     pub fn tick(&mut self, table: &FaceTable, dt: f32) -> bool {
         if dt <= 0.0 {
             return false;
         }
-        // (what shows, in the game: a line speaking with tracks, or an expression that isn't
-        // BASE. Neither exists yet, so a weight up stands in; the lip-sync's slice puts the
-        // game's test here, which also blends the base pose through a line's silences)
-        if self.weights.iter().any(|&w| w > 0.0) {
-            table.blend(&self.weights, &mut self.output);
+        self.clock += dt;
+        if self.speaking {
+            self.left -= dt;
+            if self.left <= 0.0 {
+                self.speaking = false;
+            }
         }
+        self.blend(table, dt);
         self.since_blink += dt;
         let Some(blink) = &table.blink else { return false };
         // (the clip must be over, and then only the interval counts: see the module notes for
@@ -136,14 +304,70 @@ impl Face {
     }
 
     /// Put the face on a character's pose (FUN_00143820 and the blink player's nodes): the face
-    /// bones take the output, the blink's lids their place in the clip.
+    /// bones take the output, the blink's lids their place in the clip, eased in from where the
+    /// last blink left them (the first from the model's own).
     pub fn apply(&self, table: &FaceTable, game: &Game, pose: &mut [(Quat, Vec3)]) {
         table.write(&self.output, pose);
         if self.blinked {
-            table.write_blink(game, self.since_blink, pose);
+            table.write_blink(game, self.since_blink, self.blinks > 1, pose);
         }
     }
 }
+
+/// The weights over 0, for BF_FACE_LOG (`if=0.179 wet=0.160`): by name, three decimals as the
+/// takes' face logs have them.
+fn weights_text(weights: &[f32; VISEMES]) -> String {
+    let named: Vec<String> = weights.iter().zip(face::VISEME_NAMES).filter(|(w, _)| **w > 0.0).map(|(w, n)| format!("{n}={w:.3}")).collect();
+    named.join(" ")
+}
+
+/// The face hook of every speech path with a speaker (#325): `u`'s face controller says `sound`
+/// (`Face::speak`: FUN_001435d0's part on the controller), the line begun `ago` s of its clock
+/// before now (see `Face::speak`); `by` names the path for BF_FACE_LOG. The chatter calls it as a
+/// sound starts on a character's voice (play_chatter.rs `Chatter::voice_start`), the dialog-trigger
+/// as its character says its line (play_sound_triggers.rs `speakers`). Nothing for a character
+/// without a face table (it has no controller).
+pub fn speak(u: &mut Player, sounds: &SoundBank, sound: u32, ago: f32, by: &str) {
+    if !u.facial.has_table() {
+        return;
+    }
+    let said = u.facial.speak(sounds, sound, ago);
+    if std::env::var("BF_FACE_LOG").is_ok() {
+        let length = sounds.length(sound).unwrap_or(0.0);
+        // (a library entry whose file the map's banks lack has no length: it ends at once)
+        let short = if length > 0.0 { "" } else { ", no length (its file isn't in the loaded banks): it ends at once" };
+        let what = match (&u.facial.tracks, said) {
+            (_, false) => "not in the sound library: only stopped".to_string(),
+            (Some(t), _) => format!("{length:.3} s, {} viseme track{}{short}", t.tracks.len(), if t.tracks.len() == 1 { "" } else { "s" }),
+            (None, _) => format!("{length:.3} s, no speech block: the face isn't moved{short}"),
+        };
+        println!("t={:.2} {}: says h_{sound:08x} ({what}; {by})", u.sim_time, unit_name(u));
+    }
+}
+
+/// The face hook of a line's stop (#325): `u`'s face controller stops what it says (`Face::stop`,
+/// FUN_00143570): a chatter cut-off (0x13fbde), a dialog-trigger's STOP (FUN_001267f0 at
+/// 0x1267ff). `by` names it for BF_FACE_LOG.
+pub fn stop(u: &mut Player, by: &str) {
+    if let Some((s, t, _)) = u.facial.talking().filter(|_| std::env::var("BF_FACE_LOG").is_ok()) {
+        println!("t={:.2} {}: stops h_{s:08x} at {t:.3} s ({by})", u.sim_time, unit_name(u));
+    }
+    u.facial.stop();
+}
+
+/// BF_FACE_COST: whether it is on (read once: the steps run each frame for every character).
+fn costing() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BF_FACE_COST").is_ok())
+}
+
+/// BF_FACE_COST's tally since its last report: the nanoseconds the faces' steps took, how many
+/// steps, and how many of them with a line speaking.
+static COST_NS: AtomicU64 = AtomicU64::new(0);
+/// The steps counted.
+static COST_STEPS: AtomicU32 = AtomicU32::new(0);
+/// The steps of a face that was speaking.
+static COST_SPEAKING: AtomicU32 = AtomicU32::new(0);
 
 /// A character's face for this frame, on its final body pose (`step_player` calls it after the
 /// aim): ticked by `dt`, the blink logged under BF_FACE_LOG. A model without a face is left as
@@ -155,16 +379,85 @@ impl Face {
 /// squad's four are copies made 0.5 s apart in e34's opening, and the takes' controllers show it
 /// (todo/255 take01-03, measured: each controller's clock +0x40 against the session's clock puts
 /// its start at 9.16 s for Flint, 9.63 Brutus, 10.14 Hawk and 10.64 Tex, and their blinks are
-/// 1.48, 1.01 and 0.51 s ahead of Tex's in the four-second cycle).
+/// 1.48, 1.01 and 0.51 s ahead of Tex's in the four-second cycle). A `dt` of 0 draws the face
+/// without a tick (a knock-down's get-up steps twice in a frame, `step_player`'s `tick_face`).
+/// BF_FACE_LOG: its blinks, and while it speaks its weights each tick, and the line's end;
+/// BF_FACE_COST: the step's time.
 pub fn step(p: &mut Player, l: &Loaded, game: &Game, dt: f32, pose: &mut [(Quat, Vec3)]) {
     let Some(table) = &l.model.face else { return };
     if p.absent {
         return;
     }
-    if p.facial.tick(table, dt) && std::env::var("BF_FACE_LOG").is_ok() {
-        println!("t={:.2} {}: blink {}", p.sim_time, unit_name(p), p.facial.blinks);
-    }
+    let started = costing().then(std::time::Instant::now);
+    run(p, table, dt, "");
     p.facial.apply(table, game, pose);
+    count(started, p);
+}
+
+/// A knocked-down living character's face for this frame (`update_player`, which gives it no step
+/// while the ragdoll has its body): its controller ticks all the same, for the game ticks every
+/// living character's controller from its update (FUN_0011caa0 at 0x11dc87; 0x11dc7b tests only
+/// the dead bit), so a line said as the hit knocks it down runs on its own time; nothing is drawn
+/// (the ragdoll writes the bones), and once the get-up draws the face again it shows where the
+/// line is by then. (The game's knock-down is a clip, which leaves the face bones to the
+/// controller, so its mouth would be seen moving: the demo's ragdoll holds the face it fell with.)
+pub fn tick(p: &mut Player, dt: f32) {
+    let Some(l) = p.loaded.take() else { return };
+    if let Some(table) = l.model.face.as_ref().filter(|_| !p.absent) {
+        let started = costing().then(std::time::Instant::now);
+        run(p, table, dt, " (knocked down, not drawn)");
+        count(started, p);
+    }
+    p.loaded = Some(l);
+}
+
+/// The controller's tick with BF_FACE_LOG's lines (each blink; while a line speaks its weights;
+/// the line's end), `note` after the character's name.
+fn run(p: &mut Player, table: &FaceTable, dt: f32, note: &str) {
+    let was = p.facial.talking();
+    let blinked = p.facial.tick(table, dt);
+    if dt <= 0.0 || std::env::var("BF_FACE_LOG").is_err() {
+        return;
+    }
+    let name = format!("{}{note}", unit_name(p));
+    if blinked {
+        println!("t={:.2} {name}: blink {}", p.sim_time, p.facial.blinks);
+    }
+    match (p.facial.talking(), was) {
+        (Some((s, t, left)), _) => println!("t={:.2} {name}: h_{s:08x} at {t:.4} s, {left:.3} s left: {}", p.sim_time, weights_text(&p.facial.weights)),
+        (None, Some((s, t, _))) => println!("t={:.2} {name}: h_{s:08x} said ({t:.3} s; the face keeps its last pose)", p.sim_time),
+        _ => {}
+    }
+}
+
+/// BF_FACE_COST: a step's time since `started`, and whether its face spoke, into the tally.
+fn count(started: Option<std::time::Instant>, p: &Player) {
+    let Some(t0) = started else { return };
+    COST_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    COST_STEPS.fetch_add(1, Ordering::Relaxed);
+    COST_SPEAKING.fetch_add(p.facial.talking().is_some() as u32, Ordering::Relaxed);
+}
+
+/// BF_FACE_COST: each second of the controlled character's clock, the faces' steps' time (the
+/// controller's tick and the pose written: `step`; a knocked-down one's tick, `tick`) over the
+/// frames since the last report, the steps a frame and how many spoke.
+fn report_cost(player: Res<Player>, mut since: Local<(f32, u32)>) {
+    if !costing() {
+        return;
+    }
+    let (last, frames) = &mut *since;
+    *frames += 1;
+    if player.sim_time - *last < 1.0 {
+        return;
+    }
+    let ns = COST_NS.swap(0, Ordering::Relaxed);
+    let steps = COST_STEPS.swap(0, Ordering::Relaxed);
+    let speaking = COST_SPEAKING.swap(0, Ordering::Relaxed);
+    println!("t={:.2} face cost: {:.1} us a frame over {} frames ({:.1} face steps a frame, {:.1} speaking; {:.2} us a step)", player.sim_time,
+             ns as f64 / 1000.0 / *frames as f64, *frames, steps as f64 / *frames as f64, speaking as f64 / *frames as f64,
+             if steps > 0 { ns as f64 / 1000.0 / steps as f64 } else { 0.0 });
+    *last = player.sim_time;
+    *frames = 0;
 }
 
 /// A character spawned (`spawn_unit`): its controller made afresh for its model (the game makes
@@ -194,7 +487,8 @@ fn apart(a: Quat, b: Quat) -> f32 {
 /// the bones the clip names: the largest turn of a rotation bone (degrees) and the largest move
 /// of a translation bone (m). Both should be 0 to rounding; a viseme with no clip is skipped.
 /// And the lids: how far the blink clip's first and last keys lie from the bind pose, which is
-/// what they show until the first blink starts.
+/// what they show until the first blink starts, and how far a first blink has taken them a frame
+/// and two frames in (1/30, 2/30 s), eased in (`FaceTable::write_blink`) and bare.
 pub fn check(name: &str, model: &Character, game: &Game) -> String {
     let Some(t) = &model.face else { return format!("face check: {name}: no face set") };
     let body = model.pose(game, 0, 0.0, None, 0.0);
@@ -230,13 +524,28 @@ pub fn check(name: &str, model: &Character, game: &Game) -> String {
         compare(v, clip, weights);
     }
     let (mut first, mut last) = (body.clone(), body.clone());
-    t.write_blink(game, 0.0, &mut first);
-    t.write_blink(game, f32::INFINITY, &mut last);
+    t.write_blink_clip(game, 0.0, &mut first);
+    t.write_blink_clip(game, f32::INFINITY, &mut last);
     let lids: Vec<String> = t.blink.iter().flat_map(|b| b.tracks.iter()).map(|&(bone, _)| {
         format!("{:08x} {:.1}/{:.1}", model.bones[bone], apart(body[bone].0, first[bone].0), apart(body[bone].0, last[bone].0))
     }).collect();
-    format!("face check: {name}: base and {} visemes against their clips: largest turn {turn:.4} deg, largest move {off:.6} m{worst} ({skipped} without a clip); lids' first/last key from the bind pose, degrees [{}]",
-            face::VISEMES - skipped, lids.join(", "))
+    // (a first blink's lids a frame and two into it, eased in from the bind pose, against the
+    // bare clip's: the ease's lag, faces.md "The blink")
+    let lid_at = |bone: usize, s: f32, eased: bool| {
+        let mut p = body.clone();
+        if eased {
+            t.write_blink(game, s, false, &mut p);
+        } else {
+            t.write_blink_clip(game, s, &mut p);
+        }
+        apart(body[bone].0, p[bone].0)
+    };
+    let eased: Vec<String> = t.blink.iter().flat_map(|b| b.tracks.iter()).map(|&(bone, _)| {
+        format!("{:08x} {:.1}/{:.1} {:.1}/{:.1}", model.bones[bone], lid_at(bone, 1.0 / 30.0, true), lid_at(bone, 1.0 / 30.0, false),
+                lid_at(bone, 2.0 / 30.0, true), lid_at(bone, 2.0 / 30.0, false))
+    }).collect();
+    format!("face check: {name}: base and {} visemes against their clips: largest turn {turn:.4} deg, largest move {off:.6} m{worst} ({skipped} without a clip); lids' first/last key from the bind pose, degrees [{}]; a first blink at 1/30 and 2/30 s, eased/bare, degrees [{}]",
+            face::VISEMES - skipped, lids.join(", "), eased.join(", "))
 }
 
 /// What a model's face table holds, in a line (BF_FACE_LOG, BF_DUMP_SOUNDS): the face bones by
@@ -276,8 +585,8 @@ fn hooks() -> Vec<Hook> {
 }
 
 /// Whether `who` names `u`: `all`, `me` (`controlled`: it is the character the player holds), its
-/// squad name ("tex") or its slot (0-3).
-fn is_whom(u: &Player, controlled: bool, who: &str) -> bool {
+/// squad name ("tex") or its slot (0-3). The face hooks' and BF_TEST_SPEAK's (play_chatter.rs).
+pub(super) fn is_whom(u: &Player, controlled: bool, who: &str) -> bool {
     match who {
         "all" => true,
         "me" => controlled,
@@ -285,8 +594,8 @@ fn is_whom(u: &Player, controlled: bool, who: &str) -> bool {
     }
 }
 
-/// BF_TEST_FACE: each entry sets its weight once its time comes (the controlled character's
-/// clock, `Player::sim_time`).
+/// BF_TEST_FACE: each entry sets its weight in the character's test pose (`Face::test`) once its
+/// time comes (the controlled character's clock, `Player::sim_time`).
 fn test_hooks(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut pending: Local<Option<Vec<Hook>>>) {
     let now = player.sim_time;
     let list = pending.get_or_insert_with(hooks);
@@ -298,7 +607,7 @@ fn test_hooks(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut pending:
     for h in due {
         for (i, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if is_whom(u, i == 0, &h.who) {
-                u.facial.weights[h.viseme] = h.weight;
+                u.facial.test.get_or_insert([0.0; VISEMES])[h.viseme] = h.weight;
                 if std::env::var("BF_FACE_LOG").is_ok() {
                     println!("t={now:.2} {}: {} weight {}", unit_name(u), face::VISEME_NAMES[h.viseme], h.weight);
                 }
@@ -387,15 +696,16 @@ fn face_cam(player: Res<Player>, squad: Res<Squad>, mut tools: ResMut<testtools:
 }
 
 /// The faces' systems: the test hook, before the characters step (so a weight set this frame is
-/// blended this frame), and the camera hook after.
+/// blended this frame), and the camera hook and BF_FACE_COST's report after.
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, test_hooks.before(update_player).run_if(in_state(AppState::Playing)))
-        .add_systems(Update, face_cam.after(update_player).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (face_cam, report_cost).after(update_player).run_if(in_state(AppState::Playing)));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bf_viewer::bf::audio::VisemeTrack;
     use bf_viewer::bf::face::{Blink, FaceBone, Viseme};
 
     /// A one-bone table by hand (a rotation bone, base 0.2 rad about x, `bump` 0.6) with a blink
@@ -478,28 +788,140 @@ mod tests {
         assert!(blinks(&none, 1.0 / 30.0, 20.0).is_empty());
     }
 
-    /// With every weight 0 the face is the base pose; a weight up blends it in, and once the
-    /// weights are 0 again the face keeps the last pose written, as the game's idle controller
-    /// writes nothing (FUN_001439b0).
+    /// The jaw's turn (rad) a face shows on the one-bone table.
+    fn turn(t: &FaceTable, f: &Face) -> f32 {
+        let mut pose = [(Quat::IDENTITY, Vec3::ZERO)];
+        t.write(&f.output, &mut pose);
+        pose[0].0.to_axis_angle().1
+    }
+
+    /// A `bump` track rising from 0 at 0.1 s to 100 % at 0.3 s and back to 0 at 0.5 s.
+    fn bump_line() -> Arc<Visemes> {
+        Arc::new(Visemes { tracks: vec![VisemeTrack::new(0, &[(0.1, 0.0), (0.3, 100.0), (0.5, 0.0)])] })
+    }
+
+    /// FUN_001439b0 at rest: nothing speaking and no expression, so nothing is written (the face
+    /// stays the base pose it was made with) and the mouth's weights are zeroed each tick
+    /// (FUN_00143570); a test pose (BF_TEST_FACE) with a weight up shows in their place, and once
+    /// its weights are 0 again the face keeps the last pose written. A face with no table has
+    /// nothing to show.
     #[test]
-    fn the_face_is_the_base_until_a_weight_is_up_and_keeps_the_last_pose() {
+    fn the_face_is_the_base_until_something_shows_and_keeps_the_last_pose() {
         let t = table(4.0);
         let mut f = Face::new(&t);
-        let turn = |f: &Face| {
-            let mut pose = [(Quat::IDENTITY, Vec3::ZERO)];
-            t.write(&f.output, &mut pose);
-            pose[0].0.to_axis_angle().1
-        };
-        f.tick(&t, 0.03);
-        assert!((turn(&f) - 0.2).abs() < 1e-4);
         f.weights[0] = 1.0;
         f.tick(&t, 0.03);
-        assert!((turn(&f) - 0.6).abs() < 1e-4);
-        f.weights[0] = 0.0;
+        assert!((turn(&t, &f) - 0.2).abs() < 1e-4);
+        assert_eq!(f.weights[0], 0.0, "the idle stop zeroes the mouth");
+        f.test = Some([0.0; VISEMES]);
+        f.test.as_mut().unwrap()[0] = 1.0;
         f.tick(&t, 0.03);
-        assert!((turn(&f) - 0.6).abs() < 1e-4);
-        // a face with no table has nothing to show
-        assert!(Face::default().output.is_empty());
+        assert!((turn(&t, &f) - 0.6).abs() < 1e-4);
+        f.test.as_mut().unwrap()[0] = 0.0;
+        f.tick(&t, 0.03);
+        assert!((turn(&t, &f) - 0.6).abs() < 1e-4);
+        assert!(Face::default().output.is_empty() && !Face::default().has_table());
+    }
+
+    /// FUN_001435d0 and FUN_001437d0 with FUN_001439b0: a line's tracks drive the mouth at the
+    /// time since it began, the clock going on by each tick (a speak before the tick: the first
+    /// tick reads it at dt). It speaks for its length: the tick that takes the time left to 0 or
+    /// under ends it, the mouth's weights are zeroed (the idle stop) and the face keeps the last
+    /// pose blended.
+    #[test]
+    fn a_line_drives_the_mouth_by_its_tracks_for_its_length() {
+        let t = table(4.0);
+        let mut f = Face::new(&t);
+        let dt = 0.1;
+        f.tick(&t, dt);
+        f.say(0xEC50_FB88, Some(bump_line()), 0.45, 0.0);
+        let mut seen = vec![];
+        for _ in 0..6 {
+            f.tick(&t, dt);
+            seen.push((f.weights[0], f.talking().is_some()));
+            // (a tick of no time, the get-up's second step of a frame, moves nothing on)
+            let was = f.talking();
+            f.tick(&t, 0.0);
+            assert_eq!(f.talking(), was);
+        }
+        // read at 0.1, 0.2, 0.3, 0.4 s; the fifth tick takes 0.45 s left under 0
+        let want = [(0.0, true), (0.5, true), (1.0, true), (0.5, true), (0.0, false), (0.0, false)];
+        for (k, ((w, on), (ww, won))) in seen.iter().zip(want).enumerate() {
+            assert!((w - ww).abs() < 1e-5 && *on == won, "tick {k}: {seen:?}");
+        }
+        // the last blend was at 0.4 s, bump at 0.5: the jaw halfway (0.4 rad) and left there
+        assert!((turn(&t, &f) - 0.4).abs() < 1e-3, "{}", turn(&t, &f));
+        assert!(f.sound.is_none() && f.tracks.is_none());
+    }
+
+    /// The chatter's speak comes after the frame's tick in the demo but before it in the game, so
+    /// it backs its start and its time left up by the frame (`ago`): its next tick reads the line
+    /// at two frames, as the game's second frame does, and its last at the same time as the
+    /// game's (a 0.45 s line read last at 0.4 s, its time left then 0.05 s).
+    #[test]
+    fn a_line_begun_a_frame_ago_is_read_a_frame_on() {
+        let t = table(4.0);
+        let mut f = Face::new(&t);
+        let dt = 0.1;
+        f.tick(&t, dt);
+        f.say(1, Some(bump_line()), 0.45, dt);
+        f.tick(&t, dt);
+        assert!((f.weights[0] - 0.5).abs() < 1e-5, "read at 0.2 s: {}", f.weights[0]);
+        let (_, at, left) = f.talking().unwrap();
+        assert!((at - 0.2).abs() < 1e-5 && (left - 0.25).abs() < 1e-5, "{at} {left}");
+        f.tick(&t, dt);
+        f.tick(&t, dt);
+        let (_, at, left) = f.talking().unwrap();
+        assert!((at - 0.4).abs() < 1e-5 && (left - 0.05).abs() < 1e-5, "{at} {left}");
+        f.tick(&t, dt);
+        assert!(f.talking().is_none());
+    }
+
+    /// A sound with no speech block speaks (its time runs) but moves nothing: FUN_001439b0
+    /// writes nothing while it speaks without tracks and shows no expression. A stop
+    /// (FUN_00143570) ends a line at once, the mouth's weights zeroed, the expressions' kept.
+    #[test]
+    fn a_line_without_tracks_moves_nothing_and_a_stop_ends_one() {
+        let t = table(4.0);
+        let mut f = Face::new(&t);
+        f.say(2, None, 1.0, 0.0);
+        f.weights[0] = 1.0;
+        f.tick(&t, 0.1);
+        assert!(f.talking().is_some());
+        assert!((turn(&t, &f) - 0.2).abs() < 1e-4, "nothing written");
+        assert_eq!(f.weights[0], 1.0, "and nothing stopped while it speaks");
+        f.say(3, Some(bump_line()), 1.0, 0.0);
+        f.tick(&t, 0.2);
+        assert!(f.weights[0] > 0.0);
+        f.weights[16] = 0.5;
+        f.stop();
+        assert!(f.talking().is_none());
+        assert_eq!(f.weights[0], 0.0);
+        assert_eq!(f.weights[16], 0.5);
+    }
+
+    /// FUN_001438d0: an expression other than BASE fades in at 2 a second to 1, and the blend
+    /// writes while it shows; a change of target fades the shown one out first (to 0 in 0.5 s),
+    /// then shows the target; BASE itself has no weight.
+    #[test]
+    fn an_expression_fades_at_two_a_second() {
+        let t = table(4.0);
+        let mut f = Face::new(&t);
+        f.target = 0;
+        f.tick(&t, 0.1);
+        // (the shown one, BASE, has no weight: it is the target at once)
+        assert_eq!(f.shown, 0);
+        f.tick(&t, 0.1);
+        assert!((f.weights[15] - 0.2).abs() < 1e-6, "{}", f.weights[15]);
+        for _ in 0..10 {
+            f.tick(&t, 0.1);
+        }
+        assert_eq!(f.weights[15], 1.0);
+        f.target = BASE;
+        f.tick(&t, 0.25);
+        assert!((f.weights[15] - 0.5).abs() < 1e-6 && f.shown == 0);
+        f.tick(&t, 0.25);
+        assert_eq!((f.weights[15], f.shown), (0.0, BASE));
     }
 
     /// BF_TEST_FACE names a viseme as the game does and a character by its squad name or slot.

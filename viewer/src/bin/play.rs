@@ -34,7 +34,8 @@
 //! root channel moves. Clips are looked up by their real names (animation names are hashes of
 //! the motion-sequence script names, e.g. "Sc_w1_run"); jumps follow the game's MOTION chain
 //! crouch -> launch -> fall (loop) -> land. Sounds: footsteps are triggered when a foot plants
-//! (from the animated pose) and use the character's footstep type on the current surface; the
+//! (from the animated pose) and use the character's footstep type on the current surface (their
+//! volume, place and pitch are FUN_00119020's: play_liquids.rs `step`); the
 //! jump grunt comes from the character's movement-sounds; landing / dodge use the surface's
 //! jump-land / slide sets.
 //!
@@ -2302,8 +2303,9 @@ struct Player {
     air_velocity: Vec3,
     last_velocity: Vec3,
     /// its face controller (the game's char+0x5b8: the viseme weights, the face bones' pose, the
-    /// blink's clock; play_faces.rs, #255): made with the character (`spawn_unit`), ticked by its
-    /// step while it lives. Not `face`, which is the steep terrain face it stands on (#264)
+    /// line it says and its lip-sync, the blink's clock; play_faces.rs, #255, #325): made with the
+    /// character (`spawn_unit`), ticked by its step while it lives. Not `face`, which is the steep
+    /// terrain face it stands on (#264)
     facial: faces::Face,
     sim_time: f32,
     // input (filled by read_input)
@@ -2405,8 +2407,8 @@ struct Player {
     /// the priority of the line its voice is on (char+0x81c, set as a chatter sound starts,
     /// FUN_0013fab0; 0 while it's quiet, 0x11cc37)
     voice_priority: i64,
-    /// seconds left of the voice line being said (the face controller's +0x50; the HUD shows their
-    /// speech icon)
+    /// seconds left of the voice line being said (the face controller's +0x50, the chatter's copy:
+    /// the face runs its own, play_faces.rs; the HUD shows their speech icon)
     speaking: f32,
     /// hitpoints (the character's combat-target hitpoints at the start)
     health: f32,
@@ -4597,10 +4599,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // input reaches it, play_script.rs `blocks_input`)
     if !player.dead && !knocked_down(&player) {
         if let Some(l) = player.loaded.take() {
-            step_player(&mut player, &l, &game.0, kits, dt, &mut transforms);
+            step_player(&mut player, &l, &game.0, kits, dt, true, &mut transforms);
             move_log(&player, &l, dt);
             player.loaded = Some(l);
         }
+    } else if !player.dead {
+        // knocked down: no step, the ragdoll has the body (below), but its face controller ticks
+        // as every living character's does (play_faces.rs `tick`)
+        faces::tick(&mut player, dt);
     }
     // who can see whom (the squad AI and the test map's NPCs fire only at a hostile in sight)
     let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
@@ -4618,6 +4624,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
         if m.dead || knocked_down(m) {
+            // (knocked down, alive: its face controller ticks all the same, play_faces.rs `tick`)
+            if !m.dead {
+                faces::tick(m, dt);
+            }
             continue;
         }
         // one out of the world yet, waiting for its spawn-trigger (#222): no AI and no step, its
@@ -4674,7 +4684,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             orders::think(m, &player, slot, heading, dt, target, toward, &game.0);
         }
         let Some(l) = m.loaded.take() else { continue };
-        step_player(m, &l, &game.0, kits, dt, &mut transforms);
+        step_player(m, &l, &game.0, kits, dt, true, &mut transforms);
         // (only the player's grenades are launched)
         m.thrown.clear();
         m.loaded = Some(l);
@@ -4952,7 +4962,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 let w = ((k.time - KNOCK_DOWN_TIME) / GET_UP_TIME).clamp(0.0, 1.0);
                 let w = w * w * (3.0 - 2.0 * w);
                 let still = std::mem::replace(&mut u.move_input, Vec2::ZERO);
-                step_player(u, &l, &game.0, &[], dt, &mut transforms);
+                // (a second step in the frame: its face has ticked already, in the first step or,
+                // the frame the get-up starts, as one knocked down; here it's only drawn)
+                step_player(u, &l, &game.0, &[], dt, false, &mut transforms);
                 u.move_input = still;
                 if let Some(lying) = &k.lying {
                     for (e, (q0, t0)) in l.joints.iter().zip(lying) {
@@ -5802,7 +5814,12 @@ fn toggle_weapon(p: &mut Player) -> bool {
     started
 }
 
-fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, transforms: &mut Query<&mut Transform>) {
+/// One character's step of the frame: its clock, input, motion, clips and pose, the face over the
+/// body (`faces::step`), written to its joints. `tick_face`: whether its face controller ticks in
+/// it too; false for a second step in the same frame (a knock-down's get-up, `update_player`),
+/// whose face has ticked once already: the game ticks each living character's controller once an
+/// update (FUN_0011caa0 at 0x11dc87).
+fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::GrenadeKit], dt: f32, tick_face: bool, transforms: &mut Query<&mut Transform>) {
     p.sim_time += dt;
     // (the heading the step starts from, for BF_HEADING_LOG)
     let yaw_was = p.yaw;
@@ -6495,7 +6512,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- the face: the controller's pose on the face bones, the blink's on the lids, after the
     // body's layers, overlays and aim (play_faces.rs, #255): the game's body clips never move
     // them ----
-    faces::step(p, l, game, dt, &mut pose);
+    faces::step(p, l, game, if tick_face { dt } else { 0.0 }, &mut pose);
 
     // ---- move: root motion on the ground, ballistic in the air ----
     let facing = Quat::from_rotation_y(p.yaw);
@@ -6675,8 +6692,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // ---- footsteps: a foot coming down to its planted height ----
     p.step_mute -= dt;
     let walking = !p.action.airborne() && p.step_mute <= 0.0 && !matches!(p.action, Action::JumpLand | Action::JumpCrouch) && (p.gait != Gait::Idle || matches!(p.action, Action::Dodge { .. }));
-    // (x the skill's +0xe8, FUN_00119020 at 0x11918e: a quarter for a stealthed Hawk)
-    let volume = skills::noise(p) * match p.gait { Gait::Walk | Gait::WalkBack | Gait::Side { .. } => 0.35, Gait::Sprint => 0.85, _ => 0.6 };
+    // (the surface's four variants for the character's footstep type: the ground's pick of
+    // FUN_00119020, which `liquids::step` makes when the foot isn't in a liquid)
     let steps = surface.footsteps.get(&l.footstep_type).cloned().unwrap_or_default();
     for f in 0..2 {
         // planted level and swing height of the current clip blend (idle stance otherwise)
@@ -6693,31 +6710,33 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         let contact = FOOT_CONTACT.max(0.25 * swing);
         let y = y - contact + FOOT_CONTACT;                   // contact band starts at FOOT_CONTACT
         if walking && y < FOOT_CONTACT && p.foot_prev[f] >= FOOT_CONTACT {
-            // (in a liquid the wading step or nothing, FUN_00119020's branch: play_liquids.rs;
-            // the foot's bone in the world, as drawn)
+            // (the foot's bone in the world, as drawn)
             let foot = Mat4::from_rotation_translation(Quat::from_rotation_y(p.yaw), p.position + Vec3::Y * (p.height + p.lift_now))
                 .transform_point3(world[l.feet[f]].w_axis.truncate());
-            match liquids::step(p, foot) {
-                liquids::Step::Ground => p.queue_any(&steps, volume),
-                liquids::Step::Wade(s) => p.world_sounds.push(s),
-                liquids::Step::Silent => {}
+            // FUN_00119020's request for the foot event: the ground's step, the liquid's wading
+            // step or none, with the volume, the 2D or 3D place and the pitch the game gives it
+            // (play_liquids.rs `step`)
+            if let Some(s) = liquids::step(p, foot, &steps) {
+                p.world_sounds.push(s);
             }
         }
         p.foot_prev[f] = y;
     }
 }
 
-/// A sound request with play parameters of its own (`Player::world_sounds`, #5): what the game's
-/// FUN_00179250 takes for the liquids' sounds (ECX's play-parameter block; todo/5-liquid-sounds
-/// leads §2.1), where `Player::sound_queue` holds the demo's plain (id, volume) ones.
+/// A sound request with play parameters of its own (`Player::world_sounds`, #5, #324): what the
+/// game's FUN_00179250 takes for the liquids' sounds and the footsteps (ECX's play-parameter
+/// block; todo/5-liquid-sounds leads §2.1), where `Player::sound_queue` holds the demo's plain (id,
+/// volume) ones.
 #[derive(Clone, Copy, Debug)]
 struct WorldSound {
     /// the sound id
     id: u32,
     /// where it plays from (the block's position +0 with its set byte +0xc): heard by its library
     /// entry's distances from the listener, and dropped at or beyond its max distance
-    /// (0x17932a-0x179334: 15 m for every liquid sound). None plays it 2D (the controlled
-    /// character's own wading step, whose point FUN_00119020 writes into the block's +0x10)
+    /// (0x17932a-0x179334: 15 m for every liquid sound, 10 m for a footstep). None plays it 2D
+    /// (the controlled character's own step, wading or on the ground, whose point FUN_00119020
+    /// writes into the block's +0x10)
     at: Option<Vec3>,
     /// its volume (+0x48 with its set byte +0x4c), which replaces the library entry's (FUN_0017ec80:
     /// 1.0 for a splash, where the bank has 0.5); None for the entry's own (FUN_0022feb0's ray sets
@@ -6729,6 +6748,10 @@ struct WorldSound {
     /// the request's kind, FUN_00179250's third argument (KIND_STEP, KIND_SPLASH, KIND_RAY; for
     /// BF_SOUND_LOG)
     kind: u8,
+    /// a footstep's gait factor, the share of its volume FUN_00119020's gait branch gives it
+    /// (0x119059-0x1190a4: 1.0 dashing or running, 0.35 crouch-walking, 0.5 otherwise); 0 for the
+    /// other kinds. The volume already has it in: this is for BF_SOUND_LOG
+    gait: f32,
 }
 
 impl WorldSound {
@@ -6800,7 +6823,9 @@ fn play_sounds(mut commands: Commands, mut player: ResMut<Player>, mut squad: Re
                 (Some(at), _) => format!("at {at:.2}, {:.1} m from the listener: not heard (beyond the entry's max distance, or no entry)", listener.distance(at)),
                 (None, _) => "2D".to_string(),
             };
-            println!("t={:6.2} sound {:08x} kind {} vol {:.2} (asked {}) pitch {:+.3} oct {place}", player.sim_time, s.id, s.kind,
+            // (a footstep's gait factor, the share of its asked volume the gait gave it)
+            let gait = if s.kind == KIND_STEP { format!(" gait {:.2}", s.gait) } else { String::new() };
+            println!("t={:6.2} sound {:08x} kind {} vol {:.2} (asked {}){gait} pitch {:+.3} oct {place}", player.sim_time, s.id, s.kind,
                      heard.map_or(0.0, |h| h.0), s.volume.map_or("the entry's".to_string(), |v| format!("{v:.2}")), s.pitch);
         }
         if let Some((volume, _)) = heard.filter(|h| h.0 > 0.0) {
@@ -7533,7 +7558,7 @@ fn projectiles(mut commands: Commands, time: Res<Time>, mut game: ResMut<GameDat
                 spawn_once(&mut commands, &mut game.0, &mut ale, &mut images, &mut materials, effect, Transform::from_translation(surface), 1.0);
             }
             if liquid.sounds[LIQUID_SHOT] != 0 {
-                player.world_sounds.push(WorldSound { id: liquid.sounds[LIQUID_SHOT], at: Some(surface), volume: None, pitch: 0.0, kind: KIND_RAY });
+                player.world_sounds.push(WorldSound { id: liquid.sounds[LIQUID_SHOT], at: Some(surface), volume: None, pitch: 0.0, kind: KIND_RAY, gait: 0.0 });
             }
             if std::env::var("BF_LIQUID_LOG").is_ok() {
                 println!("t {:.2}: an instant ray through a liquid's surface (type {}) at {surface:.2}: effect h_{effect:08x}, sound {:08x}",
@@ -7872,7 +7897,7 @@ mod tests {
     #[test]
     fn a_world_sound_is_heard_by_its_entry() {
         let entry = Some(bf_viewer::bf::audio::SoundParams { min_distance: 5.0, max_distance: 15.0, volume: 0.5 });
-        let splash = |x: f32| WorldSound { id: 1, at: Some(Vec3::new(x, 0.0, 0.0)), volume: Some(1.0), pitch: 0.0, kind: KIND_SPLASH };
+        let splash = |x: f32| WorldSound { id: 1, at: Some(Vec3::new(x, 0.0, 0.0)), volume: Some(1.0), pitch: 0.0, kind: KIND_SPLASH, gait: 0.0 };
         assert_eq!(splash(4.0).heard(entry, Vec3::ZERO), Some((1.0, Some(4.0))));
         // (the curve's second stretch, 7-9 m: 1.0 to 0.375)
         let (v, _) = splash(8.0).heard(entry, Vec3::ZERO).unwrap();

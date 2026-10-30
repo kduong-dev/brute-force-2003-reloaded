@@ -291,7 +291,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | `used_item(u, use_type)` | +0x104 | nothing (0x2c60c0) | an item used, by its IOU_ use type (FUN_00121170; `skills::used_item`: play.rs's throw and set-down, play_pickups.rs's medkit): Hawk's cost while stealthed |
 | `uses_item(use_type)` | +0x1c | true (0x262a80) | whether the character can use an item of that IOU_ use type (the items' "can use" 0x146c70 asks it; `skills::uses_item`, play.rs `item_usable`, play_inventory.rs `use_other`): Brutus's (FUN_0013c160) refuses the OrgSen's IOU_ATTACH_TO_FACE and the Hat's IOU_ATTACH_TO_EQUIP_SLOT, red in his box and "Cannot use" at G (#281, #196 take26) |
 | `visibility(u)` | +0xe4 | 1.0 (0x10e3d0) | how visible the character is (`skills::visibility`): the AI's sight (play_brain.rs `Sensor`) and the crosshair's selection (play_reticle.rs) read it. Hawk's falls as she fades |
-| `noise(u)` | +0xe8 | 1.0 (0x10e3d0) | the factor on its footsteps (`skills::noise`, play.rs `step_player`): Hawk's a quarter stealthed |
+| `noise(u)` | +0xe8 | 1.0 (0x10e3d0) | the factor on its footsteps (`skills::noise`, play_liquids.rs `step`, which `step_player` asks at each foot event): Hawk's a quarter stealthed |
 | `holds_fire(u)` | +0x108 | false (0x20e200) | an AI character holds fire (`skills::holds_fire`, play.rs `update_player`: no target for the squad AI or a test map NPC): Hawk while stealthed |
 
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
@@ -584,7 +584,7 @@ and leads in `todo/198-hawk-invis/`.
   the press, as the count drops), nothing for the Power Blade's melee. The medkit (IOU_USE_IN_HAND)
   costs 5.
 * **Noise** (+0xe8, 0x13d210): her footsteps x (0.25 + 0.75 x her visibility), a quarter
-  stealthed (FUN_00119020 at 0x11918e; `step_player`). The game's movement noise that the AI
+  stealthed (FUN_00119020 at 0x11918e; play_liquids.rs `step`). The game's movement noise that the AI
   hears (FUN_0001aeb0) is scaled the same: the demo's AI doesn't hear.
 * **The AI's sight** (play_brain.rs `Sensor`, #197; todo/197-ai-sight/answer.md): FUN_0004d140
   gives the AI the reach of its sight distance (the sensor's +0xa8, 0x10fb90: the type's
@@ -1007,8 +1007,10 @@ scratchpad):
   BF_TEST_SQUAD_SKILL=hawk,2.0 BF_RETICLE_LOG=2`): the hostile Hawk red, under the centre and
   locked, to 3.80 s; from 3.93 (0.94 s into her fade) blue, "hawk unseen: visibility 0.00", the
   centre still on her.
-* **Footsteps** (`BF_MAP=flat BF_TEST_GOTO=0,0,0,-60 BF_TEST_SKILL=0.5 BF_SOUND_LOG=1`): her run's
-  0.6 down to 0.54, 0.39 and 0.21 through the fade, then 0.15.
+* **Footsteps** (`BF_MAP=flat BF_CHARACTER=2 BF_TEST_GOTO=0,0,0,-60 BF_TEST_SKILL=0.5
+  BF_SOUND_LOG=1`): her run's 0.6 down to 0.54, 0.39 and 0.21 through the fade, then 0.15 (the
+  demo's own volumes then). Since #324 a step is her noise x the gait's factor (1.0 for a run) x
+  0.75 (her own step, 2D): 0.67, 0.49, 0.26 through the fade, then 0.19 (a quarter of 0.75).
 * **Hand-over** (`BF_TEST_SELECT=3,4.0`): on under the AI, draining 2.5/s, invisible (take19).
   **Death** (`BF_TEST_DIE=4.0`): off in the frame of death, her body back on the ground a second
   later. **The Vengar view** (`BF_MAP=flat BF_CHARACTER=0 BF_TEST_SWEEP=180
