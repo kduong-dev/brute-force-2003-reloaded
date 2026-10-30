@@ -947,7 +947,8 @@ fn main() {
     let playing = in_state(AppState::Playing);
     // (the map editor's edit mode has no character to drive or follow: play_editor.rs)
     let editing = || in_state(editor::EditorMode::Edit);
-    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin, bf_viewer::ale_fx::plugin))
+    app.add_plugins((hud::plugin, grenade::plugin, gas::plugin, energy::plugin, sonic::plugin, sentry::plugin, roller::plugin, fx::plugin, dna::plugin, pickups::plugin, text::plugin, deathcam::plugin, testmap::plugin, scenery::plugin, ammo::plugin))
+        .add_plugins(bf_viewer::ale_fx::plugin)
         .add_plugins(shots::plugin)
         .add_plugins(missile::plugin)
         .add_plugins(bolts::plugin)
@@ -1007,6 +1008,8 @@ mod energy;
 mod sonic;
 #[path = "play_sentry.rs"]
 mod sentry;
+#[path = "play_roller.rs"]
+mod roller;
 #[path = "play_fx.rs"]
 mod fx;
 #[path = "play_dna.rs"]

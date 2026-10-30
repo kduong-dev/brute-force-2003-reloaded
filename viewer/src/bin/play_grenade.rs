@@ -22,8 +22,9 @@
 //! count drops at once (one game frame after the button in the recordings), the stance's throw
 //! clip takes the grenade in hand at its reach event (its trail and hiss start then: ~0.33 s
 //! after the button) and lets go at its release event. It bounces silently and goes off when its
-//! fuse ends. Place-on-ground types (Roller, Sentry) are set down at the feet with the stance's
-//! place_hi clip (no meter, the count drops at the press); the Roller rolls off straight ahead.
+//! fuse ends. Place-on-ground types (Roller, Sentry, Thermo) are set down at the feet with the
+//! stance's place_hi clip (no meter, the count drops at the press); the Roller then hops off after
+//! enemies (play_roller.rs).
 //!
 //! The blast plays the effect type's ALE effects and light (ale_fx.rs) and sound and the impact
 //! sound, leaves the decal, and hurts everyone in its radius (and throws loose pickups) unless
@@ -33,9 +34,9 @@
 //! The Gas's damage over time is play_gas.rs's (its blast is handed over there, see
 //! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs), the Sonic's with its
 //! ring (play_sonic.rs). The Light does no damage: its canister stays where it lies while
-//! phosphor_grenade and light_phosphor burn (30 s, see `stays`). Not done yet (each type's own
-//! ticket): the Roller's seeking. The Sentry's trigger (a hostile within 3 m, no friend near;
-//! or a shot) is play_sentry.rs's: it sets the fuse of a mine that's due to 0.
+//! phosphor_grenade and light_phosphor burn (30 s, see `stays`). The Roller's seeking is
+//! play_roller.rs's: its proximity rule sets its fuse to 0. The Sentry's trigger (a hostile within
+//! 3 m, no friend near; or a shot) is play_sentry.rs's: it sets the fuse of a mine that's due to 0.
 
 use super::*;
 use super::damage::{footage_squad_step, Difficulty, Hit};
@@ -72,11 +73,6 @@ const USE_PLACE: i64 = 2;
 /// e40's mines, m09_b's Thermo): `load_kits` makes a kit for the grenade and explosive types among
 /// them.
 const ITEM_SPAWN: u32 = 0x1D1D_4F05;
-/// function-type IFSET_ROLLING_BOMB (the Roller: rolls off once set down)
-const ROLLING_BOMB: i64 = 13;
-/// The Roller's speed once down (m/s; 4.4-5.0 measured, straight ahead along the thrower's
-/// facing, no target in the recording).
-const ROLL_SPEED: f32 = 4.7;
 /// While it rolls, the Roller's object sound (h_19dbc65d) plays again every ROLL_SOUND_EVERY s
 /// (the recording: a loop every ~0.97 s), heard fully within ROLL_SOUND_NEAR m and fading to
 /// nothing at ROLL_SOUND_FAR m (the sound's own `<Sound falloff=5 h_fd40e332=25>` in
@@ -264,20 +260,20 @@ impl GrenadeKits {
 }
 
 /// A grenade out of the hand, until it goes off. (play_sentry.rs reads a mine's type, whether
-/// it's down and who set it down, and sets its fuse to 0 to set it off.)
+/// it's down and who set it down, and sets its fuse to 0 to set it off; play_roller.rs sets a
+/// Roller's fuse to 0.)
 #[derive(Component)]
 pub(super) struct Grenade {
     pub(super) kind: usize,
     velocity: Vec3,
     pub(super) fuse: f32,
-    /// the fuse runs once the grenade has come down
+    /// armed by its first contact (+0x1dc bit 1, set by the contact handler 0x149510): the fuse
+    /// runs once the grenade has come down
     pub(super) landed: bool,
     spin: Vec3,
     /// the character who threw it (its blast hurts them by SELF_DAMAGE)
     pub(super) thrower: usize,
-    /// a Roller: rolls this way (flat, unit) along the ground once it's down; its rolling sound
-    /// is due again in this many seconds
-    rolling: Option<Vec3>,
+    /// a Roller: its rolling sound is due again in this many seconds
     roll_sound: f32,
     /// when it left the hand (sim time; BF_GRENADE_LOG prints the flight to the first contact)
     launched: f32,
@@ -292,7 +288,7 @@ impl Grenade {
     /// Sentry's 9999 s: what sets it off is its check), thrown by no one (OTHER: no squad member's
     /// own, so no thrower's share of its blast).
     pub(super) fn placed(kind: usize, fuse: f32, now: f32) -> Grenade {
-        Grenade { kind, velocity: Vec3::ZERO, fuse, landed: true, spin: Vec3::ZERO, thrower: OTHER, rolling: None, roll_sound: 0.0, launched: now, wet: false }
+        Grenade { kind, velocity: Vec3::ZERO, fuse, landed: true, spin: Vec3::ZERO, thrower: OTHER, roll_sound: 0.0, launched: now, wet: false }
     }
 }
 
@@ -368,7 +364,8 @@ pub fn plugin(app: &mut App) {
         .init_resource::<DelayedBlastParts>()
         .insert_resource(ScreenTint(TINT_TIME))
         .add_systems(OnEnter(AppState::Playing), load_kits.after(setup))
-        .add_systems(Update, (super::inventory::stock, launch_grenades, hold_grenade, super::sentry::trip, fly_grenades, super::energy::strike, super::sonic::ring, tint).chain().in_set(GrenadeSystems)
+        .add_systems(Update, (super::inventory::stock, launch_grenades, hold_grenade, super::sentry::trip, super::roller::seek, fly_grenades, super::energy::strike,
+                              super::sonic::ring, tint).chain().in_set(GrenadeSystems)
             .after(update_player).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
@@ -452,7 +449,8 @@ pub struct Thrown {
 }
 
 /// Spawn the grenades let go this frame: the one in the hand flies on (its trail with it), or
-/// drops at the feet (a placed type: the Roller rolls off ahead once down).
+/// drops at the feet (a placed type). A Roller let go gets its seek helper (the item set's let-go
+/// 0x148640 -> FUN_00148720, play_roller.rs): its point 50 m along the thrower's aim.
 fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, mut held: ResMut<Held>,
                    mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut next_test: Local<f32>) {
     let Some(kits) = kits else { return };
@@ -484,7 +482,17 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
                 e
             }
         };
-        let rolling = (kit.def.function_type == ROLLING_BOMB && !t.landed).then(|| Quat::from_rotation_y(player.yaw) * Vec3::NEG_Z);
+        // (the placer's horizontal aim: its aim frame's forward flattened, 0x10fbf0; the demo's aim
+        // frame is the camera's turn, `camera::aim_turn`)
+        if kit.def.function_type == super::roller::ROLLING_BOMB && !t.landed {
+            let aim = super::camera::aim_turn(&player) * Vec3::NEG_Z;
+            let roller = super::roller::Roller::let_go(kit, t.pos, Some(aim), Vec3::Z, player.team, Some(player.who()), player.sim_time);
+            if std::env::var("BF_ROLLER_LOG").is_ok() {
+                println!("t {:.2}: Roller let go at {:.2}, its point {:.2} ({:.1} degrees, the logs' atan2(dz, dx))", player.sim_time, t.pos, roller.point,
+                         (roller.point.z - t.pos.z).atan2(roller.point.x - t.pos.x).to_degrees());
+            }
+            commands.entity(e).insert(roller);
+        }
         let spin = if kit.placed() { Vec3::ZERO } else { t.velocity.cross(Vec3::Y).normalize_or(Vec3::X) * -12.0 };
         let fuse = if t.landed { 0.0 } else { kit.def.fuse.max(0.0) };
         if std::env::var("BF_GRENADE_LOG").is_ok() && !t.landed {
@@ -493,7 +501,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
             println!("t {:.2}: {} leaves the hand {:.2} m over the floor at the thrower's feet at {:.1} m/s, {:.1} degrees up (mass {:.1})", player.sim_time,
                      kit.def.label, t.pos.y - feet, v.length(), v.y.atan2(Vec2::new(v.x, v.z).length()).to_degrees(), kit.def.mass);
         }
-        commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, spin, thrower: player.character, rolling,
+        commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, spin, thrower: player.character,
                                             roll_sound: 0.0, launched: player.sim_time, wet: false });
     }
 }
@@ -535,8 +543,9 @@ fn trail(commands: &mut Commands, player: &mut Player, kit: &GrenadeKit, e: Enti
     }
 }
 
-/// Grenade flight: gravity, bounces off the ground, the pillars and the map's objects, the
-/// blast when the fuse ends (or at the first contact, timer 0).
+/// Grenade flight: gravity, bounces off the ground, the pillars and the map's objects (a Roller
+/// hops toward its drive and stops at walls, play_roller.rs), the blast when the fuse ends (or at
+/// the first contact, timer 0).
 #[allow(clippy::too_many_arguments)]
 fn fly_grenades(
     mut commands: Commands,
@@ -547,7 +556,7 @@ fn fly_grenades(
     kits: Option<Res<GrenadeKits>>,
     mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
     (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-    mut grenades: Query<(Entity, &mut Grenade, &mut Transform)>,
+    mut grenades: Query<(Entity, &mut Grenade, &mut Transform, Option<&super::roller::Roller>)>,
     (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts, mut rings, mut objects): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>,
                                                                ResMut<DelayedBlastParts>, ResMut<ScreenTint>, ResMut<super::gas::GasClouds>,
                                                                ResMut<super::energy::BoltRequests>, ResMut<super::sonic::RingRequests>,
@@ -616,7 +625,7 @@ fn fly_grenades(
     let detonate = std::env::var("BF_TEST_DETONATE").ok().and_then(|v| v.parse::<f32>().ok())
         .is_some_and(|at| p.sim_time >= at && !*detonated);
     *detonated |= detonate;
-    for (e, mut g, mut tr) in &mut grenades {
+    for (e, mut g, mut tr, roller) in &mut grenades {
         let Some(kit) = kits.0.get(g.kind) else { continue };
         if detonate {
             g.fuse = 0.0;
@@ -669,10 +678,16 @@ fn fly_grenades(
             delayed.2.push(PendingDamage { left: DAMAGE_DELAY, kind: g.kind, at, thrower: g.thrower });
             continue;
         }
+        // (a Roller rests on the ground and meets walls by its own ball's radius, its archetype's
+        // sphere: 0.19 m; the others by GRENADE_RADIUS)
+        let radius = roller.map_or(GRENADE_RADIUS, |r| r.radius_m);
+        // (a wall stops a Roller with no bounce: take17 / take18 stop it within 0.05 s at the gate's
+        // panel, it settles back 0.15 m at most and stays against it, pressed toward its point)
+        let rebound = if roller.is_some() { 0.0 } else { 0.5 };
         g.velocity.y -= GRENADE_GRAVITY * dt;
         let speed = g.velocity.length();
         let mut pos = tr.translation + g.velocity * dt;
-        let floor = floor_y(pos.x, pos.z, tr.translation.y, world::Body::Thing) + GRENADE_RADIUS;
+        let floor = floor_y(pos.x, pos.z, tr.translation.y, world::Body::Thing) + radius;
         let mut hit = false;
         if pos.y < floor {
             pos.y = floor;
@@ -692,21 +707,14 @@ fn fly_grenades(
                 }
             }
             g.landed = true;
-            if let Some(dir) = g.rolling {
-                // down: it rolls off along the ground
-                let flat = Vec2::new(g.velocity.x, g.velocity.z);
-                let v = if flat.length() > 0.5 { flat.normalize() * ROLL_SPEED } else { Vec2::new(dir.x, dir.z) * ROLL_SPEED };
-                g.velocity = Vec3::new(v.x, 0.0, v.y);
-                g.spin = g.velocity.cross(Vec3::Y).normalize_or(Vec3::X) * -(ROLL_SPEED / GRENADE_RADIUS).min(40.0);
-                // its rolling sound, again and again while it rolls, fading with distance
-                g.roll_sound -= dt;
-                if g.roll_sound <= 0.0 && kit.def.object_sound != 0 {
-                    g.roll_sound = ROLL_SOUND_EVERY;
-                    let d = pos.distance(p.position);
-                    let volume = 0.8 * (1.0 - (d - ROLL_SOUND_NEAR) / (ROLL_SOUND_FAR - ROLL_SOUND_NEAR)).clamp(0.0, 1.0);
-                    if volume > 0.0 {
-                        p.sound_queue.push((kit.def.object_sound, volume));
-                    }
+            if let Some(r) = roller {
+                // a Roller hops off again, its way along the ground taken toward its drive
+                // (play_roller.rs `hop`: the takes' ball flies straight between ground contacts)
+                let before = Vec2::new(g.velocity.x, g.velocity.z).length();
+                if super::roller::hop(&mut g.velocity, r.drive, super::roller::ground_normal(pos.x, pos.z, tr.translation.y))
+                    && std::env::var("BF_ROLLER_LOG").is_ok() {
+                    println!("t {:.2}: Roller contact at {pos:.2}: {before:.2} -> {:.2} m/s along the ground, drive {:.2} m/s", p.sim_time,
+                             Vec2::new(g.velocity.x, g.velocity.z).length(), r.drive.length());
                 }
             } else if g.velocity.y < 0.0 {
                 g.velocity.y = -g.velocity.y * RESTITUTION;
@@ -718,32 +726,73 @@ fn fly_grenades(
                 }
             }
         }
+        if let Some(r) = roller {
+            // its rolling sound, again and again once it's down, fading with distance; and its
+            // turn as it rolls, with its drive (the game's ball spins with its push)
+            g.spin = super::roller::spin(r);
+            if g.landed {
+                g.roll_sound -= dt;
+                if g.roll_sound <= 0.0 && kit.def.object_sound != 0 {
+                    g.roll_sound = ROLL_SOUND_EVERY;
+                    let d = pos.distance(p.position);
+                    let volume = 0.8 * (1.0 - (d - ROLL_SOUND_NEAR) / (ROLL_SOUND_FAR - ROLL_SOUND_NEAR)).clamp(0.0, 1.0);
+                    if volume > 0.0 {
+                        p.sound_queue.push((kit.def.object_sound, volume));
+                    }
+                }
+            }
+        }
         for c in pillars() {
-            let half = 0.3 + GRENADE_RADIUS;
+            let half = 0.3 + radius;
             let d = pos - c;
             if d.x.abs() < half && d.z.abs() < half && pos.y < c.y + 1.5 {
                 // push out along the shallower axis and reflect
                 hit = true;
                 if half - d.x.abs() < half - d.z.abs() {
                     pos.x = c.x + half * d.x.signum();
-                    g.velocity.x = -g.velocity.x * 0.5;
+                    g.velocity.x = -g.velocity.x * rebound;
                 } else {
                     pos.z = c.z + half * d.z.signum();
-                    g.velocity.z = -g.velocity.z * 0.5;
+                    g.velocity.z = -g.velocity.z * rebound;
+                }
+            }
+        }
+        // a Roller's move along the ground is swept for walls first: pushed out after the move, a
+        // ball whose middle went past the middle of a thin wall (e34's gate panel, take17 / take18)
+        // came out on the far side
+        if let (Some(_), Some(a)) = (roller, world::arena()) {
+            let from = tr.translation;
+            let step = Vec3::new(pos.x - from.x, 0.0, pos.z - from.z);
+            let len = step.length();
+            if len > 1e-4 {
+                let dir = step / len;
+                if let Some((t, n)) = a.ray_normal(from, dir, len + radius).filter(|(_, n)| n.y.abs() < super::roller::WALL_NORMAL) {
+                    hit = true;
+                    let back = (t - radius).clamp(0.0, len);
+                    pos.x = from.x + dir.x * back;
+                    pos.z = from.z + dir.z * back;
+                    let n = Vec2::new(n.x, n.z).normalize_or_zero();
+                    let v = Vec2::new(g.velocity.x, g.velocity.z);
+                    let vn = v.dot(n);
+                    if vn < 0.0 {
+                        let v = v - n * vn;
+                        g.velocity.x = v.x;
+                        g.velocity.z = v.y;
+                    }
                 }
             }
         }
         // the map's objects: push out and bounce off
         if let Some(a) = world::arena() {
             let at = Vec2::new(pos.x, pos.z);
-            let q = a.push_out(at, GRENADE_RADIUS, pos.y - GRENADE_RADIUS, pos.y + GRENADE_RADIUS, 0.0, world::Body::Thing);
+            let q = a.push_out(at, radius, pos.y - radius, pos.y + radius, 0.0, world::Body::Thing);
             if q != at {
                 hit = true;
                 let n = (q - at).normalize_or_zero();
                 let v = Vec2::new(g.velocity.x, g.velocity.z);
                 let vn = v.dot(n);
                 if vn < 0.0 {
-                    let v = v - n * vn * 1.5;
+                    let v = v - n * vn * (1.0 + rebound);
                     g.velocity.x = v.x;
                     g.velocity.z = v.y;
                 }
@@ -759,7 +808,7 @@ fn fly_grenades(
         // into a liquid (#5): its splash, by its mesh's radius (play_liquids.rs; the liquids aren't
         // solid, so it goes on down to the bed)
         if let Some(a) = world::arena() {
-            if let Some((t, at, slot)) = super::liquids::object_enters(&a, &mut g.wet, tr.translation, pos, GRENADE_RADIUS, kit.splash_radius, speed) {
+            if let Some((t, at, slot)) = super::liquids::object_enters(&a, &mut g.wet, tr.translation, pos, radius, kit.splash_radius, speed) {
                 super::liquids::splash(p, &t, slot, at);
                 if std::env::var("BF_GRENADE_LOG").is_ok() || std::env::var("BF_LIQUID_LOG").is_ok() {
                     println!("t {:.2}: {} into a liquid (type {}) at {speed:.1} m/s: a {} splash at {at:.2} (r {:.3}): effect h_{:08x}, sound {:08x}",
@@ -845,7 +894,14 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
 #[allow(clippy::too_many_arguments)]
 fn blast(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::ale_fx::AleAssets>, images: &mut Assets<Image>,
          materials: &mut Assets<StandardMaterial>, kit: &GrenadeKit, at: Vec3, p: &mut Player, delayed: &mut DelayedBlastParts) -> f32 {
-    let ground = Vec3::new(at.x, floor_y(at.x, at.z, at.y + 0.5, world::Body::Thing), at.z);
+    // (where it is, when a level has no floor under it: a grenade over a rock's face too steep to
+    // be a floor found none, and its blast went to the flat floor's height, -1.05 m: a Roller on
+    // e34's rock, #79)
+    let floor = match world::arena().filter(|a| !a.is_flat()) {
+        Some(a) => a.floor_below(at.x, at.z, at.y + 0.5, world::Body::Thing).map_or(at.y, |f| f.0),
+        None => floor_y(at.x, at.z, at.y + 0.5, world::Body::Thing),
+    };
+    let ground = Vec3::new(at.x, floor, at.z);
     let mut burn: f32 = 0.0;
     if let Some(ale) = ale {
         for &effect in kit.blast_fx.effects.iter().chain([&kit.blast_fx.light]).filter(|&&e| e != 0) {

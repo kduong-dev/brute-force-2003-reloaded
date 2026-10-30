@@ -72,8 +72,15 @@ const H_BULLET_DECAL: u32 = 0x06A2_7365;
 const H_USE_TYPE: u32 = 0x1EE2_F4ED;
 /// item: a proximity mine's trigger radius (m, an int: 3 on every Sentry definition in every
 /// level). default.xbe's range test 0x146cb0 loads it from the item type (+0x178) and squares
-/// it against the 3D distance to each character.
+/// it against the 3D distance to each character. The Roller's item set reads the same type+0x178
+/// as the number of checks between its full target searches (10; FUN_00148720 -> its helper's
+/// +0x30): one attribute, two meanings by item set (the item-type handler FUN_001920d0 stores it).
 const H_PROXIMITY_RADIUS: u32 = 0x0A81_1E94;
+/// item: the Roller's seek radius (m, an int: 50 on both Roller definitions, 0 on every other
+/// grenade): the item-type handler FUN_001920d0 stores it, the runtime type carries it at +0x17c,
+/// and FUN_00148720 puts it in the seek helper (+0x2c): its target search's reach and how far
+/// ahead its first point lies (#79).
+const H_SEEK_RADIUS: u32 = 0x1188_4F2E;
 /// object base: the effects attached to the object (8 slots of `<h_081398d6 effect-name
 /// hardpoint-name>`); a grenade's first is its trail (the Frag's h_10a5508f: grenade_trail and
 /// the hiss 10318b29)
@@ -232,8 +239,11 @@ pub struct WeaponDef {
     pub stack_limit: i64,
     /// the effect type attached to the object (h_18b6ab72's first slot; 0 if none)
     pub attached_effect: u32,
-    /// items: a proximity mine's trigger radius (H_PROXIMITY_RADIUS; 0 if none)
+    /// items: a proximity mine's trigger radius (H_PROXIMITY_RADIUS; 0 if none). On the Roller
+    /// the same attribute is its checks between full target searches (10)
     pub proximity_radius: f32,
+    /// items: the Roller's seek radius (H_SEEK_RADIUS: 50; 0 if none)
+    pub seek_radius: f32,
     /// what the fire loop reads besides the above: bursts, accuracy, tracers, muzzle and shell
     /// effects, damage falloff (see `ShotData`)
     pub shots: ShotData,
@@ -494,6 +504,7 @@ pub fn parse_weapons(root: &Element, strings: &HashMap<u32, String>) -> Vec<Weap
                 .and_then(|a| a.children.first()).and_then(|e| e.attr(h("effect-name"))).and_then(|v| v.as_hash())
                 .filter(|&x| x != h("")).unwrap_or(0),
             proximity_radius: find(H_PROXIMITY_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0),
+            seek_radius: find(H_SEEK_RADIUS).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0),
             shots: shot_data(w, bullet),
             blast_core: all.iter().find(|e| e.name == h("Damage")).and_then(|e| e.attr(0x011C_B154)).and_then(|v| v.as_i64()).is_some_and(|v| v != 0),
             mesh_bullet: bullet.and_then(|b| mesh_bullet(b)),
