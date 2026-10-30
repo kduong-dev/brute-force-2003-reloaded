@@ -624,6 +624,19 @@ less (**Damage**: #112's).
     blast, the fall-off between 2.7 and 5 m: not filmed.
   * The per-material ground puff of its explosion (h_0cbcb8f2: dirt h_e919bf9e ...): no grenade's
     is drawn yet.
+  * Its blast's damage to enemies (the tester's runs of the stagings): the A50 Heavy survives a
+    Roller going off 2.4-2.6 m from it with 10-22 HP, where 8 of the 9 takes' blasts killed it. The
+    shared rule (`hurt_by_blast`: Damage max falling to nothing at the radius) gives about half
+    there (156 x 0.5 x 1.4 = 109); the game's (FUN_0022c4d0) gives a core blast's whole roll within
+    half of r', the radius less the victim's size (117-156 x 1.4 = 164-218): #112's.
+  * The sight line starts at the ball's middle, its radius (0.19 m) over the floor at rest, where
+    the game's starts at its node, ~0.3 m over the floor (the spec's §4: the logged node 29.3-29.5 on
+    ground at 28.9-29.1). A ray grazing a bump is a little likelier to be blocked in the demo.
+  * The game's sight ray is also met by fly-blockers (its kind mask 0x58 keeps PID_FLY_BLOCKER,
+    kind 8); the demo's arena has none.
+  * The wall sweep (play_grenade.rs `fly_grenades`) casts once along the frame's move and keeps the
+    first face it meets: when that face is floor-like (a slope under 65 degrees ahead), the frame's
+    sweep stops nothing, and a wall just beyond it is caught by the next frame's sweep.
 
 ## Light grenade
 
