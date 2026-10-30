@@ -41,7 +41,9 @@
 //! The dialog-trigger (vtable 0x3952a0): PLAY_DIALOG or OPERATE on its first object, a character
 //! (a spawn-trigger's copy): a dead one sends FINISHED at once, a living one says the line
 //! (FUN_001267b0, through its voice) and the trigger's update sends FINISHED once it's said
-//! (FUN_00126810). Here the line is a plain sound at the character (no mouth, no radio filter).
+//! (FUN_00126810). Here the line is a plain sound at the character (no radio filter), and the
+//! character's face controller says it (`speakers`: its mouth follows the line's viseme tracks,
+//! play_faces.rs, #325). The world's dialog queue has no speaker and moves no face.
 //!
 //! The music: a level's music bank (data/sounds/<level>.xwb) holds its music cues and ambience
 //! beds, and its sound-triggers play them (resource-type 2: the tutorial's three cues with their
@@ -478,6 +480,10 @@ pub(crate) struct SoundWorld {
     seen: Vec<Seen>,
     /// the sound system's one music voice and the handles it took away (`MusicSlot`)
     music: MusicSlot,
+    /// the dialog-triggers' lines for their speakers' face controllers this frame: the speaker's
+    /// name, and the line said (FUN_001267b0 -> FUN_001435d0) or None for its STOP (FUN_001267f0
+    /// -> FUN_00143570); `speakers` puts them on the faces
+    speech: Vec<(u32, Option<u32>)>,
 }
 
 /// The sound system's music voice (DAT_00469940 +0x1a4, 0 as FUN_0017e7c0 makes it): the last
@@ -528,10 +534,37 @@ pub(crate) fn plays_music(level: &Level, sounds: &SoundBank) -> bool {
 }
 
 /// Where the listener stands, before the triggers' frame (play_triggers.rs `run`); the voices,
-/// after it; and the start's log.
+/// after it; the dialog lines on their speakers' faces after the characters' step and the
+/// chatter's frame (`speakers`); and the start's log.
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(AppState::Playing), log_sounds.after(super::start))
-        .add_systems(Update, (listener.before(super::run), voices.after(super::run)).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, (listener.before(super::run), voices.after(super::run)).run_if(in_state(AppState::Playing)))
+        .add_systems(Update, speakers.after(super::run).after(update_player).after(chatter::ChatterSystems).run_if(in_state(AppState::Playing)));
+}
+
+/// The dialog-triggers' lines on their speakers' face controllers (play_faces.rs `speak` and
+/// `stop`, #325): FUN_001267b0 says a line through its character's controller (FUN_001435d0 at
+/// 0x1267d1) when the character is in the world (+0x26 bit 3), FUN_001267f0 stops what it says
+/// (FUN_00143570 at 0x1267ff). The game's dialog-triggers are signalled after the objects' ticks
+/// (FUN_000d9840 at 0xd9d0b): by a cutscene script's 103 from the scripts' update (FUN_00174270 at
+/// 0xd9d18) or from the trigger loop (FUN_000d99d0 at 0xd9d20), both after the chatter manager's
+/// update (0xd9ac7) too: a line said this frame is read from the next tick on (take07's face log
+/// caught Tex's controller between the two, +0x44 = +0x40 and the time left whole), and it wins
+/// over a chatter sound started on the same character in the same frame. So this runs after the
+/// characters' step and the chatter's frame, and the line's start is the controller's clock as it
+/// is (`ago` 0).
+fn speakers(mut tr: ResMut<Triggers>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>) {
+    if tr.sound.speech.is_empty() {
+        return;
+    }
+    for (name, line) in std::mem::take(&mut tr.sound.speech) {
+        let speaker = std::iter::once(&mut *player).chain(squad.0.iter_mut()).find(|u| name != 0 && u.trigger_name == name && !u.stand_in && !u.absent);
+        let Some(u) = speaker else { continue };
+        match line {
+            Some(sound) => faces::speak(u, &game.0.sounds, sound, 0.0, "a dialog-trigger"),
+            None => faces::stop(u, "a dialog-trigger's STOP"),
+        }
+    }
 }
 
 /// Before the triggers' frame, the sound system's listener as FUN_00178c10 sets it each frame for
@@ -1096,10 +1129,13 @@ impl Triggers {
                         if d.hush && d.length > 0.0 {
                             self.sound.hushes.push((speaker ^ d.dialog, Some(d.length)));
                         }
+                        // its speaker's face says it (FUN_001435d0 at 0x1267d1: the lip-sync)
+                        self.sound.speech.push((speaker, Some(d.dialog)));
                     }
                 }
                 act::STOP | act::STOP_DIALOG => {
-                    // FUN_001267f0: the character's line stopped
+                    // FUN_001267f0: the character's line stopped, its face's with it (whatever
+                    // the face says: FUN_00143570 at 0x1267ff)
                     if let ClassState::Dialog(d) = &mut self.live[i].state {
                         if d.voice != 0 {
                             self.sound.acts.push(VoiceAct::Stop { voice: d.voice, at_once: true });
@@ -1108,6 +1144,7 @@ impl Triggers {
                         d.ends = clock;
                         d.done = true;
                     }
+                    self.sound.speech.push((speaker, None));
                 }
                 act::PAUSE_DIALOG | act::RESUME_DIALOG => {}
                 _ => {

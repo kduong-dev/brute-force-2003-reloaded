@@ -11,11 +11,25 @@
 //! banks (the tutorial's h_e759c574 is dxmi_bratton_m00049).
 //! Xbox ADPCM: 36-byte blocks per channel = 4-byte header (i16 sample, u8 step index, pad) plus
 //! 64 nibbles -> 65 samples (port of xwb_tool.adpcm_decode).
+//!
+//! A speech sound (Type h_012ed199) also carries its lip-sync (#255, #325): a speech block of
+//! viseme tracks, one per mouth shape, each a curve of `<frame time weight>` keys (seconds into
+//! the line, percent), which the face controller plays as the line is said (`Visemes`):
+//!
+//!   <Sound ..><h_1b8535f0 iD=.. Type="h_012ed199"/>
+//!     <h_012ed199>                      the speech block
+//!       <h_1b8535f0 h_11b737e0=../>     a stringid on a few (not read by the game's face code)
+//!       <h_0128a038>
+//!         <h_1b8535f0 h_f63f0f49="30"/> always 30 (kept by the game at the block's +4, never read)
+//!         <h_f3280a84>                  a track
+//!           <h_1b8535f0 h_fcf7be63=VISEME/>   the viseme's name hash (`face::viseme_by_hash`)
+//!           <frame><h_1b8535f0 time="0.128" weight="0"/></frame> ...
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::bxml::Element;
+use super::face::{viseme_by_hash, VISEMES};
 use super::hash::h;
 
 const STEP: [i32; 89] = [
@@ -133,6 +147,126 @@ pub struct SoundBank {
     params: HashMap<u32, SoundParams>,
     /// sound id -> its wave's name in the wave banks added (`add_voices`, `add_stream`), for logs
     names: HashMap<u32, String>,
+    /// sound id -> its speech block's viseme tracks (the runtime entry's +0x1c, FUN_0017b800),
+    /// for the speech sounds that have one (`Visemes`)
+    visemes: HashMap<u32, Arc<Visemes>>,
+}
+
+/// A `<Sound>`'s speech block (h_012ed199, the speech Type's name as its element too).
+const H_SPEECH: u32 = 0x012E_D199;
+/// The speech block's viseme block (h_0128a038), which holds the tracks.
+const H_VISEME_BLOCK: u32 = 0x0128_A038;
+/// One viseme track (h_f3280a84; the parser makes a new one at 0x1a2577).
+const H_TRACK: u32 = 0xF328_0A84;
+/// A track's viseme name (h_fcf7be63; FUN_001a24b0 keeps its hash, or the hash of a string).
+const H_VISEME_NAME: u32 = 0xFCF7_BE63;
+/// The element that holds an element's own attributes in the library's documents (h_1b8535f0:
+/// a `<Sound>`'s `iD` and `Type`, a track's name, a frame's `time` and `weight`).
+const H_FIELDS: u32 = 0x1B85_35F0;
+
+/// One key of a viseme track: FUN_0017b800 makes each 16 bytes {time, weight, 0, 1.0} from the
+/// parsed frame's {time, weight}, then FUN_0017a990 sets the last field.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VisemeKey {
+    /// seconds into the line (a key may lie before 0, which the line, read from 0 on, only
+    /// meets as the start of the span that holds 0)
+    pub time: f32,
+    /// percent, as the data has it (85 the usual peak; up to 140 in the data, which the blend
+    /// holds at 1)
+    pub weight: f32,
+    /// 1 / (the next key's time - this one's) (FUN_0017a990), what FUN_0017aa70 multiplies the
+    /// time since this key by; 1.0, the value the key is made with, on a track of two keys or
+    /// fewer, which FUN_0017a990 leaves alone (none in the data: every track has 3 keys or more)
+    pub inv: f32,
+}
+
+/// One viseme's track of a speech sound (FUN_0017b800's 0x18-byte record: +0 the name hash, +8
+/// / +0xc the keys, +0x14 the viseme index).
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisemeTrack {
+    /// the viseme it drives, 0-21 (`face::VISEME_NAMES`; the data's tracks name only the 15
+    /// mouth shapes)
+    pub viseme: usize,
+    pub keys: Vec<VisemeKey>,
+}
+
+impl VisemeTrack {
+    /// A track of `viseme` from its frames' (time, weight) in the data's order (FUN_0017b800 keeps
+    /// it; the data's are all in time order, none at the same time): each key's `inv` the inverse
+    /// of the gap to the next one when the track has more than two keys (FUN_0017a990, the last
+    /// key's against nothing: 1.0 kept), else 1.0 throughout.
+    pub fn new(viseme: usize, frames: &[(f32, f32)]) -> VisemeTrack {
+        let mut keys: Vec<VisemeKey> = frames.iter().map(|&(time, weight)| VisemeKey { time, weight, inv: 1.0 }).collect();
+        if keys.len() > 2 {
+            for k in 0..keys.len() - 1 {
+                keys[k].inv = 1.0 / (keys[k + 1].time - keys[k].time);
+            }
+        }
+        VisemeTrack { viseme, keys }
+    }
+
+    /// The track's weight (0-1, x 0.01 of the data's percent) `t` seconds into the line:
+    /// FUN_0017aa70. Before the first key, its weight; after the last, the last's; else the key
+    /// whose span holds t (the first k with key k's time <= t < key k+1's, or the last span) and
+    /// the next, mixed by (t - key k's time) x key k's `inv`. 0 for a track without keys.
+    pub fn sample(&self, t: f32) -> f32 {
+        let keys = &self.keys;
+        let (Some(first), Some(last)) = (keys.first(), keys.last()) else { return 0.0 };
+        if t < first.time {
+            return first.weight * 0.01;
+        }
+        if last.time < t {
+            return last.weight * 0.01;
+        }
+        // (the search stops at the last span: with t at the last key's time it is that one)
+        let n = keys.len();
+        let k = (0..n.saturating_sub(2)).find(|&k| keys[k].time <= t && t < keys[k + 1].time).unwrap_or(n.saturating_sub(2));
+        let Some(next) = keys.get(k + 1) else { return keys[k].weight * 0.01 };
+        let f = (t - keys[k].time) * keys[k].inv;
+        (f * next.weight + (1.0 - f) * keys[k].weight) * 0.01
+    }
+}
+
+/// A speech sound's viseme tracks: the runtime block FUN_0017b800 builds into its library entry's
+/// +0x1c from the `<h_012ed199>` speech block (0 for a sound without one: None here). The block
+/// has a slot for each of the 22 visemes, filled from the tracks by their name's place
+/// (`face::viseme_by_hash`): a track naming another is dropped, and a later track of the same
+/// viseme takes its slot (none in the data does).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Visemes {
+    /// the tracks, by viseme
+    pub tracks: Vec<VisemeTrack>,
+}
+
+impl Visemes {
+    /// FUN_0017aa30: each track's weight at `t` s into the line (`VisemeTrack::sample`) into
+    /// `weights` at its viseme. The visemes no track drives keep what they had.
+    pub fn write(&self, t: f32, weights: &mut [f32]) {
+        for track in &self.tracks {
+            if let Some(w) = weights.get_mut(track.viseme) {
+                *w = track.sample(t);
+            }
+        }
+    }
+
+    /// A `<Sound>`'s viseme tracks, if it has a speech block (FUN_0017b800; the parse's
+    /// FUN_001a24b0 for a track's name, 0x1a2577 for a new track). A block with no tracks still
+    /// makes one, with none: the face's blend then shows the base through the line.
+    fn read(sound: &Element) -> Option<Visemes> {
+        let block = sound.child(H_SPEECH)?;
+        let mut slots: Vec<Option<VisemeTrack>> = vec![None; VISEMES];
+        for track in block.children_named(H_VISEME_BLOCK).flat_map(|b| b.children_named(H_TRACK)) {
+            let Some(viseme) = track.child(H_FIELDS).and_then(|f| f.attr(H_VISEME_NAME)).and_then(|v| v.as_hash()).and_then(viseme_by_hash) else {
+                continue;
+            };
+            let frames: Vec<(f32, f32)> = track.children_named(h("frame")).filter_map(|f| {
+                let fields = f.child(H_FIELDS)?;
+                Some((fields.attr(h("time"))?.as_f32()?, fields.attr(h("weight"))?.as_f32()?))
+            }).collect();
+            slots[viseme] = Some(VisemeTrack::new(viseme, &frames));
+        }
+        Some(Visemes { tracks: slots.into_iter().flatten().collect() })
+    }
 }
 
 /// A sound library entry's distances and volume: its `<Sound>` element's attributes, which the
@@ -261,6 +395,12 @@ impl SoundBank {
                         max_distance: float(H_MAX_DISTANCE).unwrap_or(-1.0),
                         volume: float(H_VOLUME).unwrap_or(1.0),
                     });
+                    // (the first entry of an id keeps its tracks, as its other fields)
+                    if !self.visemes.contains_key(&id) {
+                        if let Some(v) = Visemes::read(e) {
+                            self.visemes.insert(id, Arc::new(v));
+                        }
+                    }
                 }
             }
             if e.name == 0x0F60_56C9 {
@@ -300,6 +440,12 @@ impl SoundBank {
     /// A sound's library entry (`SoundParams`), if the loaded banks define it.
     pub fn params(&self, id: u32) -> Option<SoundParams> {
         self.params.get(&id).copied()
+    }
+
+    /// A speech sound's viseme tracks (its library entry's +0x1c), if the loaded banks define it
+    /// with a speech block: what a face controller keeps as it says the line (FUN_001435d0's +4).
+    pub fn visemes(&self, id: u32) -> Option<Arc<Visemes>> {
+        self.visemes.get(&id).cloned()
     }
 
     /// Whether a sound is a track of the level's music bank (its file's resource-type 2: the
@@ -381,6 +527,9 @@ impl SoundBank {
             if let Some(&p) = self.params.get(&id) {
                 out.params.insert(id, p);
             }
+            if let Some(v) = self.visemes.get(&id) {
+                out.visemes.insert(id, v.clone());
+            }
             out.files.entry(file).or_insert(FileRec { offset: 0, size: rec.size, rate: rec.rate, codec: rec.codec, blob: Arc::new(data.to_vec()) });
         }
         out
@@ -402,6 +551,9 @@ impl SoundBank {
             }
             if let Some(&p) = other.params.get(&id) {
                 self.params.entry(id).or_insert(p);
+            }
+            if let Some(v) = other.visemes.get(&id) {
+                self.visemes.entry(id).or_insert_with(|| v.clone());
             }
             if !self.files.contains_key(&name) {
                 self.files.insert(name, FileRec { offset: rec.offset, size: rec.size, rate: rec.rate, codec: rec.codec, blob: rec.blob.clone() });
@@ -491,5 +643,91 @@ fn list(e: &Element, name: u32) -> Vec<u32> {
             super::bxml::Value::List(l) => l.iter().filter_map(|x| x.as_hash()).collect::<Vec<_>>(),
             other => other.as_hash().into_iter().collect(),
         }).filter(|&x| x != 0 && x != super::hash::h("")).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::bxml::Value;
+    use super::*;
+
+    /// The first keys of the tutorial's "yeah yeah" line's `if` track (h_ec50fb88,
+    /// sounds-tutorial.xml), in the data's (seconds, percent).
+    const YEAH_IF: [(f32, f32); 7] = [(-0.264, 0.0), (0.0, 20.0), (0.608, 0.0), (0.72, 85.0), (0.944, 0.0), (1.104, 85.0), (1.28, 20.0)];
+
+    /// FUN_0017aa70 against the game: todo/255 take07's face log has Tex's weights as he says
+    /// h_ec50fb88, read at the controller's clock less the line's start (+0x40 - +0x44). Its `if`
+    /// at those times is the track's, to the log's three decimals: 0.179 at 0.0631 s, 0.114 at
+    /// 0.2617, 0.349 at 0.6540, 0.848 at 0.7197, 0.578 at 0.7917, 0.248 at 0.9906, 0.591 at 1.0552.
+    #[test]
+    fn a_track_gives_the_games_weights() {
+        let track = VisemeTrack::new(6, &YEAH_IF);
+        for (t, logged) in [(0.0631, 0.179), (0.2617, 0.114), (0.6540, 0.349), (0.7197, 0.848), (0.7917, 0.578), (0.9906, 0.248), (1.0552, 0.591)] {
+            let w = track.sample(t);
+            assert!((w - logged).abs() < 0.0006, "at {t}: {w} against the log's {logged}");
+        }
+        // before the first key its weight, after the last the last's, at a key its own
+        assert_eq!(track.sample(-1.0), 0.0);
+        assert!((track.sample(5.0) - 0.2).abs() < 1e-6);
+        assert!((track.sample(0.72) - 0.85).abs() < 1e-6);
+        assert!((track.sample(0.0) - 0.2).abs() < 1e-6);
+    }
+
+    /// FUN_0017a990 sets the keys' inverse spans only on a track of three keys or more: one of two
+    /// keeps the 1.0 its keys are made with, so its fraction is the bare seconds since its first key
+    /// (none in the data has two). A key-less track gives 0, a one-key track its weight.
+    #[test]
+    fn a_short_track_keeps_the_unscaled_fraction() {
+        let two = VisemeTrack::new(0, &[(0.0, 0.0), (0.5, 100.0)]);
+        assert_eq!(two.keys[0].inv, 1.0);
+        assert!((two.sample(0.25) - 0.25).abs() < 1e-6, "{}", two.sample(0.25));
+        assert!((two.sample(0.5) - 0.5).abs() < 1e-6);
+        assert!((two.sample(0.6) - 1.0).abs() < 1e-6);
+        let three = VisemeTrack::new(0, &[(0.0, 0.0), (0.5, 100.0), (1.0, 0.0)]);
+        assert!((three.keys[0].inv - 2.0).abs() < 1e-6);
+        assert!((three.sample(0.25) - 0.5).abs() < 1e-6);
+        assert_eq!(VisemeTrack::new(0, &[]).sample(1.0), 0.0);
+        assert!((VisemeTrack::new(0, &[(0.3, 40.0)]).sample(0.3) - 0.4).abs() < 1e-6);
+    }
+
+    /// FUN_0017aa30 writes only its tracks' visemes: the others keep their weights.
+    #[test]
+    fn the_tracks_write_their_own_visemes() {
+        let v = Visemes { tracks: vec![VisemeTrack::new(6, &YEAH_IF), VisemeTrack::new(14, &[(0.0, 50.0), (1.0, 50.0), (2.0, 0.0)])] };
+        let mut w = [0.3; VISEMES];
+        v.write(0.0631, &mut w);
+        assert!((w[6] - 0.179).abs() < 0.0006);
+        assert!((w[14] - 0.5).abs() < 1e-6);
+        assert_eq!(w[0], 0.3);
+        assert_eq!(w[15], 0.3);
+    }
+
+    /// A `<Sound>`'s speech block as the library has it: a track named by its viseme's hash (or a
+    /// string the decoder knows, `size`), its frames in order; a track naming none of the 22 is
+    /// dropped; a sound without a block has no tracks, one with an empty block an empty set.
+    #[test]
+    fn a_speech_block_reads_into_tracks() {
+        let el = |name: u32, attrs: Vec<(u32, Value)>, children: Vec<Element>| Element { name, attrs, children, text: None };
+        let frame = |t: f64, w: f64| el(h("frame"), vec![], vec![el(H_FIELDS, vec![(h("time"), Value::Float(t)), (h("weight"), Value::Float(w))], vec![])]);
+        let track = |name: Value, frames: Vec<Element>| {
+            let mut c = vec![el(H_FIELDS, vec![(H_VISEME_NAME, name)], vec![])];
+            c.extend(frames);
+            el(H_TRACK, vec![], c)
+        };
+        let block = el(H_SPEECH, vec![], vec![el(H_FIELDS, vec![], vec![]), el(H_VISEME_BLOCK, vec![], vec![
+            el(H_FIELDS, vec![(0xF63F_0F49, Value::Int(30))], vec![]),
+            track(Value::Hash(0xE1D3_067C), vec![frame(-0.264, 0.0), frame(0.0, 20.0), frame(0.608, 0.0)]),
+            track(Value::Str("size".into()), vec![frame(0.1, 0.0), frame(0.2, 60.0), frame(0.3, 0.0)]),
+            track(Value::Hash(0x1234_5678), vec![frame(0.0, 50.0)]),
+        ])]);
+        let sound = el(h("Sound"), vec![], vec![el(H_FIELDS, vec![(h("iD"), Value::Hash(0xEC50_FB88))], vec![]), block]);
+        let v = Visemes::read(&sound).expect("a speech block");
+        assert_eq!(v.tracks.iter().map(|t| t.viseme).collect::<Vec<_>>(), vec![6, 11]);
+        assert_eq!(v.tracks[0].keys.len(), 3);
+        assert!((v.tracks[0].sample(0.0631) - 0.179).abs() < 0.0006);
+        assert!((v.tracks[1].sample(0.2) - 0.6).abs() < 1e-6);
+        assert!(Visemes::read(&el(h("Sound"), vec![], vec![])).is_none());
+        let empty = el(h("Sound"), vec![], vec![el(H_SPEECH, vec![], vec![])]);
+        assert_eq!(Visemes::read(&empty), Some(Visemes::default()));
     }
 }

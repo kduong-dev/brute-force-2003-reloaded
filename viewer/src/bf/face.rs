@@ -19,7 +19,9 @@
 //!      that stretch a viseme (Flint's `if` x 1.5, Tex's `if` x 3).
 //!
 //! The game builds the table once per type (FUN_00142cb0 and FUN_00142df0, type+0x1ac); here
-//! `FaceTable::build` does, as a character's model loads.
+//! `FaceTable::build` does, as a character's model loads. The weights come from the sound
+//! library's viseme tracks while a line is said (`bf/audio.rs` `Visemes`, #325) and from the
+//! expressions' fade.
 
 use bevy::math::{Quat, Vec3};
 
@@ -55,6 +57,28 @@ pub const SC_BLINK: u32 = h("Sc_blink");
 /// The viseme index of a name ("bump", "great_pain"; any case), if it is one of the 22.
 pub fn viseme_index(name: &str) -> Option<usize> {
     VISEME_NAMES.iter().position(|n| n.eq_ignore_ascii_case(name))
+}
+
+/// The viseme a name hash is (a sound's viseme track names its viseme by `h_fcf7be63`): its place
+/// in the 22 hashes at 0x3c0290, the lower-case names' (FUN_0017b800 looks each track's name up
+/// there, 0x17b8f0-0x17b8ff, and drops a track whose name isn't one of them). None for any other.
+pub fn viseme_by_hash(hash: u32) -> Option<usize> {
+    VISEME_NAMES.iter().position(|n| h(n) == hash)
+}
+
+/// How long a blink takes to come in (s): FUN_00143d10 puts 0.1 ([0x40c930]) in its play
+/// request's +0x10, and each lid's node controller (0x2536f0) turns it into a transition
+/// (FUN_00280180) from where the lid was to `Sc_blink`'s channel, the clip's own time running from
+/// 0 (+4 of the request): a fade-in, not a delay.
+pub const BLINK_EASE: f32 = 0.1;
+
+/// The blink transition's weight `t` s in (0x280330): t / BLINK_EASE, 1 from there on ([0x3a4f78]
+/// once t isn't under the ease), times the player's weight (1.0, the request's +0x18), eased as
+/// w x w x (3 - 2 w) ([0x39a848] = 3.0) because the request's flag byte has bit 2 (FUN_000ce0e0),
+/// which the player keeps as its bit 3.
+pub fn blink_weight(t: f32) -> f32 {
+    let w = if t < BLINK_EASE { (t / BLINK_EASE).max(0.0) } else { 1.0 };
+    w * w * (3.0 - 2.0 * w)
 }
 
 /// What a face clip is called: `Sc_bump` for a viseme's, `Sc_blink`, `Sc_rest`; None for a clip
@@ -297,13 +321,10 @@ impl FaceTable {
         }
     }
 
-    /// The blink's lids `t` seconds into the clip (held at its last key from its end on: the
-    /// nodes keep what the clip last wrote), on a skeleton's local transforms: what the
-    /// animation player does with the bound targets of `Sc_blink`. The clip's own value: the game
-    /// also eases it in over 0.1 s (its play request's +0x10, a transition from the lid's earlier
-    /// pose with the weight smoothstep(t / 0.1), 0x2536f0 and 0x280330), so a lid there shows the
-    /// clip from 0.1 s on and lags it before; this doesn't apply that yet.
-    pub fn write_blink(&self, game: &Game, t: f32, pose: &mut [(Quat, Vec3)]) {
+    /// The blink clip's own value on its lids `t` seconds in (held at its last key from its end
+    /// on: the nodes keep what the clip last wrote), on a skeleton's local transforms: the bound
+    /// targets of `Sc_blink` as its channels have them, with no ease.
+    pub fn write_blink_clip(&self, game: &Game, t: f32, pose: &mut [(Quat, Vec3)]) {
         let Some(blink) = &self.blink else { return };
         for &(bone, channel) in &blink.tracks {
             let (Some(c), Some(local)) = (game.channels.get(&channel), pose.get_mut(bone)) else { continue };
@@ -317,13 +338,38 @@ impl FaceTable {
         }
     }
 
+    /// The lids `t` seconds into a blink, as the game's node controllers show them: the clip's
+    /// value (`write_blink_clip`) eased in from where each lid was as the blink began, by
+    /// `blink_weight(t)` (the transition FUN_00280180 between the node's earlier source and the
+    /// clip's channel, BLINK_EASE). Where it was: the clip's last key once an earlier blink has
+    /// played (`held`: the node kept it), else the pose's own value for the lid (the model's, as
+    /// nothing else moves the lids; the transition's "pose" source, FUN_00280100). The blend of the
+    /// two (the channel's own, through 0x234bf0 to its vtable +0x24) isn't read: a normalised lerp
+    /// for a rotation, as `sample` blends a channel's keys, and a lerp for a position (inferred).
+    /// From BLINK_EASE on the lid is the clip's.
+    pub fn write_blink(&self, game: &Game, t: f32, held: bool, pose: &mut [(Quat, Vec3)]) {
+        let Some(blink) = &self.blink else { return };
+        let w = blink_weight(t);
+        for &(bone, channel) in &blink.tracks {
+            let (Some(c), Some(local)) = (game.channels.get(&channel), pose.get_mut(bone)) else { continue };
+            let (q, v) = sample(c, t.clamp(0.0, blink.duration));
+            let (was_q, was_v) = if held { sample(c, blink.duration) } else { (None, None) };
+            if let Some(q) = q {
+                local.0 = was_q.unwrap_or(local.0).lerp(q, w);
+            }
+            if let Some(v) = v {
+                local.1 = was_v.unwrap_or(local.1).lerp(v, w);
+            }
+        }
+    }
+
     /// The face a character shows at rest, once its first blink (at its first tick) is over: the
     /// base pose on the face bones, the lids at the blink clip's last key. What a viewer shows as
     /// "the game's face". The lids can differ from the bind pose's: Brutus's rest keys are 18 and
     /// 7.5 degrees off it, Tex's and Flint's the same as it.
     pub fn write_rest(&self, game: &Game, pose: &mut [(Quat, Vec3)]) {
         self.write(&self.base, pose);
-        self.write_blink(game, f32::INFINITY, pose);
+        self.write_blink_clip(game, f32::INFINITY, pose);
     }
 }
 
@@ -451,6 +497,19 @@ mod tests {
         assert!((angle(p) - 0.4).abs() < 1e-3);
     }
 
+    /// 0x280330's weight: 0 at the start, the smoothstep of t / 0.1 before 0.1 s (half way at
+    /// 0.05 s, 0.104 at 0.02 s), 1 from 0.1 s on; a time before the start counts as 0.
+    #[test]
+    fn the_blink_eases_in_over_a_tenth() {
+        assert_eq!(blink_weight(0.0), 0.0);
+        assert!((blink_weight(0.05) - 0.5).abs() < 1e-6);
+        assert!((blink_weight(0.02) - 0.104).abs() < 1e-6);
+        assert!((blink_weight(1.0 / 30.0) - 0.259_259).abs() < 1e-5);
+        assert_eq!(blink_weight(0.1), 1.0);
+        assert_eq!(blink_weight(0.3), 1.0);
+        assert_eq!(blink_weight(-0.1), 0.0);
+    }
+
     /// The viseme names are the game's: their hashes are the 0x3c0290 table's (bump
     /// e4d50c6f, surprised 002e0bed), `Sc_` + name the clips' (`Sc_bump` eff8ac8d, `Sc_base`
     /// 0f896415, `Sc_blink` 1bb7a714), and an index is found by name in any case.
@@ -464,6 +523,10 @@ mod tests {
         assert_eq!(SC_BLINK, 0x1bb7_a714);
         assert_eq!(viseme_index("Great_Pain"), Some(18));
         assert_eq!(viseme_index("blink"), None);
+        assert_eq!(viseme_by_hash(0xe1d3_067c), Some(6));
+        assert_eq!(viseme_by_hash(0x0162_b262), Some(11));
+        assert_eq!(viseme_by_hash(0x002e_0bed), Some(21));
+        assert_eq!(viseme_by_hash(SC_BLINK), None);
         assert_eq!(clip_name(0x0f89_6415).as_deref(), Some("Sc_base"));
         assert_eq!(clip_name(0x1bb7_a714).as_deref(), Some("Sc_blink"));
         assert_eq!(clip_name(0xfebf_7c82), None);

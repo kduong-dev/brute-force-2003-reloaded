@@ -48,8 +48,9 @@
 //!    calls FUN_00143570 first), a dead speaker is silent unless its block says otherwise, and a
 //!    voice on a line of higher priority skips the new sound (FUN_0013fab0). A cut-off stops the
 //!    voice (the sound event's stop, 0x13fb90). `Player::speaking` is its time left (the HUD's
-//!    speech icon), `Player::voice` the sound it's on: the face controller (#255) takes the line's
-//!    start and stop from those two functions.
+//!    speech icon), `Player::voice` the sound it's on. The two functions start and stop the face
+//!    controller's line too (play_faces.rs `speak` / `stop`: the lip-sync, #325), which runs its
+//!    own copy of the time left.
 //!  - **The timed mutes** (`Chatter::hush`, FUN_00141100 / FUN_00141180): the triggers' lines
 //!    that hush the chatter (h_e725a1a5: a sound-trigger's sound, the dialog queue's lines, a
 //!    dialog-trigger's line, play_sound_triggers.rs) refuse every line while one runs, and the
@@ -66,8 +67,10 @@
 //! each; `BF_CHATTER_CHANCE=<percent>`
 //! sets every line's chance (100: each one passes the roll); `BF_TEST_HURT=<character>,<amount>
 //! [:fall],<s>[,<s>...][;...]` hits that squad member for `amount` at those times (the trainer's
-//! `hit`, shot list A1; `:fall` a landing's record). `BF_SKILL_CHATTER` (play_skills.rs) and
-//! `BF_TEST_HEALED` (play_pickups.rs) set their own lines' chance.
+//! `hit`, shot list A1; `:fall` a landing's record); `BF_TEST_SPEAK=<s>,<who>,<sound>[;...]` has
+//! a character say a sound on its voice at a time, with no gate (`Chatter::test_speak`: the
+//! lip-sync's test). `BF_SKILL_CHATTER` (play_skills.rs) and `BF_TEST_HEALED` (play_pickups.rs)
+//! set their own lines' chance.
 
 use super::*;
 use bf_viewer::bf::character::{ChatterBlock, ChatterResponse, CHATTER_CONDITION_NONE};
@@ -416,6 +419,9 @@ struct Ctx<'a> {
     reserve: &'a ammo::Reserve,
     /// the clock, for the log (`Chatter::clock`)
     now: f32,
+    /// the frame's time (s), the characters' step's too: how long before now, in a face
+    /// controller's clock, a line starting here began in the game (`voice_start`)
+    dt: f32,
     /// BF_CHATTER_CHANCE
     chance: Option<i64>,
     /// BF_CHATTER_LOG
@@ -443,6 +449,11 @@ impl By {
     }
 }
 
+/// The chatter's frame (`update`): the dialog-triggers' lines go on their speakers' faces after it
+/// (play_sound_triggers.rs `speakers`), as the game's triggers run after its manager.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ChatterSystems;
+
 /// The chatter manager each map (reset by play.rs `setup`); the test hook's hits, then the asks
 /// and the manager's update after the movement and the skills (whose lines it runs in the same
 /// frame), before the frame's sounds.
@@ -450,7 +461,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Chatter>()
         .add_systems(Update, (
             test_hurt.after(update_player),
-            update.after(test_hurt).after(skills::update_skills).before(play_sounds),
+            update.in_set(ChatterSystems).after(test_hurt).after(skills::update_skills).before(play_sounds),
         ).run_if(in_state(AppState::Playing)));
 }
 
@@ -461,7 +472,7 @@ pub fn plugin(app: &mut App) {
 #[allow(clippy::too_many_arguments)]
 fn update(mut commands: Commands, time: Res<Time>, mut chatter: ResMut<Chatter>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
           game: Res<GameData>, reserve: Res<ammo::Reserve>, mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>,
-          voices: Query<(Entity, &ChatterVoice)>) {
+          voices: Query<(Entity, &ChatterVoice)>, mut speaks: Local<Option<Vec<TestSpeak>>>) {
     let dt = frame_dt(&time);
     chatter.clock += dt;
     let sight = sight_list(std::iter::once(&*player).chain(squad.0.iter()));
@@ -471,6 +482,7 @@ fn update(mut commands: Commands, time: Res<Time>, mut chatter: ResMut<Chatter>,
         here: player.position,
         reserve: &reserve,
         now: chatter.clock,
+        dt,
         chance: std::env::var("BF_CHATTER_CHANCE").ok().and_then(|v| v.parse::<i64>().ok()),
         log: std::env::var("BF_CHATTER_LOG").is_ok(),
     };
@@ -491,6 +503,7 @@ fn update(mut commands: Commands, time: Res<Time>, mut chatter: ResMut<Chatter>,
         }
     }
     chatter.step(&mut all, dt, &ctx);
+    chatter.test_speak(&mut all, speaks.get_or_insert_with(test_speaks), &ctx);
     // the voices
     if chatter.acts.is_empty() {
         return;
@@ -534,16 +547,39 @@ fn update(mut commands: Commands, time: Res<Time>, mut chatter: ResMut<Chatter>,
     }
 }
 
+/// One BF_TEST_SPEAK entry: at `at` s (the controlled character's clock), `who` says `sound`.
+struct TestSpeak {
+    at: f32,
+    who: String,
+    sound: u32,
+}
+
+/// BF_TEST_SPEAK's entries (`<s>,<who>,<sound>`, `;` between them; the sound in hex, `h_` or not);
+/// one that doesn't parse is skipped with a warning.
+fn test_speaks() -> Vec<TestSpeak> {
+    let Ok(v) = std::env::var("BF_TEST_SPEAK") else { return vec![] };
+    v.split(';').filter(|e| !e.trim().is_empty()).filter_map(|e| {
+        let f: Vec<&str> = e.split(',').map(str::trim).collect();
+        let hook = (|| Some(TestSpeak { at: f.first()?.parse().ok()?, who: f.get(1)?.to_lowercase(),
+                                         sound: u32::from_str_radix(f.get(2)?.trim_start_matches("h_").trim_start_matches("0x"), 16).ok()? }))();
+        if hook.is_none() {
+            warn!("BF_TEST_SPEAK: {e:?} isn't <s>,<who>,<sound id>; skipped");
+        }
+        hook
+    }).collect()
+}
+
 /// The voice's time (the face controller's tick, FUN_001437d0: its time left +0x50 runs down and
-/// it stops speaking below 0); while it isn't speaking the line priority is 0 (char+0x81c,
-/// 0x11cc37-0x11cc6c).
+/// it stops speaking at 0 or under); while it isn't speaking the line priority is 0 (char+0x81c,
+/// 0x11cc37-0x11cc6c). This is the chatter's copy (the HUD's speech icon, the priority test of
+/// `start_sound`); the face controller runs its own in its tick (play_faces.rs `Face::tick`),
+/// where its line ends.
 fn voice_tick(u: &mut Player, dt: f32) {
     if u.voice.is_some() {
         u.speaking -= dt;
         if u.speaking > 0.0 {
             return;
         }
-        // (the face controller hears its line end here: #255)
         u.voice = None;
     }
     u.speaking = 0.0;
@@ -1127,15 +1163,19 @@ impl Chatter {
         false
     }
 
-    /// The face hook (#255): `u`'s voice starts saying sound `id` for a line of `priority`
-    /// (FUN_0013fab0 -> FUN_001435d0 at 0x13fb31: char+0x81c = the priority; the controller stops
-    /// what it was saying, FUN_00143570, and speaks the sound for its length, +0x50). Every chatter
-    /// sound starts here, so the face controller's lip-sync starts here too; its end is
-    /// `voice_tick`'s (the time out) or `voice_stop`'s (a cut-off). Heard in 2D at full for the
-    /// controlled character (FUN_001435d0 asks FUN_00112790), else as play.rs `play_sounds` hears
-    /// a squad member's sounds, quieter with the distance (the demo's mixing: the game's is 3D at
-    /// the character, FUN_00178e50).
+    /// The face hook: `u`'s voice starts saying sound `id` for a line of `priority` (FUN_0013fab0
+    /// -> FUN_001435d0 at 0x13fb31: char+0x81c = the priority; the controller stops what it was
+    /// saying, FUN_00143570, and speaks the sound for its length, +0x50). Every chatter sound
+    /// starts here, so the face controller's lip-sync starts here too (play_faces.rs `speak`,
+    /// #325): the game's manager update comes before the characters' ticks (0xd9ac7, 0xd9d0b) and
+    /// the demo's after their step, so the line is put a frame's dt back in the controller's
+    /// clock, and its mouth is read where the game's is from the next frame on. Its end is the
+    /// face's own tick (the time out) or `voice_stop`'s (a cut-off); `voice_tick` runs this copy
+    /// of the time out. Heard in 2D at full for the controlled character (FUN_001435d0 asks
+    /// FUN_00112790), else as play.rs `play_sounds` hears a squad member's sounds, quieter with
+    /// the distance (the demo's mixing: the game's is 3D at the character, FUN_00178e50).
     fn voice_start(&mut self, u: &mut Player, id: u32, priority: i64, ctx: &Ctx) {
+        faces::speak(u, &ctx.game.sounds, id, ctx.dt, "chatter");
         u.voice_priority = priority;
         u.voice = Some(id);
         u.speaking = ctx.game.sounds.length(id).unwrap_or(0.0);
@@ -1147,9 +1187,42 @@ impl Chatter {
         self.acts.push(VoiceAct::Start { who: u.who(), id, volume });
     }
 
-    /// The face hook (#255): `u`'s voice stops (a cut-off: the sound event's stop, 0x13fb90 ->
-    /// FUN_00143570), the face controller's lip-sync with it.
+    /// BF_TEST_SPEAK=<s>,<who>,<sound>[;...]: at `s` seconds (the controlled character's clock)
+    /// `who` (`me`, a squad name or 0-3, `all`; play_faces.rs `is_whom`) says `sound` (its hex
+    /// id) on its voice at the top priority, as a chatter line's sound starts (`voice_start`: the
+    /// voice, the speech icon, the face's lip-sync) but with no gate or line: the lip-sync's test.
+    /// The sound must be in the map's loaded banks (its library entry has the tracks, its file the
+    /// length): a level's own line, such as take07's h_ec50fb88 (the tutorial's), says for 0 s on
+    /// another map and moves nothing; the common bank's squad lines (Tex's skill-on line
+    /// 05410be5) are everywhere. A character not in the world is left out. BF_CHATTER_LOG logs
+    /// each, with the sound's length.
+    fn test_speak(&mut self, all: &mut [&mut Player], pending: &mut Vec<TestSpeak>, ctx: &Ctx) {
+        if pending.is_empty() {
+            return;
+        }
+        let now = all[0].sim_time;
+        let (due, rest): (Vec<TestSpeak>, Vec<TestSpeak>) = std::mem::take(pending).into_iter().partition(|s| s.at <= now);
+        *pending = rest;
+        for s in due {
+            for i in 0..all.len() {
+                if !faces::is_whom(all[i], i == 0, &s.who) || !in_world(all[i]) {
+                    continue;
+                }
+                if ctx.log {
+                    println!("t={:6.2} chatter: BF_TEST_SPEAK: {} says {:08x} ({:.2} s)", ctx.now, unit_name(all[i]), s.sound,
+                             ctx.game.sounds.length(s.sound).unwrap_or(0.0));
+                }
+                self.voice_start(&mut *all[i], s.sound, TOP_PRIORITY, ctx);
+            }
+        }
+    }
+
+    /// The face hook: `u`'s voice stops (a cut-off: the sound event's stop, 0x13fb90 ->
+    /// FUN_00143570 at 0x13fbde, once its controller is speaking, +0x54 with +0x50 over 0: `stop_line`
+    /// asks it of this copy, `Player::speaking`), the face controller's lip-sync with it
+    /// (play_faces.rs `stop`, #325).
     fn voice_stop(&mut self, u: &mut Player) {
+        faces::stop(u, "a chatter cut-off");
         u.voice = None;
         u.speaking = 0.0;
         u.voice_priority = 0;
