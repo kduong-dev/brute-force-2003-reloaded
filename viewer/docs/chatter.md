@@ -105,6 +105,14 @@ priority (char+0x81c): then it's skipped. Its variant is marked said as it start
 off stops its speaker's voice (0x13fb90). The HUD's speech icon by a portrait shows while that
 character's voice speaks (`Player::speaking`).
 
+**The mouth** (#325): the sound starting on a voice is said by the face controller too
+(FUN_001435d0 at 0x13fb31: `voice_start` calls play_faces.rs `speak`), which plays the sound's
+viseme tracks from the sound library on the face for the sound's length, and a cut-off stops it
+(0x13fbde: `voice_stop` calls `stop`). The game's manager update runs before the characters' ticks,
+the demo's after their step, so the line is put a frame back on the face's clock: from its second
+frame its mouth reads the curve where the game's does ([faces.md](faces.md), "Lip-sync"). The face
+keeps its own time left; `Player::speaking` is the chatter's.
+
 The voice is heard in 2D at full for the controlled character (FUN_001435d0), and as the demo
 hears a squad member's sounds for the others (quieter with the distance: the demo's mixing; the
 game's is 3D at the character).
@@ -182,6 +190,10 @@ its first 20 s.
 * `BF_TEST_HURT=<character>,<amount>[:fall],<s>[,<s>...][;...]`: hits that squad member (name
   or 0-3, the controlled one too) for `amount` at those times, a bare hit with no attacker as the
   trainer's `hit` (`:fall`: a landing's record, ef32191d and the death cry ed35ffae).
+* `BF_TEST_SPEAK=<s>,<who>,<sound>[;...]`: at `s` seconds (the controlled character's clock) `who`
+  (`me`, a squad name or 0-3, `all`) says the sound (its hex id, `h_` or not) on its voice at priority
+  10, as a line's sound starts (`voice_start`: the voice, the speech icon, the mouth) but with no gate
+  or line; a character not in the world is left out. The lip-sync's test ([faces.md](faces.md)).
 * `BF_SKILL_CHATTER=<percent>` the skill lines' chance ([skills.md](skills.md)),
   `BF_TEST_HEALED=1` the medkit line's ([pickups.md](pickups.md)).
 * `BF_SOUND_LOG=1` prints each voice started ("sound <id> vol <v> (the voice of <name>:
@@ -273,10 +285,12 @@ follow line) is under 0.04 s of game time, the frame the manager starts the soun
 ## Not done
 
 * The orders' lines, the AI's combat lines, the replies other than the death cries' (#320,
-  #321, #322 from #36's plan), the lines' facial expressions and lip-sync (#255: it starts and
-  stops with `Chatter::voice_start` / `voice_stop` and the voice's time running out).
+  #321, #322 from #36's plan), the lines' facial expressions (#326: the `<expression>` events;
+  the lip-sync is done, #325, above).
 * A dialog-trigger's line isn't said on its character's voice (it plays as the triggers' own
   voice, play_sound_triggers.rs): in the game it takes the voice at priority 10 (FUN_001267b0),
-  stopping its chatter; its mute still refuses every line while it runs.
+  stopping its chatter; its mute still refuses every line while it runs. Its speaker's face says it
+  (#325, [faces.md](faces.md)), but the chatter doesn't see it: a chatter sound started on that
+  character meanwhile (a line without the hush flag) isn't skipped, and takes the face.
 * The 4th argument of the gate (the line's other party) is read only by a response kind no
   squad block uses: left out.

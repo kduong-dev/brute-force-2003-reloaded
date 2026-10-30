@@ -1,10 +1,11 @@
-# Faces (`bf/face.rs`, `src/bin/play_faces.rs`, #255)
+# Faces (`bf/face.rs`, `bf/audio.rs`, `src/bin/play_faces.rs`, #255)
 
-How a character's face is drawn in play: the game's face controller, not a clip. This is the
-first slice of #255: **the face table, faces at rest and the blink**. The lip-sync (a speaking
-character's mouth) and the expressions come in their own slices; the controller already has
-their hook, the 22 viseme weights (below). Findings behind it: the code map's "Faces" section
-(`code-map.md`); the analyst's leads are `todo/255-facial-animation/leads.md`.
+How a character's face is drawn in play: the game's face controller, not a clip. #255's first
+slice made **the face table, faces at rest and the blink**; the second (#325) **the lip-sync**:
+a speaking character's mouth follows its line's viseme tracks from the sound library, on every
+speech path with a speaker. The expressions come in their own slice (#326): their fade runs, but
+nothing sets one yet. Findings behind it: the code map's "Faces" section (`code-map.md`); the
+analyst's leads are `todo/255-facial-animation/leads.md`.
 
 ## What the game does
 
@@ -20,6 +21,9 @@ their hook, the 22 viseme weights (below). Findings behind it: the code map's "F
   (FUN_00143380's last call). While nothing shows (no line speaking, no expression) the controller
   writes nothing, so the bones keep the last pose they were given.
 * **The blink** (FUN_00143d10) is the one face clip that plays: `Sc_blink`, 0.333 s, the lids.
+* **The lip-sync** is in the sound library, not the audio: every speech sound carries a curve per
+  mouth shape, and while a character says it the controller writes the curves at the time since
+  the line began into the weights (below, "Lip-sync").
 
 ## The data
 
@@ -77,24 +81,29 @@ the rotation, a vector joint the position: FUN_00143820 and FUN_00234dc0).
 
 `FaceParams` (`CharacterType::face`, parsed by `character_type.rs` `face_params`) carries the
 type's interval, chance and stretches. `bf/face.rs` also has the viseme names (`VISEME_NAMES`:
-the clip is `Sc_` + the name; `clip_name` gives a clip's name for the viewer), and the head bone's
-hash and the height of a face over it for the close-up cameras.
+the clip is `Sc_` + the name; `clip_name` gives a clip's name for the viewer; `viseme_by_hash` a
+sound track's viseme), the blink's ease (`blink_weight`; `write_blink` eased, `write_blink_clip`
+the bare clip), and the head bone's hash and the height of a face over it for the close-up cameras.
 
 ## The controller in the demo (`play_faces.rs`)
 
-`Player::facial` (`faces::Face`) is the controller: **`weights`** (22 floats, the hook the next
-slices write: the lip-sync into 0-14 as the sound's tracks run, the expression fade into 15-21),
-the face bones' output pose, and the blink's clock. It is made as the character is
-(`spawn_unit`, `faces::spawned`) and ticked by `step_player` (`faces::step`) after everything that
-poses the body: the clip layers, the weapon switch, the reload, use, throw and skill overlays and the
-aim's turn. No body pose carries a face clip any more (`Character::pose` is called with no face:
-the game's body clips don't move these bones), so the face and the body never fight: the
+`Player::facial` (`faces::Face`) is the controller: the 22 **weights** (the line's tracks write
+0-14, the expression fade 15-21), the face bones' output pose, its clock (+0x40), the line it says
+(its tracks, start and time left: +4, +0x44, +0x50, +0x54), the expression's target and shown one
+(+0x58, +0x5c) and the blink's clock. It is made as the character is (`spawn_unit`,
+`faces::spawned`) and ticked by `step_player` (`faces::step`) after everything that poses the
+body: the clip layers, the weapon switch, the reload, use, throw and skill overlays and the aim's
+turn. No body pose carries a face clip any more (`Character::pose` is called with no face: the
+game's body clips don't move these bones), so the face and the body never fight: the
 controller's pose is written over the bones last.
 
-* **Tick** (`Face::tick`): no time, nothing. While a weight is up the blend runs (FUN_001439b0); with
-  every weight 0 nothing is written and the face keeps its last pose, as the game's idle controller
-  does (the lip-sync slice swaps "a weight is up" for the game's test, a line speaking or an
-  expression that isn't BASE, which also writes the base through a line's silences).
+* **Tick** (`Face::tick`, FUN_001437d0): no time, nothing. The clock goes on by dt, a line's time
+  left down (at 0 or under it stops speaking), then the blend (`Face::blend`, FUN_001439b0): the
+  expression fade (`Face::fade`, FUN_001438d0) says whether an expression shows; **with no line
+  speaking and none showing, the line is stopped (the mouth's weights zeroed) and nothing is
+  written**, so the face keeps its last pose; speaking a sound with no speech block and no
+  expression, nothing either; otherwise the base pose, the line's tracks at the time since it
+  began, and the blend. Then the blink.
 * **At rest** the face is `Sc_base` on the face bones from the first frame.
 * **In the world only**: a squad member a spawn-trigger hasn't spawned yet (`Player::absent`) isn't
   ticked, though its step runs (the controlled one's does, for the game's clock): the game's
@@ -147,19 +156,25 @@ do when nothing writes them again; inferred: no take could read it, Tex's lids r
 has them and Brutus's can't be read through his brow). Before the first blink the lids are the model's
 own (the bind pose) and the first tick ends that.
 
-**The clip is eased in, which the demo doesn't do yet.** FUN_00143d10 sets a 0.1 in the play
-request's +0x10, and the node controller reads it (0x2536f0): it builds a **transition**, the game's
-own word ("transition, ease = ..., t = ...", the string at 0x404df8), from the node's pose to
-`Sc_blink`'s channel, the channel's weight smoothstep(t / 0.1) (0x280330; the request's bit 2 asks for
-the smoothstep, 0x39a848 = 3.0). So it is a **fade-in over 0.1 s, not a start delay**: the clip's own
+**The clip is eased in** (#325). FUN_00143d10 sets a 0.1 in the play request's +0x10, and the node
+controller reads it (0x2536f0): it builds a **transition**, the game's own word ("transition, ease =
+..., t = ...", the string at 0x404df8), from the node's pose to `Sc_blink`'s channel, the channel's
+weight smoothstep(t / 0.1) (0x280330: t / 0.1, 1.0 from 0.1 s on; the request's bit 2 asks for the
+smoothstep, 0x39a848 = 3.0). So it is a **fade-in over 0.1 s, not a start delay**: the clip's own
 time runs from 0, the lids are at its value from 0.1 s on (the peak, 44.5 degrees for Tex's big lids,
 doesn't move) and before that they lag it: for Tex's big lid 6 % of the peak at 1/30 s and 46 % at
 2/30 s against the bare clip's 23 % and 62 %, so 10 % shut comes 0.025 s later, 20 % 0.020 s, half
-0.013 s, 80 % 0.004 s (worked from the clip's keys, linear in angle between them). The demo plays
-the clip bare (the blink's timing stays as measured; the ease is a small follow-up on
-`FaceTable::write_blink`), so its lids start 0.02 s early. That is a third of the tester's 0.07 s against take01; the rest is not
-explained by the code (guesses: the log samples at 15 Hz and sees a reset up to 0.067 s late, and a
-frame or two between the controller's tick and the animation's update, none measured).
+0.013 s, 80 % 0.004 s (worked from the clip's keys, linear in angle between them). The demo does it
+in `FaceTable::write_blink` (`face::blink_weight`): each lid from where it was as the blink began, the
+model's own lid at the first blink (the transition's "pose" source, FUN_00280100: nothing else moves
+the lids) and the clip's last key at the others (where the last one left it), blended toward the
+clip's value by the weight (the transition hands the blend to the channel's own, 0x234bf0 -> its
+vtable +0x24, whose maths isn't read: a normalised lerp, as a channel's keys are blended, inferred).
+`BF_FACE_CHECK` prints a first blink's lids at 1/30 and 2/30 s eased and bare: Tex's big lids 2.7 and
+20.4 degrees against 10.4 and 27.4 (6 % and 46 % of the 44.5 against 23 % and 62 %, as worked out
+above). That closes 0.02 s of the tester's 0.07 s against take01; the rest is not explained by the
+code (guesses: the log samples at 15 Hz and sees a reset up to 0.067 s late, and a frame or two
+between the controller's tick and the animation's update, none measured).
 
 **Hawk doesn't blink.** The face controller flags every face bone's node, the binder skips flagged
 nodes, and Hawk's `Sc_base` lists her four lid bones (the 22 bones of her list: four more than Flint's
@@ -173,6 +188,99 @@ How far the lids' rest keys lie from the bind pose: none for Flint and Tex (0.0 
 7.5 degrees for Brutus (his eyes narrow when the first blink ends). Take02 couldn't read it: his eyes
 are red slits under a heavy brow, and his head idles, so no lid closing and no narrowing between his
 first blink and the later ones could be seen. Left as it is.
+
+## Lip-sync (#325)
+
+### The data: viseme tracks in the sound library
+
+Every speech `<Sound>` (Type h_012ed199) in `sounds-<level>.xml` and `sounds-common.xml` has a
+speech block of the same name: `<h_012ed199>` -> `<h_0128a038>` -> one `<h_f3280a84>` track per mouth
+shape, named by its viseme's hash (`h_fcf7be63`: `if` h_e1d3067c, `size` h_0162b262), of `<frame
+time weight>` keys (seconds into the line, which may be negative; percent). The 61 sound files hold
+13294 speech sounds and 96607 tracks (scanned): every speech sound has an `if` track, the tracks name
+only the 15 mouth shapes, each has 3 to 273 keys in time order with no two at one time, and the
+weights peak at 85 or so, at most 140. The `h_f63f0f49` (30) and `h_11b737e0` beside them aren't read
+by the face code.
+
+`bf/audio.rs` reads them with the library (`SoundBank::add` -> `Visemes::read`; `SoundBank::visemes`
+gives a sound's, shared): the runtime block FUN_0017b800 builds into the library entry's +0x1c, a
+slot for each of the 22 visemes filled by the tracks' names (`face::viseme_by_hash`: their places in
+the hash table 0x3c0290; a track naming another is dropped, a later track of one viseme takes its
+slot). A key is made {time, weight, 0, 1.0}, and FUN_0017a990 then sets its last field to 1 / (the
+next key's time - its own) on a track of more than two keys (`VisemeKey::inv`): a track of two would
+keep 1.0, so its fraction would be the bare seconds since its first key (none in the data has two).
+
+**The curve** (`VisemeTrack::sample`, FUN_0017aa70): before the first key its weight, after the last
+the last's, else the key whose span holds t and the next, mixed by (t - its time) x its `inv`; x 0.01.
+`Visemes::write` (FUN_0017aa30) puts each track's value into its viseme's weight; the visemes no track
+names keep theirs. **Checked against the game's own output**: take07's face log (Tex's "yeah yeah",
+h_ec50fb88) and take04's (his skill-on line h_05410be5 and his order answer h_0a4918dc) read the
+weights at the controller's clock less the line's start; the rule gives every logged mouth weight to
+the log's three decimals (49, 27 and 10 rows, the largest difference 0.006, the rounding), but each
+line's first row, read between the speak and its first tick (the weights still zeroed).
+
+### Saying a line (the controller)
+
+* **Speak** (`Face::speak`, FUN_001435d0's part on the controller): it stops what it was saying
+  (`Face::stop`), then, if the library has the sound (FUN_0017beb0), keeps its tracks (+4), speaks
+  (+0x54) for the sound's length (+0x50, `SoundBank::length`: 3.047 s for h_ec50fb88, the take's
+  `left` at its start) and notes the clock (+0x44 = +0x40). A sound without a speech block speaks
+  without tracks: the face isn't moved. The voice itself is the caller's.
+* **Each tick** the clock goes on and the time left down; while the time left is over 0 the blend
+  writes the tracks at the time since the line began (`+0x40 - +0x44`) and blends the poses. So the
+  mouth is the line's own curve, nothing read from the audio, and it moves in fixed steps of the
+  frame.
+* **The line's end**: the tick that takes the time left to 0 or under ends it; the blend then stops
+  (the mouth's weights zeroed) and **writes nothing**, so the face keeps the pose of the line's last
+  frame. A line that ends mid-word leaves the mouth there: take07's ends with `if` at 0.44 (Tex's
+  `if` is stretched x3) and its last frames show the mouth still open after the line; the demo's
+  does the same.
+* **Stop** (`Face::stop`, FUN_00143570): the line dropped and the mouth's weights zeroed, the face
+  not written: a chatter cut-off (0x13fbde) or a dialog-trigger's STOP (FUN_001267f0).
+
+### The speech paths (`faces::speak` and `faces::stop`)
+
+| Path | The game | The demo |
+|---|---|---|
+| chatter: every squad and enemy line (hurt, death, kill, follow, Move To, medkit, refused gun, skill, charge) | the sound event's start FUN_0013fab0 -> FUN_001435d0 (0x13fb31); its stop 0x13fb90 -> FUN_00143570 (0x13fbde) when the controller is speaking | `Chatter::voice_start` / `voice_stop` (play_chatter.rs) |
+| a dialog-trigger's line (a cutscene's on-camera lines too) | 0x206d20 -> FUN_001267b0 -> FUN_001435d0 (0x1267d1); STOP -> FUN_001267f0 -> FUN_00143570 | `Triggers::dialog` queues it for `speakers` (play_sound_triggers.rs) |
+| the world's dialog queue (the radio: Bratton's lines, the radar's cues) | FUN_00179ec0 plays a 2D voice with no character | nothing: no face moves |
+
+A character without a face table (a Shrike, a hound) has no controller: its lines move nothing.
+A dead speaker's controller takes the speak (a death cry) but isn't ticked any more, as the game's
+isn't (0x11dc7b).
+
+**When the mouth starts.** The two paths sit at different places of the game's world update
+(FUN_000d9a20): the chatter manager's update (FUN_00140d70 at 0xd9ac7) runs before the objects'
+ticks (FUN_000d9840 at 0xd9d0b); the cutscene scripts' update (FUN_00174270 at 0xd9d18, whose 103
+calls the dialog-trigger's handler there, 0x1772b0) and the triggers' loop (FUN_000d99d0 at 0xd9d20)
+after them. So a chatter line's mouth moves in the frame its sound starts (its first tick reads it
+at dt), and a dialog line's from the next frame (its sound starts after the frame's tick): take07's
+log caught Tex's controller between the two, the line begun (+0x44 = +0x40) and its time left whole
+(3.047 s), while take04's chatter rows are read at the chatter's breakpoints. (A dialog-trigger
+signalled from before the ticks, by the timed messages the world drains at 0xd9a94, FUN_000e40d0,
+if any reach one, would move its mouth in the first frame too: not traced, and the demo doesn't
+tell it apart.)
+
+In the demo both run after the characters' step: the chatter's `update`, and `speakers`, which
+puts the triggers' lines on the faces after the step and after the chatter, as the game's trigger
+loop comes after the chatter's manager (a dialog line said in the same frame as a chatter sound on
+the same character wins). The dialog line starts as the game's; the chatter's speak is put back by
+the frame's dt (`ago`: its start and its time left), so from its next frame on its mouth reads the
+curve where the game's does and ends where the game's does; only the line's first frame differs,
+the game's showing the curve at dt and the demo's the face from before the line (a line can start
+mid-shape: Tex's skill-on line h_05410be5 has `size` at 0.77 at its start).
+
+The demo's chatter keeps its own copy of the time left (`Player::speaking`, the HUD's speech icon and
+the priority test of a new sound, play_chatter.rs), run down by its own update; the controller's is
+the face's. A dialog line doesn't take its character's chatter voice in the demo (chatter.md, "Not
+done"): it plays as the triggers' voice, and the chatter doesn't see it.
+
+### The cost
+
+`BF_FACE_COST=1` (the test map, `BF_TEST_FULL_SQUAD=1`, the four saying a line every 1.5 s with
+`BF_TEST_SPEAK`, 15 fps): about 11-12 microseconds a frame for the four faces' steps while they speak
+(2.8-3.0 a face), against 3-6 at rest: nothing next to the frame.
 
 ## bf_viewer
 
@@ -193,18 +301,30 @@ close-up aimed at Brutus's hunched head with `BF_CLOSEUP` (the same frame is bla
 ## Test hooks
 
 * `BF_FACE_LOG=1`: each face as it's made (its bones by kind, the blink's lids and what it leaves out,
-  the chance, the stretches) and each blink as it starts (`t=4.07 tex: blink 2`); with `BF_TEST_FACE`
-  each weight set.
+  the chance, the stretches), each blink as it starts (`t=4.07 tex: blink 2`), each line said or
+  stopped and by which path (`t=3.27 tex: says h_ec50fb88 (3.047 s, 11 viseme tracks; a
+  dialog-trigger)`), and while a line speaks, its weights each tick (`t=3.33 tex: h_ec50fb88 at 0.0667
+  s, 2.980 s left: if=0.178`: the time since its start and the time left, the controller's +0x40 -
+  +0x44 and +0x50, as the takes' face logs read them), then its end (`h_ec50fb88 said`); with
+  `BF_TEST_FACE` each weight set.
 * `BF_FACE_CHECK=1`: for each face made, how closely its table reproduces the clips it came from: the
   base and the 22 poses (each viseme at a weight of 1 over its scale) against `Character::pose` with
   the clip laid over the same body pose (the viewer's way), on the bones the clip names: the largest
-  turn and move, and the lids' first and last key against the bind pose.
+  turn and move; the lids' first and last key against the bind pose; and a first blink's lids at 1/30
+  and 2/30 s, eased in and bare.
+* `BF_FACE_COST=1`: each second, the faces' steps' time a frame (the controller's tick and the pose
+  written), the steps a frame and how many spoke.
+* `BF_TEST_SPEAK=<s>,<who>,<sound>[;...]` (play_chatter.rs): at `s` seconds `who` says the sound (its
+  hex id) on its voice, as a chatter line's sound starts but with no gate: its mouth follows the line.
+  `--test BF_TEST_SPEAK=1.0,me,05410be5 BF_TEST_FACE_CAM=0.5,me,0.7` is Tex's skill-on line close up.
 * `BF_TEST_FACE=<s>,<who>,<viseme>,<weight>[;...]`: at `s` seconds (the controlled character's clock) set a
-  viseme's weight on `who` (`me` the controlled one, a squad name or 0-3, `all`). It stays until
-  another entry changes it. **With every weight back at 0 the face keeps the last pose blended**
-  (the game's idle controller writes nothing, so the bones are left as they were). To go back to
-  the rest face set the `base` viseme to 1: it blends to the base pose and no further, so the face
-  is `Sc_base` again. `--test BF_CHARACTER=3 BF_TEST_FACE="1.0,me,roar,1;1.4,me,roar,0;1.4,me,angry,1;2.0,me,angry,0;2.0,me,base,1"`
+  viseme's weight on `who` (`me` the controlled one, a squad name or 0-3, `all`) in its **test pose**
+  (`Face::test`, not the game's): while one of its weights is over 0 the blend shows the test pose in
+  place of the controller's weights (a line said meanwhile runs its time but doesn't show). It stays
+  until another entry changes it. **With every weight back at 0 the face keeps the last pose
+  blended** (the game's idle controller writes nothing, so the bones are left as they were). To go
+  back to the rest face set the `base` viseme to 1: it blends to the base pose and no further, so the
+  face is `Sc_base` again. `--test BF_CHARACTER=3 BF_TEST_FACE="1.0,me,roar,1;1.4,me,roar,0;1.4,me,angry,1;2.0,me,angry,0;2.0,me,base,1"`
   shows the roar, the snarl, then the rest face.
 * `BF_TEST_FACE_CAM=<s>,<who>[,<m>[,<rise>]][;...]`: at `s` seconds the free camera goes `m` metres (0.8)
   in front of `who`'s face (`rise` m higher: Brutus's hangs low, `1.1,-0.3`) and follows the head as the
@@ -242,15 +362,48 @@ the cameras above, against bf_viewer's renders of the same clips:
   shot of the held Tex): the face intact, the blink at 4.13 s on the camera 5 m away.
 * **A death** (`BF_TEST_DIE=1.0`, from above): the face as it died, no stretched geometry, the head
   thrown back.
+* **The lip-sync** (#325, 15 fps captures, `BF_MUTE=1`), the weights logged with `BF_FACE_LOG` and
+  compared with the tracks (the rule checked against the takes' logs, "Lip-sync" above):
+  * **a dialog-trigger's line** (`BF_MAP=tutorial BF_TEST_GOTO=37,67.5,37,67.5,32
+    "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`: Tex on the plate starts `tutorial_show_patrol_2`, whose 103
+    fires `trigger_dialog_tex_yeahyeah`): Tex says h_ec50fb88 (3.047 s, 11 tracks) as the trigger
+    fires; the first tick reads it at 0.0667 s (the frame after, as take07's controller), the last at
+    3.000 s with 0.047 s left; its 45 ticks' weights are the tracks' to 0.0009 (the log's rounding).
+    On the script's camera (Tex a few metres off) the mouth is shut before the line, opens and closes through
+    it, wide at the `if` peaks, and is left half open after it (`if` 0.61 and `told` 0.13 at its last
+    frame). Take07, on the same camera, shows the same in profile: the mouth open at the `if` peaks
+    (video 10.47-10.67 s) and still half open after the line (13.0 s). Its Tex turns to the camera
+    during the line, the demo's doesn't (the cutscene's body, not the face);
+  * **chatter lines** (`--test BF_TEST_SPEAK=1.0,me,05410be5 BF_TEST_HURT=tex,10,3.5
+    BF_CHATTER_CHANCE=100 BF_TEST_FACE_CAM=0.5,me,0.7`): Tex's skill-on line on his voice (1.596 s,
+    take04's `left`; 8 tracks) is first read at 0.1333 s (the chatter's speak put back a frame: the
+    game's first frame reads it at dt, its second at 2 dt) and last at 1.533 s with 0.063 s left, its
+    23 ticks' weights the tracks' to 0.0007; close up the mouth opens wide on `if` (Tex's x3), works
+    through the line and stays half open after it (`if` 0.31, `told` 0.43). Then the hit's grunt, asked
+    through the gate (e856009f, variant 1f131100, 0.584 s, one track): the mouth opens and closes
+    again over 0.6 s;
+  * **the radio moves no face** (`--test BF_MAP=tutorial BF_SCRIPT=off
+    BF_TRIGGER_FIRE=trigger_sound_bratton_baseisguarded,USER1,1.0 BF_TEST_FACE_CAM=0.5,me,0.7`):
+    Bratton's line (h_e3656325, 1.97 s, a sound-trigger's, heard alike everywhere) plays from 1.00 to
+    2.93 s; no face says anything (the log), and Tex's face close up keeps its mouth shut through it.
+    The patrol-2 run has the dialog queue's Bratton line (h_081fd9f8 from 0.07 s) before Tex's own,
+    with no face moving either;
+  * **the cost**: above;
+  * **the blink's ease**: `BF_FACE_CHECK`'s numbers (§ The blink); the second blink of the chatter
+    run shows the lids half down a frame in, shut the next, and open again by the fourth.
 * **Unit tests**: `cargo test --lib face` (the blend: weights, scales, the order, the skipped bone,
-  the nlerp, the names) and `cargo test --bin bf_play faces` (the blink schedule at several frame
-  rates and intervals, the controller's idle).
+  the nlerp, the names, the blink's ease weight), `cargo test --lib audio` (the track rule against
+  take07's log, a short track's fraction, the writes of a line's tracks, a speech block read) and
+  `cargo test --bin bf_play faces` (the blink schedule at several frame rates and intervals, the
+  controller's idle and test pose, a line's weights over its length and its end, the chatter's line
+  put back a frame, a line without tracks, the stop, the expression fade).
 
-## What the takes show for the next slices
+## What the takes show for the next slice
 
 `todo/255-facial-animation/notes.md` has each take's face log (15 Hz: the speaking byte, voice
 handle, target and shown expression, the line's priority, the controller's clocks, the blink clock
-and the 22 weights). For the expressions' slice (#326; nothing of it is built here):
+and the 22 weights). The lines' (take07's dialog line, take04's chatter lines) are used above. For
+the expressions' slice (#326; the fade is built, nothing sets an expression):
 
 * **Hurt lines flick the expression to GREAT_PAIN for about 0.27 s** (take06). This is **against the
   leads** (§3.2), which read the chatter `<expression>` events' zero default duration as a no-op and
@@ -267,27 +420,31 @@ and the 22 weights). For the expressions' slice (#326; nothing of it is built he
   (6.11 s) and falls 0.94 (19.44 s), 0.02 (19.98 s), 0 (20.04 s): 0.5-0.6 s each way, 0.12-0.13 a 15 Hz
   step, the 2.0 a second the code gives. His berserker body fills the frame as it turns on, so the
   angry face itself isn't in the pictures.
-* **The lines** (for the lip-sync's slice): the dialog-trigger line of take07 ("yeah yeah", 3.05 s,
-  char+0x81c 10, the first weight one row after the start, no expression change) and the chatter
-  lines of take04 (the skill-on line: speaking from 33.17 to 35.13 s at priority 1; Tex's answer to
-  an order, 0.83 s at priority 6) are in the notes with their weights.
 
 ## Not done, and what's guessed
 
-* **The lip-sync and the expressions**: the library's viseme tracks (`bf/audio.rs`), the speak and
-  stop calls on every speech path, the expression fade and Tex's berserk face are the next slices
-  (#325, #326). `Face::weights` is where they write, and the speech path is there already: #155's
-  chatter (`chatter.md`) starts and stops every line on a character with `Chatter::voice_start` and
-  `voice_stop` (the game's FUN_001435d0 and FUN_00143570 on its face controller), keeps the sound in
-  `Player::voice`, the line's priority in `Player::voice_priority` and the time left in
-  `Player::speaking` (the controller's +0x50), and ends a line by time in `voice_tick`. None of it
-  touches `Player::facial` (this page's `Face`) yet: the lip-sync slice calls the face from those
-  three places.
+* **The expressions** (#326): the fade (`Face::fade`, FUN_001438d0) runs each tick and feeds the
+  blend's test, but nothing sets an expression yet: Tex's berserk (ANGRY on, BASE off), the
+  e06 expression-trigger and the chatter lines' `<expression>` events (take06's GREAT_PAIN flicks).
+* **A dialog line on its character's voice**: the game's FUN_001267b0 also sets the character's line
+  priority to 10 and its speak stops the voice's chatter sound (FUN_00143570), so a chatter sound of
+  a lower priority isn't started on it meanwhile (FUN_0013fab0 via FUN_00126810). The demo's dialog
+  line moves its speaker's face but plays as the triggers' voice, and the chatter doesn't see it
+  (chatter.md, "Not done"): a chatter sound started on the dialog's speaker during a dialog line
+  without the hush flag (one in the tutorial, h_1fe7310a) would take the face from it. Also read in
+  the game's code, not seen in a take and not modelled: a dialog line with the hush flag whose
+  speaker's chatter line is still playing is cut by its own hush (inside its speak, FUN_00141100's
+  cut-off stops that chatter line's sound event, whose stop, 0x13fb90, stops whatever the controller
+  says: the dialog line just begun).
+* The chatter path's first frame: the game's mouth reads its line at dt in the frame the sound
+  starts, the demo's from the next frame (at 2 dt, where the game's second frame reads it). One frame
+  at the start of each chatter line, which shows on a line that starts mid-shape (h_05410be5: `size`
+  0.77 at its start).
+* The transition's blend of the lids (the channel's own, its vtable +0x24) isn't read: a normalised
+  lerp is used (inferred).
 * The blink's cycle, its phase by the character's first tick, and Hawk's missing blink are measured
   now (above). Still inferred: the held last key after a blink (nothing resets the nodes in the code
-  that was read; no take could read it). The 0.1 in the play request is the clip's ease-in, a fade
-  over 0.1 s (§ The blink): not applied, the lids close about 0.02 s early in the first tenth of a
-  second. Brutus's lids are unread (take02).
+  that was read; no take could read it). Brutus's lids are unread (take02).
 * The first blink after a spawn was not caught on screen (no take logged one): the staggered phases
   are what show it.
 * A knocked-down but living character's face isn't ticked, and during the get-up the step runs twice a

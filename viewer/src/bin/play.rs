@@ -2299,8 +2299,9 @@ struct Player {
     air_velocity: Vec3,
     last_velocity: Vec3,
     /// its face controller (the game's char+0x5b8: the viseme weights, the face bones' pose, the
-    /// blink's clock; play_faces.rs, #255): made with the character (`spawn_unit`), ticked by its
-    /// step while it lives. Not `face`, which is the steep terrain face it stands on (#264)
+    /// line it says and its lip-sync, the blink's clock; play_faces.rs, #255, #325): made with the
+    /// character (`spawn_unit`), ticked by its step while it lives. Not `face`, which is the steep
+    /// terrain face it stands on (#264)
     facial: faces::Face,
     sim_time: f32,
     // input (filled by read_input)
@@ -2402,8 +2403,8 @@ struct Player {
     /// the priority of the line its voice is on (char+0x81c, set as a chatter sound starts,
     /// FUN_0013fab0; 0 while it's quiet, 0x11cc37)
     voice_priority: i64,
-    /// seconds left of the voice line being said (the face controller's +0x50; the HUD shows their
-    /// speech icon)
+    /// seconds left of the voice line being said (the face controller's +0x50, the chatter's copy:
+    /// the face runs its own, play_faces.rs; the HUD shows their speech icon)
     speaking: f32,
     /// hitpoints (the character's combat-target hitpoints at the start)
     health: f32,
