@@ -109,11 +109,22 @@ the thrower), each blast and decal, and a throw called off.
   game's time, #140) and lets go at its 19f8311b event (0.50-0.60 s); it drops from the hand at
   the feet (Tex's Roller is down 0.97 s after the press; recorded ~1.05 s input to picture, ~0.85-0.9
   s in the game's time: so the demo's, from the clip's events, is probably 0.1-0.15 s late, not
-  0.08 s early; to be re-checked from a marker-synced take, #140). Squadmates don't dive from one set down. The Roller then rolls
-  straight ahead at 4.7 m/s (4.4-5.0 measured), its object sound h_19dbc65d again every 0.97 s
-  while it rolls (the recording's loop), full within 5 m and silent at 25 m (the sound's own
-  `falloff 5` / `h_fd40e332 25`, sounds-mp1.xml); the fuse (25 s; the Sentry's 9999 s) runs
-  from when it's down.
+  0.08 s early; to be re-checked from a marker-synced take, #140). Squadmates don't dive from one set down. The Roller then
+  hops off after enemies (see **Roller**), its object sound h_19dbc65d again every 0.97 s once
+  it's down (the recording's loop), full within 5 m and silent at 25 m (the sound's own
+  `falloff 5` / `h_fd40e332 25`, sounds-mp1.xml); the fuse (25 s; the Sentry's 9999 s; the
+  Thermo's 15 s) runs from when it's down. The take's Tex holds the Roller low in his right hand
+  and lets it go by his right foot, 0.72 m ahead along the aim and 1.29 m up (#79 take10 at
+  2.7-3.15 s, the spec's §4); the demo's place drops it from the throw clip's hand bone, by his
+  left side, 1.16 m up and 0.6 m from him (the shared place, not changed by #79).
+* **The fuse** (the grenade update 0x149420, #79 / #82): it counts, and ends in the blast, only
+  once the grenade is out of the hand, armed by its first contact (the contact handler 0x149510:
+  +0x1dc bit 1; a grenade set down live by the level is armed as it settles at the load), and
+  while no cutscene holds the world: the world's cutscene bit (+0xc50 bit 4, a script's 122 sets
+  it and its 123 clears it, play_script.rs `in_cutscene`) returns before the subtraction and the
+  test, so a fuse at 0 waits too (0x1494be). The demo had no cutscene test before. A Sentry's own
+  check, a shot on a mine and a blast setting one off go off at once whatever the bit
+  (`Grenade::set_off`: 0x147620 calls the grenade's +0x15c itself).
 * **Tab** (the game's B) steps to the next item carried, every category in the store's order,
   and drops a charge in progress, G then dead until it's let go (#196: [play.md](play.md), **The
   item box and the item list**; the T key that stepped the grenade types is gone, the game has
@@ -218,7 +229,11 @@ the thrower), each blast and decal, and a throw called off.
   demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
   each, ~11%, no falloff). The game's rule is read from the code (see **Sentry**,
   FUN_0022c4d0) but not implemented (#112): half the roll x0.7 on the thrower's own squad x0.6,
-  the squad's difficulty step on STANDARD, is 0.21 of a roll, the recording's ~11%.
+  the squad's difficulty step on STANDARD, is 0.21 of a roll, the recording's ~11%. A core blast
+  (`h_011cb154` true: the Roller's, the Thermo's) gives the whole roll within half the radius, so
+  its thrower takes 0.42 of a roll there (FUN_0004b9c0 has no self exclusion): #79's take10 Tex
+  -50.6 at 2.46 m from a Roller, #82's take04 Brutus -13.9 at 1.43 m from a Thermo; the demo's 0.2
+  gives a Roller's thrower 23-31 (#112's, not changed by #79 / #82).
   **The difficulty step** (#127, play.md **Damage**): every blast's hit on a character takes the
   victim's step (STANDARD on the missions and the test map: enemies x1.4, the squad x0.6; none
   on the multiplayer maps, as read live in a match, #129) and its damage-type factor. The
@@ -325,7 +340,8 @@ What each type does so far, and doesn't:
 | Gas (#76) | timer 1, gas-grenade's olive cloud (with its air fields), 1b35643e, the poison: 17.7 HP/s within 3 m for 5.5 s, Flint x0.05 | the "Tech Upgrade" (the ticket's); the cloud's fade (lingers ~1-2 s, see above); the flash's ~1 s flicker (smoke-grenade-flsh's keyed emit count: one burst here); the shared HUD's damage feedback (white bar with a dark-red trailing segment, the direction chevron) |
 | Light (#77) | timer 1.5; phosphor_grenade (a tall thin blue beam of upright streaks, the glow and sparks at its base) + light_phosphor (a blue-white point light, reach 18.8-24.3 m) burning 30 s as the data has them (the spike's rate drops to 0 at 29.45 s); ignition h_1080aaf1 and f5260e35 after 0.2 s; no damage, no decal, no tint, pickups left alone; the canister stays where it lies, its trail stopped, until the effects have run (31.1 s) | the end of the burn isn't recorded (the recording shows >= 15.1 s); the beam is paler and less solid than recorded and the base's white core smaller (see **Light grenade**); the sparks fly too far (no gravity field, #101); the light's strength not measured against the recording |
 | Sonic (#81) | goes off on first contact (timer 0), grenade_sonic (dome, ring, godrays) + light_sonic_grenade, f36fb063, decal h_fb24bcb7; the damage comes with the ring, the thrower's falls off by 5 m, nobody is knocked down (see **Sonic grenade**) | the "Tech Upgrade"; the godrays (broad columns, not two narrow shafts), the ring (a wall, not a flat band), the decal's look |
-| Roller (#79) | set down (place_hi), rolls straight at 4.7 m/s with its rolling sound, bounces off walls, 25 s fuse, the Frag's effects + h_065168c9 | seeking |
+| Roller (#79) | set down (place_hi); seeks the nearest hostile in sight within 50 m every 0.5 s (from 1 s), hops after its point (a fit to the takes: 3.1, 5.6, 7.2, 8.5 m/s at its first hops, a ceiling of 8.5), stops dead at walls, goes off within 2.5 m of its point or at its 25 s fuse; h_013b3ca8 (the Frag's six effects + light_explosion) + h_065168c9; its rolling sound (see **Roller**) | the per-material ground puff h_0cbcb8f2 (no grenade has one yet); a shot or a blast taking its 1 hp; the set-down hand (above) |
+| Thermo (#82) | set down (place_hi), 15 s fuse from the landing; m09_b's own charge set down armed at the load, its fuse held by the startup cinematic (24 s after the level's start); the Roller's effect set at 3 m + the impact sound h_16611581 (see **Thermo**) | whether a shot sets it off; enemy damage by distance; its look and sounds (not filmed) |
 | Sentry (#80) | set down (place_hi), lies there with its red tips lit (#300); goes off for a hostile within 3 m with no friend within 3 m, or when shot (see **Sentry**), or by a blast that takes its 1 hp (see **Interactive scenery**); exp-mine + light_explosion, h_145f09e5 | disarming an enemy's mine; the AI keeping clear of it; the tips' glare; the thrower's damage beyond the radius (below) |
 
 Not done for any: ALE fields other than the Gas cloud's and the trail's rise (exp-lrg-air,
@@ -495,6 +511,132 @@ BF_TEST_STRAFE=0,-1 BF_TEST_THROW=1.05,0.1` unless said):
 * Regression after #228 (the hazard rule): the trigger-distance and `wise` runs above give what
   main's build gives (stays at 3.05 m, off at 2.99 m, Flint taking 31.0 in both: the roll's,
   where this page's first run had 22; `wise` off at 0.20 m across).
+
+## Roller (`src/bin/play_roller.rs`)
+
+"Round and intelligent - the rolling bomb seeks enemies when deployed." The squad's h_fba7c475
+(m09_b's four pickups are the twin h_15f9c51a): set down as the Sentry is, its `timer` 25 s, its
+explosion h_f213e5b1 (Damage 117-156, type 10, radius 5, core; effect h_013b3ca8: the Frag's six
+ALE effects, light_explosion and h_065168c9; the Frag's scorch). What it does between is its item
+set's, IFSET_ROLLING_BOMB (function-type 13, vtable 0x39ba60; every function is in
+[code-map.md](code-map.md); the leads and the takes are `todo/79-roller-grenade/`):
+* **The let-go** (0x148640 -> FUN_00148720) makes its seek helper: a point h_11884f2e (50) m along
+  the placer's horizontal aim (0x10fbf0; the demo's aim frame, the camera's turn) at the hand's
+  height, the first check due in 1.0 s, no target, the placer's team (+0x1c0) as the bomb's.
+  Measured live in the takes: the point 50.00 m along the aim, at the hand's height.
+* **Every frame** once it's out of the hand (0x148690 -> FUN_001481c0, FUN_00148220): the check
+  timer runs down; a target out of sight has 5 s before it's dropped. **A check every 0.5 s**
+  (the first 1.0 s after the let-go): with no living target, or every 10th check (h_0a811e94), a
+  **target search** (FUN_001483e0): the nearest living character of a team the team table makes
+  hostile to the bomb's (0x3ffd80: never the squad for the squad's), not the one who set it down,
+  whose hips (the character's node, `missile::root_point`: the feet + its clip's root-height,
+  1.12 m on the Shrike Heavy; the takes' point is the enemy's record + 1.1 m) are within 50 m (3D)
+  and in sight; a held target is only replaced by one within half its distance. No cone. Then the
+  target in sight moves the point to its hips; out of sight, the point stays.
+* **The sight line** (FUN_00148100: the standard line-of-sight filter 0x39cc18, skipping the ball
+  and the target) meets the terrain and the placed objects' collision only: not the level's
+  blockers or hinters, characters, corpses, items, grenades, effects or liquids (`clear`: the
+  arena's `ray_shot`, which leaves the blockers out; on the flat test floor its ground, pillars
+  and pieces), from the ball's middle to the hips. Cast from the takes' logged positions (the
+  ball's node and the enemy's hips at each of the 116 checks of takes 05-18, `BF_ROLLER_RAYS`),
+  the demo's ray agrees with every one: takes 05 (h_09a6856d), 08 (h_fc0ef12e, h_e04e5a0e,
+  h_09a6856d, h_04e79fb8, h_fbdcd828), 11 and 12 (h_04e79fb8, the 10 m object near the enemy:
+  not the terrain, the leads' open question) and the gate panel of 17 / 18 (h_0792d16a) block
+  the misses, every find is clear, and take12's one out-of-sight check meets h_f455bbb6.
+* **It goes off** when its point is within 2.5 m across (half the explosion's radius) and between
+  1.5 m below and 2 m above the ball (exclusive): the fuse is set to 0 and armed (+0x1d4, +0x1dc),
+  so the blast is this frame's, through the fuse's cutscene gate. The rule is on the point, not
+  on anyone: an enemy unseen behind a wall 1.7-2.1 m away doesn't set it off (take18). With no
+  target it rolls on and goes off at its 25 s fuse, counted from its first contact.
+* **How it rolls** is Ipion's: the game spins the ball toward the point every frame with the same
+  angular push (FUN_002bad80 with 4.0, about the level axis square to the way to the point) and
+  the ground's friction turns the spin into the roll, none of it in the game's code. The demo's is
+  **a fit** to the takes' 20 Hz logs of the ball (`DRIVE_PUSH` and the constants after it). The
+  logs show the ball **hopping**: between ground contacts every ~0.6 s (0.4-0.85 s, 0.25-0.8 m
+  high) it flies straight (its speed along the ground holds, gravity 9.8), and only a contact
+  changes its way. So the demo keeps a drive velocity for the spin, growing toward the point at
+  11.5 m/s^2 (times the horizontal part of the unit vector to it, as the push axis is) and held
+  back at 1.35 /s along the way to the point (a ceiling of 8.5 m/s) and 1.6 /s across it; each
+  contact takes the ball's velocity along the ground (in the ground's plane) 0.8 of the way to it,
+  and it leaves again at 2.94 m/s along the ground's normal. A ball that isn't coming down into the
+  ground (the ground rose under it) is only set on it, so slopes slow it. It turns with its drive
+  (the drive's speed over its radius, 0.19 m: its archetype's sphere, which it rests and meets
+  walls by).
+* **Walls** stop it dead (no bounce): its move along the ground is swept with a ray first (a thin
+  gate leaf let the push-out send it through), and it stays against the wall, pressed toward
+  its point (takes 17 / 18).
+* **The level's own Rollers** are left out for now, pending #316: m09_a sets one down live as it
+  loads (h_0bde6982, item-alignment 1), which the item handler 0x14a0a0 lets go with no placer (its
+  point 50 m back along its own frame's third column), but its side is in doubt: FUN_00148720
+  copies the item's team into the helper once, at the let-go, and if 0x14a0a0 lets it go before
+  `item-alignment` is applied, the helper's team stays -1 and it never seeks. So `place_mines`
+  skips it and the level's own model of it stands as before. The other levels' (e16, e23, e34,
+  m05_b, m09_x, m14_a, m14_c, m14_d) are spawn-trigger templates, out of the world until a copy
+  is made, which the demo's spawn copies don't do for items.
+
+`BF_ROLLER_LOG=1` prints the let-go (the point and its heading in the logs' atan2(dz, dx)), every
+check (the search's candidates with their distance and what blocks their sight line, the target
+and the point), each ground contact (the speed along the ground before and after, the drive) and
+the proximity blast; `=2` also the ball, its drive and its point every frame.
+`BF_ROLLER_RAYS=<file>` casts the sight line once the map is up for each line
+`x1 y1 z1 x2 y2 z2 [label]` of the file (`#` comments) and prints what it meets first, how far
+along and where, with a placed object's index and type.
+
+Verified on e34 against the takes, each staged from its log (`-- --test BF_MAP=e34 BF_NO_SQUAD=1
+BF_TEST_GOTO=-49.49,25.25,48.64,6.05 BF_TEST_GO_AT=100 BF_TEST_GRENADE_TYPE=Roller
+BF_TEST_THROW=1.0,0.1 BF_TEST_INSTANT_KILL=0 BF_ROLLER_LOG=2 BF_CAPTURE=<dir> BF_CAPTURE_FPS=30`,
+the enemy as `BF_TEST_NPC=0.3,h_1c5780f8,enemy,frozen,<x>,<z>,<y>`: the take's A50 Heavy, the
+Soldier h_e9a41520; the gate from `BF_TEST_GOTO=-55.20,35.28,-56.40,135.28`): the let-go's point
+lies at -11.1 degrees (the takes' -11.1). Straight (take09's staging, no enemy): the hops leave at
+2.97, 5.72, 7.25, 7.91 m/s (the take: 2.95, 6.08, 7.23, 7.93), the 0.5 s windows from the let-go
+0.4, 3.0, 5.6, 7.0, 7.7, 8.1, 8.3 m/s (the spec: 0.5, 3.1, 5.6, 7.0, 7.5, 8.4), the first check
+0.97 s after the let-go; it climbs the rock ~38 m out and wanders on it, as the take's did (the
+demo's higher up), and goes off 25.03 s after its first contact. The blasts (the let-go to the
+blast; the take's in brackets): take10 1.1 s (0.94), take11 2.7 (2.97: unseen through h_04e79fb8
+until 3.1 m, as the take), take12 5.67 (6.05: found at the third check, 31.5 m, the take's 30.9;
+lost once), take14 2.17 (2.38; Flint never a target), take15 2.77 on A, the nearer (3.16), take16
+2.90 on B, the nearer (3.78), take06 3.73 (4.07), take07 4.07 (4.48); takes 08 and 13 never find
+one. The wide turns: take06's 109 degrees, the way first off by 20 degrees 0.6 s after the find
+(0.7), within 20 degrees of the bearing 1.8 s after (1.2), slowing to 3.5 m/s (0.9); take07's
+132, 0.6 s (0.5), 1.3 s (1.0), 2.4 m/s (2.5). Takes 17 / 18: stopped at the panel at z 41.13
+(the take's 41.1) and stayed, no target, no blast (path within 0.9 / 1.7 m rms of the take's).
+take10's frames (`BF_CAPTURE_EVERY=2`, frames 30-94) beside the take's (2.0-4.6 s): the same
+view, the ball let go and hopping off toward the enemy, then a white flash, the red damage tint
+and the yellow-white fireball; Tex takes 50 HP in the take where the demo's thrower share gives
+less (**Damage**: #112's).
+* Not matched or untested:
+  * take05's 42-degree target: the take's first check missed it (h_09a6856d) and the ball
+    circled it for 4 s (the blast at 5.9 s); the demo's ball, a little to the left of the take's
+    at that check, sees it at once and goes off at 2.77 s. In the fit's own simulation, fed the
+    take's logged points, the ball circles it for 2.5 s and goes off at 5.3 s, but the circle is
+    a knife edge of the fit (1.6 /s across circles it, 1.65 doesn't).
+  * The game's ball turns its first hops 5-13 degrees off the aim (the takes scatter -21 to +2
+    degrees round the -11 point); the demo's go straight at the point. The demo's hop is always
+    2.94 m/s (the takes' 1.9-4.2); a wide turn slows it less (3.5 m/s against take06's 0.9).
+  * On the rock (take09) the take's ball rolled back from y 33.8; the demo's climbs to 37 and
+    wanders there.
+  * At the gate (take17) both keep hopping against the panel, but the take's shuffles 3 m along
+    it (x -54.2 to -57.1) and comes off it up to 1 m; the demo's hops in place, its drive straight
+    into the wall (frames 90-270 of the staging with `BF_VIEW_YAW=0.7`).
+  * The set-down hand and point (above, **Placing**). A Roller shot or caught in a blast (1 hp),
+    a target on a ledge or in a pit, a walking target, the re-search at the 10th check, the
+    half-distance switch and the 5 s drop (code only: no take reaches them), a squadmate in the
+    blast, the fall-off between 2.7 and 5 m: not filmed.
+  * The per-material ground puff of its explosion (h_0cbcb8f2: dirt h_e919bf9e ...): no grenade's
+    is drawn yet.
+  * Its blast's damage to enemies (the tester's runs of the stagings): the A50 Heavy survives a
+    Roller going off 2.4-2.6 m from it with 10-22 HP, where 8 of the 9 takes' blasts killed it. The
+    shared rule (`hurt_by_blast`: Damage max falling to nothing at the radius) gives about half
+    there (156 x 0.5 x 1.4 = 109); the game's (FUN_0022c4d0) gives a core blast's whole roll within
+    half of r', the radius less the victim's size (117-156 x 1.4 = 164-218): #112's.
+  * The sight line starts at the ball's middle, its radius (0.19 m) over the floor at rest, where
+    the game's starts at its node, ~0.3 m over the floor (the spec's §4: the logged node 29.3-29.5 on
+    ground at 28.9-29.1). A ray grazing a bump is a little likelier to be blocked in the demo.
+  * The game's sight ray is also met by fly-blockers (its kind mask 0x58 keeps PID_FLY_BLOCKER,
+    kind 8); the demo's arena has none.
+  * The wall sweep (play_grenade.rs `fly_grenades`) casts once along the frame's move and keeps the
+    first face it meets: when that face is floor-like (a slope under 65 degrees ahead), the frame's
+    sweep stops nothing, and a wall just beyond it is caught by the next frame's sweep.
 
 ## Light grenade
 
@@ -725,15 +867,37 @@ radius 3, core true. The level places it once (h_e04e05e1 at (-178.4, 58.3, 126.
 levels-m09_b.xml 938), and not as a pickup: it's set down live (h_1cb7d5f2) on the enemies' side
 (item-alignment 1), as the tutorial's mines and e16's, e34's and e40's Sentries are. The item
 object's handler (0x14a0a0) lets it go as a throw does (+0x1bc bit 1, its item set's +0x10,
-FUN_0014a150's steps). Whether its fuse then runs (a grenade's starts at its first contact,
-0x149510) or it waits for the squad isn't traced, and the demo doesn't place it (`place_mines`
-arms the Sentry types only).
+FUN_0014a150's steps). Nothing in the level refers to it (no trigger, script or objective): a
+prop that goes off on its own. The leads and the takes are `todo/82-thermo-grenade/`.
 
 * Nothing of its own to build: it goes the placed types' way (**Placing** above). G sets it down
   at the feet with the stance's place_hi clip (the count drops at the press), its fuse runs
   from when it's down (the grenade's contact handler 0x149510 starts it, as every type's), and
   15 s later it goes off with its effect type's ALE effects, light and sounds, its decal, and
-  the shared blast's damage (#112).
+  the shared blast's damage (#112). Function-type 0: the base item set (0x39bec0), whose slots
+  are stubs; no detonator (IFSET_DETONATOR, 17, is on no item).
+* **The level's charge** (`place_mines`, play_sentry.rs): set down where it's placed as the level
+  loads, team 1, owned by nobody, its fuse armed (its body settling on the floor is a first
+  contact: in take01 it lies 2-3 cm off its placement), counting while no cutscene holds the world
+  (**The fuse**). m09_b's startup cinematic (m09_b_startup.gscr, 12.035 s) sets the cutscene bit
+  with its 122 at 0 s and clears it with its 123 at 9.0 s, so the charge goes off **24.0 s after
+  the level's start**, wherever the squad is (take01: held at 15.000 for 6.3 s of its snapshot's
+  clock, which was taken ~2.7 s into the cinematic, then 15.0 s to the blast at 21.3 s). With
+  `BF_TEST_GOTO` or `BF_SCRIPT` (no start scripts) it goes off 15.0 s after the load. Going off it
+  sends DESTROYED as the level's mines do (nothing listens). The rule is every live grenade item
+  the level sets down, not the Thermo's: the Sentries as before, but not a Roller (m09_a's one is
+  left out pending #316, see **Roller**); a spawn-trigger's template stays out of the world (none
+  of the Sentries is one).
+* **Its blast**: the effect type h_fbdd1258 has the Roller's h_013b3ca8's content (the Frag's six
+  ALE effects, light_explosion, h_065168c9), at 3 m, plus the impact sound h_16611581; no
+  per-material ground puff (its explosion's h_0cbcb8f2 is empty, where the Roller's has dirt and
+  stone entries; the demo draws none for any grenade yet).
+* Blocked (not filmed, not traced): whether a shot sets it off (take03's round landed ~0.3 m from
+  it and it didn't go; its 1 hp and the item's damage path aren't read), so it isn't among the
+  shots' targets as the Sentries are; its damage to enemies by distance and to squadmates (only
+  the thrower at 1.4 m is measured, take04: Brutus -13.9, the core blast's 0.42 of a roll by the
+  code, #112's); its look (the mesh h_0aac8518 is never seen lit in the takes) and sounds
+  (h_1d85a923's reader isn't traced); the AI's reaction to it.
 * Its kit is made where the level defines it: `load_kits` takes in the grenade and explosive types
   a level puts down itself (its item spawns, h_1d1d4f05, as pickups or set down live), so m09_b
   loads the Thermo (`8 grenade types: Frag, Gas, Sonic, Energy, Light, Sentry, Thermo, Roller`).
@@ -746,7 +910,7 @@ arms the Sentry types only).
   Sentry as live mines, set down with h_1cb7d5f2: e16 14, e34 6 and e40 7, item-alignment 1 (the
   enemies') but one of e34's, -1. With its kit made, `place_mines` (play_sentry.rs, #228) now arms
   them as the level loads, as the game's handler does (0x14a0a0): `BF_SENTRY_LOG=1` on e34 prints
-  six "the level's mine ... armed" at t 0.00, h_0a8cb601 on team 0 and five on team 1, the
+  six "the level's mine ... set down armed" at t 0.00, h_0a8cb601 on team 0 and five on team 1, the
   enemies', which go off for Brutus, Flint or Hawk within their 3 m and for Tex only stepping on
   one, as the tutorial's do. Before #82 they had no kit there and weren't placed. Not checked
   against footage of those levels.
@@ -765,7 +929,20 @@ his share (14.7). On the test map with m09_b's data
 hooks, `BF_TEST_GOTO=0,30,0,60 BF_TEST_GO_AT=100 BF_TEST_INSTANT_KILL=0`, dm Shrike Soldiers frozen
 1.8, 3.5 and 3.9 m from where it lies): the one at 1.8 m takes 97.5 x (1 - 1.83 / 3) x 1.4 = 53.2
 (its stamina shield 25 of it), the two beyond 3 m nothing. The item box shows its icon, "Thermo"
-and the count. No take: what it looks like going off is the data's only.
+and the count.
+
+Checked (#82, `BF_GRENADE_LOG=1 BF_SENTRY_LOG=1 BF_SCRIPT_LOG=1`): `BF_MAP=m09_b` from the level's
+start (no `BF_TEST_GOTO`): "the level's grenade h_e04e05e1 (Thermo) set down armed at [-178.37,
+58.25, 126.47], team 1" at t 0.00 (take01's object at (-178.386, 58.273, 126.433)); m09_b_startup's 122 at
+t 0.00, its 123 at 8.97 (script 9.000), and the blast at **23.97** (9.0 + 15.0), with 6 effects,
+light 0f220d41, h_065168c9 + 16611581 and the decal f5ccedb0. From take02's spot
+(`BF_CHARACTER=0 BF_NO_SQUAD=1 BF_TEST_GOTO=-184.22,117.80,-108.7,183.4 BF_TEST_GO_AT=100
+BF_CAPTURE_FPS=15`, Brutus 10 m from it facing it): the blast at 15.07 (15 s after the load, no
+start scripts), Brutus untouched; frames 220-249 beside take02's 10.7-12.6 s: the same doorway, a
+white core at the floor line on the first frame (the take's 11.0-11.15), the yellow-white
+fireball filling the doorway at +0.13-0.4 s (11.35-11.5), orange fire and brown smoke at +0.6 s
+(11.7), an orange haze after; the demo's haze is dimmer and gone sooner than the take's (>2 s),
+the shared effects' rendering.
 
 Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
 * `BF_TEST_GRENADE_TYPE=<label>` (any case, e.g. `Sonic`) selects that type at the start,
@@ -775,8 +952,9 @@ Test hooks (with `BF_TEST_GOTO`, on the test map or a map):
   15 fps a hold under one step (0.067 s) can fall between steps.
 * `BF_TEST_NEXT_GRENADE=<s>[,<s>...]` taps Tab (0.1 s) at each time: the next item (#196; it
   pressed the T key before, which stepped the grenade types only).
-* `BF_TEST_DETONATE=<s>` sets off every grenade out at that time. (The Sentry's own hooks:
-  see **Sentry**.)
+* `BF_TEST_DETONATE=<s>` sets off every grenade out at that time (through the fuse: a cutscene
+  holds it). (The Sentry's own hooks: see **Sentry**; the Roller's `BF_ROLLER_LOG` and
+  `BF_ROLLER_RAYS`: see **Roller**.)
 * `BF_TEST_EXPLOSION=1` sets off the selected type 6 m ahead every 1.5 s.
 * `BF_TEST_DROP=<s>[,<s>...]` sets off the selected type at the controlled character's feet at
   each time (to stand in a Gas cloud). `BF_GRENADE_LOG` prints each cloud, when it's over and,
@@ -808,9 +986,9 @@ recordings at 60 fps):
   #161's) or never starts (a run at 15 fps here).
 * Sentry (`BF_TEST_GRENADE_TYPE=Sentry`, ten presses 1 s apart): the box counts 10, 9 ... with
   no digit at 1, then shows Frag 10; `BF_TEST_NEXT_GRENADE=12.5,13` steps to Energy, then Gas.
-* Roller (`BF_TEST_GRENADE_TYPE=Roller BF_TEST_DETONATE=6 BF_SOUND_LOG=1`): down 0.97 s after
-  the press, rolls off ahead; h_19dbc65d at 2.47, 3.47, 4.47, 5.47 s, quieter as it goes
-  (0.80 to 0.42); the blast is the Frag's effects.
+* Roller: see **Roller** for its seeking and roll. Its sound (take09's staging, `BF_SOUND_LOG=1`,
+  30 fps): down at 2.00 s, h_19dbc65d at 2.00, 3.00, 4.00, 5.00 s (0.97 s on the 30 fps step),
+  0.80, 0.80, 0.53, 0.20 as it goes away.
 * Gas, test map, standing in the cloud (`--test BF_TEST_GOTO=0,4,0,3.5 BF_CAMERA_PITCH=-0.15
   BF_TEST_GRENADE_TYPE=Gas BF_TEST_DROP=2 BF_GRENADE_LOG=1`): blast at 2.07 s, Tex poisoned from
   +0.13 to +5.60 s (the first 15 fps step past +0.083 s), 97.5 HP at 17.8 HP/s, health 115 ->
