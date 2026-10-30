@@ -39,8 +39,8 @@ command line needed:
 * **What's left behind: nothing.** As the front end opens (`OnEnter(AppState::Menu)`,
   `leave_for_menu`) a session opened from EDITOR ends: `FromMenu`, `TestMap` go, the tools'
   session and the editor's state start anew. Every test-map system runs on `TestMap` (or
-  `testtools::active`), so CAMPAIGN, DEATHMATCH and SQUAD DEATHMATCH then play as without it:
-  their squads, no tools, no controls panel. A session the command line made (`--test`,
+  `testtools::active`), so CAMPAIGN and MULTIPLAYER's DEATHMATCH and SQUAD DEATHMATCH (#310)
+  then play as without it: their squads, no tools, no controls panel. A session the command line made (`--test`,
   `--edit`) keeps its `TestMap` as before.
 * **The mode after a round trip**: whatever the session, the front end puts `EditorMode` back
   to Play, so the next map from the menu plays (before, after `--edit` or F5, Backspace twice and
