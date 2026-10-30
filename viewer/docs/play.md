@@ -723,6 +723,14 @@ widget (FUN_000ab8d0, its update 0xabc60 / FUN_000ac220) and the inventory front
   0xad0c0 don't test the slot's hidden flag): with Sonic selected and Energy and Roller NEW, the
   hidden up 2's Roller takes Roller's NEW and the left 1 that shows Roller has no label (code
   only: no take has a short list with NEW stacks).
+  * **A pickup and NEW** (#19, #21): the flag is set only by the stack's constructors (FUN_0014ac90
+    and its twin 0x14b540; nothing sets it when a stack is typed or emptied again), so a pickup
+    needs no NEW of its own. A stack nobody has shown yet, a Gas stack of 0 that a pack fills or
+    the OrgSen's, still has it: the first frame the box shows it "NEW" blinks beside its count
+    (take04: "NEW Gas 3", then 6 and "NEW 9" as the packs come in a half second apart, the
+    label's 2 s on from the first; take09: "NEW OrgSen"). A stack that ran out and is filled again
+    shows none. A pickup doesn't move the selection but into an empty box: with nothing selected
+    the box takes the first stack, the pack's (take04: "Gas" selected by the first pack).
 * **The messages**: the item ones show for 3 s (FUN_000bcfe0(entry, 3.0)), restarted by each
   press, on the message line (above): "Inventory is empty", "No Medkits", "No need to heal",
   "Cannot use", "Not ready". take26's "Cannot use" stays on through presses 3 s apart (on 6.2
