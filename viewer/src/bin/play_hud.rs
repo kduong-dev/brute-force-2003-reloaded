@@ -61,6 +61,9 @@ const S_REGEN: u32 = 0xE246_DE1D;
 /// measured (170, 42, 30) through the video's compression.
 const S_FULL: u32 = 0xF141_6A07;
 const FULL_RED: Color = Color::srgb(160.0 / 255.0, 32.0 / 255.0, 32.0 / 255.0);
+/// A weapon row's icon size (HUD units) where its item names none: 128 x 64, every gun's but the
+/// MNR-7 Bio's 64 x 64 (`WeaponDef::icon_size`, #64). Its top left is (463, the row's y - 25).
+const WEAPON_ICON: [f32; 2] = [128.0, 64.0];
 /// "[Y] switch to %s." once the held gun's clip and the reserve are both empty (FUN_00120d40
 /// posts message 0x52): top left under the health bar, pale blue (todo/49 take02 19 s; the same
 /// line as the pickup prompt). Here the key (Q) stands for the button's icon (the wall panel's
@@ -1055,7 +1058,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     for row in 0..WEAPON_ROWS {
         let y = 43.0 + 45.0 * row as f32;
         commands.spawn((ChildOf(screen), at(463.0, y, 128.0, 32.0), image(&panel, Color::WHITE), Part::Panel(row), Visibility::Hidden));
-        commands.spawn((ChildOf(screen), at(463.0, y - 25.0, 128.0, 64.0), flipped(Handle::default()), Part::Icon(row), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), at(463.0, y - 25.0, WEAPON_ICON[0], WEAPON_ICON[1]), flipped(Handle::default()), Part::Icon(row), Visibility::Hidden));
         commands.spawn((ChildOf(screen), game_text("", WEAPON_NAME_X, y - WEAPON_NAME_UP, WEAPON_NAME_CAP, AMMO_ORANGE, Align::Left), Part::Name(row), Visibility::Hidden));
         commands.spawn((ChildOf(screen), game_text("", 475.0, y + 9.0, 14.0, AMMO_ORANGE, Align::Left), Part::Ammo(row), Visibility::Hidden));
     }
@@ -1349,6 +1352,18 @@ fn update_hud_widgets(
                     Part::Icon(r) => {
                         let h = (def.icon != 0).then(|| texture(&mut game.0, &mut images, &mut cache, def.icon)).flatten();
                         show(&mut vis, h.is_some());
+                        // at its own size (`WeaponDef::icon_size`, the item's h_e2bc2c81 x
+                        // h_f71189bb) from the slot's top left: the MNR-7's 64 x 64, as #287
+                        // take18 draws it, where the fixed 128 x 64 slot stretched it twice as wide
+                        // (#64); WEAPON_ICON where the data gives none
+                        if let Some(mut n) = node {
+                            let [w, h] = match def.icon_size { [w, h] if w > 0.0 && h > 0.0 => [w, h], _ => WEAPON_ICON };
+                            let (width, height) = (Val::Percent(w / 6.4), Val::Percent(h / 4.8));
+                            if n.width != width || n.height != height {
+                                n.width = width;
+                                n.height = height;
+                            }
+                        }
                         let faint = if r == 0 && name_shown && !list { ICON_UNDER_NAME + (1.0 - ICON_UNDER_NAME) * (1.0 - name_alpha) } else { 1.0 };
                         if let (Some(mut img), Some(h)) = (img, h) {
                             if img.image != h { img.image = h; }

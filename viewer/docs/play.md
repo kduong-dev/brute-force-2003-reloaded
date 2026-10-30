@@ -179,7 +179,8 @@ along the diagonal, from the dark texels found), so the channels' highlight line
 leave gaps.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
-(the weapon's own icon from its definition, clip / the squad's reserve, or "clip Regen" for a
+(the weapon's own icon from its definition at its own size, 128 x 64 or the pistols' 64 x 64
+from the panel's left, #64; clip / the squad's reserve, or "clip Regen" for a
 recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](skills.md)), radar with the squad's portraits round it (Tex top, Hawk left, Flint right, Brutus bottom; only the members in the world: **Radar**, "The portraits"),
 the item box bottom right (`play_itembox.rs`, **The item box and the item list**), the message line under the middle (the HUD entry's message widget: "No need to heal", "Inventory is empty"; the body font at 12 in (192, 255, 255) with a shadow, its last 0.5 s fading, FUN_000b32d0 / 0xb33b0), and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
@@ -1934,16 +1935,16 @@ to the e34 recipes below for it, camera.md, the tester's):
 * Not checked again (generic): the dry fire and switch (take02), the pickups (take04, take05),
   the far enemies (take09, take10).
 
-### The guns of weapons batch 2 without footage (#56, #64), and the Rail CLVR's (#66)
+### The Rail CLVR (#66), the Ion Beamer (#56) and the MNR-7 Bio (#64) against #287's takes
 
 Nothing of their own to build: each fires through the shared machinery from its own data, and
 was run on the test map (`-- --test BF_NO_SQUAD=1 BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=4.5,20,4.5,20
 BF_TEST_NPC_HP=1.0,all,300 BF_SHOT_LOG=1 BF_COMBAT_LOG=1`, dm Shrike Soldiers frozen on the
-line). The Rail CLVR is compared below with #287's takes 14-17 (`todo/287-weapon-shots/`), which
-also hold the Ion Beamer's I1 shot (take22) and the MNR-7's (takes 18-21), filmed since and not
-compared here. Without a take, what the others look like and their numbers against the game are
-open; the shots that would settle them are listed with each (the draft's R1, R2 and I1 are in
-todo/drafts/done/bolt-ricochet-passthrough.md).
+line). Each is compared below with #287's takes (`todo/287-weapon-shots/`, their specs in
+todo/56-ion-beamer/ and todo/64-mnr7-bio/): the Rail CLVR's 14-17, the Ion Beamer's I1 shot
+(take22, Brutus at m09_a's bench) and the MNR-7's 18-21 (Hawk at the same bench). Their
+breakpoint takes (19, 21, 23) read the order and the amounts of the hits, the clean ones (18,
+20, 22) the timing: each logged hit stalls the VM.
 
 **Rail CLVR** (#66; h_1b0310e6, heavy: Tex): the Rail RVR's ray and beam (§ Ricochet and
 pass-through, § Tracers and beams: its flight effect h_fa3b46ce plays the same three, rgun_perp_s,
@@ -2001,9 +2002,55 @@ degrees apart) for one round off the clip (50 -> 49 -> 48: FUN_0022fe00), one cy
 0.5 s life), and lands 0.2 s after the shot 9.6 m out (14.0-16.0 on a x1 part; 81.5 on the
 head); one to three of them hit the Shrike, the walked ones passing it. The green darts
 (bio_bullet_pistol and its trail) and the green bio flash where they strike (bio-flash_hit,
-bio-shrap_hit, light_hit_bio). Blocked: the bioreactive kill (#147); on footage, the darts' walk
-(a wall 10 m out with the camera still), the damage on a frozen enemy 7 m out with its HP
-logged, the reload, and the darts' look against the game.
+bio-shrap_hit, light_hit_bio). Against #287's takes 18-21 (#64), at take18's rock face on m09_a
+(`-- --test BF_MAP=m09_a BF_CHARACTER=2 BF_TEST_WEAPON="MNR-7 Bio"
+BF_TEST_GOTO=-187.35,-219.9,-187.35,-229.2 BF_TEST_GO_AT=100
+BF_TEST_FREECAM="0.3,-187.35,76,-218.28,0,-89.9" BF_TEST_TELEPORT=0.5 BF_TEST_FREECAM_OFF=0.7
+BF_CAMERA_PITCH=0.0 BF_TEST_TRIGGER=3.0-3.25,5.4-5.65,7.8-8.05,10.5-14.0 BF_SHOT_LOG=1
+BF_CAPTURE_FPS=30`; the free camera 16 m over the bench, so the teleport's 1.62 m offset holds):
+* **The impacts' spread is the sweeps'**, settling the spec's open question. FUN_0022f2a0's loop
+  fires all three darts in one frame (the burst delay 0 sets a cooldown of 0, so it goes round
+  again in the same call; FUN_0022fe00 excuses the first two their round), FUN_0022bac0 gives
+  each the bullet's speed with nothing added (+0x1c from the weapon's +0x210; h_ea5327e6 isn't
+  read there), and every pooled bolt's sweep counter starts at 3 (FUN_00225000 sets byte +3 when
+  the pool hands it out; FUN_00225440 counts it down): no per-dart phase. A dart's first sweep
+  reaches 8.0 m from the muzzle at 80 m/s, and take18's rock face is 7.4-8.2 m from it, so a dart
+  walked up or out past 8.0 m lands on the second sweep, 0.1 s after the others: take18's two
+  lobes 0.1 s apart in most cycles, one lobe (all three together) in its cycle 4; its third
+  flash at +0.13 s is the second-sweep pair's flash growing over two pictures (536 then 1366 white
+  pixels). take19's hit log agrees: tap 1's darts at 8.05, 8.01 and 8.20 m from the weapon object,
+  the last logged last. The demo, the same: all three launched at once (t=3.17), bolts 1 and 2 at
+  7.7 and 8.0 m on frame 3, bolt 3 at 8.1 m on frame 6, and two such split cycles in ten (one
+  dart of the second tap met Tex, whom the recipe leaves in the squad, walking through the line).
+  The breakpoint logs' 0.06-0.13 s between darts are their stalls.
+* Held fire one cycle every 0.47-0.54 s for one round (take18 and take20: 0.47-0.54); the clip
+  50 -> 49 on each tap.
+* Reload (`-- --test BF_NO_SQUAD=1 BF_CHARACTER=2 BF_TEST_WEAPON="MNR-7 Bio" BF_TEST_GOTO=0,-8,0,-8
+  BF_TEST_CLIP=6 BF_TEST_TRIGGER=2.5-5.5 BF_AMMO_LOG=1 BF_SOUND_LOG=1`, take20's 3 s hold): rounds
+  at 2.73-5.33, the reserve 200 -> 150 at the release, 5.60 (0.27 s after the last round), and the
+  clip full at the magazine-in (h_08081139) 1.00 s later. take20 held its trigger to 5.507 s of
+  video, its game time ~5.12: the reserve fell at 5.137, 0.196 s after the last round, at that
+  release (FUN_00121170's action 4), and the clip read 50 0.976 s after it. Held on past the
+  empty, the demo's reload waits for the empty cycle at the cooldown's end (0.54 s), as the other
+  guns' do.
+* Dry fire (`BF_TEST_CLIP=2 BF_TEST_RESERVE=0 BF_TEST_TRIGGER=3.0-3.25,5.4-5.65,7.8-8.05,10.2-10.45`):
+  two rounds, then a click (h_16bbf95c) 0.07-0.13 s after each press (take20 0.07-0.095 s), no
+  reload; the switch hint up at the release after the last round (take20: at the empty, before the
+  first click).
+* Damage per dart on a frozen Shrike, the roll x 1.4 on a x1 part, 14.0-16.0 (take21: 14.20-16.76,
+  one 7.83 on a x0.5 part, BIOREACTIVE x1 on this Shrike).
+* **Its HUD icon at its own size** (`WeaponDef::icon_size`, play_hud.rs `WEAPON_ICON`): its item
+  names a 64 x 64 icon (h_e2bc2c81 x h_f71189bb, FUN_001920d0's +0x19c / +0x1a0), and take18 draws
+  it so at the panel's left, where the demo stretched every icon over 128 x 64. The same for the
+  other pistols, the Confed LZR-10, the Foley 356 Tact, the Saryl-23 and the Jax-iP (#54 take01's
+  Foley icon is 64 wide too).
+* Open: the switch hint's lifetime: take20's showed 3.72 s from the empty (gone before its second
+  dry click) and 1.90 s after a switch back, where the demo's stays while the gun is dry; the game
+  posts CBT_OUT_OF_AMMO (FUN_00120d40, while +0x7e8 is clear) and the HUD's line for it isn't
+  traced (a code question). The darts in flight: the demo's three trails (bio_bullet_pistol_trail,
+  0.44 m cards for 0.175 s) make a broad green haze from the gun toward the wall, where take18
+  shows small green orbs (6-9 px) with faint short trails; the rule is the A10's checked one
+  (#47), so it's left. The switch, generic. Blocked: the bioreactive kill (#147).
 
 ### The scope: levels, zoom, ramp and lockouts (#62, #61, #7)
 
