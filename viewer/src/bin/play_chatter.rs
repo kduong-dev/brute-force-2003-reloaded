@@ -27,7 +27,9 @@
 //!    refused gun's (FUN_000a9910, play_weapon_pickups.rs), the skill lines (FUN_0010e470 /
 //!    FUN_0010e3e0, play_skills.rs) and Brutus's charge hit (FUN_0013c1c0, play_vengar.rs). A
 //!    type of its own (an enemy's) says only its death cry: the #129 takes' Shrikes said nothing
-//!    on their hits (the enemies' other lines are #110's and #128's).
+//!    on their hits. **But** the #36 takes 07-10 log a spawned Shrike's hurt lines through the
+//!    gate (e856009f, fab0be98, 01e1dcd0, 0ae8104e), so the rule is the demo's until #328
+//!    settles which enemies say them (the enemies' other lines are #110's and #128's).
 //!  - **A line** (`Line`) is the events of its parts (a sound, a response), each with its start
 //!    and its duration, and the running total where the next part starts (line+0x28). Two seams
 //!    for the next tickets: `Line::add_part` is FUN_001400d0, which FUN_00140060 calls to join a
@@ -51,10 +53,16 @@
 //!    that hush the chatter (h_e725a1a5: a sound-trigger's sound, the dialog queue's lines, a
 //!    dialog-trigger's line, play_sound_triggers.rs) refuse every line while one runs, and the
 //!    first one cuts off the lines playing (priority 10 or under).
+//!  - **The draws** (`Lcg`): the roll, the variant and the response's picks take the game's LCG
+//!    step, from a state of the chatter's own (0 at each map's start), not the characters' random
+//!    states that drive the squad AI: so a line's roll never moves a fight, and two runs of the
+//!    same test hooks match.
 //!
 //! Test hooks: `BF_CHATTER_LOG=1` prints each line asked (who, the tag, the check that refused it
-//! or the variant said and when), what the manager does with it (a wait over, a sound started or
-//! skipped, a cut-off, a response, a mute) and the queue after each; `BF_CHATTER_CHANCE=<percent>`
+//! or the variant said and when; the same check refusing a character's tag again within
+//! QUIET_GAP s, a hazard's every frame or a burst's pellets, once), what the manager does with it
+//! (a wait over, a sound started or skipped, a cut-off, a response, a mute) and the queue after
+//! each; `BF_CHATTER_CHANCE=<percent>`
 //! sets every line's chance (100: each one passes the roll); `BF_TEST_HURT=<character>,<amount>
 //! [:fall],<s>[,<s>...][;...]` hits that squad member for `amount` at those times (the trainer's
 //! `hit`, shot list A1; `:fall` a landing's record). `BF_SKILL_CHATTER` (play_skills.rs) and
@@ -75,14 +83,15 @@ pub const DEATH_FALL: u32 = 0xED35_FFAE;
 /// (0x3ffd80) that isn't the victim, one of the two a player's (their player slots differ,
 /// 0x125f82-0x125f9a), says 13601f7b when its skill's vtable +8 says so (`skills::special_kill`:
 /// Tex's and Flint's while on), else 02da3fee (probability 10, replay 20 s, priority 2; its
-/// variants split on the enemies it fights, "fighting").
+/// variants split on the enemies it fights, "fighting": Tex's, Brutus's and Flint's all need 1 to
+/// 100, which the victim makes in the death frame, `fighting`).
 pub const KILL: u32 = 0x02DA_3FEE;
 /// 13601f7b, the kill line of a skill's kill (and Brutus's charge hit, play_vengar.rs).
 pub const KILL_SKILL: u32 = 0x1360_1F7B;
 /// The hurt lines, FUN_00125ad0's table (0x125e1c-0x125ecf; the code map's row): a hit with no
 /// attacker character and the record's +0x5c bit 2 (falls, liquids), not gas, ef32191d; the
-/// victim's own, ff44e83f; a friend's (the attacker's +0x1b4 vtable +0xc4 on the victim's team),
-/// e2d9fb13; else DTYPE_GAS 0feee721, then by the hit points: crossing a quarter of the max
+/// victim's own, ff44e83f; a friend's (the attacker's +0x1b4 vtable +0xc4 on the victim's team,
+/// 0x3d2c0: the same team, one not hostile to itself), e2d9fb13; else DTYPE_GAS 0feee721, then by the hit points: crossing a quarter of the max
 /// downward 01e1dcd0, a half fab0be98, else a hit of 15% of the max or less e856009f and a
 /// bigger one 0ae8104e. Tex's blocks (todo/36-squad-voice/leads.md §2.2: probability / replay /
 /// priority / wait): ef32191d 50 / 20 / 4 / 0; ff44e83f 75 / 40 / 3 / 5; e2d9fb13 10 / 30 / 4 / 5;
@@ -180,6 +189,30 @@ const RESPONSE_SPAN: f32 = 60.0;
 /// `valid_targets` h_07b939a0 (the table at 0x3c0488, 0x135e20): every character of the speaker's
 /// team in the world but the speaker, the dead too, nearest first. The death cries' responders.
 const NEAREST_TEAMMATES: u32 = 0x07B9_39A0;
+/// BF_CHATTER_LOG's quiet time (s, the demo's): the same check refusing a character's tag again
+/// within it isn't logged, so a gas cloud's, a liquid's or a damage plate's hit, which asks its
+/// hurt line every frame, logs one refusal (its replay delay's) a run.
+const QUIET_GAP: f32 = 0.5;
+
+/// The chatter's random state. Each of its draws is the game's LCG step (the state at 0x46cfd8, x
+/// 0x19660d + 0x3c6ef35f), the new state mod a count, as FUN_001374c0 rolls a line (mod 100, + 1
+/// against the probability; no draw at 100 or more), FUN_00136fc0 picks a variant,
+/// FUN_0013fde0 a response entry and FUN_001367e0 a responder's tag, and FUN_0013fbf0 rolls a
+/// response (mod 100, no + 1). In the game that state is the one every random choice shares;
+/// the demo's chatter keeps a copy of its own, from the .bss's 0 at each map's start (play.rs
+/// `setup` puts a new `Chatter` in), so its draws don't move the squad AI's (`Player::random`)
+/// or the shots' (`GameRandom`): a line's roll changes no fight, and two runs of the same test
+/// hooks match.
+#[derive(Clone, Copy, Debug, Default)]
+struct Lcg(u32);
+
+impl Lcg {
+    /// The next state mod `n` (a draw even for 1, as the game's).
+    fn draw(&mut self, n: usize) -> usize {
+        self.0 = self.0.wrapping_mul(0x0019_660D).wrapping_add(0x3C6E_F35F);
+        (self.0 % n.max(1) as u32) as usize
+    }
+}
 
 /// What a damaging hit's record tells FUN_00125ad0 (its +0x14 attacker, its +0x5c bit 2, its
 /// damage type +4), and whether it's a fall's (the demo's stand-in for the victim's movement
@@ -285,6 +318,11 @@ pub struct Chatter {
     /// the game's time since the map started (s), for the log: the controlled character's clock
     /// stops at its death
     clock: f32,
+    /// the draws' random state (`Lcg`)
+    rng: Lcg,
+    /// BF_CHATTER_LOG: when each check (its number in `gate`) last refused each speaker's tag, to
+    /// log a run of the same refusal once (QUIET_GAP)
+    quiet: HashMap<(Who, u32, u8), f32>,
 }
 
 /// A chatter line (0x50 bytes, FUN_0013feb0): its parts' events and its state.
@@ -535,14 +573,14 @@ fn stepped(block: &ChatterBlock, v: f32) -> i64 {
 }
 
 /// The condition value of `kind` for `u`, unit `me` of `ctx.sight` (FUN_00137360; 0 for one not
-/// in the world).
-fn condition(u: &Player, me: usize, kind: u32, ctx: &Ctx) -> i64 {
+/// in the world); `held` a kill's victim, still among the killer's contacts (`fighting`).
+fn condition(u: &Player, me: usize, kind: u32, held: Option<Who>, ctx: &Ctx) -> i64 {
     if !in_world(u) {
         return 0;
     }
     match kind {
         CHATTER_CONDITION_NONE => 0,
-        CONDITION_FIGHTING => fighting(u, me, ctx),
+        CONDITION_FIGHTING => fighting(u, me, held, ctx),
         // char+0x5a8, which only ever gets 0 (answer-120-chatter §2)
         CONDITION_COUNTER => 0,
         CONDITION_HEALTH => if u.max_health > 0.0 { (u.health / u.max_health * 100.0) as i64 } else { 0 },
@@ -553,14 +591,27 @@ fn condition(u: &Player, me: usize, kind: u32, ctx: &Ctx) -> i64 {
     }
 }
 
-/// FUN_0001b460's count, the enemies `u`'s brain fights (its contacts map +0x358 with state 1),
-/// for the "fighting" condition. The demo's stand-in, **a guess**: the more of the hostiles its
-/// sensor knows (an AI's contacts, a victim among them until the next scan, as the brain's at a
-/// kill: FUN_00125f40 runs in the death frame) and the hostiles it sees within its gun's reach
-/// (play.rs `nearest_hostile`'s scan: the controlled character's sensor knows no one).
-fn fighting(u: &Player, me: usize, ctx: &Ctx) -> i64 {
+/// FUN_0001b460's count, the enemies `u`'s brain fights, for the "fighting" condition: the
+/// entries of its contact map (brain+0x358) of kind 1, an enemy character, with bit 2 (set once
+/// by the scan, FUN_00043000 -> FUN_00054f90: the contact within 15 m, else a test of the two's
+/// states, FUN_00054e00 against FUN_00054ec0, not read).
+/// The controlled character's brain keeps its contacts too: the world's brain loop (FUN_000d9770)
+/// runs a brain that's off through its vtable +8 (0x1a220), which for a squad type (brain+0x3c4
+/// bit 8, from type+0x1a8 bit 0) a human player controls (FUN_00112800), in brain mode 0 to 5,
+/// runs the same sense step as an AI's (FUN_00044480 at 0x1a360, the scan FUN_00044140).
+///
+/// The demo's stand-in, **a guess**: the more of the hostiles its sensor knows (an AI's
+/// contacts; the demo's controlled character's sensor knows no one) and the hostiles it sees
+/// within its gun's reach (play.rs `nearest_hostile`'s scan, which leaves out the dead), and one
+/// more for `held`, a kill's victim: FUN_00125f40 runs in the death frame, before the killer's
+/// next scan drops the dead contact (FUN_00044140's dead list), so the kill still counts its
+/// victim. Counted whatever the distance (the entry's bit 2 isn't modelled: a victim that never
+/// came within 15 m nor passed the other test wouldn't count in the game).
+fn fighting(u: &Player, me: usize, held: Option<Who>, ctx: &Ctx) -> i64 {
     let seen = u.sensor.scan(u, me, ctx.sight).iter().filter(|&&(_, d)| d < ai_range(u)).count();
-    seen.max(u.sensor.known()) as i64
+    // (the victim taken out of what the sensor knows, then counted once)
+    let known = u.sensor.known() - held.is_some_and(|w| u.sensor.knows(w)) as usize;
+    (seen.max(known) + held.is_some() as usize) as i64
 }
 
 /// The gun in `u`'s hand (none between a switch's drop and grab): the inventory's +0x164 of
@@ -595,6 +646,20 @@ fn morale(u: &Player) -> f32 {
     });
     let skill = if u.skill.on { 1.0 } else { MORALE_UNSET };
     health * MORALE_HEALTH + stamina * MORALE_STAMINA + clip * MORALE_CLIP + skill * MORALE_SKILL
+}
+
+/// Whom FUN_00125ad0 takes the hit on `all[i]` by `by` (its shooter) for: none (no character of
+/// `all`), the victim itself, a friend or a foe. A friend is what the attacker's +0x1b4 vtable
+/// +0xc4 says of the victim's team (0x125de1-0x125e10): 0x3d2c0, friends as FUN_0004b960 has
+/// them, the same team and one not hostile to itself. Not merely "not hostile": e34's Shrike
+/// Hounds are NEUTRAL (team 2, hostile to neither side), and their bites are a foe's.
+fn attacker(all: &[&mut Player], i: usize, by: Option<Who>) -> By {
+    match by.and_then(|w| find(all, w)) {
+        None => By::Nothing,
+        Some(k) if k == i => By::Itself,
+        Some(k) if all[k].team == all[i].team && !damage::hostile(all[k].team, all[k].team) => By::Friend,
+        Some(_) => By::Foe,
+    }
 }
 
 /// FUN_00125ad0's hurt line for a hit (see the HURT_ constants): by whom (`By`), its cause, the hit
@@ -644,10 +709,11 @@ fn wait(b: f32, a: f32, most: f32) -> Option<f32> {
     }
 }
 
-/// A variant for a part (FUN_00136fc0 over FUN_001371f0's): at random among those whose range
-/// holds `value` and that the history hasn't marked; when all that fit are marked their marks
-/// are cleared (FUN_00141580) and any of them may come. None when none fits.
-fn pick(said: &mut HashMap<(String, u32), Vec<u32>>, set: &str, tag: u32, block: &ChatterBlock, value: i64, u: &mut Player) -> Option<u32> {
+/// A variant for a part (FUN_00136fc0 over FUN_001371f0's): a draw of `rng` (the LCG mod their
+/// count) among those whose range holds `value` and that the history hasn't marked; when all that
+/// fit are marked their marks are cleared (FUN_00141580) and any of them may come. None, and no
+/// draw, when none fits.
+fn pick(said: &mut HashMap<(String, u32), Vec<u32>>, set: &str, tag: u32, block: &ChatterBlock, value: i64, rng: &mut Lcg) -> Option<u32> {
     let fits: Vec<u32> = block.variants.iter().filter(|&&(_, lo, hi)| (lo..=hi).contains(&value)).map(|&(id, _, _)| id).collect();
     if fits.is_empty() {
         return None;
@@ -658,7 +724,7 @@ fn pick(said: &mut HashMap<(String, u32), Vec<u32>>, set: &str, tag: u32, block:
         marked.clear();
         fresh = fits;
     }
-    Some(fresh[u.random(fresh.len())])
+    Some(fresh[rng.draw(fresh.len())])
 }
 
 impl Line {
@@ -670,17 +736,17 @@ impl Line {
     }
 
     /// FUN_001400d0: one part, `block` said by `u` (its chatter set `set`, the tag `tag`, its
-    /// condition value `value`): its sound (FUN_00140590: a variant, lasting its length + 0.2 s)
-    /// and its response (FUN_001406f0: the block's `<response>`s whose range holds `value`, from
-    /// the sound's end), each starting where the running total stands (FUN_0013f7b0); with `adds`
-    /// the sound's time joins the total. The part's variant, None when none fits. The gate makes
-    /// a line's first part with it; FUN_00140060 joins another speaker's (#320) and FUN_0013fbf0 a
-    /// responder's with no roll of their own.
+    /// condition value `value`): its sound (FUN_00140590: a variant drawn from `rng`, lasting its
+    /// length + 0.2 s) and its response (FUN_001406f0: the block's `<response>`s whose range holds
+    /// `value`, from the sound's end), each starting where the running total stands
+    /// (FUN_0013f7b0); with `adds` the sound's time joins the total. The part's variant, None when
+    /// none fits. The gate makes a line's first part with it; FUN_00140060 joins another
+    /// speaker's (#320) and FUN_0013fbf0 a responder's with no roll of their own.
     #[allow(clippy::too_many_arguments)]
-    fn add_part(&mut self, said: &mut HashMap<(String, u32), Vec<u32>>, block: &ChatterBlock, u: &mut Player, set: &str, tag: u32, value: i64,
-                adds: bool, game: &Game) -> Option<u32> {
+    fn add_part(&mut self, said: &mut HashMap<(String, u32), Vec<u32>>, rng: &mut Lcg, block: &ChatterBlock, u: &Player, set: &str, tag: u32,
+                value: i64, adds: bool, game: &Game) -> Option<u32> {
         let who = u.who();
-        let id = pick(said, set, tag, block, value, u);
+        let id = pick(said, set, tag, block, value, rng);
         let mut length = 0.0;
         if let Some(id) = id {
             let sound = game.sounds.length(id).unwrap_or(0.0);
@@ -751,24 +817,17 @@ impl Chatter {
     /// One ask of `all[i]`.
     fn ask(&mut self, all: &mut [&mut Player], i: usize, ask: Ask, ctx: &Ctx) {
         match ask {
-            Ask::Tag { tag, chance } => self.gate(all, i, tag, chance, ctx, String::new()),
+            Ask::Tag { tag, chance } => self.gate(all, i, tag, chance, None, ctx, String::new()),
             Ask::Hurt { cause, before, amount } => {
-                let by = match cause.by.and_then(|w| find(all, w)) {
-                    None => By::Nothing,
-                    Some(k) if k == i => By::Itself,
-                    // (FUN_00125ad0 asks the attacker's +0x1b4 vtable +0xc4 about the victim's
-                    // team: read as "not hostile", inferred)
-                    Some(k) if !damage::hostile(all[k].team, all[i].team) => By::Friend,
-                    Some(_) => By::Foe,
-                };
+                let by = attacker(all, i, cause.by);
                 let tag = hurt_tag(by, &cause, before, amount, all[i].max_health);
                 let what = format!(", a hit of {amount:.1} ({before:.0} of {:.0} before; {}{})", all[i].max_health, by.label(),
                                    if cause.environment { ", environment" } else { "" });
-                self.gate(all, i, tag, None, ctx, what);
+                self.gate(all, i, tag, None, None, ctx, what);
             }
             Ask::Death { killer, landing } => {
                 // the victim's cry (0x125fb4)
-                self.gate(all, i, if landing { DEATH_FALL } else { DEATH }, None, ctx, ", its death".into());
+                self.gate(all, i, if landing { DEATH_FALL } else { DEATH }, None, None, ctx, ", its death".into());
                 // the killer's line (0x125fce-0x126051): a character, not the victim, whose player
                 // slot isn't the victim's (0x125f82-0x125f9a: the victim's slot, world+0xbec
                 // vtable +0xc, against the record's +0x1c, the shooter's slot as the weapon code
@@ -783,67 +842,73 @@ impl Chatter {
                 }
                 let tag = if skills::special_kill(all[k]) { KILL_SKILL } else { KILL };
                 let victim = unit_name(all[i]);
-                self.gate(all, k, tag, None, ctx, format!(", the kill of {victim}"));
+                // (its victim still among its contacts: `fighting`)
+                let held = Some(all[i].who());
+                self.gate(all, k, tag, None, held, ctx, format!(", the kill of {victim}"));
             }
         }
     }
 
-    /// The gate (FUN_00140a60) for `tag` from `all[i]`, with a test hook's `chance`; `what` says
-    /// why, for the log. See the module notes for the checks.
-    fn gate(&mut self, all: &mut [&mut Player], i: usize, tag: u32, chance: Option<i64>, ctx: &Ctx, what: String) {
+    /// The gate (FUN_00140a60) for `tag` from `all[i]`, with a test hook's `chance` and `held`, a
+    /// kill's victim the condition counts (`fighting`); `what` says why, for the log. See the
+    /// module notes for the checks.
+    #[allow(clippy::too_many_arguments)]
+    fn gate(&mut self, all: &mut [&mut Player], i: usize, tag: u32, chance: Option<i64>, held: Option<Who>, ctx: &Ctx, what: String) {
         let head = format!("t={:6.2} chatter: {} {tag:08x} ({}){what}", ctx.now, unit_name(all[i]), tag_name(tag));
-        let refused = |why: String, me: &Chatter| if ctx.log {
-            println!("{head}: refused, {why} [{}]", me.state());
-        };
+        let who = all[i].who();
         // 1, 2: a timed mute, the world's cutscene bit
         if !self.mutes.is_empty() {
-            return refused(format!("a timed mute runs (h_{:08x}, {:.1} s left)", self.mutes[0].0, self.mutes[0].1), self);
+            let why = format!("a timed mute runs (h_{:08x}, {:.1} s left)", self.mutes[0].0, self.mutes[0].1);
+            return self.refused(&head, (who, tag, 1), why, ctx);
         }
         if script::in_cutscene() {
-            return refused("the world's cutscene bit".into(), self);
+            return self.refused(&head, (who, tag, 2), "the world's cutscene bit".into(), ctx);
         }
         // 3: in the world
         if !in_world(all[i]) {
-            return refused("not in the world".into(), self);
+            return self.refused(&head, (who, tag, 3), "not in the world".into(), ctx);
         }
         // 4: its replay delay for the tag
         if let Some(left) = all[i].replay.get(&tag) {
-            return refused(format!("its replay delay ({left:.1} s left)"), self);
+            return self.refused(&head, (who, tag, 4), format!("its replay delay ({left:.1} s left)"), ctx);
         }
         // 5: a block for the tag
-        let Some(set) = set_of(all[i], ctx.game) else { return refused("no chatter set".into(), self) };
+        let Some(set) = set_of(all[i], ctx.game) else { return self.refused(&head, (who, tag, 5), "no chatter set".into(), ctx) };
         let Some(block) = ctx.game.chatter_blocks.get(&set).and_then(|b| b.get(&tag)) else {
-            return refused(format!("no block in {set}_chatter"), self);
+            return self.refused(&head, (who, tag, 5), format!("no block in {set}_chatter"), ctx);
         };
         // 6: 45 m
         let v = distance(all, i, ctx);
         if block.far_cut && v > FAR_CUT {
-            return refused(format!("{v:.0} m from the player"), self);
+            return self.refused(&head, (who, tag, 6), format!("{v:.0} m from the player"), ctx);
         }
         // 7: the condition
-        let value = condition(all[i], i, block.condition, ctx);
+        let value = condition(all[i], i, block.condition, held, ctx);
         if !block.variants.iter().any(|&(_, lo, hi)| (lo..=hi).contains(&value)) {
-            return refused(format!("no variant for the condition value {value} (kind h_{:08x})", block.condition), self);
+            let why = format!("no variant for the condition value {value} (kind h_{:08x})", block.condition);
+            return self.refused(&head, (who, tag, 7), why, ctx);
         }
-        // 8: the roll
+        // 8: the roll (FUN_001374c0: none at 100 or more)
         let p = chance.or(ctx.chance).unwrap_or(block.probability);
-        if p < 100 && all[i].random(100) as i64 + 1 > p {
-            return refused(format!("not rolled ({p}%)"), self);
+        if p < 100 && self.rng.draw(100) as i64 + 1 > p {
+            return self.refused(&head, (who, tag, 8), format!("not rolled ({p}%)"), ctx);
         }
         // 9: the priority, a step less far away; 0 refused
         let priority = stepped(block, v);
         if priority == 0 {
-            return refused(format!("priority 0 ({v:.0} m from the player)"), self);
+            return self.refused(&head, (who, tag, 9), format!("priority 0 ({v:.0} m from the player)"), ctx);
         }
         // 10: the wait behind the lines playing
         let (b, a) = (self.behind(priority), self.behind(TOP_PRIORITY));
         let Some(r) = wait(b, a, block.max_wait) else {
-            return refused(format!("it would wait over its {:.1} s (behind {b:.2} s, {a:.2} s in all)", block.max_wait), self);
+            let why = format!("it would wait over its {:.1} s (behind {b:.2} s, {a:.2} s in all)", block.max_wait);
+            return self.refused(&head, (who, tag, 10), why, ctx);
         };
         // 11: one waiting line
         if let Some((w, _)) = &self.waiting {
             if w.priority >= priority {
-                return refused(format!("line #{} waits, priority {}", w.n, w.priority), self);
+                let why = format!("line #{} waits, priority {}", w.n, w.priority);
+                return self.refused(&head, (who, tag, 11), why, ctx);
             }
         }
         // the waiting line goes (FUN_00141000), the line is built (FUN_001400d0)
@@ -853,9 +918,8 @@ impl Chatter {
             }
         }
         self.made += 1;
-        let who = all[i].who();
         let mut line = Line::new(self.made, priority, block, who, tag);
-        let id = line.add_part(&mut self.said, block, &mut *all[i], &set, tag, value, true, ctx.game);
+        let id = line.add_part(&mut self.said, &mut self.rng, block, &*all[i], &set, tag, value, true, ctx.game);
         let n = line.n;
         if r > 0.0 {
             self.waiting = Some((line, r));
@@ -868,6 +932,19 @@ impl Chatter {
             println!("{head}: said, line #{n} {variant} {when} ({p}%, priority {priority}{}, replay {:.0} s, value {value}, {v:.0} m) [{}]",
                      if priority != block.priority { " after the 15 m step" } else { "" }, block.replay_delay, self.state());
         }
+    }
+
+    /// BF_CHATTER_LOG's line for the line `head` the gate refused, `why`, with the queue; `key` its
+    /// speaker, tag and the check's number. Not again while the same check refuses the same tag of
+    /// the same speaker within QUIET_GAP s of the last time (a hazard's every frame).
+    fn refused(&mut self, head: &str, key: (Who, u32, u8), why: String, ctx: &Ctx) {
+        if !ctx.log {
+            return;
+        }
+        if self.quiet.insert(key, ctx.now).is_some_and(|last| ctx.now - last < QUIET_GAP) {
+            return;
+        }
+        println!("{head}: refused, {why} [{}]", self.state());
     }
 
     /// FUN_00140cd0: `line` plays now: its first speaker's replay delay starts when its block's
@@ -1067,14 +1144,15 @@ impl Chatter {
     }
 
     /// A response event's start (0x13fe50 -> FUN_0013fbf0), as its speaker's sound ends: nothing
-    /// for a speaker gone, or dead unless its block says otherwise; else one of its entries
-    /// (FUN_0013fde0: at random, assumed) picks its responders (FUN_001367e0) and a response tag
-    /// at random, and each responder's block for it is appended to this line (FUN_001400d0) after
-    /// a roll on its `probability` (the LCG mod 100 <= it: no +1), when no waiting line has its
-    /// priority or more; no replay delay, distance rule or condition test of its own (its variant
-    /// still needs one that fits). The line takes the responder's priority after its distance
-    /// rules (FUN_001409e0) and the waiting line is dropped. Built for the death cries' responder,
-    /// the nearest teammate (h_07b939a0); the other targets and `response_flags` are #322's.
+    /// for a speaker gone, or dead unless its block says otherwise; else one of its entries (a
+    /// draw, FUN_0013fde0: the LCG mod their count) picks its responders (FUN_001367e0) and a
+    /// response tag for each (a draw: the LCG mod the entry's tags), and each responder's block
+    /// for it is appended to this line (FUN_001400d0) after a roll on its `probability` (a draw:
+    /// the LCG mod 100 <= it, no + 1), when no waiting line has its priority or more; no replay
+    /// delay, distance rule or condition test of its own (its variant still needs one that fits).
+    /// The line takes the responder's priority after its distance rules (FUN_001409e0) and the
+    /// waiting line is dropped. Built for the death cries' responder, the nearest teammate
+    /// (h_07b939a0); the other targets and `response_flags` are #322's.
     fn respond(&mut self, all: &mut [&mut Player], line: &mut Line, ev: &Event, entries: &[ChatterResponse], ctx: &Ctx) {
         let head = format!("t={:6.2} chatter: line #{}'s response to {} {:08x}", ctx.now, line.n, who_label(all, ev.speaker), ev.tag);
         let Some(s) = find(all, ev.speaker) else { return };
@@ -1084,7 +1162,7 @@ impl Chatter {
             }
             return;
         }
-        let e = &entries[all[s].random(entries.len())];
+        let e = &entries[self.rng.draw(entries.len())];
         if e.targets != NEAREST_TEAMMATES || e.flags != 0 {
             if ctx.log {
                 println!("{head}: valid_targets h_{:08x}, response_flags h_{:08x}: not built (#322)", e.targets, e.flags);
@@ -1092,7 +1170,8 @@ impl Chatter {
             return;
         }
         // 0x135e20: the speaker's teammates (its team, which isn't hostile to itself), the dead
-        // too, nearest first; one (FUN_001367e0 without response_flags bit 0)
+        // too, nearest first; the first one only (FUN_001367e0 goes past it only with the entry's
+        // +0x14 bit 0: `response_flags` h_fcc29cfe's "every responder", inferred)
         let (team, at) = (all[s].team, all[s].position);
         let nearest = all.iter().enumerate().filter(|(k, u)| *k != s && in_world(u) && u.team == team && !damage::hostile(team, team))
             .map(|(k, u)| (k, u.position.distance(at))).min_by(|a, b| a.1.total_cmp(&b.1));
@@ -1105,7 +1184,7 @@ impl Chatter {
         if e.tags.is_empty() {
             return;
         }
-        let tag = e.tags[all[s].random(e.tags.len())];
+        let tag = e.tags[self.rng.draw(e.tags.len())];
         let say = format!("{head}: {} {tag:08x} ({})", unit_name(all[r]), tag_name(tag));
         let block = set_of(all[r], ctx.game).filter(|_| !all[r].own_type())
             .and_then(|set| ctx.game.chatter_blocks.get(&set).and_then(|b| b.get(&tag)).map(|b| (set, b)));
@@ -1124,15 +1203,15 @@ impl Chatter {
             }
         }
         let p = ctx.chance.unwrap_or(block.probability);
-        let x = all[s].random(100) as i64;
+        let x = self.rng.draw(100) as i64;
         if x > p {
             if ctx.log {
                 println!("{say}: not rolled ({x} over {p})");
             }
             return;
         }
-        let value = condition(all[r], r, block.condition, ctx);
-        let id = line.add_part(&mut self.said, block, &mut *all[r], &set, tag, value, e.target_flags == 0, ctx.game);
+        let value = condition(all[r], r, block.condition, None, ctx);
+        let id = line.add_part(&mut self.said, &mut self.rng, block, &*all[r], &set, tag, value, e.target_flags == 0, ctx.game);
         let v = distance(all, r, ctx);
         line.priority = if block.far_cut && v > FAR_CUT { 0 } else { stepped(block, v) };
         if let Some((w, _)) = self.waiting.take() {
@@ -1286,17 +1365,53 @@ mod tests {
             responses: vec![],
         };
         let mut said = HashMap::new();
-        let mut u = Player::new(0);
+        let mut rng = Lcg::default();
         let mut seen = vec![];
         for _ in 0..2 {
-            let id = pick(&mut said, "tex", 7, &block, 0, &mut u).unwrap();
+            let id = pick(&mut said, "tex", 7, &block, 0, &mut rng).unwrap();
             said.get_mut(&("tex".to_string(), 7)).unwrap().push(id);
             seen.push(id);
         }
         seen.sort();
         assert_eq!(seen, vec![1, 2]);
         // both said: the marks go and either may come
-        assert!(matches!(pick(&mut said, "tex", 7, &block, 0, &mut u), Some(1 | 2)));
-        assert_eq!(pick(&mut said, "tex", 7, &block, 101, &mut u), None);
+        assert!(matches!(pick(&mut said, "tex", 7, &block, 0, &mut rng), Some(1 | 2)));
+        // none fits: no variant, and no draw
+        let before = rng.0;
+        assert_eq!(pick(&mut said, "tex", 7, &block, 101, &mut rng), None);
+        assert_eq!(rng.0, before);
+    }
+
+    /// FUN_00125ad0's attacker: a friend is one of the victim's team, a team not hostile to
+    /// itself (0x3d2c0); a neutral's hit (e34's hounds, team 2) is a foe's, and so is a hit
+    /// between two of PC_NO_TEAM (7, hostile to itself).
+    #[test]
+    fn friends() {
+        let (mut tex, mut hawk, mut hound) = (Player::new(0), Player::new(1), Player::new(2));
+        hound.team = 2;
+        let all = [&mut tex, &mut hawk, &mut hound];
+        assert_eq!(attacker(&all, 1, None), By::Nothing);
+        assert_eq!(attacker(&all, 1, Some(Who::Squad(1))), By::Itself);
+        assert_eq!(attacker(&all, 1, Some(Who::Squad(0))), By::Friend);
+        assert_eq!(attacker(&all, 1, Some(Who::Squad(2))), By::Foe);
+        let (mut a, mut b) = (Player::new(0), Player::new(1));
+        (a.team, b.team) = (7, 7);
+        assert_eq!(attacker(&[&mut a, &mut b], 1, Some(Who::Squad(0))), By::Foe);
+    }
+
+    /// The chatter's draws are the game's LCG from 0 (0x46cfd8's step), the new state mod the
+    /// count: the first states are 0x3c6ef35f and 0x47502932, so the first roll is 1013904223 %
+    /// 100 = 23 and the second 1196435762 % 100 = 62.
+    #[test]
+    fn draws() {
+        let mut rng = Lcg::default();
+        assert_eq!(rng.draw(100), 23);
+        assert_eq!(rng.0, 0x3C6E_F35F);
+        assert_eq!(rng.draw(100), 62);
+        assert_eq!(rng.0, 0x4750_2932);
+        // a draw of 1 still steps the state
+        let s = rng.0;
+        assert_eq!(rng.draw(1), 0);
+        assert_ne!(rng.0, s);
     }
 }

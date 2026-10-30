@@ -47,9 +47,16 @@ In the code's order; the first that fails refuses the line, and nothing is remem
 7. the condition: the value of the block's kind must lie in one of its variants' ranges
    (FUN_001372c0, FUN_00137360):
    * none: 0;
-   * "fighting" (h_12b74a88): the enemies the speaker's brain fights (FUN_0001b460). **A
-     guess**: the more of the hostiles its sensor knows (an AI's contacts, a victim among them in
-     its death frame) and those it sees within its gun's reach;
+   * "fighting" (h_12b74a88): the enemies the speaker's brain fights (FUN_0001b460: its
+     contacts of kind 1 whose entry has bit 2, set once the contact comes within 15 m or passes
+     a second test). The controlled character's brain keeps contacts too: the world's brain
+     loop (FUN_000d9770) runs a brain that's off through its vtable +8 (0x1a220), which for a
+     squad type a human player controls runs the same sense step as an AI's (FUN_00044480). A
+     kill's line is asked in the death frame (FUN_00125f40), before the killer's next scan drops
+     the dead contact, so the victim still counts: the player's kill of the last enemy can say
+     02da3fee, whose variants all need 1 to 100. **A guess**: the more of the hostiles its sensor
+     knows (an AI's contacts) and those it sees within its gun's reach, plus the victim for a
+     kill line (counted whatever the distance: the entry's bit 2 isn't modelled);
    * char+0x5a8 (h_e7fad8d2): always 0 in the game;
    * health % (h_e63846de);
    * the alert value (h_e8f64b20): 10 for everyone (a brain's +0x770 is 0 until GOAL_PATROL's
@@ -61,7 +68,8 @@ In the code's order; the first that fails refuses the line, and nothing is remem
      follows), 0 for the rest;
    * any other kind: the morale mix (FUN_001264a0): 0.4 health + 0.2 stamina + 0.1 the clip
      (1 full, 0 not, 0.75 without a gun) + 0.1 the skill (1 on, 0.75 off), x 100;
-8. the roll: (random mod 100) + 1 over `probability` fails;
+8. the roll: (the LCG mod 100) + 1 over `probability` fails (no draw at 100 or more; the
+   draws below);
 9. the priority: a step less beyond 15 m with h_f1cb4e63; 0 refused (a squadmate over 15 m
    away never says a priority-1 line: the skill lines, the medkit's);
 10. the wait (FUN_00141020): B, the longest time left (+ 0.2 s) of the playing lines of its
@@ -74,10 +82,10 @@ In the code's order; the first that fails refuses the line, and nothing is remem
     (FUN_00140a40).
 
 Passed, the waiting line is dropped (FUN_00141000: a new line of higher priority replaces it,
-even one that plays now), and the line is built (FUN_001400d0): a variant picked at random among
-those whose range holds the value and that its chatter set hasn't said yet (the manager's
-history, per set and tag: all are said before one repeats, FUN_001371f0), lasting its sound's
-length + 0.2 s. It waits in the slot, or plays now (FUN_00140cd0): its speaker's replay delay
+even one that plays now), and the line is built (FUN_001400d0): a variant drawn (the LCG mod
+their count, FUN_00136fc0) among those whose range holds the value and that its chatter set
+hasn't said yet (the manager's history, per set and tag: all are said before one repeats,
+FUN_001371f0), lasting its sound's length + 0.2 s. It waits in the slot, or plays now (FUN_00140cd0): its speaker's replay delay
 starts, and with h_eecb5362 the playing lines of its priority or lower that can be cut off
 are stopped (FUN_00140f80).
 
@@ -103,9 +111,9 @@ game's is 3D at the character).
 
 | Line | Where the game says it | The demo |
 |---|---|---|
-| hurt lines (FUN_00125ad0's table) | every hit that reaches the hit points (CBT_DAMAGED), by the record: no attacker character and +0x5c bit 2 (falls, liquids) ef32191d; the victim's own (its blast, its gas) ff44e83f; a friend's e2d9fb13; else DTYPE_GAS 0feee721; else crossing a quarter of the max health downward 01e1dcd0, a half fab0be98, a hit of 15% of the max or less e856009f, a bigger one 0ae8104e | play.rs `hurt`, `burn` (each liquid frame's share too), the gas's and damage areas' and plates' per-frame hits; the attacker from the hit's shooter, a friend by the team table |
+| hurt lines (FUN_00125ad0's table) | every hit that reaches the hit points (CBT_DAMAGED), by the record: no attacker character and +0x5c bit 2 (falls, liquids) ef32191d; the victim's own (its blast, its gas) ff44e83f; a friend's e2d9fb13; else DTYPE_GAS 0feee721; else crossing a quarter of the max health downward 01e1dcd0, a half fab0be98, a hit of 15% of the max or less e856009f, a bigger one 0ae8104e | play.rs `hurt`, `burn` (each liquid frame's share too), the gas's and damage areas' and plates' per-frame hits; the attacker from the hit's shooter; a friend is one of the victim's team, a team not hostile to itself (the attacker's +0x1b4 vtable +0xc4, 0x3d2c0, as FUN_0004b960) |
 | death cry | FUN_00125f40 in the death frame: e1213623, or ed35ffae when its movement state is 4 (a landing: inferred) | `Cause::fall` for a fall's death; Flint has no ed35ffae block, so a fall kills her silently. An enemy's from its type's chatter library |
-| kill line | FUN_00125f40: a killer hostile to the victim, when their player slots differ (the victim's against the hit record's +0x1c, the shooter's: so one of the two is a player's, and an AI's kill of an AI draws none), says 13601f7b when its skill's vtable +8 says so (Tex's berserk, Flint's targeting on), else 02da3fee | the killer the hit names (`damage::Hit::by`); the controlled character has the one slot (as it is at the kill: a stand-in for the shooter's at the shot). Tex's, Brutus's and Flint's 02da3fee variants all need 1..100 enemies fought; Hawk has 0..0 ones too |
+| kill line | FUN_00125f40: a killer hostile to the victim, when their player slots differ (the victim's against the hit record's +0x1c, the shooter's: so one of the two is a player's, and an AI's kill of an AI draws none), says 13601f7b when its skill's vtable +8 says so (Tex's berserk, Flint's targeting on), else 02da3fee | the killer the hit names (`damage::Hit::by`); the controlled character has the one slot (as it is at the kill: a stand-in for the shooter's at the shot). Tex's, Brutus's and Flint's 02da3fee variants all need 1..100 enemies fought, which the victim makes in the death frame; Hawk has 0..0 ones too |
 | follow | FUN_0005cc20: the one handed over from, in mode 1 (Cover Me) | play.rs `squad_control` |
 | healed | 0x146f40, only when the medkit adds health: 12c35d69 (f832ad27 for a healer whose squad has no player) | play_pickups.rs: 10%, a 30 s replay delay, priority 1 |
 | can't take that gun | FUN_000a9910 | play_weapon_pickups.rs: 100%, a 10 s replay delay |
@@ -116,7 +124,7 @@ A type of its own (an enemy) says only its death cry here: the #129 takes' Shrik
 on their hits, though their files have hurt lines (the enemies' lines are #110's and #128's).
 The #36 takes 07-10 show otherwise for a spawned Shrike shot by the squad: its hurt lines
 (e856009f, 0ae8104e, fab0be98, 01e1dcd0) are gate calls, made by the same table; opening them is
-`hurt_line`'s own-type test.
+`hurt_line`'s own-type test (#328).
 
 ## Responses
 
@@ -124,7 +132,7 @@ A block's `<response>`s whose range holds the speaker's value make a response ev
 (FUN_001406f0), which fires as the speaker's sound ends (0x13fe50 -> FUN_0013fbf0): its responder
 (for the death cries' `valid_targets` h_07b939a0: the speaker's nearest teammate, the dead
 included) answers with one of its `response_id`s, appended to the same line after a roll on its
-block's `probability` ((random mod 100) <= it), when no waiting line has that priority or more;
+block's `probability` ((the LCG mod 100) <= it), when no waiting line has that priority or more;
 no replay delay or distance rule of its own. The line takes the responder's priority, and the
 waiting line is dropped.
 
@@ -136,6 +144,17 @@ leads §2.4; the xemu take A3 settles it). The demo said one half the time befor
 Built for the death cries' responders only; the other `valid_targets` and `response_flags` are
 the replies' ticket (#322). The order lines (#320) join a second speaker's block onto a line the
 same way (`Line::add_part`, FUN_00140060: no roll, replay delay or distance check).
+
+## The draws
+
+The roll, the variant, the response's entry and its tag are each a draw of the game's LCG (the
+state at 0x46cfd8, x 0x19660d + 0x3c6ef35f), the new state mod the count (FUN_001374c0,
+FUN_00136fc0, FUN_0013fde0, FUN_001367e0, FUN_0013fbf0). In the game that state is the one
+every random choice shares. The demo's chatter keeps a copy of its own (`Lcg`, from 0 at each
+map's start), apart from each character's random state that drives the squad AI
+(`Player::random`) and the shots' (`GameRandom`): a line's roll moves nothing else, so two runs
+of the same test hooks match and a change to the chatter doesn't change a fight. (Before, they
+drew from the speaker's own random state, the one its AI draws from.)
 
 ## Timed mutes
 
@@ -153,7 +172,9 @@ its first 20 s.
   (`now` or `waits r s`), its chance, priority, replay delay, condition value and distance; what
   the manager does (a sound started or skipped and why, a line ending or cut off and by what, a
   waiting line playing or dropped, a response, a timed mute); and the queue after each (the
-  lines playing with their priority and time left, the waiting one, the mutes).
+  lines playing with their priority and time left, the waiting one, the mutes). The same check
+  refusing a character's tag again within 0.5 s of the last (a gas cloud's, a liquid's or a
+  damage plate's hit asks its hurt line every frame; a burst's pellets) isn't logged again.
 * `BF_CHATTER_CHANCE=<percent>`: every line's chance (100: each passes the roll).
 * `BF_TEST_HURT=<character>,<amount>[:fall],<s>[,<s>...][;...]`: hits that squad member (name
   or 0-3, the controlled one too) for `amount` at those times, a bare hit with no attacker as the
@@ -179,9 +200,23 @@ its first 20 s.
   (an AI killing the player) rolled at 10%; the reply rolled for his nearest teammate; the
   enemy's hurt lines a step less past 15 m (21 m: priority 2 and 7); Flint's kill of the enemy
   (an AI's of an AI) asking no kill line; the enemy's death cry's response finding no teammate.
-* The player killing an enemy dummy (`BF_TEST_NPC="1,brutus,enemy,dummy,2,-12"
-  BF_TEST_AIM_HOSTILE=1.5 BF_TEST_TRIGGER=2-6`): Tex's kill line asked, refused by its condition
-  (his twelve variants need an enemy still fought; none left in his sight).
+* The player killing an enemy dummy, the last enemy (`BF_TEST_NPC="1,brutus,enemy,dummy,2,-12"
+  BF_TEST_AIM_HOSTILE=1.5 BF_TEST_TRIGGER=2-6`): Tex's kill line asked at the kill (1.73 s) with
+  the condition value 1, the victim; at its 10% refused by the roll, with
+  `BF_CHATTER_CHANCE=100` said (variant f94d25a1, priority 2) beside the victim's death cry,
+  his speech icon showing 2.0-2.67 s. (Before, the value was 0 and no variant fitted.)
+* The draws apart from the AI's: a test-map fight with the squad's AI shooting an enemy and
+  trainer hits on Hawk and Flint every second (`BF_TEST_FULL_SQUAD=1
+  BF_TEST_NPC="1,brutus,enemy,fight,1,-26" BF_TEST_HURT="hawk,3,2,3,...;flint,3,2.5,..."`), run
+  at the natural chances (12 lines said, 4 not rolled) and with `BF_CHATTER_CHANCE=100` (13
+  said, none refused by the roll): the shots, their rolls, the hits and the deaths match line
+  for line (68 lines). e34's opening fight (the missile regression's hooks) matches over its
+  first 8 s the branch's run before this change: its lines are all refused by Bratton's timed
+  mutes or the distance, before any roll. Against the merge base (7f6b34e) the same fight runs
+  the same until Hawk's first hurt at 5.40 s, where the old code's hurt line drew its variant
+  from Hawk's own random state (her grunt 02c3b656 at 5.47 s in its sound log) and so moved her
+  AI: from 6.2 s the two fights part. An A/B capture against a build from before #155 parts at
+  the first squad line it says; between builds after it, the chatter moves nothing.
 * The player shooting Hawk (`BF_TEST_KILL=2`, the test map's instant kill): her friendly-fire
   line rolled at 10%, her death cry, no kill line (a friend's kill).
 * The skill lines (`BF_TEST_SKILL` every 14 s, 26 ons): Tex's on line said 14 times in 26 (the
@@ -196,32 +231,39 @@ its first 20 s.
   BF_TEST_MEDKIT=1.5 BF_TEST_HEALED=1`): Bratton's first radio line at 3.0 s mutes the chatter
   for 5.67 s, cutting off the three lines playing (Tex's friendly-fire line, two Shrike Hounds'
   death cries); the follow line at 4.6 s and the hits during it refused; the medkit line made but
-  skipped as Tex's voice was on his priority-4 friendly-fire line; Flint's friendly-fire line
-  waiting 0.92 s behind Tex's, then dropped when a Hound's death cry passed the gate. With the
-  scripts on, e34's opening cutscene refuses the medkit line (the cutscene bit).
+  skipped as Tex's voice was on his priority-4 friendly-fire line (Flint's shot, 1.67 s);
+  Flint's friendly-fire line (Brutus's shot) waiting 0.76 s behind Tex's, then dropped when a
+  Hound's death cry passed the gate. With the scripts on, e34's opening cutscene refuses the
+  medkit line (the cutscene bit). The Shrike Hounds are NEUTRAL (team 2), so their bites are
+  a foe's (FUN_00125ad0's friend test, `attacker`), not friendly fire: theirs are DTYPE_GAS (4),
+  the gas cough (the missile regression's hooks: Hawk's at 5.40 s).
 * The tutorial (`BF_TEST_PANEL="a,1"` and the start area's walk, hits on Tex): the grunt's 25%
   and replay delays, the half-health line at 61 -> 55 of 115.
 
 ## Against the #36 takes
 
 `todo/36-squad-voice/` (xemu, e34 with every enemy dead, gdb breakpoints on the gate and the
-sound event's start; notes.md):
+sound event's start; notes.md). Times are on the game clock: each take's watch log gives the
+game time `gt` beside the video's, which also counts the VM's pauses at the breakpoints. So the
+video's 0.3-0.5 s between a hit or a gate call and its sound (a death cry, a hurt line, the
+follow line) is under 0.04 s of game time, the frame the manager starts the sound in:
 
 * A3 (take03-05: Hawk, Brutus, Flint killed by one trainer hit): each one's death cry plays
-  with the dead-speaker flag set (priority 9), and **no teammate reply follows in the next
-  11 s**: as the demo now does (the reply is appended with no sound, its variants needing an
-  alert value of 0).
+  with the dead-speaker flag set (priority 9), and **no teammate reply follows in the rest of
+  the take** (9.4-9.6 s of game time; 10.2 s of video): as the demo now does (the reply is
+  appended with no sound, its variants needing an alert value of 0).
 * A1 (take01: Hawk hit by the trainer): the hit that takes her under half her health says
   fab0be98 at priority 8, the same rule as the demo's (its variant f9f8e847, as the demo's
   first pick in the run above).
 * A2 (take02): a priority-8 hurt line asked during a priority-6 order line waits and starts
-  about 3.9 s later, after the order's last part, instead of cutting it off: the gate's wait
-  (behind a line of its priority or lower, within its 5 s). The demo has no order lines yet
-  (#320); its own waits follow the same arithmetic (e34 above: 0.92 s behind a line of the same
-  priority).
+  2.97 s later on the game clock (the video's 3.9 s), after the order's last part, instead of
+  cutting it off: the gate's wait (behind a line of its priority or lower, within its 5 s). The
+  demo has no order lines yet (#320); its own waits follow the same arithmetic (e34 above:
+  0.76 s behind a line of the same priority).
 * D3 (take13): the follow line asked at the hand-over's cut (Tex, variant f71090f4, priority 5,
-  0.3 s later in the sound), and refused at the next hand-over 15 s later by its 30 s replay
-  delay. The demo's follow line is asked at the same cut.
+  its sound 0.04 s later on the game clock: 0.3 s of video), and refused at the next hand-over
+  11.8 s later (15 s of video) by its 30 s replay delay. The demo's follow line is asked at the
+  same cut.
 * B1 (takes 07-10): the squad's AI kills of the Shrike ask no kill line (the slot rule), and the
   enemy's death cry is a gate call made with the speaker already dead.
 

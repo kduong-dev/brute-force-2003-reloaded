@@ -1146,18 +1146,26 @@ pub struct ChatterResponse {
     /// `valid_targets` (h_15bde0bd, recovered by hashing): the responders, a row of the table at
     /// 0x3c0488 (h_07b939a0 the speaker's teammates nearest first, the death cries')
     pub targets: u32,
-    /// `response_flags` (the squad's status asks' h_fcc29cfe; FUN_001367e0 tests its bits 0 and
-    /// 1: every responder, the plain gate): 0 when not given
+    /// `response_flags`: the hash of its enum value's name, as the file keeps it (not a bit
+    /// field), 0 when not given. The one value the files use, h_fcc29cfe (12 entries, all with
+    /// `valid_targets` h_fc6e486d: the squad's status asks, dead code), is read as "every
+    /// responder answers" (todo/36-squad-voice/leads.md §2.6): the game's entry has flag bits
+    /// (FUN_001367e0 tests the entry's +0x14 bits 0 and 1, FUN_0013fbf0 its +0x18 bit 0, the
+    /// plain gate), but which value sets which bit isn't traced
     pub flags: u32,
-    /// `target_flags` (0c6af329's h_f0fa205a): the answer's part doesn't move the line's running
-    /// total on (FUN_0013fbf0 passes FUN_001400d0 the flag's inverse; inferred); 0 when not given
+    /// `target_flags`: the hash of its enum value's name, 0 when not given. The one value the
+    /// files use, h_f0fa205a (58 entries, all with `valid_targets` h_e38c96ec: the taunt-backs to
+    /// the enemies fought, in the squad's and the enemies' files), is read as "the answer's part
+    /// doesn't move the line's running total on" (FUN_0013fbf0 passes FUN_001400d0 the inverse of
+    /// the responder's flag bit; inferred)
     pub target_flags: u32,
     /// the range of the speaker's condition value it answers (its h_0ab96f95 / h_16087610:
     /// FUN_001370f0); 0..100 when not given, as a variant's (assumed: the response's parse
     /// defaults weren't read)
     pub min: i64,
     pub max: i64,
-    /// its `response_tag`s' `response_id`s: one is picked at random (FUN_001367e0)
+    /// its `response_tag`s' `response_id`s: one is drawn for each responder (FUN_001367e0: the LCG
+    /// mod their count)
     pub tags: Vec<u32>,
 }
 

@@ -580,12 +580,12 @@ fn log_sounds(tr: Res<Triggers>) {
                 };
                 println!("sound-trigger {}: {} {:.2} s, Type {}, {place}{}{}{}{}{}{}", tr.label(l.t.name), s.name, s.length, d.kind,
                          if d.looping { ", looping" } else { "" }, if d.near { format!(", within {} m of a player", s.max_distance()) } else { String::new() },
-                         if s.music { ", a music-bank track" } else { "" }, if d.hush { ", hushes the chatter (not modelled)" } else { "" },
+                         if s.music { ", a music-bank track" } else { "" }, if d.hush { ", hushes the chatter (a timed mute)" } else { "" },
                          if s.library.is_none() { ", not in the banks" } else { "" }, if l.enabled { "" } else { " (disabled)" });
             }
             ClassState::Dialog(d) => {
                 println!("dialog-trigger {}: {} {:.2} s, said by {}{}", tr.label(l.t.name), d.name, d.length,
-                         l.t.objects.first().map_or("no one".to_string(), |&o| tr.label(o)), if d.hush { ", hushes the chatter (not modelled)" } else { "" });
+                         l.t.objects.first().map_or("no one".to_string(), |&o| tr.label(o)), if d.hush { ", hushes the chatter (a timed mute)" } else { "" });
             }
             _ => {}
         }
