@@ -263,7 +263,8 @@ impl Sensor {
 
     /// How many hostiles it knows: the chatter's stand-in for the brain's count of the enemies it
     /// fights (FUN_0001b460, play_chatter.rs `fighting`). A contact killed stays until the next
-    /// scan drops it, as the brain's does (FUN_00044140).
+    /// scan drops it; the brain's dead branch (FUN_00044140 -> FUN_00043470) is read as doing the
+    /// same, inferred.
     pub fn known(&self) -> usize {
         self.contacts.len()
     }

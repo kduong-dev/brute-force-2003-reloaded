@@ -234,8 +234,8 @@ its first 20 s.
   skipped as Tex's voice was on his priority-4 friendly-fire line (Flint's shot, 1.67 s);
   Flint's friendly-fire line (Brutus's shot) waiting 0.76 s behind Tex's, then dropped when a
   Hound's death cry passed the gate. With the scripts on, e34's opening cutscene refuses the
-  medkit line (the cutscene bit). The Shrike Hounds are NEUTRAL (team 2), so their bites are
-  a foe's (FUN_00125ad0's friend test, `attacker`), not friendly fire: theirs are DTYPE_GAS (4),
+  medkit line (the cutscene bit). One of e34's Shrike Hounds is placed NEUTRAL (team 2), and
+  its bites are a foe's (FUN_00125ad0's friend test, `attacker`), not friendly fire: theirs are DTYPE_GAS (4),
   the gas cough (the missile regression's hooks: Hawk's at 5.40 s).
 * The tutorial (`BF_TEST_PANEL="a,1"` and the start area's walk, hits on Tex): the grunt's 25%
   and replay delays, the half-health line at 61 -> 55 of 115.

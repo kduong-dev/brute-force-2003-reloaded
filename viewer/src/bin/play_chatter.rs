@@ -604,9 +604,11 @@ fn condition(u: &Player, me: usize, kind: u32, held: Option<Who>, ctx: &Ctx) -> 
 /// contacts; the demo's controlled character's sensor knows no one) and the hostiles it sees
 /// within its gun's reach (play.rs `nearest_hostile`'s scan, which leaves out the dead), and one
 /// more for `held`, a kill's victim: FUN_00125f40 runs in the death frame, before the killer's
-/// next scan drops the dead contact (FUN_00044140's dead list), so the kill still counts its
-/// victim. Counted whatever the distance (the entry's bit 2 isn't modelled: a victim that never
-/// came within 15 m nor passed the other test wouldn't count in the game).
+/// brain handles the body (FUN_00043470, from FUN_00044140's dead branch: where the kind-1
+/// entry goes then isn't shown, inferred), so the kill still counts its victim. Counted whatever
+/// the distance, and even when the killer's scan never sighted it (the entry's bit 2 isn't
+/// modelled: a victim that never came within 15 m nor passed the other test, or was never a
+/// contact at all, such as a grenade kill round a corner, wouldn't count in the game).
 fn fighting(u: &Player, me: usize, held: Option<Who>, ctx: &Ctx) -> i64 {
     let seen = u.sensor.scan(u, me, ctx.sight).iter().filter(|&&(_, d)| d < ai_range(u)).count();
     // (the victim taken out of what the sensor knows, then counted once)
@@ -651,8 +653,8 @@ fn morale(u: &Player) -> f32 {
 /// Whom FUN_00125ad0 takes the hit on `all[i]` by `by` (its shooter) for: none (no character of
 /// `all`), the victim itself, a friend or a foe. A friend is what the attacker's +0x1b4 vtable
 /// +0xc4 says of the victim's team (0x125de1-0x125e10): 0x3d2c0, friends as FUN_0004b960 has
-/// them, the same team and one not hostile to itself. Not merely "not hostile": e34's Shrike
-/// Hounds are NEUTRAL (team 2, hostile to neither side), and their bites are a foe's.
+/// them, the same team and one not hostile to itself. Not merely "not hostile": one of e34's
+/// Shrike Hounds is placed NEUTRAL (team 2, hostile to neither side), and its bites are a foe's.
 fn attacker(all: &[&mut Player], i: usize, by: Option<Who>) -> By {
     match by.and_then(|w| find(all, w)) {
         None => By::Nothing,
