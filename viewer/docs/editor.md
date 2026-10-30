@@ -39,8 +39,8 @@ command line needed:
 * **What's left behind: nothing.** As the front end opens (`OnEnter(AppState::Menu)`,
   `leave_for_menu`) a session opened from EDITOR ends: `FromMenu`, `TestMap` go, the tools'
   session and the editor's state start anew. Every test-map system runs on `TestMap` (or
-  `testtools::active`), so CAMPAIGN, DEATHMATCH and SQUAD DEATHMATCH then play as without it:
-  their squads, no tools, no controls panel. A session the command line made (`--test`,
+  `testtools::active`), so CAMPAIGN and MULTIPLAYER's DEATHMATCH and SQUAD DEATHMATCH (#310)
+  then play as without it: their squads, no tools, no controls panel. A session the command line made (`--test`,
   `--edit`) keeps its `TestMap` as before.
 * **The mode after a round trip**: whatever the session, the front end puts `EditorMode` back
   to Play, so the next map from the menu plays (before, after `--edit` or F5, Backspace twice and
@@ -188,7 +188,7 @@ hooks (`BF_TEST_ON_MAP`, [testtools.md](testtools.md)).
 | Hook | Does |
 |---|---|
 | `--edit` (command line) | the test session starts in edit mode (in place of `--test`) |
-| `BF_MENU_SCREEN=editor BF_MENU_GO=1` | the front end's EDITOR chosen: LOADING, then the editor ([menu.md](menu.md); `BF_MENU_PRESS` with `down` three times and `a` does it with the keys) |
+| `BF_MENU_SCREEN=editor BF_MENU_GO=1` | the front end's EDITOR chosen: LOADING, then the editor ([menu.md](menu.md); `BF_MENU_PRESS` with `down` twice and `a` does it with the keys: CAMPAIGN, MULTIPLAYER, EDITOR since #310) |
 | `BF_TEST_EDIT=<s>[,<x>,<y>,<z>,<yaw>,<pitch>][;...]` | F5 in play: edit mode, the edit camera put there (else where it last was, else where the camera is) |
 | `BF_TEST_PLAY=<s>[,start][;...]` | F5 in edit mode: play from the pointer; `start`: Shift+F5, from the map's start |
 | `BF_TEST_POINTER=<s>,<x>,<y>` | the edit mode's pointer at that place of the window (0..1 across and down from the top left), as if the mouse were there |
@@ -257,13 +257,16 @@ Captures at 15 fps (`BF_MUTE=1 BF_BACKGROUND=1`, `BF_TOOLS_LOG=1`), frames looke
   start with Hawk leading in Tex's place (her face at the top of the radar, her camera) and the
   Shrike Soldier in Flint's ("1 more in the squad"; a "?" at its place), and F5 takes them both
   out again.
-* **From the front end** (#193; `BF_MENU_PRESS="a@0.5;down@1.0;down@1.5;down@2.0;a@3.0"
-  BF_TEST_POINTER=0.5,0.5,0.65 BF_TEST_PLAY=2 BF_TEST_EDIT=5 BF_CAPTURE_FRAMES=120`): EDITOR,
+* **From the front end** (#193; `BF_MENU_PRESS="a@0.5;down@1.0;down@1.5;a@2.5"
+  BF_TEST_POINTER=0.5,0.5,0.65 BF_TEST_PLAY=2 BF_TEST_EDIT=5 BF_CAPTURE_FRAMES=120`, the third
+  `down` of #193's main menu dropped since #310 grouped DEATHMATCH and SQUAD DEATHMATCH under
+  MULTIPLAYER, so EDITOR is the third entry, not the fourth): EDITOR,
   LOADING, then the same log as `--edit` with those hooks, line for line ("edit mode from the
   start: the edit camera at [0.00, 3.95, 9.00]", "play from [0.00, -1.05, 1.28] ... tex leads",
   back to edit at 5.13 s), the frames the same views: edit mode with its help, Tex and the HUD
   after F5, edit mode again. With `BF_TEST_BACK` the menu came back on EDITOR, and DEATHMATCH
-  and the campaign path after it started their maps with no test-map state ([menu.md](menu.md)).
+  (through MULTIPLAYER since #310) and the campaign path after it started their maps with no
+  test-map state ([menu.md](menu.md); #310 reran the DEATHMATCH one).
   `--edit` with the same hooks against the branch's base build: the same log; 84 of 90 frames
   identical, the other 6 the moment Tex's body appears after F5, which differs as much between
   two runs of the base build. `--test BF_TEST_GOTO=0,10,0,0` (45 frames): identical.

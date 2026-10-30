@@ -42,6 +42,10 @@
 //! selected button or row echoes (select-anim h_e150ead3), as play_menu.rs's.
 //!
 //! Test hook: play_menu.rs's BF_MENU_PRESS drives it (with BF_CAPTURE: menu_NNN.png).
+//!
+//! The helpers that draw a game-options menu (`pictures`, `buttons`, `texts`, `legend`,
+//! `step_pick`) also draw the MULTIPLAYER submenu, CAMPAIGN TYPE's twin (play_multiplayer_menu.rs,
+//! #310).
 
 use std::collections::HashMap;
 
@@ -59,7 +63,7 @@ use super::{play, Asked, Clock, Menu, Screen, Sfx, ECHO_COLOR, ECHO_PULSE, ECHO_
 
 /// The path's menus (game-options): CAMPAIGN TYPE, SELECT PROFILE, SELECT CAMPAIGN, ENTER NAME,
 /// SELECT DIFFICULTY and JOIN CAMPAIGN (see the module notes).
-const M_TYPE: u32 = 0xF972_8897;
+pub(super) const M_TYPE: u32 = 0xF972_8897;
 const M_PROFILE: u32 = 0x1476_1942;
 const M_SLOT: u32 = 0xE61A_E053;
 const M_NAME: u32 = 0xE37B_5C35;
@@ -103,9 +107,9 @@ const ANIM_ECHO: u32 = 0xE150_EAD3;
 /// The color-anim fading an item in, and the translation-anims sliding one in (the first with
 /// its sound, h_e8ace091).
 const ANIM_FADE: u32 = 0x1749_4BB2;
-const ANIM_SLIDE: [u32; 2] = [0xE202_7FA6, 0xF87F_B560];
+pub(super) const ANIM_SLIDE: [u32; 2] = [0xE202_7FA6, 0xF87F_B560];
 /// The typed titles' style (h_189b1ae9, its h_f78a2264: 0.125 s a letter).
-const STYLE_TYPED: u32 = 0x189B_1AE9;
+pub(super) const STYLE_TYPED: u32 = 0x189B_1AE9;
 /// The keyboard's name field: the box under the name (the default name stands selected), as take01
 /// measures it at 20.6 s (199 199 254 over the text's width: a fit, the colour isn't in the style);
 /// the selected key's word pulses between the style's disabled and selected colours once a
@@ -193,8 +197,9 @@ pub struct CampaignData {
 /// The path's data in the world (see CampaignData): the textures as images with their sizes.
 #[derive(Resource)]
 pub struct CampaignMenus {
-    /// game-options' menus, styles and picture sets
-    menus: GameMenus,
+    /// game-options' menus, styles and picture sets (the MULTIPLAYER submenu draws from CAMPAIGN
+    /// TYPE's too: play_multiplayer_menu.rs)
+    pub(super) menus: GameMenus,
     /// each texture's image and its own size
     images: HashMap<u32, (Handle<Image>, Vec2)>,
     /// game-options' `<difficulty-settings>`: STANDARD, HARD, BRUTAL's n (-4, 0, 4)
@@ -280,7 +285,7 @@ fn rgba(c: [u8; 4]) -> Color {
 }
 
 /// A string of the string table (empty if it isn't there).
-fn string(strings: &HashMap<u32, String>, id: u32) -> String {
+pub(super) fn string(strings: &HashMap<u32, String>, id: u32) -> String {
     strings.get(&id).cloned().unwrap_or_default()
 }
 
@@ -336,8 +341,8 @@ fn picture(commands: &mut Commands, screen: Entity, image: &Handle<Image>, at: V
 /// size or stretched, in its piece's colour or `tint`; one the data hasn't got, its border
 /// (BORDER). `fill` gives the code's picture for an item without a texture (JOIN's character
 /// picture).
-fn pictures(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, menu: &GameMenu, origin: Vec2, fill: &dyn Fn(u32) -> Option<u32>,
-            tint: Option<Color>) {
+pub(super) fn pictures(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, menu: &GameMenu, origin: Vec2, fill: &dyn Fn(u32) -> Option<u32>,
+                       tint: Option<Color>) {
     for item in &menu.items {
         let ItemKind::Picture { set, piece } = &item.kind else { continue };
         let corner = origin + item.at;
@@ -371,8 +376,8 @@ fn pictures(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, menu: &
 /// the body font at 12 points, in the style's colour, or its disabled colour (a delete with nothing
 /// to delete: take01's grey "Delete Profile").
 #[allow(clippy::too_many_arguments)]
-fn legend(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: &HashMap<u32, String>, origin: Vec2, item: &MenuItem, button: u32,
-          label: u32, enabled: bool) {
+pub(super) fn legend(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: &HashMap<u32, String>, origin: Vec2, item: &MenuItem,
+                     button: u32, label: u32, enabled: bool) {
     let style = cm.menus.styles.get(&item.style).cloned().unwrap_or_default();
     let corner = origin + item.at;
     let letter = string(strings, button).chars().next().unwrap_or(' ');
@@ -392,8 +397,8 @@ fn legend(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: 
 /// selected (`hidden`) and the ones the code fills (`filled`: their text, or left out): each with
 /// its animations (fade in; the title typed), which run on from when the screen opened.
 #[allow(clippy::too_many_arguments)]
-fn texts(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: &HashMap<u32, String>, menu: &GameMenu, origin: Vec2, hidden: &[u32],
-         filled: &dyn Fn(u32) -> Option<Option<String>>) {
+pub(super) fn texts(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: &HashMap<u32, String>, menu: &GameMenu, origin: Vec2,
+                    hidden: &[u32], filled: &dyn Fn(u32) -> Option<Option<String>>) {
     for item in &menu.items {
         let ItemKind::Text(id) = item.kind else { continue };
         if hidden.contains(&item.name) {
@@ -432,7 +437,8 @@ fn texts(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: &
 /// one in `color-selected` with its echo, the others in `color-normal`; each sliding and fading
 /// in as the screen opens (its translation- and color-anims). Returns the buttons' buddies (the
 /// descriptions not selected, hidden).
-fn buttons(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: &HashMap<u32, String>, menu: &GameMenu, pick: usize, now: f32) -> Vec<u32> {
+pub(super) fn buttons(commands: &mut Commands, screen: Entity, cm: &CampaignMenus, strings: &HashMap<u32, String>, menu: &GameMenu, pick: usize,
+                      now: f32) -> Vec<u32> {
     let mut hidden = vec![];
     let all: Vec<&MenuItem> = menu.items.iter().filter(|i| matches!(i.kind, ItemKind::Button { .. })).collect();
     for (k, item) in all.iter().enumerate() {
@@ -699,7 +705,7 @@ pub fn for_shot(name: &str, strings: &HashMap<u32, String>, cm: Option<&Campaign
 
 /// Step a selection by one up or down within `n`, the error sound at the ends (as the main
 /// menu's): whether it moved.
-fn step_pick(commands: &mut Commands, sfx: &Sfx, pick: &mut usize, n: usize, asked: &Asked) -> bool {
+pub(super) fn step_pick(commands: &mut Commands, sfx: &Sfx, pick: &mut usize, n: usize, asked: &Asked) -> bool {
     if !(asked.up || asked.down) {
         return false;
     }
