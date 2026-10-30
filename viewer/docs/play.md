@@ -2023,7 +2023,7 @@ soldier@dm,enemy,frozen,4.5,1" BF_TEST_PLACE="0.5,supply crate,4.5,16,0;0.5,supp
 BF_TEST_TRIGGER=2.0-2.08,3.5-6.0`): a bolt at 100 m/s (Flint's rifle range x1.25: 112.5 m) with
 the pass flag and n1 5, n2 0 (#238): it goes through both crates (each dealt the launch roll,
 its violet hit at each) and stops at the first Shrike (16.2 on an upper arm, the roll x 0.8 x
-1.4), never the one behind; held fire one bolt every 0.53 s (2 a second: 16 frames), clip 100.
+1.4), never the one behind; clip 100, 2 a second (the cycle below).
 "Penetrates armour" is its damage-type 6 (PARTICLE) against each target type's factor (generic,
 `play_damage.rs`); "some types of walls" are the objects the code lets it through (a placed
 object, a gate, a crate, a broken object's remains: the ray result's kind 2), never the terrain,
@@ -2049,21 +2049,45 @@ at -1):
   larger and softer (its lit pixels peak ~1.5 times take22's).
 * The fire sound h_1733d6e2 with each shot (`BF_SOUND_LOG`); its HUD icon h_e9e20036 (128 x 64)
   and dashed-circle crosshair h_17e53364 as take22's.
-* Open: the demo's spike breaks on the first bolt (breakable 183's own hit points), where take22's
-  trainer raised the spike's to 1000, so the later bolts find it gone (no hook sets an object's
-  hit points). Not filmed (blocked on #56's shot list: take23's
-  hit log was lost and is being re-recorded): where the bolt ends (at the character, n2 0, or on
-  the rock 1.5 m behind), a second character in line, a level wall or gate leaf, the terrain;
-  held fire, the reload, the dry fire and the switch (the data's 2 a second through FUN_0022f0e0,
-  the generic reload); the flight voices h_e297c1ef / h_f099a0c3 (the bolt's in-flight voice
-  isn't played, answers-batch1 §3).
+* Against #56's takes 01-08 (todo/56-ion-beamer/, its spec; m09_a's bench, Brutus):
+  * Where the bolt ends: take01's hit log (take22's staging) has each bolt hit the spike, then
+    the Shrike, and nothing after (not the rock 1.5 m behind); takes 02-04 a second Shrike 4 m
+    and 1.2 m behind the first or 0.5 m beside the line, never hit; take05 the rock face 16 m out,
+    a kind 1 hit that ends the bolt. The demo's rule (n2 0 at the first character, the terrain
+    ends it: § Ricochet and pass-through) is the same.
+  * Held fire (take06): one round every 0.503 s over 7 rounds, take07's 0.511-0.513 s over 18
+    (the game's clock; the 20 Hz log). The demo's cycle doesn't round 1 / rate up: the cooldown
+    runs down by the frame time and 0.5 s lands on the 15th frame, where the frame clock's
+    wobble (play_shots.rs `TICK_JITTER`) gives 15 or 16 frames about half the time each (with no
+    wobble the f32 countdown is left 2e-8 above 0 after 15 frames: 16 every time). Held 22 s on the test
+    map (`-- --test BF_NO_SQUAD=1 BF_CHARACTER=0 BF_TEST_WEAPON="Ion Beamer"
+    BF_TEST_GOTO=0,-8,0,-8 BF_TEST_TRIGGER=2.0-24.0 BF_SHOT_LOG=1`, the pellets' ticks): 17
+    intervals of 15 frames and 25 of 16, 0.520 s on average, 3 % over take06-07's 0.51 (#35
+    take04's Jax-iC, the same 2 a second, measured 0.52; the other guns whose period is a whole
+    number of frames, the Minigun, Foley, LZR-50, are the same rule, TICK_JITTER). The first
+    round 0.17 s after the trigger (take06: ~0.25 s after the pad press, the controller's poll
+    in it).
+  * Reload (take07, a clip of 6 and 20 in reserve, the trigger held; the demo's
+    `BF_TEST_CLIP=6 BF_TEST_RESERVE=20 BF_TEST_TRIGGER=2.0-9.0 BF_AMMO_LOG=1`): the reserve taken
+    0.53 s after the last round (take07: 0.512 s, the cycle's cooldown), all 20 of it into the
+    clip, and the trigger still held, the next round 1.37 s after that (take07: the clip full
+    0.937 s in, the next round 0.485 s after: 1.42 s).
+  * Dry fire, the panel's red "0 / 0", the "(Y) switch to Confed LZR-50." hint from the clip's
+    last round and the switch (take08): the generic rule (§ Ammo), checked on the MNR-7.
+  * Open: the demo's spike breaks on the first bolt (breakable 183's own hit points), where
+    take22's trainer raised the spike's to 1000, so the later bolts find it gone (no hook sets
+    an object's hit points). The panel's low-ammo blink (takes 07 and 08: red for 0.23-0.25 s
+    every ~1.05 s while the clip is at 16 or less of 100) isn't in the demo (found, not in
+    scope). Not filmed: a level wall or gate leaf (the Ion Beamer is only in m04 / m09 data, and
+    m09_a's bench has neither), the bolt and its hits in daylight or from the side, the flight
+    voices h_e297c1ef / h_f099a0c3 (the bolt's in-flight voice isn't played, answers-batch1 §3).
 
 **MNR-7 Bio** (#64; h_e671e0f8, light: Hawk, `BF_CHARACTER=2 BF_TEST_WEAPON="MNR-7 Bio"
 BF_CAMERA_PITCH=-0.16 BF_TEST_NPC="0.3,shrike soldier@dm,enemy,frozen,4.5,10"
 BF_TEST_TRIGGER=2.0-2.08,3.5-6.0`): each trigger cycle fires three darts at once (its burst of
 3, 0 s apart, walked by the burst's 3.5 degrees: #115's pellets; the log's three ways lie 3-4
-degrees apart) for one round off the clip (50 -> 49 -> 48: FUN_0022fe00), one cycle every 0.53 s
-(2 a second); each dart is a bolt at 80 m/s with its own roll (10-12 BIO) and its 40 m range (a
+degrees apart) for one round off the clip (50 -> 49 -> 48: FUN_0022fe00), one cycle every 15 or
+16 frames (2 a second: 0.52 s on average, the Ion Beamer's cycle above); each dart is a bolt at 80 m/s with its own roll (10-12 BIO) and its 40 m range (a
 0.5 s life), and lands 0.2 s after the shot 9.6 m out (14.0-16.0 on a x1 part; 81.5 on the
 head); one to three of them hit the Shrike, the walked ones passing it. The green darts
 (bio_bullet_pistol and its trail) and the green bio flash where they strike (bio-flash_hit,
