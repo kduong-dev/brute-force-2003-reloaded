@@ -59,6 +59,7 @@ use bevy::{
 };
 use bf_viewer::bf::character::{Character, Game, LIQUID_SHOT};
 use bf_viewer::bf::locomotion::{self, Locomotion};
+use bf_viewer::bf::personality;
 use bf_viewer::bf::weapon::{self, Hardpoint, WeaponDef, WeaponModel};
 use bf_viewer::scene::{spawn_model, spawn_static, ModelAssets};
 use bf_viewer::bf::level::Level;
@@ -972,6 +973,7 @@ fn main() {
         .add_plugins(triggers::sounds::plugin)
         .add_plugins(script::plugin)
         .add_plugins(brain::plugin)
+        .add_plugins(orders::plugin)
         .add_plugins(placed_fx::plugin)
         .add_plugins(lamps::plugin)
         .add_plugins(camera::plugin)
@@ -1096,6 +1098,8 @@ mod objectives;
 mod script;
 #[path = "play_brain.rs"]
 mod brain;
+#[path = "play_orders.rs"]
+mod orders;
 #[path = "play_placed_fx.rs"]
 mod placed_fx;
 #[path = "play_lamps.rs"]
@@ -1864,9 +1868,10 @@ const SELECT_TIME: f32 = 0.5;
 /// behind you", "Following at a distance", ...: line_tag f415ab02 in all four <name>_chatter
 /// files; the capture's switches transcribe and match to these, said by the previous character
 /// right at the camera cut). The game's hand-over (FUN_0005cc20, 0x5d067) says it for the one
-/// left in mode 1, Cover Me (the demo's squad always follows), through the chatter gate
-/// (play_chatter.rs): probability 100, replay delay 30 s, priority 5, a 3 s wait, heard at any
-/// distance.
+/// left in mode 1, Cover Me, through the chatter gate (play_chatter.rs): probability 100, replay
+/// delay 30 s, priority 5, a 3 s wait, heard at any distance. The one left in Stand Ground says
+/// 0e69bfe5 there instead (e635ecc6 in the far case, play_orders.rs `hand_over`) and in Fire At
+/// Will 15dc4e2d: those are #320's, and the demo says this line whatever the mode.
 const FOLLOW_CHATTER: u32 = 0xF415_AB02;
 /// a single hit this hard can knock a character down (the L-Shot's 23-27 and Bower's 16-20 can,
 /// the rifles' 2-13 can't; capture: L-Shot hits floor a squadmate for ~0.6 s before they get up)
@@ -1897,10 +1902,12 @@ const SLOT_DASH: f32 = 8.0;
 /// standing still this long (+ up to 1.5 s) a squadmate kneels (crouch idle, weapon ready);
 /// Brutus stays on his feet (both as in the captures)
 const KNEEL_AFTER: f32 = 1.2;
-/// The squad's idle variations while holding position (wingman personality h_ea20a17d,
-/// EVT_IDLE_VARY_DATA): IDLE_VARY_DATA_PAUSE_CROUCH and IDLE_VARY_DATA_PAUSE_CAUTIOUS, equally
+/// The squad's idle pauses while holding position when its personality gives none (the draw is
+/// its command mode's personality's EVT_IDLE_VARY_DATA entry, #318: `squad_ai`'s `pauses`): the
+/// wingman personality h_ea20a17d's IDLE_VARY_DATA_PAUSE_CROUCH and _PAUSE_CAUTIOUS, equally
 /// likely, lasting 15 and 12 s. The first pause is the crouch (the captures); then they're drawn.
-/// A cautious pause: standing, weapon ready, looking left and right of the heading.
+/// A cautious pause: standing, weapon ready, looking left and right of the heading; a plain pause
+/// (IDLE_VARY_DATA_PAUSE, FOLLOW's third): standing.
 const IDLE_CROUCH_TIME: f32 = 15.0;
 const IDLE_CAUTIOUS_TIME: f32 = 12.0;
 const CAUTIOUS_LOOK: f32 = 0.6;
@@ -2431,9 +2438,10 @@ struct Player {
     face_yaw: Option<f32>,
     dodge_request: Option<bool>,
     dive_from: Option<Vec3>,
-    /// the idle variation going on while holding position (cautious, else crouch) and how long
-    /// it has left (see IDLE_CROUCH_TIME)
-    idle_cautious: bool,
+    /// the idle pause going on while holding position (its GOAL_ number: IDLE_VARY_DATA_PAUSE 97,
+    /// _PAUSE_CAUTIOUS 98, _PAUSE_CROUCH 99; 0 none yet) and how long it has left (see
+    /// IDLE_CROUCH_TIME)
+    idle_pause: i64,
     idle_left: f32,
     /// the AI's squad-leash-dist (m)
     leash: f32,
@@ -2613,6 +2621,10 @@ struct Player {
     /// its AI's sensor (char+0x1b4, play_brain.rs `Sensor`): its sight distance and field of view,
     /// from its type and the placement it came from (#197), and the hostiles it knows
     sensor: brain::Sensor,
+    /// its brain's command mode, allow flags and Move To point (#318, play_brain.rs `Command`):
+    /// what the squad's AI does (play_orders.rs); it goes with the character through the
+    /// hand-over (kept while a player controls it)
+    command: brain::Command,
     /// a human player controls it (FUN_00112800's test, through FUN_0010fce0): its motion set's
     /// `pc-transition-ready` times are its, else `npc-transition-ready` (#140, `ready_times`). Set
     /// each frame by `update_player`: the controlled character's only
@@ -2705,7 +2717,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, face_time: 0.0, sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_cautious: false, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -2720,6 +2732,7 @@ impl Player {
             absent: false,
             brain: None,
             sensor: Default::default(),
+            command: Default::default(),
             controlled: false,
             ready_pose: false,
             gun_use: None,
@@ -2861,9 +2874,16 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
 
 /// Squad AI: keep to a formation place round the leader (run / sprint to catch up, walk the
 /// last bit) and look where the leader looks. They shoot only at an enemy they can see
-/// (`target`, from its sight: play_brain.rs `glance`, a brain's `sense`). Reloads happen by themselves (empty clip).
-fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
-    let f = FORMATION[slot % FORMATION.len()];
+/// (`target`, from its sight: play_brain.rs `glance`, a brain's `sense`). Reloads happen by
+/// themselves (empty clip). The follow of the command modes FOLLOW and WINGMAN (#318,
+/// play_orders.rs): the places closer in WINGMAN (`orders::spacing`), and standing still the
+/// idle pauses `pauses` (goal, weight, length) of the mode's personality.
+#[allow(clippy::too_many_arguments)]
+fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, pauses: &[(i64, f32, f32)]) {
+    // (the mode's spacing: its places, and the distances it sets off and dashes at, as
+    // FUN_00020b10's five distances all go with the mode)
+    let spacing = orders::spacing(m.command.mode);
+    let f = FORMATION[slot % FORMATION.len()] * spacing;
     let mut goal = leader.position + Quat::from_rotation_y(heading) * Vec3::new(f.x, 0.0, f.y);
     // out of the leader's line of fire: a place in the lane moves to its side, and anyone
     // standing in it steps out
@@ -2901,7 +2921,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     // behind (or past the data's leash + 10 m), walk the last bit; but not on into a liquid that
     // burns (#1, play_liquids.rs `burning_ahead`: the game's routes have no point in one): they
     // wait at its shore
-    let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START }) || (in_lane && dist > 0.3);
+    let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START * spacing }) || (in_lane && dist > 0.3);
     let shore = go && dist > 1e-4 && world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, Vec2::new(to.x, to.z) / dist));
     // (BF_LIQUID_LOG: twice a second while it waits there)
     if shore && std::env::var("BF_LIQUID_LOG").is_ok() && (m.sim_time * 2.0).floor() != ((m.sim_time - dt) * 2.0).floor() {
@@ -2911,35 +2931,36 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     if go {
         let d = to / dist;
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
-        m.sprint = dist > SLOT_DASH || dist > m.leash + 10.0;
+        m.sprint = dist > SLOT_DASH * spacing || dist > m.leash + 10.0;
         m.walk = dist < 2.5;
         m.still_time = 0.0;
         m.crouch_wanted = false;
-        m.idle_cautious = false;
+        m.idle_pause = 0;
         m.idle_left = 0.0;
     } else {
         m.move_input = Vec2::ZERO;
         m.sprint = false;
         m.walk = false;
         m.still_time += dt;
-        // after a moment, the idle variations: a crouch first, then crouch or cautious pauses
-        // drawn from the personality's table (Brutus doesn't kneel: his crouch pause stands)
+        // after a moment, the idle pauses: a crouch first, then drawn from the personality's
+        // table (Brutus doesn't kneel: his crouch pause stands)
         if m.still_time > KNEEL_AFTER + m.kneel_jitter {
             if m.idle_left <= 0.0 {
                 // (exactly 0: the first pause since moving)
                 let first = m.idle_left == 0.0;
-                m.idle_cautious = !first && m.random(2) == 0;
-                m.idle_left = if m.idle_cautious { IDLE_CAUTIOUS_TIME } else { IDLE_CROUCH_TIME };
+                let (pause, left) = draw_pause(m, pauses, first);
+                (m.idle_pause, m.idle_left) = (pause, left.max(0.1));
                 if std::env::var("BF_AI_LOG").is_ok() {
-                    println!("{} idles: {} for {} s", unit_name(m), if m.idle_cautious { "cautious" } else { "crouch" }, m.idle_left);
+                    let name = match pause { personality::GOAL_PAUSE_CAUTIOUS => "cautious", personality::GOAL_PAUSE => "pause", _ => "crouch" };
+                    println!("{} idles: {name} for {} s", unit_name(m), m.idle_left);
                 }
             }
             m.idle_left -= dt;
         }
-        m.crouch_wanted = m.data_slot() != 0 && m.still_time > KNEEL_AFTER + m.kneel_jitter && !m.idle_cautious;
+        m.crouch_wanted = m.data_slot() != 0 && m.still_time > KNEEL_AFTER + m.kneel_jitter && m.idle_pause == personality::GOAL_PAUSE_CROUCH;
     }
     m.face_yaw = Some(heading);
-    let cautious = m.idle_cautious && m.move_input == Vec2::ZERO;
+    let cautious = m.idle_pause == personality::GOAL_PAUSE_CAUTIOUS && m.move_input == Vec2::ZERO;
     if cautious {
         // look about: the ready weapon sweeps across the heading
         let sweep = CAUTIOUS_LOOK * (m.still_time * CAUTIOUS_SWEEP * std::f32::consts::TAU + slot as f32).sin();
@@ -2960,6 +2981,33 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     m.reload_pressed = false;
     m.throw_held = false;
     m.next_surface = false;
+}
+
+/// A squad member's next idle pause and its length (s) from `pauses` (the mode's personality's
+/// EVT_IDLE_VARY_DATA goals: goal, weight, length): `first`, the crouch (the captures: the first
+/// pause since moving kneels); else drawn as FUN_00054c40 draws a goal (`EventEntry::draw`: the
+/// weights summed by goal id, upward). Without a table, the wingman's (IDLE_CROUCH_TIME,
+/// IDLE_CAUTIOUS_TIME, equally likely).
+fn draw_pause(m: &mut Player, pauses: &[(i64, f32, f32)], first: bool) -> (i64, f32) {
+    let fallback = [(personality::GOAL_PAUSE_CROUCH, 1.0, IDLE_CROUCH_TIME), (personality::GOAL_PAUSE_CAUTIOUS, 1.0, IDLE_CAUTIOUS_TIME)];
+    let pauses = if pauses.is_empty() { &fallback[..] } else { pauses };
+    let length = |g: i64| pauses.iter().find(|p| p.0 == g).map(|p| p.2).filter(|&l| l > 0.0);
+    if first {
+        return (personality::GOAL_PAUSE_CROUCH, length(personality::GOAL_PAUSE_CROUCH).unwrap_or(IDLE_CROUCH_TIME));
+    }
+    let mut goals: Vec<(i64, f32)> = vec![];
+    for &(g, w, _) in pauses {
+        match goals.iter_mut().find(|x| x.0 == g) {
+            Some(x) => x.1 += w.max(0.0),
+            None => goals.push((g, w.max(0.0))),
+        }
+    }
+    goals.sort_by_key(|x| x.0);
+    let sum: f32 = goals.iter().map(|g| g.1).sum();
+    let x = m.random(1_000_000) as f32 / 1_000_000.0 * sum;
+    let mut run = 0.0;
+    let pick = goals.iter().find(|&&(_, w)| { run += w; x < run }).or(goals.last()).map_or(personality::GOAL_PAUSE_CROUCH, |g| g.0);
+    (pick, length(pick).unwrap_or(IDLE_CROUCH_TIME))
 }
 
 /// An AI character's fire at `target` (a hostile's chest, from its sight: play_brain.rs `glance` or `sense`): it faces it
@@ -3135,8 +3183,15 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // (the selection too: the game's hand-over copies the old character's wanted pair into the
     // new one's front, FUN_000c8fa0; #196 take17 / take29: every member's box reads the item)
     let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.others.clone(), player.stocked, player.item);
+    // (#318) the hand-over's re-order (FUN_0005cc20, play_orders.rs): over 50 m from the one taken,
+    // the one left stands its ground and its followers hold or move out to it
+    orders::hand_over(&mut player, &mut squad.0, i);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.others, player.stocked, player.item) = inventory;
+    // (the one taken stops moving out: FUN_000c8e80; the one left has its allow flags set by its
+    // mode again: FUN_00018230)
+    orders::taken(&mut player);
+    orders::released(&mut squad.0[i]);
     // (a script's walk was its brain's goal: under the player's control it has none)
     player.script_walk.clear();
     // the switch sound, at the cut (a capture: the same sound at every hand-over)
@@ -3164,7 +3219,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     player.ai_target = None;
     player.ai_burst = false;
     player.crouch_wanted = false;
-    player.idle_cautious = false;
+    player.idle_pause = 0;
     player.show_help = help;
     player.weapon_dirty = true;
     player.hud_list = 0.0;
@@ -4529,6 +4584,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     for m in squad.0.iter_mut() {
         m.controlled = false;
     }
+    // (its brain idles under a player: the events posted to it go nowhere, #318)
+    player.command.events = 0;
     // take the loaded character out so the step can borrow it and mutate the player freely (one
     // out of the world yet, `Player::absent`, steps too: its step runs the game's clock, and no
     // input reaches it, play_script.rs `blocks_input`)
@@ -4583,6 +4640,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // FUN_00024f80 refuses at 0x2507a while the attacker's skill's +0x108 is true, a stealthed
         // Hawk's (0x13d3f0), before it raises the gun (0x2509c)
         let target = target.filter(|_| !skills::holds_fire(m));
+        // (#318) an AI squad member's command mode (play_orders.rs): the events posted to it through
+        // its mode's personality (a grant of combat), its grant's clock; and without allow_combat
+        // the attack check refuses (FUN_00024f80 at 0x250c5): it turns to the target, gun up, and
+        // holds fire
+        if m.in_squad() && m.brain.is_none() {
+            orders::update(m, &game.0, dt, clock);
+        }
+        let (target, toward) = orders::gate(m, target, toward);
         // (BF_TEST_TARGET's squadmate stands still in the line of fire; play_sentry.rs's test
         // hooks hold theirs where they put them; the test map's NPCs have their own; a cutscene's
         // hold or walk has its own too, play_script.rs; a level character's its brain,
@@ -4599,7 +4664,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         } else if m.npc.is_some() {
             testtools::npc_ai(m, target, toward, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
-            squad_ai(m, &player, slot, heading, dt, target, toward);
+            // (its goal by its command mode: the follow, GUARD's hold, MOVE_OUT's walk)
+            orders::think(m, &player, slot, heading, dt, target, toward, &game.0);
         }
         let Some(l) = m.loaded.take() else { continue };
         step_player(m, &l, &game.0, kits, dt, &mut transforms);
@@ -4609,6 +4675,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     }
     // the squad tells each other of its targets (FUN_00045090, after the sense step)
     brain::broadcast(&mut player, &mut squad.0, &held, &sight, dt, clock);
+    // (#318) a squad member's rounds fired this frame: EVT_SQUAD_MATE_FIRING to the others near it
+    // (FUN_00045530), its own grant of combat renewed (play_orders.rs); and one a hostile brain has
+    // as its target gets EVT_SQUAD_IMA_TARGET (its EVT_ENEMY_SEEN case, play_brain.rs)
+    orders::mate_firing(&mut player, &mut squad.0, &game.0);
+    brain::tell_targets(&mut player, &mut squad.0);
     // friendly fire: the player's shots this frame stop at the first teammate in their way
     let (shooter, team) = (player.who(), player.team);
     let now = player.sim_time;
@@ -4722,10 +4793,11 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 ai_hits.0.push(PendingHit { delay: shot.delay(t), member: i, hit, dir: shot.dir, local, ammo });
             }
             // a level character of another side the shot passes close to knows its shooter if it
-            // knows no enemy, as with the player's shots (EVT_SHOT_AT_NO_ENEMIES, play_brain.rs)
+            // knows no enemy, as with the player's shots (EVT_SHOT_AT_NO_ENEMIES, play_brain.rs); a
+            // squad member's AI gets EVT_SHOT_AT (#318: its mode's personality may grant combat)
             let (by, by_team, struck) = (squad.0[k].who(), squad.0[k].team, hit.map(|h| h.0));
             for (j, m) in squad.0.iter_mut().enumerate() {
-                if j == k || struck == Some(j + 1) || m.dead || m.brain.is_none() || m.team == by_team {
+                if j == k || struck == Some(j + 1) || m.dead || (m.brain.is_none() && !m.in_squad()) || m.team == by_team {
                     continue;
                 }
                 let chest = m.position + Vec3::Y * (GROUND + m.height + 1.0);

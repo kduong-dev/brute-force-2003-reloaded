@@ -10,7 +10,9 @@ Squad movement and deaths follow the game's own data and the captures:
   crouch2stand to move on); Brutus stays on his feet. They step out of the lane you aim or fire
   down (EVT_SHOT_BLOCKED_BY_FRIEND), sidestep now and then when you shoot them
   (EVT_DAMAGED_BY_PC -> GOAL_DODGE) and dive away from a grenade that lands near them
-  (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip).
+  (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip). This is the follow of the
+  squad's default command mode, FOLLOW, and of Fire At Will's WINGMAN, closer; Stand Ground and
+  Move To hold or go elsewhere (**Squad commands**, below, #318).
 * **The test map's squad** (#302, play_testsquad.rs, [testtools.md](testtools.md) "The squad"):
   it starts with the player's character alone, and its squad menu (T) puts any character type in
   any of the four slots. The slot (`Player::character`) is the place on the HUD, the key and the
@@ -164,12 +166,16 @@ Squad movement and deaths follow the game's own data and the captures:
   frame 61 (1.017 s; 256-385.3 across, (221, 136, 92)), fading from 1.433 s, swelling to 2.3x
   by 1.617 s; `BF_TEST_GOTO=15.3,37,15.0,29 BF_TEST_DIE=1`: "BRUTUS" from 4.517 s, fading from
   4.933 s, the cut at 5.0 s, swelling past it.
-* **The squad's AI table.** Squadmates follow you as wingmen. Their personality
-  (`common/ai/personality.xmb`; each character's own `personality-wingman` is empty and
-  inherits `h_ea20a17d`) maps events to goals, with priorities and weights. Its events and goals
-  are numbers. The names come from default.xbe's name tables: events at 0x3bdc14 (`EVT_DEAD` =
-  10, … 96), goals at 0x3bce78 (`GOAL_DODGE` = 59, … 134). Without enemies, these entries
-  apply:
+* **The squad's AI table.** A squadmate's personality (`common/ai/personality.xmb`) is its
+  command mode's (#318, **Squad commands** below): FOLLOW's `h_169b2725` by default, WINGMAN's
+  `h_ea20a17d` (each character's own `personality-wingman` is empty and inherits it) after Fire
+  At Will, GUARD's `h_155e52d6` after Stand Ground, MOVE_OUT's `h_0f69b8b2` after Move To. It
+  maps events to goals, with priorities and weights. Its events and goals are numbers. The
+  names come from default.xbe's name tables: events at 0x3bdc14 (`EVT_DEAD` = 10, … 96), goals
+  at 0x3bce78 (`GOAL_DODGE` = 59, … 134). Without enemies, these are the wingman personality's
+  entries, which the demo's dodges use in every mode (FOLLOW's own have `GOAL_DODGE` 1 :
+  `GOAL_NOOP` 3 for EVT_SHOT_AT and always `GOAL_DODGE` for EVT_DAMAGED_BY_PC; GUARD's take no
+  dodge: not done):
 
   | Event | Goals (weight) | Here |
   |---|---|---|
@@ -177,9 +183,166 @@ Squad movement and deaths follow the game's own data and the captures:
   | `EVT_SHOT_AT` (20.15) | `GOAL_DODGE` 1, `GOAL_NOOP` 7 | a shot of yours passing within 1.5 m (the distance is a guess): sidestep one time in eight |
   | `EVT_DAMAGED_BY_PC` (15) | `GOAL_DODGE` 1, `GOAL_NOOP` 2 | shot by you: sidestep one time in three |
   | `EVT_BASE` (1) | `GOAL_WINGMAN_FOLLOW` | the formation |
-  | `EVT_IDLE_VARY_DATA` | `IDLE_VARY_DATA_PAUSE_CROUCH` 15, `…_PAUSE_CAUTIOUS` 12 (equal weights) | holding position: the first pause kneels (as in the captures), then kneeling and cautious pauses (standing, weapon ready, looking left and right) are drawn, lasting 15 and 12 s |
+  | `EVT_IDLE_VARY_DATA` | `IDLE_VARY_DATA_PAUSE_CROUCH` 15, `…_PAUSE_CAUTIOUS` 12 (equal weights) | holding position, the wingman's (Fire At Will) draw: the first pause kneels (as in the captures), then kneeling and cautious pauses (standing, weapon ready, looking left and right) are drawn, lasting 15 and 12 s |
 
-  `BF_AI_LOG=1` prints their idle choices and dodges.
+  The idle draw is the mode's personality's EVT_IDLE_VARY_DATA entry (#318): the table's row is
+  the wingman's, not Stand Ground's. FOLLOW's (the default) adds `IDLE_VARY_DATA_PAUSE` (97, a
+  plain standing pause) for 6 s, the three equally likely after the first crouch; GUARD's
+  (Stand Ground) has `PAUSE_CROUCH` alone: it kneels and stays down. (Before #318 the squad drew
+  the wingman's table in every case.) `BF_AI_LOG=1` prints their idle choices ("crouch",
+  "cautious", "pause") and dodges.
+* **Squad commands: the command modes** (#318, the first slice of #33: `play_orders.rs`, the
+  mode on `play_brain.rs`'s `Command`; todo/33-squad-commands leads §1-§6, its takes take01-13;
+  every function in [code-map.md](code-map.md), "AI"). Each squad member's brain has a command
+  mode (brain+0x58, the PCMD_ table 0x3bd210), which picks its personality and so what it does.
+  The Squad Command menu (#319) and its lines (#320) give the orders; `BF_TEST_ORDER` gives them
+  without the menu.
+
+  | Order (menu button) | Mode | Personality | Base goal | The demo |
+  |---|---|---|---|---|
+  | (none: the start) | 1 FOLLOW | `h_169b2725` | 75 WINGMAN_FOLLOW | the follow as before (`squad_ai`'s formation); combat allowed |
+  | Cover Me (A) | 1 FOLLOW | `h_169b2725` | 75 WINGMAN_FOLLOW | the same follow, holding fire until an event allows it |
+  | Fire At Will (B) | 4 WINGMAN | `h_ea20a17d` | 75 WINGMAN_FOLLOW | the formation 8 / 11.2 as wide; fires at what it sees |
+  | Stand Ground (Y) | 3 GUARD | `h_155e52d6` | 2 IDLE_VARY | kneels where it stands, holds, fires from there once allowed |
+  | Move To (X, then the cursor) | 5 MOVE_OUT | `h_0f69b8b2` | 72 MOVE_OUT | runs to the point, then Stand Ground with e635ecc6 |
+
+  * **The start.** The brain's set-up (0x16ff0-0x17734) puts a squad type in FOLLOW and sets
+    allow_combat and allow_cover itself: a fresh squad fights at once (every #33 take's fresh
+    start reads mode 1, allow a3; take11's members killed a Shrike unordered), and Cover Me to it
+    changes nothing (the menu skips a mode the member has, take11; Brutus kept a3 in take03).
+  * **Changing mode** (FUN_00018040): the allow flags by the mode (FUN_00018000: WINGMAN sets
+    both, FOLLOW, GUARD and MOVE_OUT clear both; take03 / take06: a0 after Cover Me from another
+    mode), the goals dropped and the base goal drawn again: the member stands up (a kneel
+    carries into GUARD's), its walk and pause start over.
+  * **Allow combat.** Without it the attack check refuses to fire (FUN_00024f80 at 0x250c5) after
+    raising the gun: the member turns to its target, gun up, and holds fire. An event whose entry
+    in the mode's personality has the quick goal h_f0233972 allows combat for 10 s: being hit
+    (EVT_DAMAGED), shot at (EVT_SHOT_AT, a hostile's shot within 1.5 m), being a hostile brain's
+    target (EVT_SQUAD_IMA_TARGET: the brain's EVT_ENEMY_SEEN case, 0x3e45a, posts it to its
+    target whenever it takes the event, so a member an enemy has picked out fights back before
+    any shot; a frozen enemy, brain mode 6, posts none, as take12's) or a squad member firing
+    within 20 m of it (EVT_SQUAD_MATE_FIRING, the type's h_e3d8aeef; the controlled character's
+    shots count: FUN_0022f060), in FOLLOW, GUARD and MOVE_OUT alike (MOVE_OUT has no EVT_SHOT_AT
+    entry: being shot at alone doesn't). Each of its own shots starts the 10 s again; when they
+    run out, outside WINGMAN, combat is taken back (the AI update, 0x1b1ff). That holds for a
+    fresh member too after its first fight (take11: a3 to a2 about 10 s after it).
+    EVT_SQUAD_ENEMY_NEAR and FRIENDLY_SHOT_AT (45, 46) grant it in the data too, but their
+    posters aren't found: not posted.
+  * **Fire At Will** (WINGMAN) keeps the follow, closer: the formation's places and the
+    distances it sets off (3 m) and dashes (8 m) at, times 8 / 11.2 (FUN_00020b10's set for
+    WINGMAN against FOLLOW's 1.4 times it), and combat allowed for as long as the mode lasts.
+  * **Stand Ground** (GUARD): kneels 0.3 s after the order (a fit: take07 0.24 s, take08 0.52 s
+    of game time), or stays down if it was kneeling already (the follow's crouch pause, or the
+    controlled character left crouched), and stays, its facing kept, Brutus standing; no dodges,
+    no stepping out of the
+    leader's line of fire (the guard personality's entries for them are off). It fires from its
+    spot at what it sees once combat is allowed.
+  * **Move To** (MOVE_OUT): runs straight to the point (#242 has the routes) at the dash, the
+    last 2.5 m at a walk (the game runs instead while the member stands in one of the level's
+    +0x114 prisms, FUN_0004cb60: what those volumes are isn't traced, so the demo dashes; the
+    leads' "a run with an enemy known" misread the test); within 2 m of the point (FUN_00045fa0's
+    walk at 2.0) it's GUARD and asks e635ecc6 of the chatter gate (chatter.md; its block:
+    probability 100, no replay delay, priority 6, a 3 s wait, heard at any distance). A
+    walk that stalls (0.1 m in 1 s, after its first second) ends the same way (a failed walk,
+    0x46256); a liquid that burns stops it at the shore. The controlled character on its way is
+    passed with 1.2 m of room (the way bends beside him until he's behind): the game routes round
+    a squadmate in the way (FUN_00041870 -> FUN_000594a0) and only with no route waits, then
+    goes GUARD silently after 7 s for a player's character; in open ground there's a route
+    (take08's Hawk ran past Tex 1.5 m off without a pause), so the wait waits on #242's routes.
+    A member with no point is at it: GUARD at once.
+  * **The hand-over** (FUN_0005cc20, FUN_000c8e80, FUN_00018230): handing control from a
+    character more than 50 m from the one taken sets it to GUARD, and each other AI member in
+    FOLLOW or WINGMAN to GUARD within 5 m of where it stands, else MOVE_OUT to there (the game's
+    point is its world point). The one taken, if it was moving out, is set to GUARD. A
+    character keeps its mode while a player controls it, for when control passes on; the one
+    left has its allow flags set by that mode again (FUN_00018230's FUN_00018000), so left in
+    FOLLOW it holds fire until an event allows it (take02: Tex a3 to a0 at the hand-over to
+    Hawk, Hawk a3 to a0 when left in turn). The line the one left says by its mode, and the
+    answers, are #320's (the demo still says the follow line f415ab02).
+  * **Not done.** The game's follow itself (#331 for the squad, #243 for the marines:
+    FUN_00020b10's state machine): in FOLLOW the
+    takes' squad trails Tex's dash at 12-16 m and stops about 9 m behind him (take04), where the
+    demo's formation keeps 1-5 m off him running and stops 4-11 m off, ahead of him (the five
+    distances' roles are in the code map's FUN_00020b10 row); WINGMAN's members going on ahead
+    of Tex and drifting 16-30 m off at rest (take05). The cover points that put a member of
+    mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit and Toggle Ability
+    (#319), Move To's routes and its wait when there's none round a player's character in the
+    way (#242), the GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the
+    spot).
+
+  Test hooks: `BF_TEST_ORDER=<member>,<mode>[,<x>,<z>][@<s>][;...]` gives each order at its time
+  (1 s without one) as the menu does: `<member>` 0-3 or brutus / flint / hawk / tex, `me`, or
+  `all` (everyone but the controlled character); `<mode>` guard / stand, wingman / fire, follow /
+  cover, moveout / move (x, z needed), or the PCMD_ number. `BF_ORDER_LOG=1` logs the mode
+  changes, grants, their end and the arrivals; `=2` also ten rows a second of each member's mode,
+  goal, allow flags (a grant's time left), place, distance to the controlled character and what
+  it's doing (fire, dash / run / walk, aim: the gun up holding fire, kneel, stand), as the takes'
+  watch logs. `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
+  snapshot had them. The test map's NPCs (`BF_TEST_NPC`) have no brain, so they never post
+  EVT_SQUAD_IMA_TARGET: only the level's characters do (a staged NPC enemy is the takes' frozen
+  one in that, whether it fights or not).
+
+  Verified (`BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps; e34 staged as the takes, Tex at
+  (-83.39, -82.79): `BF_MAP=e34 BF_TEST_GOTO=-83.39,-82.79,...,27 BF_TEST_NO_HOSTILES=1
+  BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05 BF_ORDER_LOG=2`):
+  * Stand Ground (take07: `BF_TEST_ORDER=hawk,guard@3`, Tex dashing east from 4.5 s): Hawk m3 g2
+    a0 at 3.07 s, kneeling 0.4 s later (frames 56-68), held at (-82.8, -87.1) while Tex went
+    43 m off.
+  * Move To (take08: `BF_TEST_ORDER=hawk,move,-70.8,-79.5@8`): m5 g72 a0, 15 m in 2.4 s at her
+    dash (7.2 m/s; take08 6.0 run, 6.6 dash), GUARD 1.8 m short of the point (take08 1.9-2.0),
+    her e635ecc6 sound 14c84c28 0.13 s later (take08's was 0fc11d92, the block's other), kneeling
+    0.4 s after arriving (take08 0.52 s). From take08's own kneel, with Tex nearly on her way
+    (`BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999
+    "BF_TEST_ORDER=hawk,move,-89.5,-87.8@1;hawk,move,-70.8,-79.5@10"`): she stands, runs past Tex
+    1.9 m off (take08 1.5 m) and arrives 3.1 s after the order (take08 4.2 s, her run slower).
+    With Tex right on her line (`BF_TEST_GOTO=-82.16,-85.05,...`): she bends round him 1.5 m off
+    (frame 176) and arrives at the same time. (Before #318's third round she waited 7 s behind
+    him and stood her ground: the wait-then-GUARD rule, dropped.) Through the chatter gate (after
+    #155, `BF_CHATTER_LOG=1`): at the first point her e635ecc6 is said (variant 14c84c28, priority
+    6, 7 m off); at the second, ordered at 10 s, a timed mute of e34's opening radio lines refuses
+    it, as it refuses every line; ordered at 32 s, after them, she arrives 3.1 s later and it's
+    said with take08's own sound, 0fc11d92 (the set's other variant: each is said before one
+    repeats), the HUD's speech icon by her portrait for its 1.3 s (frames 527-547).
+  * Fire At Will (take10: `--test BF_TEST_ORDER=all,fire@1 "BF_TEST_NPC=3.0,shrike
+    soldier,enemy,fight,-60,-79,,0" BF_TEST_NPC_HP=3.5,1,250 BF_TEST_INSTANT_KILL=0`, the Shrike
+    facing away): the first hit 0.6 s after it appears, dead 2.5 s after (take10: the first
+    member on it 0.2 s after, dead 4.5 s after).
+  * Cover Me after Fire At Will (take12: `"BF_TEST_ORDER=all,fire@1;all,cover@2"`, the same
+    Shrike, `BF_TEST_AIM_HOSTILE=14`): a3 to a0 at 2 s; from 3.3 s Brutus and Flint aim at it
+    and fire nothing for 11 s; Tex's first shot at 14.1 s grants all three (a1) at 14.2 s
+    (take12: 14.0 and 14.41 s), they fire from 14.5 s, it dies at 15.5 s, and the grant runs out
+    at 25.5 s, 10 s after the last shot (take12: 29.06 s, 14.7 s after its grant). With the
+    Shrike facing them (bearing 180) and Tex not firing: its shot past Brutus grants him at 4.07 s
+    (EVT_SHOT_AT), his shots grant Flint and Hawk at 4.87 s (EVT_SQUAD_MATE_FIRING).
+  * Cover Me from the start (take11: `BF_TEST_ORDER=all,cover@1`): "FOLLOW already: nothing
+    changes (allow 3)", and they kill the Shrike at once.
+  * A live enemy's target (e34 with its enemies, no `BF_TEST_NO_HOSTILES`:
+    `BF_TEST_GOTO=-60,-79,-60,-79,30 BF_TEST_ORDER=all,guard@0.3 BF_BRAIN_LOG=1
+    BF_COMBAT_LOG=1`, Tex 33 m off the squad): the Shrike Hound spawned beside them takes Hawk
+    (on Stand Ground, a0) as its target at 0.67 s, and EVT_SQUAD_IMA_TARGET grants her combat
+    at 0.80 s, before its first bite (1.07 s, which knocks her down); she fires from 2.67 s, her
+    shots grant Brutus and Flint (EVT_SQUAD_MATE_FIRING, 2.60 s), and they kill it at 3.6 s.
+    After #155's merge the same up to the bite, then her first shot and the others' grant at
+    2.47 s and its death at 3.1 s: her hurt line no longer takes a draw from her random state
+    (the chatter has its own), so her later draws differ.
+  * Stand Ground to a member kneeling in the follow (`BF_TEST_GOTO=-83.39,-82.79,-87.2,-75.8,27
+    BF_TEST_GO_AT=999 BF_TEST_ORDER=flint,guard@9`): Flint stays down through the order (frames
+    126-160; the watch log "kneel" in every row), no stand-up and kneel again.
+  * The hand-over's far case (`BF_TEST_GOTO=-83.39,-82.79,-25,-78,27 BF_TEST_SPRINT=4
+    BF_TEST_ORDER=hawk,guard@2 BF_TEST_SELECT=2,14`): at 54 m Tex goes GUARD and kneels, Brutus
+    (5.9 m off him) and Flint (11 m) move out to his spot and hold there. Taking Hawk while she
+    moves out (`BF_TEST_ORDER=hawk,move,-50,-71@2 BF_TEST_SELECT=2,3.5`): MOVE_OUT -> GUARD at
+    the hand-over.
+  * Unchanged without an order: the tutorial's marines (brain.md's recipe,
+    `BF_MAP=tutorial BF_TEST_GOTO=-15.6,-87.4,-60,-75 BF_TEST_GO_AT=14`, 420 frames) and e34's
+    follow (take04's run, 255 frames) captured with main's build and this one (and again after
+    the review's changes): no pixel more than 20 levels apart in any frame, the only differences
+    inside the farcast's glow (particle noise). The follow's idle draw (FOLLOW's plain pause)
+    comes after the first 15 s crouch.
+  * The follow distances by mode (take05's run with Tex dashing, `BF_TEST_SPRINT=9`): running
+    the demo's FOLLOW keeps 2-5 m off Tex and WINGMAN 1-4 m (means by member), at rest 5-6 m and
+    4-5 m; the takes' are 12-16 m (FOLLOW) and 5-10 m (WINGMAN) running, about 9 m at rest in
+    FOLLOW: the follow's own (#331), see **Not done**.
 * **Liquids that burn** (#1, play_liquids.rs `burning_ahead`, `steps_into_burning`). A wingman
   doesn't walk into lava, sludge or toxic waste (a liquid whose character rate h_e0489ea0 is
   above 0, the one that hurts: levels.md, "What a liquid does to a character"): with ground in

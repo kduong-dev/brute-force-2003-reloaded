@@ -561,6 +561,12 @@ play_sound_triggers.rs) isn't held.
   `USER_SIGNAL1`, `ENTER_DETECTOR`, `TRIG_SIG_TIMER_PULSE`). The trigger: its name
   (`trigger_router_spawn_tex`) or `h_xxxxxxxx`. `@<object>,<signal>` sends it from an object to
   its listeners instead (`@TUTORIAL_terrorist_5,DESTROYED`).
+* `BF_TEST_NO_HOSTILES=1` (#318): a spawn-trigger makes no character of another side than the
+  player's (logged with `BF_TRIGGER_LOG` as "would spawn"): a campaign level with the squad
+  alone, as the #33 takes' snapshot had e34 (every spawn-trigger disarmed, every enemy killed;
+  todo/33-squad-commands notes.md). The squad's own spawns and the pickups' still come. With
+  `BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05` e34's opening letterbox goes too
+  ([squad.md](squad.md), **Squad commands**).
 * The game flags, the cash and the objectives menu have their own (`BF_FLAG_LOG`,
   `BF_FLAG_SET`, `BF_CASH_LOG`, `BF_TEST_OBJECTIVES`): [campaign.md](campaign.md). The
   cutscenes' (`BF_SCRIPT`, `BF_SCRIPT_LOG`): [cutscenes.md](cutscenes.md).
