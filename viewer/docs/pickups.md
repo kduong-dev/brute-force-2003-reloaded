@@ -5,9 +5,9 @@
   enum, named in default.xbe's table at 0x3be3cc: 5 IFSET_GENERIC_HEALING, 14 IFSET_AMMO_BOX,
   16 IFSET_MINIGUN, 19 IFSET_POWERUP_MEDKIT, 20-23 the power-ups. The power-ups (19 with an idle
   effect, 20, 21) are `play_powerups.rs`'s: "Power-ups" below.
-  * Medkit (h_f5123ace): taken by walking over it (within 1 m) into the squad's shared
-    inventory, up to its stack-limit of 25, with its pickup-sound. When full, "<name> cannot
-    pick up Medkit." shows and it stays.
+  * Medkit (h_f5123ace): taken by walking over it (the walk-over's reach, below) into the
+    squad's shared inventory, up to its stack-limit of 25, with its pickup-sound. When full,
+    "<name> cannot pick up Medkit." shows and it stays.
   * Squad members take them too, running over one: a medkit into the same shared inventory (left
     alone when it's full, without the message), a Garo fruit for their own health (left alone
     at full health). `BF_TEST_TARGET=1` with a `BF_TEST_GOTO` start 8 m behind one stands the
@@ -108,10 +108,17 @@
   * Healing Garo Fruit (h_e711067e, function 19): eaten when walked over, +40, left alone at
     full health. HEALTH / STAMINA POWER are also function 19, the orbs with idle effects: see
     "Power-ups" below (#15).
-  * A level's own taken pickup comes back after 30 s (a guess: the game removes what it takes,
-    FUN_0011c170, and only spawn-triggers put pickups back). A spawn-trigger's copy (every pickup
-    of the multiplayer maps) is removed for good, and its trigger's timer makes the next: see
-    "Pickups from spawn-triggers" (#278). Only the player picks up.
+  * **A taken pickup is gone for good** (#18; the medkits and fruit, the DNA canisters, the ammo
+    boxes, the grenade packs, the OrgSen): FUN_0011c170 removes what it takes (FUN_000db3e0) and
+    nothing re-adds it, so a campaign level's own medkit or box never comes back. It came back
+    after 30 s before #18, a guess the code contradicts. Only a spawn-trigger's copy (every
+    pickup of the multiplayer maps) is replaced, by its trigger's timer: see "Pickups from
+    spawn-triggers" (#278).
+  * **The walk-over's reach** (#18): every pickup is taken by the same FUN_0011c540 ->
+    FUN_0011c170, every living member of a player's squad against it each frame, the AI's too:
+    the pickup at most 1.8 m below and 1.0 m above the character's position (its pelvis) and
+    dx^2 + dz^2 under 1.8 (1.34 m across): `powerups::in_reach` for all of them. The medkits and
+    fruit used to take 1.0 m across and 1.5 up or down, the DNA canister 1.3 m.
   * Test hooks: `BF_PICKUP_LOG=1` lists the pickups and each one taken or used.
     `BF_TEST_HEALTH=<hp>` starts hurt (above the most, with the most raised to it: #152's lava
     runs at 5000, as #146's take03). `BF_TEST_MEDKIT=<s>` uses a medkit at that time. `BF_TEST_ITEM_LIST=1` holds Tab from the start (the item list open, the game paused).
@@ -126,10 +133,11 @@
 * An item of group-type 9 (IG_DNA_CANNISTER, the IG_ name table 0x3be594): the tutorial's Confed
   Marine DNA h_f4933c12 (stringtable-name "Alien Technology Acquired!", display name
   h_1dd3a49d "Confed Marine DNA unlocked!") in the base building at (-62.5, 15.6, 18.8). A squad
-  member whose feet come within 1.3 m of it across (and 1.5 m up or down) takes it: a fit to
-  take12, where the line came between Tex's feet at 1.41 m (295.30 s, no line at 295.25) and
-  1.25 m (295.44 s, the line fading in at 295.5); the game's test isn't traced. Its pickup sound
-  plays, the line shows its display name, and it's gone for good (an unlock is once).
+  member within the walk-over's reach (above, 1.34 m across) takes it. #228 fitted the reach to
+  take12 at 1.3 m, where the line came between Tex's feet at 1.41 m (295.30 s, no line at
+  295.25) and 1.25 m (295.44 s, the line fading in at 295.5); the code's 1.34 is between them
+  (#18). Its pickup sound plays, the line shows its display name, and it's gone for good (an
+  unlock is once).
 * Its PICKUP_OBJECT starts the tutorial's timer467 (4 s), whose pulse plays Bratton's
   dxud_ai_00060 (4.22 s) ([triggers.md](triggers.md), "Object events").
 * The end screen names it (`DnaFound`, play_endmenu.rs): the squad's inventory holds the
@@ -182,9 +190,9 @@ and `todo/DNA + Weapon Pickups.mp4`.
     spot and over a dead hound would settle it); where the game rests a model-less one (its
     collision-type is 0) isn't known: the demo puts it on the ground as every pickup, the
     placement has it 2 m up.
-  * Taken, a gun is gone for good: nothing puts a placed campaign weapon back (leads §4.6), so
-    the medkits' guessed 30 s respawn isn't theirs. A spawn-trigger's copy comes back as its
-    trigger's next spawn (#278).
+  * Taken, a gun is gone for good: nothing puts a placed campaign weapon back (leads §4.6), nor
+    a medkit or a box (#18). A spawn-trigger's copy comes back as its trigger's next spawn
+    (#278).
 * **The vanish timers** (#278; the gun's +0x1a8, FUN_00157c40, `Vanish`): while one runs it counts
   down, and at 0 the gun is taken out of the world (the tick loop FUN_000d9840 -> FUN_000db3e0).
   Outside a mission (the multiplayer maps: the session's level kind isn't 0x17506391):
@@ -277,8 +285,10 @@ and `todo/DNA + Weapon Pickups.mp4`.
   whose ammo type a squad member's gun uses gives them to the reserve, keeping what doesn't fit,
   with the ammo item's pickup sound, PICKUP_OBJECT from it and the line "2x Sonic Ammo"; with the
   stack full nothing goes and the line reads "Sonic Ammo (full)" in red (a0 20 20), every frame
-  it's walked over (the DNA video's "Bio Ammo (full)" and "2x Sonic Ammo"). In #61 and #52's
-  takes nobody alive used the dropped guns' ammo: no line, as in the demo.
+  it's walked over, on the HUD of the player who controls the walker alone (an AI squadmate on
+  a full stack shows nothing: FUN_0011c6a0 with AL clear, #18) (the DNA video's "Bio Ammo
+  (full)" and "2x Sonic Ammo"). In #61 and #52's takes nobody alive used the dropped guns'
+  ammo: no line, as in the demo.
   * The guns that count are what each member's slots hold now (FUN_00122ed0 through
     FUN_0014dc50, which gives the hand holder for the slot in hand): between a release and its
     grab that slot holds nothing (`HeldWeapon::empty`), so the gun just dropped doesn't count by
@@ -383,6 +393,94 @@ and `todo/DNA + Weapon Pickups.mp4`.
     respawn at 22.85 s lays a new full one, as it should). The test map's rack, the copies'
     respawns and the LZRs' recharge are the sources of new rounds.
 
+## Ammo boxes (#18)
+
+`play_item_pickups.rs`, from default.xbe's walk-over (FUN_0011c540 -> FUN_0011c170's item path;
+the reading is `todo/18-ammo-pickups/leads.md`'s, its addresses are in
+[code-map.md](code-map.md)) and checked against that folder's takes 01-03 and 08 (sdm_e34, xemu,
+Tex's half of the split screen).
+
+* **What they are.** Ten ammo items (objecttypes `<inventory>`, function-type 14 IFSET_AMMO_BOX,
+  group-type 1 IG_AMMO, `class-type` 2): each one's `h_e5f51266` is the ammo-type that its guns'
+  `ammo-type` names, so the box feeds every gun of that type (the reserve the weapon panel and
+  the reload already use, play_ammo.rs `Reserve`):
+
+  | Ammo (item type) | ammo-type | guns | `pickup-amount` | `stack-limit` |
+  |---|---|---|---|---|
+  | 11mm Ammo (h_12302d03) | 1 | Foley 356 Tact, L-Shot-50, L-Shot-75 | 10 | 50 |
+  | High ROF Ammo (h_02735ad0) | 2 | Kman Auto, MK-ASLT, RVG50 Minigun | 50 | 600 |
+  | Sonic Ammo (h_ef0c4c1e) | 3 | Jax-iP, Jax-iR, Jax-iC | 20 | 200 |
+  | Particle Ammo (h_fc0d262e) | 4 | Saryl-23, Saryl-45, Saryl-99 | 25 | 200 |
+  | Rail Ammo (h_e4286255) | 5 | Rail RVR, Rail CLVR | 10 | 400 |
+  | Shotgun Ammo (h_e5d6b39e) | 6 | Bower 20 | 10 | 80 |
+  | Cutter Ammo (h_fe018d0b) | 7 | Feral Cutter, Rusty Cutter, PU Cutter | 25 | 120 |
+  | Bio Ammo (h_01c1965b) | 8 | MNR-7 Bio, A10 / A50 Bioreactive | 40 | 200 |
+  | Rocket Ammo (h_11119186) | 10 | Sweeper V, Therm Sweeper | 8 | 40 |
+  | Energy Ammo (h_15c866a4) | 12 | Ion Beamer | 20 | 200 |
+
+  (Cutter and Rocket Ammo are the campaign's: the multiplayer maps place the other eight.) The
+  ticket's column `h_0a811e94` ("a respawn time?") is the ammo-type written twice: the AMMO_BOX
+  set's +0x44 returns it as such (0x147180). Respawns are the spawn-triggers' timers.
+* **Taking one** is the walk-over (above): any living member of the squad in reach, the AI's too.
+  The set's "can take" is the unconditional 0x280040, so nothing refuses a box because no squad
+  gun uses the ammo or because the stack is full: `pickup-amount` goes into the squad's reserve of
+  that ammo-type (FUN_0014ce90 with its multiplier flag, FUN_0014bfe0) up to the item's
+  `stack-limit`, and
+  * **something fits**: the box is removed for good, its pickup sound (h_e4097f62) plays at the
+    character, PICKUP_OBJECT goes out from it, and the line "<n>x <name>" shows (n what went in,
+    "Particle Ammo" alone for one): take01's box of 25 on a stack of 100 made the line "25x
+    Particle Ammo" and the panel's reserve 38 / 100 -> 38 / 125 in the same moment (video 4.457
+    s, Tex 1.26 m from the box's middle; take02: 1.21 m). A partial fit loses the rest: take02's
+    stack of 195 took 5, "5x Particle Ammo", the box gone. Two boxes in a frame are one line,
+    "20x Rail Ammo" (take03: two Rail boxes 0.5 m apart, taken in the same 50 ms, the two Rail
+    guns 1.5-1.7 m away offering "Hold [X] to swap Rail RVR."). A stack nobody holds the gun of
+    takes the type: take03's Rail stack was unassigned (count 0), the squad had no Rail gun, and
+    "20x Rail Ammo" went in with no message;
+  * **nothing fits** (the stack at its limit): the line "<name> (full)" in red, the box stays,
+    and the walk-over finds it again every frame, so the line stays while the character stands
+    there (take02, 19.8-25 s: "Particle Ammo (full)" under Tex, the stack 200 throughout). It
+    goes to the HUD of the player who controls the character alone (FUN_0011c6a0 with AL clear):
+    **an AI squadmate** standing on a full box shows nothing (take08, 14-22 s; the demo:
+    `BF_TEST_TARGET=1`'s squadmate on it), and one who takes a box with room puts the line on the
+    player's HUD, the reserve following (take08 3.26 s: Hawk on the box, "25x Particle Ammo" on
+    Tex's half, 100 -> 125).
+* **The respawn** of a multiplayer copy is its trigger's timer ([triggers.md](triggers.md),
+  "Subject relays"): the Particle box 10 s after it was taken (take01 9.78 s of game time, take02
+  9.8 s), the Rail boxes 20 s (take03 19.7 s), the demo's 10.00 and 20.00; a character in reach
+  when it returns takes it at once (take04 for the Gas packs: 9 -> 10 by a returning pack; the
+  demo, take02's stack: "(full)" from the frame it returns). The copy comes whole in a frame and
+  the spawn flash's green rings rise over it for ~0.6 s (take01 15.5-16.1 s, take03 27.9-28.2
+  s): the demo's flash is the same effect object (the medkits' too). A campaign level's box is
+  a plain placement and never comes back (above).
+* **Not done, or not the game's yet.** What `h_11884f2e` (20-50 on the ammo items) does: the
+  AMMO_BOX set's +4 slot takes it with 3 (the stack loses it less 1), a caller nobody traced;
+  not the walk-over, not the reload. The weapon panel's reserve text flashing 0.3 s at a pickup
+  (`[[entry+0xf0]+0x98]+0x94 = 0.3`, FUN_0011c6a0): the widget isn't traced and take01's frames
+  (4.5-4.9 s) show the "38 / 125" unchanged in colour and size; nothing is drawn. The AI's
+  interest in boxes (the set's +0x54 / +0x58, 75 m, GOAL_GRAB_RESOURCE?) isn't traced: the squad
+  takes boxes only by walking over them. The pickup effect: none (every ammo item's
+  `pickup-effect` is empty). A dead enemy's drops (`inventory-drop`: the tutorial's terrorists
+  carry "High ROF Ammo 48") are not made.
+* **Test hooks:** `BF_PICKUP_LOG=1` prints each box taken (who, how many went in, the stack) and
+  each one a full stack refuses (once). `BF_TEST_AMMO=<ammo-type or ammo name>:<n>[,...]` sets
+  those reserves at the start, held to their stack limits (`4:195`, `rail:0`, `particle:200`).
+  The test map's pickup row and its object menu (O) carry every ammo type.
+* **Verified** (`BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_WEAPON="Saryl-99;Confed LZR-23"
+  BF_TEST_GOTO=-51.70,82.10,-56.5,81.0 BF_TEST_WALK=1 BF_TEST_GO_AT=2.0 BF_PICKUP_LOG=1`, 330-420
+  frames at 15 fps, take01's start and box): with `BF_TEST_AMMO=4:100`: "25x Particle Ammo" at
+  4.00 s, the panel 38 / 100 -> 38 / 125, the box back at 14.07 s and taken again (the stack 150);
+  with `BF_TEST_AMMO=4:195`: "5x Particle Ammo" (200) at 4.00 s, and at 14.07 s the box returns
+  with the green rings and "Particle Ammo (full)" in red stays up under Tex while he stands
+  there (frames 222-267), as take02; take03's start
+  (`BF_TEST_AMMO=rail:0 BF_TEST_GOTO=19.53,70.07,13.0,69.5`, 480 frames): "10x Rail Ammo" at
+  4.13 s and 4.20 s, "20x Rail Ammo" on the one line, the stack 20, the two boxes back 20.00 s
+  later (24.13 s and 24.20 s); take08 (`BF_TEST_TARGET=1 BF_TEST_GOTO=-55.98,89.09,-55.98,96.0`,
+  the squadmate standing on the box): Brutus takes it at once, "25x Particle Ammo" on Tex's HUD
+  and 38 / 125, and with `BF_TEST_AMMO=4:200` nothing shows under the standing squadmate for the
+  whole run. The tutorial's two medkits (`BF_MAP=tutorial BF_TEST_GOTO=51,14,51.0,18.0`): taken
+  at 1.51 and 1.55 s, and not again in the minute after; its DNA canister at 1.74 s (1.80 s with
+  the old 1.3 m).
+
 ## Pickups from spawn-triggers (#278)
 
 `play_pickup_spawns.rs` (the copies), `play_triggers.rs` (`spawn_copy`, the subject relay), from
@@ -424,9 +522,8 @@ and #129 take38 (mp1's walkway).
   after it was taken, fading in over ~0.3 s), its medkits 10 or 45 s, its guns 20 or 45 s, its
   ammo and grenades 10 or 20 s, BRUTE POWER 180 s, FORCE POWER 165 s, HEALTH POWER 30 s.
 * **Not done:** the copy's fall and its fade-in (take20's ~0.3 s; the spawn-trigger's h_eeae96e7
-  is 2 s, the demo draws no fade); taking ammo boxes and grenades (the demo's walk-over of items
-  covers medkits, fruit, DNA canisters and, since #15, the power-ups: #17's "found, not in
-  scope"); where
+  is 2 s, the demo draws no fade; take01 of #18 saw the Particle box appear whole in one frame,
+  then the green rings of the spawn flash for ~0.6 s); where
   the game's physics rests a gun copy (lying on its side is take38's look); the multiplayer maps'
   75 grenade pickups, item spawns `<h_1d1d4f05>` (types h_ecfe0d8c and h_15f9c51a, object-type
   24): their spawn-triggers fire and their relays bind, but `spawn_copy` copies inventory-objects

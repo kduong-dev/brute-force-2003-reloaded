@@ -26,7 +26,9 @@
 //!    clip gains a round every ammo-regen seconds while it isn't full and its cooldown is out
 //!    (FUN_0022ebc0), stowed or not, by its own cooldown (`Charge`). The HUD shows "N Regen".
 //!
-//! Test hooks: BF_TEST_RESERVE=<n> starts every ammo-type's reserve at n; BF_TEST_CLIP=<n>[,<n>...]
+//! Test hooks: BF_TEST_RESERVE=<n> starts every ammo-type's reserve at n; BF_TEST_AMMO=<ammo-type
+//! or ammo item name>:<n>[,...] then sets those (held to the stack limits: #18's takes start the
+//! Particle reserve at 100, 195 or 200); BF_TEST_CLIP=<n>[,<n>...]
 //! starts the player's clips at n (one value for every weapon, or one per weapon slot in order,
 //! the last for the rest); BF_TEST_TRIGGER=<from>-<to>[,<from>-<to>...] holds the
 //! trigger over those windows (s, overriding BF_TEST_FIRE); BF_TEST_SWITCH=<s>[,<s>...] presses
@@ -90,6 +92,14 @@ impl Reserve {
         let added = n.min(limit - *have).max(0);
         *have += added;
         added
+    }
+
+    /// Sets the rounds of `ammo_type` (BF_TEST_AMMO's), held to its stack limit; a type without
+    /// an ammo item has no stack to set.
+    fn set(&mut self, ammo_type: i64, n: i64) {
+        if let Some(&limit) = self.limits.get(&ammo_type) {
+            self.rounds.insert(ammo_type, n.clamp(0, limit));
+        }
     }
 
     /// A reserve holding `stacks` (ammo-type, rounds, stack limit), for the tests.
@@ -179,6 +189,22 @@ fn stock(mut reserve: ResMut<Reserve>, game: Res<GameData>, player: Res<Player>,
     }
     reserve.limits = limits;
     reserve.stocked = true;
+    // BF_TEST_AMMO=<ammo-type or ammo item's name>:<n>[,...]: those reserves set (held to their
+    // stack limits), after the start's: take02's Particle at 195 is `4:195`, take03's Rail empty
+    // `rail:0` (the item's name from its start, any case: "particle", "11mm", "Rail Ammo")
+    if let Ok(v) = std::env::var("BF_TEST_AMMO") {
+        for entry in v.split(',') {
+            let Some((which, n)) = entry.split_once(':') else { continue };
+            let (which, Ok(n)) = (which.trim(), n.trim().parse::<i64>()) else { continue };
+            let by_name = |label: &str| label.to_lowercase().starts_with(&which.to_lowercase());
+            let ammo_type = which.parse::<i64>().ok()
+                .or_else(|| game.0.items.values().find(|i| i.function == AMMO_ITEM && by_name(&i.label)).map(|i| i.kind));
+            match ammo_type {
+                Some(t) => reserve.set(t, n),
+                None => warn!("BF_TEST_AMMO: no ammo type {which:?}"),
+            }
+        }
+    }
     if std::env::var("BF_AMMO_LOG").is_ok() {
         let mut list: Vec<_> = reserve.rounds.iter().collect();
         list.sort();

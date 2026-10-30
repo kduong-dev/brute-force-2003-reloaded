@@ -978,6 +978,7 @@ fn main() {
         .add_plugins(weapon_pickups::plugin)
         .add_plugins(pickup_spawns::plugin)
         .add_plugins(powerups::plugin)
+        .add_plugins(item_pickups::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1099,6 +1100,8 @@ mod weapon_pickups;
 mod pickup_spawns;
 #[path = "play_powerups.rs"]
 mod powerups;
+#[path = "play_item_pickups.rs"]
+mod item_pickups;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.

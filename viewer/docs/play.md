@@ -426,6 +426,13 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
     stopgap until zones carry the reserve over (#231), as with none no gun could reload there.
     A zone whose placements carry any ammo keeps the carried-only rule.
   * The test map's NPCs reload from a bottomless reserve of their own.
+  * **The reserve grows by walking over the ammo boxes** (#18, [pickups.md](pickups.md), "Ammo
+    boxes"): a box's `pickup-amount` into the stack of its ammo-type up to the stack-limit, the
+    panel's "clip / reserve" following in the same moment (take01: 38 / 100 -> 38 / 125), the
+    line "25x Particle Ammo" on the HUD, or "Particle Ammo (full)" in red with the box staying
+    when the stack is at its limit (the player's own character only: an AI squadmate on a full
+    box shows nothing). `BF_TEST_AMMO=<ammo-type or ammo name>:<n>[,...]` sets the reserves at
+    the start.
 * **Recharging guns** (the LZR-10, -23 and -50: `h_1d1e0e9c` 2, 1.25 and 1 s a round) show
   "N Regen" (string `h_e246de1d`) and never reload. Their clip gains a round every ammo-regen
   seconds while it isn't full and the gun's own cooldown is out, held or stowed (FUN_0022ebc0),
