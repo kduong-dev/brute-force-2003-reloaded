@@ -19,6 +19,7 @@ use super::audio::{self, SoundBank, Surface};
 use super::weapon::{self, Hardpoint, WeaponDef};
 use super::bxml::{self, Element, SchemaSet, Value};
 use super::character_type::{CharacterType, MotionSet, Placement};
+use super::face::{FaceParams, FaceTable, SC_BASE};
 use super::personality::{self, Personality};
 use super::hash::h;
 use super::texture::{self, TexInfo};
@@ -103,10 +104,9 @@ const H_DRAW: u32 = 0xFDE5_0E9F;
 const H_GEOSET_RADIUS: u32 = 0x1AB0_9530;
 const H_GEOSET_CENTRE: u32 = H_ARCHETYPE_CENTRE;
 const H_INTERVAL: u32 = 0xF63F_0F49;
-/// First clip of every '<name>face' set: closed, relaxed mouth. Human faces are modelled
-/// mid-speech, so the game always layers a face clip; this one is the neutral default.
-const NEUTRAL_FACE: u32 = 0xEFF8_AC8D;
-/// Face clips shorter than this are held poses (the neutral face is two keys, 0.03 s).
+/// Face clips shorter than this are held poses, shown at their first key: the viseme clips are
+/// two keys over 0.033 s and `Sc_base` one key over no time (`face::SC_BASE`, duration 0).
+/// Looping them would flip the mouth between its keys 30 times a second.
 const STATIC_FACE: f32 = 0.1;
 /// game-options `<difficulty-settings>` (name recovered by hashing): the campaign's difficulty
 /// values (`Game::difficulty_settings`)
@@ -2701,9 +2701,15 @@ pub struct Character {
     pub inverse_bind: Vec<Mat4>,
     pub geosets: Vec<Geoset>,
     pub anims: Vec<AnimDef>,
-    /// '<name>face' set: lip-sync / expression clips for the face bones
+    /// '<name>face' set (or the type's `<face viseme-file>`): the face clips, one pose each
+    /// (`Sc_<viseme>`) and the blink
     pub face_anims: Vec<AnimDef>,
+    /// the face clip a viewer shows by default: `Sc_base`, the game's rest pose (None without a
+    /// face set). The demo doesn't layer a face clip: it drives the face bones from `face`
     pub default_face: Option<usize>,
+    /// its face table (`face::FaceTable`: the face bones, the base pose, the 22 viseme poses and
+    /// the blink), None for a model without a face set (the Shrikes and hounds)
+    pub face: Option<super::face::FaceTable>,
     /// hardpoints of the bones' part archetypes: name -> (bone, hardpoint in the bone's frame)
     pub hardpoints: HashMap<u32, (usize, Hardpoint)>,
     /// per bone, its part archetype's collision surface (`<h_f3f067ad h_051ac63e>`, in
@@ -2757,27 +2763,28 @@ fn rows(v: &[f32]) -> Mat3 {
 impl Character {
     /// A character by its motion set's stem (`Game::characters`: "brutus", the first definition
     /// with that motion set): its mesh, the animation set of its name and the face set
-    /// `<name>face`. Right for the squad, whose motion sets name their own sets; the other types
-    /// load with `load_type`.
+    /// `<name>face`, with the face settings of the type of that name. Right for the squad, whose
+    /// motion sets name their own sets; the other types load with `load_type`.
     pub fn load(game: &Game, name: &str, lod: usize) -> Result<Self, String> {
         let &(_, compound) = game.characters.iter().find(|(n, _)| n == name)
             .ok_or_else(|| format!("unknown character {name}"))?;
-        Self::load_model(game, compound, h(name), h(&format!("{name}face")), lod)
+        let face = game.character_types.get(&h(name)).map(|t| t.face.clone()).unwrap_or_default();
+        Self::load_model(game, compound, h(name), h(&format!("{name}face")), &face, lod)
     }
 
     /// A character type's model (#128): its mesh (`<base mesh-name>`), the animation set its
     /// motion set names (animation-set-name: the type's +0xcc, FUN_00131a10; ms_feral_colonist
-    /// plays brutus, ms_dm_lf lf, ...) and its `<face viseme-file>` set (none for Shrikes and
-    /// hounds). For the squad this is what `load` gives (BF_DUMP_TYPES checks it).
+    /// plays brutus, ms_dm_lf lf, ...) and its `<face viseme-file>` set and settings (none for
+    /// Shrikes and hounds). For the squad this is what `load` gives (BF_DUMP_TYPES checks it).
     pub fn load_type(game: &Game, t: &CharacterType, lod: usize) -> Result<Self, String> {
         let anims = game.motion_sets.get(&t.motion_set).map_or(0, |m| m.anim_set);
-        Self::load_model(game, t.mesh, anims, t.face_set, lod)
+        Self::load_model(game, t.mesh, anims, t.face_set, &t.face, lod)
     }
 
     /// A character model: the compound archetype `compound` (its PARTs the skeleton, its LOD
     /// meshes the skin), with the clips of animation set `anim_set` and the face clips of set
-    /// `face_set` (0: none).
-    fn load_model(game: &Game, compound: u32, anim_set: u32, face_set: u32, lod: usize) -> Result<Self, String> {
+    /// `face_set` (0: none), the face table built from them with `face`'s settings.
+    fn load_model(game: &Game, compound: u32, anim_set: u32, face_set: u32, face: &FaceParams, lod: usize) -> Result<Self, String> {
         let (arch, _) = game.archetype(compound).ok_or("compound archetype not found")?;
         let all = arch.walk();
 
@@ -2867,10 +2874,11 @@ impl Character {
         };
         let anims = copy(anim_set);
         let face_anims = if face_set == 0 { vec![] } else { copy(face_set) };
-        let default_face = face_anims.iter().position(|a| a.name == NEUTRAL_FACE)
+        let default_face = face_anims.iter().position(|a| a.name == SC_BASE)
             .or(if face_anims.is_empty() { None } else { Some(0) });
+        let face = FaceTable::build(game, &bones, &face_anims, face);
         Ok(Character { bones, parent, bind_rows, bind_pos, parent_point, child_point,
-                       inverse_bind, geosets, anims, face_anims, default_face, hardpoints, part_collision, part_mass_centre, part_spheres, bounds })
+                       inverse_bind, geosets, anims, face_anims, default_face, face, hardpoints, part_collision, part_mass_centre, part_spheres, bounds })
     }
 
     /// Index of the animation whose (hashed) name is `script`, e.g. "Sc_w1_run".
@@ -2891,7 +2899,9 @@ impl Character {
     }
 
     /// Local transforms at time t of animation `anim`, with face clip `face` (looping on its
-    /// own clock `face_t`) layered over the face bones. Bones without a channel keep bind.
+    /// own clock `face_t`) layered over the face bones. Bones without a channel keep bind. The
+    /// viewer layers a face clip to look at it; the demo doesn't (the game's body clips never
+    /// move the face bones, so it passes None and `face::FaceTable` writes them).
     pub fn pose(&self, game: &Game, anim: usize, t: f32, face: Option<usize>, face_t: f32) -> Vec<(Quat, Vec3)> {
         let mut local = self.bind_local();
         let index: HashMap<u32, usize> = self.bones.iter().enumerate().map(|(i, b)| (*b, i)).collect();
@@ -2914,8 +2924,9 @@ impl Character {
             apply(a, t, false);
         }
         if let Some(f) = face.and_then(|i| self.face_anims.get(i)) {
-            // the neutral face is a two-key 0.03 s pose, not an animation: looping it would
-            // flip the mouth between its keys ~30 times a second, so hold its first key
+            // a viseme is a two-key 0.03 s pose and `Sc_base` one key over no time, not
+            // animations: looping them would flip the mouth between the keys ~30 times a second,
+            // so hold the first key (the one the game's face table reads)
             let ft = if f.duration < STATIC_FACE { 0.0 } else { face_t % f.duration.max(1e-6) };
             apply(f, ft, true);
         }
@@ -3104,7 +3115,9 @@ pub fn sample(c: &Channel, t: f32) -> (Option<Quat>, Option<Vec3>) {
         let f = if i == j { 0.0 } else { ((t - times[i]) / (times[j] - times[i]).max(1e-9)).clamp(0.0, 1.0) };
         (i, j, f, 4)
     } else {
-        let x = t / c.interval;
+        // (an interval of 0 would make a NaN of the first key; none in the data has one, even the
+        // one-key `Sc_base` channels give 1/30, but a held key is what such a channel would mean)
+        let x = if c.interval > 0.0 { t / c.interval } else { 0.0 };
         let i = (x.max(0.0) as usize).min(n - 1);
         (i, (i + 1).min(n - 1), (x - i as f32).clamp(0.0, 1.0), 0)
     };

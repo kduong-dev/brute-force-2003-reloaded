@@ -31,7 +31,9 @@ behaviour on it. Sources: the decoded data (`decompiled/xml/`), default.xbe (the
   motion sets.
 * **The face clips** are the set the type's `<face viseme-file>` names (`brutusface` on the
   ferals, `militiaface`, `mutantface`, `seerface` ...; 39 of the 128 types have none: the
-  Shrikes, the hounds, some humans such as e01's Sgt. Gonzales).
+  Shrikes, the hounds, some humans such as e01's Sgt. Gonzales). The rest of the `<face>` (the
+  blink interval and chance, the visemes it stretches) is `CharacterType::face`, and a model with
+  a set gets a face table and a controller that blinks ([faces.md](faces.md), #255).
 * `Game::load_level` now opens each level's `ms_*.xmb` and `*_chatter.xmb` too (they live in
   its `characters/` folder; the squad's are in common only, so nothing of the squad's is
   replaced). A chatter file already loaded from another archive is kept, as the motion sets are.
@@ -46,7 +48,7 @@ runtime offset; see the code map's rows for each).
 | `key`, `archive`, `label` | `<base name>`, the archive, `<base h_1dd3a49d>` (string id: "Shrike Soldier") | FUN_00160da0 | the NPC menu, the dump, logs |
 | `mesh` | `<base mesh-name>` | type+0xc4 | the model (`Character::load_type`) |
 | `motion_archetype`, `motion_set` | `motion-archetype` | type+0x1a4, FUN_00131a10 | the clips (its set's animation set) |
-| `face_set` | `<face viseme-file>` | (the face block) | the face clips |
+| `face_set`, `face` | `<face viseme-file h_09109ae2 h_f5a7b9d2><h_e42866a1><h_fa110e09 enum scale>` | FUN_001901a0, FUN_00190210, FUN_001900f0 (the parse record's +0x37c, +0x394, +0x398, +0x3a0) | the face clips, the face table and the blink (`bf/face.rs`, play_faces.rs) |
 | `chatter` | `chatter-library` (h_f18a456f) | FUN_001304b0 | loaded; not yet said by enemies |
 | `hitpoints`, `target_type` | `<combat-target hitpoints target-type>` (the TTYPE_ enum, 0x3bf294) | FUN_00189f80; type+0x1c, +0x20 | HP |
 | `vulnerabilities` | `<vulnerabilities><vulnerability Type modifier>` | type+0x78, FUN_00154740 | every hit's factor for its damage type (play_damage.rs `vulnerability`) |
