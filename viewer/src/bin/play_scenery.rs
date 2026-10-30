@@ -918,6 +918,7 @@ fn set_off_mines(mut scenery: ResMut<Scenery>, player: Res<Player>, game: Res<Ga
         let takes = |kind: i64| kits.0.get(g.kind).and_then(|k| game.0.object_types.get(&k.def.name)).map_or(1.0, |t| t.factor(kind)) > 0.0;
         if g.fuse > 0.0 && reach.iter().any(|(at, r, kind)| tr.translation.distance(*at) < *r && takes(*kind)) {
             g.fuse = 0.0;
+            g.set_off = true;
             if std::env::var("BF_SCENERY_LOG").is_ok() {
                 println!("t {:.2}: a blast sets off the Sentry {e}", player.sim_time);
             }

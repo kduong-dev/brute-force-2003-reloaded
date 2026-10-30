@@ -31,6 +31,10 @@
 //! target is found, the wide turns braking to a few m/s, and the 45-degree target circled (take05).
 //! A wall stops it with no bounce; it stays against it, pressed toward the point.
 //!
+//! The level's own Rollers (an item object of the type set down live, h_1cb7d5f2: m09_a's one; the
+//! others are spawn-trigger templates the demo doesn't copy) are let go by the item handler
+//! 0x14a0a0 with no placer: the point 50 m back along their own frame (play_sentry.rs `place_mines`).
+//!
 //! Test hooks: BF_ROLLER_LOG=1 prints the let-go, every check (the search's candidates, the sight
 //! line and what blocks it, the point), each ground contact, and the proximity blast; =2 also the
 //! ball's position every frame. BF_ROLLER_RAYS=<file> casts the sight line once the map is up for
@@ -347,7 +351,7 @@ pub(super) fn spin(r: &Roller) -> Vec3 {
 /// Every Roller out of the hand, each frame before the grenades fly (FUN_00148220 from the item
 /// set's per-frame hook 0x148690): its helper (`tick`), its drive toward the point (`drive`), and
 /// the proximity rule, which sets its fuse to 0 and arms it (+0x1d4 = 0, +0x1dc |= 2: it goes off
-/// in this frame's grenade update, `fly_grenades`).
+/// in this frame's grenade update, `fly_grenades`, where the fuse's cutscene gate holds it too).
 pub(super) fn seek(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, kits: Option<Res<GrenadeKits>>,
                    mut rollers: Query<(Entity, &mut Grenade, &Transform, &mut Roller)>) {
     let Some(kits) = kits else { return };

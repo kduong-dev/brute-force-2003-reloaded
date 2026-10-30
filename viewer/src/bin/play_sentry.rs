@@ -159,12 +159,20 @@ pub fn plugin(app: &mut App) {
     // (`trip` runs in play_grenade.rs's chain, right before the grenades' fuses)
 }
 
-/// The level's own mines (#228), once the character is in (the level's objects are spawned by
-/// then, as play_pickups.rs's `find_pickups` waits for): each item object of a Sentry type the
-/// level places with h_1cb7d5f2 (`Placement::placed`: set down and armed as it loads, 0x14a0a0) is
-/// a mine on the ground where it's placed, on its `item-alignment`'s team, owned by nobody; the
-/// level's own model of it is hidden (the mine is drawn in its place): the one of its name, or for
-/// an unnamed one the nearest of its type within MODEL_REACH across. BF_SENTRY_LOG=1 lists them.
+/// The level's own mines (#228) and other live grenade items (#82), once the character is in (the
+/// level's objects are spawned by then, as play_pickups.rs's `find_pickups` waits for): each item
+/// object of a grenade type the level places with h_1cb7d5f2 (`Placement::placed`: set down and
+/// armed as it loads, the item handler 0x14a0a0: +0x1bc bit 1 and its item set's let-go +0x10) is
+/// down where it's placed, on its `item-alignment`'s team, owned by nobody, its fuse running from
+/// the load (its body settles on the floor: a first contact). A Sentry type gets its check
+/// (`Mine`); a Roller its seek helper with no placer (FUN_00148720: the point back along its own
+/// frame, play_roller.rs: m09_a's one); the rest only the fuse (m09_b's Thermo h_e04e05e1: 15 s,
+/// held by its startup cinematic's cutscene bit until the script's 123 at 9.0 s, so it goes off 24 s
+/// after the level's start, todo/82 leads Round 2 Q1). A spawn-trigger's template isn't in the
+/// world (FUN_000dfe90 takes it out as the trigger links): e16's, e23's, e34's ... Roller templates
+/// stay out (the demo's spawn copies make characters and pickups only). The level's own model of
+/// it is hidden (the grenade is drawn in its place): the one of its name, or for an unnamed one the
+/// nearest of its type within MODEL_REACH across. BF_SENTRY_LOG=1 lists them.
 fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<GrenadeKits>>, player: Res<Player>, mut mines: ResMut<PlacedMines>,
                mut scenery: Query<(&bf_viewer::level_scene::Placed, &Transform, &mut Visibility)>) {
     let Some(kits) = kits else { return };
@@ -174,17 +182,23 @@ fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<Gren
     mines.made = true;
     mines.fresh = true;
     let Some(level) = map.0.as_ref() else { return };
-    let log = std::env::var("BF_SENTRY_LOG").is_ok();
-    for o in level.objects.iter().filter(|o| o.placed) {
-        let Some(kind) = kits.0.iter().position(|k| k.def.name == o.kind && k.def.function_type == PROXIMITY_EXPLOSIVE) else { continue };
+    let log = std::env::var("BF_SENTRY_LOG").is_ok() || std::env::var("BF_GRENADE_LOG").is_ok();
+    let templates = level.spawn_templates();
+    for o in level.objects.iter().filter(|o| o.placed && !templates.contains(&o.name)) {
+        let Some(kind) = kits.0.iter().position(|k| k.def.name == o.kind) else { continue };
         let kit = &kits.0[kind];
         let e = kit.spawn_model(&mut commands, Transform::from_matrix(o.transform), None);
         // (its team: item-alignment, +0x1c0; the ALIGN_ numbers are the demo's team numbers)
         let team = o.alignment.clamp(0, 9) as u8;
-        commands.entity(e).insert((Grenade::placed(kind, kit.def.fuse.max(0.0), player.sim_time), Mine { check: 0.0, team }));
+        commands.entity(e).insert(Grenade::placed(kind, kit.def.fuse.max(0.0), player.sim_time));
+        let at = o.transform.w_axis.truncate();
+        if kit.def.function_type == PROXIMITY_EXPLOSIVE {
+            commands.entity(e).insert(Mine { check: 0.0, team });
+        } else if kit.def.function_type == super::roller::ROLLING_BOMB {
+            commands.entity(e).insert(super::roller::Roller::let_go(kit, at, None, o.transform.z_axis.truncate(), team, None, player.sim_time));
+        }
         mines.list.push((e, o.name));
         // the level's model of it: by its name, else (unnamed) the nearest of its type
-        let at = o.transform.w_axis.truncate();
         let model = scenery.iter_mut().filter(|(p, t, _)| p.tag == o.tag && p.kind == o.kind
                 && if o.name != 0 { p.name == o.name } else { t.translation.xz().distance(at.xz()) < MODEL_REACH })
             .min_by(|a, b| a.1.translation.distance_squared(at).total_cmp(&b.1.translation.distance_squared(at)));
@@ -192,7 +206,8 @@ fn place_mines(mut commands: Commands, map: Res<MapLevel>, kits: Option<Res<Gren
             *v = Visibility::Hidden;
         }
         if log {
-            println!("t {:.2}: the level's mine h_{:08x} ({}) armed at {:.2}, team {team}", player.sim_time, o.name, kit.def.label, o.transform.w_axis.truncate());
+            println!("t {:.2}: the level's {} h_{:08x} ({}) set down armed at {:.2}, team {team}, fuse {} s", player.sim_time,
+                     if kit.def.function_type == PROXIMITY_EXPLOSIVE { "mine" } else { "grenade" }, o.name, kit.def.label, at, kit.def.fuse);
         }
     }
 }
@@ -214,7 +229,7 @@ fn mines_gone(mut mines: ResMut<PlacedMines>, live: Query<(), With<Grenade>>, mu
     });
     for name in gone {
         if std::env::var("BF_SENTRY_LOG").is_ok() {
-            println!("t {:.2}: the level's mine h_{name:08x} went off", player.sim_time);
+            println!("t {:.2}: the level's mine or grenade h_{name:08x} went off", player.sim_time);
         }
         if name != 0 {
             events.0.push(super::triggers::ObjectEvent { from: name, signal: bf_viewer::bf::triggers::sig::DESTROYED, subject: name, data: -1 });
@@ -369,6 +384,7 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>,
         }
         if due.contains(&e) {
             g.fuse = 0.0;
+            g.set_off = true;
             if log {
                 println!("t {now:.2}: the mine {e} is shot: it goes off");
             }
@@ -402,8 +418,11 @@ pub(super) fn trip(mut commands: Commands, time: Res<Time>, player: Res<Player>,
                          if go { "goes off" } else { "stays" });
             }
         }
+        // (it goes off now: 0x147620 calls the grenade's +0x15c itself, not through the fuse, so the
+        // fuse's cutscene gate doesn't hold it)
         if go {
             g.fuse = 0.0;
+            g.set_off = true;
         }
     }
 }

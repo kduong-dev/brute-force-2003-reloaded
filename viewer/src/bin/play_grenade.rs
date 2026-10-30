@@ -26,6 +26,10 @@
 //! stance's place_hi clip (no meter, the count drops at the press); the Roller then hops off after
 //! enemies (play_roller.rs).
 //!
+//! The fuse (the grenade update 0x149420) counts only once the grenade is out of the hand, armed
+//! by its first contact (`Grenade::landed`), and while no cutscene holds the world (its +0xc50 bit
+//! 4, a script's 122 / 123: play_script.rs `in_cutscene`), and goes off when it's out.
+//!
 //! The blast plays the effect type's ALE effects and light (ale_fx.rs) and sound and the impact
 //! sound, leaves the decal, and hurts everyone in its radius (and throws loose pickups) unless
 //! it does no damage or deals it over time. Hurt by it, the player's 3D view goes red for a
@@ -36,7 +40,8 @@
 //! ring (play_sonic.rs). The Light does no damage: its canister stays where it lies while
 //! phosphor_grenade and light_phosphor burn (30 s, see `stays`). The Roller's seeking is
 //! play_roller.rs's: its proximity rule sets its fuse to 0. The Sentry's trigger (a hostile within
-//! 3 m, no friend near; or a shot) is play_sentry.rs's: it sets the fuse of a mine that's due to 0.
+//! 3 m, no friend near; or a shot) is play_sentry.rs's: it sets a mine that's due off at once
+//! (`Grenade::set_off`).
 
 use super::*;
 use super::damage::{footage_squad_step, Difficulty, Hit};
@@ -260,8 +265,7 @@ impl GrenadeKits {
 }
 
 /// A grenade out of the hand, until it goes off. (play_sentry.rs reads a mine's type, whether
-/// it's down and who set it down, and sets its fuse to 0 to set it off; play_roller.rs sets a
-/// Roller's fuse to 0.)
+/// it's down and who set it down, and sets it off; play_roller.rs sets a Roller's fuse to 0.)
 #[derive(Component)]
 pub(super) struct Grenade {
     pub(super) kind: usize,
@@ -270,6 +274,10 @@ pub(super) struct Grenade {
     /// armed by its first contact (+0x1dc bit 1, set by the contact handler 0x149510): the fuse
     /// runs once the grenade has come down
     pub(super) landed: bool,
+    /// goes off this frame whatever its fuse and the cutscene bit: a Sentry's own check (0x147620)
+    /// calls the grenade's blast (+0x15c) itself, not through the fuse (play_sentry.rs), and the
+    /// demo's shot and blast on a mine do the same
+    pub(super) set_off: bool,
     spin: Vec3,
     /// the character who threw it (its blast hurts them by SELF_DAMAGE)
     pub(super) thrower: usize,
@@ -284,11 +292,12 @@ pub(super) struct Grenade {
 
 impl Grenade {
     /// A grenade of type `kind` that's down where the level placed it (an item object with
-    /// h_1cb7d5f2, play_sentry.rs: the tutorial's enemy Sentries), its fuse the type's (the
-    /// Sentry's 9999 s: what sets it off is its check), thrown by no one (OTHER: no squad member's
-    /// own, so no thrower's share of its blast).
+    /// h_1cb7d5f2, play_sentry.rs: the tutorial's enemy Sentries, m09_b's Thermo), armed (its body
+    /// settles on the floor as the level loads: a first contact, todo/82 leads Round 2 Q1), its
+    /// fuse the type's (the Sentry's 9999 s: what sets it off is its check; the Thermo's 15 s),
+    /// thrown by no one (OTHER: no squad member's own, so no thrower's share of its blast).
     pub(super) fn placed(kind: usize, fuse: f32, now: f32) -> Grenade {
-        Grenade { kind, velocity: Vec3::ZERO, fuse, landed: true, spin: Vec3::ZERO, thrower: OTHER, roll_sound: 0.0, launched: now, wet: false }
+        Grenade { kind, velocity: Vec3::ZERO, fuse, landed: true, set_off: false, spin: Vec3::ZERO, thrower: OTHER, roll_sound: 0.0, launched: now, wet: false }
     }
 }
 
@@ -501,7 +510,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
             println!("t {:.2}: {} leaves the hand {:.2} m over the floor at the thrower's feet at {:.1} m/s, {:.1} degrees up (mass {:.1})", player.sim_time,
                      kit.def.label, t.pos.y - feet, v.length(), v.y.atan2(Vec2::new(v.x, v.z).length()).to_degrees(), kit.def.mass);
         }
-        commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, spin, thrower: player.character,
+        commands.entity(e).insert(Grenade { kind: t.kind, velocity: t.velocity, fuse, landed: t.landed, set_off: false, spin, thrower: player.character,
                                             roll_sound: 0.0, launched: player.sim_time, wet: false });
     }
 }
@@ -545,7 +554,7 @@ fn trail(commands: &mut Commands, player: &mut Player, kit: &GrenadeKit, e: Enti
 
 /// Grenade flight: gravity, bounces off the ground, the pillars and the map's objects (a Roller
 /// hops toward its drive and stops at walls, play_roller.rs), the blast when the fuse ends (or at
-/// the first contact, timer 0).
+/// the first contact, timer 0), or when something sets it off (`Grenade::set_off`).
 #[allow(clippy::too_many_arguments)]
 fn fly_grenades(
     mut commands: Commands,
@@ -625,16 +634,24 @@ fn fly_grenades(
     let detonate = std::env::var("BF_TEST_DETONATE").ok().and_then(|v| v.parse::<f32>().ok())
         .is_some_and(|at| p.sim_time >= at && !*detonated);
     *detonated |= detonate;
+    // (the world's cutscene bit, world+0xc50 bit 4: a script's 122 sets it, its 123 clears it)
+    let cutscene = super::script::in_cutscene();
     for (e, mut g, mut tr, roller) in &mut grenades {
         let Some(kit) = kits.0.get(g.kind) else { continue };
         if detonate {
             g.fuse = 0.0;
             g.landed = true;
         }
-        if g.landed {
+        // the fuse (the grenade update 0x149420): it counts, and ends in the blast, only once the
+        // grenade is out of the hand (+0x1bc bit 1, 0x149454: it's a Grenade once let go), armed by
+        // a contact (+0x1dc bit 1, 0x1494b3: `landed`) and with no cutscene (0x1494be returns before
+        // the subtraction while the world's cutscene bit is set: m09_b's Thermo waits out its
+        // startup cinematic, todo/82 leads Round 2 Q1). A Sentry's own check sets it off directly
+        let counts = g.landed && !cutscene;
+        if counts {
             g.fuse -= dt;
         }
-        if g.landed && g.fuse <= 0.0 {
+        if g.set_off || (counts && g.fuse <= 0.0) {
             let at = tr.translation;
             let burn = blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
             // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light), whose
