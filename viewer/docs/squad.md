@@ -498,7 +498,11 @@ Squad movement and deaths follow the game's own data and the captures:
     by the cursor and a panel opened under it couldn't be closed from a pad), nor, for the
     cursor's own buttons, in a cutscene (the cursor's rows are hidden and it reads nothing then:
     Escape frees the mouse as everywhere else in one, `mouse_capture`, which the cursor had been
-    eating; `takes`).
+    eating; `takes`). Under another menu it also **reads none of the frame's buttons** into
+    `MenuInput` (`read_buttons`; #348's review): the first version left them in, and the pad's A
+    that closes a panel (`panels::input` runs right after the menu's input and lets go of the
+    clock) was then the Move To cursor's accept too, in `squad_menu` the same frame, which
+    found the clock free: one press giving two things. Test `a_press_under_a_panel_is_not_the_menus`.
   * **The order line** (#320; FUN_000c1630 after FUN_000c1280, `play_chatter.rs` `order_line`,
     [chatter.md](chatter.md) "Lines of several parts"): for Stand Ground, Fire At Will, Cover Me
     and Move To (the cursor's accept too), whenever any selected member was handled, whether its

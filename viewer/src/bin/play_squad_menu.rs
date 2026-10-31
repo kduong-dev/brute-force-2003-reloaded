@@ -626,7 +626,8 @@ enum Takes {
 /// the item list) holds the game's clock:
 ///  * under another menu, nothing: its buttons are that menu's (the pad's A closes a panel; the
 ///    cursor ate it, and a panel opening under the cursor couldn't be closed from the pad), and
-///    `squad_menu` does nothing under it either;
+///    `squad_menu` does nothing under it either, `read_buttons` having read none of them, so the
+///    A that closes a panel isn't also the cursor's accept once the close lets go of the clock;
 ///  * open, everything (the open menu locks the player's input object, FUN_000c11f0);
 ///  * the cursor up, its own buttons, but not in a cutscene: the cursor's rows are hidden then and
 ///    it reads nothing (`menu_input`'s `accept` and `cancel` need no cutscene), so Escape is the
@@ -649,15 +650,32 @@ fn takes(open: bool, cursor: bool, cutscene: bool, under: bool) -> Takes {
 /// (as the objectives menu does: Escape, Backspace, I or the pad's BACK closing it don't free the
 /// mouse, leave the map or open the objectives); while the cursor is up its own buttons (E,
 /// Escape, the two mouse buttons, the pad's A and B) taken and let go, so they neither use, free
-/// the mouse, fire nor aim (`takes`: not in a cutscene, nor under another menu).
+/// the mouse, fire nor aim (`takes`: not in a cutscene, nor under another menu). Under another
+/// menu that holds the game's clock (a tutorial panel, the objectives menu, the item list) it reads
+/// none of them (`read_buttons`).
 fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut pads: Query<&mut Gamepad>, player: Res<Player>,
               mut menu: ResMut<SquadMenu>, mut input: ResMut<MenuInput>) {
-    let m = &mut *menu;
+    read_buttons(&mut keys, &mut mouse, &mut pads, &player, &mut menu, &mut input, paused_by_other(PAUSE_SQUAD), script::in_cutscene());
+}
+
+/// `menu_input`'s frame, given whether another menu holds the game's clock (`under`) and whether
+/// a cutscene holds the world (`cutscene`), read once by the system so the buttons and what's
+/// taken agree (and so a test needn't touch the clock's global).
+///
+/// Under another menu the frame's buttons are that menu's alone and `input` is left empty. It
+/// can't keep them for `squad_menu`: the panel's A or Y closes it in `panels::input`, which runs
+/// right after this and lets go of the clock, and `squad_menu`, running after that, would find the
+/// clock free and the same A as the cursor's accept and give the Move To order as well (#348's
+/// review: one pad press doing two things).
+#[allow(clippy::too_many_arguments)]
+fn read_buttons(keys: &mut ButtonInput<KeyCode>, mouse: &mut ButtonInput<MouseButton>, pads: &mut Query<&mut Gamepad>, player: &Player, m: &mut SquadMenu,
+              input: &mut MenuInput, under: bool, cutscene: bool) {
     let mut i = MenuInput::default();
     let pad_held = |b: GamepadButton| pads.iter().any(|p| p.pressed(b));
     let pad = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
-    // (not while a cutscene holds the world: the handler's world+0xc50 bit 4, play_script.rs)
-    if !script::in_cutscene() {
+    // (not while a cutscene holds the world: the handler's world+0xc50 bit 4, play_script.rs; and
+    // none under another menu: below)
+    if !cutscene && !under {
         for (c, key, button) in DPAD {
             i.dpad[c] = keys.pressed(key) || pad_held(button);
             i.dpad_down[c] = keys.just_pressed(key) || pad(button);
@@ -669,7 +687,7 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
     }
     // the hooks, on their clock (a direction held its time, from at least the first frame; a
     // button the frame its time comes)
-    let now = hook_time(&player, m);
+    let now = hook_time(player, m);
     let tests = m.tests.get_or_insert_with(|| std::env::var("BF_TEST_COMMAND").map_or(vec![], |v| parse_tests(&v).into_iter().map(|t| (t, false)).collect()));
     for (t, started) in tests.iter_mut() {
         if now < t.at {
@@ -689,8 +707,10 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
             _ => {}
         }
     }
-    *input = i;
-    let takes = takes(m.open, m.cursor, script::in_cutscene(), paused_by_other(PAUSE_SQUAD));
+    // (the hooks' presses fall under another menu as the real ones do: they were never the
+    // squad menu's then, `squad_menu` doing nothing under it)
+    *input = if under { MenuInput::default() } else { i };
+    let takes = takes(m.open, m.cursor, cutscene, under);
     if takes == Takes::Everything {
         let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
         for k in pressed {
@@ -700,7 +720,7 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
         for b in clicked {
             mouse.clear_just_pressed(b);
         }
-        for mut p in &mut pads {
+        for mut p in pads.iter_mut() {
             let d = p.digital_mut();
             let pressed: Vec<GamepadButton> = d.get_just_pressed().copied().collect();
             for b in pressed {
@@ -716,7 +736,7 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
             mouse.clear_just_pressed(b);
             mouse.release(b);
         }
-        for mut p in &mut pads {
+        for mut p in pads.iter_mut() {
             let d = p.digital_mut();
             for b in [GamepadButton::South, GamepadButton::East] {
                 d.clear_just_pressed(b);
@@ -1512,6 +1532,50 @@ mod tests {
         // under a panel or another menu: its buttons are that menu's
         assert_eq!(takes(false, true, false, true), Takes::Nothing);
         assert_eq!(takes(true, false, false, true), Takes::Nothing);
+    }
+
+    /// The review's leak (#348): the Move To cursor up, a tutorial panel holding the game's clock,
+    /// the pad's A pressed. The A is the panel's (`panels::input` closes it right after and lets go
+    /// of the clock), so under it the squad menu reads none of the frame's buttons, from the pad,
+    /// the keys or the mouse, and leaves them be; `squad_menu`, finding the clock free after the
+    /// close, would otherwise take that A as the cursor's accept and give the order too. With
+    /// nothing above, the same presses are the cursor's.
+    #[test]
+    fn a_press_under_a_panel_is_not_the_menus() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default()).insert_resource(ButtonInput::<MouseButton>::default())
+            .insert_resource(Player::new(3)).insert_resource(SquadMenu::default()).insert_resource(MenuInput::default());
+        let pad = app.world_mut().spawn(Gamepad::default()).id();
+        app.world_mut().resource_mut::<SquadMenu>().cursor = true;
+        app.world_mut().get_mut::<Gamepad>(pad).unwrap().digital_mut().press(GamepadButton::South);
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyE);
+            keys.press(KeyCode::KeyI);
+            keys.press(KeyCode::Digit2);
+        }
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+        let read = |under: bool| move |mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut pads: Query<&mut Gamepad>,
+                                       player: Res<Player>, mut menu: ResMut<SquadMenu>, mut input: ResMut<MenuInput>| {
+            read_buttons(&mut keys, &mut mouse, &mut pads, &player, &mut menu, &mut input, under, false);
+        };
+        // under a panel: nothing read, nothing taken
+        app.world_mut().run_system_once(read(true)).unwrap();
+        let i = *app.world().resource::<MenuInput>();
+        assert!(!i.accept && !i.cancel && !i.back && i.order.is_none(), "{i:?}");
+        assert_eq!((i.dpad, i.dpad_down), ([false; 4], [false; 4]));
+        assert!(app.world().get::<Gamepad>(pad).unwrap().just_pressed(GamepadButton::South), "the panel's A stays");
+        assert!(app.world().resource::<ButtonInput<KeyCode>>().just_pressed(KeyCode::KeyE), "and its keys");
+        assert!(app.world().resource::<ButtonInput<MouseButton>>().just_pressed(MouseButton::Left), "and the click");
+        // nothing above: the cursor's A, E and click, and the rest of the frame's reads (the pad's A
+        // is Cover Me's button too, the first of the orders pressed: COVER, before I's Stand Ground)
+        app.world_mut().run_system_once(read(false)).unwrap();
+        let i = *app.world().resource::<MenuInput>();
+        assert!(i.accept, "{i:?}");
+        assert_eq!(i.order, Some(COVER));
+        assert_eq!(i.dpad_down, [false, true, false, false]);
+        assert!(!app.world().get::<Gamepad>(pad).unwrap().pressed(GamepadButton::South), "the cursor's A, let go");
     }
 
     /// The backdrop's node (`backdrop_colour`): the UI's linear blend of it gives the console's

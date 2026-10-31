@@ -327,8 +327,10 @@ set beside the takes' (todo/28-tutorial):
   a panel with each holding its own bit of play.rs `PAUSED`, stopped working with #319's guard
   and was rewritten in #348): the objectives menu opens under no other menu that holds the game's
   clock (`paused_by_other`: the game's menus lock the player's game input, BACK's binding among
-  it; take14: BACK over a panel opens nothing). A panel at 1 s (`BF_TRIGGER_FIRE=h_0a3f40d3,2,1
-  BF_TEST_PANEL=a,3`, `BF_HINT_LOG=1 BF_FLAG_LOG=1`) with the objectives menu hooked at 1.1 s
+  it; take14: BACK over a panel opens nothing). A panel at 1 s (`BF_MAP=tutorial BF_SCRIPT=off
+  BF_TRIGGER_FIRE=h_0a3f40d3,2,1 BF_TEST_PANEL=a,3`, `BF_HINT_LOG=1 BF_FLAG_LOG=1`: the tutorial
+  with its start script off, which would hold the player for the opening's 26 s, cutscenes.md;
+  the tester's working line, #348's review) with the objectives menu hooked at 1.1 s
   (`BF_TEST_OBJECTIVES=1.1,1`): the panel shows at 1.00 and the clock stops at 1.07, short of
   the hook's 1.1, so the menu doesn't open; the panel closes by its own hook (3 s up, still at
   clock 1.07), and the objectives menu opens at 1.13 and closes by its hook at once (the clock
