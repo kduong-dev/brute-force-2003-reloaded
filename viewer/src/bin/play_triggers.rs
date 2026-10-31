@@ -227,9 +227,11 @@ const GROUND_PROBE: f32 = 50.0;
 /// tutorial's Tex, spawned at y 28.53, stands at 25.25 (take03: no fall, 69 ms from the spawn),
 /// and e40's Brutus 10.9 m below his trigger (xemu.md's live read). The demo's floor (the
 /// arena's floors no steeper than 65 degrees, as its movement stands on) stands for the ray's
-/// hit.
-pub fn on_ground(at: Vec3) -> Vec3 {
-    let y = world::arena().and_then(|a| a.floor_below(at.x, at.z, at.y, world::Body::Character)).map(|f| f.0).filter(|&y| at.y - y <= GROUND_PROBE);
+/// hit. `who` is the character placed (`Mover::of(controlled)`: a hinter's top isn't a floor to a
+/// character a player controls, #341); the squad's spawn table, made at the load before it's
+/// known who is controlled, asks as the AI.
+pub fn on_ground(at: Vec3, who: world::Mover) -> Vec3 {
+    let y = world::arena().and_then(|a| a.floor_below(at.x, at.z, at.y, who.body())).map(|f| f.0).filter(|&y| at.y - y <= GROUND_PROBE);
     Vec3::new(at.x, y.unwrap_or(at.y), at.z)
 }
 
@@ -262,7 +264,7 @@ pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
         if out.iter().any(|s| s.slot == slot) {
             continue;
         }
-        out.push(SquadSpawn { slot, template: *template, trigger: t.name, copy: *copy_name, feet: on_ground(m.w_axis.truncate()), yaw: yaw_of(&m),
+        out.push(SquadSpawn { slot, template: *template, trigger: t.name, copy: *copy_name, feet: on_ground(m.w_axis.truncate(), world::Mover::Ai), yaw: yaw_of(&m),
                               weapons: weapons(o), items: items(o), ai: ai(o) });
     }
     for o in level.objects.iter().filter(|o| o.tag == h("character-object") && o.name != 0 && !templates.contains(&o.name)) {
@@ -270,7 +272,7 @@ pub fn squad_spawns(game: &Game, level: &Level) -> SquadSpawns {
         if out.iter().any(|s| s.slot == slot) {
             continue;
         }
-        out.push(SquadSpawn { slot, template: o.name, trigger: 0, copy: o.name, feet: on_ground(o.transform.w_axis.truncate()),
+        out.push(SquadSpawn { slot, template: o.name, trigger: 0, copy: o.name, feet: on_ground(o.transform.w_axis.truncate(), world::Mover::Ai),
                               yaw: yaw_of(&o.transform), weapons: weapons(o), items: items(o), ai: ai(o) });
     }
     SquadSpawns(out)
@@ -1108,7 +1110,7 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
             }
             return;
         }
-        let feet = on_ground(point);
+        let feet = on_ground(point, world::Mover::of(controlled));
         u.position = feet - Vec3::Y * GROUND;
         u.prev_xz = feet.xz();
         u.fall_from = feet.y;
@@ -1143,7 +1145,7 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
             return;
         };
         let placement = placement_of(game, o).cloned();
-        let feet = on_ground(point);
+        let feet = on_ground(point, world::Mover::Ai);
         let mut m = Player::new(squad_of(kind));
         m.kind = kind;
         m.position = feet - Vec3::Y * GROUND;
@@ -2376,7 +2378,7 @@ fn warp(tr: &mut Triggers, i: usize, objects: &[u32], level: &Level, spawns: &Sq
         if u.dead {
             continue;
         }
-        let feet = on_ground(at);
+        let feet = on_ground(at, world::Mover::of(controlled));
         u.position = feet - Vec3::Y * GROUND;
         u.prev_xz = feet.xz();
         u.fall_from = feet.y;

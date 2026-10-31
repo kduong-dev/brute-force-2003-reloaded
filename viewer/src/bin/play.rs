@@ -4997,9 +4997,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if !u.last_world.is_empty() {
                 let start = ragdoll::Start::Knock { push: push + u.last_velocity };
                 // (one knocked down stands up where its pelvis lies: its body meets the level's
-                // blockers as a living character's does, world::Body::Character, #298)
+                // blockers as a living character's does, a player's character's not the hinters:
+                // `Mover::body`, #298, #341; kept up as control passes, below)
                 let ragdoll = ragdoll::Ragdoll::new(&l.model, &u.last_world, frame, &ragdoll::parts(&game.0, u), start, floor)
-                    .as_body(world::Body::Character);
+                    .as_body(world::Mover::of(u.controlled).body());
                 u.knock = Some(Knock { ragdoll, time: 0.0, lying: None });
                 u.thud = false;
                 u.action = Action::None;
@@ -5049,6 +5050,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         } else if let Some(mut k) = u.knock.take() {
             k.time += dt;
             if k.time < KNOCK_DOWN_TIME {
+                // (control may have passed to or from it since it fell: #341)
+                k.ragdoll.set_body(world::Mover::of(u.controlled).body());
                 k.ragdoll.step(dt);
                 apply_pose(&l, &k.ragdoll.local_pose(), &mut transforms);
                 body_thud(&k.ragdoll, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
@@ -5849,7 +5852,7 @@ fn out_of_rocks(a: &world::Arena, units: &mut [&mut Player]) {
             continue;
         }
         let feet = u.position.y + GROUND + u.height;
-        let Some(out) = a.out_of_rock(u.prev_xz, BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP) else { continue };
+        let Some(out) = a.out_of_rock(u.prev_xz, BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, world::Mover::of(u.controlled)) else { continue };
         if std::env::var("BF_INSIDE_LOG").is_ok() {
             println!("t {:.2}: {} taken out of a rock from {:.2} to {:.2} (feet {feet:.2}, the floor there {:.2?})", u.sim_time, unit_name(u),
                      u.prev_xz, out.at, out.floor);

@@ -1724,9 +1724,9 @@ impl Arena {
     /// `head` is in a rock's solid (`inside_span`: put there by a spawn, a test teleport, or a
     /// fall's drop, which isn't swept, past a rock's side it slid off under the rock's widest part)
     /// taken out of it (`escape`), if it is (#285).
-    pub fn out_of_rock(&self, at: Vec2, radius: f32, feet: f32, head: f32, step: f32) -> Option<Moved> {
+    pub fn out_of_rock(&self, at: Vec2, radius: f32, feet: f32, head: f32, step: f32, who: Mover) -> Option<Moved> {
         let lo = feet + step;
-        self.inside_span(at, lo, head).map(|body| self.escape(at, body, radius, feet, lo, head))
+        self.inside_span(at, lo, head).map(|body| self.escape(at, body, radius, feet, lo, head, who))
     }
 
     /// The walls near a move from `from` to `to` (`move_body`) cut to the heights lo..hi
@@ -1833,7 +1833,7 @@ impl Arena {
     /// head) is further from its feet than its head is, comes after one without. Its feet go on
     /// that floor (`Moved::floor`). The demo's: the game never has a body inside (its sweep
     /// doesn't let one in, FUN_00153810).
-    pub fn escape(&self, at: Vec2, body: u32, radius: f32, feet: f32, lo: f32, hi: f32) -> Moved {
+    pub fn escape(&self, at: Vec2, body: u32, radius: f32, feet: f32, lo: f32, hi: f32, who: Mover) -> Moved {
         let heights: Vec<f32> = [lo, (lo + hi) * 0.5, hi].into_iter().filter(|&y| self.inside(Vec3::new(at.x, y, at.y)) == Some(body)).collect();
         let (first, end) = self.spans[body as usize];
         let faces: Vec<&Tri> = self.tris[first as usize..end as usize].iter().filter(|t| !t.duplicate && self.solid(t)).collect();
@@ -1850,7 +1850,7 @@ impl Arena {
                 continue;
             }
             let p = at + d * (out + radius + ESCAPE_CLEAR);
-            let floor = self.floor_below(p.x, p.y, hi, Body::Character).map(|f| f.0);
+            let floor = self.floor_below(p.x, p.y, hi, who.body()).map(|f| f.0);
             let stuck = self.inside_span(p, lo, hi).is_some() || floor.is_none_or(|g| (g - feet).abs() > hi - feet);
             if best.is_none_or(|(r, _, _)| (stuck, out) < r) {
                 best = Some(((stuck, out), p, floor));
@@ -2424,11 +2424,11 @@ mod tests {
         assert_eq!(a.inside(Vec3::new(0.2, 0.7, 0.1)), Some(0));
         assert_eq!(a.inside(Vec3::new(1.3, 0.7, 0.1)), None);
         assert_eq!(a.inside(Vec3::new(0.2, 2.5, 0.1)), None);
-        let m = a.out_of_rock(Vec2::new(0.2, 0.1), 0.4, 0.0, 1.9, 0.5).expect("in the rock");
+        let m = a.out_of_rock(Vec2::new(0.2, 0.1), 0.4, 0.0, 1.9, 0.5, Mover::Ai).expect("in the rock");
         assert_eq!(m.floor, Some(0.0));
         assert!((m.at.x - 1.42).abs() < 0.01 && (m.at.y - 0.1).abs() < 0.01, "{:?}", m.at);
         assert!(a.inside_span(m.at, 0.5, 1.9).is_none());
-        assert_eq!(a.out_of_rock(Vec2::new(-3.0, 0.1), 0.4, 0.0, 1.9, 0.5), None);
+        assert_eq!(a.out_of_rock(Vec2::new(-3.0, 0.1), 0.4, 0.0, 1.9, 0.5, Mover::Ai), None);
     }
 
     /// #285's test: the faces of a twinned rock that face into it (`Tri::inner`) are neither

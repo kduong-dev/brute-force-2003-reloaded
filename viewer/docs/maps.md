@@ -500,15 +500,24 @@ them):
       none floor), 5438 on m09_a (2549 floor) and 5954 on m09_x (2677 floor). m02_b's body 89,
       at (125.5, 117.5) (floor 25.0, the band's face 30.19 over it):
       `BF_MAP=m02_b BF_TEST_GOTO=125.5,117.5,125.5,117.5 BF_TEST_FALL=10`: the player falls
-      through the band and lands on the floor at 25.0 (JumpLand at 1.2 s); with the filter left
+      through the band and lands on the floor at 25.0 (the first JumpLand at t=1.067, frame 16); with the filter left
       out of `flank_below` it came down "on a face" at 30.15 and slid to (125.42, 117.99).
       m09_a (`BF_TEST_GOTO=-206,-215.7,-199,-215.7`): the feet stay at 57.64-57.67 across
       x -204.7 to -202.8 where the AI's floor (hinter body 39's) rises to 58.8-59.5 (the old
-      step-up). On m09_x the player has no ground at all where the hinter's floor is (the
+      step-up); the run now ends held at (-201.25, -215.28) by body 182 (object 171, ice
+      crystals), where main got past on the hinter floor. On m09_x the player has no ground at all where the hinter's floor is (the
       terrain's hole under it: "no floor, face or flank", held as any hole, #296). The AI's
       is unchanged: the tutorial's lava yard (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`
       with `BF_BRAIN_LOG`) has 29 home at 1.53 s and 30 at 2.53 s as before, and sdm_e13's band
-      run (`BF_TEST_GOTO=90,-91,130,-91`) the player at (124.50, -95.15) at 11 s.
+      run (`BF_TEST_GOTO=90,-91,130,-91`) the player at (124.50, -95.15) at 11 s. The player's
+      other queries leave the hinters out as well (the review's round): a knocked-down
+      character's ragdoll body is `Mover::of(controlled).body()`, set again every frame it
+      lies (`Ragdoll::set_body`, so a squad switch gives the member switched to or from the right
+      one), the rock escape (`Arena::out_of_rock`, `escape`) and the warps' and spawn copies'
+      `on_ground` take the mover; the squad's spawn table, made before it's known who is
+      controlled, asks as the AI. Checked: `BF_MAP=m02_b BF_TEST_GOTO=125.5,117.5,125.5,117.5
+      BF_TEST_FALL=10 BF_TEST_KNOCK=0.3 BF_TEST_HEALTH=5000`, Tex knocked down falling through
+      body 89's band, gets up on the floor at 25.0 (JumpLand at 2.53 s), not on the band's 30.
     * sdm_e34's chasm, as main: from (56, 32) Tex is held at the rim, ending at (55.95, 15.42)
       (`BF_HELD_LOG`: "no floor, face or flank under it" from 4.53 s), and down the face west of it
       (`30,5,60,5`) at its foot, ending at (42.65, 7.16) as main's.
