@@ -131,7 +131,9 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   there, FUN_00084f50); a deathmatch or squad deathmatch map goes back to its SELECT MISSION on
   that map ([menu.md](menu.md)). A map started with `BF_MAP` and no front end goes by its kind,
   the same: `BF_MAP=e34` (a campaign zone) leaves for the main menu on CAMPAIGN, `BF_MAP=sdm_e34`
-  for SQUAD DEATHMATCH's SELECT MISSION on it. Checked with `BF_TEST_BACK=70 BF_MENU_SHOT=<png>
+  for SQUAD DEATHMATCH's SELECT MISSION on it. So does a campaign zone a test session switched
+  to (the test world's level switch): after the double Backspace it leaves for the main menu on
+  CAMPAIGN, not that zone's SELECT MISSION. Checked with `BF_TEST_BACK=70 BF_MENU_SHOT=<png>
   BF_MENU_SHOT_FRAME=400` (the shot is of the menu it arrives at) on both.
 
 ## Health, HUD, locomotion, weapons and sounds
