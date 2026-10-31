@@ -157,10 +157,16 @@ const CLOSE_GLYPHS: [char; 1] = ['H'];
 /// (1 - k) x 175 + 80 with k = (fade / 0.3)^2 (FUN_000c09a0): 80 / 255 when open. take01 measured
 /// the sky and the health bar 0.29-0.31 times as bright under it.
 const BACKDROP_GREY: (f32, f32) = (175.0, 80.0);
-/// The console multiplies the stored sRGB values; Bevy's UI blends in linear light, where the
-/// same darkening is a multiply by the grey to this power: drawn as black at 1 - that (a gamma of
-/// 2.2, as play_hud.rs's fits).
-const SRGB_GAMMA: f32 = 2.2;
+/// The console multiplies the stored sRGB values; Bevy's UI blends in linear light, where a node
+/// of colour C and alpha a gives enc(lin(c) (1 - a) + lin(C) a): a multiply by the grey g in
+/// stored values isn't one of those: black at 1 - g^2.2, which this was, gave a stored 20 1.8
+/// where the multiply gives 6.3, a 40 5.5 for 12.5, an 80 18.5 for 25.1, a 128 35 for 40, so
+/// the picture came out 20% too dark over its tones (#348: take01's under-menu values are 0.29-0.30
+/// of the picture's whatever its level; the demo's measured 0.17 at a stored 40, 0.23 at 73,
+/// 0.25 at 108). So the node is a dark grey at a high alpha, made exact at these two stored
+/// values of the picture, a dark and a middle one (the takes' ground and tones), which keeps
+/// it within 3.5 levels of the multiply from 10 to 180 (`backdrop_colour`).
+const BACKDROP_ANCHORS: (f32, f32) = (0.12, 0.5);
 /// The menu over the HUD (its root has no z-index) and the hint lines (1), under the radar,
 /// which shows over it (play_hud.rs RADAR_Z, take01: the radar undimmed by the backdrop), and the
 /// menus (20).
@@ -591,10 +597,12 @@ pub fn plugin(app: &mut App) {
             m.paused_game = false;
             set_paused(PAUSE_SQUAD, false);
         })
-        // (the menu takes the frame's presses before the objectives menu, the test tools and the
-        // keys' other readers see them)
+        // (the menu takes the frame's presses before the objectives menu, the tutorial panels'
+        // buttons, the test tools and the keys' other readers see them: the pad's A and Y are
+        // its orders and a panel's buttons both, so the panels' input is ordered after it, not
+        // left to the schedule's luck, #348)
         .add_systems(PreUpdate, menu_input.after(bevy::input::InputSystem).before(super::objectives::ObjectivesControls)
-            .run_if(in_state(AppState::Playing)))
+            .before(super::triggers::panels::input).run_if(in_state(AppState::Playing)))
         .add_systems(Update, (
             squad_menu.after(read_input).before(squad_control),
             find_point.after(super::reticle::update_reticle).before(update_hud),
@@ -602,12 +610,46 @@ pub fn plugin(app: &mut App) {
         ).run_if(in_state(AppState::Playing)));
 }
 
+/// Which of the frame's presses the menu takes from the rest of the game (`takes`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Takes {
+    /// none: the menu isn't up, or something above it has the frame
+    Nothing,
+    /// every key, mouse and pad press: the open menu's
+    Everything,
+    /// the cursor's own buttons, let go: E, Escape, the two mouse buttons, the pad's A and B
+    Cursor,
+}
+
+/// What the menu takes this frame, by whether it's `open`, the Move To `cursor` is up, a
+/// `cutscene` holds the world and another menu (`under`: a tutorial panel, the objectives menu,
+/// the item list) holds the game's clock:
+///  * under another menu, nothing: its buttons are that menu's (the pad's A closes a panel; the
+///    cursor ate it, and a panel opening under the cursor couldn't be closed from the pad), and
+///    `squad_menu` does nothing under it either;
+///  * open, everything (the open menu locks the player's input object, FUN_000c11f0);
+///  * the cursor up, its own buttons, but not in a cutscene: the cursor's rows are hidden then and
+///    it reads nothing (`menu_input`'s `accept` and `cancel` need no cutscene), so Escape is the
+///    mouse's release as everywhere else in one (play.rs `mouse_capture`), which the cursor ate
+///    (#348).
+fn takes(open: bool, cursor: bool, cutscene: bool, under: bool) -> Takes {
+    if under {
+        Takes::Nothing
+    } else if open {
+        Takes::Everything
+    } else if cursor && !cutscene {
+        Takes::Cursor
+    } else {
+        Takes::Nothing
+    }
+}
+
 /// The frame's menu buttons (`MenuInput`) from the keys, a pad and the hooks; and, while the menu
 /// is open, the frame's presses taken from everything else, the keys', the mouse's and the pads'
 /// (as the objectives menu does: Escape, Backspace, I or the pad's BACK closing it don't free the
 /// mouse, leave the map or open the objectives); while the cursor is up its own buttons (E,
 /// Escape, the two mouse buttons, the pad's A and B) taken and let go, so they neither use, free
-/// the mouse, fire nor aim.
+/// the mouse, fire nor aim (`takes`: not in a cutscene, nor under another menu).
 fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut pads: Query<&mut Gamepad>, player: Res<Player>,
               mut menu: ResMut<SquadMenu>, mut input: ResMut<MenuInput>) {
     let m = &mut *menu;
@@ -648,7 +690,8 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
         }
     }
     *input = i;
-    if m.open {
+    let takes = takes(m.open, m.cursor, script::in_cutscene(), paused_by_other(PAUSE_SQUAD));
+    if takes == Takes::Everything {
         let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
         for k in pressed {
             keys.clear_just_pressed(k);
@@ -664,7 +707,7 @@ fn menu_input(mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonIn
                 d.clear_just_pressed(b);
             }
         }
-    } else if m.cursor {
+    } else if takes == Takes::Cursor {
         for k in [KeyCode::KeyE, KeyCode::Escape] {
             keys.clear_just_pressed(k);
             keys.release(k);
@@ -1121,6 +1164,38 @@ fn spawn_marker(mut commands: Commands, mut game: ResMut<GameData>, map: Res<Map
     bf_viewer::level_scene::spawn_object_parts(&mut commands, &parts, root, |p| p.material.clone());
 }
 
+/// sRGB's decode (a stored value to linear light) and its inverse.
+fn srgb_to_linear(v: f32) -> f32 {
+    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+}
+
+fn linear_to_srgb(v: f32) -> f32 {
+    let v = v.clamp(0.0, 1.0);
+    if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
+}
+
+/// The backdrop's node for the console's multiply of the picture's stored values by `grey` (0-1):
+/// the UI blends a node of colour C and alpha a as lin(c) (1 - a) + lin(C) a, so with m = 1 - a
+/// and b = lin(C) a that is the line m lin(c) + b, and the multiply is exact at the two stored
+/// values BACKDROP_ANCHORS if m lin(x) + b = lin(grey x) at both: two equations for m and b.
+/// A fit of the demo's, not the game's: at 80 / 255 it is alpha 0.909 over a grey of 6 / 255,
+/// which gives a stored 10, 20, 40, 80, 128, 180 the values 6.5, 7.7, 11.9, 23.8, 40.2, 58.7
+/// where the multiply gives 3.1, 6.3, 12.5, 25.1, 40.2, 56.5 (black at 1 - grey^2.2 gave 0.8,
+/// 1.8, 5.5, 18.5, 35.1, 53.0). Fully transparent at grey 1 (the fade's start).
+fn backdrop_colour(grey: f32) -> Color {
+    let (c1, c2) = BACKDROP_ANCHORS;
+    let (l1, l2) = (srgb_to_linear(c1), srgb_to_linear(c2));
+    let (t1, t2) = (srgb_to_linear(grey * c1), srgb_to_linear(grey * c2));
+    let m = ((t2 - t1) / (l2 - l1)).clamp(0.0, 1.0);
+    let a = 1.0 - m;
+    if a < 1e-4 {
+        return Color::NONE;
+    }
+    let b = (t1 - m * l1).max(0.0);
+    let c = linear_to_srgb((b / a).min(1.0));
+    Color::srgba(c, c, c, a)
+}
+
 /// The menu and the cursor drawn: the menu, the backdrop and the cursor's rows shown while each is
 /// up; the backdrop's darkening and the texts' and icons' alphas by the fade (FUN_000c09a0,
 /// 0xc19d0, 0xbdce0); the marker at the cursor's point, turned. While a cutscene runs the cursor's
@@ -1165,7 +1240,7 @@ fn draw(menu: Res<SquadMenu>, nodes: Option<Res<MenuNodes>>, marker: Option<Res<
     let k = (m.fade / FADE).powi(2);
     let grey = ((1.0 - k) * BACKDROP_GREY.0 + BACKDROP_GREY.1) / 255.0;
     if let Ok(mut c) = colours.get_mut(n.backdrop) {
-        let want = Color::BLACK.with_alpha(1.0 - grey.powf(SRGB_GAMMA));
+        let want = backdrop_colour(grey);
         if c.0 != want {
             c.0 = want;
         }
@@ -1421,6 +1496,46 @@ mod tests {
         let i = *app.world().resource::<MenuInput>();
         assert!(i.accept && !i.cancel);
         assert!(!app.world().get::<Gamepad>(pad).unwrap().pressed(GamepadButton::South), "the cursor's A, let go");
+    }
+
+    /// What the menu takes of the frame's presses (`takes`): everything when it's open, its own
+    /// buttons with the cursor up, nothing under a cutscene (the cursor's rows are hidden and it
+    /// reads nothing: Escape frees the mouse then, #348) and nothing under another menu that
+    /// holds the game's clock (a tutorial panel's buttons are the panel's).
+    #[test]
+    fn what_the_menu_takes() {
+        assert_eq!(takes(true, false, false, false), Takes::Everything);
+        assert_eq!(takes(false, true, false, false), Takes::Cursor);
+        assert_eq!(takes(false, false, false, false), Takes::Nothing);
+        // a cutscene starting under the cursor: Escape, E and the mouse buttons pass
+        assert_eq!(takes(false, true, true, false), Takes::Nothing);
+        // under a panel or another menu: its buttons are that menu's
+        assert_eq!(takes(false, true, false, true), Takes::Nothing);
+        assert_eq!(takes(true, false, false, true), Takes::Nothing);
+    }
+
+    /// The backdrop's node (`backdrop_colour`): the UI's linear blend of it gives the console's
+    /// multiply of the stored values exactly at the two anchors and within 3.5 levels of 255 from
+    /// a stored 10 to 180, for the open menu's grey and the fade's greys on the way; none at the
+    /// fade's start.
+    #[test]
+    fn the_backdrop_multiplies_in_stored_values() {
+        for grey in [80.0 / 255.0, 0.45, 0.7, 0.9] {
+            let node = backdrop_colour(grey).to_srgba();
+            assert!(node.alpha > 0.0 && node.alpha < 1.0, "grey {grey}: alpha {}", node.alpha);
+            let through = |c: f32| linear_to_srgb(srgb_to_linear(c) * (1.0 - node.alpha) + srgb_to_linear(node.red) * node.alpha);
+            for c in [BACKDROP_ANCHORS.0, BACKDROP_ANCHORS.1] {
+                assert!((through(c) - grey * c).abs() < 0.5 / 255.0, "grey {grey}, stored {c}: {} against {}", through(c), grey * c);
+            }
+            for level in (10..=180).step_by(10) {
+                let c = level as f32 / 255.0;
+                assert!((through(c) - grey * c).abs() * 255.0 < 3.5, "grey {grey}, stored {level}: {} against {}", through(c) * 255.0, grey * level as f32);
+            }
+        }
+        assert_eq!(backdrop_colour(1.0).alpha(), 0.0, "whole picture at the fade's start");
+        // open it is the 0.909 over a dark grey the doc comment gives
+        let open = backdrop_colour(80.0 / 255.0).to_srgba();
+        assert!((open.alpha - 0.909).abs() < 0.002 && (open.red * 255.0 - 6.1).abs() < 0.5, "{open:?}");
     }
 
     /// The rows' widths: "Give Order"'s six glyphs are A, B, X and Y (18 each with their offset)

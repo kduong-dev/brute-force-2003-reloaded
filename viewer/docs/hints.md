@@ -323,10 +323,18 @@ set beside the takes' (todo/28-tutorial):
 * **The use prompt** (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100 BF_TEST_USE=1.5`):
   "Hold" from x 52.0 to 86.7, the X glyph 96.0-123.3, "to activate panel." 123.3-250.7, as take11
   at 716 s (52.7-86.7, 96.0-123.3, 123.3-250.7); the gate opens on the use as before.
-* **The clock under two menus** (the hooks only can cross them): a panel at 1 s
-  (`BF_TRIGGER_FIRE=h_0a3f40d3,2,1 BF_TEST_PANEL=a,3`) with the objectives menu opened over it
-  (`BF_TEST_OBJECTIVES=1.1,1`): the menu closing leaves the clock stopped under the panel (each
-  holds its own bit of play.rs `PAUSED`), which closes at the same 1.20 s.
+* **Menus don't stack** (the old "clock under two menus" recipe, the objectives menu hooked over
+  a panel with each holding its own bit of play.rs `PAUSED`, stopped working with #319's guard
+  and was rewritten in #348): the objectives menu opens under no other menu that holds the game's
+  clock (`paused_by_other`: the game's menus lock the player's game input, BACK's binding among
+  it; take14: BACK over a panel opens nothing). A panel at 1 s (`BF_TRIGGER_FIRE=h_0a3f40d3,2,1
+  BF_TEST_PANEL=a,3`, `BF_HINT_LOG=1 BF_FLAG_LOG=1`) with the objectives menu hooked at 1.1 s
+  (`BF_TEST_OBJECTIVES=1.1,1`): the panel shows at 1.00 and the clock stops at 1.07, short of
+  the hook's 1.1, so the menu doesn't open; the panel closes by its own hook (3 s up, still at
+  clock 1.07), and the objectives menu opens at 1.13 and closes by its hook at once (the clock
+  hasn't moved: its 1 s is real time). Before the guard it opened at 1.1 over the panel and
+  closed leaving the clock stopped under it. No run crosses two menus' bits any more (a panel
+  waits for the objectives menu too: `panels::show`); each still holds only its own.
 * **No regressions**: the objectives menu (`BF_TEST_OBJECTIVES=1,2` at take04's spot, against
   take04 63.0 s), the gate chain (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100
   BF_TEST_USE=0.5`: the panel's use, its sound, the gate opening, the prompt where it was),

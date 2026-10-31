@@ -1115,6 +1115,7 @@ struct NameLabelText;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
+        .init_resource::<HudHidden>()
         .init_resource::<NameLabel>()
         .init_resource::<StaminaBar>()
         .init_resource::<BarFlash>()
@@ -1148,6 +1149,27 @@ pub struct HudSetup;
 /// editor hides it in edit mode, where there's no character to show (play_editor.rs, #191).
 #[derive(Component)]
 pub(super) struct HudRoot;
+
+/// Whether anything has the HUD hidden, kept by the two systems that hide it: the cutscene's
+/// letterbox (play_script.rs `view`: the bars in) and the map editor's edit mode and its flight
+/// back to play (play_editor.rs `edit_view`). What draws only with the HUD that the game draws
+/// it over (the scope's frame and Flint's overlay, play_scope_view.rs) reads this, not each
+/// `HudRoot`'s visibility: that went with whichever root happened to be hidden, as the Squad
+/// Command menu's was for a while (#319's first commit left Flint's overlay at 0, #348).
+#[derive(Resource, Default)]
+pub(crate) struct HudHidden {
+    /// the letterbox's bars hide it (`Cutscenes::hud_hidden`)
+    pub letterbox: bool,
+    /// the editor's edit mode, or its camera's flight to play, hides it
+    pub editor: bool,
+}
+
+impl HudHidden {
+    /// Whether the HUD is hidden by anything.
+    pub fn any(&self) -> bool {
+        self.letterbox || self.editor
+    }
+}
 
 /// The radar panel: the radar, its portraits and what's drawn on them (the game's one widget,
 /// 0xc2d40), a node the size of the screen that slides with the Squad Command menu (RADAR_SLIDE).

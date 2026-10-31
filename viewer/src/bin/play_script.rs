@@ -1044,7 +1044,7 @@ pub fn held_step(m: &mut Player, dt: f32) {
 /// as the bars go, not every frame: other systems hide it too (the editor's view).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: Res<Squad>,
-        mode: Option<Res<State<super::editor::EditorMode>>>,
+        mode: Option<Res<State<super::editor::EditorMode>>>, mut hidden: ResMut<super::hud::HudHidden>,
         mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
         mut bars: Query<&mut Node, With<LetterboxBar>>,
         mut hud: Query<&mut Visibility, (With<super::hud::HudRoot>, Without<LetterboxBar>)>,
@@ -1076,6 +1076,10 @@ fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: 
         if let Some(want) = want.filter(|w| *v != *w) {
             *v = want;
         }
+    }
+    // (whether the bars have it hidden, for what draws only with the HUD: play_scope_view.rs)
+    if hidden.letterbox != cs.hud_hidden {
+        hidden.letterbox = cs.hud_hidden;
     }
     if let Some((m, fov_across)) = cs.shown.filter(|_| !editing).and_then(|c| cs.cameras.get(&c)).copied() {
         if let Ok((mut tr, mut projection)) = cam.single_mut() {
