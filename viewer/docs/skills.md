@@ -39,10 +39,11 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
   (her factor to 0, as a shot, through her skill's +0xb0 with a gun of no damage: nothing fired,
   nothing paid). An AI Hawk holds fire while stealthed, so this is how the flash is seen from a
   squadmate's view (#198's take07; the shot list's H5).
-* `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]`: asks a squadmate's skill to toggle at those
-  times (by name or 0-3), as the Squad Command menu's "Toggle Ability" will (#33). With
+* `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]`: gives a squadmate the Squad Command menu's
+  Toggle Ability at those times (by name or 0-3) without the menu: its goal, which sends the
+  toggle until the skill has switched ([The toggle](#the-toggle), #333). With
   `BF_TEST_HOSTILE=<character>` (grenades.md) it puts a stealthed Hawk on the other side, for the
-  crosshair's rule.
+  crosshair's rule. The menu itself: `BF_TEST_COMMAND="2:brutus:0.4;3:toggle"` (squad.md).
 * `BF_SIGHT_LOG=1` (play.rs): each AI character finding or losing its target, with the distance,
   the target's visibility and the reach (play_brain.rs `Sensor::reach`), and for the squad and
   the test map's NPCs each contact found and forgotten: when an enemy loses a fading Hawk.
@@ -125,8 +126,11 @@ a press in that frame goes to the new character), unless its controls are off (#
 is the player controller's command (0x134cff), which a script's hold switches off
 (FUN_00129530), and in a cutscene no control reaches the character (`read_input`, play_script.rs
 `blocks_input`), so V or `BF_TEST_SKILL` then is lost, not kept for later. Before #256 V toggled
-the skill under the letterbox; a squad order will too (#33's "Toggle
-Ability"). The command handler (0x1224a5) calls the skill's own toggle, which switches the skill
+the skill under the letterbox. An AI member's skill is switched by the Squad Command menu's
+Toggle Ability (#333): its goal, GOAL_TOGGLE_COMBAT_SKILL (squad.md, "Toggle Ability"), sends the
+same command every frame until the skill has switched (`Skill::ordered`; its refusals unlogged,
+as the command at 0's), Tex and Flint standing up first (their skill's +0x11c, `stands_to_toggle`).
+The command handler (0x1224a5) calls the skill's own toggle, which switches the skill
 itself or not, and whose return picks the motion (0x1224e4): 0 none, 1 the type's overlay, 2
 MT_TOGGLE_SPECIAL. In the demo (`Toggle`):
 
@@ -184,8 +188,9 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
     whether a reload, throw or switch waits for one isn't traced.
   * The aim doesn't turn the gun over a toggle's overlay: every motion set's `<overlay>` entry
     says aim="false".
-* The squad AI never switches a skill on by itself (take32: 60 s of fighting); only the order will
-  (#33).
+* The squad AI never switches a skill on by itself (take32: 60 s of fighting; no personality uses
+  goal 127, #35 leads §5); only the menu's Toggle Ability does (#333). A skill so switched on stays
+  on under the AI until its stamina runs out, its own end, death or the next Toggle Ability.
 
 ## Sounds and chatter
 
@@ -413,6 +418,21 @@ is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
   controllers off, with the fade again when the view was Vengar's. The kind-0x100 controllers
   aren't in the demo: in his own view the heat figure covers him (the renderer masks that kind
   out while drawing the heat figures, FUN_000e81e0), and nobody else sees him yet.
+* **Ordered, under the AI** (the Squad Command menu's Toggle Ability, #333): everything after the
+  vision mode in his on, the view's mode, the kind-0x100 controllers and the fade, needs a
+  player's view on him (char+0x5e4, the camera FUN_0006ff00 attaches to the character it
+  follows, so the controlled one); without it 0x13c038 jumps past all three, and his off
+  (FUN_00126df0) the same. So an AI Brutus in Vengar looks and sounds as before (his skill sounds
+  are the controlled character's alone too, FUN_0010e7a0) and has its rules: the regeneration,
+  the x0.85, the drain, the charge when he dashes into an enemy. The demo does the same (the
+  view and the fade are the controlled character's: play_vengar.rs). No take shows an AI Brutus
+  in Vengar: a shot of one ordered, seen from Tex, would confirm it. (His kind-0x100 controller,
+  vtable 0x394df4, set up by 0x213630 with no fade, draws him again with the material
+  h_1ce41323: a wrapper, glare key 180, of the shell material h_19a2b8bc, class h_0112da6f as the
+  power-ups' shells, play_powerups.rs: texture h_fa3c2612, colour 0.55 0.53 1, translate-v -0.6,
+  pushed out 0.02 m; materials-common.xml. It shows only where a view switched it on: after a hand-over
+  from a Brutus in Vengar, to whoever looks at him until he's switched off with a view again.
+  Not in the demo.)
 * **Regeneration** (his update 0x13c0b0): h_eaa78fdf, 1 hit point a second while on, up to the
   max; none after the off. take07: 50.0 -> 65.04 over the 15 s on, +1.01/s. **Not in the demo:**
   take07 draws the health bar's fill pale while it rises (the HUD bar widget's brighten, the
@@ -806,12 +826,32 @@ Hawk: 1..100); the line at 0 by Tex, Brutus and Flint, not Hawk (no fight).
 * The name's letter cores span x 56.7-130.0, y 89.6-103.6 ("Berserker"; take01 56.7-130.0, 90.0-103.3);
   "Vengar" 56.7-108.0 against take06's 55.3-110.0 (the demo's font isn't the game's).
 
+**The Squad Command menu's Toggle Ability** (#333; e34 staged as the #33 takes, Tex controlled:
+`BF_MAP=e34 BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999 BF_TEST_NO_HOSTILES=1
+BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05 BF_SKILL_LOG=1 BF_ORDER_LOG=1
+"BF_TEST_COMMAND=2:brutus:0.4;3:toggle;5:hawk:0.4;6:toggle;9:flint:0.4;10:toggle;14:brutus:0.4;15:toggle;17:hawk:0.4;18:toggle;22:flint:0.4;23:toggle"`):
+each goal's first command comes in the first frame after the menu's fade-out. Brutus on and off
+in that frame, silent and nothing to see, 2.0 a second off his stamina while on, 1.2 back after.
+Hawk's clip, on 0.87 s later, faded out over the next second seen from Tex (frames 105-130), and
+back at the second order. Flint, kneeling at the order (frames 135-159), stood up (159-163) and
+took her sniper motions (from 165); off at the second. With Brutus controlled
+(`BF_CHARACTER=0 "BF_TEST_COMMAND=2:tex:0.4;3:toggle;13:tex:0.4;14:toggle" BF_TEST_SKILL=6,9`):
+Tex reached for and drew his second gun (frames 56-70), on 0.53 s after the command, both guns
+in hand till the second order stowed it; Brutus's own V on and off at 6 and 9 s with its sound,
+the Vengar view and the red fade, as before (frames 125, 160). On sdm_e34 (Tex 6.5 a second,
+`BF_CHARACTER=0 BF_TEST_SQUAD_SKILL=tex,1,18`): his berserk ran to 0 at 16.93 s and his stop clip
+ended it 0.53 s later with the line at 0, then it refilled and stayed off; ordered again at 18.0 s
+with 1.4 stamina he stood (x2 to x1) and was refused, unlogged, till 10.08 at 25.33 s, then on.
+Flint the same (`flint,1,17`: on at 10.03, her Now under 10% unlogged).
+
 **Guessed or open**: the fight count for the line at 0 (a guess, [chatter.md](chatter.md));
 Brutus's unheard on line; what holds the name 0.15 s; which message widgets push the name
 down; the blink's colour operation (the red copy matches the takes' pixels); the ×4 refill;
 Brutus and Flint at the 10% threshold (code only); the demo's choices under "The toggle"; the
 demo's frame is ~3 units longer on the right than the game's (the tutorial picture's proportions,
-play.md).
+play.md). Toggle Ability (#333): an AI Brutus in Vengar showing nothing is the code's reading
+(0x13c038), not filmed; the member standing while its goal waits (a stand-up, its stamina) and
+the goal having no time limit are inferred; no take shows Tex's or Flint's toggle under the AI.
 
 ### Tex's Berserker (#121)
 

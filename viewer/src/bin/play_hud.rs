@@ -81,11 +81,46 @@ const SWITCH_HINT_CAP: f32 = 13.0;
 /// cropped to its opaque pixels and drawn 1:1 (a texel per screen unit) centred there.
 const PORTRAITS: [u32; 4] = [0xFDFB_4331, 0xEB2F_DA05, 0x0823_79F7, 0x076B_684B];
 const PORTRAIT_CENTRE: [(f32, f32); 4] = [(122.2, 428.5), (180.5, 368.2), (64.1, 368.5), (122.2, 303.8)];
-/// the small tab beside each portrait: the follow-order arrows, or the speech icon while that
-/// member is speaking
-const TAB_CENTRE: [(f32, f32); 4] = [(144.8, 423.3), (178.8, 345.0), (67.2, 389.3), (100.5, 312.7)];
+/// The command tab beside each portrait (#333): the tab widget FUN_000c3d10 (vtable 0x39f4f0, its
+/// update 0xc3f80 at +0x14 and draw 0xc4130 at +0x18; the HUD factory makes one a portrait at
+/// 0xb9af8), an 8-unit sprite whose texture and size its update sets each frame by the command
+/// mode of its slot's member's brain (+0x58, its jump table 0xc40e0 on the mode less 1; the
+/// constructor loads the five textures): FOLLOW (Cover Me, the squad's start) h_eeaa5549, green
+/// arrows, 16 x 8; GUARD (Stand Ground) h_fa29b7a4, yellow bars, 8 x 16; WINGMAN (Fire At Will)
+/// h_f6722366, a ring of red and orange dots, 16 x 16; MOVE_OUT (Move To) h_eed3270a, a blue arrow,
+/// 16 x 16; FORMATION and any other mode (FREEWILL, the frozen 6) none: hidden (#35 take18, the
+/// trainer's squad in mode 6: Brutus's and Flint's tabs empty). The fifth, h_e878453f (+0x40), is
+/// loaded and never shown. Measured: take03 1.0 s the four green arrows; Hawk's and Flint's
+/// yellow bars from 5.25 s after Stand Ground; take08 Hawk's blue arrow from 25.8 s after Move To,
+/// her bars from 31.1 s at the point. Fire At Will's ring isn't in a take: the code's.
+const TAB_FOLLOW: (u32, f32, f32) = (0xEEAA_5549, 16.0, 8.0);
+const TAB_GUARD: (u32, f32, f32) = (0xFA29_B7A4, 8.0, 16.0);
+const TAB_WINGMAN: (u32, f32, f32) = (0xF672_2366, 16.0, 16.0);
+const TAB_MOVE_OUT: (u32, f32, f32) = (0xEED3_270A, 16.0, 16.0);
+/// Each tab's top left (FUN_000c3f40 from the update: the table 0x3c8ea8, (x, y) by the game slot
+/// less 1, 4 on for a small screen), from the radar panel's corner, by character (CHARACTERS:
+/// Brutus slot 3, Flint 2, Hawk 4, Tex 1). Each icon's art fills its texture's top left. The
+/// corner is the one the demo draws the radar frame and the brackets from (RADAR_FRAME_AT), so
+/// each icon sits in its box of the frame as in the takes. The code's corner on a full screen is
+/// (56, 301) (FUN_000c2be0: the HUD safe area's left + 5, its bottom - 10 less the panel's 128),
+/// where take03's and take08's icons start (Hawk's arrows, bars and arrow from (61, 382), Tex's
+/// arrows from (94, 306)); the demo's frame is drawn 1.5 right and 4 lower than that (take03 1.0
+/// s: Tex's box's edges at x 90.7 / 104.7, y 302.7 / 317.3 against the demo's 92.0 / 106.0, 306.0
+/// / 320.7), and the tabs with it.
+const TAB_AT: [(f32, f32); 4] = [(82.0, 114.0), (115.0, 37.0), (5.0, 81.0), (38.0, 5.0)];
+/// The tab's flash at a new icon: the update sets +0x4c and zeroes +0x48 whenever the texture
+/// changes (0xc4002-0xc4099, the first one set included), FUN_000c4100 adds 1.5 (0x40d6b0) x the
+/// HUD's dt and ends it past 1.0 (0.67 s). Its draw (0xc4130) puts a copy of the icon under it
+/// first: the widget's scale set to s = 1 + 1.8 t (0x3a5234; its +0x18 through the vtable's
+/// +0x1c 0xa9270), the sprite draw (0xba950, which takes the size and the offset times that scale)
+/// at the offset -1.8 (s - 1) each way (0x40d6ac, 0x40d6a8) and alpha 255 x clamp(2 (1 - t)^2, 0, 1)
+/// (0x3a50e8); then the scale back to 1 and the icon (the base draw 0xbb300). So a copy that grows
+/// to 2.8 times, whole for its first 0.2 s and gone at 0.67. take03: Hawk's bars a 9.3 x 12 blob
+/// 5.35-5.55 s against their 7 x 9.3 after; the green arrows bold at 14.2-14.3 s after Cover Me.
+const TAB_FLASH_RATE: f32 = 1.5;
+const TAB_FLASH_GROW: f32 = 1.8;
+const TAB_FLASH_SHIFT: f32 = -1.8;
 const SQUAD_ICON: u32 = 0xE064_867A;
-const PLAYER_ICON: u32 = 0xEEAA_5549;
 const HEALTH_ICON: u32 = 0x1BFA_5678;
 /// bar fills (4 x 8 gradients): health red, energy blue
 const HEALTH_FILL: u32 = 0xE801_997B;
@@ -187,7 +222,9 @@ const HEALTH_BARS: [((bool, bool), (f32, f32)); 4] = [
     ((true, false), (65.0, 12.0)),
 ];
 const HEALTH_DARK: u32 = 27;
-/// where the radar frame sits (screen units, 128 x 128)
+/// where the radar frame sits (screen units, 128 x 128), the corner the brackets and the command
+/// tabs are placed from. (#333 found the game's 1.5 left and 4 higher, at the radar panel's corner
+/// (56, 301) by FUN_000c2be0: take03's frame and tabs there; not moved here, see TAB_AT)
 const RADAR_FRAME_AT: (f32, f32) = (57.5, 305.0);
 const HEALTH_PINK: Color = Color::srgb(0.96, 0.45, 0.42);
 /// The radar panel's slide while the Squad Command menu is open (#319): the radar and its
@@ -817,7 +854,6 @@ enum Part {
     Icon(usize),
     Name(usize),
     Ammo(usize),
-    Tab(usize),
     Crosshair,
     /// "Q switch to <other weapon>." while the held gun and its reserve are empty
     SwitchHint,
@@ -833,6 +869,136 @@ enum Part {
 /// up Medkit."): a record text in the game's font (MESSAGE_RGB).
 #[derive(Component)]
 struct MessageLine;
+
+/// A portrait's command tab (TAB_FOLLOW ...: `update_tabs`), by character: its icon, or the
+/// flash's growing copy of it drawn under the icon (`copy`, TAB_FLASH_RATE).
+#[derive(Component, Clone, Copy, PartialEq)]
+struct CommandTab {
+    slot: usize,
+    copy: bool,
+}
+
+/// The tab widgets' state (`update_tabs`), by character: the icon each shows (the widget's texture
+/// +0x20, with its size; None before its first, as FUN_000ba5b0 makes it) and its flash's share
+/// done (+0x48) while one runs (+0x4c). A resource, reset with each level.
+#[derive(Resource, Default)]
+struct Tabs([(Option<(u32, f32, f32)>, Option<f32>); 4]);
+
+/// The tab's icon for a member in command mode `mode` (TAB_FOLLOW ...): the texture and its size
+/// (width, height), None where the tab is hidden.
+fn tab_icon(mode: super::brain::Mode) -> Option<(u32, f32, f32)> {
+    use super::brain::Mode;
+    match mode {
+        Mode::Follow => Some(TAB_FOLLOW),
+        Mode::Guard => Some(TAB_GUARD),
+        Mode::Wingman => Some(TAB_WINGMAN),
+        Mode::MoveOut => Some(TAB_MOVE_OUT),
+        Mode::Formation | Mode::Freewill => None,
+    }
+}
+
+/// One frame of a tab's state (0xc3f80's switch and FUN_000c4100): a new icon starts the flash
+/// from 0 (the first one too), which then runs TAB_FLASH_RATE a second on the HUD's clock (`dt`)
+/// and ends past 1. `icon` None: no member in the slot (the update returns before the switch):
+/// the state is kept and nothing runs. (A member in a mode without a tab would still run its
+/// flash in the game, 0xc40b3 going on to FUN_000c4100: the squad never is in one here.)
+fn tab_step(state: &mut (Option<(u32, f32, f32)>, Option<f32>), icon: Option<(u32, f32, f32)>, dt: f32) {
+    let Some(icon) = icon else { return };
+    if state.0 != Some(icon) {
+        *state = (Some(icon), Some(0.0));
+    }
+    if let Some(t) = state.1.as_mut() {
+        *t += TAB_FLASH_RATE * dt;
+        if *t > 1.0 {
+            state.1 = None;
+        }
+    }
+}
+
+/// The flash's copy at its share done `t` (0xc4130): its scale s, its offset from the tab's place
+/// (each way, x the scale as the sprite draw takes it) and its alpha (0-1).
+fn tab_flash(t: f32) -> (f32, f32, f32) {
+    let s = 1.0 + TAB_FLASH_GROW * t;
+    let offset = TAB_FLASH_SHIFT * (s - 1.0) * s;
+    let alpha = (2.0 * (1.0 - t) * (1.0 - t)).clamp(0.0, 1.0);
+    (s, offset, alpha)
+}
+
+/// The HUD's clock step for the tabs (s): the HUD's widgets are updated through the Squad Command
+/// menu's and the item list's pauses (their fades and slides: play_squad_menu.rs and
+/// play_itembox.rs run on the same clock; take03's bars flash as the menu fades out), not while
+/// another menu stops the game (the HUD isn't updated under it); the capture's fixed step while
+/// capturing (none in its warm-up).
+fn hud_step(time: &Time) -> f32 {
+    if paused_by_other(PAUSE_SQUAD | PAUSE_ITEMS) {
+        return 0.0;
+    }
+    if std::env::var("BF_CAPTURE").is_ok() {
+        if WARMUP.load(std::sync::atomic::Ordering::Relaxed) > 0 { 0.0 } else { capture_step() }
+    } else {
+        time.delta_secs().min(0.1)
+    }
+}
+
+/// The command tabs each frame (the tab widget's update 0xc3f80 and draw 0xc4130, TAB_FOLLOW ...):
+/// for each slot's member in the world (`slot_member`: the controlled character's too, take03's
+/// Tex), its icon by its brain's command mode (`tab_icon`), at TAB_AT from the radar panel's
+/// corner (RADAR_FRAME_AT; the panel's slide moves it with the radar) at its own size, hidden
+/// while the member is dead (its +0x70 bit 0, 0xc40bb) or has no tab in its mode; and its flash's
+/// copy under it (`tab_flash`). The icons drawn whole, as the base draw's 255 (0xbb300); the copy's alpha raised
+/// to 2.2, as the HUD's other fades are here: the console blends its stored sRGB values, Bevy in
+/// linear light. BF_ORDER_LOG (play_orders.rs) prints each tab's change of icon too.
+#[allow(clippy::too_many_arguments)]
+fn update_tabs(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut tabs: ResMut<Tabs>, mut game: ResMut<GameData>,
+               mut images: ResMut<Assets<Image>>, mut cache: ResMut<HudImages>,
+               mut nodes: Query<(&CommandTab, &mut Visibility, &mut Node, &mut ImageNode)>) {
+    let dt = hud_step(&time);
+    let log = std::env::var("BF_ORDER_LOG").is_ok();
+    for c in 0..tabs.0.len() {
+        let member = slot_member(&player, &squad, c);
+        let icon = member.and_then(|u| tab_icon(u.command.mode));
+        let was = tabs.0[c].0;
+        tab_step(&mut tabs.0[c], icon, dt);
+        if log && tabs.0[c].0 != was {
+            println!("t={:.2} hud: {}'s command tab: h_{:08x} ({}), flashing", player.sim_time, CHARACTERS[c],
+                     tabs.0[c].0.map_or(0, |i| i.0), member.map_or("none", |u| u.command.mode.name()));
+        }
+    }
+    for (tab, mut vis, mut node, mut img) in &mut nodes {
+        let c = tab.slot;
+        let Some(&(icon, flash)) = tabs.0.get(c) else { continue };
+        let member = slot_member(&player, &squad, c);
+        // (shown for a member in the world, alive, in a mode with a tab; its copy while flashing)
+        let shown = member.is_some_and(|u| !u.dead && tab_icon(u.command.mode).is_some());
+        let (x, y) = (RADAR_FRAME_AT.0 + TAB_AT[c].0, RADAR_FRAME_AT.1 + TAB_AT[c].1);
+        let (place, want) = match (icon, shown, tab.copy, flash) {
+            (Some((id, w, h)), true, false, _) => ((x, y, w, h, 1.0), Some(id)),
+            (Some((id, w, h)), true, true, Some(t)) => {
+                let (s, off, a) = tab_flash(t);
+                ((x + off, y + off, w * s, h * s, a.powf(2.2)), Some(id))
+            }
+            _ => ((0.0, 0.0, 0.0, 0.0, 0.0), None),
+        };
+        let handle = want.and_then(|id| texture(&mut game.0, &mut images, &mut cache, id));
+        let on = handle.is_some();
+        let v = if on { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != v {
+            *vis = v;
+        }
+        let Some(handle) = handle else { continue };
+        if img.image != handle {
+            img.image = handle;
+        }
+        let colour = Color::srgba(1.0, 1.0, 1.0, place.4);
+        if img.color != colour {
+            img.color = colour;
+        }
+        let at = at_box(place.0, place.1, place.2, place.3);
+        if node.left != at.left || node.top != at.top || node.width != at.width || node.height != at.height {
+            (node.left, node.top, node.width, node.height) = (at.left, at.top, at.width, at.height);
+        }
+    }
+}
 
 /// Squad and grenade widgets (see update_squad_hud).
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -890,16 +1056,21 @@ pub fn plugin(app: &mut App) {
         .init_resource::<StaminaBar>()
         .init_resource::<BarFlash>()
         .init_resource::<RadarMarks>()
+        .init_resource::<Tabs>()
         .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities).in_set(HudSetup),
             (|mut commands: Commands| {
                 commands.insert_resource(NameLabel::default());
                 commands.insert_resource(StaminaBar::default());
                 commands.insert_resource(BarFlash::default());
+                commands.insert_resource(Tabs::default());
             }).after(setup)))
         .init_resource::<HudGen>()
-        // (after the death camera: its label and reticle show the frame it decides them)
+        // (after the death camera: its label and reticle show the frame it decides them; the
+        // tabs after the frame's orders, the menu's and the AI's: `update_player` sets a Move To's
+        // arrival)
         .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
-                              update_hud_widgets, update_squad_hud, update_message).after(update_weapons).after(deathcam::death_cam)
+                              update_hud_widgets, update_squad_hud, update_message, update_tabs.after(update_player))
+            .after(update_weapons).after(deathcam::death_cam)
             .run_if(in_state(AppState::Playing)))
         // the radar's objective dots, once the radar-triggers' contacts are in (#228)
         .add_systems(Update, update_radar_marks.after(super::triggers::radar::RadarApply).after(update_player).run_if(in_state(AppState::Playing)));
@@ -1188,8 +1359,12 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
             commands.spawn((ChildOf(radar), at(left, top, w.abs(), h.abs()), ZIndex(2), SquadPart::Selected(c), Visibility::Hidden,
                             ImageNode { flip_x: w < 0.0, flip_y: h > 0.0, ..ImageNode::new(handle) }));
         }
-        for (i, &(cx, cy)) in TAB_CENTRE.iter().enumerate() {
-            commands.spawn((ChildOf(radar), at(cx - 5.0, cy - 5.0, 10.0, 10.0), flipped(Handle::default()), Part::Tab(i)));
+        // each portrait's command tab (`update_tabs`): the flash's copy first, so the icon draws
+        // over it (0xc4130)
+        for slot in 0..TAB_AT.len() {
+            for copy in [true, false] {
+                commands.spawn((ChildOf(radar), at(0.0, 0.0, 0.0, 0.0), flipped(Handle::default()), CommandTab { slot, copy }, Visibility::Hidden));
+            }
         }
     }
 
@@ -1348,14 +1523,13 @@ fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<Stam
 /// Weapon rows (the held weapon first; every weapon with names for a moment after a switch, the
 /// held one's name for a moment after a pickup), ammo ("clip / reserve", the squad's reserve of
 /// its ammo-type; "clip Regen" for a recharging gun), red panel on an empty clip, the switch
-/// hint, the skill's name, portrait, crosshair.
+/// hint, the skill's name, crosshair. (The portraits' command tabs are `update_tabs`'.)
 #[allow(clippy::too_many_arguments)]
 fn update_hud_widgets(
     player: Res<Player>,
     reserve: Res<super::ammo::Reserve>,
     held_name: Res<super::ammo::HeldName>,
     (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
-    squad: Res<Squad>,
     use_panel: Res<super::UsePanel>,
     feed: Res<super::pickups::PickupFeed>,
     mut game: ResMut<GameData>,
@@ -1470,21 +1644,6 @@ fn update_hud_widgets(
                             else { format!("{clip} / {}", reserve.get(def.ammo_type)) };
                         set(text, &count, Some(tint));
                     }
-                }
-            }
-            Part::Tab(i) => {
-                let speaking = if i == player.character % PORTRAITS.len() { player.speaking > 0.0 }
-                    else { squad.0.iter().any(|m| m.character == i && m.in_squad() && m.speaking > 0.0) };
-                // every tab shows the member's command (follow); speech has its own icon beside the portrait
-                let _ = speaking;
-                let icon = Some(PLAYER_ICON);
-                let h = icon.and_then(|icon| texture(&mut game.0, &mut images, &mut cache, icon));
-                let dead = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == i && u.in_squad() && u.dead);
-                // (a slot with no member in the world has none, as it has no face: `slot_member`)
-                let empty = slot_member(&player, &squad, i).is_none();
-                show(&mut vis, h.is_some() && !dead && !empty);
-                if let (Some(mut img), Some(h)) = (img, h) {
-                    if img.image != h { img.image = h; }
                 }
             }
             Part::SwitchHint => {
@@ -2212,5 +2371,58 @@ fn blend(dst: &mut [f32; 4], rgb: [f32; 3], a: f32) {
         dst[c] = (rgb[c] * a + dst[c] * dst[3] * (1.0 - a)) / out;
     }
     dst[3] = out;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::brain::Mode;
+
+    /// The tab's icon by command mode (0xc3f80's jump table): FOLLOW's green arrows 16 x 8, GUARD's
+    /// bars 8 x 16, WINGMAN's ring and MOVE_OUT's arrow 16 x 16; FORMATION and FREEWILL none.
+    #[test]
+    fn tab_icons_by_mode() {
+        assert_eq!(tab_icon(Mode::Follow), Some((0xEEAA_5549, 16.0, 8.0)));
+        assert_eq!(tab_icon(Mode::Guard), Some((0xFA29_B7A4, 8.0, 16.0)));
+        assert_eq!(tab_icon(Mode::Wingman), Some((0xF672_2366, 16.0, 16.0)));
+        assert_eq!(tab_icon(Mode::MoveOut), Some((0xEED3_270A, 16.0, 16.0)));
+        assert_eq!(tab_icon(Mode::Formation), None);
+        assert_eq!(tab_icon(Mode::Freewill), None);
+    }
+
+    /// A new icon flashes for 1 / 1.5 s (the first one too); the same icon doesn't; an empty slot
+    /// keeps the state.
+    #[test]
+    fn a_new_icon_flashes() {
+        let dt = 0.125;
+        let mut s = (None, None);
+        tab_step(&mut s, Some(TAB_FOLLOW), dt);
+        assert_eq!(s.0, Some(TAB_FOLLOW));
+        assert_eq!(s.1, Some(TAB_FLASH_RATE * dt));
+        let mut frames = 1;
+        while s.1.is_some() {
+            tab_step(&mut s, Some(TAB_FOLLOW), dt);
+            frames += 1;
+        }
+        assert_eq!(frames, 6, "past 1 in its sixth eighth of a second: 0.67 s");
+        tab_step(&mut s, None, dt);
+        assert_eq!(s, (Some(TAB_FOLLOW), None));
+        tab_step(&mut s, Some(TAB_GUARD), dt);
+        assert!(s.0 == Some(TAB_GUARD) && s.1.is_some());
+    }
+
+    /// The flash's copy (0xc4130): the icon's size and place at the start, whole till 2 (1 - t)^2
+    /// falls under 1 (t 0.29), 2.8 times the icon and gone at the end, shifted up and left by 1.8
+    /// (s - 1) x s.
+    #[test]
+    fn the_flash_grows_and_fades() {
+        assert_eq!(tab_flash(0.0), (1.0, 0.0, 1.0));
+        let (_, _, a) = tab_flash(0.29);
+        assert_eq!(a, 1.0);
+        let (s, off, a) = tab_flash(0.5);
+        assert!((s - 1.9).abs() < 1e-6 && (a - 0.5).abs() < 1e-6 && (off + 1.8 * 0.9 * 1.9).abs() < 1e-5);
+        let (s, off, a) = tab_flash(1.0);
+        assert!((s - 2.8).abs() < 1e-6 && a == 0.0 && (off + 1.8 * 1.8 * 2.8).abs() < 1e-5);
+    }
 }
 

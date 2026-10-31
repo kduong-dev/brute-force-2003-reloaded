@@ -855,10 +855,11 @@ fn menu_orders(m: &mut SquadMenu, input: &MenuInput, player: &mut Player, squad:
 /// FUN_000c1280: the order to each selected member (by slot: every squad member has a brain).
 /// Stand Ground, Fire At Will, Cover Me and Move To set its command mode (play_orders.rs
 /// `order`: GUARD, WINGMAN, FOLLOW, MOVE_OUT with the point); the leader they make the ordering
-/// player (FUN_0005bda0) is the demo's already. Toggle Ability asks its skill to toggle
-/// (GOAL_TOGGLE_COMBAT_SKILL 127 at priority 2: play_skills.rs `Skill::request`, as #35 take18's
-/// Hawk). Medkit pushes GOAL_HEAL (20) in the game, whose behaviour isn't traced (#329): here
-/// it's only logged. The selection is cleared after. True when any member took it.
+/// player (FUN_0005bda0) is the demo's already. Toggle Ability pushes GOAL_TOGGLE_COMBAT_SKILL
+/// (127, FUN_00024540 in its mode 2: play_orders.rs `toggle_ability`), which switches its skill
+/// as the game runs again (#35 take18's Hawk; #333). Medkit pushes GOAL_HEAL (20) in the game,
+/// whose behaviour isn't traced (#329): here it's only logged. The selection is cleared after.
+/// True when any member took it.
 fn give(m: &mut SquadMenu, order: usize, point: Option<Vec3>, player: &mut Player, squad: &mut Squad, now: f32) -> bool {
     let mut any = false;
     let flags = m.flags;
@@ -867,22 +868,19 @@ fn give(m: &mut SquadMenu, order: usize, point: Option<Vec3>, player: &mut Playe
             continue;
         }
         any = true;
-        match order {
-            STAND => { orders::order(u, Mode::Guard, None, now); }
-            FIRE => { orders::order(u, Mode::Wingman, None, now); }
-            COVER => { orders::order(u, Mode::Follow, None, now); }
-            MOVE => { orders::order(u, Mode::MoveOut, point, now); }
-            TOGGLE => {
-                if u.skill.data.is_some() && !u.dead {
-                    u.skill.request = true;
-                }
-            }
-            _ => {}
-        }
+        let pushed = match order {
+            STAND => { orders::order(u, Mode::Guard, None, now); false }
+            FIRE => { orders::order(u, Mode::Wingman, None, now); false }
+            COVER => { orders::order(u, Mode::Follow, None, now); false }
+            MOVE => { orders::order(u, Mode::MoveOut, point, now); false }
+            TOGGLE => orders::toggle_ability(u, now),
+            _ => false,
+        };
         if m.log {
             match order {
                 MEDKIT => println!("t={now:.2} squad menu: Medkit to {}: GOAL_HEAL (20) pushed in the game; its heal isn't done (#329)", unit_name(u)),
-                TOGGLE => println!("t={now:.2} squad menu: Toggle Ability to {}: its skill asked to toggle", unit_name(u)),
+                TOGGLE => println!("t={now:.2} squad menu: Toggle Ability to {}: {}", unit_name(u),
+                                   if pushed { "GOAL_TOGGLE_COMBAT_SKILL (127) pushed" } else { "no skill to toggle" }),
                 _ => {}
             }
         }

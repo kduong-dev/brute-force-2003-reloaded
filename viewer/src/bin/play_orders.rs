@@ -37,10 +37,19 @@
 //!    stands its ground (GUARD) and the members following it hold too within 5 m of where it is,
 //!    else move out to it; the one taken in MOVE_OUT is set to GUARD for when control passes on
 //!    again; the one left has its allow flags set by its mode again (in FOLLOW: holding fire).
+//!  - **Toggle Ability** (#333: GOAL_TOGGLE_COMBAT_SKILL, 127, which the menu pushes over the
+//!    member's goal, `toggle_ability`): it sends the skill's toggle, the command V sends, every
+//!    frame until the skill has switched (`toggle_skill`), the member standing meanwhile (Tex and
+//!    Flint get up first). The skill then runs under the AI as under the player (play_skills.rs:
+//!    its drain, its ends at 0 stamina, at death and its own, its look); no personality switches
+//!    it again (#35 leads §5: none uses goal 127), so it stays on till one of those or the next
+//!    order. The mode is left as it is.
 //!
 //! Test hooks: `BF_TEST_ORDER=<member>,<mode>[,<x>,<z>][@<s>][;...]` gives orders without the
-//! menu (`test_orders`); `BF_ORDER_LOG=1` logs the mode changes, grants and arrivals, `=2` also a
-//! row of the squad's state ten times a second (the takes' watch logs' columns).
+//! menu (`test_orders`; Toggle Ability without the menu is play_skills.rs's
+//! `BF_TEST_SQUAD_SKILL`); `BF_ORDER_LOG=1` logs the mode changes, grants, arrivals and the Toggle
+//! Ability goal's push and end, `=2` also a row of the squad's state ten times a second (the
+//! takes' watch logs' columns).
 
 use super::*;
 use bf_viewer::bf::personality::{self, EVT_IDLE_VARY_DATA, EVT_SQUAD_MATE_FIRING, GOAL_PAUSE_CROUCH, QG_ALLOW_COMBAT, QG_ALLOW_COVER};
@@ -189,9 +198,13 @@ pub fn gate(u: &Player, target: Option<Vec3>, toward: Option<Vec3>) -> (Option<V
 
 /// One frame of an AI squad member `m`'s goal in its mode (in place of play.rs `squad_ai`, which
 /// is FOLLOW's and WINGMAN's: `leader`, `slot`, `heading` are its), firing at `target` and turning
-/// to `toward` as `gate` left them.
+/// to `toward` as `gate` left them; or, while the Squad Command menu's Toggle Ability has its goal
+/// on top, that goal alone (`toggle_skill`).
 #[allow(clippy::too_many_arguments)]
 pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, game: &Game) {
+    if toggle_skill(m, dt) {
+        return;
+    }
     match m.command.mode {
         Mode::Guard => guard(m, dt, target, toward),
         Mode::MoveOut => move_out(m, leader, dt, target, toward),
@@ -228,6 +241,99 @@ fn guard(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
     let turned = target.is_none() && toward.is_some_and(|p| face_toward(m, p));
     m.aim = target.is_some() || turned;
     ai_fire(m, target, dt);
+    m.switch_pressed = false;
+    m.reload_pressed = false;
+    m.throw_held = false;
+    m.next_surface = false;
+}
+
+/// The Squad Command menu's Toggle Ability to `u` (FUN_000c1280's order 5 for a member with a
+/// brain, 0xc1591): GOAL_TOGGLE_COMBAT_SKILL (127) pushed by FUN_00024540 in its mode 2, on top of
+/// the goal stack and started at once, over whatever the member was doing (#35 take18: Hawk's goal
+/// 15 ATTACK_GUARD_AND_COVER, then 127 from the order to the switch, then 15 again). Its start
+/// (0x36e80, the goal holder's vtable +0x688, which the goal table FUN_00012b40 gives goal 127)
+/// keeps the skill's state (`Command::toggle`: its on flag with an owner, brain+0x3c4 bit 6) and,
+/// for a skill whose toggle wants its character standing (its +0x11c, `skills::
+/// stands_to_toggle`: Tex's and Flint's), has the brain stand (0x3f0e0 with 0 clears brain+0x3cc,
+/// the crouch wanted: `crouch_wanted`). Its other branch, for a skill whose +0x10c says it needs
+/// the brain's target (its position kept at skill+0xc, the start refused when 0x34b20 says so
+/// within 20 m; read no further), is none of the four skills' (0x20e200). No mode change and no
+/// lines (FUN_000c1630 is for orders 0-3). The dead, those out of the world and a type without a
+/// skill take none (the selection refuses the dead, FUN_000c8470; the four always have one). A
+/// second order while one runs keeps the state again. `now`: the log's clock. True when pushed.
+pub fn toggle_ability(u: &mut Player, now: f32) -> bool {
+    if u.dead || u.absent || !u.in_squad() || u.skill.kind.is_none() {
+        return false;
+    }
+    u.command.toggle = Some(u.skill.on);
+    let stands = skills::stands_to_toggle(u);
+    if stands {
+        u.crouch_wanted = false;
+    }
+    if log_level() > 0 || std::env::var("BF_SKILL_LOG").is_ok() {
+        println!("t={now:.2} order {}: GOAL_TOGGLE_COMBAT_SKILL (127) pushed, the skill {}{}", unit_name(u), if u.skill.on { "on" } else { "off" },
+                 if stands { ", standing up first" } else { "" });
+    }
+    true
+}
+
+/// GOAL_TOGGLE_COMBAT_SKILL's update (0x36f60, the goal holder's vtable +0x690), each frame its goal
+/// is on top of `m`'s stack (`Command::toggle`). The goal machine (FUN_000377b0) runs the top goal
+/// alone, and this one neither moves nor fires: the member stands where it is (`hold`), kneeling
+/// still if it knelt (take18's Hawk: motion state 6 from the order to the switch), its mode's goal
+/// waiting under it. True while it runs. In the code's order:
+///  - the skill's +0x118 would send the toggle and end it: no for the four (0x20e200);
+///  - a skill that wants its character standing (+0x11c, Tex's, Flint's) waits while the character
+///    kneels or crouch-walks (char+0x1f8, motion states 6 and 7: `Action::Crouched`), sending
+///    nothing, for the stand-up its start asked for;
+///  - the skill's state not the one its start kept: done (it returns 2 and the machine pops it;
+///    the mode's goal goes on this frame);
+///  - else CT_TOGGLE_SPECIAL, the command V sends (the character's vtable +0x15c with 8:
+///    `Skill::ordered`), every frame until the skill has switched: a toggle refused (Tex's or
+///    Hawk's clip under way, a reload, under 10% to switch on: the member stands until its stamina
+///    is back to it) is asked again. No time limit was found (the push's -1.0 at the goal
+///    record's +0x8c, read nowhere traced): inferred.
+///
+/// The AI doesn't run while the game is paused, nor this: the menu pushes it as the order is given
+/// and its fade-out holds the game 0.3 s more, so the first command comes as the game runs again
+/// (#35 take18: goal 127 from 7.09 s, the order at 7.0; Hawk stealthed at 8.30, the fade and her
+/// clip's 0.83 s event after it).
+fn toggle_skill(m: &mut Player, dt: f32) -> bool {
+    let Some(kept) = m.command.toggle else { return false };
+    if paused() {
+        hold(m, dt);
+        return true;
+    }
+    let waits = skills::stands_to_toggle(m) && matches!(m.action, Action::Crouched);
+    if !waits && m.skill.on != kept {
+        m.command.toggle = None;
+        if log_level() > 0 || std::env::var("BF_SKILL_LOG").is_ok() {
+            println!("t={:.2} order {}: GOAL_TOGGLE_COMBAT_SKILL done, the skill {}", m.sim_time, unit_name(m), if m.skill.on { "on" } else { "off" });
+        }
+        return false;
+    }
+    hold(m, dt);
+    if !waits {
+        m.skill.ordered = true;
+    }
+    true
+}
+
+/// A goal that neither moves nor fires (GOAL_TOGGLE_COMBAT_SKILL's): no move, no fire, the posture
+/// as it is (`crouch_wanted` left), facing as it faces; the idle pause's clock left where the
+/// mode's goal had it.
+fn hold(m: &mut Player, dt: f32) {
+    m.move_input = Vec2::ZERO;
+    m.sprint = false;
+    m.walk = false;
+    m.jump_pressed = false;
+    m.dodge_pressed = false;
+    m.dodge_request = None;
+    m.cam_yaw = m.yaw;
+    m.cam_pitch = 0.0;
+    m.face_yaw = Some(m.yaw);
+    m.aim = false;
+    ai_fire(m, None, dt);
     m.switch_pressed = false;
     m.reload_pressed = false;
     m.throw_held = false;
@@ -440,9 +546,12 @@ pub fn hand_over(old: &mut Player, squad: &mut [Player], new: usize) {
     }
 }
 
-/// The one control has gone to (`u`, the controlled character now): set from MOVE_OUT to GUARD
-/// (FUN_000c8e80, after FUN_0008a720 passes control), so it holds where it's left.
+/// The one control has gone to (`u`, the controlled character now): its goals popped
+/// (FUN_0008a720 -> FUN_00018150: a Toggle Ability's goal still on goes, the skill as it is), and
+/// set from MOVE_OUT to GUARD (FUN_000c8e80, after FUN_0008a720 passes control), so it holds where
+/// it's left.
 pub fn taken(u: &mut Player) {
+    u.command.toggle = None;
     if u.command.mode == Mode::MoveOut {
         let now = u.sim_time;
         order(u, Mode::Guard, None, now);
@@ -742,5 +851,80 @@ mod tests {
     fn wingman_spacing() {
         assert_eq!(spacing(Mode::Follow), 1.0);
         assert!((spacing(Mode::Wingman) * 11.2 - 8.0).abs() < 1e-5);
+    }
+
+    /// A squad member `character` with the skill of `skill_set` (CSKILL_: 1 Brutus, 2 Flint, 3 Tex,
+    /// 4 Hawk), the campaign's rates.
+    fn with_skill(character: usize, skill_set: i64) -> Player {
+        let mut u = Player::new(character);
+        let data = bf_viewer::bf::character::SkillData { skill_set, max_stamina: 100.0, cost: 2.0, recovery: 1.2, stamina_update: true, ..Default::default() };
+        u.skill = skills::Skill::new(Some(&data), &bf_viewer::bf::character::CombatSkills::default());
+        u
+    }
+
+    /// Toggle Ability (#333): the goal keeps the skill's state and sends the toggle every frame
+    /// until it has switched, standing the member meanwhile; then it's done and the mode goes on,
+    /// unchanged. A dead member or one without a skill takes none.
+    #[test]
+    fn toggle_ability_sends_until_the_skill_switches() {
+        let dt = 1.0 / 15.0;
+        let mut brutus = with_skill(0, 1);
+        brutus.move_input = Vec2::ONE;
+        assert!(toggle_ability(&mut brutus, 0.0));
+        assert_eq!(brutus.command.toggle, Some(false));
+        for _ in 0..3 {
+            assert!(toggle_skill(&mut brutus, dt));
+            assert!(std::mem::take(&mut brutus.skill.ordered), "the toggle sent every frame till it switches");
+            assert_eq!(brutus.move_input, Vec2::ZERO);
+        }
+        // (play_skills.rs's step carries it out: on)
+        brutus.skill.on = true;
+        assert!(!toggle_skill(&mut brutus, dt));
+        assert!(!brutus.skill.ordered && brutus.command.toggle.is_none());
+        assert_eq!(brutus.command.mode, Mode::Follow);
+        // off again the same way, the state kept on
+        assert!(toggle_ability(&mut brutus, 0.0));
+        assert_eq!(brutus.command.toggle, Some(true));
+        let mut dead = with_skill(2, 4);
+        dead.dead = true;
+        assert!(!toggle_ability(&mut dead, 0.0));
+        let mut none = Player::new(1);
+        assert!(!toggle_ability(&mut none, 0.0));
+    }
+
+    /// Tex's and Flint's skills want them standing (their +0x11c): the goal's start stands them up
+    /// and its update sends nothing while they kneel; Brutus's and Hawk's leave the posture (take18's
+    /// Hawk kneeling from the order to the switch).
+    #[test]
+    fn toggle_ability_stands_tex_and_flint_up_first() {
+        let dt = 1.0 / 15.0;
+        for (character, skill_set, stands) in [(3, 3, true), (1, 2, true), (2, 4, false), (0, 1, false)] {
+            let mut u = with_skill(character, skill_set);
+            u.crouch_wanted = true;
+            u.action = Action::Crouched;
+            assert!(toggle_ability(&mut u, 0.0));
+            assert_eq!(u.crouch_wanted, !stands, "{character}: the posture");
+            assert!(toggle_skill(&mut u, dt));
+            assert_eq!(u.skill.ordered, !stands, "{character}: a command while kneeling");
+            u.skill.ordered = false;
+            u.action = Action::None;
+            assert!(toggle_skill(&mut u, dt));
+            assert!(u.skill.ordered, "{character}: standing, the command");
+        }
+    }
+
+    /// The goal goes with the goal stack: a mode change (FUN_00039f00) or the player taking the
+    /// member (FUN_00018150); an order to the mode it has keeps it (no change, no reset).
+    #[test]
+    fn toggle_ability_ends_with_the_goal_stack() {
+        let mut u = with_skill(2, 4);
+        toggle_ability(&mut u, 0.0);
+        assert!(!set(&mut u, Mode::Follow, None));
+        assert!(u.command.toggle.is_some());
+        assert!(set(&mut u, Mode::Guard, None));
+        assert!(u.command.toggle.is_none());
+        toggle_ability(&mut u, 0.0);
+        taken(&mut u);
+        assert!(u.command.toggle.is_none());
     }
 }

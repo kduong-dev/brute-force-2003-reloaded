@@ -12,8 +12,11 @@
 //!    x0.25 dashing (the demo's sprint), x2 kneeling still, x1 otherwise, from the frame it's
 //!    off (no delay). Clamped to 0..max. The dead don't change.
 //!  - **The toggle** (CT_TOGGLE_SPECIAL, 8): V, the game's White button, for the controlled
-//!    character. The skill's own toggle answers the command: refused, switch now, or play its
-//!    overlay from the motion set and switch at that clip's event (Tex 0.50 s, Hawk 0.83 s).
+//!    character; for an AI member the Squad Command menu's Toggle Ability, whose goal sends the
+//!    same command every frame until the skill has switched (GOAL_TOGGLE_COMBAT_SKILL,
+//!    play_orders.rs `toggle_skill`, #333). The skill's own toggle answers the command: refused,
+//!    switch now, or play its overlay from the motion set and switch at that clip's event (Tex
+//!    0.50 s, Hawk 0.83 s).
 //!  - **On and off** (FUN_0010e470 / FUN_0010e3e0, shared): switching on needs 10% of the
 //!    maximum stamina, and a refused press shows and plays nothing; each switch plays the type's
 //!    start / end sound for the controlled character only (FUN_0010e7a0) and sends a chatter tag
@@ -52,9 +55,10 @@
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
 //!
 //! Test hooks: `BF_TEST_SKILL=<s>[,<s>...]` presses the skill key at those times;
-//! `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]` asks a squadmate's skill to toggle at those
-//! times (the squad order's stand-in, #33); `BF_TEST_STAMINA=<n>[@<s>][,...]` sets the
-//! controlled character's stamina (at those times, at the start without one);
+//! `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]` gives a squadmate the Squad Command menu's
+//! Toggle Ability at those times without the menu (its goal, #333);
+//! `BF_TEST_STAMINA=<n>[@<s>][,...]` sets the controlled character's stamina (at those times, at
+//! the start without one);
 //! `BF_SKILL_CHATTER=<percent>` sets the skill lines' chance (100: every time);
 //! `BF_TEST_DOUBLE=<percent>` sets the chance of Flint's doubled rolls (100: every one);
 //! `BF_TEST_STEALTH_FLASH=<s>[,<s>...]` gives every stealthed Hawk a round's flash at those times
@@ -178,6 +182,9 @@ const WOBBLE: f32 = 0.1;
 const WOBBLE_RATE: f32 = 2.5;
 /// The least change of her visibility that FUN_00210950 pushes into the controller (2e-05).
 const VIS_STEP: f32 = 2e-5;
+/// The log's name for the toggle command GOAL_TOGGLE_COMBAT_SKILL sends (`Skill::ordered`): the
+/// Squad Command menu's Toggle Ability (#333).
+const ORDERED: &str = "the order's goal";
 
 /// What a skill's toggle makes of the command (the skill's vtable +0x04). In the game the toggle
 /// switches the skill itself or not, and its return picks the motion (the command handler,
@@ -376,6 +383,13 @@ pub trait SkillKind: Send + Sync {
     fn holds_fire(&self, _u: &Player) -> bool {
         false
     }
+    /// Whether the skill's toggle wants its character standing (vtable +0x11c, which only
+    /// GOAL_TOGGLE_COMBAT_SKILL asks: its start 0x36e80 has the brain stand, 0x3f0e0 with 0, and
+    /// its update 0x36f60 sends no toggle while the character kneels or crouch-walks, motion state
+    /// 6 / 7). The base says no (0x20e200: Brutus's, Hawk's); Tex's and Flint's yes (0x213690).
+    fn stands_to_toggle(&self) -> bool {
+        false
+    }
 }
 
 /// A character's special skill: what the game's skill base class holds (on, the toggle under
@@ -391,8 +405,13 @@ pub struct Skill {
     pub on: bool,
     /// the toggle's overlay under way, and the switch it carries
     pub toggling: Option<Toggling>,
-    /// the toggle command, asked for (the key; a squad order, #33) and not yet carried out
+    /// the toggle command, asked for (the key, the black button) and not yet carried out
     pub request: bool,
+    /// the toggle command GOAL_TOGGLE_COMBAT_SKILL sent this frame (the Squad Command menu's
+    /// Toggle Ability, play_orders.rs `toggle_skill`, #333): carried out as the key's is; the goal
+    /// sends it every frame until the skill has switched, so its refusals go unlogged, as the
+    /// command at 0's do
+    pub ordered: bool,
     /// the motion set's special motions taken (play.rs `SpecialClips`: Tex's berserk set, Flint's
     /// sniper set). Their toggles ask for them (the motion request MT_TOGGLE_SPECIAL, motion type
     /// 45) at an accepted press switching on, and for the normal ones back at one switching off:
@@ -799,6 +818,13 @@ pub fn holds_fire(u: &Player) -> bool {
     u.skill.kind.as_ref().is_some_and(|k| k.holds_fire(u))
 }
 
+/// Whether `u`'s skill wants it standing to toggle (the skill's +0x11c, `SkillKind::
+/// stands_to_toggle`: Tex's and Flint's), which the Squad Command menu's Toggle Ability goal asks
+/// (play_orders.rs `toggle_ability`, `toggle_skill`).
+pub fn stands_to_toggle(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.stands_to_toggle())
+}
+
 /// Whether `u`'s skill fades its body (Hawk's Stealth, which switches the invisibility
 /// controller her type has: `Cloak`), for play_stealth.rs to ready its copies.
 pub fn cloaks(u: &Player) -> bool {
@@ -1100,6 +1126,11 @@ impl SkillKind for Berserker {
     fn bars_scope(&self, u: &Player) -> bool {
         u.skill.special_motions
     }
+
+    /// (+0x11c, 0x213690: his toggle has no berserk transition from a kneel)
+    fn stands_to_toggle(&self) -> bool {
+        true
+    }
 }
 
 /// Brutus's Spirit of Vengar (CSKILL_BRUTUS; skill vtable 0x39d678, constructor FUN_0013bef0,
@@ -1118,6 +1149,14 @@ impl SkillKind for Berserker {
 ///  - **The charge** (FUN_0013c1c0, which his update runs while he dashes with the skill on), the
 ///    **Vengar view** (vision mode 2: his on 0x13c020, his off FUN_00126df0) and the red fade at
 ///    each switch reach beyond him: play_vengar.rs.
+///  - **Under the AI** (the Squad Command menu's Toggle Ability, #333): his on sets the vision
+///    mode (char+0x644) and then, only with a player's view on him ([char+0x5e4], which
+///    FUN_0006ff00 sets on the character a player's camera follows: the controlled one), the
+///    view's mode, his kind-0x100 material controllers and the red fade (0x13c038 jumps past all
+///    three without one); his off (FUN_00126df0) the same. So an AI Brutus's Vengar has its rules
+///    (the regeneration, the x0.85, the charge, the drain) and nothing to see or hear: the demo
+///    draws the view and the fade for the controlled character alone (play_vengar.rs), as the
+///    code does. No take shows an AI Brutus in Vengar.
 struct Vengar {
     /// his `<combat-skills>` block (h_f5dc6aac), as his constructor copies it
     s: VengarSkill,
@@ -1517,6 +1556,12 @@ impl SkillKind for Targeting {
     fn keeps_gun_up(&self, u: &Player) -> bool {
         u.skill.on
     }
+
+    /// (+0x11c, 0x213690, as Tex's: the order's goal stands her up first, though her own toggle
+    /// takes a kneel)
+    fn stands_to_toggle(&self) -> bool {
+        true
+    }
 }
 
 /// The test hooks' progress on this map: the last BF_TEST_SKILL press, BF_TEST_STAMINA poke,
@@ -1573,9 +1618,10 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
         return;
     }
     let t = player.sim_time;
-    // test hook: BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...] asks that squadmate's skill to
-    // toggle at those times (once each; the character by name or 0-3), as the Squad Command
-    // menu's "Toggle Ability" will (#33: goal 127 on the chosen members, 0xc1591)
+    // test hook: BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...] gives that squadmate the Squad
+    // Command menu's Toggle Ability at those times (once each; the character by name or 0-3): its
+    // goal 127 pushed, as the menu does (FUN_000c1280 at 0xc1591; play_orders.rs
+    // `toggle_ability`), without the menu
     if let Ok(v) = std::env::var("BF_TEST_SQUAD_SKILL") {
         let mut it = v.split(',').map(str::trim);
         let who = it.next().and_then(|c| c.parse::<usize>().ok().or_else(|| CHARACTERS.iter().position(|n| n.eq_ignore_ascii_case(c))));
@@ -1584,10 +1630,10 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
         if let (Some(c), Some(s)) = (who, due) {
             hooks.last_squad_press = s;
             if let Some(m) = squad.0.iter_mut().find(|m| m.character == c && m.in_squad() && !m.dead) {
-                m.skill.request = true;
                 if std::env::var("BF_SKILL_LOG").is_ok() {
                     println!("t={t:.2} {}: the squad order's toggle (BF_TEST_SQUAD_SKILL)", unit_name(m));
                 }
+                orders::toggle_ability(m, t);
             }
         }
     }
@@ -1756,6 +1802,10 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
         // change (take30: 94.11 for 9.4 s)
         u.skill.toggling = None;
         u.skill.request = false;
+        u.skill.ordered = false;
+        // (and the order's goal goes with the brain: the demo's choice, a dead character's goal
+        // stack isn't traced)
+        u.command.toggle = None;
         if u.skill.on {
             deactivate(u, k, env);
         }
@@ -1796,6 +1846,10 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
     if std::mem::take(&mut u.skill.request) {
         command(u, k, env, "key");
     }
+    // the Squad Command menu's Toggle Ability: its goal's command (play_orders.rs `toggle_skill`)
+    if std::mem::take(&mut u.skill.ordered) {
+        command(u, k, env, ORDERED);
+    }
     // the stamina update (FUN_0011a840), for types with h_e78efbb2
     let (cost, recovery) = match &u.skill.data {
         Some(d) if d.stamina_update => (d.cost, d.recovery),
@@ -1827,19 +1881,29 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
 }
 
 /// The toggle command (CT_TOGGLE_SPECIAL: the key's, the stamina update's at 0, a skill's own
-/// end): the character's command handler (0x1224a5) calls the skill's toggle, and its answer is
-/// carried out. (`why` is for the log.)
+/// end, the Squad Command menu's Toggle Ability goal's): the character's command handler
+/// (0x1224a5) calls the skill's toggle, and its answer is carried out. (`why` is for the log.)
 fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let was = u.skill.on;
-    // (the one at 0 comes every frame: its refusals, the skill's own reasons included, go
-    // unlogged)
+    // (the one at 0 and the order's goal's come every frame: their refusals, the skill's own
+    // reasons included, go unlogged, and so does a switch on the activate will refuse, under 10%:
+    // Brutus's and Flint's toggles answer Now and leave the 10% to it)
+    let repeated = why == "at 0" || why == ORDERED;
     let mut out = env.outside();
-    out.log &= why != "at 0";
+    out.log &= !repeated;
     let answer = k.toggle(u, &mut out);
-    if env.log && (why != "at 0" || answer != Toggle::Refused) {
+    let does = match answer {
+        Toggle::Refused => false,
+        Toggle::Now { .. } => was || can_activate(u),
+        Toggle::AtEvent(_) => true,
+    };
+    let quiet = repeated && !does;
+    if env.log && !quiet && (!repeated || answer != Toggle::Refused) {
         println!("t={:.2} {}: toggle ({why}) at stamina {:.2}, {}: {answer:?}", u.sim_time, unit_name(u),
                  u.stamina, if was { "on" } else { "off" });
     }
+    let log = env.log;
+    env.log &= !quiet;
     // (the overlay, for a toggle that returns 1, is picked by the skill's state after the toggle:
     // the off one if it's on, 0x122500-0x122564)
     match answer {
@@ -1866,6 +1930,7 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
             }
         }
     }
+    env.log = log;
 }
 
 /// Start a toggle's overlay, the on one (OMT_SPECIAL_ON) or the off one, for the held weapon's

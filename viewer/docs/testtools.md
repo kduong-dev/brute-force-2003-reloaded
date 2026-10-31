@@ -124,7 +124,7 @@ a click is any left click off the panel, and F and its teleports do nothing.
     (`CharacterType::portrait`, h_f9d94425: the
     deathmatch types and some of the militia have one, common's textures), else a "?" in pale
     blue; its skull its type's (h_00c51907), else the human one.
-  * An empty slot shows no face, follow-order tab or health channel, on the test map and on any
+  * An empty slot shows no face, command tab or health channel, on the test map and on any
     level alike (#303: the main game's rule for a slot with no member in the world, play.md
     "Radar", "The portraits"; before it the test map's alone). A dead member keeps its skull.
   * **Dying alone** on the test map respawns the player (`testsquad::respawn`; the product owner's
