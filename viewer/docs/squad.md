@@ -275,7 +275,13 @@ Squad movement and deaths follow the game's own data and the captures:
       under way, a reload, under 10% to switch on) is asked again. The goal machine runs only the
       top goal: the member stands meanwhile, firing nothing (one frame for Brutus and Flint, the
       clip's event for Tex 0.5 s and Hawk 0.83 s, longer if it must stand up or wait for its
-      stamina). No time limit was found (inferred).
+      stamina). No time limit was found (inferred), so **a refusal that lasts holds the member
+      where it stands** until an order changes its mode or the player takes it: Tex with no gun
+      in his other weapon slot, or none with rounds after his top-up from the reserve; Flint
+      with the clip in hand empty and nothing to reload it from. `BF_SKILL_LOG` gives the first
+      refusal's reason, once a goal (`Skill::told`); the ones after go unlogged.
+    * A member a test hook holds where it is (`BF_TEST_HOSTILE`'s, `BF_TEST_TARGET`'s, which skip
+      the AI's goals) still runs the goal's command (`toggle_goal`), its standing left to the hook.
     * The AI doesn't run while the game is paused, so the first command comes as the menu's
       fade-out ends (take18: the order at 7.0 s, goal 127 from 7.09, Hawk stealthed at 8.30: the
       0.3 s fade, her clip's 0.83 s event).

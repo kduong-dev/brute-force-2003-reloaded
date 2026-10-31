@@ -408,10 +408,14 @@ pub struct Skill {
     /// the toggle command, asked for (the key, the black button) and not yet carried out
     pub request: bool,
     /// the toggle command GOAL_TOGGLE_COMBAT_SKILL sent this frame (the Squad Command menu's
-    /// Toggle Ability, play_orders.rs `toggle_skill`, #333): carried out as the key's is; the goal
-    /// sends it every frame until the skill has switched, so its refusals go unlogged, as the
-    /// command at 0's do
+    /// Toggle Ability, play_orders.rs `toggle_goal`, #333): carried out as the key's is; the goal
+    /// sends it every frame until the skill has switched, so only its first refusal is logged
+    /// (`told`)
     pub ordered: bool,
+    /// the goal's command has been refused since its push: the first refusal's reason is logged
+    /// (BF_SKILL_LOG), the rest not, so one that lasts (Tex with no second gun, play_orders.rs
+    /// `toggle_goal`) says once why the member stands. play_orders.rs `toggle_ability` clears it
+    pub told: bool,
     /// the motion set's special motions taken (play.rs `SpecialClips`: Tex's berserk set, Flint's
     /// sniper set). Their toggles ask for them (the motion request MT_TOGGLE_SPECIAL, motion type
     /// 45) at an accepted press switching on, and for the normal ones back at one switching off:
@@ -1887,18 +1891,24 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let was = u.skill.on;
     // (the one at 0 and the order's goal's come every frame: their refusals, the skill's own
     // reasons included, go unlogged, and so does a switch on the activate will refuse, under 10%:
-    // Brutus's and Flint's toggles answer Now and leave the 10% to it)
-    let repeated = why == "at 0" || why == ORDERED;
+    // Brutus's and Flint's toggles answer Now and leave the 10% to it; but the goal's first
+    // refusal is told, once a goal: `Skill::told`)
+    let ordered = why == ORDERED;
+    let repeated = why == "at 0" || ordered;
+    let tell = ordered && !u.skill.told;
     let mut out = env.outside();
-    out.log &= !repeated;
+    out.log &= !repeated || tell;
     let answer = k.toggle(u, &mut out);
     let does = match answer {
         Toggle::Refused => false,
         Toggle::Now { .. } => was || can_activate(u),
         Toggle::AtEvent(_) => true,
     };
-    let quiet = repeated && !does;
-    if env.log && !quiet && (!repeated || answer != Toggle::Refused) {
+    if ordered && !does {
+        u.skill.told = true;
+    }
+    let quiet = repeated && !does && !tell;
+    if env.log && !quiet {
         println!("t={:.2} {}: toggle ({why}) at stamina {:.2}, {}: {answer:?}", u.sim_time, unit_name(u),
                  u.stamina, if was { "on" } else { "off" });
     }

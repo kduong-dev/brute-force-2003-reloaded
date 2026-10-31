@@ -41,9 +41,10 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
   squadmate's view (#198's take07; the shot list's H5).
 * `BF_TEST_SQUAD_SKILL=<character>,<s>[,<s>...]`: gives a squadmate the Squad Command menu's
   Toggle Ability at those times (by name or 0-3) without the menu: its goal, which sends the
-  toggle until the skill has switched ([The toggle](#the-toggle), #333). With
-  `BF_TEST_HOSTILE=<character>` (grenades.md) it puts a stealthed Hawk on the other side, for the
-  crosshair's rule. The menu itself: `BF_TEST_COMMAND="2:brutus:0.4;3:toggle"` (squad.md).
+  toggle until the skill has switched ([The toggle](#the-toggle), #333), also for a member a test
+  hook holds in place. With `BF_TEST_HOSTILE=<character>` (grenades.md) it puts a stealthed Hawk
+  on the other side, for the crosshair's rule. The menu itself:
+  `BF_TEST_COMMAND="2:brutus:0.4;3:toggle"` (squad.md).
 * `BF_SIGHT_LOG=1` (play.rs): each AI character finding or losing its target, with the distance,
   the target's visibility and the reach (play_brain.rs `Sensor::reach`), and for the squad and
   the test map's NPCs each contact found and forgotten: when an enemy loses a fading Hawk.
@@ -841,8 +842,16 @@ in hand till the second order stowed it; Brutus's own V on and off at 6 and 9 s 
 the Vengar view and the red fade, as before (frames 125, 160). On sdm_e34 (Tex 6.5 a second,
 `BF_CHARACTER=0 BF_TEST_SQUAD_SKILL=tex,1,18`): his berserk ran to 0 at 16.93 s and his stop clip
 ended it 0.53 s later with the line at 0, then it refilled and stayed off; ordered again at 18.0 s
-with 1.4 stamina he stood (x2 to x1) and was refused, unlogged, till 10.08 at 25.33 s, then on.
-Flint the same (`flint,1,17`: on at 10.03, her Now under 10% unlogged).
+with 1.4 stamina he stood (x2 to x1) and was refused till 10.08 at 25.33 s, then on. Flint the
+same (`flint,1,17`: on at 10.03). The goal's refusals went unlogged; since #333's review its
+first one is told, once a goal (`Skill::told`), and a member a test hook holds runs the goal too
+(the crosshair recipe below). A refusal that lasts (`--test BF_CHARACTER=3
+"BF_TEST_WEAPON=Confed LZR-50;Jax-iC" BF_TEST_CLIP=99,0 BF_TEST_RESERVE=0 BF_TEST_SELECT=0,1.0
+BF_TEST_SQUAD_SKILL=tex,3.0 BF_SKILL_LOG=1 BF_ORDER_LOG=2`: Tex handed over to Brutus with his
+Jax-iC empty and no reserve, then ordered at 3 s): "berserk top-up of weapon 1: 0 rounds",
+"berserk refused: the second gun has no rounds" and the Refused line once at 3.13 s, nothing
+after; Tex stood where the goal caught him, 1.1 m from Brutus and short of his place, for the
+run's last 7 s.
 
 **Guessed or open**: the fight count for the line at 0 (a guess, [chatter.md](chatter.md));
 Brutus's unheard on line; what holds the name 0.15 s; which message widgets push the name
@@ -1046,7 +1055,12 @@ scratchpad):
 * **The crosshair** (`-- --test BF_CHARACTER=3 BF_TEST_SWEEP=9.6 BF_TEST_HOSTILE=hawk
   BF_TEST_SQUAD_SKILL=hawk,2.0 BF_RETICLE_LOG=2`): the hostile Hawk red, under the centre and
   locked, to 3.80 s; from 3.93 (0.94 s into her fade) blue, "hawk unseen: visibility 0.00", the
-  centre still on her.
+  centre still on her. Rerun for #333 (the hook through Toggle Ability's goal, run for her though
+  the hook holds her): stealthed at 2.93 s, "hawk unseen" from 3.87 s, 0.94 s into her fade; but
+  the test map now has her 69 units below the crosshair from the start ("hawk at (+9.8, +68.8)
+  units ... outside"), so the reticle stays blue and the red phase isn't reproduced. The same
+  build with the hook's old one-shot request gave the same 157 reticle lines and 75 frames to the
+  pixel: the scene has drifted since this was measured, not the toggle.
 * **Footsteps** (`BF_MAP=flat BF_CHARACTER=2 BF_TEST_GOTO=0,0,0,-60 BF_TEST_SKILL=0.5
   BF_SOUND_LOG=1`): her run's 0.6 down to 0.54, 0.39 and 0.21 through the fade, then 0.15 (the
   demo's own volumes then). Since #324 a step is her noise x the gait's factor (1.0 for a run) x

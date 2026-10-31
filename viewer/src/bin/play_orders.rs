@@ -266,6 +266,8 @@ pub fn toggle_ability(u: &mut Player, now: f32) -> bool {
         return false;
     }
     u.command.toggle = Some(u.skill.on);
+    // (its first refusal will be logged: `Skill::told`)
+    u.skill.told = false;
     let stands = skills::stands_to_toggle(u);
     if stands {
         u.crouch_wanted = false;
@@ -278,10 +280,10 @@ pub fn toggle_ability(u: &mut Player, now: f32) -> bool {
 }
 
 /// GOAL_TOGGLE_COMBAT_SKILL's update (0x36f60, the goal holder's vtable +0x690), each frame its goal
-/// is on top of `m`'s stack (`Command::toggle`). The goal machine (FUN_000377b0) runs the top goal
-/// alone, and this one neither moves nor fires: the member stands where it is (`hold`), kneeling
-/// still if it knelt (take18's Hawk: motion state 6 from the order to the switch), its mode's goal
-/// waiting under it. True while it runs. In the code's order:
+/// is on top of `m`'s stack (`Command::toggle`): what it decides and sends; the member's standing
+/// meanwhile is `toggle_skill`'s, or a test hook's that holds it where it is (play.rs runs this
+/// for such a member too: BF_TEST_HOSTILE's Hawk, BF_TEST_TARGET's). True while it runs. In the
+/// code's order:
 ///  - the skill's +0x118 would send the toggle and end it: no for the four (0x20e200);
 ///  - a skill that wants its character standing (+0x11c, Tex's, Flint's) waits while the character
 ///    kneels or crouch-walks (char+0x1f8, motion states 6 and 7: `Action::Crouched`), sending
@@ -292,16 +294,19 @@ pub fn toggle_ability(u: &mut Player, now: f32) -> bool {
 ///    `Skill::ordered`), every frame until the skill has switched: a toggle refused (Tex's or
 ///    Hawk's clip under way, a reload, under 10% to switch on: the member stands until its stamina
 ///    is back to it) is asked again. No time limit was found (the push's -1.0 at the goal
-///    record's +0x8c, read nowhere traced): inferred.
+///    record's +0x8c, read nowhere traced): inferred. So a refusal that lasts holds the member
+///    for as long, till an order changes its mode or the player takes it: Tex with no gun in his
+///    other weapon slot, or none with rounds after his top-up from the reserve; Flint with the
+///    clip in hand empty and nothing to reload it from. The first refusal's reason is logged
+///    (`Skill::told`).
 ///
 /// The AI doesn't run while the game is paused, nor this: the menu pushes it as the order is given
 /// and its fade-out holds the game 0.3 s more, so the first command comes as the game runs again
 /// (#35 take18: goal 127 from 7.09 s, the order at 7.0; Hawk stealthed at 8.30, the fade and her
 /// clip's 0.83 s event after it).
-fn toggle_skill(m: &mut Player, dt: f32) -> bool {
+pub fn toggle_goal(m: &mut Player) -> bool {
     let Some(kept) = m.command.toggle else { return false };
     if paused() {
-        hold(m, dt);
         return true;
     }
     let waits = skills::stands_to_toggle(m) && matches!(m.action, Action::Crouched);
@@ -312,10 +317,21 @@ fn toggle_skill(m: &mut Player, dt: f32) -> bool {
         }
         return false;
     }
-    hold(m, dt);
     if !waits {
         m.skill.ordered = true;
     }
+    true
+}
+
+/// GOAL_TOGGLE_COMBAT_SKILL in an AI member's frame (`toggle_goal`): the goal machine
+/// (FUN_000377b0) runs the top goal alone, and this one neither moves nor fires, so while it runs
+/// the member stands where it is (`hold`), kneeling still if it knelt (take18's Hawk: motion state
+/// 6 from the order to the switch), its mode's goal waiting under it. True while it runs.
+fn toggle_skill(m: &mut Player, dt: f32) -> bool {
+    if !toggle_goal(m) {
+        return false;
+    }
+    hold(m, dt);
     true
 }
 
@@ -911,6 +927,21 @@ mod tests {
             assert!(toggle_skill(&mut u, dt));
             assert!(u.skill.ordered, "{character}: standing, the command");
         }
+    }
+
+    /// A member a test hook holds in place (play.rs: BF_TEST_HOSTILE's Hawk) runs the goal's
+    /// command too, its standing left to the hook (#333's review); a new goal clears the told
+    /// refusal.
+    #[test]
+    fn a_held_member_still_sends_the_goals_command() {
+        let mut hawk = with_skill(2, 4);
+        hawk.move_input = Vec2::ONE;
+        hawk.skill.told = true;
+        assert!(toggle_ability(&mut hawk, 0.0));
+        assert!(!hawk.skill.told);
+        assert!(toggle_goal(&mut hawk));
+        assert!(hawk.skill.ordered);
+        assert_eq!(hawk.move_input, Vec2::ONE, "the hook's hold, not the goal's");
     }
 
     /// The goal goes with the goal stack: a mode change (FUN_00039f00) or the player taking the
