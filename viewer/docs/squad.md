@@ -12,7 +12,15 @@ Squad movement and deaths follow the game's own data and the captures:
   (EVT_DAMAGED_BY_PC -> GOAL_DODGE) and dive away from a grenade that lands near them
   (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip). This is the follow of the
   squad's default command mode, FOLLOW, and of Fire At Will's WINGMAN, closer; Stand Ground and
-  Move To hold or go elsewhere (**Squad commands**, below, #318).
+  Move To hold or go elsewhere (**Squad commands**, below, #318). **The way to the place is a
+  route** over the level's world points (#335, play_routes.rs, [nav.md](nav.md) "The squad on
+  routes"): to the point nearest the place on the leader's side (the points his own point floods
+  to within 12 m), then the place itself when it stands on a floor that doesn't burn with a clear
+  way to it, planned again when the place moves 9.8 m (7 in WINGMAN: FUN_00020b10's d3) from where
+  the route goes and at the route's end; never a straight chase, so round a lava pit by its
+  walkway rather than across it. The places and the set-off, settle and dash distances stay the
+  demo's until #331. Stuck 2 s (no closer to its next point) a member detours round it
+  (FUN_000426b0, FUN_00042280), and the third time at one point it's put on it (FUN_000425b0).
 * **The test map's squad** (#302, play_testsquad.rs, [testtools.md](testtools.md) "The squad"):
   it starts with the player's character alone, and its squad menu (T) puts any character type in
   any of the four slots. The slot (`Player::character`) is the place on the HUD, the key and the
@@ -204,7 +212,7 @@ Squad movement and deaths follow the game's own data and the captures:
   | Cover Me (A) | 1 FOLLOW | `h_169b2725` | 75 WINGMAN_FOLLOW | the same follow, holding fire until an event allows it |
   | Fire At Will (B) | 4 WINGMAN | `h_ea20a17d` | 75 WINGMAN_FOLLOW | the formation 8 / 11.2 as wide; fires at what it sees |
   | Stand Ground (Y) | 3 GUARD | `h_155e52d6` | 2 IDLE_VARY | kneels where it stands, holds, fires from there once allowed |
-  | Move To (X, then the cursor) | 5 MOVE_OUT | `h_0f69b8b2` | 72 MOVE_OUT | runs to the point, then Stand Ground with e635ecc6 |
+  | Move To (X, then the cursor) | 5 MOVE_OUT | `h_0f69b8b2` | 72 MOVE_OUT | runs a route to the point (#335), then Stand Ground with e635ecc6 |
 
   * **The start.** The brain's set-up (0x16ff0-0x17734) puts a squad type in FOLLOW and sets
     allow_combat and allow_cover itself: a fresh squad fights at once (every #33 take's fresh
@@ -230,26 +238,31 @@ Squad movement and deaths follow the game's own data and the captures:
     posters aren't found: not posted.
   * **Fire At Will** (WINGMAN) keeps the follow, closer: the formation's places and the
     distances it sets off (3 m) and dashes (8 m) at, times 8 / 11.2 (FUN_00020b10's set for
-    WINGMAN against FOLLOW's 1.4 times it), and combat allowed for as long as the mode lasts.
+    WINGMAN against FOLLOW's 1.4 times it), the route planned again at 7 m (d3) where FOLLOW's is
+    at 9.8, and combat allowed for as long as the mode lasts.
   * **Stand Ground** (GUARD): kneels 0.3 s after the order (a fit: take07 0.24 s, take08 0.52 s
     of game time), or stays down if it was kneeling already (the follow's crouch pause, or the
     controlled character left crouched), and stays, its facing kept, Brutus standing; no dodges,
     no stepping out of the
     leader's line of fire (the guard personality's entries for them are off). It fires from its
     spot at what it sees once combat is allowed.
-  * **Move To** (MOVE_OUT): runs straight to the point (#242 has the routes) at the dash, the
-    last 2.5 m at a walk (the game runs instead while the member stands in one of the level's
-    +0x114 prisms, FUN_0004cb60: what those volumes are isn't traced, so the demo dashes; the
-    leads' "a run with an enemy known" misread the test); within 2 m of the point (FUN_00045fa0's
-    walk at 2.0) it's GUARD and asks e635ecc6 of the chatter gate (chatter.md; its block:
-    probability 100, no replay delay, priority 6, a 3 s wait, heard at any distance). A
-    walk that stalls (0.1 m in 1 s, after its first second) ends the same way (a failed walk,
-    0x46256); a liquid that burns stops it at the shore. The controlled character on its way is
-    passed with 1.2 m of room (the way bends beside him until he's behind): the game routes round
-    a squadmate in the way (FUN_00041870 -> FUN_000594a0) and only with no route waits, then
-    goes GUARD silently after 7 s for a player's character; in open ground there's a route
-    (take08's Hawk ran past Tex 1.5 m off without a pause), so the wait waits on #242's routes.
-    A member with no point is at it: GUARD at once.
+  * **Move To** (MOVE_OUT): walks a route to the point (#335, [nav.md](nav.md) "The squad on
+    routes": GOAL_MOVE_OUT's start 0x45d00 routes to the cursor's point, its update FUN_00045fa0
+    walks it at 2 m) at the dash, the last 2.5 m of it at a walk (the game runs instead while the
+    member stands in one of the level's +0x114 prisms, FUN_0004cb60: what those volumes are isn't
+    traced, so the demo dashes; the leads' "a run with an enemy known" misread the test); at the
+    route's end it's GUARD and asks e635ecc6 of the chatter gate (chatter.md; its block:
+    probability 100, no replay delay, priority 6, a 3 s wait, heard at any distance). With no
+    route it stands, still in MOVE_OUT. The route is the brain's one route record, so the AI
+    update's stuck handling and its route round a friend in the way (FUN_00041870) are Move To's
+    too; that route round, and the 7 s wait behind a player's character when there's none, only
+    run inside the level's prisms, which the demo doesn't read (`BF_TEST_PRISM` stands every
+    character in one): in open ground the members pass each other by the game's avoidance
+    (take08's Hawk ran past Tex 1.5 m off without a pause; FUN_000255d0 isn't done, the demo's
+    bodies push apart). Before #335 the walk was straight, bent round the controlled character
+    (`pass_round`) and given up when it stalled (0.1 m in 1 s); the test map's floor, with no
+    points to route over, keeps that straight walk and stall rule. A member with no point routes
+    to its own: GUARD at once.
   * **The hand-over** (FUN_0005cc20, FUN_000c8e80, FUN_00018230): handing control from a
     character more than 50 m from the one taken sets it to GUARD, and each other AI member in
     FOLLOW or WINGMAN to GUARD within 5 m of where it stands, else MOVE_OUT to there (the game's
@@ -317,9 +330,9 @@ Squad movement and deaths follow the game's own data and the captures:
     demo's formation keeps 1-5 m off him running and stops 4-11 m off, ahead of him (the five
     distances' roles are in the code map's FUN_00020b10 row); WINGMAN's members going on ahead
     of Tex and drifting 16-30 m off at rest (take05). The cover points that put a member of
-    mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit's heal (#329), Move To's
-    routes and its wait when there's none round a player's character in the way (#242), the
-    GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the spot), an event's goal
+    mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit's heal (#329), the
+    prisms that open FUN_00041870's route round a friend in the way and its wait (#335: not
+    read), the GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the spot), an event's goal
     pushed over Toggle Ability's while it waits (the demo's member stands its whole time).
 
   Test hooks: `BF_TEST_ORDER=<member>,<mode>[,<x>,<z>][@<s>][;...]` gives each order at its time
@@ -590,14 +603,15 @@ Squad movement and deaths follow the game's own data and the captures:
     objects, todo/146-liquids leads §4.2); what keeps its squad out is its routes over the
     level's world points, and no harmful liquid has one over its floor on the SDM maps (sdm_e13's
     lava 0 of the 536 over it, sdm_m03's sludge 0 of 141, sdm_m07's lava 0 of 284; at most a
-    couple ankle-deep at a shore), where water has many (sdm_e10's pond 87-272). The demo's AI
-    doesn't walk those routes yet, so this stands in for them: a data-backed rule, not a traced
-    one.
-  * Not known: whether the game's squad follows its leader into lava when he walks in (a direct
-    move to him isn't traced; #146's shot A4, not filmed), and how its routes take it round a
-    liquid between a wingman and its place: the demo steers straight, so the wingman waits at
-    the shore there (on sdm_e13 the squad starting across the lava from a leader moved by a test
-    hook stays where it starts).
+    couple ankle-deep at a shore), where water has many (sdm_e10's pond 87-272). Since #335 the
+    squad's follow and Move To walk those routes (above, [nav.md](nav.md)), and this is their
+    safety net, which none of #335's runs needed: a data-backed rule, not a traced one. The
+    enemies' and the scripts' walks (#336, #337) still lean on it.
+  * Not known: whether the game's squad follows its leader into lava when he walks in: its
+    follow routes to his own point (FUN_00022130), which lies on no liquid, so as read it waits at
+    the nearest point (#146's shot A4, not filmed). Round a liquid between a wingman and its place
+    it goes by the route (#242 take01: the squad round e13's pit by the west shore; the demo's
+    the same, nav.md).
   * The level's hinters (#292, maps.md "Blockers and hinters") are walls to the AI's characters
     and not to the player's: sdm_e13's band round its outer lava shore holds the wingmen there
     as the game's AI is held, while the player walks through it into the lava. Its inner lava has
@@ -606,7 +620,9 @@ Squad movement and deaths follow the game's own data and the captures:
     BF_TEST_GO_AT=4 BF_TEST_HEALTH=5000 BF_LIQUID_LOG=1` (`BF_VIEW_YAW=3.14159` to look back):
     Brutus walks into the lava, Tex and Hawk crouch at the shore and Flint stands on the rock
     behind them, 11-16 m from their places, and none of them takes a hit; `BF_LIQUID_LOG` prints
-    "waits at a liquid that burns" twice a second for each.
+    "waits at a liquid that burns" twice a second for each. Since #335 (`BF_ROUTE_LOG=1
+    BF_ORDER_LOG=2` too): their routes end at the shore's points (h_1d0e6ca6, h_e5c04065), where
+    they kneel 8-9 m from Brutus, and the guard never prints.
 * Hits come from the game's effect library (common/effects-common.ale, read with
   `tools/ale_tool.py`) and the flesh world material (21, WMAT_FLESH_HUMAN). Every hit plays its
   debris bundle: blood_puff (smokecard.tga mist), bloodsplat_s (diffuse_big.tga droplets in a

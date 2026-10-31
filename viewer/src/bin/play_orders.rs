@@ -18,11 +18,12 @@
 //!      state machine for the squad, #243 for the marines), so FOLLOW keeps it as it was and
 //!      WINGMAN closes it in by 1 / 1.4
 //!      (`spacing`).
-//!    - **Move To** (MOVE_OUT): GOAL_MOVE_OUT walks to the point at the dash, and within 2 m it's
-//!      GUARD, with the line e635ecc6 (`move_out`). The game's route over the world points is
-//!      #242's: here a straight walk, passing the controlled character when it's in the way (the
-//!      game's route round a squadmate, FUN_00041870 -> FUN_000594a0), given up (GUARD,
-//!      e635ecc6, as a failed walk is, 0x46256) when it stalls.
+//!    - **Move To** (MOVE_OUT): GOAL_MOVE_OUT walks a route to the point at the dash, and at
+//!      its end it's GUARD, with the line e635ecc6 (`move_out`). The route is play_routes.rs's
+//!      (#335): over the level's world points, with the AI update's route round a friend in the
+//!      way (FUN_00041870) and its 2 s stuck handling (FUN_000426b0), which run on the brain's one
+//!      route whatever the goal. Without a level's points (the test map's floor) it's a straight
+//!      walk, given up (GUARD, e635ecc6, as a failed walk is, 0x46256) when it stalls.
 //!  - **Holding fire.** Without allow_combat the attack check refuses to fire (FUN_00024f80 at
 //!    0x250c5, after raising the gun): such a member turns to its target, gun up, and holds fire
 //!    (`gate`). An event whose entry in the mode's personality has the quick goal h_f0233972
@@ -80,26 +81,19 @@ const GUARD_KNEEL: f32 = 0.3;
 /// MOVE_OUT's point is reached within this (m, across): GOAL_MOVE_OUT's update (FUN_00045fa0)
 /// walks the route with FUN_00026d80 at 2.0. Take08: Hawk stopped 1.9-2.0 m short of the point.
 const MOVE_OUT_ARRIVE: f32 = 2.0;
-/// MOVE_OUT walks the last bit (m): play.rs `squad_ai`'s own `dist < 2.5`. Take08's Hawk slowed
-/// from the dash to a run 5.6 m out and to a walk 2.8 m out (her locomotion's, not the goal's:
-/// it asks for the dash all the way, FUN_0004d970 mode 4).
+/// MOVE_OUT walks the last bit (m, along its route): play.rs `squad_ai`'s own 2.5. Take08's Hawk
+/// slowed from the dash to a run 5.6 m out and to a walk 2.8 m out (her locomotion's, not the
+/// goal's: it asks for the dash all the way, FUN_0004d970 mode 4).
 const MOVE_OUT_WALK: f32 = 2.5;
-/// MOVE_OUT's walk is given up when it hasn't come this much closer (m) in STALL_TIME s, after
-/// STALL_GRACE s in the mode (a kneeling member stands up first: 0.77 s in take08): the demo's
-/// stand-in for a failed route (play_brain.rs's walk uses the same 0.1 m in 1 s), which the game
-/// ends in GUARD with e635ecc6 (FUN_00045fa0 at 0x46256).
+/// Without a level's points (the test map's floor, no route to walk) MOVE_OUT's straight walk is
+/// given up when it hasn't come this much closer (m) in STALL_TIME s, after STALL_GRACE s in the
+/// mode (a kneeling member stands up first: 0.77 s in take08): the demo's, which the game has no
+/// counterpart of (its routes go round, and the brain's route has the 2 s stuck handling,
+/// play_routes.rs); it ends in GUARD with e635ecc6 as a failed walk does (FUN_00045fa0 at
+/// 0x46256).
 const STALL_PROGRESS: f32 = 0.1;
 const STALL_TIME: f32 = 1.0;
 const STALL_GRACE: f32 = 1.0;
-/// MOVE_OUT passes the controlled character with this much room (m) when its straight way would
-/// take it closer: the demo's stand-in, until #242's routes, for the route round a squadmate in
-/// its way. FUN_00041870 (from the AI update) finds one within 8 m whose direction and the
-/// member's way have a dot over 0.75, and gets a route round it (FUN_000594a0); only with no route
-/// and a player's character in the way (FUN_00112800) does the member wait, counting brain+0xdc,
-/// and after 7 s in MOVE_OUT it's GUARD with h_12d51a1c (no block: silent). In open ground there's
-/// a route, so take08's Hawk ran past Tex at 1.5 m without a pause: the wait isn't done. The
-/// room: two bodies' radii (play.rs BODY_RADIUS) and 0.4 m, the demo's.
-const PASS_CLEAR: f32 = 1.2;
 /// The hand-over's far case (FUN_0005cc20): the character left and the one taken more than this
 /// apart (m; 2500, its square, at 0x3a5348), and a follower of the one left within HOLD_NEAR m
 /// (25 at 0x3a5030) of its world point holds there rather than moving out to it.
@@ -200,18 +194,20 @@ pub fn gate(u: &Player, target: Option<Vec3>, toward: Option<Vec3>) -> (Option<V
 /// One frame of an AI squad member `m`'s goal in its mode (in place of play.rs `squad_ai`, which
 /// is FOLLOW's and WINGMAN's: `leader`, `slot`, `heading` are its), firing at `target` and turning
 /// to `toward` as `gate` left them; or, while the Squad Command menu's Toggle Ability has its goal
-/// on top, that goal alone (`toggle_skill`).
+/// on top, that goal alone (`toggle_skill`). `graph`: the level's world points, which the follow
+/// and Move To walk routes over (play_routes.rs, #335).
 #[allow(clippy::too_many_arguments)]
-pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, game: &Game) {
+pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, game: &Game,
+             graph: Option<&mut bf_viewer::bf::nav::Graph>) {
     if toggle_skill(m, dt) {
         return;
     }
     match m.command.mode {
         Mode::Guard => guard(m, dt, target, toward),
-        Mode::MoveOut => move_out(m, leader, dt, target, toward),
+        Mode::MoveOut => move_out(m, dt, target, toward, graph),
         _ => {
             let pauses = pauses(m, game);
-            squad_ai(m, leader, slot, heading, dt, target, toward, &pauses);
+            squad_ai(m, leader, slot, heading, dt, target, toward, &pauses, graph);
         }
     }
 }
@@ -229,6 +225,7 @@ fn guard(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
     m.move_input = Vec2::ZERO;
     m.sprint = false;
     m.walk = false;
+    m.router.asked = 1;
     m.jump_pressed = false;
     m.dodge_pressed = false;
     m.dodge_request = None;
@@ -343,6 +340,7 @@ fn hold(m: &mut Player, dt: f32) {
     m.move_input = Vec2::ZERO;
     m.sprint = false;
     m.walk = false;
+    m.router.asked = 1;
     m.jump_pressed = false;
     m.dodge_pressed = false;
     m.dodge_request = None;
@@ -357,41 +355,54 @@ fn hold(m: &mut Player, dt: f32) {
     m.next_surface = false;
 }
 
-/// MOVE_OUT (Move To): GOAL_MOVE_OUT's walk to the point (FUN_00045fa0), straight here (#242 has
-/// the routes): at the dash (FUN_0004d970 mode 4), the last MOVE_OUT_WALK m at a walk. (The game
-/// runs instead while brain+0x3c4 bit 10 is set: the character inside one of the level record's
-/// +0x114 prisms, FUN_0004cb60 / FUN_000e6e00; what those volumes are isn't read, so the demo
-/// dashes. The leads read the bit as "an enemy known": it isn't.) Within
-/// MOVE_OUT_ARRIVE m it's GUARD (the full mode change) and says e635ecc6. Given up, GUARD with
-/// e635ecc6 too, when the walk stalls; not on into a liquid that burns (play_liquids.rs, as the
-/// follow), which stalls it. The controlled character on its way is passed with PASS_CLEAR of room
-/// (the game's route round it: the wait FUN_00041870 makes when there's none isn't done, #242).
-/// ENEMY_SEEN draws GOAL_ATTACK_MOVE_OUT: the same walk facing the target, firing once combat is
-/// allowed. Without a point (none given) the route is to its own place: it's there, GUARD at once.
-fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
+/// MOVE_OUT (Move To): GOAL_MOVE_OUT's walk to the point (its start 0x45d00, its update
+/// FUN_00045fa0), on a route (play_routes.rs `move_out`, #335: over the level's world points to
+/// the cursor's point, at 2 m; the route round a friend in the way and the 2 s stuck handling are
+/// the AI update's, before this) at the dash (FUN_0004d970 mode 4), the last MOVE_OUT_WALK m of it
+/// at a walk, held at a corner at a walk too (as the follow, play.rs `squad_ai`). (The game runs
+/// instead while brain+0x3c4 bit 10 is set: the character inside one of the level record's +0x114
+/// prisms, FUN_0004cb60 / FUN_000e6e00; what those volumes are isn't read, so the demo dashes but
+/// under BF_TEST_PRISM. The leads read the bit as "an enemy known": it isn't.) At the route's end
+/// it's GUARD (the full mode change) and says e635ecc6. With no route to the point it stands, in
+/// MOVE_OUT (the update's empty route: FUN_00045fa0 asks for mode 1, a stand). Not on into a
+/// liquid that burns (play_liquids.rs, the routes' safety net, as the follow). ENEMY_SEEN draws
+/// GOAL_ATTACK_MOVE_OUT: the same walk facing the target, firing once combat is allowed. Without
+/// a point (none given) the route is to its own point: it's there, GUARD at once. Without a
+/// level's points (the test map) the walk is straight, given up when it stalls (STALL_TIME).
+fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, graph: Option<&mut bf_viewer::bf::nav::Graph>) {
     let now = m.sim_time;
     let here = m.position;
-    let to = m.command.point.map_or(Vec2::ZERO, |p| p.xz() - here.xz());
-    let dist = to.length();
-    if dist < MOVE_OUT_ARRIVE {
-        arrive(m, now, if m.command.point.is_some() { "reaches" } else { "has no" }, dist);
-        guard(m, dt, target, toward);
-        return;
-    }
-    // (past the controlled character when it's on the way)
-    let blocker = (!leader.dead && !leader.absent).then(|| leader.position.xz());
-    let way = pass_round(here.xz(), here.xz() + to, blocker);
-    // the walk's progress: given up after STALL_TIME s without coming closer
-    if dist < m.command.best - STALL_PROGRESS {
-        (m.command.best, m.command.stalled) = (dist, 0.0);
-    } else if m.command.since > STALL_GRACE {
-        m.command.stalled += dt;
-    }
-    if m.command.stalled >= STALL_TIME {
-        arrive(m, now, "stalls", dist);
-        guard(m, dt, target, toward);
-        return;
-    }
+    let point = m.command.point;
+    let dist = point.map_or(0.0, |p| p.xz().distance(here.xz()));
+    let way = match graph {
+        Some(g) => routes::move_out(m, g, point),
+        None => {
+            // (the walk's progress: given up after STALL_TIME s without coming closer)
+            if dist < m.command.best - STALL_PROGRESS {
+                (m.command.best, m.command.stalled) = (dist, 0.0);
+            } else if m.command.since > STALL_GRACE {
+                m.command.stalled += dt;
+            }
+            match point {
+                Some(p) if dist >= MOVE_OUT_ARRIVE && m.command.stalled < STALL_TIME => routes::Way::Go { target: p, along: dist, corner: false },
+                Some(_) if dist >= MOVE_OUT_ARRIVE => {
+                    arrive(m, now, "stalls short of", dist);
+                    guard(m, dt, target, toward);
+                    return;
+                }
+                _ => routes::Way::There,
+            }
+        }
+    };
+    let (to, along, corner) = match way {
+        routes::Way::There => {
+            arrive(m, now, if point.is_some() { "reaches" } else { "has no" }, dist);
+            guard(m, dt, target, toward);
+            return;
+        }
+        routes::Way::Stand => (None, 0.0, false),
+        routes::Way::Go { target, along, corner } => (Some(target), along, corner),
+    };
     m.jump_pressed = false;
     m.dodge_pressed = false;
     m.dodge_request = None;
@@ -401,47 +412,32 @@ fn move_out(m: &mut Player, leader: &Player, dt: f32, target: Option<Vec3>, towa
     m.crouch_wanted = false;
     // facing its way, or the target (ATTACK_MOVE_OUT faces it as it walks); the step's move is in
     // its "camera"'s frame, so it's made after the fire's turn
-    m.cam_yaw = (-way.x).atan2(-way.y);
+    let way = to.map_or(Vec2::ZERO, |t| (t.xz() - here.xz()).normalize_or_zero());
+    if way != Vec2::ZERO {
+        m.cam_yaw = (-way.x).atan2(-way.y);
+    }
     m.cam_pitch = 0.0;
     m.face_yaw = Some(m.cam_yaw);
     let turned = target.is_none() && toward.is_some_and(|p| face_toward(m, p));
     m.aim = target.is_some() || turned;
     ai_fire(m, target, dt);
-    let shore = world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, way));
-    if shore {
+    let held = to.is_none_or(|t| routes::shore(m, t, dt));
+    if held {
         m.move_input = Vec2::ZERO;
         m.sprint = false;
         m.walk = false;
+        m.router.asked = 1;
     } else {
         let (fwd, right) = (Vec2::new(-m.cam_yaw.sin(), -m.cam_yaw.cos()), Vec2::new(m.cam_yaw.cos(), -m.cam_yaw.sin()));
         m.move_input = Vec2::new(way.dot(right), way.dot(fwd));
-        m.sprint = dist > MOVE_OUT_WALK;
-        m.walk = dist < MOVE_OUT_WALK;
+        m.sprint = along > MOVE_OUT_WALK && m.router.cap >= routes::NO_CAP && !routes::in_prism();
+        m.walk = along < MOVE_OUT_WALK || corner || m.router.cap == 2;
+        m.router.asked = if m.walk { 2 } else if m.sprint { 4 } else { 3 };
     }
     m.switch_pressed = false;
     m.reload_pressed = false;
     m.throw_held = false;
     m.next_surface = false;
-}
-
-/// MOVE_OUT's way (a unit vector in x, z) from `here` to `point` past `blocker` (the controlled
-/// character, if it's in the world): straight, but with the blocker ahead (before the point)
-/// within PASS_CLEAR of the straight line, aimed beside it, PASS_CLEAR off it on the far side of
-/// the line, until it's behind. The demo's stand-in for the game's route round it (see
-/// PASS_CLEAR).
-fn pass_round(here: Vec2, point: Vec2, blocker: Option<Vec2>) -> Vec2 {
-    let to = point - here;
-    let dist = to.length().max(1e-4);
-    let straight = to / dist;
-    let Some(b) = blocker else { return straight };
-    let off = b - here;
-    let (ahead, side) = (off.dot(straight), straight.perp_dot(off));
-    if ahead <= 0.0 || ahead >= dist || side.abs() >= PASS_CLEAR {
-        return straight;
-    }
-    let across = Vec2::new(-straight.y, straight.x);
-    let beside = b - across * if side >= 0.0 { PASS_CLEAR } else { -PASS_CLEAR };
-    (beside - here).normalize_or(straight)
 }
 
 /// MOVE_OUT's end (FUN_00045fa0's tail, and its failed walk at 0x46256): the point given up
@@ -466,6 +462,8 @@ fn set(u: &mut Player, mode: Mode, point: Option<Vec3>) -> bool {
     if !u.command.set_mode(mode, point) {
         return false;
     }
+    // (the goal's route goes with it: play_routes.rs, at the next AI update)
+    u.router.stale = true;
     u.still_time = 0.0;
     u.idle_pause = 0;
     u.idle_left = 0.0;
@@ -548,17 +546,17 @@ pub struct HandedOver {
 /// with `old`, the character control leaves, more than HAND_OVER_FAR m from `squad[new]`, the one
 /// it goes to, `old` is set to GUARD, and every other living member following it (the demo's AI
 /// members all follow the controlled character) in FOLLOW or WINGMAN to GUARD within HOLD_NEAR m
-/// of `old`'s world point (char+0x24c: the demo has none, `old`'s place stands in), else MOVE_OUT
-/// to it. Then they all follow the one taken (FUN_0005cbc0): the demo's AI follows the controlled
+/// of `old`'s world point (char+0x24c), else MOVE_OUT to it. Then they all follow the one taken (FUN_0005cbc0): the demo's AI follows the controlled
 /// character anyway. Which members it re-ordered, for the lines (the one left says by its mode,
-/// the members it re-ordered answer: play_chatter.rs `hand_over`).
+/// the members it re-ordered answer: play_chatter.rs `hand_over`). The world point is the one
+/// left's own (play_routes.rs `Router::own_at`, #335), its place without one.
 pub fn hand_over(old: &mut Player, squad: &mut [Player], new: usize) -> HandedOver {
     let Some(taken) = squad.get(new) else { return HandedOver::default() };
     let apart = old.position.distance(taken.position);
     if apart <= HAND_OVER_FAR {
         return HandedOver::default();
     }
-    let (now, at) = (old.sim_time, old.position);
+    let (now, at) = (old.sim_time, old.router.own_at.unwrap_or(old.position));
     if log_level() > 0 {
         println!("t={now:.2} order: the hand-over from {} to {} is {apart:.1} m: over {HAND_OVER_FAR} m, {} stands its ground", unit_name(old),
                  unit_name(taken), unit_name(old));
@@ -586,6 +584,8 @@ pub fn hand_over(old: &mut Player, squad: &mut [Player], new: usize) -> HandedOv
 /// it's left.
 pub fn taken(u: &mut Player) {
     u.command.toggle = None;
+    // (its goals popped: the route goes too, play_routes.rs)
+    u.router.stale = true;
     if u.command.mode == Mode::MoveOut {
         let now = u.sim_time;
         order(u, Mode::Guard, None, now);
@@ -853,34 +853,6 @@ mod tests {
         c.set_mode(Mode::Wingman, None);
         c.released();
         assert_eq!(c.allow, ALLOW_COMBAT | ALLOW_COVER);
-    }
-
-    /// Move To past the controlled character (round 3's failure: take08's geometry, Tex nearly on
-    /// Hawk's way, made her wait 7 s and stand her ground). Her straight way from her kneel
-    /// (-89, -86.4) to the point (-70.8, -79.5) passes Tex at (-83.39, -82.79) 1.39 m off, room
-    /// enough: straight on, as take08's Hawk ran past him. With him right on the line the way
-    /// bends to pass him PASS_CLEAR off, and runs straight again once he's behind, or off the
-    /// line, or beyond the point.
-    #[test]
-    fn move_to_passes_the_controlled_character() {
-        let (point, tex) = (Vec2::new(-70.8, -79.5), Vec2::new(-83.39, -82.79));
-        let start = Vec2::new(-89.0, -86.4);
-        let straight = (point - start).normalize();
-        assert_eq!(pass_round(start, point, Some(tex)), straight);
-        // (head on: 6.5 m ahead on the line)
-        let ahead = start + straight * 6.5;
-        let way = pass_round(start, point, Some(ahead));
-        assert!(way.dot(straight) < 0.999 && way.dot(straight) > 0.9);
-        let miss = (ahead - start).perp_dot(way).abs();
-        assert!((miss - PASS_CLEAR).abs() < 0.05, "passes {miss:.2} m off");
-        // past him: straight again; nobody in the way, the point before him, or him off the line:
-        // straight
-        let past = ahead + straight;
-        let on = |way: Vec2, to: Vec2| way.dot(to.normalize()) > 0.9999;
-        assert!(on(pass_round(past, point, Some(ahead)), point - past));
-        assert!(on(pass_round(start, point, None), straight));
-        assert!(on(pass_round(start, start + straight * 3.0, Some(ahead)), straight));
-        assert!(on(pass_round(start, point, Some(ahead + Vec2::new(-straight.y, straight.x) * 3.0)), straight));
     }
 
     /// The follow's walk line is said once per order (FUN_00021b70's bit 0): a fresh brain has it
