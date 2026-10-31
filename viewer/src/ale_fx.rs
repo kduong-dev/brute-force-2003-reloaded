@@ -1401,6 +1401,19 @@ fn clock(time: &Time, fixed: Option<Res<AleClock>>) -> f32 {
     fixed.map_or(time.delta_secs().min(0.1), |c| c.0)
 }
 
+/// Test hook (an environment variable): `BF_ALE_DUMP=<effect name>` prints every particle the
+/// effects of that name make as it's born (`emit`): where, how far above its effect's place, its
+/// velocity and life. For a placed effect that's where the game's spawn for its emitter's shape
+/// puts it (the cube's 0x64e30, through the emitter's frame by FUN_000621c0): sdm_e13's embers,
+/// slava-fuzz, are born 1.5-36.5 m above their objects (#290).
+const ALE_DUMP: &str = "BF_ALE_DUMP";
+
+/// The effect name `ALE_DUMP` asks for, read once.
+fn ale_dump() -> Option<&'static str> {
+    static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| std::env::var(ALE_DUMP).ok().filter(|n| !n.is_empty())).as_deref()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, assets: Option<Res<AleAssets>>,
         mut seq: ResMut<Seq>, mut meshes: ResMut<Assets<Mesh>>,
@@ -1695,6 +1708,10 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                         Some(_) => (local + back, origin + frame * local),
                         None => (local, origin + frame * local + back),
                     };
+                    if ale_dump() == Some(compiled.name.as_str()) {
+                        println!("{} pair {i}: born at {spawn:.2}, {:.2} m above its effect at {:.2}, velocity {vel:.2}, life {life:.2} s",
+                                 compiled.name, spawn.y - place.translation.y, place.translation);
+                    }
                     let particle = AleParticle { fx: compiled.clone(), pair: i, lod: fx.lod, age, life, vel, sp, born: b.born, roll, step: 0, frame: lie, owner, local,
                                                  turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0,
                                                  rng: (fx.rng ^ (seq.0 as u32).wrapping_mul(0x85EB_CA6B)) | 1, since: 0.0 };

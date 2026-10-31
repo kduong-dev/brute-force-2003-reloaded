@@ -139,9 +139,70 @@ fn squad_skins(game: &mut Game, level: &str) {
     }
 }
 
+/// BF_SKY_CHECK=1: every level's sky as level_scene.rs draws it (`Level::load_sky`), each level
+/// loaded on its own as the test map's sky picker does (play_testworld.rs): a line per layer (its
+/// material, texture and texels, see-through or not by `sky_see_through`, its height span, the
+/// share of its texels under an alpha of 250 and how many are fully clear), then the levels with
+/// a see-through layer. Those are the skies drawn blended, which before #290 painted over the
+/// see-through things in front of them with the camera level or looking down (SKY_SORT).
+fn sky_check(dir: &std::path::Path) {
+    use bf_viewer::level_scene::sky_see_through;
+    let mut names: Vec<String> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "tgz")).filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string())).collect())
+        .unwrap_or_default();
+    names.sort();
+    let mut blended = vec![];
+    for name in names {
+        let load = (|| {
+            let mut game = Game::load(dir)?;
+            game.load_level(dir, &name)?;
+            let (sky, at, _, _) = Level::load_sky(&game)?;
+            Ok::<_, String>((game, sky, at))
+        })();
+        let (mut game, sky, at) = match load {
+            Ok(l) => l,
+            Err(e) => {
+                println!("{name}: not a level ({e})");
+                continue;
+            }
+        };
+        if sky.is_empty() {
+            println!("{name}: no sky");
+        }
+        let mut any = false;
+        for (i, g) in sky.iter().enumerate() {
+            let tex = game.material_texture(g.material);
+            let mips = tex.and_then(|t| game.texture_mips(t));
+            let (lo, hi) = g.positions.iter().fold((f32::MAX, f32::MIN), |(l, u), p| (l.min(p[1]), u.max(p[1])));
+            let (see, under, clear, size) = match &mips {
+                Some(m) => {
+                    let px = &m.top().px;
+                    let n = (px.len() / 4).max(1) as f32;
+                    let under = px.chunks_exact(4).filter(|p| p[3] < 250).count() as f32 / n;
+                    let clear = px.chunks_exact(4).filter(|p| p[3] == 0).count() as f32 / n;
+                    (sky_see_through(m), under, clear, format!("{} x {}", m.top().w, m.top().h))
+                }
+                None => (false, 0.0, 0.0, "none".into()),
+            };
+            any |= see;
+            println!("{name} sky layer {i}: material h_{:08x} texture {} ({size}), {}, {:.0}% of its texels see-through, {:.0}% clear, y {:.0} .. {:.0} (+ {:.0})",
+                     g.material, tex.map_or("none".into(), |t| format!("h_{t:08x}")), if see { "blended" } else { "opaque" },
+                     under * 100.0, clear * 100.0, lo, hi, at.y);
+        }
+        if any {
+            blended.push(name);
+        }
+    }
+    println!("skies with a see-through layer ({}): {}", blended.len(), blended.join(", "));
+}
+
 fn main() {
     if std::env::var("BF_SCRIPT_CHECK").is_ok() {
         script_check(&data_dir());
+        return;
+    }
+    if std::env::var("BF_SKY_CHECK").is_ok() {
+        sky_check(&data_dir());
         return;
     }
     let name = std::env::args().nth(1).or_else(|| std::env::var("BF_LEVEL").ok()).unwrap_or_else(|| "sdm_e34".into());
