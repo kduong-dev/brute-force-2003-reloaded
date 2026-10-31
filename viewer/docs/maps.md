@@ -88,9 +88,10 @@ them):
       so, and in their first frames when the load is slow) and its autopilot run (46 of 60, at
       most 0.002%), sdm_e34's autopilot run (60 of 60), the tutorial's marines (63 of 70, at most
       0.005%) and first patrol (34 of 40, at most 0.001%), e34's squad follow (29 of 60, at most
-      0.023%) and its fight with the Shrike Hound (49 of 50): the same to the particles' noise,
-      the largest difference 15 levels, and their logs the same line for line but the map's
-      triangle count.
+      0.023%) and its fight with the Shrike Hound (49 of 50), the tutorial's start (27 of 30, at
+      most 0.07%: a flicker) and e34's (19 of 30, at most 0.001%), and the test map, `-- --test`
+      and `-- --test BF_MAP=tutorial` (9 of 9 each): the same to the particles' noise, and
+      their logs the same line for line but the map's triangle count.
   * Material: every triangle carries one, a world-material id plus a slide flag.
   * Standing: characters stand on surfaces up to 65° (the game's ground limit), facing up by
     their winding, within a 0.5 m step; steeper surfaces are walls (#285: so is a surface facing
