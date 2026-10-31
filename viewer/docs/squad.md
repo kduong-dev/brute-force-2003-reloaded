@@ -474,8 +474,9 @@ Squad movement and deaths follow the game's own data and the captures:
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
     level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the
     crosshair's centre ray's point (`play_reticle.rs` `Reticle::point`) whose flags pass (+0x24
-    bit 14 set: h_0bb771a2; bit 15 clear: h_1346678f; +0x28 bit 2, set on every point:
-    FUN_00059b60) and that projects inside the 640 x 480 (FUN_0004d630, the filter 0xbdef0);
+    bit 14 set: h_0bb771a2; bit 15 clear: h_1346678f; +0x28 bit 2, valid: set on every point by
+    FUN_00059b60, then by the waypoint triggers' set-valid, the route graph's, [nav.md](nav.md),
+    #334) and that projects inside the 640 x 480 (FUN_0004d630, the filter 0xbdef0);
     with none (the view on the sky) the controlled character's place, and then A gives Cover Me
     (the +0xcc branch). Its marker, the object type h_18709e83's three-sided pyramid (mesh
     h_fa39b375, drawn as the level's objects are), stands on it turning a radian a second; "Look

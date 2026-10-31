@@ -12,6 +12,9 @@
 //! (bounds, normals, winding, UV direction) and exits; with BF_PART_VERTS=1 every vertex, not the first 6.
 //! BF_TEX_LOG=1 prints where each texture asked for came from (`Game::texture_entry`);
 //! BF_TEX_LOG=squad prints the squad's skin textures on the level (archive, bytes) and exits.
+//! BF_ROUTE=<x>,<z>;<x2>,<z2> prints the AI's route between the world points there (bf/nav.rs,
+//! #334; BF_ROUTE_COST=1 also times the search across the level, BF_ROUTE_RAYS=1|2 shows what
+//! the legs' corner rays meet, BF_ROUTE_PROBE=ax,ay,az,bx,by,bz one ray) and exits (`route_dump`).
 
 use std::path::PathBuf;
 
@@ -186,7 +189,12 @@ fn main() {
         std::process::exit(0);
     }
     // pickups sit at their spawn height in the file; drop them onto the floor below
-    bf_viewer::arena::Arena::install(&game, &level).settle_pickups(&game, &mut level);
+    let arena = bf_viewer::arena::Arena::install(&game, &level);
+    arena.settle_pickups(&game, &mut level);
+    if let Ok(v) = std::env::var("BF_ROUTE") {
+        route_dump(&level, &arena, &v);
+        std::process::exit(0);
+    }
     let with_mesh = level.objects.iter().filter(|o| o.archetype.is_some()).count();
     if std::env::var("BF_LEVEL_DUMP").is_ok() {
         for g in &level.sky {
@@ -259,6 +267,167 @@ fn main() {
         .add_systems(Update, (fly, screenshot, move_test_fx, turn_sky, run_liquid_clock))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
+}
+
+/// A character's position over its feet (m): the skeleton's origin, the hips, which the route
+/// code takes as the character's position (bf_play's GROUND, -1.05, the other way).
+const HIPS: f32 = 1.05;
+
+/// BF_ROUTE=<x>,<z>;<x2>,<z2> (#334, viewer/docs/nav.md): the route (bf/nav.rs `Graph::plan`) a
+/// character standing at (x, the floor, z) takes to the valid world point nearest (x2, the floor
+/// there, z2), as the level starts: every point valid but those its waypoint triggers set on their
+/// first update (`Graph::level_start`), the character's own point the nearest valid point
+/// (FUN_0014f7a0's pick at a spawn), the corridor rays the level's collision's (the terrain, the
+/// placed objects, the blockers; not liquids). Printed point by point with the floor under each
+/// and how far it is from the last, then the straight line's length, the route's, and the
+/// search's cost. With BF_ROUTE_COST=1 also the search between every 16th point and every 16th
+/// (the mean and the longest time, the most points popped), as the level starts and with every
+/// point valid; with BF_ROUTE_RAYS=1 what each leg's corner rays meet from its point and round it
+/// (=2 a map of the 2 m square round each point too); with BF_ROUTE_PROBE=ax,ay,az,bx,by,bz what
+/// one ray meets. Then it exits.
+fn route_dump(level: &Level, arena: &bf_viewer::arena::Arena, v: &str) {
+    use bf_viewer::bf::nav::{Dest, Graph, OwnPoint, Start};
+    let ends: Vec<Vec<f32>> = v.split(';').map(|p| p.split(',').filter_map(|x| x.trim().parse().ok()).collect()).collect();
+    let (Some(a), Some(b)) = (ends.first().filter(|e| e.len() >= 2), ends.get(1).filter(|e| e.len() >= 2)) else {
+        eprintln!("BF_ROUTE=<x>,<z>;<x2>,<z2>");
+        return;
+    };
+    let floor = |x: f32, z: f32| arena.floor_below(x, z, 1e4, bf_viewer::arena::Body::Character).map_or(0.0, |f| f.0);
+    // BF_ROUTE_PROBE=ax,ay,az,bx,by,bz: what the ray from a to b meets (a corridor ray replayed)
+    if let Some(v) = std::env::var("BF_ROUTE_PROBE").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|v| v.len() >= 6) {
+        let (pa, pb) = (Vec3::new(v[0], v[1], v[2]), Vec3::new(v[3], v[4], v[5]));
+        println!("probe {pa:.3} -> {pb:.3}: {:?}", arena.ray_kind(pa, (pb - pa).normalize_or_zero(), pa.distance(pb)));
+    }
+    let bare = Graph::new(&level.points);
+    let mut g = bare.clone();
+    let set = g.level_start(&level.triggers);
+    for (i, did) in &set {
+        let n = &g.nodes[*i as usize];
+        println!("at the start a waypoint trigger sets h_{:08x} (kind {}, at ({:.1}, {:.1}, {:.1})): {did:?}", n.name, n.kind, n.at.x, n.at.y, n.at.z);
+    }
+    let set = set.len();
+    let me = Vec3::new(a[0], floor(a[0], a[1]) + HIPS, a[1]);
+    let to = Vec3::new(b[0], floor(b[0], b[1]), b[1]);
+    let mut own = OwnPoint::spawned();
+    own.keep_near(&g, me);
+    let Some(goal) = g.nearest_valid(to) else {
+        println!("no valid point");
+        return;
+    };
+    let ray = |p: Vec3, q: Vec3, max: f32| {
+        let d = q - p;
+        let len = d.length();
+        len <= max && (len < 1e-4 || arena.ray(p, d / len, len).is_none())
+    };
+    let name = |i: Option<u32>| i.map_or("-".to_string(), |i| {
+        let n = &g.nodes[i as usize];
+        format!("h_{:08x} kind {:2} ({:6.1}, {:5.1}, {:6.1}) floor {:5.1}", n.name, n.kind, n.at.x, n.at.y, n.at.z, floor(n.at.x, n.at.z))
+    });
+    println!("route graph: {} points ({set} set by the waypoint triggers at the start); from ({:.1}, {:.1}, {:.1}), own point {}, to {}",
+             g.nodes.len(), me.x, me.y, me.z, name(own.point), name(Some(goal)));
+    let clock = std::time::Instant::now();
+    let plan = g.plan(me, own.point, Dest::Point(goal), None, &ray);
+    let us = clock.elapsed().as_secs_f64() * 1e6;
+    match plan {
+        Ok((route, found)) => {
+            let mut last = me;
+            let mut length = 0.0;
+            for (k, e) in route.entries.iter().enumerate() {
+                let d = e.at.distance(last);
+                length += d;
+                last = e.at;
+                let n = e.point.map(|p| &g.nodes[p as usize]);
+                println!("  {k:2}: {} +{d:4.1} m{}{}", name(e.point), if n.is_some_and(|n| n.state & bf_viewer::bf::nav::NO_SKIP != 0) { " no-skip" } else { "" },
+                         n.filter(|n| n.radius > 0.0).map_or(String::new(), |n| format!(" r {:.1}", n.radius)));
+            }
+            println!("{} entries{}; {:.1} m along the route, {:.1} m straight; the search popped {} and met {} points in {us:.0} us",
+                     route.entries.len(), route.dropped.map_or(String::new(), |d| format!(", the own point {} dropped", name(Some(d)))),
+                     length, me.distance(g.nodes[goal as usize].at), found.popped, found.met);
+            // BF_ROUTE_RAYS=1: each leg's corner corridor (FUN_00026a50's two rays, 0.8 m either
+            // side, 0.08 m above the points), from the point to the next, and what each meets
+            if std::env::var("BF_ROUTE_RAYS").is_ok() {
+                for w in route.entries.windows(2) {
+                    let (p, q) = (w[0].at + Vec3::Y * 0.08, w[1].at + Vec3::Y * 0.08);
+                    let side = Vec2::new(q.z - p.z, p.x - q.x).normalize_or_zero() * bf_viewer::bf::nav::CORRIDOR;
+                    let off = Vec3::new(side.x, 0.0, side.y);
+                    let what = |a: Vec3, b: Vec3| {
+                        let d = b - a;
+                        match arena.ray_kind(a, d / d.length(), d.length()) {
+                            None => "clear".to_string(),
+                            Some((t, k)) => {
+                                let obj = |o: Option<u32>| o.and_then(|o| level.objects.get(o as usize)).map_or(String::new(), |o| format!(" h_{:08x} type h_{:08x}", o.name, o.kind));
+                                let k = match k {
+                                    bf_viewer::arena::BodyKind::Terrain => "terrain".to_string(),
+                                    bf_viewer::arena::BodyKind::Blocker(o) => format!("a blocker{}", obj(o)),
+                                    bf_viewer::arena::BodyKind::Hinter(o) => format!("a hinter{}", obj(o)),
+                                    bf_viewer::arena::BodyKind::Object(o) => format!("an object{}", obj(Some(o))),
+                                    bf_viewer::arena::BodyKind::Other => "something else".to_string(),
+                                };
+                                format!("{k} at {t:.2} of {:.2} m", d.length())
+                            }
+                        }
+                    };
+                    println!("  leg {} -> {}: left {}; right {}", name(w[0].point), name(w[1].point), what(p + off, q + off), what(p - off, q - off));
+                    // and from 0.5 and 1 m round the point, 8 ways (where a character near it
+                    // stands): the ways whose corridor meets something
+                    for r in [0.5f32, 1.0] {
+                        let mut blocked = vec![];
+                        for k in 0..8 {
+                            let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                            let from = p + Vec3::new(a.cos(), 0.0, a.sin()) * r;
+                            let side = Vec2::new(q.z - from.z, from.x - q.x).normalize_or_zero() * bf_viewer::bf::nav::CORRIDOR;
+                            let off = Vec3::new(side.x, 0.0, side.y);
+                            let (l, rr) = (what(from + off, q + off), what(from - off, q - off));
+                            if l != "clear" || rr != "clear" {
+                                blocked.push(format!("{:.0} deg: left {l}; right {rr}", a.to_degrees()));
+                            }
+                        }
+                        if !blocked.is_empty() {
+                            println!("    from {r} m round it: {}", blocked.join(" | "));
+                        }
+                    }
+                    // and a map of the 2 m square round the point, 0.1 m a cell (x across,
+                    // z down): '.' clear, '#' blocked, 'o' the point
+                    if std::env::var("BF_ROUTE_RAYS").is_ok_and(|v| v == "2") {
+                        for j in -10..=10 {
+                            let row: String = (-10..=10).map(|i| {
+                                let from = p + Vec3::new(i as f32 * 0.1, 0.0, j as f32 * 0.1);
+                                let side = Vec2::new(q.z - from.z, from.x - q.x).normalize_or_zero() * bf_viewer::bf::nav::CORRIDOR;
+                                let off = Vec3::new(side.x, 0.0, side.y);
+                                let ok = |a: Vec3, b: Vec3| arena.ray(a, (b - a) / a.distance(b), a.distance(b)).is_none();
+                                if i == 0 && j == 0 { 'o' } else if ok(from + off, q + off) && ok(from - off, q - off) { '.' } else { '#' }
+                            }).collect();
+                            println!("      {row}");
+                        }
+                    }
+                }
+            }
+        }
+        Err(why) => println!("no route: {why:?} ({us:.0} us)"),
+    }
+    if std::env::var("BF_ROUTE_COST").is_ok() {
+        // (the graph as the level starts, then with no trigger's change: the data's links alone)
+        for (which, g) in [("at the start", &g), ("every point valid", &bare)] {
+            let sample: Vec<u32> = (0..g.nodes.len() as u32).step_by(16).collect();
+            let (mut total, mut worst, mut popped, mut n, mut none) = (0.0, 0.0f64, 0usize, 0usize, 0usize);
+            for &s in &sample {
+                for &t in &sample {
+                    let clock = std::time::Instant::now();
+                    let found = g.search(Start::Temp { at: g.nodes[s as usize].at, link: s }, t, None);
+                    let us = clock.elapsed().as_secs_f64() * 1e6;
+                    total += us;
+                    worst = worst.max(us);
+                    n += 1;
+                    match found {
+                        Some(f) => popped = popped.max(f.popped),
+                        None => none += 1,
+                    }
+                }
+            }
+            println!("search cost ({which}) over {n} pairs of {} points: mean {:.0} us, longest {worst:.0} us, at most {popped} popped; {none} pairs without a route",
+                     g.nodes.len(), total / n.max(1) as f64);
+        }
+    }
 }
 
 /// The liquids' clock (level_scene::LiquidClock: their scroll and the water's shimmer) on bevy's.
