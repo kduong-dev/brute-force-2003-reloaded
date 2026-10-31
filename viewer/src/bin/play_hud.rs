@@ -305,8 +305,20 @@ fn press_alpha(level: f32, k: usize) -> f32 {
     ((level - PRESS_FADE.0 - PRESS_FADE.1 * n) * PRESS_FADE.2).clamp(0.0, 1.0) * 254.0 / 255.0
 }
 
-/// speech icons: beside each portrait, on the side away from its command tab (by character)
-const BUBBLE_AT: [(f32, f32); 4] = [(96.0, 426.0), (176.0, 383.0), (45.0, 344.0), (136.0, 292.0)];
+/// The speech icon's size on the 640 x 480 screen: its texture (SQUAD_ICON, h_e064867a, 16 x 16 DXT3)
+/// drawn 1:1, as the game draws its HUD textures. Before #332 it was drawn 10 x 10, a third too
+/// small (take01's bubble ink is 12 units wide).
+const BUBBLE_SIZE: f32 = 16.0;
+/// Speech icons by character (Brutus, Flint, Hawk, Tex): the top-left corner of each, inside the
+/// radar ring on the portrait's inner side (#332). Measured from the squad-voice takes
+/// (`todo/36-squad-voice`, 1280 x 720 with the 4:3 picture at x 160-1120, 1.5 px a unit): the
+/// icon's white body (every channel over 185) at Hawk take01 17.6 s (x 78.0-89.3, y 344.7-352.0),
+/// Tex take12 3.9 s (x 105.3-114.7, y 324.7-332.7), Brutus take12 12.6 s (x 103.3-114.7, y
+/// 397.3-403.3) and Flint take08 4.9 s (x 151.3-162.7, y 344.7-351.3), put back to the texture's
+/// corner by where its body sits in the 16 x 16 (flipped: x 2-13, y 3-13) and checked by
+/// rendering the demo's and comparing the bodies the same way. The fit is to about 1 unit: the
+/// game's own placement code isn't found (the table is in no function the code map lists).
+const BUBBLE_AT: [(f32, f32); 4] = [(101.5, 393.5), (149.5, 340.5), (76.0, 341.0), (102.0, 321.0)];
 /// a dead member's portrait: their own skull (the character's h_00c51907 icon; Brutus's is the
 /// wide one), dimmed; their command tab and radar health bar go. Fallbacks if the data lacks one:
 const SKULL_HUMAN: u32 = 0x1834_3E47;
@@ -1424,7 +1436,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     commands.spawn((ChildOf(screen), NameLabelText, Visibility::Hidden, ZIndex(3),
                     record_text("", LABEL_CENTRE.0, LABEL_CENTRE.1, &HEADING24, vec![LABEL_ORANGE], None, Across::Centre)));
     for (c, &(x, y)) in BUBBLE_AT.iter().enumerate() {
-        commands.spawn((ChildOf(radar), SquadPart::Bubble(c), Visibility::Hidden, flipped(Handle::default()), ZIndex(2), at(x, y, 10.0, 10.0)));
+        commands.spawn((ChildOf(radar), SquadPart::Bubble(c), Visibility::Hidden, flipped(Handle::default()), ZIndex(2), at(x, y, BUBBLE_SIZE, BUBBLE_SIZE)));
     }
     // squad health in the radar frame's diagonal channels (the frame's dark channel is the track)
     for (c, bar) in bars.into_iter().enumerate() {
