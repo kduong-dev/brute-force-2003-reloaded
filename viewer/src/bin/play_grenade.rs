@@ -506,7 +506,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
         let fuse = if t.landed { 0.0 } else { kit.def.fuse.max(0.0) };
         if std::env::var("BF_GRENADE_LOG").is_ok() && !t.landed {
             let v = t.velocity;
-            let feet = floor_y(player.position.x, player.position.z, player.position.y + GROUND + 1.0, world::Body::Character);
+            let feet = floor_y(player.position.x, player.position.z, player.position.y + GROUND + 1.0, world::Body::Player);
             println!("t {:.2}: {} leaves the hand {:.2} m over the floor at the thrower's feet at {:.1} m/s, {:.1} degrees up (mass {:.1})", player.sim_time,
                      kit.def.label, t.pos.y - feet, v.length(), v.y.atan2(Vec2::new(v.x, v.z).length()).to_degrees(), kit.def.mass);
         }
