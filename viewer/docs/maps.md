@@ -13,7 +13,9 @@ then exits; `BF_FIND_BODIES=1` lists the collision bodies (size, closed or open,
 many faces face into the body; blockers and hinters, a placed object's object-type, its faces by
 the way they face) and exits, `BF_FIND_BODIES=b<n>` lists body n's triangles (#292);
 `BF_FIND_HOLES=1` or `=<file>.ppm` scans the map for holes in its collision and for the hinters'
-walls and exits (#292, "Holes" below); `BF_COLLISION_CHECK=1` counts the collision surfaces the
+walls and exits (#292, "Holes" below); `BF_FIND_HINTER=1` scans the terrain's extent every half
+metre for the spots where a character's floor or flank (one over its floor by more than a
+step) isn't the same for the AI and the player (a hinter's faces, #341) and exits; `BF_COLLISION_CHECK=1` counts the collision surfaces the
 map uses (terrain blocks, blockers, hinters, placed objects' parts) that aren't the map's own
 and exits (#338, "Which level's shapes" below); `BF_HELD_LOG=1` prints what stops the controlled
 character's move (#292); `BF_INSIDE_LOG=1` prints a character in a rock and one taken out (#285);
@@ -350,8 +352,14 @@ them):
     (`BF_FIND_BODIES` over the 28 levels, #338: #292's survey said all of them, with e01's shapes
     where a hinter's name was e01's, "Which level's shapes" above); the three others, m02_b's
     body 89 (28 steep and 28 downward faces among its 72 triangles) and m09_a's body 39 and
-    m09_x's body 49 (6 floors, 16 steep, 22 downward among 48), are shaped otherwise, and the
-    demo's floor queries for a character (`Body::Character`) take their faces in as any blocker's.
+    m09_x's body 49 (6 floors, 16 steep, 22 downward among 48), are shaped otherwise. The demo's
+    floor queries for a character the AI moves (`Body::Character`, `Mover::Ai`) take their faces
+    in as any blocker's; for the player's (`Body::Player`, `Mover::Player`, #341) they leave a
+    hinter out whole, as its sweep does: `Arena::floor_at`, `floor_around`, `floor_kind`,
+    `flank_below` and the spawn's `floor_below` all take who asks. #338's survey of three
+    bodies as "stood on like any blocker" had left the player on body 89's steep faces (28 of
+    them, normal y 0.12: the flank a body falling past the band lands on and slides down:
+    `flank_below`) and on m09_a's and m09_x's floors, which don't exist for the player now.
     The bands run round ground the AI shouldn't leave: sdm_e13's 2.7 km
     band (body 71, 25 m tall) traces its arena's outer lava shore, m14_c's longest (body 49,
     375 m) the edge of its icy plateau.
@@ -487,6 +495,29 @@ them):
       and 4 went off another way down a slope. Main can't start those runs at the bands (the
       spawn moved Tex, above); its free camera's teleport run held him at m14_c's plateau edge
       (above).
+    * The player and the hinters' faces (#341; `BF_FIND_HINTER=1`, `BF_MOVE_LOG=frame`, 15 fps):
+      the scan finds 203 cells on m02_b where the AI's and the player's ground differ (all flank,
+      none floor), 5438 on m09_a (2549 floor) and 5954 on m09_x (2677 floor). m02_b's body 89,
+      at (125.5, 117.5) (floor 25.0, the band's face 30.19 over it):
+      `BF_MAP=m02_b BF_TEST_GOTO=125.5,117.5,125.5,117.5 BF_TEST_FALL=10`: the player falls
+      through the band and lands on the floor at 25.0 (the first JumpLand at t=1.067, frame 16); with the filter left
+      out of `flank_below` it came down "on a face" at 30.15 and slid to (125.42, 117.99).
+      m09_a (`BF_TEST_GOTO=-206,-215.7,-199,-215.7`): the feet stay at 57.64-57.67 across
+      x -204.7 to -202.8 where the AI's floor (hinter body 39's) rises to 58.8-59.5 (the old
+      step-up); the run now ends held at (-201.25, -215.28) by body 182 (object 171, ice
+      crystals), where main got past on the hinter floor. On m09_x the player has no ground at all where the hinter's floor is (the
+      terrain's hole under it: "no floor, face or flank", held as any hole, #296). The AI's
+      is unchanged: the tutorial's lava yard (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`
+      with `BF_BRAIN_LOG`) has 29 home at 1.53 s and 30 at 2.53 s as before, and sdm_e13's band
+      run (`BF_TEST_GOTO=90,-91,130,-91`) the player at (124.50, -95.15) at 11 s. The player's
+      other queries leave the hinters out as well (the review's round): a knocked-down
+      character's ragdoll body is `Mover::of(controlled).body()`, set again every frame it
+      lies (`Ragdoll::set_body`, so a squad switch gives the member switched to or from the right
+      one), the rock escape (`Arena::out_of_rock`, `escape`) and the warps' and spawn copies'
+      `on_ground` take the mover; the squad's spawn table, made before it's known who is
+      controlled, asks as the AI. Checked: `BF_MAP=m02_b BF_TEST_GOTO=125.5,117.5,125.5,117.5
+      BF_TEST_FALL=10 BF_TEST_KNOCK=0.3 BF_TEST_HEALTH=5000`, Tex knocked down falling through
+      body 89's band, gets up on the floor at 25.0 (JumpLand at 2.53 s), not on the band's 30.
     * sdm_e34's chasm, as main: from (56, 32) Tex is held at the rim, ending at (55.95, 15.42)
       (`BF_HELD_LOG`: "no floor, face or flank under it" from 4.53 s), and down the face west of it
       (`30,5,60,5`) at its foot, ending at (42.65, 7.16) as main's.

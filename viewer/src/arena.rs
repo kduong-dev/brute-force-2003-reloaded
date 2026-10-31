@@ -232,6 +232,15 @@ impl Mover {
     fn meets(self, t: &Tri) -> bool {
         !t.hinter || self == Mover::Ai
     }
+
+    /// The body its floor queries are for (`Body`): a character the AI moves is a plain
+    /// `Body::Character`, one a player controls a `Body::Player` (no hinter under its feet, #341).
+    pub fn body(self) -> Body {
+        match self {
+            Mover::Player => Body::Player,
+            Mover::Ai => Body::Character,
+        }
+    }
 }
 
 /// Whose body a floor or wall query is for, as the level's invisible blockers (`Tri::blocker`:
@@ -244,13 +253,18 @@ impl Mover {
 /// pickup could come to rest on a blocker's top.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Body {
-    /// a character's: its sweep (`move_body`, `Mover`) and the floors that stand it, the
-    /// blockers' and the hinters' among them (as before: 181 of the data's 184 hinters are upright
+    /// a character the AI moves: its sweep (`move_body`, `Mover::Ai`) and the floors that stand
+    /// it, the blockers' and the hinters' among them (181 of the data's 184 hinters are upright
     /// bands with no floor, #292; the other three, m02_b's body 89 and m09_a's 39 and m09_x's 49,
     /// have faces that look up or are steep, which count as any blocker's, #338); and the demo's
     /// ragdoll of one knocked down, which it stands up where the pelvis lies (play_ragdoll.rs
-    /// `Ragdoll::as_body`, `faces_near`)
+    /// `Ragdoll::as_body`, `faces_near`) and a character's place before it's in the world
     Character,
+    /// a character a player controls (`Mover::Player`): the blockers' floors and walls as a
+    /// `Character`'s, but never a hinter's. The game's sweep filter for the player leaves PID kind
+    /// 6 out (FUN_0012cd10, `Mover`) and Ipion's pair table pairs PID_HINTER with the character
+    /// phantom alone, so the player doesn't stand on a hinter's face that looks up (#341).
+    Player,
     /// anything else: a grenade, a corpse's ragdoll bodies (PID_BONE), a pickup or a lying gun, a
     /// missile, a casing, a decal laid on a surface: whatever its kind, it isn't
     /// PID_CHARACTER_PHANTOM, so no blocker meets it
@@ -259,9 +273,13 @@ pub enum Body {
 
 impl Body {
     /// Whether a query for this body meets triangle `t`: a blocker's (a hinter's among them) only
-    /// a character's.
+    /// a character's, and a hinter's only one the AI moves (#341).
     fn meets(self, t: &Tri) -> bool {
-        self == Body::Character || !t.blocker
+        match self {
+            Body::Character => true,
+            Body::Player => !t.hinter,
+            Body::Thing => !t.blocker,
+        }
     }
 }
 
@@ -1409,12 +1427,13 @@ impl Arena {
     /// (`escape`: half a metre or more at once, #285's test of falls onto sdm_e34's boulder);
     /// the game's sweep meets the body with the face and moves it off along it. The demo stands
     /// it on the face as on terrain too steep to stand on (play.rs `slide_on_face`, #264), and
-    /// the face's part over the step pushes it off (`move_body`).
-    pub fn flank_below(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3)> {
+    /// the face's part over the step pushes it off (`move_body`). A hinter's steep face is the
+    /// AI's alone (`Mover::meets`, #341: m02_b's body 89 has 28 of them).
+    pub fn flank_below(&self, x: f32, z: f32, top: f32, who: Mover) -> Option<(f32, Vec3)> {
         let mut best: Option<(f32, Vec3)> = None;
         for &i in self.near(x, z) {
             let t = &self.tris[i as usize];
-            if t.terrain || t.two_sided || t.inner || t.front.y >= FLOOR_NORMAL || t.front.y < SLOPE_UPRIGHT || !self.solid(t) {
+            if t.terrain || t.two_sided || t.inner || t.front.y >= FLOOR_NORMAL || t.front.y < SLOPE_UPRIGHT || !self.solid(t) || !who.meets(t) {
                 continue;
             }
             if let Some(y) = Self::height_on(t, x, z).filter(|y| *y <= top) {
@@ -1431,24 +1450,25 @@ impl Arena {
     /// body that wide rests on where the ground under its middle is too steep to stand on (a
     /// sliver of steep ground beside a floor, a rim it's half over: #264). The lowest, as the
     /// game's ground contact is the lowest-lying of its contacts (FUN_00153410).
-    pub fn floor_around(&self, x: f32, z: f32, radius: f32, low: f32, top: f32) -> Option<(f32, Vec3, u8)> {
+    pub fn floor_around(&self, x: f32, z: f32, radius: f32, low: f32, top: f32, who: Mover) -> Option<(f32, Vec3, u8)> {
         (0..8).filter_map(|k| {
             let a = k as f32 * std::f32::consts::FRAC_PI_4;
-            self.floor_at(x + radius * a.cos(), z + radius * a.sin(), top).filter(|f| f.0 >= low)
+            self.floor_at(x + radius * a.cos(), z + radius * a.sin(), top, who).filter(|f| f.0 >= low)
         }).reduce(|a, b| if b.0 < a.0 { b } else { a })
     }
 
-    /// A character's floor (`floor_below` for `Body::Character`) with its collision material
-    /// (world-material id | MATERIAL_SLIDE). The flat floor's ground is level, of material 0.
-    pub fn floor_at(&self, x: f32, z: f32, top: f32) -> Option<(f32, Vec3, u8)> {
-        self.floor_tri(x, z, top, Body::Character).map(|(y, t)| t.map_or((y, Vec3::Y, 0), |t| (y, t.n, t.material)))
+    /// A character's floor (`floor_below` for the mover's body, `Mover::body`) with its collision
+    /// material (world-material id | MATERIAL_SLIDE). The flat floor's ground is level, of
+    /// material 0. A hinter's top is a floor to the AI's characters, not to the player's (#341).
+    pub fn floor_at(&self, x: f32, z: f32, top: f32, who: Mover) -> Option<(f32, Vec3, u8)> {
+        self.floor_tri(x, z, top, who.body()).map(|(y, t)| t.map_or((y, Vec3::Y, 0), |t| (y, t.n, t.material)))
     }
 
     /// The floor `floor_at` finds as a character's ground record keeps it (FUN_0012dab0): its
     /// collision material, whether it's the terrain's, and the level object it's part of (an
     /// index into `Level::objects`). The flat floor counts as terrain, of material 0.
-    pub fn floor_kind(&self, x: f32, z: f32, top: f32) -> Option<(u8, bool, Option<u32>)> {
-        self.floor_tri(x, z, top, Body::Character).map(|(_, t)| t.map_or((0, true, None), |t| (t.material, t.terrain, t.object)))
+    pub fn floor_kind(&self, x: f32, z: f32, top: f32, who: Mover) -> Option<(u8, bool, Option<u32>)> {
+        self.floor_tri(x, z, top, who.body()).map(|(_, t)| t.map_or((0, true, None), |t| (t.material, t.terrain, t.object)))
     }
 
     /// The highest floor at (x, z) no higher than `top` for `body` and its triangle (None: the
@@ -1704,9 +1724,9 @@ impl Arena {
     /// `head` is in a rock's solid (`inside_span`: put there by a spawn, a test teleport, or a
     /// fall's drop, which isn't swept, past a rock's side it slid off under the rock's widest part)
     /// taken out of it (`escape`), if it is (#285).
-    pub fn out_of_rock(&self, at: Vec2, radius: f32, feet: f32, head: f32, step: f32) -> Option<Moved> {
+    pub fn out_of_rock(&self, at: Vec2, radius: f32, feet: f32, head: f32, step: f32, who: Mover) -> Option<Moved> {
         let lo = feet + step;
-        self.inside_span(at, lo, head).map(|body| self.escape(at, body, radius, feet, lo, head))
+        self.inside_span(at, lo, head).map(|body| self.escape(at, body, radius, feet, lo, head, who))
     }
 
     /// The walls near a move from `from` to `to` (`move_body`) cut to the heights lo..hi
@@ -1813,7 +1833,7 @@ impl Arena {
     /// head) is further from its feet than its head is, comes after one without. Its feet go on
     /// that floor (`Moved::floor`). The demo's: the game never has a body inside (its sweep
     /// doesn't let one in, FUN_00153810).
-    pub fn escape(&self, at: Vec2, body: u32, radius: f32, feet: f32, lo: f32, hi: f32) -> Moved {
+    pub fn escape(&self, at: Vec2, body: u32, radius: f32, feet: f32, lo: f32, hi: f32, who: Mover) -> Moved {
         let heights: Vec<f32> = [lo, (lo + hi) * 0.5, hi].into_iter().filter(|&y| self.inside(Vec3::new(at.x, y, at.y)) == Some(body)).collect();
         let (first, end) = self.spans[body as usize];
         let faces: Vec<&Tri> = self.tris[first as usize..end as usize].iter().filter(|t| !t.duplicate && self.solid(t)).collect();
@@ -1830,7 +1850,7 @@ impl Arena {
                 continue;
             }
             let p = at + d * (out + radius + ESCAPE_CLEAR);
-            let floor = self.floor_below(p.x, p.y, hi, Body::Character).map(|f| f.0);
+            let floor = self.floor_below(p.x, p.y, hi, who.body()).map(|f| f.0);
             let stuck = self.inside_span(p, lo, hi).is_some() || floor.is_none_or(|g| (g - feet).abs() > hi - feet);
             if best.is_none_or(|(r, _, _)| (stuck, out) < r) {
                 best = Some(((stuck, out), p, floor));
@@ -2404,11 +2424,11 @@ mod tests {
         assert_eq!(a.inside(Vec3::new(0.2, 0.7, 0.1)), Some(0));
         assert_eq!(a.inside(Vec3::new(1.3, 0.7, 0.1)), None);
         assert_eq!(a.inside(Vec3::new(0.2, 2.5, 0.1)), None);
-        let m = a.out_of_rock(Vec2::new(0.2, 0.1), 0.4, 0.0, 1.9, 0.5).expect("in the rock");
+        let m = a.out_of_rock(Vec2::new(0.2, 0.1), 0.4, 0.0, 1.9, 0.5, Mover::Ai).expect("in the rock");
         assert_eq!(m.floor, Some(0.0));
         assert!((m.at.x - 1.42).abs() < 0.01 && (m.at.y - 0.1).abs() < 0.01, "{:?}", m.at);
         assert!(a.inside_span(m.at, 0.5, 1.9).is_none());
-        assert_eq!(a.out_of_rock(Vec2::new(-3.0, 0.1), 0.4, 0.0, 1.9, 0.5), None);
+        assert_eq!(a.out_of_rock(Vec2::new(-3.0, 0.1), 0.4, 0.0, 1.9, 0.5, Mover::Ai), None);
     }
 
     /// #285's test: the faces of a twinned rock that face into it (`Tri::inner`) are neither
@@ -2517,7 +2537,11 @@ mod tests {
             let kind = format!("blocker {blocker}, hinter {hinter}");
             assert_eq!(a.floor_below(0.3, 0.2, 2.5, Body::Character).map(|f| f.0), Some(2.0), "{kind}");
             assert_eq!(a.floor_below(0.3, 0.2, 2.5, Body::Thing).map(|f| f.0), Some(if blocker { 0.0 } else { 2.0 }), "{kind}");
-            assert_eq!(a.floor_at(0.3, 0.2, 2.5).map(|f| f.0), Some(2.0), "{kind}");
+            assert_eq!(a.floor_at(0.3, 0.2, 2.5, Mover::Ai).map(|f| f.0), Some(2.0), "{kind}");
+            // (#341: the player's floor leaves a hinter's top out, a blocker's stays)
+            let player = if hinter { 0.0 } else { 2.0 };
+            assert_eq!(a.floor_at(0.3, 0.2, 2.5, Mover::Player).map(|f| f.0), Some(player), "{kind}");
+            assert_eq!(a.floor_below(0.3, 0.2, 2.5, Body::Player).map(|f| f.0), Some(player), "{kind}");
             let beside = Vec2::new(-1.05, 0.0);
             let out = a.push_out(beside, 0.1, 0.5, 0.7, 0.0, Body::Character);
             assert!((out.x - -1.1).abs() < 1e-3, "{kind}: {out:?}");

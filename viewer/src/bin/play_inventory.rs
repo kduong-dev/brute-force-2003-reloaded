@@ -200,8 +200,14 @@ impl StartStore {
     /// How many of grenade kit `kit` the squad starts with: its stacks' (category 2 or 3) whose
     /// type has the kit's label (one in the data per zone), held to the kit's stack-limit. (Each
     /// stack is held to its own type's already; the kit's limit only matters were two types of a
-    /// label carried together, which no zone does, and a kit without one isn't held.)
-    fn grenades(&self, game: &Game, kit: &WeaponDef) -> i64 {
+    /// label carried together, which no zone does, and a kit without one isn't held.) Two kits
+    /// can share a label (a level's own Sentry beside the squad's, #317): the label's stacks go to
+    /// the first of them, `first`, the squad's, and none to the others, so one stack isn't
+    /// carried twice.
+    fn grenades(&self, game: &Game, kit: &WeaponDef, first: bool) -> i64 {
+        if !first {
+            return 0;
+        }
         let n: i64 = self.stacks.iter().filter(|s| matches!(s.group, IG_GRENADE | IG_EXPLOSIVE))
             .filter(|s| item_info(game, s.kind).is_some_and(|i| i.label.eq_ignore_ascii_case(&kit.label))).map(|s| s.count).sum();
         if kit.stack_limit > 0 { n.min(kit.stack_limit) } else { n }
@@ -273,9 +279,9 @@ pub fn stock(mut player: ResMut<Player>, kits: Option<Res<GrenadeKits>>, test: O
     }
     let p = &mut *player;
     let first_stock = !p.stocked;
-    p.grenades = kits.0.iter().map(|k| match (test.is_some(), store.placed) {
+    p.grenades = kits.0.iter().enumerate().map(|(i, k)| match (test.is_some(), store.placed) {
         (true, _) => k.def.stack_limit.max(1),
-        (false, true) => store.grenades(&game.0, &k.def),
+        (false, true) => store.grenades(&game.0, &k.def, !kits.0[..i].iter().any(|o| o.def.label.eq_ignore_ascii_case(&k.def.label))),
         (false, false) => if k.def.name == FRAG { START_GRENADES } else { 0 },
     }).collect();
     // (a deathmatch map without the Frag: its first type)
