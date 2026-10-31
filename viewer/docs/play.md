@@ -31,7 +31,8 @@ A flat test floor for trying things out, only reachable with the `--test` flag. 
 straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`).
 
 * **Tex alone** (#302, the product owner's choice): the squad starts with the player's character
-  (Tex, or `BF_CHARACTER`'s) and its other three slots empty. The squad menu (T) puts any
+  (Tex, or `BF_CHARACTER`'s: a squad name, `brutus`, `flint`, `hawk` or `tex`, any case, or
+  its number 0-3; #330) and its other three slots empty. The squad menu (T) puts any
   character type in a slot, a real squad member (the formation, 1-4, the portraits and health
   channels, the hand-over at a death), empties one, or changes the player's own type where they
   stand; or puts a whole predefined squad in all four (the campaign squad, or one of the five
@@ -124,6 +125,14 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   stray key doesn't throw away what was built); the first press says so, and the controls panel's
   tools line names it. `BF_TEST_BACK` still goes at once. A session opened from EDITOR comes back
   to the main menu on EDITOR, its test-map state gone.
+  Where it goes depends on the map (#312): a **campaign mission** (the mission flow is running:
+  `MissionMode::active`, the tutorial or any zone reached from CAMPAIGN) goes to the main menu on
+  CAMPAIGN, as the end menu's Quit does (the game has no Backspace; its pause menu's Quit goes
+  there, FUN_00084f50); a deathmatch or squad deathmatch map goes back to its SELECT MISSION on
+  that map ([menu.md](menu.md)). A map started with `BF_MAP` and no front end goes by its kind,
+  the same: `BF_MAP=e34` (a campaign zone) leaves for the main menu on CAMPAIGN, `BF_MAP=sdm_e34`
+  for SQUAD DEATHMATCH's SELECT MISSION on it. Checked with `BF_TEST_BACK=70 BF_MENU_SHOT=<png>
+  BF_MENU_SHOT_FRAME=400` (the shot is of the menu it arrives at) on both.
 
 ## Health, HUD, locomotion, weapons and sounds
 
@@ -141,8 +150,10 @@ the radar; if you die, the death camera circles your body and control passes to 
 living member after 4 s (see **Death camera** below; `BF_TEST_KILL=<character>` makes the
 player shoot that member). The inventory is shared: the
 grenades go with control. Every portrait's tab shows its member's order (the follow arrows
-until one is given: see **Radar**, "The command tabs"); a speech icon appears beside the
-portrait while that member talks. The one you control is the player; the other
+until one is given: see **Radar**, "The command tabs"); a speech icon appears inside the
+radar's ring, by the portrait's inner side, while that member talks (16 x 16 units, the texture 1:1;
+its places by member, `BUBBLE_AT` in play_hud.rs, measured from the squad-voice takes, #332;
+before it they were 10 x 10 and outside the ring). The one you control is the player; the other
 three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
 catch up, walking the last bit), look where you look, and
 reload on their own. They never fire just because you do - only at enemies they can see (by the AI's sensor: their vision-range, x1.15 for one they know, 90 degrees either way of their facing, a clear line; [brain.md](brain.md) "Sight and contacts", #197), within their gun's range (the level's characters on another side, and the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
@@ -372,6 +383,19 @@ the test map (`--test`), with it:
     against their 7 x 9.3 after; the arrows bold at 14.2-14.3 s after Cover Me (the "green
     flash").
   * `BF_ORDER_LOG=1` prints each tab's change of icon.
+  * **The speech icons** (#332): the texture h_e064867a (16 x 16, drawn flipped so its tail points
+    down-left) at its own size, inside the ring: Brutus's low on the left of the disc, Flint's
+    and Hawk's level with the middle on the right and left, Tex's high on the left (`BUBBLE_AT`).
+    Their places are measured from the takes, not read from the game (its placement code isn't
+    found): the icon's white body (every channel over 185) at 1.5 px a unit, take by take: Hawk
+    take01 17.6 s x 78.0-89.3 / y 344.7-352.0, Flint take08 4.9 s x 151.3-162.7 / y 344.7-351.3,
+    Tex take12 3.9 s x 105.3-114.7 / y 324.7-332.7, Brutus take12 12.6 s x 103.3-114.7 / y
+    397.3-403.3 (the video's blur takes the tail and edges out of that count). Checked with
+    `cargo run --bin bf_play -- --test` with `BF_TEST_FULL_SQUAD=1
+    BF_TEST_SPEAK="<t>,hawk,f9f8e847;<t>,flint,e50e45c4;<t>,brutus,1aa3e291;<t>,tex,f71090f4"`
+    (t = 0.2, 1.4, 2.6, 3.8; `BF_CAPTURE` 40 frames): the same count on the demo's frame 20 gives
+    the bodies at the takes' places to 1 px at 1280 x 720 (Hawk's top 1 px higher), where before
+    they were 33-40 units off, outside the ring.
   * Checked (e34 staged as the #33 takes, `BF_CAPTURE` at 15 fps: `BF_MAP=e34
     BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999 BF_TEST_NO_HOSTILES=1
     BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05 BF_TEST_CURSOR_AT=-70.8,-79.5 BF_ORDER_LOG=1
