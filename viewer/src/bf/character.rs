@@ -188,6 +188,9 @@ fn bounding_sphere(e: &Element) -> Option<(Vec3, f32)> {
 /// gameflag-path ..>`; its entries' parser FUN_00198b60) and an entry's name, h_07f2f670.
 const H_GAME_CHARACTERS: u32 = 0xF5A4_2D61;
 const H_CHARACTER_NAME: u32 = 0x07F2_F670;
+/// An entry's h_fa8c572a (name not recovered; FUN_00198b60 puts it at the entry's +0x24): its type's
+/// name in the squad deathmatch libraries (`GameCharacter::squad_type`).
+const H_CHARACTER_SQUAD_TYPE: u32 = 0xFA8C_572A;
 
 /// A character of game-options' list h_f5a42d61 (line 63 of the decoded
 /// decompiled/xml/common/game-options-en.xml): the deathmatch characters, each unlocked by its
@@ -202,6 +205,37 @@ pub struct GameCharacter {
     pub archetype: u32,
     /// `gameflag-path`: the global flag that unlocks it (h_1d604469/characters/h_048b8580)
     pub gameflag: Vec<u32>,
+    /// h_fa8c572a (the entry's +0x24, FUN_00198b60): the name of its character type in the squad
+    /// deathmatch libraries (`mp_common/objecttypes-sdm_*.xmb`; the entry's `archetype` names the
+    /// deathmatch library's type). `mp_tex` gives h_fa6ca831, sdm_bf's Tex. Checked on all 20
+    /// entries against the data (#339): the two types agree in motion set, h_072ab4af (the HUD
+    /// slot) and hit points (the portrait texture of the Flint place's McTavish differs), and each
+    /// sdm library holds exactly the four types its squad's members name this way. A squad
+    /// deathmatch match loads the squad's library (FUN_000d5f60), and FUN_000f2010 hands each
+    /// member's +0x24 on where the deathmatch's FUN_000f1fb0 hands the +0x20
+    pub squad_type: u32,
+}
+
+/// h_fed0689a, a `<squad>` entry's member names (once per member: FUN_00198d50 stores each name at
+/// the cursor of the squad record's member list, FUN_00198e30 steps the cursor by 4 per attribute)
+/// and its `library-name`.
+const H_SQUAD_MEMBER: u32 = 0xFED0_689A;
+
+/// A squad deathmatch squad of game-options' list h_f5a42d61 (`<squad name image h_fed0689a
+/// library-name>`, line 84 of the decoded decompiled/xml/common/game-options-en.xml: the five
+/// squads the front end offers, in this order: Brute Force, Feral Hunting Pack, Shrike Raiders,
+/// Seer Coven, Ferguson Platoon). The record is FUN_00198d50's: the name, the image, the four
+/// member names (+8 .. +0x17, FUN_000f2010 walks them) and the library names (+0x18, which
+/// FUN_000d5f60 loads for a squad deathmatch match). Read by the test map's squad menu (#339).
+#[derive(Clone, Debug, Default)]
+pub struct GameSquad {
+    /// `name`: the squad's name's string (h_1e67edcd "Brute Force")
+    pub name: u32,
+    /// `library-name`: the mp_common library its members' types are defined in (`sdm_bf`)
+    pub library: String,
+    /// h_fed0689a, once per member in the squad's order: the member's game-options character
+    /// (`GameCharacter::archetype`, e.g. `mp_tex`, whose `squad_type` is the type the match makes)
+    pub members: Vec<u32>,
 }
 
 /// A zone's movie list (`list`: its `pre-movies` or `post-movies` children), each movie with its
@@ -406,6 +440,9 @@ pub struct Game {
     pub follow_cameras: HashMap<u32, f32>,
     /// game-options' characters (h_f5a42d61): the names the DNA is found by (see `GameCharacter`)
     pub option_characters: Vec<GameCharacter>,
+    /// game-options' squad deathmatch squads (h_f5a42d61's `<squad>` entries, in the file's
+    /// order; see `GameSquad`)
+    pub option_squads: Vec<GameSquad>,
     /// game-options `<combat-skills>`: the skills' own tuning (see `CombatSkills`)
     pub combat_skills: CombatSkills,
     /// game-options' HUD `<main h_e72ec57a h_1d9f07c5>`: the screen's safe margins across and
@@ -1475,6 +1512,7 @@ impl Game {
             scope: ScopeOptions::default(),
             follow_cameras: HashMap::new(),
             option_characters: vec![],
+            option_squads: vec![],
             combat_skills: CombatSkills::default(),
             hud_safe: [48.0, 36.0],
             menus: Default::default(),
@@ -1708,6 +1746,13 @@ impl Game {
                     name: hash_of(c.attr(H_CHARACTER_NAME)),
                     archetype: hash_of(c.attr(h("archetype-name"))),
                     gameflag: name_list(c, h("gameflag-path")),
+                    squad_type: hash_of(c.attr(H_CHARACTER_SQUAD_TYPE)),
+                }).collect();
+                // the squad deathmatch squads: <squad name image h_fed0689a library-name> (GameSquad)
+                self.option_squads = list.children_named(h("squad")).map(|s| GameSquad {
+                    name: hash_of(s.attr(h("name"))),
+                    library: s.attr(h("library-name")).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string(),
+                    members: name_list(s, H_SQUAD_MEMBER),
                 }).collect();
             }
             // the skills' tuning: <h_f7bc2603><h_04aa86aa h_1469a0df="0.5"/>.. (CombatSkills)
