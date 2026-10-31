@@ -1082,6 +1082,13 @@ impl Walker {
         e.point.map_or(e.at, |p| graph.nodes[p as usize].at)
     }
 
+    /// FUN_00040fc0: entry `i`'s position (its point's, else its own), when there's such an entry
+    /// (FUN_000233a0: `i` 0 or more and under the count). The AI's pace near the route's points
+    /// reads its last, current and next ones (play_routes.rs `pace_near`, FUN_0004d840).
+    pub fn entry_at(&self, graph: &Graph, i: i32) -> Option<Vec3> {
+        usize::try_from(i).ok().and_then(|i| self.entries.get(i)).map(|e| Self::position(graph, e))
+    }
+
     /// The current entry's point (FUN_00026d80 reads +0x14 of entry +0x10).
     pub fn current(&self) -> Option<u32> {
         usize::try_from(self.index).ok().and_then(|i| self.entries.get(i)).and_then(|e| e.point)

@@ -279,7 +279,9 @@ Squad movement and deaths follow the game's own data and the captures:
     spot at what it sees once combat is allowed.
   * **Move To** (MOVE_OUT): walks a route to the point (#335, [nav.md](nav.md) "The squad on
     routes": GOAL_MOVE_OUT's start 0x45d00 routes to the cursor's point, its update FUN_00045fa0
-    walks it at 2 m) at the dash, the last 2.5 m of it at a walk, steered as the follow is (#344),
+    walks it at 2 m) at the dash, slowed near the route's points as FUN_0004d840 slows it (a run
+    within 6 m of its end and a walk within 3.2 m; a walk within 3.2 m of a sharp corner, a notch
+    down at a bent one: #344's second fix round), steered as the follow is (#344),
     and from a stand or after a detour at the pace its ramp allows, a notch a second (Move To isn't
     one of FUN_00058670's follow modes: a walk, the run after 1 s, the dash after 2; the game
     runs instead while the

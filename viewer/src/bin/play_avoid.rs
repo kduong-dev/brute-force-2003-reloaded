@@ -512,8 +512,10 @@ fn heading(m: &Player) -> Vec2 {
     moving(m).unwrap_or_else(|| Vec2::new(-m.yaw.sin(), -m.yaw.cos()))
 }
 
-/// The way `m` moves (its last step's, unit xz), None while it doesn't (under MOVING).
-fn moving(m: &Player) -> Option<Vec2> {
+/// The way `m` moves (its last step's, unit xz), None while it doesn't (under MOVING): the demo's
+/// for the move vector char+0x5e8 in the world (FUN_0011e680, flat and unit, zero standing; the
+/// pace at a corner reads it, play_routes.rs `corner_pace`).
+pub fn moving(m: &Player) -> Option<Vec2> {
     let v = Vec2::new(m.last_velocity.x, m.last_velocity.z);
     (v.length() > MOVING).then(|| v.normalize())
 }

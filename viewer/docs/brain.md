@@ -346,8 +346,10 @@ todo/28-tutorial's takes:
   router fired without the plate that opens the door). The other walks home arrive.
 * The patrol's 4 s timers in FUN_0002b490 (brain+0x1e0 / +0x1e8, and a 0x1f / 0x20 call on the
   character for a type with type+0x1a8 bit 15) aren't read.
-* FUN_0004d970's speed mode can be lowered by FUN_0004d840 and the brain's +0x1a8 record: not
-  read; the demo walks a patrol at mode 2 and takes `locomotion`'s mode home as it is.
+* FUN_0004d970's speed mode can be lowered by FUN_0004d840 (the pace near a route's points, read
+  in #344's second fix round: [nav.md](nav.md), the squad's Move To) and the brain's +0x1a8
+  record; the demo walks a patrol at mode 2, which FUN_0004d840 never lowers (a walk asked stays a
+  walk), and takes `locomotion`'s mode home as it is.
 * A shot's EVT_SHOT_AT radius is the squad's 1.5 m (a guess); grenades and blasts don't tell a
   brain who threw them.
 * A warp's FUN_0004c5e0 for a living character (it checks the home point again, FUN_0014f7a0,

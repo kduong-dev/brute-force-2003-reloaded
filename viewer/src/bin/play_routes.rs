@@ -112,6 +112,28 @@ const PACE_STEP: f32 = 1.0;
 /// The pace record's timer at the brain's init (FUN_00058530: the level 1, the timer 0.3 s,
 /// 0x3e99999a, running) and after the step down from a walk to a stand (FUN_00058a20).
 const PACE_STAND: f32 = 0.3;
+/// The pace record's two distances (m, +0xc and +0x10), which FUN_00058670 sets each AI frame with
+/// the step: a squad brain in FOLLOW or WINGMAN 2.7 (0x402ccccd) and 4.0 (0x40800000)...
+const PACE_WALK_SQUAD: f32 = 2.7;
+const PACE_RUN_SQUAD: f32 = 4.0;
+/// ...any other 3.2 (0x404ccccd) and 6.0 (0x40c00000), a squad member on a Move To among them
+/// (`pace_near`: a walk within the first of the route's end, at most a run within the second).
+const PACE_WALK: f32 = 3.2;
+const PACE_RUN: f32 = 6.0;
+/// FUN_000587d0, the pace at a corner (`corner_pace`): the cosine between the way to the current
+/// point and the leg after it under this (0x3a4ff0, about 84 degrees) is a sharp corner, a walk...
+const CORNER_SHARP: f32 = 0.1;
+/// ...under this (0x3a5280, about 69 degrees) a notch under the move asked...
+const CORNER_BENT: f32 = 0.365;
+/// ...and a gentler one a walk only while the character's move is off the way to the point (their
+/// cosine under this, 0x3a5038, about 53 degrees)...
+const CORNER_OFF: f32 = 0.6;
+/// ...within this of it (m, 3D: 5.76, 0x3a527c, its square)...
+const CORNER_NEAR: f32 = 2.4;
+/// ...each with the pace record's timer at this (s, 0x3fc00000), so the ramp climbs back after it.
+const CORNER_HOLD: f32 = 1.5;
+/// FUN_0004c530 / FUN_0004c480: a direction across shorter than this squared (0x3a4ffc) has none.
+const FLAT_MIN: f32 = 1.192_092_9e-7;
 /// FUN_0001ad50 (the AI update at 0x1b16b, after the ramp): a route walker at a run or a dash
 /// turning faster than this (rad/s, the character's +0x488)...
 const HARD_TURN: f32 = 2.5;
@@ -250,6 +272,136 @@ pub fn pace(m: &mut Player, asked: i32) -> bool {
     at > 1
 }
 
+/// Whether `m` has the squad's pace record settings (FUN_00058670: a squad brain, bit 8, in
+/// FOLLOW or WINGMAN, brain+0x58 1 or 4; char+0x770 not read): the ramp's PACE_STEP_SQUAD and the
+/// distances PACE_WALK_SQUAD and PACE_RUN_SQUAD.
+fn squad_pace(m: &Player) -> bool {
+    m.in_squad() && matches!(m.command.mode, brain::Mode::Follow | brain::Mode::Wingman)
+}
+
+/// FUN_0004d840, the pace near the route's points, which FUN_0004d970 runs after it writes the
+/// move asked (`asked`, here `Router::asked`) when its fifth argument is set: MOVE_OUT's update
+/// (FUN_00045fa0) sets it; the follow's walk (state 0, FUN_00022130) doesn't (0x22377 pushes 0),
+/// nor do its states 5, 6 and 10, so the follow isn't slowed by it. With a position of the brain's
+/// own at brain+0x1b4 (zeroed by the brain's init, FUN_00016ff0, and the follow's state 10; what
+/// sets it isn't found) the pace goes by the distance to that; not done. Else, with a route:
+///  - FUN_00058610 / FUN_00058590: the distance across from the character to the route's last
+///    entry (FUN_00040fc0: its point's position, else its own) within the record's walk distance
+///    (+0xc: PACE_WALK, PACE_WALK_SQUAD) with the move asked 2 or more: the move asked 2 and the
+///    level at most 2 (+0x24 set to -1 too: not read); else within the run distance (+0x10) with
+///    the move asked 3 or more: the move asked 3 and the level at most 3. Take08's Hawk on her
+///    Move To went from the dash to a run 5.6 m out and to a walk 2.8 m out (#318; at 10 Hz);
+///  - with neither, and an entry after the current one (FUN_000233a0 on both), the corner's
+///    (`corner_pace`, FUN_000587d0), whose answer FUN_0004d840 drops.
+///
+/// FUN_0004d970 then moves at the lower of the move asked and the level (`pace`), so the caller
+/// reads both after this. BF_ROUTE_LOG=2 says when the end or a corner slows it.
+pub fn pace_near(m: &mut Player, g: &Graph) {
+    let (walk, run) = pace_distances(m);
+    let me = m.position;
+    let moving = avoid::moving(m);
+    let Some(w) = m.router.walker.as_ref().filter(|w| w.walking()) else { return };
+    let last = w.entry_at(g, w.entries.len() as i32 - 1);
+    let corner = w.entry_at(g, w.index).zip(w.entry_at(g, w.index + 1));
+    let r = &mut m.router;
+    let was = (r.asked, r.cap);
+    let off = last.map_or(f32::MAX, |p| me.xz().distance(p.xz()));
+    let why = match end_pace(r, off, walk, run) {
+        Some(why) => why,
+        None => match corner {
+            Some((cur, next)) if corner_pace(r, me, moving, cur, next, walk) => "slows at a corner",
+            _ => return,
+        },
+    };
+    log_pace(m, why, was, off);
+}
+
+/// The pace near the end of a walk without a route, toward `end` (MOVE_OUT's straight walk on a
+/// map without points: the demo's, whose game counterpart, FUN_00045fa0 with an empty route,
+/// stands): FUN_00058590 by the distance across to it, as FUN_0004d840 takes it to a route's end
+/// (`pace_near`).
+pub fn pace_to(m: &mut Player, end: Vec3) {
+    let (walk, run) = pace_distances(m);
+    let off = m.position.xz().distance(end.xz());
+    let was = (m.router.asked, m.router.cap);
+    if let Some(why) = end_pace(&mut m.router, off, walk, run) {
+        log_pace(m, why, was, off);
+    }
+}
+
+/// The pace record's walk and run distances for `m` (+0xc, +0x10: FUN_00058670's, `squad_pace`).
+fn pace_distances(m: &Player) -> (f32, f32) {
+    if squad_pace(m) { (PACE_WALK_SQUAD, PACE_RUN_SQUAD) } else { (PACE_WALK, PACE_RUN) }
+}
+
+/// FUN_00058590 (from FUN_00058610 with the distance across `off` to the end of the way): within
+/// `walk` (or at it) with the move asked 2 or more, the move asked 2 and the level at most 2;
+/// else within `run` with the move asked 3 or more, the move asked 3 and the level at most 3. What
+/// it did, for the log; None when nothing (FUN_0004d840 then looks at the corner).
+fn end_pace(r: &mut Router, off: f32, walk: f32, run: f32) -> Option<&'static str> {
+    if off <= walk {
+        if r.asked < 2 {
+            return None;
+        }
+        (r.asked, r.cap) = (2, r.cap.min(2));
+        return Some("walks near its way's end");
+    }
+    if off <= run && r.asked >= 3 {
+        (r.asked, r.cap) = (3, r.cap.min(3));
+        return Some("runs at most near its way's end");
+    }
+    None
+}
+
+/// BF_ROUTE_LOG=2: the pace near the route's points set the level down (`was` the move asked and
+/// the level before), `off` m from the way's end. (The goal asks again each frame, so the move
+/// asked is lowered every frame near the end; a change of the level is logged once.)
+fn log_pace(m: &Player, why: &str, was: (i32, i32), off: f32) {
+    if log_level() >= 2 && m.router.cap != was.1 {
+        println!("t {:.2}: {}: {why} (FUN_0004d840): the move asked {} -> {}, its pace level {} -> {} ({off:.1} m off its end)", m.sim_time, unit_name(m), was.0,
+                 m.router.asked, was.1, m.router.cap);
+    }
+}
+
+/// FUN_000587d0 (the pace record, the current entry's position `cur`, the next's `next`), for a
+/// character at `me` moving `moving` (FUN_0011e680: its move across, unit; None standing): with
+/// the level over 1 and `me` within the walk distance `walk` of `cur` (3D, strictly):
+///  - `a` the way from `me` to `cur` and `b` the leg from `cur` to `next`, each across and unit
+///    (FUN_0004c530, FUN_0004c480; nothing when either is shorter than FLAT_MIN squared);
+///  - their cosine under CORNER_SHARP: the timer at CORNER_HOLD, and with the move asked over 2
+///    the level 2 (a walk);
+///  - under CORNER_BENT: the timer, and the level at most a notch under the move asked (with the
+///    move asked 2 or less, the level 2);
+///  - else, the move's cosine with `a` under CORNER_OFF and `me` within CORNER_NEAR of `cur`
+///    (3D): as a sharp corner; standing, or moving its way, nothing.
+///
+/// The move asked is left as it is, so once the timer runs out the ramp climbs back a notch a
+/// step (`pace_ramp`). True when it acted (the timer set; FUN_0004d840 drops the answer).
+fn corner_pace(r: &mut Router, me: Vec3, moving: Option<Vec2>, cur: Vec3, next: Vec3, walk: f32) -> bool {
+    if r.cap <= 1 || cur.distance_squared(me) >= walk * walk {
+        return false;
+    }
+    let flat = |v: Vec3| {
+        let d = Vec2::new(v.x, v.z);
+        (d.length_squared() >= FLAT_MIN).then(|| d.normalize())
+    };
+    let (Some(a), Some(b)) = (flat(cur - me), flat(next - cur)) else { return false };
+    let cos = a.dot(b);
+    if (CORNER_SHARP..CORNER_BENT).contains(&cos) {
+        r.cap_left = CORNER_HOLD;
+        r.cap = if r.asked <= 2 { 2 } else { r.cap.min(r.asked - 1) };
+        return true;
+    }
+    if cos >= CORNER_BENT && !(moving.is_some_and(|v| v.dot(a) < CORNER_OFF) && cur.distance_squared(me) < CORNER_NEAR * CORNER_NEAR) {
+        return false;
+    }
+    r.cap_left = CORNER_HOLD;
+    if r.asked > 2 {
+        r.cap = 2;
+    }
+    true
+}
+
 /// BF_ROUTE_LOG's level (2: the own points' changes too), read once.
 fn log_level() -> u8 {
     static LEVEL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
@@ -361,7 +513,7 @@ const NEAR: f32 = 2.0;
 /// and climbs again from there when it sets off: walk, run, dash (#33 take04's motion numbers go
 /// 47, 34, 8: walk, run, dash). Then the hard turn's drop (`hard_turn`, FUN_0001ad50).
 pub fn pace_ramp(m: &mut Player, dt: f32) {
-    let step = if m.in_squad() && matches!(m.command.mode, brain::Mode::Follow | brain::Mode::Wingman) { PACE_STEP_SQUAD } else { PACE_STEP };
+    let step = if squad_pace(m) { PACE_STEP_SQUAD } else { PACE_STEP };
     let r = &mut m.router;
     r.cap_left = (r.cap_left - dt).max(0.0);
     if r.cap_left <= 0.0 && r.asked != r.cap {
@@ -1481,5 +1633,83 @@ mod tests {
         let mut m = walking(2);
         door_step(&mut m, &g, &reached(1), &shut);
         assert_eq!((m.router.cap, m.router.avoid.feelers_off), (NO_CAP, 0.0), "the next is a plain point");
+    }
+
+    /// FUN_00058590 by the distance across to the way's end: within the walk distance (or at it) a
+    /// walk asked and the level at most 2, within the run distance a run and at most 3, farther
+    /// nothing; a walk asked isn't raised to a run, nor a stand to a walk.
+    #[test]
+    fn the_pace_near_the_end() {
+        let at = |asked: i32, cap: i32, off: f32| {
+            let mut r = Router { asked, cap, ..Default::default() };
+            let did = end_pace(&mut r, off, PACE_WALK, PACE_RUN).is_some();
+            (did, r.asked, r.cap)
+        };
+        assert_eq!(at(4, 4, 7.0), (false, 4, 4), "beyond the run distance");
+        assert_eq!(at(4, 4, PACE_RUN), (true, 3, 3), "at the run distance");
+        assert_eq!(at(4, 2, 5.0), (true, 3, 2), "the level lower already");
+        assert_eq!(at(4, 4, PACE_WALK), (true, 2, 2), "at the walk distance");
+        assert_eq!(at(2, 2, 5.0), (false, 2, 2), "a walk asked isn't raised");
+        assert_eq!(at(1, 1, 1.0), (false, 1, 1), "nor a stand");
+    }
+
+    /// FUN_000587d0 within the walk distance of the current point (3D): a corner sharper than the
+    /// cosine 0.1 a walk, under 0.365 a notch under the move asked, a gentler one a walk only while
+    /// the move is off the way to the point within 2.4 m; each with the timer at 1.5 s; nothing
+    /// farther out or at a stand's level.
+    #[test]
+    fn the_pace_at_a_corner() {
+        // the way to the point (0, 0, 0) is +z from (0, 0, -2); the next leg at `cos` to it
+        let leg = |cos: f32| Vec3::new((1.0 - cos * cos).sqrt(), 0.0, cos) * 5.0;
+        let at = |cap: i32, asked: i32, me: Vec3, cos: f32, moving: Option<Vec2>| {
+            let mut r = Router { asked, cap, cap_left: 0.0, ..Default::default() };
+            let did = corner_pace(&mut r, me, moving, Vec3::ZERO, leg(cos), PACE_WALK);
+            (did, r.cap, r.cap_left)
+        };
+        let me = Vec3::new(0.0, 0.0, -2.0);
+        let along = Some(Vec2::Y);
+        assert_eq!(at(4, 4, me, 0.0, along), (true, 2, CORNER_HOLD), "a square corner: a walk");
+        assert_eq!(at(4, 4, me, 0.2, along), (true, 3, CORNER_HOLD), "a bent one: a notch under the dash");
+        assert_eq!(at(4, 3, me, 0.2, along), (true, 2, CORNER_HOLD), "a notch under a run");
+        assert_eq!(at(3, 2, me, 0.2, along), (true, 2, CORNER_HOLD), "a walk asked: a walk");
+        assert_eq!(at(3, 2, me, 0.0, along), (true, 3, CORNER_HOLD), "a square corner, a walk asked: the timer alone");
+        assert_eq!(at(4, 4, me, 0.7, along), (false, 4, 0.0), "a gentle one, moving its way");
+        assert_eq!(at(4, 4, me, 0.7, Some(Vec2::X)), (true, 2, CORNER_HOLD), "a gentle one, moving off its way");
+        assert_eq!(at(4, 4, Vec3::new(0.0, 0.0, -2.5), 0.7, Some(Vec2::X)), (false, 4, 0.0), "off its way beyond 2.4 m");
+        assert_eq!(at(4, 4, me, 0.7, None), (false, 4, 0.0), "standing");
+        assert_eq!(at(4, 4, Vec3::new(0.0, 0.0, -3.3), 0.0, along), (false, 4, 0.0), "beyond the walk distance");
+        assert_eq!(at(4, 4, Vec3::new(0.0, 2.5, -2.0), 0.0, along), (false, 4, 0.0), "3D: 3.2 m off with the height");
+        assert_eq!(at(1, 4, me, 0.0, along), (false, 1, 0.0), "at a stand's level");
+    }
+
+    /// FUN_0004d840 on a route A (0, 0) -> B (10, 0) -> C (10, 10), a square corner at B: 2 m short
+    /// of B at the dash it walks (the corner); 3.5 m short of C it runs at most (the end, before
+    /// any corner); a Move To's distances (3.2 / 6.0) against the follow's (2.7 / 4.0).
+    #[test]
+    fn the_pace_near_a_routes_points() {
+        let pts = [point(1, 0.0, 0.0, &[2]), point(2, 10.0, 0.0, &[1, 3]), point(3, 10.0, 10.0, &[2])];
+        let g = Graph::new(&pts);
+        let walking = |index: i32, me: Vec3, mode: brain::Mode| {
+            let mut m = Player::new(2);
+            m.command.mode = mode;
+            (m.router.cap, m.router.asked) = (NO_CAP, NO_CAP);
+            m.position = me;
+            m.last_velocity = Vec3::new(6.0, 0.0, 0.0);
+            let entries = (0..3).map(|i| Entry { at: g.nodes[i].at, point: Some(i as u32) }).collect();
+            m.router.walker = Some(Walker { entries, index, best: f32::MAX, ..Default::default() });
+            m
+        };
+        let mut m = walking(1, Vec3::new(8.0, 0.0, 0.0), brain::Mode::MoveOut);
+        pace_near(&mut m, &g);
+        assert_eq!((m.router.asked, m.router.cap, m.router.cap_left), (4, 2, CORNER_HOLD), "the square corner at B: a walk, the dash still asked");
+        let mut m = walking(2, Vec3::new(10.0, 0.0, 6.5), brain::Mode::MoveOut);
+        pace_near(&mut m, &g);
+        assert_eq!((m.router.asked, m.router.cap), (3, 3), "3.5 m short of C: a run");
+        let mut m = walking(2, Vec3::new(10.0, 0.0, 5.5), brain::Mode::Follow);
+        pace_near(&mut m, &g);
+        assert_eq!((m.router.asked, m.router.cap), (NO_CAP, NO_CAP), "the follow's distances: 4.5 m is beyond its 4.0");
+        let mut m = walking(2, Vec3::new(10.0, 0.0, 5.5), brain::Mode::MoveOut);
+        pace_near(&mut m, &g);
+        assert_eq!((m.router.asked, m.router.cap), (3, 3), "a Move To's: within its 6.0");
     }
 }
