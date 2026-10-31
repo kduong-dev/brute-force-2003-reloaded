@@ -85,7 +85,8 @@
 //!    PCMD_ enum, name table 0x3bd210), which picks its personality from its type's `<ai>` and
 //!    what its base goal does. The squad starts in FOLLOW with combat and cover allowed (the
 //!    constructor 0x16ff0); the Squad Command menu's orders and the hand-over change it
-//!    (play_orders.rs, which runs what each mode does for the squad's AI).
+//!    (play_orders.rs, which runs what each mode does for the squad's AI). The menu's Toggle
+//!    Ability pushes GOAL_TOGGLE_COMBAT_SKILL over it instead (`Command::toggle`, #333).
 //!
 //! Test hooks: `BF_BRAIN_LOG=1` (each brain at its spawn, its goals, routes and points reached,
 //! its contacts found, lost and forgotten, who shot at it); `BF_TEST_AIM_HOSTILE=<s>` (from that
@@ -230,6 +231,11 @@ pub struct Command {
     /// the character's rounds fired (`Player::shots_fired`) when last looked at: a change is a
     /// round fired since (the demo's bookkeeping for play_orders.rs `mate_firing`)
     pub rounds: u32,
+    /// GOAL_TOGGLE_COMBAT_SKILL (127) on top of its goal stack, the Squad Command menu's Toggle
+    /// Ability (FUN_000c1280 pushes it, play_orders.rs `toggle_ability`), with the skill's state
+    /// its start kept (brain+0x3c4 bit 6, 0x36e80); None with no such goal. Its update sends the
+    /// toggle until that state has changed (play_orders.rs `toggle_goal`)
+    pub toggle: Option<bool>,
     /// brain+0x3c4 bit 0: the follow's walk line, "on my way" (1ecaeb98), has been said for this
     /// order. FUN_00021b70, the follow's walk to its place, says it once and sets the bit;
     /// WINGMAN's mode change and its allow flags (FUN_00018040, FUN_00018000) clear it, and so does
@@ -245,12 +251,13 @@ impl Default for Command {
     /// get FREEWILL, but only the squad runs by this), and allow_combat and allow_cover set by the
     /// constructor's own `| 3` at its start, not by FUN_00018000 (which would clear them for
     /// FOLLOW): every take's fresh e34 start reads mode 1, allow a3, and take11's members fight at
-    /// once from it. The grant's timer stopped, and the walk line's bit 0 clear (`walk_said`): the
-    /// takes' snapshots were taken mid-play with the squad past its first walk, none said it before
-    /// an order (#33 take04: a 40 m follow walk, no line), which a fresh start doesn't contradict.
+    /// once from it. The grant's timer stopped, no goal pushed, and the walk line's bit 0 clear
+    /// (`walk_said`): the takes' snapshots were taken mid-play with the squad past its first walk,
+    /// none said it before an order (#33 take04: a 40 m follow walk, no line), which a fresh start
+    /// doesn't contradict.
     fn default() -> Self {
         Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, rounds: 0,
-                  walk_said: false }
+                  toggle: None, walk_said: false }
     }
 }
 
@@ -261,8 +268,8 @@ impl Command {
     /// grant's timer (+0x46c / +0x474 zeroed, +0x470 = (& 0xfa) | 2); MOVE_OUT stores the point.
     /// Then the allow flags by the new mode (FUN_00018000), and the goal stack and event queues
     /// emptied and the base goal drawn again (FUN_00039f00, FUN_00055b50, FUN_00015fe0,
-    /// FUN_0001a4e0: here its walk and pause start over, play_orders.rs `order`). True when it
-    /// changed.
+    /// FUN_0001a4e0: here its walk and pause start over, play_orders.rs `order`; a Toggle
+    /// Ability's goal still on the stack goes with it). True when it changed.
     pub fn set_mode(&mut self, mode: Mode, point: Option<Vec3>) -> bool {
         if self.mode == mode && mode != Mode::MoveOut {
             return false;
@@ -280,6 +287,7 @@ impl Command {
         self.since = 0.0;
         self.best = f32::MAX;
         self.stalled = 0.0;
+        self.toggle = None;
         true
     }
 

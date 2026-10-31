@@ -124,7 +124,7 @@ a click is any left click off the panel, and F and its teleports do nothing.
     (`CharacterType::portrait`, h_f9d94425: the
     deathmatch types and some of the militia have one, common's textures), else a "?" in pale
     blue; its skull its type's (h_00c51907), else the human one.
-  * An empty slot shows no face, follow-order tab or health channel, on the test map and on any
+  * An empty slot shows no face, command tab or health channel, on the test map and on any
     level alike (#303: the main game's rule for a slot with no member in the world, play.md
     "Radar", "The portraits"; before it the test map's alone). A dead member keeps its skull.
   * **Dying alone** on the test map respawns the player (`testsquad::respawn`; the product owner's
@@ -773,7 +773,9 @@ captures at 15 fps, frames looked at:
   mist's particles. Recipes with a squad hook and no flag: pickups.md's dead squad member's guns
   (`BF_TEST_KILL=1 BF_TEST_SWAP=4.0,7.0`), grenades.md's hand-over during a throw
   (`BF_TEST_SELECT=1,1.6`), skills.md's crosshair on the stealthed Hawk (`BF_TEST_HOSTILE=hawk
-  BF_TEST_SQUAD_SKILL=hawk,2.0`) and this page's hand-over (`BF_TEST_SELECT=0,2.2`): their logs
+  BF_TEST_SQUAD_SKILL=hawk,2.0`; since #333 the hook goes through Toggle Ability's goal, which
+  runs for the held Hawk too: its 75 frames the one-shot request's to the pixel, its log with the
+  goal's lines added) and this page's hand-over (`BF_TEST_SELECT=0,2.2`): their logs
   main's line for line but for the loading times; the crosshair run's 75 frames the same, the
   others but for a few dozen pixels where the members, running through the pickup grid at the
   start, kick a loose item a little differently (the order of two systems Bevy leaves open, which

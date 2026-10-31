@@ -139,8 +139,9 @@ character dies: death cry (chatter e1213623: the game's CBT_DEAD handler FUN_001
 the radar; if you die, the death camera circles your body and control passes to the next
 living member after 4 s (see **Death camera** below; `BF_TEST_KILL=<character>` makes the
 player shoot that member). The inventory is shared: the
-grenades go with control. Every portrait's tab shows the follow-order arrows; a speech icon
-appears beside the portrait while that member talks. The one you control is the player; the other
+grenades go with control. Every portrait's tab shows its member's order (the follow arrows
+until one is given: see **Radar**, "The command tabs"); a speech icon appears beside the
+portrait while that member talks. The one you control is the player; the other
 three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
 catch up, walking the last bit), look where you look, and
 reload on their own. They never fire just because you do - only at enemies they can see (by the AI's sensor: their vision-range, x1.15 for one they know, 90 degrees either way of their facing, a clear line; [brain.md](brain.md) "Sight and contacts", #197), within their gun's range (the level's characters on another side, and the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
@@ -317,7 +318,7 @@ the test map (`--test`), with it:
 * **The squad**: its living members in the world as green blips (FUN_000ae7c0's friend, 90 200 40;
   take11's marines; they were yellow) at that scale, one beyond the range on the circle (the game
   draws a rim marker for it: FUN_000ae7c0 through FUN_000b0ad0, not done).
-* **The portraits** (#303): a squad slot shows its face, its follow-order tab and its health
+* **The portraits** (#303): a squad slot shows its face, its command tab and its health
   channel only while a member is in the world in it (`slot_member`; a dead one keeps its skull: dead
   members are still in the squad). A slot whose member the zone doesn't have shows nothing: the
   level spawns only the zone's members (its `h_ed54d255` names the others, [campaign.md](campaign.md)),
@@ -336,6 +337,55 @@ the test map (`--test`), with it:
   squad HUD, as before; `--test BF_TEST_GOTO=0,8,0,7.5` Tex alone, and with `BF_TEST_SQUAD="shrike
   soldier@m09_a,flint" BF_TEST_KILL=1` the Shrike's "?" in Brutus's place, Flint's skull, Hawk's
   place dark (#302's, unchanged).
+* **The command tabs** (#333; `play_hud.rs` `update_tabs`, `TAB_FOLLOW` ...): the small icon in
+  the box by each portrait is its member's order, the brain's command mode (squad.md, "Squad
+  commands"). The tab widget (FUN_000c3d10, made one a portrait by the HUD's factory) sets it each
+  frame from the slot's member's brain (+0x58; its update 0xc3f80's jump table 0xc40e0):
+
+  | Mode (the order) | Icon | Size |
+  |---|---|---|
+  | 1 FOLLOW (Cover Me, and the start) | h_eeaa5549, green arrows | 16 x 8 |
+  | 3 GUARD (Stand Ground) | h_fa29b7a4, yellow bars | 8 x 16 |
+  | 4 WINGMAN (Fire At Will) | h_f6722366, a ring of red and orange dots | 16 x 16 |
+  | 5 MOVE_OUT (Move To) | h_eed3270a, a blue arrow | 16 x 16 |
+  | 2 FORMATION, any other | none: the tab hidden | |
+
+  * **Where**: its top left at the table 0x3c8ea8 (FUN_000c3f40, by slot) from the radar panel's
+    corner, the icon at its texture's size: Tex (38, 5), Flint (115, 37), Brutus (82, 114), Hawk
+    (5, 81). The art fills each texture's top left. The code's corner is (56, 301)
+    (FUN_000c2be0), and take03 and take08's icons start there (Hawk's arrows, bars and arrow all
+    from (61, 382), Tex's arrows from (94, 306)); but the demo draws the radar frame, whose boxes
+    hold the tabs, 1.5 right and 4 lower (`RADAR_FRAME_AT` (57.5, 305): take03 1.0 s has Tex's box's
+    edges at x 90.7 / 104.7, y 302.7 / 317.3, the demo's at 92.0 / 106.0, 306.0 / 320.7), so the
+    tabs go from that corner too, as the brackets do: each in its box as in the takes, the whole
+    radar that much off them (not moved here). The panel slides with the menu, the tabs with it.
+    Before #333 every tab drew the follow arrows squeezed into a 10 x 10 box at a measured centre.
+  * **Who**: every slot's member in the world, the controlled character's too (take03: Tex's
+    arrows), hidden while it's dead (0xc40bb).
+  * **The flash**: a new icon (the update's texture compare, the first one set at a map's start
+    too) starts a flash of 0.67 s (1.5 a second, FUN_000c4100, on the HUD's clock: it runs through
+    the menu's fade-out): the draw (0xc4130) puts a copy of the icon under it, scaled by 1 + 1.8 t
+    and shifted by -1.8 (s - 1) x s each way, at alpha clamp(2 (1 - t)^2, 0, 1): whole for its
+    first 0.2 s, 2.8 times the icon and gone at the end (the alpha raised to 2.2 here, the HUD's
+    rule for the console's sRGB blending). take03: the bars a 9.3 x 12 blob at 5.35-5.55 s
+    against their 7 x 9.3 after; the arrows bold at 14.2-14.3 s after Cover Me (the "green
+    flash").
+  * `BF_ORDER_LOG=1` prints each tab's change of icon.
+  * Checked (e34 staged as the #33 takes, `BF_CAPTURE` at 15 fps: `BF_MAP=e34
+    BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999 BF_TEST_NO_HOSTILES=1
+    BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05 BF_TEST_CURSOR_AT=-70.8,-79.5 BF_ORDER_LOG=1
+    "BF_TEST_COMMAND=2:hawk:0.4;2.9:brutus;3.5:flint;4.1:brutus;5:stand;11:hawk:0.4;11.9:brutus;12.5:flint;13.5:cover;17:hawk:0.4;17.9:brutus;18.5:flint;19.5:fire;23:hawk:0.4;24:move;26:accept"`,
+    take03's presses, then Fire At Will to all three and take08's Move To for Hawk): Hawk's and
+    Flint's bars from the Stand Ground frame, their copies grown over the next three as the radar
+    slides home (frames 76-79), as take03 7.0 s at rest (frame 100); the arrows back after Cover
+    Me, Brutus's unflashed (he was in FOLLOW), as take03 15.0 s (frame 235); the three rings
+    after Fire At Will (frame 330, as #33 take05 from 5.4 s); Hawk's blue arrow after the cursor's accept, as
+    take08 27.0 s (frame 398); her bars on reaching the point, the copy growing over frames
+    405-410, as take08 33.0 s (frame 430). Each icon in its box as in the takes, the radar group
+    1.5 right and 4 lower (see "Where"). No orders (the same recipe on main's build, frames 1-32):
+    nothing differs but the four tab boxes (the largest other difference 19 levels: grass), where
+    the arrows are now the texture's 16 x 8 at the code's place, and each tab's first icon
+    flashes in the first 0.67 s (frames 1-5).
 * **The other characters** (FUN_000ae7c0, radar-contact 1, or 6 for a boss): one within the range a
   record as an objective's (below), a friend green 90 200 40 (40 100 20), one whose team the
   viewer's is hostile to red 200 40 90 (100 20 40: take08's and take11's terrorists), anyone else
