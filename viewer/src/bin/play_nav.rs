@@ -68,9 +68,11 @@ pub struct WaypointSet {
 /// The world's ray as the route code asks it (`nav::Clear`, FUN_0004ce30): the arena's ray
 /// (the terrain, the placed objects' collision, the blockers and hinters: its filter's +0x10c, 8,
 /// leaves out PID 3 alone; liquids, open doors and characters aren't in it) from `a` to `b`,
-/// none when they're more than `max` apart. BF_ROUTE_NO_HINTERS=1 (a diagnostic, #335) leaves the
-/// hinters out, to see the routes without the hinter bands the demo's members hug where the
-/// game's keep off them by their avoidance (nav.md, e13).
+/// none when they're more than `max` apart. BF_ROUTE_NO_HINTERS=1 (a diagnostic, #335, not the
+/// game) leaves the hinters out, to see the routes without the hinter bands the demo's members
+/// hug where the game's keep off them by their avoidance (nav.md, e13): the game's rays meet the
+/// hinters for everyone (FUN_000df0a0 tests every PID kind whose bit is clear in the filter's
+/// +0x10c, 8: todo/344-ai-avoidance leads §7), so the routes it shows aren't the game's.
 pub fn clear(arena: Option<&world::Arena>, a: Vec3, b: Vec3, max: f32) -> bool {
     let d = b - a;
     let len = d.length();
@@ -87,7 +89,7 @@ pub fn clear(arena: Option<&world::Arena>, a: Vec3, b: Vec3, max: f32) -> bool {
     arena.is_none_or(|w| w.ray(a, d / len, len).is_none())
 }
 
-/// BF_ROUTE_NO_HINTERS=1 (`clear`), read once.
+/// BF_ROUTE_NO_HINTERS=1 (`clear`: a diagnostic against the game), read once.
 fn no_hinters() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("BF_ROUTE_NO_HINTERS").is_ok_and(|v| v != "0"))

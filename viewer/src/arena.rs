@@ -207,8 +207,8 @@ pub enum Mover {
     /// one the AI moves (a follower, an enemy, another member's cutscene walk; the controlled
     /// character's own cutscene walk stays `Player`, whether or not the game's hold clears the
     /// player slot's flag): the hinters hold it (unless its brain's +0x3c4 has bit 12, set while
-    /// its route jumps between world points, FUN_00026520: the demo's AI walks no routes), and it's
-    /// swept in 3 passes (0x12d183)
+    /// its route jumps between world points, FUN_00026520: the demo's squad walks routes since
+    /// #335, but takes no jumps), and it's swept in 3 passes (0x12d183)
     Ai,
 }
 

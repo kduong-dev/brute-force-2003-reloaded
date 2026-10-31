@@ -430,9 +430,7 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
     } else {
         let (fwd, right) = (Vec2::new(-m.cam_yaw.sin(), -m.cam_yaw.cos()), Vec2::new(m.cam_yaw.cos(), -m.cam_yaw.sin()));
         m.move_input = Vec2::new(way.dot(right), way.dot(fwd));
-        m.sprint = along > MOVE_OUT_WALK && m.router.cap >= routes::NO_CAP && !routes::in_prism();
-        m.walk = along < MOVE_OUT_WALK || corner || m.router.cap == 2;
-        m.router.asked = if m.walk { 2 } else if m.sprint { 4 } else { 3 };
+        routes::pace(m, if along < MOVE_OUT_WALK || corner { 2 } else { 4 });
     }
     m.switch_pressed = false;
     m.reload_pressed = false;

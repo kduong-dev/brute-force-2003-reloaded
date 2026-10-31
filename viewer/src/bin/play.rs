@@ -3072,13 +3072,12 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     // within LANE_STOP); dash when far behind (or past the data's leash + 10 m), walk the last
     // bit, both measured along the way it goes (#335)
     let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START * spacing }) || (in_lane && dist > LANE_STOP);
-    // the way there: a route over the level's world points (#335, play_routes.rs `follow`: planned
-    // again as the follow's state 0 plans, the place standing in for the leader), the straight
-    // line only without them (the test map's floor)
+    // the way there: a route over the level's world points (#335, play_routes.rs `follow`: to the
+    // place, planned again as the follow's state 0 plans, by the leader's moves; held where the
+    // place is out of reach until he has moved the set-off distance), the straight line only
+    // without them (the test map's floor)
     let way = match graph {
-        // (a place it found no route to, or whose route ends at a point short of it, is asked for
-        // again once it has moved SLOT_STOP: the demo's, a search being 50 us at most)
-        Some(g) if go => routes::follow(m, g, goal, leader.router.own.point, routes::REPLAN * spacing, if in_lane { LANE_STOP } else { SLOT_STOP }, SLOT_STOP),
+        Some(g) if go => routes::follow(m, g, goal, leader.position, leader.router.own.point, routes::Reach::at(spacing, SLOT_START), if in_lane { LANE_STOP } else { SLOT_STOP }),
         Some(g) => {
             routes::stop(m, g);
             routes::Way::Stand
@@ -3105,14 +3104,14 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         let d = Vec3::new(t.x - m.position.x, 0.0, t.z - m.position.z).normalize_or_zero();
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
         // (far behind: the way left or the place itself, which moves on past where the route was
-        // planned to, the farther; the last bit: both short. The speed cap a route's detour or the
-        // way round a friend sets, play_routes.rs; held at a corner it walks, as BF_TEST_ROUTE's
-        // walk: the run's turn is wider than the corner's 0.6 m, and the AI's pace near a point,
-        // FUN_0004d840, isn't read; in a prism the dash is a run, FUN_0004d970)
+        // planned to, the farther; the last bit: both short. Held at a corner it walks, as
+        // BF_TEST_ROUTE's walk: the run's turn is wider than the corner's 0.6 m, and the AI's pace
+        // near a point, FUN_0004d840, isn't read. It moves at the lower of that and its pace
+        // level, which a route's detour, the way round a friend or the follow's hold set down and
+        // the ramp brings back, play_routes.rs `pace`)
         let behind = along.max(dist);
-        m.sprint = (behind > SLOT_DASH * spacing || behind > m.leash + 10.0) && m.router.cap >= routes::NO_CAP && !routes::in_prism();
-        m.walk = (along < 2.5 && dist < 2.5) || corner || m.router.cap == 2;
-        m.router.asked = if m.walk { 2 } else if m.sprint { 4 } else { 3 };
+        let asked = if (along < 2.5 && dist < 2.5) || corner { 2 } else if behind > SLOT_DASH * spacing || behind > m.leash + 10.0 { 4 } else { 3 };
+        routes::pace(m, asked);
         m.still_time = 0.0;
         m.crouch_wanted = false;
         m.idle_pause = 0;

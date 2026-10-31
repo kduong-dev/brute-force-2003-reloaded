@@ -16,11 +16,17 @@ Squad movement and deaths follow the game's own data and the captures:
   route** over the level's world points (#335, play_routes.rs, [nav.md](nav.md) "The squad on
   routes"): to the point nearest the place on the leader's side (the points his own point floods
   to within 12 m), then the place itself when it stands on a floor that doesn't burn with a clear
-  way to it, planned again when the place moves 9.8 m (7 in WINGMAN: FUN_00020b10's d3) from where
-  the route goes and at the route's end; never a straight chase, so round a lava pit by its
-  walkway rather than across it. The places and the set-off, settle and dash distances stay the
-  demo's until #331. Stuck 2 s (no closer to its next point) a member detours round it
-  (FUN_000426b0, FUN_00042280), and the third time at one point it's put on it (FUN_000425b0).
+  way to it from one of the four points nearest it; a place no one could stand on (in the lava, or
+  down a drop) gives way to the leader's own point, where the game's follow goes; planned again
+  when the leader has moved 9.8 m (7 in WINGMAN: FUN_00020b10's d3) from where he stood when it
+  was planned, and at the route's end beside a place that has moved on; at a route's end short of
+  the place (the place out of reach), or with no route, it holds until the leader has moved 3 m
+  (the demo's guess: his turning, which swings the place round him, doesn't count). Never a
+  straight chase, so round a lava pit by its walkway rather than across it. The places and the
+  set-off, settle and dash distances stay the demo's until #331. Stuck 2 s (no closer to its next
+  point) a member detours round it (FUN_000426b0, FUN_00042280), and the third time at one own
+  point it's put on the point it was walking to (FUN_000425b0). After a detour, a re-route or a
+  hold its pace climbs back a notch every 0.17 s (the pace ramp, FUN_00058670).
 * **The test map's squad** (#302, play_testsquad.rs, [testtools.md](testtools.md) "The squad"):
   it starts with the player's character alone, and its squad menu (T) puts any character type in
   any of the four slots, or a whole predefined squad in all four (#339: the squad deathmatch
@@ -249,7 +255,9 @@ Squad movement and deaths follow the game's own data and the captures:
     spot at what it sees once combat is allowed.
   * **Move To** (MOVE_OUT): walks a route to the point (#335, [nav.md](nav.md) "The squad on
     routes": GOAL_MOVE_OUT's start 0x45d00 routes to the cursor's point, its update FUN_00045fa0
-    walks it at 2 m) at the dash, the last 2.5 m of it at a walk (the game runs instead while the
+    walks it at 2 m) at the dash, the last 2.5 m of it at a walk, and after a detour at the pace
+    its ramp allows, a notch a second (Move To isn't one of FUN_00058670's follow modes; the game
+    runs instead while the
     member stands in one of the level's +0x114 prisms, FUN_0004cb60: what those volumes are isn't
     traced, so the demo dashes; the leads' "a run with an enemy known" misread the test); at the
     route's end it's GUARD and asks e635ecc6 of the chatter gate (chatter.md; its block:
@@ -263,7 +271,7 @@ Squad movement and deaths follow the game's own data and the captures:
     bodies push apart). Before #335 the walk was straight, bent round the controlled character
     (`pass_round`) and given up when it stalled (0.1 m in 1 s); the test map's floor, with no
     points to route over, keeps that straight walk and stall rule. A member with no point routes
-    to its own: GUARD at once.
+    to its own point (FUN_00058b60): it walks there, to within 2 m, then it's GUARD.
   * **The hand-over** (FUN_0005cc20, FUN_000c8e80, FUN_00018230): handing control from a
     character more than 50 m from the one taken sets it to GUARD, and each other AI member in
     FOLLOW or WINGMAN to GUARD within 5 m of where it stands, else MOVE_OUT to there (the game's
