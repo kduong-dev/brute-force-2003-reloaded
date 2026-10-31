@@ -479,7 +479,22 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
     hinters) the holds match the game's but for the brief ones at h_f079fb96, h_e9ba9a68 and
     h_029e248d, h_f3024e36 is skipped from h_efb7f462 and h_f2b3cbd2 reached at 2 m as the
     game's were, and all three arrive in 14-18 s: the pinning is the missing feelers' (#344);
-  * none enters lava: `BF_LIQUID_LOG` never fires (the routes' safety net never acts).
+  * none enters lava: `BF_LIQUID_LOG` never fires (the routes' safety net never acts);
+  * **with #345's ground speeds** (the squad's run and dash by the types' speeds: the dash 8.5-8.7
+    m/s while the leader is farther than 14 m and 6.8-7.0 inside it, the run 7.8-7.9 and 6.2-6.3;
+    play.md "Ground speed"; `BF_ROOT_SPEED=1` runs the staging as the numbers above were): the
+    same first routes round the west shore through the same points, and never into lava
+    (`BF_LIQUID_LOG` silent). The arrival times move: Flint's route ends at Tex's point at 18.6 s
+    (24.1 s; the game's 16.5 s), Hawk's at 57.5 s (58.1 s; the game's 18.5 s), and Brutus reaches
+    his place beside h_e7a4bd37 at 42.5 s (21 s; the game's 23.0 s). The members' dash on the
+    first straight is the take's (Brutus 8.72, Flint 8.62, Hawk 8.52 m/s over 5 s on the test
+    floor from 80-90 m off the leader; take01's 8.59-8.62, 8.53-8.55, 8.42-8.46). The pinning at
+    the band's corners isn't removed, it moves from member to member with the speeds (#344's
+    feelers): Brutus is now stuck at h_f2b3cbd2 (10.1 and 15.1 s, through on the second detour), at
+    h_f3024e36 (22.1, 25.1 and 28.2 s, put on the point the third time) and at h_1df21e91 (31.5,
+    34.6 and 37.7 s, put on it), where he was detoured once; Flint is stuck once, at h_f2b3cbd2
+    (8.5 s); Hawk as before at the same four corners (put on the point at 22.1, 32.1, 42.7 and
+    52.2 s).
 * Move To across the pit (e13, the squad and Tex on the south rim: `BF_MAP=e13
   BF_TEST_GOTO=44.3,73.6,44.3,73.6 "BF_TEST_WARP=0,me,44.3,73.6,0;0,brutus,45.7,75.8;
   0,flint,42.3,75.8;0,hawk,43.0,72.0" BF_TEST_NO_HOSTILES=1 "BF_TEST_ORDER=hawk,move,34.3,29.6@2"`,
@@ -487,19 +502,26 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   four corners pin her against the hinter band; at each the stuck handling detours her twice and
   the third stuck puts her on the point (20.4, 31.1, 42.5 and 52.9 s), each detour's drop to a
   stand climbing back a notch a second (MOVE_OUT's step); she reaches the point at 58.3 s, 1.9 m
-  off: GUARD and e635ecc6. Never into lava. (The review's run, round 1: held 3.69 m short of
+  off: GUARD and e635ecc6. Never into lava. With #345's speeds (her dash 6.8 m/s, 8.5 x 0.8,
+  as take08's plateau 6.84; the clips' 7.2 before) the same four corners pin her (put on the point at
+  20.5, 30.6, 42.1 and 52.2 s) and she reaches it at 57.9 s. (The review's run, round 1: held 3.69 m short of
   h_f2b3cbd2 for good, the jitter starting the stuck time again.) On e34 (#318's take08 recipe
   with Tex on her way, `BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999
   "BF_TEST_ORDER=hawk,move,-89.5,-87.8@1;hawk,move,-70.8,-79.5@10"`): a 5-entry route past Tex,
   at h_ff113737 3.13 s after the order, GUARD 1.8 m short (#318: 3.1 s and 1.8 m; take08 4.2 s,
-  1.9-2.0 m), the same in round 1 and the fix round.
+  1.9-2.0 m), the same in round 1 and the fix round; with #345's speeds 3.26 s and 1.9 m short
+  (her dash 6.8 m/s), the same route, no stuck.
 * The follow on e34 (`BF_TEST_GOTO=-83.39,-82.79,-30,-80,27 BF_TEST_GO_AT=4 BF_TEST_NO_HOSTILES=1
   BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05`, 300 frames, Tex running east past the rocks):
   8-12 plans a member from 4.5 to 16 s (4-5 at most in any 2 s), 1-2 holds each at points short
   of a place behind a rock (Object 464 by h_f6632343), 0.6-0.9 s each; of the 87 watch rows in
   that time, standing 8 (Brutus), 10 (Flint) and 5 (Hawk) (round 1: 3, 5 and 4; with d3 as the
   hold's distance 21, 15 and 12, Brutus ending 10 m behind Tex); all three at their places when
-  Tex stops (6.4-10.7 m off him), no stuck. Stand Ground holds where ordered while Tex goes 32 m
+  Tex stops (6.4-10.7 m off him), no stuck. With #345's speeds (the follow's dash 8.5-8.7 beyond
+  14 m of Tex, 6.8-7.0 inside; Tex's run 7.8 m/s where it was the clip's 4.8): 7-8 plans a member
+  in that time, 0-1 holds each, standing 12 (Brutus), 6 (Flint) and 4 (Hawk) of the 87 rows, all
+  three at their places when Tex stops, 6.5, 7.9 and 10.9 m off him, no stuck, no detour. Stand
+  Ground holds where ordered while Tex goes 32 m
   off, Fire At Will and Cover Me follow (`"BF_TEST_ORDER=hawk,guard@3;flint,fire@3"`, round 1).
   sdm_e13 (#1's recipe, the controlled Brutus walking into the lava): the three stay on the
   shore's points, 8-9 m from him (round 1). The tutorial's marines (brain.md's recipe) follow Tex
@@ -511,7 +533,8 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   places are in the lava. The review's run (round 1): 34-49 plans each in those 20 s, 11-13 in
   2 s, each pacing 2-5 m; keyed on the leader with the 3 m hold but the place's nearest point,
   1 in 2 s at most, but Hawk ran to and fro between h_ebea0733 and h_00bdf10f, 21 m apart. None
-  enters the lava (`BF_LIQUID_LOG`).
+  enters the lava (`BF_LIQUID_LOG`). The same with #345's speeds: no plan from 10 to 30 s, none of
+  the three moves more than 0.2 m.
 * The cost (the plans' times in the logs, opt-level 2): 4-45 us a search, at most 225 points off
   the heap (e13), the worst frame three plans in 90 us.
 * `BF_TEST_PRISM=1` (e34, Move To with Tex on Hawk's line, a squadmate on the other way round):
