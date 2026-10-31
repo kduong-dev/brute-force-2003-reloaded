@@ -988,6 +988,7 @@ fn main() {
         .add_plugins(faces::plugin)
         .add_plugins(chatter::plugin)
         .add_plugins(squad_menu::plugin)
+        .add_plugins(nav::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1127,6 +1128,8 @@ mod vision;
 mod chatter;
 #[path = "play_squad_menu.rs"]
 mod squad_menu;
+#[path = "play_nav.rs"]
+mod nav;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.

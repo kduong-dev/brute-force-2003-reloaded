@@ -149,9 +149,10 @@ const MISS_NEAR: f32 = 10.0;
 const ACCURACY_STEP: f32 = 0.05;
 /// A walk is given up on (its point taken as reached) when the walker hasn't come this much closer
 /// (m) in STALL_TIME s: a guess, as play_script.rs's walk does, for the brain's route round what's
-/// in the way. The game routes over the level's world points (each `<world-point>` lists its
-/// neighbours in h_e3439383; a waypoint-trigger, h_10ecb459, marks one valid or not); its route
-/// search isn't traced, and the demo walks straight lines.
+/// in the way. The game routes over the level's world points (each point lists its neighbours in
+/// h_e3439383; a waypoint-trigger, h_10ecb459, sets one valid or not); its route search is read
+/// and built since #334 (bf/nav.rs, viewer/docs/nav.md), but the brains still walk straight lines
+/// until #336 puts them on routes.
 const STALL_PROGRESS: f32 = 0.1;
 const STALL_TIME: f32 = 1.0;
 

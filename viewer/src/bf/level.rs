@@ -213,12 +213,23 @@ pub struct WorldPoint {
     pub flags: u32,
     /// h_e6564e8a (+0x20): its own arrival radius (-1 none; 0.3 at least when 0-0.25)
     pub radius: f32,
-    /// h_e3439383 (+0x2c, FUN_0020d220): the points it links to, by name (the route graph #242
-    /// walks: FUN_000594a0 reads the neighbours through +0x30)
+    /// h_e3439383 (+0x2c, FUN_0020d220): the points it links to, by name, one way each and in the
+    /// data's order (the route graph, bf/nav.rs: the search walks a point's own list, +0x30)
     pub links: Vec<u32>,
+    /// the object's +0x28 as the level leaves it: bit 2 (valid) from the constructor
+    /// (FUN_00059b60 starts it at 4), and bit 4 (`WorldPoint::NO_SKIP`) when its h_ed6a7490 lists
+    /// any object (the attribute handler FUN_000ecdc0 sets it when FUN_0001bb00, "is the list
+    /// empty", says no, and keeps nothing else of the list). 175 of the tutorial's 1070 points
+    /// have it, 27 of e34's 1286. The waypoint triggers change bit 2 at run time (bf/nav.rs)
+    pub state: u32,
 }
 
 impl WorldPoint {
+    /// +0x28 bit 2: valid, a point the route search may expand (`nav::VALID`).
+    pub const VALID: u32 = 1 << 2;
+    /// +0x28 bit 4: set by a non-empty h_ed6a7490; a route's look-ahead skip is never taken
+    /// through such a point (FUN_00026d80, `nav::NO_SKIP`).
+    pub const NO_SKIP: u32 = 1 << 4;
     /// +0x24 bit 14: h_0bb771a2 (true on every point of the data but none).
     pub const BIT_14: u32 = 1 << 14;
     /// +0x24 bit 15: h_1346678f (true on a few: 8 of e34's 1015 world points, 18 of its cover
@@ -234,6 +245,9 @@ const H_POINT_BIT_13: u32 = 0x09AE_B0FA;
 const H_POINT_BIT_15: u32 = 0x1346_678F;
 /// A world point's links (FUN_000ecdc0's h_e3439383, read through FUN_0020d220 into +0x2c).
 const H_POINT_LINKS: u32 = 0xE343_9383;
+/// A world point's h_ed6a7490 (FUN_000ecdc0 compares 0xed6a7490): an object list whose only
+/// trace is +0x28 bit 4 when it isn't empty (`WorldPoint::NO_SKIP`).
+const H_POINT_NO_SKIP: u32 = 0xED6A_7490;
 
 /// A placed effect object (`<effect-object h_ff8051ee=TYPE name lifetime h_0e528ccb ..>
 /// <transform><parent Type parent>`): an object of an effect type (objecttypes `<effect>`,
@@ -936,6 +950,7 @@ impl Level {
                 flags: 0xffff_0000 | id | bit(H_POINT_BIT_13, WorldPoint::BIT_13) | bit(H_POINT_BIT_14, WorldPoint::BIT_14) | bit(H_POINT_BIT_15, WorldPoint::BIT_15),
                 radius: if (0.0..0.25).contains(&radius) { 0.3 } else { radius },
                 links: triggers::object_list(e, H_POINT_LINKS),
+                state: WorldPoint::VALID | if triggers::object_list(e, H_POINT_NO_SKIP).is_empty() { 0 } else { WorldPoint::NO_SKIP },
             })
         }).collect();
         // the effect objects with their own attributes (0x21c000) and their link (an empty

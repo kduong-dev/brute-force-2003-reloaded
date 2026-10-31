@@ -190,10 +190,6 @@ const MARKER_TURN: f32 = 1.0;
 /// The 640 x 480 the filter keeps a point's projection in (0xbdef0: 0 to 640 across, 0 to 480
 /// down, [0x3a5180] / [0x3a517c]).
 const SCREEN: Vec2 = Vec2::new(640.0, 480.0);
-/// A world point's +0x28 bit 2, which the filter and FUN_0004d630 ask for: FUN_00059b60 sets it
-/// for every point and nothing in the data clears it (what does at run time isn't traced; take08
-/// read 4 on every point the cursor met, 6 once taken). The demo takes every point as having it.
-const POINT_USABLE: bool = true;
 
 /// The plain world point's type (h_f95afb93, FUN_000ee070's FUN_00059b60 case), for the log:
 /// the other kinds (cover, door, patrol points ...) are in the cursor's list too.
@@ -895,8 +891,13 @@ fn give(m: &mut SquadMenu, order: usize, point: Option<Vec3>, player: &mut Playe
 /// world point nearest the ray's point (FUN_0004d630 over the level's points) that passes the
 /// filter (0xbdef0: +0x24 bit 14 set and bit 15 clear, +0x28 bit 2, its projection inside the 640
 /// x 480); with none, the controlled character's place (and Cover Me for A, +0xcc). Also the
-/// marker's turn. BF_TEST_CURSOR_AT=<x>,<z> takes the floor there as the ray's point.
-fn find_point(time: Res<Time>, mut menu: ResMut<SquadMenu>, player: Res<Player>, reticle: Res<super::reticle::Reticle>, map: Res<MapLevel>) {
+/// marker's turn. BF_TEST_CURSOR_AT=<x>,<z> takes the floor there as the ray's point. Bit 2 is
+/// the route graph's (play_nav.rs `Nav::valid`): every point's from the start (FUN_00059b60;
+/// #33 take08 read 4 on every point the cursor met, 6 once taken), cleared and set by the
+/// waypoint triggers' set-valid (FUN_00202ba0: the tutorial clears it on door points and on the
+/// mine field's world points as it starts).
+fn find_point(time: Res<Time>, mut menu: ResMut<SquadMenu>, player: Res<Player>, reticle: Res<super::reticle::Reticle>, map: Res<MapLevel>,
+              nav: Res<super::nav::Nav>) {
     let m = &mut *menu;
     if !m.cursor {
         return;
@@ -908,11 +909,11 @@ fn find_point(time: Res<Time>, mut menu: ResMut<SquadMenu>, player: Res<Player>,
     }).unwrap_or(reticle.point);
     let points = map.0.as_ref().map_or(&[][..], |l| &l.points[..]);
     let view = reticle.view;
-    let passes = |p: &WorldPoint| {
-        p.flags & WorldPoint::BIT_14 != 0 && p.flags & WorldPoint::BIT_15 == 0 && POINT_USABLE
+    let passes = |i: usize, p: &WorldPoint| {
+        p.flags & WorldPoint::BIT_14 != 0 && p.flags & WorldPoint::BIT_15 == 0 && nav.valid(i)
             && view.and_then(|v| v.project(p.at)).is_some_and(|(s, _)| (0.0..=SCREEN.x).contains(&s.x) && (0.0..=SCREEN.y).contains(&s.y))
     };
-    let best = points.iter().enumerate().filter(|(_, p)| passes(p)).min_by(|a, b| a.1.at.distance_squared(ray).total_cmp(&b.1.at.distance_squared(ray)));
+    let best = points.iter().enumerate().filter(|(i, p)| passes(*i, p)).min_by(|a, b| a.1.at.distance_squared(ray).total_cmp(&b.1.at.distance_squared(ray)));
     let was = m.cursor_point;
     match best {
         Some((i, p)) => (m.cursor_at, m.cursor_point, m.on_player) = (p.at, Some(i), false),

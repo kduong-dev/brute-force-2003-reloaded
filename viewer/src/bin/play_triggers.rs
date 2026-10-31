@@ -81,8 +81,11 @@
 //!  * radar-trigger and damage plate (#228, play_radar.rs and play_damage_plate.rs; 0x207230,
 //!    0x1fa7e0): OPERATE gives its objects a radar-contact and a blink time (the route's
 //!    waypoint blips); a proximity detector that hurts its occupants while it's enabled.
+//!  * waypoint-trigger (#334, 0x202c50 -> FUN_00202ba0): OPERATE sets its `world-point`'s valid
+//!    bit to its `set-valid` (and +0x28 bit 0 to its h_06d92de9), -1 leaving it; play_nav.rs
+//!    applies it to the route graph (`take_waypoints`).
 //!  * every other class (property ...): its base actions; its own actions are logged as left to
-//!    their step (`bf::triggers::later_step`). Waypoint and evaluate triggers: base only.
+//!    their step (`bf::triggers::later_step`). Evaluate triggers: base only.
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
 //! copy's), a named breakable object broken (DESTROYED), a wall panel used (USE_OBJECT, play.rs
@@ -105,6 +108,7 @@ use std::collections::{HashMap, HashSet};
 use bf_viewer::bf::character::{Game, OBJECT_EFFECT};
 use bf_viewer::bf::hash::h;
 use bf_viewer::bf::level::Level;
+use bf_viewer::bf::nav::WaypointTrigger;
 use bf_viewer::bf::triggers::{self as data, act, op, operand, sig, Class, Filter, Operand, Trigger, Volume};
 use bf_viewer::level_scene::Placed;
 
@@ -399,6 +403,10 @@ enum ClassState {
     Zone { next: String },
     /// subject relay h_0cb602d0 (#278): h_f49c30af (+0x40), the binding kept (`Triggers::relay`)
     Relay { keep: bool },
+    /// waypoint-trigger (#334, its parser 0x202af0): `world-point` (h_0fe604ae, the point by name:
+    /// +0x40, resolved at +0x44), `set-valid` (h_e77cb64e, +0x48) and h_06d92de9 (+0x4c), -1 each
+    /// for "leave it" (every h_06d92de9 in the data is -1)
+    Waypoint { point: u32, valid: i64, claim: i64 },
 }
 
 /// Which class a trigger runs as (for `update` and `deliver`).
@@ -427,6 +435,7 @@ enum Kind {
     Zone,
     Radar,
     Relay,
+    Waypoint,
 }
 
 /// A trigger as the game keeps it: its data (the entries' use counts are live) and +0x3d's bits:
@@ -590,6 +599,9 @@ pub struct Triggers {
     /// what the level-over and zone triggers ask of the mission flow (play_level_over.rs,
     /// play_mission.rs takes it)
     flow: level_over::Flow,
+    /// the waypoint triggers' OPERATEs since last taken (play_nav.rs `waypoints` applies them to
+    /// the route graph)
+    waypoints: Vec<super::nav::WaypointSet>,
 }
 
 /// A map starts: its triggers as the level file has them, the listeners linked (FUN_001febb0),
@@ -638,6 +650,7 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             Class::LevelOver { ends_mission } => ClassState::LevelOver { ends_mission: *ends_mission },
             Class::Zone { next } => ClassState::Zone { next: next.clone() },
             Class::Relay { keep } => ClassState::Relay { keep: *keep },
+            Class::Other if t.tag == H_WAYPOINT => waypoint_class(t),
             Class::Other => cutscene_class(t),
         };
         // FUN_000dfe90 as the spawn-trigger links: its template counted once more, or -1 for
@@ -845,7 +858,7 @@ fn inside(volume: Volume, at: &Mat4, inv: &Mat4, a: &Actor) -> bool {
 /// panels, pickups, the test hook's), each trigger's update in the level file's order, then what
 /// they asked of the world.
 #[allow(clippy::too_many_arguments)]
-fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut events: ResMut<TriggerEvents>, mut player: ResMut<Player>,
+pub(super) fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, mut events: ResMut<TriggerEvents>, mut player: ResMut<Player>,
        mut squad: ResMut<Squad>, mut game: ResMut<GameData>, map: Res<MapLevel>, mut doors: Option<ResMut<Doors>>, spawns: Option<Res<SquadSpawns>>,
        mut fx: (Option<ResMut<bf_viewer::ale_fx::AleAssets>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
        mut placed: Query<(&Placed, &mut Visibility)>,
@@ -1257,6 +1270,7 @@ impl Triggers {
             ClassState::Zone { .. } => Kind::Zone,
             ClassState::Radar { .. } => Kind::Radar,
             ClassState::Relay { .. } => Kind::Relay,
+            ClassState::Waypoint { .. } => Kind::Waypoint,
         }
     }
 
@@ -1440,6 +1454,7 @@ impl Triggers {
             Kind::Zone => self.zone(i, ev),
             Kind::Radar => self.radar_trigger(i, ev),
             Kind::Relay => self.relay(i, ev),
+            Kind::Waypoint => self.waypoint(i, ev),
             Kind::Other => self.other(i, ev),
         }
         self.depth -= 1;
@@ -2236,6 +2251,37 @@ impl Triggers {
         std::mem::take(&mut self.cutscene)
     }
 
+    /// The waypoint-trigger's handler (0x202c50): disabled, its base actions (FUN_001ff0f0, then
+    /// FUN_001ff000); enabled, each entry that answers: OPERATE its own (FUN_00202ba0 on its
+    /// point, play_nav.rs `waypoints`) and counted (FUN_001feac0), the rest the base's.
+    fn waypoint(&mut self, i: usize, ev: Ev) {
+        if !self.live[i].enabled {
+            return self.base_and_after(i, &ev);
+        }
+        let name = self.live[i].t.name;
+        let mut k = 0;
+        while let Some(j) = self.next_entry(i, &ev, k) {
+            k = j + 1;
+            let action = self.live[i].t.entries[j].action;
+            let ClassState::Waypoint { point, valid, claim } = self.live[i].state else { return };
+            if action != act::OPERATE {
+                self.base_and_after(i, &ev);
+                continue;
+            }
+            self.waypoints.push(super::nav::WaypointSet { trigger: name, point, valid, claim, at: self.clock });
+            if self.log {
+                println!("t {:.2}: {} OPERATE on {}: its point {} set-valid {valid} h_06d92de9 {claim}", self.clock, self.who(i), sig::name(ev.signal),
+                         self.label(point));
+            }
+            self.entry_used(i, j, &ev);
+        }
+    }
+
+    /// The waypoint triggers' OPERATEs since last taken (play_nav.rs applies them to the graph).
+    pub(super) fn take_waypoints(&mut self) -> Vec<super::nav::WaypointSet> {
+        std::mem::take(&mut self.waypoints)
+    }
+
     /// Whether something has been asked of the world (a spawn, a warp, a door, a removal) that
     /// `run` hasn't done yet: a script's event that asked it waits for it (play_script.rs `update`).
     pub(super) fn has_acts(&self) -> bool {
@@ -2271,6 +2317,15 @@ fn cutscene_class(t: &Trigger) -> ClassState {
     } else {
         ClassState::Other
     }
+}
+
+/// The waypoint-trigger's element (h_10ecb459, vtable 0x395e20).
+const H_WAYPOINT: u32 = WaypointTrigger::TAG;
+
+/// A waypoint-trigger's class state from its element (the parser 0x202af0, `WaypointTrigger`).
+fn waypoint_class(t: &Trigger) -> ClassState {
+    let w = WaypointTrigger::of(t).unwrap_or(WaypointTrigger { point: 0, valid: -1, claim: -1 });
+    ClassState::Waypoint { point: w.point, valid: w.valid, claim: w.claim }
 }
 
 /// A warp-trigger's h_0ede4719 (+0x48, its parser 0x200400): the fade-in (s) a living character
