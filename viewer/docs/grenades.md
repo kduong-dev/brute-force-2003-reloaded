@@ -914,6 +914,26 @@ prop that goes off on its own. The leads and the takes are `todo/82-thermo-grena
   enemies', which go off for Brutus, Flint or Hawk within their 3 m and for Tex only stepping on
   one, as the tutorial's do. Before #82 they had no kit there and weren't placed. Not checked
   against footage of those levels.
+* **A live mine of a type that shares the squad's label has its own kit (#317).** `load_kits`
+  took a level's own types by label, so a Sentry defined under another hash than the squad's
+  h_e5f1f063 got no kit wherever the squad's own was loaded, and the level's live mines of it
+  were never put down. It now also loads the type of each live-placed item (`Placement::placed`,
+  h_1cb7d5f2) by its own hash (not a spawn-trigger's template; a Roller stays #316's), after
+  the label rule, so the squad's kit keeps its place first and `GrenadeKits::find("Sentry")`
+  still finds it. m09_b's live Sentry h_f73de83d is set down (`9 grenade types: Frag, Gas,
+  Sonic, Energy, Light, Sentry, Thermo, Sentry, Roller`, the second Sentry sorted by its
+  (category, index) after the Thermo), m09_x's four live Sentries (`8 grenade types`: one of the
+  squad's type, which was set down before, and three of h_f73de83d) and e23's three, of h_ecfe0d8c (`6 grenade types: Frag, Gas, Energy,
+  Sentry, Roller, Sentry`; function-type 8, explosion h_01f142eb radius 4 as the squad's). Each
+  mine is its own kit's: `place_mines` takes the kit by the object's type hash, so its radius
+  and blast are its definition's. `BF_SENTRY_LOG=1` on every map before and after (53 runs,
+  12 frames each): the placed lists are the same on all the others (e05 4, e10 6, e16 14,
+  e34 6, e40 7, m03_a 5, m03_b 5, m03_c 4, m08_b 14, m14_a 7, m14_b 1, m14_c 2, the tutorial 3,
+  ...), only e23 (0 to 3), m09_b (1 to 2) and m09_x (1 to 4) change. Not checked: the new
+  mines going off. Tex can't walk to them from the start (held at z -93.5 short of e23's
+  first, (-67.3, 25.4, -97.9), and at z 78.3 short of m09_b's, (-125.5, 57.5, 86.9)), and
+  `BF_TEST_HOSTILE=hawk,4,0,1` didn't set e23's first off (no check line at all, not looked
+  into).
 * Blocked: how the squad comes by one. The data has no Thermo pickup (its one placement is
   the set-down charge above): pickups are #17's, disarming a set-down item #145. Also blocked:
   what m09_b's mission does with the charge (its objectives and triggers, the campaign). Until
