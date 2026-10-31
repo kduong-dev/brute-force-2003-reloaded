@@ -245,9 +245,11 @@ impl Mover {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Body {
     /// a character's: its sweep (`move_body`, `Mover`) and the floors that stand it, the
-    /// blockers' and the hinters' among them (as before: every hinter of the data is an upright
-    /// band with no floor, #292); and the demo's ragdoll of one knocked down, which it stands up
-    /// where the pelvis lies (play_ragdoll.rs `Ragdoll::as_body`, `faces_near`)
+    /// blockers' and the hinters' among them (as before: 181 of the data's 184 hinters are upright
+    /// bands with no floor, #292; the other three, m02_b's body 89 and m09_a's 39 and m09_x's 49,
+    /// have faces that look up or are steep, which count as any blocker's, #338); and the demo's
+    /// ragdoll of one knocked down, which it stands up where the pelvis lies (play_ragdoll.rs
+    /// `Ragdoll::as_body`, `faces_near`)
     Character,
     /// anything else: a grenade, a corpse's ragdoll bodies (PID_BONE), a pickup or a lying gun, a
     /// missile, a casing, a decal laid on a surface: whatever its kind, it isn't

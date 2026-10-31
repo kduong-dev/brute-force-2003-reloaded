@@ -281,11 +281,15 @@ todo/28-tutorial's takes:
   line (x0.7: 1.6 HP). The terrorists hit with 3 of 16 and 1 of 12.
 * **The lava yard** (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`, Tex on the plate
   h_f42fa5b8, take08): the plate's router spawns 29 and 30, who run home across the pit (1.5
-  and 2.3 s); 30 sees Tex at 26.9 m on its way, stops and fires (-1.7 a hit), and dies to the aim
-  helper; 29, home, saw no one in 40 s. In take08 nobody fired on Tex on the plate: his first
-  hits (-1.5 to -2.8) came 35 s after the spawn, from across the pit, once he'd walked on to
-  (46.3, -25.9). Who sees whom there is #197's (the game's ray between the two characters'
-  points, FUN_0004cea0, isn't the demo's eye to chest).
+  and 2.3 s); 29, home, saw no one in 40 s. 30 did too once the tutorial's own hinters were in
+  (#338: it ran on e01's shapes before, and saw Tex at 26.9 m on its way, stopped and fired, -1.7 a
+  hit, and died to the aim helper); it is home at 2.53 s, where the demo's sight rays stop at the
+  hinter band h_ee99c575 (body 64) that its line to the plate crosses twice (`Arena::ray` takes
+  a hinter as any blocker: which blockers the game's sight ray leaves out isn't traced, #298). In
+  take08 nobody fired on Tex on the plate: his first hits (-1.5 to -2.8) came 35 s after the
+  spawn, from across the pit, once he'd walked on to (46.3, -25.9). Who sees whom there is
+  #197's (the game's ray between the two characters' points, FUN_0004cea0, isn't the demo's eye
+  to chest).
 * **The base** (staged: its routers fired with `BF_TRIGGER_FIRE`, Tex standing at the gate, in
   the plaza and at the third building with the aim helper): terrorists 0, 6, 8, 9, 10, 11, 13 and
   15 were killed, most having seen and fired on Tex (the sniper 11 hit him for 8.6-10 from 51 m
