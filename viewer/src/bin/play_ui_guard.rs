@@ -33,8 +33,9 @@
 //!    the HUD's `at`, the bars' widths, the text nodes' places and the target marker's box call
 //!    them (play_hud.rs, play_text.rs, play_fonts.rs, play_targeting.rs), and the window's unit
 //!    (height / 480) that a text or a ring is scaled by is checked before it divides.
-//!  - **A net** (`net`): every `Node` changed this frame is scanned before the layout, after the
-//!    systems that write nodes in PostUpdate (the text and the fonts), and any non-finite length is
+//!  - **A net** (`net`): every `Node` changed this frame, in every state (the front end's and the
+//!    briefing's glyphs carry margins as the game texts' do), is scanned before the layout, after
+//!    the systems that write nodes in PostUpdate (the text and the fonts), and any non-finite length is
 //!    reset (a position or size to `Val::Auto`, a margin, padding, border or gap to 0) with a
 //!    warning naming the node (its `Name` or its nearest named ancestor's, and its components, so
 //!    the writer's own marker shows: `SquadPart` ...); a `UiScale` that isn't finite and above 0
@@ -336,14 +337,15 @@ fn test_node(player: Res<Player>, mut done: Local<bool>, mut nodes: Query<(&mut 
     println!("t={:.2}: BF_UI_GUARD_TEST: the {field} of {n} node(s) with a border radius set to {bad} ({})", player.sim_time, if px { "px" } else { "percent" });
 }
 
-/// The watch and the member hook while playing, and in PostUpdate the node hook then the net,
-/// after the systems that write nodes there (the game texts and the record texts) and before the
-/// layout reads them.
+/// The watch and the member hook while playing, and in PostUpdate the node hook (while playing) then
+/// the net (in every state: the front end's and the briefing's glyph nodes carry margins too, the
+/// one field that reproduces the layout panic), after the systems that write nodes there (the game
+/// texts and the record texts) and before the layout reads them.
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, (watch.after(update_player), test_member.before(update_player)).run_if(in_state(AppState::Playing)))
         // (after the PostUpdate systems that write nodes, before the layout reads them)
-        .add_systems(PostUpdate, (test_node, net.run_if(net_on)).chain().after(super::text::draw).after(super::fonts::DrawRecords)
-            .before(bevy::ui::UiSystem::Layout).run_if(in_state(AppState::Playing)));
+        .add_systems(PostUpdate, (test_node.run_if(in_state(AppState::Playing)), net.run_if(net_on)).chain().after(super::text::draw)
+            .after(super::fonts::DrawRecords).before(bevy::ui::UiSystem::Layout));
 }
 
 #[cfg(test)]
@@ -379,6 +381,24 @@ mod tests {
         // clean now: nothing more to say or write
         assert!(scan(&mut node).is_empty());
         assert!(scan(&mut Node { left: Val::Percent(50.0), ..default() }).is_empty());
+    }
+
+    /// The net runs outside the Playing state too (#349's review: the front end's and the
+    /// briefing's glyph nodes carry margins, the field that reproduces the layout panic): in the
+    /// Menu state a node whose margin isn't finite is reset, a clean one left alone, and a
+    /// `UiScale` that isn't finite and above 0 is put back to 1. The plugin's other systems stay
+    /// Playing's (none of their resources exist here).
+    #[test]
+    fn the_net_runs_in_every_state() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin)).insert_state(AppState::Menu).init_resource::<UiScale>().add_plugins(plugin);
+        let bad = app.world_mut().spawn(Node { margin: UiRect::right(Val::Px(f32::NAN)), ..default() }).id();
+        let fine = app.world_mut().spawn(Node { margin: UiRect::right(Val::Px(3.0)), ..default() }).id();
+        app.world_mut().resource_mut::<UiScale>().0 = f32::NAN;
+        app.update();
+        assert_eq!(app.world().get::<Node>(bad).unwrap().margin.right, Val::Px(0.0));
+        assert_eq!(app.world().get::<Node>(fine).unwrap().margin.right, Val::Px(3.0));
+        assert_eq!(app.world().resource::<UiScale>().0, 1.0);
     }
 
     /// The hook's fields are the net's: each field `poison` can set, in either unit and either bad

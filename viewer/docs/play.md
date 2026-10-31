@@ -343,10 +343,13 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
      alpha; coloured (disc x (0.6, 0.4, 1.0) + (0.4, 0.2, 0.2)): lilac over the teal. The game's
      pixel shader 0x24 does it (its D3DPIXELSHADERDEF at 0x3e0320, its combiners and the
      constants from 0xaf524 decoded in `play_radar_disc.rs`).
-  3. **The viewer's pass**: its own circle (a dead viewer has no record: none) and the wedge,
+  3. **The viewer's pass**: its own circle (a dead viewer has no record: none; a living one whose
+     type has no `radar-range` has one of no radius, FUN_000aef00 refuses only the dead: its wedge
+     is drawn without a circle) and the wedge,
      h_fcebfc70, a triangle with its apex at the middle, stretched across the quad by f = 0.5 /
-     tan(half the camera's field of view across): 52.7 units wide at the quad's top for the
-     follow camera's 70 degrees, a hairline at the L-Shot-75's 25x (take06 of `todo/62-l-shot-75`
+     tan(half the camera's field of view across): its texture 52.7 units wide at the quad's top
+     for the follow camera's 70 degrees (the triangle's base is 114 of the texture's 128 texels:
+     about 46.9 units), a hairline at the L-Shot-75's 25x (take06 of `todo/62-l-shot-75`
      at 6.0 s shows the line against 1.0 s's wedge; the demo's `BF_TEST_SCOPE=2,1.0` the same),
      coloured disc x 0.4 + 0.3, pale grey, the same as the viewer's circle. A lone viewer
      (the tutorial's Tex, take07) shows one shape, a squad's circles lie under it (take03).
@@ -359,7 +362,10 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   drawn with the game's alpha and the colour that makes the linear blend equal the game's over a
   reference ground (`GROUND`, 0.15: the takes' dark grounds), solved layer on layer: over the
   takes' grounds and the tutorial's grass the three passes are within 2 levels of the game's
-  blend, over e34 by day and the test map's floor within 4-5 (3.5-4.8 with no correction). A
+  blend; over a brighter ground, e34 by day and the test map's floor, they part further: 4-5 on
+  average over the zones by my model of the console's blend (3.5-4.8 with no correction), up to
+  about 11 levels in a channel by the tester's. Both are estimates from a model of stored-value
+  blending, not measurements (no take has those grounds). A
   demo approximation, not the game's; the game's stored-value blend for the whole HUD is shared
   machinery (play_scope_view.rs's passes are in those values) and isn't done here (#174's
   dimness is a different thing: the sampling of small art). Side by side with the takes
@@ -507,6 +513,12 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   pixel of its 640 x 480). It was drawn inverted, its corner inside, before the fix round.
 * The dots and markers are drawn on the CPU into an image over the radar (256 x 256, two pixels a
   unit), redrawn each frame while there's any.
+* The circles' and the wedge's layers (128 x 128 each) are redrawn when their inputs change:
+  about 1 ms on the CPU (0.97 ms in the test build for three circles and the viewer's pass) and
+  two 64 KB uploads, on nearly every frame while the camera turns or a member moves (the points
+  are whole units from the view's heading), none while all stand still. They go with the map
+  (`radar_disc::forget` on leaving it; `setup_hud` drops them for a map with no squad radar), so
+  a deathmatch map after a squad one redraws nothing (#347's review).
 * **Under the Squad Command menu** (#319, play_squad_menu.rs; [squad.md](squad.md), "The Squad
   Command menu"): a member selected for an order is drawn 200 200 200 on the radar (FUN_000ae7c0
   for one FUN_000c86d0 says is flagged), its portrait in the selection's orange (0xc4280's ff a0
@@ -610,7 +622,9 @@ product owner's.
   (the corners are carried frame to frame, so a NaN would stay). `play_text` and `on_screen`
   return while the window has no height.
 * The net (`ui_guard::net`, PostUpdate after the systems that write nodes there, before the
-  layout): every `Node` changed this frame is scanned, any non-finite length reset (a position or
+  layout, **in every state**: the front end's and the briefing's glyphs, play_menu.rs `text`,
+  carry margins, the one field that reproduces the layout panic; only the test hook is
+  Playing's): every `Node` changed this frame is scanned, any non-finite length reset (a position or
   size to auto, a margin, padding, border or gap to 0, the aspect ratio to none, the flex factors
   to their defaults) with a warning naming the node (its `Name`, or its nearest named ancestor's)
   and then its components, which show the writer's own marker (`SquadPart`, `Part`, ...); a

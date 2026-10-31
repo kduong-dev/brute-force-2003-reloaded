@@ -39,8 +39,9 @@
 //!     u = -f + x / 128 (1 + 2 f) across the quad, v from 1 at its top to 0 at its bottom and
 //!     the edges clamped (0xaf771-0xaf7d4), f = 0.5 / tan(half the camera's field of view)
 //!     (0x40d730 / FUN_0006aa40's tangent: the live, zoomed one). So the wedge's apex is at the
-//!     quad's middle, its base 52.7 units across at the quad's top for the follow camera's 70
-//!     degrees, and it narrows as the scope zooms. Its colour is T0.rgb x 0.4 + 0.3: a pale grey
+//!     quad's middle and its whole texture 52.7 units wide at the quad's top for the follow
+//!     camera's 70 degrees (its base art is 114 of the texture's 128 texels: about 46.9 units),
+//!     and it narrows as the scope zooms. Its colour is T0.rgb x 0.4 + 0.3: a pale grey
 //!     over the teal, the same as the viewer's circle, which a lone viewer (the tutorial's Tex)
 //!     shows as one shape with it (take07) and a squad's lilac circles lie under.
 //!
@@ -57,6 +58,14 @@
 //! The three layers are 128 x 128 images of 1 texel a unit, `ImageNode`s at the radar panel's
 //! corner (play_hud.rs `RADAR_FRAME_AT`) set up with the HUD (`layers`); the first is the disc's
 //! (static), the other two are redrawn when a record's point (whole units) or the wedge changes.
+//! **The redraw's cost**: about 1 ms on the CPU (0.97 ms measured in the test build for three
+//! circles and the viewer's pass over the tabled curves, 3 ms with `powf`) and two 64 KB uploads.
+//! A standing squad and a still view cost nothing, but while the camera turns every member's
+//! point moves by whole units on most frames (the points are relative to the view's heading), and
+//! while a member moves so does its own: both layers are then redrawn on nearly every frame. The
+//! whole units are the game's (FUN_000b0550), so the redraws can't be made rarer without moving
+//! the circles by less than a unit; the wedge's width f alone is steady outside the scope's zoom.
+//! (Not measured in a profile of the whole demo: if it ever shows, the layers could be a shader.)
 //! No test hook of its own: `BF_TEST_GOTO` moves the squad round the viewer, the scope's hooks
 //! (`BF_TEST_SCOPE`) narrow the wedge.
 
@@ -93,9 +102,12 @@ const WEDGE_HALF: f32 = 0.5;
 /// (27, 22, 32) = 0.10, take07's grass (40, 34, 15) = 0.14). Over those grounds, and the
 /// tutorial's grass in the demo (43, 46, 22), the three passes come out within 2 levels of the
 /// game's blend (the mean over the disc-only, circle and wedge zones: 0.7-2.0 at this value,
-/// 2.4-3.6 at 0.2, 7-9 with no stand-in), over e34 by day (88, 80, 57) and the test map's
-/// floor (89, 91, 85) within 4-5 (3.5-4.8 with none: a brighter ground is where it costs). A
-/// fit, not the game's.
+/// 2.4-3.6 at 0.2, 7-9 with no stand-in). Over a brighter ground, e34 by day (88, 80, 57) and the
+/// test map's floor (89, 91, 85), the two blends part further: 4-5 levels on average over the
+/// zones by this model of the console's blend (3.5-4.8 with no stand-in: a brighter ground is
+/// where it costs), and up to about 11 in a channel by the tester's (#347's review). Both are
+/// estimates from a model of stored-value blending, not a measurement: no take has those grounds.
+/// A fit, not the game's.
 const GROUND: f32 = 0.15;
 
 /// A texture's texels as stored values 0-1 in display order (the archives store them bottom row
@@ -137,9 +149,11 @@ impl Tex {
 }
 
 /// What the dynamic layers are drawn from, from the radar's state: each circle's centre in units
-/// from the quad's top left and its radius in units, the viewer's radius (none: no viewer
-/// record, the dead one's) and the wedge's f. Equal inputs draw the same layers, so a frame whose
-/// inputs match the last one's leaves the images alone.
+/// from the quad's top left and its radius in units (0: a record whose type has no radar-range,
+/// which takes its place among the first three and draws nothing), the viewer's radius (none: no
+/// viewer record, the dead one's; 0: a living viewer whose type has none, its wedge drawn without
+/// a circle) and the wedge's f. Equal inputs draw the same layers, so a frame whose inputs match
+/// the last one's leaves the images alone.
 #[derive(Clone, Debug, PartialEq)]
 struct Inputs {
     circles: Vec<(f32, f32, f32)>,
@@ -242,6 +256,11 @@ impl RadarLayers {
     /// The ring's alpha over the quad's pixel centre (px, py) for a circle at (cx, cy) of the
     /// record radius `r` (all in units): the coordinates (px - cx) x 39 / (128 r) round 0.5.
     fn ring_alpha(&self, (px, py): (f32, f32), (cx, cy, r): (f32, f32, f32)) -> f32 {
+        // (a record with no radius, one whose type has no radar-range, has no circle: the
+        // coordinates would divide by it)
+        if r <= 0.0 {
+            return 0.0;
+        }
         let k = RADAR_UNITS / (SIZE as f32 * r);
         self.ring.sample(0.5 + (px - cx) * k, 0.5 + (py - cy) * k)[3]
     }
@@ -329,6 +348,14 @@ pub(super) fn layers(game: &mut Game, images: &mut Assets<Image>) -> Option<Rada
     Some(layers)
 }
 
+/// The viewer's record radius in units: none for a character that's `gone` (a dead one:
+/// FUN_000aef00 returns before it makes a record, 0xaef0a; the demo's absent one), else its circle,
+/// `range` x `scale` (0 for a living viewer whose type has no radar-range: it still has its
+/// record, so the wedge is drawn, the circle having no radius).
+fn viewer_radius(gone: bool, range: f32, scale: f32) -> Option<f32> {
+    (!gone).then_some(range * scale)
+}
+
 /// The radar's records for this frame (FUN_000ae580 -> FUN_000ae7c0 -> FUN_000aef00): the squad's
 /// living members within the viewer's reach, at their points on the radar (whole units, FUN_000b0550;
 /// one beyond the max-range on the circle, FUN_000b0ad0), the first CIRCLES of them, with their
@@ -338,8 +365,10 @@ fn inputs(player: &Player, squad: &Squad, game: &Game) -> Inputs {
     let max_range = game.radar.max_range.max(1.0);
     let scale = RADAR_UNITS / max_range;
     let fwd = Vec3::new(-player.cam_yaw.sin(), 0.0, -player.cam_yaw.cos());
+    // (the type's radar-range, +0x2a0, 0 where it has none: FUN_000aef00 makes a living character's
+    // record from whatever the field holds, a circle of no radius for 0)
     let range = |p: &Player| game.character_type(p.kind).and_then(|t| t.skill.as_ref()).map(|s| s.radar_range)
-        .filter(|r| r.is_finite() && *r > 0.0);
+        .filter(|r| r.is_finite() && *r > 0.0).unwrap_or(0.0);
     let half = SIZE as f32 / 2.0;
     let mut circles = vec![];
     for m in squad.0.iter().filter(|m| m.in_squad() && !m.dead && !m.absent && !m.stand_in) {
@@ -353,16 +382,15 @@ fn inputs(player: &Player, squad: &Squad, game: &Game) -> Inputs {
         if inside && radar_reach(player, game, m.position, max_range) <= 0.0 {
             continue;
         }
-        let Some(r) = range(m) else { continue };
         let p = radar_point(at, fwd, scale);
-        circles.push((half + p.x, half + p.y, r * scale));
+        circles.push((half + p.x, half + p.y, range(m) * scale));
         if circles.len() == CIRCLES {
             break;
         }
     }
     // the viewer: none while it's dead (FUN_000aef00 returns for a dead character: no record, so
-    // no wedge and no circle of its own)
-    let viewer = if player.dead || player.absent { None } else { range(player).map(|r| r * scale) };
+    // no wedge and no circle of its own), a living one always has one
+    let viewer = viewer_radius(player.dead || player.absent, range(player), scale);
     // f = 0.5 / tan(half the field of view across), the zoomed one
     let tan = super::targeting::GAME_TAN_ACROSS / player.zoom.max(1.0);
     Inputs { circles, viewer, f: WEDGE_HALF / tan }
@@ -372,9 +400,10 @@ fn inputs(player: &Player, squad: &Squad, game: &Game) -> Inputs {
 fn update(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, layers: Option<ResMut<RadarLayers>>, mut images: ResMut<Assets<Image>>) {
     let Some(mut layers) = layers else { return };
     let now = inputs(&player, &squad, &game.0);
-    // (a non-finite radius or wedge would make the layers' texels NaN: drawn as none)
-    if !now.f.is_finite() || now.circles.iter().any(|c| !(c.0.is_finite() && c.1.is_finite() && c.2.is_finite() && c.2 > 0.0))
-        || now.viewer.is_some_and(|r| !(r.is_finite() && r > 0.0)) {
+    // (a non-finite or negative radius or a non-finite wedge would make the layers' texels NaN:
+    // drawn as none; a radius of 0 is a record with no circle, `ring_alpha`)
+    if !now.f.is_finite() || now.circles.iter().any(|c| !(c.0.is_finite() && c.1.is_finite() && c.2.is_finite() && c.2 >= 0.0))
+        || now.viewer.is_some_and(|r| !(r.is_finite() && r >= 0.0)) {
         if !layers.warned {
             layers.warned = true;
             warn!("radar disc: a non-finite or empty input ({now:?}) left the circles and wedge undrawn");
@@ -393,9 +422,18 @@ fn update(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, layers: O
     layers.last = Some(now);
 }
 
+/// The layers go with the map's HUD: leaving a map drops them (and `setup_hud` drops them for a
+/// map with no squad radar), so `update` isn't left redrawing the images of nodes that are gone,
+/// as on a deathmatch map after a squad one (#347's review).
+fn forget(mut commands: Commands) {
+    commands.remove_resource::<RadarLayers>();
+}
+
+/// `update` while playing, and `forget` as a map is left.
 pub fn plugin(app: &mut App) {
     // (once the characters have moved and the camera has: before the radar's dots, which draw over it)
-    app.add_systems(Update, update.after(update_player).run_if(in_state(AppState::Playing)));
+    app.add_systems(Update, update.after(update_player).run_if(in_state(AppState::Playing)))
+        .add_systems(OnExit(AppState::Playing), forget);
 }
 
 #[cfg(test)]
@@ -502,6 +540,39 @@ mod tests {
         for k in 0..3 {
             assert!((viewer[at + k] as i32 - byte(want[k]) as i32).abs() <= 1, "channel {k}");
         }
+    }
+
+    /// A living viewer whose type has no radar-range still has its record (FUN_000aef00 only
+    /// refuses a dead one, #347's review): its wedge is drawn and its circle has no radius; a squad
+    /// member with no range has a record too, taking its place among the first three and drawing
+    /// nothing (and no NaN from its radius).
+    #[test]
+    fn a_viewer_with_no_range_has_its_wedge() {
+        assert_eq!(viewer_radius(true, 60.0, 0.325), None, "dead: no record");
+        assert_eq!(viewer_radius(false, 0.0, 0.325), Some(0.0), "living, no range: a record of no radius");
+        assert_eq!(viewer_radius(false, 60.0, 0.325), Some(19.5));
+        let l = layers();
+        let (circles, viewer) = l.dynamic_layers(&Inputs { circles: vec![(64.0, 64.0, 0.0)], viewer: viewer_radius(false, 0.0, 0.325), f: 0.5 / 0.7002 });
+        let alpha = |layer: &[u8], x: usize, y: usize| layer[(y * SIZE + x) * 4 + 3];
+        assert_eq!(alpha(&viewer, 64 + 15, 64 - 40), 128, "the wedge");
+        assert_eq!(alpha(&viewer, 64, 64 + 19), 0, "no circle");
+        assert_eq!(alpha(&viewer, 64 - 10, 64), 0, "no circle");
+        assert!(circles.iter().skip(3).step_by(4).all(|&a| a == 0), "a member's circle of no radius draws nothing");
+    }
+
+    /// The layers go with the map (#347's review): leaving the Playing state drops them, so a
+    /// deathmatch map after a squad one isn't left redrawing the images of nodes that are gone.
+    #[test]
+    fn the_layers_go_with_the_map() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin)).insert_state(AppState::Playing)
+            .add_systems(OnExit(AppState::Playing), forget);
+        app.insert_resource(layers());
+        app.update();
+        assert!(app.world().get_resource::<RadarLayers>().is_some(), "kept while playing");
+        app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Menu);
+        app.update();
+        assert!(app.world().get_resource::<RadarLayers>().is_none(), "dropped on leaving the map");
     }
 
     /// The squad's circles are lilac (the disc x (0.6, 0.4, 1.0) + (0.4, 0.2, 0.2)), where the

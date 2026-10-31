@@ -1383,6 +1383,9 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let radar = commands.spawn((ChildOf(screen), RadarPanel, GlobalZIndex(RADAR_Z), Name::new("radar panel"),
                                 Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0),
                                        height: Val::Percent(100.0), ..default() })).id();
+    // (a map with no squad radar, or with none of its textures, has no disc layers: any a map
+    // before it left are dropped as it was, `radar_disc::forget`, and here if that missed)
+    commands.remove_resource::<super::radar_disc::RadarLayers>();
     if squad {
         // the disc, the squad's lit circles and the view wedge under the frame, 128 x 128 from the
         // panel's corner (play_radar_disc.rs, the radar widget's draw 0xaefb0)
