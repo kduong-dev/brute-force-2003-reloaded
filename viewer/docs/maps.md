@@ -82,11 +82,15 @@ them):
       leaves out isn't traced, #298): the line from its home to Tex on the plate crosses body 64,
       h_ee99c575's band at (48.6, -28.1), twice. That agrees with todo/28-tutorial take08, where
       nobody fired on Tex on the plate (brain.md).
-      The other runs that were compared, before against after (`BF_MUTE=1 BF_BACKGROUND=1`,
-      15 fps): e01's start and its autopilot run, sdm_e34's autopilot run, the tutorial's marines
-      and first patrol, e34's squad follow and its fight with the Shrike Hound, are the same
-      frame for frame to within the particles' noise (at most 0.1% of the pixels, none over 15
-      levels), and the logs the same line for line.
+      The other runs compared, before against after (`BF_MUTE=1 BF_BACKGROUND=1`, 15 fps, the
+      frames saved at every 3rd to 15th): e01's start (48 of 60 frames identical, the rest
+      differing in at most 0.008% of the pixels by over 8 levels; two runs of one build differ
+      so, and in their first frames when the load is slow) and its autopilot run (46 of 60, at
+      most 0.002%), sdm_e34's autopilot run (60 of 60), the tutorial's marines (63 of 70, at most
+      0.005%) and first patrol (34 of 40, at most 0.001%), e34's squad follow (29 of 60, at most
+      0.023%) and its fight with the Shrike Hound (49 of 50): the same to the particles' noise,
+      the largest difference 15 levels, and their logs the same line for line but the map's
+      triangle count.
   * Material: every triangle carries one, a world-material id plus a slide flag.
   * Standing: characters stand on surfaces up to 65° (the game's ground limit), facing up by
     their winding, within a 0.5 m step; steeper surfaces are walls (#285: so is a surface facing

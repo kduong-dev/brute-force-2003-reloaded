@@ -2074,9 +2074,11 @@ impl Game {
     /// archives with 39 shapes, `h_ee99c575` in 38 with 37, `h_09910e17` 37 with 36, `h_1bcd1f11`
     /// 36 with 35, `h_fee0807e` 32 with 31, and e01's shape of each is no other archive's. Of
     /// e01's 492 surfaces, 34 are shaped otherwise in some other archive, and 46 of the other 52
-    /// archives have at least one that e01 shapes otherwise. The other things the levels share by name (archetypes, meshes, materials, object types,
-    /// sounds, animations, scripts) are the same wherever two levels have one of the same name
-    /// (levels.md "Load order"), so for them the order changes nothing.
+    /// archives have at least one that e01 shapes otherwise. The other things the levels share by
+    /// name (archetypes, meshes, materials, object types, sounds, animations, scripts) hardly
+    /// differ: of e01's names, one material (e16's), one effect type (e23's) and five animation
+    /// sets (in e23, m03_a, m04_a, m07_b and m09_b) are another's in the other archives
+    /// (levels.md "Which level's data"), so for them the order matters in those six archives alone.
     pub(crate) fn add_objects(&mut self, root: Element, ivd: Arc<Vec<u8>>, ipn: Arc<Vec<u8>>) {
         for table in root.children_named(H_PHYSICS_FILE) {
             for s in table.children_named(H_PHYSICS) {

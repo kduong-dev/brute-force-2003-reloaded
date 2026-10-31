@@ -191,12 +191,7 @@ walkway; the straight line between its ends crosses a pit.
   point with a 1 m radius of its own instead of closing on it (the hook's choice; the AI's pace
   near a point, FUN_0004d840, isn't read). The camera faces the way it goes, or keeps
   `BF_CAMERA_YAW`; with `BF_CAMERA_PITCH` and `BF_CAMERA_DISTANCE` it looks from above. The
-  level's prisms aren't read, so no radius is held to 1 m indoors. **Run it with
-  `BF_LEVEL=<the map>`**: bf_play loads e01's level data before the map's (its default audio,
-  `load_game`) and a collision surface loaded first wins its name (`Game::add_objects`), so 11
-  of the tutorial's 24 blocker surfaces (5 of them hinters), 9 of sdm_e34's 14 and 5 of e34's 17
-  take e01's shapes, and the corridor rays meet phantom hinters on the lava yard's walkway (the
-  walk then holds at h_1862fb9d for good). `BF_LEVEL` takes that audio from the map itself.
+  level's prisms aren't read, so no radius is held to 1 m indoors.
 * `BF_ROUTE=<x>,<z>;<x2>,<z2>` (bf_level): the route a character standing at (x, the floor, z)
   takes to the valid point nearest (x2, the floor, z2), the graph as the level starts (the
   waypoint triggers' FIRST_UPDATEs applied), point by point with the floor under each, the
@@ -216,9 +211,9 @@ BF_ROUTE="73.1,-44.6;48.7,-14.1" cargo run --bin bf_level -- tutorial
 BF_ROUTE="-49.9,43.0;2.0,-15.2" cargo run --bin bf_level -- sdm_e34
 BF_ROUTE_COST=1 BF_ROUTE="-60,-70;-10,-20" cargo run --bin bf_level -- e34
 # Tex walks the yard's route, seen from above (bf_play)
-BF_LEVEL=tutorial BF_MAP=tutorial BF_TEST_GOTO=48.7,-14.1,48.7,-14.1 BF_TEST_ROUTE=73.1,-44.6 BF_ROUTE_LOG=1 BF_CAMERA_YAW=0 BF_CAMERA_PITCH=-1.0 BF_CAMERA_DISTANCE=16 BF_CAPTURE=<dir> BF_CAPTURE_FRAMES=300 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+BF_MAP=tutorial BF_TEST_GOTO=48.7,-14.1,48.7,-14.1 BF_TEST_ROUTE=73.1,-44.6 BF_ROUTE_LOG=1 BF_CAMERA_YAW=0 BF_CAMERA_PITCH=-1.0 BF_CAMERA_DISTANCE=16 BF_CAPTURE=<dir> BF_CAPTURE_FRAMES=300 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # and up from sdm_e34's valley to its high ground
-BF_LEVEL=sdm_e34 BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROUTE_LOG=1 BF_CAMERA_PITCH=-0.6 BF_CAMERA_DISTANCE=10 BF_CAPTURE=<dir> BF_CAPTURE_FRAMES=360 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROUTE_LOG=1 BF_CAMERA_PITCH=-0.6 BF_CAMERA_DISTANCE=10 BF_CAPTURE=<dir> BF_CAPTURE_FRAMES=360 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 ```
 
 ## Verified
@@ -257,10 +252,18 @@ BF_LEVEL=sdm_e34 BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE
   the walkway round the south pit, never in lava. On sdm_e34 he climbs the ramp from the valley
   (y 30) to the high ground (y 40) in 19.7 s, the look-ahead skipping eight points (sdm_e34 has
   only 24 no-skip points) and the corner rule holding him to 0.6 m of h_1195e686, where a placed
-  object stands in the next leg's left ray. Without `BF_LEVEL` (e01's shapes for the shared
-  surfaces) the tutorial's walk holds at h_1862fb9d from 4.9 s to the end of a 20 s capture,
-  the left ray meeting a hinter that bf_level's collision doesn't have: the same two rays
-  replayed in bf_level (`BF_ROUTE_PROBE`) meet nothing.
+  object stands in the next leg's left ray.
+* #338: bf_play loaded e01's data before the map's, and a collision surface loaded first wins its
+  name, so on every map but e01 a blocker or hinter named as one of e01's had e01's shape (the
+  tutorial's five hinters, 5 of sdm_e34's 14 blockers, 1 of e34's 17: maps.md, "Which level's
+  shapes"). These walks had to run with `BF_LEVEL=<the map>`, which takes the default data from
+  the map itself: without it the tutorial's walk held at h_1862fb9d from 4.9 s to the end of a
+  20 s capture, the left ray meeting a hinter of e01's shape that bf_level's collision doesn't
+  have (the same two rays replayed in bf_level, `BF_ROUTE_PROBE`, meet nothing). The map's own
+  data loads first now: the commands above run as written, the tutorial's walk ends at 13.20 s
+  and sdm_e34's at 19.67 s (eight points skipped), and the tutorial's with `BF_LEVEL=tutorial`
+  gives the same log line for line (the search's microseconds aside) and the same frames to the
+  noise.
 
 ## Not done
 
