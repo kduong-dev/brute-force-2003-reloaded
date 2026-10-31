@@ -929,7 +929,11 @@ prop that goes off on its own. The leads and the takes are `todo/82-thermo-grena
   and blast are its definition's. `BF_SENTRY_LOG=1` on every map before and after (53 runs,
   12 frames each): the placed lists are the same on all the others (e05 4, e10 6, e16 14,
   e34 6, e40 7, m03_a 5, m03_b 5, m03_c 4, m08_b 14, m14_a 7, m14_b 1, m14_c 2, the tutorial 3,
-  ...), only e23 (0 to 3), m09_b (1 to 2) and m09_x (1 to 4) change. Not checked: the new
+  ...), only e23 (0 to 3), m09_b (1 to 2) and m09_x (1 to 4) change. The squad's start
+  stacks are credited by label (`StartStore::grenades`), so with two kits of one label the
+  first, the squad's, takes them and the others start with none (else the stack would be
+  carried twice): `BF_INVENTORY_LOG=1` on e23, m09_b, m09_x and e34 shows no Sentry stack
+  (none of those zones carries one), and m14_c's `Sentry 10` is as before. Not checked: the new
   mines going off. Tex can't walk to them from the start (held at z -93.5 short of e23's
   first, (-67.3, 25.4, -97.9), and at z 78.3 short of m09_b's, (-125.5, 57.5, 86.9)), and
   `BF_TEST_HOSTILE=hawk,4,0,1` didn't set e23's first off (no check line at all, not looked
