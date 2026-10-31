@@ -1108,6 +1108,7 @@ fn main() {
         .add_plugins(chatter::plugin)
         .add_plugins(squad_menu::plugin)
         .add_plugins(nav::plugin)
+        .add_plugins(speed::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1249,6 +1250,8 @@ mod chatter;
 mod squad_menu;
 #[path = "play_nav.rs"]
 mod nav;
+#[path = "play_speed.rs"]
+mod speed;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1729,6 +1732,9 @@ struct Clips {
     /// side steps whose own root doesn't move, and the walk whose root motion moves them instead
     /// (`root_stand_ins`)
     root_stand_in: HashMap<usize, usize>,
+    /// the run and dash clips of the slots' sets, each with its gait and its own ground speed
+    /// (m/s), whose root step takes the game's ground speed (`speed::clip_speeds`, #345)
+    ground: HashMap<usize, (speed::Kind, f32)>,
 }
 
 /// The motions a motion set's MT_TOGGLE_SPECIAL (45) transitions lead to, which a skill's toggle
@@ -2768,6 +2774,11 @@ struct Player {
     /// char+0x640 and the use's state): the switch to the slot it goes to, then the drop-and-pickup
     /// clip
     gun_use: Option<weapon_pickups::GunUse>,
+    /// the value of its brain's speed record (brain+0x8a0 while its flag +0x89d is set), which
+    /// multiplies the AI's run and dash (FUN_00048270 into char+0x720; play_speed.rs): 1.0, and
+    /// `speed::FOLLOW_BOOST` while the squad's follow dashes after its leader. Set by the AI
+    /// (`squad_ai`) and cleared before it each frame (`update_player`)
+    speed_boost: f32,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2868,6 +2879,7 @@ impl Player {
             controlled: false,
             ready_pose: false,
             gun_use: None,
+            speed_boost: 1.0,
         }
     }
 
@@ -3072,6 +3084,12 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         let d = to / dist;
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
         m.sprint = dist > SLOT_DASH * spacing || dist > m.leash + 10.0;
+        // (the follow's update sets the brain's speed record to 1.25 each update, FUN_00020b10 at
+        // 0x20ed4, and its chase state clears it while the leader is within the follow's second
+        // distance, FUN_00022130: so a dash after a leader farther than that moves at the type's
+        // dash, 0.8 x 1.25, and one inside it at 0.8; play_speed.rs)
+        let leader_gap = Vec2::new(leader.position.x - m.position.x, leader.position.z - m.position.z).length();
+        m.speed_boost = if m.sprint && leader_gap > speed::FOLLOW_D1 * spacing { speed::FOLLOW_BOOST } else { 1.0 };
         m.walk = dist < 2.5;
         m.still_time = 0.0;
         m.crouch_wanted = false;
@@ -3878,6 +3896,7 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
     }));
     Clips {
         root_stand_in: root_stand_ins(model, &slots, special.as_ref()),
+        ground: speed::clip_speeds(model, game, &slots),
         slots,
         special,
         loco,
@@ -4751,6 +4770,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     for (slot, m) in squad.0.iter_mut().enumerate() {
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
+        // (its brain's speed record: the follow sets it again below, any other goal leaves it 1.0)
+        m.speed_boost = 1.0;
         if m.dead || knocked_down(m) {
             // (knocked down, alive: its face controller ticks all the same, play_faces.rs `tick`)
             if !m.dead {
@@ -6512,9 +6533,14 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     p.layers.retain(|x| x.weight > 1e-3);
 
     // ---- advance clips: root motion and poses ----
+    // (the run and the dash take the game's ground speed: each such layer's root step is scaled by
+    // the type's speed over the clip's own, `speed::scale`; the newest layer's gait is the gait's
+    // kind)
     let mut delta = Vec3::ZERO;
     let mut poses = vec![];
-    for layer in p.layers.iter_mut() {
+    let ground = speed::targets(p, game);
+    let top = (speed::gait_kind(p.gait), p.layers.len().saturating_sub(1));
+    for (i, layer) in p.layers.iter_mut().enumerate() {
         let d = l.model.anims[layer.clip].duration.max(1e-3);
         let dt = dt * layer.rate;
         if layer.once {
@@ -6522,7 +6548,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             delta += locomotion::root_delta(&l.model, game, layer.clip, layer.time, step) * layer.weight;
             layer.time = (layer.time + dt).min(d - 1e-3);
         } else {
-            delta += clip_root_delta(&l.model, game, c, layer.clip, layer.time, dt) * layer.weight;
+            let k = ground.map_or(1.0, |t| speed::scale(&c.ground, t, layer.clip, top.0.filter(|_| i == top.1)));
+            delta += clip_root_delta(&l.model, game, c, layer.clip, layer.time, dt) * (layer.weight * k);
             layer.time = (layer.time + dt) % d;
         }
         let mut pose = l.model.pose(game, layer.clip, layer.time, None, 0.0);

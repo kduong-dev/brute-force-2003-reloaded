@@ -3,7 +3,7 @@
 | Keyboard / mouse (no gamepad for now) | Action |
 |---|---|
 | WASD | move (relative to the camera); the character turns toward the direction |
-| Shift | sprint (the game's dash). `BF_TEST_SPRINT=<s>` sprints toward the goal from that time with `BF_TEST_GOTO` |
+| Shift | sprint (the game's dash, at the type's dash speed, 8.5-8.7 m/s; WASD alone runs at its run speed, 7.8-7.9: **Ground speed**, #345). `BF_TEST_SPRINT=<s>` sprints toward the goal from that time with `BF_TEST_GOTO` |
 | Ctrl | walk |
 | Right mouse (hold) | aim: the gun is held raised (its ready timer at 4 s or more), so the camera moves in as after a shot and eases out the game's way after the release ([camera.md](camera.md): a keyboard-and-mouse adaptation, the game has no aim without shooting); the gun is turned onto the crosshair while the legs keep moving; moving away from the aim backpedals. Moving across it (30-150 degrees off the crosshair) side-steps, standing (`Sc_w1/w2_rp_f_side_walk_l/r` up to 100 degrees, `rp_b_side_walk_l/r` past it) or crouched (`cr_f/b_side_walk_l/r`). Those clips twist the upper body about a quarter turn off the root, and their root motion runs straight along it, forward or back, as far as the walks. So the character turns until the gun is on the crosshair and walks where the clip takes it: across the aim, a little forward or back. One clip in the squad's data has no root motion: Tex's `Sc_w1_rp_f_side_walk_l` (his first slot, whatever gun is in it, aimed left; its own speed h_f9628571 is 5.9e-05 m/s where the squad's other side steps carry 1.0-2.1). The game doesn't move a walk by its clip (FUN_0012c6c0 moves it at the type's `speeds` along the stick), so there he steps left as he does right. The demo moves by root motion, so a side step whose own speed is under 0.001 (the game's no-speed threshold for the play rate) takes the root motion of its stance's walk in the same direction, forward or back (`root_stand_ins`; #170: he walked in place before). `BF_TEST_STRAFE=<x>[,<y>]` moves that way (camera-relative) with `BF_TEST_GOTO`; with a goal far ahead (`BF_TEST_GOTO=4.5,20,4.5,-80`) the camera keeps still while he steps. `BF_MOVE_LOG=1` prints the controlled character's position, facing, gait and clip every half second (and the stand-in walk, `root from`). Verified (#170, `BF_MOVE_LOG=1 BF_TEST_AIM=1 BF_TEST_GOTO=4.5,20,4.5,-80 -- --test`, Tex with the Therm Sweeper): aimed left (`BF_TEST_STRAFE=-1,0`) 1.59 m/s and right 1.60, back-left / back-right 1.53 / 1.54, crouched 1.72-1.73 each way; the planted boot holds within 1 px of the floor on both steps; main's build stepped left in place; Hawk's aimed steps and Tex's unaimed walk are pixel-identical to main |
 | Left mouse (hold) | fire the held weapon (at its own rate; also aims while held). Standing, the feet turn with the aim (the spine keeps at most ~11° of twist, also when looking down and turning). As in the game, the camera moves in along the crosshair's ray from the first shot (the aim shift: Tex's 3.9 m to 2.2), stays in for the ready timer's 4 s and 2.33 s more, then eases out over 0.67 s; a dash, a jump, a crouch's transition, a throw, a reload or a switch lowers the gun and takes it out sooner ([camera.md](camera.md)) |
@@ -3343,6 +3343,76 @@ Verified (15 fps, `BF_COMBAT_LOG`; the takes' numbers and allowed ranges are ans
   BF_HIT_PARTS=1 BF_TEST_FREECAM=0.5,3.75,1.2,17.5,0,-5`): the four squad models' parts sit on
   their drawn bodies: the head, the upper arms, the forearms on the guns, the torso, thighs and
   calves.
+
+### Ground speed: the run and the dash (#345)
+
+The game doesn't move a running character by its clip's root motion. FUN_0012c6c0 sets its ground
+speed from the type's `speeds` (crouch walk, walk, run, dash; `CharacterType::speeds`) by the
+motion type, plays the run and dash clips at rate 1, and the factor on it depends on who drives
+the character. The demo moves the squad by root motion; its run and dash take the game's speed by
+scaling the clip's root step (`src/bin/play_speed.rs`: the notes there have the code and the
+footage, the rows in [code-map.md](code-map.md) the addresses). The ticket was opened for "the
+squad's dash is 10% fast (7.2-7.6 m/s against take01's 6.5-6.9)": that set the clips' constant dash
+against take01's route means and its stretches with the follow's boost off (0.8 x the dash, 6.8-7.0);
+the dash on a straight is **8.5**, and the demo's was too slow.
+
+| m/s | Brutus | Flint | Hawk | Tex |
+|---|---|---|---|---|
+| the type's run / dash (`speeds`) | 7.8 / 8.7 | 7.9 / 8.6 | 7.9 / 8.5 | 7.8 / 8.5 |
+| the clips' own root, the demo's run / dash before | 4.55 / 7.59 | 4.35 / 6.71 | 5.03 / 7.17 | 4.82 / 8.01 |
+| the player (a human drives it: x1.0), run / dash | 7.8 / 8.7 | 7.9 / 8.6 | 7.9 / 8.5 | 7.8 / 8.5 |
+| an AI member (x0.8: FUN_0012cb40), run / dash | 6.24 / 6.96 | 6.32 / 6.88 | 6.32 / 6.80 | 6.24 / 6.80 |
+| an AI member following a leader beyond d1 (x0.8 x 1.25), dash | 8.7 | 8.6 | 8.5 | 8.5 |
+
+* **The player** (`Player::controlled`): the type's speed as it is (FUN_0012cd10 calls
+  FUN_0012c6c0 itself for a character FUN_00112800 says a human drives). #264 take01 (Tex dashing
+  east on e34, the game's clock): the velocity eases up to 8.45 (type 8.5), take02 Brutus 8.7;
+  #129 take34, a player's deathmatch Soldier: run 6.49, dash 8.44 (6.5 and 8.5). So the demo's
+  plain run, WASD (the game's RUN: a pad's stick between a walk and 0.9), is 7.8-7.9, not the clips'
+  4.4-5.0, and Shift's dash 8.5-8.7, not 6.7-8.0.
+* **An AI member**: FUN_0012cb40's x0.8 for a squad type (type+0x1a8 bit 0). #33 take08 (Hawk's
+  Move To): the dash levels at 6.84 (6.8). The **follow's boost**: the follow's update sets the
+  brain's speed record to 1.25 each update and its chase state takes it off while the leader is
+  within d1 (14 m in FOLLOW, 10 in WINGMAN: `speed::FOLLOW_D1` x `orders::spacing`), so a member
+  dashing after a leader farther than that moves at 0.8 x 1.25 = 1.0 x its dash: take01's first
+  straight (the leader 48-50 m away, the game's clock) Flint 8.53-8.55, Brutus 8.59-8.62, Hawk
+  8.42-8.46 (types 8.6, 8.7, 8.5); #33 take04 (Tex dashing east): Brutus and Hawk hold 13.7-14.5 m
+  behind him, at 8-9 m/s beyond 14 m and 6.3-7.1 inside it. `squad_ai` sets `Player::speed_boost`
+  for the dash beyond d1, `update_player` clears it before every member's goal.
+* **Take01's "6.5-6.9"** is a mean of that kind: over their moving time the three covered 6.1
+  (Flint), 6.6 (Brutus) and 5.9 (Hawk) m/s, 12-35% of it at the boosted dash (8.4-8.9), 20-29% at the
+  run with the boost off (6.2-6.3: the feelers' level drop, FUN_00018c40 / the pace record, #344),
+  26-36% under 5.9 (walks after the hard turns, the climbs back up the pace ramp: 0.17 s a notch
+  for a squad member). The demo has no routes, feelers or pace ramp yet (#335, #344): its AI picks its
+  gait by its distance to its place and starts at once.
+* **Not done**: the walk, the crouch walk, the back steps and the side steps keep their clips' root
+  (the game's walk follows the stick: #126 take07's "run" at a stick of 0.7 was the game's WALK,
+  mot 47, at 3.5 m/s, Tex's type walk 3.6, where the demo's walk is the clip's 1.6); the velocity
+  ease (4.5 a second, 7 slowing down: the demo's 0.2 s crossfade stands for it, so a run starts a
+  little snappier and stops dead); Tex's berserk and Flint's sniper sets' run (their own clips); a
+  character of a type of its own (`enemies::enemy`: the test hooks' drive) and cutscenes (scripted
+  play moves everyone by the root, FUN_0012cb40's other branch). A jump keeps the ground speed
+  (`last_velocity`), so a running jump is longer, and a grenade thrown on the run carries the
+  thrower's speed (#161, play_grenade.rs `carry`: not checked against the game).
+* **Test hooks**: `BF_SPEED_LOG=1` prints, every 0.25 s, each running or dashing character: who
+  drives it (player or AI), the type's speed, the factor and the target, the speed it covers this
+  frame, where it is, and the mean speed of its gait so far (the path counted every frame from 0.5 s
+  in). `BF_ROOT_SPEED=1` moves the run and the dash by their clips' root, as before #345.
+* **Verified** (`BF_MUTE=1 BF_BACKGROUND=1`, the means are the log's, exact):
+  * the four as the player on the test map's floor (`--test BF_NO_SQUAD=1 BF_CHARACTER=<0-3>
+    BF_TEST_GOTO=0,60,0,17 [BF_TEST_SPRINT=1.0] BF_SPEED_LOG=1`): run Brutus 7.81, Flint 7.91, Hawk
+    7.91, Tex 7.84; dash 8.72, 8.62, 8.52, 8.50 (before, `BF_ROOT_SPEED=1`: run 4.55, 4.35, 5.03,
+    4.82; dash 7.59, 6.71, 7.17, 8.01);
+  * the squad after take01's staging (`--test BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=-70,45,70,45
+    BF_TEST_GO_AT=1.0 BF_TEST_SPRINT=1.0 BF_SPEED_LOG=1`, the three 80-90 m from Tex): their dash
+    over 5 s Brutus 8.72, Flint 8.62, Hawk 8.52 (take01: 8.60, 8.54, 8.44), and from 14 m off Tex
+    7.0, 6.9, 6.8; run on 30 s (`BF_TEST_GOTO=-150,45,150,45`) they fall back to 13.5 m behind
+    Tex's dash from the 20th second and hold it, at 8.5-8.7 beyond 14 m and 6.8-7.0 inside it (#33
+    take04: 13.7-14.5 m);
+  * Hawk's Move To (`BF_MAP=e34 BF_TEST_GOTO=-83.39,-82.79,-83.39,-82.79,27 BF_TEST_NO_HOSTILES=1
+    BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05 "BF_TEST_ORDER=hawk,move,-70.8,-79.5@2"
+    BF_SPEED_LOG=1`): 6.80 m/s (take08 6.84; 7.2 before);
+  * `cargo test --bin bf_play speed`: the rule's numbers.
 
 ### Running in the background (#163)
 

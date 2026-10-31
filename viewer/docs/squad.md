@@ -232,6 +232,14 @@ Squad movement and deaths follow the game's own data and the captures:
   * **Fire At Will** (WINGMAN) keeps the follow, closer: the formation's places and the
     distances it sets off (3 m) and dashes (8 m) at, times 8 / 11.2 (FUN_00020b10's set for
     WINGMAN against FOLLOW's 1.4 times it), and combat allowed for as long as the mode lasts.
+  * **The squad's pace** (#345; play.md, "Ground speed"): an AI member moves at 0.8 x its type's
+    speeds (FUN_0012cb40: 6.2-6.3 m/s running, 6.8-7.0 dashing), Move To and the follow's dash
+    within d1 of the leader (14 m, 10 in WINGMAN) alike; the follow's dash beyond d1 is 1.25 x that,
+    the type's own, 8.5-8.7 (the follow's speed record, FUN_00020b10). The player runs at the
+    type's 7.8-7.9 and dashes at 8.5-8.7, so a member trails the player's dash and holds about 14
+    m behind it, as #33 take04's did, and sprints on to catch up once farther. Not in the demo:
+    the pace ramp (a stand to the dash in 0.5 s, 0.17 s a notch), the feelers' drops to a run and
+    a walk and the velocity ease (#344).
   * **Stand Ground** (GUARD): kneels 0.3 s after the order (a fit: take07 0.24 s, take08 0.52 s
     of game time), or stays down if it was kneeling already (the follow's crouch pause, or the
     controlled character left crouched), and stays, its facing kept, Brutus standing; no dodges,
@@ -344,19 +352,21 @@ Squad movement and deaths follow the game's own data and the captures:
   * Stand Ground (take07: `BF_TEST_ORDER=hawk,guard@3`, Tex dashing east from 4.5 s): Hawk m3 g2
     a0 at 3.07 s, kneeling 0.4 s later (frames 56-68), held at (-82.8, -87.1) while Tex went
     43 m off.
-  * Move To (take08: `BF_TEST_ORDER=hawk,move,-70.8,-79.5@8`): m5 g72 a0, 15 m in 2.4 s at her
-    dash (7.2 m/s; take08 6.0 run, 6.6 dash), GUARD 1.8 m short of the point (take08 1.9-2.0),
+  * Move To (take08: `BF_TEST_ORDER=hawk,move,-70.8,-79.5@8`): m5 g72 a0, 15 m in 2.5 s at her
+    dash (6.8 m/s since #345, her type's 8.5 x 0.8 as the game's AI moves: take08's plateau 6.84,
+    its run 6.0-6.3; 7.2 before, the clip's root), GUARD 1.9 m short of the point (take08 1.9-2.0),
     her e635ecc6 sound 14c84c28 0.13 s later (take08's was 0fc11d92, the block's other), kneeling
     0.4 s after arriving (take08 0.52 s). From take08's own kneel, with Tex nearly on her way
     (`BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999
     "BF_TEST_ORDER=hawk,move,-89.5,-87.8@1;hawk,move,-70.8,-79.5@10"`): she stands, runs past Tex
-    1.9 m off (take08 1.5 m) and arrives 3.1 s after the order (take08 4.2 s, her run slower).
+    1.9 m off (take08 1.5 m) and arrives 3.3 s after the order (take08 4.2 s; 3.1 s before #345; the pace
+    ramp, 0.17 s a notch from a stand to the dash, and the velocity ease aren't in the demo).
     With Tex right on her line (`BF_TEST_GOTO=-82.16,-85.05,...`): she bends round him 1.5 m off
-    (frame 176) and arrives at the same time. (Before #318's third round she waited 7 s behind
+    (frame 176; 1.2 m at the closest in the 10 Hz rows since #345) and arrives at the same time. (Before #318's third round she waited 7 s behind
     him and stood her ground: the wait-then-GUARD rule, dropped.) Through the chatter gate (after
     #155, `BF_CHATTER_LOG=1`): at the first point her e635ecc6 is said (variant 14c84c28, priority
     6, 7 m off); at the second, ordered at 10 s, a timed mute of e34's opening radio lines refuses
-    it, as it refuses every line; ordered at 32 s, after them, she arrives 3.1 s later and it's
+    it, as it refuses every line; ordered at 32 s, after them, she arrives 3.3 s later (3.1 before #345) and it's
     said with take08's own sound, 0fc11d92 (the set's other variant: each is said before one
     repeats), the HUD's speech icon by her portrait for its 1.3 s (frames 527-547).
   * Fire At Will (take10: `--test BF_TEST_ORDER=all,fire@1 "BF_TEST_NPC=3.0,shrike

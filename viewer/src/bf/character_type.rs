@@ -238,7 +238,8 @@ pub struct CharacterType {
     /// `StowPlaces`), #297
     pub pickup_mode: i64,
     /// `<speeds speed>`: crouch walk, walk, run, dash (m/s; type+0x6f8..0x704, read by
-    /// FUN_0012c6c0); the demo moves by root motion
+    /// FUN_0012c6c0); the squad's run and dash move by them (play_speed.rs, #345), an NPC's
+    /// drive by all four (play_enemies.rs), the rest by root motion
     pub speeds: [f32; 4],
     /// `<cylinder-extents>` (FUN_00190290; type+0x1d4..0x1e0)
     pub capsule: Capsule,
