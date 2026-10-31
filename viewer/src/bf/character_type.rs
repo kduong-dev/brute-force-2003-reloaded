@@ -48,6 +48,11 @@ const H_SKULL: u32 = 0x00C5_1907;
 const H_PLAYER_TYPE: u32 = 0xE78E_FBB2;
 /// The footstep type (h_072ab4af, an enum: the squad 1-4, the campaign Shrikes and hounds 0).
 const H_FOOTSTEP: u32 = 0x072A_B4AF;
+/// The type's name tag (h_0d3bdcf5; the parse record's +0x1f0, which the Squad Command menu's
+/// order line reads, FUN_000c1630): the chatter tag the ordering character says to call a member
+/// of this type by. Written as a tag hash on every squad type (Tex fb962749, Hawk f5359692,
+/// Brutus f0c93785, Flint 116501dc), the Confed marines' (181b6433) and a few enemy types'.
+const H_NAME_TAG: u32 = 0x0D3B_DCF5;
 /// The two blood decal lists: h_fb4bfc68 the hit's, h_efc2a874 the second (FUN_00190930's two
 /// cursors, the type's vectors +0x1b4 / +0x1c4).
 const H_DECALS: [u32; 2] = [0xFB4B_FC68, 0xEFC2_A874];
@@ -247,6 +252,9 @@ pub struct CharacterType {
     /// footstep type (h_072ab4af) and `<movement-sounds jump-sound>` (0 none)
     pub footstep_type: i64,
     pub jump_sound: u32,
+    /// h_0d3bdcf5 (type+0x1f0): the chatter tag the Squad Command menu's order line calls a member
+    /// of this type by (`H_NAME_TAG`); 0 none (the order line skips such a member's name)
+    pub name_tag: u32,
     /// its `<combat-skill skill-set stamina-cost stamina-recovery>` with max-stamina and
     /// h_e78efbb2 (`SkillData`; the squad's are read by name too): the stamina update
     /// (FUN_0011a840) refills `stamina-recovery` a second for a type with h_e78efbb2, the
@@ -716,6 +724,7 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
             .filter(|&(fx, _)| fx != 0).collect()).unwrap_or_default(),
         footstep_type: int(e, H_FOOTSTEP).unwrap_or(-1),
         jump_sound: e.child(h("movement-sounds")).map_or(0, |m| name(m, h("jump-sound"))),
+        name_tag: name(e, H_NAME_TAG),
         skill: skill_data(e),
         award: part.child(H_AWARD).map(|a| Award {
             amount: num(a, h("amount")).unwrap_or(0.0),
@@ -971,11 +980,11 @@ impl Game {
                 t.hitpoints, t.target_type, t.vulnerabilities,
                 t.shield.as_ref().map_or("-".into(), |s| format!("type {} charge {} hit-effect h_{:08x} recharge {:?}", s.kind, s.max_charge, s.hit_effect, s.recharge)),
                 t.damage_multiplier, t.ai.alignment, team(t.ai.alignment), t.max_stamina, t.turn_rate, t.player_type, t.ragdoll_death));
-            out.push(format!("  speeds {:?} capsule r {} h {} crouch {} offset {:.2} height-offset {} | weapons {:?} classes {:?} items {} | decals [{}] [{}] | death-effect h_{:08x} attached {} | chatter {}{} | footsteps {} jump h_{:08x}",
+            out.push(format!("  speeds {:?} capsule r {} h {} crouch {} offset {:.2} height-offset {} | weapons {:?} classes {:?} items {} | decals [{}] [{}] | death-effect h_{:08x} attached {} | chatter {}{} | footsteps {} jump h_{:08x} name-tag h_{:08x}",
                 t.speeds, t.capsule.radius, t.capsule.height, t.capsule.crouch_height, t.capsule.offset, t.height_offset, weapons, t.weapon_classes,
                 t.items.len(), hashes(&t.decals[0]), hashes(&t.decals[1]), t.death_effect.0, t.attached_effects.len(),
                 if chatter.is_empty() { "-" } else { chatter }, if !chatter.is_empty() && !self.chatter.contains_key(chatter) { " (not loaded)" } else { "" },
-                t.footstep_type, t.jump_sound));
+                t.footstep_type, t.jump_sound, t.name_tag));
             let Some(ms) = ms else { continue };
             let has = |c: u32| self.has_clip(ms.anim_set, c);
             let seconds = |n: &str| self.anim_sets.get(&ms.anim_set).and_then(|a| a.iter().find(|c| c.name == h(n))).map(|c| (c.duration, c.root_height));

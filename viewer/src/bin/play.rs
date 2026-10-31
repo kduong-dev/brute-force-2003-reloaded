@@ -1871,15 +1871,6 @@ pub const METER_TIME: f32 = 1.0;
 /// recordings agree: "BRUTUS" shows at 22.867 s and the cut is at 23.367 s in `Friendly Fire 2
 /// + Death Cam.mp4`, "HAWK" at 31.847 s and 32.333 s. (It was 0.6, unmeasured.)
 const SELECT_TIME: f32 = 0.5;
-/// The line the character you hand over from says as they drop back into the squad ("I'm right
-/// behind you", "Following at a distance", ...: line_tag f415ab02 in all four <name>_chatter
-/// files; the capture's switches transcribe and match to these, said by the previous character
-/// right at the camera cut). The game's hand-over (FUN_0005cc20, 0x5d067) says it for the one
-/// left in mode 1, Cover Me, through the chatter gate (play_chatter.rs): probability 100, replay
-/// delay 30 s, priority 5, a 3 s wait, heard at any distance. The one left in Stand Ground says
-/// 0e69bfe5 there instead (e635ecc6 in the far case, play_orders.rs `hand_over`) and in Fire At
-/// Will 15dc4e2d: those are #320's, and the demo says this line whatever the mode.
-const FOLLOW_CHATTER: u32 = 0xF415_AB02;
 /// a single hit this hard can knock a character down (the L-Shot's 23-27 and Bower's 16-20 can,
 /// the rifles' 2-13 can't; capture: L-Shot hits floor a squadmate for ~0.6 s before they get up)
 const KNOCKDOWN_DAMAGE: f32 = 15.0;
@@ -2939,6 +2930,14 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         println!("t {:.2}: {} waits at a liquid that burns, {dist:.1} m from its place, at {:.2}", m.sim_time, unit_name(m), m.position);
     }
     let go = go && !shore;
+    // the follow's walk to its place begins (FUN_00021b70): the first since the flag was cleared (a
+    // fresh brain's, or a Fire At Will's: play_brain.rs `Command::start_walk`) says "on my way",
+    // through the gate. A stand-in for the game's follow state machine (#331): its walk starts
+    // where the formation sets off (a step out of the leader's line of fire isn't a walk to its
+    // place)
+    if go && !moving && dist > SLOT_START * spacing && m.command.start_walk() {
+        chatter::say(m, chatter::FOLLOW_WALK);
+    }
     if go {
         let d = to / dist;
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
@@ -3196,7 +3195,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let inventory = (player.grenades.clone(), player.medkits, player.medkit_kind, player.others.clone(), player.stocked, player.item);
     // (#318) the hand-over's re-order (FUN_0005cc20, play_orders.rs): over 50 m from the one taken,
     // the one left stands its ground and its followers hold or move out to it
-    orders::hand_over(&mut player, &mut squad.0, i);
+    let handed = orders::hand_over(&mut player, &mut squad.0, i);
     std::mem::swap(&mut *player, &mut squad.0[i]);
     (player.grenades, player.medkits, player.medkit_kind, player.others, player.stocked, player.item) = inventory;
     // (the one taken stops moving out: FUN_000c8e80; the one left has its allow flags set by its
@@ -3242,12 +3241,11 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // (a tap still owed its shot doesn't go on firing for the one handed over from)
         m.fire_state.drop_pull();
     }
-    // the character handed over from drops back with a follow line (unless they're dead), through
-    // the chatter gate (FUN_0005cc20 at 0x5d067)
-    let left_behind = &mut squad.0[i];
-    if !left_behind.dead {
-        chatter::say(left_behind, FOLLOW_CHATTER);
-    }
+    // the character handed over from drops back with the line of its command mode ("I'm right
+    // behind you" in Cover Me, "Following at a distance", ...: unless it's dead), and the members
+    // the far case re-ordered answer it, through the chatter gate (FUN_0005cc20, #320;
+    // play_chatter.rs `hand_over`)
+    chatter::hand_over(&mut squad.0[i], handed.far, handed.held, handed.moved);
 }
 
 #[derive(Resource, Default)]

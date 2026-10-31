@@ -1,8 +1,8 @@
 # Chatter: the voice lines and their one gate (#155)
 
-Every voice line a character says (a hurt grunt, a death cry, a kill line, the follow line at a
-hand-over, the line on reaching a Move To point, the medkit's "healed" line, the refused gun's
-grumble, the skill lines) goes through
+Every voice line a character says (a hurt grunt, a death cry, a kill line, the lines of a
+hand-over, the Squad Command menu's order line, the line on reaching a Move To point, the
+medkit's "healed" line, the refused gun's grumble, the skill lines) goes through
 one gate and one queue for the whole world, as default.xbe's do: its 50 line call sites all call
 FUN_00140a60 with the chatter manager the world owns (world+0xbe8, FUN_00140870). The values
 come from each line's block in the speaker's chatter file. `src/bin/play_chatter.rs`; the
@@ -124,7 +124,9 @@ game's is 3D at the character).
 | hurt lines (FUN_00125ad0's table) | every hit that reaches the hit points (CBT_DAMAGED), by the record: no attacker character and +0x5c bit 2 (falls, liquids) ef32191d; the victim's own (its blast, its gas) ff44e83f; a friend's e2d9fb13; else DTYPE_GAS 0feee721; else crossing a quarter of the max health downward 01e1dcd0, a half fab0be98, a hit of 15% of the max or less e856009f, a bigger one 0ae8104e | play.rs `hurt`, `burn` (each liquid frame's share too), the gas's and damage areas' and plates' per-frame hits; the attacker from the hit's shooter; a friend is one of the victim's team, a team not hostile to itself (the attacker's +0x1b4 vtable +0xc4, 0x3d2c0, as FUN_0004b960) |
 | death cry | FUN_00125f40 in the death frame: e1213623, or ed35ffae when its movement state is 4 (a landing: inferred) | `Cause::fall` for a fall's death; Flint has no ed35ffae block, so a fall kills her silently. An enemy's from its type's chatter library |
 | kill line | FUN_00125f40: a killer hostile to the victim, when their player slots differ (the victim's against the hit record's +0x1c, the shooter's: so one of the two is a player's, and an AI's kill of an AI draws none), says 13601f7b when its skill's vtable +8 says so (Tex's berserk, Flint's targeting on), else 02da3fee | the killer the hit names (`damage::Hit::by`); the controlled character has the one slot (as it is at the kill: a stand-in for the shooter's at the shot). Tex's, Brutus's and Flint's 02da3fee variants all need 1..100 enemies fought, which the victim makes in the death frame; Hawk has 0..0 ones too |
-| follow | FUN_0005cc20: the one handed over from, in mode 1 (Cover Me) | play.rs `squad_control`, whatever the mode (the other modes' lines are #320's) |
+| hand-over | FUN_0005cc20: the one handed over from, by its brain mode: Cover Me (1) f415ab02, Stand Ground (3) 0e69bfe5 (e635ecc6 when the one taken is over 50 m away), Fire At Will (4) 15dc4e2d; the members its far case re-ordered answer (below) | play.rs `squad_control`, `Ask::HandOver` ([below](#lines-of-several-parts-the-order-line-and-the-hand-over-320)) |
+| order line | FUN_000c1630, from the Squad Command menu's order dispatch FUN_000c1280: the giver calls the members ordered (or "everyone"), says the order and each answers | play_squad_menu.rs `give`, `Ask::Order` (below) |
+| follow's walk | FUN_00021b70: the follow's walk to its place, once per order (1ecaeb98, 75%, replay 20 s, priority 2) | play.rs `squad_ai`: the formation's set-off after a Fire At Will, a stand-in for the game's follow states (#331) |
 | Move To's arrival | FUN_00045fa0: a member on Move To reaching its point, or its walk failing (0x46256): e635ecc6, then GUARD | play_orders.rs `arrive` ([squad.md](squad.md), "Squad commands") |
 | healed | 0x146f40, only when the medkit adds health: 12c35d69 (f832ad27 for a healer whose squad has no player) | play_pickups.rs: 10%, a 30 s replay delay, priority 1 |
 | can't take that gun | FUN_000a9910 | play_weapon_pickups.rs: 100%, a 10 s replay delay |
@@ -153,8 +155,96 @@ brain: they're appended with no sound, so **no squad member says them** (the cod
 leads §2.4; the xemu take A3 settles it). The demo said one half the time before #155.
 
 Built for the death cries' responders only; the other `valid_targets` and `response_flags` are
-the replies' ticket (#322). The order lines (#320) join a second speaker's block onto a line the
-same way (`Line::add_part`, FUN_00140060: no roll, replay delay or distance check).
+the replies' ticket (#322). The order line and the hand-over (#320, below) join a second
+speaker's block onto a line the same way (`Line::add_part`, FUN_00140060: no roll, replay delay
+or distance check).
+
+## Lines of several parts: the order line and the hand-over (#320)
+
+FUN_00140060 joins one more speaker's block to a line the gate has just made: the tag is looked
+up in *that speaker's* chatter set (type+0x1fc), and if it has one its sound is appended after
+the parts already on the line, starting where the line's running total (line+0x28) stands. So
+the parts play one after another, each starting its length + 0.2 s after the last one started,
+whoever says it; there's no roll, replay delay, distance rule or condition test for a joined
+part, and the line keeps its first part's priority and replay delay. `Chatter::join` is it. The
+game's gate queues the line and returns it, and the caller joins at once; nothing runs between,
+so `gate_made` hands the line out before `queue` puts it in the queue, and the callers join
+in between. A line whose first gate call is refused isn't made, and nothing joins it.
+
+**The order line** (FUN_000c1630, `Chatter::order_line`; asked by the menu's `give` for Stand
+Ground, Fire At Will, Cover Me and Move To, the cursor's accept too, whenever any member took
+the order, whether or not its mode changed: FUN_000c1280's call tests a flag set for every
+member handled). The members ordered are in the squad list's slot order, Tex, Flint, Brutus,
+Hawk, whatever order they were selected in (FUN_000c8700; #33 take03), and the giver, the
+controlled character, is passed over if he was selected. With N of them:
+
+* N of two or more and as many as the others of his squad (all three of Tex's three, both of
+  two: 0xc1691): "everyone" (12df4fe6), the gate's call;
+* else each one's **name tag**, the first the gate's call and the others joined, all said by the
+  giver: the tag is the member's type's h_0d3bdcf5 (`CharacterType::name_tag`; Tex fb962749,
+  Flint 116501dc, Brutus f0c93785, Hawk f5359692, the marines 181b6433), and the giver's own set
+  has a block for each of the others' (a type without a tag is passed over, and a refused gate
+  call tries the next member's name);
+* then the order's **phrase** by the menu entry, said by the giver: 0 Stand Ground e104fe49,
+  1 Fire At Will f5041bd5, 2 Cover Me 1cdff35c, 3 Move To f8046684 (the jump table at 0xc17ac;
+  #33's leads had the first three the other way round: the takes' variants settle it, see the
+  constants' doc);
+* then each member ordered answers eaf3546f, said by that member.
+
+All of them are 100%, no replay delay, priority 6, a 3 s wait, heard at any distance, and cut
+off the lines of priority 6 or less playing (h_eecb5362). A new order while a line plays waits
+behind it by the gate's arithmetic (within 3 s), cuts it off if it would wait longer, or is
+refused when a line of its priority waits already.
+
+The menu holds the game still while it's open and through its 0.3 s fade-out, and the chatter
+manager is the world's: it isn't updated while the game's clock is held (`update`), so the
+line is made when the order is given and its first sound starts in the first frame the game
+runs again. The takes' clock is flat from the order to the fade's end and the first sound starts
+in the frame after (#36 take12, #33 take03).
+
+**The hand-over** (FUN_0005cc20, `Chatter::hand_over_line`; play.rs `squad_control` asks it
+for the character left, with what `play_orders.rs hand_over` re-ordered). The gate's distances
+are taken with the character left still the controlled one (the game asks before it passes
+control: FUN_000c90c0 runs FUN_000c8f70, then FUN_000c8e80). The character left, alive, says by its
+command mode: **Cover Me** (1) f415ab02, **Stand Ground** (3) 0e69bfe5, **Fire At Will** (4)
+15dc4e2d, and nothing in the other modes; more than 50 m from the one taken (the far case:
+play_orders.rs, squad.md) it has been set to Stand Ground and says **e635ecc6** instead. The
+blocks have a 30 s replay delay (e635ecc6: none), priority 5 (e635ecc6: 6), a 3 s wait, no
+distance cut. Then the members the far case re-ordered answer, joined to the line: each of those
+set to Stand Ground with e97ce7fd (when no line was made, the character left says e635ecc6
+himself first, and that member isn't joined), and of those sent moving out the first with
+ed05c0d7 and the rest e97ce7fd (when no line was made, the first of them makes it itself).
+The near case has no answers. Their order in the demo is its squad's, not the game's entries'
+(not read). **The far case and the answers aren't filmed** (no take has a hand-over over 50 m:
+#36 take14's first was 49.0 m on the ground, 49.2 m in 3D, which the code's test uses); they're
+the code's.
+
+**The follow's walk** (FUN_00021b70, state 9 of the wingman follow). A member starting its walk
+to its place says 1ecaeb98 through the gate (75%, a 20 s replay delay, priority 2), once per
+order: brain+0x3c4 bit 0 is clear from the brain's constructor (FUN_00016ff0 at 0x175ce), set as
+the line is asked (said or refused: the gate's answer doesn't matter) and cleared again by Fire
+At Will (FUN_00018000 for modes 0 and 4: the order, and a member left in Fire At Will by a
+hand-over), not by Stand Ground or Cover Me. #36 take12 (Brutus) and #33 take05 and take06
+(Flint) show it after a Fire At Will: the gate call comes in the first frames the game runs
+after the order's (the clock held by the menu until then); in take05 Brutus asked it 11 s after
+the order, once Tex had walked off. Hawk, who followed Tex's 40 m walk in take05, never asked
+it, so the game's follow starts its walks in other states too. The demo's is a stand-in for the
+follow's state machine (#331): the first time since the bit was cleared that a member's
+formation walk sets off (play.rs `squad_ai`, `Command::start_walk`), which is usually when the
+leader next moves off.
+
+The bit starts **clear** in the demo, as the game's constructor leaves it: a fresh start's first
+follow walk of each member asks the line once, and so does the first walk of a character the
+player has controlled from the start, once control passes from it (the hand-over's line, of
+priority 5, then keeps his voice: his walk line is made and skipped as it starts). The takes'
+snapshots were taken mid-play with the squad past that walk, which fits: #33 take04's 40 m
+follow walk asked nothing. A fresh e34 start in the demo (the scripts on): Flint at 9.00 s,
+Brutus at 9.53 s and Hawk at 10.07 s each ask it as they set off after the opening cutscene, and
+Bratton's radio mutes refuse all three (the bit is used up all the same); with `BF_SCRIPT=off`
+they set off at 0.00 s and Brutus's passes its 75% roll. The tutorial's start says none (Tex
+alone; the marines are a type of their own, which `say` leaves silent). On the test map, with
+no mutes, the squad's settling walk at its start says it (Brutus's, the others' by the roll or
+the one waiting line).
 
 ## The draws
 
@@ -183,9 +273,22 @@ its first 20 s.
   (`now` or `waits r s`), its chance, priority, replay delay, condition value and distance; what
   the manager does (a sound started or skipped and why, a line ending or cut off and by what, a
   waiting line playing or dropped, a response, a timed mute); and the queue after each (the
-  lines playing with their priority and time left, the waiting one, the mutes). The same check
+  lines playing with their priority and time left, the waiting one, the mutes). A line of
+  several parts (an order line, a hand-over with answers) is listed under its "said" row, a row
+  a part: the speaker, the tag and its name, the variant, the part's start in the line and its
+  length (`line #1: flint eaf3546f (order acknowledged) variant 19133e8a, from 1.81 s, 0.66 s`),
+  then each sound's start as its turn comes. The same check
   refusing a character's tag again within 0.5 s of the last (a gas cloud's, a liquid's or a
   damage plate's hit asks its hurt line every frame; a burst's pellets) isn't logged again.
+* `BF_TEST_COMMAND="<s>:<what>[:<hold s>];..."` (squad.md, #319) is how the order lines are
+  driven, the hook #320's ticket asked for as delivered: it presses the menu's d-pad directions
+  and order buttons at those times, so the line is said by the real path (`play_squad_menu.rs
+  give` asks it), e.g. `"2:flint:0.4;3:stand"` selects Flint and gives Stand Ground, with
+  `BF_CHATTER_LOG=1 BF_SOUND_LOG=1` for the line's parts and sounds. **`BF_TEST_ORDER` stays
+  silent**: it sets the command modes without the menu (squad.md) and says no order line; the
+  ticket's `BF_TEST_ORDER=<entry>,<members>` would have changed its #318 syntax and left the
+  menu's path untested. The hand-over's lines come with any hand-over (`BF_TEST_SELECT`, a tap
+  by `BF_TEST_COMMAND`, the keys 1-4).
 * `BF_CHATTER_CHANCE=<percent>`: every line's chance (100: each passes the roll).
 * `BF_TEST_HURT=<character>,<amount>[:fall],<s>[,<s>...][;...]`: hits that squad member (name
   or 0-3, the controlled one too) for `amount` at those times, a bare hit with no attacker as the
@@ -246,6 +349,65 @@ its first 20 s.
   with it; Tex's fall death says ed35ffae; Flint's is silent (no block).
 * The hand-over (`BF_TEST_SELECT=1,5.5`): Tex's follow line through the gate at the cut (9 m from
   Flint, 100%).
+* The order lines (#320; `BF_TEST_FULL_SQUAD=1 BF_CHATTER_LOG=1 BF_SOUND_LOG=1
+  BF_SQUAD_MENU_LOG=1 "BF_TEST_COMMAND=..."`, the test map, `BF_MUTE=1 BF_BACKGROUND=1`, a capture
+  at 15 fps for its clock): take12's four orders (`2:flint:0.4;3:stand;10:brutus:0.4;11:fire;
+  18:hawk:0.4;19:stand;26:hawk:0.4;27:cover`) and again on e34 after its radio mutes (`BF_MAP=e34
+  BF_TEST_NO_HOSTILES=1 BF_TEST_GOTO=-83.39,-82.79,-83.39,-82.79,27 BF_TEST_GO_AT=999`, the same
+  times plus 28 s): each one line of three parts, Tex's name call (Flint 116501dc, Brutus
+  f0c93785, Hawk f5359692), his phrase (e104fe49, f5041bd5, e104fe49, 1cdff35c) and the member's
+  eaf3546f, the first sound in the first frame after the menu's fade-out (0.07 s after the order
+  on the chatter's clock, which the pause holds), the others at the sums of the sounds' lengths
+  + 0.2 s (2.27, 2.73 and 4.07 s for a 0.51 s name and a 1.31 s phrase: the manager's first step
+  counts against the later parts' starts). take03's (`2:hawk:0.4;2.9:brutus;3.5:flint;4.1:brutus;5:stand;
+  11:hawk:0.4;11.9:brutus;12.5:flint;13.5:cover`): Flint and Hawk named in turn ("Flint!",
+  "Hawk!"), Stand Ground, their two answers; then, three selected, "everyone" (12df4fe6), Cover
+  Me and the answers of Flint, Brutus and Hawk in that order. The cursor's Move To to two
+  members (`2:hawk:0.4;2.5:flint:0.4;3.3:move;5:accept`, `BF_TEST_CURSOR_AT=10,45`): both names,
+  f8046684, both answers; their arrival lines (e635ecc6) then wait behind it (priority 6, one
+  waits, the other refused for the waiting one). The speech icon by Tex's portrait for his three
+  sounds, then by each member's.
+* The hand-over's lines (take13's `2:hawk:0.1;6:tex:0.1;10:brutus:0.4;11:stand;17:brutus:0.1;
+  21:tex:0.1`): Tex's f415ab02 at the first cut, Hawk's at the second, Tex's at the third refused
+  by its replay delay (16.1 s left), Brutus on Stand Ground says 0e69bfe5 (variant 119385c9, as
+  take13's). take14's shape (`BF_MAP=e34 BF_SCRIPT=off BF_TEST_NO_HOSTILES=1
+  BF_TEST_GOTO=-83.39,-82.79,-45,-80,27 BF_TEST_SPRINT=4 BF_TEST_ORDER=hawk,guard@2
+  "BF_TEST_COMMAND=30:hawk:0.1;38:tex:0.1"`, Tex 38 m from Hawk): Tex's f415ab02 (variant
+  1fa1b7b8, take14's too) going, Hawk's 0e69bfe5 coming back, no e635ecc6; Tex's own walk line,
+  its bit never used, follows his at the cut, made and skipped as it starts (his voice is on the
+  follow line, priority 5). The far case (`BF_MAP=e34 BF_SCRIPT=off BF_TEST_NO_HOSTILES=1
+  BF_TEST_GOTO=-83.39,-82.79,-25,-78,27 BF_TEST_SPRINT=4 BF_TEST_ORDER=hawk,guard@2
+  BF_TEST_SELECT=2,26`, 54.6 m): Tex, set to Stand Ground, says e635ecc6, then Brutus (moving out
+  to him) joins with ed05c0d7 and Flint with e97ce7fd; Brutus's arrival line (e635ecc6) waits
+  behind it and plays after, Flint's is refused for the waiting one. At 14.5 s the same
+  hand-over is refused by e34's radio mute, as every line.
+* A heavy hit during an order line (take02's: `2:hawk:0.4;3:stand`, `BF_TEST_HURT=hawk,60,2.72`):
+  Hawk's low-health line (priority 8) waits 2.70 s (the line's 2.20 s left + 0.2 + 0.3) and
+  plays after the order's last part, not cutting it off.
+* The follow's walk line (`BF_TEST_FULL_SQUAD=1 BF_CHATTER_CHANCE=100
+  "BF_TEST_COMMAND=2:brutus:0.4;3:fire;4:flint:0.4;5:hawk:0.4;6:fire"
+  BF_TEST_GOTO=3.5,40,3.5,5 BF_TEST_GO_AT=9`): the squad's settling walk at 0.00 s asks it
+  (Brutus's said, Flint's waiting behind it, Hawk's refused for the waiting line), and the
+  order line given at 2.2 s waits 1.31 s behind it (the gate's wait counts every playing line of
+  its priority or lower); the Fire At Will orders (3.07 and 6.13 s) clear the bits, so as Tex
+  sets off at 9 s all three ask it again: Hawk's, her first, is said at 9.53 s, Brutus's and
+  Flint's are refused by their replay delays (10.1 and 11.9 s left). Cover Me and Stand Ground
+  clear nothing: the unit test `the_walk_line_is_said_once_per_order`.
+* Other chatter unchanged, main (`8c384af`) against this branch before the walk bit's default
+  changed (`999666e`), the same hooks at 15 fps: the hurt and death recipe of the first bullet
+  above (74 log rows), a fight with hits on Hawk (71 rows), e34's first 40 s with its fight,
+  mutes and a Move To's arrival (374 rows) match row for row; the follow-mode hand-over
+  (`BF_TEST_SELECT=1,5.5`) differs only by its distance (0 m: the gate measures it from the
+  character left, still the controlled one, not 8 m from the one taken). With the bit clear from
+  the start (this change) the same four runs against `999666e`'s logs differ only by the
+  members' first walks: on e34 three rows (Flint 9.00 s, Brutus 9.53 s, Hawk 10.07 s: 1ecaeb98
+  refused by Bratton's radio mute, 374 rows to 377, nothing else); on the test map, whose squad
+  settles at 0.00 s with no mute, the line said by Brutus (1.38 s) and the others' rolls or
+  waiting, and, in the follow-mode hand-over, Tex's own at the cut (made, and skipped as it
+  starts: his voice is on the follow line of priority 5). Those lines' 75% rolls and variant picks move the
+  chatter's own later draws, so on the test map a later chance-based row can fall the other way
+  (the fight recipe's first 25% pain grunt) and later variants and line numbers differ; the e34
+  run's other rows are all the same.
 * e34 with the scripts off (`BF_SCRIPT=off BF_TEST_HEALTH=50 BF_TEST_ITEM=Medkit
   BF_TEST_MEDKIT=1.5 BF_TEST_HEALED=1`): Bratton's first radio line at 3.0 s mutes the chatter
   for 5.67 s, cutting off the three lines playing (Tex's friendly-fire line, two Shrike Hounds'
@@ -277,20 +439,55 @@ follow line) is under 0.04 s of game time, the frame the manager starts the soun
 * A2 (take02): a priority-8 hurt line asked during a priority-6 order line waits and starts
   2.97 s later on the game clock (the video's 3.9 s), after the order's last part, instead of
   cutting it off: the gate's wait (behind a line of its priority or lower, within its 5 s). The
-  demo has no order lines yet (#320); its own waits follow the same arithmetic (e34 above:
-  0.76 s behind a line of the same priority).
-* D3 (take13): the follow line asked at the hand-over's cut (Tex, variant f71090f4, priority 5,
-  its sound 0.04 s later on the game clock: 0.3 s of video), and refused at the next hand-over
-  11.8 s later (15 s of video) by its 30 s replay delay. The demo's follow line is asked at the
-  same cut.
+  demo's order line (#320) does the same: the hit 0.45 s into it (`BF_TEST_HURT=hawk,60,2.72`)
+  makes the hurt line wait the line's time left + 0.5 s, 2.70 s, and play after its last part.
+* D1 (take12: Stand Ground to Flint, Fire At Will to Brutus, Stand Ground then Cover Me to
+  Hawk, each a tap-select, an order button): one gate call for each order, Tex's, with the
+  member's name tag (116501dc, f0c93785, f5359692), then Tex's two sounds and the member's
+  answer (eaf3546f), the phrase variants in e104fe49, f5041bd5, e104fe49 and 1cdff35c's lists
+  (the tags' map, from the takes' variants). Each part's start on the game clock (`gt`, flat from
+  the order to the menu's fade-out's end, the first sound in the first frame after) follows the
+  sum of the sounds' lengths + 0.2 s before it, to within 0.037 s: after the name 0.505 s
+  predicted against 0.468 s measured, the answer at 2.083 against 2.080; 0.816 / 0.799 and
+  2.371 / 2.369; 0.546 / 0.526 and 1.854 / 1.844; 0.546 / 0.523 and 1.606 / 1.593. #33's takes
+  (the game clock again): take03's two orders (two named, then everyone: 0.505 / 0.504, 1.051 /
+  1.024, 1.865 / 1.839, 2.527 / 2.497; 0.726 / 0.720, 1.502 / 1.495, 2.333 / 2.321, 3.256 /
+  3.238), take05's Fire At Will to all (0.726 / 0.705, 1.790 / 1.753, 2.620 / 2.594, 3.544 /
+  3.528), take06's two (0.726 / 0.701, 1.790 / 1.767, 2.620 / 2.574, 3.544 / 3.518; the Cover
+  Me to all, given while the first still had its last two answers to say with the menu holding
+  the clock, waited behind them and began 0.56 s after the last ended, the gate's wait of the
+  line's time left + 0.2 + 0.3 s: 0.691 / 0.667, 1.467 / 1.454, 2.129 / 2.103, 3.329 / 3.316),
+  take08's Move To (0.546 / 0.528, 1.322 / 1.289). The demo's tags, speakers and order
+  of parts are the takes' (the test map's runs above), and its variants are drawn, so the words
+  differ from a take's by the draw. take12's Brutus also asks 1ecaeb98 in the first frames after
+  his Fire At Will (gate call, priority 2): the demo's stand-in asks it at his next walk to his
+  place.
+* D3 (take13, take14): the follow line asked at the hand-over's cut (Tex, variant f71090f4,
+  priority 5, its sound 0.04 s later on the game clock: 0.3 s of video), and refused at the next
+  hand-over 11.8 s later (15 s of video) by its 30 s replay delay; Brutus on Stand Ground says
+  0e69bfe5 when left (variant 119385c9). take14's two, by the watch log's places: Tex, left
+  for Hawk (on Stand Ground, 49.0 m away on the ground, 49.2 m in 3D, which is what the test
+  measures: 0.8 m short of the far case), says f415ab02, the near line of his mode, and no
+  e635ecc6 or re-order follows; Hawk, left for Tex 24.2 m away (24.3 m in 3D: Tex had followed
+  her part of the way) says 0e69bfe5. The demo's lines are the same, by the mode of the one
+  left (`hand_over_tag`).
 * B1 (takes 07-10): the squad's AI kills of the Shrike ask no kill line (the slot rule), and the
   enemy's death cry is a gate call made with the speaker already dead.
 
 ## Not done
 
-* The orders' lines, the AI's combat lines, the replies other than the death cries' (#320,
-  #321, #322 from #36's plan), the lines' facial expressions (#326: the `<expression>` events;
-  the lip-sync is done, #325, above).
+* The AI's combat lines and the replies other than the death cries' (#321, #322 from #36's
+  plan), the lines' facial expressions (#326: the `<expression>` events; the lip-sync is done,
+  #325, above).
+* The order line's and the hand-over's parts have no expression or overlay events of their own
+  (FUN_001400d0's FUN_001403c0 and FUN_001401e0: #326). The orders given by the level's scripts
+  or the d-pad's tutorial hand-over to the marines (#265) don't exist here, so the marines' name
+  tag (181b6433) is read but never said. The far hand-over's answers (e97ce7fd, ed05c0d7) and
+  `e635ecc6` for it are the code's alone; their order among the members is the demo's squad
+  order, not the game's entries'. The squad's size for "everyone" counts the members in the
+  world, the dead among them (the game's squad entries; unread whether a death removes one).
+  1ecaeb98 on EVT_LEADER_KILLED (which clears the bit again) isn't built, nor is the game's own
+  choice of walks that ask it (the follow's state machine, #331).
 * A dialog-trigger's line isn't said on its character's voice (it plays as the triggers' own
   voice, play_sound_triggers.rs): in the game it takes the voice at priority 10 (FUN_001267b0),
   stopping its chatter; its mute still refuses every line while it runs. Its speaker's face says it

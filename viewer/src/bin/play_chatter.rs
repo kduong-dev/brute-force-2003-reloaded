@@ -19,11 +19,17 @@
 //!    a step less beyond 15 m with h_f1cb4e63 (FUN_001409c0), 0 refused; the wait behind the
 //!    playing lines (FUN_00141020, up to h_183b88ed); a waiting line of its priority or more
 //!    (FUN_00140a40). Then the waiting line is dropped (FUN_00141000), the line built
-//!    (FUN_001400d0) and played now (FUN_00140cd0: the replay delay starts, h_eecb5362 cuts off
-//!    the playing lines of its priority or lower, FUN_00140f80) or left waiting (mgr+4, +8).
+//!    (FUN_001400d0; `gate_made`) and played now (FUN_00140cd0: the replay delay starts,
+//!    h_eecb5362 cuts off the playing lines of its priority or lower, FUN_00140f80) or left
+//!    waiting (mgr+4, +8; `queue`). The game's gate queues the line and returns it, and a caller
+//!    that joins parts to it does so at once: the demo lets that caller join between the two.
 //!  - **The lines the demo says**: the hurt lines by FUN_00125ad0's table (`hurt_tag`), the death
-//!    cry and the killer's line (FUN_00125f40, `Ask::Death`), the follow line at a hand-over
-//!    (FUN_0005cc20, play.rs `squad_control`), the Move To arrival's (FUN_00045fa0,
+//!    cry and the killer's line (FUN_00125f40, `Ask::Death`), the hand-over's (FUN_0005cc20,
+//!    `Ask::HandOver`, play.rs `squad_control`: the character left says the line of its command
+//!    mode and the members its far case re-ordered answer), the Squad Command menu's order line
+//!    (FUN_000c1630, `Ask::Order`, play_squad_menu.rs `give`: the giver calls the members, says
+//!    the order and they answer, one line of several parts), the follow's walk line (FUN_00021b70,
+//!    play.rs `squad_ai`), the Move To arrival's (FUN_00045fa0,
 //!    play_orders.rs `arrive`), the medkit's (0x146f40, play_pickups.rs), the
 //!    refused gun's (FUN_000a9910, play_weapon_pickups.rs), the skill lines (FUN_0010e470 /
 //!    FUN_0010e3e0, play_skills.rs) and Brutus's charge hit (FUN_0013c1c0, play_vengar.rs). A
@@ -32,13 +38,14 @@
 //!    gate (e856009f, fab0be98, 01e1dcd0, 0ae8104e), so the rule is the demo's until #328
 //!    settles which enemies say them (the enemies' other lines are #110's and #128's).
 //!  - **A line** (`Line`) is the events of its parts (a sound, a response), each with its start
-//!    and its duration, and the running total where the next part starts (line+0x28). Two seams
-//!    for the next tickets: `Line::add_part` is FUN_001400d0, which FUN_00140060 calls to join a
+//!    and its duration, and the running total where the next part starts (line+0x28).
+//!    `Line::add_part` is FUN_001400d0, which FUN_00140060 (`Chatter::join`) calls to join a
 //!    second speaker's block onto a line already made, with no roll, replay delay or distance
-//!    check (the order lines, #320); and the response event, made with the line (FUN_001406f0)
-//!    and fired when its speaker's sound ends (FUN_0013fbf0: `Chatter::respond`), appends the
-//!    responder's block to the same line (the replies, #322: only the death cries' responders,
-//!    the nearest teammate, are built here).
+//!    check: the order line (`order_line`) and the hand-over (`hand_over_line`) are built of
+//!    them, #320. The response event, made with the line (FUN_001406f0) and fired when its
+//!    speaker's sound ends (FUN_0013fbf0: `Chatter::respond`), appends the responder's block to
+//!    the same line the same way (the replies, #322: only the death cries' responders, the
+//!    nearest teammate, are built here).
 //!  - **The manager's update** (`Chatter::step`, FUN_00140d70): the timed mutes run down; each
 //!    playing line's events count down their start, then their duration (FUN_0013f960); a line
 //!    whose last event has ended is dropped; the waiting line plays once its wait is below 0. The
@@ -125,6 +132,47 @@ const HALF: f32 = 0.5;
 const GRUNT_SHARE: f32 = 0.15;
 /// DTYPE_GAS: FUN_00125ad0's damage type 4 (the record's +4), the gas cough's.
 const DTYPE_GAS: i64 = 4;
+
+/// The Squad Command menu's order line (FUN_000c1630, after FUN_000c1280; todo/36-squad-voice
+/// leads §2.3, takes 12 and #33's 03, 05, 06): "everyone", which the giver says in place of the
+/// members' names when he has ordered every other member (the count test at 0xc1691), as the
+/// gate's first call. All the order family's blocks are probability 100, no replay delay,
+/// priority 6, a 3 s wait and no 45 m cut.
+pub const ORDER_EVERYONE: u32 = 0x12DF_4FE6;
+/// The order phrases by menu entry (FUN_000c1630's jump table at 0xc17ac: entry 0 Stand Ground
+/// 0xc1742, 1 Fire At Will 0xc1756, 2 Cover Me 0xc1738, 3 Move To 0xc174c). The takes' variants
+/// settle the readings (todo/33's leads had the first three the other way round): #36 take12's
+/// Stand Ground to Flint said Tex's 1a608dec and to Hawk fda91911 (both e104fe49's), its Fire At
+/// Will to Brutus 10cabc24 (f5041bd5's), its Cover Me to Hawk 09d8a0eb (1cdff35c's); #33 take08's
+/// Move To to Hawk (the cursor's) said efa7783d (f8046684's).
+pub const ORDER_PHRASES: [u32; 4] = [0xE104_FE49, 0xF504_1BD5, 0x1CDF_F35C, 0xF804_6684];
+/// What each member ordered answers, joined after the phrase (0xc178c).
+pub const ORDER_ACK: u32 = 0xEAF3_546F;
+/// The hand-over's lines (FUN_0005cc20: the tag the character left says by its brain mode, 0x5d03c,
+/// 0x5d052, 0x5d05a, 0x5d067): Cover Me (mode 1) the follow line, Stand Ground (mode 3) 0e69bfe5
+/// near and e635ecc6 beyond 50 m, Fire At Will (mode 4) 15dc4e2d. Blocks: probability 100, replay
+/// delay 30 s (e635ecc6: 0), priority 5 (e635ecc6: 6), a 3 s wait, no 45 m cut.
+pub const HAND_FOLLOW: u32 = 0xF415_AB02;
+/// 0e69bfe5: the hand-over from a character on Stand Ground, within 50 m.
+pub const HAND_GUARD: u32 = 0x0E69_BFE5;
+/// e635ecc6: the hand-over from a character more than 50 m from the one taken (its mode is set to
+/// Stand Ground first), and the line a character says reaching its Move To point.
+pub const HAND_GUARD_FAR: u32 = 0xE635_ECC6;
+/// 15dc4e2d: the hand-over from a character on Fire At Will.
+pub const HAND_WINGMAN: u32 = 0x15DC_4E2D;
+/// What the members re-ordered by a far hand-over answer (0x5d09c, 0x5d103): e97ce7fd (probability
+/// 100, replay delay 20 s, priority 6, a 5 s wait), joined after the character's line.
+pub const HAND_ANSWER: u32 = 0xE97C_E7FD;
+/// The first member sent moving out to the left character's place says ed05c0d7 (0x5d118) in
+/// place of that (and starts the line itself when nobody else has).
+pub const HAND_MOVE_OUT: u32 = 0xED05_C0D7;
+/// 1ecaeb98: "on my way", the follow's walk to its place (FUN_00021b70 at 0x21cba), once per order
+/// and from a fresh brain's first walk (play_brain.rs `Command::start_walk`). Block: probability
+/// 75, replay delay 20 s, priority 2, a 5 s wait. #36 take12 (Brutus after Fire At Will, the gate
+/// call 0.2 s after the order's) and #33 take05 / take06 (Flint).
+pub const FOLLOW_WALK: u32 = 0x1ECA_EB98;
+/// The menu entries' names (FUN_000c1630's switch: 0-3), for the log.
+const ORDER_NAMES: [&str; 4] = ["Stand Ground", "Fire At Will", "Cover Me", "Move To"];
 
 /// The condition kinds FUN_00137360 tells apart (a block's h_ff361b85): none (0; the default,
 /// FUN_0019cd70); the enemies the speaker's brain is fighting (FUN_0001b460); char+0x5a8, which
@@ -270,7 +318,7 @@ impl Cause {
 }
 
 /// A line asked of the gate (`Player::asks`), run by `update` in the order asked.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Ask {
     /// the gate for a tag its caller names; `chance` a test hook's own chance (%) for it
     Tag { tag: u32, chance: Option<i64> },
@@ -280,6 +328,16 @@ pub enum Ask {
     Hurt { cause: Cause, before: f32, amount: f32 },
     /// a death's lines (FUN_00125f40): the death cry, then the killer's line
     Death { killer: Option<Who>, landing: bool },
+    /// a Squad Command menu order's line (FUN_000c1630, asked by the giver, the controlled
+    /// character): the menu entry given (0 Stand Ground, 1 Fire At Will, 2 Cover Me, 3 Move To),
+    /// the members it went to in the selection vector's order (the squad list's slots 1-4, Tex,
+    /// Flint, Brutus, Hawk: FUN_000c8700; the giver's own place among them if he was selected)
+    /// and the giver's squad size (char+0x59c's +4, the giver counted)
+    Order { entry: usize, members: Vec<Who>, squad: usize },
+    /// the hand-over's lines (FUN_0005cc20, asked by the character left): whether the one taken
+    /// is more than 50 m away, and the members re-ordered by that, those set to Stand Ground
+    /// (`held`) and those sent moving out to the left one's place (`moved`), in the squad's order
+    HandOver { far: bool, held: Vec<Who>, moved: Vec<Who> },
 }
 
 /// Ask `tag` of `u` (FUN_00140a60 from a caller that names its tag). A type of its own says no
@@ -308,6 +366,24 @@ pub fn hurt_line(u: &mut Player, cause: Cause, amount: f32) {
 /// line.
 pub fn death(u: &mut Player, cause: Cause) {
     u.asks.push(Ask::Death { killer: cause.by, landing: cause.landing });
+}
+
+/// The Squad Command menu's order line (FUN_000c1630, which FUN_000c1280 calls after an order
+/// 0-3 when any member took it): `giver`, the controlled character, calls the `members` ordered
+/// (`Ask::Order`) and says the order `entry`, and they answer. `squad` is the giver's squad
+/// size, the giver counted.
+pub fn order(giver: &mut Player, entry: usize, members: Vec<Who>, squad: usize) {
+    if !giver.own_type() {
+        giver.asks.push(Ask::Order { entry, members, squad });
+    }
+}
+
+/// The hand-over's lines (FUN_0005cc20): `left`, the character control has gone from, says the
+/// line of its brain mode, and the members the far case re-ordered (`held`, `moved`) answer.
+pub fn hand_over(left: &mut Player, far: bool, held: Vec<Who>, moved: Vec<Who>) {
+    if !left.own_type() {
+        left.asks.push(Ask::HandOver { far, held, moved });
+    }
 }
 
 /// The world's chatter manager (world+0xbe8; FUN_00140870 makes it, 0x34 bytes): one per map
@@ -385,6 +461,20 @@ struct Event {
     kind: EventKind,
 }
 
+/// A line the gate made (FUN_00140a60's result) with its first part, before it goes in the queue
+/// (`Chatter::queue`): its callers join their parts to it first (`Chatter::join`).
+struct Made {
+    line: Line,
+    /// how long it waits behind the lines playing (0: it plays now)
+    wait: f32,
+    /// BF_CHATTER_LOG's head for it (the time, the speaker, the tag, why), its first part's variant
+    /// and the values to print after (the chance, the priority, the replay delay, the condition
+    /// value, the distance)
+    head: String,
+    variant: Option<u32>,
+    note: String,
+}
+
 /// What an event does as it starts.
 #[derive(Clone, Debug)]
 enum EventKind {
@@ -408,6 +498,7 @@ enum VoiceAct {
 struct ChatterVoice(Who);
 
 /// What the gate and the manager read of the world this frame.
+#[derive(Clone, Copy)]
 struct Ctx<'a> {
     game: &'a Game,
     /// who can see whom (play.rs `sight_list`: the player, then the squad), for "fighting"
@@ -502,7 +593,13 @@ fn update(mut commands: Commands, time: Res<Time>, mut chatter: ResMut<Chatter>,
             chatter.ask(&mut all, i, ask, &ctx);
         }
     }
-    chatter.step(&mut all, dt, &ctx);
+    // (the manager is the world's: it isn't updated while the game's clock is held, so a line the
+    // gate made as the Squad Command menu closed starts its first sound when the game runs
+    // again, #36 take12 and #33 take03: the clock flat from the order to the fade's end, the
+    // sound at its first moving frame)
+    if !paused() {
+        chatter.step(&mut all, dt, &ctx);
+    }
     chatter.test_speak(&mut all, speaks.get_or_insert_with(test_speaks), &ctx);
     // the voices
     if chatter.acts.is_empty() {
@@ -599,6 +696,49 @@ fn set_of(u: &Player, game: &Game) -> Option<String> {
         game.character_type(u.kind).map(|t| t.chatter.trim_end_matches("_chatter").to_string()).filter(|s| !s.is_empty())
     } else {
         Some(u.data_name().to_string())
+    }
+}
+
+/// The tag the order line calls `u` by (its type's name tag, h_0d3bdcf5 at type+0x1f0,
+/// FUN_000c1630 at 0xc16f3): 0 for a type without one.
+fn name_tag(u: &Player, game: &Game) -> u32 {
+    game.character_type(u.kind).map_or(0, |t| t.name_tag)
+}
+
+/// How the order line calls the members ordered (FUN_000c1630 at 0xc1691).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Call {
+    /// "everyone" (12df4fe6)
+    Everyone,
+    /// each by its name tag
+    Names,
+    /// no one: nothing is said
+    Nobody,
+}
+
+/// The call for `others` members ordered besides the giver, in a squad of `squad` (the giver
+/// counted): everyone when they are two or more and as many as the giver's squad has besides him
+/// (`n >= 2 && n >= squad - 1`: with three squadmates all three; with two, both), else the
+/// names, or no one with none.
+fn call_for(others: usize, squad: usize) -> Call {
+    if others >= 2 && others + 1 >= squad {
+        Call::Everyone
+    } else if others >= 1 {
+        Call::Names
+    } else {
+        Call::Nobody
+    }
+}
+
+/// The tag the character left says at a hand-over by its brain mode (FUN_0005cc20 at 0x5d02a-0x5d067):
+/// Cover Me (FOLLOW) the follow line, Stand Ground (GUARD) e635ecc6 when the one taken is more than 50 m
+/// away and 0e69bfe5 within, Fire At Will (WINGMAN) 15dc4e2d; none for the other modes.
+fn hand_over_tag(mode: brain::Mode, far: bool) -> Option<u32> {
+    match mode {
+        brain::Mode::Follow => Some(HAND_FOLLOW),
+        brain::Mode::Guard => Some(if far { HAND_GUARD_FAR } else { HAND_GUARD }),
+        brain::Mode::Wingman => Some(HAND_WINGMAN),
+        _ => None,
     }
 }
 
@@ -895,69 +1035,98 @@ impl Chatter {
                 let held = Some(all[i].who());
                 self.gate(all, k, tag, None, held, ctx, format!(", the kill of {victim}"));
             }
+            Ask::Order { entry, members, squad } => self.order_line(all, i, entry, &members, squad, ctx),
+            Ask::HandOver { far, held, moved } => self.hand_over_line(all, i, far, &held, &moved, ctx),
         }
     }
 
     /// The gate (FUN_00140a60) for `tag` from `all[i]`, with a test hook's `chance` and `held`, a
     /// kill's victim the condition counts (`fighting`); `what` says why, for the log. See the
-    /// module notes for the checks.
+    /// module notes for the checks. The line it makes is put in the queue at once; a caller that
+    /// joins more parts to it (the order line, the hand-over) takes it from `gate_made` instead.
     #[allow(clippy::too_many_arguments)]
     fn gate(&mut self, all: &mut [&mut Player], i: usize, tag: u32, chance: Option<i64>, held: Option<Who>, ctx: &Ctx, what: String) {
+        if let Some(made) = self.gate_made(all, i, tag, chance, held, ctx, what) {
+            self.queue(all, made, ctx);
+        }
+    }
+
+    /// The gate's checks and the line they make (FUN_00140a60 up to FUN_00140cd0): None when one
+    /// refuses; else the waiting line dropped (FUN_00141000) and the line built with its first
+    /// part (FUN_001400d0), not yet in the queue (`queue`). The game's gate queues the line before
+    /// it returns it, and its caller joins parts to it at once (FUN_00140060): nothing runs
+    /// between the two, so the demo lets the caller join first and queues it after.
+    #[allow(clippy::too_many_arguments)]
+    fn gate_made(&mut self, all: &mut [&mut Player], i: usize, tag: u32, chance: Option<i64>, held: Option<Who>, ctx: &Ctx, what: String) -> Option<Made> {
         let head = format!("t={:6.2} chatter: {} {tag:08x} ({}){what}", ctx.now, unit_name(all[i]), tag_name(tag));
         let who = all[i].who();
         // 1, 2: a timed mute, the world's cutscene bit
         if !self.mutes.is_empty() {
             let why = format!("a timed mute runs (h_{:08x}, {:.1} s left)", self.mutes[0].0, self.mutes[0].1);
-            return self.refused(&head, (who, tag, 1), why, ctx);
+            self.refused(&head, (who, tag, 1), why, ctx);
+            return None;
         }
         if script::in_cutscene() {
-            return self.refused(&head, (who, tag, 2), "the world's cutscene bit".into(), ctx);
+            self.refused(&head, (who, tag, 2), "the world's cutscene bit".into(), ctx);
+            return None;
         }
         // 3: in the world
         if !in_world(all[i]) {
-            return self.refused(&head, (who, tag, 3), "not in the world".into(), ctx);
+            self.refused(&head, (who, tag, 3), "not in the world".into(), ctx);
+            return None;
         }
         // 4: its replay delay for the tag
         if let Some(left) = all[i].replay.get(&tag) {
-            return self.refused(&head, (who, tag, 4), format!("its replay delay ({left:.1} s left)"), ctx);
+            self.refused(&head, (who, tag, 4), format!("its replay delay ({left:.1} s left)"), ctx);
+            return None;
         }
         // 5: a block for the tag
-        let Some(set) = set_of(all[i], ctx.game) else { return self.refused(&head, (who, tag, 5), "no chatter set".into(), ctx) };
+        let Some(set) = set_of(all[i], ctx.game) else {
+            self.refused(&head, (who, tag, 5), "no chatter set".into(), ctx);
+            return None;
+        };
         let Some(block) = ctx.game.chatter_blocks.get(&set).and_then(|b| b.get(&tag)) else {
-            return self.refused(&head, (who, tag, 5), format!("no block in {set}_chatter"), ctx);
+            self.refused(&head, (who, tag, 5), format!("no block in {set}_chatter"), ctx);
+            return None;
         };
         // 6: 45 m
         let v = distance(all, i, ctx);
         if block.far_cut && v > FAR_CUT {
-            return self.refused(&head, (who, tag, 6), format!("{v:.0} m from the player"), ctx);
+            self.refused(&head, (who, tag, 6), format!("{v:.0} m from the player"), ctx);
+            return None;
         }
         // 7: the condition
         let value = condition(all[i], i, block.condition, held, ctx);
         if !block.variants.iter().any(|&(_, lo, hi)| (lo..=hi).contains(&value)) {
             let why = format!("no variant for the condition value {value} (kind h_{:08x})", block.condition);
-            return self.refused(&head, (who, tag, 7), why, ctx);
+            self.refused(&head, (who, tag, 7), why, ctx);
+            return None;
         }
         // 8: the roll (FUN_001374c0: none at 100 or more)
         let p = chance.or(ctx.chance).unwrap_or(block.probability);
         if p < 100 && self.rng.draw(100) as i64 + 1 > p {
-            return self.refused(&head, (who, tag, 8), format!("not rolled ({p}%)"), ctx);
+            self.refused(&head, (who, tag, 8), format!("not rolled ({p}%)"), ctx);
+            return None;
         }
         // 9: the priority, a step less far away; 0 refused
         let priority = stepped(block, v);
         if priority == 0 {
-            return self.refused(&head, (who, tag, 9), format!("priority 0 ({v:.0} m from the player)"), ctx);
+            self.refused(&head, (who, tag, 9), format!("priority 0 ({v:.0} m from the player)"), ctx);
+            return None;
         }
         // 10: the wait behind the lines playing
         let (b, a) = (self.behind(priority), self.behind(TOP_PRIORITY));
         let Some(r) = wait(b, a, block.max_wait) else {
             let why = format!("it would wait over its {:.1} s (behind {b:.2} s, {a:.2} s in all)", block.max_wait);
-            return self.refused(&head, (who, tag, 10), why, ctx);
+            self.refused(&head, (who, tag, 10), why, ctx);
+            return None;
         };
         // 11: one waiting line
         if let Some((w, _)) = &self.waiting {
             if w.priority >= priority {
                 let why = format!("line #{} waits, priority {}", w.n, w.priority);
-                return self.refused(&head, (who, tag, 11), why, ctx);
+                self.refused(&head, (who, tag, 11), why, ctx);
+                return None;
             }
         }
         // the waiting line goes (FUN_00141000), the line is built (FUN_001400d0)
@@ -969,17 +1138,144 @@ impl Chatter {
         self.made += 1;
         let mut line = Line::new(self.made, priority, block, who, tag);
         let id = line.add_part(&mut self.said, &mut self.rng, block, &*all[i], &set, tag, value, true, ctx.game);
+        let note = format!("({p}%, priority {priority}{}, replay {:.0} s, value {value}, {v:.0} m)", if priority != block.priority { " after the 15 m step" } else { "" },
+                           block.replay_delay);
+        Some(Made { line, wait: r, head, variant: id, note })
+    }
+
+    /// FUN_00140cd0 for a line the gate made (and its callers have joined parts to): it waits in
+    /// the slot (mgr+4, +8) or plays now. BF_CHATTER_LOG says which, and lists the parts of a line
+    /// with several, each with its speaker, tag, variant, start and length.
+    fn queue(&mut self, all: &mut [&mut Player], made: Made, ctx: &Ctx) {
+        let Made { line, wait: r, head, variant, note } = made;
         let n = line.n;
+        let parts: Vec<String> = if ctx.log && line.events.iter().filter(|e| matches!(e.kind, EventKind::Sound(_))).count() > 1 {
+            line.events.iter().filter_map(|e| match e.kind {
+                EventKind::Sound(id) => Some(format!("t={:6.2} chatter:   line #{n}: {} {:08x} ({}) variant {id:08x}, from {:.2} s, {:.2} s", ctx.now,
+                                                     who_label(all, e.speaker), e.tag, tag_name(e.tag), e.start, e.duration)),
+                EventKind::Response(_) => None,
+            }).collect()
+        } else {
+            vec![]
+        };
         if r > 0.0 {
             self.waiting = Some((line, r));
         } else {
             self.play_now(all, line, ctx);
         }
         if ctx.log {
-            let variant = id.map_or("no variant".to_string(), |id| format!("variant {id:08x}"));
+            let variant = variant.map_or("no variant".to_string(), |id| format!("variant {id:08x}"));
             let when = if r > 0.0 { format!("waits {r:.2} s") } else { "now".into() };
-            println!("{head}: said, line #{n} {variant} {when} ({p}%, priority {priority}{}, replay {:.0} s, value {value}, {v:.0} m) [{}]",
-                     if priority != block.priority { " after the 15 m step" } else { "" }, block.replay_delay, self.state());
+            println!("{head}: said, line #{n} {variant} {when} {note} [{}]", self.state());
+            for part in parts {
+                println!("{part}");
+            }
+        }
+    }
+
+    /// FUN_00140060: `speaker`'s block for `tag` joined to `line` (made by the gate, not yet in the
+    /// queue): looked up in the speaker's own chatter set and, if it has one, its part appended
+    /// after those on the line (FUN_001400d0 with the sound's time added to the running total), with
+    /// no roll, replay delay or distance check. Nothing is joined for a speaker not in `all` or
+    /// one whose set has no block for the tag. True when a part was joined.
+    fn join(&mut self, all: &[&mut Player], line: &mut Line, speaker: Who, tag: u32, ctx: &Ctx) -> bool {
+        let Some(k) = find(all, speaker) else { return false };
+        let Some(set) = set_of(all[k], ctx.game) else { return false };
+        let Some(block) = ctx.game.chatter_blocks.get(&set).and_then(|b| b.get(&tag)) else { return false };
+        let value = condition(all[k], k, block.condition, None, ctx);
+        line.add_part(&mut self.said, &mut self.rng, block, &*all[k], &set, tag, value, true, ctx.game);
+        true
+    }
+
+    /// The Squad Command menu's order line (FUN_000c1630, after FUN_000c1280 gave the order):
+    /// the giver `all[i]` says, through the gate, who he calls and joins the rest to the same
+    /// line (FUN_00140060), so the parts play one after another:
+    ///  - when the `members` other than himself are two or more and as many as the others of his
+    ///    squad (0xc1691: `n >= 2 && n >= squad - 1`), "everyone" (12df4fe6), the gate's call;
+    ///  - else each member's name tag (its type's h_0d3bdcf5): the first the gate's call, the
+    ///    others joined (a member whose type has no tag is passed over; if the gate refuses a name
+    ///    the next one is tried for it, 0xc1708). With no member nothing is said;
+    ///  - then the order's phrase (`ORDER_PHRASES` by the entry) said by the giver, and each
+    ///    member's acknowledgement (`ORDER_ACK`), said by that member.
+    /// Nothing is said if the gate refuses every call.
+    fn order_line(&mut self, all: &mut [&mut Player], i: usize, entry: usize, members: &[Who], squad: usize, ctx: &Ctx) {
+        let giver = all[i].who();
+        // (the giver, if he was selected, takes no part in it: the loops pass over his own entry)
+        let others: Vec<Who> = members.iter().copied().filter(|&w| w != giver).collect();
+        let n = others.len();
+        // the phrase, then the answers
+        let mut tail: Vec<(Who, u32)> = ORDER_PHRASES.get(entry).map(|&p| (giver, p)).into_iter().collect();
+        tail.extend(others.iter().map(|&w| (w, ORDER_ACK)));
+        let what = format!(", the {} order line to {}", ORDER_NAMES.get(entry).copied().unwrap_or("?"),
+                           others.iter().map(|&w| who_label(all, w)).collect::<Vec<_>>().join(", "));
+        let call = call_for(n, squad);
+        if call == Call::Everyone {
+            if let Some(mut made) = self.gate_made(all, i, ORDER_EVERYONE, None, None, ctx, what) {
+                for &(who, tag) in &tail {
+                    self.join(all, &mut made.line, who, tag, ctx);
+                }
+                self.queue(all, made, ctx);
+            }
+            return;
+        }
+        // the members' name tags, in the vector's order
+        let names: Vec<u32> = others.iter().filter_map(|&w| find(all, w).map(|k| name_tag(all[k], ctx.game)).filter(|&t| t != 0)).collect();
+        for (k, &tag) in names.iter().enumerate() {
+            let Some(mut made) = self.gate_made(all, i, tag, None, None, ctx, what.clone()) else { continue };
+            for &name in &names[k + 1..] {
+                self.join(all, &mut made.line, giver, name, ctx);
+            }
+            for &(who, tag) in &tail {
+                self.join(all, &mut made.line, who, tag, ctx);
+            }
+            self.queue(all, made, ctx);
+            return;
+        }
+    }
+
+    /// The hand-over's lines (FUN_0005cc20, 0x5d01d-0x5d18c). The character left, `all[i]`, alive,
+    /// says by its brain mode (the far case has set it to Stand Ground already) through the gate:
+    /// Cover Me (1) the follow line, Stand Ground (3) e635ecc6 when the one taken is more than 50 m
+    /// away and 0e69bfe5 within, Fire At Will (4) 15dc4e2d; the other modes say nothing. Then the
+    /// members the far case re-ordered join the line, those set to Stand Ground (`held`) with
+    /// e97ce7fd each (if the line has not been made, the character left starts it himself with
+    /// e635ecc6, the member that was to answer passed over), and those sent moving out (`moved`) the
+    /// first with ed05c0d7, the rest e97ce7fd (with no line made by then the first member makes it
+    /// itself).
+    fn hand_over_line(&mut self, all: &mut [&mut Player], i: usize, far: bool, held: &[Who], moved: &[Who], ctx: &Ctx) {
+        // (the lines are asked before control passes: FUN_000c90c0 runs FUN_000c8f70, this, then
+        // FUN_000c8e80, which passes it on, so the player's character is still the one left and the
+        // gate's distances (the 15 m step) are taken from it)
+        let ctx = &Ctx { here: all[i].position, ..*ctx };
+        let tag = if all[i].dead { None } else { hand_over_tag(all[i].command.mode, far) };
+        let what = format!(", the hand-over{}", if far { " (the one taken is over 50 m away)" } else { "" });
+        let mut made = tag.and_then(|t| self.gate_made(all, i, t, None, None, ctx, what.clone()));
+        for &member in held {
+            match made.as_mut() {
+                Some(m) => {
+                    self.join(all, &mut m.line, member, HAND_ANSWER, ctx);
+                }
+                None => made = self.gate_made(all, i, HAND_GUARD_FAR, None, None, ctx, what.clone()),
+            }
+        }
+        let mut later = false;
+        for &member in moved {
+            let tag = if later { HAND_ANSWER } else { HAND_MOVE_OUT };
+            match made.as_mut() {
+                Some(m) => {
+                    self.join(all, &mut m.line, member, tag, ctx);
+                }
+                None if !later => {
+                    if let Some(k) = find(all, member) {
+                        made = self.gate_made(all, k, tag, None, None, ctx, what.clone());
+                    }
+                }
+                None => {}
+            }
+            later |= made.is_some();
+        }
+        if let Some(made) = made {
+            self.queue(all, made, ctx);
         }
     }
 
@@ -1344,7 +1640,24 @@ fn tag_name(tag: u32) -> &'static str {
         HURT_HALF => "half health",
         HURT_HIT => "I'm hit",
         HURT_GRUNT => "pain grunt",
-        0xF415_AB02 => "follow",
+        HAND_FOLLOW => "follow",
+        HAND_GUARD => "hand-over, standing ground",
+        HAND_GUARD_FAR => "holding here",
+        HAND_WINGMAN => "hand-over, fire at will",
+        HAND_ANSWER => "hand-over, answer",
+        HAND_MOVE_OUT => "hand-over, moving out",
+        FOLLOW_WALK => "on my way",
+        ORDER_EVERYONE => "everyone!",
+        ORDER_ACK => "order acknowledged",
+        0xE104_FE49 => "order: Stand Ground",
+        0xF504_1BD5 => "order: Fire At Will",
+        0x1CDF_F35C => "order: Cover Me",
+        0xF804_6684 => "order: Move To",
+        0xFB96_2749 => "Tex!",
+        0x1165_01DC => "Flint!",
+        0xF0C9_3785 => "Brutus!",
+        0xF535_9692 => "Hawk!",
+        0x181B_6433 => "Marine!",
         0x12C3_5D69 => "healed",
         0xF832_AD27 => "healed, alone",
         0xF2CE_8278 => "can't take that gun",
@@ -1483,6 +1796,49 @@ mod tests {
         let (mut a, mut b) = (Player::new(0), Player::new(1));
         (a.team, b.team) = (7, 7);
         assert_eq!(attacker(&[&mut a, &mut b], 1, Some(Who::Squad(0))), By::Foe);
+    }
+
+    /// FUN_000c1630's call (0xc1691): "everyone" for two or more ordered that are as many as the
+    /// giver's squad has besides him; fewer, by name; none, nothing. (#33 take03: Flint and Hawk
+    /// of Flint, Brutus and Hawk by name, all three "everyone".)
+    #[test]
+    fn order_calls() {
+        assert_eq!(call_for(3, 4), Call::Everyone);
+        assert_eq!(call_for(2, 4), Call::Names);
+        assert_eq!(call_for(1, 4), Call::Names);
+        assert_eq!(call_for(0, 4), Call::Nobody);
+        // a squad of three: both of the others is everyone
+        assert_eq!(call_for(2, 3), Call::Everyone);
+        assert_eq!(call_for(1, 3), Call::Names);
+        // a squad of two has one other: always a name
+        assert_eq!(call_for(1, 2), Call::Names);
+    }
+
+    /// FUN_0005cc20's line by the left one's mode (0x5d02a-0x5d067): Cover Me the follow line,
+    /// Stand Ground e635ecc6 far and 0e69bfe5 near, Fire At Will 15dc4e2d, the other modes none.
+    #[test]
+    fn hand_over_lines_by_mode() {
+        use brain::Mode;
+        assert_eq!(hand_over_tag(Mode::Follow, false), Some(HAND_FOLLOW));
+        assert_eq!(hand_over_tag(Mode::Follow, true), Some(HAND_FOLLOW));
+        assert_eq!(hand_over_tag(Mode::Guard, false), Some(HAND_GUARD));
+        assert_eq!(hand_over_tag(Mode::Guard, true), Some(HAND_GUARD_FAR));
+        assert_eq!(hand_over_tag(Mode::Wingman, false), Some(HAND_WINGMAN));
+        for mode in [Mode::Freewill, Mode::Formation, Mode::MoveOut] {
+            assert_eq!(hand_over_tag(mode, false), None);
+        }
+    }
+
+    /// The order phrases are the jump table's (0xc17ac) by entry, all different; the hand-over
+    /// tags are the code's immediates.
+    #[test]
+    fn order_tags() {
+        assert_eq!(ORDER_PHRASES, [0xE104_FE49, 0xF504_1BD5, 0x1CDF_F35C, 0xF804_6684]);
+        let mut all = ORDER_PHRASES.to_vec();
+        all.extend([ORDER_EVERYONE, ORDER_ACK, HAND_FOLLOW, HAND_GUARD, HAND_GUARD_FAR, HAND_WINGMAN, HAND_ANSWER, HAND_MOVE_OUT, FOLLOW_WALK]);
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), 13);
     }
 
     /// The chatter's draws are the game's LCG from 0 (0x46cfd8's step), the new state mod the
