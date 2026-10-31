@@ -221,9 +221,12 @@ fn title(game: &Game, menu: u32) -> String {
 /// game's clock stops at the start of the first frame after a panel was drawn; A or Y closes it
 /// (its nodes go, the press is kept for its trigger's update: `menu_update`); every key, mouse
 /// and pad press of the frame is taken, so nothing under it sees one (the hint lines' buttons
-/// read the frame after this). When the last panel closes, the game's clock runs again.
+/// read the frame after this). When the last panel closes, the game's clock runs again. The
+/// Squad Command menu's input (play_squad_menu.rs `menu_input`) runs before this one: with the
+/// menu open or its cursor up the menu takes the frame's presses first, so the pad's A and Y,
+/// which are its orders and this panel's buttons both, don't reach a panel (#348).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn input(mut commands: Commands, mut tr: ResMut<Triggers>, mut keys: ResMut<ButtonInput<KeyCode>>,
+pub(crate) fn input(mut commands: Commands, mut tr: ResMut<Triggers>, mut keys: ResMut<ButtonInput<KeyCode>>,
                     mut mouse: ResMut<ButtonInput<MouseButton>>, mut pads: Query<&mut Gamepad>, time: Res<Time>, game: Res<GameData>) {
     let clock = tr.clock;
     let log = tr.hints.log;

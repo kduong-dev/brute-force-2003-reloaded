@@ -129,10 +129,11 @@ a click is any left click off the panel, and F and its teleports do nothing.
     body turns see-through with the camera's fade). Its portrait is its type's
     (`CharacterType::portrait`, h_f9d94425: the
     deathmatch types and some of the militia have one, common's textures), else a "?" in pale
-    blue; its skull its type's (h_00c51907), else the human one.
+    blue; its skull its type's (h_00c51907, #342), and none (a dead one's place goes blank, as the game's
+    widget hides itself) where the type has none: the tutorial's marines, which have a portrait.
   * An empty slot shows no face, command tab or health channel, on the test map and on any
     level alike (#303: the main game's rule for a slot with no member in the world, play.md
-    "Radar", "The portraits"; before it the test map's alone). A dead member keeps its skull.
+    "Radar", "The portraits"; before it the test map's alone). A dead member keeps its skull, drawn in the same 32 x 32 box as every portrait (play.md, "The portrait box and the skulls").
   * **Dying alone** on the test map respawns the player (`testsquad::respawn`; the product owner's
     rule for the test map, not the game's, where a lone death ends the mission): with nobody to
     hand over to (no living squad member in the world, no hand-over under way), RESPAWN_TIME (4

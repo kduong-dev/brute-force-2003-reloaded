@@ -1086,6 +1086,8 @@ fn main() {
         .add_plugins(vengar::plugin)
         // (after the Vengar view's: its pass follows that one's in the render graph)
         .add_plugins(scope_view::plugin)
+        .add_plugins(radar_disc::plugin)
+        .add_plugins(ui_guard::plugin)
         .add_plugins(stealth::plugin)
         .add_plugins(flags::plugin)
         .add_plugins(objectives::plugin)
@@ -1213,6 +1215,10 @@ mod ragdoll;
 mod vengar;
 #[path = "play_scope_view.rs"]
 mod scope_view;
+#[path = "play_radar_disc.rs"]
+mod radar_disc;
+#[path = "play_ui_guard.rs"]
+mod ui_guard;
 #[path = "play_stealth.rs"]
 mod stealth;
 #[path = "play_triggers.rs"]
@@ -3127,9 +3133,9 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     // not on into a liquid that burns (#1, play_liquids.rs `burning_ahead`): the routes' safety
     // net, as no world point lies in one (it waits at the shore; BF_LIQUID_LOG)
     let go = steered.is_some_and(|d| !routes::shore(m, d, dt));
-    // the follow's walk to its place begins (FUN_00021b70): the first since the flag was cleared (a
-    // fresh brain's, or a Fire At Will's: play_brain.rs `Command::start_walk`) says "on my way",
-    // through the gate. A stand-in for the game's follow state machine (#331): its walk starts
+    // the walk to its place begins (FUN_00021b70): the first since a Fire At Will cleared the flag
+    // (play_brain.rs `Command::start_walk`: in FOLLOW the game can't reach the state, #343) says
+    // "on my way", through the gate. A stand-in for the game's follow state machine (#331): its walk starts
     // where the formation sets off (a step out of the leader's line of fire isn't a walk to its
     // place)
     if go && !moving && dist > SLOT_START * spacing && m.command.start_walk() {
