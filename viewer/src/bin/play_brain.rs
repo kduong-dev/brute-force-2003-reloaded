@@ -922,9 +922,11 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
 
 /// One frame of `m`'s brain, in place of the squad's AI or the test map NPC's (see the module
 /// notes). `leader`, `slot` and `heading`: the squad AI's, for a follower; `target`: the chest it
-/// may fire at (`sense`); `patrols`: the level's patrol points; `n`: the difficulty.
+/// may fire at (`sense`); `patrols`: the level's patrol points; `n`: the difficulty; `graph`: the
+/// level's world points, which a follower's follow walks routes over (#335, play_routes.rs).
 #[allow(clippy::too_many_arguments)]
-pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, patrols: &[PatrolPoint], game: &Game, n: i64) {
+pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, patrols: &[PatrolPoint], game: &Game, n: i64,
+             graph: Option<&mut bf_viewer::bf::nav::Graph>) {
     let Some(mut b) = m.brain.take() else { return };
     let log = log_on();
     let accuracy = accuracy_at(b.accuracy, n, b.follows);
@@ -942,7 +944,7 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
         let toward = if target.is_none() { m.sensor.toward(eye) } else { None };
         // (its idle pauses: its wingman personality's EVT_IDLE_VARY_DATA draw)
         let pauses = game.personality_entry(b.personality, personality::EVT_IDLE_VARY_DATA).map(|e| e.pauses()).unwrap_or_default();
-        squad_ai(m, leader, slot, heading, dt, target, toward, &pauses);
+        squad_ai(m, leader, slot, heading, dt, target, toward, &pauses, graph);
         aim(m, target, accuracy);
         m.brain = Some(b);
         return;

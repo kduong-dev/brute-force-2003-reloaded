@@ -7,8 +7,10 @@
 //! and the callers' factors) depends on who drives the character:
 //!
 //!  - **A character with a human player** (FUN_00112800's test, repeated at 0x12cf6a-0x12cf8d in
-//!    FUN_0012cd10, the ground step) calls FUN_0012c6c0 directly with char+0x720 = 1 (the brain
-//!    that sets it is off for a controlled member: 0x1a2a5): the type's speed as it stands.
+//!    FUN_0012cd10, the ground step) calls FUN_0012c6c0 directly with char+0x720 = 1 (the movement
+//!    reset FUN_0012b560 sets it at 0x12b61a, a player taking the character puts the brain's
+//!    speed record back, FUN_00018150 at 0x181d3, and the brain's off update keeps it at 1.0,
+//!    0x1a2a5): the type's speed as it stands.
 //!    #264 take01 (Tex dashing east on e34, the game's clock): the velocity eases up to 8.45 m/s
 //!    (type 8.5); take02 (Brutus) 8.7 (8.7); #129 take34 (a player's deathmatch Soldier, run 6.5
 //!    dash 8.5): 6.49 and 8.44.
@@ -23,30 +25,37 @@
 //!    leader is within the follow's second distance (14 m in FOLLOW, 10 m in WINGMAN). The AI
 //!    update FUN_0001afe0 hands the record to FUN_00048270 (at 0x1b3cd), which puts the value in
 //!    char+0x720 while the pace level (the pace record at brain+0x1a8, +0: 1 stand, 2 walk, 3
-//!    run, 4 dash) is a run or a dash, the value is at least 1, the record's timer has run out and
-//!    the brain isn't crouched, else 1.0. So a member chasing a leader farther than that at the
-//!    dash moves at 0.8 x 1.25 = 1.0 x the type's dash, and inside it at 0.8 x: #242 take01
-//!    (Flint, Brutus and Hawk right after the release, the game's clock) 8.3-8.7 m/s on the first
-//!    straight (types 8.6, 8.7, 8.5; the leader 48-50 m away); #33 take04 (the followers of Tex's
-//!    dash) Brutus and Hawk hold 13.7-14.5 m behind him at 8-9 m/s while farther and slow to
-//!    6.3-7.1 inside it. Move To (GOAL_MOVE_OUT) leaves the record at 1.0 (set at every mode
-//!    change, FUN_00018000 at 0x181d3): the 0.8.
+//!    run, 4 dash) is above 2, a run or a dash alike, the value is at least 1, the record's timer
+//!    has run out and the brain isn't crouched, else 1.0. So a member chasing a leader farther
+//!    than that at a run or a dash moves at 0.8 x 1.25 = 1.0 x the type's speed for it, and
+//!    inside it at 0.8 x: #242 take01 (Flint, Brutus and Hawk right after the release, the game's
+//!    clock) 8.3-8.7 m/s on the first straight (types 8.6, 8.7, 8.5; the leader 48-50 m away);
+//!    #33 take04 (the followers of Tex's dash) Brutus and Hawk hold 13.7-14.5 m behind him at 8-9
+//!    m/s while farther and slow to 6.3-7.1 inside it. Move To (GOAL_MOVE_OUT) writes nothing to
+//!    the record, and the follow goal's end puts it back to 1.0 and off (FUN_00020a10, 0x20a5c and
+//!    0x20a62): the 0.8.
 //!
-//! **What isn't here.** The pace level is a ramp the AI climbs a notch at a time (FUN_00058670,
-//! 0.17 s a step for a squad member in FOLLOW or WINGMAN, 1.0 s otherwise: standing to a dash in
-//! about 0.5 s, walk, run, dash as take04's motion numbers go 47, 34, 8), and things set it down
-//! with a timer: the feelers (FUN_00018c40) on a dash hit take the follow's boost off for 1.5 s
-//! (the timer at brain+0x8a4) and on the next hit drop to a run for 1.5 s, a hard turn to a walk
-//! for 1 s, a door step to a stand for 0.5 s (todo/344-ai-avoidance/leads.md §6). The members of
-//! #242 take01 spent their route that way, on the game's clock: 12-35% of their moving time at the
-//! boosted dash (8.4-8.9 m/s), 20-29% at the run without the boost (6.2-6.3 = 0.8 x 7.8 / 7.9),
-//! 19-27% in between (the climbs back up the ramp, the dash without the boost, 6.8-7.0) and
-//! 26-36% under 5.9 (walks after the turns, corners): a mean over the moving time of 6.1 (Flint),
-//! 6.6 (Brutus) and 5.9 (Hawk) m/s. A mean of that kind (the ticket's "6.5-6.9" is of that order)
-//! says nothing of the dash on a straight, which is 8.5. The demo's AI picks its gait by its
-//! distance to its place (play.rs `squad_ai`), starts at once (the crossfade's 0.2 s stands for
-//! the ramp) and has no feelers: the route's levels come with #344, and `Player::speed_boost` is
-//! where the feelers' timer lands.
+//! **What isn't here.** The pace level is #335's (play_routes.rs `Router::cap`): the demo's starts
+//! at the dash, the routes' stuck detours, the way round a friend and the follow's hold set it
+//! down with their timers, and the ramp climbs it back (FUN_00058670: a notch every 0.17 s for a
+//! squad member in FOLLOW or WINGMAN, 1.0 s otherwise); a member moves at the lower of it and the
+//! move it asks, and the boost is keyed on that (`squad_ai`: 3 or 4). Left to #344: the ramp's
+//! start from a stand and its step down after the move asked (the game's level follows it both
+//! ways: walk, run, dash as take04's motion numbers go 47, 34, 8), and the feelers' drops
+//! (FUN_00018c40: a dash hit takes the boost off for 1.5 s, the timer at brain+0x8a4, and the next
+//! hit drops to a run for 1.5 s), a hard turn to a walk for 1 s and a door step to a stand for
+//! 0.5 s (todo/344-ai-avoidance/leads.md §6). The follow's other states set the record too, and
+//! the demo has neither: state 5 (FUN_00022790) 1.0 / off and then FUN_0002fba0's value near an
+//! arrival, at most 1.0, which only a walk takes (the level 2 test: the slow-down on arrival; the
+//! demo's walk is the clip's), and state 6 (FUN_000210c0) 1.5 / on, entered only with a route
+//! point, so in WINGMAN (FUN_00020b10's row: FOLLOW never leaves the states 0-5). The members of
+//! #242 take01 spent their route on the game's clock: 12-35% of their moving time at the boosted
+//! dash (8.4-8.9 m/s), 20-29% at the run without the boost (6.2-6.3 = 0.8 x 7.8 / 7.9), 19-27% in
+//! between (the climbs back up the ramp, the dash without the boost, 6.8-7.0) and 26-36% under
+//! 5.9 (walks after the turns, corners): a mean over the moving time of 6.1 (Flint), 6.6 (Brutus)
+//! and 5.9 (Hawk) m/s. A mean of that kind (the ticket's "6.5-6.9" is of that order) says nothing
+//! of the dash on a straight, which is 8.5. `Player::speed_boost` is where the feelers' timer
+//! lands.
 //!
 //! The demo moves the squad by root motion (the clips are looked up by name, the root decides
 //! the step), so the run and the dash take the game's speed by scaling the clip's root step: each
@@ -72,7 +81,8 @@ use super::*;
 pub const AI_SQUAD_FACTOR: f32 = 0.8;
 
 /// The follow's speed record while it chases the leader: 1.25 (0x3fa00000, stored at 0x20ed4 by
-/// FUN_00020b10 every update), which FUN_00048270 puts in char+0x720. 0.8 x 1.25 = 1.
+/// FUN_00020b10 every update), which FUN_00048270 puts in char+0x720 at any pace level above a
+/// walk. 0.8 x 1.25 = 1.
 pub const FOLLOW_BOOST: f32 = 1.25;
 
 /// The leader's distance (m) inside which the follow's chase state takes the record back to 1.0
@@ -82,6 +92,17 @@ pub const FOLLOW_BOOST: f32 = 1.25;
 /// the demo by `orders::spacing`). #33 take04: Brutus and Hawk dash after Tex's dash at 13.7-14.5
 /// m, 8-9 m/s while farther and 6.3-7.1 m/s inside it (0.8 x 8.7 = 6.96).
 pub const FOLLOW_D1: f32 = 14.0;
+
+/// The follow's speed record (`Player::speed_boost`) for a member moving at pace level `level`
+/// (1 stand, 2 walk, 3 run, 4 dash: the lower of the move it asks and the level its drops leave
+/// it, play_routes.rs `pace`) with its leader `gap` m away and `d1` the follow's second distance
+/// (`FOLLOW_D1` x the mode's spacing): FOLLOW_BOOST beyond d1 at a run or a dash, 1.0 otherwise.
+/// FUN_00020b10 sets 1.25 each update and FUN_00022130 takes it back to 1.0 while the gap is at
+/// most d1 (0x221b6); FUN_00048270 hands the value to char+0x720 only at a level over 2, a run
+/// as well as a dash (a walk takes only a value under 1.0: the arrival's slow-down, not done).
+pub fn follow_boost(level: i32, gap: f32, d1: f32) -> f32 {
+    if level > 2 && gap > d1 { FOLLOW_BOOST } else { 1.0 }
+}
 
 /// A locomotion clip's gait for the ground speed: the type's `speeds[2]` or `speeds[3]`
 /// (FUN_0012c6c0: a running motion type, MT_RUN among them; MT_DASH).
@@ -292,6 +313,23 @@ mod tests {
         assert!((ground_speed(&tex(), Kind::Dash, false, FOLLOW_BOOST) - 8.5).abs() < 1e-4);
         // (a record under 1 is not taken for a run or a dash)
         assert!((ground_speed(&tex(), Kind::Dash, false, 0.5) - 6.8).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_follows_boost_is_at_a_run_or_a_dash_beyond_d1() {
+        // FUN_00048270 takes the record at a pace level over 2: a run as well as a dash
+        assert_eq!(follow_boost(4, 20.0, FOLLOW_D1), FOLLOW_BOOST);
+        assert_eq!(follow_boost(3, 20.0, FOLLOW_D1), FOLLOW_BOOST);
+        // a walk or a stand takes none
+        assert_eq!(follow_boost(2, 20.0, FOLLOW_D1), 1.0);
+        assert_eq!(follow_boost(1, 20.0, FOLLOW_D1), 1.0);
+        // FUN_00022130 clears it while the leader is within d1, at d1 included
+        assert_eq!(follow_boost(4, FOLLOW_D1, FOLLOW_D1), 1.0);
+        assert_eq!(follow_boost(3, 10.0, FOLLOW_D1), 1.0);
+        // WINGMAN's d1 is 10 m (14 x 8 / 11.2)
+        assert_eq!(follow_boost(4, 12.0, FOLLOW_D1 * 8.0 / 11.2), FOLLOW_BOOST);
+        // so a run beyond d1 moves at the type's own run speed: 0.8 x 1.25 x 7.8
+        assert!((ground_speed(&tex(), Kind::Run, false, follow_boost(3, 20.0, FOLLOW_D1)) - 7.8).abs() < 1e-4);
     }
 
     #[test]
