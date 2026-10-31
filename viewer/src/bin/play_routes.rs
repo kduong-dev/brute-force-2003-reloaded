@@ -26,10 +26,15 @@
 //!    out of lava by the graph's layout (no point lies over a harmful liquid, nav.md "Lava"), and
 //!    the corridor rays pass through liquids; a member whose next step would still go into one
 //!    holds there (`shore`).
+//!  - **The pace record** (#344, `Router::cap`, `pace_ramp`): the level the move is held to,
+//!    starting at a stand and stepping toward the move asked, up and down, with the drops that set
+//!    it down for a while (the stuck detours, the way round a friend, the follow's hold, the hard
+//!    turn, the feelers). The walk's direction is the steering target through the AI's avoidance
+//!    (play_avoid.rs, the callers').
 //!
 //! Test hooks: BF_ROUTE_LOG=1 (each plan and why, each point reached, corner held, skip,
-//! catch-up, stuck, detour, re-route, warp and blocker step of the AI squad's routes; =2 also
-//! their own points' changes), BF_TEST_WARP=<s>,<who>,<x>,<z>[,<heading>][;...] (the controlled
+//! catch-up, stuck, detour, re-route, warp, hard turn and blocker step of the AI squad's routes;
+//! =2 also their own points' changes and the pace level's steps), BF_TEST_WARP=<s>,<who>,<x>,<z>[,<heading>][;...] (the controlled
 //! character, `me`, or a member put on the floor at x, z at time s, facing the heading in degrees,
 //! 0 = -z: the takes' trainer `tp`), BF_TEST_PRISM=1 (every character counts as inside one of the
 //! level's prisms,
@@ -57,16 +62,6 @@ pub const REPLAN: f32 = 9.8;
 /// FUN_000426b0: the time (s) without the squared distance to the current target falling
 /// (route+0x1c over 2.0, 0x4267c) that counts as stuck.
 const STUCK_AFTER: f32 = 2.0;
-/// How much closer (m) to its target a character asking to move must come for the stuck time to
-/// start again: a guess, and a stand-in until #344. The game's test has no margin (0x42760-
-/// 0x4278f: a squared distance over the best adds the time, one under or equal is the new best
-/// and the time 0), so its jitter would start the time again too, but its members don't get
-/// pinned: the feelers (FUN_000255d0 / FUN_00018c40, #344) keep them about a metre off a hinter
-/// band. The demo's, without them, press against it, and its collision jitters one held there by
-/// about a centimetre, a new best every few frames (#335's review: Hawk held 3.69 m from her
-/// target, the time started again after 0.07-0.47 s, so the 2 s never came); 5 cm is five times
-/// that, and a walk at 2 m/s gains it in a frame at 15 fps. To go with #344's feelers.
-const STUCK_PROGRESS: f32 = 0.05;
 /// FUN_000425b0: the point's position + 0.25 m (0x3e800000) up, where the third stuck in a row at
 /// one own point puts the character: the route's current entry's point (EAX at 0x42839-0x42857,
 /// todo/344-ai-avoidance leads §7), the one it couldn't reach.
@@ -87,20 +82,27 @@ const DETOUR_HOLD: f32 = 1.0;
 const REROUTE_HOLD: f32 = 1.5;
 const BLOCKER_RUN: f32 = 0.5;
 const FOLLOW_HOLD: f32 = 0.3;
-/// The pace level's top, the dash (FUN_00058b10's level 4). The demo's level starts there and
-/// leaves it only by the drops above, then climbs back (`ai_update`); the game's starts at 1 (the
-/// brain's init, 0x1706f) and follows the move asked down as well as up (FUN_00058a20: 2 to 1
-/// with 0.3 s; FUN_00058aa0: 3 to 2; FUN_00058b10: 4 to 3), so its every start from a stand climbs
-/// too: that start-up ramp is #344's (todo/344-ai-avoidance leads §6).
+/// The pace level's top, the dash (FUN_00058b10's level 4).
 pub const NO_CAP: i32 = 4;
 /// The pace ramp's step (s, the record's +0x20, FUN_00058670 each AI frame): 0.17 (0x3e2e147b)
 /// for a squad brain (brain+0x3c4 bit 8) in FOLLOW or WINGMAN (brain+0x58 1 or 4; or with +0x770
-/// set, not read), 1.0 (0x3f800000) for any other. Run out, its timer lets the level climb one
-/// notch toward the move asked (FUN_000589b0 to 2, FUN_00058a60 to 3, FUN_00058aa0 to 4) and
-/// starts again at the step: a member of the follow climbs from 1 to the dash in 0.51 s, one on
-/// a Move To in 3 s.
+/// set, not read), 1.0 (0x3f800000) for any other. Run out, its timer lets the level step one
+/// notch toward the move asked, up (FUN_000589b0 to 2, FUN_00058a60 to 3, FUN_00058aa0 to 4) or
+/// down (FUN_00058b10 to 3, FUN_00058aa0 to 2, FUN_00058a20 to 1), and starts again at the step
+/// (PACE_STAND for the step down to 1): a member of the follow climbs from a stand to the dash in
+/// 0.34 s, one on a Move To in 2 s.
 const PACE_STEP_SQUAD: f32 = 0.17;
 const PACE_STEP: f32 = 1.0;
+/// The pace record's timer at the brain's init (FUN_00058530: the level 1, the timer 0.3 s,
+/// 0x3e99999a, running) and after the step down from a walk to a stand (FUN_00058a20).
+const PACE_STAND: f32 = 0.3;
+/// FUN_0001ad50 (the AI update at 0x1b16b, after the ramp): a route walker at a run or a dash
+/// turning faster than this (rad/s, the character's +0x488)...
+const HARD_TURN: f32 = 2.5;
+/// ...for over this long (s, brain+0x35c counting it) drops to a walk...
+const HARD_TURN_TIME: f32 = 1.0;
+/// ...with the pace record's timer at this (s, 0x3f800000).
+const HARD_TURN_WALK: f32 = 1.0;
 /// FUN_00041870: a friend within 8 m (3D, 64 its square), its pace level under 3, whose own point is
 /// the member's current point, its own point or its skipped one, and lying the member's way (the
 /// x and z of the two unit directions, to it and to the current point, dot over 0.75).
@@ -165,13 +167,20 @@ pub struct Router {
     /// a mode change dropped its goal (FUN_00018040's goal reset): the route goes at its next
     /// AI update, where the graph is at hand
     pub stale: bool,
+    /// the stuck handling gave its route up short of a bare position, where there's no point to
+    /// be put at (`stuck`): the follow holds at the route's end (`follow`). The demo's
+    gave_up: bool,
+    /// the brain's avoidance fields (play_avoid.rs, #344): the feelers-off timer, the speed
+    /// record's timer, char+0x720 as it stands, the characters near it
+    pub avoid: avoid::Avoid,
 }
 
 impl Default for Router {
-    /// A spawned character's: its own point wanted, no route, its pace level at the top.
+    /// A spawned character's: its own point wanted, no route, its pace record as the brain's init
+    /// makes it (FUN_00058530: the level 1, a stand, its timer at PACE_STAND).
     fn default() -> Self {
         Router { own: OwnPoint::spawned(), own_at: None, walker: None, dest: None, planned: None, hold: None, ordered: None, last: None, stuck_at: None, stuck_count: 0,
-                 cap: NO_CAP, cap_left: 0.0, asked: 1, wait: 0.0, stale: false }
+                 cap: 1, cap_left: PACE_STAND, asked: 1, wait: 0.0, stale: false, gave_up: false, avoid: avoid::Avoid::default() }
     }
 }
 
@@ -192,8 +201,9 @@ impl Router {
     }
 
     /// The pace level set down to `cap` with its timer at `time` s ([brain+0x1a8]+0 and
-    /// FUN_000124f0 on its +0x28): the drops (DETOUR_HOLD and the others).
-    fn set_pace(&mut self, cap: i32, time: f32) {
+    /// FUN_000124f0 on its +0x28): the drops (DETOUR_HOLD and the others, the hard turn's, the
+    /// feelers').
+    pub fn set_pace(&mut self, cap: i32, time: f32) {
         self.cap = cap;
         self.cap_left = time;
     }
@@ -295,36 +305,85 @@ pub struct Mate {
 }
 
 /// The characters FUN_00041870 looks through (the world's two character lists): the controlled
-/// one and the squad's, alive and in the world. An AI one is slow while the pace it moves at, the
-/// lower of the move it asks and its level (`pace`), is a walk or a stand (the game tests the
-/// level under 3, which follows the move asked down where the demo's doesn't: NO_CAP); the
+/// one and the squad's, alive and in the world. An AI one is slow while its pace level is under 3
+/// (a walk or a stand: the level follows the move asked both ways since #344, `pace_ramp`); the
 /// controlled one while it walks or stands (its brain idles: the demo's guess).
 pub fn mates(player: &Player, squad: &[Player]) -> Vec<Mate> {
     let prism = in_prism();
     std::iter::once(player).chain(squad.iter()).filter(|u| !u.dead && !u.absent).map(|u| {
-        let slow = if u.controlled { u.move_input.length() < 0.1 || u.walk } else { u.router.asked.min(u.router.cap) < 3 };
+        let slow = if u.controlled { u.move_input.length() < 0.1 || u.walk } else { u.router.cap < 3 };
         Mate { who: u.who(), team: u.team, at: u.position, point: u.router.own.point, slow, human: u.controlled, prism }
     }).collect()
 }
 
-/// The AI update's route steps for `m` before its goal (FUN_0001afe0): the pace ramp (FUN_00058670
-/// at 0x1b119: the timer runs, and run out with the move asked above the level, the level climbs
-/// a notch and the timer starts again at the step, PACE_STEP_SQUAD or PACE_STEP; the move asked is
-/// the last frame's, as the goal writes it after); then at 0x1b17f-0x1b18b, when the character
-/// has an own point, a route its goal dropped, the route round a friend in the way (`blocker`,
-/// FUN_00041870), the catch-up (FUN_00041ff0, `Walker::resync`) and the stuck handling (`stuck`,
-/// FUN_000426b0). `mates`: this frame's friends (`mates`).
-pub fn ai_update(m: &mut Player, mates: &[Mate], g: &mut Graph, dt: f32) {
+/// The positions of the characters of `mates` (every living one in the world, of any side) near
+/// `m`, not itself: the push's look through the world's character lists (play_avoid.rs `push`,
+/// the sensor's 0x521c0, which takes them within 1.5 m across; this keeps those within 2 m).
+pub fn near(m: &Player, mates: &[Mate]) -> Vec<Vec3> {
+    let me = m.who();
+    mates.iter().filter(|x| x.who != me && x.at.xz().distance_squared(m.position.xz()) < NEAR * NEAR).map(|x| x.at).collect()
+}
+
+/// `near`'s reach (m, across): the push's 1.5 m (brain+0x3bc) with room to spare.
+const NEAR: f32 = 2.0;
+
+/// The AI update's pace ramp for `m` (FUN_00058670 at 0x1b119, each AI frame, whether or not it
+/// has a route: play.rs runs it for every AI character the routes' goals move, with a level's
+/// points or not): the pace record's timer runs, and once it has run out with the level not the
+/// move asked, the level steps one notch toward it, up or down (the move asked is the last frame's,
+/// as the goal writes it after), and the timer starts again at the step, PACE_STEP_SQUAD or
+/// PACE_STEP, or PACE_STAND for the step down to a stand. So a member that stops steps down to 1
+/// and climbs again from there when it sets off: walk, run, dash (#33 take04's motion numbers go
+/// 47, 34, 8: walk, run, dash). Then the hard turn's drop (`hard_turn`, FUN_0001ad50).
+pub fn pace_ramp(m: &mut Player, dt: f32) {
     let step = if m.in_squad() && matches!(m.command.mode, brain::Mode::Follow | brain::Mode::Wingman) { PACE_STEP_SQUAD } else { PACE_STEP };
     let r = &mut m.router;
     r.cap_left = (r.cap_left - dt).max(0.0);
-    if r.cap_left <= 0.0 && r.asked > r.cap && r.cap < NO_CAP {
-        r.cap += 1;
-        r.cap_left = step;
+    if r.cap_left <= 0.0 && r.asked != r.cap {
+        if r.asked > r.cap {
+            r.cap = (r.cap + 1).min(NO_CAP);
+            r.cap_left = step;
+        } else {
+            r.cap = (r.cap - 1).max(1);
+            r.cap_left = if r.cap == 1 { PACE_STAND } else { step };
+        }
         if log_level() >= 2 {
-            println!("t {:.2}: {}: its pace climbs to {} (the next in {step} s)", m.sim_time, unit_name(m), m.router.cap);
+            println!("t {:.2}: {}: its pace level steps to {} toward {} (the next in {} s)", m.sim_time, unit_name(m), m.router.cap, m.router.asked, m.router.cap_left);
         }
     }
+    hard_turn(m, dt);
+}
+
+/// FUN_0001ad50 for `m`, a frame of `dt` s (the AI update at 0x1b16b, right after the ramp):
+/// walking a route at a run or a dash (the level over 2) and turning faster than HARD_TURN (its
+/// turn over the last frame, the demo's stand-in for the character's +0x488), brain+0x35c counts
+/// the time, and over HARD_TURN_TIME the level drops to a walk for HARD_TURN_WALK and the count
+/// starts again; anything else zeroes it. What keeps a runner from circling a point it must come
+/// within 0.6 m of (a corner hold), where its turn at speed is wider.
+fn hard_turn(m: &mut Player, dt: f32) {
+    let turned = m.router.avoid.yaw_was.replace(m.yaw).map_or(0.0, |y| wrap_angle(m.yaw - y).abs());
+    let r = &mut m.router;
+    if !(r.walking() && r.cap > 2 && dt > 0.0 && turned / dt > HARD_TURN) {
+        r.avoid.turning = 0.0;
+        return;
+    }
+    r.avoid.turning += dt;
+    if r.avoid.turning <= HARD_TURN_TIME {
+        return;
+    }
+    r.avoid.turning = 0.0;
+    r.set_pace(2, HARD_TURN_WALK);
+    if log_level() > 0 {
+        println!("t {:.2}: {}: turning over {HARD_TURN} rad/s for {HARD_TURN_TIME} s: walks for {HARD_TURN_WALK} s (FUN_0001ad50)", m.sim_time, unit_name(m));
+    }
+}
+
+/// The AI update's route steps for `m` before its goal (FUN_0001afe0, 0x1b17f-0x1b18b), when the
+/// character has an own point: a route its goal dropped, the route round a friend in the way
+/// (`blocker`, FUN_00041870), the catch-up (FUN_00041ff0, `Walker::resync`) and the stuck
+/// handling (`stuck`, FUN_000426b0). `mates`: this frame's friends (`mates`). The pace ramp before
+/// them is `pace_ramp`.
+pub fn ai_update(m: &mut Player, mates: &[Mate], g: &mut Graph, dt: f32) {
     let r = &mut m.router;
     if std::mem::take(&mut r.stale) {
         r.drop_route(g);
@@ -416,6 +475,7 @@ fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result<(), NoRout
             m.router.walker = Some(w);
             m.router.dest = Some(to);
             m.router.last = Some(me);
+            m.router.gave_up = false;
             Ok(())
         }
         Err(e) => {
@@ -435,9 +495,8 @@ fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result<(), NoRout
 /// How the follow or Move To goes this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Way {
-    /// toward `target` (the route's steering target, brain+0x478), `along` m of the walk left,
-    /// `corner` while the corner rule holds it
-    Go { target: Vec3, along: f32, corner: bool },
+    /// toward `target` (the route's steering target, brain+0x478), `along` m of the walk left
+    Go { target: Vec3, along: f32 },
     /// standing: no route to its place, or held at a route's end short of it (the pace level at 1
     /// is the caller's, `pace`)
     Stand,
@@ -595,16 +654,22 @@ pub fn follow(m: &mut Player, g: &mut Graph, place: Vec3, leader_at: Vec3, leade
         let s = step(m, g, nav::ARRIVE, settle);
         if s.walking {
             let w = m.router.walker.as_ref().expect("walking");
-            return Way::Go { target: s.target, along: w.remaining(g, m.position), corner: w.corner.is_some() };
+            return Way::Go { target: s.target, along: w.remaining(g, m.position) };
         }
         // (the route's end: at the place, or at the point short of it)
         let at_place = matches!(m.router.dest, Some(Dest::Beside { .. }));
         m.router.drop_route(g);
         if m.position.xz().distance(place.xz()) <= settle {
+            m.router.gave_up = false;
             return Way::There;
         }
         if !at_place {
             begin_hold(m, g, leader_at, place, "the route's end short of its place");
+            return Way::Stand;
+        }
+        // (the stuck handling gave the place up: it holds where it is, `stuck`)
+        if std::mem::take(&mut m.router.gave_up) {
+            begin_hold(m, g, leader_at, place, "stuck short of its place");
             return Way::Stand;
         }
         why = "the follow: at the route's end short of its place";
@@ -666,18 +731,17 @@ pub fn move_out(m: &mut Player, g: &mut Graph, point: Option<Vec3>) -> Way {
         return Way::There;
     }
     let w = m.router.walker.as_ref().expect("walking");
-    Way::Go { target: s.target, along: w.remaining(g, m.position), corner: w.corner.is_some() }
+    Way::Go { target: s.target, along: w.remaining(g, m.position) }
 }
 
-/// The liquid guard on `m`'s way to `target` (play_liquids.rs `burning_ahead`): the safety net
-/// behind the routes, true when its next step would go into a liquid that burns. BF_LIQUID_LOG
-/// says so twice a second.
-pub fn shore(m: &Player, target: Vec3, dt: f32) -> bool {
-    let d = Vec2::new(target.x - m.position.x, target.z - m.position.z);
-    if d.length() < 1e-4 {
+/// The liquid guard on `m`'s way `dir` (xz; the steered direction, play_avoid.rs `steer`)
+/// (play_liquids.rs `burning_ahead`): the safety net behind the routes, true when its next step
+/// would go into a liquid that burns. BF_LIQUID_LOG says so twice a second.
+pub fn shore(m: &Player, dir: Vec2, dt: f32) -> bool {
+    if dir.length() < 1e-4 {
         return false;
     }
-    let held = world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, d.normalize()));
+    let held = world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, dir.normalize()));
     if held && std::env::var("BF_LIQUID_LOG").is_ok() && (m.sim_time * 2.0).floor() != ((m.sim_time - dt) * 2.0).floor() {
         println!("t {:.2}: {} waits at a liquid that burns on its route (the routes' safety net), at {:.2}", m.sim_time, unit_name(m), m.position);
     }
@@ -801,21 +865,24 @@ fn blocker(m: &mut Player, mates: &[Mate], g: &mut Graph, dt: f32) {
 /// FUN_000426b0 for `m` (from the AI update, 0x1b18b): with a route and the pace level at 2 or
 /// more (0x426f7; under 2 the time is 0), the squared distance (3D) from its position to the
 /// current target (FUN_000233d0) over the best so far (route+0x18, FLT_MAX at each new target)
-/// adds the frame's time to route+0x1c, one under or equal is the best and the time 0 (asking to
-/// move, the demo wants STUCK_PROGRESS closer: see it). Past STUCK_AFTER (time 0 again; the speed
-/// factor char+0x720 at 0.01 or under would be put back to 1 and nothing more: the demo has no
-/// speed factor, FUN_00048270; char+0x250 bit 0, the own point wanted, set: the demo's always
-/// is):
+/// adds the frame's time to route+0x1c, one under or equal is the best and the time 0 (0x42760-
+/// 0x4278f: no margin, #344). Past STUCK_AFTER (time 0 again; the speed factor char+0x720 at 0.01
+/// or under would be put back to 1 and nothing more: the demo's is never under 1, FUN_00048270;
+/// char+0x250 bit 0, the own point wanted, set: the demo's always is):
 ///  - its own point the same as at the last stuck, the count (brain+0x9c4) over 1: put at the
 ///    route's current entry's point (FUN_000425b0 with it in EAX, 0x42839-0x42857: vtable +0x48
 ///    with the point's position + 0.25 m, then FUN_0004c5e0; medium: read as a set-position, here
-///    its feet on the floor under that), nothing for a bare position (FUN_000425b0 tests EAX);
+///    its feet on the floor under that). For a bare position FUN_000425b0 does nothing (it tests
+///    EAX), and the game's follow never routes to one; the demo's follow does (its place,
+///    `Dest::Beside`), so there the route is given up and the follow holds where it is until its
+///    leader moves on (`Router::gave_up`, `follow`): the demo's, where nothing would act again
+///    (#335's re-review: pinned at the place until the leader moved d3);
 ///  - else the detour (`detour`, FUN_00042280), and when its search finds nothing, the re-route
 ///    (`reroute`, FUN_00042490). (FUN_00042620's GOAL_ATTACK_GUARD between them is for a brain
 ///    out of the squad, brain+0x3c4 bit 8 clear: never the squad's.)
 fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
     let me = m.position;
-    let (cap, pushing) = (m.router.cap, m.router.asked >= 2);
+    let cap = m.router.cap;
     let Some(w) = m.router.walker.as_mut().filter(|w| w.walking()) else { return };
     if cap < 2 {
         w.stuck = 0.0;
@@ -823,14 +890,7 @@ fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
     }
     let Some(target) = w.target_now(g) else { return };
     let d2 = target.distance_squared(me);
-    // (the game starts the time again on any fall of the squared distance, or none; a character
-    // asking to move must come STUCK_PROGRESS closer here until #344's feelers keep the squad off
-    // the walls, the demo's collision jittering one held against a wall by a centimetre or so,
-    // which with the game's test is never stuck. One standing by its goal's choice, a Toggle
-    // Ability's hold, keeps the game's test: an equal distance starts the time again, so it isn't
-    // stuck either)
-    let closer = if pushing { d2.sqrt() < w.best.sqrt() - STUCK_PROGRESS } else { d2 <= w.best };
-    if closer {
+    if d2 <= w.best {
         w.best = d2;
         w.stuck = 0.0;
     } else {
@@ -852,17 +912,29 @@ fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
                  label(g, own), r.stuck_count + 1);
     }
     if r.stuck_count > 1 {
-        if let Some(p) = short_of {
-            let at = g.nodes[p as usize].at + Vec3::Y * WARP_LIFT;
-            let feet = floor_y(at.x, at.z, at.y + STEP_UP, world::Mover::Ai.body());
-            m.position = Vec3::new(at.x, feet - GROUND, at.z);
-            m.prev_xz = at.xz();
-            m.fall_from = feet;
-            m.vy = 0.0;
-            m.height = 0.0;
-            m.router.last = Some(m.position);
-            if log {
-                println!("t {:.2}: {}: put at its route's current point {} (FUN_000425b0)", m.sim_time, unit_name(m), label(g, short_of));
+        match short_of {
+            Some(p) => {
+                let at = g.nodes[p as usize].at + Vec3::Y * WARP_LIFT;
+                let feet = floor_y(at.x, at.z, at.y + STEP_UP, world::Mover::Ai.body());
+                m.position = Vec3::new(at.x, feet - GROUND, at.z);
+                m.prev_xz = at.xz();
+                m.fall_from = feet;
+                m.vy = 0.0;
+                m.height = 0.0;
+                m.router.last = Some(m.position);
+                if log {
+                    println!("t {:.2}: {}: put at its route's current point {} (FUN_000425b0)", m.sim_time, unit_name(m), label(g, short_of));
+                }
+            }
+            None => {
+                // (a bare position: no point to be put at; the demo gives the route up, see above)
+                if let Some(w) = r.walker.as_mut() {
+                    w.done = true;
+                }
+                r.gave_up = true;
+                if log {
+                    println!("t {:.2}: {who}: no point to be put at short of its place: gives the route up and holds (the demo's)", m.sim_time);
+                }
             }
         }
         return;
@@ -1021,50 +1093,111 @@ mod tests {
         w.entries.iter().filter_map(|e| e.point).map(|p| g.nodes[p as usize].name).collect()
     }
 
-    /// A line 1 - 2 - 3 - 4 - 7 and a way round 2 - 5 - 7: a member past 2 (its own point) on its
-    /// way to 3 that comes no closer for 2 s gets the detour (FUN_00042280): 3, its own point 2 and
-    /// the next, 4, off for one search, a new route to the destination 7 round them, the pace level
-    /// at 1, the bits given back; the third stuck in a row at one own point puts it on the
-    /// route's current point (FUN_000425b0).
+    /// The line 1 - 2 - 3 - 4 - 7 with a way round 2 - 5 - 7.
+    fn line() -> Graph {
+        Graph::new(&[point(1, 0.0, 0.0, &[2]), point(2, 10.0, 0.0, &[1, 3, 5]), point(3, 20.0, 0.0, &[2, 4]), point(4, 30.0, 0.0, &[3, 7]), point(5, 20.0, 10.0, &[2, 7]),
+                     point(7, 40.0, 0.0, &[4, 5])])
+    }
+
+    /// A member past 2 (its own point) on its way to 3, at the dash, running `frames` stuck tests
+    /// of 1/15 s with its x from `x(k)`.
+    fn held(m: &mut Player, g: &mut Graph, frames: usize, x: impl Fn(usize) -> f32) {
+        for k in 0..frames {
+            m.position.x = x(k);
+            stuck(m, g, 1.0 / 15.0);
+        }
+    }
+
+    /// On the line, a member past 2 (its own point) on its way to 3 that comes no closer than its
+    /// best for 2 s gets the detour (FUN_00042280): 3, its own point 2 and the next, 4, off for one
+    /// search, a new route to the destination 7 round them, the pace level at 1, the bits given
+    /// back; the third stuck in a row at one own point puts it on the route's current point
+    /// (FUN_000425b0).
     #[test]
     fn the_stuck_detour_and_the_warp() {
-        let pts = [point(1, 0.0, 0.0, &[2]), point(2, 10.0, 0.0, &[1, 3, 5]), point(3, 20.0, 0.0, &[2, 4]), point(4, 30.0, 0.0, &[3, 7]), point(5, 20.0, 10.0, &[2, 7]),
-                   point(7, 40.0, 0.0, &[4, 5])];
-        let mut g = Graph::new(&pts);
+        let mut g = line();
         let mut m = Player::new(2);
         m.position = Vec3::new(12.0, 0.0, 0.0);
         m.router.own.point = Some(1);
+        m.router.cap = NO_CAP;
         plan(&mut m, &mut g, Dest::Point(5), "test").unwrap();
         assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [3, 4, 7]);
-        // standing by its goal's choice (asking for no move) it isn't stuck
-        for _ in 0..32 {
-            stuck(&mut m, &mut g, 1.0 / 15.0);
-        }
+        // standing where it is it isn't stuck: an equal distance is the best again (no margin)
+        held(&mut m, &mut g, 40, |_| 12.0);
         assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [3, 4, 7]);
-        // asking to run and no closer for over 2 s (held where it is): the detour
-        m.router.asked = 3;
-        for _ in 0..32 {
-            stuck(&mut m, &mut g, 1.0 / 15.0);
-        }
+        // a centimetre back and held there, over its best for over 2 s: the detour
+        held(&mut m, &mut g, 32, |_| 11.99);
         assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [5, 7], "round 3 and 4 by 5");
         assert!((0..g.nodes.len() as u32).all(|i| g.valid(i)), "the bits given back");
         assert_eq!((m.router.cap, m.router.stuck_count), (1, 0));
-        // held by the cap the time stays 0
-        for _ in 0..40 {
-            stuck(&mut m, &mut g, 1.0 / 15.0);
-        }
+        // held by the level the time stays 0
+        held(&mut m, &mut g, 40, |_| 11.98);
         assert_eq!(m.router.stuck_count, 0);
         // two more stucks at the same own point, the level back up: the second detours again, the
         // third puts it on its route's current point
         for k in 1..=2 {
             plan(&mut m, &mut g, Dest::Point(5), "test").unwrap();
             m.router.cap = NO_CAP;
-            for _ in 0..32 {
+            m.position.x = 12.0;
+            stuck(&mut m, &mut g, 1.0 / 15.0);
+            for _ in 0..40 {
+                m.position.x = 11.99;
                 stuck(&mut m, &mut g, 1.0 / 15.0);
+                if m.router.stuck_count == k {
+                    break;
+                }
             }
             assert_eq!(m.router.stuck_count, k);
         }
         assert_eq!(m.position.xz(), Vec2::new(20.0, 0.0), "put at its route's current point 3, not its own point 2");
+    }
+
+    /// The stuck test has no margin (FUN_000426b0, 0x42760-0x4278f): a member that jitters by a
+    /// centimetre and comes back to its best now and then is never stuck; one that drifts away
+    /// a millimetre a frame is, after 2 s.
+    #[test]
+    fn the_stuck_test_has_no_margin() {
+        let start = |g: &mut Graph| {
+            let mut m = Player::new(2);
+            m.router.own.point = Some(1);
+            m.router.cap = NO_CAP;
+            m.position = Vec3::new(12.0, 0.0, 0.0);
+            plan(&mut m, g, Dest::Point(5), "test").unwrap();
+            m
+        };
+        let mut g = line();
+        let mut m = start(&mut g);
+        held(&mut m, &mut g, 60, |k| 12.0 - if k % 3 == 0 { 0.0 } else { 0.01 });
+        assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [3, 4, 7], "jitter back to its best: never stuck");
+        let mut m = start(&mut g);
+        held(&mut m, &mut g, 32, |k| 12.0 - k as f32 * 0.001);
+        assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [5, 7], "drifting away: the detour");
+    }
+
+    /// The follow's route to its place (a bare position, `Dest::Beside`) has no point to be put at
+    /// on the third stuck: the route is given up and the follow holds (the demo's, `Router::gave_up`).
+    #[test]
+    fn a_stuck_place_is_given_up() {
+        let mut g = line();
+        let mut m = Player::new(2);
+        m.router.own.point = Some(3);
+        m.router.cap = NO_CAP;
+        m.position = Vec3::new(30.5, 0.0, 0.0);
+        // to a place beside 4 (its own route: the place alone, the last entry a bare position)
+        plan(&mut m, &mut g, Dest::Beside { at: Vec3::new(31.0, 0.0, 3.0), point: 3 }, "test").unwrap();
+        let bare = |m: &Player| m.router.walker.as_ref().is_some_and(|w| w.current().is_none());
+        assert!(bare(&m), "{:?}", m.router.walker.as_ref().map(|w| &w.entries));
+        // three stucks at the same own point: the first two end the route (the detour on its last
+        // entry, which the walk's next step would reset and the follow plan again), the third gives
+        // it up
+        for k in 0..3 {
+            assert!(!m.router.gave_up);
+            m.position.x = 30.5;
+            stuck(&mut m, &mut g, 1.0 / 15.0);
+            held(&mut m, &mut g, 32, |_| 30.4);
+            assert_eq!(m.router.stuck_count, k);
+        }
+        assert!(m.router.gave_up && m.router.walker.as_ref().is_some_and(|w| w.done));
     }
 
     /// The follow's points for its place (`place_points`): the points the leader's own point
@@ -1090,15 +1223,14 @@ mod tests {
     /// it asks. It moves at the lower of the level and what it asks.
     #[test]
     fn the_pace_ramp() {
-        let mut g = Graph::new(&[point(1, 0.0, 0.0, &[])]);
         let dt = 1.0 / 60.0;
-        let mut level_at = |mode: brain::Mode, asked: i32, t: f32| {
+        let level_at = |mode: brain::Mode, asked: i32, t: f32| {
             let mut m = Player::new(2);
             m.command.mode = mode;
             m.router.asked = asked;
             m.router.set_pace(1, DETOUR_HOLD);
             for _ in 0..(t / dt).round() as i32 {
-                ai_update(&mut m, &[], &mut g, dt);
+                pace_ramp(&mut m, dt);
             }
             m.router.cap
         };
@@ -1119,33 +1251,36 @@ mod tests {
         assert!(!pace(&mut m, 4) && m.move_input == Vec2::ZERO && m.router.asked == 4);
     }
 
-    /// The stuck time of a member pressed against a wall: its distance to the target jittering by
-    /// a centimetre (#335's review) is no progress while it asks to move (STUCK_PROGRESS, until
-    /// #344), so the detour comes after 2 s; 10 cm closer every frame is, and it doesn't.
+    /// The pace record starts at a stand with its timer at 0.3 s (FUN_00058530), and follows the
+    /// move asked down as well as up: from the dash a stand asked steps 4 -> 3 -> 2 a step apart,
+    /// then 2 -> 1 with the timer at 0.3 s (FUN_00058b10, FUN_00058aa0, FUN_00058a20); asked to
+    /// dash again, it climbs from 1 once that has run out.
     #[test]
-    fn jitter_is_no_progress() {
-        let pts = [point(1, 0.0, 0.0, &[2]), point(2, 10.0, 0.0, &[1, 3, 5]), point(3, 20.0, 0.0, &[2, 4]), point(4, 30.0, 0.0, &[3, 7]), point(5, 20.0, 10.0, &[2, 7]),
-                   point(7, 40.0, 0.0, &[4, 5])];
-        let mut g = Graph::new(&pts);
-        let start = |g: &mut Graph| {
-            let mut m = Player::new(2);
-            m.router.own.point = Some(1);
-            m.router.asked = 3;
-            m.position = Vec3::new(12.0, 0.0, 0.0);
-            plan(&mut m, g, Dest::Point(5), "test").unwrap();
-            m
+    fn the_pace_follows_the_move_asked_down() {
+        let dt = 1.0 / 60.0;
+        let mut m = Player::new(2);
+        m.command.mode = brain::Mode::Follow;
+        assert_eq!((m.router.cap, m.router.cap_left), (1, PACE_STAND), "the brain's init");
+        let run = |m: &mut Player, t: f32| {
+            for _ in 0..(t / dt).round() as i32 {
+                pace_ramp(m, dt);
+            }
+            m.router.cap
         };
-        let mut m = start(&mut g);
-        for k in 0..32 {
-            m.position.x = 12.0 + if k % 2 == 0 { 0.01 } else { 0.0 } + k as f32 * 0.001;
-            stuck(&mut m, &mut g, 1.0 / 15.0);
-        }
-        assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [5, 7], "jitter: the detour");
-        let mut m = start(&mut g);
-        for k in 0..32 {
-            m.position.x = 12.0 + k as f32 * 0.1;
-            stuck(&mut m, &mut g, 1.0 / 15.0);
-        }
-        assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [3, 4, 7], "walking on: no detour");
+        m.router.asked = 4;
+        assert_eq!(run(&mut m, 0.25), 1, "the init's 0.3 s first");
+        assert_eq!(run(&mut m, 0.07), 2);
+        assert_eq!(run(&mut m, 0.35), 4, "0.34 s from a walk to the dash");
+        // (its timer runs out at the dash and stays so)
+        assert_eq!(run(&mut m, 0.5), 4);
+        m.router.asked = 1;
+        assert_eq!(run(&mut m, 0.02), 3, "the timer had run out: a notch down at once");
+        // (3 -> 2 a step later; then 2 -> 1, its timer at 0.3 s, a few frames of which are gone)
+        assert_eq!(run(&mut m, 0.2), 2);
+        assert_eq!(run(&mut m, 0.2), 1);
+        assert!(m.router.cap_left > 0.2 && m.router.cap_left < PACE_STAND, "the step down to a stand sets 0.3 s: {}", m.router.cap_left);
+        m.router.asked = 4;
+        assert_eq!(run(&mut m, 0.2), 1, "its 0.3 s still running");
+        assert_eq!(run(&mut m, 0.1), 2);
     }
 }

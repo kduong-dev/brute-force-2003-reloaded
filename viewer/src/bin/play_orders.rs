@@ -359,7 +359,7 @@ fn hold(m: &mut Player, dt: f32) {
 /// FUN_00045fa0), on a route (play_routes.rs `move_out`, #335: over the level's world points to
 /// the cursor's point, at 2 m; the route round a friend in the way and the 2 s stuck handling are
 /// the AI update's, before this) at the dash (FUN_0004d970 mode 4), the last MOVE_OUT_WALK m of it
-/// at a walk, held at a corner at a walk too (as the follow, play.rs `squad_ai`). (The game runs
+/// at a walk, steered through the AI's avoidance (#344, play_avoid.rs). (The game runs
 /// instead while brain+0x3c4 bit 10 is set: the character inside one of the level record's +0x114
 /// prisms, FUN_0004cb60 / FUN_000e6e00; what those volumes are isn't read, so the demo dashes but
 /// under BF_TEST_PRISM. The leads read the bit as "an enemy known": it isn't.) At the route's end
@@ -384,7 +384,7 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
                 m.command.stalled += dt;
             }
             match point {
-                Some(p) if dist >= MOVE_OUT_ARRIVE && m.command.stalled < STALL_TIME => routes::Way::Go { target: p, along: dist, corner: false },
+                Some(p) if dist >= MOVE_OUT_ARRIVE && m.command.stalled < STALL_TIME => routes::Way::Go { target: p, along: dist },
                 Some(_) if dist >= MOVE_OUT_ARRIVE => {
                     arrive(m, now, "stalls short of", dist);
                     guard(m, dt, target, toward);
@@ -394,14 +394,14 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
             }
         }
     };
-    let (to, along, corner) = match way {
+    let (to, along) = match way {
         routes::Way::There => {
             arrive(m, now, if point.is_some() { "reaches" } else { "has no" }, dist);
             guard(m, dt, target, toward);
             return;
         }
-        routes::Way::Stand => (None, 0.0, false),
-        routes::Way::Go { target, along, corner } => (Some(target), along, corner),
+        routes::Way::Stand => (None, 0.0),
+        routes::Way::Go { target, along } => (Some(target), along),
     };
     m.jump_pressed = false;
     m.dodge_pressed = false;
@@ -411,8 +411,10 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
     m.idle_left = 0.0;
     m.crouch_wanted = false;
     // facing its way, or the target (ATTACK_MOVE_OUT faces it as it walks); the step's move is in
-    // its "camera"'s frame, so it's made after the fire's turn
-    let way = to.map_or(Vec2::ZERO, |t| (t.xz() - here.xz()).normalize_or_zero());
+    // its "camera"'s frame, so it's made after the fire's turn. Its way: the steering target
+    // through the AI's avoidance (#344, play_avoid.rs `steer`, FUN_000255d0 as MOVE_OUT calls it at
+    // 0x45cb6)
+    let way = to.map_or(Vec2::ZERO, |t| avoid::steer(m, t).0);
     if way != Vec2::ZERO {
         m.cam_yaw = (-way.x).atan2(-way.y);
     }
@@ -421,7 +423,7 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
     let turned = target.is_none() && toward.is_some_and(|p| face_toward(m, p));
     m.aim = target.is_some() || turned;
     ai_fire(m, target, dt);
-    let held = to.is_none_or(|t| routes::shore(m, t, dt));
+    let held = to.is_none() || routes::shore(m, way, dt);
     if held {
         m.move_input = Vec2::ZERO;
         m.sprint = false;
@@ -430,7 +432,7 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
     } else {
         let (fwd, right) = (Vec2::new(-m.cam_yaw.sin(), -m.cam_yaw.cos()), Vec2::new(m.cam_yaw.cos(), -m.cam_yaw.sin()));
         m.move_input = Vec2::new(way.dot(right), way.dot(fwd));
-        routes::pace(m, if along < MOVE_OUT_WALK || corner { 2 } else { 4 });
+        routes::pace(m, if along < MOVE_OUT_WALK { 2 } else { 4 });
     }
     m.switch_pressed = false;
     m.reload_pressed = false;

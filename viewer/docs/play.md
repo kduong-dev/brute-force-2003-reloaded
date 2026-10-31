@@ -3380,8 +3380,10 @@ the dash on a straight is **8.5**, and the demo's was too slow.
   8.53-8.55, Brutus 8.59-8.62, Hawk 8.42-8.46 (types 8.6, 8.7, 8.5); #33 take04 (Tex dashing
   east): Brutus and Hawk hold 13.7-14.5 m behind him, at 8-9 m/s beyond 14 m and 6.3-7.1 inside
   it. `squad_ai` sets `Player::speed_boost`
-  after `routes::pace` (#335) for a move at pace level 3 or 4 (`asked.min(Router::cap)`, the level
-  the member moves at) with the leader beyond d1; `update_player` clears it before every member's
+  after `routes::pace` (#335) at pace level 3 or 4 (`Router::cap`, which follows the move asked up
+  and down since #344) with the leader beyond d1 and the speed record's timer run out (brain+0x8a4,
+  `Avoid::boost_off`: a feeler's hit at a dash starts it at 1.5 s, #344); `update_player` keeps
+  what the last frame left (char+0x720, the feelers' factor) and clears it before every member's
   goal. Move To writes nothing to the record and the follow goal's end resets it (FUN_00020a10), so
   it moves at 0.8 x.
 * **Take01's "6.5-6.9"** is a mean of that kind: over their moving time the three covered 6.1
@@ -3389,8 +3391,10 @@ the dash on a straight is **8.5**, and the demo's was too slow.
   run with the boost off (6.2-6.3: the feelers' level drop, FUN_00018c40 / the pace record, #344),
   26-36% under 5.9 (walks after the hard turns, the climbs back up the pace ramp: 0.17 s a notch
   for a squad member). The demo's AI walks routes and climbs its pace back after a drop since #335,
-  and picks its gait by its distance to its place; the feelers' drops, the climb from a stand and
-  the step down after the move asked are #344's.
+  and picks its gait by its distance to its place; since #344 also the feelers' drops, the climb
+  from a stand, the step down after the move asked and the hard turn's walk (nav.md "The
+  steering"): take01's staging then runs within a second of the take at each stretch of the west
+  walkway.
 * **Not done** (the walk and the ease are #350's): the walk, the crouch walk, the back steps and
   the side steps keep their clips' root (the game's walk follows the stick: #126 take07's "run" at a
   stick of 0.7 was the game's WALK, mot 47, at 3.5 m/s, Tex's type walk 3.6, where the demo's walk

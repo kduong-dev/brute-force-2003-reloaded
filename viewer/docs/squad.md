@@ -23,10 +23,16 @@ Squad movement and deaths follow the game's own data and the captures:
   the place (the place out of reach), or with no route, it holds until the leader has moved 3 m
   (the demo's guess: his turning, which swings the place round him, doesn't count). Never a
   straight chase, so round a lava pit by its walkway rather than across it. The places and the
-  set-off, settle and dash distances stay the demo's until #331. Stuck 2 s (no closer to its next
-  point) a member detours round it (FUN_000426b0, FUN_00042280), and the third time at one own
-  point it's put on the point it was walking to (FUN_000425b0). After a detour, a re-route or a
-  hold its pace climbs back a notch every 0.17 s (the pace ramp, FUN_00058670).
+  set-off, settle and dash distances stay the demo's until #331. **It steers through the AI's
+  avoidance** (#344, play_avoid.rs, [nav.md](nav.md) "The steering", FUN_000255d0): three feelers
+  along its heading turn it off walls, rocks and the AI's hinter bands (a metre off e13's lava
+  walkway's, as #242 take01's members ran), a squadmate within 1.5 m ahead pushes it aside, else it
+  heads straight for its next point. Stuck 2 s (no closer to its next point than its best)
+  a member detours round it (FUN_000426b0, FUN_00042280), and the third time at one own point it's
+  put on the point it was walking to (FUN_000425b0), or, short of its place, holds there. Its pace
+  (the pace ramp, FUN_00058670) starts from a stand and steps a notch every 0.17 s toward the pace
+  it asks, up and down: a walk at once, a run, then the dash; a detour, a re-route, a hold, a hard
+  turn or a feeler's hit sets it down for a while.
 * **The test map's squad** (#302, play_testsquad.rs, [testtools.md](testtools.md) "The squad"):
   it starts with the player's character alone, and its squad menu (T) puts any character type in
   any of the four slots, or a whole predefined squad in all four (#339: the squad deathmatch
@@ -254,10 +260,10 @@ Squad movement and deaths follow the game's own data and the captures:
     FUN_00048270 hands to the character at any pace level above a walk). The player runs at the
     type's 7.8-7.9 and dashes at 8.5-8.7, so a member trails the player's dash and holds about 14
     m behind it, as #33 take04's did, and moves on at the boosted pace to catch up once farther.
-    The pace level itself is #335's (the routes' drops and the ramp's climb back, 0.17 s a notch
-    in FOLLOW and WINGMAN); not in the demo: the start-up ramp from a stand (the level begins at
-    the dash), its step down after the move asked, the feelers' drops (the boost off for 1.5 s on
-    a dash hit, a run on the next one: #344), and the walk and the velocity ease (#350).
+    The pace level is the routes' (#335's drops and the ramp's climb back, 0.17 s a notch in
+    FOLLOW and WINGMAN; #344's start from a stand, its step down after the move asked, the hard
+    turn's walk, and the feelers' drops: a dash's hit takes the boost off for 1.5 s, the next drops
+    it to a run for 1.5 s); not in the demo: the walk and the velocity ease (#350).
   * **Stand Ground** (GUARD): kneels 0.3 s after the order (a fit: take07 0.24 s, take08 0.52 s
     of game time), or stays down if it was kneeling already (the follow's crouch pause, or the
     controlled character left crouched), and stays, its facing kept, Brutus standing; no dodges,
@@ -266,8 +272,9 @@ Squad movement and deaths follow the game's own data and the captures:
     spot at what it sees once combat is allowed.
   * **Move To** (MOVE_OUT): walks a route to the point (#335, [nav.md](nav.md) "The squad on
     routes": GOAL_MOVE_OUT's start 0x45d00 routes to the cursor's point, its update FUN_00045fa0
-    walks it at 2 m) at the dash, the last 2.5 m of it at a walk, and after a detour at the pace
-    its ramp allows, a notch a second (Move To isn't one of FUN_00058670's follow modes; the game
+    walks it at 2 m) at the dash, the last 2.5 m of it at a walk, steered as the follow is (#344),
+    and from a stand or after a detour at the pace its ramp allows, a notch a second (Move To isn't
+    one of FUN_00058670's follow modes: a walk, the run after 1 s, the dash after 2; the game
     runs instead while the
     member stands in one of the level's +0x114 prisms, FUN_0004cb60: what those volumes are isn't
     traced, so the demo dashes; the leads' "a run with an enemy known" misread the test); at the
@@ -278,8 +285,8 @@ Squad movement and deaths follow the game's own data and the captures:
     too; that route round, and the 7 s wait behind a player's character when there's none, only
     run inside the level's prisms, which the demo doesn't read (`BF_TEST_PRISM` stands every
     character in one): in open ground the members pass each other by the game's avoidance
-    (take08's Hawk ran past Tex 1.5 m off without a pause; FUN_000255d0 isn't done, the demo's
-    bodies push apart). Before #335 the walk was straight, bent round the controlled character
+    (take08's Hawk ran past Tex 1.5 m off without a pause; FUN_000255d0's push, #344, and the
+    bodies' collision). Before #335 the walk was straight, bent round the controlled character
     (`pass_round`) and given up when it stalled (0.1 m in 1 s); the test map's floor, with no
     points to route over, keeps that straight walk and stall rule. A member with no point routes
     to its own point (FUN_00058b60): it walks there, to within 2 m, then it's GUARD.
@@ -385,8 +392,8 @@ Squad movement and deaths follow the game's own data and the captures:
     (`BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999
     "BF_TEST_ORDER=hawk,move,-89.5,-87.8@1;hawk,move,-70.8,-79.5@10"`): she stands, runs past Tex
     1.3 m off (take08 1.5 m) and arrives 3.3 s after the order, 1.9 m short (take08 4.2 s; 3.2 s
-    with the clips' root; the pace ramp from a stand, 0.17 s a notch, and the velocity ease
-    aren't in the demo). With Tex right on her line (`BF_TEST_GOTO=-82.16,-85.05,...`): she
+    with the clips' root; the velocity ease isn't in the demo). With #344's pace ramp from a stand
+    (Move To's 1 s a notch) 3.86 s, 1.9 m short. With Tex right on her line (`BF_TEST_GOTO=-82.16,-85.05,...`): she
     passes him 0.8 m off at the closest in the 10 Hz rows (1.4 m with the clips' root) and arrives
     at the same time. (Before #318's third round she waited 7 s behind
     him and stood her ground: the wait-then-GUARD rule, dropped.) Through the chatter gate (after
