@@ -387,7 +387,12 @@ pub fn plugin(app: &mut App) {
 /// outside SQUAD_GRENADES (28: the campaign's and the arenas'), it adds a kit on four: m09_b's
 /// Thermo, and the Sentry h_f73de83d on e16, e34 and e40, which those three lay as live mines
 /// (h_1cb7d5f2): with its kit made, `place_mines` (play_sentry.rs) now arms them as the level
-/// loads (14, 6 and 7), where before #82 they had no kit and weren't placed.
+/// loads (14, 6 and 7), where before #82 they had no kit and weren't placed. The types of the
+/// level's live-placed items get their own kit by type hash, not by label (#317): m09_b's and
+/// m09_x's Sentry h_f73de83d and e23's h_ecfe0d8c share the label of the squad's h_e5f1f063, which
+/// the label rule above kept out; `place_mines` (play_sentry.rs) now sets down 1 more mine on
+/// m09_b (its one of h_f73de83d), 3 more on m09_x (4 in all) and 3 on e23 (before: none), and no other level's
+/// count changes (`BF_SENTRY_LOG=1` over the 53 maps, before and after).
 #[allow(clippy::too_many_arguments)]
 fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>,
              mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
@@ -412,6 +417,25 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: Res
             .filter(|d| !defs.iter().any(|k| k.label.eq_ignore_ascii_case(&d.label)));
         if let Some(d) = other.cloned() {
             defs.push(d);
+        }
+    }
+    // and the types of the level's live-placed items (`Placement::placed`, h_1cb7d5f2: `place_mines`
+    // sets them down as the level loads), taken by their own type hash, not by label (#317): two
+    // types can share a label (the Sentry has three definitions, h_e5f1f063, h_f73de83d and e23's
+    // h_ecfe0d8c, all labelled Sentry), so m09_b's and m09_x's live h_f73de83d and e23's live
+    // h_ecfe0d8c got no kit behind the squad's own Sentry h_e5f1f063 and were never put down. The
+    // squad's kit keeps its place first (the labels' `GrenadeKits::find` takes the first of a label,
+    // and the sort below is stable). A level's own Roller is left to #316, a spawn-trigger's template
+    // isn't in the world (`place_mines`'s rules).
+    for l in map.iter().filter_map(|m| m.0.as_ref()) {
+        let templates = l.spawn_templates();
+        for o in l.objects.iter().filter(|o| o.placed && !templates.contains(&o.name)) {
+            let own = game.0.weapons.get(&o.kind)
+                .filter(|d| matches!(d.group_type, 2 | 3) && usable(d) && d.function_type != super::roller::ROLLING_BOMB)
+                .filter(|d| !defs.iter().any(|k| k.name == d.name));
+            if let Some(d) = own.cloned() {
+                defs.push(d);
+            }
         }
     }
     // (BF_TEST_INV's grenade types the level defines but neither SQUAD_GRENADES, its squad nor its
@@ -506,7 +530,7 @@ fn launch_grenades(mut commands: Commands, mut player: ResMut<Player>, kits: Opt
         let fuse = if t.landed { 0.0 } else { kit.def.fuse.max(0.0) };
         if std::env::var("BF_GRENADE_LOG").is_ok() && !t.landed {
             let v = t.velocity;
-            let feet = floor_y(player.position.x, player.position.z, player.position.y + GROUND + 1.0, world::Body::Character);
+            let feet = floor_y(player.position.x, player.position.z, player.position.y + GROUND + 1.0, world::Body::Player);
             println!("t {:.2}: {} leaves the hand {:.2} m over the floor at the thrower's feet at {:.1} m/s, {:.1} degrees up (mass {:.1})", player.sim_time,
                      kit.def.label, t.pos.y - feet, v.length(), v.y.atan2(Vec2::new(v.x, v.z).length()).to_degrees(), kit.def.mass);
         }

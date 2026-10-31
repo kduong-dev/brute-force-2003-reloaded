@@ -247,6 +247,34 @@ for all eight; Brutus's two other textures, h_e095a2f0 and h_e6ee3065, are commo
     Hawk's dead body on e40 (`BF_TEST_DIE=1`), textured; the HUD portraits unchanged;
     `cargo test --bin bf_play` passes.
 
+## The squad deathmatch squads (#339)
+
+The five squads squad deathmatch offers are data of game-options (`common/game-options-en.xmb`),
+in its character list h_f5a42d61 beside the 20 deathmatch `<character>`s (`Game::option_squads`,
+`Game::option_characters`):
+
+* `<squad name image h_fed0689a library-name>` (parser FUN_00198d50): its `name` a string of the
+  string table (Brute Force, Feral Hunting Pack, Shrike Raiders, Seer Coven, Ferguson Platoon, in
+  the file's order), its `library-name` one of mp_common's libraries (`sdm_bf`, `sdm_feral`,
+  `sdm_shrike`, `sdm_seers`, `sdm_ferg`), and `h_fed0689a` once per member: the four names, each
+  the `archetype-name` of one of the list's `<character>`s (`mp_tex mp_brutus mp_hawk mp_flint` for
+  Brute Force; the others' names are unrecovered hashes). A sixth squad name sits in the string
+  table (h_0f3ad7a9 "Kingman Posse") with no squad, library or type.
+* Each `<character>` has an `archetype-name`, its type in the deathmatch library `dm` (20 types:
+  the four of the Brute Force squad, then the militia, the Confed marines, the ferals, the Seers,
+  the Shrikes), and h_fa8c572a, its type in the squad libraries (`GameCharacter::squad_type`).
+  The two types agree in motion set, HUD slot (h_072ab4af) and hit points on all 20 (only the Flint
+  place's McTavish's portrait texture differs), and each squad library holds exactly the four
+  types its members name this way; a squad deathmatch match loads its squad's library
+  (FUN_000d5f60), so those four types are the squad. (`BF_DUMP_TYPES=all` lists them: "mp_common/
+  sdm_shrike" in the type's place.)
+* Where each stands: its type's h_072ab4af, the HUD slot (1 top, 2 right, 3 bottom, 4 left: Tex,
+  Flint, Brutus, Hawk in the campaign squad; FUN_000c84e0). Every squad has the four slots once
+  each, in an order of its own in the file (Brute Force lists 1, 3, 4, 2; Seer Coven 4, 2, 3, 1).
+  The squads and their members by place: testtools.md "The squad" (the T menu's predefined squads).
+* The test map's squad menu (T) puts any of them in the four slots at once; the members are types
+  of their own as any type of this page ("In play" above).
+
 ## The test map's other types (#180)
 
 The test map's levels (common, e01 for the first mission, mp_common, mp1-mp8, m02_a, m09_a,

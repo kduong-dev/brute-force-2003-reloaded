@@ -60,7 +60,9 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
     is still skipped, as it was from the main menu). Up and down move, B (Esc, Backspace) goes
     back to the main menu on MULTIPLAYER, with no sound of its own. SELECT MISSION's B goes back
     to the submenu **on that mode**; in a map, Backspace still comes back to its SELECT MISSION,
-    so B, B walks on to the submenu and the main menu on MULTIPLAYER. The submenu opens on
+    so B, B walks on to the submenu and the main menu on MULTIPLAYER. A campaign
+    mission's Backspace goes to the main menu on CAMPAIGN instead (the pause menu's Quit's place,
+    #312: the same `menu::Return` as the end menu's Quit). The submenu opens on
     DEATHMATCH every time it's entered from the main menu (the product owner's choice; CAMPAIGN
     TYPE too opens on its first button). Coming back from SELECT MISSION it's on that mode.
   * The mouse works here as on the main menu (CAMPAIGN TYPE's screens take none): each button has

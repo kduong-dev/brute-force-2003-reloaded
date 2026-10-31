@@ -13,11 +13,15 @@ then exits; `BF_FIND_BODIES=1` lists the collision bodies (size, closed or open,
 many faces face into the body; blockers and hinters, a placed object's object-type, its faces by
 the way they face) and exits, `BF_FIND_BODIES=b<n>` lists body n's triangles (#292);
 `BF_FIND_HOLES=1` or `=<file>.ppm` scans the map for holes in its collision and for the hinters'
-walls and exits (#292, "Holes" below); `BF_COLLISION_CHECK=1` counts the collision surfaces the
+walls and exits (#292, "Holes" below); `BF_FIND_HINTER=1` scans the terrain's extent every half
+metre for the spots where a character's floor or flank (one over its floor by more than a
+step) isn't the same for the AI and the player (a hinter's faces, #341) and exits; `BF_COLLISION_CHECK=1` counts the collision surfaces the
 map uses (terrain blocks, blockers, hinters, placed objects' parts) that aren't the map's own
 and exits (#338, "Which level's shapes" below); `BF_HELD_LOG=1` prints what stops the controlled
 character's move (#292); `BF_INSIDE_LOG=1` prints a character in a rock and one taken out (#285);
 `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` prints particle emission;
+`BF_ALE_DUMP=<effect name>` prints each particle that effect makes as it's born (where, how high
+above its effect, its velocity and life: "Placed effect objects", #290);
 `BF_NO_IDLE_FX=1` leaves out the power-ups' effects; `BF_NO_PLACED_FX=1` the level's placed
 effect objects, `BF_PLACED_FX_VARIANTS=1` starts the ones held out, `BF_LEVEL_DUMP=1` lists
 them):
@@ -350,8 +354,14 @@ them):
     (`BF_FIND_BODIES` over the 28 levels, #338: #292's survey said all of them, with e01's shapes
     where a hinter's name was e01's, "Which level's shapes" above); the three others, m02_b's
     body 89 (28 steep and 28 downward faces among its 72 triangles) and m09_a's body 39 and
-    m09_x's body 49 (6 floors, 16 steep, 22 downward among 48), are shaped otherwise, and the
-    demo's floor queries for a character (`Body::Character`) take their faces in as any blocker's.
+    m09_x's body 49 (6 floors, 16 steep, 22 downward among 48), are shaped otherwise. The demo's
+    floor queries for a character the AI moves (`Body::Character`, `Mover::Ai`) take their faces
+    in as any blocker's; for the player's (`Body::Player`, `Mover::Player`, #341) they leave a
+    hinter out whole, as its sweep does: `Arena::floor_at`, `floor_around`, `floor_kind`,
+    `flank_below` and the spawn's `floor_below` all take who asks. #338's survey of three
+    bodies as "stood on like any blocker" had left the player on body 89's steep faces (28 of
+    them, normal y 0.12: the flank a body falling past the band lands on and slides down:
+    `flank_below`) and on m09_a's and m09_x's floors, which don't exist for the player now.
     The bands run round ground the AI shouldn't leave: sdm_e13's 2.7 km
     band (body 71, 25 m tall) traces its arena's outer lava shore, m14_c's longest (body 49,
     375 m) the edge of its icy plateau.
@@ -487,6 +497,29 @@ them):
       and 4 went off another way down a slope. Main can't start those runs at the bands (the
       spawn moved Tex, above); its free camera's teleport run held him at m14_c's plateau edge
       (above).
+    * The player and the hinters' faces (#341; `BF_FIND_HINTER=1`, `BF_MOVE_LOG=frame`, 15 fps):
+      the scan finds 203 cells on m02_b where the AI's and the player's ground differ (all flank,
+      none floor), 5438 on m09_a (2549 floor) and 5954 on m09_x (2677 floor). m02_b's body 89,
+      at (125.5, 117.5) (floor 25.0, the band's face 30.19 over it):
+      `BF_MAP=m02_b BF_TEST_GOTO=125.5,117.5,125.5,117.5 BF_TEST_FALL=10`: the player falls
+      through the band and lands on the floor at 25.0 (the first JumpLand at t=1.067, frame 16); with the filter left
+      out of `flank_below` it came down "on a face" at 30.15 and slid to (125.42, 117.99).
+      m09_a (`BF_TEST_GOTO=-206,-215.7,-199,-215.7`): the feet stay at 57.64-57.67 across
+      x -204.7 to -202.8 where the AI's floor (hinter body 39's) rises to 58.8-59.5 (the old
+      step-up); the run now ends held at (-201.25, -215.28) by body 182 (object 171, ice
+      crystals), where main got past on the hinter floor. On m09_x the player has no ground at all where the hinter's floor is (the
+      terrain's hole under it: "no floor, face or flank", held as any hole, #296). The AI's
+      is unchanged: the tutorial's lava yard (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`
+      with `BF_BRAIN_LOG`) has 29 home at 1.53 s and 30 at 2.53 s as before, and sdm_e13's band
+      run (`BF_TEST_GOTO=90,-91,130,-91`) the player at (124.50, -95.15) at 11 s. The player's
+      other queries leave the hinters out as well (the review's round): a knocked-down
+      character's ragdoll body is `Mover::of(controlled).body()`, set again every frame it
+      lies (`Ragdoll::set_body`, so a squad switch gives the member switched to or from the right
+      one), the rock escape (`Arena::out_of_rock`, `escape`) and the warps' and spawn copies'
+      `on_ground` take the mover; the squad's spawn table, made before it's known who is
+      controlled, asks as the AI. Checked: `BF_MAP=m02_b BF_TEST_GOTO=125.5,117.5,125.5,117.5
+      BF_TEST_FALL=10 BF_TEST_KNOCK=0.3 BF_TEST_HEALTH=5000`, Tex knocked down falling through
+      body 89's band, gets up on the floor at 25.0 (JumpLand at 2.53 s), not on the band's 30.
     * sdm_e34's chasm, as main: from (56, 32) Tex is held at the rim, ending at (55.95, 15.42)
       (`BF_HELD_LOG`: "no floor, face or flank under it" from 4.53 s), and down the face west of it
       (`30,5,60,5`) at its foot, ending at (42.65, 7.16) as main's.
@@ -981,6 +1014,50 @@ them):
     lights levels hang on them (`<parent>` light objects of type h_09020c30: #143's; the game
     drives one such light-object from the light effect, FUN_0021d270, where the demo draws a
     point light per particle: levels.md "Linked lights").
+  * **Over the sky (#290).** Until #290 the sky's see-through layers were drawn after every
+    see-through thing in front of the camera whenever the camera was level or looked down, and
+    painted over it wherever the sky was behind it ([levels.md](levels.md), "The sky is drawn
+    first"). So the placed effects showed against the ground and stopped at the skyline:
+    sdm_e13's embers (slava-fuzz) showed only on the lava and the rocks, none in the air above
+    them. It wasn't their placement: every slava-fuzz particle is born 1.6 to 36.5 m above its
+    object (`BF_ALE_DUMP=slava-fuzz`: 256 births in a 10 s run, mean 18.6 m, drifting down at
+    up to 1.23 m/s), the box the game's cube spawn makes (0x64e30, through the emitter's -180
+    degree frame by FUN_000621c0), and `BF_ALE_LOG` has all eight objects emitting, with 787
+    particles alive over all the level's effects at 7.5 s, far under the 4000 budget. Every
+    effect, placed or not, whatever its facing, shared the fault, and every level with a sky
+    (51) has a see-through layer. Main and the fix give the same picture where nothing
+    see-through lies over the sky (fixed-step captures, same seeds), so their difference shows
+    what the fix brings back (scratchpad t290dev, frame 75, 5 s into the capture; pixels
+    changed by 8 levels or more):
+    * sdm_e13 at the south shore, level (`BF_MAP=sdm_e13 BF_TEST_GOTO=-19.97,-122.8,-19.97,-122.8
+      BF_CAMERA_PITCH=0`): 4.0% of the picture, the embers over the rock walls of the sky; looking
+      down with Brutus (`BF_CHARACTER=0 BF_TEST_GOTO=-19.97,-122.8,-19.97,-140
+      BF_TEST_GO_AT=999`): 1.7%, the corners where the sky shows; pitched up 0.35: 0.06%, a
+      pixel's fringe along the skyline (the terrain's blended layers, 0.02 m above the ground,
+      now drawn over the sky's edge, as the game draws the sky first).
+    * The tutorial's lava yard, level (`BF_MAP=tutorial BF_TEST_GOTO=50.68,17.53,55.8,8.9
+      BF_TEST_GO_AT=999 BF_CAMERA_PITCH=0`): the sky was empty; now the embers fill its left
+      half with three flies (xfly) among them (0.47% of the picture changed, growing from 0 as
+      the embers build up), as take08 shows its sky (Checked, below; #258's check saw them
+      because it was pitched up 0.25).
+    * m03_a's dust storm (ferg_duststorm_light, camera-attached: `BF_MAP=m03_a
+      BF_TEST_GOTO=-221.61,-113.87,-188.2,-51.8 BF_TEST_GO_AT=999 BF_CAMERA_PITCH=0`): 5.4%,
+      growing from 0.04% at the capture's start as the storm builds up: a faint veil of dust over
+      the sky (its top left 4-8 levels darker) and the odd speck of debris, which main didn't
+      draw.
+    * m14_a's meteor rain (smeteor_rain_master, camera-attached: `BF_MAP=m14_a
+      BF_TEST_GOTO=-104.3,-163.1,-104.3,-150 BF_TEST_GO_AT=999 BF_CAMERA_PITCH=0`): no change in
+      any of the six frames kept (0 to 5 s into the capture); nothing of it crossed the sky in
+      view there, so it isn't checked.
+    * The tutorial's landing spot, looking down (the recipe below): a band along the horizon
+      changes from the first frame, the sky's own layers in their order now (levels.md): a pale
+      haze over the far island where main had a dark band and ghostly pale palms, as take03 at
+      31.5 s shows it (a blue-grey haze, the far palms muted).
+    * Not checked against a take with the camera level or up on sdm_e13: the takes there all
+      look down at the lava (#146); a take pitched up at the rock walls is A1 of
+      todo/286-particle-facing/shotlist.md, not recorded. #146 take01's frames at 1 and 4 s
+      differenced show the game's embers all over both players' views, near ground and far
+      shore alike, and #28 take08 shows the tutorial's in its sky.
   * **Checked** (scratchpad t258dev):
     * The tutorial's landing spot (take03 30-33 s: `BF_MAP=tutorial
       BF_TEST_GOTO=65.55,74.03,55.6,73.05 BF_TEST_GO_AT=999`): dark winged flies dart about the

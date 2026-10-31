@@ -250,8 +250,9 @@ pub fn terrain_bump(game: &Game, level: &Level, id: u32) -> Option<(TerrainBump,
 /// an effect, the layer drew after it, painting the ground over explosions, muzzle flashes and
 /// decals: take04's cliff blasts in #73 vanished, and their scorch showed only where the rock
 /// layer's mask let it through, as straight-edged wedges. A layer is part of the ground, so it
-/// sorts first, before every other transparent thing; the layers keep their order among
-/// themselves (+10 each, as before). Its depth-test bias stays as it was (`Lamps::layer_bias`).
+/// sorts before every other transparent thing but the sky's layers (SKY_SORT, drawn before the
+/// ground as the game draws them); the layers keep their order among themselves (+10 each, as
+/// before). Its depth-test bias stays as it was (`Lamps::layer_bias`).
 const TERRAIN_LAYER_SORT: f32 = -1.0e6;
 
 /// A liquid's surface, drawn as the game's two liquid material classes draw theirs (#4;
@@ -1158,16 +1159,14 @@ pub fn animates(moving: &HashMap<u32, Animated>, played: &HashSet<u32>, name: u3
 }
 
 /// A sky layer: where the sky sits with the camera at the map's centre (its `<position>`), how
-/// far its own origin is lifted above that to draw the layers in order (`make_sky`), how the sky
-/// turns (`SkySpin`) and its clock (s of game time since it was put up). The sky moves along with
-/// the camera across the map (so its mountains stay on the horizon), not up and down; the game's
-/// stays at its `<position>` (FUN_00177d50), a few degrees of horizon parallax across a map.
+/// the sky turns (`SkySpin`) and its clock (s of game time since it was put up). The sky moves
+/// along with the camera across the map (so its mountains stay on the horizon), not up and down;
+/// the game's stays at its `<position>` (FUN_00177d50), a few degrees of horizon parallax across a
+/// map. Its layers are drawn in order before everything else see-through (SKY_SORT).
 #[derive(Component)]
 pub struct SkyLayer {
     /// the sky's origin, its `<position>`
     pub at: Vec3,
-    /// how far this layer's origin sits above the sky's, unturned (`make_sky`)
-    pub lift: Vec3,
     /// how the sky turns
     pub spin: SkySpin,
     /// s of game time on the sky's clock (`run`)
@@ -1185,15 +1184,13 @@ impl SkyLayer {
 /// Keep the sky around the camera and turned by its clock (see `SkyLayer`, `SkySpin`); add it
 /// to a level app's PostUpdate, before the transforms propagate. The whole model turns about the
 /// sky's origin (FUN_00177ba0 sets the instance's frame, FUN_00177d50 draws it at its position):
-/// each layer's mesh sits at its lifted origin less the lift, so its origin is put at the sky's
-/// plus the lift turned, and every layer stays where the others are as the sky tumbles (m09,
-/// m14, mp3); for the levels that turn about y alone the lift, along y, doesn't move.
+/// every layer's mesh is in the model's frame at that origin, so the layers stay together as the
+/// sky tumbles (m09, m14, mp3).
 pub fn follow_sky(camera: Query<&GlobalTransform, With<Camera3d>>, mut sky: Query<(&SkyLayer, &mut Transform)>) {
     let Some(eye) = camera.iter().next().map(|c| c.translation()) else { return };
     for (s, mut tr) in &mut sky {
-        let turn = s.spin.rotation(s.time);
-        tr.translation = s.at + turn * s.lift + Vec3::new(eye.x, 0.0, eye.z);
-        tr.rotation = turn;
+        tr.translation = s.at + Vec3::new(eye.x, 0.0, eye.z);
+        tr.rotation = s.spin.rotation(s.time);
     }
 }
 
@@ -1209,9 +1206,20 @@ pub fn console_look() -> (bevy::core_pipeline::tonemapping::Tonemapping, bevy::r
 /// Point lights tuned for Bevy's default camera exposure (ev100 9.7) keep their look under
 /// `console_look` when scaled by this (1.2 x 2^9.7 / (1.2 x 2^-0.263)).
 pub const POINT_LIGHT_SCALE: f32 = 1.0 / 997.0;
-/// How far apart (m) the sky layers' origins are stacked, to draw them in order (see the sky
-/// in `spawn_level`).
-const SKY_LAYER_STEP: f32 = 1000.0;
+/// A sky layer's sort distance (its material's `depth_bias`, +10 for each layer after the
+/// first; its depth-test bias stays 0, `Lamps::layer_bias`): bevy draws the see-through meshes
+/// back to front by their origin's depth in the view plus that bias, and this puts the sky's
+/// first of all of them, before the terrain's layers (TERRAIN_LAYER_SORT), in the mesh's order
+/// whatever the camera's pitch. The game draws the sky first in a camera's render (FUN_000d9f00
+/// runs FUN_00177d50 before the terrain, FUN_001f5600, and the object lists), so the world drawn
+/// after it lies over it everywhere. The demo used to sort the layers by their origins alone,
+/// stacked 1000 m apart straight above the camera: with the camera level or looking down those
+/// lay on the view's plane or behind it, so a blended layer was drawn after every see-through
+/// thing in front of the camera and painted over it wherever no solid surface stood behind it.
+/// sdm_e13's embers (slava-fuzz, #290) showed only where the ground or the lava lay behind
+/// them, cut off along the skyline, and came back with the camera pitched up; the layers' own
+/// order turned over with the pitch too.
+const SKY_SORT: f32 = -2.0e6;
 
 /// The level's own lighting (instead of a made-up sun): the outdoor pair (`Level::pair`) as
 /// directional lights, and the object ambient. The game lights each surface texture x (ambient
@@ -1878,12 +1886,12 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
     doors
 }
 
-/// A sky's layers made ready to draw (`sky_layers`): each one's mesh, material and lift above
-/// the sky's origin (`make_sky`); where the sky sits and how it turns (`Level::sky_of`).
+/// A sky's layers made ready to draw (`sky_layers`): each one's mesh and material (`make_sky`);
+/// where the sky sits and how it turns (`Level::sky_of`).
 #[derive(Clone)]
 pub struct SkyLayers {
-    /// each layer's mesh, material and lift, in the mesh's order
-    pub layers: Vec<(Handle<Mesh>, Handle<LevelMaterial>, Vec3)>,
+    /// each layer's mesh and material, in the mesh's order
+    pub layers: Vec<(Handle<Mesh>, Handle<LevelMaterial>)>,
     /// the sky's origin, its `<position>`
     pub at: Vec3,
     /// how it turns
@@ -1900,35 +1908,37 @@ pub fn sky_layers(game: &mut Game, sky: &[Geoset], at: Vec3, spin: SkySpin, mesh
     make_sky(game, sky, at, spin, meshes, materials, images, &lamps, &mut HashMap::new())
 }
 
+/// Whether a sky layer's texture has see-through texels (an alpha under 250 anywhere in its top
+/// level): such a layer is blended over the ones before it, the others are drawn opaque
+/// (`make_sky`).
+pub fn sky_see_through(mips: &Mips) -> bool {
+    mips.top().px.chunks_exact(4).any(|p| p[3] < 250)
+}
+
 /// The sky's layers in the mesh's order (sdm_e34: the flat top, the panorama of mountains and
-/// clouds, the moon, a cloud swirl), self-lit (shader h_f539fe8c), the see-through ones blended.
-/// Transparent meshes are drawn far to near by their origin, so each layer's origin sits higher
-/// above the sky's than the next one's: they draw in order from the ground.
+/// clouds, the moon, a cloud swirl), self-lit (shader h_f539fe8c), the see-through ones blended
+/// (`sky_see_through`). Each layer has a material of its own, which sorts it among the
+/// see-through meshes: first of all, in this order (SKY_SORT).
 #[allow(clippy::too_many_arguments)]
 fn make_sky(game: &mut Game, sky: &[Geoset], at: Vec3, spin: SkySpin, meshes: &mut Assets<Mesh>, materials: &mut Assets<LevelMaterial>,
             images: &mut Assets<Image>, lamps: &Lamps, cache: &mut HashMap<u32, Handle<LevelMaterial>>) -> SkyLayers {
-    let layers = sky.len() as f32;
     let mut out = vec![];
     for (i, g) in sky.iter().enumerate() {
-        let mat = material(game, images, materials, lamps, cache, g.material ^ 0x5A5A_5A5A, true, false);
-        let lift = Vec3::Y * SKY_LAYER_STEP * (layers - i as f32);
-        if let Some(m) = materials.get_mut(&mat).map(|m| &mut m.base) {
-            m.double_sided = true;
-            m.cull_mode = None;
-            m.fog_enabled = false;
-            let mips = game.material_texture(g.material).and_then(|t| game.texture_mips(t)).unwrap_or_else(|| Mips::single(1, 1, vec![160, 170, 180, 255]));
-            let clear = mips.top().px.chunks_exact(4).any(|p| p[3] < 250);
-            m.alpha_mode = if clear { AlphaMode::Blend } else { AlphaMode::Opaque };
-            m.base_color = Color::WHITE;
-            m.base_color_texture = Some(image(images, &mips));
-        }
-        let mut layer = mesh_of(g, None, 0.0, false);
-        if let Some(VertexAttributeValues::Float32x3(ps)) = layer.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
-            for p in ps.iter_mut() {
-                *p = (Vec3::from(*p) - lift).to_array();
-            }
-        }
-        out.push((meshes.add(layer), mat, lift));
+        let shared = material(game, images, materials, lamps, cache, g.material ^ 0x5A5A_5A5A, true, false);
+        let mut layer = materials.get(&shared).cloned().unwrap_or_default();
+        let mips = game.material_texture(g.material).and_then(|t| game.texture_mips(t)).unwrap_or_else(|| Mips::single(1, 1, vec![160, 170, 180, 255]));
+        let m = &mut layer.base;
+        m.double_sided = true;
+        m.cull_mode = None;
+        m.fog_enabled = false;
+        m.alpha_mode = if sky_see_through(&mips) { AlphaMode::Blend } else { AlphaMode::Opaque };
+        m.base_color = Color::WHITE;
+        m.base_color_texture = Some(image(images, &mips));
+        // drawn before every other see-through thing, in the layers' order (see SKY_SORT), with
+        // no depth-test bias
+        m.depth_bias = SKY_SORT + 10.0 * i as f32;
+        layer.extension.layer_bias = Some(0);
+        out.push((meshes.add(mesh_of(g, None, 0.0, false)), materials.add(layer)));
     }
     SkyLayers { layers: out, at, spin }
 }
@@ -1939,11 +1949,10 @@ fn make_sky(game: &mut Game, sky: &[Geoset], at: Vec3, spin: SkySpin, meshes: &m
 /// shows it.
 pub fn spawn_sky(commands: &mut Commands, sky: &SkyLayers) -> Vec<Entity> {
     let time = std::env::var("BF_SKY_TIME").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
-    sky.layers.iter().map(|(mesh, mat, lift)| {
-        let layer = SkyLayer { at: sky.at, lift: *lift, spin: sky.spin, time };
-        let turn = sky.spin.rotation(time);
+    sky.layers.iter().map(|(mesh, mat)| {
+        let layer = SkyLayer { at: sky.at, spin: sky.spin, time };
         commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), NotShadowCaster,
-                        Transform::from_translation(sky.at + turn * *lift).with_rotation(turn), layer)).id()
+                        Transform::from_translation(sky.at).with_rotation(sky.spin.rotation(time)), layer)).id()
     }).collect()
 }
 

@@ -23,7 +23,8 @@ Squad movement and deaths follow the game's own data and the captures:
   (FUN_000426b0, FUN_00042280), and the third time at one point it's put on it (FUN_000425b0).
 * **The test map's squad** (#302, play_testsquad.rs, [testtools.md](testtools.md) "The squad"):
   it starts with the player's character alone, and its squad menu (T) puts any character type in
-  any of the four slots. The slot (`Player::character`) is the place on the HUD, the key and the
+  any of the four slots, or a whole predefined squad in all four (#339: the squad deathmatch
+  squads, each member in the slot its type's h_072ab4af names, the radar's place). The slot (`Player::character`) is the place on the HUD, the key and the
   identity for the hand-over; what this page reads by a character's name (chatter, skills, the
   camera, Brutus not kneeling) goes by its type (`Player::data_slot`), the same in the main game.
 * **The tutorial's Confed marines** (#227, [brain.md](brain.md)): the V-squad's two follow Tex

@@ -134,7 +134,7 @@ fn zone(kind: i64) -> bool {
 /// (OT_PLATFORM) its light-usage: LU_INDOOR indoors, LU_GEOSET the triangle's bit, any other
 /// outdoors. On anything else, or with no floor below, it stays as it `was`.
 fn indoors(arena: &world::Arena, level: &Level, game: &Game, at: Vec3, was: bool) -> bool {
-    let Some((material, terrain, object)) = arena.floor_kind(at.x, at.z, at.y + STEP_UP) else { return was };
+    let Some((material, terrain, object)) = arena.floor_kind(at.x, at.z, at.y + STEP_UP, world::Mover::Player) else { return was };
     if terrain {
         return material & MATERIAL_INDOOR != 0;
     }

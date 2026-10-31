@@ -57,7 +57,7 @@ command line needed:
 | wheel (no menu open) | the camera's speed: x1.25 a notch, 1.5-96 m/s (6 at first), shown in the help |
 | the mouse pointer | where the tools act: the ray through it places, spawns and picks, and the menus' see-through copies follow it. With no pointer (the cursor off the window, or `BF_BACKGROUND`) the crosshair's place, marked with a small white cross; while looking, the cross stands where the pointer was |
 | left click | the open menu's click at the pointer (place, spawn, pick); a click on the panel isn't one in the world |
-| P O N T Y U L | the tools (the registry, below): scenery, objects, NPCs, squad (#302: its slots, which the next play makes), sky, music, level. The key again or Esc closes the menu |
+| P O N T Y U L | the tools (the registry, below): scenery, objects, NPCs, squad (#302: its slots, or a whole predefined squad (#339), which the next play makes), sky, music, level. The key again or Esc closes the menu |
 | J / B / Delete | on the NPC under the pointer: team, fight or dummy, remove (Shift+Delete: all) |
 | Home | put back the pickups taken in play (the test map's grid and the ones the object tool put down, each where it was; `BF_TEST_RESET_PICKUPS`, [testtools.md](testtools.md) "Putting pickups back") |
 | F5 | play from the pointer (Shift+F5: from the map's start) |
@@ -120,7 +120,8 @@ the key asks for the switch (`edit_input`) and the state's change makes it (`to_
   once the level's start has run: they don't wait for a spawn-trigger that may have fired while
   editing (#222, [cutscenes.md](cutscenes.md)). Its slots are the map's roster's (#302,
   `testsquad::Roster`, [testtools.md](testtools.md) "The squad": the map's start squad, the test
-  map's the player's character alone, as the squad menu has changed it since, in either mode):
+  map's the player's character alone, as the squad menu has changed it since (a slot at a time, or
+  all four from a predefined squad, #339), in either mode):
   `testsquad::apply` empties the slots it leaves empty and gives each its type, the leader's
   too, a member it adds at its formation place round the leader. The NPCs stay after
   them in `Squad`. The squad is fresh each time: full health and stamina, a full clip, the start's

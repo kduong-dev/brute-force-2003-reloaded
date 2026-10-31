@@ -449,8 +449,9 @@ pub struct Ragdoll {
     floor: f32,
     /// whose body the level's queries are for (#298): a corpse's is a thing's, which the level's
     /// blockers and hinters don't hold (its bodies are PID_BONE, which Ipion's pair table at
-    /// 0x3c01e8 keeps off them); a knocked-down character's a character's, which they do, as
-    /// it stands up where its pelvis lies (`as_body`)
+    /// 0x3c01e8 keeps off them); a knocked-down character's a character's, which they do (but for
+    /// the hinters, a player's character's, #341), as it stands up where its pelvis lies
+    /// (`as_body`, `set_body`)
     body: world::Body,
     contacts: Vec<Contact>,
     /// the steps run (s), the movement check's clock, and the steps to its next check
@@ -658,11 +659,18 @@ impl Ragdoll {
     }
 
     /// The same ragdoll, its body of kind `body` for the level's queries (#298): a corpse's is
-    /// `Body::Thing` (as `new` makes it), a knocked-down character's `Body::Character`, and one
-    /// that dies knocked down goes back to `Body::Thing` (play.rs).
+    /// `Body::Thing` (as `new` makes it), a knocked-down character's `Body::Character` (the AI's)
+    /// or `Body::Player` (a character a player controls: no hinter holds it, #341), and one that
+    /// dies knocked down goes back to `Body::Thing` (play.rs).
     pub fn as_body(mut self, body: world::Body) -> Self {
         self.body = body;
         self
+    }
+
+    /// Change its body kind in place (`as_body`): a knocked-down character's follows who
+    /// controls it, which changes when the squad's control passes (#341).
+    pub fn set_body(&mut self, body: world::Body) {
+        self.body = body;
     }
 
     /// Run it on by `dt` s of game time: as many 66 Hz steps as are owed, then the bones posed.

@@ -208,7 +208,7 @@ pub fn burning_ahead(a: &world::Arena, u: &Player, dir: Vec2) -> bool {
 /// one off a ledge.
 pub fn steps_into_burning(a: &world::Arena, from: Vec2, feet: f32, to: Vec2) -> bool {
     let inside = burns_at(a, Vec3::new(from.x, feet - PART_REACH, from.y));
-    a.floor_at(to.x, to.y, feet + STEP_UP).is_some_and(|(g, _, _)| (!inside || g <= feet) && burns_at(a, Vec3::new(to.x, g - PART_REACH, to.y)))
+    a.floor_at(to.x, to.y, feet + STEP_UP, world::Mover::Ai).is_some_and(|(g, _, _)| (!inside || g <= feet) && burns_at(a, Vec3::new(to.x, g - PART_REACH, to.y)))
 }
 
 /// The liquids on the characters, once they have moved and been posed, before the frame's sounds

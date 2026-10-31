@@ -68,6 +68,21 @@ use bf_viewer::bf::level::Level;
 /// The squad's four by squad slot (`Player::character`): the names their motion sets, their
 /// types (common's objecttypes) and the name-keyed `Game::character_*` tables go by; then OTHER's.
 const CHARACTERS: [&str; 5] = ["brutus", "flint", "hawk", "tex", ""];
+/// BF_CHARACTER: the character the player starts as, a squad slot: a name from CHARACTERS
+/// ("brutus", "flint", "hawk", "tex"; any case) or its number (0-3, the numbers the docs' recipes
+/// use); Tex when unset. Before #330 only the number parsed, so a name silently gave Tex.
+fn start_character() -> usize {
+    let Ok(v) = std::env::var("BF_CHARACTER") else { return 3 };
+    let v = v.trim().to_lowercase();
+    match CHARACTERS[..SQUAD].iter().position(|c| *c == v) {
+        Some(slot) => slot,
+        None => v.parse::<usize>().map_or_else(|_| {
+            eprintln!("BF_CHARACTER={v:?} is neither a squad name nor a number: Tex");
+            3
+        }, |n| n % SQUAD),
+    }
+}
+
 /// How many of CHARACTERS are the squad: the slots control passes between.
 const SQUAD: usize = 4;
 /// The CHARACTERS index of a character of any other type: a test map NPC's slot (#128), and the
@@ -293,12 +308,44 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
             }
             let a = world::Arena::install(game, &l);
             a.settle_pickups(game, &mut l);
+            // test hook: BF_FIND_HINTER=1 scans the map's terrain extent every half metre and
+            // lists the spots where the floor or the flank a character finds under it depends on
+            // whose it is, the AI's or the player's (#341: a hinter's faces are the AI's alone),
+            // with the heights each finds; then exits
+            if std::env::var("BF_FIND_HINTER").is_ok() {
+                let (lo, hi) = a.terrain_bounds().unwrap_or((Vec2::splat(-200.0), Vec2::splat(200.0)));
+                let (mut cells, mut differs, mut floors) = (0, 0, 0);
+                let mut z = lo.y;
+                while z <= hi.y {
+                    let mut x = lo.x;
+                    while x <= hi.x {
+                        cells += 1;
+                        let floor = |who| a.floor_at(x, z, 1e4, who).map(|f| f.0);
+                        let flank = |who| a.flank_below(x, z, 1e4, who).map(|f| f.0);
+                        let (ai, pl) = ((floor(world::Mover::Ai), flank(world::Mover::Ai)), (floor(world::Mover::Player), flank(world::Mover::Player)));
+                        // (a flank only counts where it's over the floor by more than a step,
+                        // as the ground loop takes it)
+                        let stands = |f: (Option<f32>, Option<f32>)| (f.0, f.1.filter(|&k| f.0.is_none_or(|g| k > g + STEP_UP)));
+                        floors += (ai.0 != pl.0) as usize;
+                        if stands(ai) != stands(pl) {
+                            differs += 1;
+                            if differs <= 40 || ai.0 != pl.0 && floors <= 10 {
+                                println!("hinter spot ({x:.1}, {z:.1}): AI floor {:?} flank {:?}, player floor {:?} flank {:?}", ai.0, ai.1, pl.0, pl.1);
+                            }
+                        }
+                        x += 0.5;
+                    }
+                    z += 0.5;
+                }
+                println!("hinter scan: {differs} of {cells} cells differ, {floors} of them by their floor");
+                std::process::exit(0);
+            }
             // test hook: BF_FIND_STEEP=1 lists spots on slide surfaces steeper than 50 degrees
             if std::env::var("BF_FIND_STEEP").is_ok() {
                 for z in (-100..100).step_by(6) {
                     for x in (-100..100).step_by(6) {
                         let (x, z) = (x as f32, z as f32);
-                        if let Some((y, n, m)) = a.floor_at(x, z, 200.0) {
+                        if let Some((y, n, m)) = a.floor_at(x, z, 200.0, world::Mover::Ai) {
                             let deg = n.y.clamp(-1.0, 1.0).acos().to_degrees();
                             if deg > 50.0 && world::Arena::slides(m) {
                                 println!("steep {x},{z} y {y:.1} {deg:.0} deg, slide surface, down {:.2},{:.2}", n.x, n.z);
@@ -306,7 +353,7 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
                             // a ledge: flat here, much lower 2 m away
                             if deg < 20.0 {
                                 for (dx, dz) in [(2.0, 0.0), (-2.0, 0.0), (0.0, 2.0), (0.0, -2.0)] {
-                                    if let Some((y2, _, _)) = a.floor_at(x + dx, z + dz, y + 0.5) {
+                                    if let Some((y2, _, _)) = a.floor_at(x + dx, z + dz, y + 0.5, world::Mover::Ai) {
                                         if y - y2 > 6.0 {
                                             println!("ledge {x},{z} y {y:.1} drops {:.1} m toward {},{}", y - y2, x + dx, z + dz);
                                         }
@@ -473,7 +520,7 @@ fn find_holes(a: &world::Arena, map: &str, seeds: &[Vec3], file: Option<&str>) {
                 }
             } else if let Some((g, _)) = a.slope_below(x, z, 1e4) {
                 (kind[k], height[k]) = (2, g);
-            } else if let Some((g, _)) = a.flank_below(x, z, 1e4) {
+            } else if let Some((g, _)) = a.flank_below(x, z, 1e4, world::Mover::Ai) {
                 (kind[k], height[k]) = (3, g);
             }
         }
@@ -638,7 +685,7 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     // a level whose squad its spawn-triggers spawn starts each member at its own (#102,
     // play_triggers.rs), led by BF_CHARACTER's if the level has them
     let spawns = level.as_ref().map(|l| triggers::squad_spawns(&game, l)).unwrap_or_default();
-    let start = spawns.leader(std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % SQUAD);
+    let start = spawns.leader(start_character());
     let mut player = player_at_start(start, &spawns);
     let mut squad = squad_at_start(start, deathmatch, &spawns);
     // the test map starts with the player's character alone, or the squad its hooks ask for
@@ -705,14 +752,14 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
     if let Some(g) = test_goto() {
         // a 5th value starts at that height (on the floor below it), e.g. on a roof; with no
         // floor below, on the steep face there if there's one (#264: it slides down it)
-        let face = g.get(4).and_then(|&y| world::arena().filter(|a| a.floor_below(g[0], g[1], y, world::Body::Character).is_none())
+        let face = g.get(4).and_then(|&y| world::arena().filter(|a| a.floor_below(g[0], g[1], y, world::Body::Player).is_none())
             .and_then(|a| a.slope_below(g[0], g[1], y)));
         // (without a height: on the terrain there, or, with no terrain there, on the highest
         // floor: #292, m14_c's squad spawn at (-167.14, 87.95) stands on an object's floor with
         // no terrain under it, where the feet came out at GROUND, -1.05 m, under the floor)
         let ground = match g.get(4) {
-            Some(&y) => world::arena().and_then(|a| a.floor_below(g[0], g[1], y, world::Body::Character)).map_or(y, |f| f.0),
-            None => world::arena().and_then(|a| a.ground(g[0], g[1]).or_else(|| a.floor_below(g[0], g[1], f32::MAX, world::Body::Character).map(|f| f.0)))
+            Some(&y) => world::arena().and_then(|a| a.floor_below(g[0], g[1], y, world::Body::Player)).map_or(y, |f| f.0),
+            None => world::arena().and_then(|a| a.ground(g[0], g[1]).or_else(|| a.floor_below(g[0], g[1], f32::MAX, world::Body::Player).map(|f| f.0)))
                 .unwrap_or(GROUND),
         };
         p.position = Vec3::new(g[0], ground + 1.0 - GROUND, g[1]);
@@ -724,7 +771,7 @@ fn player_at_start(start: usize, spawns: &triggers::SquadSpawns) -> Player {
             return p;
         }
     }
-    p.position.y = floor_y(p.position.x, p.position.z, p.position.y + GROUND, world::Body::Character) - GROUND;
+    p.position.y = floor_y(p.position.x, p.position.z, p.position.y + GROUND, world::Body::Player) - GROUND;
     p.prev_xz = Vec2::new(p.position.x, p.position.z);
     p
 }
@@ -775,8 +822,8 @@ fn squad_at_start(start: usize, deathmatch: bool, spawns: &triggers::SquadSpawns
 /// there, as `squad_around` puts the others.
 fn player_at(start: usize, at: Vec3, yaw: f32) -> Player {
     let mut p = Player::new(start);
-    let xz = world::arena().map_or(at.xz(), |a| a.push_out(at.xz(), BODY_RADIUS, at.y, at.y + BODY_HEIGHT, STEP_UP, world::Body::Character));
-    let feet = floor_y(xz.x, xz.y, at.y + STEP_UP, world::Body::Character);
+    let xz = world::arena().map_or(at.xz(), |a| a.push_out(at.xz(), BODY_RADIUS, at.y, at.y + BODY_HEIGHT, STEP_UP, world::Body::Player));
+    let feet = floor_y(xz.x, xz.y, at.y + STEP_UP, world::Body::Player);
     p.position = Vec3::new(xz.x, feet - GROUND, xz.y);
     p.prev_xz = xz;
     p.fall_from = feet;
@@ -893,7 +940,7 @@ fn main() {
         if test_map {
             testmap::load_weapon_data(&mut game);
         }
-        let start = std::env::var("BF_CHARACTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3usize) % SQUAD;
+        let start = start_character();
         // BF_DUMP_TYPES=1  the character types of the loaded archives (character_type.rs:
         // `character_type_report`), their placements and the squad's check, and exit; `all`:
         // every archive of data/ loaded first (the whole cast: 128 types, 542 placements);
@@ -1503,11 +1550,14 @@ const LEAVE_CONFIRM: f32 = 2.0;
 /// editor's, play_editor.rs) only a second press within LEAVE_CONFIRM s leaves, so a stray key
 /// doesn't throw away what was built. The map editor opened from the front end's EDITOR (#193,
 /// `editor::FromMenu`) goes back to the main menu on EDITOR (its session ends there:
-/// play_editor.rs `leave_for_menu`).
+/// play_editor.rs `leave_for_menu`). A campaign mission (the mission flow is running,
+/// `mission::MissionMode::active`) goes to the main menu on CAMPAIGN, as the end menu's Quit does
+/// (play_mission.rs `Go::Quit`, FUN_00084f50), not to a deathmatch map list (#312).
 #[allow(clippy::too_many_arguments)]
 fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>, mode: Res<Mode>, map: Res<CurrentMap>,
                 mut commands: Commands, mut frames: Local<u32>, test_map: Option<Res<testmap::TestMap>>, time: Res<Time<Real>>,
-                mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>, from_menu: Option<Res<editor::FromMenu>>) {
+                mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>, from_menu: Option<Res<editor::FromMenu>>,
+                mission: Res<mission::MissionMode>) {
     // test hook: BF_TEST_BACK=<n> goes back after n frames of the map
     *frames += 1;
     let test = std::env::var("BF_TEST_BACK").ok().and_then(|v| v.parse::<u32>().ok()) == Some(*frames);
@@ -1522,8 +1572,13 @@ fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppS
         *armed = None;
         *frames = 0;
         let editor = from_menu.is_some();
-        let map = (!editor).then(|| map.0.clone());
-        commands.insert_resource(menu::Return { map, deathmatch: mode.deathmatch, main: false, editor });
+        if mission.active && !editor {
+            // a campaign mission: the same return as the end menu's Quit (#312)
+            commands.insert_resource(menu::Return { map: None, deathmatch: false, main: true, editor: false });
+        } else {
+            let map = (!editor).then(|| map.0.clone());
+            commands.insert_resource(menu::Return { map, deathmatch: mode.deathmatch, main: false, editor });
+        }
         next.set(AppState::Menu);
     }
 }
@@ -5023,9 +5078,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             if !u.last_world.is_empty() {
                 let start = ragdoll::Start::Knock { push: push + u.last_velocity };
                 // (one knocked down stands up where its pelvis lies: its body meets the level's
-                // blockers as a living character's does, world::Body::Character, #298)
+                // blockers as a living character's does, a player's character's not the hinters:
+                // `Mover::body`, #298, #341; kept up as control passes, below)
                 let ragdoll = ragdoll::Ragdoll::new(&l.model, &u.last_world, frame, &ragdoll::parts(&game.0, u), start, floor)
-                    .as_body(world::Body::Character);
+                    .as_body(world::Mover::of(u.controlled).body());
                 u.knock = Some(Knock { ragdoll, time: 0.0, lying: None });
                 u.thud = false;
                 u.action = Action::None;
@@ -5075,6 +5131,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         } else if let Some(mut k) = u.knock.take() {
             k.time += dt;
             if k.time < KNOCK_DOWN_TIME {
+                // (control may have passed to or from it since it fell: #341)
+                k.ragdoll.set_body(world::Mover::of(u.controlled).body());
                 k.ragdoll.step(dt);
                 apply_pose(&l, &k.ragdoll.local_pose(), &mut transforms);
                 body_thud(&k.ragdoll, &mut u.thud, &mut u.body_at, &surface_land, &mut u.sound_queue, &mut u.rng);
@@ -5143,7 +5201,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // liquid). The demo's stand-in for the routes; the game's AI has no refusal of its own.
             // The probe leaves alone one on a slide-flagged floor or building up a slide there,
             // which the game's slide should take down it (e40's Shrikes at (-12.9, 56.7))
-            let here = a.floor_at(u.position.x, u.position.z, feet + STEP_UP);
+            let who = world::Mover::of(u.controlled);
+            let here = a.floor_at(u.position.x, u.position.z, feet + STEP_UP, who);
             let steered = !(player_first && i == 0) && !air && !u.slide_active && u.knock.is_none();
             let probe = steered && u.slide_amount <= 0.0 && !here.is_some_and(|f| world::Arena::slides(f.2));
             let moved = Vec2::new(u.position.x, u.position.z) - u.prev_xz;
@@ -5171,10 +5230,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // middle more than a step over that floor is ground too steep to stand on as well
             // (#285, `Arena::flank_below`; not for one the AI steers, which keeps to floors)
             let top = feet + STEP_UP;
-            let floor = a.floor_at(u.position.x, u.position.z, top)
-                .or_else(|| (!steered).then(|| a.floor_around(u.position.x, u.position.z, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, top)).flatten());
+            let floor = a.floor_at(u.position.x, u.position.z, top, who)
+                .or_else(|| (!steered).then(|| a.floor_around(u.position.x, u.position.z, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, top, who)).flatten());
             let flank = if steered { None } else {
-                a.flank_below(u.position.x, u.position.z, top).filter(|f| floor.is_none_or(|g| f.0 > g.0 + STEP_UP))
+                a.flank_below(u.position.x, u.position.z, top, who).filter(|f| floor.is_none_or(|g| f.0 > g.0 + STEP_UP))
             };
             let slope = if floor.is_none() { a.slope_below(u.position.x, u.position.z, top) } else { None };
             let Some((g, n, material, steep)) = flank.map(|(g, n)| (g, n, 0, true)).or(floor.map(|(g, n, m)| (g, n, m, false)))
@@ -5470,8 +5529,9 @@ fn ground_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
     let mut feet = feet;
     for k in 1..steps {
         let p = from.lerp(to, k as f32 / steps as f32);
-        let floor = a.floor_at(p.x, p.y, feet + STEP_UP)
-            .or_else(|| a.floor_around(p.x, p.y, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, feet + STEP_UP));
+        let who = world::Mover::of(u.controlled);
+        let floor = a.floor_at(p.x, p.y, feet + STEP_UP, who)
+            .or_else(|| a.floor_around(p.x, p.y, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, feet + STEP_UP, who));
         match floor {
             // (a step up into a wall, under a rock's overhang, isn't taken: they stop before it,
             // #285, `Arena::clear`)
@@ -5514,10 +5574,10 @@ fn face_walk(a: &world::Arena, u: &mut Player, feet: f32) -> f32 {
         let t = k as f32 / steps as f32;
         let p = from.lerp(to, t);
         let at = feet - u.face_drop * t;
-        let floor = a.floor_at(p.x, p.y, at + FACE_TOUCH).is_some_and(|f| at - f.0 <= FACE_TOUCH + u.face_drop / steps as f32);
+        let floor = a.floor_at(p.x, p.y, at + FACE_TOUCH, world::Mover::of(u.controlled)).is_some_and(|f| at - f.0 <= FACE_TOUCH + u.face_drop / steps as f32);
         // (the face: steep terrain, or a rock's flank, #285)
         let top = at + FACE_TOUCH + u.face_drop;
-        if floor || (a.slope_below(p.x, p.y, top).is_none() && a.flank_below(p.x, p.y, top).is_none()) {
+        if floor || (a.slope_below(p.x, p.y, top).is_none() && a.flank_below(p.x, p.y, top, world::Mover::of(u.controlled)).is_none()) {
             u.position.x = p.x;
             u.position.z = p.y;
             u.position.y = at - GROUND;
@@ -5592,7 +5652,7 @@ fn slide(u: &mut Player, a: &world::Arena, g: f32, start: f32, n: Vec3, material
     let asked = to - u.prev_xz;
     let to = a.move_body(u.prev_xz, to, BODY_RADIUS, start, start + BODY_HEIGHT, STEP_UP, None, world::Mover::of(u.controlled));
     let kept = if asked.length() > 1e-5 { ((to - u.prev_xz).length() / asked.length()).min(1.0) } else { 1.0 };
-    let floor = a.floor_at(to.x, to.y, g + STEP_UP);
+    let floor = a.floor_at(to.x, to.y, g + STEP_UP, world::Mover::of(u.controlled));
     let across = Vec2::new(mv.x, mv.z).length() * kept;
     match floor {
         Some((g2, _, _)) if across >= SLIDE_BLOCKED * mv.length() => u.position = Vec3::new(to.x, g2 - GROUND, to.y),
@@ -5841,7 +5901,7 @@ fn walls(a: &world::Arena, units: &mut [&mut Player], from: &mut [Vec2], player_
         let feet = u.position.y + GROUND + u.height;
         let (x, z) = (u.position.x, u.position.z);
         let steps_on = (player_first && i == 0) || u.action.airborne();
-        let face = u.face.or_else(|| steps_on.then(|| a.floor_at(x, z, feet + STEP_UP).is_none().then(|| a.slope_below(x, z, feet + STEP_UP)).flatten()).flatten().map(|s| s.1));
+        let face = u.face.or_else(|| steps_on.then(|| a.floor_at(x, z, feet + STEP_UP, world::Mover::of(u.controlled)).is_none().then(|| a.slope_below(x, z, feet + STEP_UP)).flatten()).flatten().map(|s| s.1));
         let who = world::Mover::of(u.controlled);
         let mut at = a.move_body(from[i], Vec2::new(x, z), BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, face, who);
         // (BF_HELD_LOG: what held the controlled character's move short, #292)
@@ -5873,7 +5933,7 @@ fn out_of_rocks(a: &world::Arena, units: &mut [&mut Player]) {
             continue;
         }
         let feet = u.position.y + GROUND + u.height;
-        let Some(out) = a.out_of_rock(u.prev_xz, BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP) else { continue };
+        let Some(out) = a.out_of_rock(u.prev_xz, BODY_RADIUS, feet, feet + BODY_HEIGHT, STEP_UP, world::Mover::of(u.controlled)) else { continue };
         if std::env::var("BF_INSIDE_LOG").is_ok() {
             println!("t {:.2}: {} taken out of a rock from {:.2} to {:.2} (feet {feet:.2}, the floor there {:.2?})", u.sim_time, unit_name(u),
                      u.prev_xz, out.at, out.floor);

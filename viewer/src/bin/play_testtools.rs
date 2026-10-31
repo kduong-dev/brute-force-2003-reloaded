@@ -59,7 +59,8 @@
 //!    it and joining the map's collision.
 //!  - T: the squad menu (play_testsquad.rs, #302): any character type the NPC menu offers in
 //!    each of the squad's four slots (real squad members, not NPCs), or a slot emptied; the
-//!    controlled character's own type changed in place.
+//!    controlled character's own type changed in place. Or a whole predefined squad (#339): the
+//!    campaign squad or one of squad deathmatch's five, all four slots at once.
 //!  - F5: the map editor's edit mode (play_editor.rs, #191): the squad leaves the world and the
 //!    camera flies free (the right mouse button held looks), the tools acting at the mouse
 //!    pointer; F5 again plays from where the pointer is. The menus' keys are the editor's tool
@@ -84,7 +85,7 @@ pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a 
                         F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
                         P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level\n\
-                        T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty)\n\
+                        T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty); or a predefined squad in all four (the campaign's, squad deathmatch's: the first rows)\n\
                         Home: put back every pickup taken (the grid's, and the ones placed with O), where they were";
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
@@ -367,6 +368,13 @@ pub(super) enum Hook {
     /// the squad menu's Enter or Delete: squad slot `slot` (as the hook names it:
     /// play_testsquad.rs `slot_named`) to the type `kind` names (`npc_kind`), None: emptied
     SquadSlot { slot: String, kind: Option<String> },
+    /// the squad menu's Enter on a predefined squad (#339): all four slots to that squad's
+    /// members; the squad as the hook names it (play_testsquad.rs `preset_named`)
+    SquadPreset(String),
+    /// T with a row of its list picked (a predefined squad as `SquadPreset` names one, else a
+    /// character type as `SquadSlot` names one) and, if given, a slot: the picks Up / Down and
+    /// Left / Right would make (play_testsquad.rs)
+    SquadPick { row: String, slot: Option<String> },
     /// Home: every pickup taken is put back where it was (play_testpickups.rs)
     ResetPickups,
 }
@@ -453,6 +461,13 @@ impl std::fmt::Debug for FreeCam {
 ///    squad slot (0-3 or brutus / flint / hawk / tex: its place, as BF_TEST_SELECT names it; `me`
 ///    the controlled character's) gets that type (as BF_TEST_NPC names one) or is emptied; the
 ///    controlled character's slot changes its type.
+///    BF_TEST_SQUAD_PRESET=<s>,<squad>[;...]: the squad menu's Enter on a predefined squad (#339):
+///    all four slots get that squad's members, the controlled character's changing in place.
+///    The squad: its number in the menu's list from 0, its name (`shrike raiders`), its library
+///    (`sdm_shrike` or `shrike`; `common`) or a word of its name (`campaign`, `raiders`), any case.
+///    BF_TEST_SQUAD_PICK=<s>,<row>[,<slot>]: T with that row picked (a squad as above, else a
+///    character type as BF_TEST_NPC names one) and that slot (as BF_TEST_SQUAD_SLOT names one):
+///    the picks the keys make, so the panel shows what Enter would do there.
 ///  - BF_TEST_RESET_PICKUPS=<s>[;<s>...]: Home (play_testpickups.rs): every pickup taken on the
 ///    map is put back where it was, the grid's and the object tool's.
 ///
@@ -674,6 +689,12 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     for e in entries("BF_TEST_SQUAD_SLOT") {
         let kind = e.get(2).map(|k| (!k.eq_ignore_ascii_case("empty")).then(|| k.clone()));
         add(num(&e, 0), e.get(1).zip(kind).map(|(slot, kind)| Hook::SquadSlot { slot: slot.clone(), kind }));
+    }
+    for e in entries("BF_TEST_SQUAD_PRESET") {
+        add(num(&e, 0), e.get(1).map(|n| Hook::SquadPreset(n.clone())));
+    }
+    for e in entries("BF_TEST_SQUAD_PICK") {
+        add(num(&e, 0), e.get(1).map(|r| Hook::SquadPick { row: r.clone(), slot: e.get(2).cloned() }));
     }
     for e in entries("BF_TEST_RESET_PICKUPS") {
         add(num(&e, 0), Some(Hook::ResetPickups));
