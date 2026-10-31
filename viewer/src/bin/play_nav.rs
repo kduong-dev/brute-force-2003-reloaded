@@ -1,8 +1,8 @@
 //! The AI's navigation on the map's level (#334, the first slice of #242; viewer/docs/nav.md):
 //! the world-point graph (bf/nav.rs) made as the map starts, the waypoint triggers' set-valid
 //! applied to it as they act (play_triggers.rs hands their OPERATEs on, `WaypointSet`), and the
-//! test hooks. Nothing walks a route yet but the BF_TEST_ROUTE walk: the squad's follow and
-//! Move To (#335), the enemies' goals (#336) and the script walks (#337) are the next slices;
+//! test hooks. The AI squad's follow and Move To walk routes over it since #335
+//! (play_routes.rs); the enemies' goals (#336) and the script walks (#337) are the next slices;
 //! the Move To cursor's filter reads the graph's valid bit (`Nav::valid`).
 //!
 //! Test hooks:
@@ -66,8 +66,13 @@ pub struct WaypointSet {
 }
 
 /// The world's ray as the route code asks it (`nav::Clear`, FUN_0004ce30): the arena's ray
-/// (the terrain, the placed objects' collision, the blockers and hinters; liquids, open doors
-/// and characters aren't in it) from `a` to `b`, none when they're more than `max` apart.
+/// (the terrain, the placed objects' collision, the blockers and hinters: its filter's +0x10c, 8,
+/// leaves out PID 3 alone; liquids, open doors and characters aren't in it) from `a` to `b`,
+/// none when they're more than `max` apart. BF_ROUTE_NO_HINTERS=1 (a diagnostic, #335, not the
+/// game) leaves the hinters out, to see the routes without the hinter bands the demo's members
+/// hug where the game's keep off them by their avoidance (nav.md, e13): the game's rays meet the
+/// hinters for everyone (FUN_000df0a0 tests every PID kind whose bit is clear in the filter's
+/// +0x10c, 8: todo/344-ai-avoidance leads §7), so the routes it shows aren't the game's.
 pub fn clear(arena: Option<&world::Arena>, a: Vec3, b: Vec3, max: f32) -> bool {
     let d = b - a;
     let len = d.length();
@@ -77,7 +82,17 @@ pub fn clear(arena: Option<&world::Arena>, a: Vec3, b: Vec3, max: f32) -> bool {
     if len < 1e-4 {
         return true;
     }
+    // (BF_ROUTE_NO_HINTERS=1: the hinters left out, the diagnostic above)
+    if no_hinters() {
+        return arena.is_none_or(|w| w.ray_past_hinters(a, d / len, len).is_none());
+    }
     arena.is_none_or(|w| w.ray(a, d / len, len).is_none())
+}
+
+/// BF_ROUTE_NO_HINTERS=1 (`clear`: a diagnostic against the game), read once.
+fn no_hinters() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BF_ROUTE_NO_HINTERS").is_ok_and(|v| v != "0"))
 }
 
 /// A map starts: its graph from the level's points (`Level::points`), every point valid; the

@@ -28,7 +28,13 @@
 //!  - **The walk** (`Walker`, FUN_00025730 / FUN_00026d80): the current entry is the target,
 //!    reached within the caller's radius across (2 m), less at a corner whose next leg isn't
 //!    clear (0.6), the point's own h_e6564e8a when it has one, at most 1 m inside a prism; at a
-//!    plain point, the one after is taken at once when the corridor to it is clear.
+//!    plain point, the one after is taken at once when the corridor to it is clear. The AI
+//!    update's catch-up to the own point (FUN_00041ff0) is `Walker::resync`.
+//!  - **A position beside a point** (`Dest::Beside`, #335): FUN_00059d40's temporary goal, linked
+//!    both ways to the point and its neighbours, the route ending at the position.
+//!  - **The flood** (`Graph::flood`, FUN_000594a0, #335): a link further each pass from a point,
+//!    the first point a filter takes and the way to it (the follow's point near the leader, the
+//!    way round a friend in the way).
 //!
 //! The corridor ray (FUN_0004ce30) is the caller's (`Clear`): the world's ray against the
 //! terrain, placed geometry and the blockers, which passes through liquids (object type 22,
@@ -244,11 +250,26 @@ pub enum Start {
 
 /// What a route goes to (the to-place of FUN_000416a0): a point (FUN_00058b60's place, bit 0
 /// clear), or a character (FUN_0011dfa0's place: its position and its own world point, bit 0
-/// set): a character is routed to its point, not its position (FUN_0005a440).
+/// set): a character is routed to its point, not its position (FUN_0005a440); or a position
+/// beside a point (a place with bits 0 and 1 set): FUN_0005a440 searches to FUN_00059d40's
+/// temporary point at the position, linked both ways to the point and to each of the point's
+/// neighbours, and the route ends at the position itself (FUN_00042880 drops the temporary,
+/// FUN_00022d70 + FUN_00038320 append the position). Who sets bit 1 in the game isn't found
+/// (leads §1.1); the demo's follow uses it for its formation place (play_routes.rs).
 #[derive(Clone, Copy, Debug)]
 pub enum Dest {
     Point(u32),
     Character { at: Vec3, point: Option<u32> },
+    Beside { at: Vec3, point: u32 },
+}
+
+/// Where a search ends (FUN_0005a440's goal node): a point, or FUN_00059d40's temporary at a
+/// position, linked both ways to `point` and to each of `point`'s neighbours (its own +0x30 list:
+/// the points it links to); the temporary is valid (FUN_00059b60 starts +0x28 at 4).
+#[derive(Clone, Copy, Debug)]
+pub enum Goal {
+    Point(u32),
+    Beside { at: Vec3, point: u32 },
 }
 
 /// One entry of a route (the 0x18-byte place, FUN_00058c50): a point, or a bare position (the
@@ -447,10 +468,13 @@ impl Graph {
         })
     }
 
-    /// The position of a search node: a point's, or the temporary start's (`Start::Temp`).
-    fn pos(&self, i: u32, start: &Start) -> Vec3 {
-        match (start, i as usize == self.nodes.len()) {
-            (Start::Temp { at, .. }, true) => *at,
+    /// The position of a search node: a point's, the temporary start's (`Start::Temp`, the node
+    /// after the last point) or the temporary goal's (`Goal::Beside`, the one after that).
+    fn pos(&self, i: u32, start: &Start, goal: &Goal) -> Vec3 {
+        let n = self.nodes.len();
+        match (start, goal, i as usize) {
+            (Start::Temp { at, .. }, _, k) if k == n => *at,
+            (_, Goal::Beside { at, .. }, k) if k == n + 1 => *at,
             _ => self.nodes[i as usize].at,
         }
     }
@@ -471,10 +495,20 @@ impl Graph {
     /// place, FUN_00059920 isn't called for it). The heap is the game's STL one (`push_heap`,
     /// `pop_heap`), so equal f's come off in its order.
     pub fn search(&self, start: Start, goal: u32, within: Option<f32>) -> Option<Found> {
+        self.search_to(start, Goal::Point(goal), within)
+    }
+
+    /// `search` to a `Goal`: a point, or FUN_00059d40's temporary beside one (the node after the
+    /// temporary start, `nodes.len() + 1`, in the path), whose links in are the point's and its
+    /// neighbours' (FUN_000e1910 pushes the temporary at the end of each of their lists, so it's
+    /// met after their own links).
+    pub fn search_to(&self, start: Start, goal: Goal, within: Option<f32>) -> Option<Found> {
         let n = self.nodes.len();
-        if goal as usize >= n {
-            return None;
-        }
+        let (goal_node, beside) = match goal {
+            Goal::Point(g) if (g as usize) < n => (g, None),
+            Goal::Beside { point, .. } if (point as usize) < n => (n as u32 + 1, Some(point)),
+            _ => return None,
+        };
         let first = match start {
             Start::Point(i) if (i as usize) < n => i,
             Start::Temp { link, .. } if (link as usize) < n => n as u32,
@@ -484,11 +518,24 @@ impl Graph {
             Start::Temp { link, .. } => vec![link],
             _ => vec![],
         };
-        let links = |i: u32| if i as usize == n { &temp_links[..] } else { &self.nodes[i as usize].links[..] };
-        let start_at = self.pos(first, &start);
-        let goal_at = self.nodes[goal as usize].at;
+        // (the points linked to the temporary goal: its point and the point's neighbours, each
+        // with its own links and then the temporary)
+        let into_goal: Vec<u32> = beside.map_or(vec![], |p| std::iter::once(p).chain(self.nodes[p as usize].links.iter().copied()).collect());
+        let with_goal: HashMap<u32, Vec<u32>> = into_goal.iter().map(|&k| (k, self.nodes[k as usize].links.iter().copied().chain(std::iter::once(goal_node)).collect())).collect();
+        let none: [u32; 0] = [];
+        let links = |i: u32| -> &[u32] {
+            if i as usize == n {
+                &temp_links[..]
+            } else if i as usize > n {
+                &none[..]
+            } else {
+                with_goal.get(&i).map_or(&self.nodes[i as usize].links[..], |l| &l[..])
+            }
+        };
+        let start_at = self.pos(first, &start, &goal);
+        let goal_at = self.pos(goal_node, &start, &goal);
         let limit = within.filter(|r| *r > 0.0).map(|r| r * r);
-        let mut rec = vec![Record::default(); n + 1];
+        let mut rec = vec![Record::default(); n + 2];
         let mut made = 1usize;
         let h0 = start_at.as_dvec3().distance(goal_at.as_dvec3());
         rec[first as usize] = Record { parent: None, g: 0.0, h: h0 as f32, f: h0 as f32, open: true, closed: false, made: true };
@@ -499,13 +546,13 @@ impl Graph {
             pop_heap(&mut heap, |i| rec[i as usize].f);
             found.popped += 1;
             rec[top as usize].open = false;
-            if top == goal {
-                let mut path = vec![goal];
-                let mut at = goal;
+            if top == goal_node {
+                let mut path = vec![goal_node];
+                let mut at = goal_node;
                 while let Some(p) = rec[at as usize].parent {
                     path.push(p);
                     at = p;
-                    if path.len() > n + 1 {
+                    if path.len() > n + 2 {
                         break;
                     }
                 }
@@ -514,26 +561,27 @@ impl Graph {
                 found.met = made;
                 return Some(found);
             }
-            let here = self.pos(top, &start);
+            let here = self.pos(top, &start, &goal);
             for &k in links(top) {
-                let node = &self.nodes[k as usize];
-                if node.state & AVOID != 0 || (node.state & VALID == 0 && made != 1) {
+                // (the temporary goal: valid, never avoided, FUN_00059b60's 4)
+                let (state, at) = if k as usize > n { (VALID, goal_at) } else { (self.nodes[k as usize].state, self.nodes[k as usize].at) };
+                if state & AVOID != 0 || (state & VALID == 0 && made != 1) {
                     continue;
                 }
-                if limit.is_some_and(|r2| node.at.distance_squared(start_at) > r2) {
+                if limit.is_some_and(|r2| at.distance_squared(start_at) > r2) {
                     continue;
                 }
                 if !rec[k as usize].made {
                     rec[k as usize].made = true;
                     made += 1;
                 }
-                let cost = 2.0 * here.as_dvec3().distance(node.at.as_dvec3());
+                let cost = 2.0 * here.as_dvec3().distance(at.as_dvec3());
                 let g = ((cost + rec[top as usize].g as f64) as f32) as i32 as f32;
                 let r = rec[k as usize];
                 if (r.open || r.closed) && g >= r.g {
                     continue;
                 }
-                let h = node.at.as_dvec3().distance(goal_at.as_dvec3());
+                let h = at.as_dvec3().distance(goal_at.as_dvec3());
                 let r = &mut rec[k as usize];
                 r.parent = Some(top);
                 r.g = g;
@@ -553,12 +601,15 @@ impl Graph {
     /// FUN_000416a0 `(to, from, brain; route)` with FUN_0005a440: a route from a character at
     /// `at` whose own world point is `own` (char+0x24c) to `to`, or why there's none.
     ///  1. the same point on both sides (both none too, as the game compares them): the
-    ///     one-entry route to `to` (the point, or the character's position);
+    ///     one-entry route to `to` (the point, or a position place's position: a character's or
+    ///     one beside a point);
     ///  2. (FUN_000413f0, a bit-15 destination linked to the nearest valid point within 40 m of
     ///     it: with its filter as read that's the destination itself whenever it's valid, and an
     ///     invalid one stays unexpandable, so nothing changes; not done);
-    ///  3. the search from a temporary start at `at` linked to `own` to the destination's point
-    ///     (`search`, `within` as there), the temporary dropped (FUN_0005a690): an entry per point;
+    ///  3. the search from a temporary start at `at` linked to `own` to the destination's point,
+    ///     or for a position beside a point to FUN_00059d40's temporary there (`search_to`, `within`
+    ///     as there), the temporary start dropped (FUN_0005a690): an entry per point, and the
+    ///     temporary goal's a bare position (FUN_00042880, FUN_00022d70);
     ///  4. FUN_00041320: with two entries or more and the first point not a door or a jump's,
     ///     the first dropped when the corridor (`corridor_blocked`) from the character, at that
     ///     point's height, to the second is clear: it goes straight to the second.
@@ -566,18 +617,27 @@ impl Graph {
         let goal = match to {
             Dest::Point(p) => Some(p),
             Dest::Character { point, .. } => point,
+            Dest::Beside { point, .. } => Some(point),
         };
         if own == goal {
             let entry = match to {
                 Dest::Point(p) => Entry { at: self.nodes[p as usize].at, point: Some(p) },
-                Dest::Character { at, .. } => Entry { at, point: None },
+                Dest::Character { at, .. } | Dest::Beside { at, .. } => Entry { at, point: None },
             };
             return Ok((Route { entries: vec![entry], dropped: None }, Found::default()));
         }
         let own = own.ok_or(NoRoute::NoStart)?;
         let goal = goal.ok_or(NoRoute::NoGoal)?;
-        let found = self.search(Start::Temp { at, link: own }, goal, within).ok_or(NoRoute::Unreachable)?;
-        let mut entries: Vec<Entry> = found.path.iter().skip(1).map(|&i| Entry { at: self.nodes[i as usize].at, point: Some(i) }).collect();
+        let target = match to {
+            Dest::Beside { at, point } => Goal::Beside { at, point },
+            _ => Goal::Point(goal),
+        };
+        let found = self.search_to(Start::Temp { at, link: own }, target, within).ok_or(NoRoute::Unreachable)?;
+        let n = self.nodes.len();
+        let mut entries: Vec<Entry> = found.path.iter().skip(1).map(|&i| match (i as usize > n, to) {
+            (true, Dest::Beside { at, .. }) => Entry { at, point: None },
+            _ => Entry { at: self.nodes[i as usize].at, point: Some(i) },
+        }).collect();
         let mut dropped = None;
         if entries.len() >= 2 && entries[0].point.is_none_or(|p| !special(self.nodes[p as usize].kind)) {
             let from = Vec3::new(at.x, entries[0].at.y, at.z);
@@ -587,6 +647,68 @@ impl Graph {
             }
         }
         Ok((Route { entries, dropped }, found))
+    }
+
+    /// FUN_000594a0 `(from, filter, route)`: a flood from point `from` through its links, the
+    /// first point `accept` takes (the filter's vtable +0) and the way to it, `from` first. The
+    /// search's records (FUN_00058e10's vector, DAT_004a5900) start with `from`'s; each pass goes
+    /// back from the vector's last record to the first one already examined, so the points are
+    /// taken a link further each pass (the points first met on the last pass, the last met
+    /// first): each is offered to `accept` (`from` itself first), and when refused its links are
+    /// met: a point with +0x28 bit 3 (`AVOID`) clear and bit 2 (`VALID`) set, within `within` m
+    /// (3D, the filter's +0x110) of `from`, gets a record at the end the first time, the point
+    /// that met it its parent (only then: 0x5960a). None when a pass ends with nothing new. The
+    /// follow's point near the leader (FUN_000225d0, 12 m), the blocker's way round
+    /// (FUN_00041870, 15 m) and the cover goals use it (code map).
+    pub fn flood(&self, from: u32, within: f32, mut accept: impl FnMut(u32) -> bool) -> Option<Vec<u32>> {
+        let n = self.nodes.len();
+        if from as usize >= n {
+            return None;
+        }
+        let origin = self.nodes[from as usize].at;
+        let r2 = within * within;
+        let mut recs = vec![from];
+        let mut closed = vec![false];
+        let mut parent: Vec<Option<u32>> = vec![None; n];
+        let mut has = vec![false; n];
+        has[from as usize] = true;
+        loop {
+            let len = recs.len();
+            if closed[len - 1] {
+                return None;
+            }
+            let mut i = len;
+            while i > 0 {
+                i -= 1;
+                if closed[i] {
+                    break;
+                }
+                let p = recs[i];
+                if accept(p) {
+                    let mut path = vec![p];
+                    let mut at = p;
+                    while let Some(q) = parent[at as usize] {
+                        path.push(q);
+                        at = q;
+                        if path.len() > n {
+                            break;
+                        }
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+                for &k in &self.nodes[p as usize].links {
+                    let node = &self.nodes[k as usize];
+                    if node.state & AVOID == 0 && node.state & VALID != 0 && node.at.distance_squared(origin) <= r2 && !has[k as usize] {
+                        has[k as usize] = true;
+                        parent[k as usize] = Some(p);
+                        recs.push(k);
+                        closed.push(false);
+                    }
+                }
+                closed[i] = true;
+            }
+        }
     }
 }
 
@@ -965,6 +1087,70 @@ impl Walker {
         usize::try_from(self.index).ok().and_then(|i| self.entries.get(i)).and_then(|e| e.point)
     }
 
+    /// FUN_00023420: the point of the entry after the current one (none past the end, or for a
+    /// bare position).
+    pub fn next(&self) -> Option<u32> {
+        usize::try_from(self.index + 1).ok().and_then(|i| self.entries.get(i)).and_then(|e| e.point)
+    }
+
+    /// The last entry's point (the route's +8 less 4: what the stuck handling re-plans to,
+    /// FUN_00042280 / FUN_00042490); none for a route that ends at a bare position.
+    pub fn last(&self) -> Option<u32> {
+        self.entries.last().and_then(|e| e.point)
+    }
+
+    /// Whether it has entries (the follow's and the AI update's "a route": +4 set and +8 - +4
+    /// not 0).
+    pub fn walking(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// FUN_00041ff0 (from the AI update, 0x1b184, before the goal's walk): when the character's
+    /// own point `own` is the point of the entry after the current one or of the one after that
+    /// (index + 1 and + 2, within the route; the loop runs from min(index + 1, n) to below
+    /// min(index + 3, n)), the index moves there, the later of the two when both are (each
+    /// match overwrites), with +0x18 FLT_MAX and +0x24 cleared: a character whose own point has
+    /// gone past its target catches its route up. True when it moved.
+    pub fn resync(&mut self, own: Option<u32>) -> bool {
+        let Some(own) = own else { return false };
+        let n = self.entries.len() as i32;
+        if n == 0 {
+            return false;
+        }
+        let (from, to) = ((self.index + 1).min(n), (self.index + 3).min(n));
+        let mut moved = false;
+        for k in from.max(0)..to {
+            if self.entries[k as usize].point == Some(own) && self.index != k {
+                self.index = k;
+                self.best = f32::MAX;
+                self.skipped = None;
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// What's left of the walk from `me` (m, across): to the current entry, then along the
+    /// rest. The demo's follow paces by it (play_routes.rs: its formation dashes far behind and
+    /// walks the last bit, the distances measured along the way it goes).
+    pub fn remaining(&self, graph: &Graph, me: Vec3) -> f32 {
+        let Some(i) = usize::try_from(self.index).ok().filter(|&i| i < self.entries.len()) else { return 0.0 };
+        let mut at = Self::position(graph, &self.entries[i]);
+        let mut d = me.xz().distance(at.xz());
+        for e in &self.entries[i + 1..] {
+            let p = Self::position(graph, e);
+            d += at.xz().distance(p.xz());
+            at = p;
+        }
+        d
+    }
+
+    /// The current entry's position (FUN_000233d0: its point's live one, else its own): the
+    /// stuck handling's target (FUN_000426b0).
+    pub fn target_now(&self, graph: &Graph) -> Option<Vec3> {
+        usize::try_from(self.index).ok().and_then(|i| self.entries.get(i)).map(|e| Self::position(graph, e))
+    }
+
     /// FUN_0004e8f0: the reset: the last point's `DESTINATION` and every entry's `AVOID` cleared,
     /// no current entry, the entries gone, not done.
     pub fn reset(&mut self, graph: &mut Graph) {
@@ -1281,6 +1467,64 @@ mod tests {
         // far from every point but 4: FUN_0014f7a0
         let c = own.update(&g, Vec3::new(58.0, 0.25, 0.0), 0.1, false, &open);
         assert_eq!(c, Some(OwnChange::Far(3)));
+    }
+
+    /// A route to a position beside a point (FUN_00059d40's temporary, linked both ways to the
+    /// point and to each of its neighbours): it ends at the position itself, through whichever of
+    /// them is on the way; from the point itself it's the position alone (FUN_000416a0's same
+    /// point on both sides, a position place's position).
+    #[test]
+    fn a_route_to_a_position_beside_a_point() {
+        // 1 (0, 0) -> 2 (10, 0) -> 3 (20, 0) <-> 4 (20, 10); the position (12, 3) beside 3, whose
+        // neighbours are 2 and 4: through 2 it's 2 x 3.6 m from 2, through 3 a 10 m leg more
+        let pts = [point(1, 0.0, 0.0, &[2]), point(2, 10.0, 0.0, &[1, 3]), point(3, 20.0, 0.0, &[2, 4]), point(4, 20.0, 10.0, &[3])];
+        let g = Graph::new(&pts);
+        let place = Vec3::new(12.0, 0.0, 3.0);
+        let wall = |_: Vec3, _: Vec3, _: f32| false;
+        let (route, _) = g.plan(Vec3::new(-1.0, 0.0, 0.0), Some(0), Dest::Beside { at: place, point: 2 }, None, &wall).unwrap();
+        assert_eq!(route.entries, [Entry { at: pts[0].at, point: Some(0) }, Entry { at: pts[1].at, point: Some(1) }, Entry { at: place, point: None }]);
+        // from 4 the way in is 4 -> T (a neighbour of 3's) rather than 4 -> 3 -> T
+        let (route, _) = g.plan(Vec3::new(20.0, 0.0, 11.0), Some(3), Dest::Beside { at: Vec3::new(20.0, 0.0, 4.0), point: 2 }, None, &wall).unwrap();
+        assert_eq!(route.entries.iter().map(|e| e.point).collect::<Vec<_>>(), [Some(3), None]);
+        // standing on its point: the position alone
+        let (route, _) = g.plan(Vec3::new(20.0, 0.0, 0.5), Some(2), Dest::Beside { at: place, point: 2 }, None, &open).unwrap();
+        assert_eq!(route.entries, [Entry { at: place, point: None }]);
+    }
+
+    /// FUN_000594a0's flood: the start offered first, then a link further each pass, the points
+    /// met last on a pass taken first on the next, each point's parent the first that met it; no
+    /// way through an avoided or invalid point or beyond the radius.
+    #[test]
+    fn the_flood_goes_a_link_further_each_pass() {
+        // 1 -> 2, 3; 2 -> 4; 3 -> 4, 5; 5 -> 6
+        let pts = [point(1, 0.0, 0.0, &[2, 3]), point(2, 5.0, 2.0, &[4]), point(3, 5.0, -2.0, &[4, 5]), point(4, 10.0, 0.0, &[]), point(5, 10.0, -5.0, &[6]),
+                   point(6, 15.0, -5.0, &[])];
+        let mut g = Graph::new(&pts);
+        // (3 is examined before 2, so 4's parent is 3)
+        let mut seen = vec![];
+        let path = g.flood(0, 50.0, |p| { seen.push(p); p == 3 }).unwrap();
+        assert_eq!(names(&g, &path), [1, 3, 4]);
+        assert_eq!(names(&g, &seen), [1, 3, 2, 5, 4]);
+        assert!(g.flood(0, 50.0, |p| p == 0).is_some_and(|p| p == [0]));
+        // beyond the radius, or only through an avoided point: none
+        assert!(g.flood(0, 12.0, |p| p == 5).is_none());
+        g.nodes[2].state |= AVOID;
+        assert_eq!(names(&g, &g.flood(0, 50.0, |p| p == 3).unwrap()), [1, 2, 4]);
+        assert!(g.flood(0, 50.0, |p| p == 5).is_none());
+    }
+
+    /// FUN_00041ff0: the character's own point one or two entries on moves the index there.
+    #[test]
+    fn the_route_catches_up_with_its_own_point() {
+        let pts = [point(1, 0.0, 0.0, &[2]), point(2, 10.0, 0.0, &[3]), point(3, 20.0, 0.0, &[4]), point(4, 30.0, 0.0, &[])];
+        let mut g = Graph::new(&pts);
+        let route = Route { entries: (0..4).map(|i| Entry { at: g.nodes[i].at, point: Some(i as u32) }).collect(), dropped: None };
+        let mut w = Walker::start(&mut g, &route, true, None);
+        assert!(!w.resync(Some(3)), "three on is too far");
+        assert!(w.resync(Some(2)) && w.index == 2 && w.best == f32::MAX);
+        assert!(!w.resync(Some(2)), "already there");
+        assert!(w.resync(Some(3)) && w.index == 3);
+        assert_eq!((w.next(), w.last()), (None, Some(3)));
     }
 
     /// The heap is the STL's: after pushes and pops in any order the pops come off by f, lowest

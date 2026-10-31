@@ -207,8 +207,8 @@ pub enum Mover {
     /// one the AI moves (a follower, an enemy, another member's cutscene walk; the controlled
     /// character's own cutscene walk stays `Player`, whether or not the game's hold clears the
     /// player slot's flag): the hinters hold it (unless its brain's +0x3c4 has bit 12, set while
-    /// its route jumps between world points, FUN_00026520: the demo's AI walks no routes), and it's
-    /// swept in 3 passes (0x12d183)
+    /// its route jumps between world points, FUN_00026520: the demo's squad walks routes since
+    /// #335, but takes no jumps), and it's swept in 3 passes (0x12d183)
     Ai,
 }
 
@@ -1909,6 +1909,52 @@ impl Arena {
     pub fn ray_breakable(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, Option<usize>)> {
         self.ray_tri_where(origin, dir, max, |t| Body::Thing.meets(t))
             .map(|(t, i)| (t, i.and_then(|i| self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize))))
+    }
+
+    /// `ray` with the level's hinters left out (the blockers kept).
+    pub fn ray_past_hinters(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+        self.ray_tri_where(origin, dir, max, |t| !t.hinter).map(|(t, _)| t)
+    }
+
+    /// The level's blocker and hinter triangles with a corner within the box (x, z) `lo`..`hi`,
+    /// with what each is (`body_kind`): bf_level's BF_ROUTE_FACES, to map them round a route.
+    pub fn faces_in(&self, lo: Vec2, hi: Vec2) -> Vec<(BodyKind, [Vec3; 3])> {
+        self.tris.iter().filter(|t| self.solid(t) && !t.terrain && t.object.is_none())
+            .filter(|t| t.v.iter().any(|v| v.x >= lo.x && v.x <= hi.x && v.z >= lo.y && v.z <= hi.y))
+            .map(|t| (self.body_kind(t.body), t.v)).filter(|(k, _)| matches!(k, BodyKind::Hinter(_) | BodyKind::Blocker(_))).collect()
+    }
+
+    /// Every solid triangle a ray crosses within `max`, nearest first: its distance, what it is
+    /// (`body_kind`) and which way it faces the ray (its winding's normal, (v1 - v0) x (v2 - v0),
+    /// dotted with the ray's direction: under 0 met from its front). bf_level's BF_ROUTE_PROBE.
+    pub fn ray_crossings(&self, origin: Vec3, dir: Vec3, max: f32) -> Vec<(f32, BodyKind, f32)> {
+        let mut out = vec![];
+        let mut seen = HashSet::new();
+        let flat = Vec2::new(dir.x, dir.z).length();
+        let step = if flat > 1e-4 { (CELL * 0.5 / flat).min(max) } else { max };
+        let mut t = 0.0;
+        loop {
+            let p = origin + dir * t;
+            for &i in self.near(p.x, p.z) {
+                if !seen.insert(i) {
+                    continue;
+                }
+                let tri = &self.tris[i as usize];
+                if !self.solid(tri) {
+                    continue;
+                }
+                if let Some(d) = ray_triangle(&tri.v, origin, dir).filter(|&d| d > 1e-3 && d < max) {
+                    let n = (tri.v[1] - tri.v[0]).cross(tri.v[2] - tri.v[0]).normalize_or_zero();
+                    out.push((d, self.body_kind(tri.body), n.dot(dir)));
+                }
+            }
+            if t >= max {
+                break;
+            }
+            t = (t + step).min(max);
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
     }
 
     /// `ray`, with what it meets first (`body_kind`; the flat floor's ground is `Terrain`): what

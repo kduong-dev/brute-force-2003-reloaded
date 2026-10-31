@@ -1108,6 +1108,7 @@ fn main() {
         .add_plugins(chatter::plugin)
         .add_plugins(squad_menu::plugin)
         .add_plugins(nav::plugin)
+        .add_plugins(routes::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1249,6 +1250,8 @@ mod chatter;
 mod squad_menu;
 #[path = "play_nav.rs"]
 mod nav;
+#[path = "play_routes.rs"]
+mod routes;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -2027,6 +2030,9 @@ const FIRE_LANE: f32 = 1.8;
 const SLOT_START: f32 = 3.0;
 const SLOT_STOP: f32 = 1.0;
 const SLOT_DASH: f32 = 8.0;
+/// one standing in the leader's lane steps out until within this of its moved place (m): the
+/// demo's (`squad_ai`'s 0.3 before #335)
+const LANE_STOP: f32 = 0.3;
 /// standing still this long (+ up to 1.5 s) a squadmate kneels (crouch idle, weapon ready);
 /// Brutus stays on his feet (both as in the captures)
 const KNEEL_AFTER: f32 = 1.2;
@@ -2768,6 +2774,10 @@ struct Player {
     /// char+0x640 and the use's state): the switch to the slot it goes to, then the drop-and-pickup
     /// clip
     gun_use: Option<weapon_pickups::GunUse>,
+    /// its own world point and its brain's route (#335, play_routes.rs `Router`: char+0x24c and
+    /// brain+0x930 with the fields the route code reads): kept for the controlled character and
+    /// the AI squad, walked by the squad's follow and Move To
+    router: routes::Router,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2868,6 +2878,7 @@ impl Player {
             controlled: false,
             ready_pose: false,
             gun_use: None,
+            router: Default::default(),
         }
     }
 
@@ -3009,9 +3020,13 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
 /// (`target`, from its sight: play_brain.rs `glance`, a brain's `sense`). Reloads happen by
 /// themselves (empty clip). The follow of the command modes FOLLOW and WINGMAN (#318,
 /// play_orders.rs): the places closer in WINGMAN (`orders::spacing`), and standing still the
-/// idle pauses `pauses` (goal, weight, length) of the mode's personality.
+/// idle pauses `pauses` (goal, weight, length) of the mode's personality. The way to its place is
+/// a route over the level's world points (#335, play_routes.rs `follow`, with `graph`: never a
+/// straight chase), the formation's rules saying when it sets off and settles; without a level's
+/// points (the test map's floor) the straight line.
 #[allow(clippy::too_many_arguments)]
-fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, pauses: &[(i64, f32, f32)]) {
+fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, pauses: &[(i64, f32, f32)],
+            graph: Option<&mut bf_viewer::bf::nav::Graph>) {
     // (the mode's spacing: its places, and the distances it sets off and dashes at, as
     // FUN_00020b10's five distances all go with the mode)
     let spacing = orders::spacing(m.command.mode);
@@ -3039,7 +3054,11 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     m.cam_pitch = leader.cam_pitch;
     let fwd = Vec3::new(-m.cam_yaw.sin(), 0.0, -m.cam_yaw.cos());
     let right = Vec3::new(m.cam_yaw.cos(), 0.0, -m.cam_yaw.sin());
-    let moving = m.move_input.length() > 0.1;
+    // (under way: a route walked, play_routes.rs; without a level's points the stick held)
+    let moving = match &graph {
+        Some(_) => m.router.walking(),
+        None => m.move_input.length() > 0.1,
+    };
     m.jump_pressed = false;
     m.dodge_pressed = false;
     // shot by the player: sidestep (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
@@ -3049,17 +3068,30 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         m.crouch_wanted = false;
         return;
     }
-    // wingman follow: set off when this far from the place, settle when close; dash when far
-    // behind (or past the data's leash + 10 m), walk the last bit; but not on into a liquid that
-    // burns (#1, play_liquids.rs `burning_ahead`: the game's routes have no point in one): they
-    // wait at its shore
-    let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START * spacing }) || (in_lane && dist > 0.3);
-    let shore = go && dist > 1e-4 && world::arena().is_some_and(|a| liquids::burning_ahead(&a, m, Vec2::new(to.x, to.z) / dist));
-    // (BF_LIQUID_LOG: twice a second while it waits there)
-    if shore && std::env::var("BF_LIQUID_LOG").is_ok() && (m.sim_time * 2.0).floor() != ((m.sim_time - dt) * 2.0).floor() {
-        println!("t {:.2}: {} waits at a liquid that burns, {dist:.1} m from its place, at {:.2}", m.sim_time, unit_name(m), m.position);
-    }
-    let go = go && !shore;
+    // wingman follow: set off when this far from the place, settle when close (out of the lane:
+    // within LANE_STOP); dash when far behind (or past the data's leash + 10 m), walk the last
+    // bit, both measured along the way it goes (#335)
+    let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START * spacing }) || (in_lane && dist > LANE_STOP);
+    // the way there: a route over the level's world points (#335, play_routes.rs `follow`: to the
+    // place, planned again as the follow's state 0 plans, by the leader's moves; held where the
+    // place is out of reach until he has moved the set-off distance), the straight line only
+    // without them (the test map's floor)
+    let way = match graph {
+        Some(g) if go => routes::follow(m, g, goal, leader.position, leader.router.own.point, routes::Reach::at(spacing, SLOT_START), if in_lane { LANE_STOP } else { SLOT_STOP }),
+        Some(g) => {
+            routes::stop(m, g);
+            routes::Way::Stand
+        }
+        None if go => routes::Way::Go { target: goal, along: dist, corner: false },
+        None => routes::Way::Stand,
+    };
+    let (way_to, along, corner) = match way {
+        routes::Way::Go { target, along, corner } => (Some(target), along, corner),
+        _ => (None, 0.0, false),
+    };
+    // not on into a liquid that burns (#1, play_liquids.rs `burning_ahead`): the routes' safety
+    // net, as no world point lies in one (it waits at the shore; BF_LIQUID_LOG)
+    let go = way_to.is_some_and(|t| !routes::shore(m, t, dt));
     // the follow's walk to its place begins (FUN_00021b70): the first since the flag was cleared (a
     // fresh brain's, or a Fire At Will's: play_brain.rs `Command::start_walk`) says "on my way",
     // through the gate. A stand-in for the game's follow state machine (#331): its walk starts
@@ -3068,11 +3100,18 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     if go && !moving && dist > SLOT_START * spacing && m.command.start_walk() {
         chatter::say(m, chatter::FOLLOW_WALK);
     }
-    if go {
-        let d = to / dist;
+    if let (true, Some(t)) = (go, way_to) {
+        let d = Vec3::new(t.x - m.position.x, 0.0, t.z - m.position.z).normalize_or_zero();
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
-        m.sprint = dist > SLOT_DASH * spacing || dist > m.leash + 10.0;
-        m.walk = dist < 2.5;
+        // (far behind: the way left or the place itself, which moves on past where the route was
+        // planned to, the farther; the last bit: both short. Held at a corner it walks, as
+        // BF_TEST_ROUTE's walk: the run's turn is wider than the corner's 0.6 m, and the AI's pace
+        // near a point, FUN_0004d840, isn't read. It moves at the lower of that and its pace
+        // level, which a route's detour, the way round a friend or the follow's hold set down and
+        // the ramp brings back, play_routes.rs `pace`)
+        let behind = along.max(dist);
+        let asked = if (along < 2.5 && dist < 2.5) || corner { 2 } else if behind > SLOT_DASH * spacing || behind > m.leash + 10.0 { 4 } else { 3 };
+        routes::pace(m, asked);
         m.still_time = 0.0;
         m.crouch_wanted = false;
         m.idle_pause = 0;
@@ -3081,6 +3120,7 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         m.move_input = Vec2::ZERO;
         m.sprint = false;
         m.walk = false;
+        m.router.asked = 1;
         m.still_time += dt;
         // after a moment, the idle pauses: a crouch first, then drawn from the personality's
         // table (Brutus doesn't kneel: his crouch pause stands)
@@ -4702,7 +4742,7 @@ fn land_player_shot(m: &mut Player, h: &PendingHit, game: &Game, difficulty: &da
 fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
                  mut transforms: Query<&mut Transform>, mut heading: Local<Option<f32>>, mut saw: Local<HashMap<Who, bool>>, test: Option<Res<testmap::TestMap>>,
                  kits: Option<Res<grenade::GrenadeKits>>, mut mines: ResMut<sentry::MineTargets>, mut ai_hits: ResMut<AiHits>,
-                 difficulty: Res<damage::Difficulty>, reticle: Res<reticle::Reticle>, map: Res<MapLevel>) {
+                 difficulty: Res<damage::Difficulty>, reticle: Res<reticle::Reticle>, map: Res<MapLevel>, mut nav: ResMut<nav::Nav>) {
     let dt = frame_dt(&time);
     let kits: &[grenade::GrenadeKit] = kits.as_ref().map_or(&[], |k| &k.0);
     // the controlled character's guns aim at the crosshair's lock (play_reticle.rs, last
@@ -4745,6 +4785,16 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let patrols = map.0.as_ref().map_or(&[][..], |l| &l.patrols[..]);
     // a follower's formation place comes after the squad's own members' (play_brain.rs)
     let mut follower = squad.0.iter().filter(|m| m.in_squad()).count();
+    // (#335) the own world points (FUN_0014f860, kept by the character update) of the controlled
+    // character and of the AI squad and its followers, and the friends the AI update's route
+    // round one in the way looks through (FUN_00041870, play_routes.rs)
+    if let Some(g) = nav.graph.as_ref() {
+        routes::keep_point(&mut player, g, dt);
+        for m in squad.0.iter_mut().filter(|m| routes::walks_routes(m)) {
+            routes::keep_point(m, g, dt);
+        }
+    }
+    let mates = routes::mates(&player, &squad.0);
     // each one's target this frame, for the squad's broadcast (play_brain.rs `broadcast`): the
     // controlled character's the nearest hostile it sees
     let mut held = vec![(0, (!player.dead).then(|| nearest_hostile(&player, 0, &sight)).flatten().map(|(i, _)| sight[i].who))];
@@ -4800,16 +4850,23 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if m.brain.as_ref().is_some_and(|b| b.follows()) {
             follower += 1;
         }
+        // (#335) the AI update's route steps before its goal (FUN_0001afe0, 0x1b17f-0x1b18b: the
+        // route round a friend in its way, the catch-up to its own point, the stuck handling), for
+        // whatever goal walks the route
+        let free = !(m.held || !m.script_walk.is_empty()) && (m.brain.is_some() || ((slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold));
+        if let (true, true, Some(g)) = (free, routes::walks_routes(m), nav.graph.as_mut()) {
+            routes::ai_update(m, &mates, g, dt);
+        }
         if m.held || !m.script_walk.is_empty() {
             brain::held(m);
             script::held_step(m, dt);
         } else if m.brain.is_some() {
-            brain::think(m, &player, place, heading, dt, target, patrols, &game.0, difficulty.n);
+            brain::think(m, &player, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut());
         } else if m.npc.is_some() {
             testtools::npc_ai(m, target, toward, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             // (its goal by its command mode: the follow, GUARD's hold, MOVE_OUT's walk)
-            orders::think(m, &player, slot, heading, dt, target, toward, &game.0);
+            orders::think(m, &player, slot, heading, dt, target, toward, &game.0, nav.graph.as_mut());
         } else {
             // (held where it is by a test hook: a Toggle Ability goal's command still goes, as
             // BF_TEST_HOSTILE's stealthed Hawk needs, #333)
