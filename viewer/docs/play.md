@@ -317,9 +317,59 @@ the test map (`--test`), with it:
 
 ### Radar (#228)
 
-`play_hud.rs` (`update_squad_hud`, `update_radar_marks`), from the radar widget's code
-(FUN_000ae580 and the functions below; [code-map.md](code-map.md), "HUD"):
+`play_hud.rs` (`update_squad_hud`, `update_radar_marks`) and `play_radar_disc.rs` (the disc, the
+circles and the wedge), from the radar widget's code (FUN_000ae580 and the functions below;
+[code-map.md](code-map.md), "HUD"):
 
+* **Its place** (#347): the radar panel's corner is (56, 301) (`RADAR_FRAME_AT`; FUN_000c2be0:
+  the HUD safe area's left + 5 and its bottom - 10 less the panel's 128), the radar's middle
+  (120, 365) (`RADAR_CENTRE`), the disc, the frame, the dots' overlay, the tabs and the brackets
+  all from it. The demo had them at (57.5, 305), 1.5 right and 4 down (#333 found it). The takes
+  agree: the frame texture's edges slid over take03 (1.0 s) and take07 (5.0 s) of the tutorial
+  fit best at (56.0, 301.0) of 2337 corners 0.25 apart (the old corner ranked 1926th and 1675th;
+  the demo's frame, searched the same way: (57.5, 304.5) before, (56.25, 301.0) now), and take07's
+  viewer dot sits at (119.6, 364.9). The faces round it are placed by the game's table too (see
+  "The portraits").
+* **The disc, the circles and the wedge** (#347, `play_radar_disc.rs`; the radar widget's draw
+  0xaefb0, FUN_000af1a0; [code-map.md](code-map.md)): three passes over the 128 x 128 quad at the
+  corner, as the game's textures and pixel shader make them, not the stretched disc and
+  procedural cone they were:
+  1. **The disc**: h_17d0ee37 (a teal ball, alpha 0.53, 0.6 round its rim; the circle in it
+     86 units across, as take03's), white, at its own size.
+  2. **The squad's circles**: the living members in the viewer's squad (and in reach, as their
+     blips), up to three, each the ring texture h_1fbc4e99 (a hard-edged disc) round its point at
+     the radar's scale, the radius its type's `radar-range` times 0.325 (60 m: 19.5 units, the
+     disc in the texture 1.05 x that), their alphas added and clamped at 1, times the disc's own
+     alpha; coloured (disc x (0.6, 0.4, 1.0) + (0.4, 0.2, 0.2)): lilac over the teal. The game's
+     pixel shader 0x24 does it (its D3DPIXELSHADERDEF at 0x3e0320, its combiners and the
+     constants from 0xaf524 decoded in `play_radar_disc.rs`).
+  3. **The viewer's pass**: its own circle (a dead viewer has no record: none) and the wedge,
+     h_fcebfc70, a triangle with its apex at the middle, stretched across the quad by f = 0.5 /
+     tan(half the camera's field of view across): 52.7 units wide at the quad's top for the
+     follow camera's 70 degrees, a hairline at the L-Shot-75's 25x (take06 of `todo/62-l-shot-75`
+     at 6.0 s shows the line against 1.0 s's wedge; the demo's `BF_TEST_SCOPE=2,1.0` the same),
+     coloured disc x 0.4 + 0.3, pale grey, the same as the viewer's circle. A lone viewer
+     (the tutorial's Tex, take07) shows one shape, a squad's circles lie under it (take03).
+  The colours, as the game blends them (stored values, SRC_ALPHA / INV_SRC_ALPHA): over take03's
+  ground the six zones of the disc, the circles and the middle measured in the take come out of
+  the formulas to within 4 levels (mean 1.6; e.g. the disc at (-30, +25) from the centre
+  (22.4, 51.7, 80.9) measured, (21.4, 51.5, 80.6) by the formulas); take07's, over a ground that
+  varies across the radar, within 7 (mean 3.2). The UI blends in linear light, where the same
+  layers over a dark ground come out lighter (the disc's blue about 14 levels), so each layer is
+  drawn with the game's alpha and the colour that makes the linear blend equal the game's over a
+  reference ground (`GROUND`, 0.15: the takes' dark grounds), solved layer on layer: over the
+  takes' grounds and the tutorial's grass the three passes are within 2 levels of the game's
+  blend, over e34 by day and the test map's floor within 4-5 (3.5-4.8 with no correction). A
+  demo approximation, not the game's; the game's stored-value blend for the whole HUD is shared
+  machinery (play_scope_view.rs's passes are in those values) and isn't done here (#174's
+  dimness is a different thing: the sampling of small art). Side by side with the takes
+  (`BF_MAP=tutorial BF_TEST_GOTO=10.64,44.15,22.28,34.31` at frame 90 against take07 5.0 s: the
+  grass is the same dark olive in both; `BF_MAP=e34` staged as the #33 takes against take03 1.0
+  s, whose ground is dusk where the demo's is day): the zone colours of the tutorial frame
+  against take07's differ by 3-10 levels (the demo's ground is a little brighter, (43, 46, 22)
+  against (40, 34, 15)); a horizontal profile across the wedge 34 units above the middle has
+  its edges between the same samples in both (the left one between 16 and 14 units out, the
+  right between 14 and 16, samples 2 units apart), its plateau 113 against 116 levels.
 * **Its scale** (FUN_000b0550): a world offset from the viewer, turned by the view, x 39 units
   (the max-range circle, the radar's +0x88 on a full screen) over the game options' `<radar>`
   max-range (120 m): 0.325 units a metre, each point cut to whole units. take07 agrees: the
@@ -332,6 +382,16 @@ the test map (`--test`), with it:
 * **The squad**: its living members in the world as green blips (FUN_000ae7c0's friend, 90 200 40;
   take11's marines; they were yellow) at that scale, one beyond the range on the circle (the game
   draws a rim marker for it: FUN_000ae7c0 through FUN_000b0ad0, not done).
+* **The faces' places** (#347): each slot's face texture is drawn from the radar panel's corner
+  plus the table 0x3c8c68's entry (FUN_000c2d70 puts the slot's portrait widget, class 0xe9535a,
+  there: Tex (51, -15), Flint (112, 51), Brutus (51, 112), Hawk (-4, 51); `FACE_AT`), at its
+  texture's size, the art packed into the top left of the 32 x 32 (Tex's from the second row), so
+  the art boxes' top lefts are (107, 287), (168, 352), (107, 413) and (52, 352). They had been
+  fitted by eye, (1.7, 3) too far right and down on average. Each face texture slid over take03's
+  frames (1.0 s and 7.0 s, steps of a quarter unit, the art's luminance correlated with the
+  take's) fits exactly there for Flint, Brutus and Hawk (0.88-0.94) and Tex within 0.5-0.75 up
+  (his bracket over the art); the demo's own frame the same way: within 0.25 of the table for all
+  four, and the whole radar region within 0.25-0.5 of take03's.
 * **The portraits** (#303): a squad slot shows its face, its command tab and its health
   channel only while a member is in the world in it (`slot_member`; a dead one keeps its skull: dead
   members are still in the squad). A slot whose member the zone doesn't have shows nothing: the
@@ -368,12 +428,12 @@ the test map (`--test`), with it:
     corner, the icon at its texture's size: Tex (38, 5), Flint (115, 37), Brutus (82, 114), Hawk
     (5, 81). The art fills each texture's top left. The code's corner is (56, 301)
     (FUN_000c2be0), and take03 and take08's icons start there (Hawk's arrows, bars and arrow all
-    from (61, 382), Tex's arrows from (94, 306)); but the demo draws the radar frame, whose boxes
-    hold the tabs, 1.5 right and 4 lower (`RADAR_FRAME_AT` (57.5, 305): take03 1.0 s has Tex's box's
-    edges at x 90.7 / 104.7, y 302.7 / 317.3, the demo's at 92.0 / 106.0, 306.0 / 320.7), so the
-    tabs go from that corner too, as the brackets do: each in its box as in the takes, the whole
-    radar that much off them (not moved here). The panel slides with the menu, the tabs with it.
-    Before #333 every tab drew the follow arrows squeezed into a 10 x 10 box at a measured centre.
+    from (61, 382), Tex's arrows from (94, 306)). The radar frame, whose boxes hold the tabs, was
+    drawn 1.5 right and 4 lower than that until #347 (`RADAR_FRAME_AT` (57.5, 305): take03 1.0 s
+    has Tex's box's edges at x 90.7 / 104.7, y 302.7 / 317.3, the demo's were at 92.0 / 106.0,
+    306.0 / 320.7); the frame, the tabs and the brackets all go from (56, 301) now, each in its
+    box as in the takes. The panel slides with the menu, the tabs with it. Before #333 every tab
+    drew the follow arrows squeezed into a 10 x 10 box at a measured centre.
   * **Who**: every slot's member in the world, the controlled character's too (take03: Tex's
     arrows), hidden while it's dead (0xc40bb).
   * **The flash**: a new icon (the update's texture compare, the first one set at a map's start
@@ -460,7 +520,16 @@ the test map (`--test`), with it:
   menu fades in, 1 - (1 - fade / 0.3)^3 of the way (FUN_000c2be0: 116 right and 120 up), and
   back as it fades out; it draws over the menu's darkening backdrop (`RADAR_Z`). Checked against
   take01 (4.0 s) and take03 (3.9 s, three selected): the faces, brackets and the pale middle
-  dot, the panel at the take's place within the demo's own 2-4 units.
+  dot, the panel at the take's place (the frame texture's edges fit take01's open menu at
+  (171.6, 181.0), the code's slid corner (172, 181), the demo's frame (172.0, 180.5); it was
+  within 2-4 units before #347 moved the corner). The chevrons' stack is the demo's own fit
+  (`CHEVRON_GAP`): the game's flash widget (0xf5c0f471) draws the textures h_016c3d13 (Flint and
+  Hawk, 16 x 32, mirrored for Flint) and h_091adf04 (Tex and Brutus, 32 x 16, mirrored for
+  Brutus) in the boxes of the table 0x3c8e28 ((26, 49, 16, 32) Hawk, (103, 49, -16, 32) Flint,
+  (48, 23, 32, 16) Tex, (48, 105, 32, -16) Brutus from the panel's corner), each of the three
+  6 units further out (FUN_000c4bc0: (2 - n) x 6), tinted by their alpha (0xc4c37: the red
+  (a, a / 4, a / 4), not traced further); the demo's are rotated copies of h_158f87c1, 2-3 units
+  off take02's taps at Hawk (2.20 s) and Tex (5.70 s) after the fit, and smaller (not done).
 
 Verified (the tutorial, `BF_TEST_GOTO=10.64,44.15,22.28,34.31` into the first patrol's circle,
 [triggers.md](triggers.md) "Test hooks"; crops of the radar against take07 and take03): the first
@@ -482,11 +551,15 @@ BF_TEST_GOTO=-44.4,15.5,-44.6,15.1 "BF_TEST_NPC=0.5,brutus,enemy,fight,-44.5,5;0
 the near enemy, known to Flint, red; the far one (75 m) none; the friend green; the neutral 70 70 70.
 
 Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
-radar's own placement and size on screen (take07's sits ~2 units right and ~4 lower) and the
-dots' size; the squad's rim markers (above) and their 200 200 200 when selected (FUN_000c86d0); the
-reach's easing by char+0x57c (above); contact 2's cursor on the screen (FUN_00052db0); which
-list of characters the HUD's squad list is kept from (FUN_000bd790, "The portraits" above). A
-test map dummy is no AI target, so nobody knows of a hostile dummy and it never shows.
+dots' size (the game's character records are re-made each game frame and grow, so a dot is a
+blob 5-7 units across, the demo's squad blips and middle dot 4); the squad's rim markers (above)
+and their 200 200 200 when selected (FUN_000c86d0); the reach's easing by char+0x57c (above);
+contact 2's cursor on the screen (FUN_00052db0); which list of characters the HUD's squad list
+is kept from (FUN_000bd790, "The portraits" above); the disc's and the frame's colours blended as
+the console does (stored values: see "The disc, the circles and the wedge"); the portraits'
+notch fills behind the faces (the demo's blue boxes are brighter than the takes' dark navy: a
+fit, #342's neighbourhood). A test map dummy is no AI target, so nobody knows of a hostile
+dummy and it never shows.
 
 ### Ammo, reload and the crosshair (#114)
 
