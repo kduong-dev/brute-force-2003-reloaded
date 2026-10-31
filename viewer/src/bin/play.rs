@@ -391,11 +391,11 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
 /// bf_level loads it) and so is the default level's (`other`: `BF_LEVEL`, e01); for each kind of
 /// surface the map names (the terrain blocks, the blockers, the hinters, the parts of the placed
 /// objects) it prints how many surfaces and uses there are, how many of the surfaces `other` has
-/// under the same name too (what the ticket counted: the tutorial 11 of its 24 blockers and
+/// under the same name too (what #338 counted first: the tutorial 11 of its 24 blockers and
 /// hinters), how many `own` has no shape for, and how many `game` gives a shape other than `own`'s
 /// (a surface that another level's data shadowed: the tutorial's five hinters before #338, none
 /// after), with the first few names. The triangles are compared as the game's loader gives them
-/// (`Game::collision`).
+/// (`Game::collision`). maps.md, "Which level's shapes", has the counts over the 53 maps.
 fn collision_check(game: &Game, level: &Level, map: &str) {
     use std::collections::BTreeMap;
     let default = std::env::var("BF_LEVEL").unwrap_or_else(|_| "e01".into());
