@@ -79,7 +79,8 @@ const WINGMAN_SPACING: f32 = 8.0 / 11.2;
 /// blend) isn't traced.
 const GUARD_KNEEL: f32 = 0.3;
 /// MOVE_OUT's point is reached within this (m, across): GOAL_MOVE_OUT's update (FUN_00045fa0)
-/// walks the route with FUN_00026d80 at 2.0. Take08: Hawk stopped 1.9-2.0 m short of the point.
+/// walks the route with FUN_00026d80 at 2.0. Take08: Hawk's first GUARD row (30.85 s) is 2.00 m
+/// across from the point (-72.66, -80.21 against -70.78, -79.53), 1.84 m once she settles.
 const MOVE_OUT_ARRIVE: f32 = 2.0;
 /// MOVE_OUT walks the last bit (m, along its route): play.rs `squad_ai`'s own 2.5. Take08's Hawk
 /// slowed from the dash to a run 5.6 m out and to a walk 2.8 m out (her locomotion's, not the

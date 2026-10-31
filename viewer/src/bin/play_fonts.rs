@@ -209,6 +209,11 @@ pub fn record_text(text: &str, x: f32, y: f32, record: &'static Record, colours:
             ..default() })
 }
 
+/// The record texts' drawing system (`draw`): what writes their nodes before the UI's layout
+/// (play_ui_guard.rs orders its net after it).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct DrawRecords;
+
 /// The record texts' drawing, in every state (the status line shows over the front end and the
 /// briefings too). Its glyph nodes are made before the UI's frame starts: UiSystem::Prepare gives
 /// each node its camera and scale, UiSystem::Stack lists the nodes to draw and the visibility
@@ -216,7 +221,7 @@ pub fn record_text(text: &str, x: f32, y: f32, record: &'static Record, colours:
 /// text made anew every frame, sliding or typing, wouldn't show: the front end's captures).
 pub fn plugin(app: &mut App) {
     app.init_resource::<FontImages>()
-        .add_systems(PostUpdate, draw.before(bevy::ui::UiSystem::Prepare).before(bevy::ui::UiSystem::Stack)
+        .add_systems(PostUpdate, draw.in_set(DrawRecords).before(bevy::ui::UiSystem::Prepare).before(bevy::ui::UiSystem::Stack)
             .before(bevy::render::view::VisibilitySystems::VisibilityPropagate));
 }
 
@@ -225,6 +230,25 @@ pub fn plugin(app: &mut App) {
 fn draw(mut commands: Commands, images: Res<FontImages>, mut texts: Query<(Entity, &mut RecordText, Option<&Children>)>,
         mut glyphs: Query<(&Glyph, &mut ImageNode)>) {
     for (e, mut t, children) in &mut texts {
+        // (a number the placing code computed that isn't finite is 0 and logged once, #349)
+        let what = |t: &RecordText, field: &str| format!("record text {:?}'s {field}", t.text);
+        if !(t.x.is_finite() && t.y.is_finite() && t.scale.is_finite() && t.alpha.is_finite()) {
+            // (x and y to 0, the scale and the alpha to 1)
+            if !t.x.is_finite() {
+                t.x = super::ui_guard::finite_with(|| what(&t, "x"), t.x);
+            }
+            if !t.y.is_finite() {
+                t.y = super::ui_guard::finite_with(|| what(&t, "y"), t.y);
+            }
+            if !t.scale.is_finite() {
+                super::ui_guard::finite_with(|| what(&t, "scale"), t.scale);
+                t.scale = 1.0;
+            }
+            if !t.alpha.is_finite() {
+                super::ui_guard::finite_with(|| what(&t, "alpha"), t.alpha);
+                t.alpha = 1.0;
+            }
+        }
         let want = (t.text.clone(), t.x.to_bits(), t.y.to_bits(), t.scale.to_bits());
         if t.drawn.as_ref() == Some(&want) {
             if t.drawn_alpha != t.alpha {

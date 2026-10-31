@@ -94,29 +94,39 @@ impl GameFont {
     }
 }
 
-fn draw(mut commands: Commands, font: Option<Res<GameFont>>, windows: Query<&Window, With<PrimaryWindow>>,
+pub(crate) fn draw(mut commands: Commands, font: Option<Res<GameFont>>, windows: Query<&Window, With<PrimaryWindow>>,
         mut texts: Query<(Entity, &mut GameText, &mut Node)>) {
     let (Some(font), Ok(win)) = (font, windows.single()) else { return };
     // the HUD screen is 4:3 at the window's height
     let unit = win.height() / 480.0;
+    // (a window with no height, minimised, has no screen to draw on: its glyphs would be 0 px and
+    // what's divided by the unit would be NaN, #349. Nothing is drawn until it has one again)
+    if !(unit.is_finite() && unit > 0.0) {
+        return;
+    }
     for (e, mut t, mut node) in &mut texts {
+        // (its numbers are computed by whatever places it: a non-finite one is 0 and logged once,
+        // naming the text, #349)
+        let what = |t: &GameText, field: &str| format!("game text {:?}'s {field}", t.text);
+        let cap = super::ui_guard::finite_with(|| what(&t, "cap"), t.cap);
+        let (x, y) = (super::ui_guard::finite_with(|| what(&t, "x"), t.x), super::ui_guard::finite_with(|| what(&t, "y"), t.y));
         let want = (t.text.clone(), t.color, unit);
         if t.drawn.as_ref() != Some(&want) {
-            t.width = font.width(&t.text, t.cap);
+            t.width = font.width(&t.text, cap);
             t.drawn = Some(want);
             commands.entity(e).despawn_related::<Children>();
-            spawn_glyphs(&mut commands, &font.0, e, &t.text, t.cap * unit, t.color);
+            spawn_glyphs(&mut commands, &font.0, e, &t.text, cap * unit, t.color);
         }
         let left = match t.align {
-            Align::Left => t.x,
-            Align::Centre => t.x - t.width / 2.0,
+            Align::Left => x,
+            Align::Centre => x - t.width / 2.0,
         };
-        let (l, top) = (Val::Percent(left / 6.4), Val::Percent(t.y / 4.8));
+        let (l, top) = (Val::Percent(left / 6.4), Val::Percent(y / 4.8));
         if node.left != l || node.top != top {
             node.left = l;
             node.top = top;
         }
-        let h = Val::Px(font.line(t.cap) * unit);
+        let h = Val::Px(font.line(cap) * unit);
         if node.height != h {
             node.height = h;
         }

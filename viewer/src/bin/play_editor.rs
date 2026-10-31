@@ -707,6 +707,7 @@ fn help_text(tools: Res<Tools>, editor: Res<Editor>, placements: Res<Placements>
 /// where the cursor doesn't show, and the mark of where F5 puts the squad (no menu open).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn edit_view(time: Res<Time>, mut editor: ResMut<Editor>, tools: Res<Tools>, mut player: ResMut<Player>, status: Res<UsePanel>,
+             mut hidden: ResMut<super::hud::HudHidden>,
              mut cam: Query<&mut Transform, With<MainCamera>>, windows: Query<&Window, With<PrimaryWindow>>,
              mut hud: Query<&mut Visibility, (Or<(With<super::hud::HudRoot>, With<Hud>)>, Without<PointerMark>)>,
              mut line: Query<(&mut Text, &mut Node), (With<EditStatus>, Without<PointerMark>)>,
@@ -726,6 +727,10 @@ fn edit_view(time: Res<Time>, mut editor: ResMut<Editor>, tools: Res<Tools>, mut
         }
     }
     let show = !tools.edit && editor.flight.is_none();
+    // (for what draws only with the HUD: play_scope_view.rs)
+    if hidden.editor == show {
+        hidden.editor = !show;
+    }
     for mut v in &mut hud {
         let want = if show { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
@@ -750,7 +755,9 @@ fn edit_view(time: Res<Time>, mut editor: ResMut<Editor>, tools: Res<Tools>, mut
             *v = want;
         }
         let p = tools.pointer.unwrap_or(Vec2::new(0.0, CROSSHAIR_UP));
-        let (left, top) = (Val::Percent((p.x + 1.0) * 50.0), Val::Percent((1.0 - p.y) * 50.0));
+        // (the pointer's place comes from the cursor over the window's size: a number that isn't
+        // finite is 0 and logged once, #349)
+        let (left, top) = (super::ui_guard::percent("the editor's pointer cross", (p.x + 1.0) * 50.0), super::ui_guard::percent("the editor's pointer cross", (1.0 - p.y) * 50.0));
         if node.left != left || node.top != top {
             (node.left, node.top) = (left, top);
         }

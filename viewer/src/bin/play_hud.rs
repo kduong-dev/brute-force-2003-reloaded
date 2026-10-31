@@ -14,9 +14,8 @@ use super::*;
 use super::fonts::{record_text, Across, RecordText, BODY12, HEADING24};
 use super::text::{game_text, Align, GameText, AMMO_ORANGE, MESSAGE_BLUE};
 
-/// radar frame (octagon) and its disc
+/// radar frame (octagon); its disc, circles and wedge are play_radar_disc.rs's
 const RADAR_FRAME: u32 = 0x132E_4EE1;
-const RADAR_DISC: u32 = 0x17D0_EE37;
 /// weapon panel background (128 x 32)
 const WEAPON_PANEL: u32 = 0xE11F_B292;
 const CROSSHAIR_TEX: u32 = 0x1D2A_68D0;
@@ -73,15 +72,30 @@ const WEAPON_ICON: [f32; 2] = [128.0, 64.0];
 const SWITCH_HINT_X: f32 = 53.0;
 const SWITCH_HINT_TOP: f32 = 85.8;
 const SWITCH_HINT_CAP: f32 = 13.0;
-/// portraits by character (CHARACTERS order: Brutus, Flint, Hawk, Tex) and the centres of the
-/// faces round the radar: the whole squad, Tex top, Hawk left, Flint right, Brutus bottom (game
-/// screenshot, positions refined by template matching against it; same order as the options
-/// screen's HUD page). The faces are packed into a corner
-/// of their 32 x 32 textures (Flint and Hawk 21 x 27, Brutus 27 x 24, Tex 27 x 30), so the
-/// centre of each slot's own face is where its opaque pixels sit, and the 32 x 32 box every
-/// portrait and skull is drawn in (PORTRAIT_BOX) has its corner at `portrait_corner`.
+/// portraits by character (CHARACTERS order: Brutus, Flint, Hawk, Tex) round the radar: the whole
+/// squad, Tex top, Hawk left, Flint right, Brutus bottom (same order as the options screen's HUD
+/// page). The faces are packed into the top left of their 32 x 32 textures (Flint and Hawk
+/// 21 x 27, Brutus 27 x 24, Tex 27 x 30 from the second row); the game draws the whole texture
+/// in a 32 x 32 box (PORTRAIT_BOX) at the table's place (FACE_AT), so the art lands where those
+/// texels are.
 const PORTRAITS: [u32; 4] = [0xFDFB_4331, 0xEB2F_DA05, 0x0823_79F7, 0x076B_684B];
-const PORTRAIT_CENTRE: [(f32, f32); 4] = [(122.2, 428.5), (180.5, 368.2), (64.1, 368.5), (122.2, 303.8)];
+/// Where each slot's portrait box (PORTRAIT_BOX) is drawn: its top left from the radar panel's
+/// corner (RADAR_FRAME_AT), by character (Brutus slot 3, Flint 2, Hawk 4, Tex 1). The portrait
+/// group's constructor (FUN_000c2d70, 0xc2dc9-0xc2dd7) puts the slot's portrait widget (class
+/// 0xe9535a, which FUN_000c3680 gives five parts) at the table 0x3c8c68's entry, the slot less 1
+/// (4 on for a small screen): (51, -15), (112, 51), (51, 112), (-4, 51) for Tex, Flint, Brutus,
+/// Hawk; the widget draws its whole 32 x 32 texture from there (#342). The takes agree: each
+/// face texture slid over take03's frames (1.0 s and 7.0 s, steps of a quarter unit, normalised
+/// correlation of the art's luminance) fits best exactly at the table's place for Flint (168,
+/// 352), Brutus (107, 413) and Hawk (52, 352) (correlation 0.88-0.94), and Tex (107, 286) within
+/// 0.5-0.75 up (his yellow bracket over the art in those frames). (The demo's faces were fitted
+/// by eye against a screenshot, on average (1.7, 3) too far right and down, when the frame was
+/// drawn at (57.5, 305): #347.)
+const FACE_AT: [(f32, f32); 4] = [(51.0, 112.0), (112.0, 51.0), (-4.0, 51.0), (51.0, -15.0)];
+/// The centre of each slot's own face's art (its opaque box in the texture, from FACE_AT): where a
+/// thing aimed at the portrait points (the selection's chevrons; the "?" of a face with none). The
+/// box itself isn't used any more, the whole texture being drawn: these are the numbers it gave.
+const PORTRAIT_CENTRE: [(f32, f32); 4] = [(120.5, 425.0), (178.5, 365.5), (62.5, 365.5), (120.5, 302.0)];
 /// The command tab beside each portrait (#333): the tab widget FUN_000c3d10 (vtable 0x39f4f0, its
 /// update 0xc3f80 at +0x14 and draw 0xc4130 at +0x18; the HUD factory makes one a portrait at
 /// 0xb9af8), an 8-unit sprite whose texture and size its update sets each frame by the command
@@ -102,13 +116,12 @@ const TAB_MOVE_OUT: (u32, f32, f32) = (0xEED3_270A, 16.0, 16.0);
 /// Each tab's top left (FUN_000c3f40 from the update: the table 0x3c8ea8, (x, y) by the game slot
 /// less 1, 4 on for a small screen), from the radar panel's corner, by character (CHARACTERS:
 /// Brutus slot 3, Flint 2, Hawk 4, Tex 1). Each icon's art fills its texture's top left. The
-/// corner is the one the demo draws the radar frame and the brackets from (RADAR_FRAME_AT), so
-/// each icon sits in its box of the frame as in the takes. The code's corner on a full screen is
-/// (56, 301) (FUN_000c2be0: the HUD safe area's left + 5, its bottom - 10 less the panel's 128),
-/// where take03's and take08's icons start (Hawk's arrows, bars and arrow from (61, 382), Tex's
-/// arrows from (94, 306)); the demo's frame is drawn 1.5 right and 4 lower than that (take03 1.0
-/// s: Tex's box's edges at x 90.7 / 104.7, y 302.7 / 317.3 against the demo's 92.0 / 106.0, 306.0
-/// / 320.7), and the tabs with it.
+/// corner is the one the demo draws the radar frame and the brackets from (RADAR_FRAME_AT, the
+/// code's (56, 301) since #347: FUN_000c2be0), where take03's and take08's icons start (Hawk's
+/// arrows, bars and arrow from (61, 382), Tex's arrows from (94, 306)), so each icon sits in its
+/// box of the frame as in the takes. (The frame was drawn 1.5 right and 4 lower until #347,
+/// take03 1.0 s: Tex's box's edges at x 90.7 / 104.7, y 302.7 / 317.3 against the demo's then
+/// 92.0 / 106.0, 306.0 / 320.7.)
 const TAB_AT: [(f32, f32); 4] = [(82.0, 114.0), (115.0, 37.0), (5.0, 81.0), (38.0, 5.0)];
 /// The tab's flash at a new icon: the update sets +0x4c and zeroes +0x48 whenever the texture
 /// changes (0xc4002-0xc4099, the first one set included), FUN_000c4100 adds 1.5 (0x40d6b0) x the
@@ -153,15 +166,17 @@ const METER_TICK: Color = Color::srgb(0.08, 0.12, 0.25);
 /// ground the demo's fade comes out a little fainter than the game's.
 const METER_GROUND: f32 = 28.0 / 255.0;
 const METER_FULL: f32 = 130.0 / 255.0;
-/// radar: centre of the disc (screen units; the radar widget's place + 64, its +0xd4 / +0xd8)
-const RADAR_CENTRE: (f32, f32) = (121.5, 369.0);
+/// radar: centre of the disc (screen units; the radar widget's place + 64, its +0xd4 / +0xd8:
+/// FUN_000adbc0 sets them to 0x40 and FUN_000adf20 again on a full screen), (120, 365) from the
+/// corner RADAR_FRAME_AT. take07's viewer dot is at (119.6, 364.9).
+const RADAR_CENTRE: (f32, f32) = (RADAR_FRAME_AT.0 + 64.0, RADAR_FRAME_AT.1 + 64.0);
 /// The radar's max-range circle in screen units: its +0x88, 39 on a full screen (set at 0xadc70
 /// and by FUN_000adf20; 29 on a small or split one). FUN_000b0550 turns a world offset by the view
 /// and scales it by this over the game options' max-range (+0x94 = +0x88 / +0x90,
 /// 0xae255-0xae26a): 120 m across 39 units, 0.325 a metre. take07 agrees: the waypoint 17.4 m off
 /// drawn 5.4 units from the middle (5.65 by the code), the next, 55.5 m off, 17.0 (18.0). (The
 /// demo's 40 m across 44 units before #228 had no source.)
-const RADAR_UNITS: f32 = 39.0;
+pub(super) const RADAR_UNITS: f32 = 39.0;
 /// The squad's blips: FUN_000ae7c0's colour for a friend (a character on the viewer's team, a team
 /// not hostile to itself: FUN_0004b960), 90 200 40 (0xae9a9-0xae9b9); take11's marines are green.
 /// (The demo's yellow before #228 had no source.)
@@ -224,10 +239,14 @@ const HEALTH_BARS: [((bool, bool), (f32, f32)); 4] = [
     ((true, false), (65.0, 12.0)),
 ];
 const HEALTH_DARK: u32 = 27;
-/// where the radar frame sits (screen units, 128 x 128), the corner the brackets and the command
-/// tabs are placed from. (#333 found the game's 1.5 left and 4 higher, at the radar panel's corner
-/// (56, 301) by FUN_000c2be0: take03's frame and tabs there; not moved here, see TAB_AT)
-const RADAR_FRAME_AT: (f32, f32) = (57.5, 305.0);
+/// Where the radar panel sits (screen units): the corner the radar's disc, its frame, the brackets
+/// and the command tabs are placed from. The code's: FUN_000c2be0 puts the panel (128 x 128) at the
+/// HUD safe area's left + 5 and its bottom - 10 less the panel's height, (56, 301); the radar
+/// widget and the frame draw 128 x 128 from it. The takes agree: the frame texture's edges fit
+/// take03 (1.0 s) and the tutorial's take07 (5.0 s) best at (56.0, 301.0) of 2337 corners tried
+/// 0.25 apart over 52-62 x 296-310 (the old (57.5, 305.0), #333's finding, ranked 1926th and
+/// 1675th). It was (57.5, 305.0) until #347.
+const RADAR_FRAME_AT: (f32, f32) = (56.0, 301.0);
 const HEALTH_PINK: Color = Color::srgb(0.96, 0.45, 0.42);
 /// The radar panel's slide while the Squad Command menu is open (#319): the radar and its
 /// portraits are one widget (0xc2d40, 128 x 128, its update 0xc2ac0), which FUN_000c2be0 places
@@ -291,6 +310,16 @@ const LABEL_CENTRE: (f32, f32) = (320.0, 240.0);
 /// portrait's centre (capture), red, lit one after another
 const CHEVRON: u32 = 0x158F_87C1;
 const CHEVRON_RED: Color = Color::srgb(1.0, 0.33, 0.2);
+/// How far the outermost chevron's centre sits from its portrait's centre, toward the radar's
+/// middle, by character (Brutus, Flint, Hawk, Tex): the demo's own fit, not the game's (its flash
+/// widget draws h_016c3d13 and h_091adf04 in the boxes of the table 0x3c8e28 and steps them 6
+/// units: not done). It was 28 for all, fitted when the faces stood (1.7, 3) off the game's
+/// places (#347); with them at the code's places, take02's taps (Hawk's at 2.20 s, the red
+/// chevrons' extent x 71.3-91.3; Tex's at 5.70 s, y 313.3-338.0) fit 30.65 and 34.8. Flint's
+/// and Brutus's are those mirrored (the boxes are symmetric about the radar's middle: Hawk's
+/// (26, 49, 16, 32) and Flint's (103, 49, -16, 32), Tex's (48, 23, 32, 16) and Brutus's
+/// (48, 105, 32, -16)): no take presses them with the menu shut, a guess.
+const CHEVRON_GAP: [f32; 4] = [34.8, 30.65, 30.65, 34.8];
 /// A d-pad press's chevron flash (#319): the flash widget (0xf5c0f471, FUN_000c48c0, its draw
 /// 0xc4ba0) draws its three chevrons at FUN_000c4cd0's alpha, clamp((level - 0.5 - 0.1 n) x
 /// 3.333, 0, 1) x 254 (0x3a4f74, 0x3a4ff0, 0x3a5174, 0x3a516c), n 0 for the one nearest the
@@ -531,47 +560,25 @@ fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
 }
 
-/// A portrait's own image (to show again after the skull) and its opaque box (`face_art`).
+/// A portrait's own image (to show again after the skull).
 #[derive(Component)]
-struct PortraitArt(Handle<Image>, Rect);
+struct PortraitArt(Handle<Image>);
 
-/// The corner of slot `c`'s PORTRAIT_BOX, in HUD units: its own face's opaque box `art` (rows as
-/// stored, bottom first, so flipped on screen) centred on PORTRAIT_CENTRE. Every other portrait
-/// and skull of the place is drawn in the same box (#342, as the game does: the widget's place
-/// is fixed and its texture is whatever the member's type names). It agrees with the game's
-/// table 0x3c8c68 (the place's top-left in the radar panel: Brutus (51, 112), Flint (112, 51),
-/// Hawk (-4, 51), Tex (51, -15)) to a unit or two against the panel at (57.5, 305), a frame that
-/// is itself a guess.
-fn portrait_corner(c: usize, art: Rect) -> (f32, f32) {
-    let (cx, cy) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
-    let face = ((art.min.x + art.max.x) / 2.0, PORTRAIT_BOX - (art.min.y + art.max.y) / 2.0);
-    (cx - face.0, cy - face.1)
-}
-
-/// A face texture `id`: its image and its opaque box (texels with alpha over 40, rows as stored).
-/// The faces are packed into a corner of their 32 x 32 textures. Kept in `faces` by texture; None
-/// when the texture isn't found or is clear (a type whose portrait isn't drawable shows the "?").
-/// Only the squad's four faces use the box (`portrait_corner`): every portrait is drawn whole in
-/// PORTRAIT_BOX.
-fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, faces: &mut HashMap<u32, Option<(Handle<Image>, Rect)>>,
-            id: u32) -> Option<(Handle<Image>, Rect)> {
+/// A face texture `id` as the HUD draws it, whole in PORTRAIT_BOX at the table's place (#342, #347):
+/// its image, if the texture has anything to draw (a texel with alpha over 40: the scan is only
+/// that test, the box it finds isn't used; a type whose portrait is clear shows the "?"). Kept in
+/// `faces` by texture; None when the texture isn't found or is clear.
+fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, faces: &mut HashMap<u32, Option<Handle<Image>>>,
+            id: u32) -> Option<Handle<Image>> {
     if let Some(art) = faces.get(&id) {
         return art.clone();
     }
     let art = (|| {
-        let (w, h, px) = game.texture_rgba(id)?;
-        let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
-        for (k, p) in px.chunks_exact(4).enumerate() {
-            if p[3] > 40 {
-                let (x, y) = (k as u32 % w, k as u32 / w);
-                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
-            }
-        }
-        if x1 <= x0 || y1 <= y0 {
+        let (_, _, px) = game.texture_rgba(id)?;
+        if !px.chunks_exact(4).any(|p| p[3] > 40) {
             return None;
         }
-        let handle = texture(game, images, cache, id)?;
-        Some((handle, Rect::new(x0 as f32, y0 as f32, x1 as f32, y1 as f32)))
+        texture(game, images, cache, id)
     })();
     faces.insert(id, art.clone());
     art
@@ -579,7 +586,7 @@ fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, 
 
 /// A face texture `id` as a selected member's portrait shows it (#319, SELECTED_TINT): each texel's
 /// luminance (0.3, 0.59, 0.11, as `texture_grey`) x SELECTED_GAIN in the selection's orange, its
-/// alpha kept; cached (SELECTED_KEY). The same texels as the face, so `face_art`'s box fits it.
+/// alpha kept; cached (SELECTED_KEY). The same texels as the face, drawn in the same box.
 fn selected_face(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, id: u32) -> Option<Handle<Image>> {
     cache.0.entry(id ^ SELECTED_KEY).or_insert_with(|| {
         let (w, h, mut px) = game.texture_rgba(id)?;
@@ -642,7 +649,7 @@ struct HudGen {
     bubble: Handle<Image>,
     /// the faces drawn so far, by texture (`face_art`): the squad's four, and on the test map any
     /// type's portrait a squad slot's member shows (#302)
-    faces: HashMap<u32, Option<(Handle<Image>, Rect)>>,
+    faces: HashMap<u32, Option<Handle<Image>>>,
     /// the stamina bar's fill (ENERGY_FILL), remade mixed toward white by its brighten, and the
     /// texture's own texels it's made from
     stamina_fill: Handle<Image>,
@@ -1086,6 +1093,7 @@ struct NameLabelText;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<HudImages>()
+        .init_resource::<HudHidden>()
         .init_resource::<NameLabel>()
         .init_resource::<StaminaBar>()
         .init_resource::<BarFlash>()
@@ -1119,6 +1127,27 @@ pub struct HudSetup;
 /// editor hides it in edit mode, where there's no character to show (play_editor.rs, #191).
 #[derive(Component)]
 pub(super) struct HudRoot;
+
+/// Whether anything has the HUD hidden, kept by the two systems that hide it: the cutscene's
+/// letterbox (play_script.rs `view`: the bars in) and the map editor's edit mode and its flight
+/// back to play (play_editor.rs `edit_view`). What draws only with the HUD that the game draws
+/// it over (the scope's frame and Flint's overlay, play_scope_view.rs) reads this, not each
+/// `HudRoot`'s visibility: that went with whichever root happened to be hidden, as the Squad
+/// Command menu's was for a while (#319's first commit left Flint's overlay at 0, #348).
+#[derive(Resource, Default)]
+pub(crate) struct HudHidden {
+    /// the letterbox's bars hide it (`Cutscenes::hud_hidden`)
+    pub letterbox: bool,
+    /// the editor's edit mode, or its camera's flight to play, hides it
+    pub editor: bool,
+}
+
+impl HudHidden {
+    /// Whether the HUD is hidden by anything.
+    pub fn any(&self) -> bool {
+        self.letterbox || self.editor
+    }
+}
 
 /// The radar panel: the radar, its portraits and what's drawn on them (the game's one widget,
 /// 0xc2d40), a node the size of the screen that slides with the Squad Command menu (RADAR_SLIDE).
@@ -1161,43 +1190,25 @@ pub(super) fn flipped(h: Handle<Image>) -> ImageNode {
 }
 
 /// Absolute placement in 640 x 480 screen units (as `at`, for moving nodes).
+#[track_caller]
 fn at_box(x: f32, y: f32, w: f32, h: f32) -> Node {
     at(x, y, w, h)
 }
 
-/// Absolute placement in 640 x 480 screen units.
+/// Absolute placement in 640 x 480 screen units. A number that isn't finite is 0 and logged once
+/// with the caller's file and line (`ui_guard::finite`: a NaN place would reach bevy_ui's layout,
+/// #349).
+#[track_caller]
 pub(super) fn at(x: f32, y: f32, w: f32, h: f32) -> Node {
+    use super::ui_guard::finite;
     Node {
         position_type: PositionType::Absolute,
-        left: Val::Percent(x / 6.4), top: Val::Percent(y / 4.8),
-        width: Val::Percent(w / 6.4), height: Val::Percent(h / 4.8),
+        left: Val::Percent(finite("a HUD node's x", x) / 6.4), top: Val::Percent(finite("a HUD node's y", y) / 4.8),
+        width: Val::Percent(finite("a HUD node's width", w) / 6.4), height: Val::Percent(finite("a HUD node's height", h) / 4.8),
         ..default()
     }
 }
 
-
-/// The radar's view cone and the lit circle round the player, white with soft edges (the radar
-/// turns with the camera, so the cone always points up).
-fn radar_cone() -> Image {
-    let n = 128u32;
-    let mut px = Vec::with_capacity((n * n * 4) as usize);
-    let smooth = |e0: f32, e1: f32, x: f32| { let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t) };
-    for y in 0..n {
-        for x in 0..n {
-            let (dx, dy) = ((x as f32 + 0.5) / n as f32 * 2.0 - 1.0, (y as f32 + 0.5) / n as f32 * 2.0 - 1.0);
-            let r = (dx * dx + dy * dy).sqrt();
-            let angle = dx.atan2(-dy).abs();
-            let circle = 1.0 - smooth(0.36, 0.40, r);
-            let cone = (1.0 - smooth(0.50, 0.56, angle)) * (1.0 - smooth(0.92, 0.98, r));
-            let a = (circle.max(cone) * 0.18 * 255.0) as u8;
-            px.extend_from_slice(&[255, 255, 255, a]);
-        }
-    }
-    Image::new(bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
-               bevy::render::render_resource::TextureDimension::D2, px,
-               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-               bevy::asset::RenderAssetUsages::default())
-}
 
 fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mut cache: ResMut<HudImages>,
              mut gen: ResMut<HudGen>, mode: Res<Mode>) {
@@ -1206,7 +1217,6 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     if std::env::var("BF_NO_HUD").is_ok() {
         return;
     }
-    let cone = images.add(radar_cone());
     // the chevron texture made white (its brightness kept for the tint) and turned four ways
     if let Some((w, h, px)) = game.0.texture_rgba(CHEVRON) {
         let at = |x: u32, y: u32| { let i = ((y * w + x) * 4) as usize; let l = px[i].max(px[i + 1]).max(px[i + 2]); [l, l, l, px[i + 3]] };
@@ -1265,8 +1275,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let stamina_fill = gen.stamina_fill.clone();
     let bar_frame = game.texture_rgba(BAR_FRAME_CORNER).map(|(w, h, px)| images.add(bar_frame(w, h, &px)));
     let mut tex = |name: u32| texture(game, &mut images, &mut cache, name);
-    let (frame, disc, panel, cross, bolt) =
-        (tex(RADAR_FRAME), tex(RADAR_DISC), tex(WEAPON_PANEL), tex(CROSSHAIR_TEX), tex(ENERGY_ICON));
+    let (frame, panel, cross, bolt) =
+        (tex(RADAR_FRAME), tex(WEAPON_PANEL), tex(CROSSHAIR_TEX), tex(ENERGY_ICON));
     let image = |h: &Option<Handle<Image>>, color: Color| flipped(h.clone().unwrap_or_default()).with_color(color);
 
     // full window, with the game's 4:3 screen centred in it
@@ -1346,11 +1356,20 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let radar = commands.spawn((ChildOf(screen), RadarPanel, GlobalZIndex(RADAR_Z), Name::new("radar panel"),
                                 Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0),
                                        height: Val::Percent(100.0), ..default() })).id();
+    // (a map with no squad radar, or with none of its textures, has no disc layers: any a map
+    // before it left are dropped as it was, `radar_disc::forget`, and here if that missed)
+    commands.remove_resource::<super::radar_disc::RadarLayers>();
     if squad {
-        commands.spawn((ChildOf(radar), at(51.0, 298.5, 141.0, 141.0), image(&disc, Color::srgba(1.0, 1.0, 1.0, 0.85))));
-        commands.spawn((ChildOf(radar), at(75.0, 322.5, 93.0, 93.0), ImageNode::new(cone)));
-        commands.spawn((ChildOf(radar), at(57.5, 305.0, 128.0, 128.0), image(&frame, Color::WHITE)));
-        commands.spawn((ChildOf(radar), at(119.5, 367.0, 4.0, 4.0), BackgroundColor(VIEWER_GREY),
+        // the disc, the squad's lit circles and the view wedge under the frame, 128 x 128 from the
+        // panel's corner (play_radar_disc.rs, the radar widget's draw 0xaefb0)
+        if let Some(disc) = super::radar_disc::layers(game, &mut images) {
+            for layer in disc.images.clone() {
+                commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0), ImageNode::new(layer)));
+            }
+            commands.insert_resource(disc);
+        }
+        commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0), image(&frame, Color::WHITE)));
+        commands.spawn((ChildOf(radar), at(RADAR_CENTRE.0 - 2.0, RADAR_CENTRE.1 - 2.0, 4.0, 4.0), BackgroundColor(VIEWER_GREY),
                                   BorderRadius::all(Val::Percent(50.0))));
         // the objectives' dots and rim markers (#228): drawn into an image over the radar each
         // frame (`update_radar_marks`)
@@ -1368,14 +1387,16 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         // the frame's four portrait notches are open in its texture; the game fills them dark behind
         // the faces (texel boxes in the frame texture: top, right, bottom, left)
         for (x0, y0, x1, y1) in [(50.0, 8.0, 80.0, 17.0), (110.0, 50.0, 119.0, 80.0), (48.0, 110.0, 78.0, 119.0), (8.0, 48.0, 17.0, 78.0)] {
-            commands.spawn((ChildOf(radar), at(57.5 + x0, 305.0 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9))));
+            commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x0, RADAR_FRAME_AT.1 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9))));
         }
         for (i, &(cx, cy)) in PORTRAIT_CENTRE.iter().enumerate() {
-            let Some((handle, rect)) = face_art(game, &mut images, &mut cache, &mut gen.faces, PORTRAITS[i]) else { continue };
-            let (x, y) = portrait_corner(i, rect);
-            commands.spawn((ChildOf(radar), at(x, y, PORTRAIT_BOX, PORTRAIT_BOX),
+            let Some(handle) = face_art(game, &mut images, &mut cache, &mut gen.faces, PORTRAITS[i]) else { continue };
+            // (the game's table puts the box, not the art: whatever the slot shows, face or
+            // skull, is drawn whole in it, #342, and it stays where it is)
+            let (x, y) = FACE_AT[i];
+            commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x, RADAR_FRAME_AT.1 + y, PORTRAIT_BOX, PORTRAIT_BOX),
                             flipped(handle.clone()), ZIndex(1),
-                            SquadPart::Portrait(i), PortraitArt(handle, rect)));
+                            SquadPart::Portrait(i), PortraitArt(handle)));
             // (a test map squad member whose type has no portrait: a "?" in its place, #302)
             commands.spawn((ChildOf(radar), game_text("?", cx, cy - UNKNOWN_CAP * UNKNOWN_TOP, UNKNOWN_CAP, MESSAGE_BLUE, Align::Centre),
                             ZIndex(1), SquadPart::Unknown(i), Visibility::Hidden));
@@ -1590,7 +1611,13 @@ fn update_hud_widgets(
         let win = windows.single().ok()?;
         let px = cam.world_to_viewport(&GlobalTransform::from(*at), p).ok()?;
         let unit = win.height() / 480.0;
-        Some(Vec2::new((px.x - (win.width() - 640.0 * unit) / 2.0) / unit, px.y / unit))
+        // (a window with no height, minimised, has no screen to place it on: dividing by its unit
+        // would be NaN or infinite, and a ring's place from it a NaN `left`, #349)
+        if !(unit.is_finite() && unit > 0.0) {
+            return None;
+        }
+        let place = Vec2::new((px.x - (win.width() - 640.0 * unit) / 2.0) / unit, px.y / unit);
+        place.is_finite().then_some(place)
     };
     let regen_word = game.0.strings.get(&S_REGEN).cloned().unwrap_or("Regen".into());
     // the switch hint (play_ammo.rs's SwitchHint) names the other weapon
@@ -1806,7 +1833,7 @@ fn update_squad_hud(
     // the radar panel's slide toward the middle while the Squad Command menu is open
     // (FUN_000c2be0, RADAR_SLIDE: #319)
     if let Ok(mut n) = panel.single_mut() {
-        let k = menu.radar_slide();
+        let k = super::ui_guard::finite("the radar panel's slide", menu.radar_slide());
         let (left, top) = (Val::Percent(RADAR_SLIDE.0 * k / 6.4), Val::Percent(RADAR_SLIDE.1 * k / 4.8));
         if n.left != left || n.top != top {
             (n.left, n.top) = (left, top);
@@ -1853,7 +1880,11 @@ fn update_squad_hud(
     let health = |c: usize| member(c)
         .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
     let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
-    let pct = |x: f32, y: f32, n: &mut Node| { n.left = Val::Percent(x / 6.4); n.top = Val::Percent(y / 4.8); };
+    // (a place that isn't finite is 0 and logged once, naming the node: #349)
+    let pct = |what: &str, x: f32, y: f32, n: &mut Node| {
+        n.left = super::ui_guard::percent(what, x / 6.4);
+        n.top = super::ui_guard::percent(what, y / 4.8);
+    };
     let fwd = Vec3::new(-player.cam_yaw.sin(), 0.0, -player.cam_yaw.cos());
     let right = Vec3::new(player.cam_yaw.cos(), 0.0, -player.cam_yaw.sin());
     let charging = player.charge > 0.0;
@@ -1888,7 +1919,7 @@ fn update_squad_hud(
                 };
                 face_id = id;
                 match (id != 0).then(|| face_art(&mut game.0, &mut images, &mut cache, &mut gen.faces, id)).flatten() {
-                    Some((h, _)) => Face::Other(h),
+                    Some(h) => Face::Other(h),
                     None => Face::Unknown,
                 }
             }
@@ -1923,6 +1954,16 @@ fn update_squad_hud(
                 // FUN_000b0ad0: here on the circle; within it a member shows only within the
                 // player's reach, FUN_000b0670)
                 let mut v = Vec2::new(rel.dot(right), rel.dot(fwd)) * scale;
+                // (a member or a view heading that isn't finite has no place on the radar: the
+                // blip is hidden, once saying whose, instead of a NaN `left` reaching bevy_ui's
+                // border radius clamp, which panics: #349)
+                if !v.is_finite() {
+                    super::ui_guard::once(&format!("blip {slot}"), || format!(
+                        "UI guard: radar blip {slot} ({}) has no place: its position {:?}, the player's {:?}, the camera's yaw {} and pitch {}: hidden (#349)",
+                        unit_name(m), m.position, player.position, player.cam_yaw, player.cam_pitch));
+                    show(&mut vis, false);
+                    continue;
+                }
                 if v.length() > RADAR_UNITS {
                     v = v.normalize() * RADAR_UNITS;
                 } else if radar_reach(&player, &game.0, m.position, game.0.radar.max_range.max(1.0)) <= 0.0 {
@@ -1930,7 +1971,7 @@ fn update_squad_hud(
                     continue;
                 }
                 show(&mut vis, true);
-                pct(RADAR_CENTRE.0 + v.x - 2.0, RADAR_CENTRE.1 - v.y - 2.0, &mut node);
+                pct("a radar blip", RADAR_CENTRE.0 + v.x - 2.0, RADAR_CENTRE.1 - v.y - 2.0, &mut node);
                 // (selected for the Squad Command menu: 200 200 200, FUN_000c86d0)
                 let want = if menu.selected(m.character) { SELECTED_GREY } else { SQUAD_GREEN };
                 if let Some(mut c) = background.filter(|c| c.0 != want) {
@@ -1945,8 +1986,8 @@ fn update_squad_hud(
                 if let Some((c, _)) = selected {
                     let (px, py) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
                     let u = Vec2::new(px - RADAR_CENTRE.0, py - RADAR_CENTRE.1).normalize_or(Vec2::X);
-                    let at = Vec2::new(px, py) - u * (28.0 - 5.0 * k as f32);
-                    pct(at.x - 15.0, at.y - 15.0, &mut node);
+                    let at = Vec2::new(px, py) - u * (CHEVRON_GAP[c % CHEVRON_GAP.len()] - 5.0 * k as f32);
+                    pct("a selection chevron", at.x - 15.0, at.y - 15.0, &mut node);
                     let dir = if u.x.abs() > u.y.abs() { if u.x > 0.0 { 0 } else { 1 } } else if u.y < 0.0 { 2 } else { 3 };
                     // lit one after another toward the portrait, then all dim again; after a d-pad
                     // press, the game's fade (`press_alpha`)
@@ -1971,7 +2012,8 @@ fn update_squad_hud(
             }
             SquadPart::Portrait(c) => {
                 if let (Some(mut img), Some(art), Some((face, skull, lit))) = (img, art, looks.get(c)) {
-                    // (the face or the skull, whole, in the place's one box: PORTRAIT_BOX)
+                    // (the face or the skull, whole, in the place's one box, PORTRAIT_BOX: the
+                    // node's place is the table's, FACE_AT, set with the HUD, whatever it shows)
                     let own = match face {
                         Face::Other(h) => h.clone(),
                         _ => art.0.clone(),
@@ -1986,11 +2028,6 @@ fn update_squad_hud(
                     if img.image != want { img.image = want; }
                     if img.rect.is_some() { img.rect = None; }
                     img.color = color;
-                    let (x, y) = portrait_corner(c, art.1);
-                    let want = at(x, y, PORTRAIT_BOX, PORTRAIT_BOX);
-                    if node.width != want.width || node.height != want.height || node.left != want.left || node.top != want.top {
-                        (node.left, node.top, node.width, node.height) = (want.left, want.top, want.width, want.height);
-                    }
                 }
             }
             SquadPart::Unknown(c) => {
@@ -2013,8 +2050,9 @@ fn update_squad_hud(
             }
             SquadPart::PlayerHealth => {
                 let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
-                let width = if gen.tutorial_frame { bar_fill(player.health.clamp(0.0, player.max_health)) } else { bar_span().1 * f };
-                node.width = Val::Percent(width / 6.4);
+                // (health or its maximum not a number: an empty bar, once saying so, #349)
+                let width = if gen.tutorial_frame && player.max_health >= 0.0 { bar_fill(player.health.clamp(0.0, player.max_health)) } else { bar_span().1 * f };
+                node.width = super::ui_guard::percent("the player's health bar width", width / 6.4);
                 // in the "full" flash's colour while it's tinted (`BarFlash`: a HEALTH POWER
                 // walked over at full health)
                 let want = if flash_tinted(flash.health) { gen.health_flash.clone() } else { gen.health_fill.clone() };
@@ -2026,25 +2064,25 @@ fn update_squad_hud(
             }
             // the stamina bar's value and its trail, as `update_stamina_bar` keeps them
             SquadPart::PlayerStamina => {
-                node.width = Val::Percent(bar_fill(stamina.value) / 6.4);
+                node.width = super::ui_guard::percent("the stamina bar's width", bar_fill(stamina.value) / 6.4);
                 show(&mut vis, stamina.value > 0.0);
             }
             SquadPart::StaminaTrail => {
                 let (from, to) = (bar_fill(stamina.value), bar_fill(stamina.shown));
                 show(&mut vis, to > from);
-                node.left = Val::Percent((BAR_X + from) / 6.4);
-                node.width = Val::Percent((to - from).max(0.0) / 6.4);
+                node.left = super::ui_guard::percent("the stamina bar's trail", (BAR_X + from) / 6.4);
+                node.width = super::ui_guard::percent("the stamina bar's trail", (to - from).max(0.0) / 6.4);
             }
             SquadPart::FrameMiddle => {
                 // the middle takes up what the bars' length adds to (or takes from) the picture's
-                node.width = Val::Percent(((TB_MIDDLE.1 - TB_MIDDLE.0) as f32 + frame_stretch(player.max_health)).max(1.0) / 6.4);
+                node.width = super::ui_guard::percent("the health frame's middle", ((TB_MIDDLE.1 - TB_MIDDLE.0) as f32 + frame_stretch(player.max_health)).max(1.0) / 6.4);
             }
             SquadPart::FrameRight => {
-                node.left = Val::Percent((TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + frame_stretch(player.max_health)) / 6.4);
+                node.left = super::ui_guard::percent("the health frame's right end", (TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + frame_stretch(player.max_health)) / 6.4);
             }
             SquadPart::MeterBox => {
                 show(&mut vis, meter);
-                node.top = Val::Percent((METER_BOX.1 + meter_shift) / 4.8);
+                node.top = super::ui_guard::percent("the charge meter's box", (METER_BOX.1 + meter_shift) / 4.8);
                 let want = HUD_BLUE.with_alpha(strength);
                 if let Some(mut c) = border.filter(|c| c.0 != want) {
                     c.0 = want;
@@ -2052,7 +2090,7 @@ fn update_squad_hud(
             }
             SquadPart::MeterTick => {
                 show(&mut vis, meter);
-                node.top = Val::Percent((METER_TICK_Y + meter_shift) / 4.8);
+                node.top = super::ui_guard::percent("the charge meter's tick", (METER_TICK_Y + meter_shift) / 4.8);
                 let want = METER_TICK.with_alpha(strength);
                 if let Some(mut c) = background.filter(|c| c.0 != want) {
                     c.0 = want;
@@ -2061,8 +2099,8 @@ fn update_squad_hud(
             SquadPart::MeterFill => {
                 show(&mut vis, meter);
                 let h = (METER_FILL.3 - METER_FILL.2) * level;
-                node.top = Val::Percent((METER_FILL.3 - h + meter_shift) / 4.8);
-                node.height = Val::Percent(h / 4.8);
+                node.top = super::ui_guard::percent("the charge meter's fill", (METER_FILL.3 - h + meter_shift) / 4.8);
+                node.height = super::ui_guard::percent("the charge meter's fill", h / 4.8);
                 let want = METER_ORANGE.with_alpha(METER_ORANGE.alpha() * strength);
                 if let Some(mut c) = background.filter(|c| c.0 != want) {
                     c.0 = want;
@@ -2150,7 +2188,7 @@ fn radar_knowledge(marks: &mut RadarMarks, player: &Player, squad: &Squad, dt: f
 /// +0x2a4 by char+0x57c, taken as 0: its writers aren't traced beyond the character's set-up and
 /// the radar's own reset), and none beyond; within it full but for the last 2 m, (reach - d) / 2.
 /// A type with no `radar-range` shows to the radar's max-range.
-fn radar_reach(player: &Player, game: &Game, at: Vec3, max_range: f32) -> f32 {
+pub(super) fn radar_reach(player: &Player, game: &Game, at: Vec3, max_range: f32) -> f32 {
     let reach = game.character_type(player.kind).and_then(|t| t.skill.as_ref()).map(|s| s.radar_range).filter(|&r| r > 0.0).unwrap_or(max_range);
     let d = Vec2::new(at.x - player.position.x, at.z - player.position.z).length();
     ((reach - d) * 0.5).clamp(0.0, 1.0)
@@ -2159,7 +2197,7 @@ fn radar_reach(player: &Player, game: &Game, at: Vec3, max_range: f32) -> f32 {
 /// FUN_000b0550: a world offset `rel` (from the viewer) on the radar, in screen units from its
 /// middle (x right, y down), turned by the view (`fwd`, the demo's camera heading: the squad's
 /// blips use the same) and scaled by `scale`; each cut to a whole number as the game's int casts do.
-fn radar_point(rel: Vec3, fwd: Vec3, scale: f32) -> Vec2 {
+pub(super) fn radar_point(rel: Vec3, fwd: Vec3, scale: f32) -> Vec2 {
     let x = (rel.z * fwd.x - rel.x * fwd.z) * scale;
     let y = -(rel.x * fwd.x + rel.z * fwd.z) * scale;
     Vec2::new(x.trunc(), y.trunc())
