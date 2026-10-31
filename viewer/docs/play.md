@@ -125,6 +125,14 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   tools line names it. `BF_TEST_BACK` still goes at once. A session opened from EDITOR comes back
   to the main menu on EDITOR, its test-map state gone.
 
+  Where it goes depends on the map (#312): a **campaign mission** (the mission flow is running:
+  `MissionMode::active`, the tutorial or any zone reached from CAMPAIGN) goes to the main menu on
+  CAMPAIGN, as the end menu's Quit does (the game has no Backspace; its pause menu's Quit goes
+  there, FUN_00084f50); a deathmatch or squad deathmatch map goes back to its SELECT MISSION on
+  that map ([menu.md](menu.md)). A map started with `BF_MAP` and no front end goes by its kind,
+  the same: `BF_MAP=e34` (a campaign zone) leaves for the main menu on CAMPAIGN, `BF_MAP=sdm_e34`
+  for SQUAD DEATHMATCH's SELECT MISSION on it. Checked with `BF_TEST_BACK=70 BF_MENU_SHOT=<png>
+  BF_MENU_SHOT_FRAME=400` (the shot is of the menu it arrives at) on both.
 ## Health, HUD, locomotion, weapons and sounds
 
 Squad: the four squad members are all in play, each with their own health (the characters'

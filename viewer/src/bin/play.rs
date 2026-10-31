@@ -1500,11 +1500,14 @@ const LEAVE_CONFIRM: f32 = 2.0;
 /// editor's, play_editor.rs) only a second press within LEAVE_CONFIRM s leaves, so a stray key
 /// doesn't throw away what was built. The map editor opened from the front end's EDITOR (#193,
 /// `editor::FromMenu`) goes back to the main menu on EDITOR (its session ends there:
-/// play_editor.rs `leave_for_menu`).
+/// play_editor.rs `leave_for_menu`). A campaign mission (the mission flow is running,
+/// `mission::MissionMode::active`) goes to the main menu on CAMPAIGN, as the end menu's Quit does
+/// (play_mission.rs `Go::Quit`, FUN_00084f50), not to a deathmatch map list (#312).
 #[allow(clippy::too_many_arguments)]
 fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>, mode: Res<Mode>, map: Res<CurrentMap>,
                 mut commands: Commands, mut frames: Local<u32>, test_map: Option<Res<testmap::TestMap>>, time: Res<Time<Real>>,
-                mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>, from_menu: Option<Res<editor::FromMenu>>) {
+                mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>, from_menu: Option<Res<editor::FromMenu>>,
+                mission: Res<mission::MissionMode>) {
     // test hook: BF_TEST_BACK=<n> goes back after n frames of the map
     *frames += 1;
     let test = std::env::var("BF_TEST_BACK").ok().and_then(|v| v.parse::<u32>().ok()) == Some(*frames);
@@ -1519,8 +1522,13 @@ fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppS
         *armed = None;
         *frames = 0;
         let editor = from_menu.is_some();
-        let map = (!editor).then(|| map.0.clone());
-        commands.insert_resource(menu::Return { map, deathmatch: mode.deathmatch, main: false, editor });
+        if mission.active && !editor {
+            // a campaign mission: the same return as the end menu's Quit (#312)
+            commands.insert_resource(menu::Return { map: None, deathmatch: false, main: true, editor: false });
+        } else {
+            let map = (!editor).then(|| map.0.clone());
+            commands.insert_resource(menu::Return { map, deathmatch: mode.deathmatch, main: false, editor });
+        }
         next.set(AppState::Menu);
     }
 }
