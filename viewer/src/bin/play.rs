@@ -208,25 +208,40 @@ pub struct Mode {
     pub deathmatch: bool,
 }
 
-/// The game data for a map: the shared archives, the default level audio (surfaces and their
-/// footstep / landing sounds come from the first mission; the multiplayer bank has everyone's
-/// footsteps) and the squad's voice lines. The first mission's texture library isn't loaded
-/// (`load_level_data`): the map's is, by `load_map` (#284).
+/// The game data for a map to start from: the shared archives (common's) and the squad's voice
+/// lines. The map's own data comes next (`load_map`), and after it the default level's
+/// (`load_default_level`).
 pub fn load_game() -> Result<Game, String> {
     let mut game = Game::load(&data_dir())?;
-    let level = std::env::var("BF_LEVEL").unwrap_or_else(|_| "e01".into());
-    if let Err(e) = game.load_level_data(&data_dir(), &level) {
-        eprintln!("no level audio from {level}: {e}");
-    }
-    if level != "mp1" {
-        if let Err(e) = game.load_extra_sounds(&data_dir(), "mp1") {
-            eprintln!("no extra sounds from mp1: {e}");
-        }
-    }
     if let Err(e) = game.load_voices(&data_dir(), "en") {
         eprintln!("no voice lines: {e}");
     }
     Ok(game)
+}
+
+/// The data the demo adds beside the map's (`map`: "flat" for none): the default level's, `BF_LEVEL`
+/// (e01), and the multiplayer bank's sounds. The first mission's sounds are what the footsteps and
+/// landings play (its world materials: the surfaces' footstep / landing sets; the multiplayer bank
+/// has everyone's footsteps, as a mission carries only its own squad's), and its objects, types
+/// and the rest fill in what a map's own data lacks. It loads AFTER the map's (`Game::load_level`),
+/// as entries already loaded win: the game loads common's data and the map's and nothing of
+/// another level, so what the map names must be the map's, not e01's (#338: the blockers' and
+/// hinters' collision surfaces are numbered alike in every level and took e01's shapes when e01
+/// came first). The first mission's texture library isn't loaded (`Game::load_level_data`): the
+/// map's is, by `load_level` (#284). A default that is the map itself, or the multiplayer bank
+/// when it is, is already in.
+fn load_default_level(game: &mut Game, map: &str) {
+    let level = std::env::var("BF_LEVEL").unwrap_or_else(|_| "e01".into());
+    if level != map {
+        if let Err(e) = game.load_level_data(&data_dir(), &level) {
+            eprintln!("no level audio from {level}: {e}");
+        }
+    }
+    if level != "mp1" && map != "mp1" {
+        if let Err(e) = game.load_extra_sounds(&data_dir(), "mp1") {
+            eprintln!("no extra sounds from mp1: {e}");
+        }
+    }
 }
 
 /// The library the deathmatch characters name (game-options-en.xml lines 64-67, `<character
@@ -235,21 +250,27 @@ pub fn load_game() -> Result<Game, String> {
 const DM_LIBRARY: &str = "dm";
 
 /// Load a map (its level, streamed sounds and collision, made the current arena); "flat" or a
-/// map that won't load: the flat test floor (None). The map's texture library becomes the one
-/// after common's (`Game::load_level`): the squad wears its outfit (#284); on a multiplayer map
-/// mp_common's library of the match comes after it and its skins win. The flat floor loads
-/// none, so the search by archive name finds the squad's skins in e01's (the tan set).
+/// map that won't load: the flat test floor (None). The map's data goes in first, after common's,
+/// and the default level's after it (`load_default_level`, #338). The map's texture library
+/// becomes the one after common's (`Game::load_level`): the squad wears its outfit (#284); on a
+/// multiplayer map mp_common's library of the match comes after it and its skins win. The flat
+/// floor loads none, so the search by archive name finds the squad's skins in e01's (the tan
+/// set).
 pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
     world::Arena::uninstall();
-    if map == "flat" {
-        return None;
+    let loaded = (map != "flat").then(|| game.load_level(&data_dir(), map));
+    // door and gate sounds stream from the map's language wave bank: attached right after its
+    // sound bank is read, before another is (`SoundBank::add` keeps only the last bank's
+    // streamed files to attach)
+    if matches!(loaded, Some(Ok(()))) {
+        if let Err(e) = game.load_level_streams(&data_dir(), map, "en") {
+            eprintln!("no streamed sounds for {map}: {e}");
+        }
     }
-    match game.load_level(&data_dir(), map).and_then(|_| Level::load(game)) {
+    load_default_level(game, map);
+    let loaded = loaded?;
+    match loaded.and_then(|_| Level::load(game)) {
         Ok(mut l) => {
-            // door and gate sounds stream from the map's language wave bank
-            if let Err(e) = game.load_level_streams(&data_dir(), map, "en") {
-                eprintln!("no streamed sounds for {map}: {e}");
-            }
             // a squad deathmatch map: the deathmatch squad's skill rates (play_skills.rs)
             if map.starts_with("sdm_") {
                 if let Err(e) = game.load_squad_library(&data_dir(), skills::SDM_SQUAD) {
@@ -263,6 +284,12 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
                 if let Err(e) = game.load_match_textures(&data_dir(), library) {
                     eprintln!("no {library} textures from mp_common: {e}");
                 }
+            }
+            // test hook: BF_COLLISION_CHECK=1 counts the collision surfaces the map uses that
+            // aren't the map's own (#338), then exits
+            if std::env::var("BF_COLLISION_CHECK").is_ok() {
+                collision_check(game, &l, map);
+                std::process::exit(0);
             }
             let a = world::Arena::install(game, &l);
             a.settle_pickups(game, &mut l);
@@ -356,6 +383,51 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
             eprintln!("no map {map}: {e}; using the flat test floor");
             None
         }
+    }
+}
+
+/// BF_COLLISION_CHECK (#338): how many of the collision surfaces the played map uses are the map's
+/// own. The data the map's own archive holds is read again alone (`own`: common's and the map's, as
+/// bf_level loads it) and so is the default level's (`other`: `BF_LEVEL`, e01); for each kind of
+/// surface the map names (the terrain blocks, the blockers, the hinters, the parts of the placed
+/// objects) it prints how many surfaces and uses there are, how many of the surfaces `other` has
+/// under the same name too (what the ticket counted: the tutorial 11 of its 24 blockers and
+/// hinters), how many `own` has no shape for, and how many `game` gives a shape other than `own`'s
+/// (a surface that another level's data shadowed: the tutorial's five hinters before #338, none
+/// after), with the first few names. The triangles are compared as the game's loader gives them
+/// (`Game::collision`).
+fn collision_check(game: &Game, level: &Level, map: &str) {
+    use std::collections::BTreeMap;
+    let default = std::env::var("BF_LEVEL").unwrap_or_else(|_| "e01".into());
+    let read = |name: &str| -> Option<Game> {
+        let mut g = Game::load(&data_dir()).map_err(|e| eprintln!("collision check: {e}")).ok()?;
+        g.load_level_data(&data_dir(), name).map_err(|e| eprintln!("collision check: no data of {name}: {e}")).ok()?;
+        Some(g)
+    };
+    let (Some(own), Some(other)) = (read(map), read(&default)) else { return };
+    // the surfaces by kind, each with how many times the map uses it
+    let mut kinds: [(&str, BTreeMap<u32, usize>); 4] = [("terrain blocks", BTreeMap::new()), ("blockers", BTreeMap::new()),
+                                                        ("hinters", BTreeMap::new()), ("object parts", BTreeMap::new())];
+    for &s in &level.terrain_collision {
+        *kinds[0].1.entry(s).or_default() += 1;
+    }
+    for &(s, _, _, kind) in &level.blockers {
+        *kinds[if kind == bf_viewer::bf::level::HINTER_PID { 2 } else { 1 }].1.entry(s).or_default() += 1;
+    }
+    let mut parts: HashMap<u32, Vec<u32>> = HashMap::new();
+    for o in level.objects.iter().filter(|o| o.tag != bf_viewer::bf::hash::h("character-object")) {
+        let Some(arch) = o.archetype else { continue };
+        let surfaces = parts.entry(arch).or_insert_with(|| WeaponModel::load(game, arch).map(|m| m.parts.iter().filter_map(|p| p.physics).collect()).unwrap_or_default());
+        for &s in surfaces.iter() {
+            *kinds[3].1.entry(s).or_default() += 1;
+        }
+    }
+    for (kind, surfaces) in &kinds {
+        let shared = surfaces.keys().filter(|&&s| !other.collision(s).is_empty()).count();
+        let missing = surfaces.keys().filter(|&&s| own.collision(s).is_empty()).count();
+        let foreign: Vec<String> = surfaces.keys().filter(|&&s| game.collision(s) != own.collision(s)).map(|s| format!("h_{s:08x}")).collect();
+        println!("collision check {map} (default level {default}): {kind}: {} surfaces ({} uses), {shared} also in {default}, {missing} without a shape in {map}, {} not the map's own {}",
+                 surfaces.len(), surfaces.values().sum::<usize>(), foreign.len(), foreign.iter().take(6).cloned().collect::<Vec<_>>().join(" "));
     }
 }
 

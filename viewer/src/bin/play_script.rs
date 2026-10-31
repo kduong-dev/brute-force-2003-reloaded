@@ -305,7 +305,8 @@ fn start(mut commands: Commands, game: Res<GameData>, map: Res<MapLevel>, curren
     }
     cs.mission = map.0.is_some() && !damage::multiplayer_map(&game.0, &current.0);
     if let Some(level) = map.0.as_ref() {
-        // the map's own scripts (e01's are loaded too, with its archive's audio: `load_game`)
+        // the map's own scripts (e01's are loaded too, with its archive's audio, after the map's:
+        // `load_default_level`; a name in both is the map's, `Game::scripts`)
         cs.scripts = game.0.scripts.iter().filter(|(_, s)| s.level == current.0).map(|(k, s)| (*k, Arc::new(s.clone()))).collect();
         cs.cameras = level.camera_objects.iter().map(|c| (c.name, (c.transform, 2.0 * c.half_fov))).collect();
         cs.paths = level.paths.iter().map(|p| (p.name, PathCurve::new(p))).collect();

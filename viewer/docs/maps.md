@@ -13,7 +13,9 @@ then exits; `BF_FIND_BODIES=1` lists the collision bodies (size, closed or open,
 many faces face into the body; blockers and hinters, a placed object's object-type, its faces by
 the way they face) and exits, `BF_FIND_BODIES=b<n>` lists body n's triangles (#292);
 `BF_FIND_HOLES=1` or `=<file>.ppm` scans the map for holes in its collision and for the hinters'
-walls and exits (#292, "Holes" below); `BF_HELD_LOG=1` prints what stops the controlled
+walls and exits (#292, "Holes" below); `BF_COLLISION_CHECK=1` counts the collision surfaces the
+map uses (terrain blocks, blockers, hinters, placed objects' parts) that aren't the map's own
+and exits (#338, "Which level's shapes" below); `BF_HELD_LOG=1` prints what stops the controlled
 character's move (#292); `BF_INSIDE_LOG=1` prints a character in a rock and one taken out (#285);
 `BF_SLIDE_LOG=1` prints slides, falls and landings; `BF_ALE_LOG=1` prints particle emission;
 `BF_NO_IDLE_FX=1` leaves out the power-ups' effects; `BF_NO_PLACED_FX=1` the level's placed
@@ -28,12 +30,63 @@ them):
 * **The level's triggers** run: detectors, routers, timers, calculators, spawn-triggers, the
   doors' anim-triggers, destroyers ([triggers.md](triggers.md), #220).
 * **Collision.** It uses the game's own collision surfaces (`src/bf/collision.rs`,
-  `src/arena.rs`). On sdm_e34 that's 43,348 triangles.
+  `src/arena.rs`). On sdm_e34 that's 43,444 triangles.
   * Where they come from: `objects-<level>.ipn` holds them in the Ipion physics engine's format.
     The terrain blocks, the 23 invisible blockers and every placed object's parts each name
     theirs. Door leaves have their own and stop blocking while open. A blocker is a wall to
     every character or, a hinter, to the AI's alone (#292, "Blockers and hinters" below), and to
     nothing else: grenades, ragdolls, pickups, shots and decals pass through (#298).
+  * **Which level's shapes (#338).** A surface is found by the name its owner gives it, and the
+    levels number their blockers and hinters alike. Of the 9057 surface names in the 53 level
+    archives' tables 1967 are in more than one archive and 291 of those have more than one shape:
+    `h_fcc5d473` is in 42 archives with 39 shapes, `h_ee99c575` in 38 with 37, `h_09910e17` in 37
+    with 36, `h_1bcd1f11` in 36 with 35, `h_fee0807e` in 32 with 31, and e01's shape of each is no
+    other archive's (34 of e01's 492 surfaces are shaped otherwise somewhere, and 46 of the other
+    52 archives have at least one that e01 shapes otherwise). The game loads common's data and
+    the level's and nothing of another level (FUN_000d61a0), so a blocker is the shape its own
+    archive has. bf_play loaded e01's data (the first mission's, `BF_LEVEL`: for its sounds)
+    before the map's, and the first surface of a name wins (`Game::add_objects`), so on every map
+    but e01 a blocker or hinter named as one of e01's took e01's shape. `BF_COLLISION_CHECK` over
+    the 53 maps found 774 blocker surfaces (2768 placed) and 184 hinter surfaces (184 placed); 290
+    and 142 had a name of e01's, and 155 (on 37 maps) and 136 (on 24) took another shape than the
+    map's own: 291 of the 958. The terrain blocks (5960 surfaces) and the placed objects' parts
+    (3851, 771 of them named in e01 too) never did. Examples (surfaces, those with a name of
+    e01's, those that took another shape): the tutorial's blockers and hinters 24, 11 (6 blockers
+    that were the same, and the 5 hinters), 5; sdm_e34's 14, 9, 5; e34's 17, 5, 1; e13's 6, 5, 5;
+    m03_c's 32, 20, 11; m09_a's 18, 11, 11; sdm_e40's 5, 2, 2.
+    * Now the map's data is loaded first, right after common's, and e01's after it, to fill in
+      what the map lacks (`load_map`, `load_default_level`; the extras of the test map come after
+      that): the check finds none on all 53 maps, and every surface a map names has a shape in its
+      own data. e01's own map is as it was.
+    * What else the levels name alike is the same in both, but for six archives (levels.md,
+      "Which level's data"): so the order changes nothing for archetypes, meshes, materials,
+      object types, sounds, animations and scripts, and gives e16, e23, m03_a, m04_a, m07_b and
+      m09_b their own material, effect type and animation sets.
+    * `BF_COLLISION_CHECK=1` (bf_play): reads the map's own data and e01's again alone (common's
+      with the map's, as bf_level loads it) and prints for the terrain blocks, the blockers, the
+      hinters and the placed objects' parts: the surfaces and their uses, how many `BF_LEVEL`'s
+      level (e01) also has under the name, how many the map has no shape for, and how many the
+      loaded data gives another shape than the map's own (with the first names); then exits.
+    * What changed on screen. sdm_e34's `h_fee0807e` blocker at (14.7, 99.8) was e01's 19.8 x
+      12.0 x 22.3 m box and is the map's own 7.1 x 8.0 x 10.3 m one: Tex running north along
+      x 14.7 from z 84 (`BF_MAP=sdm_e34 BF_TEST_GOTO=14.7,84,14.7,112 BF_HELD_LOG=1`) was held
+      for the rest of the run at (13.60, 36.46, 92.71) by body 51, a blocker, and now walks on,
+      held a moment by the new body 51's west face (x 11.89) at (11.59, 37.78, 102.33). The
+      tutorial's five hinters (the AI's alone) span 9-38 m where e01's spanned 3-22 m: four of
+      them lie round the lava yard's pits and walkways. Terrorist 30 of the yard's plate trigger
+      (`BF_MAP=tutorial BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999 BF_BRAIN_LOG=1
+      BF_COMBAT_LOG=1 BF_TEST_AIM_HOSTILE=14`) used to see Tex across the pit at 26.9 m and stop
+      at 2.33 s, still on its way, and fire (it died at 15 s to the aim helper); now it reaches
+      its home (62.1, -38.2) at 2.53 s and sees no one for the 40 s: the demo's sight rays stop at
+      a hinter's band as at any blocker (`Arena::ray`; which blockers the game's own sight ray
+      leaves out isn't traced, #298): the line from its home to Tex on the plate crosses body 64,
+      h_ee99c575's band at (48.6, -28.1), twice. That agrees with todo/28-tutorial take08, where
+      nobody fired on Tex on the plate (brain.md).
+      The other runs that were compared, before against after (`BF_MUTE=1 BF_BACKGROUND=1`,
+      15 fps): e01's start and its autopilot run, sdm_e34's autopilot run, the tutorial's marines
+      and first patrol, e34's squad follow and its fight with the Shrike Hound, are the same
+      frame for frame to within the particles' noise (at most 0.1% of the pixels, none over 15
+      levels), and the logs the same line for line.
   * Material: every triangle carries one, a world-material id plus a slide flag.
   * Standing: characters stand on surfaces up to 65° (the game's ground limit), facing up by
     their winding, within a 0.5 m step; steeper surfaces are walls (#285: so is a surface facing
@@ -287,9 +340,14 @@ them):
     (FUN_001525f0) that its physics step builds (FUN_0012cd10, code map): the blockers always,
     the hinters only for a character no player controls (one whose brain has +0x3c4 bit 12, set
     while its route jumps between world points, FUN_00026520, passes them too). A hinter is a wall
-    the AI keeps to and the player walks through. Every hinter of the data is an open band of
-    upright faces (no floor, flank or face looking down among them, none closed:
-    `BF_FIND_BODIES` over the 28 levels), round ground the AI shouldn't leave: sdm_e13's 2.7 km
+    the AI keeps to and the player walks through. 181 of the data's 184 hinters are open bands
+    of upright faces (no floor, flank or face looking down among them), none is closed
+    (`BF_FIND_BODIES` over the 28 levels, #338: #292's survey said all of them, with e01's shapes
+    where a hinter's name was e01's, "Which level's shapes" above); the three others, m02_b's
+    body 89 (28 steep and 28 downward faces among its 72 triangles) and m09_a's body 39 and
+    m09_x's body 49 (6 floors, 16 steep, 22 downward among 48), are shaped otherwise, and the
+    demo's floor queries for a character (`Body::Character`) take their faces in as any blocker's.
+    The bands run round ground the AI shouldn't leave: sdm_e13's 2.7 km
     band (body 71, 25 m tall) traces its arena's outer lava shore, m14_c's longest (body 49,
     375 m) the edge of its icy plateau.
     * The demo made every blocker a wall to everyone. Before #285 the push-out let a body run
@@ -309,11 +367,14 @@ them):
       game's AI is held; the demo's own shore stop for them (squad.md, "Liquids that burn") is
       unchanged.
     * Where (`BF_FIND_HOLES`: the hinters' walls on ground the player can walk to, in metres of
-      floor, an upper bound): sdm_e13 1532, m02_a 670, m07_a 494, m02_c 426, m14_a 400, e05 366,
-      m07_b 352, m14_b 333, m04_c 304, m03_b 294, m14_c 289, m04_a 276, m03_a 232, m02_b 225, e01
-      212, m09_x 210, the tutorial 51, m09_a 49, e16 31, sdm_m03 19, e13 18, e40 16, m09_c 14,
-      sdm_e40 11, m07_c 1; m05_y's and m09_b's one hinter each is on no such ground; sdm_m07's six
-      (a level with no terrain) aren't scanned. The fix takes the kind, so it covers every one.
+      floor, an upper bound; measured again after #338, which gave the maps their own hinters
+      and blockers: the numbers before in brackets where they changed): e13 2613 (18), sdm_e13 2607 (1532), m14_a 1608 (400), m07_b 1338 (352), m02_a 1323
+      (670), m02_c 1223 (426), m14_b 1065 (333), m07_a 973 (494), m04_c 963 (304), m02_b 665 (225),
+      m09_a 567 (49), m14_c 523 (289), m09_x 512 (210), m09_b 489 (none), e05 366, sdm_m03 337
+      (19), m04_a 308 (276), m03_b 293 (294), m03_a 246 (232), e01 212, the tutorial 198 (51), e16
+      117 (31), e40 78 (16), sdm_e40 10 (11), m09_c 8 (14), m07_c none (1); m05_y's one hinter is on
+      no such ground; sdm_m07's six (a level with no terrain) aren't scanned. The fix takes the
+      kind, so it covers every one.
     * **Only a character meets them (#298).** Ipion's body-pair table at 0x3c01e8 (FUN_00169ab0:
       a byte per pair of PID kinds, 0 never collide, 1 always, 255 ask the pair's own check;
       code-map.md) pairs PID_BLOCKER (4) and PID_HINTER (6) with PID_CHARACTER_PHANTOM (10)

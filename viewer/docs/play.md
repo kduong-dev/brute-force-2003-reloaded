@@ -2942,7 +2942,10 @@ liquids' sounds are requests with play parameters of their own (`WorldSound`: a 
 by the library's distances from the listener and dropped beyond its max distance, a volume, a
 pitch in octaves played as the speed); `BF_SOUND_LOG` prints each with its kind, volume, a
 footstep's gait factor, pitch and distance. Surface sounds live in level archives: `BF_LEVEL=<name>` (default `e01`) picks the
-level; `mp1`'s bank is merged in too, since a mission only carries its own squad's footsteps.
+level; `mp1`'s bank is merged in too, since a mission only carries its own squad's footsteps. They
+load after the played map's own data (`load_map`, `load_default_level`) and only fill in what it
+lacks: where two levels name something alike the map's is the one found (#338, levels.md "Which
+level's data").
 On a level, its sound-triggers play their own voices (#223: voice lines, door and gate sounds,
 ambience, the music cues; 3D ones by DirectSound's distance law from the camera): see
 [triggers.md](triggers.md), "Sound- and dialog-triggers", and their `BF_SOUND_LOG` lines

@@ -437,7 +437,9 @@ pub struct Game {
     pub light_specular: HashSet<u32>,
     /// inventory item types (objecttypes `<inventory>`): type name -> its settings
     pub items: HashMap<u32, ItemType>,
-    /// the loaded levels' level files (levels-<name>.xmb: terrain, placed objects, sky, fog)
+    /// the played level's level file (levels-<name>.xmb: terrain, placed objects, sky, fog), which
+    /// `load_level` adds; a level that only adds its data (`load_level_data`) adds none, so the
+    /// last one is the played level's however late the others load (#338)
     pub levels: Vec<Element>,
     /// the game's level list (common campaign-bf.xmb), in its order
     pub campaign: Vec<CampaignLevel>,
@@ -486,7 +488,7 @@ pub struct Game {
     pub script_names: HashMap<u32, String>,
     /// the loaded levels' cutscene scripts (scripts/<name>.gscr, `gscr::Script`) by the hash of
     /// their name, what a script-trigger's `script-name` holds (FUN_00174180 registers each so);
-    /// a later level's replaces an earlier one's of the same name (#222)
+    /// the first loaded of a name stays (#222; the played level's, loaded first: #338)
     pub scripts: HashMap<u32, super::gscr::Script>,
 }
 
@@ -1395,7 +1397,7 @@ impl Game {
         let mut g = Game::empty(schemas);
         // (BF_TEX_LOG=squad is bf_level's squad listing alone)
         g.texture_log = std::env::var("BF_TEX_LOG").is_ok_and(|v| v != "squad").then(Default::default);
-        g.load_archive(&common, COMMON)?;
+        g.load_archive(&common, COMMON, false)?;
         g.pending_texture_archives = Self::texture_archives(data_dir, None)?;
         g.normal_palette = normal_palette(&data_dir.join("..").join("default.xbe")).map(Arc::new);
         Ok(g)
@@ -1525,8 +1527,12 @@ impl Game {
     }
 
     /// Read an archive's data (`archive`: its name, e.g. "common" or "e34", kept with the
-    /// character types it defines). Entries already loaded win.
-    fn load_archive(&mut self, ar: &Archive, archive: &str) -> Result<(), String> {
+    /// character types it defines). Entries already loaded win: so the played level's data is
+    /// loaded right after common's, and whatever the demo adds beside it (`load_level_data`)
+    /// after it, to fill in what the level lacks and never to take the place of what it has
+    /// (#338). `played`: this is the played level (`load_level`), whose level file `Level::load`
+    /// reads.
+    fn load_archive(&mut self, ar: &Archive, archive: &str, played: bool) -> Result<(), String> {
         self.load_motion_sets(ar, |_| true);
         // the AI personalities (common's ai/personality.xmb: the enemies' hit reactions, #129)
         if self.personalities.is_empty() {
@@ -1535,7 +1541,7 @@ impl Game {
             }
         }
         self.load_chatter(ar, |_| true)?;
-        self.load_archive_rest(ar, archive)
+        self.load_archive_rest(ar, archive, played)
     }
 
     /// An archive's motion sets whose file stem ("ms_lf") passes `keep` (character_type.rs
@@ -1622,7 +1628,7 @@ impl Game {
     }
 
     /// The rest of `load_archive`, after the motion sets, the personalities and the chatter.
-    fn load_archive_rest(&mut self, ar: &Archive, archive: &str) -> Result<(), String> {
+    fn load_archive_rest(&mut self, ar: &Archive, archive: &str, played: bool) -> Result<(), String> {
         // the level list: <level><h_1b8535f0 h_07f2f670=NAME texture-name=PREVIEW ...>
         // <zone file-name=ARCHIVE/><dm-data description=TEXT/>
         if let Some(root) = self.parse(ar, "campaign-bf.xmb")? {
@@ -1782,7 +1788,11 @@ impl Game {
         for n in ar.find("levels-", ".xmb") {
             if let Some(root) = self.parse(ar, &n)? {
                 self.add_placements(&root, archive);
-                self.levels.push(root);
+                // (the level file of a level that only adds its data isn't kept: `Level::load`
+                // reads the last one)
+                if played {
+                    self.levels.push(root);
+                }
             }
         }
         for n in ar.find("materials-", ".xmb") {
@@ -2057,7 +2067,16 @@ impl Game {
     /// An objects file (objects-<lvl>.xmb, its vertex data `ivd` and its collision `ipn`): its
     /// archetypes and meshes, looked up in the order the files were added (`archetype`, `mesh`),
     /// and its collision surfaces' table, `<h_104db1cd data-file=..ipn><h_f3f067ad name off>`
-    /// (a surface already loaded wins).
+    /// (a surface already loaded wins). So the played level's objects file has to come before
+    /// any other level's (#338): the blockers' and hinters' surfaces are numbered alike in every
+    /// level. Of the 9057 surface names in the 53 level archives' tables, 1967 are defined by
+    /// more than one archive and 291 of those have more than one shape; `h_fcc5d473` is in 42
+    /// archives with 39 shapes, `h_ee99c575` in 38 with 37, `h_09910e17` 37 with 36, `h_1bcd1f11`
+    /// 36 with 35, `h_fee0807e` 32 with 31, and e01's shape of each is no other archive's. Of
+    /// e01's 492 surfaces, 34 are shaped otherwise in some other archive, and 46 of the other 52
+    /// archives have at least one that e01 shapes otherwise. The other things the levels share by name (archetypes, meshes, materials, object types,
+    /// sounds, animations, scripts) are the same wherever two levels have one of the same name
+    /// (levels.md "Load order"), so for them the order changes nothing.
     pub(crate) fn add_objects(&mut self, root: Element, ivd: Arc<Vec<u8>>, ipn: Arc<Vec<u8>>) {
         for table in root.children_named(H_PHYSICS_FILE) {
             for s in table.children_named(H_PHYSICS) {
@@ -2224,7 +2243,9 @@ impl Game {
     /// name-ordered search found): among them the squad's eight skins, which common lacks and
     /// every level carries in one of five outfits (#284), and 21 world textures that differ
     /// between levels. What another level's library left is dropped and searched for again
-    /// (`texture_entry`). Entries already loaded win for the rest of the data.
+    /// (`texture_entry`). Entries already loaded win for the rest of the data: so this comes
+    /// before any `load_level_data` (#338), and a Game made with `Game::load` and this alone
+    /// holds the level's own data and common's, as the game does (bf_level).
     pub fn load_level(&mut self, data_dir: &Path, level: &str) -> Result<(), String> {
         self.textures.retain(|_, t| &*t.archive == COMMON);
         self.pending_texture_archives = Self::texture_archives(data_dir, Some(level))?;
@@ -2240,8 +2261,12 @@ impl Game {
     /// chatter (characters/ms_*.xmb, *_chatter.xmb: #128) and its placed characters, on top of
     /// what's loaded: entries already loaded win. Not its texture library: that is the played
     /// level's alone (`load_level`), and a texture only this one holds is found by name later
-    /// (`texture_entry`). What the demo adds beside the played level (the first mission's
-    /// sounds, the test map's weapons) loads with this.
+    /// (`texture_entry`); nor its level file (`Game::levels`). What the demo adds beside the
+    /// played level (the first mission's sounds, the test map's weapons) loads with this, AFTER
+    /// the played level (`load_level`): the game loads common's data and the level's and nothing
+    /// of another level (FUN_000d61a0), so where two levels name an entry alike the played
+    /// level's has to be the one found (#338: the blockers' and hinters' collision surfaces,
+    /// `Game::add_objects`); what it doesn't have is found in the data loaded here.
     pub fn load_level_data(&mut self, data_dir: &Path, level: &str) -> Result<(), String> {
         self.load_level_with(data_dir, level, false)
     }
@@ -2274,20 +2299,23 @@ impl Game {
         Ok(())
     }
 
-    /// `load_level` (`textures`: with the texture library) or `load_level_data`.
+    /// `load_level` (`textures`: with the texture library, and the level file `Level::load` reads)
+    /// or `load_level_data`.
     fn load_level_with(&mut self, data_dir: &Path, level: &str, textures: bool) -> Result<(), String> {
         let ar = Archive::open(&data_dir.join(format!("{level}.tgz")), |n| {
             ["objects-", "materials-", "objecttypes-", "sounds-", "world-materials", "levels-", "animations-", "ms_"].iter().any(|p| n.starts_with(p))
                 || n.ends_with("_chatter.xmb") || n.ends_with(".gscr") || (textures && n.starts_with("textures-"))
         })?;
-        self.load_archive(&ar, level)?;
+        self.load_archive(&ar, level, textures)?;
         if textures && self.texture_log.is_some() {
             let n = self.textures.values().filter(|t| *t.archive == *level).count();
             println!("textures: {level}'s library loaded: {n} textures (common's: {})",
                      self.textures.values().filter(|t| &*t.archive == COMMON).count());
         }
         // the cutscene scripts' entity names (Lua 4 source: `entity_name = "trigger_spawn8",`),
-        // and the scripts themselves, by their names (the file's, without .gscr: #222)
+        // and the scripts themselves, by their names (the file's, without .gscr: #222); the
+        // first loaded of a name stays (the played level's: only 8 of the 167 names are in more
+        // than one archive, and those are byte-equal)
         for f in ar.find("", ".gscr") {
             let text = String::from_utf8_lossy(ar.get(&f).unwrap_or(&[])).into_owned();
             for part in text.split("entity_name").skip(1) {
@@ -2298,13 +2326,16 @@ impl Game {
             match super::gscr::Script::parse(stem, &text) {
                 Ok(s) => {
                     self.script_names.entry(h(stem)).or_insert_with(|| stem.to_string());
-                    self.scripts.insert(h(stem), super::gscr::Script { level: level.to_string(), ..s });
+                    self.scripts.entry(h(stem)).or_insert(super::gscr::Script { level: level.to_string(), ..s });
                 }
                 Err(e) => eprintln!("{level}: script {f}: {e}"),
             }
         }
-        if let Some(root) = self.parse(&ar, "world-materials.xmb")? {
-            self.surfaces = audio::surfaces(&root);
+        // (the first one read stays: every level's file is the same, 54 of 54 byte-equal)
+        if self.surfaces.is_empty() {
+            if let Some(root) = self.parse(&ar, "world-materials.xmb")? {
+                self.surfaces = audio::surfaces(&root);
+            }
         }
         Ok(())
     }
@@ -3203,5 +3234,87 @@ pub fn sample(c: &Channel, t: f32) -> (Option<Quat>, Option<Vec3>) {
         DT_VEC => (None, Some(vec_at(a).lerp(vec_at(b), f))),
         DT_XFORM => (Some(nlerp(quat_at(&a[12..]), quat_at(&b[12..]), f)), Some(vec_at(a).lerp(vec_at(b), f))),
         _ => (None, None),
+    }
+}
+
+/// The order the demo loads archives in (#338): what a level names alike is the first loaded one's.
+#[cfg(test)]
+mod load_order_tests {
+    use super::*;
+
+    /// A tiny compact surface (the layout `collision::surface` reads: a header whose +0x20 points
+    /// at one leaf node, its ledge, one triangle of material 5 and its three points) as an .ipn.
+    fn surface_blob(tri: [Vec3; 3]) -> Vec<u8> {
+        let mut d = vec![0u8; 0x60];
+        d[0x20..0x24].copy_from_slice(&0x24i32.to_le_bytes());
+        // the node at 0x24: a leaf (no right child) whose ledge is 28 bytes on
+        d[0x28..0x2c].copy_from_slice(&28i32.to_le_bytes());
+        // the ledge at 0x40: its points 32 bytes on, one triangle (at +12), the triangle's header
+        // (material 5 in its top byte) and its three points' indices
+        d[0x40..0x44].copy_from_slice(&32i32.to_le_bytes());
+        d[0x4c..0x4e].copy_from_slice(&1i16.to_le_bytes());
+        d[0x50..0x54].copy_from_slice(&(5u32 << 24).to_le_bytes());
+        for k in 0..3u32 {
+            d[0x54 + 4 * k as usize..0x58 + 4 * k as usize].copy_from_slice(&k.to_le_bytes());
+        }
+        for p in tri {
+            for c in [p.x, p.y, p.z, 0.0] {
+                d.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+        d
+    }
+
+    /// An objects file's element with a surface table of `names`, each at offset 0 of its .ipn.
+    fn objects_with(names: &[&str]) -> Element {
+        let surface = |n: &&str| Element { name: H_PHYSICS, attrs: vec![(h("name"), Value::Hash(h(n))), (H_PHYSICS_OFFSET, Value::Int(0))], ..Default::default() };
+        Element { name: h("objects"), children: vec![Element { name: H_PHYSICS_FILE, children: names.iter().map(surface).collect(), ..Default::default() }], ..Default::default() }
+    }
+
+    /// A level archive `<dir>/<name>.tgz` of `members` (path, bytes).
+    fn write_archive(dir: &Path, name: &str, members: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(dir.join(format!("{name}.tgz"))).unwrap();
+        let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(file, flate2::Compression::fast()));
+        for (path, data) in members {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            tar.append_data(&mut header, path, *data).unwrap();
+        }
+        tar.into_inner().unwrap().finish().unwrap();
+    }
+
+    /// A collision surface already loaded keeps its name (`add_objects`): the blockers' and
+    /// hinters' names are numbered alike in every level, so whichever objects file comes first
+    /// decides their shape. A surface only the later file has is found.
+    #[test]
+    fn the_first_surface_of_a_name_stays() {
+        let mut game = Game::empty(SchemaSet::default());
+        let (played, other) = ([Vec3::ZERO, Vec3::X, Vec3::Y], [Vec3::ZERO, Vec3::X * 2.0, Vec3::Z]);
+        game.add_objects(objects_with(&["blocker"]), Arc::new(vec![]), Arc::new(surface_blob(played)));
+        game.add_objects(objects_with(&["blocker", "only_later"]), Arc::new(vec![]), Arc::new(surface_blob(other)));
+        assert_eq!(game.collision(h("blocker")), vec![(played, 5)]);
+        assert_eq!(game.collision(h("only_later")), vec![(other, 5)]);
+        assert!(game.collision(h("neither")).is_empty());
+    }
+
+    /// The played level's cutscene scripts stay when a level loaded after it (the default level's
+    /// data, the test map's) has one of the same name: `Game::scripts` keeps the first, and the
+    /// script's `level` is the played one's (play_script.rs plays only the current map's).
+    #[test]
+    fn the_played_levels_script_stays() {
+        let script = |duration: f32| format!("duration = {duration:.6};\nentities =\n{{\n}};\n\nevents =\n{{\n}};");
+        let dir = std::env::temp_dir().join(format!("bf_load_order_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_archive(&dir, "played", &[("played/scripts/shared.gscr", script(1.0).as_bytes()), ("played/scripts/own.gscr", script(3.0).as_bytes())]);
+        write_archive(&dir, "other", &[("other/scripts/shared.gscr", script(2.0).as_bytes()), ("other/scripts/theirs.gscr", script(4.0).as_bytes())]);
+        let mut game = Game::empty(SchemaSet::default());
+        let loaded = game.load_level(&dir, "played").and_then(|_| game.load_level_data(&dir, "other"));
+        let _ = std::fs::remove_dir_all(&dir);
+        loaded.unwrap();
+        let by = |name: &str| game.scripts.get(&h(name)).map(|s| (s.level.clone(), s.duration));
+        assert_eq!(by("shared"), Some(("played".to_string(), 1.0)));
+        assert_eq!(by("own"), Some(("played".to_string(), 3.0)));
+        assert_eq!(by("theirs"), Some(("other".to_string(), 4.0)));
     }
 }
