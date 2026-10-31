@@ -22,8 +22,11 @@
 //!    player back where it stood RESPAWN_TIME later (the demo's rule).
 //!    Any other map keeps its own squad.
 //!  - **The menu** (T: its key is the tool registry's, play_editor.rs `TOOLS`; on any map of a
-//!    test session): Left / Right pick a slot, Up / Down (the wheel; Page Up / Down a page) a row
-//!    of the list: the predefined squads first (below), then the character types. On a type,
+//!    test session): Left / Right pick a slot, Up / Down (the wheel; Page Up / Down a page of
+//!    ROWS) a row of the list: the predefined squads first (below), then the character types. It
+//!    opens with the first type picked, as before the squads were added (`Row::default`), and its
+//!    window on the top of the list with the squads in view (`window_top`). The panel keeps above
+//!    the HUD's item box in every state (the tests count its lines). On a type,
 //!    Enter or a click puts a fresh one of that type in the slot (`change`: a member of another
 //!    type replaced where it stands, an empty slot's at its formation place round the leader, the
 //!    controlled character's changed in place: its position, heading, view and the squad's
@@ -52,7 +55,7 @@
 //! squad, the squads the menu lists and each change.
 
 use super::*;
-use super::testtools::{fill_npc_list, npc_kind, title, Hook, NpcList, Panel, Script, Tools, LIST_LINES, MESSAGE_TIME};
+use super::testtools::{fill_npc_list, npc_kind, title, Hook, NpcList, Panel, Script, Tools, MESSAGE_TIME};
 
 /// Each squad slot's type (None: empty), by CHARACTERS index: the map's squad as its start made
 /// it and the squad menu has changed it since (a map's: `begin_play` makes it with the squad). The
@@ -73,14 +76,23 @@ impl Roster {
     }
 }
 
-/// The squad menu's picks: the slot (a CHARACTERS index) and the row of its list (`row`: the
-/// predefined squads, `Presets`, then the types of the NPC menu's list, `NpcList`). A map's: reset
-/// as each one starts.
+/// The squad menu's picks: the slot (a CHARACTERS index), the row of its list picked (a predefined
+/// squad, `Presets`, or a type of the NPC menu's list, `NpcList`) and the first row of the window
+/// the panel shows (`top`, a position in the list: the squads, then the types). A map's: reset as
+/// each one starts.
 #[derive(Resource, Default)]
 struct Menu {
     slot: usize,
-    pick: usize,
+    /// the row picked: the first character type to start with, as the menu was before the squads
+    /// (#339) were added to it. Enter on a squad puts four slots at once, so it's chosen on purpose
+    pick: Row,
+    top: usize,
 }
+
+/// How many rows of the list the panel shows at once, and how far Page Up / Down jump (the demo's
+/// choice: the tools' panel has to end above the HUD's item box in every state, which `PANEL_LINES`
+/// in the tests counts; the NPC and object menus show LIST_LINES, 9).
+const ROWS: usize = 7;
 
 /// A predefined squad (#339): the type each of the four slots holds. The campaign squad and the
 /// five squad deathmatch squads of game-options, as `presets` makes them from the loaded data.
@@ -275,9 +287,33 @@ enum Row {
     Type(usize),
 }
 
-/// Row `pick` of the list with `squads` predefined squads before the types.
+impl Default for Row {
+    /// The first character type: the row the menu opened on before the squads were added (#339),
+    /// whatever number of squads the data gives.
+    fn default() -> Row {
+        Row::Type(0)
+    }
+}
+
+/// The row at position `pick` of the list, with `squads` predefined squads before the types.
 fn row(pick: usize, squads: usize) -> Row {
     if pick < squads { Row::Squad(pick) } else { Row::Type(pick - squads) }
+}
+
+/// Where a row stands in the list (the inverse of `row`).
+fn position(r: Row, squads: usize) -> usize {
+    match r {
+        Row::Squad(i) => i,
+        Row::Type(i) => squads + i,
+    }
+}
+
+/// The first row of the window (ROWS rows of a list of `rows`) that holds position `at`, moved as
+/// little as it takes from where it was (`top`): the window stays put while the pick moves inside
+/// it and scrolls a row at a time past its edges, so the menu opens on its first rows with the
+/// squads in view and the first type picked at the bottom.
+fn window_top(top: usize, at: usize, rows: usize) -> usize {
+    top.max((at + 1).saturating_sub(ROWS)).min(at).min(rows.saturating_sub(ROWS))
 }
 
 /// What the menu is asked to do in a frame: put a type in a slot (None: empty it), or fill all
@@ -571,9 +607,9 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
                 }
             },
             Hook::SquadPick { row, slot } => {
-                // (a squad first, else a type: its row after the squads)
-                let at = preset_named(squads, row)
-                    .or_else(|| named_type(&game.0, row).and_then(|k| types.iter().position(|t| t.1 == k)).map(|i| squads.len() + i));
+                // (a squad first, else a type)
+                let at = preset_named(squads, row).map(Row::Squad)
+                    .or_else(|| named_type(&game.0, row).and_then(|k| types.iter().position(|t| t.1 == k)).map(Row::Type));
                 match at {
                     Some(at) => {
                         tools.panel = Panel::Squad;
@@ -593,11 +629,12 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
     if open && rows > 0 {
         let step = |k: KeyCode| keys.just_pressed(k) as i32;
         let wheel = if scroll.delta.y < 0.0 { 1 } else if scroll.delta.y > 0.0 { -1 } else { 0 };
-        let d = step(KeyCode::ArrowDown) - step(KeyCode::ArrowUp) + wheel + LIST_LINES as i32 * (step(KeyCode::PageDown) - step(KeyCode::PageUp));
-        menu.pick = (menu.pick as i32 + d).rem_euclid(rows as i32) as usize;
+        let d = step(KeyCode::ArrowDown) - step(KeyCode::ArrowUp) + wheel + ROWS as i32 * (step(KeyCode::PageDown) - step(KeyCode::PageUp));
+        let at = (position(menu.pick, squads.len()).min(rows - 1) as i32 + d).rem_euclid(rows as i32) as usize;
+        menu.pick = row(at, squads.len());
         menu.slot = (menu.slot as i32 + step(KeyCode::ArrowRight) - step(KeyCode::ArrowLeft)).rem_euclid(SQUAD as i32) as usize;
         if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) || tools.click {
-            asks.push(match row(menu.pick, squads.len()) {
+            asks.push(match menu.pick {
                 Row::Squad(i) => Ask::Squad(i),
                 Row::Type(i) => Ask::Slot(menu.slot, Some(types[i].1)),
             });
@@ -606,6 +643,10 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
         if keys.just_pressed(KeyCode::Delete) {
             asks.push(Ask::Slot(menu.slot, None));
         }
+    }
+    // (the window follows the pick, whichever of the keys and the hooks moved it)
+    if rows > 0 {
+        menu.top = window_top(menu.top, position(menu.pick, squads.len()).min(rows - 1), rows);
     }
     // each slot to change: the slot, its type (None: empty), and the predefined squad it's part of
     let mut puts: Vec<(usize, Option<u32>, Option<usize>)> = vec![];
@@ -694,7 +735,10 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
     for (i, took, why, you) in told {
         let name = &squads[i].name;
         let mut what = format!("Squad: {name}");
-        let notes: Vec<String> = [you.map(|y| format!("you're {y} now")), why.map(|w| format!("{} not put: {w}", SQUAD - took))].into_iter().flatten().collect();
+        // (a map played alone's reason as "played alone": the message is long enough, and the panel says the rest)
+        let notes: Vec<String> = [you.map(|y| format!("you're {y} now")),
+                                  why.map(|w| format!("{} not put: {}", SQUAD - took, w.strip_prefix("No squad here: the map is ").unwrap_or(&w)))]
+            .into_iter().flatten().collect();
         if !notes.is_empty() {
             what += &format!(" ({})", notes.join("; "));
         }
@@ -710,7 +754,13 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
     if keys.just_pressed(KeyCode::KeyV) && player.skill.data.is_none() && !player.dead && !player.stand_in {
         status.message = Some((format!("{} has no special skill", display_name(&player, &game.0)), MESSAGE_TIME));
     }
-    let s = if open { panel_text(&menu, types, squads, &roster, &player, &squad, &game.0, tools.edit, mode.deathmatch) } else { String::new() };
+    let label_of = |k: u32| label(k, types, &game.0);
+    let short_of = |k: u32| short_name(k, &game.0);
+    let s = if open {
+        panel_text(&menu, types, squads, &roster, &player, &squad, (&label_of, &short_of), tools.edit, mode.deathmatch)
+    } else {
+        String::new()
+    };
     if text.0 != s {
         text.0 = s;
     }
@@ -722,12 +772,18 @@ fn squad_label(p: &Preset) -> String {
 }
 
 /// The squad menu's panel: the four slots (the one picked marked), who holds each (dead, or the
-/// controlled character's), what a type of its own lacks, a window of the list round the row
-/// picked (the predefined squads, then the types, under a heading each), and the keys; with a
-/// squad picked, who it would put in each place.
+/// controlled character's), what a type of its own lacks, a window of ROWS rows of the list (the
+/// predefined squads, then the types, a heading each) and, for the row picked, the keys or, for a
+/// squad, who it would put in each place. `names` are the type's long label (with where it's
+/// defined and its HP: a slot's and the types' rows) and short name (a squad's members).
+///
+/// It has to end above the HUD's item box (see `PANEL_LINES` in the tests) in every state, the
+/// worst being four slots of long names with a squad picked: so the type-of-its-own note is a
+/// line, a squad's members take two lines (two places a line), and the list shows ROWS rows.
 #[allow(clippy::too_many_arguments)]
-fn panel_text(menu: &Menu, types: &[(String, u32)], squads: &[Preset], roster: &Roster, player: &Player, squad: &Squad, game: &Game, edit: bool,
-              deathmatch: bool) -> String {
+fn panel_text(menu: &Menu, types: &[(String, u32)], squads: &[Preset], roster: &Roster, player: &Player, squad: &Squad,
+              names: (&dyn Fn(u32) -> String, &dyn Fn(u32) -> String), edit: bool, deathmatch: bool) -> String {
+    let (label_of, short_of) = names;
     let mut s = String::from("SQUAD   (T / Esc: close)\nslot (Left / Right):\n");
     let mut own = false;
     for c in 0..SQUAD {
@@ -738,22 +794,22 @@ fn panel_text(menu: &Menu, types: &[(String, u32)], squads: &[Preset], roster: &
                 own |= squad_of(k) == OTHER;
                 let dead = !edit && std::iter::once(player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
                 let you = if c == player.character { if edit { "   (leads at F5)" } else { "   (you)" } } else { "" };
-                format!("{}{}{you}", label(k, types, game), if dead { "   DEAD" } else { "" })
+                format!("{}{}{you}", label_of(k), if dead { "   DEAD" } else { "" })
             }
         };
         s += &format!("{mark} {}  {}'s place: {who}\n", c + 1, title(CHARACTERS[c]));
     }
     if own {
-        s += "  (a type not of the squad: no skill, no voice but its death line,\n   its type's portrait or ?)\n";
+        s += "  (a type of its own: no skill, a death line only)\n";
     }
     if deathmatch {
-        s += "  (played alone here: no squad to fill)\n";
+        s += "  (played alone here: only your slot changes)\n";
     }
     s += "squad or type (Up / Down, wheel, Page Up / Down):\n";
     let n = squads.len() + types.len();
-    let first = menu.pick.saturating_sub(LIST_LINES / 2).min(n.saturating_sub(LIST_LINES));
+    let (at, first) = (position(menu.pick, squads.len()), menu.top.min(n.saturating_sub(ROWS)));
     let mut group = "";
-    for i in first..(first + LIST_LINES).min(n) {
+    for i in first..(first + ROWS).min(n) {
         let (heading, label) = match row(i, squads.len()) {
             Row::Squad(k) => ("predefined squads", squad_label(&squads[k])),
             Row::Type(k) => ("character types", types[k].0.clone()),
@@ -762,23 +818,21 @@ fn panel_text(menu: &Menu, types: &[(String, u32)], squads: &[Preset], roster: &
             group = heading;
             s += &format!("  [{heading}]\n");
         }
-        s += &format!("  {} {label}\n", if i == menu.pick { ">" } else { " " });
+        s += &format!("  {} {label}\n", if i == at { ">" } else { " " });
     }
     let slot = menu.slot + 1;
-    match row(menu.pick, squads.len()) {
+    match menu.pick {
         Row::Squad(k) => {
             let p = &squads[k];
-            s += &format!("click / Enter: all four slots become {}:\n", p.name);
-            for c in 0..SQUAD {
-                let who = p.slots[c].map_or("(empty)".to_string(), |k| short_name(k, game));
-                let you = if c == player.character { if edit { "   (leads at F5)" } else { "   (you)" } } else { "" };
-                s += &format!("  {}  {}'s place: {who}{you}\n", c + 1, title(CHARACTERS[c]));
-            }
-            if deathmatch {
-                s += "  (played alone: only your slot changes)\n";
-            }
-            if menu.slot != player.character {
-                s += &format!("Delete: empty slot {slot}");
+            s += &format!("click / Enter: {} in all four slots:\n", p.name);
+            // who goes in each place, two a line in the order of the slot rows
+            for pair in [[0, 1], [2, 3]] {
+                let line: Vec<String> = pair.iter().map(|&c| {
+                    let who = p.slots[c].map_or("(empty)".to_string(), short_of);
+                    let you = if c == player.character { if edit { " (leads)" } else { " (you)" } } else { "" };
+                    format!("{}: {who}{you}", title(CHARACTERS[c]))
+                }).collect();
+                s += &format!("  {}\n", line.join("   "));
             }
         }
         Row::Type(k) => {
@@ -959,5 +1013,137 @@ mod tests {
         assert_eq!(tex.kind, squad_type(1));
         assert_eq!(squad.0.iter().filter(|m| m.in_squad()).map(|m| (m.character, m.kind)).collect::<Vec<_>>(),
                    vec![(1, SHRIKE), (2, squad_type(2))]);
+    }
+
+    #[test]
+    fn the_menu_opens_on_the_first_type_with_the_squads_in_view() {
+        // (the row it opened on before the squads were added, so Enter straight after T changes
+        // one slot, not four: whatever number of squads the data gives)
+        let m = Menu::default();
+        assert_eq!(m.pick, Row::Type(0));
+        for squads in [0, 1, 6] {
+            assert_eq!(row(position(m.pick, squads), squads), Row::Type(0));
+        }
+        assert_eq!(position(m.pick, 6), 6);
+        // (and its window starts at the top of the list: the six squads and that type at its foot)
+        assert_eq!(window_top(m.top, position(m.pick, 6), 6 + 128), 0);
+        assert_eq!(position(Row::Squad(3), 6), 3);
+    }
+
+    #[test]
+    fn the_window_scrolls_a_row_at_a_time_past_its_edges() {
+        let rows = 6 + 128;
+        // inside it stays where it was, past an edge it moves just far enough
+        assert_eq!(window_top(0, ROWS - 1, rows), 0);
+        assert_eq!(window_top(0, ROWS, rows), 1);
+        assert_eq!(window_top(3, 5, rows), 3);
+        assert_eq!(window_top(3, 3 + ROWS - 1, rows), 3);
+        assert_eq!(window_top(3, 3 + ROWS, rows), 4);
+        assert_eq!(window_top(3, 2, rows), 2);
+        // wrapping round either end, and a list shorter than the window
+        assert_eq!(window_top(0, rows - 1, rows), rows - ROWS);
+        assert_eq!(window_top(rows - ROWS, 0, rows), 0);
+        assert_eq!(window_top(5, 2, 4), 0);
+    }
+
+    /// How many lines the panel may take once wrapped. It starts 18% down the window (130 px of 720,
+    /// play_testtools.rs `spawn_panel`) with 8 px of padding, its 13-point lines are 15.6 px (31
+    /// lines made it end at y 630 in the tester's capture), and it has to end above the HUD's item
+    /// box, whose top is at y 565 of 720 at 1280 x 720 (about 555 with a margin): 26 lines.
+    const PANEL_LINES: usize = 26;
+
+    /// How many characters of a line fit before the panel wraps it: at most 36% of the window's
+    /// width (461 px at 1280) less 8 px of padding each side, at the font's advance; the captures'
+    /// longest first line before a wrap, "> 1  Brutus's place: Shrike Soldier (mp_common/sdm_shrike,",
+    /// holds 58.
+    const PANEL_COLUMNS: usize = 58;
+
+    /// The lines `text` takes in the panel: a greedy word wrap at PANEL_COLUMNS (the panel breaks
+    /// lines at spaces).
+    fn wrapped_lines(text: &str) -> usize {
+        text.trim_end().split('\n').map(|line| {
+            let (mut rows, mut width) = (1, 0);
+            for (i, word) in line.split(' ').enumerate() {
+                let (len, gap) = (word.chars().count(), usize::from(i > 0));
+                if width > 0 && width + gap + len > PANEL_COLUMNS {
+                    rows += 1;
+                    width = len;
+                } else {
+                    width += gap + len;
+                }
+            }
+            rows
+        }).sum()
+    }
+
+    /// The six predefined squads as the data gives them (testtools.md "The predefined squads"): the
+    /// name, the library and the four places' members with their hit points, in the order of the
+    /// slots (Brutus's, Flint's, Hawk's, Tex's).
+    const DATA: [(&str, &str, [(&str, u32); 4]); 6] = [
+        ("Campaign squad", "common", [("Brutus", 75), ("Flint", 55), ("Hawk", 50), ("Tex", 70)]),
+        ("Brute Force", "sdm_bf", [("Brutus", 75), ("Flint", 55), ("Hawk", 50), ("Tex", 70)]),
+        ("Feral Hunting Pack", "sdm_feral", [("Feral Shaman", 70), ("Feral Outcast", 75), ("Outcast Shaman", 70), ("Feral Colonist", 75)]),
+        ("Shrike Raiders", "sdm_shrike", [("Shrike Soldier", 50), ("Shrike Heavy", 55), ("Shrike Hound", 45), ("Hunter Lord", 80)]),
+        ("Seer Coven", "sdm_seers", [("Seer Follower", 75), ("Seer Priest", 85), ("Fire Hound", 45), ("Shadoon", 95)]),
+        ("Ferguson Platoon", "sdm_ferg", [("Confed Marine", 80), ("McTavish", 80), ("Gunthar Ghent", 80), ("Militia", 80)]),
+    ];
+
+    /// The type of squad `s`'s member at place `c`, made up (none is one of the campaign four, so the
+    /// panel's note about a type of its own shows: the longer case).
+    fn kind_of(s: usize, c: usize) -> u32 {
+        0xB000_0000 | (s as u32) << 4 | c as u32
+    }
+
+    /// A made-up type's NPC menu label ("Shrike Soldier (mp_common/sdm_shrike, 50 hp)") and short name.
+    fn long_label(k: u32) -> String {
+        let (s, c) = (((k >> 4) & 0xF) as usize, (k & 0xF) as usize);
+        format!("{} (mp_common/{}, {} hp)", DATA[s].2[c].0, DATA[s].1, DATA[s].2[c].1)
+    }
+
+    fn short_label(k: u32) -> String {
+        DATA[((k >> 4) & 0xF) as usize].2[(k & 0xF) as usize].0.to_string()
+    }
+
+    #[test]
+    fn the_panel_ends_above_the_item_box_in_every_state() {
+        let squads: Vec<Preset> = DATA.iter().enumerate().map(|(s, d)| Preset {
+            name: d.0.into(), place: format!("mp_common/{}", d.1), library: d.1.into(), slots: std::array::from_fn(|c| Some(kind_of(s, c))),
+        }).collect();
+        // the types: the four of the squad, then 124 of the longest labels (the menu lists 128 on the test map)
+        let types: Vec<(String, u32)> = (0..128).map(|i| (long_label(kind_of(2 + i % 4, i % 4)) + if i % 3 == 0 { " h_0571d345" } else { "" }, 0xC000_0000 + i as u32)).collect();
+        let (mut worst, mut states) = (0, 0);
+        for edit in [false, true] {
+            for held in 0..squads.len() {
+                // every squad's four in the slots, any of the four the player's, any slot picked
+                for me in 0..SQUAD {
+                    for dead in [false, true] {
+                        let mut player = Player::new(me);
+                        player.dead = dead;
+                        let roster = Roster(squads[held].slots);
+                        let others = Squad(vec![]);
+                        let picks = (0..squads.len()).map(Row::Squad).chain([Row::Type(0), Row::Type(5), Row::Type(127)]);
+                        for pick in picks {
+                            for slot in [0, me] {
+                                let menu = Menu { slot, pick, top: window_top(0, position(pick, squads.len()), squads.len() + types.len()) };
+                                let text = panel_text(&menu, &types, &squads, &roster, &player, &others, (&long_label, &short_label), edit, false);
+                                let lines = wrapped_lines(&text);
+                                assert!(lines <= PANEL_LINES, "{lines} lines (edit {edit}, {} held, you {me}, {pick:?}):\n{text}", squads[held].name);
+                                (worst, states) = (worst.max(lines), states + 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // (a map played alone: the roster is the player's slot alone)
+        let alone = Roster([None, None, None, Some(kind_of(2, 3))]);
+        for pick in (0..squads.len()).map(Row::Squad) {
+            let menu = Menu { slot: 3, pick, top: 0 };
+            let text = panel_text(&menu, &types, &squads, &alone, &Player::new(3), &Squad(vec![]), (&long_label, &short_label), false, true);
+            assert!(wrapped_lines(&text) <= PANEL_LINES, "{text}");
+        }
+        // (the fixture reaches long panels: its long names wrap the slot rows)
+        println!("the worst of {states} states takes {worst} of {PANEL_LINES} lines");
+        assert!(worst >= 20, "the worst of {states} states takes {worst} lines: the fixture isn't the worst case");
     }
 }

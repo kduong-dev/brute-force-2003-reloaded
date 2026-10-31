@@ -23,7 +23,7 @@ a click is any left click off the panel, and F and its teleports do nothing.
 | F | **free camera** on / off (in play). Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl (or E / Q): up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
 | N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, B dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
 | J / B / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / remove it. Shift+Delete removes every NPC. (In a test session B is this tool's, not the Black button's Medkit shortcut it is in play: `BF_TEST_ITEM_INPUT`'s `black` drives that here, [play.md](play.md) **The item box and the item list**) |
-| T | **squad menu** (#302): the squad's four slots, its places round the radar and the keys 1-4 that take control of them (Brutus's, Flint's, Hawk's, Tex's), each with who holds it ("(empty)", a type, DEAD, "(you)"). Left / Right picks a slot, Up / Down or the wheel (Page Up / Down: a page) a row of the list: first the **predefined squads** (#339: the campaign squad and the five squads squad deathmatch offers, six rows under "[predefined squads]"), then the character types under "[character types]", any the NPC menu offers (the four, then all 128 of the test map). Click or Enter on a type puts a fresh one of that type in the slot: a real squad member (below), and in your own slot you become it where you stand. Click or Enter on a squad fills all four slots at once with that squad's members (the panel lists who goes where), your own slot becoming its member in place. Delete empties the slot (not yours: "Your own slot can't be emptied"). T or Esc closes it |
+| T | **squad menu** (#302): the squad's four slots, its places round the radar and the keys 1-4 that take control of them (Brutus's, Flint's, Hawk's, Tex's), each with who holds it ("(empty)", a type, DEAD, "(you)"). Left / Right picks a slot, Up / Down or the wheel (Page Up / Down: a page, seven rows) a row of the list: first the **predefined squads** (#339: the campaign squad and the five squads squad deathmatch offers, six rows under "[predefined squads]"), then the character types under "[character types]", any the NPC menu offers (the four, then all 128 of the test map). It opens with the first character type, Brutus, picked as before the squads, the six squads above it in view, so Enter straight after T changes one slot; a squad is picked on purpose. Click or Enter on a type puts a fresh one of that type in the slot: a real squad member (below), and in your own slot you become it where you stand. Click or Enter on a squad fills all four slots at once with that squad's members (the panel lists who goes where), your own slot becoming its member in place. Delete empties the slot (not yours: "Your own slot can't be emptied"). T or Esc closes it |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
 | P | **scenery menu** (#185): every level's buildings and static scenery (2,412 pieces of 53 levels, below), by level, each by its type's name (a hash) with its size, parts and how many its level places, the largest first. Up / Down picks, Page Up / Down jumps a level; a see-through copy stands at the crosshair, the wheel turns it 15 degrees a notch; click or Enter puts one there, drawn as its level draws it and solid as there, and the menu stays open for more. P or Esc closes it. In the free camera the copy hangs on the crosshair's ray as the object menu's does (Shift + the wheel: how far), a yellow ring at its foot, and it's put where it hangs |
 | Y | **sky menu**: none, the map's own, or the sky of any level whose level file names one; click or Enter shows it over the map in place of its own, with that level's background colour |
@@ -182,9 +182,17 @@ a click is any left click off the panel, and F and its teleports do nothing.
     fresh character of its type, your own slot's in place where you stand (its view, clock and the
     squad's inventory kept), an empty slot's at its formation place round you, a member already
     there replaced where it stands. "Squad: Shrike Raiders (you're Hunter Lord now)" shows; on a map
-    played alone (an arena) only your slot changes ("3 not put: No squad here: the map is played
-    alone"); in edit mode only the roster ("(when play starts)"). The panel, with a squad picked,
-    lists who goes in each place. A squad deathmatch squad's members are types of their own in the
+    played alone (an arena) only your slot changes ("3 not put: played alone"); in edit
+    mode only the roster ("(when play starts)"). **The panel** (`testsquad::panel_text`) shows
+    seven rows of the list (`ROWS`) in a window that stays put while the pick moves inside it and
+    scrolls a row at a time past its edges (it opens on the top of the list: the six squads in view
+    and the first type, picked, at its foot), and, with a squad picked, who goes in each place, two
+    to a line in the slot rows' order ("Brutus: Shrike Soldier   Flint: Shrike Heavy" / "Hawk:
+    Shrike Hound   Tex: Hunter Lord (you)"). It stays above the HUD's item box (its top at y 565 of
+    720 at 1280 x 720) in every state: it starts 18% down the window, so it may take 26 lines of
+    13-point text, 15.6 px each with 8 px of padding; the worst state, a filled squad of long names
+    (each slot row wraps to two lines) with a squad picked, takes 24 and ends at y 520 (the tests
+    count the lines of 1,728 states of the six squads' real names: the worst 24). A squad deathmatch squad's members are types of their own in the
     demo, as any type the menu puts in a slot: no skill, no squad voice (V says "has no special
     skill"), the portrait, camera, weapons, stamina shield and behaviour of their types. That
     includes Brute Force's, the sdm versions of the four (the squad deathmatch maps' own squad is
@@ -904,7 +912,8 @@ with its types and keys in the order of the places):
   Hunting Pack): the map's own four replaced where they stood, the player the Feral Colonist. An
   arena (`BF_MAP=mp1`, Shrike Raiders): the player the Hunter Lord, the three others refused one by
   one in the log, "1 of 4 slots put", and on the screen "Squad: Shrike Raiders (you're Hunter Lord
-  now; 3 not put: No squad here: the map is played alone)".
+  now; 3 not put: played alone)" (it read "3 not put: No squad here: the map is played alone"
+  until the fixes below shortened it).
 * The editor's edit mode (`--edit BF_TEST_SQUAD_MENU=0.5 BF_TEST_SQUAD_PRESET="1.0,seer coven"
   BF_TEST_PLAY=2.5,start BF_TEST_EDIT=5.0`, 100 frames): "Squad: Seer Coven (when play starts)", the
   four slots "was empty (the roster, for play)" (Tex's "was Tex"), Shift+F5 "play from the map's
@@ -918,9 +927,10 @@ with its types and keys in the order of the places):
   coven,2;1.5,ferguson,3;2.0,flint,0;2.5,shrike soldier@m09_a,3"`): the six squads under
   "[predefined squads]" and the types under "[character types]", the row picked marked, the list
   window moving with it (the squads, with the types after them; the squads' last rows and the first
-  types; the types alone), for a squad "click / Enter: all four slots become Seer Coven:" and who
-  goes in each place ("(you)" at the player's), for a type the slot's text as before ("click /
-  Enter: put it in slot 1   Delete: empty slot 1", "you become it (slot 4)").
+  types; the types alone), for a squad who goes in each place ("(you)" at the player's; the first
+  version took one line a place and covered the item box, see the fixes below), for a type the
+  slot's text as before ("click / Enter: put it in slot 1   Delete: empty slot 1", "you become it
+  (slot 4)").
 * The single slot unchanged (the "Filling" recipe above with `BF_TEST_GOTO=0,8,0,8`, and "Emptying
   and replacing"): the same log lines as before the change ("squad slot 1 (Brutus's place): Shrike
   Soldier (m09_a, 73 hp) (h_fcec1024) at [1.50, -1.05, 11.25], was empty", "Your own slot can't be
@@ -931,3 +941,29 @@ with its types and keys in the order of the places):
 * Not tested: the keys and the mouse themselves (Up / Down over the squad rows, the wheel, Enter or
   a click on one): the hooks drive the same code from the menu's asks on, and `BF_TEST_SQUAD_PICK`
   sets what the keys set (the row's mapping is a unit test).
+
+After the product owner's two fixes (the menu opened on the Campaign squad, so Enter straight after T
+changed four slots; with a squad picked the panel ended at y 630 and covered the Frag item box, x
+955-1045, y 565-657), `--test` with `BF_MUTE=1 BF_BACKGROUND=1`, 45-frame captures, main merged in
+(70dfaae: #338's load order, #334's nav core):
+* **T opens on the old row** (`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_MENU=0.3`): "> Brutus", the first
+  character type, is the row picked, as on main ("(1 of 128 character types)", "click / Enter: put
+  it in slot 1   Delete: empty slot 1"), with the six squads above it in the window (the list's top,
+  the pick at its foot); the panel ends at y 426. Enter there puts Brutus in slot 1 as before;
+  a squad needs Up first (a unit test: `Menu::default` picks `Row::Type(0)`, whatever the number of
+  squads; the window's rule `window_top`).
+* **The panel above the item box in every state**: its bottom edge measured in the captures (the
+  rows the panel darkens, against the same frame with the menu closed; the item box's top is 565):
+  the worst state, a filled squad of long names with a squad picked (`BF_TEST_SQUAD_PRESET="0.8,<squad>"
+  BF_TEST_SQUAD_PICK="1.2,<squad>,3"`), ends at y 520 for the Feral Hunting Pack, Seer Coven and
+  Shrike Raiders (24 lines, 45 px above the box), 504 for the Ferguson Platoon, 458 for Brute Force;
+  a long type picked after a squad was put 489; the window at the list's end (the last type,
+  h_115268fc) 489; the editor's edit mode with the Feral Hunting Pack in the roster 520 (no HUD there);
+  an arena (played alone) 458. The unit test `the_panel_ends_above_the_item_box_in_every_state`
+  counts the panel's wrapped lines over 1,728 states of the six squads' real names (every squad
+  held and picked, every slot yours, play and edit mode, dead or not, three type rows): at most 24 of
+  the 26 lines that fit.
+* The rest rerun on the merged tree with the same logs as before: the six squads on the test map
+  (the radar's four portraits by place, the channels full), the editor (`--edit`) and an arena
+  refusing the three members ("3 not put: played alone" now), sdm_e34, and the single slot's
+  "Filling" and "Emptying and replacing" recipes. `cargo test --bin bf_play`: 150 passed.
