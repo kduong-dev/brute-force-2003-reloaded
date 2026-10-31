@@ -92,7 +92,8 @@ const PORTRAIT_CENTRE: [(f32, f32); 4] = [(122.2, 428.5), (180.5, 368.2), (64.1,
 /// trainer's squad in mode 6: Brutus's and Flint's tabs empty). The fifth, h_e878453f (+0x40), is
 /// loaded and never shown. Measured: take03 1.0 s the four green arrows; Hawk's and Flint's
 /// yellow bars from 5.25 s after Stand Ground; take08 Hawk's blue arrow from 25.8 s after Move To,
-/// her bars from 31.1 s at the point. Fire At Will's ring isn't in a take: the code's.
+/// her bars from 31.1 s at the point; #33 take05 Fire At Will's ring on Flint's, Brutus's and
+/// Hawk's tabs from 5.4 s.
 const TAB_FOLLOW: (u32, f32, f32) = (0xEEAA_5549, 16.0, 8.0);
 const TAB_GUARD: (u32, f32, f32) = (0xFA29_B7A4, 8.0, 16.0);
 const TAB_WINGMAN: (u32, f32, f32) = (0xF672_2366, 16.0, 16.0);

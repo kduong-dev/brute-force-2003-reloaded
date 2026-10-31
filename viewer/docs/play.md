@@ -379,7 +379,7 @@ the test map (`--test`), with it:
     Flint's bars from the Stand Ground frame, their copies grown over the next three as the radar
     slides home (frames 76-79), as take03 7.0 s at rest (frame 100); the arrows back after Cover
     Me, Brutus's unflashed (he was in FOLLOW), as take03 15.0 s (frame 235); the three rings
-    after Fire At Will (frame 330, not filmed); Hawk's blue arrow after the cursor's accept, as
+    after Fire At Will (frame 330, as #33 take05 from 5.4 s); Hawk's blue arrow after the cursor's accept, as
     take08 27.0 s (frame 398); her bars on reaching the point, the copy growing over frames
     405-410, as take08 33.0 s (frame 430). Each icon in its box as in the takes, the radar group
     1.5 right and 4 lower (see "Where"). No orders (the same recipe on main's build, frames 1-32):
