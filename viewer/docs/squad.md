@@ -616,7 +616,7 @@ Squad movement and deaths follow the game's own data and the captures:
   * take08 (`"...2:hawk:0.4;3:move;8:accept"`): the cursor on world point h_ef17a343 at (-67.8,
     28.1, -76.5), the point nearest take08's own first read; its rows on take08's to the pixel,
     the marker turning; A: Hawk MOVE_OUT to it. With `BF_TEST_CURSOR_AT=-70.8,-79.5`: take08's
-    chosen point itself, h_ff113737 (flags ffff4000, as take08 read), Hawk arriving 2.0 m short
+    chosen point itself, h_ff113737 (flags ffff4000, as take08 read), Hawk arriving 1.7 m short (2.0 m before #335's route)
     (take08 2.00 at its first GUARD row: -72.66, -80.21 against the point -70.78, -79.53) and GUARD. With `BF_CAMERA_PITCH=1.0` (the sky): no point, the marker on Tex, A
     gives Cover Me.
   * take09 (`"...2:hawk:0.4;3:move;6:cancel"`): cancelled, the selection empty, nobody ordered;
