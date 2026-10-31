@@ -126,7 +126,7 @@ game's is 3D at the character).
 | kill line | FUN_00125f40: a killer hostile to the victim, when their player slots differ (the victim's against the hit record's +0x1c, the shooter's: so one of the two is a player's, and an AI's kill of an AI draws none), says 13601f7b when its skill's vtable +8 says so (Tex's berserk, Flint's targeting on), else 02da3fee | the killer the hit names (`damage::Hit::by`); the controlled character has the one slot (as it is at the kill: a stand-in for the shooter's at the shot). Tex's, Brutus's and Flint's 02da3fee variants all need 1..100 enemies fought, which the victim makes in the death frame; Hawk has 0..0 ones too |
 | hand-over | FUN_0005cc20: the one handed over from, by its brain mode: Cover Me (1) f415ab02, Stand Ground (3) 0e69bfe5 (e635ecc6 when the one taken is over 50 m away), Fire At Will (4) 15dc4e2d; the members its far case re-ordered answer (below) | play.rs `squad_control`, `Ask::HandOver` ([below](#lines-of-several-parts-the-order-line-and-the-hand-over-320)) |
 | order line | FUN_000c1630, from the Squad Command menu's order dispatch FUN_000c1280: the giver calls the members ordered (or "everyone"), says the order and each answers | play_squad_menu.rs `give`, `Ask::Order` (below) |
-| follow's walk | FUN_00021b70: the follow's walk to its place, once per order (1ecaeb98, 75%, replay 20 s, priority 2) | play.rs `squad_ai`: the formation's set-off after a Fire At Will, a stand-in for the game's follow states (#331) |
+| walk line | FUN_00021b70: the walk to its place in Fire At Will (mode 4 only, #343), once per order (1ecaeb98, 75%, replay 20 s, priority 2) | play.rs `squad_ai`: the formation's set-off after a Fire At Will, a stand-in for the game's follow states (#331) |
 | Move To's arrival | FUN_00045fa0: a member on Move To reaching its point, or its walk failing (0x46256): e635ecc6, then GUARD | play_orders.rs `arrive` ([squad.md](squad.md), "Squad commands") |
 | healed | 0x146f40, only when the medkit adds health: 12c35d69 (f832ad27 for a healer whose squad has no player) | play_pickups.rs: 10%, a 30 s replay delay, priority 1 |
 | can't take that gun | FUN_000a9910 | play_weapon_pickups.rs: 100%, a 10 s replay delay |
@@ -219,32 +219,25 @@ The near case has no answers. Their order in the demo is its squad's, not the ga
 #36 take14's first was 49.0 m on the ground, 49.2 m in 3D, which the code's test uses); they're
 the code's.
 
-**The follow's walk** (FUN_00021b70, state 9 of the wingman follow). A member starting its walk
-to its place says 1ecaeb98 through the gate (75%, a 20 s replay delay, priority 2), once per
-order: brain+0x3c4 bit 0 is clear from the brain's constructor (FUN_00016ff0 at 0x175ce), set as
-the line is asked (said or refused: the gate's answer doesn't matter) and cleared again by Fire
-At Will (FUN_00018000 for modes 0 and 4: the order, and a member left in Fire At Will by a
-hand-over), not by Stand Ground or Cover Me. #36 take12 (Brutus) and #33 take05 and take06
-(Flint) show it after a Fire At Will: the gate call comes in the first frames the game runs
-after the order's (the clock held by the menu until then); in take05 Brutus asked it 11 s after
-the order, once Tex had walked off. Hawk, who followed Tex's 40 m walk in take05, never asked
-it, so the game's follow starts its walks in other states too. The demo's is a stand-in for the
-follow's state machine (#331): the first time since the bit was cleared that a member's
-formation walk sets off (play.rs `squad_ai`, `Command::start_walk`), which is usually when the
-leader next moves off.
-
-The bit starts **clear** in the demo, as the game's constructor leaves it: a fresh start's first
-follow walk of each member asks the line once, and so does the first walk of a character the
-player has controlled from the start, once control passes from it (the hand-over's line, of
-priority 5, then keeps his voice: his walk line is made and skipped as it starts). The takes'
-snapshots were taken mid-play with the squad past that walk, which fits: #33 take04's 40 m
-follow walk asked nothing. A fresh e34 start in the demo (the scripts on): Flint at 9.00 s,
-Brutus at 9.53 s and Hawk at 10.07 s each ask it as they set off after the opening cutscene, and
-Bratton's radio mutes refuse all three (the bit is used up all the same); with `BF_SCRIPT=off`
-they set off at 0.00 s and Brutus's passes its 75% roll. The tutorial's start says none (Tex
-alone; the marines are a type of their own, which `say` leaves silent). On the test map, with
-no mutes, the squad's settling walk at its start says it (Brutus's, the others' by the roll or
-the one waiting line).
+**The walk line** (FUN_00021b70, state 9 of the wingman follow). A member starting its walk to
+its place says 1ecaeb98 through the gate (75%, a 20 s replay delay, priority 2), once per Fire
+At Will: brain+0x3c4 bit 0 is clear from the brain's constructor (FUN_00016ff0 at 0x175ce), set
+as the line is asked (said or refused: the gate's answer doesn't matter) and cleared again by
+Fire At Will (FUN_00018000 for modes 0 and 4: the order, and a member left in Fire At Will by a
+hand-over), not by Stand Ground or Cover Me. **Only in Fire At Will (mode 4)** (#343): state 9
+needs the member's route point (brain+0x6f4), and FUN_00020b10 zeroes that every update in
+FOLLOW (0x20ddd-0x20de3), so a brain in FOLLOW, which is what every fresh brain starts in, never
+reaches it: **a mission start and the test map's squad say nothing on their first walk**, and
+neither does a Cover Me or Stand Ground walk (#33 take04's 40 m follow walk asked nothing). #36
+take12 (Brutus) and #33 take05 and take06 (Flint) show it after a Fire At Will: the gate call
+comes in the first frames the game runs after the order's (the clock held by the menu until
+then); in take05 Brutus asked it 11 s after the order, once Tex had walked off (the member that
+gets the route point is the first in the squad's list, FUN_0001adf0 / FUN_0005ea10). Hawk, who
+followed Tex's 40 m walk in take05, never asked it, so the game's follow starts its walks in
+other states too. The demo's is a stand-in for the follow's state machine (#331): the first
+time since the bit was cleared that a member in WINGMAN has its formation walk set off (play.rs
+`squad_ai`, `Command::start_walk`, which answers false in any other mode), which is usually when
+the leader next moves off.
 
 ## The draws
 
@@ -373,9 +366,9 @@ its first 20 s.
   take13's). take14's shape (`BF_MAP=e34 BF_SCRIPT=off BF_TEST_NO_HOSTILES=1
   BF_TEST_GOTO=-83.39,-82.79,-45,-80,27 BF_TEST_SPRINT=4 BF_TEST_ORDER=hawk,guard@2
   "BF_TEST_COMMAND=30:hawk:0.1;38:tex:0.1"`, Tex 38 m from Hawk): Tex's f415ab02 (variant
-  1fa1b7b8, take14's too) going, Hawk's 0e69bfe5 coming back, no e635ecc6; Tex's own walk line,
-  its bit never used, follows his at the cut, made and skipped as it starts (his voice is on the
-  follow line, priority 5). The far case (`BF_MAP=e34 BF_SCRIPT=off BF_TEST_NO_HOSTILES=1
+  1fa1b7b8, take14's too) going, Hawk's 0e69bfe5 coming back, no e635ecc6 (before #343 Tex's own
+  walk line followed his at the cut, made and skipped as it started; he's in FOLLOW, so it no
+  longer does). The far case (`BF_MAP=e34 BF_SCRIPT=off BF_TEST_NO_HOSTILES=1
   BF_TEST_GOTO=-83.39,-82.79,-25,-78,27 BF_TEST_SPRINT=4 BF_TEST_ORDER=hawk,guard@2
   BF_TEST_SELECT=2,26`, 54.6 m): Tex, set to Stand Ground, says e635ecc6, then Brutus (moving out
   to him) joins with ed05c0d7 and Flint with e97ce7fd; Brutus's arrival line (e635ecc6) waits
@@ -384,15 +377,22 @@ its first 20 s.
 * A heavy hit during an order line (take02's: `2:hawk:0.4;3:stand`, `BF_TEST_HURT=hawk,60,2.72`):
   Hawk's low-health line (priority 8) waits 2.70 s (the line's 2.20 s left + 0.2 + 0.3) and
   plays after the order's last part, not cutting it off.
-* The follow's walk line (`BF_TEST_FULL_SQUAD=1 BF_CHATTER_CHANCE=100
+* The walk line (`BF_TEST_FULL_SQUAD=1 BF_CHATTER_CHANCE=100
   "BF_TEST_COMMAND=2:brutus:0.4;3:fire;4:flint:0.4;5:hawk:0.4;6:fire"
-  BF_TEST_GOTO=3.5,40,3.5,5 BF_TEST_GO_AT=9`): the squad's settling walk at 0.00 s asks it
-  (Brutus's said, Flint's waiting behind it, Hawk's refused for the waiting line), and the
-  order line given at 2.2 s waits 1.31 s behind it (the gate's wait counts every playing line of
-  its priority or lower); the Fire At Will orders (3.07 and 6.13 s) clear the bits, so as Tex
-  sets off at 9 s all three ask it again: Hawk's, her first, is said at 9.53 s, Brutus's and
-  Flint's are refused by their replay delays (10.1 and 11.9 s left). Cover Me and Stand Ground
-  clear nothing: the unit test `the_walk_line_is_said_once_per_order`.
+  BF_TEST_GOTO=3.5,40,3.5,5 BF_TEST_GO_AT=9`, #343): the squad's settling walk at 0.00 s, in
+  FOLLOW, asks nothing (before #343 all three asked it there); the Fire At Will orders (3.07 and
+  6.13 s) put the three in WINGMAN and clear the bits, so as Tex sets off at 9 s all three ask it:
+  Brutus's is said at 9.80 s, Flint's waits behind it, Hawk's is refused for the waiting line.
+  The order lines' rows are the same as before, row for row. Cover Me and Stand Ground clear
+  nothing and say nothing: the unit test `the_walk_line_is_said_once_per_fire_at_will`. A Fire At
+  Will given to Flint and Brutus with Tex already running (`--test BF_TEST_FULL_SQUAD=1
+  "BF_TEST_ORDER=flint,fire@2;brutus,fire@2" BF_TEST_GOTO=3.5,40,3.5,5 BF_TEST_GO_AT=0`) has
+  Brutus ask it at 4.33 s and Flint at 4.60 s, as the formation's walk sets off: the stand-in's
+  timing, not take05's (Flint's gate call 0.6 s after the order, which the game's state 9 makes as
+  the order lands: #331).
+* e34's start (`BF_MAP=e34 BF_CHATTER_LOG=1 BF_SOUND_LOG=1`, 330 frames, #343): the three members'
+  1ecaeb98 rows (Flint 9.00 s, Brutus 9.53 s, Hawk 10.07 s, all refused by Bratton's radio mute)
+  are gone, and every other chatter and sound row is the same.
 * Other chatter unchanged, main (`8c384af`) against this branch before the walk bit's default
   changed (`999666e`), the same hooks at 15 fps: the hurt and death recipe of the first bullet
   above (74 log rows), a fight with hits on Hawk (71 rows), e34's first 40 s with its fight,
