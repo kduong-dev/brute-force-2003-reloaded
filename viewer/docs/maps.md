@@ -373,8 +373,9 @@ them):
       unchanged.
     * Where (`BF_FIND_HOLES`: the hinters' walls on ground the player can walk to, in metres of
       floor, an upper bound; measured again after #338, which gave the maps their own hinters
-      and blockers: the numbers before in brackets where they changed): e13 2613 (18), sdm_e13 2607 (1532), m14_a 1608 (400), m07_b 1338 (352), m02_a 1323
-      (670), m02_c 1223 (426), m14_b 1065 (333), m07_a 973 (494), m04_c 963 (304), m02_b 665 (225),
+      and blockers: the numbers before in brackets where they changed): e13 2613 (18), sdm_e13
+      2607 (1532), m14_a 1608 (400), m07_b 1338 (352), m02_a 1323 (670), m02_c 1223 (426), m14_b
+      1065 (333), m07_a 973 (494), m04_c 963 (304), m02_b 665 (225),
       m09_a 567 (49), m14_c 523 (289), m09_x 512 (210), m09_b 489 (none), e05 366, sdm_m03 337
       (19), m04_a 308 (276), m03_b 293 (294), m03_a 246 (232), e01 212, the tutorial 198 (51), e16
       117 (31), e40 78 (16), sdm_e40 10 (11), m09_c 8 (14), m07_c none (1); m05_y's one hinter is on
