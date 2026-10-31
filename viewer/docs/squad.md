@@ -516,11 +516,7 @@ Squad movement and deaths follow the game's own data and the captures:
     (116501dc Flint, f0c93785 Brutus, f5359692 Hawk, fb962749 Tex, 181b6433 a marine), the phrases
     (Stand Ground e104fe49, Fire At Will f5041bd5, Cover Me 1cdff35c, Move To f8046684), the
     answer eaf3546f and the parts' starts to within 0.05 s of the sum of the sounds' lengths +
-    0.2 s. The first time a member's follow sets off to its place, from a fresh start (the brain's
-    flag is clear) or after a Fire At Will, it says 1ecaeb98 ("on my way", 75%), once per order:
-    the game's follow state 9, here the formation's set-off, a stand-in until #331 (chatter.md,
-    "The follow's walk": on e34's start the three members ask it at 9-10 s and Bratton's radio
-    mutes refuse them).
+    0.2 s. The first time a member set off to its place after a Fire At Will, it says 1ecaeb98 ("on my way", 75%), once per order: the game's follow state 9, here the formation's set-off, a stand-in until #331 (chatter.md, "The walk line"). It is Fire At Will's alone (#343): in FOLLOW the game never reaches the state, so a mission start (e34's, the test map's) says nothing.
   * **The Move To cursor** (HUD+0x44, FUN_000bd860; the game runs meanwhile). Each frame
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
     level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the

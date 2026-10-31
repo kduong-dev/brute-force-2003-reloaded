@@ -854,16 +854,17 @@ mod tests {
         assert_eq!(c.allow, ALLOW_COMBAT | ALLOW_COVER);
     }
 
-    /// The follow's walk line is said once per order (FUN_00021b70's bit 0): a fresh brain has it
-    /// clear (the constructor, 0x175ce), so its first walk says it; Fire At Will (FUN_00018040,
-    /// FUN_00018000) clears it again, the control passing on from a member in WINGMAN does too
-    /// (FUN_00018230), Cover Me and Stand Ground leave it.
+    /// The walk line is Fire At Will's alone and said once per order (FUN_00021b70's bit 0, state 9
+    /// of the wingman follow, which FOLLOW's FUN_00020b10 can't reach: #343): a fresh brain, in
+    /// FOLLOW, says nothing; Fire At Will (FUN_00018040, FUN_00018000) clears the bit, the control
+    /// passing on from a member in WINGMAN does too (FUN_00018230), Cover Me and Stand Ground leave
+    /// it.
     #[test]
-    fn the_walk_line_is_said_once_per_order() {
+    fn the_walk_line_is_said_once_per_fire_at_will() {
         let mut c = Command::default();
-        assert!(c.start_walk());
         assert!(!c.start_walk());
         c.set_mode(Mode::Guard, None);
+        assert!(!c.start_walk());
         c.set_mode(Mode::Follow, None);
         assert!(!c.start_walk());
         c.set_mode(Mode::Wingman, None);
@@ -874,6 +875,9 @@ mod tests {
         assert!(!c.start_walk());
         c.released();
         assert!(c.start_walk());
+        assert!(!c.start_walk());
+        // (Cover Me after it: no line, and the bit stays as it was)
+        c.set_mode(Mode::Follow, None);
         assert!(!c.start_walk());
     }
 
