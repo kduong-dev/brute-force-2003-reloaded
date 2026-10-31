@@ -1,7 +1,8 @@
 //! Squad commands, the AI's side (#318, the first slice of #33; todo/33-squad-commands leads §1,
 //! §3, §5.2-§6): what each squad member does by its brain's command mode (play_brain.rs
 //! `Command`, brain+0x58), which the Squad Command menu's orders set (FUN_000c1280; the menu
-//! itself is #319, the order lines #320). Every function cited is in viewer/docs/code-map.md.
+//! itself is #319, the order lines #320: play_chatter.rs, `order_line` and `hand_over_line`).
+//! Every function cited is in viewer/docs/code-map.md.
 //!
 //!  - **The modes.** The squad starts in FOLLOW (the brain's constructor) with combat and cover
 //!    allowed. An order changes the mode with FUN_00018040: the allow flags by the mode
@@ -531,18 +532,31 @@ pub fn mate_firing(player: &mut Player, squad: &mut [Player], game: &Game) {
     }
 }
 
+/// What a hand-over decided (FUN_0005cc20), for the lines it says (play_chatter.rs
+/// `hand_over`): whether the one taken is more than HAND_OVER_FAR m from the one left, and the
+/// members that case re-ordered, those set to GUARD (`held`) and those sent moving out to the
+/// left one's place (`moved`), each in the squad's order (the demo's own: the game's is its
+/// squad entries', which isn't read).
+#[derive(Clone, Debug, Default)]
+pub struct HandedOver {
+    pub far: bool,
+    pub held: Vec<Who>,
+    pub moved: Vec<Who>,
+}
+
 /// The hand-over's re-order (FUN_0005cc20, from FUN_000c8f70 at the select widget's countdown):
 /// with `old`, the character control leaves, more than HAND_OVER_FAR m from `squad[new]`, the one
 /// it goes to, `old` is set to GUARD, and every other living member following it (the demo's AI
 /// members all follow the controlled character) in FOLLOW or WINGMAN to GUARD within HOLD_NEAR m
 /// of `old`'s world point (char+0x24c: the demo has none, `old`'s place stands in), else MOVE_OUT
 /// to it. Then they all follow the one taken (FUN_0005cbc0): the demo's AI follows the controlled
-/// character anyway. The lines (by `old`'s mode, the answers) are #320's.
-pub fn hand_over(old: &mut Player, squad: &mut [Player], new: usize) {
-    let Some(taken) = squad.get(new) else { return };
+/// character anyway. Which members it re-ordered, for the lines (the one left says by its mode,
+/// the members it re-ordered answer: play_chatter.rs `hand_over`).
+pub fn hand_over(old: &mut Player, squad: &mut [Player], new: usize) -> HandedOver {
+    let Some(taken) = squad.get(new) else { return HandedOver::default() };
     let apart = old.position.distance(taken.position);
     if apart <= HAND_OVER_FAR {
-        return;
+        return HandedOver::default();
     }
     let (now, at) = (old.sim_time, old.position);
     if log_level() > 0 {
@@ -550,16 +564,20 @@ pub fn hand_over(old: &mut Player, squad: &mut [Player], new: usize) {
                  unit_name(taken), unit_name(old));
     }
     order(old, Mode::Guard, None, now);
+    let mut out = HandedOver { far: true, ..Default::default() };
     for (j, u) in squad.iter_mut().enumerate() {
         if j == new || u.dead || u.absent || !u.in_squad() || u.brain.is_some() || !matches!(u.command.mode, Mode::Follow | Mode::Wingman) {
             continue;
         }
         if u.position.xz().distance(at.xz()) <= HOLD_NEAR {
             order(u, Mode::Guard, None, now);
+            out.held.push(u.who());
         } else {
             order(u, Mode::MoveOut, Some(at), now);
+            out.moved.push(u.who());
         }
     }
+    out
 }
 
 /// The one control has gone to (`u`, the controlled character now): its goals popped
@@ -644,8 +662,11 @@ fn parse_orders(v: &str) -> Vec<TestOrder> {
 /// controlled character) in `<mode>` (`mode_named`: guard, wingman, follow, moveout or 0-5);
 /// Move To's point is x, z on the floor there. E.g. `BF_TEST_ORDER="all,fire@1;all,cover@3"`
 /// (take12's Fire At Will, then Cover Me), `BF_TEST_ORDER=hawk,move,-70.8,-79.5@2` (take08's).
-/// No lines are said (#320). The hook is read once, at the first frame: each order with whether
-/// it's been given (a bad entry is logged that once).
+/// **This hook says no order line**: the menu's (`play_squad_menu.rs give`, FUN_000c1630, #320)
+/// is said only by an order given through the menu, which BF_TEST_COMMAND drives. The follow's
+/// walk line (play_brain.rs `Command::start_walk`) is the member's own, not the order's, so a
+/// member says it after a Fire At Will given here too. The hook is read once, at the first
+/// frame: each order with whether it's been given (a bad entry is logged that once).
 fn test_orders(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut orders: Local<Option<Vec<(TestOrder, bool)>>>) {
     let orders = orders.get_or_insert_with(|| {
         std::env::var("BF_TEST_ORDER").map_or(vec![], |v| parse_orders(&v).into_iter().map(|o| (o, false)).collect())
@@ -860,6 +881,29 @@ mod tests {
         assert!(on(pass_round(start, point, None), straight));
         assert!(on(pass_round(start, start + straight * 3.0, Some(ahead)), straight));
         assert!(on(pass_round(start, point, Some(ahead + Vec2::new(-straight.y, straight.x) * 3.0)), straight));
+    }
+
+    /// The follow's walk line is said once per order (FUN_00021b70's bit 0): a fresh brain has it
+    /// clear (the constructor, 0x175ce), so its first walk says it; Fire At Will (FUN_00018040,
+    /// FUN_00018000) clears it again, the control passing on from a member in WINGMAN does too
+    /// (FUN_00018230), Cover Me and Stand Ground leave it.
+    #[test]
+    fn the_walk_line_is_said_once_per_order() {
+        let mut c = Command::default();
+        assert!(c.start_walk());
+        assert!(!c.start_walk());
+        c.set_mode(Mode::Guard, None);
+        c.set_mode(Mode::Follow, None);
+        assert!(!c.start_walk());
+        c.set_mode(Mode::Wingman, None);
+        assert!(c.start_walk());
+        assert!(!c.start_walk());
+        // (Fire At Will to one already in it changes nothing)
+        assert!(!c.set_mode(Mode::Wingman, None));
+        assert!(!c.start_walk());
+        c.released();
+        assert!(c.start_walk());
+        assert!(!c.start_walk());
     }
 
     /// WINGMAN's formation is FOLLOW's times 8 / 11.2 (FUN_00020b10's two sets).

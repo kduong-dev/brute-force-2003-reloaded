@@ -1,7 +1,8 @@
 //! The Squad Command menu, the members' selection and the Move To cursor (#319, the second slice
 //! of #33; todo/33-squad-commands leads §2 and §4, its takes take01-take03, take08, take09 and #35
-//! take18). The orders it gives are #318's command modes (play_orders.rs `order`); the lines they
-//! say are #320's. Every function cited is in viewer/docs/code-map.md ("HUD").
+//! take18). The orders it gives are #318's command modes (play_orders.rs `order`); the line they
+//! say is #320's (`give` asks it of the chatter: play_chatter.rs `order_line`). Every function
+//! cited is in viewer/docs/code-map.md ("HUD").
 //!
 //!  - **Selecting** (the HUD's squad list, FUN_000c7cf0, its d-pad handler 0xc7e20): each d-pad
 //!    direction is a radar portrait's member (up Tex, right Flint, down Brutus, left Hawk: the
@@ -852,22 +853,36 @@ fn menu_orders(m: &mut SquadMenu, input: &MenuInput, player: &mut Player, squad:
     m.close_menu(acts);
 }
 
+/// The squad list's slots 1-4 as the demo's characters (CHARACTERS indices): Tex 3, Flint 1,
+/// Brutus 0, Hawk 2 (the types' h_072ab4af, 1-4). FUN_000c8700 builds the selection vector the
+/// order goes from by walking the slots in this order, 1 to 4, and the order line names and
+/// answers in it (#33 take03: selected Hawk, Brutus, Flint in that order, the names and answers
+/// Flint, Brutus, Hawk).
+const SLOT_ORDER: [usize; SQUAD] = [3, 1, 0, 2];
+
 /// FUN_000c1280: the order to each selected member (by slot: every squad member has a brain).
 /// Stand Ground, Fire At Will, Cover Me and Move To set its command mode (play_orders.rs
 /// `order`: GUARD, WINGMAN, FOLLOW, MOVE_OUT with the point); the leader they make the ordering
 /// player (FUN_0005bda0) is the demo's already. Toggle Ability pushes GOAL_TOGGLE_COMBAT_SKILL
 /// (127, FUN_00024540 in its mode 2: play_orders.rs `toggle_ability`), which switches its skill
 /// as the game runs again (#35 take18's Hawk; #333). Medkit pushes GOAL_HEAL (20) in the game,
-/// whose behaviour isn't traced (#329): here it's only logged. The selection is cleared after.
-/// True when any member took it.
+/// whose behaviour isn't traced (#329): here it's only logged. For the four modes, when any
+/// member took the order, whether or not its mode changed (0xc15d4: the call after the loop tests
+/// a flag set for each member with a brain, not the mode change), the controlled character says
+/// the order line (FUN_000c1630, play_chatter.rs `order`). The selection is cleared after. True
+/// when any member took it.
 fn give(m: &mut SquadMenu, order: usize, point: Option<Vec3>, player: &mut Player, squad: &mut Squad, now: f32) -> bool {
     let mut any = false;
     let flags = m.flags;
+    let mut taken: Vec<(usize, Who)> = vec![];
+    // (the squad's size, the controlled character counted: char+0x59c's +4)
+    let size = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| u.in_squad() && !u.absent).count();
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         if !u.in_squad() || u.absent || u.character >= SQUAD || !flags[u.character] {
             continue;
         }
         any = true;
+        taken.push((SLOT_ORDER.iter().position(|&c| c == u.character).unwrap_or(SQUAD), u.who()));
         let pushed = match order {
             STAND => { orders::order(u, Mode::Guard, None, now); false }
             FIRE => { orders::order(u, Mode::Wingman, None, now); false }
@@ -886,6 +901,11 @@ fn give(m: &mut SquadMenu, order: usize, point: Option<Vec3>, player: &mut Playe
         }
     }
     m.flags = [false; SQUAD];
+    if any && order <= MOVE {
+        // (the selection vector's order: by slot)
+        taken.sort_by_key(|t| t.0);
+        chatter::order(player, order, taken.into_iter().map(|t| t.1).collect(), size);
+    }
     any
 }
 
