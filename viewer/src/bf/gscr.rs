@@ -440,8 +440,9 @@ pub struct Event {
 #[derive(Clone, Debug)]
 pub struct Script {
     pub name: String,
-    /// The level whose archive it came from (`Game::load_level` sets it; empty from `parse`):
-    /// the demo plays only the current map's (bf_play loads e01's archive too, for its audio).
+    /// The level whose archive it came from (`Game::load_level` / `load_level_data` set it; empty
+    /// from `parse`): the demo plays only the current map's (bf_play loads e01's archive too, for
+    /// its audio, after the map's: a script both have is the map's, #338).
     pub level: String,
     pub duration: f32,
     pub entities: Vec<Entity>,
