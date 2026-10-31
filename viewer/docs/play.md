@@ -31,7 +31,8 @@ A flat test floor for trying things out, only reachable with the `--test` flag. 
 straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`).
 
 * **Tex alone** (#302, the product owner's choice): the squad starts with the player's character
-  (Tex, or `BF_CHARACTER`'s) and its other three slots empty. The squad menu (T) puts any
+  (Tex, or `BF_CHARACTER`'s: a squad name, `brutus`, `flint`, `hawk` or `tex`, any case, or
+  its number 0-3; #330) and its other three slots empty. The squad menu (T) puts any
   character type in a slot, a real squad member (the formation, 1-4, the portraits and health
   channels, the hand-over at a death), empties one, or changes the player's own type where they
   stand; or puts a whole predefined squad in all four (the campaign squad, or one of the five

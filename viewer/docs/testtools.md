@@ -96,6 +96,12 @@ a click is any left click off the panel, and F and its teleports do nothing.
     NPC's of the same character.
 * **The squad** (`play_testsquad.rs`, #302; the product owner's choices, not the game's: its squad
   is always Brutus, Flint, Hawk and Tex, each in its own place):
+  * `BF_CHARACTER` (play.rs `start_character`, #330) picks that character, on the test map and on
+    every level: a squad name (`brutus`, `flint`, `hawk`, `tex`, any case) or its slot number
+    (0-3: Brutus, Flint, Hawk, Tex); Tex when unset or when the value is neither (the demo says so
+    on stderr). Before #330 only the numbers parsed, so a name silently gave Tex. Checked on the
+    test map (`--test BF_TOOLS_LOG=1`, the "squad at the start" line) for `flint`, `1`, `Hawk`,
+    `brutus`, `tex` and `0`.
   * The test map starts with the player's character alone (Tex, or `BF_CHARACTER`'s), its
     other three slots empty, on every start of the flat floor (`--test`, `--edit`, a level
     switch back to it). Any other map keeps its own squad (the four, or a level's squad spawns),
