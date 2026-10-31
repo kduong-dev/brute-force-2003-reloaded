@@ -203,7 +203,8 @@ The V-squad's two marines (Stout and Cogburn: trigger_spawn64 and 76, `h_0fa4f51
 member check keeps them and sets their flags, [triggers.md](triggers.md)) farcast in during
 tutorial_farcast_vsquad_short (7.57 / 7.87 s), held by its 119s until it ends; then they follow
 Tex with the squad AI's wingman follow (`squad_ai`: places 6-11 m ahead of the leader, set off 3 m
-from it, dash when far behind, kneel or look about while he stands), from the formation places
+from it, dash when far behind, kneel or look about while he stands; since #335 the way to the place
+a route over the world points, [nav.md](nav.md) "The squad on routes"), from the formation places
 after the squad's own (Tex alone in the tutorial: the first two). They're on the player's team (0,
 their placements' alignment-type), see by the sensor above (90 degrees either way of their
 facing), fire at what they see with their aim (above), and the Red Hand fire at them. Not done:
@@ -333,7 +334,11 @@ todo/28-tutorial's takes:
   the level's world points (every kind, 1070 points and 6482 links in the tutorial), each
   point's h_e3439383 its links, a waypoint-trigger (h_10ecb459) setting one valid or not. The
   route search, the start and end nodes and the walk along a route are read and built since
-  #334 ([nav.md](nav.md)); the brains walk them in #336. So in the tutorial (`BF_BRAIN_LOG`, every spawn fired
+  #334 ([nav.md](nav.md)), the squad's follow (the marines' too) and Move To walk them since #335,
+  and the brains' goals walk them in #336: the goals' route is the brain's one route record,
+  brain+0x930 (the goal holder's +0x8f0: nav.md's corrections), on which the AI update's stuck
+  handling (FUN_000426b0) and route round a friend (FUN_00041870) run whatever the goal, so the
+  enemies' walks get those with their routes. So in the tutorial (`BF_BRAIN_LOG`, every spawn fired
   with Tex away): the base's patroller, TUTORIAL_terrorist_6, stalls 48 m short of its home just
   inside the gate and patrols from there, its first legs stalling until it's on the chain; the
   third building's 21 and 13 stall against its walls 12 and 31 m short of theirs (in take12 they

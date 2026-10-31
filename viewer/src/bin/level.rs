@@ -14,7 +14,9 @@
 //! BF_TEX_LOG=squad prints the squad's skin textures on the level (archive, bytes) and exits.
 //! BF_ROUTE=<x>,<z>;<x2>,<z2> prints the AI's route between the world points there (bf/nav.rs,
 //! #334; BF_ROUTE_COST=1 also times the search across the level, BF_ROUTE_RAYS=1|2 shows what
-//! the legs' corner rays meet, BF_ROUTE_PROBE=ax,ay,az,bx,by,bz one ray) and exits (`route_dump`).
+//! the legs' corner rays meet, BF_ROUTE_PROBE=ax,ay,az,bx,by,bz one ray and every triangle it
+//! crosses, BF_ROUTE_FACES=x0,z0,x1,z1 the blockers' and hinters' triangles in a box, #335) and
+//! exits (`route_dump`).
 
 use std::path::PathBuf;
 
@@ -345,7 +347,9 @@ const HIPS: f32 = 1.05;
 /// (the mean and the longest time, the most points popped), as the level starts and with every
 /// point valid; with BF_ROUTE_RAYS=1 what each leg's corner rays meet from its point and round it
 /// (=2 a map of the 2 m square round each point too); with BF_ROUTE_PROBE=ax,ay,az,bx,by,bz what
-/// one ray meets. Then it exits.
+/// one ray meets and every triangle it crosses (from its front or back: `Arena::ray_crossings`);
+/// with BF_ROUTE_FACES=x0,z0,x1,z1 the blockers' and hinters' triangles in that box
+/// (`Arena::faces_in`, #335: to map e13's hinter band round its west walkway). Then it exits.
 fn route_dump(level: &Level, arena: &bf_viewer::arena::Arena, v: &str) {
     use bf_viewer::bf::nav::{Dest, Graph, OwnPoint, Start};
     let ends: Vec<Vec<f32>> = v.split(';').map(|p| p.split(',').filter_map(|x| x.trim().parse().ok()).collect()).collect();
@@ -358,6 +362,16 @@ fn route_dump(level: &Level, arena: &bf_viewer::arena::Arena, v: &str) {
     if let Some(v) = std::env::var("BF_ROUTE_PROBE").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|v| v.len() >= 6) {
         let (pa, pb) = (Vec3::new(v[0], v[1], v[2]), Vec3::new(v[3], v[4], v[5]));
         println!("probe {pa:.3} -> {pb:.3}: {:?}", arena.ray_kind(pa, (pb - pa).normalize_or_zero(), pa.distance(pb)));
+        for (d, k, facing) in arena.ray_crossings(pa, (pb - pa).normalize_or_zero(), pa.distance(pb)) {
+            println!("  crosses {k:?} at {d:.2} m, met from its {}", if facing < 0.0 { "front" } else { "back" });
+        }
+    }
+    // BF_ROUTE_FACES=x0,z0,x1,z1: the blockers' and hinters' triangles in that box, one per line
+    // (kind, then its three corners), to map them round a route's points
+    if let Some(v) = std::env::var("BF_ROUTE_FACES").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|v| v.len() >= 4) {
+        for (k, t) in arena.faces_in(Vec2::new(v[0], v[1]), Vec2::new(v[2], v[3])) {
+            println!("face {k:?} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3}", t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z);
+        }
     }
     let bare = Graph::new(&level.points);
     let mut g = bare.clone();

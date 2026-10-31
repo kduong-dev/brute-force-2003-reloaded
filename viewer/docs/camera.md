@@ -199,7 +199,7 @@ the camera 2 cm to -x of the pivot at -1.047, as the take's; at heading 0 the 0.
 | Flint scoped at the gate (take15) | pitch -0.019 -> +0.206, out -0.008 | +0.2119, out -0.0025; after it 1.482 m, alpha 0.57 (take 1.495, 0.58) |
 | A crouch (take07) | the pivot down 0.6 m in ~0.3 s, up in ~0.4 | 31.093 -> 30.492 in 0.4 s |
 | A dash after a tap | t7dc to 0, t430 down at 3/s (answers Q11) | the same |
-| A run's start (take07) | the pivot trails 0.29 m, 0 within ~0.65 s | 0.43 m, 0 within 0.6 s: the demo's run accelerates faster than the take's (the leash itself gives the code's numbers on the demo's motion to the mm) |
+| A run's start (take07) | the pivot trails 0.29 m, 0 within ~0.65 s | 0.43 m, 0 within 0.6 s: the demo's run accelerates faster than the take's (the leash itself gives the code's numbers on the demo's motion to the mm). **#345:** take07's stick of 0.7 was the game's WALK (mot 47, about 3.5 m/s: Tex's type walk is 3.6), not a run, so the row compared the demo's run with a walk; the demo's run now moves at the type's 7.8 (play.md "Ground speed") and its pivot trails 0.72 m at a start (0.48 m before: `BF_CAMERA_LOG=1 BF_CAPTURE_FPS=60`, Tex from the gate spot, `BF_ROOT_SPEED=1` for before), under 1 cm again 0.4 s after the peak; the demo's walk is still the clip's 1.6 m/s; no take of the game's run start exists |
 | The hand-over to Brutus (take21) | the camera at his place at once, no ease | the same (boom 3.413) |
 
 Checked again after main's level lights (#143, which relit e34, e40 and the tutorial): the
