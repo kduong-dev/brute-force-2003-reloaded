@@ -1964,6 +1964,22 @@ impl Arena {
         self.ray_tri(origin, dir, max).map(|(t, i)| (t, i.map_or(BodyKind::Terrain, |i| self.body_kind(self.tris[i].body))))
     }
 
+    /// `ray_kind`, with the met triangle's normal turned to face back along the ray (the flat
+    /// floor's ground: up): what the AI's feelers meet (#344, bf_play's play_avoid.rs). FUN_00018c40
+    /// casts FUN_000ddd10 with the corridor ray's filter (the terrain, the placed objects, the
+    /// blockers and the hinters; no characters, items or liquids) and reads the hit record's kind
+    /// and normal: a terrain hit whose normal's y is over 0.7 is walkable ground, not a block.
+    pub fn ray_kind_normal(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, BodyKind, Vec3)> {
+        self.ray_tri(origin, dir, max).map(|(t, i)| match i {
+            None => (t, BodyKind::Terrain, Vec3::Y),
+            Some(i) => {
+                let v = &self.tris[i].v;
+                let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or(Vec3::Y);
+                (t, self.body_kind(self.tris[i].body), if n.dot(dir) > 0.0 { -n } else { n })
+            }
+        })
+    }
+
     /// `ray`, with the placed object it meets first (its index in `Level::objects`), if the
     /// nearest thing on the ray is part of one: what the crosshair's centre ray is on
     /// (play_reticle.rs).

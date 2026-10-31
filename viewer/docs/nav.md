@@ -3,7 +3,8 @@
 How the game's AI finds its way: the level's world points as a graph, the route search over it,
 where a character's routes start, and how a route is walked. The first slice of #242 (AI
 routes, #334) is the shared machinery; since the second (#335) the AI squad's follow and its Move
-To walk routes ("The squad on routes" below, `src/bin/play_routes.rs`). The enemies' goals are
+To walk routes ("The squad on routes" below, `src/bin/play_routes.rs`), steered through the AI's
+avoidance since #344 ("The steering", `src/bin/play_avoid.rs`). The enemies' goals are
 #336, the script walks #337; the Move To cursor's filter takes a point's valid bit from the graph
 ([squad.md](squad.md)).
 
@@ -152,7 +153,8 @@ landing (0x1b / 0x1c) gets its own point put first, so the jump is made. Then ea
    blocked: the point is the corner point and the walk goes on toward it, which brings the
    radius to 0.6 (or keeps the point's own), so it closes on the corner before it turns.
 4. **The point is reached**: its kind's own step is the caller's (doors FUN_00026820, patrol
-   points FUN_00026940, jumps FUN_00026520 / FUN_000267b0: `Step::reached` reports the kind).
+   points FUN_00026940, jumps FUN_00026520 / FUN_000267b0: `Step::reached` reports the kind). The
+   squad's routes take the door step since #346 ("The door step" below).
 5. **The next entry** is the target; **the look-ahead skip**: when it's a plain world point
    (kind 0) without bit 4 and the one after it has no bit 4 either, and the corridor from the
    character (at the reached point's height) to that one is clear, the walk goes to it at once,
@@ -160,7 +162,7 @@ landing (0x1b / 0x1c) gets its own point put first, so the jump is made. Then ea
 6. **Past the end**: the last point's destination bit cleared, the route reset; the walk is over.
 
 The steering is the caller's: in the game the AI steers for the target through its avoidance
-(FUN_000255d0) and its move (FUN_0004d970).
+(FUN_000255d0) and its move (FUN_0004d970); the squad's since #344 ("The steering" below).
 
 ## The squad on routes (#335)
 
@@ -223,19 +225,43 @@ function is in [code-map.md](code-map.md), "AI".
   * walked at 2 m a point (FUN_00026d80 at 2.0, the follow's), its last entry, the place, within
     the formation's 1 m (0.3 m out of the leader's line of fire);
   * the pace: the dash when the way left (along the route) or the place itself is over 8 m off,
-    a walk when both are under 2.5 m and while the corner rule holds it (as `BF_TEST_ROUTE`'s
-    walk: the run turns wider than the corner's 0.6 m; the AI's own pace near a point,
-    FUN_0004d840, isn't read); what it asks for, held to its pace level (below).
-  Without a level's points (the test map's floor) the follow is the straight walk it was.
+    a walk when both are under 2.5 m, else a run: the demo's (the game's follow walks its route at
+    the dash, FUN_0004d970 mode 4 from state 0 without the fifth argument, 0x22377, so the pace
+    near the route's points, FUN_0004d840, never slows it; near the leader its own states do,
+    #331); what it asks for, held to its pace level (below). Until #344 it also walked
+    while the corner rule held it (as `BF_TEST_ROUTE`'s walk: the run turns wider than the
+    corner's 0.6 m); the game has no such rule, and its hard turn's walk (FUN_0001ad50, "The
+    steering") is what keeps a runner from circling the corner point;
+  * steered for the route's target through the AI's avoidance (#344, "The steering");
+  * held where it stands, as at a route's end short of its place, when the stuck handling acts on
+    its route, or gives it up (the detour done on its last entries, or the third stuck at the place
+    itself), within d0 of the leader (11.2 m, 8 in WINGMAN: FUN_00020b10's first distance, within
+    which the game's follow holds in its state 3): the demo's (#344's fix round). The game's follow
+    routes to the leader's point and holds near him, and never has a place of its own it can't
+    reach; the demo's did, at rest beside a standing leader, and went round and round (m07_a:
+    Brutus and Flint walked 125 and 47 m after Tex stopped; sdm_e34's building by a door). Beyond
+    d0 a route given up is planned again at once, as the game's follow plans again out there
+    (state 0 with its route empty): held out there, two members that ran past their places stood
+    13 and 16 m off a standing Tex for good (e13's Move To recipe below);
+  Without a level's points (the test map's floor) the follow is the straight walk it was, steered
+  the same way.
 * **Move To** (GOAL_MOVE_OUT: its start 0x45d00, its update FUN_00045fa0): for each order a
   route to the point (brain+0x8ac: the cursor's point, which the order's position is; for a
   position that isn't one, `BF_TEST_ORDER`'s, the valid point nearest it that the cursor would
   take: +0x24 bit 14 set, bit 15 clear; the hand-over's, the one left's own point; with no point,
   its own point, FUN_00058b60: it walks there, to within 2 m, then the end), walked at 2 m at the
-  dash (held to its pace level) to its end, then GUARD and e635ecc6. No route: it stands in
-  MOVE_OUT (the update's empty route asks FUN_0004d970 for mode 1). `pass_round` and the 0.1 m / 1 s stall guess are
-  gone; the test map's floor keeps a straight walk with that stall rule (no points to route
-  over).
+  dash (held to its pace level), slowed near the route's points (`pace_near`, #344's second fix
+  round: FUN_00045fa0 calls FUN_0004d970 with its fifth argument set, 0x4627d, so FUN_0004d840
+  runs: a run within 6.0 m of the route's last entry and a walk within 3.2 m, across, FUN_00058590
+  with the pace record's distances for a brain out of FOLLOW and WINGMAN; else, within 3.2 m of
+  the current point (3D), FUN_000587d0 by the corner on to the next: a walk for a turn sharper
+  than about 84 degrees, a notch under the dash for 69-84, a walk for a gentler one while its move
+  is 53 degrees or more off the way to the point within 2.4 m, each with the level's timer at 1.5
+  s, after which the ramp climbs a notch a second), steered through the avoidance (#344,
+  FUN_000255d0 as MOVE_OUT calls it at 0x45cb6), to its end, then GUARD and e635ecc6. No route: it
+  stands in MOVE_OUT (the update's empty route asks FUN_0004d970 for mode 1). `pass_round` and
+  the 0.1 m / 1 s stall guess are gone; the test map's floor keeps a straight walk with that stall
+  rule (no points to route over).
 * **The AI update's route steps** (FUN_0001afe0, 0x1b17f-0x1b18b, for a character with an own
   point, before the goal machine), `ai_update`:
   1. **The blocker** (FUN_00041870, `blocker`): with a route, each friend (not hostile, alive)
@@ -255,23 +281,28 @@ function is in [code-map.md](code-map.md), "AI".
      any chatter file). Outside the prisms nothing but the count's reset. The marks are cleared
      at its end: they only steer the flood. The demo doesn't read the prisms, so this runs only
      under `BF_TEST_PRISM=1`; in open ground the game's members pass each other by their
-     avoidance (FUN_000255d0, not done), as #33 take08's Hawk ran past Tex.
+     avoidance (FUN_000255d0's push, "The steering"), as #33 take08's Hawk ran past Tex.
   2. **The catch-up** (FUN_00041ff0, `Walker::resync`): the character's own point being the point
      of the entry after the current one or the one after that, the index moves there (the later
      when both: each match overwrites).
   3. **Stuck** (FUN_000426b0, `stuck`): with a route and the pace level at 2 or more (0x426f7;
      under 2, after a detour, a re-route or a hold, the time is 0), the squared 3D distance to the
      current target over the best since the target was set adds the frame's time; under or equal
-     to it, the best and the time 0 (asm 0x42760-0x4278f: no margin; the demo's, while the member
-     asks to move, is 5 cm: see the demo's choices). Past 2 s (strictly), the time 0 again, and:
+     to it, the best and the time 0 (asm 0x42760-0x4278f: no margin, the game's since #344; #335's
+     5 cm is gone, see the demo's choices; `progress`: one asking to move whose distance is its
+     best's to the bit hasn't moved at all and is no closer, the demo's). Past 2 s (strictly), the time 0 again, and:
      the speed factor (char+0x720, FUN_00048270's, which the follow's FUN_00020b10 keeps at 1.25
-     far from the leader) at 0.01 or under put back to 1 and nothing more (the demo has no speed
-     factor); else the own point the same as at the last stuck, counting: the third in a row puts
+     far from the leader) at 0.01 or under put back to 1 and nothing more (the demo's is never
+     under 1); else the own point the same as at the last stuck, counting: the third in a row puts
      the character on the route's current entry's point, the one it couldn't reach
      (FUN_000425b0 with it in EAX, 0x42839-0x42857: the point's position + 0.25 m, then
-     FUN_0004c5e0; medium, read as a set-position; here its feet on the floor under it; nothing
-     for a bare position. Round 1 put it on its own point, as todo/242's leads had it: corrected
-     from todo/344's leads §7); else the detour (FUN_00042280): the
+     FUN_0004c5e0; medium, read as a set-position; here its feet on the floor under it. Round 1
+     put it on its own point, as todo/242's leads had it: corrected from todo/344's leads §7). For
+     a bare position FUN_000425b0 does nothing, and the game's follow never routes to one; the
+     demo's follow does (its place), so there the route is given up, and the follow holds where it
+     is until its leader moves on, within d0 of him, or plans again beyond (#344, `Router::gave_up`:
+     the demo's; #335's re-review found it pinned there with nothing acting until the leader moved
+     d3); else the detour (FUN_00042280): the
      current entry the last, the route done; else, the current point valid, it and the own
      point lose bit 2 (valid) for one search, the next entry the last, done, else the next point
      loses it too and a new route to the destination is planned (FUN_00041660) and started with
@@ -282,36 +313,181 @@ function is in [code-map.md](code-map.md), "AI".
 * **The pace record** ([brain+0x1a8]: its level +0, `Router::cap`; the mode asked +4,
   `Router::asked`): FUN_0004d970 moves at the lower of the two (`pace`: 1 stands, 2 walks, 3
   runs, 4 dashes, a dash in a prism a run), and the follow and Move To ask for what they want,
-  the level holding them to it. The level is a ramp (FUN_00058530; FUN_00058670 each AI frame at
-  0x1b119; todo/344's leads §6): its timer (+0x28, FUN_000124f0) runs, and run out with the mode
-  asked above the level, the level climbs a notch (FUN_000589b0 to 2, FUN_00058a60 to 3,
-  FUN_00058aa0 to 4) and the timer starts again at the step, 0.17 s for a squad brain in FOLLOW
-  or WINGMAN (brain+0x58 1 or 4) and 1.0 s for any other (Move To, GUARD): a follower climbs
-  from 1 to the dash in 0.51 s, a member on a Move To in 3 s. The drops set it down with the
-  timer: the detour 1 for 1 s, the re-route 1 for 1.5 s, the blocker at most 3 (or 1) for 0.5 s,
-  the follow's hold 1 for 0.3 s (FUN_000223c0). (Round 1 lifted it at once when the timer ran
-  out, inferred.) The game's level also follows the mode asked down (FUN_00058a20: 2 to 1 with
-  0.3 s; FUN_00058aa0: 3 to 2; FUN_00058b10: 4 to 3) and starts at 1 (the brain's init), so its
-  every start from a stand climbs; the demo's starts at the dash and only the drops take it
-  down: that start-up ramp is #344's.
+  the level holding them to it. The level is a ramp ("The steering", `pace_ramp`): it starts at a
+  stand and steps a notch toward the mode asked, up and down, each time its timer runs out; the
+  drops set it down with the timer: the detour 1 for 1 s, the re-route 1 for 1.5 s, the blocker
+  at most 3 (or 1) for 0.5 s, the follow's hold 1 for 0.3 s (FUN_000223c0), and since #344 the
+  feelers' and the hard turn's, and on a Move To the pace near the route's points (FUN_0004d840:
+  the move asked lowered near the route's end, the level set down at a corner for 1.5 s; Move To
+  above). (Round 1 lifted it at once when the timer ran out, inferred; until
+  #344 it started at the dash and climbed only.)
 * **The liquid guard** (play_liquids.rs `burning_ahead`): a safety net only, the routes' points
   lying on no harmful liquid. A member whose next step would go into one holds there;
   `BF_LIQUID_LOG` says so ("on its route (the routes' safety net)"). In the runs below it never
   acted.
 * **The demo's choices**, labelled in the code: the formation place and its points, the four
   tried for a clear corridor, and the leader's point for a place no one could stand on (above);
-  the follow keyed on the leader and its 3 m hold (above); the walk at a corner hold; the pace by
-  the longer of the way left and the place's distance; in the stuck test, while the member asks
-  to move, 5 cm closer to count as progress, a guess and a stand-in until #344: the game's test
-  has no margin (any fall, or none, starts its time again) and its members don't get pinned,
-  the feelers (FUN_000255d0 / FUN_00018c40, #344) keeping them a metre off a hinter band; the
-  demo's press against the band, where its collision jitters a held body by about a centimetre,
-  a new best every few frames (#335's review: Hawk held 3.69 m from her target on e13, the time
-  starting again after 0.07-0.47 s, so she was never stuck and stood there for good), and 5 cm
-  is five times that; one standing by its goal's choice keeps the game's test; the blocker's
-  slow friend by the pace it moves at (the lower of its level and the mode asked, as the demo's
-  level doesn't follow the mode down), the controlled character's read from its stick (it walks
-  or stands: under 3); no prisms; no start-up ramp (#344).
+  the follow keyed on the leader and its 3 m hold (above); the pace by the longer of the way left
+  and the place's distance; the follow's hold when the stuck handling acts on its route, or gives
+  it up, within d0 of the leader (above); the blocker's slow friend, for the controlled character, read
+  from its stick (it walks or stands: under 3); no prisms; and the avoidance's ("The steering").
+  Gone with #344: the walk at a corner hold, and in the stuck test, while the member asked to
+  move, 5 cm closer to count as progress (#335's stand-in: without the feelers its members pressed
+  against e13's hinter band, where the collision jitters a held body by a centimetre, a new best
+  every few frames, so the game's test never fired; with them the game's own test, no margin,
+  moves every member on: the e13 runs below have no stuck at all, and with the feelers off,
+  `BF_AVOID_OFF=1`, Hawk is pinned at the band for good). Kept from it, since #344's fix round:
+  a member asking to move whose distance is its best's to the bit counts as no closer
+  (`progress`). The game's characters are never held to the bit (no AI ledge refusal: its routes
+  jump down between a jump's points, FUN_000267b0 with bit 12; its physics leaves a body pressed
+  into a wall moving); the demo's AI ledge stop (play.rs `ledge_ahead`) puts one back exactly where
+  it was every frame. The tutorial's lava yard: its route from the upper ledge goes from
+  h_0656d0f4 (kind 0x1b, y 26.4) to h_03090779 (0x1c, y 16.4), a jump's two points 10 m apart in
+  height, which the demo's marines can't take; held at the edge, they were never stuck and stood
+  there for good; now the detour finds no other way down (its search round the three points
+  fails, and the re-route plans the same way) and the third stuck puts each on the lower point
+  (FUN_000425b0), 12-13 s after it reached the edge, where the game's would have dropped down at
+  once (the controlled Tex, whom the ledge stop doesn't hold, walks off it).
+
+## The steering: the AI's avoidance (#344)
+
+`src/bin/play_avoid.rs` (`steer`), for the route walkers: the follow (play.rs `squad_ai`: the
+squad's, the tutorial's marines', the test map's straight walk) and Move To (play_orders.rs
+`move_out`). The reading is `todo/344-ai-avoidance/leads.md` §1-§6, checked against the asm; every
+function is in [code-map.md](code-map.md), "AI". The enemies' goals walk no routes yet (#336) and
+aren't steered.
+
+**FUN_000255d0** makes the direction of every walking goal from its steering target (the route's,
+brain+0x478; none for a target at the world's origin) in four stages and takes the first that
+steers: the target's direction only when nothing is in the way. A stage that steers replaces the
+direction (no blend).
+
+1. **The feelers** (FUN_00018c40, `feel`): three rays along the character's heading (the way it
+   moves, iface +0x34: the demo's last step, else its facing) from its hips 0.25 m lower and
+   0.5 m back: the centre 3.15 m, the left and right 2.0475 m at 25 degrees (the brain's list,
+   brain+0x354, which the constructor fills and nothing changes). Their lengths: x0.6 at a walk,
+   x1.6 at a dash, and x0.9 x the speed factor char+0x720 when that's over 1 (the follow's boost:
+   x1.125); off at a stand, and while brain+0x924 runs (the walk's door step sets it, "The door
+   step"). Each ray is tilted by the
+   ground ahead (FUN_00115b00: the height change to the ground 0.8 m ahead along the move, its y
+   added before it's normalised). They meet the terrain, the placed objects, the blockers, the
+   hinters and the fly-blockers, never a character, an item or a liquid (the corridor ray's
+   filter; `Arena::ray_kind_normal`); a terrain hit whose normal's y is over 0.7 is walkable ground,
+   not a block; an object's or a blocker's always is. The response:
+   * at a dash (or a run inside a prism) the first block only drops the pace: the level a notch
+     down with its timer at 1.5 s, or, with the speed factor over 1, the speed record's timer
+     (brain+0x8a4) at 1.5 s, which takes the follow's boost off (FUN_00048270); nothing steers
+     that frame. So a boosted dash meets a wall twice: the boost off, then the run;
+   * a side ray's block turns it square to its heading, away from it (a left hit: the heading's
+     right); both sides blocked, the side whose block is farther;
+   * the centre's alone (a wall ahead): two more rays along the side rays, four times as long, and
+     the side with more room (a missed long ray keeps its slot's last distance, as FUN_000ddd10
+     writes it only on a hit: copied as read); then, at a run or a dash, held to the side the
+     target lies on (FUN_00018b50), with the level 2 for 2 s when that overrides the pick.
+   A side ray reaches 0.87 m across at a run, 1.56 m at a boosted dash, 0.52 m at a walk: what
+   keeps a member about a metre off e13's hinter band.
+2. **The push** (the sensor's +0x3c, 0x521c0, `push`): every other living character within 1.5 m
+   across, overlapping in height (1.0 m margin) and in the half in front of the heading, or within
+   0.5 m anywhere, pushes the direction away from it by 1 over the distance; the sum (not
+   normalised there: FUN_0004d970 does it).
+3. **The side-step** (the sensor's +0x4c, 0x52750, `side_step`): the nearest obstacle disc in the
+   path (its offset across the heading under the two radii, the walker's 0.5 m and its own), within
+   its radius + 2 m and in front: a step across, away from it. Its discs come from two world lists,
+   [world+0xa4] and [world+0x12c], neither identified (the radius method, 0x52c90, takes the body's
+   bounding sphere for OT_STATIC_GEOMETRY, OT_PLATFORM and OT_WORLDBUTTON, and 0.5 m for a
+   character, the walker's own disc); the demo has none to give it (`obstacles`).
+4. **The plain direction** (the sensor's +0x24, 0x519f0, `plain`): to the target, flat.
+
+**The move** (FUN_00019af0, `move_turn`, #344's fix round). The direction goes to FUN_0004d970
+(play_routes.rs `pace`: the move at the lower of the mode asked and the pace level, the direction
+sized x0.01 at a stand, x0.5 at a walk, x1 at a run or a dash) and the AI update's steering
+FUN_00019ed0, which turns the facing at the type's turn rate x char+0x7ec and, for the follow and
+Move To (no FOLLOW_HOLD_BACK route at brain+0x684), hands the move to FUN_00019af0: the move turns
+from the heading toward the direction **at most 200 degrees a second** (3.49 rad/s), its rate eased
+from the last frame's, a third of the way a game frame at a run or a dash and a fifth at a walk,
+dropped to 0 when the turn reverses, never past what closes the angle; within a degree it keeps the
+heading, and after a frame that ended with no direction (a stand) it takes the direction at once.
+The demo moves a character along its facing by its clip's root and turns the facing at 9 rad/s, so
+its facing follows that move; the ease is applied by the frame's share of the game's 30 Hz frames.
+So a feeler's square steer, a frame or two at a time, bends the path by a few degrees where before
+it turned the member a third of the way round at 15 fps: the weave of the first round's e13 runs
+(Hawk and Brutus 1.18 and 1.13 changes of side a 10 m, take01's 0.36 and 0.42) is gone. A turn at
+200 degrees a second has a radius of 1.8 m at a run (6.3 m/s) and 2.4 m at a dash (8.5 m/s), so a
+member dashing at a doorway at an angle can miss it, or loop round a corner point it has to close
+on. The game's facing turns no faster for the squad (FUN_00019ed0: the type's turn rate x
+char+0x7ec, which the brain's constructor sets to 200 / (type+0x2d0 x 57.3): 200 degrees a second
+too). What slows its members there: on a Move To the pace near the route's points (FUN_0004d840,
+`pace_near`: a walk within 3.2 m of a sharp corner); indoors the level's prisms (FUN_0004d970: a
+dash is a run inside one; FUN_00018c40: a feeler's hit there drops a run to a walk), which the
+demo doesn't read: see "Not done". The follow's walk has neither in the demo, and in the game only
+the prisms (its state 0 passes FUN_0004d970 no fifth argument, 0x22377). A turn past 180 degrees
+at the cap (a loop to close on a corner point) lasts over a second at more than 2.5 rad/s, so it
+ends in the hard turn's walk; a plain U-turn at the cap, 0.9 s, doesn't.
+
+**The pace record** ([brain+0x1a8], `Router::cap`, play_routes.rs `pace_ramp`): FUN_00058530
+starts it at the level 1 (a stand) with its timer at 0.3 s; FUN_00058670, each AI frame (0x1b119,
+before the route steps), runs the timer and, once it has run out with the level not the mode
+asked, steps the level one notch toward it, up (FUN_000589b0 to 2, FUN_00058a60 to 3, FUN_00058aa0
+to 4) or down (FUN_00058b10 to 3, FUN_00058aa0 to 2, FUN_00058a20 to 1, that one with 0.3 s), and
+starts the timer again at the step: 0.17 s for a squad brain in FOLLOW or WINGMAN, 1.0 s for any
+other. A follower stopping steps down to a stand and climbs again when it sets off: a walk at
+once, a run 0.17 s later, the dash 0.34 s after it; on a Move To, the run after 1 s and the dash
+after 2. Then **the hard turn** (FUN_0001ad50, 0x1b16b, `hard_turn`): a route walker at a run or a
+dash turning faster than 2.5 rad/s (char+0x488; the demo's: its facing's turn over the last frame)
+for over 1 s walks for 1 s. The ramp runs for every AI character the routes' goals move, with a
+level's points or not.
+
+**The speed record's timer** (brain+0x8a4, `Avoid::boost_off`): counted down each AI frame
+(FUN_00048270, after the goal; the demo's a frame sooner); while it runs the follow's boost isn't
+handed to char+0x720 (play_speed.rs `follow_boost`). The feelers read char+0x720 as the last AI
+frame left it (`Avoid::factor`).
+
+**The demo's choices**, labelled in the code: the heading from the last step (the game's move
+vector char+0x5e8); the push's height test (the two bodies' spans, 1.9 m each, grown by the
+margin: FUN_00052120's extents aren't read); the push's list, the characters within 2 m at the
+frame's start (`routes::near`); no side-step obstacles; the hard turn's rate from the facing's
+turn; the move's ease by the frame's share of the game's frames.
+
+**Test hooks**: `BF_AVOID_LOG=1` prints each frame a stage before the plain direction steers:
+which feelers met what (steep terrain, an object, a blocker) and how far, the response (the
+direction, the long rays' slots, the hysteresis' walk), the pace drops and the boost's, the push
+and from whom. `BF_AVOID_OFF=1` (a diagnostic, not the game) steers by the plain direction alone,
+as before #344. `BF_AVOID_FREE_TURN=1` (a diagnostic, not the game) leaves the move's turn to the
+facing's 9 rad/s, as before #344's fix round. `BF_ROUTE_LOG=1` also says each hard turn's walk,
+`=2` each step of the pace level.
+
+## The door step and the corner hold (#346)
+
+The reading is `todo/346-route-doors/leads.md`; no footage shows a squad member at a door
+(its shot list's A and B), so the demo follows the code alone.
+
+**The door step** (FUN_00026820, play_routes.rs `door_step`): FUN_00026d80 hands it a door point
+reached (kind 6; the corner rule skips door points). It acts only when the **next** entry's point
+is a door point too, the pair either side of a door: the 0.8 m corridor between the two points at
+their positions (FUN_000410a0, as the route's other tests: the arena's ray, which a door's leaves
+block until 0.6 of their clip) blocked, the pace level goes to a stand with its timer at 0.5 s and
+the feelers go off for 1.5 s (brain+0x924). The walk moves on regardless (the step's return is
+ignored): no wait for the door, no read of its state, no new plan. So a member reaching a shut
+door stands half a second, then the ramp walks it on toward the far point with nothing turning it
+off its line; a door its detector opened in time is walked straight through. A door that stays
+shut is left to the stuck handling. The step's first branch, a world button at the point (+0x3c,
+an OT_WORLDBUTTON "used" with TRIG_SIG_USE_OBJECT), is left out: no door point in the data has an
+object (every h_e5851820 is empty, no h_0b6b92ba record attaches one), so it never runs. Doors
+open by their own triggers, not by the walker; locked doors never get this far, their points made
+invalid by the level's waypoint triggers (e34's six, sdm_e34's two, the tutorial's base gate
+until its panels).
+
+**The corner hold** (brain+0x9dc, `Walker::corner`) has no timer in the game: it's set at a point
+reached whose next leg is blocked and cleared only when a point is passed with the rule not
+holding (the corner point itself once within 0.6 m, a door's or a jump's point, or the rays clear
+again) or by the brain's reset (FUN_00026d80's row). A member that can't close on the corner point
+is moved by the stuck handling alone. The demo's never had a timer either; what pinned its
+members at e13's corners was its missing feelers, and with #344's none needs the stuck handling:
+in the e13 runs every hold (14 of them, 0.3-1.4 s) ended by passing within 0.6 m.
+
+**Test hooks**: `BF_ROUTE_LOG=1` says each door step (the two points, the corridor clear or
+blocked); `BF_TEST_DOOR_SHUT=<h_xxxxxxxx>[,...]` holds the named doors shut (maps.md, the doors'
+hooks: `BF_DOOR_LOG=1` lists their names).
 
 ## Lava
 
@@ -339,8 +515,8 @@ walkway; the straight line between its ends crosses a pit.
   (its goal its start). Its own point is kept every frame; it runs straight at each steering
   target (`BF_TEST_WALK` / `BF_TEST_SPRINT` as for `BF_TEST_GOTO`) and walks while the corner rule
   holds it: the controlled character's run turns in a circle of some 0.7 m and would go round a
-  point with a 1 m radius of its own instead of closing on it (the hook's choice; the AI's pace
-  near a point, FUN_0004d840, isn't read). The camera faces the way it goes, or keeps
+  point with a 1 m radius of its own instead of closing on it (the hook's choice; the pace near a
+  route's points, FUN_0004d840, is a brain's, `pace_near`). The camera faces the way it goes, or keeps
   `BF_CAMERA_YAW`; with `BF_CAMERA_PITCH` and `BF_CAMERA_DISTANCE` it looks from above. The
   level's prisms aren't read, so no radius is held to 1 m indoors.
 * `BF_ROUTE_LOG=1` also logs the AI squad's routes (#335): each plan and why (the follow, its
@@ -349,10 +525,11 @@ walkway; the straight line between its ends crosses a pit.
   entries, the dropped first entry and the search's cost; each hold of the follow and why (the
   route's end short of its place, no route, its place's point the one it stands at) and its end;
   each point reached, corner held, point skipped, catch-up, stuck, detour, put-at-the-point and
-  blocker step; `=2` also each one's own point's changes, the pace level's climbs, why a place
-  isn't walked to (no floor or too low, in a liquid that burns, the corridor from its nearest
-  points blocked) and, once a second, its walk's state (the entry, the target, the radius, the
-  distance, the corner, the stuck time and best, the pace level and its timer).
+  blocker step; `=2` also each one's own point's changes, the pace level's climbs, the pace near a
+  route's points setting the level down (near its end or at a corner, FUN_0004d840: Move To's),
+  why a place isn't walked to (no floor or too low, in a liquid that burns, the corridor from its
+  nearest points blocked) and, once a second, its walk's state (the entry, the target, the
+  radius, the distance, the corner, the stuck time and best, the pace level and its timer).
 * `BF_TEST_WARP=<s>,<who>,<x>,<z>[,<heading>][;...]` (bf_play): at time s `who` (`me`, the
   controlled character, or a member by name or slot, as `BF_TEST_ORDER`) is put on the floor at
   (x, z), facing the heading (degrees, 0 = -z) or as it faced: the takes' trainer `tp`.
@@ -495,6 +672,38 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
     34.6 and 37.7 s, put on it), where he was detoured once; Flint is stuck once, at h_f2b3cbd2
     (8.5 s); Hawk as before at the same four corners (put on the point at 22.1, 32.1, 42.7 and
     52.2 s).
+  * **with #344's avoidance** (the feelers, the push, the pace ramp from a stand and down, the hard
+    turn, the game's stuck test; the same command with `BF_AVOID_LOG=1`; `BF_ORDER_LOG=2`'s 15 Hz
+    rows against take01's 10 Hz watch rows, both from the release, "within 10.5 m of Tex" as the
+    arrival, the take's state 3 being 9.8-10.0 m off him): Flint 17.6 s (the take's 16.6), Hawk
+    18.1 s (18.6) and Brutus 18.9 s (23.1; the game's Brutus took a detour lane after a stuck, 145 m
+    to his 128, the demo's none). Along the west walkway, the first time each is past z 64, 50 and
+    38 and then on the north rim (x over 20): Hawk 8.9, 11.5, 14.1, 17.2 s (the take's 9.1, 11.7,
+    13.8, 17.5), Flint 8.4, 10.8, 13.6, 16.7 (7.8, 10.1, 12.3, 15.8: the game's Flint ran the first
+    straight on the lane of points at z 77.6, his own point carried from before the freeze, the
+    demo's spawn picks h_06130f19 on the z 73.6 one, whose hinter band 1-4 m south of it his feelers
+    meet twice at the dash), Brutus 9.3, 13.2, 14.9, 18.0. No stuck at all (21 before, 6 of them
+    put on the point), no detour, no lava (`BF_LIQUID_LOG` silent), 116 frames of feelers steering
+    and 70 of the push, two hard turns' walks. The corner holds: h_f079fb96, h_e9ba9a68,
+    h_029e248d and h_1469ef23 for all three, the take's four, plus one member each at h_f2b3cbd2
+    (Hawk) and h_f3024e36 (Flint), which the game's didn't hold; each held 0.3-1.4 s and passed
+    within its 0.6 m. A track plot against `BF_ROUTE_FACES`' hinter faces shows the three down the
+    west walkway on the band's outer side as the take's, a metre or so off it, wavering at
+    h_e9ba9a68-h_f2b3cbd2 where the take's curve is smooth (the push and the square steers turn
+    the demo's members, which move along their facing). With `BF_AVOID_OFF=1` (the plain direction
+    alone, the rest as #344's): Hawk pinned at the band for good, 8 stucks, Flint at 40.5 s.
+  * **with #344's fix round** (the move's turn, FUN_00019af0; the stuck test's `progress`; the
+    follow's hold within d0): Flint 18.8 s (the take's 16.6: +13%), Hawk 17.1 s (18.6: -8%) and
+    Brutus 21.9 s (23.1: -5%), no stuck, no detour, no lava. The weave (the tester's measure, 0-25
+    s from the release, the track resampled every metre: changes of side over 0.3 rad a 10 m, the
+    turn a metre): Flint 0.42 and 0.158 rad, Hawk 0.25 and 0.123, Brutus 0.74 and 0.182; take01's
+    0.28 and 0.138, 0.36 and 0.133, 0.42 and 0.155; the first round's 0.27 and 0.117, 1.18 and
+    0.183, 1.13 and 0.192. The spread off the track's 9 m mean grows (0.77, 0.68 and 0.88 m; the
+    take's 0.59, 0.59 and 0.67; the first round's 0.66, 0.60, 0.67): the turn's wider arcs. Over
+    six staging shifts (all three 2 m west, swapped round, 2 m toward the pit, bunched, 14 and 24 m
+    west along the rim) all arrive in 13.7-20.5 s, with one stuck in three of them and three in
+    one, each a detour at a corner of the band (h_f079fb96, h_e9ba9a68, h_f2b3cbd2), none put on a
+    point; with `BF_AVOID_FREE_TURN=1` none (the first round's numbers to the frame).
 * Move To across the pit (e13, the squad and Tex on the south rim: `BF_MAP=e13
   BF_TEST_GOTO=44.3,73.6,44.3,73.6 "BF_TEST_WARP=0,me,44.3,73.6,0;0,brutus,45.7,75.8;
   0,flint,42.3,75.8;0,hawk,43.0,72.0" BF_TEST_NO_HOSTILES=1 "BF_TEST_ORDER=hawk,move,34.3,29.6@2"`,
@@ -505,12 +714,34 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   off: GUARD and e635ecc6. Never into lava. With #345's speeds (her dash 6.8 m/s, 8.5 x 0.8,
   as take08's plateau 6.84; the clips' 7.2 before) the same four corners pin her (put on the point at
   20.5, 30.6, 42.1 and 52.2 s) and she reaches it at 57.9 s. (The review's run, round 1: held 3.69 m short of
-  h_f2b3cbd2 for good, the jitter starting the stuck time again.) On e34 (#318's take08 recipe
+  h_f2b3cbd2 for good, the jitter starting the stuck time again.) With #344's avoidance: no stuck,
+  held at five corners for a moment each, two hard turns' walks; she reaches the point at 20.2 s,
+  18.2 s after the order, 1.8 m off: GUARD. With the fix round: held at seven corners for a moment
+  each, no stuck; she reaches the point at 22.7 s, 20.7 s after the order, 1.8 m off. Brutus and
+  Flint, sent to places 7 and 9 m out in front of the standing Tex that lie across each other's
+  way, run south side by side 1.2 m apart: each turning toward its place brings the other into the
+  half in front, whose push turns it back, and at 200 degrees a second neither breaks away (with
+  the free turn both do). They run on past their places (Brutus 9 m) down the slope, where the
+  feelers' blockers stop them, stuck at 3.9 and 4.1 s, 16 and 13 m off Tex; held there, as the
+  fix round's first build did, they stood so for good. Beyond d0 the follow plans again: Flint
+  reaches his place, 8.6 m off Tex, and Brutus, stuck twice more short of h_f7672590, is put on it
+  (9.1 s) and holds there, 10.1 m off Tex, 3.1 m short of his place. With the second fix round's
+  pace near the route's points (`pace_near`, `BF_ROUTE_LOG=2`): the level dropped to a walk by
+  the corners at h_f079fb96, h_f2b3cbd2 and h_1b3a3faf and a notch at h_1c93b982 (FUN_000587d0,
+  each with the timer at 1.5 s, then the ramp's notch a second), so she walks most of the west
+  walkway, whose corners lie 5 m apart; a run from 5.9 m off the point, a walk from 2.9 m; she
+  reaches it at 27.9 s, 25.9 s after the order, 1.9 m off, no stuck (no footage of this one).
+  On e34 (#318's take08 recipe
   with Tex on her way, `BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999
   "BF_TEST_ORDER=hawk,move,-89.5,-87.8@1;hawk,move,-70.8,-79.5@10"`): a 5-entry route past Tex,
   at h_ff113737 3.13 s after the order, GUARD 1.8 m short (#318: 3.1 s and 1.8 m; take08 4.2 s,
   1.9-2.0 m), the same in round 1 and the fix round; with #345's speeds 3.26 s and 1.9 m short
-  (her dash 6.8 m/s), the same route, no stuck.
+  (her dash 6.8 m/s), the same route, no stuck; with #344's 3.86 s and 1.9 m short (Move To's ramp
+  from a stand: a walk, the run after 1 s, the dash after 2), the same with the fix round; with
+  the second fix round's pace near the route's points 4.13 s and 2.0 m short, the take's 4.2 s
+  and 1.9-2.0 m: she dashes from 12.2 m out, runs from 5.1 m out and walks from 2.7 m out (the
+  watch rows at 7.5 Hz; take08's 5.6 and 2.8 m at 10 Hz, FUN_00058590's 6.0 and 3.2 m), where she
+  had dashed to 1.7 m.
 * The follow on e34 (`BF_TEST_GOTO=-83.39,-82.79,-30,-80,27 BF_TEST_GO_AT=4 BF_TEST_NO_HOSTILES=1
   BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05`, 300 frames, Tex running east past the rocks):
   8-12 plans a member from 4.5 to 16 s (4-5 at most in any 2 s), 1-2 holds each at points short
@@ -520,8 +751,31 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   Tex stops (6.4-10.7 m off him), no stuck. With #345's speeds (the follow's dash 8.5-8.7 beyond
   14 m of Tex, 6.8-7.0 inside; Tex's run 7.8 m/s where it was the clip's 4.8): 7-8 plans a member
   in that time, 0-1 holds each, standing 12 (Brutus), 6 (Flint) and 4 (Hawk) of the 87 rows, all
-  three at their places when Tex stops, 6.5, 7.9 and 10.9 m off him, no stuck, no detour. Stand
-  Ground holds where ordered while Tex goes 32 m
+  three at their places when Tex stops, 6.5, 7.9 and 10.9 m off him, no stuck, no detour. With
+  #344's avoidance: no stuck, no detour, the same final distances (6.5, 7.8, 10.8 m), the members
+  never closer than 1.3 m to each other (0.72 before: the push), the lag behind Tex while he runs
+  a mean of 5.8 (Brutus), 9.5 (Flint) and 10.1 m (Hawk) against 5.0, 8.4 and 6.7 (Hawk's back-step
+  to the point behind her at 5.4 s, #335's follow, comes a little sooner, and her hold there
+  ends later). With the fix round: no stuck, no detour, the same final distances (6.4, 7.8 and
+  10.8 m), the members never closer than 0.81 m, the lag a mean of 5.9, 12.9 and 11.3 m: Flint's
+  route at 6.9 s goes back to his own point behind him, and turning round at 200 degrees a second
+  takes over a second at more than 2.5 rad/s, which ends in the hard turn's walk (8.3 s), 21 m
+  behind Tex at most; Hawk's back-step the same. (The tester's sprint recipe, `BF_MAP=e34
+  BF_SCRIPT=off BF_TEST_NO_HOSTILES=1 BF_TEST_GOTO=-83.39,-82.79,-43,-80,27 BF_TEST_GO_AT=4
+  BF_TEST_SPRINT=4`, 375 frames: a mean lag of 3.7, 5.0 and 7.0 m, the first round's 3.6, 5.1 and
+  7.8, main's 3.4, 6.9 and 8.8; never closer than 0.78 m.) The second fix round changes neither
+  (the follow's walk has no pace near its points). Both back-steps are #335's follow: main makes
+  them too (Hawk's route at 5.5 s to h_e90ebcab, Flint's at 6.2 s to h_e0098c3d, toward the
+  place's point behind them), turning round at once; the game's follow routes to the leader's own
+  point (state 0) and wouldn't (#331). Over the rows before each one's back-step the lag is 4.8
+  (Flint) and 8.3 m (Hawk), main's 5.4 and 8.3; Brutus, who has none, 5.9 (main 5.0: a 2 s walk
+  at 8.7 s, the long rays' pick held to the target's side, FUN_00018b50). A plain U-turn at 200
+  degrees a second (0.9 s) doesn't set off the hard turn's walk; Flint's and Hawk's went on round
+  their corner points (h_e0098c3d, closing to 0.6 m) past 1 s. (Tried and dropped, not the game's:
+  the pace near the route's points for the follow too. Hawk then goes through sdm_e34's door at a
+  dash, but on e13 she arrives at 25.9 s, 39% over the take, m07's Flint walks 23 m at rest, the
+  sprint recipe's lag grows to 6.4, 9.7 and 7.6 m, and the e34 run's stays at 5.9, 11.3 and 10.5.)
+  Stand Ground holds where ordered while Tex goes 32 m
   off, Fire At Will and Cover Me follow (`"BF_TEST_ORDER=hawk,guard@3;flint,fire@3"`, round 1).
   sdm_e13 (#1's recipe, the controlled Brutus walking into the lava): the three stay on the
   shore's points, 8-9 m from him (round 1). The tutorial's marines (brain.md's recipe) follow Tex
@@ -534,7 +788,51 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   2 s, each pacing 2-5 m; keyed on the leader with the 3 m hold but the place's nearest point,
   1 in 2 s at most, but Hawk ran to and fro between h_ebea0733 and h_00bdf10f, 21 m apart. None
   enters the lava (`BF_LIQUID_LOG`). The same with #345's speeds: no plan from 10 to 30 s, none of
-  the three moves more than 0.2 m.
+  the three moves more than 0.2 m. The same with #344's fix round: no plan and no stuck from 10
+  to 30 s, none moves more than 0.2 m.
+* #344's review recipes, on the fix round's build (the tester's, `BF_MUTE=1 BF_BACKGROUND=1`):
+  * the tutorial's lava yard (`BF_MAP=tutorial BF_TEST_GOTO=-15.6,-87.4,-15.6,-87.4
+    BF_TEST_NO_HOSTILES=1`, the base gate's ten waypoint triggers fired, `BF_TRIGGER_FIRE`, and its
+    panels pressed, `BF_TEST_PANEL`, Tex sent down the yard by `BF_TEST_ROUTE=73.1,-44.6,16`, 3000
+    frames, and from 10, 24 and 40 s, 2400 frames): the two marines' routes from the upper ledge
+    go by the jump h_0656d0f4 -> h_03090779; each is stuck there three times, the detours finding
+    no other way down, and put on h_03090779 below (Cogburn 75.0 s, Stout 77.5 s in the first);
+    within 8 m of the yard's end (73.1, -44.6) at 87 and 90 s, 82 and 84 (10 s), 94 and 97 (24 s),
+    and at 112 s for Stout (40 s; Cogburn stops at his place 8.4 m off it at 98 s). main: 84-86,
+    78-81, 91-92, 100-107 s; #344's first build: held at the edge for good;
+  * m07_a (`BF_MAP=m07_a BF_TEST_NO_HOSTILES=1 BF_TEST_GOTO=-341.5,39.1,-341.5,39.1
+    BF_TEST_ROUTE=-270.4,38.0,2`, 1000 frames, Tex standing from about 20 s, his test walk held at
+    a corner by an object):
+    from 30 to 66 s Brutus, Flint and Hawk walk 0.0, 0.8 and 0.0 m (main 1.1, 8.9, 0.3; #344's
+    first build 124.7, 47.3, 1.7), each held where the stuck handling acted near Tex;
+  * sdm_e34's door pair at a run and at a dash (`BF_MAP=sdm_e34 BF_CHARACTER=0 BF_TEST_NO_HOSTILES=1
+    BF_TEST_GOTO=-44.6,18.6,-44.6,18.6 BF_TEST_ROUTE=-58.3,3.4,2 "BF_TEST_WARP=0,hawk,-47,21,90;
+    0,flint,-46,23,90;0,tex,-47,16,90"`, and `BF_TEST_SPRINT=2`, 900 frames; Brutus led through
+    h_f519ca12 / h_117d5fb1 into the building): from 15 to 60 s Flint, Hawk and Tex walk 0.6, 1.5
+    and 1.8 m at a run (main 0.5, 0.1, 0.3; the first build 1.0, 0.2, 2.1), and 0.7, 42.5 and 1.6
+    m at the dash (main 1.5, 0.2, 1.1; the first build 8.6, 3.2, 0.8): Hawk, on through at the
+    first door point at 6.3 s, swings wide of the doorway at 200 degrees a second, is stuck outside
+    it at 8.9 s, and the detour takes her round the building by its other doors, at her point at
+    22.9 s (with `BF_AVOID_FREE_TURN=1` through in 2 s, 3.2 m walked after 15 s);
+  * e34's Fire At Will then Cover Me (`BF_MAP=e34 BF_TEST_GOTO=-60,-79,-60,-79,30
+    "BF_TEST_ORDER=all,fire@1;all,cover@6"`, 450 frames): two stucks (Brutus and Hawk, 8.4 s),
+    each held at once where it stood near Tex (main none; the first build six and a place given
+    up).
+* The door step (#346; sdm_e34's pair h_f519ca12 (-49.2, 11.8) / h_117d5fb1 (-53.1, 10.0), door 0
+  h_06537687 between them, opened by the anim-trigger h_134c9934 on a detector; Hawk's Move To to
+  h_f4e3da16 (-56.0, 8.2) inside: `BF_MAP=sdm_e34 BF_CHARACTER=0 BF_TEST_NO_HOSTILES=1
+  BF_TEST_GOTO=-36,20,-36,20 "BF_TEST_WARP=0,me,-36,20,90;0,hawk,-38,18,90;0,flint,-37,22,90;
+  0,brutus,-38,21,90" "BF_TEST_ORDER=hawk,move,-56.0,8.2@3" BF_ROUTE_LOG=1 BF_DOOR_LOG=1
+  BF_AVOID_LOG=1`, 300 frames): her route goes through the pair; the detector opens the door at
+  4.33 s as she nears it, she reaches the first door point at 5.07 s, the corridor between the
+  two is clear by then (the leaves past 0.6 of their 1.21 s clip), "on through", the far point at
+  5.73 s, GUARD at the Move To point at 6.60 s. With `BF_TEST_DOOR_SHUT=h_06537687` (the same
+  run): at 5.07 s "the corridor between them blocked: stands 0.5 s, its feelers off 1.5 s"; no
+  feeler steers until 6.60 s (1.5 s on), then they turn her along the leaves; with the route's next
+  entry its last, the first stuck (8.73 s) ends it (FUN_00042280) and the Move To is over, GUARD
+  7.6 m short. (Tex warped beside the door instead, the follow walks Hawk through it at 1.13 s with
+  the door already open.) The frames of these runs show the tower beside the building, not the
+  door: the logs are the check.
 * The cost (the plans' times in the logs, opt-level 2): 4-45 us a search, at most 225 points off
   the heap (e13), the worst frame three plans in 90 us.
 * `BF_TEST_PRISM=1` (e34, Move To with Tex on Hawk's line, a squadmate on the other way round):
@@ -546,25 +844,63 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   neighbour, the position alone from the point itself); the flood's order (a link further each
   pass, the last met first, the radius, the avoided points); the catch-up; the stuck detour (the
   three points off for one search, the bits back, the pace level) and the third stuck's warp onto
-  the route's current point; a centimetre's jitter against a wall no progress, 10 cm a frame
-  progress; the pace ramp (a notch every 0.17 s in FOLLOW, every 1.0 s on a Move To, once the
-  drop's timer runs out; no higher than asked; the move at the lower of the two); the follow's
-  points on the leader's side, the nearest the place first.
+  the route's current point; the stuck test without a margin (#344: a jitter that comes back to
+  its best never stuck, a drift away stuck after 2 s; since the fix round one asking to move and
+  held to the bit stuck, one standing by choice not), and the follow's place given up on the
+  third stuck; the stuck handling's marks for the follow, which holds within d0 of its leader and
+  plans again beyond it; the pace near a route's points (the second fix round: FUN_00058590 at,
+  within and beyond its two distances, a walk asked not raised; FUN_000587d0's square, bent and
+  gentle corners, moving its way or off it, beyond 2.4 m, standing, past the walk distance in 3D,
+  at a stand's level; on a route, the corner and then the end, and a Move To's distances against
+  the follow's); the pace ramp (a notch every 0.17 s in FOLLOW, every 1.0 s on a Move To, once the
+  drop's timer runs out; no higher than asked; the move at the lower of the two) and, since #344,
+  its start at a stand with 0.3 s and its steps down after the mode asked; the follow's points on
+  the leader's side, the nearest the place first. The avoidance (`cargo test --bin bf_play
+  avoid`): the feelers' lengths by the pace and the speed factor (x0.945 for a factor of 1.05, as
+  read, not max(1, 0.9 f)), a side block's square steer, a wall ahead's long rays and the
+  hysteresis (the missed long ray's slot as read), both sides blocked, the dash's drops, walkable
+  terrain, the tilt; FUN_00018b50's side; the push; the side-step; the plain direction; the move's
+  turn (FUN_00019af0: at once from a stand, else at most 3.49 rad/s with the rate eased a third of
+  the way a game frame, the same ease over two at 15 fps, the heading within a degree, a stand's
+  direction as it is). The door
+  step (#346): blocked between two door points, a stand and the feelers off; clear, nothing; a door
+  point followed by a plain one, nothing.
 
 ## Not done
 
 * The enemies on routes (#336: RETURN_HOME, PATROL's first leg FUN_0004c2e0, PURSUE, the attack
   approach with its radius budget FUN_0002e800), the script 105 walks (#337, an open code
   question). The follow's own states (FUN_00020b10: its five distances, state 4's point near the
-  leader with the claimed bit, the speed factor): #331. The AI's avoidance (FUN_000255d0, its
-  feelers FUN_00018c40 and their speed caps) and the per-type capsule (#173: the squad's lf 0.35
-  m against the demo's 0.4) are what would keep the members off e13's hinter band as the game's
-  are. FUN_0001ad50 (the cap to a walk after a second of hard turning). The pace ramp's start-up
-  (the game's level follows the mode asked down and starts at 1, so every start from a stand
-  climbs: #344). The prisms (FUN_0004cb60's records) and brain+0x3c8.
+  leader with the claimed bit, the speed factor): #331. The per-type capsule (#173: the squad's lf
+  0.35 m against the demo's 0.4). The prisms (FUN_0004cb60's records) and brain+0x3c8.
+* The avoidance's open ends (#344): the side-step's two world lists ([world+0xa4], [world+0x12c]:
+  a live read at 0x529d0 / 0x527f7 would say what they hold; the stage has nothing to step round
+  until then); FUN_00019ed0's other branch, for a brain with FOLLOW_HOLD_BACK's route at
+  brain+0x684 (the move straight along the facing; the demo has no such goal); FUN_00019af0's
+  bit 14 of brain+0x3c4 (its setter not traced); FUN_00052120's height extents; brain+0x3c4
+  bit 1 (skips the push: cleared at 0x1b15c when a brain timer runs out, its setter not found);
+  FUN_00018c40's other callers (0x2a61c, 0x2a66e with a forced 3.0 m; 0x2addb, 0x2aec5). The walk's
+  speed (the clip's 1.6-1.9 m/s where the game's follows the stick, #350) makes the feelers' and
+  the hard turn's walks slower than the game's. The level's prisms (FUN_0004cb60's records, the
+  level record's +0x114), inside which the game's AI runs instead of dashing and drops to a walk at
+  a feeler's hit: without them the demo's members dash through buildings, and with the move's turn
+  at 200 degrees a second a member dashing at a doorway at an angle can miss it and go round
+  (#344's fix round, sdm_e34's door pair h_f519ca12 / h_117d5fb1 with three members close behind
+  the leader's dash: Hawk round the building, 20 s where she went through in 2 with the free turn,
+  `BF_AVOID_FREE_TURN=1`). The jump steps (FUN_00026520 / FUN_000267b0: bit 12, the hinters and the
+  feelers off between a jump's points), so the demo's routes still lead to a drop they can't take
+  (the stuck handling puts the member down, `progress`). Footage: todo/344's shot list (the
+  feelers' hits, the pace level, a dash past a squadmate) isn't filmed.
 * FUN_00059f70's and FUN_00059d40's temporary points; the 20 m look at a route's end (route+0x14,
-  FUN_0001fdd0); the kinds' own steps at a point reached (doors, patrol points, jumps); the
-  prisms (bit 10); the avoidance FUN_000255d0; the AI's pace near a point (FUN_0004d840).
+  FUN_0001fdd0); the kinds' own steps at a point reached (patrol points, jumps; the doors' since
+  #346, but its world-button branch, dead in the data); the prisms (bit 10). Of the pace near a
+  route's points (FUN_0004d840, done for Move To since #344's second fix round, `pace_near`): its
+  first branch, by a position of the brain's own at brain+0x1b4 (its setter not found), and
+  FUN_00058590's +0x24 (set to -1); MOVE_OUT's run (mode 3) while it faces a target of its aim
+  record (FUN_00045fa0's first block). The follow's walk doesn't call it (state 0 passes
+  FUN_0004d970 no fifth argument, 0x22377), so it slows no follower at a corner or a door.
+* Footage of a squad member at a door (todo/346's shot list A and B: the stand, the door's state
+  when it's reached, the stuck steps at a door that stays shut) isn't filmed.
 * Kind 0x13's and the save points' set-valid (kept by the game elsewhere); the cover points' bit 5
   is kept (`Node::cover`) for #336's cover goals.
 * Footage: take01 (e13, the squad round the pit, its routes logged) is the one take; Move To across a pit, the tutorial's lava yard and the blocker and stuck shots (shotlist.md A1, A3-A5, B, C) aren't filmed.

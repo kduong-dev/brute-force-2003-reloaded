@@ -35,16 +35,15 @@
 //!    the record, and the follow goal's end puts it back to 1.0 and off (FUN_00020a10, 0x20a5c and
 //!    0x20a62): the 0.8.
 //!
-//! **What isn't here.** The pace level is #335's (play_routes.rs `Router::cap`): the demo's starts
-//! at the dash, the routes' stuck detours, the way round a friend and the follow's hold set it
-//! down with their timers, and the ramp climbs it back (FUN_00058670: a notch every 0.17 s for a
-//! squad member in FOLLOW or WINGMAN, 1.0 s otherwise); a member moves at the lower of it and the
-//! move it asks, and the boost is keyed on that (`squad_ai`: 3 or 4). Left to #344: the ramp's
-//! start from a stand and its step down after the move asked (the game's level follows it both
-//! ways: walk, run, dash as take04's motion numbers go 47, 34, 8), and the feelers' drops
-//! (FUN_00018c40: a dash hit takes the boost off for 1.5 s, the timer at brain+0x8a4, and the next
-//! hit drops to a run for 1.5 s), a hard turn to a walk for 1 s and a door step to a stand for
-//! 0.5 s (todo/344-ai-avoidance/leads.md §6). The follow's other states set the record too, and
+//! **What isn't here.** The pace level is the routes' (play_routes.rs `Router::cap`, `pace_ramp`):
+//! it starts at a stand and steps a notch toward the move asked, up or down, each time its timer
+//! runs out (FUN_00058670: every 0.17 s for a squad member in FOLLOW or WINGMAN, 1.0 s otherwise,
+//! #344), the routes' stuck detours, the way round a friend, the follow's hold, the feelers and the
+//! door step set it down with their timers; a member moves at the lower of it and the move it
+//! asks, and the boost is keyed on the level (`squad_ai`: 3 or 4). The feelers' hit at a dash
+//! (FUN_00018c40, play_avoid.rs) takes the boost off for 1.5 s (the record's timer at brain+0x8a4,
+//! `Avoid::boost_off`) and the next drops the level to a run for 1.5 s; a hard turn walks for 1 s
+//! (FUN_0001ad50, play_routes.rs `hard_turn`). The follow's other states set the record too, and
 //! the demo has neither: state 5 (FUN_00022790) 1.0 / off and then FUN_0002fba0's value near an
 //! arrival, at most 1.0, which only a walk takes (the level 2 test: the slow-down on arrival; the
 //! demo's walk is the clip's), and state 6 (FUN_000210c0) 1.5 / on, entered only with a route
@@ -93,15 +92,18 @@ pub const FOLLOW_BOOST: f32 = 1.25;
 /// m, 8-9 m/s while farther and 6.3-7.1 m/s inside it (0.8 x 8.7 = 6.96).
 pub const FOLLOW_D1: f32 = 14.0;
 
-/// The follow's speed record (`Player::speed_boost`) for a member moving at pace level `level`
-/// (1 stand, 2 walk, 3 run, 4 dash: the lower of the move it asks and the level its drops leave
-/// it, play_routes.rs `pace`) with its leader `gap` m away and `d1` the follow's second distance
-/// (`FOLLOW_D1` x the mode's spacing): FOLLOW_BOOST beyond d1 at a run or a dash, 1.0 otherwise.
-/// FUN_00020b10 sets 1.25 each update and FUN_00022130 takes it back to 1.0 while the gap is at
-/// most d1 (0x221b6); FUN_00048270 hands the value to char+0x720 only at a level over 2, a run
-/// as well as a dash (a walk takes only a value under 1.0: the arrival's slow-down, not done).
-pub fn follow_boost(level: i32, gap: f32, d1: f32) -> f32 {
-    if level > 2 && gap > d1 { FOLLOW_BOOST } else { 1.0 }
+/// The follow's speed record (`Player::speed_boost`) for a member at pace level `level` (the pace
+/// record's +0: 1 stand, 2 walk, 3 run, 4 dash, which follows the move it asks up and down,
+/// play_routes.rs `pace_ramp`) with its leader `gap` m away, `d1` the follow's second distance
+/// (`FOLLOW_D1` x the mode's spacing) and the record's timer `timer` s left (brain+0x8a4, the
+/// feelers' `Avoid::boost_off`): FOLLOW_BOOST beyond d1 at a run or a dash with the timer run out,
+/// 1.0 otherwise. FUN_00020b10 sets 1.25 each update and FUN_00022130 takes it back to 1.0 while
+/// the gap is at most d1 (0x221b6); FUN_00048270 hands the value to char+0x720 only with the
+/// timer at 0 and at a level over 2, a run as well as a dash (a walk takes only a value under 1.0:
+/// the arrival's slow-down, not done); a feeler hit at a dash with the factor over 1 starts the
+/// timer at 1.5 s (FUN_00018c40, play_avoid.rs).
+pub fn follow_boost(level: i32, gap: f32, d1: f32, timer: f32) -> f32 {
+    if level > 2 && gap > d1 && timer <= 0.0 { FOLLOW_BOOST } else { 1.0 }
 }
 
 /// A locomotion clip's gait for the ground speed: the type's `speeds[2]` or `speeds[3]`
@@ -318,18 +320,20 @@ mod tests {
     #[test]
     fn the_follows_boost_is_at_a_run_or_a_dash_beyond_d1() {
         // FUN_00048270 takes the record at a pace level over 2: a run as well as a dash
-        assert_eq!(follow_boost(4, 20.0, FOLLOW_D1), FOLLOW_BOOST);
-        assert_eq!(follow_boost(3, 20.0, FOLLOW_D1), FOLLOW_BOOST);
+        assert_eq!(follow_boost(4, 20.0, FOLLOW_D1, 0.0), FOLLOW_BOOST);
+        assert_eq!(follow_boost(3, 20.0, FOLLOW_D1, 0.0), FOLLOW_BOOST);
         // a walk or a stand takes none
-        assert_eq!(follow_boost(2, 20.0, FOLLOW_D1), 1.0);
-        assert_eq!(follow_boost(1, 20.0, FOLLOW_D1), 1.0);
+        assert_eq!(follow_boost(2, 20.0, FOLLOW_D1, 0.0), 1.0);
+        assert_eq!(follow_boost(1, 20.0, FOLLOW_D1, 0.0), 1.0);
         // FUN_00022130 clears it while the leader is within d1, at d1 included
-        assert_eq!(follow_boost(4, FOLLOW_D1, FOLLOW_D1), 1.0);
-        assert_eq!(follow_boost(3, 10.0, FOLLOW_D1), 1.0);
+        assert_eq!(follow_boost(4, FOLLOW_D1, FOLLOW_D1, 0.0), 1.0);
+        assert_eq!(follow_boost(3, 10.0, FOLLOW_D1, 0.0), 1.0);
         // WINGMAN's d1 is 10 m (14 x 8 / 11.2)
-        assert_eq!(follow_boost(4, 12.0, FOLLOW_D1 * 8.0 / 11.2), FOLLOW_BOOST);
+        assert_eq!(follow_boost(4, 12.0, FOLLOW_D1 * 8.0 / 11.2, 0.0), FOLLOW_BOOST);
         // so a run beyond d1 moves at the type's own run speed: 0.8 x 1.25 x 7.8
-        assert!((ground_speed(&tex(), Kind::Run, false, follow_boost(3, 20.0, FOLLOW_D1)) - 7.8).abs() < 1e-4);
+        assert!((ground_speed(&tex(), Kind::Run, false, follow_boost(3, 20.0, FOLLOW_D1, 0.0)) - 7.8).abs() < 1e-4);
+        // while the record's timer runs (a feeler's hit at a dash, #344) the boost is off
+        assert_eq!(follow_boost(4, 20.0, FOLLOW_D1, 1.2), 1.0);
     }
 
     #[test]

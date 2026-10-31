@@ -69,10 +69,11 @@ pub struct WaypointSet {
 /// (the terrain, the placed objects' collision, the blockers and hinters: its filter's +0x10c, 8,
 /// leaves out PID 3 alone; liquids, open doors and characters aren't in it) from `a` to `b`,
 /// none when they're more than `max` apart. BF_ROUTE_NO_HINTERS=1 (a diagnostic, #335, not the
-/// game) leaves the hinters out, to see the routes without the hinter bands the demo's members
-/// hug where the game's keep off them by their avoidance (nav.md, e13): the game's rays meet the
-/// hinters for everyone (FUN_000df0a0 tests every PID kind whose bit is clear in the filter's
-/// +0x10c, 8: todo/344-ai-avoidance leads §7), so the routes it shows aren't the game's.
+/// game) leaves the hinters out, to see the routes without the hinter bands (nav.md, e13; since
+/// #344 the members keep off them by their avoidance, play_avoid.rs, as the game's do): the
+/// game's rays meet the hinters for everyone (FUN_000df0a0 tests every PID kind whose bit is
+/// clear in the filter's +0x10c, 8: todo/344-ai-avoidance leads §7), so the routes it shows
+/// aren't the game's.
 pub fn clear(arena: Option<&world::Arena>, a: Vec3, b: Vec3, max: f32) -> bool {
     let d = b - a;
     let len = d.length();

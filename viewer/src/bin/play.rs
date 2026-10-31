@@ -1261,6 +1261,8 @@ mod nav;
 mod routes;
 #[path = "play_speed.rs"]
 mod speed;
+#[path = "play_avoid.rs"]
+mod avoid;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -1376,9 +1378,21 @@ const MUSIC_VOLUME: f32 = 0.5;
 /// A level's ambience bed, under its music (of the music's volume).
 const AMBIENCE_VOLUME: f32 = 0.8;
 
+/// BF_TEST_DOOR_SHUT=<h_xxxxxxxx>[,...] (test hook, #346): the doors of those names (BF_DOOR_LOG
+/// prints each door's) stay shut whatever their anim-triggers say: a door that doesn't open on a
+/// squad member's route, for the walk's door step (play_routes.rs `door_step`) and the stuck
+/// handling that follows it. Read once.
+fn shut_door(name: u32) -> bool {
+    static SHUT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    SHUT.get_or_init(|| std::env::var("BF_TEST_DOOR_SHUT").ok().map_or(vec![], |v| {
+        v.split(',').filter_map(|x| u32::from_str_radix(x.trim().trim_start_matches("h_"), 16).ok()).collect()
+    })).contains(&name)
+}
+
 /// Each frame: the panel prompt and a panel's use (see USE_REACH's notes), whose event goes to
 /// the level's triggers (`triggers::TriggerEvents`); then each door's leaves where its
-/// anim-triggers send them, its collision open past 0.6 of its clip.
+/// anim-triggers send them (a door BF_TEST_DOOR_SHUT names held shut), its collision open past
+/// 0.6 of its clip.
 fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut use_panel: ResMut<UsePanel>,
          mut events: ResMut<triggers::TriggerEvents>, mut transforms: Query<&mut Transform>) {
     let dt = frame_dt(&time);
@@ -1420,6 +1434,10 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
     // the leaves, where their anim-triggers send them (play_triggers.rs)
     for (i, d) in doors.list.iter_mut().enumerate() {
         let DoorState { door, t, opening, rate } = d;
+        // (BF_TEST_DOOR_SHUT: held shut whatever its triggers say, #346)
+        if *opening && shut_door(door.name) {
+            *opening = false;
+        }
         let was = *t;
         *t = if *opening { (*t + dt * *rate).min(door.duration) } else { (*t - dt * *rate).max(0.0) };
         if *t != was {
@@ -3041,7 +3059,8 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
 /// idle pauses `pauses` (goal, weight, length) of the mode's personality. The way to its place is
 /// a route over the level's world points (#335, play_routes.rs `follow`, with `graph`: never a
 /// straight chase), the formation's rules saying when it sets off and settles; without a level's
-/// points (the test map's floor) the straight line.
+/// points (the test map's floor) the straight line. Either way it steers for the target through
+/// the AI's avoidance (#344, play_avoid.rs `steer`).
 #[allow(clippy::too_many_arguments)]
 fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, pauses: &[(i64, f32, f32)],
             graph: Option<&mut bf_viewer::bf::nav::Graph>) {
@@ -3100,16 +3119,20 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
             routes::stop(m, g);
             routes::Way::Stand
         }
-        None if go => routes::Way::Go { target: goal, along: dist, corner: false },
+        None if go => routes::Way::Go { target: goal, along: dist },
         None => routes::Way::Stand,
     };
-    let (way_to, along, corner) = match way {
-        routes::Way::Go { target, along, corner } => (Some(target), along, corner),
-        _ => (None, 0.0, false),
+    let (way_to, along) = match way {
+        routes::Way::Go { target, along } => (Some(target), along),
+        _ => (None, 0.0),
     };
+    // the way it goes: the steering target through the AI's avoidance (#344, play_avoid.rs
+    // `steer`, FUN_000255d0: its feelers, the push from the characters near it, the side-step, else
+    // straight at the target)
+    let steered = way_to.map(|t| avoid::steer(m, t).0);
     // not on into a liquid that burns (#1, play_liquids.rs `burning_ahead`): the routes' safety
     // net, as no world point lies in one (it waits at the shore; BF_LIQUID_LOG)
-    let go = way_to.is_some_and(|t| !routes::shore(m, t, dt));
+    let go = steered.is_some_and(|d| !routes::shore(m, d, dt));
     // the walk to its place begins (FUN_00021b70): the first since a Fire At Will cleared the flag
     // (play_brain.rs `Command::start_walk`: in FOLLOW the game can't reach the state, #343) says
     // "on my way", through the gate. A stand-in for the game's follow state machine (#331): its walk starts
@@ -3118,25 +3141,30 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     if go && !moving && dist > SLOT_START * spacing && m.command.start_walk() {
         chatter::say(m, chatter::FOLLOW_WALK);
     }
-    if let (true, Some(t)) = (go, way_to) {
-        let d = Vec3::new(t.x - m.position.x, 0.0, t.z - m.position.z).normalize_or_zero();
-        m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
+    if let (true, Some(d)) = (go, steered) {
         // (far behind: the way left or the place itself, which moves on past where the route was
-        // planned to, the farther; the last bit: both short. Held at a corner it walks, as
-        // BF_TEST_ROUTE's walk: the run's turn is wider than the corner's 0.6 m, and the AI's pace
-        // near a point, FUN_0004d840, isn't read. It moves at the lower of that and its pace
-        // level, which a route's detour, the way round a friend or the follow's hold set down and
-        // the ramp brings back, play_routes.rs `pace`)
+        // planned to, the farther; the last bit: both short. It moves at the lower of that and
+        // its pace level, which follows it up and down, and which a route's detour, the way round
+        // a friend, the follow's hold, the feelers, a hard turn and a door (#346) set down for a
+        // while, play_routes.rs `pace`. #335's walk while held at a corner is gone with #344: the game
+        // has no such rule, its hard turn's walk (FUN_0001ad50) keeps a runner from circling the
+        // corner's 0.6 m, and with it the e13 run's times came to the take's)
         let behind = along.max(dist);
-        let asked = if (along < 2.5 && dist < 2.5) || corner { 2 } else if behind > SLOT_DASH * spacing || behind > m.leash + 10.0 { 4 } else { 3 };
+        let asked = if along < 2.5 && dist < 2.5 { 2 } else if behind > SLOT_DASH * spacing || behind > m.leash + 10.0 { 4 } else { 3 };
+        // (the move this frame: its heading turned toward the steering direction at most 200
+        // degrees a second, FUN_00019af0, play_avoid.rs `move_turn`)
+        let d = avoid::move_turn(m, d, avoid::move_size(asked.min(m.router.cap)), dt);
+        let d = Vec3::new(d.x, 0.0, d.y);
+        m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
         routes::pace(m, asked);
         // (the follow's update sets the brain's speed record to 1.25 each update, FUN_00020b10 at
         // 0x20ed4, and its chase state clears it while the leader is within the follow's second
         // distance, FUN_00022130; FUN_00048270 hands it to the character while the pace level is
-        // above a walk, a run or a dash alike: so a member moving at 3 or 4 after a leader farther
-        // than that moves at the type's speed, 0.8 x 1.25, and one inside it at 0.8; play_speed.rs)
+        // above a walk, a run or a dash alike, and the record's timer has run out (a feeler's hit
+        // at a dash starts it, #344): so a member moving at 3 or 4 after a leader farther than that
+        // moves at the type's speed, 0.8 x 1.25, and one inside it at 0.8; play_speed.rs)
         let leader_gap = Vec2::new(leader.position.x - m.position.x, leader.position.z - m.position.z).length();
-        m.speed_boost = speed::follow_boost(asked.min(m.router.cap), leader_gap, speed::FOLLOW_D1 * spacing);
+        m.speed_boost = speed::follow_boost(m.router.cap, leader_gap, speed::FOLLOW_D1 * spacing, m.router.avoid.boost_off);
         m.still_time = 0.0;
         m.crouch_wanted = false;
         m.idle_pause = 0;
@@ -4827,7 +4855,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     for (slot, m) in squad.0.iter_mut().enumerate() {
         // (the crosshair's lock is the controlled character's alone: one handed over drops it)
         m.lock_aim = None;
-        // (its brain's speed record: the follow sets it again below, any other goal leaves it 1.0)
+        // (its brain's speed record: the follow sets it again below, any other goal leaves it 1.0;
+        // what the last frame left in char+0x720 is the feelers', #344)
+        m.router.avoid.factor = m.speed_boost;
         m.speed_boost = 1.0;
         if m.dead || knocked_down(m) {
             // (knocked down, alive: its face controller ticks all the same, play_faces.rs `tick`)
@@ -4882,6 +4912,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // route round a friend in its way, the catch-up to its own point, the stuck handling), for
         // whatever goal walks the route
         let free = !(m.held || !m.script_walk.is_empty()) && (m.brain.is_some() || ((slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold));
+        // (#344) before them, with a level's points or not: the pace ramp (FUN_00058670 at
+        // 0x1b119), the avoidance's timers (brain+0x924, 0x1b2d7; the speed record's, FUN_00048270)
+        // and the characters near it for the push (play_avoid.rs)
+        if free && routes::walks_routes(m) {
+            routes::pace_ramp(m, dt);
+            m.router.avoid.tick(dt);
+            m.router.avoid.near = routes::near(m, &mates);
+        }
         if let (true, true, Some(g)) = (free, routes::walks_routes(m), nav.graph.as_mut()) {
             routes::ai_update(m, &mates, g, dt);
         }
