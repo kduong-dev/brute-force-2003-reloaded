@@ -3142,8 +3142,6 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         chatter::say(m, chatter::FOLLOW_WALK);
     }
     if let (true, Some(d)) = (go, steered) {
-        let d = Vec3::new(d.x, 0.0, d.y);
-        m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
         // (far behind: the way left or the place itself, which moves on past where the route was
         // planned to, the farther; the last bit: both short. It moves at the lower of that and
         // its pace level, which follows it up and down, and which a route's detour, the way round
@@ -3153,6 +3151,11 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         // corner's 0.6 m, and with it the e13 run's times came to the take's)
         let behind = along.max(dist);
         let asked = if along < 2.5 && dist < 2.5 { 2 } else if behind > SLOT_DASH * spacing || behind > m.leash + 10.0 { 4 } else { 3 };
+        // (the move this frame: its heading turned toward the steering direction at most 200
+        // degrees a second, FUN_00019af0, play_avoid.rs `move_turn`)
+        let d = avoid::move_turn(m, d, avoid::move_size(asked.min(m.router.cap)), dt);
+        let d = Vec3::new(d.x, 0.0, d.y);
+        m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
         routes::pace(m, asked);
         // (the follow's update sets the brain's speed record to 1.25 each update, FUN_00020b10 at
         // 0x20ed4, and its chase state clears it while the leader is within the follow's second

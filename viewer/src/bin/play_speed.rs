@@ -42,8 +42,8 @@
 //! door step set it down with their timers; a member moves at the lower of it and the move it
 //! asks, and the boost is keyed on the level (`squad_ai`: 3 or 4). The feelers' hit at a dash
 //! (FUN_00018c40, play_avoid.rs) takes the boost off for 1.5 s (the record's timer at brain+0x8a4,
-//! `Avoid::boost_off`) and the next drops the level to a run for 1.5 s. Not done: a hard turn's
-//! walk for 1 s (FUN_0001ad50, todo/344-ai-avoidance/leads.md §6). The follow's other states set the record too, and
+//! `Avoid::boost_off`) and the next drops the level to a run for 1.5 s; a hard turn walks for 1 s
+//! (FUN_0001ad50, play_routes.rs `hard_turn`). The follow's other states set the record too, and
 //! the demo has neither: state 5 (FUN_00022790) 1.0 / off and then FUN_0002fba0's value near an
 //! arrival, at most 1.0, which only a walk takes (the level 2 test: the slow-down on arrival; the
 //! demo's walk is the clip's), and state 6 (FUN_000210c0) 1.5 / on, entered only with a route

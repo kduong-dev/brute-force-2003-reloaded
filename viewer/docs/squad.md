@@ -27,11 +27,16 @@ Squad movement and deaths follow the game's own data and the captures:
   avoidance** (#344, play_avoid.rs, [nav.md](nav.md) "The steering", FUN_000255d0): three feelers
   along its heading turn it off walls, rocks and the AI's hinter bands (a metre off e13's lava
   walkway's, as #242 take01's members ran), a squadmate within 1.5 m ahead pushes it aside, else it
-  heads straight for its next point. At a door on its way (a pair of door points) it stands half
+  heads straight for its next point, its move turning toward that at most 200 degrees a second
+  (FUN_00019af0, #344's fix round: no zigzag). At a door on its way (a pair of door points) it stands half
   a second if the door is still shut, its feelers off for 1.5 s, then walks on through (the door
   step, FUN_00026820, #346); it never waits for a door. Stuck 2 s (no closer to its next point than its best)
   a member detours round it (FUN_000426b0, FUN_00042280), and the third time at one own point it's
-  put on the point it was walking to (FUN_000425b0), or, short of its place, holds there. Its pace
+  put on the point it was walking to (FUN_000425b0); when the stuck handling acts within 11.2 m of
+  its leader (8 in Fire At Will), or gives the route to its place up there, it holds where it
+  stands until the leader moves on, and farther out it plans again (the demo's: the game's follow
+  holds near the leader and has no place of its own to miss; [nav.md](nav.md) "The squad on
+  routes"). Its pace
   (the pace ramp, FUN_00058670) starts from a stand and steps a notch every 0.17 s toward the pace
   it asks, up and down: a walk at once, a run, then the dash; a detour, a re-route, a hold, a hard
   turn or a feeler's hit sets it down for a while.

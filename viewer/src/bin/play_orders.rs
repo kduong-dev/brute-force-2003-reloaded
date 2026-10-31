@@ -414,8 +414,13 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
     // facing its way, or the target (ATTACK_MOVE_OUT faces it as it walks); the step's move is in
     // its "camera"'s frame, so it's made after the fire's turn. Its way: the steering target
     // through the AI's avoidance (#344, play_avoid.rs `steer`, FUN_000255d0 as MOVE_OUT calls it at
-    // 0x45cb6)
-    let way = to.map_or(Vec2::ZERO, |t| avoid::steer(m, t).0);
+    // 0x45cb6), its heading turned toward that at most 200 degrees a second (FUN_00019af0,
+    // `move_turn`), at the pace it asks (FUN_0004d970 mode 4, the last bit 2) as its level allows
+    let asked = if along < MOVE_OUT_WALK { 2 } else { 4 };
+    let way = to.map_or(Vec2::ZERO, |t| {
+        let d = avoid::steer(m, t).0;
+        avoid::move_turn(m, d, avoid::move_size(asked.min(m.router.cap)), dt)
+    });
     if way != Vec2::ZERO {
         m.cam_yaw = (-way.x).atan2(-way.y);
     }
@@ -430,10 +435,12 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
         m.sprint = false;
         m.walk = false;
         m.router.asked = 1;
+        // (no move this frame: no direction kept for the next one's turn)
+        m.router.avoid.dir_now = Vec2::ZERO;
     } else {
         let (fwd, right) = (Vec2::new(-m.cam_yaw.sin(), -m.cam_yaw.cos()), Vec2::new(m.cam_yaw.cos(), -m.cam_yaw.sin()));
         m.move_input = Vec2::new(way.dot(right), way.dot(fwd));
-        routes::pace(m, if along < MOVE_OUT_WALK { 2 } else { 4 });
+        routes::pace(m, asked);
     }
     m.switch_pressed = false;
     m.reload_pressed = false;

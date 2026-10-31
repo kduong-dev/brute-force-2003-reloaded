@@ -19,14 +19,17 @@
 //!  4. **The plain direction** (the sensor's +0x24, 0x519f0, `plain`): to the target.
 //!
 //! The direction goes to the move (FUN_0004d970, play_routes.rs `pace`, which the feelers' drops
-//! hold) and the steering, which turns the character toward it (play.rs `step_player`). The callers
-//! are the demo's route walkers, the follow (play.rs `squad_ai`: the squad's, the tutorial
-//! marines', and the test map's straight walk) and Move To (play_orders.rs `move_out`); the enemies'
-//! goals walk no routes yet (#336) and aren't steered.
+//! hold) and the AI update's steering FUN_00019ed0, whose FUN_00019af0 turns the move toward it at
+//! most 200 degrees a second (`move_turn`); the demo's character turns its facing toward that move
+//! (play.rs `step_player`). The callers are the demo's route walkers, the follow (play.rs
+//! `squad_ai`: the squad's, the tutorial marines', and the test map's straight walk) and Move To
+//! (play_orders.rs `move_out`); the enemies' goals walk no routes yet (#336) and aren't steered.
 //!
 //! Test hooks: BF_AVOID_LOG=1 prints each frame a stage before the plain direction steers (which
 //! feelers met what and how far, the response, the pace drops, the push and from whom);
-//! BF_AVOID_OFF=1 (a diagnostic, not the game) steers by the plain direction alone, as before #344.
+//! BF_AVOID_OFF=1 (a diagnostic, not the game) steers by the plain direction alone, as before #344;
+//! BF_AVOID_FREE_TURN=1 (a diagnostic, not the game) leaves the move's turn to the facing's 9 rad/s,
+//! as before #344's fix round.
 
 use super::*;
 
@@ -109,6 +112,25 @@ const STEP_AHEAD: f32 = 0.1;
 /// The character's own disc for the side-step (the sensor's +0x20, 0x52c90, on its own body: type
 /// kind 3, a character, 0.5 m at its node, 0x52cea).
 const SELF_RADIUS: f32 = 0.5;
+/// FUN_00019af0, the move's turn (`move_turn`): at most this fast (rad/s, 0x405f66f3: 200 degrees
+/// a second) the move turns toward the steering direction...
+const MOVE_TURN_MAX: f32 = 3.490_658_5;
+/// ...its rate eased toward the one wanted, (k x the last + the wanted) / (k + 1) a game frame, k
+/// this at a run or a dash (0x3a5008)...
+const MOVE_TURN_EASE_RUN: f32 = 2.0;
+/// ...and this at a walk, the direction's size 0.51 or under (0x3a5084; 0x3a4fd0)...
+const MOVE_TURN_EASE_WALK: f32 = 4.0;
+const MOVE_TURN_SLOW: f32 = 0.51;
+/// ...no turn within a degree (57.2958 x the angle against 1.0, 0x19c5e-0x19c79)...
+const MOVE_TURN_LEAST: f32 = 1.0;
+/// ...and the steering direction taken as it is when its size is under 0.1 (0x3a4ff0, a stand's
+/// 0.01) or when the last frame's was, its square under 0.1 (FUN_000162c0 on brain+0x1cc: the AI
+/// update keeps each frame's after the steering, 0x1b3fb).
+const MOVE_TURN_STILL: f32 = 0.1;
+/// FUN_0004d970's size of the direction by the level the AI moves at: a stand's x0.01, a walk's
+/// x0.5, a run's or a dash's x1 (FUN_00019af0 reads it as the stick's tilt).
+const MOVE_STAND: f32 = 0.01;
+const MOVE_WALK: f32 = 0.5;
 
 /// Which of FUN_000255d0's stages made the direction (its return value 1, 2, 4 or 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,24 +162,88 @@ pub struct Avoid {
     /// `hard_turn`), and its facing at the last AI frame (the turn rate's stand-in)
     pub turning: f32,
     pub yaw_was: Option<f32>,
+    /// brain+0x1c4: the move's turn rate (rad/s, `move_turn`, FUN_00019af0)
+    pub turn_rate: f32,
+    /// brain+0x1cc..: the steering direction the last AI frame ended with, times its size (a
+    /// stand's 0.01, a walk's 0.5, else 1; zero when no goal moved it), and this frame's
+    pub dir_was: Vec2,
+    pub dir_now: Vec2,
 }
 
 impl Default for Avoid {
     /// A new brain's: the feelers on, the speed record's timer run out, char+0x720 1.0 (the
-    /// movement reset FUN_0012b560), no hard turn counted.
+    /// movement reset FUN_0012b560), no hard turn counted, no turn, no direction.
     fn default() -> Self {
-        Avoid { feelers_off: 0.0, boost_off: 0.0, factor: 1.0, near: vec![], turning: 0.0, yaw_was: None }
+        Avoid { feelers_off: 0.0, boost_off: 0.0, factor: 1.0, near: vec![], turning: 0.0, yaw_was: None, turn_rate: 0.0, dir_was: Vec2::ZERO,
+                dir_now: Vec2::ZERO }
     }
 }
 
 impl Avoid {
     /// The AI update's timers for a frame of `dt` s: brain+0x924 counted down (0x1b2d7-0x1b306,
     /// before the goal) and the speed record's brain+0x8a4 (FUN_00048270 at 0x1b3cd, after the goal:
-    /// here a frame sooner).
+    /// here a frame sooner); and the direction the last frame ended with kept (brain+0x1cc,
+    /// 0x1b3fb), this frame's zero until a goal moves it (the buffer zeroed before the goal machine,
+    /// 0x1b338-0x1b350).
     pub fn tick(&mut self, dt: f32) {
         self.feelers_off = (self.feelers_off - dt).max(0.0);
         self.boost_off = (self.boost_off - dt).max(0.0);
+        self.dir_was = std::mem::take(&mut self.dir_now);
     }
+}
+
+/// FUN_0004d970's size of the move direction at the pace level `level` the AI moves at (the lower
+/// of its level and the mode asked): MOVE_STAND, MOVE_WALK or 1.
+pub fn move_size(level: i32) -> f32 {
+    match level {
+        ..=1 => MOVE_STAND,
+        2 => MOVE_WALK,
+        _ => 1.0,
+    }
+}
+
+/// FUN_00019af0 (from the AI update's steering FUN_00019ed0, for a brain without FOLLOW_HOLD_BACK's
+/// route at brain+0x684: the follow's and Move To's) for `m`, a frame of `dt` s: the move this
+/// frame, turned from its heading (iface +0x34, `heading`) toward the steering direction `dir`
+/// (unit, xz; FUN_000255d0's, `steer`), of size `size` (`move_size`):
+///  - under MOVE_TURN_STILL in size, or after a frame that ended with none (FUN_000162c0), the
+///    direction as it is; within MOVE_TURN_LEAST degrees of the heading, the heading (the rate 0);
+///  - else the heading turned by the rate x `dt`, the rate eased toward the one that would close
+///    the angle this frame, at most MOVE_TURN_MAX (FUN_00019ab0): (k x the last + it) / (k + 1)
+///    (FUN_00019a70; MOVE_TURN_EASE_RUN or _WALK), the last taken as 0 when it turned the other way
+///    (FUN_00019a20), and never past the wanted one; kept for the next frame (brain+0x1c4).
+///
+/// The game eases a game frame at a time (GAME_FRAME, 30 Hz); the demo eases by the frame's share
+/// of them, so the turn doesn't hang on its frame rate. The direction (times `size`) is kept for
+/// the next frame's test (`Avoid::dir_now`). The demo's character moves along its facing, which
+/// turns toward this at 9 rad/s, faster than MOVE_TURN_MAX: so its facing follows the move.
+pub fn move_turn(m: &mut Player, dir: Vec2, size: f32, dt: f32) -> Vec2 {
+    let heading = heading(m);
+    let r = &mut m.router.avoid;
+    r.dir_now = dir * size;
+    if size < MOVE_TURN_STILL || dt <= 0.0 || free_turn() {
+        r.turn_rate = 0.0;
+        return dir;
+    }
+    let angle = wrap_angle(dir.x.atan2(dir.y) - heading.x.atan2(heading.y));
+    if angle.abs().to_degrees() <= MOVE_TURN_LEAST {
+        r.turn_rate = 0.0;
+        return heading;
+    }
+    if r.dir_was.length_squared() < MOVE_TURN_STILL {
+        return dir;
+    }
+    let wanted = (angle / dt).clamp(-MOVE_TURN_MAX, MOVE_TURN_MAX);
+    let last = if wanted * r.turn_rate < 0.0 { 0.0 } else { r.turn_rate };
+    let k = if size > MOVE_TURN_SLOW { MOVE_TURN_EASE_RUN } else { MOVE_TURN_EASE_WALK };
+    let keep = (k / (k + 1.0)).powf(dt / GAME_FRAME);
+    let mut rate = wanted + (last - wanted) * keep;
+    if rate.abs() > wanted.abs() {
+        rate = wanted;
+    }
+    r.turn_rate = rate;
+    let turned = heading.x.atan2(heading.y) + rate * dt;
+    Vec2::new(turned.sin(), turned.cos())
 }
 
 /// What a feeler met (FUN_000ddd10's hit record, its +0): the terrain (kind 1), an object (2: a
@@ -209,7 +295,9 @@ pub struct Felt {
 ///    left); one side: away from it; the centre alone (a wall ahead): two rays along the side rays,
 ///    LONG x their length, the farther slot's side (a tie: right). FUN_000ddd10 writes the distance
 ///    only on a hit, so a long ray that misses keeps the slot's last distance, the centre's for the
-///    left one, the left one's for the right (0x195d2-0x19667): copied as read. Then the hysteresis
+///    left one, the left one's for the right (0x195d2-0x19667): copied as read. (The pick's
+///    branches for a slot of 0 or under, 0x196b6-0x196cb, never run: the slots hold the centre's
+///    hit at least, over 0.001 m; they're left out.) Then the hysteresis
 ///    (FUN_00018b50): the target on the other side, at a run or a dash, the pace level 2 for
 ///    TURN_WALK s and the target's side.
 pub fn feel(level: i32, factor: f32, prism: bool, origin: Vec3, heading: Vec2, rise: f32, target: Vec3, cast: impl Fn(Vec3, Vec3, f32) -> Option<Hit>) -> Felt {
@@ -449,6 +537,13 @@ fn log_on() -> bool {
 fn off() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("BF_AVOID_OFF").is_ok_and(|v| v != "0"))
+}
+
+/// BF_AVOID_FREE_TURN=1 (a diagnostic against the game): the move takes the steering direction at
+/// once, its turn left to the facing's 9 rad/s, as before #344's fix round (`move_turn`). Read once.
+fn free_turn() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BF_AVOID_FREE_TURN").is_ok_and(|v| v != "0"))
 }
 
 /// FUN_000255d0 for `m` steering for `target` (the route's steering target, brain+0x478; the stage
@@ -732,6 +827,42 @@ mod tests {
         let d = side_step(me, h, SELF_RADIUS, &[Disc { at: Vec3::new(2.4, 0.0, -0.2), radius: 0.5, first: false },
                                                 Disc { at: Vec3::new(1.5, 0.0, 0.4), radius: 0.5, first: true }]).unwrap();
         assert!((d - Vec2::new(0.0, -0.4)).length() < 1e-5);
+    }
+
+    /// FUN_00019af0: from a stand the move takes the direction at once; moving, it turns toward it
+    /// at most 3.49 rad/s, the rate eased from the last (a third of the way a game frame at a run),
+    /// and within a degree it keeps its heading; a stand's small direction is taken as it is.
+    #[test]
+    fn the_move_turns_at_most_200_degrees_a_second() {
+        let dt = GAME_FRAME;
+        let mut m = Player::new(2);
+        // moving -z (the heading from its last step), wanting +x: a quarter turn to its right
+        m.last_velocity = Vec3::new(0.0, 0.0, -6.0);
+        let d = move_turn(&mut m, Vec2::X, 1.0, dt);
+        assert!((d - Vec2::X).length() < 1e-5, "after a stand, at once: {d:?}");
+        m.router.avoid.tick(dt);
+        let d = move_turn(&mut m, Vec2::X, 1.0, dt);
+        // the rate eased from 0: 3.49 / 3 rad/s for a frame of 1/30 s
+        let turned = (MOVE_TURN_MAX / 3.0) * dt;
+        assert!((d - Vec2::new(turned.sin(), -turned.cos())).length() < 1e-4, "{d:?}");
+        assert!((m.router.avoid.turn_rate + MOVE_TURN_MAX / 3.0).abs() < 1e-4, "the rate kept: {}", m.router.avoid.turn_rate);
+        // frame after frame the rate climbs to the cap, never past it
+        for _ in 0..30 {
+            m.router.avoid.tick(dt);
+            move_turn(&mut m, Vec2::X, 1.0, dt);
+        }
+        assert!((m.router.avoid.turn_rate.abs() - MOVE_TURN_MAX).abs() < 0.01, "{}", m.router.avoid.turn_rate);
+        // at 15 fps the same ease over two game frames: (2/3)^2 of the way kept
+        let mut m = Player::new(2);
+        m.last_velocity = Vec3::new(0.0, 0.0, -6.0);
+        m.router.avoid.dir_was = Vec2::new(0.0, -1.0);
+        move_turn(&mut m, Vec2::X, 1.0, 2.0 * dt);
+        assert!((m.router.avoid.turn_rate + MOVE_TURN_MAX * (1.0 - 4.0 / 9.0)).abs() < 1e-4, "{}", m.router.avoid.turn_rate);
+        // within a degree: the heading; a stand's direction: as it is
+        let near = Vec2::new(0.5f32.to_radians().sin(), -0.5f32.to_radians().cos());
+        assert_eq!(move_turn(&mut m, near, 1.0, dt), Vec2::new(0.0, -1.0));
+        assert_eq!(move_turn(&mut m, Vec2::X, MOVE_STAND, dt), Vec2::X);
+        assert_eq!((move_size(1), move_size(2), move_size(4)), (MOVE_STAND, MOVE_WALK, 1.0));
     }
 
     /// The plain direction: flat, over the 3D distance, none within 0.01 m.
