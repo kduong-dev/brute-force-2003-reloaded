@@ -77,8 +77,9 @@ const SWITCH_HINT_CAP: f32 = 13.0;
 /// faces round the radar: the whole squad, Tex top, Hawk left, Flint right, Brutus bottom (game
 /// screenshot, positions refined by template matching against it; same order as the options
 /// screen's HUD page). The faces are packed into a corner
-/// of their 32 x 32 textures (Flint and Hawk 21 x 27, Brutus 27 x 24, Tex 27 x 30), so each is
-/// cropped to its opaque pixels and drawn 1:1 (a texel per screen unit) centred there.
+/// of their 32 x 32 textures (Flint and Hawk 21 x 27, Brutus 27 x 24, Tex 27 x 30), so the
+/// centre of each slot's own face is where its opaque pixels sit, and the 32 x 32 box every
+/// portrait and skull is drawn in (PORTRAIT_BOX) has its corner at `portrait_corner`.
 const PORTRAITS: [u32; 4] = [0xFDFB_4331, 0xEB2F_DA05, 0x0823_79F7, 0x076B_684B];
 const PORTRAIT_CENTRE: [(f32, f32); 4] = [(122.2, 428.5), (180.5, 368.2), (64.1, 368.5), (122.2, 303.8)];
 /// The command tab beside each portrait (#333): the tab widget FUN_000c3d10 (vtable 0x39f4f0, its
@@ -319,10 +320,18 @@ const BUBBLE_SIZE: f32 = 16.0;
 /// rendering the demo's and comparing the bodies the same way. The fit is to about 1 unit: the
 /// game's own placement code isn't found (the table is in no function the code map lists).
 const BUBBLE_AT: [(f32, f32); 4] = [(101.5, 393.5), (149.5, 340.5), (76.0, 341.0), (102.0, 321.0)];
-/// a dead member's portrait: their own skull (the character's h_00c51907 icon; Brutus's is the
-/// wide one), dimmed; their command tab and radar health bar go. Fallbacks if the data lacks one:
-const SKULL_HUMAN: u32 = 0x1834_3E47;
-const SKULL_BRUTUS: u32 = 0x19DA_7869;
+/// The box every portrait and skull is drawn in, 32 x 32 HUD units with the whole texture
+/// stretched to it (#342): the portrait widget 0xc3550 sets its size to 32 x 32 in its constructor
+/// (0xc3556-0xc355f) and its draw FUN_000bb300 sends width +0xe and height +0xc with UV 0..1,
+/// never reading the texture's own size. All the portrait and skull textures are 32 x 32
+/// (textures-common.xml, the multiplayer libraries), so they are drawn 1:1; the "wide" Brutus
+/// skull and the narrow others are the drawings inside their canvases.
+const PORTRAIT_BOX: f32 = 32.0;
+/// a dead member's portrait: their type's skull (h_00c51907, `CharacterType::skull`: for every
+/// predefined squad its slot's, four textures in common, the slot-3 one the wide one), dimmed;
+/// their command tab and radar health bar go. A type without one (the tutorial's marines) shows
+/// nothing in its place once dead: the widget FUN_000c3590 hides itself with no texture
+/// (0xc361d-0xc3625), and there is no fallback by race or slot in the code (#342).
 const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
 /// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
 /// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,
@@ -522,14 +531,28 @@ fn bar_frame(cw: u32, ch: u32, px: &[u8]) -> Image {
                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
 }
 
-/// A portrait's own image (to show again after the skull).
+/// A portrait's own image (to show again after the skull) and its opaque box (`face_art`).
 #[derive(Component)]
 struct PortraitArt(Handle<Image>, Rect);
 
-/// A face texture `id` as the HUD draws it: its image and its opaque box (texels with alpha over
-/// 40, rows as stored). The faces are packed into a corner of their 32 x 32 textures, so each is
-/// drawn cropped to that box, 1:1, centred on its place (PORTRAIT_CENTRE). Kept in `faces` by
-/// texture; None when the texture isn't found or is clear.
+/// The corner of slot `c`'s PORTRAIT_BOX, in HUD units: its own face's opaque box `art` (rows as
+/// stored, bottom first, so flipped on screen) centred on PORTRAIT_CENTRE. Every other portrait
+/// and skull of the place is drawn in the same box (#342, as the game does: the widget's place
+/// is fixed and its texture is whatever the member's type names). It agrees with the game's
+/// table 0x3c8c68 (the place's top-left in the radar panel: Brutus (51, 112), Flint (112, 51),
+/// Hawk (-4, 51), Tex (51, -15)) to a unit or two against the panel at (57.5, 305), a frame that
+/// is itself a guess.
+fn portrait_corner(c: usize, art: Rect) -> (f32, f32) {
+    let (cx, cy) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
+    let face = ((art.min.x + art.max.x) / 2.0, PORTRAIT_BOX - (art.min.y + art.max.y) / 2.0);
+    (cx - face.0, cy - face.1)
+}
+
+/// A face texture `id`: its image and its opaque box (texels with alpha over 40, rows as stored).
+/// The faces are packed into a corner of their 32 x 32 textures. Kept in `faces` by texture; None
+/// when the texture isn't found or is clear (a type whose portrait isn't drawable shows the "?").
+/// Only the squad's four faces use the box (`portrait_corner`): every portrait is drawn whole in
+/// PORTRAIT_BOX.
 fn face_art(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudImages, faces: &mut HashMap<u32, Option<(Handle<Image>, Rect)>>,
             id: u32) -> Option<(Handle<Image>, Rect)> {
     if let Some(art) = faces.get(&id) {
@@ -582,7 +605,7 @@ fn selected_face(game: &mut Game, images: &mut Assets<Image>, cache: &mut HudIma
 #[derive(Clone)]
 enum Face {
     Own,
-    Other(Handle<Image>, Rect),
+    Other(Handle<Image>),
     Empty,
     Unknown,
 }
@@ -617,8 +640,6 @@ struct HudGen {
     chevrons: [Handle<Image>; 4],
     /// speech icon
     bubble: Handle<Image>,
-    /// skulls for the dead, by character
-    skulls: [Handle<Image>; 4],
     /// the faces drawn so far, by texture (`face_art`): the squad's four, and on the test map any
     /// type's portrait a squad slot's member shows (#302)
     faces: HashMap<u32, Option<(Handle<Image>, Rect)>>,
@@ -1204,11 +1225,6 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                         images.add(make(&|x, y| (y, x))), images.add(make(&|x, y| (m - y, x)))];
     }
     gen.bubble = texture(&mut game.0, &mut images, &mut cache, SQUAD_ICON).unwrap_or_default();
-    gen.skulls = [0, 1, 2, 3].map(|c| {
-        let id = game.0.character_icons.get(CHARACTERS[c]).map(|i| i.1).filter(|&i| i != 0)
-            .unwrap_or(if c == 0 { SKULL_BRUTUS } else { SKULL_HUMAN });
-        texture(&mut game.0, &mut images, &mut cache, id).unwrap_or_default()
-    });
     if let Some((w, h, px)) = game.0.texture_rgba(RADAR_FRAME) {
         gen.bar_texels = radar_channels(w as usize, h as usize, &px);
         let n = (w * h) as usize;
@@ -1356,9 +1372,9 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         }
         for (i, &(cx, cy)) in PORTRAIT_CENTRE.iter().enumerate() {
             let Some((handle, rect)) = face_art(game, &mut images, &mut cache, &mut gen.faces, PORTRAITS[i]) else { continue };
-            let (bw, bh) = (rect.width(), rect.height());
-            commands.spawn((ChildOf(radar), at(cx - bw / 2.0, cy - bh / 2.0, bw, bh),
-                            ImageNode { rect: Some(rect), ..flipped(handle.clone()) }, ZIndex(1),
+            let (x, y) = portrait_corner(i, rect);
+            commands.spawn((ChildOf(radar), at(x, y, PORTRAIT_BOX, PORTRAIT_BOX),
+                            flipped(handle.clone()), ZIndex(1),
                             SquadPart::Portrait(i), PortraitArt(handle, rect)));
             // (a test map squad member whose type has no portrait: a "?" in its place, #302)
             commands.spawn((ChildOf(radar), game_text("?", cx, cy - UNKNOWN_CAP * UNKNOWN_TOP, UNKNOWN_CAP, MESSAGE_BLUE, Align::Centre),
@@ -1855,8 +1871,8 @@ fn update_squad_hud(
     let press = if selected.is_none() { menu.flash() } else { None };
     let selected = selected.or(press.map(|(c, _)| (c, Vec3::ZERO)));
     let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
-    // each slot's place: its member's face (`Face`), and its skull once it's dead (its type's: a
-    // squad type's own, another type's from its data, `CharacterType::skull`, else the human one)
+    // each slot's place: its member's face (`Face`), and its skull once it's dead (its type's,
+    // `CharacterType::skull`; a dead member whose type has none shows nothing, #342)
     // (a slot with no member in the world shows nothing: #303)
     // (and, selected for the Squad Command menu, its face in the selection's orange: `selected_face`)
     let looks: Vec<(Face, Option<Handle<Image>>, Option<Handle<Image>>)> = (0..PORTRAITS.len()).map(|c| {
@@ -1872,18 +1888,23 @@ fn update_squad_hud(
                 };
                 face_id = id;
                 match (id != 0).then(|| face_art(&mut game.0, &mut images, &mut cache, &mut gen.faces, id)).flatten() {
-                    Some((h, r)) => Face::Other(h, r),
+                    Some((h, _)) => Face::Other(h),
                     None => Face::Unknown,
                 }
             }
         };
-        let skull = m.filter(|u| u.dead).map(|u| match u.data_slot() {
-            OTHER => {
-                let id = game.0.character_type(u.kind).map_or(0, |t| t.skull);
-                texture(&mut game.0, &mut images, &mut cache, if id != 0 { id } else { SKULL_HUMAN }).unwrap_or_default()
-            }
-            d => gen.skulls[d].clone(),
+        // the dead: the type's skull texture (h_00c51907, the squad's from its data too); none
+        // makes the place blank (FUN_000c3590 hides the widget with no texture)
+        let skull = m.filter(|u| u.dead).map(|u| {
+            let id = game.0.character_type(u.kind).map(|t| t.skull).filter(|&i| i != 0)
+                .or_else(|| (u.data_slot() != OTHER).then(|| game.0.character_icons.get(u.data_name()).map_or(0, |i| i.1)));
+            id.and_then(|id| texture(&mut game.0, &mut images, &mut cache, id))
         });
+        let (face, skull) = match skull {
+            Some(None) => (Face::Empty, None),
+            Some(s) => (face, s),
+            None => (face, None),
+        };
         let lit = (menu.selected(c) && skull.is_none() && matches!(face, Face::Own | Face::Other(..)))
             .then(|| selected_face(&mut game.0, &mut images, &mut cache, face_id)).flatten();
         (face, skull, lit)
@@ -1950,23 +1971,23 @@ fn update_squad_hud(
             }
             SquadPart::Portrait(c) => {
                 if let (Some(mut img), Some(art), Some((face, skull, lit))) = (img, art, looks.get(c)) {
-                    // (the face and its box: the slot's own, or another one, centred in the place)
-                    let (own, box_) = match face {
-                        Face::Other(h, r) => ((h.clone(), *r), *r),
-                        _ => ((art.0.clone(), art.1), art.1),
+                    // (the face or the skull, whole, in the place's one box: PORTRAIT_BOX)
+                    let own = match face {
+                        Face::Other(h) => h.clone(),
+                        _ => art.0.clone(),
                     };
                     show(&mut vis, skull.is_some() || matches!(face, Face::Own | Face::Other(..)));
                     // (selected for the Squad Command menu: in the selection's orange, 0xc4280, #319)
-                    let own = (lit.clone().unwrap_or(own.0), own.1);
-                    let (want, rect, color) = match skull {
-                        Some(s) => (s.clone(), None, SKULL_TINT),
-                        None => (own.0, Some(own.1), Color::WHITE),
+                    let own = lit.clone().unwrap_or(own);
+                    let (want, color) = match skull {
+                        Some(s) => (s.clone(), SKULL_TINT),
+                        None => (own, Color::WHITE),
                     };
                     if img.image != want { img.image = want; }
-                    if img.rect != rect { img.rect = rect; }
+                    if img.rect.is_some() { img.rect = None; }
                     img.color = color;
-                    let (cx, cy) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
-                    let want = at(cx - box_.width() / 2.0, cy - box_.height() / 2.0, box_.width(), box_.height());
+                    let (x, y) = portrait_corner(c, art.1);
+                    let want = at(x, y, PORTRAIT_BOX, PORTRAIT_BOX);
                     if node.width != want.width || node.height != want.height || node.left != want.left || node.top != want.top {
                         (node.left, node.top, node.width, node.height) = (want.left, want.top, want.width, want.height);
                     }

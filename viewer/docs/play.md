@@ -351,6 +351,37 @@ the test map (`--test`), with it:
   squad HUD, as before; `--test BF_TEST_GOTO=0,8,0,7.5` Tex alone, and with `BF_TEST_SQUAD="shrike
   soldier@m09_a,flint" BF_TEST_KILL=1` the Shrike's "?" in Brutus's place, Flint's skull, Hawk's
   place dark (#302's, unchanged).
+* **The portrait box and the skulls** (#342). Every portrait and every skull is drawn whole in
+  one **32 x 32** box (`PORTRAIT_BOX`, HUD units): the portrait widget 0xc3550 sets its size to 32
+  x 32 in its constructor and its draw FUN_000bb300 sends that width and height with UV 0..1,
+  never reading the texture's size (every portrait and skull texture in the data is 32 x 32, so
+  they draw 1:1; the "wide" Brutus skull is the drawing inside its canvas). The box's corner
+  (`portrait_corner`) is the one that puts the slot's own face's opaque box on `PORTRAIT_CENTRE`;
+  another type's portrait or skull sits in the same box rather than being centred on its own
+  opaque pixels (a skull used to be stretched to the face's box, 21 x 27 for Flint's). The
+  corners come out within a unit or two of the game's table 0x3c8c68 (Brutus (51, 112), Flint
+  (112, 51), Hawk (-4, 51), Tex (51, -15), against a panel corner at (57.5, 305), itself a guess).
+  A dead member shows **its type's** skull (`CharacterType::skull`, h_00c51907): there is no feral
+  or race skull in the data, only the four slot skulls (h_fe6fa2af slot 1, h_18343e47 slot 2,
+  h_19da7869 slot 3, the wide one, h_17bd5b5c slot 4), which every predefined squad's types
+  carry (a type reads non-zero for all 20 sdm types and the campaign four), so a dead feral shows
+  the skull of the slot it holds. FUN_000c3590 takes type+0x158 dead and type+0x154 alive and
+  hides the widget when there is no texture, with no fallback by race, name or slot: so a type
+  with a portrait and no skull (the tutorial's marines) leaves its place **blank** once dead; the
+  demo's old human and Brutus skull fallbacks are gone. Checked (`--test BF_TEST_FULL_SQUAD=1
+  BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET=0.5,<squad>`, 45 frames alive, then
+  `BF_TEST_KILL=0|1|2` for 120 frames and `BF_TEST_DIE=2` for Tex, each of the six squads: campaign,
+  sdm_bf, sdm_feral, sdm_shrike, sdm_ferg, sdm_seers): every portrait whole and unsquashed in its
+  place, each dead place showing its slot's skull (Brutus's the wide one at the bottom in every
+  squad, the dead feral and Shrike Heavy too, Tex's at the top with the red chevrons as control
+  passes); sdm_seers' slot 2 wouldn't die in 22 s (330 frames: not the HUD's), so that one is
+  checked by the other squads' slot 2 and the data. `BF_TEST_SQUAD="Sgt. Gonzales@e01,Private
+  Cogburn@e01,Corporal Stout@e05" BF_TEST_KILL=0|1|2` (the marines, with portraits and no skull):
+  each place goes blank when its marine dies. Against the squad deathmatch footage (`todo/reference/
+  Friendly Fire 2 + Death Cam.mp4`, 31.5 s, Brutus's skull at the bottom) the skull's size and
+  place agree to a couple of units; its colour differs, as the demo's notch fill (the dark blue
+  rectangles behind the faces) shows through the skull's alpha of 170 (the game's skull sits on
+  the terrain), not looked into.
 * **The command tabs** (#333; `play_hud.rs` `update_tabs`, `TAB_FOLLOW` ...): the small icon in
   the box by each portrait is its member's order, the brain's command mode (squad.md, "Squad
   commands"). The tab widget (FUN_000c3d10, made one a portrait by the HUD's factory) sets it each
