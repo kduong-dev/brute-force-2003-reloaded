@@ -1372,9 +1372,21 @@ const MUSIC_VOLUME: f32 = 0.5;
 /// A level's ambience bed, under its music (of the music's volume).
 const AMBIENCE_VOLUME: f32 = 0.8;
 
+/// BF_TEST_DOOR_SHUT=<h_xxxxxxxx>[,...] (test hook, #346): the doors of those names (BF_DOOR_LOG
+/// prints each door's) stay shut whatever their anim-triggers say: a door that doesn't open on a
+/// squad member's route, for the walk's door step (play_routes.rs `door_step`) and the stuck
+/// handling that follows it. Read once.
+fn shut_door(name: u32) -> bool {
+    static SHUT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    SHUT.get_or_init(|| std::env::var("BF_TEST_DOOR_SHUT").ok().map_or(vec![], |v| {
+        v.split(',').filter_map(|x| u32::from_str_radix(x.trim().trim_start_matches("h_"), 16).ok()).collect()
+    })).contains(&name)
+}
+
 /// Each frame: the panel prompt and a panel's use (see USE_REACH's notes), whose event goes to
 /// the level's triggers (`triggers::TriggerEvents`); then each door's leaves where its
-/// anim-triggers send them, its collision open past 0.6 of its clip.
+/// anim-triggers send them (a door BF_TEST_DOOR_SHUT names held shut), its collision open past
+/// 0.6 of its clip.
 fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut use_panel: ResMut<UsePanel>,
          mut events: ResMut<triggers::TriggerEvents>, mut transforms: Query<&mut Transform>) {
     let dt = frame_dt(&time);
@@ -1416,6 +1428,10 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
     // the leaves, where their anim-triggers send them (play_triggers.rs)
     for (i, d) in doors.list.iter_mut().enumerate() {
         let DoorState { door, t, opening, rate } = d;
+        // (BF_TEST_DOOR_SHUT: held shut whatever its triggers say, #346)
+        if *opening && shut_door(door.name) {
+            *opening = false;
+        }
         let was = *t;
         *t = if *opening { (*t + dt * *rate).min(door.duration) } else { (*t - dt * *rate).max(0.0) };
         if *t != was {
@@ -3125,8 +3141,8 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         // (far behind: the way left or the place itself, which moves on past where the route was
         // planned to, the farther; the last bit: both short. It moves at the lower of that and
         // its pace level, which follows it up and down, and which a route's detour, the way round
-        // a friend, the follow's hold, the feelers and a hard turn set down for a while,
-        // play_routes.rs `pace`. #335's walk while held at a corner is gone with #344: the game
+        // a friend, the follow's hold, the feelers, a hard turn and a door (#346) set down for a
+        // while, play_routes.rs `pace`. #335's walk while held at a corner is gone with #344: the game
         // has no such rule, its hard turn's walk (FUN_0001ad50) keeps a runner from circling the
         // corner's 0.6 m, and with it the e13 run's times came to the take's)
         let behind = along.max(dist);

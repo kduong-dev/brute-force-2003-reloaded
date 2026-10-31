@@ -123,8 +123,8 @@ pub enum Stage {
 #[derive(Clone, Debug)]
 pub struct Avoid {
     /// brain+0x924: the feelers are off while it's over 0 (s); the walk's door step sets it to 1.5
-    /// (FUN_00026820, #346), the AI update counts it down (0x1b2d7-0x1b306), the brain's reset
-    /// zeroes it (0x17610)
+    /// (FUN_00026820, play_routes.rs `door_step`, #346), the AI update counts it down
+    /// (0x1b2d7-0x1b306), the brain's reset zeroes it (0x17610)
     pub feelers_off: f32,
     /// brain+0x8a4: the speed record's timer (s): while it runs FUN_00048270 hands char+0x720 1.0,
     /// not the record's factor (play_speed.rs `follow_boost`); a feeler hit at a dash with the

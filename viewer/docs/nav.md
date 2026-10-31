@@ -153,7 +153,8 @@ landing (0x1b / 0x1c) gets its own point put first, so the jump is made. Then ea
    blocked: the point is the corner point and the walk goes on toward it, which brings the
    radius to 0.6 (or keeps the point's own), so it closes on the corner before it turns.
 4. **The point is reached**: its kind's own step is the caller's (doors FUN_00026820, patrol
-   points FUN_00026940, jumps FUN_00026520 / FUN_000267b0: `Step::reached` reports the kind).
+   points FUN_00026940, jumps FUN_00026520 / FUN_000267b0: `Step::reached` reports the kind). The
+   squad's routes take the door step since #346 ("The door step" below).
 5. **The next entry** is the target; **the look-ahead skip**: when it's a plain world point
    (kind 0) without bit 4 and the one after it has no bit 4 either, and the corridor from the
    character (at the reached point's height) to that one is clear, the walk goes to it at once,
@@ -332,7 +333,8 @@ direction (no blend).
    0.5 m back: the centre 3.15 m, the left and right 2.0475 m at 25 degrees (the brain's list,
    brain+0x354, which the constructor fills and nothing changes). Their lengths: x0.6 at a walk,
    x1.6 at a dash, and x0.9 x the speed factor char+0x720 when that's over 1 (the follow's boost:
-   x1.125); off at a stand, and while brain+0x924 runs (the walk's door step sets it, #346). Each ray is tilted by the
+   x1.125); off at a stand, and while brain+0x924 runs (the walk's door step sets it, "The door
+   step"). Each ray is tilted by the
    ground ahead (FUN_00115b00: the height change to the ground 0.8 m ahead along the move, its y
    added before it's normalised). They meet the terrain, the placed objects, the blockers, the
    hinters and the fly-blockers, never a character, an item or a liquid (the corridor ray's
@@ -398,6 +400,39 @@ which feelers met what (steep terrain, an object, a blocker) and how far, the re
 direction, the long rays' slots, the hysteresis' walk), the pace drops and the boost's, the push
 and from whom. `BF_AVOID_OFF=1` (a diagnostic, not the game) steers by the plain direction alone,
 as before #344. `BF_ROUTE_LOG=1` also says each hard turn's walk, `=2` each step of the pace level.
+
+## The door step and the corner hold (#346)
+
+The reading is `todo/346-route-doors/leads.md`; no footage shows a squad member at a door
+(its shot list's A and B), so the demo follows the code alone.
+
+**The door step** (FUN_00026820, play_routes.rs `door_step`): FUN_00026d80 hands it a door point
+reached (kind 6; the corner rule skips door points). It acts only when the **next** entry's point
+is a door point too, the pair either side of a door: the 0.8 m corridor between the two points at
+their positions (FUN_000410a0, as the route's other tests: the arena's ray, which a door's leaves
+block until 0.6 of their clip) blocked, the pace level goes to a stand with its timer at 0.5 s and
+the feelers go off for 1.5 s (brain+0x924). The walk moves on regardless (the step's return is
+ignored): no wait for the door, no read of its state, no new plan. So a member reaching a shut
+door stands half a second, then the ramp walks it on toward the far point with nothing turning it
+off its line; a door its detector opened in time is walked straight through. A door that stays
+shut is left to the stuck handling. The step's first branch, a world button at the point (+0x3c,
+an OT_WORLDBUTTON "used" with TRIG_SIG_USE_OBJECT), is left out: no door point in the data has an
+object (every h_e5851820 is empty, no h_0b6b92ba record attaches one), so it never runs. Doors
+open by their own triggers, not by the walker; locked doors never get this far, their points made
+invalid by the level's waypoint triggers (e34's six, sdm_e34's two, the tutorial's base gate
+until its panels).
+
+**The corner hold** (brain+0x9dc, `Walker::corner`) has no timer in the game: it's set at a point
+reached whose next leg is blocked and cleared only when a point is passed with the rule not
+holding (the corner point itself once within 0.6 m, a door's or a jump's point, or the rays clear
+again) or by the brain's reset (FUN_00026d80's row). A member that can't close on the corner point
+is moved by the stuck handling alone. The demo's never had a timer either; what pinned its
+members at e13's corners was its missing feelers, and with #344's none needs the stuck handling:
+in the e13 runs every hold (14 of them, 0.3-1.4 s) ended by passing within 0.6 m.
+
+**Test hooks**: `BF_ROUTE_LOG=1` says each door step (the two points, the corridor clear or
+blocked); `BF_TEST_DOOR_SHUT=<h_xxxxxxxx>[,...]` holds the named doors shut (maps.md, the doors'
+hooks: `BF_DOOR_LOG=1` lists their names).
 
 ## Lava
 
@@ -648,6 +683,21 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   1 in 2 s at most, but Hawk ran to and fro between h_ebea0733 and h_00bdf10f, 21 m apart. None
   enters the lava (`BF_LIQUID_LOG`). The same with #345's speeds: no plan from 10 to 30 s, none of
   the three moves more than 0.2 m.
+* The door step (#346; sdm_e34's pair h_f519ca12 (-49.2, 11.8) / h_117d5fb1 (-53.1, 10.0), door 0
+  h_06537687 between them, opened by the anim-trigger h_134c9934 on a detector; Hawk's Move To to
+  h_f4e3da16 (-56.0, 8.2) inside: `BF_MAP=sdm_e34 BF_CHARACTER=0 BF_TEST_NO_HOSTILES=1
+  BF_TEST_GOTO=-36,20,-36,20 "BF_TEST_WARP=0,me,-36,20,90;0,hawk,-38,18,90;0,flint,-37,22,90;
+  0,brutus,-38,21,90" "BF_TEST_ORDER=hawk,move,-56.0,8.2@3" BF_ROUTE_LOG=1 BF_DOOR_LOG=1
+  BF_AVOID_LOG=1`, 300 frames): her route goes through the pair; the detector opens the door at
+  4.33 s as she nears it, she reaches the first door point at 5.07 s, the corridor between the
+  two is clear by then (the leaves past 0.6 of their 1.21 s clip), "on through", the far point at
+  5.73 s, GUARD at the Move To point at 6.60 s. With `BF_TEST_DOOR_SHUT=h_06537687` (the same
+  run): at 5.07 s "the corridor between them blocked: stands 0.5 s, its feelers off 1.5 s"; no
+  feeler steers until 6.60 s (1.5 s on), then they turn her along the leaves; with the route's next
+  entry its last, the first stuck (8.73 s) ends it (FUN_00042280) and the Move To is over, GUARD
+  7.6 m short. (Tex warped beside the door instead, the follow walks Hawk through it at 1.13 s with
+  the door already open.) The frames of these runs show the tower beside the building, not the
+  door: the logs are the check.
 * The cost (the plans' times in the logs, opt-level 2): 4-45 us a search, at most 225 points off
   the heap (e13), the worst frame three plans in 90 us.
 * `BF_TEST_PRISM=1` (e34, Move To with Tex on Hawk's line, a squadmate on the other way round):
@@ -668,7 +718,9 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   avoid`): the feelers' lengths by the pace and the speed factor (x0.945 for a factor of 1.05, as
   read, not max(1, 0.9 f)), a side block's square steer, a wall ahead's long rays and the
   hysteresis (the missed long ray's slot as read), both sides blocked, the dash's drops, walkable
-  terrain, the tilt; FUN_00018b50's side; the push; the side-step; the plain direction.
+  terrain, the tilt; FUN_00018b50's side; the push; the side-step; the plain direction. The door
+  step (#346): blocked between two door points, a stand and the feelers off; clear, nothing; a door
+  point followed by a plain one, nothing.
 
 ## Not done
 
@@ -687,8 +739,11 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   the hard turn's walks slower than the game's. Footage: todo/344's shot list (the feelers' hits,
   the pace level, a dash past a squadmate) isn't filmed.
 * FUN_00059f70's and FUN_00059d40's temporary points; the 20 m look at a route's end (route+0x14,
-  FUN_0001fdd0); the kinds' own steps at a point reached (doors, patrol points, jumps); the
-  prisms (bit 10); the AI's pace near a point (FUN_0004d840).
+  FUN_0001fdd0); the kinds' own steps at a point reached (patrol points, jumps; the doors' since
+  #346, but its world-button branch, dead in the data); the prisms (bit 10); the AI's pace near a
+  point (FUN_0004d840).
+* Footage of a squad member at a door (todo/346's shot list A and B: the stand, the door's state
+  when it's reached, the stuck steps at a door that stays shut) isn't filmed.
 * Kind 0x13's and the save points' set-valid (kept by the game elsewhere); the cover points' bit 5
   is kept (`Node::cover`) for #336's cover goals.
 * Footage: take01 (e13, the squad round the pit, its routes logged) is the one take; Move To across a pit, the tutorial's lava yard and the blocker and stuck shots (shotlist.md A1, A3-A5, B, C) aren't filmed.

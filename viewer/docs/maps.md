@@ -690,6 +690,9 @@ them):
     triggers open or close and its leaves each second: how far each sliding leaf has slid, or,
     for a door on transform joints or hinges, how far each leaf is from its closed place (m) and
     how far it has turned (degrees). `BF_TEST_USE=<s>` holds use from that time for a second.
+    `BF_TEST_DOOR_SHUT=<h_xxxxxxxx>[,...]` (#346) holds the doors of those names (as
+    `BF_DOOR_LOG` prints them) shut whatever their triggers say: a door on a squad member's route
+    that doesn't open, for the walk's door step ([nav.md](nav.md), "The door step").
 * **HUD text** (`play_text.rs`) is drawn in the game's own body font, atlas h_e4e4d2f4 (as the
   menu draws it), its glyphs 1 atlas pixel apart over a black outline and shadow, as in the
   captures. Colours sampled from them: messages and prompts pale blue (186 210 249), ammo and

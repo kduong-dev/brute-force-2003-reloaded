@@ -29,8 +29,10 @@
 //!  - **The pace record** (#344, `Router::cap`, `pace_ramp`): the level the move is held to,
 //!    starting at a stand and stepping toward the move asked, up and down, with the drops that set
 //!    it down for a while (the stuck detours, the way round a friend, the follow's hold, the hard
-//!    turn, the feelers). The walk's direction is the steering target through the AI's avoidance
-//!    (play_avoid.rs, the callers').
+//!    turn, the door step, the feelers). The walk's direction is the steering target through the
+//!    AI's avoidance (play_avoid.rs, the callers').
+//!  - **The door step** (#346, `door_step`, FUN_00026820): at a door point whose next entry is a
+//!    door point too, the corridor between them blocked, a half-second stand with the feelers off.
 //!
 //! Test hooks: BF_ROUTE_LOG=1 (each plan and why, each point reached, corner held, skip,
 //! catch-up, stuck, detour, re-route, warp, hard turn and blocker step of the AI squad's routes;
@@ -103,6 +105,11 @@ const HARD_TURN: f32 = 2.5;
 const HARD_TURN_TIME: f32 = 1.0;
 /// ...with the pace record's timer at this (s, 0x3f800000).
 const HARD_TURN_WALK: f32 = 1.0;
+/// The door step (FUN_00026820, `door_step`): with the corridor between the two door points
+/// blocked the pace level 1 with its timer at this (s, 0x3f000000)...
+const DOOR_STAND: f32 = 0.5;
+/// ...and the feelers off for this (s, brain+0x924 = 0x3fc00000).
+const DOOR_FEELERS_OFF: f32 = 1.5;
 /// FUN_00041870: a friend within 8 m (3D, 64 its square), its pace level under 3, whose own point is
 /// the member's current point, its own point or its skipped one, and lying the member's way (the
 /// x and z of the two unit directions, to it and to the current point, dot over 0.75).
@@ -202,7 +209,7 @@ impl Router {
 
     /// The pace level set down to `cap` with its timer at `time` s ([brain+0x1a8]+0 and
     /// FUN_000124f0 on its +0x28): the drops (DETOUR_HOLD and the others, the hard turn's, the
-    /// feelers').
+    /// door step's, the feelers').
     pub fn set_pace(&mut self, cap: i32, time: f32) {
         self.cap = cap;
         self.cap_left = time;
@@ -438,7 +445,36 @@ fn step(m: &mut Player, g: &mut Graph, radius: f32, last_radius: f32) -> Step {
     if !s.walking {
         m.router.walker = None;
     }
+    door_step(m, g, &s, &ray);
     s
+}
+
+/// The walk's door step (FUN_00026820, from FUN_00026d80 at 0x27059 on a door point reached;
+/// #346): when the point reached in `s` is a door point (kind 6) and the next entry's point is one
+/// too (the pair either side of a door), the 0.8 m corridor between the two points at their
+/// positions (FUN_000410a0, as the route's other tests) blocked: the pace level 1 with its timer at
+/// DOOR_STAND (the ramp climbs again after it) and the feelers off for DOOR_FEELERS_OFF
+/// (brain+0x924), so the member stands half a second at the first point and then walks through
+/// with nothing turning it off its line. The walk moves on regardless (the step's return is
+/// ignored, 0x27059-0x2707f): no wait for the door, no read of its state, no new plan. A door that
+/// stays shut is left to the stuck handling (`stuck`). Its first branch, a world button at the
+/// point (+0x3c, an OT_WORLDBUTTON: its vtable +0x138 posts TRIG_SIG_USE_OBJECT), never runs: no
+/// point in the data has an object (every door point's h_e5851820 is empty and its h_0b6b92ba
+/// record attaches nothing, todo/346-route-doors leads §1). `clear` is the world's ray (`ray`);
+/// BF_ROUTE_LOG says what it found.
+fn door_step(m: &mut Player, g: &Graph, s: &Step, clear: nav::Clear) {
+    let Some((Some(p), nav::kind::DOOR)) = s.reached else { return };
+    let Some(next) = m.router.walker.as_ref().and_then(|w| w.current()).filter(|&n| g.nodes[n as usize].kind == nav::kind::DOOR) else { return };
+    let (a, b) = (g.nodes[p as usize].at, g.nodes[next as usize].at);
+    let blocked = nav::corridor_blocked(a, b, nav::CORRIDOR, clear);
+    if log_level() > 0 {
+        println!("t {:.2}: {}: the door step from {} to {}: the corridor between them {}", m.sim_time, unit_name(m), label(g, Some(p)), label(g, Some(next)),
+                 if blocked { format!("blocked: stands {DOOR_STAND} s, its feelers off {DOOR_FEELERS_OFF} s") } else { "clear: on through".into() });
+    }
+    if blocked {
+        m.router.set_pace(1, DOOR_STAND);
+        m.router.avoid.feelers_off = DOOR_FEELERS_OFF;
+    }
 }
 
 /// Plans `m`'s route to `to` (FUN_000416a0 from its own point) and starts it (FUN_00025730 with
@@ -1282,5 +1318,37 @@ mod tests {
         m.router.asked = 4;
         assert_eq!(run(&mut m, 0.2), 1, "its 0.3 s still running");
         assert_eq!(run(&mut m, 0.1), 2);
+    }
+
+    /// The door step (FUN_00026820): reaching a door point whose next entry is a door point too,
+    /// with the corridor between them blocked, the pace level 1 for 0.5 s and the feelers off for
+    /// 1.5 s; clear, nothing; a door point followed by a plain one, nothing.
+    #[test]
+    fn the_door_step() {
+        // 1 (a door point, `<door-point>` h_1ff1d816) -> 2 (one) -> 3 (plain), along x
+        let door = |name: u32, x: f32, links: &[u32]| WorldPoint { kind: 0x1FF1_D816, ..point(name, x, 0.0, links) };
+        let pts = [door(1, 0.0, &[2]), door(2, 6.0, &[1, 3]), point(3, 12.0, 0.0, &[2])];
+        let g = Graph::new(&pts);
+        assert_eq!((g.nodes[0].kind, g.nodes[2].kind), (nav::kind::DOOR, nav::kind::WORLD), "the door point's type");
+        let walking = |index: i32| {
+            let mut m = Player::new(2);
+            m.router.cap = NO_CAP;
+            let entries = (0..3).map(|i| Entry { at: g.nodes[i].at, point: Some(i as u32) }).collect();
+            m.router.walker = Some(Walker { entries, index, best: f32::MAX, ..Default::default() });
+            m
+        };
+        let reached = |p: u32| Step { walking: true, reached: Some((Some(p), g.nodes[p as usize].kind)), ..Default::default() };
+        // a shut door across x = 3: the rays between the two door points meet it
+        let shut = |a: Vec3, b: Vec3, _: f32| (a.x - 3.0).signum() == (b.x - 3.0).signum();
+        let open = |_: Vec3, _: Vec3, _: f32| true;
+        let mut m = walking(1);
+        door_step(&mut m, &g, &reached(0), &shut);
+        assert_eq!((m.router.cap, m.router.cap_left, m.router.avoid.feelers_off), (1, DOOR_STAND, DOOR_FEELERS_OFF), "blocked: a stand, the feelers off");
+        let mut m = walking(1);
+        door_step(&mut m, &g, &reached(0), &open);
+        assert_eq!((m.router.cap, m.router.avoid.feelers_off), (NO_CAP, 0.0), "clear: on through");
+        let mut m = walking(2);
+        door_step(&mut m, &g, &reached(1), &shut);
+        assert_eq!((m.router.cap, m.router.avoid.feelers_off), (NO_CAP, 0.0), "the next is a plain point");
     }
 }
