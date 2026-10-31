@@ -1127,7 +1127,9 @@ fn draw(boxed: Res<ItemBox>, player: Res<Player>, mut game: ResMut<GameData>, ki
                 set_vis(&mut vis, shown(s));
                 let at = slot_at(s, b.open);
                 if let Some(mut n) = node {
-                    let (l, t) = (Val::Percent(at.x / 6.4), Val::Percent(at.y / 4.8));
+                    // (a slot's place follows the box's opening: a number that isn't finite is 0 and
+                    // logged once, #349)
+                    let (l, t) = (super::ui_guard::percent("an item box slot's place", at.x / 6.4), super::ui_guard::percent("an item box slot's place", at.y / 4.8));
                     if n.left != l || n.top != t {
                         (n.left, n.top) = (l, t);
                     }

@@ -1212,16 +1212,21 @@ pub(super) fn flipped(h: Handle<Image>) -> ImageNode {
 }
 
 /// Absolute placement in 640 x 480 screen units (as `at`, for moving nodes).
+#[track_caller]
 fn at_box(x: f32, y: f32, w: f32, h: f32) -> Node {
     at(x, y, w, h)
 }
 
-/// Absolute placement in 640 x 480 screen units.
+/// Absolute placement in 640 x 480 screen units. A number that isn't finite is 0 and logged once
+/// with the caller's file and line (`ui_guard::finite`: a NaN place would reach bevy_ui's layout,
+/// #349).
+#[track_caller]
 pub(super) fn at(x: f32, y: f32, w: f32, h: f32) -> Node {
+    use super::ui_guard::finite;
     Node {
         position_type: PositionType::Absolute,
-        left: Val::Percent(x / 6.4), top: Val::Percent(y / 4.8),
-        width: Val::Percent(w / 6.4), height: Val::Percent(h / 4.8),
+        left: Val::Percent(finite("a HUD node's x", x) / 6.4), top: Val::Percent(finite("a HUD node's y", y) / 4.8),
+        width: Val::Percent(finite("a HUD node's width", w) / 6.4), height: Val::Percent(finite("a HUD node's height", h) / 4.8),
         ..default()
     }
 }
@@ -1629,7 +1634,13 @@ fn update_hud_widgets(
         let win = windows.single().ok()?;
         let px = cam.world_to_viewport(&GlobalTransform::from(*at), p).ok()?;
         let unit = win.height() / 480.0;
-        Some(Vec2::new((px.x - (win.width() - 640.0 * unit) / 2.0) / unit, px.y / unit))
+        // (a window with no height, minimised, has no screen to place it on: dividing by its unit
+        // would be NaN or infinite, and a ring's place from it a NaN `left`, #349)
+        if !(unit.is_finite() && unit > 0.0) {
+            return None;
+        }
+        let place = Vec2::new((px.x - (win.width() - 640.0 * unit) / 2.0) / unit, px.y / unit);
+        place.is_finite().then_some(place)
     };
     let regen_word = game.0.strings.get(&S_REGEN).cloned().unwrap_or("Regen".into());
     // the switch hint (play_ammo.rs's SwitchHint) names the other weapon
@@ -1845,7 +1856,7 @@ fn update_squad_hud(
     // the radar panel's slide toward the middle while the Squad Command menu is open
     // (FUN_000c2be0, RADAR_SLIDE: #319)
     if let Ok(mut n) = panel.single_mut() {
-        let k = menu.radar_slide();
+        let k = super::ui_guard::finite("the radar panel's slide", menu.radar_slide());
         let (left, top) = (Val::Percent(RADAR_SLIDE.0 * k / 6.4), Val::Percent(RADAR_SLIDE.1 * k / 4.8));
         if n.left != left || n.top != top {
             (n.left, n.top) = (left, top);
@@ -1892,7 +1903,11 @@ fn update_squad_hud(
     let health = |c: usize| member(c)
         .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
     let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
-    let pct = |x: f32, y: f32, n: &mut Node| { n.left = Val::Percent(x / 6.4); n.top = Val::Percent(y / 4.8); };
+    // (a place that isn't finite is 0 and logged once, naming the node: #349)
+    let pct = |what: &str, x: f32, y: f32, n: &mut Node| {
+        n.left = super::ui_guard::percent(what, x / 6.4);
+        n.top = super::ui_guard::percent(what, y / 4.8);
+    };
     let fwd = Vec3::new(-player.cam_yaw.sin(), 0.0, -player.cam_yaw.cos());
     let right = Vec3::new(player.cam_yaw.cos(), 0.0, -player.cam_yaw.sin());
     let charging = player.charge > 0.0;
@@ -1957,6 +1972,16 @@ fn update_squad_hud(
                 // FUN_000b0ad0: here on the circle; within it a member shows only within the
                 // player's reach, FUN_000b0670)
                 let mut v = Vec2::new(rel.dot(right), rel.dot(fwd)) * scale;
+                // (a member or a view heading that isn't finite has no place on the radar: the
+                // blip is hidden, once saying whose, instead of a NaN `left` reaching bevy_ui's
+                // border radius clamp, which panics: #349)
+                if !v.is_finite() {
+                    super::ui_guard::once(&format!("blip {slot}"), || format!(
+                        "UI guard: radar blip {slot} ({}) has no place: its position {:?}, the player's {:?}, the camera's yaw {} and pitch {}: hidden (#349)",
+                        unit_name(m), m.position, player.position, player.cam_yaw, player.cam_pitch));
+                    show(&mut vis, false);
+                    continue;
+                }
                 if v.length() > RADAR_UNITS {
                     v = v.normalize() * RADAR_UNITS;
                 } else if radar_reach(&player, &game.0, m.position, game.0.radar.max_range.max(1.0)) <= 0.0 {
@@ -1964,7 +1989,7 @@ fn update_squad_hud(
                     continue;
                 }
                 show(&mut vis, true);
-                pct(RADAR_CENTRE.0 + v.x - 2.0, RADAR_CENTRE.1 - v.y - 2.0, &mut node);
+                pct("a radar blip", RADAR_CENTRE.0 + v.x - 2.0, RADAR_CENTRE.1 - v.y - 2.0, &mut node);
                 // (selected for the Squad Command menu: 200 200 200, FUN_000c86d0)
                 let want = if menu.selected(m.character) { SELECTED_GREY } else { SQUAD_GREEN };
                 if let Some(mut c) = background.filter(|c| c.0 != want) {
@@ -1980,7 +2005,7 @@ fn update_squad_hud(
                     let (px, py) = PORTRAIT_CENTRE[c % PORTRAIT_CENTRE.len()];
                     let u = Vec2::new(px - RADAR_CENTRE.0, py - RADAR_CENTRE.1).normalize_or(Vec2::X);
                     let at = Vec2::new(px, py) - u * (CHEVRON_GAP[c % CHEVRON_GAP.len()] - 5.0 * k as f32);
-                    pct(at.x - 15.0, at.y - 15.0, &mut node);
+                    pct("a selection chevron", at.x - 15.0, at.y - 15.0, &mut node);
                     let dir = if u.x.abs() > u.y.abs() { if u.x > 0.0 { 0 } else { 1 } } else if u.y < 0.0 { 2 } else { 3 };
                     // lit one after another toward the portrait, then all dim again; after a d-pad
                     // press, the game's fade (`press_alpha`)
@@ -2049,8 +2074,9 @@ fn update_squad_hud(
             }
             SquadPart::PlayerHealth => {
                 let f = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
-                let width = if gen.tutorial_frame { bar_fill(player.health.clamp(0.0, player.max_health)) } else { bar_span().1 * f };
-                node.width = Val::Percent(width / 6.4);
+                // (health or its maximum not a number: an empty bar, once saying so, #349)
+                let width = if gen.tutorial_frame && player.max_health >= 0.0 { bar_fill(player.health.clamp(0.0, player.max_health)) } else { bar_span().1 * f };
+                node.width = super::ui_guard::percent("the player's health bar width", width / 6.4);
                 // in the "full" flash's colour while it's tinted (`BarFlash`: a HEALTH POWER
                 // walked over at full health)
                 let want = if flash_tinted(flash.health) { gen.health_flash.clone() } else { gen.health_fill.clone() };
@@ -2062,25 +2088,25 @@ fn update_squad_hud(
             }
             // the stamina bar's value and its trail, as `update_stamina_bar` keeps them
             SquadPart::PlayerStamina => {
-                node.width = Val::Percent(bar_fill(stamina.value) / 6.4);
+                node.width = super::ui_guard::percent("the stamina bar's width", bar_fill(stamina.value) / 6.4);
                 show(&mut vis, stamina.value > 0.0);
             }
             SquadPart::StaminaTrail => {
                 let (from, to) = (bar_fill(stamina.value), bar_fill(stamina.shown));
                 show(&mut vis, to > from);
-                node.left = Val::Percent((BAR_X + from) / 6.4);
-                node.width = Val::Percent((to - from).max(0.0) / 6.4);
+                node.left = super::ui_guard::percent("the stamina bar's trail", (BAR_X + from) / 6.4);
+                node.width = super::ui_guard::percent("the stamina bar's trail", (to - from).max(0.0) / 6.4);
             }
             SquadPart::FrameMiddle => {
                 // the middle takes up what the bars' length adds to (or takes from) the picture's
-                node.width = Val::Percent(((TB_MIDDLE.1 - TB_MIDDLE.0) as f32 + frame_stretch(player.max_health)).max(1.0) / 6.4);
+                node.width = super::ui_guard::percent("the health frame's middle", ((TB_MIDDLE.1 - TB_MIDDLE.0) as f32 + frame_stretch(player.max_health)).max(1.0) / 6.4);
             }
             SquadPart::FrameRight => {
-                node.left = Val::Percent((TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + frame_stretch(player.max_health)) / 6.4);
+                node.left = super::ui_guard::percent("the health frame's right end", (TB_AT.0 + (TB_RIGHT.0 - TB_ICONS.0) as f32 + frame_stretch(player.max_health)) / 6.4);
             }
             SquadPart::MeterBox => {
                 show(&mut vis, meter);
-                node.top = Val::Percent((METER_BOX.1 + meter_shift) / 4.8);
+                node.top = super::ui_guard::percent("the charge meter's box", (METER_BOX.1 + meter_shift) / 4.8);
                 let want = HUD_BLUE.with_alpha(strength);
                 if let Some(mut c) = border.filter(|c| c.0 != want) {
                     c.0 = want;
@@ -2088,7 +2114,7 @@ fn update_squad_hud(
             }
             SquadPart::MeterTick => {
                 show(&mut vis, meter);
-                node.top = Val::Percent((METER_TICK_Y + meter_shift) / 4.8);
+                node.top = super::ui_guard::percent("the charge meter's tick", (METER_TICK_Y + meter_shift) / 4.8);
                 let want = METER_TICK.with_alpha(strength);
                 if let Some(mut c) = background.filter(|c| c.0 != want) {
                     c.0 = want;
@@ -2097,8 +2123,8 @@ fn update_squad_hud(
             SquadPart::MeterFill => {
                 show(&mut vis, meter);
                 let h = (METER_FILL.3 - METER_FILL.2) * level;
-                node.top = Val::Percent((METER_FILL.3 - h + meter_shift) / 4.8);
-                node.height = Val::Percent(h / 4.8);
+                node.top = super::ui_guard::percent("the charge meter's fill", (METER_FILL.3 - h + meter_shift) / 4.8);
+                node.height = super::ui_guard::percent("the charge meter's fill", h / 4.8);
                 let want = METER_ORANGE.with_alpha(METER_ORANGE.alpha() * strength);
                 if let Some(mut c) = background.filter(|c| c.0 != want) {
                     c.0 = want;

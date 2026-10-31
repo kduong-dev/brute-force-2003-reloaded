@@ -1087,6 +1087,7 @@ fn main() {
         // (after the Vengar view's: its pass follows that one's in the render graph)
         .add_plugins(scope_view::plugin)
         .add_plugins(radar_disc::plugin)
+        .add_plugins(ui_guard::plugin)
         .add_plugins(stealth::plugin)
         .add_plugins(flags::plugin)
         .add_plugins(objectives::plugin)
@@ -1214,6 +1215,8 @@ mod vengar;
 mod scope_view;
 #[path = "play_radar_disc.rs"]
 mod radar_disc;
+#[path = "play_ui_guard.rs"]
+mod ui_guard;
 #[path = "play_stealth.rs"]
 mod stealth;
 #[path = "play_triggers.rs"]

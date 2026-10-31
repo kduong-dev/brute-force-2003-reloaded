@@ -755,7 +755,9 @@ fn edit_view(time: Res<Time>, mut editor: ResMut<Editor>, tools: Res<Tools>, mut
             *v = want;
         }
         let p = tools.pointer.unwrap_or(Vec2::new(0.0, CROSSHAIR_UP));
-        let (left, top) = (Val::Percent((p.x + 1.0) * 50.0), Val::Percent((1.0 - p.y) * 50.0));
+        // (the pointer's place comes from the cursor over the window's size: a number that isn't
+        // finite is 0 and logged once, #349)
+        let (left, top) = (super::ui_guard::percent("the editor's pointer cross", (p.x + 1.0) * 50.0), super::ui_guard::percent("the editor's pointer cross", (1.0 - p.y) * 50.0));
         if node.left != left || node.top != top {
             (node.left, node.top) = (left, top);
         }

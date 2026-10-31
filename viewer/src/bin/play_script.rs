@@ -1052,7 +1052,8 @@ fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: 
     let dt = frame_dt(&time);
     let editing = mode.is_some_and(|m| *m.get() == super::editor::EditorMode::Edit);
     cs.letterbox_step(dt);
-    let height = Val::Percent(if editing { 0.0 } else { cs.bars * LETTERBOX_BAR * 100.0 });
+    // (the bars' share is an eased ratio: one that isn't finite is 0 and logged once, #349)
+    let height = super::ui_guard::percent("a letterbox bar's height", if editing { 0.0 } else { cs.bars * LETTERBOX_BAR * 100.0 });
     for mut n in &mut bars {
         if n.height != height {
             n.height = height;

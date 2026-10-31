@@ -309,7 +309,17 @@ fn update_marker(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 if let Some((at, depth)) = view.project(root.transform_point3(local)) {
                     // (640 r / d x the zoom in the game's view: GAME_TAN_ACROSS of the sphere's
                     // projected diameter, here in the demo's)
-                    marker.target = (at - marker.place, SIZE_SCALE * radius / depth * GAME_TAN_ACROSS / view.tan_across());
+                    let target = (at - marker.place, SIZE_SCALE * radius / depth * GAME_TAN_ACROSS / view.tan_across());
+                    // (a target whose place or size isn't finite, a NaN position or turn of it, or
+                    // of the camera, is no box to close on: the corners would carry the NaN on, and
+                    // bevy_ui's layout panics on it, #349)
+                    if target.0.is_finite() && target.1.is_finite() {
+                        marker.target = target;
+                    } else {
+                        super::ui_guard::once("marker target", || format!(
+                            "UI guard: the target marker's box for {} is {:?}, size {} (its position {:?}, yaw {}; depth {depth}): not used (#349)",
+                            unit_name(u), target.0, target.1, u.position, u.yaw));
+                    }
                 }
             }
         }
@@ -336,6 +346,14 @@ fn update_marker(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             let (left, right) = if k == 0 { (SLIDE_OUT, SLIDE_IN) } else { (SLIDE_IN, SLIDE_OUT) };
             let step_x = if d.x < 0.0 { (-dt * left).max(d.x) } else { (dt * right).min(d.x) };
             marker.corners[k] += Vec2::new(step_x, d.y.clamp(-dt * SLIDE_Y, dt * SLIDE_Y));
+            // (the corners are carried from frame to frame, so a NaN in one stays: back to where
+            // the marker is off, once saying so, #349)
+            if !marker.corners[k].is_finite() {
+                super::ui_guard::once(&format!("marker corner {k}"), || format!(
+                    "UI guard: the target marker's corner {k} was {:?} (goal {goal:?}, place {:?}, dt {dt}): put back off the screen (#349)",
+                    marker.corners[k], marker.place));
+                marker.corners[k] = Marker::off_point(k, shares);
+            }
         }
         // the wave scrolls whether it shows or not (0xb5310)
         marker.wave = (marker.wave + dt * WAVE_SPEED) % WAVE_WRAP;
