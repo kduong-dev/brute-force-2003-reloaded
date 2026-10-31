@@ -537,10 +537,11 @@ fn parse_orders(v: &str) -> Vec<TestOrder> {
 /// controlled character) in `<mode>` (`mode_named`: guard, wingman, follow, moveout or 0-5);
 /// Move To's point is x, z on the floor there. E.g. `BF_TEST_ORDER="all,fire@1;all,cover@3"`
 /// (take12's Fire At Will, then Cover Me), `BF_TEST_ORDER=hawk,move,-70.8,-79.5@2` (take08's).
-/// No order line is said (the menu's, `play_squad_menu.rs give`, is #320's: drive that with
-/// BF_TEST_COMMAND); the follow's walk line (play_brain.rs `Command::start_walk`) is, after a
-/// Fire At Will. The hook is read once, at the first frame: each order with whether
-/// it's been given (a bad entry is logged that once).
+/// **This hook says no order line**: the menu's (`play_squad_menu.rs give`, FUN_000c1630, #320)
+/// is said only by an order given through the menu, which BF_TEST_COMMAND drives. The follow's
+/// walk line (play_brain.rs `Command::start_walk`) is the member's own, not the order's, so a
+/// member says it after a Fire At Will given here too. The hook is read once, at the first
+/// frame: each order with whether it's been given (a bad entry is logged that once).
 fn test_orders(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut orders: Local<Option<Vec<(TestOrder, bool)>>>) {
     let orders = orders.get_or_insert_with(|| {
         std::env::var("BF_TEST_ORDER").map_or(vec![], |v| parse_orders(&v).into_iter().map(|o| (o, false)).collect())
@@ -757,12 +758,14 @@ mod tests {
         assert!(on(pass_round(start, point, Some(ahead + Vec2::new(-straight.y, straight.x) * 3.0)), straight));
     }
 
-    /// The follow's walk line is said once per order (FUN_00021b70's bit 0): the demo starts with it
-    /// said, Fire At Will (FUN_00018040, FUN_00018000) clears it, the control passing on from a
-    /// member in WINGMAN does too (FUN_00018230), Cover Me and Stand Ground leave it.
+    /// The follow's walk line is said once per order (FUN_00021b70's bit 0): a fresh brain has it
+    /// clear (the constructor, 0x175ce), so its first walk says it; Fire At Will (FUN_00018040,
+    /// FUN_00018000) clears it again, the control passing on from a member in WINGMAN does too
+    /// (FUN_00018230), Cover Me and Stand Ground leave it.
     #[test]
     fn the_walk_line_is_said_once_per_order() {
         let mut c = Command::default();
+        assert!(c.start_walk());
         assert!(!c.start_walk());
         c.set_mode(Mode::Guard, None);
         c.set_mode(Mode::Follow, None);

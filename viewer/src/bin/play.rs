@@ -2930,10 +2930,11 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         println!("t {:.2}: {} waits at a liquid that burns, {dist:.1} m from its place, at {:.2}", m.sim_time, unit_name(m), m.position);
     }
     let go = go && !shore;
-    // the follow's walk to its place begins (FUN_00021b70): the first since an order cleared the
-    // flag (Fire At Will, play_brain.rs `Command::start_walk`) says "on my way", through the gate.
-    // A stand-in for the game's follow state machine (#331): its walk starts where the formation
-    // sets off (a step out of the leader's line of fire isn't a walk to its place)
+    // the follow's walk to its place begins (FUN_00021b70): the first since the flag was cleared (a
+    // fresh brain's, or a Fire At Will's: play_brain.rs `Command::start_walk`) says "on my way",
+    // through the gate. A stand-in for the game's follow state machine (#331): its walk starts
+    // where the formation sets off (a step out of the leader's line of fire isn't a walk to its
+    // place)
     if go && !moving && dist > SLOT_START * spacing && m.command.start_walk() {
         chatter::say(m, chatter::FOLLOW_WALK);
     }

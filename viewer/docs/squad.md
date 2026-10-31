@@ -287,8 +287,10 @@ Squad movement and deaths follow the game's own data and the captures:
   watch logs. `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
   snapshot had them. The test map's NPCs (`BF_TEST_NPC`) have no brain, so they never post
   EVT_SQUAD_IMA_TARGET: only the level's characters do (a staged NPC enemy is the takes' frozen
-  one in that, whether it fights or not). `BF_TEST_ORDER` says no order line (the menu's, #320:
-  drive that with `BF_TEST_COMMAND` below, whose log `BF_CHATTER_LOG=1` shows the line's parts).
+  one in that, whether it fights or not). **`BF_TEST_ORDER` stays silent**: it says no order line
+  (the menu's, #320). The order lines are driven through `BF_TEST_COMMAND` below, the hook the
+  ticket asked for as delivered: it presses the real menu, so the line is said by `give`, and
+  `BF_CHATTER_LOG=1` shows its parts ([chatter.md](chatter.md), "Test hooks").
 
   Verified (`BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps; e34 staged as the takes, Tex at
   (-83.39, -82.79): `BF_MAP=e34 BF_TEST_GOTO=-83.39,-82.79,...,27 BF_TEST_NO_HOSTILES=1
@@ -417,9 +419,11 @@ Squad movement and deaths follow the game's own data and the captures:
     (116501dc Flint, f0c93785 Brutus, f5359692 Hawk, fb962749 Tex, 181b6433 a marine), the phrases
     (Stand Ground e104fe49, Fire At Will f5041bd5, Cover Me 1cdff35c, Move To f8046684), the
     answer eaf3546f and the parts' starts to within 0.05 s of the sum of the sounds' lengths +
-    0.2 s. After a Fire At Will, the first time a member's follow sets off to its place it says
-    1ecaeb98 ("on my way", 75%, once per order): the game's follow state 9, here the formation's
-    set-off, a stand-in until #331.
+    0.2 s. The first time a member's follow sets off to its place, from a fresh start (the brain's
+    flag is clear) or after a Fire At Will, it says 1ecaeb98 ("on my way", 75%), once per order:
+    the game's follow state 9, here the formation's set-off, a stand-in until #331 (chatter.md,
+    "The follow's walk": on e34's start the three members ask it at 9-10 s and Bratton's radio
+    mutes refuse them).
   * **The Move To cursor** (HUD+0x44, FUN_000bd860; the game runs meanwhile). Each frame
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
     level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the

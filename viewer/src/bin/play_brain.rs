@@ -233,10 +233,9 @@ pub struct Command {
     /// brain+0x3c4 bit 0: the follow's walk line, "on my way" (1ecaeb98), has been said for this
     /// order. FUN_00021b70, the follow's walk to its place, says it once and sets the bit;
     /// WINGMAN's mode change and its allow flags (FUN_00018040, FUN_00018000) clear it, and so does
-    /// EVT_LEADER_KILLED (not modelled). The demo starts it set: the game's constructor leaves it
-    /// clear, so a fresh level's first follow walk would say the line too, but every take started
-    /// from a snapshot taken mid-play with the squad already walking and none said it before an
-    /// order (#33 take04: a 40 m follow walk, no line); `start_walk`.
+    /// EVT_LEADER_KILLED (not modelled). The brain's constructor clears it (FUN_00016ff0 at
+    /// 0x175ce: `and edx, 0xfffff7c2` on +0x3c4, nothing sets it before), so a fresh brain's first
+    /// follow walk says the line and the demo starts it clear (`Command::default`); `start_walk`.
     pub walk_said: bool,
 }
 
@@ -246,10 +245,12 @@ impl Default for Command {
     /// get FREEWILL, but only the squad runs by this), and allow_combat and allow_cover set by the
     /// constructor's own `| 3` at its start, not by FUN_00018000 (which would clear them for
     /// FOLLOW): every take's fresh e34 start reads mode 1, allow a3, and take11's members fight at
-    /// once from it. The grant's timer stopped.
+    /// once from it. The grant's timer stopped, and the walk line's bit 0 clear (`walk_said`): the
+    /// takes' snapshots were taken mid-play with the squad past its first walk, none said it before
+    /// an order (#33 take04: a 40 m follow walk, no line), which a fresh start doesn't contradict.
     fn default() -> Self {
         Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, rounds: 0,
-                  walk_said: true }
+                  walk_said: false }
     }
 }
 

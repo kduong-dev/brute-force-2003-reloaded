@@ -167,9 +167,9 @@ pub const HAND_ANSWER: u32 = 0xE97C_E7FD;
 /// place of that (and starts the line itself when nobody else has).
 pub const HAND_MOVE_OUT: u32 = 0xED05_C0D7;
 /// 1ecaeb98: "on my way", the follow's walk to its place (FUN_00021b70 at 0x21cba), once per order
-/// (play_brain.rs `Command::start_walk`). Block: probability 75, replay delay 20 s, priority 2,
-/// a 5 s wait. #36 take12 (Brutus after Fire At Will, the gate call 0.2 s after the order's) and
-/// #33 take05 / take06 (Flint).
+/// and from a fresh brain's first walk (play_brain.rs `Command::start_walk`). Block: probability
+/// 75, replay delay 20 s, priority 2, a 5 s wait. #36 take12 (Brutus after Fire At Will, the gate
+/// call 0.2 s after the order's) and #33 take05 / take06 (Flint).
 pub const FOLLOW_WALK: u32 = 0x1ECA_EB98;
 /// The menu entries' names (FUN_000c1630's switch: 0-3), for the log.
 const ORDER_NAMES: [&str; 4] = ["Stand Ground", "Fire At Will", "Cover Me", "Move To"];
