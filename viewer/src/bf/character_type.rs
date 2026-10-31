@@ -46,7 +46,10 @@ const H_PORTRAIT: u32 = 0xF9D9_4425;
 const H_SKULL: u32 = 0x00C5_1907;
 /// The type's flag h_e78efbb2 (name not recovered; see `CharacterType::player_type`).
 const H_PLAYER_TYPE: u32 = 0xE78E_FBB2;
-/// The footstep type (h_072ab4af, an enum: the squad 1-4, the campaign Shrikes and hounds 0).
+/// The footstep type (h_072ab4af, an enum: the squad 1-4, the campaign Shrikes and hounds 0). On
+/// the squad types and every multiplayer type it is also the HUD slot, 1-4: the game's HUD squad
+/// list puts a character at its type's +0x150 (FUN_000c84e0; Tex 1, Flint 2, Brutus 3, Hawk 4), and
+/// each squad deathmatch squad has the four once each (#339, play_testsquad.rs `seat`).
 const H_FOOTSTEP: u32 = 0x072A_B4AF;
 /// The type's name tag (h_0d3bdcf5; the parse record's +0x1f0, which the Squad Command menu's
 /// order line reads, FUN_000c1630): the chatter tag the ordering character says to call a member
@@ -249,7 +252,8 @@ pub struct CharacterType {
     /// effects attached to the body (`<base><h_18b6ab72>`: effect, hardpoint): the hounds'
     /// gashound_bdy; empty entries left out. What starts them isn't traced
     pub attached_effects: Vec<(u32, u32)>,
-    /// footstep type (h_072ab4af) and `<movement-sounds jump-sound>` (0 none)
+    /// footstep type (h_072ab4af; also the HUD slot 1-4 of a squad or multiplayer type, see
+    /// `H_FOOTSTEP`; -1 when a type gives none) and `<movement-sounds jump-sound>` (0 none)
     pub footstep_type: i64,
     pub jump_sound: u32,
     /// h_0d3bdcf5 (type+0x1f0): the chatter tag the Squad Command menu's order line calls a member

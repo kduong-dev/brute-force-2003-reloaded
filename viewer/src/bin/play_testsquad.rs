@@ -22,19 +22,34 @@
 //!    player back where it stood RESPAWN_TIME later (the demo's rule).
 //!    Any other map keeps its own squad.
 //!  - **The menu** (T: its key is the tool registry's, play_editor.rs `TOOLS`; on any map of a
-//!    test session): Left / Right pick a slot, Up / Down (the wheel; Page Up / Down a page) a type,
+//!    test session): Left / Right pick a slot, Up / Down (the wheel; Page Up / Down a page) a row
+//!    of the list: the predefined squads first (below), then the character types. On a type,
 //!    Enter or a click puts a fresh one of that type in the slot (`change`: a member of another
 //!    type replaced where it stands, an empty slot's at its formation place round the leader, the
 //!    controlled character's changed in place: its position, heading, view and the squad's
 //!    inventory kept), Delete empties it (not the controlled character's). In the map editor's
 //!    edit mode, with the squad out of the world, it changes the roster the next play makes.
+//!  - **The predefined squads** (#339, `Preset`, `presets`): the campaign squad (common's Brutus,
+//!    Flint, Hawk and Tex) and the five squads squad deathmatch offers (game-options' `<squad>`
+//!    entries, `Game::option_squads`: Brute Force, Feral Hunting Pack, Shrike Raiders, Seer Coven
+//!    and Ferguson Platoon, by the game's own names). On a squad, Enter or a click fills all four
+//!    slots at once, each by the single-slot path above (`change`, the slots in the keys' order
+//!    Brutus, Flint, Hawk, Tex): your own slot becomes its member in place, the others appear at
+//!    their formation places round you (a member already there is replaced where it stands). A
+//!    squad's members are the four types of its library: each of its game-options characters
+//!    (h_fed0689a) names its type there (`GameCharacter::squad_type`, h_fa8c572a), and a match
+//!    loads the library (FUN_000d5f60). Each sits in the place its type's h_072ab4af names, the
+//!    HUD slot the game puts a character at on the radar (Tex 1 top, Flint 2 right, Brutus 3
+//!    bottom, Hawk 4 left: FUN_000c84e0, `seat`).
 //!  - **The roster** (`Roster`): each map's slots, as its start made them and the menu changed
 //!    them; the map editor's play (F5) makes its fresh squad from it (play_editor.rs `to_play`).
 //!
 //! Test hooks: BF_TEST_SQUAD, BF_TEST_FULL_SQUAD (the test map's start: `start_roster`);
-//! BF_TEST_SQUAD_MENU=<s> (T) and BF_TEST_SQUAD_SLOT=<s>,<slot>,<type|empty>[;...] (the menu's
-//! Enter or Delete), timed as the tools' hooks (play_testtools.rs `read_hooks`). BF_TOOLS_LOG=1
-//! prints the start squad and each change.
+//! BF_TEST_SQUAD_MENU=<s> (T), BF_TEST_SQUAD_SLOT=<s>,<slot>,<type|empty>[;...] (the menu's
+//! Enter or Delete on a type), BF_TEST_SQUAD_PRESET=<s>,<squad>[;...] (its Enter on a predefined
+//! squad) and BF_TEST_SQUAD_PICK=<s>,<squad|type>[,<slot>] (the row and slot its keys pick),
+//! timed as the tools' hooks (play_testtools.rs `read_hooks`). BF_TOOLS_LOG=1 prints the start
+//! squad, the squads the menu lists and each change.
 
 use super::*;
 use super::testtools::{fill_npc_list, npc_kind, title, Hook, NpcList, Panel, Script, Tools, LIST_LINES, MESSAGE_TIME};
@@ -58,13 +73,36 @@ impl Roster {
     }
 }
 
-/// The squad menu's picks: the slot (a CHARACTERS index) and the type (an index into the NPC
-/// menu's list, `NpcList`). A map's: reset as each one starts.
+/// The squad menu's picks: the slot (a CHARACTERS index) and the row of its list (`row`: the
+/// predefined squads, `Presets`, then the types of the NPC menu's list, `NpcList`). A map's: reset
+/// as each one starts.
 #[derive(Resource, Default)]
 struct Menu {
     slot: usize,
     pick: usize,
 }
+
+/// A predefined squad (#339): the type each of the four slots holds. The campaign squad and the
+/// five squad deathmatch squads of game-options, as `presets` makes them from the loaded data.
+#[derive(Clone, Debug)]
+struct Preset {
+    /// its name in the menu: the game's own for a squad deathmatch squad (game-options' `<squad
+    /// name>`, a string of the string table: "Shrike Raiders"), the demo's for the campaign's
+    name: String,
+    /// where its types are defined (`CharacterType::place`: "common", "mp_common/sdm_shrike")
+    place: String,
+    /// its library as a hook may name it: the squad's game-options `library-name` ("sdm_shrike"),
+    /// "common" for the campaign's
+    library: String,
+    /// the type each slot (a CHARACTERS index) holds, None for an empty one (every squad of the
+    /// data has four members, one for each place)
+    slots: [Option<u32>; SQUAD],
+}
+
+/// The menu's predefined squads (`presets`), made once a map's data is in (`squad_menu`) and
+/// again with each map.
+#[derive(Resource, Default)]
+struct Presets(Vec<Preset>);
 
 /// The squad menu's text, shown by play_testtools.rs's panel (`show_panel`).
 #[derive(Resource, Default)]
@@ -73,7 +111,7 @@ pub(super) struct SquadText(pub(super) String);
 /// The squad menu's systems: its state anew with each map, and the menu (after `read_input`,
 /// before control passes: `squad_control`).
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Menu>().init_resource::<SquadText>().init_resource::<Roster>()
+    app.init_resource::<Menu>().init_resource::<SquadText>().init_resource::<Roster>().init_resource::<Presets>()
         .add_systems(OnEnter(AppState::Playing), reset.after(setup).run_if(resource_exists::<super::testmap::TestMap>))
         .add_systems(Update, squad_menu.after(read_input).after(super::editor::open_tools).before(squad_control).run_if(super::testtools::active))
         .add_systems(Update, respawn.after(super::deathcam::death_cam).before(update_hud).run_if(super::testtools::active))
@@ -147,10 +185,107 @@ fn mirror_roster(roster: Res<Roster>) {
     }
 }
 
-/// A new map: the menu's picks anew (its slots are the map's: `begin_play` made its roster).
-fn reset(mut menu: ResMut<Menu>, mut text: ResMut<SquadText>) {
+/// A new map: the menu's picks anew (its slots are the map's: `begin_play` made its roster), and
+/// the predefined squads to be made again from the data it loads.
+fn reset(mut menu: ResMut<Menu>, mut text: ResMut<SquadText>, mut presets: ResMut<Presets>) {
     *menu = Menu::default();
     text.0.clear();
+    presets.0.clear();
+}
+
+/// Seats a squad's members in the four places (#339): each member is `(its type, its type's
+/// h_072ab4af)`, the HUD slot the game puts the character at on the radar (FUN_000c84e0 adds it to
+/// the HUD's squad list at its type's +0x150: Tex 1 top, Flint 2 right, Brutus 3 bottom, Hawk 4
+/// left; the d-pad and the Squad Command menu go by it too, play_squad_menu.rs `SLOT_ORDER`).
+/// Every squad of the data has the four slots once each, so each member lands in the place its
+/// type names. A member whose slot is out of 1-4 or already taken (not in the data: a guess) takes
+/// the first place still free in the keys' order, after the others are seated.
+fn seat(members: &[(u32, i64)]) -> [Option<u32>; SQUAD] {
+    let mut places = [None; SQUAD];
+    let mut over = vec![];
+    for &(kind, slot) in members {
+        match slot.checked_sub(1).and_then(|i| usize::try_from(i).ok()).and_then(|i| super::squad_menu::SLOT_ORDER.get(i)).copied() {
+            Some(c) if places[c].is_none() => places[c] = Some(kind),
+            _ => over.push(kind),
+        }
+    }
+    for kind in over {
+        if let Some(c) = (0..SQUAD).find(|&c| places[c].is_none()) {
+            places[c] = Some(kind);
+        }
+    }
+    places
+}
+
+/// The menu's predefined squads (#339), from the loaded data:
+///  - the campaign squad: common's Brutus, Flint, Hawk and Tex, each in its own place (the demo's
+///    name for it; the game has none);
+///  - then game-options' squad deathmatch squads (`Game::option_squads`, the file's order), by the
+///    game's names. Each member is a game-options character (`h_fed0689a`, e.g. `mp_tex`), and the
+///    type it stands for is its `squad_type` (h_fa8c572a: the type of that name in the squad's
+///    library, e.g. sdm_bf's Tex h_fa6ca831; the library a match loads, FUN_000d5f60, holds
+///    exactly the squad's four). It sits in the place its type's h_072ab4af names (`seat`).
+///
+/// A squad one of whose types isn't loaded with its model (the NPC menu's rule too) is left out,
+/// with a line in the log.
+fn presets(game: &Game) -> Vec<Preset> {
+    let loaded = |k: u32| game.character_type(k).is_some_and(|t| game.has_model(t));
+    let place = |k: u32| game.character_type(k).map_or_else(String::new, |t| t.place());
+    let mut out = vec![Preset {
+        name: "Campaign squad".into(),
+        place: place(squad_type(0)),
+        library: "common".into(),
+        slots: std::array::from_fn(|c| Some(squad_type(c))),
+    }];
+    for s in &game.option_squads {
+        let name = game.strings.get(&s.name).cloned().unwrap_or_else(|| format!("squad h_{:08x}", s.name));
+        let kinds: Vec<Option<u32>> = s.members.iter()
+            .map(|a| game.option_characters.iter().find(|c| c.archetype == *a).map(|c| c.squad_type).filter(|&k| loaded(k))).collect();
+        if kinds.is_empty() || kinds.iter().any(Option::is_none) {
+            println!("test map: squad {name} ({}): a member's type isn't loaded with its model: left out", s.library);
+            continue;
+        }
+        let members: Vec<(u32, i64)> = kinds.into_iter().flatten().map(|k| (k, game.character_type(k).map_or(0, |t| t.footstep_type))).collect();
+        out.push(Preset { name, place: place(members[0].0), library: s.library.clone(), slots: seat(&members) });
+    }
+    out
+}
+
+/// The predefined squad a hook names (#339): its number in the menu's list from 0, its name (any
+/// case: "shrike raiders"), its library ("sdm_shrike", or "shrike" for short; "common" for the
+/// campaign's), else the first whose name contains it ("campaign", "raiders").
+fn preset_named(list: &[Preset], s: &str) -> Option<usize> {
+    let s = s.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(i) = s.parse::<usize>() {
+        return (i < list.len()).then_some(i);
+    }
+    let short = |l: &str| l.to_ascii_lowercase().strip_prefix("sdm_").map(str::to_string);
+    list.iter().position(|p| p.name.to_ascii_lowercase() == s || p.library.to_ascii_lowercase() == s || short(&p.library).is_some_and(|l| l == s))
+        .or_else(|| list.iter().position(|p| p.name.to_ascii_lowercase().contains(&s)))
+}
+
+/// What a row of the menu's list is: a predefined squad (an index into `Presets`) or a character
+/// type (an index into the NPC menu's list). The squads come first.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Row {
+    Squad(usize),
+    Type(usize),
+}
+
+/// Row `pick` of the list with `squads` predefined squads before the types.
+fn row(pick: usize, squads: usize) -> Row {
+    if pick < squads { Row::Squad(pick) } else { Row::Type(pick - squads) }
+}
+
+/// What the menu is asked to do in a frame: put a type in a slot (None: empty it), or fill all
+/// four slots from a predefined squad (an index into `Presets`).
+#[derive(Clone, Copy, Debug)]
+enum Ask {
+    Slot(usize, Option<u32>),
+    Squad(usize),
 }
 
 /// The character type a hook names (as BF_TEST_NPC names one: play_testtools.rs `npc_kind`), if
@@ -365,22 +500,52 @@ fn label(kind: u32, types: &[(String, u32)], game: &Game) -> String {
     types.iter().find(|t| t.1 == kind).map_or_else(|| kind_name(kind, game), |t| t.0.clone())
 }
 
+/// A type's short name for a message or a squad's list of members: a squad type's capitalised
+/// ("Tex"), any other's display name ("Hunter Lord"), without where it's defined or its HP.
+fn short_name(kind: u32, game: &Game) -> String {
+    match squad_of(kind) {
+        OTHER => game.type_label(kind),
+        c => title(CHARACTERS[c]),
+    }
+}
+
+/// Makes the predefined squads once a map's data is in (`presets`); with BF_TOOLS_LOG it lists
+/// them, each with who holds which place.
+fn fill_presets(list: &mut Presets, game: &Game) {
+    if !list.0.is_empty() {
+        return;
+    }
+    list.0 = presets(game);
+    if std::env::var("BF_TOOLS_LOG").is_ok() {
+        println!("squad menu: {} predefined squads", list.0.len());
+        for p in &list.0 {
+            let who: Vec<String> = p.slots.iter().enumerate().map(|(c, k)| match k {
+                Some(k) => format!("{c} {} h_{k:08x}", kind_name(*k, game)),
+                None => format!("{c} empty"),
+            }).collect();
+            println!("  {} ({}): {}", p.name, p.place, who.join(", "));
+        }
+    }
+}
+
 /// The squad menu (T) and its hooks (see the module's notes), and its text. In play a change is
 /// made at once (the bodies replaced go, the shots on their way are dropped when members move in
 /// `Squad`), the roster with it; in edit mode the roster alone. A message says what changed or
 /// why not; BF_TOOLS_LOG prints it. A press of V by a character with no skill says so (a type of
-/// its own).
+/// its own). A predefined squad (a hook, Enter or a click on one of its rows) is its four slots
+/// put one after the other through the same steps as a single slot (#339), the message and the
+/// log then saying the squad.
 #[allow(clippy::too_many_arguments)]
 fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>,
               script: Res<Script>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut roster: ResMut<Roster>, mut menu: ResMut<Menu>,
               (mut hits, mut status, mode): (ResMut<AiHits>, ResMut<UsePanel>, Res<Mode>), game: Res<GameData>, mut npcs: ResMut<NpcList>,
-              mut text: ResMut<SquadText>) {
+              mut presets: ResMut<Presets>, mut text: ResMut<SquadText>) {
     fill_npc_list(&mut npcs, &game.0);
-    let types = &npcs.0;
+    fill_presets(&mut presets, &game.0);
+    let (types, squads) = (&npcs.0, &presets.0);
     let log = std::env::var("BF_TOOLS_LOG").is_ok();
     let me = player.character;
-    // (slot, its type or None, how it was asked for)
-    let mut asks: Vec<(usize, Option<u32>)> = vec![];
+    let mut asks: Vec<Ask> = vec![];
     for hook in &script.now {
         match hook {
             Hook::SquadMenu => tools.panel = if tools.panel == Panel::Squad { Panel::None } else { Panel::Squad },
@@ -390,32 +555,77 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
                     continue;
                 };
                 match kind.as_deref().map(|k| (k, named_type(&game.0, k))) {
-                    None => asks.push((c, None)),
-                    Some((_, Some(kind))) => asks.push((c, Some(kind))),
+                    None => asks.push(Ask::Slot(c, None)),
+                    Some((_, Some(kind))) => asks.push(Ask::Slot(c, Some(kind))),
                     Some((k, None)) => {
                         println!("test tools: no character type {k} with its model in the loaded data");
                         status.message = Some((format!("No character type {k}"), MESSAGE_TIME));
                     }
                 }
             }
+            Hook::SquadPreset(name) => match preset_named(squads, name) {
+                Some(i) => asks.push(Ask::Squad(i)),
+                None => {
+                    println!("test tools: no predefined squad {name} (they are: {})", squads.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
+                    status.message = Some((format!("No predefined squad {name}"), MESSAGE_TIME));
+                }
+            },
+            Hook::SquadPick { row, slot } => {
+                // (a squad first, else a type: its row after the squads)
+                let at = preset_named(squads, row)
+                    .or_else(|| named_type(&game.0, row).and_then(|k| types.iter().position(|t| t.1 == k)).map(|i| squads.len() + i));
+                match at {
+                    Some(at) => {
+                        tools.panel = Panel::Squad;
+                        menu.pick = at;
+                    }
+                    None => println!("test tools: no squad or character type {row} in the squad menu's list"),
+                }
+                if let Some(c) = slot.as_deref().and_then(|s| slot_named(s, me)) {
+                    menu.slot = c;
+                }
+            }
             _ => {}
         }
     }
     let open = tools.panel == Panel::Squad;
-    if open && !types.is_empty() {
+    let rows = squads.len() + types.len();
+    if open && rows > 0 {
         let step = |k: KeyCode| keys.just_pressed(k) as i32;
         let wheel = if scroll.delta.y < 0.0 { 1 } else if scroll.delta.y > 0.0 { -1 } else { 0 };
         let d = step(KeyCode::ArrowDown) - step(KeyCode::ArrowUp) + wheel + LIST_LINES as i32 * (step(KeyCode::PageDown) - step(KeyCode::PageUp));
-        menu.pick = (menu.pick as i32 + d).rem_euclid(types.len() as i32) as usize;
+        menu.pick = (menu.pick as i32 + d).rem_euclid(rows as i32) as usize;
         menu.slot = (menu.slot as i32 + step(KeyCode::ArrowRight) - step(KeyCode::ArrowLeft)).rem_euclid(SQUAD as i32) as usize;
         if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) || tools.click {
-            asks.push((menu.slot, Some(types[menu.pick].1)));
+            asks.push(match row(menu.pick, squads.len()) {
+                Row::Squad(i) => Ask::Squad(i),
+                Row::Type(i) => Ask::Slot(menu.slot, Some(types[i].1)),
+            });
         }
+        // (Delete empties the slot picked, whatever row is)
         if keys.just_pressed(KeyCode::Delete) {
-            asks.push((menu.slot, None));
+            asks.push(Ask::Slot(menu.slot, None));
         }
     }
-    for (c, kind) in asks {
+    // each slot to change: the slot, its type (None: empty), and the predefined squad it's part of
+    let mut puts: Vec<(usize, Option<u32>, Option<usize>)> = vec![];
+    for ask in asks {
+        match ask {
+            Ask::Slot(c, kind) => puts.push((c, kind, None)),
+            Ask::Squad(i) => puts.extend((0..SQUAD).map(|c| (c, squads[i].slots[c], Some(i)))),
+        }
+    }
+    // each predefined squad put: its index, how many slots took, why the others didn't (the first
+    // reason), and what you are if your slot did
+    let mut told: Vec<(usize, usize, Option<String>, Option<String>)> = vec![];
+    for (c, kind, via) in puts {
+        if let Some(i) = via.filter(|&i| !told.iter().any(|t| t.0 == i)) {
+            told.push((i, 0, None, None));
+            if log {
+                let p = &squads[i];
+                println!("t {:.2}: squad {} ({}) in all four slots", player.sim_time, p.name, p.place);
+            }
+        }
         let place = format!("slot {} ({}'s place)", c + 1, title(CHARACTERS[c]));
         let was = roster.0[c].map_or("empty".to_string(), |k| label(k, types, &game.0));
         let now = kind.map_or("empty".to_string(), |k| label(k, types, &game.0));
@@ -443,12 +653,22 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
         match done {
             Ok(()) => {
                 roster.0[c] = kind;
+                let you = kind.filter(|_| c == player.character && !tools.edit);
                 let what = match kind {
-                    Some(_) if c == player.character && !tools.edit => format!("You're {now} now"),
+                    Some(_) if you.is_some() => format!("You're {now} now"),
                     Some(_) => format!("Slot {}: {now}", c + 1),
                     None => format!("Slot {} emptied", c + 1),
                 };
-                status.message = Some((if tools.edit { format!("{what} (when play starts)") } else { what }, MESSAGE_TIME));
+                match via.and_then(|i| told.iter_mut().find(|t| t.0 == i)) {
+                    // (a predefined squad says itself once it's all put, below)
+                    Some(t) => {
+                        t.1 += 1;
+                        if let Some(k) = you {
+                            t.3 = Some(short_name(k, &game.0));
+                        }
+                    }
+                    None => status.message = Some((if tools.edit { format!("{what} (when play starts)") } else { what }, MESSAGE_TIME)),
+                }
                 if log {
                     let kind = kind.map_or(String::new(), |k| format!(" (h_{k:08x})"));
                     // (where its feet are, in play)
@@ -458,28 +678,56 @@ fn squad_menu(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, scroll: R
                 }
             }
             Err(why) => {
-                status.message = Some((why.clone(), MESSAGE_TIME));
+                match via.and_then(|i| told.iter_mut().find(|t| t.0 == i)) {
+                    Some(t) => {
+                        t.2.get_or_insert(why.clone());
+                    }
+                    None => status.message = Some((why.clone(), MESSAGE_TIME)),
+                }
                 if log {
                     println!("t {:.2}: squad {place}: {now} refused: {why}", player.sim_time);
                 }
             }
         }
     }
+    // a predefined squad put: what it did, in one message (the last one asked, if several)
+    for (i, took, why, you) in told {
+        let name = &squads[i].name;
+        let mut what = format!("Squad: {name}");
+        let notes: Vec<String> = [you.map(|y| format!("you're {y} now")), why.map(|w| format!("{} not put: {w}", SQUAD - took))].into_iter().flatten().collect();
+        if !notes.is_empty() {
+            what += &format!(" ({})", notes.join("; "));
+        }
+        if tools.edit {
+            what += " (when play starts)";
+        }
+        if log {
+            println!("t {:.2}: squad {name}: {took} of {SQUAD} slots put{}", player.sim_time, if tools.edit { " (the roster, for play)" } else { "" });
+        }
+        status.message = Some((what, MESSAGE_TIME));
+    }
     // (V with no skill: a type of its own has none, the menu's doing)
     if keys.just_pressed(KeyCode::KeyV) && player.skill.data.is_none() && !player.dead && !player.stand_in {
         status.message = Some((format!("{} has no special skill", display_name(&player, &game.0)), MESSAGE_TIME));
     }
-    let s = if open { panel_text(&menu, types, &roster, &player, &squad, &game.0, tools.edit, mode.deathmatch) } else { String::new() };
+    let s = if open { panel_text(&menu, types, squads, &roster, &player, &squad, &game.0, tools.edit, mode.deathmatch) } else { String::new() };
     if text.0 != s {
         text.0 = s;
     }
 }
 
+/// A predefined squad's row in the menu's list: its name and where its types are defined.
+fn squad_label(p: &Preset) -> String {
+    format!("{} ({})", p.name, p.place)
+}
+
 /// The squad menu's panel: the four slots (the one picked marked), who holds each (dead, or the
-/// controlled character's), what a type of its own lacks, a window of the types round the one
-/// picked, and the keys.
+/// controlled character's), what a type of its own lacks, a window of the list round the row
+/// picked (the predefined squads, then the types, under a heading each), and the keys; with a
+/// squad picked, who it would put in each place.
 #[allow(clippy::too_many_arguments)]
-fn panel_text(menu: &Menu, types: &[(String, u32)], roster: &Roster, player: &Player, squad: &Squad, game: &Game, edit: bool, deathmatch: bool) -> String {
+fn panel_text(menu: &Menu, types: &[(String, u32)], squads: &[Preset], roster: &Roster, player: &Player, squad: &Squad, game: &Game, edit: bool,
+              deathmatch: bool) -> String {
     let mut s = String::from("SQUAD   (T / Esc: close)\nslot (Left / Right):\n");
     let mut own = false;
     for c in 0..SQUAD {
@@ -501,19 +749,47 @@ fn panel_text(menu: &Menu, types: &[(String, u32)], roster: &Roster, player: &Pl
     if deathmatch {
         s += "  (played alone here: no squad to fill)\n";
     }
-    s += "type (Up / Down, wheel, Page Up / Down):\n";
-    let n = types.len();
+    s += "squad or type (Up / Down, wheel, Page Up / Down):\n";
+    let n = squads.len() + types.len();
     let first = menu.pick.saturating_sub(LIST_LINES / 2).min(n.saturating_sub(LIST_LINES));
-    for (i, t) in types.iter().enumerate().take((first + LIST_LINES).min(n)).skip(first) {
-        s += &format!("  {} {}\n", if i == menu.pick { ">" } else { " " }, t.0);
+    let mut group = "";
+    for i in first..(first + LIST_LINES).min(n) {
+        let (heading, label) = match row(i, squads.len()) {
+            Row::Squad(k) => ("predefined squads", squad_label(&squads[k])),
+            Row::Type(k) => ("character types", types[k].0.clone()),
+        };
+        if heading != group {
+            group = heading;
+            s += &format!("  [{heading}]\n");
+        }
+        s += &format!("  {} {label}\n", if i == menu.pick { ">" } else { " " });
     }
-    s += &format!("    ({} of {n} character types)\n", menu.pick + 1);
     let slot = menu.slot + 1;
-    s += &if menu.slot == player.character {
-        format!("click / Enter: {} it (slot {slot})", if edit { "the leader becomes" } else { "you become" })
-    } else {
-        format!("click / Enter: put it in slot {slot}   Delete: empty slot {slot}")
-    };
+    match row(menu.pick, squads.len()) {
+        Row::Squad(k) => {
+            let p = &squads[k];
+            s += &format!("click / Enter: all four slots become {}:\n", p.name);
+            for c in 0..SQUAD {
+                let who = p.slots[c].map_or("(empty)".to_string(), |k| short_name(k, game));
+                let you = if c == player.character { if edit { "   (leads at F5)" } else { "   (you)" } } else { "" };
+                s += &format!("  {}  {}'s place: {who}{you}\n", c + 1, title(CHARACTERS[c]));
+            }
+            if deathmatch {
+                s += "  (played alone: only your slot changes)\n";
+            }
+            if menu.slot != player.character {
+                s += &format!("Delete: empty slot {slot}");
+            }
+        }
+        Row::Type(k) => {
+            s += &format!("    ({} of {} character types)\n", k + 1, types.len());
+            s += &if menu.slot == player.character {
+                format!("click / Enter: {} it (slot {slot})", if edit { "the leader becomes" } else { "you become" })
+            } else {
+                format!("click / Enter: put it in slot {slot}   Delete: empty slot {slot}")
+            };
+        }
+    }
     s
 }
 
@@ -584,6 +860,80 @@ mod tests {
         assert_eq!(squad.0.len(), 2);
         assert_eq!(squad.0[0].character, 2);
         assert!(squad.0[1].npc.is_some());
+    }
+
+    /// A predefined squad of made-up types, for the name tests.
+    fn preset(name: &str, library: &str) -> Preset {
+        Preset { name: name.into(), place: format!("mp_common/{library}"), library: library.into(), slots: [Some(1), Some(2), Some(3), Some(4)] }
+    }
+
+    #[test]
+    fn a_squads_members_sit_in_the_places_their_hud_slots_name() {
+        // sdm_bf in game-options' order (Tex, Brutus, Hawk, Flint: h_072ab4af 1, 3, 4, 2): Brutus's
+        // place (bottom, slot 3) is the second member's, Tex's (top, slot 1) the first's
+        assert_eq!(seat(&[(10, 1), (11, 3), (12, 4), (13, 2)]), [Some(11), Some(13), Some(12), Some(10)]);
+        // sdm_seers (hound 4, priest 2, follower 3, shadoon 1): the order of the list doesn't matter
+        assert_eq!(seat(&[(20, 4), (21, 2), (22, 3), (23, 1)]), [Some(22), Some(21), Some(20), Some(23)]);
+        // a squad of the data's four has the four slots once each: every place filled
+        assert!(seat(&[(1, 1), (2, 2), (3, 3), (4, 4)]).iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn a_member_with_no_slot_of_its_own_takes_the_first_free_place() {
+        // slot 1 twice, 0 (no slot) and 7: the first takes Tex's place, the others the free ones
+        // in the keys' order (Brutus's, Flint's, Hawk's)
+        assert_eq!(seat(&[(10, 1), (11, 1), (12, 0), (13, 7)]), [Some(11), Some(12), Some(13), Some(10)]);
+        // fewer than four leaves the rest empty
+        assert_eq!(seat(&[(10, 2)]), [None, Some(10), None, None]);
+    }
+
+    #[test]
+    fn a_hook_names_a_squad_by_number_name_library_or_a_word() {
+        let list = [preset("Campaign squad", "common"), preset("Brute Force", "sdm_bf"), preset("Shrike Raiders", "sdm_shrike")];
+        assert_eq!(preset_named(&list, "2"), Some(2));
+        assert_eq!(preset_named(&list, "3"), None);
+        assert_eq!(preset_named(&list, "shrike raiders"), Some(2));
+        assert_eq!(preset_named(&list, " SDM_BF "), Some(1));
+        assert_eq!(preset_named(&list, "shrike"), Some(2));
+        assert_eq!(preset_named(&list, "common"), Some(0));
+        assert_eq!(preset_named(&list, "campaign"), Some(0));
+        assert_eq!(preset_named(&list, "raiders"), Some(2));
+        assert_eq!(preset_named(&list, "seers"), None);
+        // (nothing named is no squad, not the first)
+        assert_eq!(preset_named(&list, " "), None);
+    }
+
+    #[test]
+    fn the_list_has_the_squads_before_the_types() {
+        assert_eq!(row(0, 6), Row::Squad(0));
+        assert_eq!(row(5, 6), Row::Squad(5));
+        assert_eq!(row(6, 6), Row::Type(0));
+        assert_eq!(row(7, 0), Row::Type(7));
+    }
+
+    #[test]
+    fn a_squad_put_slot_by_slot_fills_the_four_places_round_the_leader() {
+        // Tex alone (slot 3) takes a squad of four others: the leader changes in place, the other
+        // three appear in the keys' order at the formation places, before the NPC
+        let (mut tex, mut squad) = squad(&[]);
+        let kinds = [0xA000_0001, 0xA000_0002, 0xA000_0003, SHRIKE];
+        for (c, kind) in kinds.into_iter().enumerate() {
+            change(c, Some(kind), &mut tex, &mut squad, false).expect("put");
+        }
+        assert_eq!((tex.character, tex.kind, tex.position.x, tex.position.z), (3, SHRIKE, 0.0, 8.0));
+        assert_eq!(squad.0.iter().map(|m| (m.character, m.kind, m.npc.is_some())).collect::<Vec<_>>(),
+                   vec![(0, 0xA000_0001, false), (1, 0xA000_0002, false), (2, 0xA000_0003, false), (0, squad_type(0), true)]);
+        assert_eq!(Roster::of(&tex, &squad).0, kinds.map(Some));
+        // (in deathmatch the three are refused and the leader's change stands)
+        let (mut tex, mut squad) = squad_alone();
+        assert!(change(0, Some(kinds[0]), &mut tex, &mut squad, true).is_err());
+        assert!(change(3, Some(kinds[3]), &mut tex, &mut squad, true).is_ok());
+        assert_eq!(squad.0.iter().filter(|m| m.in_squad()).count(), 0);
+    }
+
+    /// Tex alone, no NPC.
+    fn squad_alone() -> (Player, Squad) {
+        (Player::new(3), Squad(vec![]))
     }
 
     #[test]

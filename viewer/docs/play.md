@@ -34,7 +34,8 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
   (Tex, or `BF_CHARACTER`'s) and its other three slots empty. The squad menu (T) puts any
   character type in a slot, a real squad member (the formation, 1-4, the portraits and health
   channels, the hand-over at a death), empties one, or changes the player's own type where they
-  stand ([testtools.md](testtools.md), "The squad"). `BF_TEST_FULL_SQUAD=1` starts with the four
+  stand; or puts a whole predefined squad in all four (the campaign squad, or one of the five
+  squad deathmatch offers, #339: [testtools.md](testtools.md), "The squad"). `BF_TEST_FULL_SQUAD=1` starts with the four
   as before, `BF_TEST_SQUAD=<type>,<type>...` with those; a hook that acts on the squad's members
   (`BF_TEST_SELECT`, `BF_TEST_KILL`, `BF_TEST_TARGET` ...) starts it with the four too, so the
   recipes written for them run as before. Any other map (the L menu's levels, `--test

@@ -853,8 +853,9 @@ fn menu_orders(m: &mut SquadMenu, input: &MenuInput, player: &mut Player, squad:
 /// Brutus 0, Hawk 2 (the types' h_072ab4af, 1-4). FUN_000c8700 builds the selection vector the
 /// order goes from by walking the slots in this order, 1 to 4, and the order line names and
 /// answers in it (#33 take03: selected Hawk, Brutus, Flint in that order, the names and answers
-/// Flint, Brutus, Hawk).
-const SLOT_ORDER: [usize; SQUAD] = [3, 1, 0, 2];
+/// Flint, Brutus, Hawk). The test map's predefined squads (play_testsquad.rs `presets`, #339) put
+/// each member of a squad in the place its type's h_072ab4af names by it.
+pub(super) const SLOT_ORDER: [usize; SQUAD] = [3, 1, 0, 2];
 
 /// FUN_000c1280: the order to each selected member (by slot: every squad member has a brain).
 /// Stand Ground, Fire At Will, Cover Me and Move To set its command mode (play_orders.rs

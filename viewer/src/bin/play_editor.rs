@@ -170,7 +170,7 @@ pub(super) const TOOLS: [Tool; 7] = [
     Tool { key: KeyCode::KeyP, key_name: "P", panel: Panel::Scenery, name: "scenery", about: "any level's buildings and static scenery" },
     Tool { key: KeyCode::KeyO, key_name: "O", panel: Panel::Objects, name: "objects", about: "pickups, weapons, grenades, breakables" },
     Tool { key: KeyCode::KeyN, key_name: "N", panel: Panel::Npcs, name: "NPCs", about: "any character type, friend or enemy" },
-    Tool { key: KeyCode::KeyT, key_name: "T", panel: Panel::Squad, name: "squad", about: "any character type in each squad slot, or empty" },
+    Tool { key: KeyCode::KeyT, key_name: "T", panel: Panel::Squad, name: "squad", about: "any character type in each squad slot, or empty; or a predefined squad" },
     Tool { key: KeyCode::KeyY, key_name: "Y", panel: Panel::Sky, name: "sky", about: "any level's sky" },
     Tool { key: KeyCode::KeyU, key_name: "U", panel: Panel::Music, name: "music", about: "any level's music" },
     Tool { key: KeyCode::KeyL, key_name: "L", panel: Panel::Levels, name: "level", about: "the map to build on (what's placed goes)" },
