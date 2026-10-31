@@ -917,8 +917,8 @@ pub fn class_name(tag: u32) -> String {
 /// step 2, #221; the script, letterbox and warp triggers since step 3, #222; the sound- and
 /// dialog-triggers since step 4, #223; the message, input, menu and event triggers since step 5,
 /// #224; the level-over and zone triggers since step 7, #226; the radar-trigger and the damage
-/// plate since step 9, #228), and for those that do nothing a player sees (waypoint, evaluate:
-/// their base actions only).
+/// plate since step 9, #228; the waypoint trigger since #334, bf/nav.rs), and for the evaluate
+/// trigger, which does nothing a player sees (its base actions only).
 pub fn later_step(tag: u32) -> Option<&'static str> {
     (tag == 0x14CC_CFAA).then_some("a later step (object properties)")
 }

@@ -266,16 +266,61 @@ Squad movement and deaths follow the game's own data and the captures:
     those set to Stand Ground e97ce7fd, those sent moving out ed05c0d7 for the first and e97ce7fd
     for the rest (the far case isn't filmed; #36 take13 and take14's were near). Replay delay 30 s
     (the blocks'), so tapping back and forth says it once.
+  * **Toggle Ability** (#333; `play_orders.rs` `toggle_ability`, `toggle_goal`). The menu's White
+    entry changes no mode: FUN_000c1280 pushes GOAL_TOGGLE_COMBAT_SKILL (127) on each selected
+    member's goal stack (FUN_00024540, mode 2: on top and started at once; #35 take18: Hawk's goal
+    15 went 127 at the order and back to 15 at the switch). The goal table (FUN_00012b40) gives
+    goal 127 the goal holder's vtable +0x688 (start 0x36e80) and +0x690 (update 0x36f60):
+    * **its start** keeps the skill's state (brain+0x3c4 bit 6) and, when the skill wants its
+      character standing (the skill's +0x11c: Tex's and Flint's; Brutus's and Hawk's no), has the
+      brain stand (0x3f0e0 with 0: the crouch wanted cleared). (Its +0x10c branch, for a skill
+      that needs the brain's target, keeping its position at skill+0xc, is no squad skill's.)
+    * **its update**, each frame it's on top: with a +0x11c skill and the member kneeling or
+      crouch-walking (motion state 6 / 7) it waits; once the skill's state isn't the kept one it's
+      done; else it sends CT_TOGGLE_SPECIAL, the command V sends (the character's +0x15c with 8),
+      **every frame** until the skill has switched, so a refused toggle (Hawk's or Tex's clip
+      under way, a reload, under 10% to switch on) is asked again. The goal machine runs only the
+      top goal: the member stands meanwhile, firing nothing (one frame for Brutus and Flint, the
+      clip's event for Tex 0.5 s and Hawk 0.83 s, longer if it must stand up or wait for its
+      stamina). No time limit was found (inferred), so **a refusal that lasts holds the member
+      where it stands** until an order changes its mode or the player takes it: Tex with no gun
+      in his other weapon slot, or none with rounds after his top-up from the reserve; Flint
+      with the clip in hand empty and nothing to reload it from. `BF_SKILL_LOG` gives the first
+      refusal's reason, once a goal (`Skill::told`); the ones after go unlogged.
+    * A member a test hook holds where it is (`BF_TEST_HOSTILE`'s, `BF_TEST_TARGET`'s, which skip
+      the AI's goals) still runs the goal's command (`toggle_goal`), its standing left to the hook.
+    * The AI doesn't run while the game is paused, so the first command comes as the menu's
+      fade-out ends (take18: the order at 7.0 s, goal 127 from 7.09, Hawk stealthed at 8.30: the
+      0.3 s fade, her clip's 0.83 s event).
+    * The skill then runs under the AI as under the player (skills.md "The toggle"): the drain,
+      off at 0 stamina, at death, by its own ends (Tex's second gun dry, Flint's clip dry); the
+      skill sounds play only for the controlled character (FUN_0010e7a0: take18's AI Hawk is
+      silent), the lines go through the chatter gate. No personality uses goal 127 (#35 leads §5):
+      the AI never switches it again by itself, so it stays on till one of those or the next
+      order. Its look is each skill's own (skills.md): Hawk fades out, Tex draws his second gun
+      in his berserk motions, Flint with a rifle takes her sniper motions; **an AI Brutus shows
+      nothing**: his on (0x13c020) sets the vision mode and then, only with a player's view on him
+      (char+0x5e4, the camera FUN_0006ff00 attaches to the character it follows), the view's mode,
+      his kind-0x100 material controllers (the shell h_1ce41323) and the red fade; without one
+      it jumps past all three (0x13c038). So the orange view is the controlled Brutus's; ordered,
+      his Vengar has its rules (1 hit point a second, x0.85 damage, the charge) and no look. Not
+      filmed: no take has an AI Brutus in Vengar.
+    * A mode change while it runs (another order, FUN_00039f00) or the player taking the member
+      (FUN_00018150) pops it; the demo drops it at death too.
+  * **The radar's command tabs** (#333; play.md "Radar", `play_hud.rs` `update_tabs`): each
+    portrait's tab shows its member's mode, the controlled character's too: Cover Me's (FOLLOW)
+    green arrows, Stand Ground's (GUARD) yellow bars, Fire At Will's (WINGMAN) ring of red and
+    orange dots, Move To's (MOVE_OUT) blue arrow, each new one with a growing flash.
   * **Not done.** The game's follow itself (#331 for the squad, #243 for the marines:
     FUN_00020b10's state machine): in FOLLOW the
     takes' squad trails Tex's dash at 12-16 m and stops about 9 m behind him (take04), where the
     demo's formation keeps 1-5 m off him running and stops 4-11 m off, ahead of him (the five
     distances' roles are in the code map's FUN_00020b10 row); WINGMAN's members going on ahead
     of Tex and drifting 16-30 m off at rest (take05). The cover points that put a member of
-    mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit's heal (#329; Toggle
-    Ability is the menu's, #319, below), Move To's routes and its wait when there's none round a
-    player's character in the way (#242), the GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the
-    demo's fire from the spot).
+    mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit's heal (#329), Move To's
+    routes and its wait when there's none round a player's character in the way (#242), the
+    GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the spot), an event's goal
+    pushed over Toggle Ability's while it waits (the demo's member stands its whole time).
 
   Test hooks: `BF_TEST_ORDER=<member>,<mode>[,<x>,<z>][@<s>][;...]` gives each order at its time
   (1 s without one) as the menu does: `<member>` 0-3 or brutus / flint / hawk / tex, `me`, or
@@ -389,7 +434,8 @@ Squad movement and deaths follow the game's own data and the captures:
     Ground, X Move To, Black Medkit, White Toggle Ability. Move To, Medkit and Toggle first drop
     the controlled character from the selection; with someone left, Move To brings up the
     cursor and the rest go to each selected member (FUN_000c1280: `play_orders.rs` `order` for
-    the four modes; Toggle Ability asks its skill to switch, #35 take18's; **Medkit** pushes the
+    the four modes; Toggle Ability pushes GOAL_TOGGLE_COMBAT_SKILL, which switches the skill as
+    the game runs again, **Toggle Ability** above, #333; **Medkit** pushes the
     game's GOAL_HEAL, whose behaviour isn't traced (#329): the demo only logs it), with
     h_11d6f86a; the entry just given stays whole as the menu fades out (h_15262e1b) and the game
     runs again at the fade's end. BACK clears the selection: h_15262e1b and h_ffbe0bb9. Stand
@@ -428,8 +474,9 @@ Squad movement and deaths follow the game's own data and the captures:
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
     level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the
     crosshair's centre ray's point (`play_reticle.rs` `Reticle::point`) whose flags pass (+0x24
-    bit 14 set: h_0bb771a2; bit 15 clear: h_1346678f; +0x28 bit 2, set on every point:
-    FUN_00059b60) and that projects inside the 640 x 480 (FUN_0004d630, the filter 0xbdef0);
+    bit 14 set: h_0bb771a2; bit 15 clear: h_1346678f; +0x28 bit 2, valid: set on every point by
+    FUN_00059b60, then by the waypoint triggers' set-valid, the route graph's, [nav.md](nav.md),
+    #334) and that projects inside the 640 x 480 (FUN_0004d630, the filter 0xbdef0);
     with none (the view on the sky) the controlled character's place, and then A gives Cover Me
     (the +0xcc branch). Its marker, the object type h_18709e83's three-sided pyramid (mesh
     h_fa39b375, drawn as the level's objects are), stands on it turning a radian a second; "Look
@@ -510,6 +557,11 @@ Squad movement and deaths follow the game's own data and the captures:
   * take09 (`"...2:hawk:0.4;3:move;6:cancel"`): cancelled, the selection empty, nobody ordered;
     Toggle Ability (`9:hawk:0.4;10:toggle`) switches Hawk's stealth on as the game resumes;
     Medkit (`13:hawk:0.4;14:medkit`) logged only.
+  * Toggle Ability through its goal (#333; skills.md "How it was checked" has the recipes):
+    Brutus, Hawk and Flint on and off, Tex as an AI member with Brutus controlled, each command in
+    the first frame after the fade-out; Flint stood up first; on sdm_e34 Tex ordered under 10%
+    waited standing till 10% and switched on. The radar's tabs after each order: play.md "Radar",
+    "The command tabs".
   * The keys and the pad (`cargo test --bin bf_play squad_menu`, `the_keys`, `the_pad`): 1-4
     held and pressed, the order keys in the game's order, Backspace; the open menu taking the
     frame's presses, the pad's too (I or the pad's BACK opens no objectives menu); the cursor's

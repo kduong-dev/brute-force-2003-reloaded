@@ -1060,6 +1060,7 @@ fn main() {
         .add_plugins(faces::plugin)
         .add_plugins(chatter::plugin)
         .add_plugins(squad_menu::plugin)
+        .add_plugins(nav::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1199,6 +1200,8 @@ mod vision;
 mod chatter;
 #[path = "play_squad_menu.rs"]
 mod squad_menu;
+#[path = "play_nav.rs"]
+mod nav;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -4752,6 +4755,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             // (its goal by its command mode: the follow, GUARD's hold, MOVE_OUT's walk)
             orders::think(m, &player, slot, heading, dt, target, toward, &game.0);
+        } else {
+            // (held where it is by a test hook: a Toggle Ability goal's command still goes, as
+            // BF_TEST_HOSTILE's stealthed Hawk needs, #333)
+            orders::toggle_goal(m);
         }
         let Some(l) = m.loaded.take() else { continue };
         step_player(m, &l, &game.0, kits, dt, true, &mut transforms);

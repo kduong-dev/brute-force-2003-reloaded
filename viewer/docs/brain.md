@@ -326,9 +326,10 @@ todo/28-tutorial's takes:
   looks, crouches, walks), the home area (EVT_PAST_HOME_AREA), grenades.
 * **Routes.** The walks are straight lines, given up where they stall (not 0.1 m closer in 1 s:
   a guess): a walk home stops there, a patrol goes on to its next point. The game routes over
-  the level's world points: each `<world-point>` lists its neighbours in h_e3439383 (946 points
-  and 5982 links in the tutorial), and a waypoint-trigger (h_10ecb459) marks one valid or not;
-  the route search itself isn't traced. So in the tutorial (`BF_BRAIN_LOG`, every spawn fired
+  the level's world points (every kind, 1070 points and 6482 links in the tutorial), each
+  point's h_e3439383 its links, a waypoint-trigger (h_10ecb459) setting one valid or not. The
+  route search, the start and end nodes and the walk along a route are read and built since
+  #334 ([nav.md](nav.md)); the brains walk them in #336. So in the tutorial (`BF_BRAIN_LOG`, every spawn fired
   with Tex away): the base's patroller, TUTORIAL_terrorist_6, stalls 48 m short of its home just
   inside the gate and patrols from there, its first legs stalling until it's on the chain; the
   third building's 21 and 13 stall against its walls 12 and 31 m short of theirs (in take12 they

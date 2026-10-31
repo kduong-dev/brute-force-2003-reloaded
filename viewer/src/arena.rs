@@ -1889,6 +1889,13 @@ impl Arena {
             .map(|(t, i)| (t, i.and_then(|i| self.tris[i].piece.filter(|p| !p.1).map(|p| p.0 as usize))))
     }
 
+    /// `ray`, with what it meets first (`body_kind`; the flat floor's ground is `Terrain`): what
+    /// stops a route's corridor ray (#334), for bf_play's BF_ROUTE_LOG and bf_level's
+    /// BF_ROUTE_RAYS / BF_ROUTE_PROBE.
+    pub fn ray_kind(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(f32, BodyKind)> {
+        self.ray_tri(origin, dir, max).map(|(t, i)| (t, i.map_or(BodyKind::Terrain, |i| self.body_kind(self.tris[i].body))))
+    }
+
     /// `ray`, with the placed object it meets first (its index in `Level::objects`), if the
     /// nearest thing on the ray is part of one: what the crosshair's centre ray is on
     /// (play_reticle.rs).
