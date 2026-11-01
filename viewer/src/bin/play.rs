@@ -2648,8 +2648,9 @@ struct Player {
     dead: bool,
     /// the body once dead: the game's ragdoll (play_ragdoll.rs, #259)
     ragdoll: Option<ragdoll::Ragdoll>,
-    /// shoves requested of its ragdoll (the world's queue entries for it, FUN_000e00b0: the
-    /// Vengar's, the death's own behind `ragdoll::DEATH_SHOVE`), applied once it's built
+    /// shoves requested of its ragdoll (the world's queue entries for it, FUN_000e00b0
+    /// `ragdoll::request`: a death by a hit's two, a blast on a corpse's, the Vengar's), walked
+    /// from the update after it's built (`ragdoll::Ragdoll::walk`)
     shoves: Vec<ragdoll::Shove>,
     /// the push of what killed it (world, m/s): the demo's throw of its dropped guns (the
     /// ragdoll itself starts from the character's velocity, play_ragdoll.rs)
@@ -4812,9 +4813,9 @@ fn land_ai_shot(u: &mut Player, h: &PendingHit, game: &Game, difficulty: &damage
     let bled = u.blood.len();
     let alive = !u.dead;
     hurt(u, game, amount, chatter::Cause::hit(&hit), Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
-    // (a kill's own shoves on the body: behind ragdoll::DEATH_SHOVE)
+    // (a kill's own shoves on the body: the CBT_DEAD handler's, play_ragdoll.rs `death_shoves`)
     if alive && u.dead {
-        ragdoll::death_shoves(u, hit.bone(), at, h.dir, amount, hit.damage_type, hit.push);
+        ragdoll::death_shoves(u, hit.bone().into(), at, h.dir, amount, hit.damage_type, hit.push);
     }
     if let Some(b) = u.blood.get_mut(bled) {
         b.record = Some(hit.record());
@@ -4837,9 +4838,9 @@ fn land_player_shot(m: &mut Player, h: &PendingHit, game: &Game, difficulty: &da
     let bled = m.blood.len();
     let alive = !m.dead;
     hurt(m, game, amount, chatter::Cause::hit(&hit), Vec3::new(h.dir.x, 0.0, h.dir.z).normalize_or(Vec3::Z) * 4.0 + Vec3::Y * 1.5, at, h.ammo);
-    // (a kill's own shoves on the body: behind ragdoll::DEATH_SHOVE)
+    // (a kill's own shoves on the body: the CBT_DEAD handler's, play_ragdoll.rs `death_shoves`)
     if alive && m.dead {
-        ragdoll::death_shoves(m, hit.bone(), at, h.dir, amount, hit.damage_type, hit.push);
+        ragdoll::death_shoves(m, hit.bone().into(), at, h.dir, amount, hit.damage_type, hit.push);
     }
     if let Some(b) = m.blood.get_mut(bled) {
         b.record = Some(hit.record());
@@ -5256,15 +5257,12 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // (its name for the log, taken before its ragdoll is borrowed)
             let name = if std::env::var("BF_RAGDOLL_LOG").is_ok() { unit_name(u) } else { String::new() };
             if let Some(r) = u.ragdoll.as_mut() {
-                // the shoves asked of it, from the update after the one that built it (FUN_000d9a20
-                // takes the queue's shoves once the build is done)
-                if r.age > 0.0 {
-                    for s in u.shoves.drain(..) {
-                        r.shove(&s);
-                    }
-                }
                 r.step(dt);
-                if !name.is_empty() && (r.age <= 3.0 || (r.age * 2.0).fract() < dt * 2.0) {
+                // the shoves asked of it, a world update at a time from the second after the one
+                // that built it (FUN_000d9a20's walk of the queue: `Ragdoll::walk`)
+                r.walk(&mut u.shoves, dt);
+                // (BF_RAGDOLL_LOG=all: a line every frame, not the first 3 s and then each half second)
+                if !name.is_empty() && (r.age <= 3.0 || (r.age * 2.0).fract() < dt * 2.0 || std::env::var("BF_RAGDOLL_LOG").is_ok_and(|v| v == "all")) {
                     println!("{}", r.log_line(&name, r.age));
                 }
                 apply_pose(&l, &r.local_pose(), &mut transforms);

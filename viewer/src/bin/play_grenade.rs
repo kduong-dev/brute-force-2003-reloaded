@@ -888,12 +888,18 @@ fn stays(kit: &GrenadeKit) -> bool {
 pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: Vec3, own: f32, thrower: usize, kill: bool,
                             difficulty: &Difficulty, now: f32) -> Option<f32> {
     let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
-    // a corpse: the blast's push on its ragdoll's root body when the explosion pushes
-    // (FUN_00224a90, its Damage max as the blast's damage: play_ragdoll.rs `blast_corpse`, #259).
-    // With no cover test, as the grenades' blasts hurt the living here (their rule is the demo's
-    // until #112 gives them the game's: its ray from the blast to the body)
+    // a corpse: the damage handler's shove request and the explosion's own push of the root body
+    // (FUN_00224a90, its Damage max as the blast's damage: play_ragdoll.rs `blast_corpse`, #259,
+    // #307), the request's magnitude what the blast deals a living body at the root's distance
+    // (the same rule and factors, below). With no cover test, as the grenades' blasts hurt the
+    // living here (their rule is the demo's until #112 gives them the game's: its ray from the
+    // blast to the body)
     if u.dead {
-        ragdoll::blast_corpse(u, at, radius, max, kit.blast.push, |_| true);
+        let root = u.body_at.unwrap_or(u.position);
+        let k = (1.0 - root.distance(at) / radius).max(0.0);
+        let mut hit = Hit::new(max * k, "Damage max x (1 - d / r)", kit.blast.damage_type).source(Who::Squad(thrower));
+        let damage = hit.on(u, game, difficulty);
+        ragdoll::blast_corpse(u, at, radius, max, kit.blast.push, damage, kit.blast.damage_type, |_| true);
         return None;
     }
     let d = u.position.distance(at);
@@ -916,11 +922,14 @@ pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: V
     }
     hit.report(u, game, now);
     hurt(u, game, dealt, chatter::Cause::hit(&hit), (away * 6.0 + Vec3::Y * 4.0) * k, u.position + Vec3::Y * 1.0, -1);
-    // (a kill's own shoves on the body, behind ragdoll::DEATH_SHOVE: the blast's record has no
-    // part, and a push of 2 when its weapon's is 0, FUN_0022c4d0)
+    // (a kill's own shoves on the body, play_ragdoll.rs `death_shoves`: the blast's record has no
+    // part, FUN_00224a90 gives it the character's root as the body struck and the root's place
+    // as the point, the way from the blast's centre to it (take06 at the feet: up and away,
+    // take07 2.5 m off: away), and a push of 2 when its weapon's is 0, FUN_0022c4d0)
     if u.dead {
         let push = if kit.blast.push > 0.0 { kit.blast.push } else { 2.0 };
-        ragdoll::death_shoves(u, None, u.position + Vec3::Y * 1.0, away, dealt, kit.blast.damage_type, push);
+        let root = super::missile::root_point(u);
+        ragdoll::death_shoves(u, ragdoll::Target::Root, root, (root - at).normalize_or(Vec3::Y), dealt, kit.blast.damage_type, push);
     }
     if std::env::var("BF_COMBAT_LOG").is_ok() {
         println!("{} blast at {d:.1} m: {} takes {dealt:.1} -> {:.1} / {:.0}", kit.def.label, unit_name(u), u.health, u.max_health);

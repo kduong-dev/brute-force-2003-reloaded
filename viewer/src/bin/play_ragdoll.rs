@@ -33,9 +33,11 @@
 //!    the build gives only to a character that moves. One that stood still stays as it stood for
 //!    REST_WAKE s, then goes (or at once if something pushes it): a fit to the takes' frozen
 //!    Shrikes, which hold their pose 0.35-0.45 s, though the game's body is simulated from the
-//!    build (FUN_00114b80 puts each ball into the simulation at once, FUN_002b3c60). No other
-//!    push on a death: the CBT_DEAD handler's shove and up-kick (FUN_00115f90) are in the code
-//!    but in no take, so they wait behind DEATH_SHOVE.
+//!    build (FUN_00114b80 puts each ball into the simulation at once, FUN_002b3c60). #307's live
+//!    read shows no such hold (the bodies move from the build), and a guess is that those takes'
+//!    own stand was their hit log's breakpoints stopping the machine at the damage path. A death
+//!    by a hit throws the body (below); only a death with no hit (a fall, a liquid, a test
+//!    hook's) is left to this hold, which no take has measured.
 //!  - **The step** (Ipion): 66 steps a second whatever the frame rate, gravity 9.81, damping
 //!    `v *= 1 - k dt` (0.95 a second linear, 0.5 angular, +0.1 once calm), contact with the level's
 //!    faces (`Arena::faces_near`) with friction 4 and restitution 0.04: a body that lands stays.
@@ -43,10 +45,14 @@
 //!    15-19 steps Ipion's movement check (FUN_002bb980, FUN_002be350) finds each body moving,
 //!    calm or still by how far it went since its references, and freezes the ragdoll once all
 //!    are still (`movement_check`, `CHECK_EVERY`).
-//!  - **Pushes**: the queued shove (FUN_00127c60: `Ragdoll::shove`, the Vengar's charge,
-//!    play_vengar.rs); a blast's push on a corpse's root body (FUN_00224a90: `Ragdoll::blast`);
-//!    a shot into a body on the ground, the demo's placeholder (`Ragdoll::shot`, spec S6.5); the
-//!    Energy grenade's bolt (`Ragdoll::fling`, play_energy.rs).
+//!  - **Pushes**: the world's queue of shoves for a ragdoll (FUN_000e00b0 `request`, which merges
+//!    what is asked, walked a game frame at a time by FUN_000d9a20, `Ragdoll::walk`, each applied
+//!    by FUN_00127c60, `Ragdoll::shove`): the CBT_DEAD handler's two requests for a death by a
+//!    hit (FUN_00115f90: `death_shoves`, #307), a blast's on a corpse (the damage handler's,
+//!    0x125853: `blast_corpse`) and the Vengar's charge (play_vengar.rs); a blast's own push on a
+//!    corpse's root body (FUN_00224a90: `Ragdoll::blast`); a shot into a body on the ground, the
+//!    demo's placeholder (`Ragdoll::shot`, spec S6.5); the Energy grenade's bolt
+//!    (`Ragdoll::fling`, play_energy.rs).
 //!
 //! The solver (the demo's, not the game's: Ipion solves a ragdoll's joints together as one linear
 //! system each step, FUN_002db0a0 / FUN_002db5a0): extended position-based dynamics (Müller et
@@ -181,27 +187,37 @@ const MAX_POINTS: usize = 26;
 /// FUN_00127c60's shove: every body but the one struck takes min(SHOVE_ALL x magnitude x factor,
 /// SHOVE_ALL_CAP) N s along the shove (0x3c05f4, 0x3c05e8; only with a factor of 1 or more); the
 /// one struck min(SHOVE_HIT x magnitude x factor, SHOVE_HIT_CAP) more at the point (0x3c05f0,
-/// 0x3c05ec); none while the root goes faster than SHOVE_TOP_SPEED m/s.
+/// 0x3c05ec). #307's live read (take01-10) matched the sums of the bodies' momentum jumps to
+/// these within the load below.
 const SHOVE_ALL: f32 = 0.5;
 const SHOVE_ALL_CAP: f32 = 75.0;
 const SHOVE_HIT: f32 = 8.0;
 const SHOVE_HIT_CAP: f32 = 300.0;
-const SHOVE_TOP_SPEED: f32 = 100.0;
-/// ... times L = (1 - w) x 0.4 + 0.6, w the world's load (world+0xc58, FUN_000d9090's measure of
-/// explosions and living objects, #151): 1 in a quiet scene, which the demo takes.
-const SHOVE_LOAD: f32 = 1.0;
+/// ... none while the root core's speed SQUARED is over this (m^2/s^2): the function opens with
+/// `FUN_0010ff10(core + 0xac) <= 100.0`, and FUN_0010ff10 returns x^2 + y^2 + z^2, so a root
+/// faster than 10 m/s (a hard throw) refuses the next request. (#280 read it as a speed of 100
+/// m/s.) The world's walk drops a refused entry (FUN_000d9a20 0xd9bca-0xd9be3: the test of the
+/// result jumps to the same removal as a shove that landed), so the up-kick behind a hard throw
+/// is lost, not retried; take08's weak throw (root 7.6 m/s) takes its up-kick at once.
+const SHOVE_TOP_SPEED_SQ: f32 = 100.0;
+/// ... times L = (1 - w) x 0.4 + 0.6, w the world's load (world+0xc58, FUN_000d9090: a count of
+/// the world's live objects and explosions, #151, which the demo doesn't keep). The seven takes'
+/// momentum jumps give L = 0.86 to 0.97 (take01 0.86, take02 0.87, take09 0.89, take10 0.89,
+/// take06 0.91, take07 0.92, take08 0.97): a fit of 0.9, w 0.25, to them.
+const SHOVE_LOAD: f32 = 0.9;
 /// ... and a shove of damage type 10 (DTYPE_EXPLOSION) has a factor of at least 3.
 const EXPLOSION_TYPE: i64 = 10;
 const EXPLOSION_FACTOR: f32 = 3.0;
-/// The CBT_DEAD handler's shoves (FUN_00115f90 -> FUN_000e00b0): the hit's (magnitude 2 x the
-/// damage, the damage type, the weapon's push as the factor, at the point struck, on the part
-/// struck: 0x11607a) and the up-kick (magnitude 1, type 0, factor UP_KICK = 36, 0x39dfa0,
-/// straight up on every body: 0x116124; not in the air nor knocked down). As written, an L-Shot
-/// kill would throw a body at the Vengar's ~16 m/s and every death would hop 3.8 m/s up, which
-/// none of the eight filmed deaths does (todo/280-ragdoll answer §2.5, §3; spec S6.4): off until
-/// a live read (the shot list's A1) settles it. True turns both on.
-pub const DEATH_SHOVE: bool = false;
+/// The CBT_DEAD handler's up-kick (FUN_00115f90 -> FUN_000e00b0 at 0x116124): magnitude 1, type 0,
+/// factor 36 (0x39dfa0), straight up (DAT_004a8cd0) on no body, so min(0.5 x 1 x 36, 75) = 18 N s
+/// a body, about 3.2 m/s up for the whole of it (take08: +3.2 m/s mean in the frame after it).
+/// Not in the air (movement mode 2 or 3) nor knocked down (motion type 25).
 const UP_KICK: f32 = 36.0;
+/// The world update (FUN_000d9a20) that first walks a ragdoll's queue, counted from the one that
+/// built it: the built bodies first show at the second sample of the takes' per-frame reads and
+/// the first kick two samples later (take01, 02, 06, 07, 09, 10; take08's a sample later), the
+/// up-kick the update after it.
+const FIRST_WALK: u32 = 2;
 /// A blast's push on a corpse's root body (FUN_00224a90): 1.5 (0x3bc6f0) x (1.2 - d / r)^2 x the
 /// blast's damage N s, away from the blast, d the body's distance from it and r its radius, when
 /// the weapon's push is 1 or more.
@@ -282,18 +298,66 @@ pub fn parts(game: &Game, u: &Player) -> Vec<u32> {
     damage::hit_bones(game, u).iter().map(|b| b.bone).collect()
 }
 
-/// A shove request (an entry of the world's ragdoll queue, FUN_000e00b0): the part struck (its
-/// bone's name hash; None: none, every body alike), the point and the way, its magnitude, damage
-/// type and factor. Applied once the ragdoll is built (FUN_000d9a20 takes the queue's shoves in
-/// the update after the build).
+/// The body a shove's point is on (FUN_000e00b0's ECX): none, the root body (char+0x500: what
+/// a blast meets of a corpse, FUN_00224a90 at 0x224e41), or the hit part of a bone (its name hash).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Target {
+    None,
+    Root,
+    Bone(u32),
+}
+
+impl From<Option<u32>> for Target {
+    /// A hit's struck bone (`damage::Hit::bone`) as the body hit: None is no body.
+    fn from(bone: Option<u32>) -> Self {
+        bone.map_or(Target::None, Target::Bone)
+    }
+}
+
+/// A shove request (an entry of the world's ragdoll queue, FUN_000e00b0): the body struck, the
+/// point and the way (not normalised: FUN_00127c60 does), its magnitude, damage type and factor.
+/// Walked a game frame at a time from two updates after the build (`Ragdoll::walk`).
 #[derive(Clone, Copy, Debug)]
 pub struct Shove {
-    pub bone: Option<u32>,
+    pub target: Target,
     pub point: Vec3,
     pub dir: Vec3,
     pub magnitude: f32,
     pub kind: i64,
     pub factor: f32,
+}
+
+/// FUN_000e00b0: ask for a shove on a character's ragdoll (queued or built: the caller's), into
+/// its entries of the world's queue `queue`. The first entry with a magnitude, if it's for the
+/// same body, takes the request in (its point and way moved toward the new by the new's share of
+/// the two magnitudes, their magnitudes and factors summed, the type of the larger); for another
+/// body it's replaced only by a request more than five times stronger in both magnitude and
+/// factor; otherwise the next entry is tried, and the request becomes a new one at the end. (An
+/// entry with no magnitude, the bare one the death's build queue makes, takes the request over:
+/// the demo's queue has none.) So a kill's two requests stay two entries (take01: the hit's, 80 x
+/// 4, and the up-kick's, 1 x 36), while two blasts' for one body (a corpse's root) add up.
+pub fn request(queue: &mut Vec<Shove>, s: Shove) {
+    for e in queue.iter_mut() {
+        if e.magnitude != 0.0 {
+            if e.target == s.target {
+                let w = s.magnitude / (s.magnitude + e.magnitude);
+                e.point = e.point.lerp(s.point, w);
+                e.dir = e.dir.lerp(s.dir, w);
+                if s.magnitude > e.magnitude {
+                    e.kind = s.kind;
+                }
+                e.magnitude += s.magnitude;
+                e.factor += s.factor;
+                return;
+            }
+            if !(e.magnitude * 5.0 < s.magnitude && e.factor * 5.0 < s.factor) {
+                continue;
+            }
+        }
+        *e = s;
+        return;
+    }
+    queue.push(s);
 }
 
 /// How a ragdoll starts: a death (the game's: the character's velocity, `START_IMPULSE`) or the
@@ -465,6 +529,10 @@ pub struct Ragdoll {
     wake_at: Option<f32>,
     /// seconds since it started
     pub age: f32,
+    /// the world's updates (FUN_000d9a20, `GAME_FRAME` long) walked since it was built, and the
+    /// time owed to the next (s): `Ragdoll::walk`
+    updates: u32,
+    frame_clock: f32,
     /// the bone names, for the log
     names: Vec<u32>,
 }
@@ -650,7 +718,7 @@ impl Ragdoll {
         let root_frame0 = bodies[0].frame();
         let mut r = Ragdoll { bodies, joints, body_of, parent, local, frame, root_frame0, posed: vec![Mat4::IDENTITY; n], owed: 0.0, floor,
                               body: bf_viewer::arena::Body::Thing, contacts: vec![], clock: 0.0, countdown: CHECK_EVERY, asleep: wake_at.is_some(),
-                              wake_at, age: 0.0, names: model.bones[..n].to_vec() };
+                              wake_at, age: 0.0, updates: 0, frame_clock: 0.0, names: model.bones[..n].to_vec() };
         r.pose();
         if std::env::var("BF_RAGDOLL_LOG").is_ok() {
             r.log_build(start);
@@ -747,16 +815,65 @@ impl Ragdoll {
         world::arena().and_then(|a| a.floor_below(p.x, p.z, p.y + 0.5, self.body)).map_or(self.floor, |f| f.0)
     }
 
+    /// The root core's velocity (char+0x500's body: the node's ball, the first part of the first
+    /// piece): what FUN_00127c60 gates on.
+    fn root_velocity(&self) -> Vec3 {
+        let b = &self.bodies[0];
+        b.v + b.w.cross(b.at(b.parts[0].centre) - b.x)
+    }
+
+    /// Each of the game's bodies' cores now: its place and velocity (world), the root's first.
+    /// What the takes' per-frame reads log (core+0x12c and core+0xac), for `log_line`.
+    fn cores(&self) -> impl Iterator<Item = (Vec3, Vec3)> + '_ {
+        self.bodies.iter().flat_map(|b| b.parts.iter().map(move |p| {
+            let c = b.at(p.centre);
+            (c, b.v + b.w.cross(c - b.x))
+        }))
+    }
+
+    /// FUN_000d9a20's walk of the world's queue (0xd9b54-0xd9c28) for this ragdoll's entries,
+    /// run for `dt` s of game time: once a world update (`GAME_FRAME`, 30 a second), from the
+    /// `FIRST_WALK`th since the build, it takes the queue's first entry, applies it and drops it
+    /// whether it landed or not, and stops there when it landed with a factor over 0 (a factor of 0
+    /// lets it go on to the next). So a death's two requests land a frame apart, the hit's
+    /// first, and the up-kick lands only if the throw has slowed to 10 m/s. Called after the
+    /// frame's `step`: a shove lands at the end of the frame its update falls in.
+    pub fn walk(&mut self, queue: &mut Vec<Shove>, dt: f32) {
+        self.frame_clock += dt.max(0.0);
+        while self.frame_clock >= GAME_FRAME {
+            self.frame_clock -= GAME_FRAME;
+            self.updates += 1;
+            if self.updates < FIRST_WALK {
+                continue;
+            }
+            while !queue.is_empty() {
+                let s = queue.remove(0);
+                if self.shove(&s) && s.factor != 0.0 {
+                    break;
+                }
+            }
+        }
+    }
+
     /// FUN_00127c60: a queued shove (`Shove`) on the built ragdoll, on each of the game's bodies.
-    pub fn shove(&mut self, s: &Shove) {
-        let root = self.bodies[0].v.length();
+    /// Whether it landed (the game's return: anything applied). Nothing with no magnitude or
+    /// way, or while the root core's speed squared is over `SHOVE_TOP_SPEED_SQ`.
+    pub fn shove(&mut self, s: &Shove) -> bool {
         let dir = s.dir.normalize_or_zero();
-        if s.magnitude <= 0.0 || root > SHOVE_TOP_SPEED || dir == Vec3::ZERO {
-            return;
+        let speed = self.root_velocity().length_squared();
+        if s.magnitude <= 0.0 || dir == Vec3::ZERO || speed > SHOVE_TOP_SPEED_SQ {
+            if s.magnitude > 0.0 && std::env::var("BF_RAGDOLL_LOG").is_ok() {
+                println!("ragdoll shove refused: magnitude {:.1} type {} factor {:.1}: the root goes {:.2} m/s", s.magnitude, s.kind, s.factor, speed.sqrt());
+            }
+            return false;
         }
         let factor = if s.kind == EXPLOSION_TYPE && s.factor < EXPLOSION_FACTOR { EXPLOSION_FACTOR } else { s.factor };
         let all = if factor >= 1.0 { (SHOVE_ALL * s.magnitude * factor).min(SHOVE_ALL_CAP) * SHOVE_LOAD } else { 0.0 };
-        let struck = s.bone.and_then(|b| self.names.iter().position(|&x| x == b)).and_then(|i| self.body_of.get(i).copied().flatten());
+        let struck = match s.target {
+            Target::None => None,
+            Target::Root => Some((0, 0)),
+            Target::Bone(b) => self.names.iter().position(|&x| x == b).and_then(|i| self.body_of.get(i).copied().flatten()),
+        };
         let hit = (SHOVE_HIT * s.magnitude * if factor > 0.0 { factor } else { 1.0 }).min(SHOVE_HIT_CAP) * SHOVE_LOAD + all;
         for (bi, b) in self.bodies.iter_mut().enumerate() {
             for pi in 0..b.parts.len() {
@@ -773,6 +890,7 @@ impl Ragdoll {
             println!("ragdoll shove: magnitude {:.1} type {} factor {factor:.1} along {dir:.2}: {all:.1} N s on every body{}", s.magnitude, s.kind,
                      if struck.is_some() { format!(", {hit:.1} N s on the part struck") } else { String::new() });
         }
+        all > 0.0 || struck.is_some()
     }
 
     /// FUN_00224a90's push of a blast (at `at`, radius `radius`, its damage `damage`) on a
@@ -1168,12 +1286,12 @@ impl Ragdoll {
         }
     }
 
-    /// BF_RAGDOLL_LOG's line for this frame: the root body's place and speed, the fastest body and
-    /// spin, the trunk's lowest point over the floor under it (the root's piece and the chest's),
-    /// the worst joint gap, the contacts, how many bodies the last movement check found calm and
-    /// still, asleep.
+    /// BF_RAGDOLL_LOG's line for this frame: the root body's place and speed, the game's bodies'
+    /// mean speed and velocity and the highest core (#307: the numbers its takes' per-frame reads
+    /// give), the fastest body and spin, the trunk's lowest point over the floor under it (the
+    /// root's piece and the chest's), the worst joint gap, the contacts, how many bodies the last
+    /// movement check found calm and still, asleep.
     pub fn log_line(&self, who: &str, since: f32) -> String {
-        let root = &self.bodies[0];
         let chest = self.names.iter().position(|&b| b == SPINE2).and_then(|i| self.body_of[i]).map(|(b, _)| b);
         let trunk = [Some(0), chest].into_iter().flatten().map(|i| {
             let b = &self.bodies[i];
@@ -1188,9 +1306,20 @@ impl Ragdoll {
         let spin = self.bodies.iter().max_by(|a, b| a.w.length().total_cmp(&b.w.length())).map_or((0.0, String::new()), |b| (b.w.length(), label(b)));
         let calm = self.bodies.iter().filter(|b| b.state == 2).count();
         let still = self.bodies.iter().filter(|b| b.state == 3).count();
-        format!("ragdoll {who} t {since:.2}: root at {:.2} going {:.2} m/s ({:.2} up), fastest body {:.2} m/s ({}), fastest spin {:.2} rad/s ({}), trunk {trunk:.3} m over the floor, worst joint gap {:.4} m, {} contacts, {calm} calm and {still} still of {}{}",
-                self.root(), root.v.length(), root.v.y, fastest.0, fastest.1, spin.0, spin.1, gap, self.contacts.len(), self.bodies.len(),
-                if self.asleep { ", asleep" } else { "" })
+        // (the takes' per-frame reads of the cores, #307: the mean speed of the game's bodies and
+        // the highest core, `cores`)
+        let cores: Vec<(Vec3, Vec3)> = self.cores().collect();
+        if std::env::var("BF_RAGDOLL_CORES").is_ok() {
+            for (i, ((p, v), part)) in cores.iter().zip(self.bodies.iter().flat_map(|b| b.parts.iter())).enumerate() {
+                println!("  core {i} {}: at {p:.2} v {v:.2}", part.bone.map_or("node".to_string(), |k| bone_name(self.names[k])));
+            }
+        }
+        let mean = cores.iter().map(|c| c.1.length()).sum::<f32>() / cores.len().max(1) as f32;
+        let mean_v = cores.iter().map(|c| c.1).sum::<Vec3>() / cores.len().max(1) as f32;
+        let top = cores.iter().map(|c| c.0.y).fold(f32::MIN, f32::max);
+        format!("ragdoll {who} t {since:.2}: root at {:.2} going {:.2} m/s ({:.2} up), mean core speed {mean:.2} m/s (mean velocity {mean_v:.2}), top core {top:.2}, fastest body {:.2} m/s ({}), fastest spin {:.2} rad/s ({}), trunk {trunk:.3} m over the floor (the floor under the root {:.2}), worst joint gap {:.4} m, {} contacts, {calm} calm and {still} still of {}{}",
+                self.root(), self.root_velocity().length(), self.root_velocity().y, fastest.0, fastest.1, spin.0, spin.1, self.floor_under(self.root()), gap, self.contacts.len(),
+                self.bodies.len(), if self.asleep { ", asleep" } else { "" })
     }
 
     /// The bodies and joints for BF_RAGDOLL_DRAW: each body's surface edges and balls (a cross
@@ -1236,32 +1365,61 @@ fn draw_ragdolls(player: Res<Player>, squad: Res<Squad>, mut gizmos: Gizmos) {
     }
 }
 
-/// The CBT_DEAD handler's shove requests for a hit that killed `u` (FUN_00115f90 -> FUN_000e00b0
-/// at 0x11607a and 0x116124): the hit's, magnitude 2 x the damage `damage` of type `kind` at
-/// `at` along `dir` with the weapon's push `push` as the factor on the part struck `bone`, and
-/// the up-kick unless `u` is in the air. Only with DEATH_SHOVE (off: no take shows them).
-pub fn death_shoves(u: &mut Player, bone: Option<u32>, at: Vec3, dir: Vec3, damage: f32, kind: i64, push: f32) {
-    if !DEATH_SHOVE {
-        return;
+/// The CBT_DEAD handler's two shove requests for a hit that killed `u` (FUN_00115f90 case 0x4e,
+/// FUN_000e00b0 at 0x11607a and 0x116124; #307's live read, take01-take10), to the world's queue
+/// `u.shoves`:
+///  * the hit's: magnitude 2 x the damage `damage` the hit dealt (the record's +8 after the
+///    victim's factors, 0x125600 and FUN_002232d0: the whole of it, not what was left of the hit
+///    points), its damage type `kind`, the weapon's push `push` (the record's +0x54, h_e39b994b)
+///    as the factor, at the point struck `at` along the hit's way `dir` on the body hit `target`;
+///  * the up-kick: magnitude 1, type 0, factor `UP_KICK`, up, on no body; not when `u` is in the
+///    air nor knocked down.
+/// The handler asks for them only when the damage record's bit 3 (+0x5c & 8) is set, which every
+/// hit traced has; a death with no hit (a fall, a liquid, a test hook's) never calls this.
+pub fn death_shoves(u: &mut Player, target: Target, at: Vec3, dir: Vec3, damage: f32, kind: i64, push: f32) {
+    let hit = Shove { target, point: at, dir, magnitude: 2.0 * damage, kind, factor: push };
+    request(&mut u.shoves, hit);
+    let up = !u.action.airborne() && u.knock.is_none();
+    if up {
+        request(&mut u.shoves, Shove { target: Target::None, point: u.position, dir: Vec3::Y, magnitude: 1.0, kind: 0, factor: UP_KICK });
     }
-    u.shoves.push(Shove { bone, point: at, dir, magnitude: 2.0 * damage, kind, factor: push });
-    if !u.action.airborne() {
-        u.shoves.push(Shove { bone: None, point: u.position, dir: Vec3::Y, magnitude: 1.0, kind: 0, factor: UP_KICK });
+    if std::env::var("BF_RAGDOLL_LOG").is_ok() {
+        println!("ragdoll {}: death shoves asked: magnitude {:.1} type {kind} factor {push:.1} at {at:.2} along {dir:.2} on {target:?}{}", unit_name(u),
+                 hit.magnitude, if up { ", then the up-kick" } else { "" });
     }
 }
 
-/// A blast's push on `u` if it's a corpse with a ragdoll (FUN_00224a90: `Ragdoll::blast`), when
-/// the blast's weapon pushes (`push`, its bullet's h_e39b994b, 1 or more) and the blast meets
-/// the body: one of its hit parts within the radius that `clear` says the blast sees (the game
-/// gathers a character through a hit-part body in its ball with a clear ray from the blast's
-/// centre to that body, FUN_002b3970, the same test as the living's).
-pub fn blast_corpse(u: &mut Player, at: Vec3, radius: f32, damage: f32, push: f32, clear: impl Fn(Vec3) -> bool) {
-    if push < 1.0 || !u.dead {
+/// A blast's hit on `u` if it's a corpse with a ragdoll, when the blast meets the body: one of
+/// its hit parts within the radius that `clear` says the blast sees (the game gathers a character
+/// through a hit-part body in its ball with a clear ray from the blast's centre to that body,
+/// FUN_002b3970, the same test as the living's). FUN_00224a90 takes the body hit to be the root
+/// (0x224e41) and does two things:
+///  * the damage goes through the character's damage handler as any hit does, and the handler
+///    of a character whose ragdoll is queued or built asks for a shove (0x125853, FUN_000e00b0):
+///    magnitude `damage` (what the blast would deal a living body: its record's +8 after the
+///    victim's factors), type `kind`, factor 0, the root struck at the root's place, away from the
+///    blast's centre `at`. A type of 10 raises the factor to 3 (`shove`), so every body is
+///    pushed by min(0.5 x damage x 3, 75): take10's Frag, 44.6, threw the corpse's whole body list
+///    at 15.5 m/s (#280 had the root alone);
+///  * when the blast's weapon pushes (`push`, its bullet's h_e39b994b, 1 or more), a push of the
+///    root by FUN_00224a90's own rule (`Ragdoll::blast`, by the blast's roll `damage_roll`).
+#[allow(clippy::too_many_arguments)]
+pub fn blast_corpse(u: &mut Player, at: Vec3, radius: f32, damage_roll: f32, push: f32, damage: f32, kind: i64, clear: impl Fn(Vec3) -> bool) {
+    if !u.dead {
         return;
     }
-    if let Some(r) = u.ragdoll.as_mut() {
-        if r.hit_points().any(|p| p.distance(at) <= radius && clear(p)) {
-            r.blast(at, radius, damage);
+    let Some(r) = u.ragdoll.as_mut() else { return };
+    if !r.hit_points().any(|p| p.distance(at) <= radius && clear(p)) {
+        return;
+    }
+    let root = r.root();
+    if damage > 0.0 {
+        let away = (root - at).normalize_or(Vec3::Y);
+        request(&mut u.shoves, Shove { target: Target::Root, point: root, dir: away, magnitude: damage, kind, factor: 0.0 });
+    }
+    if push >= 1.0 {
+        if let Some(r) = u.ragdoll.as_mut() {
+            r.blast(at, radius, damage_roll);
         }
     }
 }
@@ -1473,7 +1631,7 @@ mod tests {
         let mut r = Ragdoll { bodies, joints, body_of: vec![], parent: vec![], local: vec![], frame: Mat4::IDENTITY, root_frame0: Mat4::IDENTITY,
                               posed: vec![], owed: 0.0, floor: 0.0, body: bf_viewer::arena::Body::Thing, contacts: vec![], clock: 0.0,
                               countdown: CHECK_EVERY, asleep: false, wake_at: None,
-                              age: 0.0, names: vec![] };
+                              age: 0.0, updates: 0, frame_clock: 0.0, names: vec![] };
         fresh(&mut r);
         r
     }
@@ -1685,6 +1843,127 @@ mod tests {
             last = e;
         }
         assert!(r.asleep, "{:?} {:?}", r.bodies[0].w, r.bodies[0].v);
+    }
+
+    /// A shove request at the origin on `target` (the bar tests: the first part of the first body
+    /// is the root).
+    fn shove_of(target: Target, magnitude: f32, kind: i64, factor: f32, dir: Vec3) -> Shove {
+        Shove { target, point: Vec3::ZERO, dir, magnitude, kind, factor }
+    }
+
+    /// FUN_000e00b0: a kill's two requests stay two entries (the up-kick's body, none, differs
+    /// and is nowhere near five times the hit's), the hit's body keeps its place; a second request
+    /// for the same body is blended into its entry (magnitudes and factors summed, point and way
+    /// moved by the new one's share, the type of the larger); a request for another body replaces
+    /// an entry only when it is more than five times its magnitude and its factor.
+    #[test]
+    fn requests_merge_as_the_game_does() {
+        let hit = Shove { point: Vec3::new(0.0, 1.0, 0.0), ..shove_of(Target::Bone(7), 80.0, 1, 4.0, Vec3::Z) };
+        let up = shove_of(Target::None, 1.0, 0, UP_KICK, Vec3::Y);
+        let mut q = vec![];
+        request(&mut q, hit);
+        request(&mut q, up);
+        assert_eq!(q.len(), 2);
+        assert_eq!(q[0].target, Target::Bone(7));
+        assert_eq!(q[1].target, Target::None);
+        // the same body again: 20 more of a blast's type 10, along x, at the origin
+        let more = shove_of(Target::Bone(7), 20.0, 10, 4.0, Vec3::X);
+        request(&mut q, more);
+        assert_eq!(q.len(), 2);
+        assert!((q[0].magnitude - 100.0).abs() < 1e-4 && (q[0].factor - 8.0).abs() < 1e-4, "{:?}", q[0]);
+        assert_eq!(q[0].kind, 1, "the larger's type");
+        // (a share of 20 / 100 of the way: the point's y 1 -> 0.8, the way z 1 -> 0.8 and x 0 -> 0.2)
+        assert!((q[0].point.y - 0.8).abs() < 1e-4 && (q[0].dir.x - 0.2).abs() < 1e-4 && (q[0].dir.z - 0.8).abs() < 1e-4, "{:?}", q[0]);
+        // a request for the root, 5x the hit's magnitude and factor in both: replaces it...
+        let mut q = vec![hit];
+        request(&mut q, shove_of(Target::Root, 401.0, 10, 20.1, Vec3::X));
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].target, Target::Root);
+        // ... but not at exactly 5x in one of them: it becomes a second entry
+        let mut q = vec![hit];
+        request(&mut q, shove_of(Target::Root, 401.0, 10, 20.0, Vec3::X));
+        assert_eq!(q.len(), 2);
+    }
+
+    /// Bars of the game's limb mass in a row, unjoined, `v` the first one's speed along x: a ragdoll
+    /// for the shove tests (its root is the first bar's part).
+    fn bars(n: usize, v: f32) -> Ragdoll {
+        let mut bodies: Vec<Body> = (0..n).map(|k| bar(Vec3::new(0.0, 5.0 + k as f32, 0.0), LIMB_MASS)).collect();
+        bodies[0].v = Vec3::new(v, 0.0, 0.0);
+        test_ragdoll(bodies, vec![])
+    }
+
+    /// FUN_00127c60: every body but the one struck takes min(0.5 x magnitude x factor, 75) x L
+    /// N s, the one struck min(8 x magnitude x factor, 300) x L more at its point; type 10 raises a
+    /// factor under 3 to 3; a factor under 1 pushes only the one struck.
+    #[test]
+    fn a_shove_gives_each_body_its_share() {
+        // the up-kick (magnitude 1 x factor 36): 18 L on each body, none struck
+        let mut r = bars(3, 0.0);
+        assert!(r.shove(&shove_of(Target::None, 1.0, 0, UP_KICK, Vec3::Y)));
+        for b in &r.bodies {
+            assert!((b.v.y - 18.0 * SHOVE_LOAD / LIMB_MASS).abs() < 1e-4, "{:?}", b.v);
+        }
+        // a rifle kill (80 x 4) on the root: every other body the 75 cap, the root that and 300 more
+        let mut r = bars(3, 0.0);
+        assert!(r.shove(&shove_of(Target::Root, 80.0, 1, 4.0, Vec3::X)));
+        assert!((r.bodies[1].v.x - 75.0 * SHOVE_LOAD / LIMB_MASS).abs() < 1e-3);
+        assert!((r.bodies[0].v.x - (75.0 + 300.0) * SHOVE_LOAD / LIMB_MASS).abs() < 1e-3, "{:?}", r.bodies[0].v);
+        // a blast's factor 0 on a corpse (44.6, type 10) is a 3: 0.5 x 44.6 x 3 = 66.9 on the others,
+        // and 300 (the cap of 8 x 44.6 x 3) more on the struck
+        let mut r = bars(3, 0.0);
+        assert!(r.shove(&shove_of(Target::Root, 44.6, 10, 0.0, Vec3::X)));
+        assert!((r.bodies[2].v.x - 66.9 * SHOVE_LOAD / LIMB_MASS).abs() < 1e-3, "{:?}", r.bodies[2].v);
+        assert!((r.bodies[0].v.x - (66.9 + 300.0) * SHOVE_LOAD / LIMB_MASS).abs() < 1e-3);
+        // a blast of type 1 with factor 0 pushes the one struck alone, 8 x magnitude
+        let mut r = bars(3, 0.0);
+        assert!(r.shove(&shove_of(Target::Root, 10.0, 1, 0.0, Vec3::X)));
+        assert!(r.bodies[1].v.length() < 1e-6 && (r.bodies[0].v.x - 80.0 * SHOVE_LOAD / LIMB_MASS).abs() < 1e-3);
+    }
+
+    /// The gate: no shove while the root core's speed SQUARED is over 100 (FUN_0010ff10 returns
+    /// x^2 + y^2 + z^2), so 10 m/s lets one through and 10.1 doesn't, and a shove with no magnitude
+    /// or no way does nothing.
+    #[test]
+    fn a_shove_waits_for_a_slow_root() {
+        let up = shove_of(Target::None, 1.0, 0, UP_KICK, Vec3::Y);
+        let mut slow = bars(2, 10.0);
+        assert!(slow.shove(&up) && slow.bodies[1].v.y > 3.0);
+        let mut fast = bars(2, 10.1);
+        assert!(!fast.shove(&up) && fast.bodies[1].v == Vec3::ZERO);
+        assert!(!bars(2, 0.0).shove(&shove_of(Target::None, 0.0, 0, 36.0, Vec3::Y)));
+        assert!(!bars(2, 0.0).shove(&shove_of(Target::None, 1.0, 0, 36.0, Vec3::ZERO)));
+    }
+
+    /// FUN_000d9a20's walk: nothing for a ragdoll's first update, then one request a world update,
+    /// the hit's first; a request the gate refuses is dropped, not retried (take01-02: a hard
+    /// throw loses its up-kick), and one that lands with a factor of 0 lets the walk go on.
+    #[test]
+    fn the_queue_is_walked_a_frame_at_a_time() {
+        let hit = shove_of(Target::Root, 80.0, 1, 4.0, Vec3::X);
+        let up = shove_of(Target::None, 1.0, 0, UP_KICK, Vec3::Y);
+        let mut r = bars(3, 0.0);
+        let mut q = vec![hit, up];
+        r.walk(&mut q, GAME_FRAME);
+        assert_eq!(q.len(), 2, "the first update walks nothing");
+        r.walk(&mut q, GAME_FRAME);
+        assert_eq!(q.len(), 1, "the hit lands the second update");
+        assert!(r.bodies[1].v.x > 10.0);
+        // (the root is over 10 m/s now, the up-kick is refused and dropped)
+        r.walk(&mut q, GAME_FRAME);
+        assert!(q.is_empty() && r.bodies[1].v.y == 0.0, "{:?}", r.bodies[1].v);
+        // a weak hit leaves the root slow: the up-kick lands the update after it
+        let mut r = bars(3, 0.0);
+        let mut q = vec![shove_of(Target::Root, 1.0, 1, 4.0, Vec3::X), up];
+        r.walk(&mut q, 2.0 * GAME_FRAME + 0.001);
+        assert_eq!(q.len(), 1);
+        r.walk(&mut q, GAME_FRAME);
+        assert!(q.is_empty() && r.bodies[1].v.y > 3.0, "{:?}", r.bodies[1].v);
+        // a factor of 0 lands and the walk goes on to the next request in the same update
+        let mut r = bars(3, 0.0);
+        let mut q = vec![shove_of(Target::Root, 5.0, 1, 0.0, Vec3::X), up];
+        r.walk(&mut q, 2.0 * GAME_FRAME + 0.001);
+        assert!(q.is_empty() && r.bodies[1].v.y > 3.0);
     }
 
     /// A chain of four bodies dropped onto the floor with their joints at a limit comes to rest

@@ -107,7 +107,7 @@ const LINE_CHARGE: u32 = 0x1360_1F7B;
 /// thrown against the tower. The same way is the hit's push (it aims the blood and throws the
 /// dropped guns, play.rs).
 fn knock_back(velocity: Vec3, cfg: &bf_viewer::bf::character::VengarSkill, at: Vec3) -> ragdoll::Shove {
-    ragdoll::Shove { bone: None, point: at, dir: Vec3::new(velocity.x, cfg.knock_up, velocity.z), magnitude: cfg.knock_force, kind: 0, factor: cfg.knock_weight }
+    ragdoll::Shove { target: ragdoll::Target::None, point: at, dir: Vec3::new(velocity.x, cfg.knock_up, velocity.z), magnitude: cfg.knock_force, kind: 0, factor: cfg.knock_weight }
 }
 
 /// How long the view's colour fade takes to go from its colour to none (s): the 0.6 FUN_000c6980 is
@@ -308,7 +308,7 @@ fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<
             hurt(v, &game.0, amount, chatter::Cause::hit(&hit), shove.dir, at.translation, -1);
             // a kill: the knock-back on its ragdoll, once it's built
             if v.dead && before > 0.0 {
-                v.shoves.push(shove);
+                ragdoll::request(&mut v.shoves, shove);
             }
             if log {
                 println!("t={now:.2} {}: the charge hits {} at {:.2} m, {:.0} deg off his facing: {amount:.1} ({before:.1} -> {:.1} hp){}",

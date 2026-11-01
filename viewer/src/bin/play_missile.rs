@@ -1227,6 +1227,11 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
         let push = Vec3::new(bl.dir.x, 0.0, bl.dir.z).normalize_or(Vec3::Z) * HIT_PUSH.0 + Vec3::Y * HIT_PUSH.1;
         let before = u.health;
         hurt_still(u, game, amount, &hit, push, bl.at);
+        // (a kill's own shoves on the body: the record's push is the weapon's, FUN_0022c4d0, the
+        // point where the missile struck it, the way it was going, play_ragdoll.rs `death_shoves`)
+        if u.dead && before > 0.0 {
+            ragdoll::death_shoves(u, bone.map(|b| b.bone).into(), bl.at, bl.dir, amount, def.damage_type, def.push);
+        }
         if controlled && u.health < before {
             tint.0 = 0.0;
         }
@@ -1316,6 +1321,20 @@ fn shake(shake: &mut CameraShake, at: Vec3, eye: Vec3, def: &WeaponDef) {
     shake.kick(strength * falloff, SHAKE_HOLD, falloff * SHAKE_FALL);
 }
 
+/// A blast's share of its roll for a body whose root is at `root` (FUN_00224a90's entry point:
+/// the character's position, vtable +0x40), within `radius`: half the roll, flat, or with the
+/// Damage core rule (`WeaponDef::blast_core`, h_011cb154) the whole roll to half the radius, then
+/// (1 - 2 (d / r - 0.5))^2 of it. The character's size term, its skill's vtable +0xe0, is 0 for
+/// the squad.
+fn blast_share(def: &WeaponDef, b: &PendingBlast, radius: f32, root: Vec3) -> f32 {
+    if def.blast_core {
+        let x = root.distance(b.at) / radius;
+        if x <= 0.5 { b.roll } else { (1.0 - 2.0 * (x - 0.5)).clamp(0.0, 1.0).powi(2) * b.roll }
+    } else {
+        b.roll * BLAST_SHARE
+    }
+}
+
 /// The blasts whose delay is out (FUN_00224770 -> FUN_0022c4d0): every living body the blast's
 /// ball meets (one of its hit parts within the Damage radius and BLAST_PART_REACH more), with
 /// nothing of the world between the blast and the bone of a part it meets, takes the share (half
@@ -1324,7 +1343,9 @@ fn shake(shake: &mut CameraShake, at: Vec3, eye: Vec3, def: &WeaponDef) {
 /// own side (the shooter too), x the victim's step and damage-type factor (play_damage.rs); the
 /// player's view goes red. No living body is moved (FUN_00224a90 pushes only loose objects and a
 /// corpse's root body, `ragdoll::blast_corpse`; the push given to `hurt_still` only aims the blood
-/// and throws the guns of a body it kills). Then the scorches and sounds due.
+/// and throws the guns of a body it kills); a body it kills is thrown by the death's own shoves
+/// (`ragdoll::death_shoves`, #307), and a corpse by the damage handler's (`blast_corpse`). Then the
+/// scorches and sounds due.
 #[allow(clippy::too_many_arguments)]
 fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>, mut state: ResMut<MissileState>,
                mut tint: ResMut<ScreenTint>, mut decals: ResMut<super::fx::DecalRequests>, test: Option<Res<super::testmap::TestMap>>,
@@ -1347,11 +1368,15 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
         let human = player.who() == b.owner;
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if u.dead {
-                // a corpse: the blast's push on its ragdoll's root body, by its roll, when the
-                // weapon pushes and the blast sees one of its hit parts, as it must the living's
-                // (FUN_00224a90, play_ragdoll.rs `blast_corpse`, #259)
+                // a corpse: the damage handler's shove request (the share a living body at the
+                // root's place would take: the same rule and factors as below) and, when the
+                // weapon pushes, the blast's own push of its ragdoll's root body, by its roll,
+                // when the blast sees one of its hit parts, as it must the living's
+                // (FUN_00224a90, play_ragdoll.rs `blast_corpse`, #259, #307)
                 let eye = b.eye;
-                ragdoll::blast_corpse(u, b.at, radius, b.roll, def.push, |p| {
+                let share = blast_share(def, &b, radius, u.body_at.unwrap_or(u.position));
+                let dealt = damage::Hit::new(share, "the share", def.damage_type).by(b.owner, b.team, u).on(u, &game.0, &difficulty);
+                ragdoll::blast_corpse(u, b.at, radius, b.roll, def.push, dealt, def.damage_type, |p| {
                     let to = p - eye;
                     to.length() <= 0.05 || ray_hit(eye, to.normalize(), to.length()).is_none()
                 });
@@ -1396,14 +1421,7 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
                 }
                 continue;
             }
-            let share = if def.blast_core {
-                // (the character's size term, its skill's vtable +0xe0, is 0 for the squad; the
-                // entry's point is the character's position, vtable +0x40: its root, FUN_00224a90)
-                let x = root_point(u).distance(b.at) / radius;
-                if x <= 0.5 { b.roll } else { (1.0 - 2.0 * (x - 0.5)).clamp(0.0, 1.0).powi(2) * b.roll }
-            } else {
-                b.roll * BLAST_SHARE
-            };
+            let share = blast_share(def, &b, radius, root_point(u));
             let kind = if def.blast_core { "the core rule's share" } else { "half the roll" };
             let mut hit = damage::Hit::new(share, kind, def.damage_type).by(b.owner, b.team, u);
             let amount = hit.land(u, &game.0, &difficulty, now);
@@ -1411,10 +1429,14 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             let away = Vec3::new(f.x - b.at.x, 0.0, f.z - b.at.z).normalize_or(Vec3::X);
             let before = u.health;
             hurt_still(u, &game.0, amount, &hit, away * BLAST_PUSH.0 + Vec3::Y * BLAST_PUSH.1, middle);
-            // (a kill's own shoves on the body, behind ragdoll::DEATH_SHOVE: the blast's record
-            // has no part, and a push of 2 when its weapon's is 0, FUN_0022c4d0)
+            // (a kill's own shoves on the body, play_ragdoll.rs `death_shoves`: the blast's record
+            // has no part, FUN_00224a90 gives it the character's root as the body struck and its
+            // place as the point, the way from the blast's centre to it, and a push of 2 when its
+            // weapon's is 0, FUN_0022c4d0)
             if u.dead && before > 0.0 {
-                ragdoll::death_shoves(u, None, middle, away, amount, def.damage_type, if def.push > 0.0 { def.push } else { 2.0 });
+                let root = root_point(u);
+                ragdoll::death_shoves(u, ragdoll::Target::Root, root, (root - b.eye).normalize_or(Vec3::Y), amount, def.damage_type,
+                                      if def.push > 0.0 { def.push } else { 2.0 });
             }
             if k == 0 && u.health < before {
                 tint.0 = 0.0;
