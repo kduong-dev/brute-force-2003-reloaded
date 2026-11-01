@@ -448,9 +448,17 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   Cogburn@e01,Corporal Stout@e05" BF_TEST_KILL=0|1|2` (the marines, with portraits and no skull):
   each place goes blank when its marine dies. Against the squad deathmatch footage (`todo/reference/
   Friendly Fire 2 + Death Cam.mp4`, 31.5 s, Brutus's skull at the bottom) the skull's size and
-  place agree to a couple of units; its colour differs, as the demo's notch fill (the dark blue
-  rectangles behind the faces) shows through the skull's alpha of 170 (the game's skull sits on
-  the terrain), not looked into.
+  place agree to a couple of units. Its colour (#351): the game's skull is dark neutral grey, (48,
+  51, 48) at its core over terrain (57, 48, 40), with the terrain showing through its alpha of
+  170 and no fill behind it (the footage's notch beside the skull is the frame's own box). The
+  demo's dark-blue notch fills (`SquadPart::Notch`, a fit from #302's neighbourhood: the code
+  has no fill widget in the portrait's path, FUN_000c3590 / FUN_000bb300 draw only the texture)
+  are now hidden while their slot shows a skull, and `SKULL_TINT` is 0.53 on every channel
+  ((48 - 0.33 x 57) / 0.67 / 79 and the same for G and B), a fit: the code draws the widget in
+  white and the colour path that darkens it isn't found. Checked with the `BF_TEST_FULL_SQUAD=1
+  BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET=0.5,brute BF_TEST_KILL=2` recipe above (90 frames),
+  the bottom skull beside the footage frame at 31.5 s: same grey, no blue behind it (the demo's
+  floor is lighter than the footage's terrain, so its skull reads a little lighter).
 * **The command tabs** (#333; `play_hud.rs` `update_tabs`, `TAB_FOLLOW` ...): the small icon in
   the box by each portrait is its member's order, the brain's command mode (squad.md, "Squad
   commands"). The tab widget (FUN_000c3d10, made one a portrait by the HUD's factory) sets it each
@@ -604,7 +612,7 @@ contact 2's cursor on the screen (FUN_00052db0); which list of characters the HU
 is kept from (FUN_000bd790, "The portraits" above); the disc's and the frame's colours blended as
 the console does (stored values: see "The disc, the circles and the wedge"); the portraits'
 notch fills behind the faces (the demo's blue boxes are brighter than the takes' dark navy: a
-fit, #342's neighbourhood). A test map dummy is no AI target, so nobody knows of a hostile
+fit, #342's neighbourhood; hidden behind a skull since #351). A test map dummy is no AI target, so nobody knows of a hostile
 dummy and it never shows.
 
 ### Keeping non-finite numbers out of the UI (#349)

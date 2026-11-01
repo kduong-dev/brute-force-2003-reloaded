@@ -361,7 +361,13 @@ const PORTRAIT_BOX: f32 = 32.0;
 /// their command tab and radar health bar go. A type without one (the tutorial's marines) shows
 /// nothing in its place once dead: the widget FUN_000c3590 hides itself with no texture
 /// (0xc361d-0xc3625), and there is no fallback by race or slot in the code (#342).
-const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
+/// The tint is a **fit** (#351): the code draws the widget in white (0xc3550, FUN_000bb300) and
+/// the colour path that darkens it isn't found. In `todo/reference/Friendly Fire 2 + Death
+/// Cam.mp4` at 31.5 s the bottom skull's core is (48, 51, 48) over terrain (57, 48, 40), where
+/// the texture's alpha of 170 (0.67) and its own average (79, 100, 102) would give
+/// (72, 83, 81): what the footage needs is 0.53 of the texture's colour on every channel
+/// ((48 - 0.33 x bg) / 0.67 / texture), grey where #342's (0.6, 0.66, 0.6) left it teal.
+const SKULL_TINT: Color = Color::srgb(0.53, 0.53, 0.53);
 /// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
 /// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,
 /// this tall (units) with its line's top this many heights above the place's centre, which
@@ -1065,6 +1071,9 @@ enum SquadPart {
     Portrait(usize),
     /// the "?" in a slot's place whose member's type has no portrait (UNKNOWN_CAP, #302)
     Unknown(usize),
+    /// the dark fill in a frame notch behind a slot's portrait (by slot): gone while the slot shows
+    /// a skull (#351)
+    Notch(usize),
     /// the bracket round a selected member's portrait (by slot: SELECT_FRAMES, #319)
     Selected(usize),
     MeterBox,
@@ -1386,8 +1395,9 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0), ImageNode::new(overlay), ZIndex(2)));
         // the frame's four portrait notches are open in its texture; the game fills them dark behind
         // the faces (texel boxes in the frame texture: top, right, bottom, left)
-        for (x0, y0, x1, y1) in [(50.0, 8.0, 80.0, 17.0), (110.0, 50.0, 119.0, 80.0), (48.0, 110.0, 78.0, 119.0), (8.0, 48.0, 17.0, 78.0)] {
-            commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x0, RADAR_FRAME_AT.1 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9))));
+        for (i, (x0, y0, x1, y1)) in [(50.0, 8.0, 80.0, 17.0), (110.0, 50.0, 119.0, 80.0), (48.0, 110.0, 78.0, 119.0), (8.0, 48.0, 17.0, 78.0)].into_iter().enumerate() {
+            commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x0, RADAR_FRAME_AT.1 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9)),
+                            SquadPart::Notch(i)));
         }
         for (i, &(cx, cy)) in PORTRAIT_CENTRE.iter().enumerate() {
             let Some(handle) = face_art(game, &mut images, &mut cache, &mut gen.faces, PORTRAITS[i]) else { continue };
@@ -2029,6 +2039,10 @@ fn update_squad_hud(
                     if img.rect.is_some() { img.rect = None; }
                     img.color = color;
                 }
+            }
+            SquadPart::Notch(c) => {
+                // (the game's skull sits on the terrain, no fill behind it: #351)
+                show(&mut vis, looks.get(c).is_none_or(|(_, skull, _)| skull.is_none()));
             }
             SquadPart::Unknown(c) => {
                 show(&mut vis, looks.get(c).is_some_and(|(face, skull, _)| matches!(face, Face::Unknown) && skull.is_none()));
