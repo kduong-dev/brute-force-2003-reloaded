@@ -843,7 +843,7 @@ captures at 15 fps, frames looked at:
   goal's lines added) and this page's hand-over (`BF_TEST_SELECT=0,2.2`): their logs
   main's line for line but for the loading times; the crosshair run's 75 frames the same, the
   others but for a few dozen pixels where the members, running through the pickup grid at the
-  start, kick a loose item a little differently (the order of two systems Bevy leaves open, which
+  start, kick a loose item a little differently (before #356 removed the kick) (the order of two systems Bevy leaves open, which
   the new systems shift: two runs of either build agree there).
 * `cargo test --bin bf_play`: the slot changes (`play_testsquad.rs` tests: the controlled slot
   changed in place and not emptied, a member replaced or removed, an empty slot filled before the

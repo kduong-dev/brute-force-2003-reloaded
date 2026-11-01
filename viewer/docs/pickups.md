@@ -121,7 +121,7 @@
         the packs where they lay and "Gas Grenades (full)" red, as take05's.
       * #61 take04's recreation (`--test BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_GUN="L-Shot-50,3.6,0.3;
         Jax-iP,3.3,-0.35" BF_TEST_WEAPON="MK-ASLT;Confed LZR-50"`, 120 frames): both guns rest
-        where they landed, (0.28, -3.60) and (-0.35, -3.30), and nothing moves them after Tex is
+        where they landed, (0.28, -3.60) and (-0.35, -3.30), and nothing moves them after Tex is (to see take04's swap ring too, use `BF_TEST_GOTO=0,0,0,-4.0 BF_TEST_WALK=1 BF_TEST_GO_AT=1.5 BF_TEST_SWAP=6.0`: with -3.0 Tex overshoots and the camera turns away)
         0.3 m from the Jax-iP (before: kicked to (-1.16, -5.85), at rest at 2.87 s); with the
         goal at -7.0 he walks through both and nothing is kicked.
       * the box on a full stack (`BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_WEAPON="Saryl-99;Confed
@@ -240,7 +240,7 @@
 * What it unlocks (its gameflag-database 1: the global flag h_1d604469/characters/h_048b8580, the
   deathmatch's Confed Marine) isn't kept: the demo doesn't load the global flags.
 * Verified (`BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_PICKUP_LOG=1 BF_TEST_GOTO=-58.9,21.26,-62.22,19.23
-  "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`, 120 frames at 15 fps): taken at 1.80 s, PICKUP_OBJECT ->
+  "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`, 120 frames at 15 fps): taken at 1.60 s (1.80 s before #331), PICKUP_OBJECT ->
   timer467 -> sound463 at 5.80 s; "Confed Marine DNA unlocked!" under Tex from frame 27 to 87
   (4 s), as take12's line (its place on the screen is the pickup lines' layout since #314). With the objectives and the ending fired after
   it (`BF_MISSION_LOG=1 "BF_TRIGGER_FIRE=h_f0cac43d,10,2.5;h_065b02c7,10,2.6;h_065b02c7,10,2.7;h_065b02c7,10,2.8;h_f82e0ba6,ENTER_DETECTOR,4"`,

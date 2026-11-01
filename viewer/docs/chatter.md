@@ -304,7 +304,7 @@ the Shrikes', the Fire Hound's, the Shadoon's, Ghent's and McTavish's, half heal
 McTavish's only; the fall / burn cry ef32191d in sdm_bf's four and the skill-on line 1c0514bd in
 Tex's, Flint's and Brutus's; friendly fire e2d9fb13 in sdm_bf's four, the ferals' three, the
 Shadoon's and the Confed Marine's. A death cry's reply (the Shrikes', McTavish's, Ghent's and the
-Shadoon's blocks have a `<response>`) names a tag, 015afdf5, that no file has a block for: it is
+Shadoon's blocks have a `<response>`) names a tag, 015afdf5, that no squad deathmatch file has a block for (the campaign four's files do): it is
 answered by "no block". Their expressions (`expression_type`, 7-17 blocks of each file but the Shrikes',
 the Marine's and the Militia's) are #326's.
 
