@@ -671,7 +671,11 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>, game: Re
         player.use_face = false;
         player.use_stack = stack;
         // the stack's count drops as the use starts (FUN_00121170 -> FUN_0014abc0, 0x121571), not
-        // at the heal: #196 take13's Medkit 2 -> 1 in the first log row after the press (#361)
+        // at the heal: #196 take13's Medkit 2 -> 1 in the first log row after the press (#361).
+        // What an interruption before the heal does (a knock-down, a death, a hand-over: the
+        // heal event never comes, `Player::using` ends) is the demo's guess: the medkit stays
+        // lost. The game's pending holder (inv+0xf0) isn't traced on a cancel. The swapped-out
+        // member's `item_used` is never consumed either
         match stack {
             Item::Other(k) => {
                 if let Some(c) = player.others.iter_mut().find(|c| c.kind == k) {

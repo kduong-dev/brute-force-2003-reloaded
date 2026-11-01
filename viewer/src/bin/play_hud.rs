@@ -12,6 +12,7 @@
 
 use super::*;
 use super::fonts::{record_text, Across, RecordText, BODY12, BODY14, HEADING24};
+use super::portrait_parts::{self as portrait, FaceTint, Flashes};
 use super::text::{game_text, Align, GameText, AMMO_ORANGE, MESSAGE_BLUE};
 
 /// radar frame (octagon); its disc, circles and wedge are play_radar_disc.rs's
@@ -145,7 +146,6 @@ const TAB_AT: [(f32, f32); 4] = [(82.0, 114.0), (115.0, 37.0), (5.0, 81.0), (38.
 const TAB_FLASH_RATE: f32 = 1.5;
 const TAB_FLASH_GROW: f32 = 1.8;
 const TAB_FLASH_SHIFT: f32 = -1.8;
-const SQUAD_ICON: u32 = 0xE064_867A;
 const HEALTH_ICON: u32 = 0x1BFA_5678;
 /// bar fills (4 x 8 gradients): health red, energy blue
 const HEALTH_FILL: u32 = 0xE801_997B;
@@ -236,19 +236,6 @@ const OBJECTIVE_YELLOW: [f32; 3] = [1.0, 1.0, 0.0];
 const PICKUP_GREEN: [f32; 3] = [30.0 / 255.0, 90.0 / 255.0, 30.0 / 255.0];
 /// The radar overlay's pixels per screen unit (its image is 128 units square).
 const OVERLAY_PX: usize = 2;
-/// Squad health bars fill the radar frame's own dark channels on its diagonals (texels of the
-/// frame texture, display rows, darker than HEALTH_DARK). By character (Brutus, Flint, Hawk,
-/// Tex): the channel's quadrant (x right, y down) and the portrait notch it's anchored at (frame
-/// texels), so the bar empties toward the member's portrait: Brutus bottom-left toward the
-/// bottom, Flint bottom-right toward the right, Hawk top-left toward the left, Tex top-right
-/// toward the top.
-const HEALTH_BARS: [((bool, bool), (f32, f32)); 4] = [
-    ((false, true), (63.0, 115.0)),
-    ((true, true), (115.0, 65.0)),
-    ((false, false), (12.0, 63.0)),
-    ((true, false), (65.0, 12.0)),
-];
-const HEALTH_DARK: u32 = 27;
 /// Where the radar panel sits (screen units): the corner the radar's disc, its frame, the brackets
 /// and the command tabs are placed from. The code's: FUN_000c2be0 puts the panel (128 x 128) at the
 /// HUD safe area's left + 5 and its bottom - 10 less the panel's height, (56, 301); the radar
@@ -257,7 +244,6 @@ const HEALTH_DARK: u32 = 27;
 /// 0.25 apart over 52-62 x 296-310 (the old (57.5, 305.0), #333's finding, ranked 1926th and
 /// 1675th). It was (57.5, 305.0) until #347.
 const RADAR_FRAME_AT: (f32, f32) = (56.0, 301.0);
-const HEALTH_PINK: Color = Color::srgb(0.96, 0.45, 0.42);
 /// The radar panel's slide while the Squad Command menu is open (#319): the radar and its
 /// portraits are one widget (0xc2d40, 128 x 128, its update 0xc2ac0), which FUN_000c2be0 places
 /// each frame between its corner, the HUD safe area's left + 5 and bottom - 10 less its height
@@ -345,20 +331,6 @@ fn press_alpha(level: f32, k: usize) -> f32 {
     ((level - PRESS_FADE.0 - PRESS_FADE.1 * n) * PRESS_FADE.2).clamp(0.0, 1.0) * 254.0 / 255.0
 }
 
-/// The speech icon's size on the 640 x 480 screen: its texture (SQUAD_ICON, h_e064867a, 16 x 16 DXT3)
-/// drawn 1:1, as the game draws its HUD textures. Before #332 it was drawn 10 x 10, a third too
-/// small (take01's bubble ink is 12 units wide).
-const BUBBLE_SIZE: f32 = 16.0;
-/// Speech icons by character (Brutus, Flint, Hawk, Tex): the top-left corner of each, inside the
-/// radar ring on the portrait's inner side (#332). Measured from the squad-voice takes
-/// (`todo/36-squad-voice`, 1280 x 720 with the 4:3 picture at x 160-1120, 1.5 px a unit): the
-/// icon's white body (every channel over 185) at Hawk take01 17.6 s (x 78.0-89.3, y 344.7-352.0),
-/// Tex take12 3.9 s (x 105.3-114.7, y 324.7-332.7), Brutus take12 12.6 s (x 103.3-114.7, y
-/// 397.3-403.3) and Flint take08 4.9 s (x 151.3-162.7, y 344.7-351.3), put back to the texture's
-/// corner by where its body sits in the 16 x 16 (flipped: x 2-13, y 3-13) and checked by
-/// rendering the demo's and comparing the bodies the same way. The fit is to about 1 unit: the
-/// game's own placement code isn't found (the table is in no function the code map lists).
-const BUBBLE_AT: [(f32, f32); 4] = [(101.5, 393.5), (149.5, 340.5), (76.0, 341.0), (102.0, 321.0)];
 /// The box every portrait and skull is drawn in, 32 x 32 HUD units with the whole texture
 /// stretched to it (#342): the portrait widget 0xc3550 sets its size to 32 x 32 in its constructor
 /// (0xc3556-0xc355f) and its draw FUN_000bb300 sends width +0xe and height +0xc with UV 0..1,
@@ -368,23 +340,18 @@ const BUBBLE_AT: [(f32, f32); 4] = [(101.5, 393.5), (149.5, 340.5), (76.0, 341.0
 const PORTRAIT_BOX: f32 = 32.0;
 /// a dead member's portrait: their type's skull (h_00c51907, `CharacterType::skull`: for every
 /// predefined squad its slot's, four textures in common, the slot-3 one the wide one), dimmed;
-/// their command tab and radar health bar go. A type without one (the tutorial's marines) shows
-/// nothing in its place once dead: the widget FUN_000c3590 hides itself with no texture
-/// (0xc361d-0xc3625), and there is no fallback by race or slot in the code (#342).
-/// The tint is a **fit** (#351): the code draws the widget in white (0xc3550, FUN_000bb300) and
-/// the colour path that darkens it isn't found. In `todo/reference/Friendly Fire 2 + Death
-/// Cam.mp4` at 31.5 s (Brutus's wide skull, h_19da7869, over terrain) the skull's core (the
-/// opaque texels eroded by three, registered on the texture by luminance correlation, r 0.80) is
-/// (49.2, 52.2, 47.6) over a ground of (59.6, 47.3, 41.2) (the strip of terrain just under the
-/// box). The console blends in stored values, where 0.51-0.53 of the texture's colour at its
-/// alpha of 170 (0.67) gives that; the demo's UI blends in linear light, which leaves 0.53 about
-/// 20% lighter (the tester: (56, 55, 52) against (44.5, 46.9, 42.4)). So the tint is solved in the
-/// demo's own blend, out = srgb(a x tint x tex + (1 - a) x ground) in linear light per texel,
-/// meaned over the core, on the footage's ground: 0.397, 0.463, 0.426. The model was checked on
-/// two renders of the demo (tints 0.53 and 0.41 / 0.45 / 0.42, over its ground of (81.4, 83.4,
-/// 77.4)): it reads 5-6 levels under the renders by the same amount for both (5.9, 5.7, 5.3 and
-/// 6.0, 5.8, 5.3), so that offset was added before solving.
-const SKULL_TINT: Color = Color::srgb(0.40, 0.46, 0.43);
+/// their command tab and radar health channel's fill go. A type without one (the tutorial's
+/// marines) shows nothing in its place once dead: the widget FUN_000c3590 hides itself with no
+/// texture (0xc361d-0xc3625), and there is no fallback by race or slot in the code (#342).
+/// The dimming is the code's: the portrait's flash part sets its colour bytes to (128, 128, 128)
+/// while the member's health is 0 (0xc452f-0xc453a, `portrait::SKULL_GREY`), and the sprite draw
+/// multiplies the texture by them. #351 had fitted 0.40, 0.46, 0.43 for the footage's skull
+/// (`todo/reference/Friendly Fire 2 + Death Cam.mp4` at 31.5 s: its core (49.2, 52.2, 47.6) over a
+/// ground of (59.6, 47.3, 41.2)) because this was not found. The console blends in stored values
+/// and the demo's UI in linear light, so the code's 128 reads a little lighter here: Brutus's
+/// skull rendered on e34 and put on the footage's ground gives (52.6, 54.8, 52.8), 3.4, 2.6 and
+/// 5.2 levels over the footage's (play.md, "The portrait box and the skulls").
+const SKULL_TINT: Color = Color::srgb(portrait::SKULL_GREY as f32 / 255.0, portrait::SKULL_GREY as f32 / 255.0, portrait::SKULL_GREY as f32 / 255.0);
 /// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
 /// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,
 /// this tall (units) with its line's top this many heights above the place's centre, which
@@ -645,34 +612,44 @@ enum Face {
 /// hasn't spawned it, or whose copy the session took away, FUN_00209900). None for a slot whose
 /// member the zone doesn't have (#303: the level spawns only the zone's members, so the
 /// tutorial's and m01_a's squad is Tex alone, the zone's h_ed54d255 "brutus hawk flint"), and for
-/// the test map's emptied slots (#302). Such a slot has no face, follow tab or health channel.
+/// the test map's emptied slots (#302). Such a slot has no face, follow tab or channel fill; its
+/// channel's frame outline is drawn all the same (`SquadPart::ChannelFrame`: the channel's draw
+/// 0xc3390 draws the frame whenever its textures are bound, and the member only sets the empty
+/// fraction, 1.0 with none, which empties the fill).
 /// The game's HUD keeps a squad list of five entries (+0x34), one per slot by the character's
 /// type +0x150 (1-4): each frame FUN_000bd790 drops the characters no longer on the list it
 /// reads (FUN_000c8570) and adds the new ones (FUN_000c84e0), so a slot holds a character only
 /// once one is in the world (which list it reads, and that the portraits draw from it, aren't
-/// traced). take04 (`todo/28-tutorial`, 60 s) shows Tex's face alone, no tabs or channels.
+/// traced). take04 (`todo/28-tutorial`, 60 s) shows Tex's face alone, no tabs or channel fills,
+/// and the other three channels as their bare outlines.
 fn slot_member<'a>(player: &'a Player, squad: &'a Squad, c: usize) -> Option<&'a Player> {
     std::iter::once(player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad() && !u.absent)
 }
 
-/// Generated HUD images: the squad health bars, the selection chevrons and the speech icon.
+/// Generated HUD images: the radar's health channels and icons as the game's sprite program makes
+/// them, the selection chevrons, the faces.
 #[derive(Resource, Default)]
 struct HudGen {
     /// the health / stamina frame is the original's (TUTORIAL_BAR), its length following the
     /// character's maximum health
     tutorial_frame: bool,
-    /// per character: its health bar image (frame-sized), the channel texels (index, how far
-    /// from the portrait end 0-1) and the fill drawn last
-    bars: [Handle<Image>; 4],
-    bar_texels: [Vec<(usize, f32)>; 4],
-    bar_fill: [f32; 4],
+    /// per character: its channel's frame sprite as drawn white (the texture, its colour bled into
+    /// the clear texels) and red (FRAME_RED through the tint program, `portrait::tint_texels`), see
+    /// `frame_images`; None where the texture isn't found
+    frames: [Option<[Handle<Image>; 2]>; 4],
+    /// per character: its channel's fill sprite for each threshold of its gradient, ascending: the
+    /// texels whose blue is at least that level kept, the rest clear (`fill_images`)
+    fills: [Vec<(u8, Handle<Image>)>; 4],
     /// the game's chevron, white, pointing right / left / up / down
     chevrons: [Handle<Image>; 4],
-    /// speech icon
-    bubble: Handle<Image>,
+    /// the three portrait icons (speech, "!", ring) in ICON_RGB through the tint program
+    icons: [Handle<Image>; 3],
     /// the faces drawn so far, by texture (`face_art`): the squad's four, and on the test map any
     /// type's portrait a squad slot's member shows (#302)
     faces: HashMap<u32, Option<Handle<Image>>>,
+    /// the faces as the health flash tints them, by texture and the flash's green and blue byte
+    /// (`flashed_face`)
+    flashed: HashMap<(u32, u8), Option<Handle<Image>>>,
     /// the stamina bar's fill (ENERGY_FILL), remade mixed toward white by its brighten, and the
     /// texture's own texels it's made from
     stamina_fill: Handle<Image>,
@@ -683,78 +660,54 @@ struct HudGen {
     health_flash: Option<Handle<Image>>,
 }
 
-/// The radar frame's four diagonal health channels, by character (see HEALTH_BARS): texel index
-/// (display rows) and its place along the channel from the portrait end (0-1). A channel is the
-/// frame's dark texels in that quadrant (pieces of 15 or more), with the 1-texel highlight lines
-/// between dark texels closed over.
-fn radar_channels(w: usize, h: usize, px: &[u8]) -> [Vec<(usize, f32)>; 4] {
-    // display rows: the texture is stored bottom row first
-    let at = |x: usize, y: usize| &px[((h - 1 - y) * w + x) * 4..((h - 1 - y) * w + x) * 4 + 4];
-    let dark = |x: usize, y: usize| { let p = at(x, y); p[3] > 128 && (p[0] as u32 + p[1] as u32 + p[2] as u32) / 3 <= HEALTH_DARK };
-    let mut mask = vec![false; w * h];
-    let mut seen = vec![false; w * h];
-    for start in 0..w * h {
-        if seen[start] || !dark(start % w, start / w) {
-            continue;
-        }
-        // flood fill one dark piece; keep it if it's big enough
-        let (mut piece, mut stack) = (vec![], vec![start]);
-        seen[start] = true;
-        while let Some(i) = stack.pop() {
-            piece.push(i);
-            let (x, y) = (i % w, i / w);
-            for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
-                if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
-                    continue;
-                }
-                let j = ny as usize * w + nx as usize;
-                if !seen[j] && dark(nx as usize, ny as usize) {
-                    seen[j] = true;
-                    stack.push(j);
-                }
-            }
-        }
-        if piece.len() >= 15 {
-            piece.into_iter().for_each(|i| mask[i] = true);
-        }
-    }
-    // close 1-texel gaps (the channel's inner highlight line): dark on both sides
-    let closed: Vec<bool> = (0..w * h).map(|i| {
-        let (x, y) = (i % w, i / w);
-        let m = |dx: i32, dy: i32| {
-            let (nx, ny) = (x as i32 + dx, y as i32 + dy);
-            nx >= 0 && ny >= 0 && nx < w as i32 && ny < h as i32 && mask[ny as usize * w + nx as usize]
-        };
-        mask[i] || (at(x, y)[3] > 128 && ((m(-1, 0) && m(1, 0)) || (m(0, -1) && m(0, 1))))
-    }).collect();
-    HEALTH_BARS.map(|((right, down), (ax, ay))| {
-        // the channel is a band across its quadrant's diagonal: from the dark texels found, its
-        // distance from the centre (s, the middle 80% of them) and its extent along it (t); every
-        // texel in that band belongs to it, also the lighter ones the darkness test misses (the
-        // channel's highlight lines left gaps: Hawk's and Brutus's bars)
-        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
-        let (sx, sy) = (if right { 1.0 } else { -1.0 }, if down { 1.0 } else { -1.0 });
-        let st = |i: usize| {
-            let (x, y) = ((i % w) as f32 + 0.5 - cx, (i / w) as f32 + 0.5 - cy);
-            ((x * sx + y * sy) * std::f32::consts::FRAC_1_SQRT_2, (x * sx - y * sy) * std::f32::consts::FRAC_1_SQRT_2)
-        };
-        let quadrant = |i: usize| ((i % w) * 2 >= w) == right && ((i / w) * 2 >= h) == down;
-        let found: Vec<usize> = (0..w * h).filter(|&i| closed[i] && quadrant(i)).collect();
-        let mut ss: Vec<f32> = found.iter().map(|&i| st(i).0).collect();
-        ss.sort_by(f32::total_cmp);
-        let pick = |q: f32| ss.get(((ss.len() as f32 - 1.0) * q).round() as usize).copied().unwrap_or(0.0);
-        let (s_lo, s_hi) = (pick(0.1), pick(0.9));
-        let (t_lo, t_hi) = found.iter().map(|&i| st(i).1).fold((f32::MAX, f32::MIN), |(a, b), t| (a.min(t), b.max(t)));
-        let texels: Vec<(usize, f32)> = (0..w * h)
-            .filter(|&i| quadrant(i) && (closed[i] || {
-                let (s, t) = st(i);
-                at(i % w, i / w)[3] > 128 && (s_lo..=s_hi).contains(&s) && (t_lo..=t_hi).contains(&t)
-            }))
-            .map(|i| (i, ((i % w) as f32 + 0.5 - ax).hypot((i / w) as f32 + 0.5 - ay))).collect();
-        let (lo, hi) = texels.iter().fold((f32::MAX, f32::MIN), |(lo, hi), t| (lo.min(t.1), hi.max(t.1)));
-        texels.into_iter().map(|(i, d)| (i, ((d - lo) / (hi - lo).max(1.0)).max(1e-3))).collect()
-    })
+/// An image from a texture's RGBA texels, in the library's order (bottom row first, so a node
+/// shows it `flipped`).
+fn rgba_image(w: u32, h: u32, px: Vec<u8>) -> Image {
+    Image::new(bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+               bevy::render::render_resource::TextureDimension::D2, px,
+               bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::default())
+}
+
+/// A texture through the sprite tint program in `rgb` (`portrait::tint_texels`) as an image; None if
+/// the texture isn't found.
+fn tinted(game: &mut Game, images: &mut Assets<Image>, id: u32, rgb: [u8; 3]) -> Option<Handle<Image>> {
+    let (w, h, px) = game.texture_rgba(id)?;
+    Some(images.add(rgba_image(w, h, portrait::tint_texels(&px, rgb))))
+}
+
+/// A channel's frame texture `id` as the two images its node shows: the texture as it is, its colour
+/// bled into the clear texels at the outline so the filter can't lighten the edge toward their white
+/// (`portrait::bleed`), and the same through the tint program in `portrait::FRAME_RED`; None if the
+/// texture isn't found.
+fn frame_images(game: &mut Game, images: &mut Assets<Image>, id: u32) -> Option<[Handle<Image>; 2]> {
+    let (w, h, px) = game.texture_rgba(id)?;
+    let white = portrait::bleed(&px, w as usize, h as usize);
+    let red = portrait::tint_texels(&white, portrait::FRAME_RED);
+    Some([images.add(rgba_image(w, h, white)), images.add(rgba_image(w, h, red))])
+}
+
+/// A face texture `id` as the portrait is drawn while the health flash colours it (255, `a`, `a`),
+/// `a` not 255 (that is white, the plain face): the tint program on its texels, in the face's own
+/// size and layout, kept in `flashed` by (texture, a); None if the texture isn't found.
+fn flashed_face(game: &mut Game, images: &mut Assets<Image>, flashed: &mut HashMap<(u32, u8), Option<Handle<Image>>>,
+                id: u32, a: u8) -> Option<Handle<Image>> {
+    flashed.entry((id, a)).or_insert_with(|| tinted(game, images, id, [255, a, a])).clone()
+}
+
+/// A health channel's fill texture `id` once per threshold: for each level its gradient has (the
+/// texels' blue, ascending), the image whose texels at or above that level are white at their own
+/// alpha and the rest clear. The fill sprite's pixel program keeps a texel while its blue is at
+/// least the empty byte (`portrait::fill_shows`), and the colour comes from the node's tint, flat.
+/// Hence the image for a byte is the first level at or above it; none above the gradient's top.
+fn fill_images(game: &mut Game, images: &mut Assets<Image>, id: u32) -> Vec<(u8, Handle<Image>)> {
+    let Some((w, h, px)) = game.texture_rgba(id) else { return vec![] };
+    let mut levels: Vec<u8> = px.chunks_exact(4).filter(|p| p[3] > 0).map(|p| p[2]).collect();
+    levels.sort_unstable();
+    levels.dedup();
+    levels.into_iter().map(|level| {
+        let out: Vec<u8> = px.chunks_exact(4).flat_map(|p| [255, 255, 255, if portrait::fill_shows(p[2], level) { p[3] } else { 0 }]).collect();
+        (level, images.add(rgba_image(w, h, out)))
+    }).collect()
 }
 
 const ENERGY_FILL: u32 = 0xE11C_7D04;
@@ -1062,13 +1015,41 @@ fn update_tabs(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut tabs
     }
 }
 
+/// The portraits' health flash parts, one step a frame (the update 0xc43b0, `portrait::Flash`): each
+/// slot's member in the world gives its health and its most, on the HUD's clock (`hud_step`, as the
+/// tabs' flash: the widgets update through the Squad Command menu's and the item list's pauses). A
+/// slot with no member keeps its part as it was (the update returns at 0xc43e8 without a
+/// character; its portrait is hidden then). The controlled character's slot runs the same part:
+/// its own face blinks under 20% (#354 take02). Test hook: `BF_FLASH_LOG=1` prints a slot's part
+/// whenever its last health, level or colour changes: the sim time, +0x34, +0x3c, the HUD's dt,
+/// the portrait's colour, the channel's frame and the fill's whiteness (the rows of #354's
+/// watch logs, which read the same three fields).
+fn update_flashes(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut flashes: ResMut<Flashes>) {
+    let dt = hud_step(&time);
+    let log = std::env::var("BF_FLASH_LOG").is_ok();
+    for (c, flash) in flashes.0.iter_mut().enumerate() {
+        if let Some(u) = slot_member(&player, &squad, c) {
+            let was = *flash;
+            flash.update(u.health, u.max_health, dt);
+            if log && (was.level != flash.level || was.face != flash.face || was.last != flash.last) {
+                println!("t={:.3} hud: {}'s flash part: +0x34 {:.2} +0x3c {:.3} (dt {:.4}), the portrait {:?}, the channel's frame {}, fill whiteness {}",
+                         player.sim_time, CHARACTERS[c], flash.last, flash.level, dt, flash.face,
+                         if flash.frame_red() { "red" } else { "white" }, flash.whiteness());
+            }
+        }
+    }
+}
+
 /// Squad and grenade widgets (see update_squad_hud).
 #[derive(Component, Clone, Copy, PartialEq)]
 enum SquadPart {
     /// squad member's radar blip (by squad slot)
     Blip(usize),
-    /// a squad member's health bar in its radar diagonal channel (by character)
-    Health(usize),
+    /// a slot's health channel on the radar (by character, `portrait::CHANNELS`): its frame sprite,
+    /// white or red, drawn for every slot, and its fill sprite, a member's health left from the
+    /// portrait end
+    ChannelFrame(usize),
+    ChannelFill(usize),
     /// the controlled character's health (top-left red bar)
     PlayerHealth,
     /// the stamina bar and its trail (see `StaminaBar`), and the frame's stretching middle and
@@ -1080,8 +1061,10 @@ enum SquadPart {
     FrameRight,
     /// the selection's three chevrons on the radar
     Chevron(usize),
-    /// speech icon beside a member's portrait while they talk (by character)
-    Bubble(usize),
+    /// one of the icons beside a member's portrait (by character and icon, `portrait::ICON_AT`): 0 the
+    /// speech bubble while the member talks, 1 the "!" while its skill is on, 2 the ring while it
+    /// is scoped
+    Icon(usize, usize),
     /// portrait (by squad slot: its member's face, `Face`): its skull when dead
     Portrait(usize),
     /// the "?" in a slot's place whose member's type has no portrait (UNKNOWN_CAP, #302)
@@ -1123,19 +1106,22 @@ pub fn plugin(app: &mut App) {
         .init_resource::<BarFlash>()
         .init_resource::<RadarMarks>()
         .init_resource::<Tabs>()
+        .init_resource::<Flashes>()
         .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities).in_set(HudSetup),
             (|mut commands: Commands| {
                 commands.insert_resource(NameLabel::default());
                 commands.insert_resource(StaminaBar::default());
                 commands.insert_resource(BarFlash::default());
                 commands.insert_resource(Tabs::default());
+                commands.insert_resource(Flashes::default());
             }).after(setup)))
         .init_resource::<HudGen>()
         // (after the death camera: its label and reticle show the frame it decides them; the
         // tabs after the frame's orders, the menu's and the AI's: `update_player` sets a Move To's
-        // arrival)
+        // arrival; the portraits' flash parts before the radar's nodes read them)
         .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
-                              update_hud_widgets, update_squad_hud, update_message, update_feed, update_tabs.after(update_player))
+                              update_hud_widgets, update_squad_hud, update_message, update_feed, update_tabs.after(update_player),
+                              update_flashes.before(update_squad_hud))
             .after(update_weapons).after(deathcam::death_cam)
             .run_if(in_state(AppState::Playing)))
         // the radar's objective dots, once the radar-triggers' contacts are in (#228)
@@ -1258,20 +1244,17 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         gen.chevrons = [images.add(make(&|x, y| (m - x, y))), images.add(make(&|x, y| (x, y))),
                         images.add(make(&|x, y| (y, x))), images.add(make(&|x, y| (m - y, x)))];
     }
-    gen.bubble = texture(&mut game.0, &mut images, &mut cache, SQUAD_ICON).unwrap_or_default();
-    if let Some((w, h, px)) = game.0.texture_rgba(RADAR_FRAME) {
-        gen.bar_texels = radar_channels(w as usize, h as usize, &px);
-        let n = (w * h) as usize;
-        gen.bars = [0, 1, 2, 3].map(|_| images.add(Image::new(
-            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-            bevy::render::render_resource::TextureDimension::D2, [255, 255, 255, 0].repeat(n),
-            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-            bevy::asset::RenderAssetUsages::default())));
-        gen.bar_fill = [-1.0; 4];
-        info!("radar health channels: {:?} texels", gen.bar_texels.iter().map(|t| t.len()).collect::<Vec<_>>());
-    }
-    let (chevrons, bars) = (gen.chevrons.clone(), gen.bars.clone());
+    let chevrons = gen.chevrons.clone();
     let game = &mut game.0;
+    // each channel's frame sprite (white as it is, red through the tint program) and its fill sprite
+    // once per level of its gradient (`fill_images`; the two textures are shared by two characters
+    // each), and the three portrait icons in their colour
+    let mut fills: HashMap<u32, Vec<(u8, Handle<Image>)>> = HashMap::new();
+    for (c, ch) in portrait::CHANNELS.iter().enumerate() {
+        gen.frames[c] = frame_images(game, &mut images, ch.frame);
+        gen.fills[c] = fills.entry(ch.fill).or_insert_with(|| fill_images(game, &mut images, ch.fill)).clone();
+    }
+    gen.icons = portrait::ICON_TEXTURES.map(|id| tinted(game, &mut images, id, portrait::ICON_RGB).unwrap_or_default());
     game.load_textures_for(&super::data_dir(), "tutorial", TUTORIAL_BAR);
     let tutorial = game.texture_rgba(TUTORIAL_BAR).map(|(w, h, px)| {
         let mut piece = |cols: (u32, u32), red: bool| images.add(tutorial_piece(w, h, &px, cols, red));
@@ -1497,13 +1480,29 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     // the chosen member's name label (LABEL_SHOW): the heading font's record text
     commands.spawn((ChildOf(screen), NameLabelText, Visibility::Hidden, ZIndex(3),
                     record_text("", LABEL_CENTRE.0, LABEL_CENTRE.1, &HEADING24, vec![LABEL_ORANGE], None, Across::Centre)));
-    for (c, &(x, y)) in BUBBLE_AT.iter().enumerate() {
-        commands.spawn((ChildOf(radar), SquadPart::Bubble(c), Visibility::Hidden, flipped(Handle::default()), ZIndex(2), at(x, y, BUBBLE_SIZE, BUBBLE_SIZE)));
+    // the icons beside each portrait (the speech bubble, the "!", the scope ring), 16 x 16 at the
+    // table's places from the panel's corner (`portrait::ICON_AT`), over the faces
+    for (c, row) in portrait::ICON_AT.iter().enumerate() {
+        for (k, &(x, y)) in row.iter().enumerate() {
+            commands.spawn((ChildOf(radar), SquadPart::Icon(c, k), Visibility::Hidden, flipped(gen.icons[k].clone()), ZIndex(2),
+                            at(RADAR_FRAME_AT.0 + x, RADAR_FRAME_AT.1 + y, portrait::ICON_SIZE, portrait::ICON_SIZE)));
+        }
     }
-    // squad health in the radar frame's diagonal channels (the frame's dark channel is the track)
-    for (c, bar) in bars.into_iter().enumerate() {
-        commands.spawn((ChildOf(radar), SquadPart::Health(c), ZIndex(1), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0),
-                        ImageNode::new(bar).with_color(HEALTH_PINK)));
+    // each slot's health channel (`portrait::CHANNELS`): the frame sprite, then the fill over it, 32
+    // x 32 in the table's rect from the panel's corner, a negative size the mirror of the
+    // texture's usual flip (as SELECT_FRAMES). The frame is shown whether the slot has a member or
+    // not (the channel's draw 0xc3390 tests only that its two textures are bound, 0xc3399-0xc33a9),
+    // the fill only for a member (`ChannelFill`)
+    for (c, ch) in portrait::CHANNELS.iter().enumerate() {
+        let (x, y, w, h) = ch.rect;
+        let (left, top) = (RADAR_FRAME_AT.0 + x.min(x + w), RADAR_FRAME_AT.1 + y.min(y + h));
+        let sprite = |image: Handle<Image>| ImageNode { flip_x: w < 0.0, flip_y: h > 0.0, ..ImageNode::new(image) };
+        if let Some([white, _]) = gen.frames[c].clone() {
+            commands.spawn((ChildOf(radar), SquadPart::ChannelFrame(c), ZIndex(1), at(left, top, w.abs(), h.abs()), sprite(white)));
+        }
+        commands.spawn((ChildOf(radar), SquadPart::ChannelFill(c), Visibility::Hidden, ZIndex(1),
+                        at(left, top, w.abs(), h.abs()), sprite(gen.fills[c].first().map(|f| f.1.clone()).unwrap_or_default())
+                            .with_color(Color::srgb_u8(portrait::FILL_RGB[0], portrait::FILL_RGB[1], portrait::FILL_RGB[2]))));
     }
 }
 
@@ -1871,7 +1870,7 @@ fn update_squad_hud(
     mut cache: ResMut<HudImages>,
     mut label: ResMut<NameLabel>,
     stamina: Res<StaminaBar>,
-    flash: Res<BarFlash>,
+    (flash, flashes): (Res<BarFlash>, Res<Flashes>),
     mut parts: Query<(&SquadPart, &mut Visibility, &mut Node, Option<&mut Text>, Option<&mut TextFont>, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&PortraitArt>,
                       Option<&mut BackgroundColor>, Option<&mut BorderColor>)>,
     mut name_text: Query<(&mut RecordText, &mut Visibility), (With<NameLabelText>, Without<SquadPart>)>,
@@ -1925,8 +1924,6 @@ fn update_squad_hud(
             t.alpha = LABEL_ALPHA * share;
         }
     }
-    let health = |c: usize| member(c)
-        .map(|u| (u.health / u.max_health.max(1.0)).clamp(0.0, 1.0));
     let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
     // (a place that isn't finite is 0 and logged once, naming the node: #349)
     let pct = |what: &str, x: f32, y: f32, n: &mut Node| {
@@ -1949,12 +1946,12 @@ fn update_squad_hud(
     let selected = player.select.and_then(|(c, _)| squad.0.iter().find(|m| m.character == c && m.in_squad()).map(|m| (c, m.position)));
     let press = if selected.is_none() { menu.flash() } else { None };
     let selected = selected.or(press.map(|(c, _)| (c, Vec3::ZERO)));
-    let dead = |c: usize| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.dead);
     // each slot's place: its member's face (`Face`), and its skull once it's dead (its type's,
     // `CharacterType::skull`; a dead member whose type has none shows nothing, #342)
     // (a slot with no member in the world shows nothing: #303)
-    // (and, selected for the Squad Command menu, its face in the selection's orange: `selected_face`)
-    let looks: Vec<(Face, Option<Handle<Image>>, Option<Handle<Image>>)> = (0..PORTRAITS.len()).map(|c| {
+    // (selected for the Squad Command menu, its face in the selection's orange: `selected_face`;
+    // and while its health flash is red (`Flash`), its face through the tint program: `flashed_face`)
+    let looks: Vec<(Face, Option<Handle<Image>>, Option<Handle<Image>>, Option<Handle<Image>>)> = (0..PORTRAITS.len()).map(|c| {
         let m = member(c);
         let mut face_id = PORTRAITS[c];
         let face = match m {
@@ -1986,7 +1983,15 @@ fn update_squad_hud(
         };
         let lit = (menu.selected(c) && skull.is_none() && matches!(face, Face::Own | Face::Other(..)))
             .then(|| selected_face(&mut game.0, &mut images, &mut cache, face_id)).flatten();
-        (face, skull, lit)
+        // the flash's red (255, a, a): on a face alive and shown, not over the selection's orange
+        // (the selection part updates after the flash part and writes the colour last, 0xc4280),
+        // and not on the hit's own first frame (a of 255 is white)
+        let red = match flashes.0[c].face {
+            FaceTint::Red(a) if a != 255 && lit.is_none() && skull.is_none() && matches!(face, Face::Own | Face::Other(..)) => Some(a),
+            _ => None,
+        };
+        let flashed = red.and_then(|a| flashed_face(&mut game.0, &mut images, &mut gen.flashed, face_id, a));
+        (face, skull, lit, flashed)
     }).collect();
     // the squad's blips: its living members in the world, not the NPCs the triggers or the test
     // tools spawned (the tutorial's terrorists showed as squad blips before #228)
@@ -2051,15 +2056,19 @@ fn update_squad_hud(
                     }
                 }
             }
-            SquadPart::Bubble(c) => {
-                let speaking = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.speaking > 0.0);
-                show(&mut vis, speaking);
-                if let Some(mut img) = img {
-                    if img.image != gen.bubble { img.image = gen.bubble.clone(); }
-                }
+            SquadPart::Icon(c, k) => {
+                // (a living member in the world: the dead bit hides all three, tested at 0xc474f,
+                // 0xc4862 and 0xc47c4; the speech icon while its voice line plays, the "!" while its
+                // skill is on, the ring while it's scoped)
+                let on = member(c).is_some_and(|u| !u.dead && match k {
+                    0 => u.speaking > 0.0,
+                    1 => u.skill.on,
+                    _ => u.scope_level > 0,
+                });
+                show(&mut vis, on);
             }
             SquadPart::Portrait(c) => {
-                if let (Some(mut img), Some(art), Some((face, skull, lit))) = (img, art, looks.get(c)) {
+                if let (Some(mut img), Some(art), Some((face, skull, lit, red))) = (img, art, looks.get(c)) {
                     // (the face or the skull, whole, in the place's one box, PORTRAIT_BOX: the
                     // node's place is the table's, FACE_AT, set with the HUD, whatever it shows)
                     let own = match face {
@@ -2067,8 +2076,10 @@ fn update_squad_hud(
                         _ => art.0.clone(),
                     };
                     show(&mut vis, skull.is_some() || matches!(face, Face::Own | Face::Other(..)));
-                    // (selected for the Squad Command menu: in the selection's orange, 0xc4280, #319)
-                    let own = lit.clone().unwrap_or(own);
+                    // (red while its health flash is: the face through the tint program; then, if the
+                    // member is selected for the Squad Command menu, in the selection's orange,
+                    // 0xc4280, #319, which the flash's red gives way to)
+                    let own = lit.clone().or_else(|| red.clone()).unwrap_or(own);
                     let (want, color) = match skull {
                         Some(s) => (s.clone(), SKULL_TINT),
                         None => (own, Color::WHITE),
@@ -2080,24 +2091,35 @@ fn update_squad_hud(
             }
             SquadPart::Notch(c) => {
                 // (the game's skull sits on the terrain, no fill behind it: #351)
-                show(&mut vis, looks.get(c).is_none_or(|(_, skull, _)| skull.is_none()));
+                show(&mut vis, looks.get(c).is_none_or(|(_, skull, _, _)| skull.is_none()));
             }
             SquadPart::Unknown(c) => {
-                show(&mut vis, looks.get(c).is_some_and(|(face, skull, _)| matches!(face, Face::Unknown) && skull.is_none()));
+                show(&mut vis, looks.get(c).is_some_and(|(face, skull, _, _)| matches!(face, Face::Unknown) && skull.is_none()));
             }
-            SquadPart::Health(c) => {
-                let Some(f) = health(c) else { show(&mut vis, false); continue };
-                show(&mut vis, !dead(c) && f > 0.0);
-                // light the channel's texels from the portrait end up to the health fraction
-                if (gen.bar_fill[c] - f).abs() > 1e-3 {
-                    gen.bar_fill[c] = f;
-                    if let Some(image) = images.get_mut(&gen.bars[c]) {
-                        if let Some(data) = image.data.as_mut() {
-                            for &(i, t) in &gen.bar_texels[c] {
-                                data[i * 4 + 3] = if t <= f { 255 } else { 0 };
-                            }
-                        }
-                    }
+            SquadPart::ChannelFrame(c) => {
+                // always drawn (the node is there when the texture is: 0xc3390 draws the frame
+                // whenever its textures are bound, member or none, and take04's empty channels show
+                // their outlines): white, or red while the slot's flash level is over 0.5
+                // (0xc33df-0xc33ef). An empty slot's part isn't updated (0xc43e8), so it's white here
+                // whatever level it was left at
+                if let (Some(mut img), Some(frames)) = (img, &gen.frames[c]) {
+                    let want = &frames[(member(c).is_some() && flashes.0[c].frame_red()) as usize];
+                    if img.image != *want { img.image = want.clone(); }
+                }
+            }
+            SquadPart::ChannelFill(c) => {
+                // the health left in whole hundredths (FUN_000c32c0): the gradient's texels at or
+                // above the empty byte (`portrait::fill_shows`), in the fill's colour pushed
+                // toward white by the flash's whiteness (0xc3449)
+                let Some(u) = member(c) else { show(&mut vis, false); continue };
+                let empty = portrait::empty_byte(portrait::empty_fraction(u.health.max(0.0), u.max_health));
+                let want = gen.fills[c].iter().find(|(level, _)| *level >= empty).map(|(_, h)| h.clone());
+                show(&mut vis, want.is_some());
+                if let (Some(mut img), Some(want)) = (img, want) {
+                    if img.image != want { img.image = want; }
+                    let [r, g, b] = portrait::pushed(portrait::FILL_RGB, flashes.0[c].whiteness());
+                    let colour = Color::srgb_u8(r, g, b);
+                    if img.color != colour { img.color = colour; }
                 }
             }
             SquadPart::PlayerHealth => {

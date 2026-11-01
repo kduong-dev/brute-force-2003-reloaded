@@ -1132,6 +1132,8 @@ fn main() {
 
 #[path = "play_hud.rs"]
 mod hud;
+#[path = "play_portrait_parts.rs"]
+mod portrait_parts;
 #[path = "play_faces.rs"]
 mod faces;
 #[path = "play_grenade.rs"]
@@ -3438,7 +3440,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         m.move_input = Vec2::ZERO;
         m.aim = false;
         m.fire = false;
-        // (a tap still owed its shot doesn't go on firing for the one handed over from)
+        // (a press riding out the raise doesn't go on firing for the one handed over from)
         m.fire_state.drop_pull();
     }
     // the character handed over from drops back with the line of its command mode ("I'm right
@@ -6283,7 +6285,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         };
         let duration = clip.map_or(1.0, |c| c.duration);
         let grab = clip.and_then(|c| c.event(EV_REACH)).unwrap_or(duration * 0.2);
-        let used = clip.and_then(|c| c.event(on)).unwrap_or(duration * if p.use_face { 0.8 } else { 0.25 });
+        let used = clip.and_then(|c| c.event(on)).unwrap_or(duration * if p.use_face { 0.8 } else { 0.25 }); // (fallbacks: guesses, for a clip without the event; every squad clip has it)
         // (the medkit leaves the hand at the clip's let-go event; the OrgSen goes on the face)
         let let_go = if p.use_face { used } else { clip.and_then(|c| c.event(EV_LET_GO)).unwrap_or(duration * 0.8) };
         p.item_in_hand = t >= grab && t < let_go;
@@ -6401,7 +6403,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // (an AI holds a lobbed weapon's fire while its target is within the blast's reach of itself,
     // `missile::lob_holds`: the demo's, untraced)
     let held = p.ai_target.zip(l.weapons.get(p.weapon)).is_some_and(|(t, w)| missile::lob_holds(&w.def, game, p.position, t));
-    // (a tap is held for each gun until its first shot, play_shots.rs `pull`)
+    // (a press is kept for each gun only while the raise runs, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire && !held, can_fire);
     if pulled.contains(&true) {
         if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
@@ -6416,8 +6418,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // accuracy; each round fired takes one from its clip and plays one report. The fire command
     // sets both guns' fire flags (0x122614-0x122655): each runs its own loop
     if let Some(def) = l.weapons.get(p.weapon).map(|w| &w.def) {
-        // (an empty gun's dry cycle: the button down, or a pull still owed the other gun's shot,
-        // as the game's request sets both guns' fire flags)
+        // (an empty gun's dry cycle: the button down, or a press riding out the raise for the other
+        // gun's shot, as the game's request sets both guns' fire flags)
         let dry = ((p.fire && !held) || pulled.contains(&true)) && gun_up && p.using.is_none();
         // (the accuracy object's bonus from the holder: a level character's placement's, #227,
         // play_brain.rs; -1 for the rest)

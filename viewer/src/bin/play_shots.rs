@@ -212,7 +212,7 @@ pub struct Trigger {
     /// the trigger for the fire loop (`pull`: held, or a press riding out the gun's raise)
     pub held: bool,
     /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case), or a press riding
-    /// still owed the other hand's shot (the request sets both guns' fire flags, `pull`)
+    /// out the raise for the other hand's shot (the request sets both guns' fire flags, `pull`)
     pub dry: bool,
     /// rounds in the clip
     pub clip: i64,
@@ -296,7 +296,7 @@ impl FireState {
         std::mem::take(&mut self.empty[hand]) > 0
     }
 
-    /// Forget a pull still owed its shot (control passing to another character).
+    /// Forget a press riding out the raise (control passing to another character).
     pub fn drop_pull(&mut self) {
         self.latched = [false; HANDS];
         self.latch_left = 0.0;

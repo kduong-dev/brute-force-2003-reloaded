@@ -58,10 +58,7 @@
     Checked (#361, `BF_TEST_HEALTH=60 BF_TEST_MEDKIT=1.5 BF_TEST_INV=Medkit:3 BF_TEST_ITEM=Medkit
     BF_PICKUP_LOG=1 BF_CAPTURE_FPS=60`, e34's range spot): the press at 1.52 logs "2 left", the
     heal at 1.65 (Brutus), 1.68 (Hawk, Tex), 1.75 (Flint, the L-Shot-75's w1 stance), and the
-    medkit let go at 2.33 (Tex), where the demo healed at 2.33 before. The capture's frames
-    show the medkit in the hand at 1.65 and the throw-away pose after; the capture had no HUD
-    (not looked into), so the bar's fill and the box's count were
-    checked in the log, not in frames.
+    medkit let go at 2.33 (Tex, 0.8 s after the press: the 19f8311b event, where the demo used to heal). The HUD frames (`BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05` takes the test spot's letterbox off; 60 fps) show the box's count 3 on the frames at 1.483 and 1.500, 2 from 1.517 (the press frame), the health bar at 60/115 to 1.667 and full in one step on 1.683 (+0.167 s), the box then grey and red (full health), and the medkit in the hand from the reach event. **An interruption is the demo's guess:** the count drops at the press as take13 shows, but a use that ends before 0a6e8f79 (a knock-down, a death, a hand-over to another member) leaves no heal and the medkit gone, since the demo ends the use clip and nothing gives it back. The game's pending holder (inv+0xf0) isn't traced on a cancel, so what it does isn't known. On a hand-over the swapped-out member's `item_used` is never consumed (`medkit_used` reads only the controlled player).
   * The medkit's cross glows: the model's second piece is a flat quad over the painted cross
     with the untextured glow material h_031724e6 (shader h_f539fe8c, glow 0.10 0.34 0.83,
     wrapper opacity 50). Flat untextured glows like it are drawn at full strength (the
