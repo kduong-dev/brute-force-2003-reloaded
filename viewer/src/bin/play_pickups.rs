@@ -161,30 +161,49 @@ pub const FEED_TIME: f32 = 4.0;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PickupSystems;
 
-/// The pickup lines under the character (`FeedLine`).
+/// The pickup lines under the character (`FeedLine`): the HUD widget's three line slots
+/// (FUN_000ad690's widget, +0x64 / +0x68 / +0x6c; `FEED_SLOTS`).
 #[derive(Resource, Default)]
 pub struct PickupFeed(pub Vec<FeedLine>);
 
-/// A pickup line: the item's name, how many taken, seconds left, and whether it's the "(full)"
-/// form. A count of 0 or 1 shows the name alone (FUN_000ad790; the memory chip's message,
-/// play_dna.rs, is pushed with 0), from 2 "<n>x <name>". `full`: nothing could be taken, the
-/// stack being full (FUN_000ad790's count-0 form, L"%s %s" (0x40d744) with "(full)" h_f1416a07, in
-/// FUN_000b8820's red: #17, the walk-over of a lying gun, play_weapon_pickups.rs).
+/// How many lines the widget has: FUN_000ad650 and FUN_000ad5f0 loop over three (`iVar < 0 || 2 <
+/// iVar`) at +0x64.
+pub const FEED_SLOTS: usize = 3;
+/// A line's fade-in, seconds: FUN_000ad790 calls FUN_000bbea0 with 0x3dcccccd (0.1) as the time,
+/// the rate (+0x54) being 1 / time toward the target alpha 1.
+pub const FEED_FADE_IN: f32 = 0.1;
+/// A line's fade-out, seconds: when its hold runs out the base widget update (FUN_000bbf40) calls
+/// FUN_000bbef0 with -1, which takes the widget's own +0x50, 0.5 (FUN_000ad690 sets +0x4c 0.25 and
+/// +0x50 0.5). take12 of the tutorial agrees (the lines' bright pixels go over 0.3 s from 281.48
+/// s, what a 0.5 s ramp does to pale text over a dark ground; a 0.1 s one would take 0.05 s).
+pub const FEED_FADE_OUT: f32 = 0.5;
+
+/// A pickup line: the item's name, how many taken, seconds of hold left, whether it's the
+/// "(full)" form, its slot and its alpha. A count of 0 or 1 shows the name alone (FUN_000ad790;
+/// the memory chip's message, play_dna.rs, is pushed with 0), from 2 "<n>x <name>". `full`:
+/// nothing could be taken, the stack being full (FUN_000ad790's count-0 form, L"%s %s" (0x40d744)
+/// with "(full)" h_f1416a07, in FUN_000b8820's red: #17, the walk-over of a lying gun,
+/// play_weapon_pickups.rs). `left` is the hold (+0x60: 4.0 from the time the line is at full
+/// alpha, then 0 while it fades out, and then the slot is free); `slot` the widget line it is
+/// in (its place, 20 units apart), `alpha` its +0x58 eased toward 1 and then 0 (`PickupFeed::tick`).
 pub struct FeedLine {
     pub name: String,
     pub count: i64,
     pub left: f32,
     pub full: bool,
+    pub slot: usize,
+    pub alpha: f32,
 }
 
 impl PickupFeed {
-    /// A pickup of `n` of the item named `name` (FUN_000ad790): the same item's line counts up, any
-    /// other starts one, its time back to FEED_TIME. `n` 0 is a pickup that took nothing (its stack
-    /// full): the "(full)" form while the line's count is 0, its time put back each time; a line
-    /// that has a count keeps it, and its time runs on (0xad7b5: the time is set only for a count
-    /// above 0 or a total of 0).
+    /// A pickup of `n` of the item named `name` (FUN_000ad790): the line showing the same item
+    /// counts up (FUN_000ad650: a line with time left and this item), any other starts one in a
+    /// free slot or the one with the least time left (FUN_000ad5f0), its hold back to FEED_TIME.
+    /// `n` 0 is a pickup that took nothing (its stack full): the "(full)" form while the line's
+    /// count is 0, its time put back each time; a line that has a count keeps it, and its time
+    /// runs on (0xad7b5: the time is set only for a count above 0 or a total of 0).
     pub fn add(&mut self, name: String, n: i64) {
-        match self.0.iter_mut().find(|l| l.name == name) {
+        match self.0.iter_mut().find(|l| l.left > 0.0 && l.name == name) {
             Some(l) => {
                 l.count += n;
                 if n > 0 || l.count == 0 {
@@ -192,8 +211,46 @@ impl PickupFeed {
                 }
                 l.full = l.count == 0;
             }
-            None => self.0.push(FeedLine { full: n == 0, name, count: n, left: FEED_TIME }),
+            None => self.start(FeedLine { full: n == 0, name, count: n, left: FEED_TIME, slot: 0, alpha: 0.0 }),
         }
+    }
+
+    /// A line of its own, without a count, that never joins another (the memory chip's message,
+    /// play_dna.rs).
+    pub fn message(&mut self, name: String) {
+        self.start(FeedLine { full: false, name, count: 0, left: FEED_TIME, slot: 0, alpha: 0.0 });
+    }
+
+    /// Puts a new line in its slot (FUN_000ad5f0): the first whose hold is 0 (free, though it may
+    /// still be fading), else the one with the least hold left. The line starts from the alpha the
+    /// slot's widget has, and fades in from there.
+    fn start(&mut self, mut line: FeedLine) {
+        let held = |slot: usize| self.0.iter().find(|l| l.slot == slot && l.left > 0.0).map(|l| l.left);
+        let slot = (0..FEED_SLOTS).find(|&k| held(k).is_none())
+            .or_else(|| (0..FEED_SLOTS).min_by(|&a, &b| held(a).unwrap_or(0.0).total_cmp(&held(b).unwrap_or(0.0))))
+            .unwrap_or(0);
+        line.slot = slot;
+        line.alpha = self.0.iter().find(|l| l.slot == slot).map_or(0.0, |l| l.alpha);
+        self.0.retain(|l| l.slot != slot);
+        self.0.push(line);
+    }
+
+    /// One frame: each line's alpha eases to 1 in FEED_FADE_IN, its hold runs while it's at 1,
+    /// and out of hold it fades to 0 in FEED_FADE_OUT and goes (FUN_000bbf40: the alpha moves
+    /// first, the hold is taken off after it in the same call, only while the alpha is at its
+    /// target).
+    pub fn tick(&mut self, dt: f32) {
+        for l in &mut self.0 {
+            if l.left > 0.0 {
+                l.alpha = (l.alpha + dt / FEED_FADE_IN).min(1.0);
+                if l.alpha >= 1.0 {
+                    l.left = (l.left - dt).max(0.0);
+                }
+            } else {
+                l.alpha = (l.alpha - dt / FEED_FADE_OUT).max(0.0);
+            }
+        }
+        self.0.retain(|l| l.left > 0.0 || l.alpha > 0.0);
     }
 }
 
@@ -484,10 +541,7 @@ fn take_pickups(mut commands: Commands, time: Res<Time>, game: Res<GameData>, mu
                 mut events: ResMut<super::triggers::TriggerEvents>, mut found: ResMut<DnaFound>) {
     let dt = frame_dt(&time);
     let mut gone: Vec<Entity> = vec![];
-    for line in &mut feed.0 {
-        line.left -= dt;
-    }
-    feed.0.retain(|l| l.left > 0.0);
+    feed.tick(dt);
     // (the selection after an item runs out is play_itembox.rs's `settle`)
     // who's near enough: the player first, then any squad member running over it (their
     // medkits go in the squad's shared inventory, the player's; a fruit heals whoever eats it;

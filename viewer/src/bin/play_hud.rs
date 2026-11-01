@@ -11,7 +11,7 @@
 //! upside down, so they are drawn flipped. Text uses Bevy's font, not the game's bitmap font.
 
 use super::*;
-use super::fonts::{record_text, Across, RecordText, BODY12, HEADING24};
+use super::fonts::{record_text, Across, RecordText, BODY12, BODY14, HEADING24};
 use super::text::{game_text, Align, GameText, AMMO_ORANGE, MESSAGE_BLUE};
 
 /// radar frame (octagon); its disc, circles and wedge are play_radar_disc.rs's
@@ -34,13 +34,18 @@ const RING_GROW: f32 = 1.5;
 const RING_BLUE: Color = Color::srgb(0x23 as f32 / 255.0, 0x53 as f32 / 255.0, 0xD4 as f32 / 255.0);
 const RING_RED: Color = Color::srgb(0xA0 as f32 / 255.0, 0x20 as f32 / 255.0, 0x20 as f32 / 255.0);
 const RING_IN_USE: Color = Color::srgb(0x3C as f32 / 255.0, 0x69 as f32 / 255.0, 0xDC as f32 / 255.0);
-/// Pickup lines shown at once, and where they go: fixed on the screen, centred under the
-/// character's usual place, the status message above them (the capture's spacing: lines 29
-/// and 45 under the message).
-const FEED_LINES: usize = 4;
-const MESSAGE_Y: f32 = 290.0;
-const FEED_FIRST: f32 = 29.0;
-const FEED_STEP: f32 = 16.5;
+/// The pickup lines (#17, #314): the widget FUN_000ad690 makes (HUD name 0x1eeaa123) has three
+/// of them, `FEED_LINES`, each 14 points of the body font (its constructor sets the record 0xc626fd5
+/// at 0xe: play_fonts.rs BODY14), centred on the middle of the screen (x 320), with line k 20 units
+/// under the first (its update 0xad860: y = k x 0x14). The first line's place is a fit, the
+/// layout data that puts the widget isn't found: take12 of the tutorial (`todo/28-tutorial`,
+/// 278.5 s, 1280 x 720 with the 4:3 picture at x 160-1120, 1.5 px a unit) has one line alone with
+/// its ink 346.7 units from the top ("Frag Grenades (full)", F's top at video y 520) and, with a
+/// second, that one's at 366.7 ("31x High ROF Ammo", y 550), 20.0 units on; `FEED_TOP` is the
+/// record text's top that puts the demo's ink there.
+const FEED_LINES: usize = super::pickups::FEED_SLOTS;
+const FEED_STEP: f32 = 20.0;
+const FEED_TOP: f32 = 341.5;
 /// The message line (the HUD entry's widget +0x114, name 0xe2548d48, constructor FUN_000b32d0):
 /// the body font at 12 points (FUN_000cd9c0(0xc626fd5, 12): play_fonts.rs BODY12) in
 /// (192, 255, 255) (its constructor's bytes from FUN_000b87a0's c0 d7 ff ff, the green taken from
@@ -906,8 +911,6 @@ enum Part {
     SwitchHint,
     /// the special skill's name while it's on (and a moment after), under the bars
     SkillLabel,
-    /// the pickup lines under the message line (`MessageLine`)
-    Feed(usize),
     /// the blue target ring on a usable panel's button
     Ring,
 }
@@ -1120,7 +1123,7 @@ pub fn plugin(app: &mut App) {
         // tabs after the frame's orders, the menu's and the AI's: `update_player` sets a Move To's
         // arrival)
         .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
-                              update_hud_widgets, update_squad_hud, update_message, update_tabs.after(update_player))
+                              update_hud_widgets, update_squad_hud, update_message, update_feed, update_tabs.after(update_player))
             .after(update_weapons).after(deathcam::death_cam)
             .run_if(in_state(AppState::Playing)))
         // the radar's objective dots, once the radar-triggers' contacts are in (#228)
@@ -1445,8 +1448,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     commands.spawn((ChildOf(screen), MessageLine, Visibility::Hidden,
                     record_text("", 320.0, MESSAGE_TOP, &BODY12, vec![message_rgb], Some(Color::BLACK), Across::Centre)));
     for i in 0..FEED_LINES {
-        commands.spawn((ChildOf(screen), game_text("", 320.0, MESSAGE_Y + FEED_FIRST + FEED_STEP * i as f32, 11.5, MESSAGE_BLUE, Align::Centre),
-                        Part::Feed(i), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), FeedText(i), Visibility::Hidden,
+                        record_text("", 320.0, FEED_TOP + FEED_STEP * i as f32, &BODY14, vec![FEED_PALE], Some(Color::BLACK), Across::Centre)));
     }
 
     // ---- crosshair, above centre (320, 192) ----
@@ -1591,7 +1594,6 @@ fn update_hud_widgets(
     held_name: Res<super::ammo::HeldName>,
     (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
     use_panel: Res<super::UsePanel>,
-    feed: Res<super::pickups::PickupFeed>,
     mut game: ResMut<GameData>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<HudImages>,
@@ -1638,15 +1640,6 @@ fn update_hud_widgets(
     // its fade at the end (1: full), and the icon faint under it meanwhile, coming back as it
     // fades
     let name_alpha = (held_name.0 / super::ammo::NAME_FADE).min(1.0);
-    // (FUN_000ad790: "%dx %s" from two in a row, the name alone for one, 0x40d734; nothing taken
-    // with a stack full, "%s %s" (0x40d744) with "(full)", in FUN_000b8820's red, #17)
-    let full_word = game.0.strings.get(&S_FULL).cloned().unwrap_or("(full)".into());
-    let feed_shown: Vec<(String, Color)> = feed.0.iter().rev().take(FEED_LINES).rev().map(|l| match (l.full, l.count) {
-        (true, _) => (format!("{} {full_word}", l.name), FULL_RED),
-        (false, n) if n > 1 => (format!("{n}x {}", l.name), MESSAGE_BLUE),
-        _ => (l.name.clone(), MESSAGE_BLUE),
-    }).collect();
-
     for (part, mut vis, img, mut text, node) in &mut parts {
         let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
         let set = |t: Option<Mut<GameText>>, s: &str, color: Option<Color>| {
@@ -1760,13 +1753,6 @@ fn update_hud_widgets(
                     }
                 }
             }
-            Part::Feed(k) => {
-                let line = feed_shown.get(k);
-                show(&mut vis, line.is_some());
-                if let Some((line, colour)) = line {
-                    set(text, line, Some(*colour));
-                }
-            }
             Part::Crosshair => {
                 // (none once dead: the reference recording's reticle goes on the death frame; none
                 // during a weapon switch from the drop to the grab: the takes' crosshair goes
@@ -1794,6 +1780,46 @@ fn update_hud_widgets(
                     if img.color != tint { img.color = tint; }
                 }
             }
+        }
+    }
+}
+
+/// A pickup line's text (by slot, `PickupFeed`'s `FeedLine::slot`).
+#[derive(Component)]
+struct FeedText(usize);
+
+/// The pickup lines' colour: FUN_000b87a0's bytes c0 d7 ff, which FUN_000ad690 and FUN_000ad790
+/// put in the text's +0x38 (red), +0x3a (green) and +0x39 (blue); take12's pale text measures
+/// (201, 215, 252) through the video.
+const FEED_PALE: Color = Color::srgb(0xC0 as f32 / 255.0, 0xD7 as f32 / 255.0, 1.0);
+
+/// The pickup lines (`FeedText`): each slot shows the line `PickupFeed` holds in it, at the line's
+/// alpha (FUN_000bb170 turns the widget's alpha into the text's: the fade in and out of
+/// `PickupFeed::tick`). FUN_000ad790's text: "%dx %s" from a count of 2, the item's name alone for
+/// 0x40d734 below it, "%s %s" with "(full)" in FUN_000b8820's red for a total of 0 (#17).
+fn update_feed(feed: Res<super::pickups::PickupFeed>, game: Res<GameData>, mut texts: Query<(&FeedText, &mut Visibility, &mut RecordText)>) {
+    let full_word = game.0.strings.get(&S_FULL).cloned().unwrap_or("(full)".into());
+    for (slot, mut vis, mut t) in &mut texts {
+        let line = feed.0.iter().find(|l| l.slot == slot.0);
+        let want = if line.is_some_and(|l| l.alpha > 0.0) { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        let Some(l) = line else { continue };
+        let (text, colour) = match (l.full, l.count) {
+            (true, _) => (format!("{} {full_word}", l.name), FULL_RED),
+            (false, n) if n > 1 => (format!("{n}x {}", l.name), FEED_PALE),
+            _ => (l.name.clone(), FEED_PALE),
+        };
+        if t.text != text {
+            t.text = text;
+        }
+        if t.colours.first() != Some(&colour) {
+            t.colours = vec![colour];
+            t.redraw();
+        }
+        if (t.alpha - l.alpha).abs() > 1e-3 {
+            t.alpha = l.alpha;
         }
     }
 }

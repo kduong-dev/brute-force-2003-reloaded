@@ -279,7 +279,7 @@ fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
             queue.push((chip.sound, 1.0));
         }
         // a line of its own, without a count (n 0, see play_hud.rs)
-        feed.0.push(super::pickups::FeedLine { name: chip.message.clone(), count: 0, left: super::pickups::FEED_TIME, full: false });
+        feed.message(chip.message.clone());
         if std::env::var("BF_PICKUP_LOG").is_ok() {
             println!("{who} took a memory chip at {at:.2} (t {:.2}) from {:.2} m across, {:.2} m 3D: {:?}", player.sim_time,
                      Vec2::new(at.x - f.x, at.z - f.z).length(), f.distance(at), chip.message);
