@@ -101,6 +101,11 @@ const FACE_AT: [(f32, f32); 4] = [(51.0, 112.0), (112.0, 51.0), (-4.0, 51.0), (5
 /// thing aimed at the portrait points (the selection's chevrons; the "?" of a face with none). The
 /// box itself isn't used any more, the whole texture being drawn: these are the numbers it gave.
 const PORTRAIT_CENTRE: [(f32, f32); 4] = [(120.5, 425.0), (178.5, 365.5), (62.5, 365.5), (120.5, 302.0)];
+/// The frame's four portrait notches, as texel boxes (x0, y0, x1, y1) in the frame texture, **by
+/// character like `FACE_AT`** (Brutus bottom, Flint right, Hawk left, Tex top; #351: they were in
+/// the place order top, right, bottom, left, which hid a living member's fill when another died).
+/// The boxes are the notches' open parts in the texture, a fit from the takes.
+const NOTCHES: [(f32, f32, f32, f32); 4] = [(48.0, 110.0, 78.0, 119.0), (110.0, 50.0, 119.0, 80.0), (8.0, 48.0, 17.0, 78.0), (50.0, 8.0, 80.0, 17.0)];
 /// The command tab beside each portrait (#333): the tab widget FUN_000c3d10 (vtable 0x39f4f0, its
 /// update 0xc3f80 at +0x14 and draw 0xc4130 at +0x18; the HUD factory makes one a portrait at
 /// 0xb9af8), an 8-unit sprite whose texture and size its update sets each frame by the command
@@ -368,11 +373,18 @@ const PORTRAIT_BOX: f32 = 32.0;
 /// (0xc361d-0xc3625), and there is no fallback by race or slot in the code (#342).
 /// The tint is a **fit** (#351): the code draws the widget in white (0xc3550, FUN_000bb300) and
 /// the colour path that darkens it isn't found. In `todo/reference/Friendly Fire 2 + Death
-/// Cam.mp4` at 31.5 s the bottom skull's core is (48, 51, 48) over terrain (57, 48, 40), where
-/// the texture's alpha of 170 (0.67) and its own average (79, 100, 102) would give
-/// (72, 83, 81): what the footage needs is 0.53 of the texture's colour on every channel
-/// ((48 - 0.33 x bg) / 0.67 / texture), grey where #342's (0.6, 0.66, 0.6) left it teal.
-const SKULL_TINT: Color = Color::srgb(0.53, 0.53, 0.53);
+/// Cam.mp4` at 31.5 s (Brutus's wide skull, h_19da7869, over terrain) the skull's core (the
+/// opaque texels eroded by three, registered on the texture by luminance correlation, r 0.80) is
+/// (49.2, 52.2, 47.6) over a ground of (59.6, 47.3, 41.2) (the strip of terrain just under the
+/// box). The console blends in stored values, where 0.51-0.53 of the texture's colour at its
+/// alpha of 170 (0.67) gives that; the demo's UI blends in linear light, which leaves 0.53 about
+/// 20% lighter (the tester: (56, 55, 52) against (44.5, 46.9, 42.4)). So the tint is solved in the
+/// demo's own blend, out = srgb(a x tint x tex + (1 - a) x ground) in linear light per texel,
+/// meaned over the core, on the footage's ground: 0.397, 0.463, 0.426. The model was checked on
+/// two renders of the demo (tints 0.53 and 0.41 / 0.45 / 0.42, over its ground of (81.4, 83.4,
+/// 77.4)): it reads 5-6 levels under the renders by the same amount for both (5.9, 5.7, 5.3 and
+/// 6.0, 5.8, 5.3), so that offset was added before solving.
+const SKULL_TINT: Color = Color::srgb(0.40, 0.46, 0.43);
 /// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
 /// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,
 /// this tall (units) with its line's top this many heights above the place's centre, which
@@ -1398,7 +1410,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0), ImageNode::new(overlay), ZIndex(2)));
         // the frame's four portrait notches are open in its texture; the game fills them dark behind
         // the faces (texel boxes in the frame texture: top, right, bottom, left)
-        for (i, (x0, y0, x1, y1)) in [(50.0, 8.0, 80.0, 17.0), (110.0, 50.0, 119.0, 80.0), (48.0, 110.0, 78.0, 119.0), (8.0, 48.0, 17.0, 78.0)].into_iter().enumerate() {
+        for (i, &(x0, y0, x1, y1)) in NOTCHES.iter().enumerate() {
             commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x0, RADAR_FRAME_AT.1 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9)),
                             SquadPart::Notch(i)));
         }
@@ -2489,6 +2501,22 @@ fn blend(dst: &mut [f32; 4], rgb: [f32; 3], a: f32) {
 mod tests {
     use super::*;
     use super::super::brain::Mode;
+
+    /// Each notch fill is the one beside its own character's portrait box (#351: both tables are by
+    /// character, so a death hides its own fill and no other).
+    #[test]
+    fn notches_are_by_character() {
+        let centre = |(x0, y0, x1, y1): (f32, f32, f32, f32)| ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        for (i, &n) in NOTCHES.iter().enumerate() {
+            let (nx, ny) = centre(n);
+            let near = |k: usize| {
+                let (px, py) = (FACE_AT[k].0 + PORTRAIT_BOX / 2.0, FACE_AT[k].1 + PORTRAIT_BOX / 2.0);
+                (nx - px).hypot(ny - py)
+            };
+            let nearest = (0..4).min_by(|&a, &b| near(a).total_cmp(&near(b))).unwrap();
+            assert_eq!(nearest, i, "notch {i}");
+        }
+    }
 
     /// The tab's icon by command mode (0xc3f80's jump table): FOLLOW's green arrows 16 x 8, GUARD's
     /// bars 8 x 16, WINGMAN's ring and MOVE_OUT's arrow 16 x 16; FORMATION and FREEWILL none.

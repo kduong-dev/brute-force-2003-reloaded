@@ -810,7 +810,7 @@ Squad movement and deaths follow the game's own data and the captures:
     blend is above it, and the glare raises every channel and spreads the soft halo. The demo
     doesn't key the chip yet: the glare also multiplies by the frame buffer's alpha, which the
     chip's blend leaves at a value not worked out (a follow-up).
-  * Earlier footage: far off (Friendly Fire 2, 33.8 s) the chip's inside is
+  * Earlier footage (campaign e34, not a squad deathmatch): far off (Friendly Fire 2, 33.8 s) the chip's inside is
     green +58 over the background, red and blue up too; the demo's is green +30 to +48 at 6-15 m
     on sdm_e34, red and blue a little down. Up close in front of a lit wall (DNA + Weapon
     Pickups, 12.4-12.6 s) the footage's is whitish cyan, red 165 over 60, with a soft halo.

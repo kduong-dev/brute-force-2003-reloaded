@@ -18,7 +18,7 @@
 //! scroll (FUN_0008fca0) moves the texture by h_fb0bff34 / h_e002ae8e per second only while
 //! h_08c2d2ee seconds are left, then stops: a fixed offset of rate x time.
 //!
-//! In todo/DNA + Weapon Pickups.mp4 (0-12.6 s) and todo/Friendly Fire 2 + Death Cam.mp4 (from
+//! In todo/DNA + Weapon Pickups.mp4 (0-12.6 s) and todo/Friendly Fire 2 + Death Cam.mp4 (campaign e34, from
 //! 33.1 s, beside Brutus) it's a solid see-through green cube that turns with the view, its far
 //! faces visible through it, not spinning or bobbing. Walking into it takes it: it goes, its
 //! sound plays and the pickup lines say "Memory Chip Recovered!" (the footage also shows
