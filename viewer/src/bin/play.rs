@@ -1928,9 +1928,15 @@ impl OverlayClip {
 }
 
 /// reload clip event: magazine in
-/// use_item clip events: the item in the hand, and used (the medkit's heal, then let go).
-const EV_ITEM_IN_HAND: u32 = 0x0A6E_8F79;
-const EV_ITEM_USED: u32 = 0x19F8_311B;
+/// use_item clip events (FUN_00117660, #361): the item reaches the hand is `EV_REACH` (1a6b4920:
+/// the pending holder's item into the hand holder, the "use under way" flag cleared); this one is
+/// the use itself (0a6e8f79, 0x1179e5: the held item's type set's use, 0x14b980 -> 0x146f40, the
+/// medkit's heal and "healed" line, and the place state-2 sound), 0.13-0.27 s into the squad's
+/// clips.
+const EV_ITEM_USE: u32 = 0x0A6E_8F79;
+/// use_item clip event: the used item let go into the world (19f8311b, 0x118227 -> FUN_001215e0:
+/// the hand holder's +0x34), 0.77-0.90 s into the squad's clips. It heals nothing.
+const EV_LET_GO: u32 = 0x19F8_311B;
 /// bring2face clip events (the OrgSen put on, play_vision.rs): the item reaches the hand (the throw
 /// clips' EV_REACH, 1a6b4920) and is attached to the face holder, `attach_item` (FUN_00117660 at
 /// 0x11774c; the name recovered by hashing, as `pickup_item`)
@@ -1943,7 +1949,7 @@ const EV_RELEASE: u32 = 0x1186_6F3A;
 /// reaches it (EV_REACH, 0.23-0.47 s over the squad's clips: the recordings' "in hand
 /// 0.38-0.47 s") and lets it go (19f8311b, the use_item clip's "used" event, 0.50-0.60 s); it drops from the hand to the
 /// ground (the recordings: on the ground ~0.8 s (Sentry) / ~1.05 s (Roller) after the press)
-const EV_PLACED: u32 = EV_ITEM_USED;
+const EV_PLACED: u32 = EV_LET_GO;
 /// An inventory item, one stack of the squad's store: a grenade type (an index into
 /// `grenade::GrenadeKits`, the same as into `Player::grenades`), the Medkit (the 80-point (5, 0)
 /// stack), or another item of the store by its item type (`Player::others`: the OrgSen, the Hat,
@@ -2522,11 +2528,13 @@ struct Player {
     item: Option<Item>,
     item_use: bool,
     /// a medkit being used: time into the use_item clip; `item_in_hand` while the clip has it
-    /// (its 0a6e8f79 event to its 19f8311b), `item_used` set the frame it's used (heal, sound,
-    /// drop: see play_pickups.rs)
+    /// (its 1a6b4920 event to its 19f8311b), `item_used` set the frame it's used (its 0a6e8f79
+    /// event: heal, sound, the "healed" line) and `item_let_go` the frame it's let go (19f8311b:
+    /// the model drops); see play_pickups.rs
     using: Option<f32>,
     item_in_hand: bool,
     item_used: bool,
+    item_let_go: bool,
     /// the use under way is the OrgSen's (IOU_ATTACH_TO_FACE: the stance's bring2face clip, its
     /// reach and attach_item events in place of the use_item clip's, play_vision.rs): `item_in_hand`
     /// then means the OrgSen in the hand, `item_used` the frame it's put on
@@ -2901,7 +2909,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, facial: Default::default(), sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, item_let_go: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -3432,7 +3440,7 @@ fn squad_control(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         m.move_input = Vec2::ZERO;
         m.aim = false;
         m.fire = false;
-        // (a tap still owed its shot doesn't go on firing for the one handed over from)
+        // (a press riding out the raise doesn't go on firing for the one handed over from)
         m.fire_state.drop_pull();
     }
     // the character handed over from drops back with the line of its command mode ("I'm right
@@ -6262,23 +6270,30 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.reloading = Some(r);
         }
     }
-    // ---- a medkit: the stance's use_item clip; in the hand from its 0a6e8f79 event, used (and
-    // dropped) at its 19f8311b event. The OrgSen (`use_face`): the stance's bring2face clip, in the
-    // hand from its reach event (1a6b4920), put on the face at its attach_item (play_vision.rs)
+    // ---- a medkit: the stance's use_item clip; in the hand from its reach event (1a6b4920), used
+    // at its 0a6e8f79 event (the heal, #361) and let go at its 19f8311b. The OrgSen (`use_face`):
+    // the stance's bring2face clip, in the hand from its reach event (1a6b4920), put on the face
+    // at its attach_item (play_vision.rs)
     p.item_used = false;
+    p.item_let_go = false;
     if let Some(t0) = p.using.take() {
         let t = t0 + dt;
-        let (clip, in_hand, on) = if p.use_face {
-            (l.face_clips[stance_of(l, p.weapon)].as_ref(), EV_REACH, EV_ATTACH_ITEM)
+        let (clip, on) = if p.use_face {
+            (l.face_clips[stance_of(l, p.weapon)].as_ref(), EV_ATTACH_ITEM)
         } else {
-            (l.use_clips[stance_of(l, p.weapon)].as_ref(), EV_ITEM_IN_HAND, EV_ITEM_USED)
+            (l.use_clips[stance_of(l, p.weapon)].as_ref(), EV_ITEM_USE)
         };
         let duration = clip.map_or(1.0, |c| c.duration);
-        let grab = clip.and_then(|c| c.event(in_hand)).unwrap_or(duration * 0.2);
-        let used = clip.and_then(|c| c.event(on)).unwrap_or(duration * 0.8);
-        p.item_in_hand = t >= grab && t < used;
+        let grab = clip.and_then(|c| c.event(EV_REACH)).unwrap_or(duration * 0.2);
+        let used = clip.and_then(|c| c.event(on)).unwrap_or(duration * if p.use_face { 0.8 } else { 0.25 }); // (fallbacks: guesses, for a clip without the event; every squad clip has it)
+        // (the medkit leaves the hand at the clip's let-go event; the OrgSen goes on the face)
+        let let_go = if p.use_face { used } else { clip.and_then(|c| c.event(EV_LET_GO)).unwrap_or(duration * 0.8) };
+        p.item_in_hand = t >= grab && t < let_go;
         if t0 < used && t >= used {
             p.item_used = true;
+        }
+        if !p.use_face && t0 < let_go && t >= let_go {
+            p.item_let_go = true;
         }
         if t < duration && !p.dead {
             p.using = Some(t);
@@ -6388,7 +6403,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // (an AI holds a lobbed weapon's fire while its target is within the blast's reach of itself,
     // `missile::lob_holds`: the demo's, untraced)
     let held = p.ai_target.zip(l.weapons.get(p.weapon)).is_some_and(|(t, w)| missile::lob_holds(&w.def, game, p.position, t));
-    // (a tap is held for each gun until its first shot, play_shots.rs `pull`)
+    // (a press is kept for each gun only while the raise runs, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire && !held, can_fire);
     if pulled.contains(&true) {
         if p.aim_hold <= 0.0 && !p.fire_state.raised() && !p.aim {
@@ -6403,8 +6418,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // accuracy; each round fired takes one from its clip and plays one report. The fire command
     // sets both guns' fire flags (0x122614-0x122655): each runs its own loop
     if let Some(def) = l.weapons.get(p.weapon).map(|w| &w.def) {
-        // (an empty gun's dry cycle: the button down, or a pull still owed the other gun's shot,
-        // as the game's request sets both guns' fire flags)
+        // (an empty gun's dry cycle: the button down, or a press riding out the raise for the other
+        // gun's shot, as the game's request sets both guns' fire flags)
         let dry = ((p.fire && !held) || pulled.contains(&true)) && gun_up && p.using.is_none();
         // (the accuracy object's bonus from the holder: a level character's placement's, #227,
         // play_brain.rs; -1 for the rest)

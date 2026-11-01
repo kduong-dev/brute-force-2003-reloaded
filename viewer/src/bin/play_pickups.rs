@@ -18,9 +18,11 @@
 //!
 //! Using a medkit (todo/medic + intenvory use case.mp4) plays the stance's use_item overlay
 //! (Sc_w1_/Sc_w2_use_item, ~1 s): the red used medkit (the carried type's own model) is in the
-//! throwing hand from its 0a6e8f79 event; at its 19f8311b event it heals, plays MEDKIT_SOUND,
-//! the character now and then says a "healed" line, and the medkit is let go: it falls and
-//! bounces to rest on the ground, and stays.
+//! throwing hand from its 1a6b4920 event. The press takes one off the stack (FUN_0014abc0, as
+//! the game's use starts); at the clip's 0a6e8f79 event (0.13-0.27 s in, FUN_00117660 ->
+//! 0x14b980 -> 0x146f40) it heals and plays MEDKIT_SOUND, the character now and then says a
+//! "healed" line; at its 19f8311b event the medkit is let go (FUN_001215e0): it falls and
+//! bounces to rest on the ground, and stays (#361).
 //!
 //! Every pickup on the ground (and every used medkit) is loose: it lies tilted to the ground
 //! under it, a shot knocks it and a grenade blast throws it, and it tumbles, bounces and slides
@@ -668,34 +670,48 @@ fn use_medkit(mut player: ResMut<Player>, mut status: ResMut<UsePanel>, game: Re
         player.using = Some(0.0);
         player.use_face = false;
         player.use_stack = stack;
+        // the stack's count drops as the use starts (FUN_00121170 -> FUN_0014abc0, 0x121571), not
+        // at the heal: #196 take13's Medkit 2 -> 1 in the first log row after the press (#361).
+        // What an interruption before the heal does (a knock-down, a death, a hand-over: the
+        // heal event never comes, `Player::using` ends) is the demo's guess: the medkit stays
+        // lost. The game's pending holder (inv+0xf0) isn't traced on a cancel. The swapped-out
+        // member's `item_used` is never consumed either
+        match stack {
+            Item::Other(k) => {
+                if let Some(c) = player.others.iter_mut().find(|c| c.kind == k) {
+                    c.count -= 1;
+                }
+            }
+            _ => player.medkits -= 1,
+        }
+        if std::env::var("BF_PICKUP_LOG").is_ok() {
+            println!("t={:.2} uses a medkit: {} left, health {:.0}/{:.0}; the heal waits for the clip's 0a6e8f79 event", player.sim_time,
+                     item_count(&player, stack), player.health, player.max_health);
+        }
         // the item use's skill call as its overlay is queued (FUN_00121170 -> +0x104, the medkit's
         // IOU_USE_IN_HAND): a stealthed Hawk's 5 stamina
         super::skills::used_item(&mut player, super::skills::IOU_USE_IN_HAND);
     }
 }
 
-/// The use_item clip's use event: one of the stack in use taken (`Player::use_stack`), heal by
-/// its type's h_0a811e94 (the 80-point Medkit's 80, the other's 60), the sound, the "healed" line
-/// asked of the chatter gate when the heal added health, and let the medkit go.
-/// BF_TEST_HEALED=1: the line's chance 100%.
+/// The use_item clip's events (#361). At its use event (0a6e8f79, `Player::item_used`) heal by the
+/// stack in use's (`Player::use_stack`) type's h_0a811e94 (the 80-point Medkit's 80, the other's
+/// 60), the sound, the "healed" line asked of the chatter gate when the heal added health; the
+/// stack already dropped at the press (`use_medkit`). At its let-go event (19f8311b,
+/// `Player::item_let_go`) the used medkit leaves the hand. BF_TEST_HEALED=1: the line's chance 100%.
 fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<Player>, mut used: ResMut<UsedMedkit>,
                joints: Query<&GlobalTransform>) {
-    let stack = player.use_stack;
     // (the OrgSen's bring2face clip has the frame's `item_used` too, at its attach_item: play_vision.rs)
-    if !player.item_used || player.use_face || item_count(&player, stack) <= 0 {
+    if player.item_let_go && !player.use_face {
+        let_go(&mut commands, &mut player, &mut used, &joints);
+    }
+    if !player.item_used || player.use_face {
         return;
     }
+    let stack = player.use_stack;
     let kind = match stack {
-        Item::Other(k) => {
-            if let Some(c) = player.others.iter_mut().find(|c| c.kind == k) {
-                c.count -= 1;
-            }
-            k
-        }
-        _ => {
-            player.medkits -= 1;
-            player.medkit_kind
-        }
+        Item::Other(k) => k,
+        _ => player.medkit_kind,
     };
     let heal = game.0.items.get(&kind).map_or(60.0, |i| i.health);
     let before = player.health;
@@ -707,13 +723,23 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
     if healed {
         chatter::say_with(&mut player, HEALED_CHATTER, std::env::var("BF_TEST_HEALED").is_ok().then_some(100));
     }
+    if std::env::var("BF_PICKUP_LOG").is_ok() {
+        println!("t={:.2} used a medkit (h_{kind:08x}): health {:.0}/{:.0}, {} left; sound h_{MEDKIT_SOUND:08x} (in the bank: {}), healed line {}",
+                 player.sim_time, player.health, player.max_health, item_count(&player, stack), game.0.sounds.has(MEDKIT_SOUND),
+                 if healed { "asked of the chatter gate" } else { "not asked (no health added)" });
+    }
+}
+
+/// The used medkit leaves the hand at the clip's let-go event (19f8311b): it falls forward of the
+/// character, bounces and stays (`physics`).
+fn let_go(commands: &mut Commands, player: &mut Player, used: &mut UsedMedkit, joints: &Query<&GlobalTransform>) {
     // the medkit leaves the hand: forward of the character, a little up, tumbling
     let hand = player.loaded.as_ref().and_then(|l| l.throw_hand.map(|(bone, point)| (l.joints[bone], point)))
         .and_then(|(joint, point)| joints.get(joint).ok().map(|t| t.transform_point(point)))
         .unwrap_or(player.position + Vec3::Y * (CHEST + GROUND));
     let forward = Vec3::new(-player.yaw.sin(), 0.0, -player.yaw.cos());
     let k = player.random(1000) as f32 / 1000.0;
-    let e = spawn_model(&mut commands, &used, Transform::from_translation(hand), None);
+    let e = spawn_model(commands, &*used, Transform::from_translation(hand), None);
     commands.entity(e).insert(Body { velocity: forward * DROP_FORWARD + Vec3::Y * DROP_UP, spin: Vec3::new(4.0 + 3.0 * k, 2.0 * k, 3.0 - 2.0 * k),
                                      lift: DROP_RADIUS, moving: true, rest: None, corners: used.corners.clone(), quiet: 0.0 });
     used.dropped.push(e);
@@ -722,9 +748,7 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
         commands.entity(old).despawn();
     }
     if std::env::var("BF_PICKUP_LOG").is_ok() {
-        println!("used a medkit (h_{kind:08x}): health {:.0}/{:.0}, {} left; sound h_{MEDKIT_SOUND:08x} (in the bank: {}), healed line {}, dropped at {hand:.2}",
-                 player.health, player.max_health, item_count(&player, stack), game.0.sounds.has(MEDKIT_SOUND),
-                 if healed { "asked of the chatter gate" } else { "not asked (no health added)" });
+        println!("t={:.2} the used medkit is let go at {hand:.2}", player.sim_time);
     }
 }
 

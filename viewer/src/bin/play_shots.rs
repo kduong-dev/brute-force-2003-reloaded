@@ -170,9 +170,12 @@ pub struct FireState {
     seed: u32,
     /// the frame clock's random numbers (`TICK_JITTER`), apart from the gun's stream
     clock_seed: u32,
-    /// a trigger pull still owed its first shot, by hand (see `pull`), and the trigger last frame
+    /// a press riding out the gun's raise, by hand (see `pull`), and the trigger last frame
     latched: [bool; HANDS],
     was_held: bool,
+    /// seconds left of the raise a press is latched through (`raise`, `LATCH_GRACE`): the
+    /// controller's +0xa1 bit 3 while the ready timer is above 4
+    latch_left: f32,
     /// seconds the gun stays up after a shot (see `READY_HOLD`)
     ready: f32,
 }
@@ -187,6 +190,15 @@ pub struct FireState {
 /// 15.5-15.8 (play_skills.rs `Skill::raised`).
 pub(super) const READY_HOLD: f32 = 4.0;
 
+/// How long past the raise's in-time a press stays latched (s): two game frames. The controller's
+/// bit 3 posts the fire command until the ready timer is at 4 or below, and the command fires in
+/// that same frame (0x1225d7); the demo holds the cooldown at the in-time plus a frame
+/// (play.rs `raise`), whose frames wobble (`TICK_JITTER`) and are run in whole 30 Hz steps
+/// after the render frame's `pull`, so the latch outlasts the wait by a frame or so. A latch that
+/// outlasts it fires nothing it shouldn't: the round resets the hand's latch (`tick_gun`), and
+/// an unready cooldown fires nothing. A fit to keep the first round at 0.10-0.13 s, not a game value.
+const LATCH_GRACE: f32 = 2.0 * TICK;
+
 /// The cooldown a trigger cycle, a dry click or a switch sets: 1 / rate, or 1 / the scoped rate
 /// h_019c314a while the holder's +0x7a8 is set (FUN_0022f0e0, FUN_002327f0, FUN_0022dc00 all
 /// read it through vtable +0x15c).
@@ -197,10 +209,10 @@ pub fn period(def: &WeaponDef, scoped: bool) -> f32 {
 
 /// What the trigger and the holder are doing this frame.
 pub struct Trigger {
-    /// the trigger for the fire loop (`pull`: held, or a tap still owed its shot)
+    /// the trigger for the fire loop (`pull`: held, or a press riding out the gun's raise)
     pub held: bool,
-    /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case), or a pull
-    /// still owed the other hand's shot (the request sets both guns' fire flags, `pull`)
+    /// the button down on a gun that's up but whose clip is empty (FUN_002327f0's case), or a press riding
+    /// out the raise for the other hand's shot (the request sets both guns' fire flags, `pull`)
     pub dry: bool,
     /// rounds in the clip
     pub clip: i64,
@@ -254,19 +266,26 @@ impl FireState {
     }
 
     /// The trigger for each hand's fire loop this frame (`can_fire`: whether that hand's gun can
-    /// fire): held, or pressed earlier and still owed its first shot. The game's request outlives
-    /// the button: the press sets the holder's +0x260 bit 3 (8), which sets the fire flag (+0x224
-    /// bit 2) of the gun in hand and of the second hand's each frame (0x122614-0x122655) until an
-    /// animation event clears it (0x0f8408d5, FUN_00117660 at 0x117b12, which clears both guns'
-    /// +0x224 bit 1 too), so an 80 ms tap fires once the gun is raised (the takes logged it 0.19-0.24
-    /// s after the input; the game's raise is 0.10-0.13 s, play.rs `raise`), both guns in Tex's
-    /// berserk. The clip that clears it isn't placed; the demo keeps each hand's request until
-    /// that gun's first shot, or until it can't fire.
+    /// fire): held, or pressed while the gun was being raised. The game's controller posts the
+    /// fire command (CT_FIRE_WEAPON) each frame the trigger is past 0.2, and the command sets
+    /// the weapon's fire flag (+0x224 value 4), which lives one weapon update: the fire loop
+    /// runs only with the cooldown out, and FUN_0022f770 clears the flag whether a round went
+    /// or not (FUN_0022efe0). So a press inside the cooldown fires nothing, and the demo doesn't
+    /// remember it (the ghost shot of #360). The one latch is the controller's +0xa1 bit 3
+    /// (0x1345b8): a press that finds the gun down raises it (FUN_00123ea0, the ready timer to 4
+    /// + the in-time) and sets the bit, and while it is set the controller posts the command
+    /// every frame without reading the trigger, until the timer is at 4 or below (0x134a25
+    /// clears it). So an 80 ms tap from idle fires its round once the gun is up (the takes
+    /// logged it 0.19-0.24 s after the input; the game's raise is 0.10-0.13 s, play.rs
+    /// `raise`), both guns in Tex's berserk. During held fire the command keeps the timer at 4
+    /// and the bit stays clear. `latch_left` is that raise, so a latched press ends with it,
+    /// shot or not.
     pub fn pull(&mut self, held: bool, can_fire: [bool; HANDS]) -> [bool; HANDS] {
         let pressed = held && !self.was_held;
         self.was_held = held;
+        let raising = self.latch_left > 0.0;
         std::array::from_fn(|k| {
-            self.latched[k] = (self.latched[k] || pressed) && can_fire[k];
+            self.latched[k] = (self.latched[k] && raising || pressed) && can_fire[k];
             (held || self.latched[k]) && can_fire[k]
         })
     }
@@ -277,9 +296,10 @@ impl FireState {
         std::mem::take(&mut self.empty[hand]) > 0
     }
 
-    /// Forget a pull still owed its shot (control passing to another character).
+    /// Forget a press riding out the raise (control passing to another character).
     pub fn drop_pull(&mut self) {
         self.latched = [false; HANDS];
+        self.latch_left = 0.0;
         self.was_held = false;
     }
 
@@ -293,6 +313,7 @@ impl FireState {
     /// up again within it raises nothing more.
     pub fn raise(&mut self, in_time: f32) {
         self.ready = self.ready.max(READY_HOLD + in_time);
+        self.latch_left = in_time + LATCH_GRACE;
     }
 
     /// FUN_00123ea0 asked for besides a shot (Flint's targeting, every frame while it's on,
@@ -310,6 +331,7 @@ impl FireState {
     /// follow camera's aim shift runs out (play_camera.rs) and the next pull raises it again.
     pub fn lower(&mut self) {
         self.ready = 0.0;
+        self.latch_left = 0.0;
     }
 
     /// The ready timer's time left (s; BF_CAMERA_LOG's t7dc).
@@ -334,6 +356,7 @@ impl FireState {
             self.clock_seed = (seed ^ CLOCK_SEED) | 1;
         }
         self.ready -= dt;
+        self.latch_left -= dt;
         self.clock += dt;
         while self.clock >= TICK {
             self.clock -= TICK;
