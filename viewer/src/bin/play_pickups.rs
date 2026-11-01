@@ -23,10 +23,17 @@
 //! bounces to rest on the ground, and stays.
 //!
 //! Every pickup on the ground (and every used medkit) is loose: it lies tilted to the ground
-//! under it, a character walking into it kicks it along, a grenade blast throws it, and it
-//! tumbles, bounces and slides to rest (simple rigid-body steps, see `physics`; loose ones
-//! push off each other so they don't sink into one another). Pickups with an idle effect
-//! (the hovering power-ups) are left alone.
+//! under it, a shot knocks it and a grenade blast throws it, and it tumbles, bounces and slides
+//! to rest (simple rigid-body steps, see `physics`; loose ones push off each other so they
+//! don't sink into one another). Pickups with an idle effect (the hovering power-ups) are left
+//! alone. **A character walking into one moves nothing** (#356): the game has no kick. The
+//! walk-over is a distance rule with no contact (FUN_0011c540 -> FUN_0011c170), and the pushes
+//! the game does make on a loose body (FUN_002b3bc0's callers: a thrown grenade's launch, a
+//! bolt's shove, the ragdoll's start) are none of them the character's movement. So a pickup it
+//! can't take (a full stack's box or pack, a lying gun, a used medkit, a fruit at full health)
+//! is walked through where it lies: #18 take05 has Tex walk 2.7 m through three Gas packs
+//! with the stack full and none of them moves, and in #61 take04 the two lying guns he stands
+//! at stay where they are.
 //!
 //! Each heals its item type's h_0a811e94 (see `ItemType`), up to the character's maximum: the
 //! fruit 40; a medkit what the carried item's says. The placed Medkit (h_f5123ace, 60) gives,
@@ -104,28 +111,24 @@ const DROP_UP: f32 = 0.6;
 const DROP_GRAVITY: f32 = 9.8;
 const DROP_RADIUS: f32 = 0.06;
 const DROPS_KEPT: usize = 12;
-/// Loose pickups: how near (m, across) a character's feet must come to kick one, and how high
-/// above or below; the kick (the character's speed carried, a push away, a hop up, m/s); a
-/// blast's reach (its radius times this) and throw (m/s at its middle); how far apart (m)
-/// loose ones push to; the steepest they lie tilted (rad). A kick sends it out ahead faster than the character and off to the side it was
-/// on (KICK_SIDE: how much the side it's off the character's line counts).
-const KICK_REACH: f32 = 0.45;
-const KICK_UP_REACH: f32 = 0.8;
-const KICK_CARRY: f32 = 1.15;
-const KICK_AWAY: f32 = 1.2;
-const KICK_SIDE: f32 = 2.5;
-const KICK_HOP: f32 = 1.4;
-/// After a kick it can't be kicked again for this long (s), so it isn't pushed along.
-const KICK_AGAIN: f32 = 0.6;
+/// A grenade blast's reach on loose pickups (its radius times this) and its throw (m/s at its
+/// middle, falling to nothing at the reach). The demo's choices (#91), as the rest of the loose
+/// bodies' motion: the game's pushes on a loose body are its physics' own (FUN_002b3bc0), and no
+/// character's walk is one of them (the module notes).
 const BLAST_REACH: f32 = 1.5;
+/// The blast's throw at its middle (m/s): see `BLAST_REACH`.
 const BLAST_THROW: f32 = 9.0;
+/// How far apart (m) loose pickups push to: the demo's choice (#91), so they don't sink into one
+/// another.
 const BODY_APART: f32 = 0.28;
+/// The steepest a pickup lies tilted to the ground under it (rad); a steeper slope is a step or a
+/// wall's edge, and it lies flat. The demo's choice (#91).
 const MAX_TILT: f32 = 0.45;
 /// The tumble (see `rigid_step`): a corner landing faster than BOUNCE_SPEED (m/s) bounces back
 /// at RIGID_BOUNCE of it; friction at a corner is at most RIGID_FRICTION of its bounce; on the
 /// ground the turning slows by RIGID_ROLL_DRAG per second; RIGID_STEPS sub-steps per 1/15 s.
 /// Slower than RIGID_STILL m/s and RIGID_STILL_SPIN rad/s on the ground for RIGID_QUIET s, it's
-/// at rest. A kick rolls it KICK_ROLL rad/s per m/s it's sent. All the demo's choices.
+/// at rest. All the demo's choices.
 const BOUNCE_SPEED: f32 = 1.0;
 const RIGID_BOUNCE: f32 = 0.3;
 const RIGID_FRICTION: f32 = 0.6;
@@ -134,7 +137,10 @@ const RIGID_STEPS: usize = 8;
 const RIGID_STILL: f32 = 0.12;
 const RIGID_STILL_SPIN: f32 = 0.6;
 const RIGID_QUIET: f32 = 0.25;
-const KICK_ROLL: f32 = 2.5;
+/// A blast rolls a pickup it throws BLAST_ROLL rad/s per m/s it's thrown, as a ball rolling the
+/// way it's sent. The demo's choice (#91); it's the value the character's kick shared before
+/// #356 took the kick out.
+const BLAST_ROLL: f32 = 2.5;
 /// A shot through a loose body: the push along the shot and the hop (m/s), and the turn per m of
 /// how far off its middle it's hit (rad/s). The demo's choices.
 const SHOT_PUSH: f32 = 2.5;
@@ -306,15 +312,13 @@ struct UsedMedkit {
 }
 
 /// A loose pickup (or used medkit): its motion, how high its origin sits above the ground at
-/// rest, and whether it's moving (at rest it's left alone until kicked or thrown).
+/// rest, and whether it's moving (at rest it's left alone until a shot or a blast moves it).
 #[derive(Component)]
 struct Body {
     velocity: Vec3,
     spin: Vec3,
     lift: f32,
     moving: bool,
-    /// seconds until it can be kicked again
-    kicked: f32,
     /// the pose it's settling into after coming to rest (eased to, see SETTLE_TURN)
     rest: Option<Quat>,
     /// the outermost points of its meshes (in its own frame, see `local_points`): it touches
@@ -479,7 +483,7 @@ fn find_pickups(mut commands: Commands, mut game: ResMut<GameData>, mut pickups:
             continue;
         }
         let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5, world::Body::Thing);
-        let mut body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: (t.translation.y - ground).max(0.0), moving: drop_in, kicked: 0.0,
+        let mut body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: (t.translation.y - ground).max(0.0), moving: drop_in,
                               rest: None, corners: local_points(e, &children, &parts, &meshes, t.scale), quiet: 0.0 };
         if drop_in {
             // falling from where it is, as it's turned
@@ -711,7 +715,7 @@ fn medkit_used(mut commands: Commands, game: Res<GameData>, mut player: ResMut<P
     let k = player.random(1000) as f32 / 1000.0;
     let e = spawn_model(&mut commands, &used, Transform::from_translation(hand), None);
     commands.entity(e).insert(Body { velocity: forward * DROP_FORWARD + Vec3::Y * DROP_UP, spin: Vec3::new(4.0 + 3.0 * k, 2.0 * k, 3.0 - 2.0 * k),
-                                     lift: DROP_RADIUS, moving: true, kicked: 0.0, rest: None, corners: used.corners.clone(), quiet: 0.0 });
+                                     lift: DROP_RADIUS, moving: true, rest: None, corners: used.corners.clone(), quiet: 0.0 });
     used.dropped.push(e);
     if used.dropped.len() > DROPS_KEPT {
         let old = used.dropped.remove(0);
@@ -729,7 +733,7 @@ fn throw(mut commands: Commands, thrown: Query<(Entity, &Thrown, &Transform)>, c
          parts: Query<(&Transform, Option<&Mesh3d>), Without<Placed>>, meshes: Res<Assets<Mesh>>) {
     for (e, t, tr) in &thrown {
         commands.entity(e).remove::<Thrown>().insert(Body {
-            velocity: t.velocity, spin: t.spin, lift: DROP_RADIUS, moving: true, kicked: KICK_AGAIN, rest: None,
+            velocity: t.velocity, spin: t.spin, lift: DROP_RADIUS, moving: true, rest: None,
             corners: local_points(e, &children, &parts, &meshes, tr.scale), quiet: 0.0,
         });
     }
@@ -973,23 +977,16 @@ fn rigid_step(b: &mut Body, tr: &mut Transform, dt: f32) -> bool {
     touching
 }
 
-/// Loose pickups: kicked by the characters walking into them, thrown by blasts, then gravity,
-/// bounces off the ground, sliding to rest tilted to it; loose ones pushed apart. The pickups'
-/// spots follow them.
+/// Loose pickups: knocked by shots, thrown by blasts, then gravity, bounces off the ground,
+/// sliding to rest tilted to it; loose ones pushed apart. The pickups' spots follow them. A
+/// character's walk moves none of them (the module notes: the game has no kick, #356).
 #[allow(clippy::too_many_arguments)]
 fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: ResMut<Blasts>, mut pickups: ResMut<Pickups>,
-           mut last: Local<Vec<Vec3>>, mut bodies: Query<(Entity, &mut Body, &mut Transform, &Visibility)>,
-           swept: Res<super::bolts::Sweeps>) {
+           mut bodies: Query<(Entity, &mut Body, &mut Transform, &Visibility)>, swept: Res<super::bolts::Sweeps>) {
     let dt = frame_dt(&time);
     if dt <= 0.0 {
         return;
     }
-    // the characters' feet and how fast they're going (from last frame's place)
-    let feet: Vec<Vec3> = std::iter::once(&*player).chain(squad.0.iter()).map(|u| u.position + Vec3::Y * GROUND).collect();
-    let alive: Vec<bool> = std::iter::once(&*player).chain(squad.0.iter()).map(|u| !u.dead).collect();
-    let speed: Vec<Vec3> = feet.iter().enumerate()
-        .map(|(i, f)| last.get(i).filter(|_| last.len() == feet.len()).map_or(Vec3::ZERO, |l| (*f - *l) / dt)).collect();
-    *last = feet.clone();
     let blasts = std::mem::take(&mut blasts.0);
     // this frame's shots (anyone's): each knocks the first loose body on its line; a bolt's
     // sweeps this frame (play_bolts.rs `Sweeps`: from its last checked point up to what it met)
@@ -1020,35 +1017,6 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
         let at = tr.translation;
         // a fixed per-body jitter for spins
         let j = ((e.index() as f32) * 12.9898).sin().fract().abs();
-        b.kicked = (b.kicked - dt).max(0.0);
-        for (i, f) in feet.iter().enumerate() {
-            let v = Vec3::new(speed[i].x, 0.0, speed[i].z);
-            let to = Vec2::new(at.x - f.x, at.z - f.z);
-            if !alive[i] || to.length() > KICK_REACH || (at.y - f.y).abs() > KICK_UP_REACH || v.length() < 0.5 || v.length() > 30.0 {
-                continue;
-            }
-            if b.kicked > 0.0 {
-                continue;
-            }
-            // out ahead, and off to whichever side of the character's line it was on
-            let ahead = Vec2::new(v.x, v.z).normalize_or_zero();
-            let side = Vec2::new(-ahead.y, ahead.x);
-            let off = to.dot(side);
-            let off = if off.abs() < 0.05 { if j < 0.5 { -0.2 } else { 0.2 } } else { off / KICK_REACH };
-            let push = ahead * KICK_AWAY + side * off * KICK_SIDE;
-            b.velocity = v * KICK_CARRY + Vec3::new(push.x, 0.0, push.y) + Vec3::Y * KICK_HOP * (0.6 + 0.4 * j);
-            b.kicked = KICK_AGAIN;
-            // rolling the way it's sent (a ball rolling along v turns about up x v), a little
-            // askew and turning, per body
-            let along = Vec3::new(b.velocity.x, 0.0, b.velocity.z);
-            b.spin = Vec3::Y.cross(along) * KICK_ROLL + Vec3::new(2.0 * (j - 0.5), 4.0 * (j - 0.5), 2.0 * (0.5 - j));
-            b.moving = true;
-            b.rest = None;
-            b.quiet = 0.0;
-            if std::env::var("BF_PICKUP_LOG").is_ok() {
-                println!("kicked {e} at {at:.2} by character {i} going {:.1} m/s: {:.2}", v.length(), b.velocity);
-            }
-        }
         // shot: knocked along the shot, and turned by where it was hit
         if let Some(&(dir, off)) = struck.get(&e) {
             b.velocity += dir * SHOT_PUSH + Vec3::Y * SHOT_HOP;
@@ -1063,8 +1031,10 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
                 let k = 1.0 - d / (r * BLAST_REACH);
                 let away = Vec3::new(at.x - c.x, 0.0, at.z - c.z).normalize_or(Vec3::X);
                 b.velocity += (away * 0.8 + Vec3::Y) * BLAST_THROW * k;
-                b.spin += Vec3::Y.cross(away) * BLAST_THROW * KICK_ROLL * k + Vec3::new(6.0 * j, 4.0, 5.0 * (1.0 - j)) * k;
-                    b.moving = true;
+                // (rolling the way it's sent: a ball rolling along v turns about up x v; a little
+                // askew and turning, per body)
+                b.spin += Vec3::Y.cross(away) * BLAST_THROW * BLAST_ROLL * k + Vec3::new(6.0 * j, 4.0, 5.0 * (1.0 - j)) * k;
+                b.moving = true;
                 b.rest = None;
                 b.quiet = 0.0;
             }
@@ -1099,7 +1069,7 @@ fn physics(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut blasts: 
             b.quiet = 0.0;
             b.rest = Some(settle(tr.translation, tr.rotation));
             if std::env::var("BF_PICKUP_LOG").is_ok() {
-                println!("{e} came to rest at {:.2} at t {:.2}; the player at {:.2}", tr.translation, player.sim_time, feet[0]);
+                println!("{e} came to rest at {:.2} at t {:.2}; the player at {:.2}", tr.translation, player.sim_time, player.position + Vec3::Y * GROUND);
             }
         }
     }
@@ -1152,7 +1122,7 @@ fn late_pickups(mut commands: Commands, game: Res<GameData>, mut pickups: ResMut
     for (e, p, mut t, drop_in, copy) in &mut placed {
         commands.entity(e).remove::<LatePickup>();
         let ground = floor_y(t.translation.x, t.translation.z, t.translation.y + 0.5, world::Body::Thing);
-        let body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: 0.0, moving: drop_in, kicked: 0.0,
+        let body = Body { velocity: Vec3::ZERO, spin: Vec3::ZERO, lift: 0.0, moving: drop_in,
                           rest: None, corners: local_points(e, &children, &parts, &meshes, t.scale), quiet: 0.0 };
         if !drop_in {
             let (yaw, _, _) = t.rotation.to_euler(EulerRot::YXZ);

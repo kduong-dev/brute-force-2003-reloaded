@@ -133,10 +133,22 @@ game's is 3D at the character).
 | skill on / off / off at 0 | FUN_0010e470 / FUN_0010e3e0 | play_skills.rs ([skills.md](skills.md)) |
 | charge hit | FUN_0013c1c0 | play_vengar.rs |
 
-A type of its own (an enemy) says its hurt lines and its death cry (#328), from its type's
-`chatter-library` (`set_of`), through the same gate as the squad: its chance, replay delay,
-priority, distance and condition, and a tag its library has no block for is refused ("no block in
-..."). Its other lines are #110's and #128's. The #36 takes 07-10 log a spawned Shrike shot by the
+**Who says them** (#357, `speaks`). Every squad member says every line it's asked, whatever its
+type, from its own type's chatter library: the gate's callers never look at the type (FUN_000c1630,
+FUN_0005cc20, FUN_00125ad0, FUN_00125f40, the brain's and the goals' lines), and the speaker's
+chatter set is its type's (type+0x1f4, loaded by FUN_001304b0 from the type's `chatter-library`,
+h_f18a456f: `set_of`). The campaign four's files are `tex` ... `flint` (`common/characters`), and
+a squad deathmatch type's its own `sdm_*_chatter` file ([below](#the-squad-deathmatch-squads-voices-357)),
+which the test map's predefined squads and a squad deathmatch map's library put in the squad. A
+tag the file has no block for is refused ("no block in <set>_chatter"), as in the game; before
+#357 the demo asked only the campaign four (`!own_type()`), so these squads said their hurt lines
+and death cry and nothing else. A test map NPC of a squad type (an enemy Brutus) speaks as it did.
+
+A test map NPC of a type of its own (an enemy, not in the squad) says its hurt lines and its death
+cry (#328), from its type's `chatter-library` (`set_of`), through the same gate as the squad: its
+chance, replay delay, priority, distance and condition, and a tag its library has no block for is
+refused ("no block in ..."). Its other lines are #110's and #128's and the AI's combat lines'
+(#321). The #36 takes 07-10 log a spawned Shrike shot by the
 squad calling the gate with e856009f (pain grunt), 0ae8104e (I'm hit), fab0be98 (half health),
 01e1dcd0 (low health) and, dead, e1213623, the same table `hurt_tag` draws up for every hit
 (take07: 0ae8104e line made at 4.6 s, refused at 7.3 s, 01e1dcd0 made at 7.4 s, 0ae8104e refused
@@ -253,6 +265,58 @@ Will to all three, Brutus after his own) asks the line at its first follow updat
 (`walk_line`, `Command::start_walk`, which answers false in any other mode), and the others never
 (take05's Brutus asked his when the list's first entry changed, 11 s on: not done).
 
+## The squad deathmatch squads' voices (#357)
+
+The five squads of squad deathmatch (game-options' `<squad>` entries, `Game::option_squads`) are the
+test map's predefined squads ([squad.md](squad.md), #339), and their members say what the campaign
+four say, each from its own type's file (`mp_common/characters/<set>_chatter.xml`, the type's
+`chatter-library`: `Player::own_type` with `in_squad`), the sounds from the squad's banks (the
+`sounds-sdm_<squad>` library and its language wave banks; sdm_bf's are the campaign's, in
+`sounds-common`). The name tags a member is called by (the type's h_0d3bdcf5, FUN_000c1630 at
+0xc16f3) are the types' data: the log names them ("name: Feral Shaman"). Blocks per file
+(`<chatter_line>`s) and what the mouths do (the controller and the tracks: [faces.md](faces.md)):
+
+| Squad (library) | Member type: chatter set, blocks | Face set | Sounds with viseme tracks | Mouth |
+|---|---|---|---|---|
+| Brute Force (sdm_bf) | Tex `sdm_tex` 32, Hawk `sdm_hawk` 30, Flint `sdm_flint` 32, Brutus `sdm_brutus` 30 | texface, hawkface, flintface, brutusface | 88 of 89, 91 of 92, 81 of 82, 82 of 83 | moves |
+| Feral Hunting Pack (sdm_feral) | Feral Colonist `sdm_feral_warrior` 25, Feral Shaman and Outcast Shaman `sdm_feral_shaman` 25, Feral Outcast `sdm_feral_outcast` 26 | brutusface | 69 of 70, 62 of 63, 68 of 69 | moves |
+| Shrike Raiders (sdm_shrike) | Hunter Lord `sdm_shrike_hunterlord`, Shrike Heavy `_heavy`, Shrike Soldier `_light`, Shrike Hound `_hound`: 23 each | none (`viseme-file=""`) | none | still |
+| Seer Coven (sdm_seers) | Shadoon `sdm_seer_shadoon` 21, Fire Hound `sdm_shrike_firehound` 23, Seer Priest `sdm_seer_priest` 23, Seer Follower `sdm_seer_follower` 24 | shadoon_face; seerface (Priest, Follower); Fire Hound none | all of the Shadoon's, the Priest's and the Follower's; the Fire Hound's none | the Shadoon, Priest and Follower move; the Fire Hound is still |
+| Ferguson Platoon (sdm_ferg) | Militia `sdm_militia` 25, Gunthar Ghent `sdm_gunther_ghent` 22, McTavish `ty_mctavish` 8, Confed Marine `sdm_confed_marine` 26 | militiaface (Militia, Ghent, McTavish); Confed Marine none | 71 of 72, 68 of 69, **McTavish's 0 of 22**, the Marine's 99 of 100 | the Militia and Ghent move; **McTavish** and the Marine are still |
+
+(The sounds that have tracks are the library entries with a viseme block, which the face controller's
+speak reads, #325; the count is of each file's distinct sounds that a library has. **McTavish has a
+face set but none of his sounds has tracks, so his mouth doesn't move**; the Confed Marine's sounds
+have tracks but his type names no face set, so he has no controller.)
+
+What the files have: in all of them the four order phrases (e104fe49, f5041bd5, 1cdff35c, f8046684),
+"everyone" 12df4fe6, the acknowledgement eaf3546f, the hand-over's f415ab02, 0e69bfe5, 15dc4e2d,
+e635ecc6 and ed05c0d7, I'm hit 0ae8104e, the pain grunt e856009f, the kill 02da3fee, the death cry
+e1213623 and each squad's name tags, but for **McTavish's, which has eight blocks (low and half
+health, the kill, I'm hit, the grunt, spotted, gas, the death cry), no order or hand-over block and no
+name tag** (his type's h_0d3bdcf5 is empty): an order passes him over in the names and he joins no
+acknowledgement, and his hand-over is refused ("no block in ty_mctavish_chatter"). The Militia's name
+tag (0273a322) has a block in no file, so nobody names the Militia. **In none of the sdm files**, so
+the gate refuses them ("no block in <set>_chatter"): the walk line 1ecaeb98, the "healed" lines
+12c35d69 / f832ad27, the refused gun f2ce8278, the skill-off lines 09087c9c / ee0a5cbc, the hand-over's
+answer e97ce7fd and the landing's death cry ed35ffae. Thinner: low health 01e1dcd0 is in Flint's,
+the Shrikes', the Fire Hound's, the Shadoon's, Ghent's and McTavish's, half health fab0be98 in
+McTavish's only; the fall / burn cry ef32191d in sdm_bf's four and the skill-on line 1c0514bd in
+Tex's, Flint's and Brutus's; friendly fire e2d9fb13 in sdm_bf's four, the ferals' three, the
+Shadoon's and the Confed Marine's. A death cry's reply (the Shrikes', McTavish's, Ghent's and the
+Shadoon's blocks have a `<response>`) names a tag, 015afdf5, that no squad deathmatch file has a block for (the campaign four's files do): it is
+answered by "no block". Their expressions (`expression_type`, 7-17 blocks of each file but the Shrikes',
+the Marine's and the Militia's) are #326's.
+
+A squad deathmatch map plays the campaign four still (the match's sdm_bf library for the player's squad
+is #144's: its "chatter sets" item is this section's rule, once the squad is made of those types); the other
+squads are reached by the test map's squad menu, in a `--test` session on any map (`BF_MAP=sdm_e34 ... -- --test`
+works: the Feral Hunting Pack's order line from the Feral Colonist, 3.33 s).
+
+**No footage has a squad other than the campaign four or sdm_bf**, and the sdm_bf takes (#35 20 / 21,
+#146) have no chatter log: the lines, their order and their variants are the data's and the gate's,
+not compared with the original's. Checked in the demo, "Verified" below.
+
 ## The draws
 
 The roll, the variant, the response's entry and its tag are each a draw of the game's LCG (the
@@ -296,6 +360,12 @@ its first 20 s.
   ticket's `BF_TEST_ORDER=<entry>,<members>` would have changed its #318 syntax and left the
   menu's path untested. The hand-over's lines come with any hand-over (`BF_TEST_SELECT`, a tap
   by `BF_TEST_COMMAND`, the keys 1-4).
+* `BF_TEST_SQUAD_PRESET=<s>,<squad>` (squad.md, #339) puts a predefined squad in the four slots at `s`
+  (`feral`, `shrike`, `seers`, `ferg`, `sdm_bf` for Brute Force, `common` for the campaign four), so the same
+  `BF_TEST_COMMAND`, `BF_TEST_SELECT` and `BF_TEST_HURT` give its members' order lines, hand-overs, hits and
+  deaths: #357's table. The slot names are the HUD's places (`tex` the top one, `hawk` left, `flint` right,
+  `brutus` the bottom), whatever type holds them. `BF_TEST_FACE_CAM=<s>,me,1.1,-0.4` puts the free camera at the
+  controlled character's face for the mouth ([faces.md](faces.md)).
 * `BF_CHATTER_CHANCE=<percent>`: every line's chance (100: each passes the roll).
 * `BF_TEST_HURT=<character>,<amount>[:fall],<s>[,<s>...][;...]`: hits that squad member (name
   or 0-3, the controlled one too) for `amount` at those times, a bare hit with no attacker as the
@@ -311,7 +381,8 @@ its first 20 s.
 * `BF_SKILL_CHATTER=<percent>` the skill lines' chance ([skills.md](skills.md)),
   `BF_TEST_HEALED=1` the medkit line's ([pickups.md](pickups.md)).
 * `BF_SOUND_LOG=1` prints each voice started ("sound <id> vol <v> (the voice of <name>:
-  chatter)").
+  chatter)") and, for a sound the loaded banks hold no sample of, "sound <id>: no sample data in the
+  loaded banks" (under `BF_MUTE` too, which plays nothing: a squad's lines can be checked unheard, #357).
 
 ## Verified
 
@@ -440,6 +511,64 @@ its first 20 s.
   the gas cough (the missile regression's hooks: Hawk's at 5.40 s).
 * The tutorial (`BF_TEST_PANEL="a,1"` and the start area's walk, hits on Tex): the grunt's 25%
   and replay delays, the half-health line at 61 -> 55 of 115.
+* The other squads' lines (#357; `--test BF_TEST_GOTO=0,8,0,7.5 BF_TEST_SQUAD_PRESET=0.5,<squad>
+  "BF_TEST_COMMAND=3:hawk:0.4;3.6:brutus:0.4;4.2:fire;12:hawk:0.4;12.6:brutus:0.4;13.2:flint:0.4;13.8:cover"
+  BF_CHATTER_LOG=1 BF_SOUND_LOG=1 BF_FACE_LOG=1 BF_MUTE=1 BF_BACKGROUND=1`, 330 frames at 15 fps): Fire At
+  Will to two members, then Cover Me to the three others, each line made by the leader's type from its own file
+  and the answers from the members' own:
+  * Feral Hunting Pack (`feral`): the Feral Colonist calls 0396ce6f (Feral Shaman) and 1aa45cbf (Outcast Shaman),
+  says f5041bd5, and the Shaman and the Outcast Shaman answer eaf3546f from `sdm_feral_shaman` (the parts start
+  at 0.00, 1.04, 1.65, 3.26 and 4.28 s of the line, the sounds' own lengths + 0.2 s); the second order is
+  "everyone" 12df4fe6, 1cdff35c and the three answers. The Feral Shaman's walk line
+  (1ecaeb98, #331's stand-in for the first member of Fire At Will's list) is refused: "no block in
+  sdm_feral_shaman_chatter".
+  * Shrike Raiders (`shrike`): the Hunter Lord calls 05525b83 (Shrike Soldier) and ecbf5cde (Shrike Hound), says
+  f5041bd5, they answer; "everyone", 1cdff35c, the Heavy's, the Soldier's and the Hound's answers. No face
+  controller in any of the four ("face: Hunter Lord: no face set"), so no "says" row for them.
+  * Seer Coven (`seers`): the Shadoon calls 0766302c (Seer Follower) and f70721ef (Fire Hound), says f5041bd5 (3.33 s)
+  and the two answer: 11.2 s of line, so the second order at 11.00 s, which would wait 3.8 s over its 3 s, goes now and
+  cuts it off by the gate's rule ("line #1 cut off by line #2"), the Fire Hound's first answer never said; the second is
+  "everyone", 1cdff35c, the Priest's, the Follower's and the Hound's answers. The Shadoon, Follower and Priest have
+  "says" rows; the Fire Hound ("no face set") none.
+  * Ferguson Platoon (`ferg`; Fire At Will to Ghent and McTavish): the Militia calls efd08278 (Gunthar Ghent) only,
+  McTavish being passed over in the names (no name tag), says f5041bd5 and Ghent answers; McTavish's answer joins
+  nothing (no block). The second order, to Ghent, McTavish and the Confed Marine, is "everyone", 1cdff35c and
+  the Marine's and Ghent's answers (the Marine, with no face set, has no "says" row; Ghent has).
+  * Brute Force (`sdm_bf`): Tex calls f0c93785 (Brutus!) and f5359692 (Hawk!), says f5041bd5 from `sdm_tex`, Brutus and
+  Hawk answer from `sdm_brutus` and `sdm_hawk`; the second is "everyone", 1cdff35c and Flint's, Brutus's and
+  Hawk's answers. All with "says" rows (4 to 7 viseme tracks a sound).
+* Their hand-over, hits, kill and death (`BF_TEST_SELECT=1,3.0 "BF_TEST_HURT=hawk,8,5;hawk,25,7;brutus,500,9"
+  BF_CHATTER_CHANCE=100`, 200 frames): the one left says f415ab02 from its own file at the cut (the Feral Colonist
+  with 7 viseme tracks, the Hunter Lord with no mouth, the Shadoon with 10, the Militia with 5, sdm_bf's Tex with 7
+  and its variant 1fa1b7b8, as #36 take14's); the Hawk-place member's hits say the grunt e856009f or I'm hit
+  0ae8104e by its hit points (the Outcast Shaman 8 of 70 and 25: both said; the Hound, the Fire Hound and sdm_bf's
+  Hawk, with 45-50 hit points, "I'm hit" for 8 and half health fab0be98 "no block" for the 25 that crosses it),
+  and the Brutus-place member's lethal hit its death cry e1213623 (the Shrikes' and the Marine's said with no
+  mouth, the Feral Shaman's, the Seer Follower's and Brutus's with one), its low-health line refused by "no block"
+  where the file has none (the Feral Shaman, the Seer Follower, the Marine, Brutus), made and skipped dead where it
+  has one (the Shrike Soldier, 9.13 s). A player kill (`BF_TEST_GOTO=0,8,0,8 BF_TEST_NPC=1.0,brutus,enemy,dummy,0,14
+  BF_TEST_AIM_HOSTILE=1.5 BF_TEST_TRIGGER=2-12 BF_CHATTER_CHANCE=100` as the Feral Colonist): "the kill of brutus"
+  02da3fee said at 1.80 s (value 1, variant 088a38bc, 2.28 s, 7 viseme tracks); the same kill as the Hunter Lord
+  (variant 0ef5c564, 1.67 s, no mouth), the Shadoon (3.05 s, 11 tracks), the Militia (7) and sdm_bf's Tex (12). McTavish (`BF_TEST_COMMAND=
+  2:flint:0.1;6:tex:0.1 "BF_TEST_HURT=flint,8,3;flint,25,4;flint,500,9"`): the grunt, I'm hit and the death cry from
+  `ty_mctavish`, each with "no speech block: the face isn't moved"; given away from, his follow line is refused
+  ("no block in ty_mctavish_chatter").
+* The mouths (`BF_TEST_FACE_CAM=2.0,me,1.1,-0.4`, the Feral Colonist giving the Fire At Will above, frames
+  53-90, after the menu's fade): the mean difference of the mouth's region between frames is 0 before the line and
+  after it (from frame 91), 0 in the gaps between its parts (frames 65-67, 74-77) and 0.2-7.7 grey levels a frame
+  while a part is said; his teeth and jaw change shape in the frames. The log's "says h_... (N viseme tracks; chatter)" rows are the controller's
+  lines for the speakers with a face set; the Shrikes, the Fire Hound and the Confed Marine have none, McTavish's
+  say "no speech block".
+* The campaign four, and the enemies, unchanged: the same hooks at 15 fps against the build before #357 (the
+  chatter, voice and face rows, compared row for row): the hurt and death recipe of the first bullet above (28
+  rows), take12's four orders (48), the follow-mode hand-over (4), the player's kill of an enemy dummy (12), e34's
+  first 30 s (33), and the test map enemy Shrike's hurt chain and death cry (#328's run, 15 rows: it asks no
+  order, hand-over, walk or kill line) are identical. The unit test `who_speaks` has the rule: a squad member of
+  a type of its own asks the lines by tag, a test map NPC of one does not, an enemy Brutus does.
+* The samples (`BF_SOUND_LOG=1` under `BF_MUTE`, the order recipe, a hand-over, hits and a death for each squad,
+  9-11 chatter sounds each): every sound the five squads said has its sample in the loaded banks ("no sample
+  data" 0 times), the ferals' and the Shrikes' from `mp_common`'s `sounds-sdm_*` banks and their language wave
+  banks.
 
 ## Against the #36 takes
 

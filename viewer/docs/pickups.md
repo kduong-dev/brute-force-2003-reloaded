@@ -56,10 +56,37 @@
     * **At the start** each sits in the level's pose, tilted to the ground under it (up to
       ~25 degrees; steeper is a step, so it lies flat). It rests on its lowest point, not its
       origin: a model's origin can be its middle.
-    * **Kicks and blasts.** A character walking into one kicks it out ahead, faster than
-      they're going and off to the side it was on, with a hop, rolling the way it's sent
-      (once per 0.6 s, so it isn't pushed along). A grenade blast within 1.5x its radius
-      throws it.
+    * **A walk moves nothing** (#356). A character who walks into a pickup he can't take (a box,
+      pack or OrgSen on a full stack, a lying gun, a used medkit, a fruit at full health, a
+      squadmate's refusal) walks straight through it: nothing is nudged, hopped or held off.
+      The game has no kick. Until #356 the demo had one (#91: out ahead of the character,
+      faster than he went, off to the side with a hop and a roll, once per 0.6 s); with the
+      walk-over's reach (1.34 m) wider than the kick's (0.45 m), the only pickups it ever
+      kicked were these.
+      * *The code.* The walk-over is a distance rule with no contact: FUN_0011c540 asks the
+        world's cells within 2.0 m for items (19), grenades (24) and weapons (20) and hands each
+        to FUN_0011c170's reach test ([code-map.md](code-map.md)). The pushes the game makes on a
+        loose body are FUN_002b3bc0's callers (a thrown grenade's launch, a bolt's shove, the
+        ragdoll's start), none of them the character's movement.
+      * *The physics' pairing.* Whether a pickup's body meets the character's capsule at all is
+        Ipion's pair rule (FUN_00169a30): a lying box, pack, medkit, fruit or canister pairs
+        with it (the type's h_ecb577b4 is false; the carried Medkit and a few inventory-only
+        items have it set), a lying gun (kind 20) never does. What the pairing is for isn't
+        read, and the footage shows it has no effect on a walk.
+      * *The takes.* #18 take05 (sdm_e34, the Gas stack at 10): Tex walks 2.7 m through three
+        Gas packs, two of them at his left foot, and stops among them; frames at 3.6, 4.0, 4.5,
+        5.0, 6.0 and 8.0 s show the packs where they lay at 2.0 s, "Gas Grenades (full)" red the
+        whole time. #61 take04: Tex walks onto the drop (the L-Shot-50 and the Jax-iP, "Tex
+        cannot pick up Jax-iP." at 3.3 s) and stands there, the blue ring on the L-Shot-50 at
+        his feet on the same ground point from 4.0 to 6.4 s, and after the swap (7.0-8.0 s) the
+        Jax-iP is still at his feet with the red ring: neither gun is moved. (For a lying gun
+        there's a second reason: a weapon never pairs with the capsule, above.) The ammo boxes
+        carry the packs' collision flags (mass 100, h_ecb577b4 false), so the packs' rule is
+        theirs: #18 take02's two walks onto the full Particle box stopped 0.65 and 0.80 m short
+        of it and don't show it moving, and no take walks through a box (the ticket's shot S1,
+        not filmed).
+    * **Blasts.** A grenade blast within 1.5x its radius throws it (9 m/s at the middle, less
+      toward the reach), rolling the way it's sent. The demo's choice, #91's; unchanged.
     * **Shots.** Anyone's shot whose line passes through one (its bounding sphere, before
       the shot's end) knocks the first it meets: 2.5 m/s along the shot, a 1 m/s hop, and a
       turn from how far off its middle it was hit.
@@ -83,6 +110,36 @@
       hinters"). No pickup or lying gun of the 53 levels starts over one, so the level's own
       lie where they did; a thrown or dropped one no longer stops on one.
     * The bounce, friction, drag and thresholds are the demo's choices, not the game's.
+    * **Verified, no kick** (#356; `BF_PICKUP_LOG=1`, 15 fps captures, `BF_MUTE=1
+      BF_BACKGROUND=1`; the same runs on the build before the change, which logged "kicked ..."
+      and a second "came to rest" for what it kicked, are quoted):
+      * #18 take05's walk (`BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_INV=Frag:0,Gas:10
+        BF_TEST_GOTO=-77.52,15.19,-78.3,11.4 BF_TEST_WALK=1 BF_TEST_GO_AT=2.0`, 150 frames):
+        "the stack is full, it stays" for the three packs at 3.47, 3.60 and 4.07 s, no kick and
+        no pack coming to rest anywhere (before: "kicked 1999v1 at [-78.38, 29.15, 11.69] by
+        character 0 going 0.6 m/s", at rest 0.6 m off at 5.27 s). Frames 54-120 (3.6-8.0 s) have
+        the packs where they lay and "Gas Grenades (full)" red, as take05's.
+      * #61 take04's recreation (`--test BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_GUN="L-Shot-50,3.6,0.3;
+        Jax-iP,3.3,-0.35" BF_TEST_WEAPON="MK-ASLT;Confed LZR-50"`, 120 frames): both guns rest
+        where they landed, (0.28, -3.60) and (-0.35, -3.30), and nothing moves them after Tex is (to see take04's swap ring too, use `BF_TEST_GOTO=0,0,0,-4.0 BF_TEST_WALK=1 BF_TEST_GO_AT=1.5 BF_TEST_SWAP=6.0`: with -3.0 Tex overshoots and the camera turns away)
+        0.3 m from the Jax-iP (before: kicked to (-1.16, -5.85), at rest at 2.87 s); with the
+        goal at -7.0 he walks through both and nothing is kicked.
+      * the box on a full stack (`BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_WEAPON="Saryl-99;Confed
+        LZR-23" BF_TEST_AMMO=4:200 BF_TEST_GOTO=-51.70,82.10,-57.9,80.6 BF_TEST_WALK=1
+        BF_TEST_GO_AT=2.0`, 150 frames): he walks through the box's spot (-55.98, 29.01, 81.09),
+        "Particle Ammo (full)" at 4.00 s, no kick (before: kicked to (-57.36, 29.18, 80.68)).
+      * a used medkit (`--test BF_TEST_HEALTH=50 BF_TEST_INV=Medkit:3 BF_TEST_ITEM=Medkit
+        BF_TEST_MEDKIT=1.5 BF_TEST_GOTO=0,0,-3.1,-5.9 BF_TEST_GO_AT=4.0`, 150 frames): it falls
+        to rest at (-0.82, -1.00, -0.79) at 3.53 s and Tex's line passes 0.36 m from it, inside
+        the old kick's reach, with no second rest.
+      * still moved: a thrown Frag's blast (`--test BF_TEST_GOTO=0,0,0,0 BF_TEST_THROW=1.0,0.6`,
+        the blast at 4.47 s, 24 m out) sets the grid's pickups tumbling again (second rests
+        logged at 6.8-9.3 s), and a shot (`BF_TEST_GOTO=0,0,0,0 BF_TEST_FIRE=hip
+        BF_CAMERA_AIM_AT=0.71,-1.0,-14.79`) knocks the one it passes ("shot struck 363v1 at
+        [0.77, -1.01, -14.54]", at rest (0.71, -14.79) before and (1.15, -18.98) at 3.0 s).
+      * still taken: the packs with room (`BF_TEST_INV=Frag:0`) at 3.47, 3.60 and 4.07 s, "3x"
+        to 9 Gas; the tutorial's medkits (`BF_MAP=tutorial BF_TEST_HEALTH=50
+        BF_TEST_GOTO=51,14,51,20`) at 1.40 and 1.47 s.
   * The medkit sound is h_1538baad, the Sound whose file is h_15331992 (named "92193315":
     those bytes as stored in sounds-<level>.xmb), the same in all 54 levels' banks, 1.5 s.
     When the heal adds health the character also asks the chatter gate for their "healed" line
@@ -183,7 +240,7 @@
 * What it unlocks (its gameflag-database 1: the global flag h_1d604469/characters/h_048b8580, the
   deathmatch's Confed Marine) isn't kept: the demo doesn't load the global flags.
 * Verified (`BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_PICKUP_LOG=1 BF_TEST_GOTO=-58.9,21.26,-62.22,19.23
-  "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`, 120 frames at 15 fps): taken at 1.80 s, PICKUP_OBJECT ->
+  "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`, 120 frames at 15 fps): taken at 1.60 s (1.80 s before #331), PICKUP_OBJECT ->
   timer467 -> sound463 at 5.80 s; "Confed Marine DNA unlocked!" under Tex from frame 27 to 87
   (4 s), as take12's line (its place on the screen is the pickup lines' layout since #314). With the objectives and the ending fired after
   it (`BF_MISSION_LOG=1 "BF_TRIGGER_FIRE=h_f0cac43d,10,2.5;h_065b02c7,10,2.6;h_065b02c7,10,2.7;h_065b02c7,10,2.8;h_f82e0ba6,ENTER_DETECTOR,4"`,
