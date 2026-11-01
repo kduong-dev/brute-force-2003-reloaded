@@ -121,8 +121,9 @@ const CORNER_OFF: f32 = 0.6;
 const CORNER_NEAR: f32 = 2.4;
 /// ...each with the pace record's timer at this (s, 0x3fc00000), so the ramp climbs back after it.
 const CORNER_HOLD: f32 = 1.5;
-/// FUN_0004c530 / FUN_0004c480: a direction across shorter than this squared (0x3a4ffc) has none.
-const FLAT_MIN: f32 = 1.192_092_9e-7;
+/// FUN_0004c530 / FUN_0004c480: a direction across shorter than this squared (0x3a4ffc) has none
+/// (the corners' pace here; play_follow.rs `turn_check`).
+pub(super) const FLAT_MIN: f32 = 1.192_092_9e-7;
 /// FUN_0001ad50 (the AI update at 0x1b16b, after the ramp): a route walker at a run or a dash
 /// turning faster than this (rad/s, the character's +0x488)...
 const HARD_TURN: f32 = 2.5;

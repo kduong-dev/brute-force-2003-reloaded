@@ -269,11 +269,11 @@ function is in [code-map.md](code-map.md), "AI".
      (FUN_000425b0 with it in EAX, 0x42839-0x42857: the point's position + 0.25 m, then
      FUN_0004c5e0; medium, read as a set-position; here its feet on the floor under it. Round 1
      put it on its own point, as todo/242's leads had it: corrected from todo/344's leads §7). For
-     a bare position FUN_000425b0 does nothing, and the game's follow never routes to one; the
-     demo's follow does (its place), so there the route is given up, and the follow holds where it
-     is until its leader moves on, within d0 of him, or plans again beyond (#344, `Router::gave_up`:
-     the demo's; #335's re-review found it pinned there with nothing acting until the leader moved
-     d3); else the detour (FUN_00042280): the
+     a bare position (the follow's one-entry route to a leader whose own point is the member's,
+     FUN_00022d70) FUN_000425b0 does nothing and the game's member pushes on until the leader moves
+     d3 off; the demo ends the route there (route+0x20), and the follow's chase holds at its end
+     with the leader within d4, else plans again (#331; until then the demo's formation place,
+     `Router::gave_up`, now gone); else the detour (FUN_00042280): the
      current entry the last, the route done; else, the current point valid, it and the own
      point lose bit 2 (valid) for one search, the next entry the last, done, else the next point
      loses it too and a new route to the destination is planned (FUN_00041660) and started with

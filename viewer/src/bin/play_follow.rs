@@ -6,14 +6,15 @@
 //!
 //!  - **The leader** (FUN_00020b10's start, FUN_0005e540): the squad's formation record (the
 //!    squad's +0x28) keeps a list per follow mode, WINGMAN's at +4 and FOLLOW's at +0x14
-//!    (`Formation`). A member's leader is the controlled character but for the third entry, which
-//!    follows the first (the tables 0x3ffc40 / 0x3ffc70: FOLLOW's entries follow 3, 3, 0, 3 being
-//!    the controlled character and 0 the first entry's; WINGMAN's the same while the first entry
-//!    has no route point). The lists start empty and fill as orders change the members' modes, so
-//!    after one the squad runs as a column: #33 take06's Hawk, the third after Cover Me to Flint,
-//!    Brutus and Hawk, waited for Flint to be 13 m off while Tex was 27 m off, trailed Flint by
-//!    15-16 m without the boost Tex's distance would have given her, and stopped 8.8 m from him;
-//!    take04's three, fresh, each followed Tex.
+//!    (`Formation`). A member's leader is the controlled character but for the third entry of a
+//!    list, which follows the first (the tables 0x3ffc40 / 0x3ffc70: entries 0 and 1 follow 3, the
+//!    controlled character, entry 2 follows entry 0; WINGMAN's while its first entry has no route
+//!    point), counted over both lists (a member left in WINGMAN's list by a Cover Me keeps its
+//!    place there). The lists start empty at each level and fill as orders change the members'
+//!    modes, so after one the squad runs as a column: #33 take06's Hawk, the third after Cover Me
+//!    to Flint, Brutus and Hawk, waited for Flint to be 13 m off while Tex was 27 m off, trailed
+//!    Flint by 15-16 m without the boost Tex's distance would have given her, and stopped 8.8 m
+//!    from him; take04's three, fresh, each followed Tex.
 //!  - **The five distances** (FUN_00020b10's stack +8..+0x18): 8, 10, 7, 7 and 4 m in WINGMAN, and
 //!    1.4 times them in FOLLOW (11.2, 14, 9.8, 9.8, 5.6; 0x20d6c-0x20de3), measured to the leader
 //!    in 3D (`distances`).
@@ -39,8 +40,8 @@
 //! Test hooks: BF_FOLLOW_LOG=1 prints each state change and why, each cover point found and
 //! claimed, and the formation's lists when they change; BF_TEST_FORMATION=<member>,<member>,...
 //! puts those members (as `BF_TEST_ORDER` names them: brutus, flint, hawk, tex or a slot; in
-//! FOLLOW) into FOLLOW's list in that order at the start, where a level's list starts empty, to
-//! stage the column an order leaves (#33 take06's Cover Me to Flint, Brutus and Hawk:
+//! FOLLOW) into FOLLOW's list in that order at each level's start, where the list starts empty,
+//! to stage the column an order leaves (#33 take06's Cover Me to Flint, Brutus and Hawk:
 //! flint,brutus,hawk).
 
 use bf_viewer::bf::nav::{self, Dest, Graph};
@@ -49,10 +50,24 @@ use brain::Mode;
 use super::*;
 
 /// The formation's bookkeeping runs before the characters' step, after the frame's input and its
-/// orders (a mode change made later in the frame is seen at the next).
+/// orders (a mode change made later in the frame is seen at the next); a level's start begins it
+/// afresh (`reset`), as its squad.
 pub fn plugin(app: &mut App) {
     app.init_resource::<Formation>()
+        .add_systems(OnEnter(AppState::Playing), reset)
         .add_systems(Update, sync.after(read_input).before(update_player).run_if(in_state(AppState::Playing)));
+}
+
+/// A level's start: the formation record empty, as the squad's new brains find it (`Formation`:
+/// the old brains' destructor, FUN_00017770 at 0x177c0, took each squad member out of both lists;
+/// the squad itself is made anew, play.rs `setup`), and BF_TEST_FORMATION to be applied again.
+/// Without it a fresh squad (`Command::joined` 0, so never added) kept the last level's lists.
+/// BF_FOLLOW_LOG says what it dropped.
+fn reset(mut formation: ResMut<Formation>) {
+    if log_on() {
+        println!("level start: the formation record afresh (it held {} in FOLLOW's list, {} in WINGMAN's)", formation.follow.len(), formation.wingman.len());
+    }
+    *formation = Formation::default();
 }
 
 /// WINGMAN's five distances (FUN_00020b10's stack, 0x20d6c-0x20d94: 0x41000000, 0x41200000,
@@ -88,11 +103,23 @@ const START_CLAIM: f32 = 0.5;
 /// FUN_0005e670's insert into FOLLOW's list: before an entry only when this much nearer the
 /// controlled character than it (and this much farther than the entry before).
 const INSERT_GAP: f32 = 5.0;
-/// Who each entry of a follow list follows (FUN_0005e310 over the tables 0x3ffc40 / 0x3ffc70, read
-/// with FUN_0005e540): None the squad's controlled character (the tables' 3), Some(k) the list's
-/// entry k. FOLLOW's 3, 3, 0; WINGMAN's the same while its first entry has no route point (with
-/// one 3, 0, 3: never in the demo).
-const LEADS: [Option<usize>; 3] = [None, None, Some(0)];
+/// FUN_00058740's test (0x3a5028): the member's facing and the way to its route's first entry
+/// with a dot under this (the entry more than about 75.5 deg off the facing) start the walk.
+const TURN_DOT: f32 = 0.25;
+/// FUN_00058740: the time (s) the pace level is held at a walk (0x3fc00000 to the pace record's
+/// +0x2c and +0x34), after which the ramp climbs a notch each 0.17 s (play_routes.rs `pace_ramp`).
+const TURN_WALK: f32 = 1.5;
+/// Whom each of WINGMAN's first three entries follows (FUN_0005e310 over 0x3ffc70: each 16-byte
+/// entry's second dword, or its fourth while its third is 1 and entry 0 has a route point,
+/// 0x5e3b7-0x5e3ee; no member has one in the demo): the number of an entry of the same list, 3 the
+/// squad's controlled character (whose number it is, FUN_0005bca0; it's in neither list). Entry 2
+/// follows entry 0 (with the route point it would follow the controlled character, and entry 1
+/// entry 0).
+const WINGMAN_LEADS: [usize; 3] = [3, 3, 0];
+/// FOLLOW's (0x3ffc40's second dwords; no route-point variant): entry 2 follows entry 0.
+const FOLLOW_LEADS: [usize; 3] = [3, 3, 0];
+/// FUN_0005e220's answer for a character not in the list: its part of FUN_0005e310 is skipped.
+const ABSENT: usize = 4;
 
 /// The follow's state (brain+0x6ac): the formation family the demo runs. The numbers are the
 /// game's; 1 (FUN_00021fa0, the walk to brain+0x738's object, whose writer isn't traced) and the
@@ -230,27 +257,37 @@ pub fn distances(mode: Mode) -> [f32; 5] {
 }
 
 /// The squad's formation record (the squad's +0x28): its two follow lists, in order, and what each
-/// member was last added as. FUN_0005e8b0 adds a member by its mode: FOLLOW's list by distance to
-/// the controlled character (FUN_0005e670, `insert`), WINGMAN's at its end (FUN_0005eab0; at its
-/// front when the one entry is in state 12 or 14, never in the demo), each taking it out of the
-/// other list first (FUN_0005e1e0 at 0x5e937); any other mode takes it out of both (FUN_0005e600).
+/// member was last added as. FUN_0005e8b0 adds a member by its mode (0x5e8fc-0x5e9fb), the two
+/// follow modes not alike:
+///  - WINGMAN: a member already in WINGMAN's list stays as it is (0x5e92d); else it's taken out of
+///    FOLLOW's (FUN_0005e1e0 on the record + 0x10, 0x5e937) and put at WINGMAN's end (FUN_0005eab0;
+///    at its front when the one entry is in state 12 or 14, never in the demo);
+///  - FOLLOW: one not in FOLLOW's list goes in by its distance (FUN_0005e670, `insert`); WINGMAN's
+///    list isn't touched, so a member that had Fire At Will keeps its place there;
+///  - any other mode: out of both (FUN_0005e600 at 0x5e9fb).
+///
 /// The callers: the brain's set-up at the spawn (FUN_00017b60), every mode change (FUN_00018040's
-/// end), the brain released by the player (FUN_00018230); a character the player takes leaves both
-/// (FUN_00018150). At a level's start the lists are empty: the spawn's insert finds no controlled
-/// character to measure from (FUN_0005e670 adds nothing without FUN_0005bca0's member; read, and
-/// the takes agree: #33 take04's three, fresh from the start, each set off by Tex's own distance,
-/// d0, Brutus 0.3 s after Flint and Hawk as he stood 4 m nearer, where take06's Hawk, after Cover
-/// Me to the three in the squad list's order, the third entry, waited for Flint to be 13 m off
-/// while Tex was 27 m off, trailed him by 15-16 m and stopped 8.8 m from him). So a member joins
-/// at its first mode change or its release by the player (`Command::joined` over 0). The demo
-/// drops the dead.
+/// end), the brain released by the player (FUN_00018230). Out of both besides (FUN_0005e600): a
+/// character the player takes (FUN_00018150, 0x181ef), one that dies (FUN_00112830, read as the
+/// death, -> FUN_0001a420 at 0x1a454: the demo drops the dead), the killed leader at
+/// EVT_LEADER_KILLED (the brain's event case at 0x3e1db: not modelled) and a squad member's brain
+/// destroyed (its destructor FUN_00017770, 0x177c0: so a new level's brains find the lists empty).
+/// So after Fire At Will and then Cover Me to the three both lists hold them, and a Fire At Will
+/// to one of them changes neither. At a level's start the lists are empty: the
+/// spawn's insert finds no controlled character to measure from (FUN_0005e670 adds nothing without
+/// FUN_0005bca0's member; read, and the takes agree: #33 take04's three, fresh from the start, each
+/// set off by Tex's own distance, d0, Brutus 0.3 s after Flint and Hawk as he stood 4 m nearer,
+/// where take06's Hawk, after Cover Me to the three in the squad list's order, the third entry,
+/// waited for Flint to be 13 m off while Tex was 27 m off, trailed him by 15-16 m and stopped 8.8 m
+/// from him). So a member joins at its first mode change or its release by the player
+/// (`Command::joined` over 0), and the demo starts each level's record afresh (`reset`).
 #[derive(Resource, Default, Debug)]
 pub struct Formation {
     pub wingman: Vec<Who>,
     pub follow: Vec<Who>,
     /// each member's mode and mode change (`Command::joined`) when it was last added
     seen: HashMap<Who, (Mode, u64)>,
-    /// BF_TEST_FORMATION applied
+    /// BF_TEST_FORMATION applied (this level)
     staged: bool,
 }
 
@@ -261,14 +298,17 @@ impl Formation {
         self.follow.retain(|w| *w != who);
     }
 
-    /// `who` added by `mode` (FUN_0005e8b0), `far` its distance (3D) to the controlled character
-    /// and `dist` the others'.
+    /// `who` added by `mode` (FUN_0005e8b0, see `Formation`), `far` its distance (3D) to the
+    /// controlled character and `dist` the others'.
     fn add(&mut self, who: Who, mode: Mode, far: f32, dist: &HashMap<Who, f32>) {
-        self.remove(who);
         match mode {
-            Mode::Follow => insert(&mut self.follow, who, far, dist),
-            Mode::Wingman => self.wingman.push(who),
-            _ => {}
+            Mode::Wingman if !self.wingman.contains(&who) => {
+                self.follow.retain(|w| *w != who);
+                self.wingman.push(who);
+            }
+            Mode::Follow if !self.follow.contains(&who) => insert(&mut self.follow, who, far, dist),
+            Mode::Wingman | Mode::Follow => {}
+            _ => self.remove(who),
         }
     }
 
@@ -281,18 +321,58 @@ impl Formation {
         }
     }
 
-    /// `who`'s leader in `mode` (FUN_0005e540): the entry `LEADS` names for its place in its list,
-    /// None the controlled character (a member in no list, past the tables' three entries, or the
-    /// tables' 3).
+    /// Whether `who` follows `x` (FUN_0005e310's list for `x`): `x`'s number in WINGMAN's list (its
+    /// index, FUN_0005e220; ABSENT skips the part), and `who` an entry of WINGMAN's first three whose
+    /// WINGMAN_LEADS is that number; then the same over FOLLOW's list with FOLLOW_LEADS. Both lists
+    /// count whatever `who`'s mode, so a WINGMAN entry 2 left by a Cover Me still follows WINGMAN's
+    /// entry 0. (A fourth entry's number, 3, is the controlled character's, as read, so entries 0
+    /// and 1 would follow it: the demo's lists never hold four.)
+    fn follows(&self, who: Who, x: Who) -> bool {
+        let part = |list: &[Who], leads: &[usize; 3]| {
+            let id = list.iter().position(|w| *w == x).filter(|&i| i != ABSENT);
+            id.is_some_and(|id| list.iter().take(leads.len()).enumerate().any(|(i, w)| *w == who && leads[i] == id))
+        };
+        part(&self.wingman, &WINGMAN_LEADS) || part(&self.follow, &FOLLOW_LEADS)
+    }
+
+    /// `who`'s leader in `mode` (FUN_0005e540, EBX the list of its mode: the record or the record +
+    /// 0x10, FUN_00020b10 at 0x20b49 / 0x20b52): the first entry of that list, in its order and not
+    /// `who`, that `who` follows (`follows`); None the controlled character (FUN_0005bca0), as for a
+    /// member in no list or another mode.
     pub fn leader_of(&self, who: Who, mode: Mode) -> Option<Who> {
-        let list = self.list(mode)?;
-        let i = list.iter().position(|w| *w == who)?;
-        LEADS.get(i).copied().flatten().and_then(|k| list.get(k).copied()).filter(|&w| w != who)
+        self.list(mode)?.iter().copied().filter(|&x| x != who).find(|&x| self.follows(who, x))
     }
 
     /// Whether `who` is the first entry of its mode's list (FUN_0005ea10).
     pub fn first(&self, who: Who, mode: Mode) -> bool {
         self.list(mode).is_some_and(|l| l.first() == Some(&who))
+    }
+
+    /// One frame's bookkeeping (`sync`) over the AI squad `squad`, `me` the controlled character's
+    /// position: a member whose mode or mode change differs from what it was added as is added
+    /// again by its mode (`add`), in the order the changes were made (`Command::joined`; a fresh
+    /// brain's 0 is no join); one no longer a member (dead, out of the world, taken by the player)
+    /// leaves both lists. True when anything changed.
+    fn update(&mut self, me: Vec3, squad: &[Player]) -> bool {
+        let member = |u: &Player| (u.in_squad() || follower(u)) && !u.dead && !u.absent;
+        let dist: HashMap<Who, f32> = squad.iter().filter(|u| member(u)).map(|u| (u.who(), u.position.distance(me))).collect();
+        let mut changed = false;
+        let gone: Vec<Who> = self.seen.keys().filter(|w| !dist.contains_key(w)).copied().collect();
+        for w in gone {
+            self.remove(w);
+            self.seen.remove(&w);
+            changed = true;
+        }
+        let mut adds: Vec<(u64, usize, Who, Mode)> = squad.iter().enumerate().filter(|(_, u)| member(u) && u.command.joined > 0)
+            .filter(|(_, u)| self.seen.get(&u.who()) != Some(&(u.command.mode, u.command.joined)))
+            .map(|(k, u)| (u.command.joined, k, u.who(), u.command.mode)).collect();
+        adds.sort_by_key(|a| (a.0, a.1));
+        for (stamp, _, who, mode) in adds {
+            self.add(who, mode, dist[&who], &dist);
+            self.seen.insert(who, (mode, stamp));
+            changed = true;
+        }
+        changed
     }
 }
 
@@ -318,13 +398,11 @@ fn log_on() -> bool {
     *ON.get_or_init(|| std::env::var("BF_FOLLOW_LOG").is_ok_and(|v| v != "0"))
 }
 
-/// The formation's bookkeeping each frame, before the squad's AI (see `Formation`): a member whose
-/// mode or mode change differs from what it was added as is added again, by its mode, in the order
-/// the changes were made (`Command::joined`; a fresh brain's 0 is no join); one no longer a member
-/// (dead, out of the world, taken by the player) leaves both lists. Then each member's leader and
-/// first-entry bit for its follow (`Follow::leader`, `Follow::first`). BF_TEST_FORMATION's order is
-/// applied once. The claims the dead and the goals' restarts gave up lose their bits here, where
-/// the graph is at hand.
+/// The formation's bookkeeping each frame, before the squad's AI (`Formation::update`), then each
+/// member's leader and first-entry bit for its follow (`Follow::leader`, `Follow::first`; a change
+/// of leader logged under BF_FOLLOW_LOG). BF_TEST_FORMATION's order is applied once a level. The
+/// claims the dead and the goals' restarts gave up lose their bits here, where the graph is at
+/// hand.
 fn sync(mut formation: ResMut<Formation>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut world_points: ResMut<super::nav::Nav>) {
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         if u.dead && u.follow.claimed.is_some() {
@@ -336,27 +414,10 @@ fn sync(mut formation: ResMut<Formation>, mut player: ResMut<Player>, mut squad:
             }
         }
     }
-    let me = player.position;
-    let member = |u: &Player| (u.in_squad() || follower(u)) && !u.dead && !u.absent;
-    let dist: HashMap<Who, f32> = squad.0.iter().filter(|u| member(u)).map(|u| (u.who(), u.position.distance(me))).collect();
     let f = &mut *formation;
-    let mut changed = false;
-    let gone: Vec<Who> = f.seen.keys().filter(|w| !dist.contains_key(w)).copied().collect();
-    for w in gone {
-        f.remove(w);
-        f.seen.remove(&w);
-        changed = true;
-    }
-    let mut adds: Vec<(u64, usize, Who, Mode)> = squad.0.iter().enumerate().filter(|(_, u)| member(u) && u.command.joined > 0)
-        .filter(|(_, u)| f.seen.get(&u.who()) != Some(&(u.command.mode, u.command.joined)))
-        .map(|(k, u)| (u.command.joined, k, u.who(), u.command.mode)).collect();
-    adds.sort_by_key(|a| (a.0, a.1));
-    for (stamp, _, who, mode) in adds {
-        f.add(who, mode, dist[&who], &dist);
-        f.seen.insert(who, (mode, stamp));
-        changed = true;
-    }
-    if !f.staged && !dist.is_empty() {
+    let mut changed = f.update(player.position, &squad.0);
+    let members = squad.0.iter().any(|u| (u.in_squad() || follower(u)) && !u.dead && !u.absent);
+    if !f.staged && members {
         f.staged = true;
         if let Some(order) = staged_order(&squad.0) {
             for who in order {
@@ -369,12 +430,18 @@ fn sync(mut formation: ResMut<Formation>, mut player: ResMut<Player>, mut squad:
             changed = true;
         }
     }
+    let named: Vec<(Who, String)> = if log_on() { squad.0.iter().map(|u| (u.who(), unit_name(u))).collect() } else { vec![] };
+    let name = |w: Who| named.iter().find(|n| n.0 == w).map_or("?", |n| n.1.as_str());
     if changed && log_on() {
-        let names = |l: &[Who]| l.iter().map(|w| squad.0.iter().find(|u| u.who() == *w).map_or("?".into(), unit_name)).collect::<Vec<_>>().join(", ");
+        let names = |l: &[Who]| l.iter().map(|w| name(*w)).collect::<Vec<_>>().join(", ");
         println!("t {:.2}: formation: FOLLOW [{}], WINGMAN [{}]", player.sim_time, names(&f.follow), names(&f.wingman));
     }
     for u in squad.0.iter_mut() {
-        u.follow.leader = f.leader_of(u.who(), u.command.mode);
+        let leader = f.leader_of(u.who(), u.command.mode);
+        if log_on() && leader != u.follow.leader {
+            println!("t {:.2}: {}: follows {} (the formation, {:?})", player.sim_time, unit_name(u), leader.map_or("the controlled character", name), u.command.mode);
+        }
+        u.follow.leader = leader;
         u.follow.first = f.first(u.who(), u.command.mode);
     }
 }
@@ -610,8 +677,8 @@ fn hold(m: &mut Player, g: Option<&mut Graph>, d: &[f32; 5], dist: f32) -> Next 
 
 /// State 4 (FUN_000225d0, FOLLOW's): the flood from the leader's own point within COVER_FLOOD
 /// (FUN_000594a0) for the first point the filter takes (`cover_ok`); found and a route to it
-/// (FUN_000416a0), the point claimed (the last given up) and state 5; else state 2, the claim
-/// given up. Either way the next state now.
+/// (FUN_000416a0), the turn check on it (`turn_check`), the point claimed (the last given up) and
+/// state 5; else state 2, the claim given up. Either way the next state now.
 fn find_cover(m: &mut Player, g: &mut Graph, lead: &Lead, mates: &[Mate]) -> Next {
     let me = m.who();
     let at = m.position;
@@ -622,6 +689,7 @@ fn find_cover(m: &mut Player, g: &mut Graph, lead: &Lead, mates: &[Mate]) -> Nex
     let dist = at.distance(lead.at);
     if let Some(p) = found {
         if routes::plan(m, g, Dest::Point(p), "the follow: to a cover point near its leader").is_ok() {
+            turn_check(m, g);
             claim(m, g, p);
             if log_on() {
                 let n = &g.nodes[p as usize];
@@ -636,6 +704,32 @@ fn find_cover(m: &mut Player, g: &mut Graph, lead: &Lead, mates: &[Mate]) -> Nex
     Next::On
 }
 
+/// FUN_00058740, the turn check state 4 runs on the route it has just planned to its cover point
+/// (0x226d0-0x226f3: EDI the pace record [brain+0x1a8], ESI the route's first entry, its point's
+/// position, else its own): the member's facing (char+0x1b4's vtable +0x34, flat and unit,
+/// FUN_0004c530) against the way to that entry (flat and unit, FUN_0004c480; none when the member
+/// stands on it); a dot under TURN_DOT sets the pace level to a walk, 2, for TURN_WALK s
+/// ([brain+0x1a8]+0 and its timer), so a member whose cover point lies behind it turns at a walk
+/// before the ramp lifts it to a run. #33 take04's Brutus: the dash until the frame Tex stopped
+/// (gt 7.21, his chase ending within d2 of a leader not running: states 0, 4 and 5 in one update),
+/// then MT_WALK for 1.4-1.5 s, his distance to Tex closing 8.1 -> 6.8 m and opening to 8.0 m (the
+/// point behind him), the run from gt 8.71 and there at 8.89. (States 1, 9 and 11 run it too: not
+/// in the demo.)
+fn turn_check(m: &mut Player, g: &Graph) {
+    let Some(first) = m.router.walker.as_ref().and_then(|w| w.entry_at(g, 0)) else { return };
+    let flat = |x: f32, z: f32| {
+        let d = Vec2::new(x, z);
+        if d.length_squared() < routes::FLAT_MIN { Vec2::ZERO } else { d.normalize() }
+    };
+    let dot = flat(-m.yaw.sin(), -m.yaw.cos()).dot(flat(first.x - m.position.x, first.z - m.position.z));
+    if dot < TURN_DOT {
+        m.router.set_pace(2, TURN_WALK);
+        if log_on() {
+            println!("t {:.2}: {}: its route's first entry {:.0} deg off its facing: walks for {TURN_WALK} s (FUN_00058740)", m.sim_time, unit_name(m), dot.clamp(-1.0, 1.0).acos().to_degrees());
+        }
+    }
+}
+
 /// State 4's filter on point `p` for member `me` at `at` (the wrapper 0x3a400c, FUN_00020200: a
 /// point of kind 10, then the object 0x3a4008, 0x20410: within COVER_NEAR of the member, the
 /// filter of FUN_00020170 (0x26240) and FUN_00020260):
@@ -644,11 +738,14 @@ fn find_cover(m: &mut Player, g: &mut Graph, lead: &Lead, mates: &[Mate]) -> Nex
 ///  - no other character of the squad has it for its own point (FUN_00045310 over the squad list,
 ///    the controlled one too; FUN_00020260's first test);
 ///  - of the AI members in FOLLOW that aren't walking to a cover point (state 5) or holding at one
-///    (state 3 with their own point of kind 10), the member is the nearest to it (3D).
+///    (state 3 with their own point of kind 10), the member is the nearest to it (3D). FUN_00020260
+///    walks the squad list keeping the first strictly nearer one, so of two at the same distance
+///    the one first in the list has it: the demo's order is `mates`' (the squad record's own, the
+///    order FUN_0005b9a0 joined them in, isn't read).
 ///
 /// Not modelled: the leash (FUN_00023630 on brain+0x1ec, none on a squad member as far as is
-/// read), the point's vtable +0x40 test, FUN_00048000 on brain+0x510 and the filter's exclusion
-/// list (FUN_00162d60, empty here).
+/// read), the point's vtable +0x40 test, FUN_00048000 (the point in the brain's list at
+/// brain+0x570) and the filter's exclusion list (FUN_00162d60, empty here).
 fn cover_ok(g: &Graph, p: u32, me: Who, at: Vec3, mates: &[Mate]) -> bool {
     let n = &g.nodes[p as usize];
     if n.kind != nav::kind::COVER || !n.cover || !g.valid(p) || n.at.distance_squared(at) >= COVER_NEAR * COVER_NEAR {
@@ -658,10 +755,14 @@ fn cover_ok(g: &Graph, p: u32, me: Who, at: Vec3, mates: &[Mate]) -> bool {
         return false;
     }
     let mine = n.at.distance_squared(at);
-    !mates.iter().any(|x| {
+    let place = mates.iter().position(|x| x.who == me).unwrap_or(mates.len());
+    !mates.iter().enumerate().any(|(k, x)| {
         x.who != me && x.follows && x.state != State::ToCover
             && !(x.state == State::Hold && x.point.is_some_and(|q| g.nodes[q as usize].kind == nav::kind::COVER))
-            && n.at.distance_squared(x.at) < mine
+            && {
+                let d = n.at.distance_squared(x.at);
+                d < mine || (d == mine && k < place)
+            }
     })
 }
 
@@ -743,17 +844,75 @@ mod tests {
     }
 
     /// FUN_0005e540 with the tables: the first two entries follow the controlled character, the
-    /// third the first; a member in no list, or past three, the controlled character.
+    /// third the first; a member in no list, or in another mode, the controlled character. Both
+    /// lists count (FUN_0005e310): a WINGMAN entry 2 follows WINGMAN's entry 0 in FOLLOW too, when
+    /// that one is in FOLLOW's list and no entry before it there claims it. A fourth entry's number
+    /// is the controlled character's 3, so entries 0 and 1 follow it (as read; the demo's lists hold
+    /// three at most).
     #[test]
     fn the_third_entry_follows_the_first() {
         let (a, b, c, d) = (Who::Squad(0), Who::Squad(1), Who::Squad(2), Who::Npc(1, 0));
-        let f = Formation { follow: vec![a, b, c, d], wingman: vec![b, a], ..Default::default() };
+        let f = Formation { follow: vec![a, b, c], wingman: vec![b, a], ..Default::default() };
         assert_eq!(f.leader_of(a, Mode::Follow), None);
         assert_eq!(f.leader_of(b, Mode::Follow), None);
         assert_eq!(f.leader_of(c, Mode::Follow), Some(a));
-        assert_eq!(f.leader_of(d, Mode::Follow), None, "past the tables' three entries");
+        assert_eq!(f.leader_of(d, Mode::Follow), None, "in no list");
         assert_eq!(f.leader_of(a, Mode::Guard), None);
         assert!(f.first(b, Mode::Wingman) && !f.first(a, Mode::Wingman) && f.first(a, Mode::Follow));
+        // a stale WINGMAN entry 2: FOLLOW's own order would make c its entry 0
+        let f = Formation { follow: vec![c, b, a], wingman: vec![a, b, c], ..Default::default() };
+        assert_eq!(f.leader_of(c, Mode::Follow), Some(a), "WINGMAN's entry 2 follows its entry 0");
+        assert_eq!(f.leader_of(a, Mode::Follow), Some(c), "and FOLLOW's entry 2 its entry 0");
+        let f = Formation { follow: vec![a, b, c, d], ..Default::default() };
+        assert_eq!(f.leader_of(a, Mode::Follow), Some(d), "a fourth entry, number 3");
+    }
+
+    /// FUN_0005e8b0's two follow modes (0x5e908-0x5e9e8), through a frame's bookkeeping
+    /// (`Formation::update`) with the orders in the squad list's slot order: Fire At Will to all puts
+    /// Flint, Brutus and Hawk in WINGMAN's list and Flint, its first, says the walk line; Cover Me to
+    /// all puts them in FOLLOW's and leaves WINGMAN's as it was; Fire At Will to Hawk alone then
+    /// changes neither (she's in WINGMAN's list already): she's its third, so she follows Flint, and
+    /// says no line (not its first); Flint, in FOLLOW, is FOLLOW's first and follows Tex. Stand Ground
+    /// takes one out of both; a fresh squad (no mode change) is in neither.
+    #[test]
+    fn fire_at_will_cover_me_fire_at_will_to_hawk() {
+        let at = |c: usize, x: f32| {
+            let mut m = Player::new(c);
+            m.position = Vec3::new(x, 0.0, 0.0);
+            m
+        };
+        // (Brutus, Flint, Hawk as play.rs makes them, all within 5 m of each other's distance to Tex)
+        let mut squad = vec![at(0, 4.0), at(1, 6.0), at(2, 7.0)];
+        let (brutus, flint, hawk) = (squad[0].who(), squad[1].who(), squad[2].who());
+        let mut f = Formation::default();
+        assert!(!f.update(Vec3::ZERO, &squad), "a fresh squad joins no list");
+        assert!(f.follow.is_empty() && f.wingman.is_empty());
+        // (FUN_000c1280's order: the squad list's slots, Flint, Brutus, Hawk)
+        let order = |squad: &mut [Player], who: &[usize], mode: Mode| {
+            for &k in who {
+                squad[k].command.set_mode(mode, None);
+            }
+        };
+        order(&mut squad, &[1, 0, 2], Mode::Wingman);
+        f.update(Vec3::ZERO, &squad);
+        assert_eq!(f.wingman, [flint, brutus, hawk]);
+        assert!(f.first(flint, Mode::Wingman) && squad[1].command.start_walk(), "Flint says the walk line");
+        assert_eq!(f.leader_of(hawk, Mode::Wingman), Some(flint));
+        order(&mut squad, &[1, 0, 2], Mode::Follow);
+        f.update(Vec3::ZERO, &squad);
+        assert_eq!(f.follow, [flint, brutus, hawk]);
+        assert_eq!(f.wingman, [flint, brutus, hawk], "Cover Me leaves WINGMAN's list");
+        order(&mut squad, &[2], Mode::Wingman);
+        f.update(Vec3::ZERO, &squad);
+        assert_eq!((&f.wingman[..], &f.follow[..]), (&[flint, brutus, hawk][..], &[flint, brutus, hawk][..]), "Fire At Will to Hawk changes neither");
+        assert_eq!(f.leader_of(hawk, Mode::Wingman), Some(flint), "Hawk follows Flint");
+        assert!(!f.first(hawk, Mode::Wingman) && squad[2].command.start_walk() && !squad[1].command.start_walk(),
+                "Hawk isn't WINGMAN's first: the bit is clear but she's never asked; Flint, in FOLLOW, can't say it");
+        assert!(f.first(flint, Mode::Follow) && f.leader_of(flint, Mode::Follow).is_none() && f.leader_of(brutus, Mode::Follow).is_none());
+        order(&mut squad, &[0], Mode::Guard);
+        f.update(Vec3::ZERO, &squad);
+        assert_eq!((&f.wingman[..], &f.follow[..]), (&[flint, hawk][..], &[flint, hawk][..]), "Stand Ground: out of both");
+        assert_eq!(f.leader_of(hawk, Mode::Wingman), None, "WINGMAN's second now: the controlled character");
     }
 
     /// The goal starts holding (state 2, then 3); the hold ends once the leader is beyond d0, and
@@ -836,6 +995,36 @@ mod tests {
         update(&mut m, &far, &[], Some(&mut g));
         assert_eq!((m.follow.state, m.follow.claimed), (State::Chase, None));
         assert!(g.nodes[3].state & nav::CLAIMED == 0);
+    }
+
+    /// FUN_00058740 after state 4's plan: a member facing away from its route's first entry (yaw 0
+    /// faces -z; its own point and the cover point lie +z of it, whichever the route starts with)
+    /// walks, the pace level 2; one facing it keeps its level.
+    #[test]
+    fn the_turn_check_walks_a_member_facing_away() {
+        for (yaw, cap) in [(0.0, 2), (std::f32::consts::PI, 1)] {
+            let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5]), point(5, COVER, -8.0, 3.0, &[1, 2])];
+            let mut g = Graph::new(&pts);
+            let mut m = member(1, Vec3::new(-8.0, 0.0, -1.0), Some(1), Mode::Follow);
+            m.yaw = yaw;
+            m.follow.started = true;
+            m.follow.state = State::FindCover;
+            assert!(matches!(update(&mut m, &leader(Vec3::ZERO, Some(0)), &[], Some(&mut g)), routes::Way::Go { .. }));
+            assert_eq!((m.follow.state, m.router.cap), (State::ToCover, cap), "yaw {yaw}");
+        }
+    }
+
+    /// FUN_00020260's tie: of two eligible members at the same distance from a cover point, the
+    /// first in the squad list has it.
+    #[test]
+    fn a_tie_goes_to_the_first_in_the_list() {
+        let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5]), point(5, COVER, -8.0, 3.0, &[1, 2])];
+        let g = Graph::new(&pts);
+        let (a, b) = (Vec3::new(-9.0, 0.0, 3.0), Vec3::new(-7.0, 0.0, 3.0));
+        let mate = |c: usize, at: Vec3| Mate { who: Who::Squad(c), at, point: Some(1), follows: true, state: State::Hold };
+        let mates = [mate(0, a), mate(1, b)];
+        assert!(cover_ok(&g, 2, Who::Squad(0), a, &mates));
+        assert!(!cover_ok(&g, 2, Who::Squad(1), b, &mates));
     }
 
     /// Without a level's points the chase walks straight at the leader and holds within d2 of one
