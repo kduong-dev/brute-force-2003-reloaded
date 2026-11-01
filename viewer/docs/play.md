@@ -3487,7 +3487,9 @@ FUN_00119020's sound request (the code map's row has every address; todo/36-squa
   (Before #324 the volumes were the demo's own: 0.35 for the walk and the side steps, 0.6 the run,
   0.85 the sprint, whoever stepped.) Which of the demo's gaits is which motion is play_liquids.rs
   `gait`'s: the sprint dashes, a crouched move crouch-walks (its back and side steps too, inferred),
-  the aimed side steps are the `_SLOW` walks (inferred: if they're the running ones the factor is 1.0).
+  the aimed side steps are the `_SLOW` walks (inferred: if they're the running ones the factor is 1.0),
+  and an AI member's side runs (#363, `Gait::SideRun`: the `f_side_run` / `b_side_run` clips of
+  MT 26 / 30 / 27 / 31) run.
 * **Where.** The controlled character's own step is **2D**: heard at its volume wherever the listener
   is. FUN_00119020 puts its point into the request block's second slot (+0x10), not the first
   (+0, the position with its set byte +0xc), and FUN_00179250 (the cull) and FUN_0017ec80 (the
@@ -3812,6 +3814,12 @@ the dash on a straight is **8.5**, and the demo's was too slow.
   from a stand, the step down after the move asked and the hard turn's walk (nav.md "The
   steering"): take01's staging then runs within a second of the take at each stretch of the west
   walkway.
+* **The AI's side and back runs** (#363, nav.md "The view and the motion"): an AI member's motion
+  is FUN_001195c0's against its own view, and at a run or a dash its side steps and backpedal are
+  running states (FUN_00126a40): the sets' `f_side_run` / `b_side_run` / `back_run` clips, scaled to
+  the run's speed as the run is, and x0.8 more while it backs off (FUN_0012cb40's second 0.8, while
+  char+0x800 is 0: `speed::AI_BACK_FACTOR`), 0.64 x the type's run without the follow's boost. A
+  player's back run keeps its clip's root.
 * **Not done** (the walk and the ease are #350's): the walk, the crouch walk, the back steps and
   the side steps keep their clips' root (the game's walk follows the stick: #126 take07's "run" at a
   stick of 0.7 was the game's WALK, mot 47, at 3.5 m/s, Tex's type walk 3.6, where the demo's walk

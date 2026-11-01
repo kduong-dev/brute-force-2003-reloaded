@@ -19,17 +19,24 @@
 //!  4. **The plain direction** (the sensor's +0x24, 0x519f0, `plain`): to the target.
 //!
 //! The direction goes to the move (FUN_0004d970, play_routes.rs `pace`, which the feelers' drops
-//! hold) and the AI update's steering FUN_00019ed0, whose FUN_00019af0 turns the move toward it at
-//! most 200 degrees a second (`move_turn`); the demo's character turns its facing toward that move
-//! (play.rs `step_player`). The callers are the demo's route walkers, the follow (play.rs
-//! `squad_ai`: the squad's, the tutorial marines', and the test map's straight walk) and Move To
-//! (play_orders.rs `move_out`); the enemies' goals walk no routes yet (#336) and aren't steered.
+//! hold) and the AI update's steering FUN_00019ed0, which turns the character's view toward it at
+//! 200 degrees a second (`view_turn`) and whose FUN_00019af0 turns the move toward it at most 200
+//! degrees a second (`move_turn`). The move is the character's stick (char+0x5e8, the commanded
+//! move, never the speed it makes), and its heading (iface +0x34: the feelers', the push's and the
+//! next turn's) is that command (`heading`, #363). The character update then picks the motion from
+//! the stick in its own view frame (FUN_001195c0, `pick`): it runs facing its move, and steps
+//! sideways or backs off only while its view lags its move (play.rs `step_player`). The callers are
+//! the demo's route walkers, the follow (play.rs `squad_ai`: the squad's, the tutorial marines',
+//! and the test map's straight walk) and Move To (play_orders.rs `move_out`); the enemies' goals
+//! walk no routes yet (#336) and aren't steered.
 //!
 //! Test hooks: BF_AVOID_LOG=1 prints each frame a stage before the plain direction steers (which
 //! feelers met what and how far, the response, the pace drops, the push and from whom);
 //! BF_AVOID_OFF=1 (a diagnostic, not the game) steers by the plain direction alone, as before #344;
 //! BF_AVOID_FREE_TURN=1 (a diagnostic, not the game) leaves the move's turn to the facing's 9 rad/s,
-//! as before #344's fix round.
+//! as before #344's fix round. BF_GAIT_LOG=1 (play.rs `gait_log`) prints each frame every route
+//! walker's motion: its gait, its view, body and move, the pick's case, its step and its clip
+//! layers.
 
 use super::*;
 
@@ -85,9 +92,14 @@ const GROUND_PROBE: f32 = 0.4;
 const GROUND_BELOW: f32 = 5.0;
 const GROUND_JUMP: f32 = 2.75;
 const GROUND_GARBAGE: f32 = 100.0;
-/// The character's heading is its move when it moves (iface +0x34, 0x11e860: the move vector
-/// char+0x5e8): the demo's step over this (m/s, `Player::last_velocity`), else its facing. The demo's.
-const MOVING: f32 = 0.1;
+/// The character's heading (iface +0x34, 0x11e860) is its commanded move (char+0x5e8 put back in
+/// the world, FUN_0011e680) when its flat square is at least this (0x3a519c), else the body's
+/// forward (`heading`). FUN_0011e680's own zero test (1.42e-14) is smaller still: the least move the
+/// AI commands is a stand's (MOVE_STAND, 1e-4 squared), which passes both.
+const MOVE_NONE: f32 = 1e-10;
+/// FUN_00115b00's ground probes run along the velocity (char+0x470, normalised) unless its square
+/// is under this (0.0001, its row: the out left unwritten, so no tilt).
+const PROBE_STILL: f32 = 0.0001;
 /// Stage 2: the characters within this (m, across: brain+0x3bc, set 1.5 by the brain's
 /// constructor), within PUSH_ANGLE of the heading (brain+0x3c0, 90 degrees: the half in front)...
 const PUSH_RADIUS: f32 = 1.5;
@@ -131,6 +143,26 @@ const MOVE_TURN_STILL: f32 = 0.1;
 /// x0.5, a run's or a dash's x1 (FUN_00019af0 reads it as the stick's tilt).
 const MOVE_STAND: f32 = 0.01;
 const MOVE_WALK: f32 = 0.5;
+/// FUN_00019ed0, the view's turn (`view_turn`): at most this fast (rad/s), the type's turn rate
+/// (type+0x2d0) x char+0x7ec, which the brain's set-up makes 200 / (the rate x 57.2958) for a type
+/// with the squad bit (0x17699-0x176ab, 0x3a52dc = 200): 200 degrees a second whatever the type.
+/// (A type without the bit gets 1.8 x its rate, 0x17737: no such type walks the demo's routes.)
+const VIEW_TURN_MAX: f32 = 3.490_658_5;
+/// ...no turn within a degree (0x3a4fe0 = 0.0174533 rad against the angle, 0x1a009), nor for a
+/// direction whose square is under 1e-16 (0x3a52b0, 0x19f7e)...
+const VIEW_TURN_LEAST: f32 = 0.017_453_3;
+/// ...and a turn the frame can finish taken at the fraction it needs, the kept one first set to
+/// this share of it (x 0x3a4f74 = 0.5 at 0x1a086), so a turn's last degrees ease out.
+const VIEW_TURN_CLOSE: f32 = 0.5;
+/// FUN_001195c0's forward test (`pick`): the move's cosine against the view's forward at least this
+/// (0x3ecccccd) takes the forward or the backward case by its sign...
+const PICK_STRAIGHT: f32 = 0.4;
+/// ...or this with the gun up (char+0x7dc over 0, FUN_000d4440)...
+const PICK_STRAIGHT_RAISED: f32 = 0.25;
+/// ...and the body this close to its target yaw (char+0x4a0) is on its move: under it a body more
+/// than 45 degrees off the view steps sideways (0x46d314 = 0.5236, 30 degrees, a static init at
+/// 0x30bdd0).
+const PICK_ON_MOVE: f32 = 0.523_6;
 
 /// Which of FUN_000255d0's stages made the direction (its return value 1, 2, 4 or 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,28 +200,67 @@ pub struct Avoid {
     /// stand's 0.01, a walk's 0.5, else 1; zero when no goal moved it), and this frame's
     pub dir_was: Vec2,
     pub dir_now: Vec2,
+    /// char+0x5e8 put back in the world (FUN_0011e680): the move the last AI frame commanded
+    /// (FUN_00019af0's, `move_turn`, times its size; zero when no goal moved it), which this
+    /// frame's heading is (`heading`, iface +0x34), and this frame's (#363)
+    pub moved_was: Vec2,
+    pub moved: Vec2,
+    /// its view frame (char+0x5bc) and its motion pick while a route walker steers it (`View`);
+    /// None standing, where the demo's view is its facing (#363)
+    pub view: Option<View>,
 }
 
 impl Default for Avoid {
     /// A new brain's: the feelers on, the speed record's timer run out, char+0x720 1.0 (the
-    /// movement reset FUN_0012b560), no hard turn counted, no turn, no direction.
+    /// movement reset FUN_0012b560), no hard turn counted, no turn, no direction, no move, no view
+    /// of its own.
     fn default() -> Self {
         Avoid { feelers_off: 0.0, boost_off: 0.0, factor: 1.0, near: vec![], turning: 0.0, yaw_was: None, turn_rate: 0.0, dir_was: Vec2::ZERO,
-                dir_now: Vec2::ZERO }
+                dir_now: Vec2::ZERO, moved_was: Vec2::ZERO, moved: Vec2::ZERO, view: None }
     }
 }
 
 impl Avoid {
     /// The AI update's timers for a frame of `dt` s: brain+0x924 counted down (0x1b2d7-0x1b306,
     /// before the goal) and the speed record's brain+0x8a4 (FUN_00048270 at 0x1b3cd, after the goal:
-    /// here a frame sooner); and the direction the last frame ended with kept (brain+0x1cc,
-    /// 0x1b3fb), this frame's zero until a goal moves it (the buffer zeroed before the goal machine,
-    /// 0x1b338-0x1b350).
+    /// here a frame sooner); and the direction and the move the last frame ended with kept
+    /// (brain+0x1cc, 0x1b3fb; char+0x5e8), this frame's zero until a goal moves it (the buffer
+    /// zeroed before the goal machine, 0x1b338-0x1b350, and FUN_00019af0 writing the move as the
+    /// direction it has: none with none).
     pub fn tick(&mut self, dt: f32) {
         self.feelers_off = (self.feelers_off - dt).max(0.0);
         self.boost_off = (self.boost_off - dt).max(0.0);
         self.dir_was = std::mem::take(&mut self.dir_now);
+        self.moved_was = std::mem::take(&mut self.moved);
+        // (a view its steering didn't turn last frame is gone: a walk after it starts from its
+        // facing, `view_turn`; one it did waits for this frame's turn)
+        self.view = self.view.filter(|v| v.turned).map(|v| View { turned: false, ..v });
     }
+
+    /// A frame with no move of the AI's (a hold, the liquids' guard): no direction or move kept for
+    /// the next frame's turn, and no view of its own (the demo's stand: its body faces its own way).
+    pub fn stand(&mut self) {
+        self.dir_now = Vec2::ZERO;
+        self.moved = Vec2::ZERO;
+        self.view = None;
+    }
+}
+
+/// The view frame of a character the AI steers and its motion pick (#363): what FUN_00019ed0 turns
+/// and FUN_001195c0 reads, kept with its steering (`Avoid::view`) as only the route walkers' steering
+/// turns them in the demo.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct View {
+    /// the view's yaw (char+0x5bc, R: its forward is the stick's -z; the demo's yaw, 0 down -z)
+    pub yaw: f32,
+    /// brain+0x1c8: the view turn's eased fraction of VIEW_TURN_MAX (`view_turn`)
+    pub rate: f32,
+    /// char+0x800 = 0: the last pick's backward case (`pick`), where FUN_0012cb40 takes another 0.8
+    /// off the character's speed (play_speed.rs `targets`)
+    pub backing: bool,
+    /// turned this AI frame (`view_turn`): the step picks its motion against it only then
+    /// (play.rs `step_player`), and the next frame's `Avoid::tick` drops a view left unturned
+    pub turned: bool,
 }
 
 /// FUN_0004d970's size of the move direction at the pace level `level` the AI moves at (the lower
@@ -215,12 +286,20 @@ pub fn move_size(level: i32) -> f32 {
 ///
 /// The game eases a game frame at a time (GAME_FRAME, 30 Hz); the demo eases by the frame's share
 /// of them, so the turn doesn't hang on its frame rate. The direction (times `size`) is kept for
-/// the next frame's test (`Avoid::dir_now`). The demo's character moves along its facing, which
-/// turns toward this at 9 rad/s, faster than MOVE_TURN_MAX: so its facing follows the move.
+/// the next frame's test (`Avoid::dir_now`), and the move (times `size`: the stick, char+0x5e8) for
+/// the next frame's heading (`Avoid::moved`, #363). The demo's character moves along its facing,
+/// which turns toward this at 9 rad/s, faster than MOVE_TURN_MAX: so its facing follows the move.
 pub fn move_turn(m: &mut Player, dir: Vec2, size: f32, dt: f32) -> Vec2 {
     let heading = heading(m);
     let r = &mut m.router.avoid;
     r.dir_now = dir * size;
+    let out = turned(r, heading, dir, size, dt);
+    r.moved = out * size;
+    out
+}
+
+/// FUN_00019af0's turn of the move from `heading` toward `dir` (`move_turn`), its rate kept in `r`.
+fn turned(r: &mut Avoid, heading: Vec2, dir: Vec2, size: f32, dt: f32) -> Vec2 {
     if size < MOVE_TURN_STILL || dt <= 0.0 || free_turn() {
         r.turn_rate = 0.0;
         return dir;
@@ -244,6 +323,120 @@ pub fn move_turn(m: &mut Player, dir: Vec2, size: f32, dt: f32) -> Vec2 {
     r.turn_rate = rate;
     let turned = heading.x.atan2(heading.y) + rate * dt;
     Vec2::new(turned.sin(), turned.cos())
+}
+
+/// FUN_00019ed0's turn of `m`'s view (`View::yaw`, the frame R = char+0x5bc its motion is picked in:
+/// `pick`) toward the steering direction `dir` (unit, xz; FUN_000255d0's, `steer`) of size `size`
+/// (`move_size`), a frame of `dt` s (#363):
+///  - a walk that starts from a stand starts from the way it faces (the demo's: in the game a
+///    standing character's body follows its view, FUN_00119fa0, where the demo's stands face their
+///    own way, play.rs `step_player`);
+///  - no turn for no direction, nor within VIEW_TURN_LEAST of it (the kept fraction 0);
+///  - else the fraction of VIEW_TURN_MAX wanted: all of it (+-1), or for a turn the frame can
+///    finish the share that finishes it, the kept fraction first set to VIEW_TURN_CLOSE of that;
+///    the kept one taken as 0 when it turned the other way (FUN_00019a20) and eased toward the
+///    wanted (FUN_00019a70, k as the move's, by the frame's share of the game's frames as
+///    `move_turn`); the view turned by it (FUN_0011e5e0 -> char+0x5f8, which FUN_00119fa0 applies x
+///    char+0x7ec) and the fraction kept (brain+0x1c8).
+///
+/// Its target is the steering direction, never a target to fire at: the one facing override
+/// (brain+0x488) is the follow's look-point near a cover point (FUN_00022790, not done), and no
+/// fight goal sets it. So the view turns to the move, and the gun finds its target with the upper
+/// body (play.rs `step_player`'s aim).
+pub fn view_turn(m: &mut Player, dir: Vec2, size: f32, dt: f32) {
+    let facing = m.yaw;
+    let v = m.router.avoid.view.get_or_insert(View { yaw: facing, ..Default::default() });
+    v.turned = true;
+    let angle = wrap_angle(yaw_of(dir) - v.yaw);
+    if dir == Vec2::ZERO || dt <= 0.0 || angle.abs() <= VIEW_TURN_LEAST {
+        v.rate = 0.0;
+        return;
+    }
+    let most = VIEW_TURN_MAX * dt;
+    let wanted = if angle.abs() < most {
+        v.rate = angle / most * VIEW_TURN_CLOSE;
+        angle / most
+    } else {
+        angle.signum()
+    };
+    let last = if wanted * v.rate < 0.0 { 0.0 } else { v.rate };
+    let k = if size > MOVE_TURN_SLOW { MOVE_TURN_EASE_RUN } else { MOVE_TURN_EASE_WALK };
+    let keep = (k / (k + 1.0)).powf(dt / GAME_FRAME);
+    v.rate = wanted + (last - wanted) * keep;
+    v.yaw = wrap_angle(v.yaw + v.rate * most);
+}
+
+/// The demo's yaw (0 down -z, positive to the left) of a direction across (x, z).
+pub fn yaw_of(d: Vec2) -> f32 {
+    (-d.x).atan2(-d.y)
+}
+
+/// What FUN_001195c0 commands for a character the AI drives while its stick moves it (`pick`), the
+/// CT_ commands its handler 0x122040 plays (#363).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Motion {
+    /// CT_RUN (3): forward along the move, MT_RUN, MT_WALK or MT_DASH by the pace
+    Run,
+    /// CT_MOVE_LEFT (6) / CT_MOVE_RIGHT (7): the body on its move, the view more than 45 degrees
+    /// off it to the right (`left`: the move to the view's left) or the left; MT 26 / 30 at a run,
+    /// the _SLOW 29 / 33 at a walk
+    Side { left: bool },
+    /// CT_MOVE_BACK (0xc): backing along the move, the body facing away from it within 45 degrees
+    /// of the view; MT_BACKPEDAL (3) at a run, MT 4 at a walk
+    Back,
+    /// CT_MOVE_LEFT_BACK (0xd) / CT_MOVE_RIGHT_BACK (0xe): backing off, the body more than 45
+    /// degrees off the view; MT 27 / 31 at a run, 28 / 32 at a walk
+    SideBack { left: bool },
+    /// no command: the motion it has goes on (backing off, the body still 30 degrees or more off
+    /// the move's reverse while more than 45 degrees off the view)
+    Keep,
+}
+
+/// FUN_001195c0's pick (`pick`): the motion, the case (char+0x800: true forward, false backward) and
+/// the body's target yaw (char+0x4a0: the move's, or its reverse backward; the demo's yaw).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pick {
+    pub motion: Motion,
+    pub forward: bool,
+    pub body: f32,
+}
+
+/// FUN_001195c0 (0x11987f-0x119eea) for a character whose stick moves it along the yaw `moving`
+/// (the commanded move in the world), its view at the yaw `view` (R, `View::yaw`) and its body at
+/// `body` (char+0x434), its gun up (`raised`: the ready timer char+0x7dc over 0) or not, dashing
+/// (`dashing`: the motion MT_DASH) or not (#363):
+///  - the case: the move's cosine against the view's forward at least PICK_STRAIGHT
+///    (PICK_STRAIGHT_RAISED with the gun up), or a dash: forward when it's 0 or more (or dashing),
+///    else backward; under it (the move mostly across the view) forward when the move is in the
+///    body's front half, a hysteresis on the body;
+///  - the body's target: the move's yaw, forward; its reverse, backward;
+///  - the command, from the body against the view and the turn the body still has to make
+///    (`PICK_ON_MOVE`): forward, the body within 45 degrees of the view, or still 30 or more off its
+///    move, runs; else (on its move, the view more than 45 degrees off) it steps sideways, to the
+///    side of the view its body is on. Backward, within 45 degrees of the view it backs off; else
+///    still turning, no command; else it backs off sideways.
+///
+/// So on a straight its body, its view and its move agree and it runs facing its move; it steps
+/// sideways only in the moments of a sharp turn its view lags, and backs off only on a reversal,
+/// until its view has turned to within 66 degrees of its move. No other character's view or
+/// camera goes into it.
+pub fn pick(view: f32, body: f32, moving: f32, raised: bool, dashing: bool) -> Pick {
+    let ahead = wrap_angle(moving - view).cos();
+    let least = if raised { PICK_STRAIGHT_RAISED } else { PICK_STRAIGHT };
+    let forward = if ahead.abs() >= least || dashing { ahead >= 0.0 || dashing } else { wrap_angle(body - moving).cos() >= 0.0 };
+    let target = if forward { moving } else { wrap_angle(moving + std::f32::consts::PI) };
+    // (the body against the view: positive to its left, b.x < 0)
+    let off = wrap_angle(body - view);
+    let near_view = off.abs() < std::f32::consts::FRAC_PI_4;
+    let turning = wrap_angle(target - body).abs() >= PICK_ON_MOVE;
+    let motion = match (forward, near_view, turning) {
+        (true, true, _) | (true, false, true) => Motion::Run,
+        (true, false, false) => Motion::Side { left: off > 0.0 },
+        (false, true, _) => Motion::Back,
+        (false, false, true) => Motion::Keep,
+        (false, false, false) => Motion::SideBack { left: off < 0.0 },
+    };
+    Pick { motion, forward, body: target }
 }
 
 /// What a feeler met (FUN_000ddd10's hit record, its +0): the terrain (kind 1), an object (2: a
@@ -506,18 +699,30 @@ pub fn plain(me: Vec3, target: Vec3) -> Vec2 {
     Vec2::new(d.x, d.z) / l2.sqrt()
 }
 
-/// The character's heading (iface +0x34, 0x11e860): the way it moves when it moves (its last step,
-/// over MOVING), else the way it faces. Unit, xz.
-fn heading(m: &Player) -> Vec2 {
+/// The character's heading (iface +0x34, 0x11e860): its commanded move, the stick the last AI frame
+/// gave it (`moving`), else its body's forward (with char+0x800 = 0 the game takes the body's
+/// backward instead, but a stick of nothing is a stand, where FUN_001195c0 sets it back to 1 the
+/// same frame: so here always the forward). Unit, xz. Never the speed it makes: #363's cause, where
+/// the demo's last step under a sideways gait turned the next move off its way. The follow's turn
+/// check reads it too (play_follow.rs `turn_check`, FUN_00058740).
+pub fn heading(m: &Player) -> Vec2 {
     moving(m).unwrap_or_else(|| Vec2::new(-m.yaw.sin(), -m.yaw.cos()))
 }
 
-/// The way `m` moves (its last step's, unit xz), None while it doesn't (under MOVING): the demo's
-/// for the move vector char+0x5e8 in the world (FUN_0011e680, flat and unit, zero standing; the
-/// pace at a corner reads it, play_routes.rs `corner_pace`).
+/// The way `m`'s stick moves it (FUN_0011e680: char+0x5e8 put back in the world, flat and unit),
+/// None for a stick of nothing (under MOVE_NONE): the last AI frame's command (`Avoid::moved_was`,
+/// `move_turn`'s), not the speed it makes (#363). The feelers and the push look along it (through
+/// `heading`), and the pace at a corner reads it (play_routes.rs `corner_pace`, FUN_000587d0).
 pub fn moving(m: &Player) -> Option<Vec2> {
+    let v = m.router.avoid.moved_was;
+    (v.length_squared() >= MOVE_NONE).then(|| v.normalize())
+}
+
+/// The way `m` goes, from its velocity (char+0x470: the demo's last step), None under PROBE_STILL:
+/// the direction FUN_00115b00 probes the ground along (`rise`), the one reader of the speed here.
+fn going(m: &Player) -> Option<Vec2> {
     let v = Vec2::new(m.last_velocity.x, m.last_velocity.z);
-    (v.length() > MOVING).then(|| v.normalize())
+    (v.length_squared() >= PROBE_STILL).then(|| v.normalize())
 }
 
 /// A body met, as the hit record's kind (`Met`).
@@ -591,7 +796,7 @@ fn feelers(m: &mut Player, heading: Vec2, target: Vec3) -> Option<Vec2> {
     let arena = world::arena()?;
     let a = &*arena;
     let origin = m.position - Vec3::Y * FEELER_DROP - Vec3::new(heading.x, 0.0, heading.y) * FEELER_BACK;
-    let up = rise(a, m.position, m.position.y + GROUND, moving(m));
+    let up = rise(a, m.position, m.position.y + GROUND, going(m));
     let cast = |o: Vec3, d: Vec3, len: f32| a.ray_kind_normal(o, d, len).map(|(t, k, n)| Hit { at: t, met: met(k), up: n.y });
     let factor = m.router.avoid.factor;
     let felt = feel(level, factor, routes::in_prism(), origin, heading, up, target, cast);
@@ -833,38 +1038,167 @@ mod tests {
 
     /// FUN_00019af0: from a stand the move takes the direction at once; moving, it turns toward it
     /// at most 3.49 rad/s, the rate eased from the last (a third of the way a game frame at a run),
-    /// and within a degree it keeps its heading; a stand's small direction is taken as it is.
+    /// and within a degree it keeps its heading; a stand's small direction is taken as it is. The
+    /// heading it turns from is the last frame's move (#363), so the turn goes on from where the
+    /// last one left it, whatever the character's step did.
     #[test]
     fn the_move_turns_at_most_200_degrees_a_second() {
         let dt = GAME_FRAME;
         let mut m = Player::new(2);
-        // moving -z (the heading from its last step), wanting +x: a quarter turn to its right
-        m.last_velocity = Vec3::new(0.0, 0.0, -6.0);
-        let d = move_turn(&mut m, Vec2::X, 1.0, dt);
-        assert!((d - Vec2::X).length() < 1e-5, "after a stand, at once: {d:?}");
+        // its last move -z, wanting +x: a quarter turn to its right; its last step went the other
+        // way (an aimed side step's, say): the step isn't the heading
+        m.router.avoid.moved = Vec2::new(0.0, -1.0);
+        m.last_velocity = Vec3::new(3.0, 0.0, 0.0);
         m.router.avoid.tick(dt);
         let d = move_turn(&mut m, Vec2::X, 1.0, dt);
-        // the rate eased from 0: 3.49 / 3 rad/s for a frame of 1/30 s
+        assert!((d - Vec2::X).length() < 1e-5, "after a stand, at once: {d:?}");
+        assert_eq!(m.router.avoid.moved, Vec2::X, "the move kept for the next frame's heading");
+        let mut m = Player::new(2);
+        m.router.avoid.moved = Vec2::new(0.0, -1.0);
+        m.router.avoid.dir_now = Vec2::new(0.0, -1.0);
+        m.last_velocity = Vec3::new(3.0, 0.0, 0.0);
+        m.router.avoid.tick(dt);
+        let d = move_turn(&mut m, Vec2::X, 1.0, dt);
+        // the rate eased from 0: 3.49 / 3 rad/s for a frame of 1/30 s, from -z (not from +x)
         let turned = (MOVE_TURN_MAX / 3.0) * dt;
         assert!((d - Vec2::new(turned.sin(), -turned.cos())).length() < 1e-4, "{d:?}");
         assert!((m.router.avoid.turn_rate + MOVE_TURN_MAX / 3.0).abs() < 1e-4, "the rate kept: {}", m.router.avoid.turn_rate);
-        // frame after frame the rate climbs to the cap, never past it
-        for _ in 0..30 {
+        // frame after frame the rate climbs to the cap, never past it, each turn from the last move
+        // (the gap to the cap down by 2/3 a frame: 3.49 x (2/3)^11 = 0.04)
+        for _ in 0..10 {
             m.router.avoid.tick(dt);
             move_turn(&mut m, Vec2::X, 1.0, dt);
         }
-        assert!((m.router.avoid.turn_rate.abs() - MOVE_TURN_MAX).abs() < 0.01, "{}", m.router.avoid.turn_rate);
+        assert!((m.router.avoid.turn_rate.abs() - MOVE_TURN_MAX).abs() < 0.05, "{}", m.router.avoid.turn_rate);
+        // and it gets there: a quarter turn in well under a second at 200 degrees a second
+        for _ in 0..12 {
+            m.router.avoid.tick(dt);
+            move_turn(&mut m, Vec2::X, 1.0, dt);
+        }
+        assert!((m.router.avoid.moved - Vec2::X).length() < 1e-4, "{:?}", m.router.avoid.moved);
         // at 15 fps the same ease over two game frames: (2/3)^2 of the way kept
         let mut m = Player::new(2);
-        m.last_velocity = Vec3::new(0.0, 0.0, -6.0);
+        m.router.avoid.moved_was = Vec2::new(0.0, -1.0);
         m.router.avoid.dir_was = Vec2::new(0.0, -1.0);
         move_turn(&mut m, Vec2::X, 1.0, 2.0 * dt);
         assert!((m.router.avoid.turn_rate + MOVE_TURN_MAX * (1.0 - 4.0 / 9.0)).abs() < 1e-4, "{}", m.router.avoid.turn_rate);
-        // within a degree: the heading; a stand's direction: as it is
+        // within a degree: the heading; a stand's direction: as it is, and kept at its size
         let near = Vec2::new(0.5f32.to_radians().sin(), -0.5f32.to_radians().cos());
         assert_eq!(move_turn(&mut m, near, 1.0, dt), Vec2::new(0.0, -1.0));
         assert_eq!(move_turn(&mut m, Vec2::X, MOVE_STAND, dt), Vec2::X);
+        assert_eq!(m.router.avoid.moved, Vec2::X * MOVE_STAND);
         assert_eq!((move_size(1), move_size(2), move_size(4)), (MOVE_STAND, MOVE_WALK, 1.0));
+    }
+
+    /// iface +0x34: the heading is the last frame's move, a stand's tiny one included, else the
+    /// body's forward; never the speed it makes. A frame no goal moves it leaves none.
+    #[test]
+    fn the_heading_is_the_last_move() {
+        let mut m = Player::new(2);
+        m.yaw = std::f32::consts::FRAC_PI_2;
+        m.last_velocity = Vec3::new(0.0, 0.0, 6.0);
+        // nothing commanded: the body's forward (yaw 90 degrees: -x)
+        assert!((heading(&m) - Vec2::new(-1.0, 0.0)).length() < 1e-5);
+        assert_eq!(moving(&m), None);
+        m.router.avoid.moved = Vec2::new(0.0, -0.01);
+        m.router.avoid.tick(GAME_FRAME);
+        assert!((heading(&m) - Vec2::new(0.0, -1.0)).length() < 1e-5, "a stand's move has a direction");
+        assert!(moving(&m).is_some_and(|v| (v - Vec2::new(0.0, -1.0)).length() < 1e-5));
+        // the next frame, with no move made: none again
+        m.router.avoid.tick(GAME_FRAME);
+        assert_eq!(moving(&m), None);
+        // a stand (the liquids' guard, a hold) forgets the move and the view
+        m.router.avoid.moved = Vec2::X;
+        m.router.avoid.view = Some(View::default());
+        m.router.avoid.stand();
+        assert_eq!((m.router.avoid.moved, m.router.avoid.view), (Vec2::ZERO, None));
+    }
+
+    /// FUN_00019ed0: the view starts from the facing, turns toward the direction at most 200
+    /// degrees a second, its fraction eased a third of the way a game frame at a run (a fifth at a
+    /// walk), and closes the last of a turn at 2/3 of what's left a frame; within a degree it holds.
+    #[test]
+    fn the_view_turns_to_the_move_at_200_degrees_a_second() {
+        let dt = GAME_FRAME;
+        let mut m = Player::new(2);
+        m.yaw = 0.0;
+        // wanting +x from facing -z: the demo's yaw -90 degrees
+        view_turn(&mut m, Vec2::X, 1.0, dt);
+        let v = m.router.avoid.view.unwrap();
+        assert!((v.rate + 1.0 / 3.0).abs() < 1e-5, "eased from 0 toward -1: {}", v.rate);
+        assert!((v.yaw + VIEW_TURN_MAX * dt / 3.0).abs() < 1e-5, "{}", v.yaw);
+        // at a walk the ease is a fifth
+        let mut w = Player::new(2);
+        view_turn(&mut w, Vec2::X, MOVE_WALK, dt);
+        assert!((w.router.avoid.view.unwrap().rate + 0.2).abs() < 1e-5);
+        // it gets there: 90 degrees in about half a second, and holds within a degree
+        for _ in 0..20 {
+            view_turn(&mut m, Vec2::X, 1.0, dt);
+        }
+        let v = m.router.avoid.view.unwrap();
+        assert!((v.yaw + std::f32::consts::FRAC_PI_2).abs() < 0.02, "{}", v.yaw.to_degrees());
+        // the last of a turn: a 2-degree gap the frame could close (6.7 degrees a frame) closes
+        // by 2/3, the kept fraction first halved
+        let mut c = Player::new(2);
+        c.router.avoid.view = Some(View { yaw: 2f32.to_radians(), ..Default::default() });
+        view_turn(&mut c, Vec2::new(0.0, -1.0), 1.0, dt);
+        let v = c.router.avoid.view.unwrap();
+        assert!((v.yaw.to_degrees() - 2.0 / 3.0).abs() < 1e-3, "{}", v.yaw.to_degrees());
+        // within a degree: no turn, the fraction 0; no direction: none
+        c.router.avoid.view = Some(View { yaw: 0.5f32.to_radians(), rate: 0.3, ..Default::default() });
+        view_turn(&mut c, Vec2::new(0.0, -1.0), 1.0, dt);
+        assert_eq!(c.router.avoid.view.unwrap(), View { yaw: 0.5f32.to_radians(), rate: 0.0, backing: false, turned: true });
+        view_turn(&mut c, Vec2::ZERO, 1.0, dt);
+        assert_eq!(c.router.avoid.view.unwrap().yaw, 0.5f32.to_radians());
+        // a frame with no turn drops it at the next tick: the next walk starts from the facing
+        c.router.avoid.tick(dt);
+        assert!(c.router.avoid.view.is_some_and(|v| !v.turned), "turned last frame: kept for this one's turn");
+        c.router.avoid.tick(dt);
+        assert_eq!(c.router.avoid.view, None);
+        c.yaw = 1.0;
+        view_turn(&mut c, Vec2::new(-1.0f32.sin(), -1.0f32.cos()), 1.0, dt);
+        assert!((c.router.avoid.view.unwrap().yaw - 1.0).abs() < 1e-5);
+    }
+
+    /// FUN_001195c0: running on its view and its body, it runs; a move across while the body has
+    /// turned onto it and the view lags steps sideways to the side the body is on; a move behind
+    /// the view backs off, the body turned away from it; the gun up takes the move as straight
+    /// down to a cosine of 0.25, a dash always forward.
+    #[test]
+    fn the_motion_is_picked_against_its_own_view() {
+        let d = |a: f32| a.to_radians();
+        // all three along -z: forward, run, the body's target the move
+        let p = pick(0.0, 0.0, 0.0, false, false);
+        assert_eq!((p.motion, p.forward, p.body), (Motion::Run, true, 0.0));
+        // a move 80 degrees to the view's left, the body still on the view: mostly across, the
+        // move in the body's front half: forward, still 80 degrees to turn: run
+        let p = pick(0.0, 0.0, d(80.0), false, false);
+        assert_eq!((p.motion, p.forward), (Motion::Run, true));
+        assert!((p.body - d(80.0)).abs() < 1e-5);
+        // the body there, the view lagging 70 degrees off it: a side step to the left
+        assert_eq!(pick(d(10.0), d(80.0), d(80.0), false, false).motion, Motion::Side { left: true });
+        assert_eq!(pick(d(-10.0), d(-80.0), d(-80.0), false, false).motion, Motion::Side { left: false });
+        // the view within 45 degrees of the body: a run again
+        assert_eq!(pick(d(40.0), d(80.0), d(80.0), false, false).motion, Motion::Run);
+        // a move 150 degrees off the view: backward, the body's target its reverse (30 degrees to
+        // the view's right), the body on the view: backs off
+        let p = pick(0.0, 0.0, d(150.0), false, false);
+        assert_eq!((p.motion, p.forward), (Motion::Back, false));
+        assert!((p.body - d(-30.0)).abs() < 1e-5);
+        // the body more than 45 degrees off the view, on the reverse: backs off sideways, the move
+        // to the view's left (the body to its right); still turning to it: no command
+        assert_eq!(pick(0.0, d(-60.0), d(120.0), false, false).motion, Motion::SideBack { left: true });
+        assert_eq!(pick(0.0, d(60.0), d(120.0), false, false).motion, Motion::Keep);
+        // a move 70 degrees off the view is across without the gun up (cos 0.34 < 0.4): the case
+        // by the body's half; with it up straight (0.34 >= 0.25): forward whatever the body
+        assert!(pick(0.0, 0.0, d(70.0), false, false).forward, "across, in the body's front half");
+        assert!(!pick(0.0, d(180.0), d(70.0), false, false).forward, "across, in the body's back half");
+        assert!(pick(0.0, d(180.0), d(70.0), true, false).forward, "the gun up: straight ahead");
+        // 110 degrees off: across, the body facing it forward; with the gun up straight back
+        assert!(pick(0.0, d(110.0), d(110.0), false, false).forward);
+        assert!(!pick(0.0, d(110.0), d(110.0), true, false).forward);
+        // a dash is forward whatever the view
+        assert!(pick(0.0, 0.0, d(170.0), false, true).forward);
     }
 
     /// The plain direction: flat, over the 3D distance, none within 0.01 m.

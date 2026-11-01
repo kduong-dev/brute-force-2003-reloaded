@@ -69,7 +69,15 @@ Squad movement and deaths follow the game's own data and the captures:
   along its heading turn it off walls, rocks and the AI's hinter bands (a metre off e13's lava
   walkway's, as #242 take01's members ran), a squadmate within 1.5 m ahead pushes it aside, else it
   heads straight for its next point, its move turning toward that at most 200 degrees a second
-  (FUN_00019af0, #344's fix round: no zigzag). At a door on its way (a pair of door points) it
+  (FUN_00019af0, #344's fix round: no zigzag), from the move it last commanded (#363). **It runs
+  facing its way** (#363, [nav.md](nav.md) "The view and the motion"): its own view turns toward
+  its way at 200 degrees a second (FUN_00019ed0) and its motion is picked from its move in that
+  view (FUN_001195c0), never from the controlled character's camera: it runs, walks or dashes by
+  its pace with its body on its move, steps sideways only for the moment of a sharp turn its view
+  lags, and backpedals on a reversal (at 0.64 x its type's run) until its view has swung round.
+  With a target it fights on the move: the gun on the target by the upper body as it runs, no
+  shots while it dashes (the dash can't aim: its motion's aim="false", and the demo's gun is down
+  on a sprint), and from where it stops. At a door on its way (a pair of door points) it
   stands half a second if the door is still shut, its feelers off for 1.5 s, then walks on through
   (the door step, FUN_00026820, #346); it never waits for a door. Stuck 2 s (no closer to its next
   point than its best) a member detours round it (FUN_000426b0, FUN_00042280), and the third time at

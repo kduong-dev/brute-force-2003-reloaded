@@ -333,11 +333,16 @@ aren't steered.
 
 **FUN_000255d0** makes the direction of every walking goal from its steering target (the route's,
 brain+0x478; none for a target at the world's origin) in four stages and takes the first that
-steers: the target's direction only when nothing is in the way. A stage that steers replaces the
-direction (no blend).
+steers: the target's direction only when nothing is in the way. A stage that steers is the whole
+direction (no blend): the stages write into the AI update's direction buffer, which is zero when
+they run (zeroed before the goal machine, 0x1b338, and no walking goal writes the target's
+direction into it first: the route walker FUN_00026d80 writes the target's position), so the
+push, which adds into it (0x523fd), gives its sum alone (#363's reading; #344 read the stage as
+overwriting, the same in effect).
 
-1. **The feelers** (FUN_00018c40, `feel`): three rays along the character's heading (the way it
-   moves, iface +0x34: the demo's last step, else its facing) from its hips 0.25 m lower and
+1. **The feelers** (FUN_00018c40, `feel`): three rays along the character's heading (iface +0x34:
+   its commanded move, the stick the last AI frame gave it, else its body's forward; #363, which
+   put right #344's reading of the speed it makes) from its hips 0.25 m lower and
    0.5 m back: the centre 3.15 m, the left and right 2.0475 m at 25 degrees (the brain's list,
    brain+0x354, which the constructor fills and nothing changes). Their lengths: x0.6 at a walk,
    x1.6 at a dash, and x0.9 x the speed factor char+0x720 when that's over 1 (the follow's boost:
@@ -360,10 +365,13 @@ direction (no blend).
      target lies on (FUN_00018b50), with the level 2 for 2 s when that overrides the pick.
    A side ray reaches 0.87 m across at a run, 1.56 m at a boosted dash, 0.52 m at a walk: what
    keeps a member about a metre off e13's hinter band.
-2. **The push** (the sensor's +0x3c, 0x521c0, `push`): every other living character within 1.5 m
-   across, overlapping in height (1.0 m margin) and in the half in front of the heading, or within
-   0.5 m anywhere, pushes the direction away from it by 1 over the distance; the sum (not
-   normalised there: FUN_0004d970 does it).
+2. **The push** (the sensor's +0x3c, 0x521c0, `push`): every other living character (of any
+   side: the world's two character lists, no team test) within 1.5 m across, overlapping in
+   height (1.0 m margin) and in the half in front of the heading (the commanded move, as the
+   feelers'), or within 0.5 m anywhere, pushes the direction away from it by 1 over the distance;
+   the sum (not normalised there: FUN_0004d970 does it). The stage has no memory: what keeps a push
+   of a frame or two from showing is the move's turn after it (below), which starts from the last
+   command and turns at most 200 degrees a second.
 3. **The side-step** (the sensor's +0x4c, 0x52750, `side_step`): the nearest obstacle disc in the
    path (its offset across the heading under the two radii, the walker's 0.5 m and its own), within
    its radius + 2 m and in front: a step across, away from it. Its discs come from two world lists,
@@ -375,14 +383,17 @@ direction (no blend).
 **The move** (FUN_00019af0, `move_turn`, #344's fix round). The direction goes to FUN_0004d970
 (play_routes.rs `pace`: the move at the lower of the mode asked and the pace level, the direction
 sized x0.01 at a stand, x0.5 at a walk, x1 at a run or a dash) and the AI update's steering
-FUN_00019ed0, which turns the facing at the type's turn rate x char+0x7ec and, for the follow and
-Move To (no FOLLOW_HOLD_BACK route at brain+0x684), hands the move to FUN_00019af0: the move turns
+FUN_00019ed0, which turns the character's view toward it (below) and, for the follow and Move To
+(no FOLLOW_HOLD_BACK route at brain+0x684), hands the move to FUN_00019af0: the move turns
 from the heading toward the direction **at most 200 degrees a second** (3.49 rad/s), its rate eased
 from the last frame's, a third of the way a game frame at a run or a dash and a fifth at a walk,
 dropped to 0 when the turn reverses, never past what closes the angle; within a degree it keeps the
 heading, and after a frame that ended with no direction (a stand) it takes the direction at once.
-The demo moves a character along its facing by its clip's root and turns the facing at 9 rad/s, so
-its facing follows that move; the ease is applied by the frame's share of the game's 30 Hz frames.
+The move is the character's stick (char+0x5e8, `Avoid::moved`), and the heading it turns from
+next frame is that move (#363): the chain is command to command, the speed the character makes
+never feeds back. The demo moves a character along its facing by its clip's root and turns the
+facing at 9 rad/s, so its facing follows that move; the ease is applied by the frame's share of
+the game's 30 Hz frames.
 So a feeler's square steer, a frame or two at a time, bends the path by a few degrees where before
 it turned the member a third of the way round at 15 fps: the weave of the first round's e13 runs
 (Hawk and Brutus 1.18 and 1.13 changes of side a 10 m, take01's 0.36 and 0.42) is gone. A turn at
@@ -397,6 +408,45 @@ demo doesn't read: see "Not done". The follow's walk has neither in the demo, an
 the prisms (its state 0 passes FUN_0004d970 no fifth argument, 0x22377). A turn past 180 degrees
 at the cap (a loop to close on a corner point) lasts over a second at more than 2.5 rad/s, so it
 ends in the hard turn's walk; a plain U-turn at the cap, 0.9 s, doesn't.
+
+**The view and the motion** (#363; play_avoid.rs `view_turn`, `pick`; play.rs `step_player`,
+`ai_gait`; the reading is `todo/363-squad-combat-freeze/leads.md` §1-§3). A character's motion
+comes from its stick in its own view frame (R, char+0x5bc), and the AI turns that view itself:
+* **The view** (FUN_00019ed0, `view_turn`): toward the steering direction at **200 degrees a
+  second** (the type's turn rate x char+0x7ec, which the brain's set-up makes 200 / (the rate x
+  57.3) for a squad type), the fraction of that eased as the move's (a third of the way a game
+  frame at a run, a fifth at a walk), a turn the frame can finish closed at 2/3 of what's left
+  (its kept fraction first halved, 0x1a086), none within a degree. Its one override (brain+0x488)
+  is the follow's look-point near a cover point (FUN_00022790, not done); no fight goal sets it,
+  so in a fight the view turns to the move, never to the target. FUN_0011e5e0 hands the turn to
+  the character and FUN_00119fa0 applies it, and while the character stands its body follows its
+  view.
+* **The motion** (FUN_001195c0, `pick`): forward when the move is within about 66 degrees of the
+  view (a cosine of 0.4; 0.25, about 75 degrees, with the gun up: the ready timer char+0x7dc over
+  0), backward past 114 (105); in between, by the body's half the move is in. Forward, the body
+  turns to the move and it runs (CT_RUN: the run, the walk or the dash by its pace) while the
+  body is within 45 degrees of the view or still 30 or more off the move, and steps sideways
+  (CT_MOVE_LEFT / RIGHT, toward the side of the view the body is on) only with the body on its
+  move and the view more than 45 off it. Backward, the body turns to the move's reverse and it
+  backs off (CT_MOVE_BACK) with the body within 45 of the view, sideways (CT_MOVE_*_BACK) past
+  that once the body is on the reverse, and gives no command while it turns. So on a straight
+  the three agree and it runs facing its move; a side step plays for the frames of a sharp turn
+  its view lags (from a stand, say, the move taken at once and the view turning after it), a
+  backpedal on a reversal until the view has swung to within 66 degrees of the move. The gun
+  finds a target with the upper body as it runs (play.rs's aim, the arm chain turned up to 1.9
+  rad). The side and back motions at a run or a dash are running states (FUN_00126a40: MT 26 /
+  30, 27 / 31, MT_BACKPEDAL) and play the sets' `f_side_run`, `b_side_run` and `back_run` clips at
+  the run's speed, x0.8 more while backing off (FUN_0012cb40, char+0x800 = 0: 0.64 x the type's
+  run without the follow's boost, play_speed.rs); at a walk the side and back walks keep their
+  clip's root, as every walk does.
+* **What it replaced.** Until #363 a demo member took the controlled character's camera for its
+  own and moved by the player's aimed strafe against it whenever it aimed (a side walk for a move
+  30-150 degrees off his look, a walk back past that, a walk for a run: the clips' 0.4-2 m/s), its
+  heading read from the speed it made: a member with a target and its way more than 30 degrees
+  off the leader's look crawled at 0.3-0.7 m/s, its gait flipping about 12 times a second and its
+  clip layers stacking 10-11 deep, and the push's frames swayed a running group. Its move was also
+  put in the leader's camera's frame before the fire turned the camera onto its target, so it
+  moved off its way by the angle between the two. The game's AI reads no other character's view.
 
 **The pace record** ([brain+0x1a8], `Router::cap`, play_routes.rs `pace_ramp`): FUN_00058530
 starts it at the level 1 (a stand) with its timer at 0.3 s; FUN_00058670, each AI frame (0x1b119,
@@ -416,11 +466,16 @@ level's points or not.
 handed to char+0x720 (play_speed.rs `record_boost`). The feelers read char+0x720 as the last AI
 frame left it (`Avoid::factor`).
 
-**The demo's choices**, labelled in the code: the heading from the last step (the game's move
-vector char+0x5e8); the push's height test (the two bodies' spans, 1.9 m each, grown by the
-margin: FUN_00052120's extents aren't read); the push's list, the characters within 2 m at the
-frame's start (`routes::near`); no side-step obstacles; the hard turn's rate from the facing's
-turn; the move's ease by the frame's share of the game's frames.
+**The demo's choices**, labelled in the code: the push's height test (the two bodies' spans, 1.9
+m each, grown by the margin: FUN_00052120's extents aren't read); the push's list, the characters
+within 2 m at the frame's start (`routes::near`); no side-step obstacles; the hard turn's rate from
+the facing's turn; the move's and the view's ease by the frame's share of the game's frames. Since
+#363: a walk from a stand starts its view from the way it faces (the game's standing body follows
+its view; the demo's stands face their own way); the body turns at the demo's 9 rad/s, not the
+game's 400 degrees a second x k (FUN_001195c0's request, the step at 0x11d7fb), as the demo moves a
+character along its body: so the body keeps up with the move and the path is the command's; a
+character the player has had starts its steering afresh when the AI takes it back (the game's
+would find the player's last stick in char+0x5e8); the walks' speeds are the clips' (#350).
 
 **Test hooks**: `BF_AVOID_LOG=1` prints each frame a stage before the plain direction steers:
 which feelers met what (steep terrain, an object, a blocker) and how far, the response (the
@@ -428,7 +483,10 @@ direction, the long rays' slots, the hysteresis' walk), the pace drops and the b
 and from whom. `BF_AVOID_OFF=1` (a diagnostic, not the game) steers by the plain direction alone,
 as before #344. `BF_AVOID_FREE_TURN=1` (a diagnostic, not the game) leaves the move's turn to the
 facing's 9 rad/s, as before #344's fix round. `BF_ROUTE_LOG=1` also says each hard turn's walk,
-`=2` each step of the pace level.
+`=2` each step of the pace level. `BF_GAIT_LOG=1` (#363) prints every frame each AI member's
+motion after its step: its gait and action, whether it aims and fires, its view, body and
+commanded move (degrees, the demo's yaw; `-` for none), `back` in the backward case, the speed its
+step made, where it is and its clip layers (clip:weight): to count gait changes and layers.
 
 ## The door step and the corner hold (#346)
 
@@ -836,6 +894,60 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
     held at z 17.3) keeps his stick held, so he's running to the follow and the three close
     to 1-2 m of him (FUN_00020ad0 reads the motion, not the speed: take04's Tex too, pushing at the
     rocks).
+* **#363: the command heading, the view and the motion** (`BF_MUTE=1 BF_BACKGROUND=1`, the 15 Hz
+  watch rows and `BF_GAIT_LOG=1`; main is `a897a30`):
+  * **The fight** (`BF_MAP=e34 BF_SCRIPT=off BF_TEST_GOTO=-83.39,-82.79,-43,-80,27 BF_TEST_GO_AT=4`,
+    620 frames; Hawk is killed at 3.3 s by the start valley's enemies in both builds): Flint and
+    Brutus keep up with Tex's run through the fight, dashing at 6.9-8.6 m/s and running at 6.3 m/s
+    with the gun on their target, and are within 10 m of him from 11.9 s (he stops at 11.1 s),
+    holding 9.1-9.3 m off; main's Flint crawled at 0.4 m/s and was within 10 m at 26.7 s, its
+    Brutus at 20.0 s; before #344, 18.3 and 17.6 s. Their gait changes once or twice a second
+    moving with a target (main: 12-13), their clip layers 1.1-1.6 deep (max 3-4, a crossfade;
+    main 10-11), their view, body and move within a degree or two of each other on a straight. From
+    13 s they lose sight of their target where they hold and turn to its last place, gun up (the
+    contacts' turn, play_brain.rs). With Fire At Will (`"BF_TEST_ORDER=all,fire@0.5"`) Flint and
+    Brutus stay within 8 m of Tex from his stop (5.9 and 6.7 m off at 11.9 s), Hawk, who follows
+    Flint, 12.3 m off; main's two within 8 m at 23.3 and 21.7 s, its Hawk never. On the test map's
+    fight (`--test BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=0,0,0,70 BF_TEST_GO_AT=3 "BF_TEST_NPC=0.5,shrike
+    soldier,enemy,fight,-22,25" BF_TEST_NPC_HP=1.5,1,9999`) the three chase Tex dashing, guns turned
+    onto the Shrike by the upper body (frames 102-114 looking back, `BF_VIEW_YAW=3.1416`), 0.2-0.9
+    gait changes a second, layers 1.1 deep; Hawk backs off for a moment on a reversal (12% of her
+    moving frames). They reach Tex where he's held at z 17 by a pillar, in the Shrike's fire, and
+    Brutus and Hawk die there; main's crawled 20-42 m behind and lived.
+  * **The sway**: the paths' wobble (the tester's measure, the 10 Hz track's heading about its 1 s
+    mean) in the fight 12.8 (Flint) and 5.7 degrees (Brutus) RMS at 1.4 and 1.0 crossings a second,
+    on the no-hostiles runs (the run to -43, -80; the sprint; take04's) 5-19 degrees at 0.9-1.7;
+    #33 take04's 13-18 degrees at 0.7-1.25; main's 5-17 at 0.7-2.2. Where it remains, the members
+    run bunched within 1.5 m (the run to -43, -80: Flint with Hawk 1.4 m ahead of him for half a
+    second at a time), and the push (the game's stage) swerves the move until the neighbour is
+    out of the half in front: the squad's start bunched 1.3-3 m apart is #363's out of scope.
+  * **Unchanged**: take08's Move To (GUARD 4.06 s after the order, 2.0 m short; main 4.13 s, 1.9 m;
+    the take 4.2 s, 1.9-2.0 m); the e34 run (a lag of 12.1, 13.6 and 13.5 m, at rest 9.3-9.9; main
+    14.7, 13.5, 13.3 and 9.0-9.3), the sprint recipe (11.8, 13.2, 13.9 m; main 15.3, 16.7, 13.7), the
+    walk (9.8-10.5 m as main's) and take04's (13.0, 18.8, 18.6 m, at rest 9.0-9.3; main 13.0, 19.7,
+    18.6 and 8.7-10.6); the yard (the marines put on h_03090779 at 75.7 and 78.7 s, within d2 of Tex
+    at the yard's end at 87.1 and 90.1 s; main 77.0 / 74.3 and 88.9 / 85.7); the tutorial's follow
+    (to the row); m07_a (from 30 to 66 s the three walk 0.0, 0.6 and 0.6 m; main 0.6, 0.2, 1.0); the
+    leader in the lava (at most 0.1 m walked, no lava); sdm_e34's door pair (at most 1.2 m walked
+    from 15 to 60 s, run and dash; one stuck at the run, main two); the door step (to the frame as
+    main's); with the door shut the first stuck ends the Move To at 9.8 s, 5.5 m short (main's went
+    round to a stuck at 14.0 s, 8.5 m off); e34's Fire At Will then Cover Me with its enemies: no
+    stuck (main 2), Hawk killed at 5.7 s after a knock-down (main's lived).
+  * **e13**: take01's staging, arrivals within 10.5 m of Tex at 18.5 (Flint), 18.8 (Brutus) and
+    17.5 s (Hawk) (main 18.8, 21.9, 17.1; the take 16.6, 23.1, 18.6), two stucks (Flint 8.3 s and
+    Brutus 9.2 s short of h_f2b3cbd2, a detour each onto the -0.7 m lane), no lava; the weave 0.08,
+    0.16 and 0.44 changes of side a 10 m (Flint, Brutus, Hawk; main 0.45, 0.82, 0.27; the take 0.28,
+    0.42, 0.36). Over three staging shifts as well (all 2 m west, swapped round, bunched) the mean
+    arrival is 20.3, 17.6 and 17.3 s (main 16.9, 18.8, 18.4): Flint late in two (22.1, 24.7 s), each
+    time held at the west walkway's band. There a member's move can be caught facing straight away
+    from its next point: the left feeler's tip (1.0-1.2 m at a walk) meets the band every other
+    frame, so the steering alternates between the feelers' square steer and the way to the point
+    behind it, each frame's turn reverses the last (the rate dropped at each change of side,
+    FUN_00019a20), and the move holds where it is till the stuck handling moves it on; the view,
+    which has both on one side, turns away meanwhile, so a side step and a backpedal show. The
+    game's logic, met where the demo's members hug e13's hinter band (#344's open end). e13rev
+    over five stagings: a mean lag of 11.9, 20.0 and 21.5 m (Brutus, Flint, Hawk; main 13.6, 17.3,
+    22.9), each build with runs where one falls 34-49 m behind at the walkway's corners.
 * The door step (#346; sdm_e34's pair h_f519ca12 (-49.2, 11.8) / h_117d5fb1 (-53.1, 10.0), door 0
   h_06537687 between them, opened by the anim-trigger h_134c9934 on a detector; Hawk's Move To to
   h_f4e3da16 (-56.0, 8.2) inside: `BF_MAP=sdm_e34 BF_CHARACTER=0 BF_TEST_NO_HOSTILES=1
@@ -892,6 +1004,16 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   ahead of its leader on his path, FUN_0001adf0, FUN_0005acb0; [squad.md](squad.md) "The follow").
   The per-type capsule (#173: the squad's lf 0.35 m against the demo's 0.4). The prisms
   (FUN_0004cb60's records) and brain+0x3c8.
+* The motion's open ends (#363): the game's members fight from attack goals (#33 take10: goal 120
+  DEBUG1 from when each sees the enemy), which run and walk; the demo's keep the follow's dash,
+  and a member dashing with a target holds fire (the game's dash can't aim, its MOTION's
+  aim="false"; the demo's sprint plays the ready run with the gun raised, as the player's does
+  after a shot). The facing override (brain+0x488, the follow's look-point near a cover point,
+  FUN_00022790). The body's turn (the game's 400 degrees a second x k; the demo's 9 rad/s). The
+  aim-points block (0x11d271-0x11d45e) behind the game's upper-body aim on the move. The shot
+  list's live reads (`todo/363-squad-combat-freeze/shotlist.md` A-E: the gait against a member's own
+  view in a fight, the push's sway, a corner's side step, a reversal's backpedal at 0.64 x) aren't
+  filmed.
 * The avoidance's open ends (#344): the side-step's two world lists ([world+0xa4], [world+0x12c]:
   a live read at 0x529d0 / 0x527f7 would say what they hold; the stage has nothing to step round
   until then); FUN_00019ed0's other branch, for a brain with FOLLOW_HOLD_BACK's route at

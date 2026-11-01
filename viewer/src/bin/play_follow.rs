@@ -709,9 +709,11 @@ fn find_cover(m: &mut Player, g: &mut Graph, lead: &Lead, mates: &[Mate]) -> Nex
 
 /// FUN_00058740, the turn check state 4 runs on the route it has just planned to its cover point
 /// (0x226d0-0x226f3: EDI the pace record [brain+0x1a8], ESI the route's first entry, its point's
-/// position, else its own): the member's facing (char+0x1b4's vtable +0x34, flat and unit,
-/// FUN_0004c530) against the way to that entry (flat and unit, FUN_0004c480; none when the member
-/// stands on it); a dot under TURN_DOT sets the pace level to a walk, 2, for TURN_WALK s
+/// position, else its own): the member's heading (char+0x1b4's vtable +0x34, flat and unit,
+/// FUN_0004c530: its commanded move, else its body's forward, play_avoid.rs `heading`; #363, where
+/// it was the body's yaw, which a backpedal turns away from the move) against the way to that entry
+/// (flat and unit, FUN_0004c480; none when the member stands on it); a dot under TURN_DOT sets the
+/// pace level to a walk, 2, for TURN_WALK s
 /// ([brain+0x1a8]+0 and its timer), so a member whose cover point lies behind it turns at a walk
 /// before the ramp lifts it to a run. #33 take04's Brutus: the dash until the frame Tex stopped
 /// (gt 7.21, his chase ending within d2 of a leader not running: states 0, 4 and 5 in one update),
@@ -724,7 +726,7 @@ fn turn_check(m: &mut Player, g: &Graph) {
         let d = Vec2::new(x, z);
         if d.length_squared() < routes::FLAT_MIN { Vec2::ZERO } else { d.normalize() }
     };
-    let dot = flat(-m.yaw.sin(), -m.yaw.cos()).dot(flat(first.x - m.position.x, first.z - m.position.z));
+    let dot = avoid::heading(m).dot(flat(first.x - m.position.x, first.z - m.position.z));
     if dot < TURN_DOT {
         m.router.set_pace(2, TURN_WALK);
         if log_on() {
@@ -1006,18 +1008,21 @@ mod tests {
 
     /// FUN_00058740 after state 4's plan: a member facing away from its route's first entry (yaw 0
     /// faces -z; its own point and the cover point lie +z of it, whichever the route starts with)
-    /// walks, the pace level 2; one facing it keeps its level.
+    /// walks, the pace level 2; one facing it keeps its level. The facing is its heading (#363): its
+    /// last commanded move when it has one, so one backing off toward the entry, its body turned
+    /// away, keeps its level too.
     #[test]
     fn the_turn_check_walks_a_member_facing_away() {
-        for (yaw, cap) in [(0.0, 2), (std::f32::consts::PI, 1)] {
+        for (yaw, moved, cap) in [(0.0, Vec2::ZERO, 2), (std::f32::consts::PI, Vec2::ZERO, 1), (0.0, Vec2::new(0.0, 1.0), 1)] {
             let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5]), point(5, COVER, -8.0, 3.0, &[1, 2])];
             let mut g = Graph::new(&pts);
             let mut m = member(1, Vec3::new(-8.0, 0.0, -1.0), Some(1), Mode::Follow);
             m.yaw = yaw;
+            m.router.avoid.moved_was = moved;
             m.follow.started = true;
             m.follow.state = State::FindCover;
             assert!(matches!(update(&mut m, &leader(Vec3::ZERO, Some(0)), &[], Some(&mut g)), routes::Way::Go { .. }));
-            assert_eq!((m.follow.state, m.router.cap), (State::ToCover, cap), "yaw {yaw}");
+            assert_eq!((m.follow.state, m.router.cap), (State::ToCover, cap), "yaw {yaw}, moved {moved:?}");
         }
     }
 

@@ -357,7 +357,9 @@ fn hold(m: &mut Player, dt: f32) {
 /// it's GUARD (the full mode change) and says e635ecc6. With no route to the point it stands, in
 /// MOVE_OUT (the update's empty route: FUN_00045fa0 asks for mode 1, a stand). Not on into a
 /// liquid that burns (play_liquids.rs, the routes' safety net, as the follow). ENEMY_SEEN draws
-/// GOAL_ATTACK_MOVE_OUT: the same walk facing the target, firing once combat is allowed. Without
+/// GOAL_ATTACK_MOVE_OUT: the same walk, firing once combat is allowed; its view turns to its way,
+/// not to the target (FUN_00019ed0, #363), so it runs facing its way with the gun on the target by
+/// the upper body (play_avoid.rs `pick`; until #363 it walked facing the target). Without
 /// a point (none given) the route is to its own point: it's there, GUARD at once. Without a
 /// level's points (the test map) the walk is straight, given up when it stalls (STALL_TIME).
 fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, graph: Option<&mut bf_viewer::bf::nav::Graph>) {
@@ -402,13 +404,15 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
     m.idle_pause = 0;
     m.idle_left = 0.0;
     m.crouch_wanted = false;
-    // facing its way, or the target (ATTACK_MOVE_OUT faces it as it walks); the step's move is in
-    // its "camera"'s frame, so it's made after the fire's turn. Its way: the steering target
-    // through the AI's avoidance (#344, play_avoid.rs `steer`, FUN_000255d0 as MOVE_OUT calls it at
-    // 0x45cb6); then its pace (FUN_0004d970 as FUN_00045fa0 calls it: the dash asked, and with its
-    // fifth argument set FUN_0004d840 near the route's end or a corner, `pace_near`); its heading
-    // turned toward its way at most 200 degrees a second (FUN_00019af0, `move_turn`), sized by the
-    // lower of the move asked and the level
+    // its aim: its own view, which turns toward its way (FUN_00019ed0, `view_turn`, #363: its
+    // motion is picked against it, play_avoid.rs `pick`), or the target's or a contact's (the gun on
+    // it by the upper body as it runs on its way); the step's move is in its "camera"'s frame, so
+    // it's made after the fire's turn. Its way: the steering target through the AI's avoidance
+    // (#344, play_avoid.rs `steer`, FUN_000255d0 as MOVE_OUT calls it at 0x45cb6); then its pace
+    // (FUN_0004d970 as FUN_00045fa0 calls it: the dash asked, and with its fifth argument set
+    // FUN_0004d840 near the route's end or a corner, `pace_near`); its heading, the last frame's
+    // move, turned toward its way at most 200 degrees a second (FUN_00019af0, `move_turn`), sized by
+    // the lower of the move asked and the level
     let dir = to.map(|t| avoid::steer(m, t).0);
     m.router.asked = MOVE_OUT_MODE;
     match (graph.as_deref(), point, dir.is_some()) {
@@ -417,9 +421,13 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
         _ => {}
     }
     let asked = m.router.asked;
-    let way = dir.map_or(Vec2::ZERO, |d| avoid::move_turn(m, d, avoid::move_size(asked.min(m.router.cap)), dt));
-    if way != Vec2::ZERO {
-        m.cam_yaw = (-way.x).atan2(-way.y);
+    let size = avoid::move_size(asked.min(m.router.cap));
+    if let Some(d) = dir {
+        avoid::view_turn(m, d, size, dt);
+    }
+    let way = dir.map_or(Vec2::ZERO, |d| avoid::move_turn(m, d, size, dt));
+    if let Some(v) = m.router.avoid.view.filter(|v| v.turned) {
+        m.cam_yaw = v.yaw;
     }
     m.cam_pitch = 0.0;
     m.face_yaw = Some(m.cam_yaw);
@@ -432,11 +440,11 @@ fn move_out(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>,
         m.sprint = false;
         m.walk = false;
         m.router.asked = 1;
-        // (no move this frame: no direction kept for the next one's turn)
-        m.router.avoid.dir_now = Vec2::ZERO;
+        // (no move this frame: no direction or move kept for the next one's turn, no view of its
+        // own)
+        m.router.avoid.stand();
     } else {
-        let (fwd, right) = (Vec2::new(-m.cam_yaw.sin(), -m.cam_yaw.cos()), Vec2::new(m.cam_yaw.cos(), -m.cam_yaw.sin()));
-        m.move_input = Vec2::new(way.dot(right), way.dot(fwd));
+        m.move_input = camera_input(m.cam_yaw, way);
         routes::pace(m, asked);
     }
     m.switch_pressed = false;

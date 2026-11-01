@@ -66,6 +66,14 @@
 //! everyone by the root, FUN_0012cb40's other branch). The ease and the slide to a stop (4.5 and
 //! 7 a second) aren't added: the crossfade's 0.2 s ramp stands for them, as before.
 //!
+//! **The AI's side and back runs** (#363): an AI squad member's motion is FUN_001195c0's against
+//! its own view (play_avoid.rs `pick`), which at a run or a dash steps sideways or backs off with
+//! the running motions (MT_MOVE_LEFT / _RIGHT 26 / 30 forward, MT_BACKPEDAL 3 and MT_MOVE_*_BACK 27
+//! / 31 backward: running states, FUN_00126a40, so the run's speed in FUN_0012c6c0). Their clips
+//! (`f_side_run_*`, `b_side_run_*`, `back_run`) take the run's speed too, x AI_BACK_FACTOR more in the
+//! backward case (char+0x800 = 0), so 0.64 x the type's run without the follow's boost. A player's
+//! back run keeps its clip's root (the aimed strafe is the demo's own, #170).
+//!
 //! Test hooks: `BF_SPEED_LOG=1` prints, every 0.25 s, each running or dashing character's target
 //! (the type's speed, who drives it, the boost), the speed it covers and where it is;
 //! `BF_ROOT_SPEED=1` moves the run and the dash by their clips' root, as before #345.
@@ -75,9 +83,13 @@ use bf_viewer::bf::character_type::CharacterType;
 use super::*;
 
 /// The squad types' factor for a character no human drives: FUN_0012cb40 (0x12cbca-0x12cbd6)
-/// multiplies char+0x720 by the float at 0x3a5014 when the type has h_e78efbb2. (A second 0.8 for
-/// moving backwards or sideways, char+0x800 = 0, isn't used: the demo's run and dash go forward.)
+/// multiplies char+0x720 by the float at 0x3a5014 when the type has h_e78efbb2.
 pub const AI_SQUAD_FACTOR: f32 = 0.8;
+
+/// FUN_0012cb40's second factor for a character no human drives: x0.8 again (the same 0x3a5014,
+/// 0x12cbdc-0x12cbf0) while the byte char+0x800 is 0, FUN_001195c0's backward case (play_avoid.rs
+/// `pick`: backing off, straight or sideways). Its forward-case side steps keep char+0x800 = 1.
+pub const AI_BACK_FACTOR: f32 = 0.8;
 
 /// The follow's speed record while it chases the leader: 1.25 (0x3fa00000, stored at 0x20ed4 by
 /// FUN_00020b10 every update), which FUN_00048270 puts in char+0x720 at any pace level above a
@@ -103,37 +115,44 @@ pub fn record_boost(level: i32, record: Option<f32>, timer: f32) -> f32 {
 }
 
 /// A locomotion clip's gait for the ground speed: the type's `speeds[2]` or `speeds[3]`
-/// (FUN_0012c6c0: a running motion type, MT_RUN among them; MT_DASH).
+/// (FUN_0012c6c0: a running motion type, MT_RUN among them; MT_DASH), or a back run (`Back`:
+/// MT_BACKPEDAL and the two back side runs, running states too, #363), which only the AI's take to
+/// the run's speed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Run,
     Dash,
+    Back,
 }
 
-/// The ground speeds (m/s) a character's run and dash move it at now.
+/// The ground speeds (m/s) a character's run and dash move it at now, and its back runs (None: by
+/// their clip's root, a player's).
 #[derive(Clone, Copy, Debug)]
 pub struct Targets {
     pub run: f32,
     pub dash: f32,
+    pub back: Option<f32>,
 }
 
 impl Targets {
-    /// The speed of `kind`.
-    pub fn of(&self, kind: Kind) -> f32 {
+    /// The speed of `kind`, None for a clip that keeps its own.
+    pub fn of(&self, kind: Kind) -> Option<f32> {
         match kind {
-            Kind::Run => self.run,
-            Kind::Dash => self.dash,
+            Kind::Run => Some(self.run),
+            Kind::Dash => Some(self.dash),
+            Kind::Back => self.back,
         }
     }
 }
 
-/// The ground speed (m/s) of `kind` for a character of type `t`: its `speeds` entry, x1 under a
-/// human player (FUN_0012c6c0 called directly), else x AI_SQUAD_FACTOR for a type with
-/// h_e78efbb2 (`CharacterType::player_type`), x `boost` (the brain's speed record, at least 1:
-/// FUN_00048270 takes it for a run or a dash only from 1.0 up; FOLLOW_BOOST in the follow).
+/// The ground speed (m/s) of `kind` for a character of type `t`: its `speeds` entry (a back run's
+/// is the run's), x1 under a human player (FUN_0012c6c0 called directly), else x AI_SQUAD_FACTOR for
+/// a type with h_e78efbb2 (`CharacterType::player_type`), x `boost` (the brain's speed record, at
+/// least 1: FUN_00048270 takes it for a run or a dash only from 1.0 up; FOLLOW_BOOST in the
+/// follow).
 pub fn ground_speed(t: &CharacterType, kind: Kind, human: bool, boost: f32) -> f32 {
     let speed = match kind {
-        Kind::Run => t.speeds[2],
+        Kind::Run | Kind::Back => t.speeds[2],
         Kind::Dash => t.speeds[3],
     };
     if human {
@@ -159,32 +178,43 @@ pub fn targets(p: &Player, game: &Game) -> Option<Targets> {
     speeds_of(p, game)
 }
 
-/// `targets` without BF_ROOT_SPEED (for the log).
+/// `targets` without BF_ROOT_SPEED (for the log). An AI character in FUN_001195c0's backward case
+/// (play_avoid.rs `View::backing`, char+0x800 = 0) takes AI_BACK_FACTOR off all of them, whatever
+/// clip it plays (FUN_0012cb40 multiplies char+0x720 itself); its back runs go at its run's.
 fn speeds_of(p: &Player, game: &Game) -> Option<Targets> {
     if enemies::enemy(p) || script::in_cutscene() {
         return None;
     }
     let t = game.character_type(p.kind)?;
-    Some(Targets { run: ground_speed(t, Kind::Run, p.controlled, p.speed_boost), dash: ground_speed(t, Kind::Dash, p.controlled, p.speed_boost) })
+    let human = p.controlled;
+    let back = if !human && p.router.avoid.view.is_some_and(|v| v.turned && v.backing) { AI_BACK_FACTOR } else { 1.0 };
+    let run = ground_speed(t, Kind::Run, human, p.speed_boost) * back;
+    Some(Targets { run, dash: ground_speed(t, Kind::Dash, human, p.speed_boost) * back, back: (!human).then_some(run) })
 }
 
-/// The gait of the clip `p.gait` plays: Run for a run, Dash for a sprint (the demo's name for the
-/// game's dash), None for the rest.
+/// The gait of the clip `p.gait` plays: Run for a run and an AI's forward side run, Dash for a
+/// sprint (the demo's name for the game's dash), Back for a back run and a back side run, None for
+/// the rest (the walks keep their clip's root).
 pub fn gait_kind(gait: Gait) -> Option<Kind> {
     match gait {
-        Gait::Run => Some(Kind::Run),
+        Gait::Run | Gait::SideRun { back: false, .. } => Some(Kind::Run),
         Gait::Sprint => Some(Kind::Dash),
+        Gait::RunBack | Gait::SideRun { back: true, .. } => Some(Kind::Back),
         _ => None,
     }
 }
 
 /// Each run and dash clip of the slots' sets (carried and ready) with its gait and its own ground
 /// speed, root displacement over the cycle (m/s, over `MIN_OWN` or left out). The same speed as
-/// the clip's `AnimDef::move_speed` (h_f9628571) within 1%.
+/// the clip's `AnimDef::move_speed` (h_f9628571) within 1%. Since #363 also the side runs (forward:
+/// Run; back: Back) and the back runs (Back), which an AI member's pick plays at a run or a dash
+/// (play_avoid.rs `pick`); a player's back run keeps its root (`Targets::back` None).
 pub fn clip_speeds(model: &Character, game: &Game, slots: &[SlotClips; 2]) -> HashMap<usize, (Kind, f32)> {
     let mut out = HashMap::new();
-    for set in slots.iter().flat_map(|s| [&s.carry, &s.rp]) {
-        for (clip, kind) in [(set.run, Kind::Run), (set.sprint, Kind::Dash)] {
+    for s in slots {
+        let runs = [&s.carry, &s.rp].into_iter().flat_map(|set| [(set.run, Kind::Run), (set.sprint, Kind::Dash), (set.run_back, Kind::Back)]);
+        let sides = s.side_run.iter().chain(&s.rp_side_run).enumerate().map(|(k, &c)| (c, if k % 4 < 2 { Kind::Run } else { Kind::Back }));
+        for (clip, kind) in runs.chain(sides) {
             let Some(c) = clip else { continue };
             let d = model.anims[c].duration.max(1e-3);
             let root = locomotion::root_delta(model, game, c, 0.0, d - 1e-3);
@@ -204,10 +234,11 @@ const MIN_OWN: f32 = 0.5;
 /// The factor on a layer's root step: the clip's ground speed taken to the game's. `top` is the
 /// gait of the newest layer (`gait_kind`), which sets its own kind (a sprint with the gun up plays
 /// the ready run, `Gait::Sprint => lo.sprint.or(lo.run)`: the dash's speed); the layers fading out
-/// keep their clip's. 1 for any other clip.
+/// keep their clip's. 1 for any other clip, and for a kind the character keeps its root in (a
+/// player's back run).
 pub fn scale(ground: &HashMap<usize, (Kind, f32)>, t: Targets, clip: usize, top: Option<Kind>) -> f32 {
     match ground.get(&clip) {
-        Some(&(kind, own)) => t.of(top.unwrap_or(kind)) / own,
+        Some(&(kind, own)) => t.of(top.unwrap_or(kind)).map_or(1.0, |s| s / own),
         None => 1.0,
     }
 }
@@ -264,18 +295,20 @@ fn log(player: Res<Player>, squad: Res<Squad>, game: Res<GameData>, mut last: Lo
         }
         if print {
             let speed = kind_speed(ty, kind);
-            println!("t={t:.2} {} ({}): {} {speed:.2} m/s x {:.2} -> {:.2}, covers {:.2} m/s at ({:.2}, {:.2}), mean {:.2} m/s over {:.2} s", unit_name(u),
-                     if u.controlled { "player" } else { "AI" }, if kind == Kind::Run { "run" } else { "dash" },
-                     g.of(kind) / speed.max(1e-3), g.of(kind), Vec2::new(u.last_velocity.x, u.last_velocity.z).length(), u.position.x, u.position.z,
+            // (a kind the character keeps its clip's root in: the type's speed, x1)
+            let target = g.of(kind).unwrap_or(speed);
+            println!("t={t:.2} {} ({}): {} {speed:.2} m/s x {:.2} -> {target:.2}, covers {:.2} m/s at ({:.2}, {:.2}), mean {:.2} m/s over {:.2} s", unit_name(u),
+                     if u.controlled { "player" } else { "AI" }, match kind { Kind::Run => "run", Kind::Dash => "dash", Kind::Back => "back run" },
+                     target / speed.max(1e-3), Vec2::new(u.last_velocity.x, u.last_velocity.z).length(), u.position.x, u.position.z,
                      if k.time > 0.0 { k.path / k.time } else { 0.0 }, k.time);
         }
     }
 }
 
-/// The type's own speed of `kind`, for the log.
+/// The type's own speed of `kind`, for the log (a back run's is the run's).
 fn kind_speed(t: &CharacterType, kind: Kind) -> f32 {
     match kind {
-        Kind::Run => t.speeds[2],
+        Kind::Run | Kind::Back => t.speeds[2],
         Kind::Dash => t.speeds[3],
     }
 }
@@ -341,12 +374,32 @@ mod tests {
         let mut ground = HashMap::new();
         ground.insert(7, (Kind::Run, 4.8));
         ground.insert(9, (Kind::Dash, 8.0));
-        let t = Targets { run: 7.8, dash: 8.5 };
+        let t = Targets { run: 7.8, dash: 8.5, back: None };
         assert!((scale(&ground, t, 7, None) - 7.8 / 4.8).abs() < 1e-5);
         assert!((scale(&ground, t, 9, None) - 8.5 / 8.0).abs() < 1e-5);
         // the newest layer of a sprint that plays the ready run moves at the dash's speed
         assert!((scale(&ground, t, 7, Some(Kind::Dash)) - 8.5 / 4.8).abs() < 1e-5);
         // any other clip keeps its root
         assert_eq!(scale(&ground, t, 3, None), 1.0);
+    }
+
+    /// #363: a back run (MT_BACKPEDAL, the back side runs) goes at the run's speed for the AI, x0.8
+    /// more in the backward case (char+0x800 = 0): 0.64 x the type's run without the boost; a
+    /// player's keeps its clip's root.
+    #[test]
+    fn an_ai_backs_off_at_the_runs_speed_less_a_fifth() {
+        let mut ground = HashMap::new();
+        ground.insert(5, (Kind::Back, 3.84));
+        let run = ground_speed(&tex(), Kind::Run, false, 1.0) * AI_BACK_FACTOR;
+        assert!((run - 7.8 * 0.64).abs() < 1e-4, "0.8 x 0.8 x 7.8: {run}");
+        let ai = Targets { run, dash: 6.8 * AI_BACK_FACTOR, back: Some(run) };
+        assert!((scale(&ground, ai, 5, Some(Kind::Back)) - run / 3.84).abs() < 1e-5);
+        let player = Targets { run: 7.8, dash: 8.5, back: None };
+        assert_eq!(scale(&ground, player, 5, Some(Kind::Back)), 1.0);
+        // the gaits' kinds: a forward side run runs, a back one and the backpedal back off
+        assert_eq!(gait_kind(Gait::SideRun { left: true, back: false }), Some(Kind::Run));
+        assert_eq!(gait_kind(Gait::SideRun { left: false, back: true }), Some(Kind::Back));
+        assert_eq!(gait_kind(Gait::RunBack), Some(Kind::Back));
+        assert_eq!(gait_kind(Gait::Side { left: true, back: false }), None, "the side walks keep their root");
     }
 }

@@ -487,9 +487,10 @@ pub fn step(u: &mut Player, foot: Vec3, ground: &[u32]) -> Option<WorldSound> {
 /// The gait's factor on a step's volume, FUN_00119020 (0x119059-0x1190a4) by the motion type
 /// (char+0x1f8): 1.0 for MT_DASH (8) and the running ones (FUN_00126a40: MT_RUN, MT_BACKPEDAL and
 /// the four MT_MOVE_* runs), 0.35 for MT_CROUCH_WALK (7), 0.5 for the rest (the walks, a dodge).
-/// The demo's gaits: a sprint dashes; a run, forward or back, runs; a move crouched is the crouch
-/// walk (its back and side steps too: inferred); the walks and the aimed side steps (the
-/// `f_side_walk` clips: FUN_00126b40's MOVE_*_SLOW, inferred) walk.
+/// The demo's gaits: a sprint dashes; a run, forward or back, and an AI's side run (the four
+/// MT_MOVE_* runs, #363) run; a move crouched is the crouch walk (its back and side steps too:
+/// inferred); the walks and the aimed side steps (the `f_side_walk` clips: FUN_00126b40's
+/// MOVE_*_SLOW, inferred) walk.
 fn gait(u: &Player) -> f32 {
     if matches!(u.action, Action::Dodge { .. }) {
         return 0.5;
@@ -498,7 +499,7 @@ fn gait(u: &Player) -> f32 {
         return 0.35;
     }
     match u.gait {
-        Gait::Sprint | Gait::Run | Gait::RunBack => 1.0,
+        Gait::Sprint | Gait::Run | Gait::RunBack | Gait::SideRun { .. } => 1.0,
         _ => 0.5,
     }
 }

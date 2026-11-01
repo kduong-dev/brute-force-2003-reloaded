@@ -1657,6 +1657,10 @@ enum Gait {
     /// aiming, stepping sideways with the body to the crosshair: left or right, the forward or
     /// the back diagonal (the motion scripts' f_side_walk / b_side_walk)
     Side { left: bool, back: bool },
+    /// an AI member's side step at a run or a dash (#363, play_avoid.rs `pick`): the running side
+    /// motions MT_MOVE_LEFT / _RIGHT (26 / 30) and, backing off, MT_MOVE_*_BACK (27 / 31), whose
+    /// clips (f_side_run / b_side_run) run along the body with the upper body turned to the view
+    SideRun { left: bool, back: bool },
 }
 
 /// Aiming and moving: a side step when the way the character moves is off the crosshair's
@@ -1677,6 +1681,30 @@ const SIDE_FROM: f32 = 0.52;
 const SIDE_BACK_FROM: f32 = 1.75;
 const BACK_FROM: f32 = 2.62;
 
+/// The gait an AI route walker plays for FUN_001195c0's command `motion` (play_avoid.rs `pick`,
+/// #363), its gait so far `was`, at a dash (`dash`), a walk (`walk`) or a run: CT_RUN runs, walks
+/// or dashes by its pace (MT_RUN, MT_WALK, MT_DASH: a run's level runs); a side step at a run or a
+/// dash is its set's running side clip (`runs`: f_side_run / b_side_run, MT 26 / 30 / 27 / 31,
+/// `Gait::SideRun`), at a walk its side walk (`walks`: the _SLOW motions 29 / 33 / 28 / 32), each where
+/// the set has it, else straight on; backing off, the back run at a run or a dash (MT_BACKPEDAL) and
+/// the back walk at a walk (MT 4); no command, the gait it has (from a stand, the back one).
+fn ai_gait(motion: avoid::Motion, was: Gait, dash: bool, walk: bool, walks: &[Option<usize>; 4], runs: &[Option<usize>; 4]) -> Gait {
+    let ahead = if dash { Gait::Sprint } else if walk { Gait::Walk } else { Gait::Run };
+    let backs = if walk { Gait::WalkBack } else { Gait::RunBack };
+    let side = |left: bool, back: bool| {
+        let i = side_index(left, back);
+        if walk { walks[i].map(|_| Gait::Side { left, back }) } else { runs[i].map(|_| Gait::SideRun { left, back }) }
+    };
+    match motion {
+        avoid::Motion::Run => ahead,
+        avoid::Motion::Side { left } => side(left, false).unwrap_or(ahead),
+        avoid::Motion::Back => backs,
+        avoid::Motion::SideBack { left } => side(left, true).unwrap_or(backs),
+        avoid::Motion::Keep if was == Gait::Idle => backs,
+        avoid::Motion::Keep => was,
+    }
+}
+
 /// BF_MOVE_LOG=1: the controlled character's position, facing, gait and clip every half second,
 /// with the clip whose root motion moves it when that's a stand-in (`root_stand_ins`).
 /// BF_MOVE_LOG=frame prints `frame_log`'s line every frame instead.
@@ -1687,6 +1715,27 @@ fn move_log(p: &Player, l: &Loaded, dt: f32) {
     let top = p.layers.last().map(|x| x.clip);
     println!("t={:.2} pos ({:.2}, {:.2}) yaw {:.0} gait {:?} {:?} clip {:?} root from {:?}", p.sim_time, p.position.x, p.position.z,
              p.yaw.to_degrees(), p.gait, p.action, top, top.and_then(|t| l.clips.root_stand_in.get(&t)));
+}
+
+/// BF_GAIT_LOG=1 (test hook, #363): every frame, each AI squad member's (and follower's) motion
+/// after its step: the gait and the action, whether it aims and fires, its view (the yaw its
+/// motion is picked against, play_avoid.rs `View`; "-" with none: a stand, a hold), its body and
+/// its commanded move (degrees, the demo's yaw: 0 down -z, positive to the left; "-" for no move),
+/// the case (`back`: FUN_001195c0's backward one), the speed its step made, where it is, and its
+/// clip layers (clip:weight), to count its gait changes and see its layers stack.
+fn gait_log(u: &Player) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if u.controlled || !routes::walks_routes(u) || !*ON.get_or_init(|| std::env::var("BF_GAIT_LOG").is_ok_and(|v| v != "0")) {
+        return;
+    }
+    let deg = |a: Option<f32>| a.map_or("-".to_string(), |a| format!("{:.0}", a.to_degrees()));
+    let view = u.router.avoid.view.filter(|v| v.turned);
+    let moved = u.router.avoid.moved;
+    let layers: Vec<String> = u.layers.iter().map(|x| format!("{}:{:.2}", x.clip, x.weight)).collect();
+    println!("t={:.3} gait {}: {:?} {:?} aim {} fire {} view {} body {:.0} move {}{} step {:.2} m/s at ({:.2}, {:.2}) layers {} [{}]", u.sim_time, unit_name(u),
+             u.gait, u.action, u.aim, u.fire, deg(view.map(|v| v.yaw)), u.yaw.to_degrees(), deg((moved != Vec2::ZERO).then(|| avoid::yaw_of(moved))),
+             if view.is_some_and(|v| v.backing) { " back" } else { "" }, Vec2::new(u.last_velocity.x, u.last_velocity.z).length(), u.position.x, u.position.z,
+             u.layers.len(), layers.join(" "));
 }
 
 /// BF_MOVE_LOG=frame (#270): the controlled character every frame once the ground loop has put
@@ -1847,6 +1896,11 @@ struct SlotClips {
     /// back left, back right (`side_index`)
     rp_side: [Option<usize>; 4],
     cr_side: [Option<usize>; 4],
+    /// the running side steps, carried and ready (the motion sets' MT 26 / 30 / 27 / 31: f_side_run_l,
+    /// f_side_run_r, b_side_run_l, b_side_run_r, every squad set's), which an AI member plays at a run
+    /// or a dash (`Gait::SideRun`, #363); same order
+    side_run: [Option<usize>; 4],
+    rp_side_run: [Option<usize>; 4],
     dive: Option<usize>,
 }
 
@@ -3076,9 +3130,11 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
 /// map's floor, a straight walk), FOLLOW taking a cover point near him when he stops; steered
 /// through the AI's avoidance (#344, play_avoid.rs `steer`); and standing still, the idle pauses
 /// `pauses` (goal, weight, length) of the mode's personality, facing the squad's heading `heading`
-/// (the controlled character's, smoothed). It looks where the controlled character `leader` looks
-/// and steps out of his line of fire. It shoots only at an enemy it can see (`target`, from its
-/// sight: play_brain.rs `glance`, a brain's `sense`). Reloads happen by themselves (empty clip).
+/// (the controlled character's, smoothed). Standing it looks where the controlled character
+/// `leader` looks; walking, its own view turns toward its way and its motion is picked against
+/// that (#363, play_avoid.rs `view_turn`, `pick`). It steps out of his line of fire. It shoots only
+/// at an enemy it can see (`target`, from its sight: play_brain.rs `glance`, a brain's `sense`), on
+/// the move with the upper body. Reloads happen by themselves (empty clip).
 #[allow(clippy::too_many_arguments)]
 fn squad_ai(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follow::Mate], slot: usize, heading: f32, dt: f32, target: Option<Vec3>,
             toward: Option<Vec3>, pauses: &[(i64, f32, f32)], graph: Option<&mut bf_viewer::bf::nav::Graph>) {
@@ -3098,11 +3154,12 @@ fn squad_ai(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follo
         }
     }
     m.follow.lane = lane_to.is_some();
-    // their "camera" is the leader's, so movement and aim share the leader's frame
+    // its "camera", its aim (the frame the step reads its move in, `step_player`): where the leader
+    // looks while it stands (the demo's look about), its own view while it walks (below), a
+    // target's or a contact's when it has one (`ai_fire`, `face_toward`). Its move and its motion
+    // never key on the leader's camera: the game's AI reads no other character's view (#363)
     m.cam_yaw = leader.cam_yaw;
     m.cam_pitch = leader.cam_pitch;
-    let fwd = Vec3::new(-m.cam_yaw.sin(), 0.0, -m.cam_yaw.cos());
-    let right = Vec3::new(m.cam_yaw.cos(), 0.0, -m.cam_yaw.sin());
     m.jump_pressed = false;
     m.dodge_pressed = false;
     // shot by the player: sidestep (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
@@ -3128,15 +3185,26 @@ fn squad_ai(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follo
     // not on into a liquid that burns (#1, play_liquids.rs `burning_ahead`): the routes' safety
     // net, as no world point lies in one (it waits at the shore; BF_LIQUID_LOG)
     let go = steered.is_some_and(|d| !routes::shore(m, d, dt));
+    // (the move this frame, in the world; put in its camera's frame at the end, once the fire has
+    // turned it)
+    let mut moves = None;
     if let (true, Some(d)) = (go, steered) {
-        // (the move this frame: its heading turned toward the steering direction at most 200
-        // degrees a second, FUN_00019af0, play_avoid.rs `move_turn`, at the lower of the move asked
-        // and its pace level, which follows it up and down and which a route's detour, a hold, the
-        // feelers, a hard turn and a door (#346) set down for a while, play_routes.rs `pace`)
-        let d = avoid::move_turn(m, d, avoid::move_size(asked.min(m.router.cap)), dt);
-        let d = Vec3::new(d.x, 0.0, d.y);
-        m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
-        routes::pace(m, asked);
+        // (the move this frame: its heading, the last frame's move, turned toward the steering
+        // direction at most 200 degrees a second, FUN_00019af0, play_avoid.rs `move_turn`, at the
+        // lower of the move asked and its pace level, which follows it up and down and which a
+        // route's detour, a hold, the feelers, a hard turn and a door (#346) set down for a while,
+        // play_routes.rs `pace`; and its view turned toward the steering direction at 200 degrees
+        // a second, FUN_00019ed0, `view_turn`: its aim while it walks, and what its motion is
+        // picked against, #363)
+        let size = avoid::move_size(asked.min(m.router.cap));
+        avoid::view_turn(m, d, size, dt);
+        let d = avoid::move_turn(m, d, size, dt);
+        if routes::pace(m, asked) {
+            moves = Some(d);
+        }
+        if let Some(v) = m.router.avoid.view {
+            (m.cam_yaw, m.cam_pitch) = (v.yaw, 0.0);
+        }
         // (the follow's speed record, as its states left it: 1.25 every update, 1.0 within d1 of
         // the leader and on the way to a cover point; FUN_00048270 hands it to the character at a
         // run or a dash with its timer run out (a feeler's hit at a dash starts it, #344):
@@ -3149,7 +3217,7 @@ fn squad_ai(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follo
         m.idle_pause = 0;
         m.idle_left = 0.0;
     } else {
-        m.move_input = Vec2::ZERO;
+        m.router.avoid.stand();
         m.sprint = false;
         m.walk = false;
         m.router.asked = 1;
@@ -3172,7 +3240,7 @@ fn squad_ai(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follo
         m.crouch_wanted = m.data_slot() != 0 && m.still_time > KNEEL_AFTER + m.kneel_jitter && m.idle_pause == personality::GOAL_PAUSE_CROUCH;
     }
     m.face_yaw = Some(heading);
-    let cautious = m.idle_pause == personality::GOAL_PAUSE_CAUTIOUS && m.move_input == Vec2::ZERO;
+    let cautious = m.idle_pause == personality::GOAL_PAUSE_CAUTIOUS && moves.is_none();
     if cautious {
         // look about: the ready weapon sweeps across the heading
         let sweep = CAUTIOUS_LOOK * (m.still_time * CAUTIOUS_SWEEP * std::f32::consts::TAU + slot as f32).sin();
@@ -3189,10 +3257,22 @@ fn squad_ai(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follo
     let turned = target.is_none() && toward.is_some_and(|p| face_toward(m, p));
     m.aim = target.is_some() || cautious || turned;
     ai_fire(m, target, dt);
+    // the move in its camera's frame as the fire left it: the step turns it back into the world by
+    // the same (`step_player`), whatever it aims at. (Until #363 it was put in the leader's camera's
+    // frame before the fire turned the camera onto a target, so a member with a target moved off
+    // its way by the angle between the two)
+    m.move_input = moves.map_or(Vec2::ZERO, |d| camera_input(m.cam_yaw, d));
     m.switch_pressed = false;
     m.reload_pressed = false;
     m.throw_held = false;
     m.next_surface = false;
+}
+
+/// A move across the world `d` (x, z) as the stick in the frame of a camera at `yaw` (x right, y
+/// forward: `Player::move_input`, which `step_player` turns back into the world by the camera).
+fn camera_input(yaw: f32, d: Vec2) -> Vec2 {
+    let (fwd, right) = (Vec2::new(-yaw.sin(), -yaw.cos()), Vec2::new(yaw.cos(), -yaw.sin()));
+    Vec2::new(d.dot(right), d.dot(fwd))
 }
 
 /// A squad member's next idle pause and its length (s) from `pauses` (the mode's personality's
@@ -3919,6 +3999,8 @@ fn pick_clips(model: &Character, game: &Game) -> Clips {
             cr_back_walk: n("cr_back_walk"),
             rp_side: ["rp_f_side_walk_l", "rp_f_side_walk_r", "rp_b_side_walk_l", "rp_b_side_walk_r"].map(n),
             cr_side: ["cr_f_side_walk_l", "cr_f_side_walk_r", "cr_b_side_walk_l", "cr_b_side_walk_r"].map(n),
+            side_run: ["f_side_run_l", "f_side_run_r", "b_side_run_l", "b_side_run_r"].map(n),
+            rp_side_run: ["rp_f_side_run_l", "rp_f_side_run_r", "rp_b_side_run_l", "rp_b_side_run_r"].map(n),
             dive: n("dive"),
         }
     };
@@ -4046,7 +4128,7 @@ fn foot_ranges(model: &Character, game: &Game, clips: &Clips, feet: [usize; 2]) 
     for c in [lo.walk, lo.run, lo.sprint, lo.walk_back, lo.run_back, lo.dodge_left, lo.dodge_right].into_iter()
         .chain(sets.flat_map(|l| [l.walk, l.run, l.sprint, l.walk_back, l.run_back]))
         .chain(clips.slots.iter().flat_map(|s| [s.cr_walk, s.cr_back_walk]))
-        .chain(clips.slots.iter().flat_map(|s| s.rp_side.into_iter().chain(s.cr_side))).flatten() {
+        .chain(clips.slots.iter().flat_map(|s| s.rp_side.into_iter().chain(s.cr_side).chain(s.side_run).chain(s.rp_side_run))).flatten() {
         let d = model.anims[c].duration;
         let mut r = [(f32::MAX, f32::MIN); 2];
         for k in 0..24 {
@@ -4789,6 +4871,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // the npc ones (#140)
     player.sensor.clear();
     player.controlled = true;
+    // (its brain's steering doesn't run under a player: when the AI takes it back it starts afresh,
+    // from a stand, its view its facing; play_avoid.rs, #363. The demo's: the game's AI would find
+    // the player's last stick in char+0x5e8)
+    player.router.avoid = avoid::Avoid::default();
     for m in squad.0.iter_mut() {
         m.controlled = false;
     }
@@ -4911,6 +4997,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // (its follow's leader: the formation's, else the controlled character, `leads[0]`)
         let lead = m.follow.leader.and_then(|w| leads.iter().find(|l| l.who == w)).unwrap_or(&leads[0]);
         if m.held || !m.script_walk.is_empty() {
+            // (a script moves it, not its steering: no view of its own, #363)
+            m.router.avoid.stand();
             brain::held(m);
             script::held_step(m, dt);
         } else if m.brain.is_some() {
@@ -4922,11 +5010,13 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             orders::think(m, &player, lead, &follow_mates, slot, heading, dt, target, toward, &game.0, nav.graph.as_mut());
         } else {
             // (held where it is by a test hook: a Toggle Ability goal's command still goes, as
-            // BF_TEST_HOSTILE's stealthed Hawk needs, #333)
+            // BF_TEST_HOSTILE's stealthed Hawk needs, #333; no view of its own, #363)
+            m.router.avoid.stand();
             orders::toggle_goal(m);
         }
         let Some(l) = m.loaded.take() else { continue };
         step_player(m, &l, &game.0, kits, dt, true, &mut transforms);
+        gait_log(m);
         // (only the player's grenades are launched)
         m.thrown.clear();
         m.loaded = Some(l);
@@ -6487,7 +6577,28 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             None if matches!(p.action, Action::Crouched) => &stance.cr_side,
             None => &stance.rp_side,
         };
-        p.gait = if p.aim {
+        // an AI route walker (#363) moves by the motion FUN_001195c0 picks from its stick in its own
+        // view, which its steering turned toward its way this frame (play_avoid.rs `view_turn`,
+        // `pick`), never by a camera's: it runs facing its move with the gun on its target by the
+        // upper body (the aim below), and steps sideways or backs off only while its view lags its
+        // move. Its body turns at TURN_RATE where the game's turns at 400 degrees a second x k
+        // (FUN_001195c0's request, FUN_0011caa0's step): the demo's body carries its move, so it keeps
+        // up with the move's 200. Held at a stand (its pace level 1), its body follows its view
+        // (FUN_00119fa0), the gun on its target by the upper body
+        let ai_view = if p.controlled { None } else { p.router.avoid.view.filter(|v| v.turned) };
+        p.gait = if let Some(view) = ai_view {
+            if moving {
+                let pick = avoid::pick(view.yaw, p.yaw, dir_yaw, p.fire_state.raised(), p.gait == Gait::Sprint);
+                if let Some(v) = p.router.avoid.view.as_mut() {
+                    v.backing = !pick.forward;
+                }
+                turn_to(&mut p.yaw, pick.body, TURN_RATE);
+                ai_gait(pick.motion, p.gait, sprint && special.is_none(), walk, sides, &stance.rp_side_run)
+            } else {
+                turn_to(&mut p.yaw, view.yaw, TURN_RATE);
+                Gait::Idle
+            }
+        } else if p.aim {
             if !moving {
                 let goal = stand_aim_yaw(p, aim_yaw - off);
                 turn_to(&mut p.yaw, goal, TURN_RATE);
@@ -6528,7 +6639,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.gait = match p.gait {
                 Gait::Idle => Gait::Idle,
                 Gait::WalkBack | Gait::RunBack => Gait::WalkBack,
-                Gait::Side { left, back } => Gait::Side { left, back },
+                Gait::Side { left, back } | Gait::SideRun { left, back } => Gait::Side { left, back },
                 _ => Gait::Walk,
             };
         }
@@ -6574,6 +6685,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     };
     p.ready_pose = ready_set;
     let sides = special.map_or(&set.rp_side, |s| &s.side);
+    // (the running side steps: the ready set's with the gun up, else the carried; a special set
+    // has none loaded: its side walks)
+    let side_runs = if special.is_some() { sides } else if ready_set { &set.rp_side_run } else { &set.side_run };
     let gait_clip = match p.gait {
         Gait::Idle => lo.idle,
         Gait::Walk => lo.walk,
@@ -6582,6 +6696,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         Gait::WalkBack => lo.walk_back.or(lo.run_back),
         Gait::RunBack => lo.run_back.or(lo.walk_back),
         Gait::Side { left, back } => sides[side_index(left, back)].or(lo.walk),
+        Gait::SideRun { left, back } => side_runs[side_index(left, back)].or(set.rp_side_run[side_index(left, back)]).or(if back { lo.run_back } else { lo.run }),
     }.or(lo.idle);
     let (action_clip, once) = match p.action {
         Action::None => (if sliding { slide_clip } else { None }, false),
@@ -7325,6 +7440,8 @@ fn update_hud(player: Res<Player>, game: Res<GameData>, mut hud: Query<(&mut Tex
             Gait::WalkBack => "walk back", Gait::RunBack => "backpedal",
             Gait::Side { left: true, back: false } => "step left", Gait::Side { left: false, back: false } => "step right",
             Gait::Side { left: true, back: true } => "step back left", Gait::Side { left: false, back: true } => "step back right",
+            Gait::SideRun { left: true, back: false } => "side run left", Gait::SideRun { left: false, back: false } => "side run right",
+            Gait::SideRun { left: true, back: true } => "side run back left", Gait::SideRun { left: false, back: true } => "side run back right",
         },
         Action::Dodge { left: true } => "dodge left",
         Action::Dodge { left: false } => "dodge right",
