@@ -140,9 +140,11 @@ straight into play: no loading screen, intro or menu (`src/bin/play_testmap.rs`)
 
 Squad: the four squad members are all in play, each with their own health (the characters'
 combat-target hitpoints: Tex 115, Brutus 105, Flint 90, Hawk 65) shown on the radar's diagonal
-edges. Each bar fills that diagonal's dark channel in the radar frame texture (the frame's own
-texels darker than 27/255), starting by the member's portrait, and drains toward it as in the
-game. For whoever you control, health also shows in the top-left bar. Grenade blasts hurt everyone in range (the explosion's Damage max, falling
+edges. Each is the game's health channel: its frame outline and its fill, two 32 x 32 sprites in
+the diagonal between a portrait and the next, the fill showing the health left in whole hundredths
+from the portrait's end and draining toward it as in the game (**The portraits' parts**, #354);
+a hit flashes the portrait and the channel red. For whoever you control, health also shows in the
+top-left bar. Grenade blasts hurt everyone in range (the explosion's Damage max, falling
 off to nothing at its radius; the thrower takes a flat share, see **Grenades**), and every hit asks its hurt line of the chatter gate
 (a pain grunt e856009f for a small one, "I'm hit" 0ae8104e, the half- and low-health lines, the thrower's own, a friend's: [chatter.md](chatter.md)). Friendly
 fire: your shots hit squadmates in the way (the weapon's damage, x0.7 on your own side, by the hit part struck and the difficulty: see **Damage**; their line the friendly-fire one, e2d9fb13 "Careful!"
@@ -195,9 +197,9 @@ is the health bar's split-screen frame's left piece (0xb79f0 at 0xb7a53, with h_
 h_06a1d26e; full screen h_e5634eaf, h_eee38815, h_17470408). The item box's panel is the game's
 own, the 64 × 64 h_e16927fb (FUN_000ab580, 0xab614; h_10891a71, 64 × 32, its split-screen one,
 which the demo drew 9-sliced before #196): see **The item box and the item list**. (The
-tutorial's `h_17f34cbe` is only a baked picture of the whole bar.) Radar health channels are filled as bands (distance from the centre and extent
-along the diagonal, from the dark texels found), so the channels' highlight lines no longer
-leave gaps.
+tutorial's `h_17f34cbe` is only a baked picture of the whole bar.) The radar's health channels are
+not made from the radar frame's dark texels any more (a fit before #354): they are the game's own
+sprites, **The portraits' parts**.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
 (the weapon's own icon from its definition at its own size, 128 x 64 or the pistols' 64 x 64
@@ -466,18 +468,112 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   max difference 0; with Tex dead the bottom notch differs by the selected face's chevrons, which
   main draws at another brightness: the fill itself is there in both) and with nobody dead
   (nothing differs).
-  **`SKULL_TINT` is a fit** (0.40, 0.46, 0.43; the comment has the arithmetic): the code draws the
-  widget in white and the colour path that darkens it isn't found. 0.53 of the texture's colour
-  gives the footage's skull on the console's stored-value blend, but the demo's UI blends in linear
-  light and read it 5-8 levels lighter by this method, the tester measured 8-12 ((55.5, 56.9, 55.4) against (49.2, 52.2, 47.6) with the
-  grounds made equal). Fitted by solving the demo's own blend per texel (linear light, alpha 170 /
-  255) for the footage's core (opaque texels eroded by three, registered on the texture by
-  luminance correlation) over the terrain strip under the box, after checking the model on two
-  renders (it reads 5-6 levels low by the same amount at both tints, added back). Result: the
-  rendered skull's core (60.9, 68.3, 64.1) over the demo's floor (81.4, 83.4, 77.4) moves to
-  (49.4, 52.0, 48.0) over the footage's ground (59.6, 47.3, 41.2) by the same model, against the
-  footage's (49.2, 52.2, 47.6). The demo's own floor is lighter than the footage's terrain, so its
-  skull reads lighter there.
+  **The skull's colour is the code's own** (#354; #351 had fitted it, 0.40, 0.46, 0.43, because "the
+  colour path that darkens it isn't found"): the portrait's flash part (**The portraits' parts**,
+  below) sets the portrait's colour bytes to (128, 128, 128) while the member's health is 0
+  (0xc452f-0xc453a), and the sprite draw multiplies the texture by them (equal bytes: the plain
+  program, no tint), so the skull is its texture at 128 / 255 (`SKULL_TINT`). The console
+  multiplies and blends in stored values and the demo's UI in linear light, so the same 128 reads
+  a little lighter here, which #351's fit absorbed. Measured on #351's footage's case (e34,
+  `BF_TEST_HURT=brutus,500,0.5`, the recipe below, frame 50 of 60 at 15 fps; the core is the
+  opaque texels eroded by three, and the render is put on the footage's ground the way the
+  tester's method does, by inverting the demo's blend on the strip of ground under the box): the
+  render's core (64.3, 66.0, 56.9) over its ground (86.7, 79.1, 55.2) is (52.6, 54.8, 52.8) over
+  the footage's (59.6, 47.3, 41.2), against the footage's (49.2, 52.2, 47.6): 3.4, 2.6 and 5.2
+  levels lighter (the fit: within 0.5 by construction; 0.53 by multiply: 8-12 out, the tester's).
+  Kept the code's value: a skull 2% lighter, from the blend, with no fitted number left.
+* **The portraits' parts** (#354, #355; the rules, tables and tint in `play_portrait_parts.rs`, the
+  nodes in `play_hud.rs`): FUN_000c3680 gives each slot's portrait widget five parts, which update
+  in this order: the **health flash** (class 0x1f0aff78, vtable 0x39fa44, made by 0xb9e80: update
+  0xc43b0), the **selection tint** (0xfc8a6dfb, 0xc4280: the orange, #319) and the three
+  **icons** (the speech bubble 0x1c8134b1, the "!" 0x07ccab64, the scope ring 0x11fb2340: base
+  0xc4550); the slot's **health channel** (class 0x2a9b279: 0xc3080, 0xc32c0, 0xc3390) is a widget
+  of the radar panel's. Every slot has them, the controlled character's too.
+  * **The health flash** (`Flash`): +0x34 the member's health at the last update (0 as attached),
+    +0x38 the low-health threshold 0.2, +0x3c a level. Each HUD update (`update_flashes`, on the
+    HUD's clock `hud_step`, as the tabs' flash: it runs through the Squad Command menu's and the
+    item list's pauses): health 0: the level 0; health under the last update's: the level at
+    least **1.5** (a hit: any fall between two updates); otherwise health / most under **0.2** with
+    the level 0: the level **1.0**. The portrait's colour bytes are then white, or (255, a, a)
+    while the level is over **0.5** (a from 0xc4330: 128, and while a hit's level is over 1.0,
+    255 - 128 (1 - x^3) with x = 2 (level - 1): 255 at the hit falling to 143 in a quarter second
+    and 127 at the level 1.0), the level then counting down by dt to 0, and (128, 128, 128) when the
+    health is 0 (the skull, above). So **a hit** reddens the face for 1.0 s (its first frame, a of
+    255, is white: the first visible change is the next) and leaves 0.5 s of normal; **under 20%**
+    the level restarts the update after it reaches 0: red 0.5 s, normal 0.5 s, the period 1 s (to
+    the frame: 30 frames at 30 fps), until the member heals or dies, the controlled character's
+    slot the same; a hit under 20% runs its 1.5 s into the blink; one that leaves the member over
+    a fifth just ends. The selection tint updates after it and writes the colour last, so a member
+    selected for the Squad Command menu keeps its orange (inferred from the order; not filmed).
+    `BF_FLASH_LOG=1` prints each slot's part when it changes (the sim time, +0x34, +0x3c, the
+    portrait's colour, the channel's frame and the fill's whiteness).
+  * **The tint program.** Every sprite is drawn by FUN_000ba950 with a colour (red, green, blue
+    bytes), and FUN_000ba820 picks its pixel program by it, one of the table 0x3e2530's
+    D3DPIXELSHADERDEFs (FUN_000a4d00): with **equal bytes** (the white of every plain sprite, the
+    dead skull's grey) technique 0x25 (0x3e0230), texture x colour in stored values and then a
+    push toward white by the widget's +0x14 (0 as made); with **any difference** technique 0x23
+    (0x3e0140), whose five combiners read: grey = min(1, T.r^2 + T.g^2 + T.b^2) (the texel's dot
+    product with itself), then colour x grey, with the texel's alpha (and a (x - 0.25) x s + 0.25
+    round it that does nothing for the s = 1 of every widget here). So the flash's red face, the
+    icons' blue-white and the channel's red frame are not a multiply: a red channel that a
+    multiply leaves where it was rises, and the texture's contrast is squared. `tint_texels` bakes
+    it into an image (the faces, the frame's red copy, the icons; `flashed_face` caches a face by
+    its green byte). Checked texel by texel on the face texture and the video, the ground taken
+    from the rest frame: Hawk's steady red (a 128) on screen is (143, 74, 77) in #36 take01
+    (17.5-18.3 s) against the program's (142.9, 77.5, 79.9) (a multiply gives (98.6, 55.4, 67.6),
+    a luminance tint x 1.38 gives (134.6, 74.2, 76.6)); Tex's, in #354 take02: (108, 56.7, 59.5)
+    against (107.8, 56.5, 59.0), and the first frames of the hit (a near 232-238) (106.8, 95.5,
+    99.5) against (107.8, 96.7, 99.2). It
+    is very likely what the fits of #319's selected faces (`SELECTED_GAIN`, "luminance x colour x
+    1.28") and of the top-left bars' flash colours (`FLASH_TINT`, "x 1.64") stand in for (not
+    checked, not replaced here).
+  * **The health channel** (`CHANNELS`, `SquadPart::ChannelFrame` / `ChannelFill`): two 32 x 32
+    sprites in the table 0x3c8da8's rect for the slot, from the radar panel's corner: Tex (80, 12),
+    Hawk (13, 21), Flint (115, 108) and Brutus (48, 116) the last two mirrored (a negative size),
+    each a diagonal between its portrait and the next. The **frame** (h_e0706e07 for slots 1 and
+    3, h_00ff5cfb for 2 and 4: a blue outline at alpha 136-170) is drawn white, or
+    (160, 32, 32) (FUN_000b8820) while the slot's level is over 0.5, through the program: a flat
+    red outline. The **fill** (h_e684da10 / h_1cee1256: a gradient of about 20 levels in its blue
+    channel, white at the portrait's end) is drawn in **(192, 87, 94)** by the program at
+    0x3e0050 (technique 0x22, which the sprite draw takes when its twelfth argument is 1, and only
+    this draw sets it; its constant is the channel's +0x34 through the vtable getter 0x10fa30): a
+    texel shows, in the flat colour at its own alpha, while its blue is at least the **empty
+    byte**, round(255 x (1 - floor(100 x health / most) / 100)) (FUN_000c32c0), so the health
+    left grows out from the portrait's end in the gradient's steps (`fill_images` makes one image
+    per level; the demo's old fill was the radar frame's dark texels, fitted); a member with no
+    health shows none (the brightest texel's blue is 249). In a hit's first half second the fill is
+    pushed toward white by (a - 128) / 128 of the way (`pushed`: (254, 253, 253) at the hit's
+    frame, 0xc3449): the pale flash. Only a slot with a member in the world draws them.
+  * **Verified.** Against `todo/354-portrait-health-flash` (xemu, the flash part watched at
+    20 Hz): the level jumps to 1.465-1.473 at a hit (1.5 less a frame), counts down at 1 a second,
+    reaches 0 1.5 s after it and, with the member under a fifth, restarts at 1.0 the update after
+    (take05: Tex 115 to 15, 0 at gt 3.062, 0.957 on the next row), and held under a fifth restarts
+    every 0.997 s on average (take01: Hawk at 10 of 65, 11 restarts from gt 2.36 to 12.33; take02:
+    Tex at 20 of 115); a hit that leaves 30% (take03: 115 to 75 to 35; take04: Hawk 65 to 45 to 25)
+    ends after the 1.5 s. The demo: `BF_FLASH_LOG=1 BF_TEST_HURT=hawk,55,0.5` (10 of 65) logs 1.467 at
+    the hit and restarts every 0.999 s of its frames (30 fps capture: 1.0 s, the frame
+    included); `BF_TEST_HEALTH=20` (Tex at 20 of 115) blinks red 15 frames, normal 15 (30 fps);
+    `BF_TEST_HURT=tex,100,1.0` runs the hit into the blink (the level 0 after the hit's 1.5 s of
+    frames, red again the update after, as take05); `BF_TEST_HURT="tex,40,1.0,5.0"` (115, 75, 35)
+    ends both flashes with no blink.
+    Pictures, e34 as the takes (`BF_MAP=e34 BF_TEST_GOTO=-83.39,-82.79,-83.39,-82.79
+    BF_TEST_GO_AT=999 BF_TEST_NO_HOSTILES=1 BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05
+    BF_CAPTURE_FPS=30`), the demo's crop against the video's at the same pixels: Hawk at 52% (take01
+    16.8 s) and 32% (17.5 s, red): the fill's shape and length the same, its colour (192, 87, 94)
+    against the video's (189.2, 85.7, 92.6); the hit's first frame the fill white-pink (243, 223,
+    224 for the frame at level 1.467; the video's first frame after it (239, 207, 211), a frame
+    later in its own clock) and the channel's frame red; the face's steps white, pale, pink, red
+    as the take's frames 17.43-17.57 s. The demo's faces read 15-26 levels lighter than the video's
+    at rest and in the flash alike (the notch fill behind them, `NOTCHES`, and the linear-light
+    blend: not this ticket's), the change from rest to red the same to within 20%: Hawk (+52, -38,
+    -56) against (+44, -31, -50), Tex (+47, -24, -51) against (+38, -22, -48). The dead skull:
+    above.
+  * **Not done or not filmed:** the channel frame's red as measured (the takes show it reddish and
+    dark; the demo's reads pinker, the outline being semi-transparent over the radar frame's own
+    outline and blended in linear light); Flint's and Brutus's own flashes (the same code); a
+    flagged member under a fifth (orange by the update order); the split screen's rects, textures
+    and icon rows; the yellow corner brackets (part 0x16b9cec9, FUN_000c37a0); a full-screen red
+    vignette on the controlled character's hit, which is not this part.
 * **The command tabs** (#333; `play_hud.rs` `update_tabs`, `TAB_FOLLOW` ...): the small icon in
   the box by each portrait is its member's order, the brain's command mode (squad.md, "Squad
   commands"). The tab widget (FUN_000c3d10, made one a portrait by the HUD's factory) sets it each
