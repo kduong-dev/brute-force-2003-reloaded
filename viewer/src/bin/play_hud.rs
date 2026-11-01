@@ -1409,7 +1409,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         commands.insert_resource(RadarMarks { image: overlay.clone(), dot, ..default() });
         commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0), ImageNode::new(overlay), ZIndex(2)));
         // the frame's four portrait notches are open in its texture; the game fills them dark behind
-        // the faces (texel boxes in the frame texture: top, right, bottom, left)
+        // the faces (texel boxes in the frame texture, `NOTCHES`, by character)
         for (i, &(x0, y0, x1, y1)) in NOTCHES.iter().enumerate() {
             commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x0, RADAR_FRAME_AT.1 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9)),
                             SquadPart::Notch(i)));
