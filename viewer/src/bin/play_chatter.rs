@@ -33,10 +33,13 @@
 //!    play_orders.rs `arrive`), the medkit's (0x146f40, play_pickups.rs), the
 //!    refused gun's (FUN_000a9910, play_weapon_pickups.rs), the skill lines (FUN_0010e470 /
 //!    FUN_0010e3e0, play_skills.rs) and Brutus's charge hit (FUN_0013c1c0, play_vengar.rs). A
-//!    type of its own (an enemy's) says only its death cry: the #129 takes' Shrikes said nothing
-//!    on their hits. **But** the #36 takes 07-10 log a spawned Shrike's hurt lines through the
-//!    gate (e856009f, fab0be98, 01e1dcd0, 0ae8104e), so the rule is the demo's until #328
-//!    settles which enemies say them (the enemies' other lines are #110's and #128's).
+//!    type of its own (an enemy's) says its hurt lines and its death cry, through the gate with
+//!    its `chatter-library`'s blocks (#328: the #36 takes 07-10 log a spawned Shrike's hurt
+//!    chain through the gate, e856009f, fab0be98, 01e1dcd0, 0ae8104e, with its death cry
+//!    e1213623; the rule the demo had before, the death cry only, came from the #129 takes,
+//!    where the Shrikes were heard saying nothing on their hits and no gate was logged: the
+//!    gate's own refusals (the roll, the replay delay, the distance) may account for it, not
+//!    settled); the enemies' other lines are #110's and #128's.
 //!  - **A line** (`Line`) is the events of its parts (a sound, a response), each with its start
 //!    and its duration, and the running total where the next part starts (line+0x28).
 //!    `Line::add_part` is FUN_001400d0, which FUN_00140060 (`Chatter::join`) calls to join a
@@ -340,8 +343,8 @@ pub enum Ask {
     HandOver { far: bool, held: Vec<Who>, moved: Vec<Who> },
 }
 
-/// Ask `tag` of `u` (FUN_00140a60 from a caller that names its tag). A type of its own says no
-/// line but its death cry (see the module notes).
+/// Ask `tag` of `u` (FUN_00140a60 from a caller that names its tag). A type of its own says none
+/// of these, only its hurt lines (`hurt_line`) and its death cry (`death`; see the module notes).
 pub fn say(u: &mut Player, tag: u32) {
     say_with(u, tag, None);
 }
@@ -355,9 +358,10 @@ pub fn say_with(u: &mut Player, tag: u32, chance: Option<i64>) {
 
 /// A damaging hit's hurt line (FUN_00125ad0, which every hit that reaches the hit points runs:
 /// CBT_DAMAGED, posted by FUN_002232d0 when the amount isn't 0), asked before the hit points go
-/// down. Not by a type of its own (see the module notes).
+/// down. A type of its own's too (#328): the gate finds the blocks of its `chatter-library` and
+/// refuses a tag it has none for.
 pub fn hurt_line(u: &mut Player, cause: Cause, amount: f32) {
-    if amount > 0.0 && !u.own_type() {
+    if amount > 0.0 {
         u.asks.push(Ask::Hurt { cause, before: u.health, amount });
     }
 }

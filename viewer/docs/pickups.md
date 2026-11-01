@@ -93,7 +93,7 @@
     case.mp4 Tex says e707f108 at his use and Brutus nothing at his. `BF_TEST_HEALED=1` passes
     its roll.
   * Each pickup adds a line below the middle of the screen (FUN_000ad790, one of the HUD's
-    three): the item's display name (h_1dd3a49d; its stringtable-name without one) alone for the
+    three, #314: see "The pickup lines' layout" below): the item's display name (h_1dd3a49d; its stringtable-name without one) alone for the
     first, "<n>x <name>" (the format at 0x40d734) once more of the same are taken while it's up;
     each pickup puts its time back to 4 s (the widget's +0x64, set by its constructor
     FUN_000ad690, #228; it was 3 s). take08's two medkits: "Medkit", then "2x Medkit" for 4.25 s
@@ -102,8 +102,31 @@
     the same frame, so "2x Medkit" comes at once; the DNA canister's line (one) is its name alone.
     A pickup that took nothing, its stack full, reads "<name> (full)" in red (FUN_000ad790's
     count-0 form; a lying gun walked over, "Weapon pickups" below).
-    Status messages ("No need to heal") show just
-    above them. They stay put on the screen (the capture has them by the character).
+    Status messages ("No need to heal") show above them. They stay put on the screen (the
+    capture has them by the character).
+  * **The pickup lines' layout** (#314; `play_hud.rs` `update_feed`, `play_pickups.rs`
+    `PickupFeed`). The widget FUN_000ad690 (HUD name 0x1eeaa123) has three lines, each the 14-point
+    body font (`BODY14`: its constructor sets the record 0xc626fd5 at 0xe), centred on x 320, line
+    k 20 units under the first (its update 0xad860: y = k x 0x14), the colour FUN_000b87a0's
+    c0 d7 ff (192, 215, 255; take12 measures (201, 215, 252)), "(full)" FUN_000b8820's a0 20 20.
+    The slot a new item takes is FUN_000ad5f0's: the first with no hold left (it may still be
+    fading), else the one with the least; the same item joins the line already showing it
+    (FUN_000ad650). Each line's alpha eases to 1 in 0.1 s (FUN_000ad790's call of FUN_000bbea0
+    with 0.1), its 4.0 s hold runs while it is at 1, and then it fades out over **0.5 s**, the
+    widget's +0x50 (FUN_000bbef0 with -1 in the base update FUN_000bbf40); an expired slot's
+    item and count are cleared (0xad877), so it can't take a count from the line that was in it.
+    Measured on take12 (`todo/28-tutorial`, 276-282 s): one line alone ("Frag Grenades (full)")
+    has its ink 346.7 units from the top, the second slot's ("31x High ROF Ammo") 366.7 and
+    its capitals 20 px (13.3 units) tall at 1.5 px a unit, centred at x 319.3-320; the bright
+    pixels of a line fade over about 0.3 s (281.48-281.78 s), what a 0.5 s ramp gives (a 0.1 s one
+    would be done in 0.05 s). **The ticket said 0.1 s for the fade-out and 367 for a single
+    line: 367 is the second slot, and 0.1 s is the fade-in.** The first line's place (`FEED_TOP`,
+    341.5 for the record text's top) is a fit to those ink rows: the widget's layout data isn't
+    found. The old layout (`FEED_FIRST` 29 under the message, a 16.5 step, 11.5 pt text, no
+    fade) is gone. Checked with `BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6
+    BF_TEST_POWERUP="brute@0.5;force@2.0"` (120 frames): the capitals' ink rows 520-541 (slot 0)
+    and 551-571 (slot 1) at 1280 x 720, take12's 520 and 551; the line out of frame 0.47 s into
+    0.53 s, the first one's bright pixels falling from 4.67 to 5.0 s (4.6 s hold end + 0.5 s).
   * What a medkit heals: an item's h_0a811e94 is the health it restores and h_11884f2e the
     stamina (STAMINA POWER has 0 / 50 where HEALTH POWER has 50 / 0), not a respawn time. The
     placed Medkit (60) gives, by its pickup-archetype, the inventory Medkit h_192d5337 (80):
@@ -162,8 +185,7 @@
 * Verified (`BF_MAP=tutorial BF_TRIGGER_LOG=1 BF_PICKUP_LOG=1 BF_TEST_GOTO=-58.9,21.26,-62.22,19.23
   "BF_TEST_PANEL=a,1;a,1;a,1;a,1"`, 120 frames at 15 fps): taken at 1.80 s, PICKUP_OBJECT ->
   timer467 -> sound463 at 5.80 s; "Confed Marine DNA unlocked!" under Tex from frame 27 to 87
-  (4 s), as take12's line (its place on the screen: take12's is ~45 units lower and larger, a
-  layout the demo's pickup lines don't have yet). With the objectives and the ending fired after
+  (4 s), as take12's line (its place on the screen is the pickup lines' layout since #314). With the objectives and the ending fired after
   it (`BF_MISSION_LOG=1 "BF_TRIGGER_FIRE=h_f0cac43d,10,2.5;h_065b02c7,10,2.6;h_065b02c7,10,2.7;h_065b02c7,10,2.8;h_f82e0ba6,ENTER_DETECTOR,4"`,
   380 frames): MISSION SUCCESSFUL at 14.07 s, "DNA Sequences Recovered" / "Confed Marine DNA"
   with the DNA icon at take12's place (frame 379 against take12 at 363 s).

@@ -810,6 +810,23 @@ Squad movement and deaths follow the game's own data and the captures:
     pose's lowest vertex under the model's origin, which is Hawk's within 2 mm but not Tex's
     (1.204), so a guess. It stays there (it doesn't follow the falling body), doesn't spin, bob
     or fall.
+  * **Not on a multiplayer map** (#315, `play_dna.rs` `drops_chips`): the drop is the placement's
+    `<h_0f77963d inventory-drop="h_f50f94f9">` (FUN_00156390 at 0x156666), and no multiplayer
+    level has it: decoded with `xmb_tool.py`, sdm_e13, sdm_e34, sdm_e40, sdm_m03 and mp1 have no
+    `inventory-drop` attribute at all (their squads are made by the match, not placed as
+    character-objects: sdm_e13's levels file has 0 of them, e40's has 16 and the four squad members' carry
+    the chip, as do m09_a's four of 15), and the chip item h_f50f94f9 is defined only in the campaign levels' objecttypes
+    (e40, m09_a; none of sdm_e13, sdm_e34, sdm_m03, mp1). `#18` take09 and take10 (sdm_e13) show no
+    chip and nobody taking one. So a death on a map `damage::multiplayer_map` says is multiplayer
+    (campaign-bf.xmb's deathmatch and squad deathmatch levels) drops nothing; the missions, the
+    tutorial and the test map still do. Unseen in the game: a squad member dying in a squad
+    deathmatch (the footage has its AI frozen), so "none" rests on the data. The chip's own
+    code path (`BF_TEST_CHIP`) is unchanged on every map. Checked: `BF_MAP=sdm_e13
+    BF_TEST_GOTO=7.34,26.75,7.34,26.75 BF_TEST_DIE=1 BF_PICKUP_LOG=1` (120 frames): Tex dies, the
+    hand-over goes to Brutus, no "dropped a memory chip" and no chip in the frames;
+    `BF_MAP=m09_a BF_TEST_GOTO=-197.3,-216.9,-197.3,-216.9 BF_TEST_DIE=1` still has "tex dropped a
+    memory chip" at 1.07 s, and the test map (`--test BF_TEST_GOTO=0,8,0,8 BF_TEST_DIE=1`) too, taken by
+    Brutus.
   * **Pickup:** any living squad member (the player or an AI one) whose feet come within
     sqrt(3) m (3D) of its middle takes it (take03 and staging: 1.34 m across with the chip
     1.098 m up, every time from three directions; whether the game tests 3D or across only
@@ -852,7 +869,7 @@ Squad movement and deaths follow the game's own data and the captures:
     blend is above it, and the glare raises every channel and spreads the soft halo. The demo
     doesn't key the chip yet: the glare also multiplies by the frame buffer's alpha, which the
     chip's blend leaves at a value not worked out (a follow-up).
-  * Earlier footage: far off (Friendly Fire 2, 33.8 s) the chip's inside is
+  * Earlier footage (campaign e34, not a squad deathmatch): far off (Friendly Fire 2, 33.8 s) the chip's inside is
     green +58 over the background, red and blue up too; the demo's is green +30 to +48 at 6-15 m
     on sdm_e34, red and blue a little down. Up close in front of a lit wall (DNA + Weapon
     Pickups, 12.4-12.6 s) the footage's is whitish cyan, red 165 over 60, with a soft halo.
