@@ -1337,17 +1337,32 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   the scope the rate is h_019c314a (the MK's 6/s; medium confidence that the holder's +0x7a8 is
   the scope); a dry click (`play_ammo.rs`) and the Charge's shot cooldown use the same
   `shots::period` (FUN_002327f0, FUN_0022dc00).
-* **Taps and the raise.** A press is a request that outlives the button: the holder's +0x260 bit
-  3 (8) sets the fire flag of the gun in hand and of the second hand's each frame
-  (0x122614-0x122655) until an animation event clears it (0x0f8408d5, FUN_00117660 at 0x117b12;
-  which clip isn't placed), so the demo holds a press until its first shot (`FireState::pull`):
-  an 80 ms tap fires. With two guns (Tex's berserk) it holds it for each until that gun's first
-  shot, so a tap fires both, the one still cooling down when it's ready (#121: a tap at 3.98 s
-  fired the LZR-50 at 4.07 and the Jax-iC at 4.27, after the button came up), and while either
-  is owed its shot an empty one runs its dry cycle (the request sets both flags), but the demo
-  clicks and syncs the LZR recharge only while the button is down (`u.fire`, play_ammo.rs); the
-  game's FUN_002327f0 clicks on every such cycle, so an empty gun after a short tap stays silent
-  in the demo. From idle the gun is raised first, for the character's own ready time (#140;
+* **Taps and the raise.** A press is not remembered, except across the raise (#360). The
+  controller posts CT_FIRE_WEAPON every frame the trigger is past 0.2 (0x134531-0x1345c1); the
+  command sets the fire flag (+0x224 value 4) of the gun in hand and of the second hand's, and
+  the flag lives one weapon update: the fire loop (FUN_0022efe0) fires only with the cooldown
+  out, and FUN_0022f770 then clears the flag whether a round went or not. So a press inside the
+  cooldown fires nothing, and a round needs the trigger down on a frame where the cooldown has
+  run out: on the L-Shot-75 (1 round/s) a tap inside the second after a shot is dropped, a hold
+  across the cooldown's end fires at the end. (Before #360 the demo latched such a press and
+  fired a ghost shot when the cooldown ended, the button long up; the +0x260 bit 3 it was read
+  from is the may-aim bit FUN_0011e000 recomputes every frame, not a latch.) An empty gun's dry
+  click and auto reload (FUN_002327f0) run only from the fire loop, so a tap inside the
+  cooldown gives none either. The one latch is the controller's +0xa1 bit 3 (0x1345b8): a
+  press that finds the gun down raises it and sets the bit, and while it is set the controller
+  posts the command every frame without reading the trigger, until the ready timer is at 4 or
+  below (0x134a25 clears it), so an 80 ms tap from idle fires once the gun is up
+  (`FireState::pull`: `latch_left`, the raise's in-time and two game frames, `LATCH_GRACE`; the
+  latch ends with the raise, shot or not). During held fire the command holds the timer at 4,
+  so the bit stays clear. With two guns (Tex's berserk) the latch is kept for each hand
+  and both are raised together, so a tap from idle fires both guns, each when ready; a gun
+  still cooling down does not fire later on its own (#121: a tap at 3.98 s fired the LZR-50 at
+  4.07 and the Jax-iC at 4.27, after the button came up; read as the Jax-iC's draw into the
+  second hand finishing after the tap, by the code its request is dropped in the frame it is
+  set), and while a latched press is pending an empty one runs its dry cycle (the request sets
+  both flags), but the demo clicks and syncs the LZR recharge only while the button is down
+  (`u.fire`, play_ammo.rs); the game's FUN_002327f0 clicks on every such cycle, so an empty gun
+  after a short tap stays silent in the demo. From idle the gun is raised first, for the character's own ready time (#140;
   todo/140-footage-timing/answer.md §1): FUN_00123ea0 starts the ready timer at 4 + its motion
   set's `pc-transition-ready in-time` while a player controls it, else its
   `npc-transition-ready in-time` (FUN_0010fce0; `characters/ms_<name>.xml`, h_f599b114 /
@@ -1375,6 +1390,19 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   step (3.067 s). An e40 Shrike Soldier on the test map (`BF_TEST_NPC=...,fight`) logs "raises
   the gun: the first round in 0.3 s (npc-transition-ready in-time)" as it takes Tex up, and fires
   0.87 s later (its opening delay).
+* **Taps in the cooldown (#360), checked** (`BF_MAP=e34 BF_CHARACTER=1 BF_TEST_WEAPON=L-Shot-75
+  BF_TEST_GOTO=-53.64,31.08,-53.64,31.08 BF_SHOT_LOG=1 BF_CAPTURE_FPS=60`, the rounds in the shot
+  log): `BF_TEST_TRIGGER=3.0-3.08,3.5-3.58` one round (3.17; before, a second at ~4.2);
+  `3.0-3.08,3.5-3.9` and `3.0-3.08,3.9-3.98` one; `3.0-3.08,3.5-4.6` two, 1.03 s apart (the
+  hold across the cooldown's end), none after; `3.0-3.08` alone one, 0.14 s after the press
+  seen; `3.0-3.08,8.0-8.08` two (the second raised again: 8.02, round 8.13); `3.0-8.0` rounds
+  1.0-1.03 s apart; the L-Shot-50 (`BF_MAP=m03_a`) held 3.17, 4.87; MK-ASLT held every 0.13 s;
+  the Bower's tap inside its cooldown (`3.0-3.08,3.2-3.28`) one burst and no click, its dry
+  click only at a tap after (`BF_TEST_CLIP=1 BF_AMMO_LOG=1`, `...,5.0-5.08`: 5.03). Tex's
+  berserk (`BF_CHARACTER=3 BF_TEST_WEAPON="Confed LZR-50;Jax-iC" BF_START_WEAPON=1
+  BF_TEST_SKILL=2`, trigger `4.0-4.08,6.0-6.08,6.3-6.38,8.0-9.0`): both guns at 4.13, both at 6.03,
+  at 6.33 only the second hand's (the gun in hand was cooling down, and fires nothing after),
+  both from 8.03 when held.
 * **The burst counter** is cleared by a reload starting (FUN_0022daf0), a dry click
   (FUN_002327f0) and a switch (FUN_0022dc00), as in the game.
 * **The seed** of a shooter's fire loop is the demo's own hash, character x 7919 + NPC number x
