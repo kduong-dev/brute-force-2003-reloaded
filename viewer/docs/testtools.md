@@ -110,7 +110,8 @@ a click is any left click off the panel, and F and its teleports do nothing.
     the radar (Brutus's bottom, Flint's right, Hawk's left, Tex's top), its health channel, its
     speech icon and the key (1-4) that takes control of it. The menu fills it with any type, as
     a real squad member, not an NPC: it gets a formation place (FORMATION by its place in
-    `Squad`, where the members come before the NPCs) and the squad AI, control passes to it (1-4,
+    `Squad`, where the members come before the NPCs: where it's put, the follow being the game's
+    since #331, [squad.md](squad.md) "The follow") and the squad AI, control passes to it (1-4,
     `BF_TEST_SELECT`, the death camera's hand-over: the first living member in `Squad`'s order),
     the HUD shows it, it takes the squad's pickups and memory chips and drops a chip when it
     dies, and the controls panel names it. A new member appears at half its formation place's

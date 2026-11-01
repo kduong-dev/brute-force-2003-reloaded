@@ -20,7 +20,8 @@
 //!    personalities, which stand where they are here (its pauses, cautious looks, crouches and
 //!    random walks home are #26's); GOAL_WINGMAN_FOLLOW for a squad-type character on the player's
 //!    side (the V-squad's Confed marines, through their wingman personality h_ebe6044c): the squad
-//!    AI's follow (play.rs `squad_ai`), from a formation place after the squad's own. A goal whose
+//!    AI's follow (play.rs `squad_ai`: the game's states since #331, play_follow.rs; in FOLLOW, the
+//!    controlled character their leader, as they join no list of the formation). A goal whose
 //!    start refuses (a patrol with no route) is struck out and the draw repeated (FUN_00054bc0).
 //!  - **Patrol** (GOAL_PATROL: start FUN_0002af70, update FUN_0002b490, the walk FUN_00026d80, a
 //!    point reached FUN_00026940): the route is the chain of the patrol point nearest the
@@ -246,6 +247,22 @@ pub struct Command {
     /// FUN_00020b10 zeroes every update in FOLLOW (0x20ddd-0x20de3), so only Fire At Will (mode 4)
     /// reaches it: a fresh brain, in FOLLOW, says nothing on its first walk (#343); `start_walk`.
     pub walk_said: bool,
+    /// When it last joined its mode's follow list (the squad's formation record, play_follow.rs
+    /// `Formation`): FUN_00018040's end and FUN_00018230 add the member by its mode
+    /// (FUN_0005e8b0). A count of those calls in the order they're made (`next_join`), 0 for a fresh
+    /// brain, which is in no list: the spawn's set-up (FUN_00017b60) finds no controlled member to
+    /// measure from and adds none (`Formation`)
+    pub joined: u64,
+}
+
+/// The joins to the follow lists so far (`Command::joined`): the order mode changes are made in
+/// decides the lists' (FUN_000c1280 gives an order to the selected members in the squad list's
+/// slot order, play_squad_menu.rs `SLOT_ORDER`).
+static JOINS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The next join's stamp (`Command::joined`).
+fn next_join() -> u64 {
+    JOINS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
 }
 
 impl Default for Command {
@@ -260,7 +277,7 @@ impl Default for Command {
     /// Fire At Will's alone (`walk_said`, #343), so a fresh start's walks say nothing.
     fn default() -> Self {
         Command { mode: Mode::Follow, allow: ALLOW_COMBAT | ALLOW_COVER, grant: None, point: None, events: 0, since: 0.0, best: f32::MAX, stalled: 0.0, rounds: 0,
-                  toggle: None, walk_said: false }
+                  toggle: None, walk_said: false, joined: 0 }
     }
 }
 
@@ -272,7 +289,8 @@ impl Command {
     /// Then the allow flags by the new mode (FUN_00018000), and the goal stack and event queues
     /// emptied and the base goal drawn again (FUN_00039f00, FUN_00055b50, FUN_00015fe0,
     /// FUN_0001a4e0: here its walk and pause start over, play_orders.rs `order`; a Toggle
-    /// Ability's goal still on the stack goes with it). True when it changed.
+    /// Ability's goal still on the stack goes with it), and the member added to its mode's follow
+    /// list (FUN_0005e8b0, `joined`). True when it changed.
     pub fn set_mode(&mut self, mode: Mode, point: Option<Vec3>) -> bool {
         if self.mode == mode && mode != Mode::MoveOut {
             return false;
@@ -291,6 +309,7 @@ impl Command {
         self.best = f32::MAX;
         self.stalled = 0.0;
         self.toggle = None;
+        self.joined = next_join();
         true
     }
 
@@ -313,10 +332,13 @@ impl Command {
     /// in FOLLOW, GUARD or MOVE_OUT holds fire until an event allows it. #33 take02: Tex's a3 went
     /// a0 at the hand-over to Hawk (2.96 s), Hawk's a3 a0 when she was left in turn (6.47 s). The
     /// events posted while it was controlled are dropped with it (its brain idled: the last
-    /// frame's would otherwise grant combat a frame after the reset).
+    /// frame's would otherwise grant combat a frame after the reset). It joins its mode's follow
+    /// list again (FUN_00018230's FUN_0005e8b0, at 0x1829f; the player taking it took it out,
+    /// FUN_00018150's FUN_0005e600).
     pub fn released(&mut self) {
         self.allow_by_mode();
         self.events = 0;
+        self.joined = next_join();
     }
 
     /// The quick goal h_f0233972 (FUN_0003a4a0 at 0x3a744): allow_combat set and the grant's timer
@@ -338,12 +360,13 @@ impl Command {
         }
     }
 
-    /// The member starts a walk to its place (FUN_00021b70, the wingman follow's state 9, the gate
+    /// The member walks to its route point (FUN_00021b70, the wingman follow's state 9, the gate
     /// call at 0x21cba: `if bit 0 clear { set it; say 1ecaeb98 }`): true the first time since the
     /// bit was cleared, in WINGMAN only, when the line is to be said (through the gate: 75%, a 20 s
     /// replay delay, priority 2). In any other mode the machine can't reach state 9 (FOLLOW's
     /// FUN_00020b10 zeroes the route point brain+0x6f4 every update, 0x20ddd-0x20de3), so it says
-    /// nothing and leaves the bit (#343).
+    /// nothing and leaves the bit (#343). Only the first entry of WINGMAN's list gets a route point
+    /// (FUN_0001adf0 -> FUN_0005ea10): play_follow.rs `walk_line` asks it for that one (#331).
     pub fn start_walk(&mut self) -> bool {
         self.mode == Mode::Wingman && !std::mem::replace(&mut self.walk_said, true)
     }
@@ -765,8 +788,8 @@ pub fn broadcast(player: &mut Player, squad: &mut [Player], held: &[(usize, Opti
 }
 
 impl Brain {
-    /// Whether it follows the leader (a squad-type character on the player's side): it takes a
-    /// formation place (play.rs `update_player`).
+    /// Whether it follows the leader (a squad-type character on the player's side): the squad's
+    /// follow (play.rs `update_player`, `squad_ai`; play_follow.rs).
     pub fn follows(&self) -> bool {
         self.follows
     }
@@ -925,12 +948,13 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
 }
 
 /// One frame of `m`'s brain, in place of the squad's AI or the test map NPC's (see the module
-/// notes). `leader`, `slot` and `heading`: the squad AI's, for a follower; `target`: the chest it
-/// may fire at (`sense`); `patrols`: the level's patrol points; `n`: the difficulty; `graph`: the
-/// level's world points, which a follower's follow walks routes over (#335, play_routes.rs).
+/// notes). `leader`, `lead`, `mates`, `slot` and `heading`: the squad AI's, for a follower;
+/// `target`: the chest it may fire at (`sense`); `patrols`: the level's patrol points; `n`: the
+/// difficulty; `graph`: the level's world points, which a follower's follow walks routes over
+/// (#335, play_routes.rs).
 #[allow(clippy::too_many_arguments)]
-pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, patrols: &[PatrolPoint], game: &Game, n: i64,
-             graph: Option<&mut bf_viewer::bf::nav::Graph>) {
+pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follow::Mate], slot: usize, heading: f32, dt: f32, target: Option<Vec3>,
+             patrols: &[PatrolPoint], game: &Game, n: i64, graph: Option<&mut bf_viewer::bf::nav::Graph>) {
     let Some(mut b) = m.brain.take() else { return };
     let log = log_on();
     let accuracy = accuracy_at(b.accuracy, n, b.follows);
@@ -939,7 +963,7 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
         if b.base.is_none() {
             b.base = Some(GOAL_WINGMAN_FOLLOW);
             if log {
-                println!("t={:.2} brain {}: follows {} (GOAL_WINGMAN_FOLLOW), formation place {slot}", m.sim_time, b.label, unit_name(leader));
+                println!("t={:.2} brain {}: follows {} (GOAL_WINGMAN_FOLLOW), squad slot {slot}", m.sim_time, b.label, unit_name(leader));
             }
         }
         stop_walk(m);
@@ -948,7 +972,7 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
         let toward = if target.is_none() { m.sensor.toward(eye) } else { None };
         // (its idle pauses: its wingman personality's EVT_IDLE_VARY_DATA draw)
         let pauses = game.personality_entry(b.personality, personality::EVT_IDLE_VARY_DATA).map(|e| e.pauses()).unwrap_or_default();
-        squad_ai(m, leader, slot, heading, dt, target, toward, &pauses, graph);
+        squad_ai(m, leader, lead, mates, slot, heading, dt, target, toward, &pauses, graph);
         aim(m, target, accuracy);
         m.brain = Some(b);
         return;

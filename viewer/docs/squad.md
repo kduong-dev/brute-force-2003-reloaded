@@ -2,44 +2,82 @@
 
 Squad movement and deaths follow the game's own data and the captures:
 
-* Wingman follow (the squad AI's follow personality, decoded from common/ai/personality.xml
-  with the event / goal enums from default.xbe): squadmates keep loose places 6-11 m *ahead*
-  of the leader (measured from the captures), set off when 3 m from their place and settle
-  within 1 m, dash when far behind (or past the data's squad-leash-dist + 10 m), and face the
-  leader's heading. Standing a while, Flint, Hawk and Tex kneel (stand2crouch -> rp_crouch_idle,
-  crouch2stand to move on); Brutus stays on his feet. They step out of the lane you aim or fire
-  down (EVT_SHOT_BLOCKED_BY_FRIEND), sidestep now and then when you shoot them
+* **The follow** (#331, `play_follow.rs`; every function in [code-map.md](code-map.md), "AI"): the
+  goal of the squad's two follow modes, FOLLOW (the default, Cover Me) and WINGMAN (Fire At Will),
+  is GOAL_WINGMAN_FOLLOW, whose update FUN_00020b10 runs a state machine at brain+0x6ac; the demo
+  runs its formation states (the demo's own formation places, ahead of the leader, are gone):
+  * **Its leader** is the controlled character, but for the third entry of a follow list, which
+    follows the first (the formation record's tables 0x3ffc40 / 0x3ffc70 read through FUN_0005e540
+    and FUN_0005e310, which count both lists whatever the member's mode). The lists start empty at
+    each level's start (the old brains' destructor took the squad out of them); a member joins at
+    each mode change and when the player lets it go (FUN_0005e8b0), in the order the orders reach
+    the members (the squad list's slot order: Flint, Brutus, Hawk), the two follow modes not alike:
+    Cover Me puts it in FOLLOW's list by its distance to the controlled character and leaves
+    WINGMAN's as it is; Fire At Will puts it at WINGMAN's end and takes it out of FOLLOW's, unless
+    it's in WINGMAN's already (then nothing changes); Stand Ground and Move To take it out of both.
+    So after Cover Me or Fire At Will to all three, Hawk follows Flint: #33 take06's Hawk waited for
+    Flint to be 13 m off while Tex was 27 m off, trailed Flint by 15-16 m and stopped 8.8 m from
+    him, 17 m from Tex. After Fire At Will, Cover Me, then Fire At Will to Hawk alone she's still
+    WINGMAN's third: she follows Flint and doesn't say the walk line.
+  * **The five distances** (d0-d4) are 8, 10, 7, 7 and 4 m in WINGMAN and 1.4 times them in FOLLOW
+    (11.2, 14, 9.8, 9.8, 5.6), measured to its leader in 3D.
+  * **The hold** (states 2 and 3): its pace set to a stand for 0.3 s, then held while its leader is
+    within d0 (1.5 x d0 standing on a cover point). Kneels and idles meanwhile, facing the squad's
+    heading.
+  * **The chase** (state 0): a route to its leader's own world point (FUN_000416a0 to his place;
+    [nav.md](nav.md) "The squad on routes"), walked at 2 m a point at the dash (its pace ramp climbing
+    from where it stands), planned again while he's farther than d3 from the route's end; it stops
+    within d2 of a leader who isn't running (FUN_00020ad0: his motion a stand or a walk): FOLLOW
+    then looks for a **cover point** near him (state 4: the first `<cover-point>` his point's flood
+    reaches within 12 m that lies within 6 m of the member, that no squad member stands on and that
+    no nearer member in FOLLOW could take; walked to, state 5, and held at), WINGMAN holds. At the
+    route's end it holds with him within d4, else routes again. So the squad trails a running
+    leader in a column, never ahead of him, and stops about 9-10 m back (#33 take04: 9.1, 8.5, 8.9 m;
+    Brutus took the cover point h_e1182318 there, as the demo's Brutus does).
+  * **Its speed** (the follow's speed record, #345): 1.25 x the AI's 0.8 beyond d1, the type's own,
+    0.8 inside it and on the way to a cover point; so a member chasing a dashing leader settles
+    about 14 m behind him (take04: 13.7-14.5 m).
+  * **The walk to a cover point** (state 5) starts with the turn check (FUN_00058740, which state 4
+    runs on the route it plans): a cover point whose route starts more than about 75 deg off the
+    member's facing makes it walk for 1.5 s before the pace ramp lifts it to a run (the analyst's
+    reading of #33 take04's Brutus, MT_WALK from the frame Tex stopped for 1.4-1.5 s, then the run;
+    in the demo's take04 it's Hawk who walks, see the verification below). A point another member
+    has claimed is passed over (the search's claim test, on in FUN_00020170's filter), so two never
+    head for one point.
+  * **Not done**: the follow's route-point states (6-16), which only WINGMAN's first entry enters:
+    FUN_0001adf0 gives it a point ahead of its leader along the level's progress chains, and it runs
+    there (take05: Flint 5 m ahead of Tex's run, then 30 m off at rest; Brutus, then the list's
+    first, 17 m off). The analyst's follow-up has traced them (the progress points' links, the
+    leader's path record FUN_0005acb0, brain+0x718 / +0x71c = 10 / 16 m:
+    todo/331-follow-states/wingman-leads.md), a ticket of its own; without them no member has a
+    route point, and Fire At Will's three follow as FOLLOW's do, closer. Their one line, state 9's
+    "on my way" (1ecaeb98), the first entry of WINGMAN's list says at its first follow update after
+    the order (a stand-in, [chatter.md](chatter.md) "The walk line"). Also not done: the flank
+    point's walk (state 1, brain+0x738, FUN_00056980) and FUN_00020a80's 3 m round it, a leader near
+    his brain+0x3c8 object, the cover point's facing, and the brake over the last 0.9 m (FUN_0002fba0,
+    which FUN_00048270 hands on at a walk only, and the demo's walk moves by its clip's root).
+
+  Around the follow, as before: squadmates step out of the lane you aim or fire down
+  (EVT_SHOT_BLOCKED_BY_FRIEND: sideways, the demo's), sidestep now and then when you shoot them
   (EVT_DAMAGED_BY_PC -> GOAL_DODGE) and dive away from a grenade that lands near them
-  (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip). This is the follow of the
-  squad's default command mode, FOLLOW, and of Fire At Will's WINGMAN, closer; Stand Ground and
-  Move To hold or go elsewhere (**Squad commands**, below, #318). **The way to the place is a
-  route** over the level's world points (#335, play_routes.rs, [nav.md](nav.md) "The squad on
-  routes"): to the point nearest the place on the leader's side (the points his own point floods
-  to within 12 m), then the place itself when it stands on a floor that doesn't burn with a clear
-  way to it from one of the four points nearest it; a place no one could stand on (in the lava, or
-  down a drop) gives way to the leader's own point, where the game's follow goes; planned again
-  when the leader has moved 9.8 m (7 in WINGMAN: FUN_00020b10's d3) from where he stood when it
-  was planned, and at the route's end beside a place that has moved on; at a route's end short of
-  the place (the place out of reach), or with no route, it holds until the leader has moved 3 m
-  (the demo's guess: his turning, which swings the place round him, doesn't count). Never a
-  straight chase, so round a lava pit by its walkway rather than across it. The places and the
-  set-off, settle and dash distances stay the demo's until #331. **It steers through the AI's
+  (EVT_GRENADE_NEAR -> GOAL_DIVE, the motion scripts' dive clip); standing a while, Flint, Hawk and
+  Tex kneel (stand2crouch -> rp_crouch_idle, crouch2stand to move on), Brutus stays on his feet.
+  Stand Ground and Move To hold or go elsewhere (**Squad commands**, below, #318). **The routes**
+  (#335, play_routes.rs, [nav.md](nav.md) "The squad on routes") never chase straight, so the squad
+  goes round a lava pit by its walkway rather than across it. **It steers through the AI's
   avoidance** (#344, play_avoid.rs, [nav.md](nav.md) "The steering", FUN_000255d0): three feelers
   along its heading turn it off walls, rocks and the AI's hinter bands (a metre off e13's lava
   walkway's, as #242 take01's members ran), a squadmate within 1.5 m ahead pushes it aside, else it
   heads straight for its next point, its move turning toward that at most 200 degrees a second
-  (FUN_00019af0, #344's fix round: no zigzag). At a door on its way (a pair of door points) it stands half
-  a second if the door is still shut, its feelers off for 1.5 s, then walks on through (the door
-  step, FUN_00026820, #346); it never waits for a door. Stuck 2 s (no closer to its next point than its best)
-  a member detours round it (FUN_000426b0, FUN_00042280), and the third time at one own point it's
-  put on the point it was walking to (FUN_000425b0); when the stuck handling acts within 11.2 m of
-  its leader (8 in Fire At Will), or gives the route to its place up there, it holds where it
-  stands until the leader moves on, and farther out it plans again (the demo's: the game's follow
-  holds near the leader and has no place of its own to miss; [nav.md](nav.md) "The squad on
-  routes"). Its pace
-  (the pace ramp, FUN_00058670) starts from a stand and steps a notch every 0.17 s toward the pace
-  it asks, up and down: a walk at once, a run, then the dash; a detour, a re-route, a hold, a hard
-  turn or a feeler's hit sets it down for a while.
+  (FUN_00019af0, #344's fix round: no zigzag). At a door on its way (a pair of door points) it
+  stands half a second if the door is still shut, its feelers off for 1.5 s, then walks on through
+  (the door step, FUN_00026820, #346); it never waits for a door. Stuck 2 s (no closer to its next
+  point than its best) a member detours round it (FUN_000426b0, FUN_00042280), and the third time at
+  one own point it's put on the point it was walking to (FUN_000425b0); a route the stuck handling
+  ends, the chase holds at its end within d4 or routes again. Its pace (the pace ramp, FUN_00058670)
+  starts from a stand and steps a notch every 0.17 s toward the pace it asks, up and down: a walk at
+  once, a run, then the dash; a detour, a re-route, a hold, a hard turn or a feeler's hit sets it
+  down for a while.
 * **The test map's squad** (#302, play_testsquad.rs, [testtools.md](testtools.md) "The squad"):
   it starts with the player's character alone, and its squad menu (T) puts any character type in
   any of the four slots, or a whole predefined squad in all four (#339: the squad deathmatch
@@ -47,10 +85,10 @@ Squad movement and deaths follow the game's own data and the captures:
   identity for the hand-over; what this page reads by a character's name (chatter, skills, the
   camera, Brutus not kneeling) goes by its type (`Player::data_slot`), the same in the main game.
 * **The tutorial's Confed marines** (#227, [brain.md](brain.md)): the V-squad's two follow Tex
-  with this follow, from the formation places after the squad's own, see by their sensor (80 m,
-  90 degrees either way) and fire with the AI's aim (accuracy 0.6). In take11 they trailed Tex
-  and stopped 9-10 m behind him; the game's wingman follow is a state machine of its own
-  (FUN_00020b10) the demo doesn't read. Switching to them (the d-pad) isn't done.
+  with this follow (#331: they never change mode, so they join no list and follow him; #243 is
+  their own ticket), see by their sensor (80 m, 90 degrees either way) and fire with the AI's aim
+  (accuracy 0.6). In take11 they trailed Tex and stopped 9-10 m behind him, as the follow's d2
+  stops them now. Switching to them (the d-pad) isn't done.
 * **Standing on the floor.** The floor is 1.05 m (`GROUND`) under each character's pelvis, but
   the four aren't the same height. So each is raised or lowered by how far the lowest
   skinned vertex of their idle pose is from it (`sole_lift`, up to 0.3 m either way):
@@ -210,7 +248,7 @@ Squad movement and deaths follow the game's own data and the captures:
   | `EVT_GRENADE_NEAR` (pri 28) | `GOAL_DIVE` | dive away from a grenade that lands near |
   | `EVT_SHOT_AT` (20.15) | `GOAL_DODGE` 1, `GOAL_NOOP` 7 | a shot of yours passing within 1.5 m (the distance is a guess): sidestep one time in eight |
   | `EVT_DAMAGED_BY_PC` (15) | `GOAL_DODGE` 1, `GOAL_NOOP` 2 | shot by you: sidestep one time in three |
-  | `EVT_BASE` (1) | `GOAL_WINGMAN_FOLLOW` | the formation |
+  | `EVT_BASE` (1) | `GOAL_WINGMAN_FOLLOW` | the follow (#331) |
   | `EVT_IDLE_VARY_DATA` | `IDLE_VARY_DATA_PAUSE_CROUCH` 15, `…_PAUSE_CAUTIOUS` 12 (equal weights) | holding position, the wingman's (Fire At Will) draw: the first pause kneels (as in the captures), then kneeling and cautious pauses (standing, weapon ready, looking left and right) are drawn, lasting 15 and 12 s |
 
   The idle draw is the mode's personality's EVT_IDLE_VARY_DATA entry (#318): the table's row is
@@ -228,9 +266,9 @@ Squad movement and deaths follow the game's own data and the captures:
 
   | Order (menu button) | Mode | Personality | Base goal | The demo |
   |---|---|---|---|---|
-  | (none: the start) | 1 FOLLOW | `h_169b2725` | 75 WINGMAN_FOLLOW | the follow as before (`squad_ai`'s formation); combat allowed |
+  | (none: the start) | 1 FOLLOW | `h_169b2725` | 75 WINGMAN_FOLLOW | the follow (**The follow**, above); combat allowed |
   | Cover Me (A) | 1 FOLLOW | `h_169b2725` | 75 WINGMAN_FOLLOW | the same follow, holding fire until an event allows it |
-  | Fire At Will (B) | 4 WINGMAN | `h_ea20a17d` | 75 WINGMAN_FOLLOW | the formation 8 / 11.2 as wide; fires at what it sees |
+  | Fire At Will (B) | 4 WINGMAN | `h_ea20a17d` | 75 WINGMAN_FOLLOW | the follow at WINGMAN's distances; fires at what it sees |
   | Stand Ground (Y) | 3 GUARD | `h_155e52d6` | 2 IDLE_VARY | kneels where it stands, holds, fires from there once allowed |
   | Move To (X, then the cursor) | 5 MOVE_OUT | `h_0f69b8b2` | 72 MOVE_OUT | runs a route to the point (#335), then Stand Ground with e635ecc6 |
 
@@ -256,10 +294,11 @@ Squad movement and deaths follow the game's own data and the captures:
     fresh member too after its first fight (take11: a3 to a2 about 10 s after it).
     EVT_SQUAD_ENEMY_NEAR and FRIENDLY_SHOT_AT (45, 46) grant it in the data too, but their
     posters aren't found: not posted.
-  * **Fire At Will** (WINGMAN) keeps the follow, closer: the formation's places and the
-    distances it sets off (3 m) and dashes (8 m) at, times 8 / 11.2 (FUN_00020b10's set for
-    WINGMAN against FOLLOW's 1.4 times it), the route planned again at 7 m (d3) where FOLLOW's is
-    at 9.8, and combat allowed for as long as the mode lasts.
+  * **Fire At Will** (WINGMAN) keeps the follow, closer: FUN_00020b10's WINGMAN set (8, 10, 7, 7,
+    4 m against FOLLOW's 1.4 times it), no cover points (its chase holds within d2), and combat
+    allowed for as long as the mode lasts. Its first follower would walk to a route point ahead of
+    the leader (states 6-16, not done: **The follow**); here it follows as the others do and says
+    the walk line.
   * **The squad's pace** (#345; play.md, "Ground speed"): an AI member moves at 0.8 x its type's
     speeds (FUN_0012cb40: 6.2-6.3 m/s running, 6.8-7.0 dashing), Move To and the follow within d1
     of the leader (14 m, 10 in WINGMAN) alike; the follow's run or dash beyond d1 is 1.25 x that,
@@ -360,12 +399,8 @@ Squad movement and deaths follow the game's own data and the captures:
     portrait's tab shows its member's mode, the controlled character's too: Cover Me's (FOLLOW)
     green arrows, Stand Ground's (GUARD) yellow bars, Fire At Will's (WINGMAN) ring of red and
     orange dots, Move To's (MOVE_OUT) blue arrow, each new one with a growing flash.
-  * **Not done.** The game's follow itself (#331 for the squad, #243 for the marines:
-    FUN_00020b10's state machine): in FOLLOW the
-    takes' squad trails Tex's dash at 12-16 m and stops about 9 m behind him (take04), where the
-    demo's formation keeps 1-5 m off him running and stops 4-11 m off, ahead of him (the five
-    distances' roles are in the code map's FUN_00020b10 row); WINGMAN's members going on ahead
-    of Tex and drifting 16-30 m off at rest (take05). The cover points that put a member of
+  * **Not done.** The follow's route-point states (**The follow**): WINGMAN's members going on
+    ahead of Tex and drifting 16-30 m off at rest (take05). The cover points that put a member of
     mode 4 or 5 in GUARD (FUN_00043860), the dodge odds by mode, Medkit's heal (#329), the
     prisms that open FUN_00041870's route round a friend in the way and its wait (#335: not
     read), the GUARD fight's own goal (ATTACK_GUARD_AND_COVER: the demo's fire from the spot), an event's goal
@@ -378,7 +413,12 @@ Squad movement and deaths follow the game's own data and the captures:
   changes, grants, their end and the arrivals; `=2` also ten rows a second of each member's mode,
   goal, allow flags (a grant's time left), place, distance to the controlled character and what
   it's doing (fire, dash / run / walk, aim: the gun up holding fire, kneel, stand), as the takes'
-  watch logs. `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
+  watch logs. `BF_FOLLOW_LOG=1` (#331) logs each follow state change and why (with the leader's
+  distance), each cover point claimed, the formation's lists when they change and WINGMAN's first
+  asking the walk line; `BF_TEST_FORMATION=<member>,...` puts those members (in FOLLOW) in
+  FOLLOW's list in that order at each level's start, where the list starts empty, to stage the
+  column an order leaves (take06's: `flint,brutus,hawk`); BF_FOLLOW_LOG also says what a level's
+  start dropped and each change of a member's leader, and logs the turn check. `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
   snapshot had them. The test map's NPCs (`BF_TEST_NPC`) have no brain, so they never post
   EVT_SQUAD_IMA_TARGET: only the level's characters do (a staged NPC enemy is the takes' frozen
   one in that, whether it fights or not). **`BF_TEST_ORDER` stays silent**: it says no order line
@@ -450,9 +490,82 @@ Squad movement and deaths follow the game's own data and the captures:
     inside the farcast's glow (particle noise). The follow's idle draw (FOLLOW's plain pause)
     comes after the first 15 s crouch.
   * The follow distances by mode (take05's run with Tex dashing, `BF_TEST_SPRINT=9`): running
-    the demo's FOLLOW keeps 2-5 m off Tex and WINGMAN 1-4 m (means by member), at rest 5-6 m and
+    the demo's FOLLOW kept 2-5 m off Tex and WINGMAN 1-4 m (means by member), at rest 5-6 m and
     4-5 m; the takes' are 12-16 m (FOLLOW) and 5-10 m (WINGMAN) running, about 9 m at rest in
-    FOLLOW: the follow's own (#331), see **Not done**.
+    FOLLOW. Since #331, the game's follow (below).
+  * **The follow** (#331), on the takes' staging (`BF_MAP=e34 BF_SCRIPT=off BF_TEST_NO_HOSTILES=1
+    "BF_TEST_WARP=0,flint,-91.08,-83.87;0,brutus,-87.21,-84.16;0,hawk,-89.53,-87.82"`, Tex dashing
+    to take04's stop: `BF_TEST_GOTO=-83.39,-82.79,-49.25,-71.14,27 BF_TEST_GO_AT=2
+    BF_TEST_SPRINT=2`, `BF_ORDER_LOG=2 BF_FOLLOW_LOG=1`, 270 frames; the demo's 15 Hz rows against
+    the takes' 10 Hz watch rows, the trail over the rows with Tex moving; main is `b3f6a9c`):
+    * take04 (FOLLOW, no order): the three set off as Tex gets 11.2 m off each (Flint and Hawk at
+      2.47 s, Brutus at 2.87 s; the take's 2.44-2.53 and 2.81 s); they trail his dash at a mean of
+      13.0 (Brutus), 19.7 (Flint) and 18.6 m (Hawk), the take's 11.9, 16.2 and 13.3, Brutus at
+      14.1-14.9 m once at speed (the take's 13.7-14.4); never ahead of him (main: 10-14 of the 33
+      rows ahead, a mean of 4.9, 7.4 and 7.8 m); at rest 8.7, 9.2 and 10.6 m off him (the take's 8.5,
+      9.1 and 8.9; main 6.3, 3.9 and 4.4). Brutus goes to the cover point h_e1182318, where the
+      take's Brutus stood (0.3 m off it); Hawk claims h_f7d1227d, 118 deg off her dash, so the turn
+      check walks her 1.47 s (the walk rows at 1.3-1.8 m/s, her distance to Tex closing 10.1 -> 8.7 m
+      and opening to 9.9 m) before the run and the point; Flint, who claimed the same point before
+      the claim test, holds where he stops (the take's Flint and Hawk ended 1.4 and 1.65 m off
+      h_f7d1227d). The take's Brutus walked to his point (MT_WALK from gt 7.21, the frame Tex
+      stopped, for 1.4 s, then the run at 8.71 and there at 8.89) where the demo's dashes: the
+      demo's route to it starts at the point itself (his own point dropped, FUN_00041320), within
+      75 deg of his dash, so the turn check doesn't fire; whether the game's route began at his own
+      point, behind him, isn't settled (a live read of the pace record would). Flint's and Hawk's
+      longer trail is their rise from a kneel, 1.1 s from the hold's end to a run (the stance's
+      crouch2stand played whole) where the game's took 0.3 s (take04's motion 7); Brutus, who
+      stands, matches.
+    * take06 (Fire At Will at 4.3 s, Cover Me at 10 s, the dash at 14.5 s): FOLLOW's list Flint,
+      Brutus, Hawk, so Hawk follows Flint: running 12.9 (Brutus), 15.5 (Flint) and 24.1 m (Hawk),
+      the take's 12.4, 10.7 and 21; at rest 6.9, 9.2 and 18.3 m, the take's 7.2, 9.2 and 17.4.
+    * take05 (Fire At Will at 4.3 s, the dash at 8.5 s): WINGMAN's list Flint, Brutus, Hawk;
+      running 10.1 (Brutus), 13.1 (Flint) and 21.6 m (Hawk, following Flint), at rest 6.3, 6.6 and
+      12.9 m. The take's Flint 5 m ahead of Tex running and 30 m off at rest, and its Brutus 17 m off
+      at rest, are the route-point walk (not done); its Brutus ran 6.7 m and its Hawk 9.5 m behind
+      Tex (Hawk 4.6 m at rest). Main's formation: 4.1-6.0 m running, 2.8-7.4 m at rest, 6-13 rows
+      ahead of Tex.
+    * The review's fix round (the build against the first round's, the same recipes):
+      * a level after a level (`BF_MAP=sdm_e34 BF_TEST_NO_HOSTILES=1
+        "BF_TEST_ORDER=all,fire@1;all,cover@2.5" BF_TEST_BACK=150 BF_MENU_PRESS=a@1.0
+        BF_FOLLOW_LOG=1`: back to SELECT MISSION after 150 frames and sdm_e34 again): the second
+        start drops the three entries of each list, and no member follows another there (no leader
+        change in its 8 s); by the first round's code the lists stayed, so Hawk would have followed
+        Flint from its first frame (the review's reading);
+      * the order sequence on e34 (take04's staging with Tex standing,
+        `"BF_TEST_ORDER=all,fire@1;all,cover@4;hawk,fire@7" BF_FOLLOW_LOG=1 BF_CHATTER_LOG=1`):
+        WINGMAN's list Flint, Brutus, Hawk at 1 s, Hawk following Flint and Flint saying 1ecaeb98;
+        FOLLOW's the same at 4.07 s, WINGMAN's kept; Hawk's Fire At Will at 7.07 s changes neither
+        list, she still follows Flint and says nothing (by the first round's code she'd have been
+        alone in WINGMAN's list: its first, following Tex, saying the line). A unit test runs the
+        same. The bookkeeping now runs after the frame's orders and hand-over by the schedule
+        (it was ambiguous with them, so a frame late or not by the schedule's luck: take05's and
+        take06's Hawk, following Flint from the order's frame, holds and kneels 0.13 s sooner than
+        the first round's, which chased Tex for that frame);
+      * take04 as above, take05 and take06 unchanged (take06 at rest 6.9, 9.2 and 18.3 m); the e34
+        run and sprint, #242 take01, e13rev, take08's Move To, m07_a, e34's Stand Ground fight, the
+        deaths, the hand-over, the test map's floor and the squad's rows of the lava yard unchanged
+        to the row;
+      * the turn check elsewhere: the lava yard's Cogburn (98 deg, at his point 0.7 s later than
+        before), the Move To hand-over's Tex (97 deg) and the doors' Tex (173 deg). There Tex's
+        walk, slower, reaches the corner before the cover point later, and after it a step straight
+        away from the point passes the walk's pass test (FUN_00025870 has no lower bound): his
+        route ends 3.0 m from Brutus, 5 m short of the point (the first round's: on it, 7.6 m off);
+        the same test ended the first round's Brutus 4 m short on the hand-over;
+      * the claim test: e34's Fire At Will then Cover Me with its enemies sent Brutus and Flint to
+        one point, h_e4690f7a (the first round's), Brutus alone now (on it, where Flint's crowding
+        left him 0.7 m off), Flint holding 9 m off Tex; the fight the same (25 rows firing, no one
+        dead). The Move To hand-over's Flint and Tex had both claimed h_09b3e901 (Tex never got
+        there): Tex takes h_06073d1c now.
+    * The walk line through the menu (`BF_TEST_COMMAND=30:hawk:0.4;30.9:brutus;31.5:flint;32.5:fire`,
+      Tex standing, `BF_CHATTER_LOG=1`): Flint, WINGMAN's first, asks 1ecaeb98 at the first frame
+      after the menu's fade, said alongside Tex's order line (take05: 0.58 s after the order's gate
+      call); main asked nothing in the 3 s after (no formation walk set off).
+    * Frames: from above (`BF_CAMERA_YAW=-1.5708 BF_CAMERA_PITCH=-1.0 BF_CAMERA_DISTANCE=22`) main's
+      three run beside and ahead of Tex and gather 2-4 m from him; this follow's trail out of view
+      behind him and stop 9-10 m back. The tutorial's lava yard (t335test's recipe) the same: main's
+      marines stand in front of Tex at the yard's end, these behind him, out of the follow camera's
+      view.
 * **The Squad Command menu** (#319, the second slice of #33: `play_squad_menu.rs`; the radar's
   part in `play_hud.rs`, play.md "Radar"; todo/33-squad-commands leads §2 and §4, takes take01-03,
   take08, take09; every function in [code-map.md](code-map.md), "HUD"). How the player gives the
@@ -532,7 +645,7 @@ Squad movement and deaths follow the game's own data and the captures:
     (116501dc Flint, f0c93785 Brutus, f5359692 Hawk, fb962749 Tex, 181b6433 a marine), the phrases
     (Stand Ground e104fe49, Fire At Will f5041bd5, Cover Me 1cdff35c, Move To f8046684), the
     answer eaf3546f and the parts' starts to within 0.05 s of the sum of the sounds' lengths +
-    0.2 s. The first time a member set off to its place after a Fire At Will, it says 1ecaeb98 ("on my way", 75%), once per order: the game's follow state 9, here the formation's set-off, a stand-in until #331 (chatter.md, "The walk line"). It is Fire At Will's alone (#343): in FOLLOW the game never reaches the state, so a mission start (e34's, the test map's) says nothing.
+    0.2 s. After a Fire At Will the first member of WINGMAN's list (Flint, when the order goes to all three) says 1ecaeb98 ("on my way", 75%) at its first follow update, once per order: the game's follow state 9, a stand-in since #331 for its walk to its route point (chatter.md, "The walk line"). It is Fire At Will's alone (#343): in FOLLOW the game never reaches the state, so a mission start (e34's, the test map's) says nothing.
   * **The Move To cursor** (HUD+0x44, FUN_000bd860; the game runs meanwhile). Each frame
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
     level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the

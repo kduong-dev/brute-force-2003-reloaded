@@ -202,10 +202,14 @@ it's dead, unseen 15 s or stealthed).
 The V-squad's two marines (Stout and Cogburn: trigger_spawn64 and 76, `h_0fa4f510` false, so the
 member check keeps them and sets their flags, [triggers.md](triggers.md)) farcast in during
 tutorial_farcast_vsquad_short (7.57 / 7.87 s), held by its 119s until it ends; then they follow
-Tex with the squad AI's wingman follow (`squad_ai`: places 6-11 m ahead of the leader, set off 3 m
-from it, dash when far behind, kneel or look about while he stands; since #335 the way to the place
-a route over the world points, [nav.md](nav.md) "The squad on routes"), from the formation places
-after the squad's own (Tex alone in the tutorial: the first two). They're on the player's team (0,
+Tex with the squad AI's wingman follow (`squad_ai`; since #331 the game's GOAL_WINGMAN_FOLLOW
+states, play_follow.rs, [squad.md](squad.md) "The follow": held while Tex is within 11.2 m, a
+route to his own point at the dash once he's farther, stopped 9.8 m from him once he stops, a cover
+point near him taken when there's one, kneeling or looking about while they hold; their mode never
+changes, so they join no formation list and follow him; #243 is their own ticket). The tutorial's
+yard (t335test's recipe): they reach 9.5-9.7 m from Tex at 85.7 and 88.9 s (main's formation
+places within 8 m of the yard's end at 87.1 and 90.1 s), Cogburn walking to a cover point by him,
+both behind him where main's stood in front. They're on the player's team (0,
 their placements' alignment-type), see by the sensor above (90 degrees either way of their
 facing), fire at what they see with their aim (above), and the Red Hand fire at them. Not done:
 switching to them (the d-pad), their portraits, the squad commands.

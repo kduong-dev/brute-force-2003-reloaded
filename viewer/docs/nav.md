@@ -33,7 +33,7 @@ world's one list at world+0x110 that the search, the own point's walks and FUN_0
 
 | Bit | | Set / cleared by | Read by |
 |---|---|---|---|
-| 0 | claimed | a waypoint trigger's h_06d92de9 (every one in the data is -1); the follow's state 4 on the point it picks near the leader (FUN_000225d0; the demo's follow keeps its formation, #331) | GOAL_IDLE's start, the point filters |
+| 0 | claimed | a waypoint trigger's h_06d92de9 (every one in the data is -1); the follow's state 4 on the cover point it picks near the leader (FUN_000225d0, #331: play_follow.rs `claim`; its search passes over a claimed point, FUN_00020170 turning its filter's claim test on, 0x201df: `cover_ok`) | GOAL_IDLE's start, the point filters |
 | 1 | a route's destination | a route's start (FUN_00025730), cleared at its end and on a reset | (#33 take08 read 6 on the point Hawk went to) |
 | 2 | **valid** | every point at the start (FUN_00059b60); a waypoint trigger's `set-valid` | the search, the own point's walks, FUN_000ab260, the cursor |
 | 3 | **avoid** | FUN_00041870 on the own points of the friends in a member's way, for its flood alone (cleared at its end, but on a point that had it); FUN_0004e8f0 clears it on a reset route's points | the search, the flood (FUN_000594a0) |
@@ -166,8 +166,8 @@ The steering is the caller's: in the game the AI steers for the target through i
 
 ## The squad on routes (#335)
 
-`src/bin/play_routes.rs` (`Router`, one per character, `Player::router`), from play.rs
-`squad_ai` (the follow, FOLLOW and WINGMAN, and the marines' brains), play_orders.rs `move_out`
+`src/bin/play_routes.rs` (`Router`, one per character, `Player::router`), from play_follow.rs
+(the follow, FOLLOW and WINGMAN, through play.rs `squad_ai`, and the marines' brains), play_orders.rs `move_out`
 (Move To) and play.rs `update_player` (the own points and the AI update's route steps). Every
 function is in [code-map.md](code-map.md), "AI".
 
@@ -179,72 +179,47 @@ function is in [code-map.md](code-map.md), "AI".
   follow (and to the enemies' routes, #336). (todo/242's leads called the goals' route brain+0x8f0;
   #242's xemu notes read no route there.)
 * **The own points** (FUN_0014f860) of the controlled character (its brain idles under the
-  player, but a route to a character ends at its point: the follow's flood starts there) and of
+  player, but a route to a character ends at its point: the follow's chase goes there and its
+  cover search floods from there) and of
   the AI squad and its followers, every frame before the AI (`keep_point`).
-* **The follow.** The demo keeps its formation places, set-off (3 m), settle (1 m) and dash (8 m)
-  distances until #331 brings the game's follow states (FUN_00020b10), but the way to the place
-  is a route, never a straight chase:
-  * its points: the points the leader's own point floods to within 12 m (FUN_000594a0 with
-    FUN_000225d0's radius, the follow's state 4 picking its point near the leader), the nearest
-    the place first, so points on the leader's side of a pit (the demo's order; state 4 takes the
-    first its filter takes);
-  * its destination: the place itself beside the first of the four nearest from which the 0.8 m
-    corridor to it is clear (`Dest::Beside`: FUN_0005a440's FUN_00059d40 temporary, linked both
-    ways to the point and its neighbours, the route ending at the position; the corridor from the
-    point to the place as high over its floor as the point stands over its own), when the place
-    stands on a floor no more than 2 m under or over the leader's feet (looked for from 2 m over
-    them, so a place up a slope counts) and in no liquid that burns. A place on such a floor that
-    none of the four sees: the nearest point (the route ends there, as near as the graph comes;
-    four is a guess: on e34 Object 464 hides the places beyond h_f6632343 from it). A place no
-    one could stand on (no such floor, or in a liquid that burns): the leader's own point, the
-    game's follow's own destination (FUN_00022130 routes to the leader). `BF_ROUTE_LOG=2` says why
-    a place isn't walked to;
-  * keyed on the leader, not the place. The place turns with the leader's heading 7-12 m out in
-    front (FORMATION), so a leader turning where he stands swings it round him; the game's follow
-    routes to his own point and measures by him. (#335's review: keyed on the place, with Tex
-    running round his goal in the lava on e13, the follow planned 11-13 times in 2 s, its
-    destination flipping between points. Keyed on him, but with the place's nearest point for a
-    place in the lava, Hawk still went to and fro between points 21 m apart on two shores as his
-    heading swung her place from one to the other; his own point stays put);
-  * planned again when the leader is more than d3 (9.8 m, 7 in WINGMAN: FUN_00020b10's +0x14)
-    from where he stood when the route was planned (FUN_00022130 plans again while the leader is
-    farther than d3 from the route's end, which is his point), and at a route's end beside the
-    place when the place has moved on (state 0 with its route empty plans; the game's would hold
-    there with the leader within d4, the demo's formation keeps its place);
-  * held at a route's end at a point short of the place, with no route found (state 2), or with
-    its destination the point it stands at (no search for it), until the leader has moved the
-    formation's set-off distance (3 m, 2.1 in WINGMAN) from where he stood when the hold began:
-    the demo's, a guess. The game's hold (state 3, FUN_00022420) ends when the leader is beyond d0
-    (11.2 m) of the member, which a member held on a shore 11-14 m from a leader in the lava
-    already is; and at a route's end the game holds only with the leader within d4 (5.6 m), else
-    plans again to his point. A settled member sets off when its place is 3 m off; a held one
-    when the leader himself has gone that far, his turning left out. (With d3 instead the e34
-    follow held 2 s at each point short of a place, and Brutus ended 10 m behind Tex, short of his
-    place.) Each hold begins as the game's state 2 does (FUN_000223c0): the pace level at 1 for
-    0.3 s;
-  * walked at 2 m a point (FUN_00026d80 at 2.0, the follow's), its last entry, the place, within
-    the formation's 1 m (0.3 m out of the leader's line of fire);
-  * the pace: the dash when the way left (along the route) or the place itself is over 8 m off,
-    a walk when both are under 2.5 m, else a run: the demo's (the game's follow walks its route at
-    the dash, FUN_0004d970 mode 4 from state 0 without the fifth argument, 0x22377, so the pace
-    near the route's points, FUN_0004d840, never slows it; near the leader its own states do,
-    #331); what it asks for, held to its pace level (below). Until #344 it also walked
-    while the corner rule held it (as `BF_TEST_ROUTE`'s walk: the run turns wider than the
-    corner's 0.6 m); the game has no such rule, and its hard turn's walk (FUN_0001ad50, "The
-    steering") is what keeps a runner from circling the corner point;
-  * steered for the route's target through the AI's avoidance (#344, "The steering");
-  * held where it stands, as at a route's end short of its place, when the stuck handling acts on
-    its route, or gives it up (the detour done on its last entries, or the third stuck at the place
-    itself), within d0 of the leader (11.2 m, 8 in WINGMAN: FUN_00020b10's first distance, within
-    which the game's follow holds in its state 3): the demo's (#344's fix round). The game's follow
-    routes to the leader's point and holds near him, and never has a place of its own it can't
-    reach; the demo's did, at rest beside a standing leader, and went round and round (m07_a:
-    Brutus and Flint walked 125 and 47 m after Tex stopped; sdm_e34's building by a door). Beyond
-    d0 a route given up is planned again at once, as the game's follow plans again out there
-    (state 0 with its route empty): held out there, two members that ran past their places stood
-    13 and 16 m off a standing Tex for good (e13's Move To recipe below);
-  Without a level's points (the test map's floor) the follow is the straight walk it was, steered
-  the same way.
+* **The follow** (#331, play_follow.rs; the states and the formation in [squad.md](squad.md) "The
+  follow"): GOAL_WINGMAN_FOLLOW's states (FUN_00020b10) walk two kinds of route on brain+0x930:
+  * **the chase** (state 0, FUN_00022130): with no route, a route to the leader's place
+    (FUN_000416a0 with FUN_0011dfa0's places: to his own point, or to his position when the
+    member's own point is his: `Dest::Character`), started (FUN_00025730); with one, planned again
+    while the leader is farther than d3 (9.8 m, 7 in WINGMAN) from its last entry (its point's
+    position, else its own: 0x22251-0x222d7); walked at 2 m a point (FUN_00026d80 at 2.0) at the
+    dash (FUN_0004d970 mode 4, no fifth argument: no pace near its points) as far as the pace
+    level allows; within d2 (9.8, 7) of a leader who isn't running (FUN_00020ad0 under 3) it's
+    reset (FUN_0004e8f0) and the member stops, FOLLOW for state 4, WINGMAN to hold; at its end, the
+    reset and a hold with the leader within d4 (5.6, 4), else a new route at the next update. No
+    route found: a hold;
+  * **the walk to a cover point** (state 4, FUN_000225d0, FOLLOW only): the flood from the leader's
+    own point (FUN_000594a0 within 12 m of it) for the first `<cover-point>` (kind 10, its +0x64 bit
+    5, valid) within 6 m of the member (0x20410: the filter's 12 m x 0.5), not claimed (+0x28 bit 0:
+    the filter's claim test, which FUN_00020170 turns on), that no squad member has for its own
+    point (FUN_00045310, FUN_00020260) and no nearer member in FOLLOW could take (FUN_00020260:
+    those walking to one, state 5, or holding at one, left out; of two as near, the first in the
+    squad list), claimed (+0x28 bit 0, brain+0x6c0) and walked to (state 5, FUN_00022790: 1 m an
+    entry, 0.1 m the point, `step`'s last radius) at the dash, then held. The route planned, the
+    turn check (FUN_00058740): its first entry more than about 75 deg off the member's facing, the
+    pace level at a walk for 1.5 s (play_follow.rs `turn_check`), so a member turns at a walk to a
+    point behind it;
+  * **the holds** (states 2 and 3): the pace level at 1 for 0.3 s (FUN_000223c0), then until the
+    leader is beyond d0 (11.2 m, 8; x1.5 with the member's own point a cover point, FUN_00022420);
+    the route reset as a hold begins (the demo's, so no other goal's route is walked on).
+
+  The stuck handling runs on these routes as on any (below): a route it ends, the chase holds at
+  with the leader within d4 or plans again, as the game's; a bare position (the one-entry route to
+  a leader sharing the member's own point), which FUN_000425b0 can't put it at, the demo ends.
+  Without a level's points (the test map's floor) the chase walks straight at the leader with the
+  same tests. Gone with #331: the demo's formation place and its points (the leader's flood
+  sorted by the place, the four tried for a clear corridor, the leader's point for a place no one
+  could stand on), the 3 m hold, the pace by the way left, the holds when the stuck handling acted
+  within d0 (`Router::gave_up`, `stuck_fired`) and the planned-from position: the follow routes to
+  the leader's own point and holds near him, as the game's, so the back-steps of #344's e34 run
+  (Flint and Hawk sent to their places' points behind them) and the gathering beside a leader
+  whose places couldn't be stood on are gone.
 * **Move To** (GOAL_MOVE_OUT: its start 0x45d00, its update FUN_00045fa0): for each order a
   route to the point (brain+0x8ac: the cursor's point, which the order's position is; for a
   position that isn't one, `BF_TEST_ORDER`'s, the valid point nearest it that the cursor would
@@ -298,11 +273,11 @@ function is in [code-map.md](code-map.md), "AI".
      (FUN_000425b0 with it in EAX, 0x42839-0x42857: the point's position + 0.25 m, then
      FUN_0004c5e0; medium, read as a set-position; here its feet on the floor under it. Round 1
      put it on its own point, as todo/242's leads had it: corrected from todo/344's leads §7). For
-     a bare position FUN_000425b0 does nothing, and the game's follow never routes to one; the
-     demo's follow does (its place), so there the route is given up, and the follow holds where it
-     is until its leader moves on, within d0 of him, or plans again beyond (#344, `Router::gave_up`:
-     the demo's; #335's re-review found it pinned there with nothing acting until the leader moved
-     d3); else the detour (FUN_00042280): the
+     a bare position (the follow's one-entry route to a leader whose own point is the member's,
+     FUN_00022d70) FUN_000425b0 does nothing and the game's member pushes on until the leader moves
+     d3 off; the demo ends the route there (route+0x20), and the follow's chase holds at its end
+     with the leader within d4, else plans again (#331; until then the demo's formation place,
+     `Router::gave_up`, now gone); else the detour (FUN_00042280): the
      current entry the last, the route done; else, the current point valid, it and the own
      point lose bit 2 (valid) for one search, the next entry the last, done, else the next point
      loses it too and a new route to the destination is planned (FUN_00041660) and started with
@@ -325,12 +300,11 @@ function is in [code-map.md](code-map.md), "AI".
   lying on no harmful liquid. A member whose next step would go into one holds there;
   `BF_LIQUID_LOG` says so ("on its route (the routes' safety net)"). In the runs below it never
   acted.
-* **The demo's choices**, labelled in the code: the formation place and its points, the four
-  tried for a clear corridor, and the leader's point for a place no one could stand on (above);
-  the follow keyed on the leader and its 3 m hold (above); the pace by the longer of the way left
-  and the place's distance; the follow's hold when the stuck handling acts on its route, or gives
-  it up, within d0 of the leader (above); the blocker's slow friend, for the controlled character, read
-  from its stick (it walks or stands: under 3); no prisms; and the avoidance's ("The steering").
+* **The demo's choices**, labelled in the code: the follow's (play_follow.rs: the route reset as a
+  hold begins, a stuck bare position's route ended, the straight chase on the test map's floor;
+  until #331 its formation place, its points and holds, above); the blocker's slow friend, for
+  the controlled character, read from its stick (it walks or stands: under 3); no prisms; and the
+  avoidance's ("The steering").
   Gone with #344: the walk at a corner hold, and in the stuck test, while the member asked to
   move, 5 cm closer to count as progress (#335's stand-in: without the feelers its members pressed
   against e13's hinter band, where the collision jitters a held body by a centimetre, a new best
@@ -439,7 +413,7 @@ level's points or not.
 
 **The speed record's timer** (brain+0x8a4, `Avoid::boost_off`): counted down each AI frame
 (FUN_00048270, after the goal; the demo's a frame sooner); while it runs the follow's boost isn't
-handed to char+0x720 (play_speed.rs `follow_boost`). The feelers read char+0x720 as the last AI
+handed to char+0x720 (play_speed.rs `record_boost`). The feelers read char+0x720 as the last AI
 frame left it (`Avoid::factor`).
 
 **The demo's choices**, labelled in the code: the heading from the last step (the game's move
@@ -519,17 +493,16 @@ walkway; the straight line between its ends crosses a pit.
   route's points, FUN_0004d840, is a brain's, `pace_near`). The camera faces the way it goes, or keeps
   `BF_CAMERA_YAW`; with `BF_CAMERA_PITCH` and `BF_CAMERA_DISTANCE` it looks from above. The
   level's prisms aren't read, so no radius is held to 1 m indoors.
-* `BF_ROUTE_LOG=1` also logs the AI squad's routes (#335): each plan and why (the follow, its
-  leader moved, out of its hold, at the route's end short of its place, Move To, the detour, the
-  re-route), from where, the own point, the destination (a point, or the place beside one), the
-  entries, the dropped first entry and the search's cost; each hold of the follow and why (the
-  route's end short of its place, no route, its place's point the one it stands at) and its end;
-  each point reached, corner held, point skipped, catch-up, stuck, detour, put-at-the-point and
-  blocker step; `=2` also each one's own point's changes, the pace level's climbs, the pace near a
-  route's points setting the level down (near its end or at a corner, FUN_0004d840: Move To's),
-  why a place isn't walked to (no floor or too low, in a liquid that burns, the corridor from its
-  nearest points blocked) and, once a second, its walk's state (the entry, the target, the
-  radius, the distance, the corner, the stuck time and best, the pace level and its timer).
+* `BF_ROUTE_LOG=1` also logs the AI squad's routes (#335): each plan and why (the follow's chase
+  to its leader's point, its leader over d3 from the route's end, the walk to a cover point, Move
+  To, the detour, the re-route), from where, the own point, the destination (a point, or a
+  character at his point), the entries, the dropped first entry and the search's cost; each point
+  reached, corner held, point skipped, catch-up, stuck, detour, put-at-the-point and blocker step;
+  `=2` also each one's own point's changes, the pace level's climbs, the pace near a route's points
+  setting the level down (near its end or at a corner, FUN_0004d840: Move To's) and, once a
+  second, its walk's state (the entry, the target, the radius, the distance, the corner, the stuck
+  time and best, the pace level and its timer). The follow's states, holds and cover points are
+  `BF_FOLLOW_LOG=1`'s (#331, [squad.md](squad.md)).
 * `BF_TEST_WARP=<s>,<who>,<x>,<z>[,<heading>][;...]` (bf_play): at time s `who` (`me`, the
   controlled character, or a member by name or slot, as `BF_TEST_ORDER`) is put on the floor at
   (x, z), facing the heading (degrees, 0 = -z) or as it faced: the takes' trainer `tp`.
@@ -818,6 +791,51 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
     "BF_TEST_ORDER=all,fire@1;all,cover@6"`, 450 frames): two stucks (Brutus and Hawk, 8.4 s),
     each held at once where it stood near Tex (main none; the first build six and a place given
     up).
+* **The game's follow (#331)**, the recipes above on its build against main's (`b3f6a9c`), `BF_MUTE=1
+  BF_BACKGROUND=1`, the lag the mean over the 15 Hz rows with the leader moving (the takes' own
+  numbers are in [squad.md](squad.md)):
+  * the e34 run (`BF_TEST_GOTO=-83.39,-82.79,-30,-80,27 BF_TEST_GO_AT=4`, 300 frames): a lag of
+    14.7 (Brutus), 13.5 (Flint) and 13.3 m (Hawk), at most 16.3, 16.1 and 16.0, never ahead of Tex,
+    and at rest 9.3, 9.0 and 9.2 m behind him; main 5.9, 12.9 and 11.3, at most 13.7, 21.6 and 16.5
+    (Flint's and Hawk's back-steps to their places' points behind them), 17-21 rows of 87 ahead of
+    him, at rest 6.4, 7.8 and 10.8. 20 plans in all (main 28). The lag is the game's: the chase
+    holds a member about 14 m behind a leader at its own top speed (take04's 13.7-14.4 m); main's
+    was less because its places ran beside and ahead of him;
+  * the sprint recipe (`BF_TEST_GOTO=-83.39,-82.79,-43,-80,27 BF_TEST_GO_AT=4 BF_TEST_SPRINT=4`):
+    15.3, 16.7 and 13.7 m, at rest 8.2, 9.2 and 9.1 (main 3.7, 5.0 and 7.0, 15-21 rows ahead);
+  * #242 take01's staging on e13: arrivals within 10.5 m of Tex at 18.8 (Flint), 17.1 (Hawk) and
+    21.9 s (Brutus), main's to the frame (the game's 16.6, 18.6 and 23.1: +13%, -8%, -5%), the paths
+    116, 113 and 126 m (main 124, 121, 137; the game's 109, 112, 145); each stops 9.4-9.7 m off him
+    (the take's state 3 at 9.8-10.0 m); no stuck, no lava, no warp;
+  * e13rev (Tex running the route to the south rim, `BF_TEST_ROUTE=44.3,73.6,2` from the north rim,
+    700 frames): a lag of 16.2, 15.2 and 14.6 m, at most 33.9, 23.8 and 18.3 (main 23.9, 21.7 and
+    20.6, at most 46.6-49.9; #344's tester's main before #344: 18.5, 11.5 and 14.1); one corner
+    hold each at h_1df21e91 (#344's Brutus held there four times, 5 s), Brutus held twice at
+    h_029e248d; at rest 9.3, 9.4 and 8.5 m; no stuck, no lava;
+  * take08's Move To: at the point 4.13 s after the order, 1.9 m short (main 4.13 s, 2.0 m);
+  * m07_a (Tex standing from about 20 s): from 30 to 66 s the three walk 0.6, 0.2 and 1.0 m (main
+    0.0, 0.8, 0.0), at rest 9.0, 9.4 and 9.2 m off Tex where main's Flint and Hawk stood 1.4 and 2.5 m
+    off him (its places' fallback to his point); no stuck;
+  * the leader in the lava (e13, `BF_TEST_GOTO=143.9,68.7,120,100 BF_TEST_HEALTH=5000`): from 10 to
+    30 s the three walk 0.2, 4.0 and 0.2 m on the shore, 11-15 m off him, none into the lava (main
+    0.9, 0.6, 0.1). Without `play_follow.rs` `in_burning` (the demo's: no route to a leader's position
+    in a liquid that burns) they walked 105-134 m in those 20 s, 500 plans: the chase plans every
+    update with him farther than d3 from his own point, and the route of a member on his own point
+    is his position, in the lava, which the shore guard held them out of as they slid along it;
+    sdm_e13's Brutus in the lava: the three on the shore 9.3-10.6 m off him (main 9.4-11.6);
+  * the tutorial's lava yard (t335test's recipe): the marines stuck at the jump's edge and put on
+    h_03090779 below as main's (Cogburn 74.3 s, Stout 77.0 s), within d2 of Tex at the yard's end at
+    85.7 and 88.9 s (main's within 8 m of the end at 87.1 and 90.1 s), Cogburn to a cover point;
+  * sdm_e34's door pair at a run: from 15 to 20 s Brutus, Flint and Hawk walk 0.0 m (main 0.2, 0.0,
+    0.6); e34's Fire At Will then Cover Me with its enemies: 3 stucks (main 6), the squad fights
+    (16 rows firing, main 76; main's Hawk died at 12.5 s, here no one: the members hold 9-15 m off
+    Tex, not 4-9);
+  * the test map's floor (no world points, `--test BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=0,0,0,14
+    BF_TEST_SPRINT=2`): the straight chase, 12.3-13.4 m behind Tex's dash, at rest 9.2-9.3 m (main
+    1.3-3.4 m running beside him, at rest 6.3-10.7). A goal Tex can't reach (`0,0,0,60`: he's
+    held at z 17.3) keeps his stick held, so he's running to the follow and the three close
+    to 1-2 m of him (FUN_00020ad0 reads the motion, not the speed: take04's Tex too, pushing at the
+    rocks).
 * The door step (#346; sdm_e34's pair h_f519ca12 (-49.2, 11.8) / h_117d5fb1 (-53.1, 10.0), door 0
   h_06537687 between them, opened by the anim-trigger h_134c9934 on a detector; Hawk's Move To to
   h_f4e3da16 (-56.0, 8.2) inside: `BF_MAP=sdm_e34 BF_CHARACTER=0 BF_TEST_NO_HOSTILES=1
@@ -870,9 +888,10 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
 
 * The enemies on routes (#336: RETURN_HOME, PATROL's first leg FUN_0004c2e0, PURSUE, the attack
   approach with its radius budget FUN_0002e800), the script 105 walks (#337, an open code
-  question). The follow's own states (FUN_00020b10: its five distances, state 4's point near the
-  leader with the claimed bit, the speed factor): #331. The per-type capsule (#173: the squad's lf
-  0.35 m against the demo's 0.4). The prisms (FUN_0004cb60's records) and brain+0x3c8.
+  question). The follow's route-point states (6-16: WINGMAN's first entry walking a route to a point
+  ahead of its leader on his path, FUN_0001adf0, FUN_0005acb0; [squad.md](squad.md) "The follow").
+  The per-type capsule (#173: the squad's lf 0.35 m against the demo's 0.4). The prisms
+  (FUN_0004cb60's records) and brain+0x3c8.
 * The avoidance's open ends (#344): the side-step's two world lists ([world+0xa4], [world+0x12c]:
   a live read at 0x529d0 / 0x527f7 would say what they hold; the stage has nothing to step round
   until then); FUN_00019ed0's other branch, for a brain with FOLLOW_HOLD_BACK's route at

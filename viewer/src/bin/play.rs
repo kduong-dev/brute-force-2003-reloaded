@@ -1112,6 +1112,7 @@ fn main() {
         .add_plugins(nav::plugin)
         .add_plugins(routes::plugin)
         .add_plugins(speed::plugin)
+        .add_plugins(follow::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1263,6 +1264,8 @@ mod routes;
 mod speed;
 #[path = "play_avoid.rs"]
 mod avoid;
+#[path = "play_follow.rs"]
+mod follow;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -2048,21 +2051,21 @@ pub const DIVE_RADIUS: f32 = 6.0;
 const BODY_HEIGHT: f32 = 1.9;
 /// characters' collision radius (m)
 const BODY_RADIUS: f32 = 0.4;
-/// wingman places (x right, z back, in the frame of the leader's heading), by member: the
-/// captures' squad keeps 4-12 m ahead of the leader (measured from character sizes on screen:
-/// running 5-6 m ahead +-2 m, stopped 4-12 m ahead up to 7 m aside)
+/// The squad's spawn places round a start (x right, z back, in the frame of the start's heading),
+/// by member (`place_in_formation`): the demo's, once its follow's formation (the captures' squad
+/// 4-12 m ahead of the leader, measured from character sizes on screen; the follow is the game's
+/// since #331, play_follow.rs).
 const FORMATION: [Vec2; 3] = [Vec2::new(-3.0, -6.5), Vec2::new(3.5, -8.0), Vec2::new(-1.6, -11.5)];
 /// while the leader aims or fires, squadmates keep out of this wide a lane along the aim
 /// (EVT_SHOT_BLOCKED_BY_FRIEND -> GOAL_REPOSITION: step aside rather than block the shot)
 const FIRE_LANE: f32 = 1.8;
-/// a squadmate sets off when this far from their place and settles within SLOT_STOP; runs, and
-/// dashes when far behind (the AI's leash: past squad-leash-dist + 10 m it must dash)
-const SLOT_START: f32 = 3.0;
-const SLOT_STOP: f32 = 1.0;
-const SLOT_DASH: f32 = 8.0;
-/// one standing in the leader's lane steps out until within this of its moved place (m): the
-/// demo's (`squad_ai`'s 0.3 before #335)
+/// one stepping out of the leader's lane goes on until within this of its side (m): the demo's
+/// (`squad_ai`'s 0.3 before #335)
 const LANE_STOP: f32 = 0.3;
+/// The move the follow asks while it walks (FUN_0004d970's mode 4, the dash, from the follow's
+/// states 0 and 5: FUN_00022130 at 0x22377, FUN_00022790), held to the pace level
+/// (play_routes.rs `pace`).
+const FOLLOW_MOVE: i32 = 4;
 /// standing still this long (+ up to 1.5 s) a squadmate kneels (crouch idle, weapon ready);
 /// Brutus stays on his feet (both as in the captures)
 const KNEEL_AFTER: f32 = 1.2;
@@ -2611,8 +2614,6 @@ struct Player {
     /// IDLE_CROUCH_TIME)
     idle_pause: i64,
     idle_left: f32,
-    /// the AI's squad-leash-dist (m)
-    leash: f32,
     /// hits to show (blood, sparks, hit sound, decals: play_fx.rs)
     blood: Vec<Bleed>,
     /// the body has hit the ground (thud played) / where it lies
@@ -2813,6 +2814,10 @@ struct Player {
     /// brain+0x930 with the fields the route code reads): kept for the controlled character and
     /// the AI squad, walked by the squad's follow and Move To
     router: routes::Router,
+    /// its follow goal's state (#331, play_follow.rs `Follow`: GOAL_WINGMAN_FOLLOW's fields on the
+    /// brain, brain+0x6ac and the rest), its leader and the speed record; kept through the
+    /// hand-over, started again by a mode change and by the player letting it go
+    follow: follow::Follow,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -2894,7 +2899,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, facial: Default::default(), sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, leash: 15.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -2915,6 +2920,7 @@ impl Player {
             gun_use: None,
             speed_boost: 1.0,
             router: Default::default(),
+            follow: Default::default(),
         }
     }
 
@@ -3051,51 +3057,40 @@ fn unit_mut<'a>(player: &'a mut Player, squad: &'a mut Squad, who: Who) -> Optio
     squad.0.iter_mut().find(|m| m.who() == who).map(|m| (m, false))
 }
 
-/// Squad AI: keep to a formation place round the leader (run / sprint to catch up, walk the
-/// last bit) and look where the leader looks. They shoot only at an enemy they can see
-/// (`target`, from its sight: play_brain.rs `glance`, a brain's `sense`). Reloads happen by
-/// themselves (empty clip). The follow of the command modes FOLLOW and WINGMAN (#318,
-/// play_orders.rs): the places closer in WINGMAN (`orders::spacing`), and standing still the
-/// idle pauses `pauses` (goal, weight, length) of the mode's personality. The way to its place is
-/// a route over the level's world points (#335, play_routes.rs `follow`, with `graph`: never a
-/// straight chase), the formation's rules saying when it sets off and settles; without a level's
-/// points (the test map's floor) the straight line. Either way it steers for the target through
-/// the AI's avoidance (#344, play_avoid.rs `steer`).
+/// Squad AI: the follow of the command modes FOLLOW and WINGMAN (#318, play_orders.rs), the game's
+/// GOAL_WINGMAN_FOLLOW (#331, play_follow.rs `update`): after its leader `lead` (the controlled
+/// character, or for the formation's third entry its first), it holds near him and chases a route
+/// to his own point over the level's world points (#335, play_routes.rs; without them, the test
+/// map's floor, a straight walk), FOLLOW taking a cover point near him when he stops; steered
+/// through the AI's avoidance (#344, play_avoid.rs `steer`); and standing still, the idle pauses
+/// `pauses` (goal, weight, length) of the mode's personality, facing the squad's heading `heading`
+/// (the controlled character's, smoothed). It looks where the controlled character `leader` looks
+/// and steps out of his line of fire. It shoots only at an enemy it can see (`target`, from its
+/// sight: play_brain.rs `glance`, a brain's `sense`). Reloads happen by themselves (empty clip).
 #[allow(clippy::too_many_arguments)]
-fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, pauses: &[(i64, f32, f32)],
-            graph: Option<&mut bf_viewer::bf::nav::Graph>) {
-    // (the mode's spacing: its places, and the distances it sets off and dashes at, as
-    // FUN_00020b10's five distances all go with the mode)
-    let spacing = orders::spacing(m.command.mode);
-    let f = FORMATION[slot % FORMATION.len()] * spacing;
-    let mut goal = leader.position + Quat::from_rotation_y(heading) * Vec3::new(f.x, 0.0, f.y);
-    // out of the leader's line of fire: a place in the lane moves to its side, and anyone
-    // standing in it steps out
-    let mut in_lane = false;
+fn squad_ai(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follow::Mate], slot: usize, heading: f32, dt: f32, target: Option<Vec3>,
+            toward: Option<Vec3>, pauses: &[(i64, f32, f32)], graph: Option<&mut bf_viewer::bf::nav::Graph>) {
+    // out of the leader's line of fire: one standing in the lane steps out of it, sideways to
+    // FIRE_LANE + 1.2 off the line (the demo's GOAL_REPOSITION on EVT_SHOT_BLOCKED_BY_FRIEND),
+    // and goes on until within LANE_STOP of that
+    let mut lane_to = None;
     if leader.aim || leader.aim_hold > 0.0 {
         let lf = Vec3::new(-leader.cam_yaw.sin(), 0.0, -leader.cam_yaw.cos());
         let lr = Vec3::new(leader.cam_yaw.cos(), 0.0, -leader.cam_yaw.sin());
-        let side_of = |p: Vec3| { let r = p - leader.position; (r.dot(lf), r.dot(lr)) };
-        let (ma, ms) = side_of(m.position);
-        in_lane = ma > 0.0 && ms.abs() < FIRE_LANE;
-        let (ga, gs) = side_of(goal);
-        if ga > 0.0 && gs.abs() < FIRE_LANE + 0.5 {
-            let side = if ms.abs() > 0.2 { ms.signum() } else if gs.abs() > 0.2 { gs.signum() } else { 1.0 };
-            goal += lr * (side * (FIRE_LANE + 1.2) - gs);
+        let r = m.position - leader.position;
+        let (ma, ms) = (r.dot(lf), r.dot(lr));
+        let off = FIRE_LANE + 1.2;
+        if ma > 0.0 && (ms.abs() < FIRE_LANE || (m.follow.lane && ms.abs() < off - LANE_STOP)) {
+            let side = if ms.abs() > 0.2 { ms.signum() } else { 1.0 };
+            lane_to = Some(m.position + lr * (side * off - ms));
         }
     }
-    let to = Vec3::new(goal.x - m.position.x, 0.0, goal.z - m.position.z);
-    let dist = to.length();
+    m.follow.lane = lane_to.is_some();
     // their "camera" is the leader's, so movement and aim share the leader's frame
     m.cam_yaw = leader.cam_yaw;
     m.cam_pitch = leader.cam_pitch;
     let fwd = Vec3::new(-m.cam_yaw.sin(), 0.0, -m.cam_yaw.cos());
     let right = Vec3::new(m.cam_yaw.cos(), 0.0, -m.cam_yaw.sin());
-    // (under way: a route walked, play_routes.rs; without a level's points the stick held)
-    let moving = match &graph {
-        Some(_) => m.router.walking(),
-        None => m.move_input.length() > 0.1,
-    };
     m.jump_pressed = false;
     m.dodge_pressed = false;
     // shot by the player: sidestep (EVT_DAMAGED_BY_PC -> GOAL_DODGE)
@@ -3105,26 +3100,14 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
         m.crouch_wanted = false;
         return;
     }
-    // wingman follow: set off when this far from the place, settle when close (out of the lane:
-    // within LANE_STOP); dash when far behind (or past the data's leash + 10 m), walk the last
-    // bit, both measured along the way it goes (#335)
-    let go = (if moving { dist > SLOT_STOP } else { dist > SLOT_START * spacing }) || (in_lane && dist > LANE_STOP);
-    // the way there: a route over the level's world points (#335, play_routes.rs `follow`: to the
-    // place, planned again as the follow's state 0 plans, by the leader's moves; held where the
-    // place is out of reach until he has moved the set-off distance), the straight line only
-    // without them (the test map's floor)
-    let way = match graph {
-        Some(g) if go => routes::follow(m, g, goal, leader.position, leader.router.own.point, routes::Reach::at(spacing, SLOT_START), if in_lane { LANE_STOP } else { SLOT_STOP }),
-        Some(g) => {
-            routes::stop(m, g);
-            routes::Way::Stand
-        }
-        None if go => routes::Way::Go { target: goal, along: dist },
-        None => routes::Way::Stand,
-    };
-    let (way_to, along) = match way {
-        routes::Way::Go { target, along } => (Some(target), along),
-        _ => (None, 0.0),
+    // the follow's state machine (play_follow.rs, FUN_00020b10): the route's steering target and
+    // the dash its states 0 and 5 ask (FUN_0004d970 mode 4), or a stand; a stand in the leader's
+    // lane is the step out of it (a walk, a run for over 2.5 m: the demo's)
+    let way = follow::update(m, lead, mates, graph);
+    let (way_to, asked, follows) = match (way, lane_to) {
+        (routes::Way::Go { target, .. }, _) => (Some(target), FOLLOW_MOVE, true),
+        (_, Some(t)) => (Some(t), if t.xz().distance(m.position.xz()) < 2.5 { 2 } else { 3 }, false),
+        _ => (None, 1, false),
     };
     // the way it goes: the steering target through the AI's avoidance (#344, play_avoid.rs
     // `steer`, FUN_000255d0: its feelers, the push from the characters near it, the side-step, else
@@ -3133,38 +3116,22 @@ fn squad_ai(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32,
     // not on into a liquid that burns (#1, play_liquids.rs `burning_ahead`): the routes' safety
     // net, as no world point lies in one (it waits at the shore; BF_LIQUID_LOG)
     let go = steered.is_some_and(|d| !routes::shore(m, d, dt));
-    // the walk to its place begins (FUN_00021b70): the first since a Fire At Will cleared the flag
-    // (play_brain.rs `Command::start_walk`: in FOLLOW the game can't reach the state, #343) says
-    // "on my way", through the gate. A stand-in for the game's follow state machine (#331): its walk starts
-    // where the formation sets off (a step out of the leader's line of fire isn't a walk to its
-    // place)
-    if go && !moving && dist > SLOT_START * spacing && m.command.start_walk() {
-        chatter::say(m, chatter::FOLLOW_WALK);
-    }
     if let (true, Some(d)) = (go, steered) {
-        // (far behind: the way left or the place itself, which moves on past where the route was
-        // planned to, the farther; the last bit: both short. It moves at the lower of that and
-        // its pace level, which follows it up and down, and which a route's detour, the way round
-        // a friend, the follow's hold, the feelers, a hard turn and a door (#346) set down for a
-        // while, play_routes.rs `pace`. #335's walk while held at a corner is gone with #344: the game
-        // has no such rule, its hard turn's walk (FUN_0001ad50) keeps a runner from circling the
-        // corner's 0.6 m, and with it the e13 run's times came to the take's)
-        let behind = along.max(dist);
-        let asked = if along < 2.5 && dist < 2.5 { 2 } else if behind > SLOT_DASH * spacing || behind > m.leash + 10.0 { 4 } else { 3 };
         // (the move this frame: its heading turned toward the steering direction at most 200
-        // degrees a second, FUN_00019af0, play_avoid.rs `move_turn`)
+        // degrees a second, FUN_00019af0, play_avoid.rs `move_turn`, at the lower of the move asked
+        // and its pace level, which follows it up and down and which a route's detour, a hold, the
+        // feelers, a hard turn and a door (#346) set down for a while, play_routes.rs `pace`)
         let d = avoid::move_turn(m, d, avoid::move_size(asked.min(m.router.cap)), dt);
         let d = Vec3::new(d.x, 0.0, d.y);
         m.move_input = Vec2::new(d.dot(right), d.dot(fwd));
         routes::pace(m, asked);
-        // (the follow's update sets the brain's speed record to 1.25 each update, FUN_00020b10 at
-        // 0x20ed4, and its chase state clears it while the leader is within the follow's second
-        // distance, FUN_00022130; FUN_00048270 hands it to the character while the pace level is
-        // above a walk, a run or a dash alike, and the record's timer has run out (a feeler's hit
-        // at a dash starts it, #344): so a member moving at 3 or 4 after a leader farther than that
-        // moves at the type's speed, 0.8 x 1.25, and one inside it at 0.8; play_speed.rs)
-        let leader_gap = Vec2::new(leader.position.x - m.position.x, leader.position.z - m.position.z).length();
-        m.speed_boost = speed::follow_boost(m.router.cap, leader_gap, speed::FOLLOW_D1 * spacing, m.router.avoid.boost_off);
+        // (the follow's speed record, as its states left it: 1.25 every update, 1.0 within d1 of
+        // the leader and on the way to a cover point; FUN_00048270 hands it to the character at a
+        // run or a dash with its timer run out (a feeler's hit at a dash starts it, #344):
+        // play_speed.rs `record_boost`)
+        if follows {
+            m.speed_boost = speed::record_boost(m.router.cap, m.follow.record, m.router.avoid.boost_off);
+        }
         m.still_time = 0.0;
         m.crouch_wanted = false;
         m.idle_pause = 0;
@@ -4410,7 +4377,6 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.skill = skills::Skill::new(game.character_skills.get(name), &game.combat_skills);
     p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
     p.stamina = p.max_stamina;
-    p.leash = game.squad_leash.get(name).copied().or(ty.as_ref().map(|t| t.ai.squad_leash)).unwrap_or(15.0);
     p.scope_sounds = game.character_scope_sounds.get(name).copied().unwrap_or((0, 0));
     p.snipe_sound = game.character_snipe_sound.get(name).and_then(|&id| game.sounds.pcm(id).map(|(r, pcm)| (id, pcm.len() as f32 / r as f32)));
     p.kneel_jitter = 1.5 * p.random(1000) as f32 / 1000.0;
@@ -4802,7 +4768,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // the controlled character's guns aim at the crosshair's lock (play_reticle.rs, last
     // frame's); the AI's at its own target
     player.lock_aim = reticle.aim;
-    // the squad's heading: the leader's facing, smoothed (formation places turn with it)
+    // the squad's heading: the leader's facing, smoothed (the members face it standing still)
     let h = heading.get_or_insert(player.yaw);
     *h = wrap_angle(*h + wrap_angle(player.yaw - *h) * (1.0 - (-1.5 * dt).exp()));
     let heading = *h;
@@ -4837,7 +4803,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     let clock = player.sim_time;
     // the level's patrol points, for the brains' patrols (#227, play_brain.rs)
     let patrols = map.0.as_ref().map_or(&[][..], |l| &l.patrols[..]);
-    // a follower's formation place comes after the squad's own members' (play_brain.rs)
+    // a follower's slot comes after the squad's own members' (play_brain.rs: its cautious look's
+    // phase)
     let mut follower = squad.0.iter().filter(|m| m.in_squad()).count();
     // (#335) the own world points (FUN_0014f860, kept by the character update) of the controlled
     // character and of the AI squad and its followers, and the friends the AI update's route
@@ -4849,6 +4816,12 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         }
     }
     let mates = routes::mates(&player, &squad.0);
+    // (#331) the follow's leaders, each character as one at the frame's start, and the squad as
+    // its state 4 looks through it (play_follow.rs; a member's leader is its formation's, set by
+    // `follow::sync` before this system: the controlled character, the first of the list for its
+    // third entry)
+    let leads: Vec<follow::Lead> = std::iter::once(&*player).chain(squad.0.iter()).map(follow::Lead::of).collect();
+    let follow_mates = follow::mates(&player, &squad.0);
     // each one's target this frame, for the squad's broadcast (play_brain.rs `broadcast`): the
     // controlled character's the nearest hostile it sees
     let mut held = vec![(0, (!player.dead).then(|| nearest_hostile(&player, 0, &sight)).flatten().map(|(i, _)| sight[i].who))];
@@ -4923,16 +4896,18 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         if let (true, true, Some(g)) = (free, routes::walks_routes(m), nav.graph.as_mut()) {
             routes::ai_update(m, &mates, g, dt);
         }
+        // (its follow's leader: the formation's, else the controlled character, `leads[0]`)
+        let lead = m.follow.leader.and_then(|w| leads.iter().find(|l| l.who == w)).unwrap_or(&leads[0]);
         if m.held || !m.script_walk.is_empty() {
             brain::held(m);
             script::held_step(m, dt);
         } else if m.brain.is_some() {
-            brain::think(m, &player, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut());
+            brain::think(m, &player, lead, &follow_mates, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut());
         } else if m.npc.is_some() {
             testtools::npc_ai(m, target, toward, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             // (its goal by its command mode: the follow, GUARD's hold, MOVE_OUT's walk)
-            orders::think(m, &player, slot, heading, dt, target, toward, &game.0, nav.graph.as_mut());
+            orders::think(m, &player, lead, &follow_mates, slot, heading, dt, target, toward, &game.0, nav.graph.as_mut());
         } else {
             // (held where it is by a test hook: a Toggle Ability goal's command still goes, as
             // BF_TEST_HOSTILE's stealthed Hawk needs, #333)
