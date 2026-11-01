@@ -18,7 +18,7 @@
 //! scroll (FUN_0008fca0) moves the texture by h_fb0bff34 / h_e002ae8e per second only while
 //! h_08c2d2ee seconds are left, then stops: a fixed offset of rate x time.
 //!
-//! In todo/DNA + Weapon Pickups.mp4 (0-12.6 s) and todo/Friendly Fire 2 + Death Cam.mp4 (from
+//! In todo/DNA + Weapon Pickups.mp4 (0-12.6 s) and todo/Friendly Fire 2 + Death Cam.mp4 (campaign e34, from
 //! 33.1 s, beside Brutus) it's a solid see-through green cube that turns with the view, its far
 //! faces visible through it, not spinning or bobbing. Walking into it takes it: it goes, its
 //! sound plays and the pickup lines say "Memory Chip Recovered!" (the footage also shows
@@ -213,6 +213,18 @@ fn chip_texture(mips: &Mips) -> Image {
     bf_viewer::scene::mip_image(mips, bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb, [Address::Wrap; 2])
 }
 
+/// Whether a death on `map` leaves a memory chip (#315): not on a multiplayer map (the deathmatch
+/// arenas mp* and the squad deathmatch maps sdm_*: `damage::multiplayer_map`). The chip is a
+/// campaign placement's `<h_0f77963d inventory-drop="h_f50f94f9">` (FUN_00156390 at 0x156666) on
+/// each squad character-object, and no multiplayer level has such an attribute (its squads are
+/// made by the match, with no character-objects: sdm_e13, sdm_e34, sdm_e40 and mp1 carry none,
+/// where the campaign levels e40 and m09_a carry it); the item h_f50f94f9 is defined only in the
+/// campaign levels' objecttypes (e40, m09_a). take09 and take10 of #18 (sdm_e13) show none.
+/// The test map and the missions keep them.
+fn drops_chips(game: &Game, map: &str) -> bool {
+    !super::damage::multiplayer_map(game, map)
+}
+
 /// A chip in front of each squad member as they die (`dna_done`: once per death). On the death's
 /// frame for shots (`update_player`, which this runs after); a grenade's or gas's kill (their
 /// systems call `hurt` and aren't ordered before this) shows it a frame later.
@@ -220,8 +232,10 @@ fn chip_texture(mips: &Mips) -> Image {
 /// on the floor there below 2 m over the player's middle), to look at it and walk into it (with
 /// BF_TEST_GOTO) without a death.
 fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
-              mut test_dropped: ResMut<TestChipDropped>) {
+              mut test_dropped: ResMut<TestChipDropped>, game: Res<GameData>, current: Res<CurrentMap>) {
     let Some(chip) = chip else { return };
+    // (a multiplayer map's deaths leave none: #315, `drops_chips`)
+    let deaths_drop = drops_chips(&game.0, &current.0);
     let test = std::env::var("BF_TEST_CHIP").ok()
         .map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()).filter(|v| v.len() >= 2);
     if let Some(t) = test.filter(|t| !test_dropped.0 && player.sim_time >= t.get(2).copied().unwrap_or(0.5)) {
@@ -238,6 +252,9 @@ fn drop_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
             continue;
         }
         u.dna_done = true;
+        if !deaths_drop {
+            continue;
+        }
         // where they stood as they died, along the way they faced (forward is -z turned by yaw)
         let ahead = Vec3::new(-u.yaw.sin(), 0.0, -u.yaw.cos()) * CHIP_AHEAD;
         let feet = floor_y(u.position.x, u.position.z, u.position.y + GROUND + 1.0, world::Body::Thing);
@@ -279,7 +296,7 @@ fn take_chips(mut commands: Commands, chip: Option<Res<ChipModel>>, mut player: 
             queue.push((chip.sound, 1.0));
         }
         // a line of its own, without a count (n 0, see play_hud.rs)
-        feed.0.push(super::pickups::FeedLine { name: chip.message.clone(), count: 0, left: super::pickups::FEED_TIME, full: false });
+        feed.message(chip.message.clone());
         if std::env::var("BF_PICKUP_LOG").is_ok() {
             println!("{who} took a memory chip at {at:.2} (t {:.2}) from {:.2} m across, {:.2} m 3D: {:?}", player.sim_time,
                      Vec2::new(at.x - f.x, at.z - f.z).length(), f.distance(at), chip.message);

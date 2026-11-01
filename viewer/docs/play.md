@@ -383,7 +383,7 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   17.0 (18.0). The demo's 40 m across 44 units before #228 had no source.
 * **The middle**: the viewer's dot, 180 180 180 (FUN_000ae7c0's colour for the HUD's own
   character, 0xae7f0: pale grey in take03 and take07; it was green). The code has no mode test:
-  the squad deathmatch recordings' green middle is the squadmates' dots drawn over it, a few metres
+  the campaign recordings' green middle is the squadmates' dots drawn over it, a few metres
   off at 0.325 units a metre.
 * **The squad**: its living members in the world as green blips (FUN_000ae7c0's friend, 90 200 40;
   take11's marines; they were yellow) at that scale, one beyond the range on the circle (the game
@@ -446,11 +446,37 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   passes); sdm_seers' slot 2 wouldn't die in 22 s (330 frames: not the HUD's), so that one is
   checked by the other squads' slot 2 and the data. `BF_TEST_SQUAD="Sgt. Gonzales@e01,Private
   Cogburn@e01,Corporal Stout@e05" BF_TEST_KILL=0|1|2` (the marines, with portraits and no skull):
-  each place goes blank when its marine dies. Against the squad deathmatch footage (`todo/reference/
-  Friendly Fire 2 + Death Cam.mp4`, 31.5 s, Brutus's skull at the bottom) the skull's size and
-  place agree to a couple of units; its colour differs, as the demo's notch fill (the dark blue
-  rectangles behind the faces) shows through the skull's alpha of 170 (the game's skull sits on
-  the terrain), not looked into.
+  each place goes blank when its marine dies. Against the campaign footage on e34 (`todo/reference/
+  Friendly Fire 2 + Death Cam.mp4`, 31.5 s, Brutus's skull at the bottom; the product owner
+  confirmed it is campaign, not squad deathmatch) the skull's size and
+  place agree to a couple of units. Its colour (#351): the game's skull is dark neutral grey, the
+  terrain showing through its alpha of 170 and no fill behind it (the footage's notch beside the
+  skull is the frame's own box). The demo's dark-blue notch fills (`NOTCHES`,
+  `SquadPart::Notch`, a fit from #302's neighbourhood: the code has no fill widget in the
+  portrait's path, FUN_000c3590 / FUN_000bb300 draw only the texture) are hidden while their slot
+  shows a skull. **The notch table is by character** (Brutus bottom, Flint right, Hawk left, Tex
+  top, as `FACE_AT` and `looks`): the first version had them in the place order top, right,
+  bottom, left, so a death hid a living member's fill and left the dead one's; the test
+  `notches_are_by_character` pairs each box with its portrait's. Checked with `--test
+  BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET=0.5,brute` and `BF_TEST_KILL=0`
+  (Brutus, the bottom skull: the footage's case), `=1` (Flint), `=2` (Hawk; Brutus dies in that
+  run too) and `BF_TEST_DIE=2` (Tex), 90 frames, frame 85, branch against an older main build
+  (the dead slot's portrait box and notch box differ, the living ones' boxes are bit-identical,
+  max difference 0; with Tex dead the bottom notch differs by the selected face's chevrons, which
+  main draws at another brightness: the fill itself is there in both) and with nobody dead
+  (nothing differs).
+  **`SKULL_TINT` is a fit** (0.40, 0.46, 0.43; the comment has the arithmetic): the code draws the
+  widget in white and the colour path that darkens it isn't found. 0.53 of the texture's colour
+  gives the footage's skull on the console's stored-value blend, but the demo's UI blends in linear
+  light and read it 5-8 levels lighter by this method, the tester measured 8-12 ((55.5, 56.9, 55.4) against (49.2, 52.2, 47.6) with the
+  grounds made equal). Fitted by solving the demo's own blend per texel (linear light, alpha 170 /
+  255) for the footage's core (opaque texels eroded by three, registered on the texture by
+  luminance correlation) over the terrain strip under the box, after checking the model on two
+  renders (it reads 5-6 levels low by the same amount at both tints, added back). Result: the
+  rendered skull's core (60.9, 68.3, 64.1) over the demo's floor (81.4, 83.4, 77.4) moves to
+  (49.4, 52.0, 48.0) over the footage's ground (59.6, 47.3, 41.2) by the same model, against the
+  footage's (49.2, 52.2, 47.6). The demo's own floor is lighter than the footage's terrain, so its
+  skull reads lighter there.
 * **The command tabs** (#333; `play_hud.rs` `update_tabs`, `TAB_FOLLOW` ...): the small icon in
   the box by each portrait is its member's order, the brain's command mode (squad.md, "Squad
   commands"). The tab widget (FUN_000c3d10, made one a portrait by the HUD's factory) sets it each
@@ -604,7 +630,7 @@ contact 2's cursor on the screen (FUN_00052db0); which list of characters the HU
 is kept from (FUN_000bd790, "The portraits" above); the disc's and the frame's colours blended as
 the console does (stored values: see "The disc, the circles and the wedge"); the portraits'
 notch fills behind the faces (the demo's blue boxes are brighter than the takes' dark navy: a
-fit, #342's neighbourhood). A test map dummy is no AI target, so nobody knows of a hostile
+fit, #342's neighbourhood; hidden behind a skull since #351). A test map dummy is no AI target, so nobody knows of a hostile
 dummy and it never shows.
 
 ### Keeping non-finite numbers out of the UI (#349)

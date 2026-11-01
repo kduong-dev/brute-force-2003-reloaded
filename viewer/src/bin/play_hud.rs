@@ -11,7 +11,7 @@
 //! upside down, so they are drawn flipped. Text uses Bevy's font, not the game's bitmap font.
 
 use super::*;
-use super::fonts::{record_text, Across, RecordText, BODY12, HEADING24};
+use super::fonts::{record_text, Across, RecordText, BODY12, BODY14, HEADING24};
 use super::text::{game_text, Align, GameText, AMMO_ORANGE, MESSAGE_BLUE};
 
 /// radar frame (octagon); its disc, circles and wedge are play_radar_disc.rs's
@@ -34,13 +34,18 @@ const RING_GROW: f32 = 1.5;
 const RING_BLUE: Color = Color::srgb(0x23 as f32 / 255.0, 0x53 as f32 / 255.0, 0xD4 as f32 / 255.0);
 const RING_RED: Color = Color::srgb(0xA0 as f32 / 255.0, 0x20 as f32 / 255.0, 0x20 as f32 / 255.0);
 const RING_IN_USE: Color = Color::srgb(0x3C as f32 / 255.0, 0x69 as f32 / 255.0, 0xDC as f32 / 255.0);
-/// Pickup lines shown at once, and where they go: fixed on the screen, centred under the
-/// character's usual place, the status message above them (the capture's spacing: lines 29
-/// and 45 under the message).
-const FEED_LINES: usize = 4;
-const MESSAGE_Y: f32 = 290.0;
-const FEED_FIRST: f32 = 29.0;
-const FEED_STEP: f32 = 16.5;
+/// The pickup lines (#17, #314): the widget FUN_000ad690 makes (HUD name 0x1eeaa123) has three
+/// of them, `FEED_LINES`, each 14 points of the body font (its constructor sets the record 0xc626fd5
+/// at 0xe: play_fonts.rs BODY14), centred on the middle of the screen (x 320), with line k 20 units
+/// under the first (its update 0xad860: y = k x 0x14). The first line's place is a fit, the
+/// layout data that puts the widget isn't found: take12 of the tutorial (`todo/28-tutorial`,
+/// 278.5 s, 1280 x 720 with the 4:3 picture at x 160-1120, 1.5 px a unit) has one line alone with
+/// its ink 346.7 units from the top ("Frag Grenades (full)", F's top at video y 520) and, with a
+/// second, that one's at 366.7 ("31x High ROF Ammo", y 550), 20.0 units on; `FEED_TOP` is the
+/// record text's top that puts the demo's ink there.
+const FEED_LINES: usize = super::pickups::FEED_SLOTS;
+const FEED_STEP: f32 = 20.0;
+const FEED_TOP: f32 = 341.5;
 /// The message line (the HUD entry's widget +0x114, name 0xe2548d48, constructor FUN_000b32d0):
 /// the body font at 12 points (FUN_000cd9c0(0xc626fd5, 12): play_fonts.rs BODY12) in
 /// (192, 255, 255) (its constructor's bytes from FUN_000b87a0's c0 d7 ff ff, the green taken from
@@ -96,6 +101,11 @@ const FACE_AT: [(f32, f32); 4] = [(51.0, 112.0), (112.0, 51.0), (-4.0, 51.0), (5
 /// thing aimed at the portrait points (the selection's chevrons; the "?" of a face with none). The
 /// box itself isn't used any more, the whole texture being drawn: these are the numbers it gave.
 const PORTRAIT_CENTRE: [(f32, f32); 4] = [(120.5, 425.0), (178.5, 365.5), (62.5, 365.5), (120.5, 302.0)];
+/// The frame's four portrait notches, as texel boxes (x0, y0, x1, y1) in the frame texture, **by
+/// character like `FACE_AT`** (Brutus bottom, Flint right, Hawk left, Tex top; #351: they were in
+/// the place order top, right, bottom, left, which hid a living member's fill when another died).
+/// The boxes are the notches' open parts in the texture, a fit from the takes.
+const NOTCHES: [(f32, f32, f32, f32); 4] = [(48.0, 110.0, 78.0, 119.0), (110.0, 50.0, 119.0, 80.0), (8.0, 48.0, 17.0, 78.0), (50.0, 8.0, 80.0, 17.0)];
 /// The command tab beside each portrait (#333): the tab widget FUN_000c3d10 (vtable 0x39f4f0, its
 /// update 0xc3f80 at +0x14 and draw 0xc4130 at +0x18; the HUD factory makes one a portrait at
 /// 0xb9af8), an 8-unit sprite whose texture and size its update sets each frame by the command
@@ -361,7 +371,20 @@ const PORTRAIT_BOX: f32 = 32.0;
 /// their command tab and radar health bar go. A type without one (the tutorial's marines) shows
 /// nothing in its place once dead: the widget FUN_000c3590 hides itself with no texture
 /// (0xc361d-0xc3625), and there is no fallback by race or slot in the code (#342).
-const SKULL_TINT: Color = Color::srgb(0.6, 0.66, 0.6);
+/// The tint is a **fit** (#351): the code draws the widget in white (0xc3550, FUN_000bb300) and
+/// the colour path that darkens it isn't found. In `todo/reference/Friendly Fire 2 + Death
+/// Cam.mp4` at 31.5 s (Brutus's wide skull, h_19da7869, over terrain) the skull's core (the
+/// opaque texels eroded by three, registered on the texture by luminance correlation, r 0.80) is
+/// (49.2, 52.2, 47.6) over a ground of (59.6, 47.3, 41.2) (the strip of terrain just under the
+/// box). The console blends in stored values, where 0.51-0.53 of the texture's colour at its
+/// alpha of 170 (0.67) gives that; the demo's UI blends in linear light, which leaves 0.53 about
+/// 20% lighter (the tester: (56, 55, 52) against (44.5, 46.9, 42.4)). So the tint is solved in the
+/// demo's own blend, out = srgb(a x tint x tex + (1 - a) x ground) in linear light per texel,
+/// meaned over the core, on the footage's ground: 0.397, 0.463, 0.426. The model was checked on
+/// two renders of the demo (tints 0.53 and 0.41 / 0.45 / 0.42, over its ground of (81.4, 83.4,
+/// 77.4)): it reads 5-6 levels under the renders by the same amount for both (5.9, 5.7, 5.3 and
+/// 6.0, 5.8, 5.3), so that offset was added before solving.
+const SKULL_TINT: Color = Color::srgb(0.40, 0.46, 0.43);
 /// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
 /// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,
 /// this tall (units) with its line's top this many heights above the place's centre, which
@@ -900,8 +923,6 @@ enum Part {
     SwitchHint,
     /// the special skill's name while it's on (and a moment after), under the bars
     SkillLabel,
-    /// the pickup lines under the message line (`MessageLine`)
-    Feed(usize),
     /// the blue target ring on a usable panel's button
     Ring,
 }
@@ -1065,6 +1086,9 @@ enum SquadPart {
     Portrait(usize),
     /// the "?" in a slot's place whose member's type has no portrait (UNKNOWN_CAP, #302)
     Unknown(usize),
+    /// the dark fill in a frame notch behind a slot's portrait (by slot): gone while the slot shows
+    /// a skull (#351)
+    Notch(usize),
     /// the bracket round a selected member's portrait (by slot: SELECT_FRAMES, #319)
     Selected(usize),
     MeterBox,
@@ -1111,7 +1135,7 @@ pub fn plugin(app: &mut App) {
         // tabs after the frame's orders, the menu's and the AI's: `update_player` sets a Move To's
         // arrival)
         .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
-                              update_hud_widgets, update_squad_hud, update_message, update_tabs.after(update_player))
+                              update_hud_widgets, update_squad_hud, update_message, update_feed, update_tabs.after(update_player))
             .after(update_weapons).after(deathcam::death_cam)
             .run_if(in_state(AppState::Playing)))
         // the radar's objective dots, once the radar-triggers' contacts are in (#228)
@@ -1386,8 +1410,9 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
         commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0, RADAR_FRAME_AT.1, 128.0, 128.0), ImageNode::new(overlay), ZIndex(2)));
         // the frame's four portrait notches are open in its texture; the game fills them dark behind
         // the faces (texel boxes in the frame texture: top, right, bottom, left)
-        for (x0, y0, x1, y1) in [(50.0, 8.0, 80.0, 17.0), (110.0, 50.0, 119.0, 80.0), (48.0, 110.0, 78.0, 119.0), (8.0, 48.0, 17.0, 78.0)] {
-            commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x0, RADAR_FRAME_AT.1 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9))));
+        for (i, &(x0, y0, x1, y1)) in NOTCHES.iter().enumerate() {
+            commands.spawn((ChildOf(radar), at(RADAR_FRAME_AT.0 + x0, RADAR_FRAME_AT.1 + y0, x1 - x0, y1 - y0), BackgroundColor(Color::srgba(0.16, 0.2, 0.45, 0.9)),
+                            SquadPart::Notch(i)));
         }
         for (i, &(cx, cy)) in PORTRAIT_CENTRE.iter().enumerate() {
             let Some(handle) = face_art(game, &mut images, &mut cache, &mut gen.faces, PORTRAITS[i]) else { continue };
@@ -1435,8 +1460,8 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     commands.spawn((ChildOf(screen), MessageLine, Visibility::Hidden,
                     record_text("", 320.0, MESSAGE_TOP, &BODY12, vec![message_rgb], Some(Color::BLACK), Across::Centre)));
     for i in 0..FEED_LINES {
-        commands.spawn((ChildOf(screen), game_text("", 320.0, MESSAGE_Y + FEED_FIRST + FEED_STEP * i as f32, 11.5, MESSAGE_BLUE, Align::Centre),
-                        Part::Feed(i), Visibility::Hidden));
+        commands.spawn((ChildOf(screen), FeedText(i), Visibility::Hidden,
+                        record_text("", 320.0, FEED_TOP + FEED_STEP * i as f32, &BODY14, vec![FEED_PALE], Some(Color::BLACK), Across::Centre)));
     }
 
     // ---- crosshair, above centre (320, 192) ----
@@ -1581,7 +1606,6 @@ fn update_hud_widgets(
     held_name: Res<super::ammo::HeldName>,
     (switch_hint, hint_lines): (Res<super::ammo::SwitchHint>, Res<super::triggers::hints::HintLines>),
     use_panel: Res<super::UsePanel>,
-    feed: Res<super::pickups::PickupFeed>,
     mut game: ResMut<GameData>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<HudImages>,
@@ -1628,15 +1652,6 @@ fn update_hud_widgets(
     // its fade at the end (1: full), and the icon faint under it meanwhile, coming back as it
     // fades
     let name_alpha = (held_name.0 / super::ammo::NAME_FADE).min(1.0);
-    // (FUN_000ad790: "%dx %s" from two in a row, the name alone for one, 0x40d734; nothing taken
-    // with a stack full, "%s %s" (0x40d744) with "(full)", in FUN_000b8820's red, #17)
-    let full_word = game.0.strings.get(&S_FULL).cloned().unwrap_or("(full)".into());
-    let feed_shown: Vec<(String, Color)> = feed.0.iter().rev().take(FEED_LINES).rev().map(|l| match (l.full, l.count) {
-        (true, _) => (format!("{} {full_word}", l.name), FULL_RED),
-        (false, n) if n > 1 => (format!("{n}x {}", l.name), MESSAGE_BLUE),
-        _ => (l.name.clone(), MESSAGE_BLUE),
-    }).collect();
-
     for (part, mut vis, img, mut text, node) in &mut parts {
         let show = |v: &mut Visibility, on: bool| { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } };
         let set = |t: Option<Mut<GameText>>, s: &str, color: Option<Color>| {
@@ -1750,13 +1765,6 @@ fn update_hud_widgets(
                     }
                 }
             }
-            Part::Feed(k) => {
-                let line = feed_shown.get(k);
-                show(&mut vis, line.is_some());
-                if let Some((line, colour)) = line {
-                    set(text, line, Some(*colour));
-                }
-            }
             Part::Crosshair => {
                 // (none once dead: the reference recording's reticle goes on the death frame; none
                 // during a weapon switch from the drop to the grab: the takes' crosshair goes
@@ -1784,6 +1792,46 @@ fn update_hud_widgets(
                     if img.color != tint { img.color = tint; }
                 }
             }
+        }
+    }
+}
+
+/// A pickup line's text (by slot, `PickupFeed`'s `FeedLine::slot`).
+#[derive(Component)]
+struct FeedText(usize);
+
+/// The pickup lines' colour: FUN_000b87a0's bytes c0 d7 ff, which FUN_000ad690 and FUN_000ad790
+/// put in the text's +0x38 (red), +0x3a (green) and +0x39 (blue); take12's pale text measures
+/// (201, 215, 252) through the video.
+const FEED_PALE: Color = Color::srgb(0xC0 as f32 / 255.0, 0xD7 as f32 / 255.0, 1.0);
+
+/// The pickup lines (`FeedText`): each slot shows the line `PickupFeed` holds in it, at the line's
+/// alpha (FUN_000bb170 turns the widget's alpha into the text's: the fade in and out of
+/// `PickupFeed::tick`). FUN_000ad790's text: "%dx %s" from a count of 2, the item's name alone for
+/// 0x40d734 below it, "%s %s" with "(full)" in FUN_000b8820's red for a total of 0 (#17).
+fn update_feed(feed: Res<super::pickups::PickupFeed>, game: Res<GameData>, mut texts: Query<(&FeedText, &mut Visibility, &mut RecordText)>) {
+    let full_word = game.0.strings.get(&S_FULL).cloned().unwrap_or("(full)".into());
+    for (slot, mut vis, mut t) in &mut texts {
+        let line = feed.0.iter().find(|l| l.slot == slot.0);
+        let want = if line.is_some_and(|l| l.alpha > 0.0) { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        let Some(l) = line else { continue };
+        let (text, colour) = match (l.full, l.count) {
+            (true, _) => (format!("{} {full_word}", l.name), FULL_RED),
+            (false, n) if n > 1 => (format!("{n}x {}", l.name), FEED_PALE),
+            _ => (l.name.clone(), FEED_PALE),
+        };
+        if t.text != text {
+            t.text = text;
+        }
+        if t.colours.first() != Some(&colour) {
+            t.colours = vec![colour];
+            t.redraw();
+        }
+        if (t.alpha - l.alpha).abs() > 1e-3 {
+            t.alpha = l.alpha;
         }
     }
 }
@@ -2029,6 +2077,10 @@ fn update_squad_hud(
                     if img.rect.is_some() { img.rect = None; }
                     img.color = color;
                 }
+            }
+            SquadPart::Notch(c) => {
+                // (the game's skull sits on the terrain, no fill behind it: #351)
+                show(&mut vis, looks.get(c).is_none_or(|(_, skull, _)| skull.is_none()));
             }
             SquadPart::Unknown(c) => {
                 show(&mut vis, looks.get(c).is_some_and(|(face, skull, _)| matches!(face, Face::Unknown) && skull.is_none()));
@@ -2449,6 +2501,22 @@ fn blend(dst: &mut [f32; 4], rgb: [f32; 3], a: f32) {
 mod tests {
     use super::*;
     use super::super::brain::Mode;
+
+    /// Each notch fill is the one beside its own character's portrait box (#351: both tables are by
+    /// character, so a death hides its own fill and no other).
+    #[test]
+    fn notches_are_by_character() {
+        let centre = |(x0, y0, x1, y1): (f32, f32, f32, f32)| ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        for (i, &n) in NOTCHES.iter().enumerate() {
+            let (nx, ny) = centre(n);
+            let near = |k: usize| {
+                let (px, py) = (FACE_AT[k].0 + PORTRAIT_BOX / 2.0, FACE_AT[k].1 + PORTRAIT_BOX / 2.0);
+                (nx - px).hypot(ny - py)
+            };
+            let nearest = (0..4).min_by(|&a, &b| near(a).total_cmp(&near(b))).unwrap();
+            assert_eq!(nearest, i, "notch {i}");
+        }
+    }
 
     /// The tab's icon by command mode (0xc3f80's jump table): FOLLOW's green arrows 16 x 8, GUARD's
     /// bars 8 x 16, WINGMAN's ring and MOVE_OUT's arrow 16 x 16; FORMATION and FREEWILL none.

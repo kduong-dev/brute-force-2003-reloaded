@@ -133,11 +133,23 @@ game's is 3D at the character).
 | skill on / off / off at 0 | FUN_0010e470 / FUN_0010e3e0 | play_skills.rs ([skills.md](skills.md)) |
 | charge hit | FUN_0013c1c0 | play_vengar.rs |
 
-A type of its own (an enemy) says only its death cry here: the #129 takes' Shrikes said nothing
-on their hits, though their files have hurt lines (the enemies' lines are #110's and #128's).
-The #36 takes 07-10 show otherwise for a spawned Shrike shot by the squad: its hurt lines
-(e856009f, 0ae8104e, fab0be98, 01e1dcd0) are gate calls, made by the same table; opening them is
-`hurt_line`'s own-type test (#328).
+A type of its own (an enemy) says its hurt lines and its death cry (#328), from its type's
+`chatter-library` (`set_of`), through the same gate as the squad: its chance, replay delay,
+priority, distance and condition, and a tag its library has no block for is refused ("no block in
+..."). Its other lines are #110's and #128's. The #36 takes 07-10 log a spawned Shrike shot by the
+squad calling the gate with e856009f (pain grunt), 0ae8104e (I'm hit), fab0be98 (half health),
+01e1dcd0 (low health) and, dead, e1213623, the same table `hurt_tag` draws up for every hit
+(take07: 0ae8104e line made at 4.6 s, refused at 7.3 s, 01e1dcd0 made at 7.4 s, 0ae8104e refused
+at 8.3 s, the death cry made at 8.7 s). The rule the demo had before, the death cry only, came
+from the #129 takes, where the Shrikes were heard saying nothing on their hits and no gate was
+logged: the gate's own refusals (rolls of 25-75%, a 10 s replay delay) can account for that, not
+settled. Checked on the test map (`BF_TEST_INSTANT_KILL=0 BF_TEST_GOTO=0,8,0,7.3
+BF_TEST_NPC="0.3,shrike soldier@m09_a,enemy,dummy,0,3" BF_TEST_FIRE=hip BF_CHATTER_LOG=1`, 300
+frames): the Shrike's first hit says e856009f "said" (25%, priority 3, replay 10 s), the next
+refused by its replay delay, fab0be98 and 01e1dcd0 refused "not rolled" (60% and 75%), then the
+death cry said; with the sdm_shrike library (`shrike soldier`, dm_shrike_light_chatter) the half
+and low health tags have "no block" and are refused. Not compared with the takes' audio: the
+takes' lines are one run's rolls.
 
 ## Responses
 
