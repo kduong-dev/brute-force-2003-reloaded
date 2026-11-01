@@ -156,8 +156,9 @@ until one is given: see **Radar**, "The command tabs"); a speech icon appears in
 radar's ring, by the portrait's inner side, while that member talks (16 x 16 units, the texture 1:1;
 its places by member, `BUBBLE_AT` in play_hud.rs, measured from the squad-voice takes, #332;
 before it they were 10 x 10 and outside the ring). The one you control is the player; the other
-three are AI that keep a formation on your flanks and a little ahead (running / sprinting to
-catch up, walking the last bit), look where you look, and
+three are AI that follow you (the game's follow, #331, [squad.md](squad.md) "The follow": they
+hold while you're within 11 m, chase a route to your point when you're farther, trail a dash about
+14 m back and stop 9-10 m behind you), look where you look, and
 reload on their own. They never fire just because you do - only at enemies they can see (by the AI's sensor: their vision-range, x1.15 for one they know, 90 degrees either way of their facing, a clear line; [brain.md](brain.md) "Sight and contacts", #197), within their gun's range (the level's characters on another side, and the test map's NPCs set to fight, see [testtools.md](testtools.md)). Collision: everyone is a 0.4 m circle, pushed out of the pillars and apart from each other. Their footsteps and shots are heard quieter with distance, and they show as
 green blips on the radar (turning with the camera, at the radar's scale: see **Radar** below). `BF_NO_SQUAD=1` (or `BF_DEATHMATCH=1`) plays deathmatch: alone, without the radar.
 
@@ -3586,7 +3587,7 @@ the dash on a straight is **8.5**, and the demo's was too slow.
 * **An AI member**: FUN_0012cb40's x0.8 for a squad type (type+0x1a8 bit 0). #33 take08 (Hawk's
   Move To): the dash levels at 6.84 (6.8). The **follow's boost**: the follow's update sets the
   brain's speed record to 1.25 each update and its chase state takes it off while the leader is
-  within d1 (14 m in FOLLOW, 10 in WINGMAN: `speed::FOLLOW_D1` x `orders::spacing`), and the AI
+  within d1 (14 m in FOLLOW, 10 in WINGMAN: play_follow.rs `distances`, #331), and the AI
   update's FUN_00048270 hands it to the character at any pace level above a walk, so a member
   moving at a run or a dash after a leader farther than that moves at 0.8 x 1.25 = 1.0 x the
   type's speed: take01's first straight (the leader 48-50 m away, the game's clock) Flint

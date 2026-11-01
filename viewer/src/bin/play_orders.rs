@@ -13,11 +13,10 @@
 //!    - **Stand Ground** (GUARD): GOAL_IDLE_VARY with the guard personality's only pause,
 //!      PAUSE_CROUCH: it kneels where it stands and stays (`guard`).
 //!    - **Fire At Will** (WINGMAN) and **Cover Me** (FOLLOW): GOAL_WINGMAN_FOLLOW, at the code's
-//!      8, 10, 7, 7, 4 m for WINGMAN against 1.4 times them for FOLLOW (FUN_00020b10). The demo's
-//!      follow is still its own formation (play.rs `squad_ai`, FORMATION: #331 is the game's
-//!      state machine for the squad, #243 for the marines), so FOLLOW keeps it as it was and
-//!      WINGMAN closes it in by 1 / 1.4
-//!      (`spacing`).
+//!      8, 10, 7, 7, 4 m for WINGMAN against 1.4 times them for FOLLOW (FUN_00020b10): the game's
+//!      state machine since #331 (play_follow.rs, from play.rs `squad_ai`; the marines' too, #243),
+//!      the formation's lists by the order the mode changes are made in (`test_orders`, the
+//!      menu's `give`: the squad list's slot order).
 //!    - **Move To** (MOVE_OUT): GOAL_MOVE_OUT walks a route to the point at the dash, and at
 //!      its end it's GUARD, with the line e635ecc6 (`move_out`). The route is play_routes.rs's
 //!      (#335): over the level's world points, with the AI update's route round a friend in the
@@ -64,13 +63,6 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, watch.after(update_player).run_if(in_state(AppState::Playing)));
 }
 
-/// How much closer WINGMAN's follow keeps than FOLLOW's: FUN_00020b10's distances are 8, 10, 7,
-/// 7 and 4 m, and 11.2, 14, 9.8, 9.8 and 5.6 m (1.4 times them) when its goal+0x18, the brain's
-/// mode, is PCMD_FOLLOW. The demo's formation (play.rs FORMATION, SLOT_START, SLOT_DASH) was
-/// measured from the squad in its default mode, FOLLOW, so in WINGMAN its places and the
-/// distances it sets off and dashes at are those times 8 / 11.2. (What the five distances do in
-/// the game's follow: code-map.md's FUN_00020b10 row; the demo's follow doesn't run them, #331.)
-const WINGMAN_SPACING: f32 = 8.0 / 11.2;
 /// GUARD's kneel, this long after the mode change (s): a fit. The takes' Hawk began her
 /// stand2crouch 0.24 s of game time after Stand Ground (take07) and 0.52 s after arriving at a
 /// Move To point (take08), against the follow's kneel after standing still a while
@@ -121,11 +113,6 @@ fn base_goal(mode: Mode) -> (i64, &'static str) {
 /// BF_ORDER_LOG's level: 0 off, 1 the events, 2 the 10 Hz rows too.
 fn log_level() -> u8 {
     std::env::var("BF_ORDER_LOG").ok().map_or(0, |v| v.trim().parse().unwrap_or(1))
-}
-
-/// The scale of the follow's formation in `mode` (see WINGMAN_SPACING): 1 in FOLLOW.
-pub fn spacing(mode: Mode) -> f32 {
-    if mode == Mode::Wingman { WINGMAN_SPACING } else { 1.0 }
 }
 
 /// The personality `u`'s brain runs: its type's `<ai>` one for its mode (`TypeAi::personalities`,
@@ -195,13 +182,13 @@ pub fn gate(u: &Player, target: Option<Vec3>, toward: Option<Vec3>) -> (Option<V
 }
 
 /// One frame of an AI squad member `m`'s goal in its mode (in place of play.rs `squad_ai`, which
-/// is FOLLOW's and WINGMAN's: `leader`, `slot`, `heading` are its), firing at `target` and turning
-/// to `toward` as `gate` left them; or, while the Squad Command menu's Toggle Ability has its goal
-/// on top, that goal alone (`toggle_skill`). `graph`: the level's world points, which the follow
-/// and Move To walk routes over (play_routes.rs, #335).
+/// is FOLLOW's and WINGMAN's: `leader`, `lead`, `mates`, `slot`, `heading` are its), firing at
+/// `target` and turning to `toward` as `gate` left them; or, while the Squad Command menu's Toggle
+/// Ability has its goal on top, that goal alone (`toggle_skill`). `graph`: the level's world
+/// points, which the follow and Move To walk routes over (play_routes.rs, #335).
 #[allow(clippy::too_many_arguments)]
-pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32, target: Option<Vec3>, toward: Option<Vec3>, game: &Game,
-             graph: Option<&mut bf_viewer::bf::nav::Graph>) {
+pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follow::Mate], slot: usize, heading: f32, dt: f32, target: Option<Vec3>,
+             toward: Option<Vec3>, game: &Game, graph: Option<&mut bf_viewer::bf::nav::Graph>) {
     if toggle_skill(m, dt) {
         return;
     }
@@ -210,7 +197,7 @@ pub fn think(m: &mut Player, leader: &Player, slot: usize, heading: f32, dt: f32
         Mode::MoveOut => move_out(m, dt, target, toward, graph),
         _ => {
             let pauses = pauses(m, game);
-            squad_ai(m, leader, slot, heading, dt, target, toward, &pauses, graph);
+            squad_ai(m, leader, lead, mates, slot, heading, dt, target, toward, &pauses, graph);
         }
     }
 }
@@ -480,8 +467,10 @@ fn set(u: &mut Player, mode: Mode, point: Option<Vec3>) -> bool {
     if !u.command.set_mode(mode, point) {
         return false;
     }
-    // (the goal's route goes with it: play_routes.rs, at the next AI update)
+    // (the goal's route goes with it: play_routes.rs, at the next AI update; the follow's goal
+    // starts again, play_follow.rs)
     u.router.stale = true;
+    u.follow.restart();
     u.still_time = 0.0;
     u.idle_pause = 0;
     u.idle_left = 0.0;
@@ -602,8 +591,9 @@ pub fn hand_over(old: &mut Player, squad: &mut [Player], new: usize) -> HandedOv
 /// it's left.
 pub fn taken(u: &mut Player) {
     u.command.toggle = None;
-    // (its goals popped: the route goes too, play_routes.rs)
+    // (its goals popped: the route goes too, play_routes.rs, and the follow's claim)
     u.router.stale = true;
+    u.follow.restart();
     if u.command.mode == Mode::MoveOut {
         let now = u.sim_time;
         order(u, Mode::Guard, None, now);
@@ -616,6 +606,8 @@ pub fn taken(u: &mut Player) {
 pub fn released(u: &mut Player) {
     let was = u.command.allow;
     u.command.released();
+    // (its brain takes up its mode's goal again: the follow from its start, play_follow.rs)
+    u.follow.restart();
     if log_level() > 0 && was != u.command.allow {
         println!("t={:.2} order {}: left by the player in {}: allow {was:x} -> {:x}", u.sim_time, unit_name(u), u.command.mode.name(), u.command.allow);
     }
@@ -704,14 +696,17 @@ fn test_orders(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut orders:
         // (Move To's point: on the floor under 200 m there)
         let point = o.point.map(|p| Vec3::new(p.x, floor_y(p.x, p.y, 200.0, world::Body::Character), p.y));
         let player = &mut *player;
-        for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-            let picked = match slot {
+        let mut picked: Vec<&mut Player> = std::iter::once(&mut *player).chain(squad.0.iter_mut()).filter(|u| {
+            u.in_squad() && match slot {
                 Some(s) => s == Some(u.character),
                 None => u.character != me,
-            };
-            if picked && u.in_squad() {
-                order(u, o.mode, point, now);
             }
+        }).collect();
+        // (in the squad list's slot order, as FUN_000c1280 walks its selection: the follow lists
+        // take the members in it, play_follow.rs, #331)
+        picked.sort_by_key(|u| squad_menu::SLOT_ORDER.iter().position(|&c| c == u.character).unwrap_or(SQUAD));
+        for u in picked {
+            order(u, o.mode, point, now);
         }
     }
 }
@@ -898,13 +893,6 @@ mod tests {
         // (Cover Me after it: no line, and the bit stays as it was)
         c.set_mode(Mode::Follow, None);
         assert!(!c.start_walk());
-    }
-
-    /// WINGMAN's formation is FOLLOW's times 8 / 11.2 (FUN_00020b10's two sets).
-    #[test]
-    fn wingman_spacing() {
-        assert_eq!(spacing(Mode::Follow), 1.0);
-        assert!((spacing(Mode::Wingman) * 11.2 - 8.0).abs() < 1e-5);
     }
 
     /// A squad member `character` with the skill of `skill_set` (CSKILL_: 1 Brutus, 2 Flint, 3 Tex,

@@ -126,7 +126,7 @@ game's is 3D at the character).
 | kill line | FUN_00125f40: a killer hostile to the victim, when their player slots differ (the victim's against the hit record's +0x1c, the shooter's: so one of the two is a player's, and an AI's kill of an AI draws none), says 13601f7b when its skill's vtable +8 says so (Tex's berserk, Flint's targeting on), else 02da3fee | the killer the hit names (`damage::Hit::by`); the controlled character has the one slot (as it is at the kill: a stand-in for the shooter's at the shot). Tex's, Brutus's and Flint's 02da3fee variants all need 1..100 enemies fought, which the victim makes in the death frame; Hawk has 0..0 ones too |
 | hand-over | FUN_0005cc20: the one handed over from, by its brain mode: Cover Me (1) f415ab02, Stand Ground (3) 0e69bfe5 (e635ecc6 when the one taken is over 50 m away), Fire At Will (4) 15dc4e2d; the members its far case re-ordered answer (below) | play.rs `squad_control`, `Ask::HandOver` ([below](#lines-of-several-parts-the-order-line-and-the-hand-over-320)) |
 | order line | FUN_000c1630, from the Squad Command menu's order dispatch FUN_000c1280: the giver calls the members ordered (or "everyone"), says the order and each answers | play_squad_menu.rs `give`, `Ask::Order` (below) |
-| walk line | FUN_00021b70: the walk to its place in Fire At Will (mode 4 only, #343), once per order (1ecaeb98, 75%, replay 20 s, priority 2) | play.rs `squad_ai`: the formation's set-off after a Fire At Will, a stand-in for the game's follow states (#331) |
+| walk line | FUN_00021b70: the walk to its route point in Fire At Will (mode 4 only, #343; the first entry of WINGMAN's list), once per order (1ecaeb98, 75%, replay 20 s, priority 2) | play_follow.rs `walk_line`: WINGMAN's first entry at its first follow update after a Fire At Will, a stand-in for state 9 (#331) |
 | Move To's arrival | FUN_00045fa0: a member on Move To reaching its point, or its walk failing (0x46256): e635ecc6, then GUARD | play_orders.rs `arrive` ([squad.md](squad.md), "Squad commands") |
 | healed | 0x146f40, only when the medkit adds health: 12c35d69 (f832ad27 for a healer whose squad has no player) | play_pickups.rs: 10%, a 30 s replay delay, priority 1 |
 | can't take that gun | FUN_000a9910 | play_weapon_pickups.rs: 100%, a 10 s replay delay |
@@ -233,11 +233,13 @@ take12 (Brutus) and #33 take05 and take06 (Flint) show it after a Fire At Will: 
 comes in the first frames the game runs after the order's (the clock held by the menu until
 then); in take05 Brutus asked it 11 s after the order, once Tex had walked off (the member that
 gets the route point is the first in the squad's list, FUN_0001adf0 / FUN_0005ea10). Hawk, who
-followed Tex's 40 m walk in take05, never asked it, so the game's follow starts its walks in
-other states too. The demo's is a stand-in for the follow's state machine (#331): the first
-time since the bit was cleared that a member in WINGMAN has its formation walk set off (play.rs
-`squad_ai`, `Command::start_walk`, which answers false in any other mode), which is usually when
-the leader next moves off.
+followed Tex's 40 m walk in take05, never asked it: she was never the list's first. The demo's
+(#331): the follow runs the game's states (play_follow.rs) but not the route-point family 6-16,
+so no member has a route point; the first entry of WINGMAN's list (FUN_0005ea10; the members join
+it in the order the order reaches them, the squad list's slot order, so Flint after a Fire At
+Will to all three, Brutus after his own) asks the line at its first follow update after the order
+(`walk_line`, `Command::start_walk`, which answers false in any other mode), and the others never
+(take05's Brutus asked his when the list's first entry changed, 11 s on: not done).
 
 ## The draws
 
@@ -389,7 +391,13 @@ its first 20 s.
   "BF_TEST_ORDER=flint,fire@2;brutus,fire@2" BF_TEST_GOTO=3.5,40,3.5,5 BF_TEST_GO_AT=0`) has
   Brutus ask it at 4.33 s and Flint at 4.60 s, as the formation's walk sets off: the stand-in's
   timing, not take05's (Flint's gate call 0.6 s after the order, which the game's state 9 makes as
-  the order lands: #331).
+  the order lands: #331). Since #331 the first recipe's Brutus, WINGMAN's first, asks it at the
+  first frame after his Fire At Will (2.20 s on his clock, said with the order line playing; #36
+  take12's Brutus 0.2 s after his), and Flint and Hawk, ordered after him into the list's second
+  and third places, never; on e34 a Fire At Will to all three through the menu
+  (`BF_TEST_COMMAND=30:hawk:0.4;30.9:brutus;31.5:flint;32.5:fire`) has Flint ask it at the first
+  frame after the menu's fade (take05: 0.58 s after the order's gate call), where main's asked
+  nothing in the 3 s after.
 * e34's start (`BF_MAP=e34 BF_CHATTER_LOG=1 BF_SOUND_LOG=1`, 330 frames, #343): the three members'
   1ecaeb98 rows (Flint 9.00 s, Brutus 9.53 s, Hawk 10.07 s, all refused by Bratton's radio mute)
   are gone, and every other chatter and sound row is the same.
@@ -460,8 +468,8 @@ follow line) is under 0.04 s of game time, the frame the manager starts the soun
   take08's Move To (0.546 / 0.528, 1.322 / 1.289). The demo's tags, speakers and order
   of parts are the takes' (the test map's runs above), and its variants are drawn, so the words
   differ from a take's by the draw. take12's Brutus also asks 1ecaeb98 in the first frames after
-  his Fire At Will (gate call, priority 2): the demo's stand-in asks it at his next walk to his
-  place.
+  his Fire At Will (gate call, priority 2): since #331 the demo's stand-in does too (WINGMAN's
+  first entry).
 * D3 (take13, take14): the follow line asked at the hand-over's cut (Tex, variant f71090f4,
   priority 5, its sound 0.04 s later on the game clock: 0.3 s of video), and refused at the next
   hand-over 11.8 s later (15 s of video) by its 30 s replay delay; Brutus on Stand Ground says

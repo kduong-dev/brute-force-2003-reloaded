@@ -149,7 +149,7 @@ pub struct Avoid {
     /// (0x1b2d7-0x1b306), the brain's reset zeroes it (0x17610)
     pub feelers_off: f32,
     /// brain+0x8a4: the speed record's timer (s): while it runs FUN_00048270 hands char+0x720 1.0,
-    /// not the record's factor (play_speed.rs `follow_boost`); a feeler hit at a dash with the
+    /// not the record's factor (play_speed.rs `record_boost`); a feeler hit at a dash with the
     /// factor over 1 sets it to DASH_DROP (FUN_00018c40, 0x194cb)
     pub boost_off: f32,
     /// char+0x720 as the last AI frame left it (`Player::speed_boost`, the follow's 1.25 or 1.0):

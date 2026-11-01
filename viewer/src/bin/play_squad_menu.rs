@@ -937,10 +937,12 @@ fn give(m: &mut SquadMenu, order: usize, point: Option<Vec3>, player: &mut Playe
     let mut taken: Vec<(usize, Who)> = vec![];
     // (the squad's size, the controlled character counted: char+0x59c's +4)
     let size = std::iter::once(&*player).chain(squad.0.iter()).filter(|u| u.in_squad() && !u.absent).count();
-    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
-        if !u.in_squad() || u.absent || u.character >= SQUAD || !flags[u.character] {
-            continue;
-        }
+    let mut picked: Vec<&mut Player> = std::iter::once(&mut *player).chain(squad.0.iter_mut())
+        .filter(|u| u.in_squad() && !u.absent && u.character < SQUAD && flags[u.character]).collect();
+    // (the selection vector's order, FUN_000c8700: by slot; each member's mode change joins its
+    // follow list in it, play_follow.rs, #331)
+    picked.sort_by_key(|u| SLOT_ORDER.iter().position(|&c| c == u.character).unwrap_or(SQUAD));
+    for u in picked {
         any = true;
         taken.push((SLOT_ORDER.iter().position(|&c| c == u.character).unwrap_or(SQUAD), u.who()));
         let pushed = match order {

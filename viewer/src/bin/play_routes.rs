@@ -15,11 +15,9 @@
 //!  - **The own points** (FUN_0014f860) of the controlled character (the character update keeps
 //!    its point while its brain idles under the player: a route to a character ends there) and
 //!    of the AI squad and its followers, every frame (`keep_point`).
-//!  - **The follow** (`follow`, from play.rs `squad_ai` in FOLLOW and WINGMAN): the demo's
-//!    formation place, its distances kept until #331 brings the game's follow states, reached by
-//!    a route and never a straight chase, planned again as the follow's state 0 plans (see
-//!    `follow`). Without a level (the test map's floor has no world points) it stays the straight
-//!    walk it was.
+//!  - **The follow** (#331, play_follow.rs, from play.rs `squad_ai` in FOLLOW and WINGMAN): the
+//!    game's follow states, whose chase walks a route to the leader's own point (state 0) and whose
+//!    walk to a cover point near him (state 5) another, both through `plan` and `step` here.
 //!  - **Move To** (`move_out`, from play_orders.rs): GOAL_MOVE_OUT's route to the cursor's point
 //!    (0x45d00), walked at 2 m to its end (FUN_00045fa0).
 //!  - **The liquid guard** (play_liquids.rs `burning_ahead`): a safety net only. The game keeps
@@ -53,14 +51,6 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Update, warp_hook.after(read_input).before(update_player).run_if(in_state(AppState::Playing)));
 }
 
-/// FUN_000225d0's flood for a point near the leader: 12 m (FUN_00020170(.., 0, 12.0) puts 12 at
-/// the filter's +0x110, the radius FUN_000594a0 floods within). The demo's follow takes its
-/// place's point among the points the leader's own point floods to within it (`follow`).
-const NEAR_LEADER: f32 = 12.0;
-/// FUN_00020b10's d3 (its +0x14): 7 m in WINGMAN, 9.8 m (1.4 x 7) in FOLLOW. The follow's state 0
-/// plans again while the leader is farther than it from the route's end (FUN_00022130, 0x22251);
-/// play.rs `squad_ai` scales it by `orders::spacing` (8 / 11.2 in WINGMAN: 7.0).
-pub const REPLAN: f32 = 9.8;
 /// FUN_000426b0: the time (s) without the squared distance to the current target falling
 /// (route+0x1c over 2.0, 0x4267c) that counts as stuck.
 const STUCK_AFTER: f32 = 2.0;
@@ -91,13 +81,12 @@ const REROUTE_GRACE: f32 = -5.0;
 /// The pace level ([brain+0x1a8]+0, `Router::cap`: 1 stand, 2 walk, 3 run, 4 dash), which
 /// FUN_0004d970's move is held to (`pace`), set down with its timer (+0x28, FUN_000124f0) for
 /// this long (s): FUN_00042280's detour 1 for 1.0, FUN_00042490's re-route 1 for 1.5,
-/// FUN_00041870's route round a friend at most 3 for 0.5 and its wait 1 for 0.5, the follow's
-/// hold (state 2, FUN_000223c0: 0x3e99999a) 1 for 0.3. The ramp climbs back once the timer runs
-/// out (`ai_update`).
+/// FUN_00041870's route round a friend at most 3 for 0.5 and its wait 1 for 0.5 (the follow's
+/// hold, state 2, is play_follow.rs's HOLD_STAND). The ramp climbs back once the timer runs out
+/// (`ai_update`).
 const DETOUR_HOLD: f32 = 1.0;
 const REROUTE_HOLD: f32 = 1.5;
 const BLOCKER_RUN: f32 = 0.5;
-const FOLLOW_HOLD: f32 = 0.3;
 /// The pace level's top, the dash (FUN_00058b10's level 4).
 pub const NO_CAP: i32 = 4;
 /// The pace ramp's step (s, the record's +0x20, FUN_00058670 each AI frame): 0.17 (0x3e2e147b)
@@ -160,17 +149,6 @@ const BLOCKER_FLOOD: f32 = 15.0;
 /// asks 12d51a1c (0x41fa2: no block in any chatter file, silent).
 const BLOCKER_WAIT: f32 = 7.0;
 const LINE_BLOCKED: u32 = 0x12D5_1A1C;
-/// The demo's follow ends its route at the place itself (`Dest::Beside`) only when the corridor
-/// from the place's point to it is clear (FUN_000410a0's 0.8 m, as the walk's skips test) and the
-/// place is on a floor no more than this under or over the leader's feet: the demo's, so a place
-/// on a ledge below, in a pit or up a cliff isn't walked to (one up a slope is: the floor is
-/// looked for from this over his feet).
-const PLACE_DROP: f32 = 2.0;
-/// The demo's follow looks for a clear corridor to its place from this many of the points
-/// nearest it (`follow_dest`), so a place that an object hides from its nearest point is still
-/// walked to from one beside it: a guess (e34, #335's fix round: Object 464 stood between
-/// h_f6632343 and the places beyond it, and the members held at the point).
-const PLACE_TRIES: usize = 4;
 
 /// A character's route state: its own world point and its brain's route (the fields of the brain
 /// the route code reads), kept with the character through the hand-over (`Player::router`).
@@ -186,11 +164,6 @@ pub struct Router {
     pub walker: Option<Walker>,
     /// what the route goes to, as planned (a detour or a re-route plans to it again)
     pub dest: Option<Dest>,
-    /// where the follow's leader stood when its route was planned
-    planned: Option<Vec3>,
-    /// where the follow's leader stood when its hold began (`follow`: a route's end short of its
-    /// place, no route, or its place's point the one it stands at); None out of a hold
-    hold: Option<Vec3>,
     /// MOVE_OUT's route was planned for this order (the point as ordered)
     ordered: Option<Vec3>,
     /// where the character was at its last walk step (FUN_00025870's from)
@@ -210,13 +183,6 @@ pub struct Router {
     /// a mode change dropped its goal (FUN_00018040's goal reset): the route goes at its next
     /// AI update, where the graph is at hand
     pub stale: bool,
-    /// the stuck handling gave its route up short of its end: a bare position, where there's no
-    /// point to be put at (`stuck`), or the detour's done on its last entries (`detour`): the follow
-    /// holds at the route's end within d0 of its leader, else plans again (`follow`). The demo's
-    gave_up: bool,
-    /// the stuck handling acted on its route this AI frame (`stuck`; the follow holds when it's
-    /// near its leader, `follow`)
-    stuck_fired: bool,
     /// the brain's avoidance fields (play_avoid.rs, #344): the feelers-off timer, the speed
     /// record's timer, char+0x720 as it stands, the characters near it
     pub avoid: avoid::Avoid,
@@ -226,8 +192,8 @@ impl Default for Router {
     /// A spawned character's: its own point wanted, no route, its pace record as the brain's init
     /// makes it (FUN_00058530: the level 1, a stand, its timer at PACE_STAND).
     fn default() -> Self {
-        Router { own: OwnPoint::spawned(), own_at: None, walker: None, dest: None, planned: None, hold: None, ordered: None, last: None, stuck_at: None, stuck_count: 0,
-                 cap: 1, cap_left: PACE_STAND, asked: 1, wait: 0.0, stale: false, gave_up: false, stuck_fired: false, avoid: avoid::Avoid::default() }
+        Router { own: OwnPoint::spawned(), own_at: None, walker: None, dest: None, ordered: None, last: None, stuck_at: None, stuck_count: 0,
+                 cap: 1, cap_left: PACE_STAND, asked: 1, wait: 0.0, stale: false, avoid: avoid::Avoid::default() }
     }
 }
 
@@ -243,7 +209,6 @@ impl Router {
             w.reset(g);
         }
         self.dest = None;
-        self.planned = None;
         self.ordered = None;
     }
 
@@ -562,7 +527,6 @@ fn hard_turn(m: &mut Player, dt: f32) {
 /// them is `pace_ramp`.
 pub fn ai_update(m: &mut Player, mates: &[Mate], g: &mut Graph, dt: f32) {
     let r = &mut m.router;
-    r.stuck_fired = false;
     if std::mem::take(&mut r.stale) {
         r.drop_route(g);
     }
@@ -581,15 +545,16 @@ pub fn ai_update(m: &mut Player, mates: &[Mate], g: &mut Graph, dt: f32) {
     stuck(m, g, dt);
 }
 
-/// A route walk's step for `m` (FUN_00026d80 at `radius`, at most 1 m in a prism), logged; its
-/// position kept for the next step's pass test.
-fn step(m: &mut Player, g: &mut Graph, radius: f32, last_radius: f32) -> Step {
+/// A route walk's step for `m` (FUN_00026d80 at `radius`, `last_radius` for the route's last
+/// entry: the follow's walk to a cover point passes 1.0 and 0.1, FUN_00022790; at most 1 m in a
+/// prism), logged; its position kept for the next step's pass test.
+pub(super) fn step(m: &mut Player, g: &mut Graph, radius: f32, last_radius: f32) -> Step {
     let me = m.position;
     let last = m.router.last.replace(me).unwrap_or(me);
     let who = unit_name(m);
     let now = m.sim_time;
     let Some(w) = m.router.walker.as_mut() else { return Step::default() };
-    let on_last = usize::try_from(w.index).is_ok_and(|i| i + 1 == w.entries.len()) && w.entries.last().is_some_and(|e| e.point.is_none());
+    let on_last = usize::try_from(w.index).is_ok_and(|i| i + 1 == w.entries.len());
     let held = w.corner;
     let s = w.step(g, me, last, in_prism(), if on_last { last_radius } else { radius }, &ray);
     // (BF_ROUTE_LOG=2: the walk's state once a second)
@@ -649,9 +614,9 @@ fn door_step(m: &mut Player, g: &Graph, s: &Step, clear: nav::Clear) {
 }
 
 /// Plans `m`'s route to `to` (FUN_000416a0 from its own point) and starts it (FUN_00025730 with
-/// its third argument 1, as the follow's and MOVE_OUT's starts pass it), logged with `why`. The
-/// route found, or why none.
-fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result<(), NoRoute> {
+/// its third argument 1, as the follow's and MOVE_OUT's starts pass it), logged with `why`; the
+/// route it had reset, its corner point kept (brain+0x9dc). The route found, or why none.
+pub(super) fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result<(), NoRoute> {
     let me = m.position;
     let own = m.router.own.point;
     let clock = std::time::Instant::now();
@@ -682,7 +647,6 @@ fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result<(), NoRout
             m.router.walker = Some(w);
             m.router.dest = Some(to);
             m.router.last = Some(me);
-            m.router.gave_up = false;
             Ok(())
         }
         Err(e) => {
@@ -704,233 +668,18 @@ fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result<(), NoRout
 pub enum Way {
     /// toward `target` (the route's steering target, brain+0x478), `along` m of the walk left
     Go { target: Vec3, along: f32 },
-    /// standing: no route to its place, or held at a route's end short of it (the pace level at 1
-    /// is the caller's, `pace`)
+    /// standing: the follow's holds, no route (the pace level at 1 is the caller's, `pace`)
     Stand,
-    /// at the route's end, its place reached
+    /// at the route's end, Move To's point reached
     There,
 }
 
-/// The points the follow's route to `place` may go to, the nearest `place` (3D) first: the points
-/// the leader's own point `leader` floods to within NEAR_LEADER (FUN_000594a0 from the leader's
-/// point, as the follow's state 4 finds its point near the leader: FUN_000225d0), so ones on the
-/// leader's side of whatever lies between, his point among them (the flood offers it first, and
-/// it comes first of equals); without a leader's point the nearest valid point to `place`. The
-/// demo's pick for its formation place (state 4 takes the first its filter takes; #331).
-fn place_points(g: &Graph, place: Vec3, leader: Option<u32>) -> Vec<u32> {
-    let Some(lp) = leader else { return g.nearest_valid(place).into_iter().collect() };
-    let mut all = Vec::new();
-    g.flood(lp, NEAR_LEADER, |p| {
-        all.push((p, g.nodes[p as usize].at.distance_squared(place)));
-        false
-    });
-    all.sort_by(|a, b| a.1.total_cmp(&b.1));
-    all.into_iter().map(|(p, _)| p).collect()
-}
-
-/// The follow's destination for `place` (feet height `feet`) by the points near it, the nearest
-/// first (`place_points`), and the leader's own point `leader`:
-///  - the place itself beside the first of the PLACE_TRIES nearest from which the corridor to it
-///    is clear (`Dest::Beside`, FUN_00059d40's position beside a point; FUN_000410a0's 0.8 m, from
-///    the point to the place as high over its floor as the point stands over its own: the
-///    demo's, as the route's corridors run between points at their heights), when it stands on a
-///    floor no more than PLACE_DROP under or over `feet` and in no liquid that burns;
-///  - a place on such a floor that none of them sees: the nearest point (the route ends there, as
-///    near as the graph comes);
-///  - a place no one could stand on (no such floor, or in a liquid that burns): the leader's own
-///    point, the game's follow's destination (FUN_00022130's route to the leader), the nearest
-///    without one. The demo's: the formation's place turns with the leader's heading, and for a
-///    leader in the lava it swings round him over the far shores, its nearest point with it,
-///    where his own point stays (#335's fix round, e13: with the place's nearest point Hawk went
-///    to and fro between two points 21 m apart as his turning swung her place from shore to
-///    shore).
-///
-/// None without a point. BF_ROUTE_LOG=2 says why a place isn't walked to.
-fn follow_dest(g: &Graph, place: Vec3, feet: f32, points: &[u32], leader: Option<u32>) -> Option<Dest> {
-    let nearest = *points.first()?;
-    let body = world::Mover::Ai.body();
-    let arena = world::arena();
-    let floor = arena.as_deref().and_then(|a| a.floor_below(place.x, place.z, feet + PLACE_DROP, body)).map(|f| f.0);
-    let dropped = !floor.is_some_and(|y| feet - y <= PLACE_DROP);
-    let burns = arena.as_deref().zip(floor).is_some_and(|(a, y)| liquids::burns_at(a, Vec3::new(place.x, y + 0.1, place.z)));
-    let clear = |point: u32, y: f32| {
-        let p = g.nodes[point as usize].at;
-        let lift = arena.as_deref().and_then(|a| a.floor_below(p.x, p.z, p.y + STEP_UP, body)).map_or(0.0, |f| (p.y - f.0).max(0.0));
-        !nav::corridor_blocked(p, Vec3::new(place.x, y + lift, place.z), nav::CORRIDOR, &ray)
-    };
-    let seen = floor.filter(|_| !dropped && !burns).and_then(|y| points.iter().take(PLACE_TRIES).copied().find(|&p| clear(p, y)).map(|p| (p, y)));
-    if seen.is_none() && log_level() >= 2 {
-        println!("  (the place ({:.1}, {:.1}) not walked to: {}; its floor {:?}, the leader's feet {feet:.1})", place.x, place.z,
-                 if dropped { "no floor or too low" } else if burns { "in a liquid that burns" } else { "the corridor from its nearest points blocked" }, floor);
-    }
-    Some(match seen {
-        Some((point, y)) => Dest::Beside { at: Vec3::new(place.x, y - GROUND, place.z), point },
-        None if dropped || burns => Dest::Point(leader.unwrap_or(nearest)),
-        None => Dest::Point(nearest),
-    })
-}
-
-/// The follow's distances at its command mode's spacing (play.rs `orders::spacing`, 1 in FOLLOW
-/// and 8 / 11.2 in WINGMAN, as FUN_00020b10's five distances all go with the mode): `replan`, d3
-/// (REPLAN); `again`, the formation's set-off distance (play.rs SLOT_START), which a hold waits
-/// for the leader himself to move (`follow`); and `near`, d0 (HOLD_NEAR), within which a member
-/// the stuck handling acts on holds (`follow`).
-#[derive(Clone, Copy, Debug)]
-pub struct Reach {
-    pub replan: f32,
-    pub again: f32,
-    pub near: f32,
-}
-
-impl Reach {
-    /// The three at the formation's `spacing`, `start` its set-off distance unscaled.
-    pub fn at(spacing: f32, start: f32) -> Reach {
-        Reach { replan: REPLAN * spacing, again: start * spacing, near: HOLD_NEAR * spacing }
-    }
-}
-
-/// FUN_00020b10's d0 (the distances' first, its stack's +8: 11.2 m in FOLLOW, 8 in WINGMAN): the
-/// game's follow holds (state 3, FUN_00022520 -> FUN_00022420) while its leader is within it. The
-/// demo's follow holds where it stands when the stuck handling acts on its route, or gives it up,
-/// within this of its leader; beyond it a route given up is planned again (`follow`).
-const HOLD_NEAR: f32 = 11.2;
-
-/// The follow's way to its place `place` this frame (play.rs `squad_ai`, once it has set off: the
-/// formation's set-off and settle rules are its), by a route over the graph. `leader_at` is the
-/// leader's position: the game's follow routes to his own point and measures its re-plans and
-/// holds by him, and the demo keys them on him too, not on the place, which turns with his
-/// heading 7-12 m out in front (FORMATION), so a leader turning where he stands swings it round
-/// him (#335's review: 11-13 plans in 2 s, the destination flipping between points, with the
-/// leader running round his goal in lava on e13):
-///  - planned to `follow_dest` (the place beside one of the points near it on the leader's side,
-///    else the nearest of them, or for a place no one could stand on the leader's own point), from
-///    the member's own point;
-///  - planned again when the leader has moved more than d3 (3D) from where he stood when the
-///    route was planned (FUN_00022130 plans again while the leader is farther than d3 from the
-///    route's end, which is his point), and at a route's end beside the place when the place has
-///    moved on (state 0 plans again with its route empty; the settle radius `settle`, the
-///    formation's SLOT_STOP; the game's state 0 would hold there with the leader within d4, the
-///    demo's formation keeps its place);
-///  - held at a route's end at a point short of the place (the place out of reach: FUN_00022130
-///    holds at a route's end with the leader within d4, else plans again to his point, which for
-///    a place out of reach is that point or one beside it, so the demo holds whatever his
-///    distance), with no route (FUN_000416a0 fails: state 2, the hold), or with its destination
-///    the point it stands at (as near as the graph comes: no search for it); each hold until the
-///    leader has moved `again` (3D, the formation's set-off distance) from where he stood when
-///    it began: the demo's, a guess (the game's hold, state 3, FUN_00022420, ends when the leader
-///    is beyond d0 of the member, which a member held on a shore 11-14 m from a leader in the
-///    lava already is). A settled member sets off when its place is that far; a held one when
-///    the leader himself has gone that far, his turning left out: the e13 lava leader's track
-///    keeps within 2 m of its middle, and a leader running at 4.8 m/s goes 3 m in 0.6 s;
-///  - walked at 2 m a point (FUN_00026d80 at 2.0, the follow's), the last entry, the place itself,
-///    within `settle`, at the pace the caller asks and the level allows (`pace`: at level 1, after
-///    a detour, a re-route or a hold, it stands);
-///  - held where it stands, as at a route's end short of its place, when the stuck handling acted
-///    on its route this frame, or gave it up (`Router::gave_up`), within `reach.near` (d0) of its
-///    leader: the demo's. The game's follow, which routes to its leader's point and holds near him
-///    (state 3 while he's within d0), never has a place of its own to fail to reach; the demo's
-///    did, at rest beside a standing leader, round and round him (#344's review: m07_a, Brutus and
-///    Flint walked 125 and 47 m after Tex stopped, a stuck every few seconds; sdm_e34's building by
-///    the door pair h_f519ca12 / h_117d5fb1 likewise). Beyond d0 a route given up is planned again
-///    at once, as the game's follow, out of its hold there, plans again (state 0 with its route
-///    empty): a hold out there would keep a member that ran past its place, 13-16 m off a leader
-///    standing for good, where it stuck (#344's fix round, e13's Move To recipe).
-pub fn follow(m: &mut Player, g: &mut Graph, place: Vec3, leader_at: Vec3, leader: Option<u32>, reach: Reach, settle: f32) -> Way {
-    let mut why = "the follow";
-    let log = log_level() > 0;
-    if std::mem::take(&mut m.router.stuck_fired) && m.position.distance(leader_at) <= reach.near {
-        m.router.drop_route(g);
-        begin_hold(m, g, leader_at, place, "stuck near its leader");
-        return Way::Stand;
-    }
-    for _ in 0..2 {
-        if let Some(l0) = m.router.planned.filter(|_| m.router.walking()) {
-            let moved = l0.distance(leader_at);
-            if moved > reach.replan {
-                if log {
-                    println!("t {:.2}: {}: its leader is {moved:.1} m from where he stood when its route was planned (over {:.1}): plans again", m.sim_time,
-                             unit_name(m), reach.replan);
-                }
-                m.router.drop_route(g);
-                why = "the follow: its leader moved";
-            }
-        }
-        if !m.router.walking() {
-            if let Some(h) = m.router.hold {
-                let moved = h.distance(leader_at);
-                if moved <= reach.again {
-                    return Way::Stand;
-                }
-                m.router.hold = None;
-                if log {
-                    println!("t {:.2}: {}: out of its hold: its leader {moved:.1} m from where he stood when it began (over {:.1})", m.sim_time, unit_name(m),
-                             reach.again);
-                }
-                why = "the follow: out of its hold";
-            }
-            let Some(to) = follow_dest(g, place, place.y + GROUND, &place_points(g, place, leader), leader) else { return Way::Stand };
-            if let Dest::Point(p) = to {
-                if m.position.xz().distance(g.nodes[p as usize].at.xz()) < nav::ARRIVE {
-                    begin_hold(m, g, leader_at, place, "its place's point is the one it stands at");
-                    return Way::Stand;
-                }
-            }
-            if plan(m, g, to, why).is_err() {
-                begin_hold(m, g, leader_at, place, "no route");
-                return Way::Stand;
-            }
-            m.router.planned = Some(leader_at);
-        }
-        let s = step(m, g, nav::ARRIVE, settle);
-        if s.walking {
-            let w = m.router.walker.as_ref().expect("walking");
-            return Way::Go { target: s.target, along: w.remaining(g, m.position) };
-        }
-        // (the route's end: at the place, or at the point short of it)
-        let at_place = matches!(m.router.dest, Some(Dest::Beside { .. }));
-        m.router.drop_route(g);
-        if m.position.xz().distance(place.xz()) <= settle {
-            m.router.gave_up = false;
-            return Way::There;
-        }
-        if !at_place {
-            begin_hold(m, g, leader_at, place, "the route's end short of its place");
-            return Way::Stand;
-        }
-        // (the stuck handling gave the place up: within d0 of the leader it holds where it is,
-        // beyond it plans again, `stuck`)
-        if std::mem::take(&mut m.router.gave_up) {
-            if m.position.distance(leader_at) <= reach.near {
-                begin_hold(m, g, leader_at, place, "stuck short of its place");
-                return Way::Stand;
-            }
-            why = "the follow: its route given up beyond d0 of its leader";
-            continue;
-        }
-        why = "the follow: at the route's end short of its place";
-    }
-    Way::Stand
-}
-
-/// The follow's hold begins (`follow`), the leader at `leader_at` and its place `place` then: the
-/// game's state 2 (FUN_000223c0), which sets the pace level to 1 for FOLLOW_HOLD before its hold,
-/// state 3; `why` for the log.
-fn begin_hold(m: &mut Player, g: &Graph, leader_at: Vec3, place: Vec3, why: &str) {
-    m.router.hold = Some(leader_at);
-    m.router.set_pace(1, FOLLOW_HOLD);
-    if log_level() > 0 {
-        println!("t {:.2}: {}: holds ({why}) at ({:.1}, {:.1}), its own point {}, its place ({:.1}, {:.1})", m.sim_time, unit_name(m), m.position.x, m.position.z,
-                 label(g, m.router.own.point), place.x, place.z);
-    }
-}
-
-/// The follow stops (its set-off rule says stand): the route dropped (state 0's hold within d2
-/// resets it, FUN_0004e8f0) and its hold forgotten.
+/// FUN_0004e8f0 on `m`'s route, when it has one: the follow's resets (state 0 within d2 of a
+/// leader who isn't running and at its route's end, state 5 at its cover point; play_follow.rs).
 pub fn stop(m: &mut Player, g: &mut Graph) {
     if m.router.walker.is_some() {
         m.router.drop_route(g);
     }
-    m.router.hold = None;
 }
 
 /// GOAL_MOVE_OUT on a route (its start 0x45d00, its update FUN_00045fa0): for each order (the
@@ -1108,12 +857,10 @@ fn blocker(m: &mut Player, mates: &[Mate], g: &mut Graph, dt: f32) {
 ///  - its own point the same as at the last stuck, the count (brain+0x9c4) over 1: put at the
 ///    route's current entry's point (FUN_000425b0 with it in EAX, 0x42839-0x42857: vtable +0x48
 ///    with the point's position + 0.25 m, then FUN_0004c5e0; medium: read as a set-position, here
-///    its feet on the floor under that). For a bare position FUN_000425b0 does nothing (it tests
-///    EAX), and the game's follow never routes to one; the demo's follow does (its place,
-///    `Dest::Beside`), so there the route is given up: within d0 of its leader the follow holds
-///    where it is until he moves on, beyond it plans again (`Router::gave_up`, `follow`): the
-///    demo's, where nothing would act again (#335's re-review: pinned at the place until the
-///    leader moved d3);
+///    its feet on the floor under that). For a bare position (the follow's one-entry route to a
+///    leader whose own point is the member's, FUN_00022d70) FUN_000425b0 does nothing (it tests
+///    EAX) and the game's member pushes on until its leader moves d3 off; the demo ends the route
+///    there (route+0x20), so the follow's state 0 plans again at once (play_follow.rs): the demo's;
 ///  - else the detour (`detour`, FUN_00042280), and when its search finds nothing, the re-route
 ///    (`reroute`, FUN_00042490). (FUN_00042620's GOAL_ATTACK_GUARD between them is for a brain
 ///    out of the squad, brain+0x3c4 bit 8 clear: never the squad's.)
@@ -1144,7 +891,6 @@ fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
     let own = r.own.point;
     r.stuck_count = if r.stuck_at == own { r.stuck_count + 1 } else { 0 };
     r.stuck_at = own;
-    r.stuck_fired = true;
     if log {
         println!("t {:.2}: {who}: stuck {STUCK_AFTER} s short of {} at ({:.1}, {:.1}), its own point {} ({} in a row there)", m.sim_time, label(g, short_of), me.x, me.z,
                  label(g, own), r.stuck_count + 1);
@@ -1165,13 +911,12 @@ fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
                 }
             }
             None => {
-                // (a bare position: no point to be put at; the demo gives the route up, see above)
+                // (a bare position: no point to be put at; the demo ends the route, see above)
                 if let Some(w) = r.walker.as_mut() {
                     w.done = true;
                 }
-                r.gave_up = true;
                 if log {
-                    println!("t {:.2}: {who}: no point to be put at short of its place: gives the route up (the demo's)", m.sim_time);
+                    println!("t {:.2}: {who}: no point to be put at short of its route's end: the route is done (the demo's)", m.sim_time);
                 }
             }
         }
@@ -1184,8 +929,7 @@ fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
 }
 
 /// FUN_00042280: the detour. With the current entry and the route's last point (here its last
-/// entry, which for the demo's follow may be its place: the route's destination, `Router::dest`,
-/// is planned to again):
+/// entry: the route's destination, `Router::dest`, is planned to again):
 ///  - the current entry the last: the route done (route+0x20);
 ///  - else, the current point valid: it loses +0x28 bit 2 (`VALID`) for one search, the own point
 ///    too while it has it; the next entry the last: done; the next point valid: it loses it too,
@@ -1193,12 +937,9 @@ fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
 ///    pace level at 1 for 1 s and route+0x1c at -20;
 ///  - the bits given back (FUN_00042240).
 ///
-/// A route done here is given up (`Router::gave_up`): within d0 of its leader the follow holds at
-/// its end where the game's would plan again to its leader's point (FUN_00022130, its state 0 with
-/// the route empty), which the demo's follow, going to a place of its own, hasn't got (the demo's:
-/// #344's review, m07_a, where Brutus's place lay beyond the standing Tex and the follow planned
-/// the same blocked last leg again at once, round him, for good); beyond d0 it plans again.
-/// False only when the search found nothing.
+/// A route done here ends at the follow's next step: its state 0 holds there with the leader
+/// within d4, else plans again to his point (FUN_00022130, play_follow.rs). False only when the
+/// search found nothing.
 fn detour(m: &mut Player, g: &mut Graph) -> bool {
     let log = log_level() > 0;
     let (who, now) = (unit_name(m), m.sim_time);
@@ -1210,7 +951,6 @@ fn detour(m: &mut Player, g: &mut Graph) -> bool {
         if log {
             println!("t {now:.2}: {who}: the detour: stuck on its route's last entry: the route is done");
         }
-        m.router.gave_up = true;
         return true;
     }
     let Some(cp) = w.entries[cur].point.filter(|&p| g.valid(p)) else { return true };
@@ -1221,10 +961,8 @@ fn detour(m: &mut Player, g: &mut Graph) -> bool {
         off.push(o);
     }
     let mut found = true;
-    let mut ended = false;
     if cur as i32 + 1 == n - 1 {
         w.done = true;
-        ended = true;
         if log {
             println!("t {now:.2}: {who}: the detour: its next entry is the last: the route is done");
         }
@@ -1245,9 +983,6 @@ fn detour(m: &mut Player, g: &mut Graph) -> bool {
     }
     for p in off {
         g.nodes[p as usize].state |= nav::VALID;
-    }
-    if ended {
-        m.router.gave_up = true;
     }
     found
 }
@@ -1432,11 +1167,10 @@ mod tests {
         assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [3, 4, 7], "standing by choice: never stuck");
     }
 
-    /// The stuck handling tells the follow what it did (`follow`'s hold): that it acted this frame
-    /// (`Router::stuck_fired`, which the AI update clears), and that a detour on the route's last
-    /// entry ended it (`Router::gave_up`).
+    /// A detour stuck on the route's last entry ends the route (route+0x20, FUN_00042280): the
+    /// follow's state 0 then holds there with its leader within d4, or plans again (play_follow.rs).
     #[test]
-    fn the_stuck_handling_tells_the_follow() {
+    fn a_detour_on_the_last_entry_ends_the_route() {
         let mut g = line();
         let mut m = Player::new(2);
         m.router.own.point = Some(3);
@@ -1446,94 +1180,35 @@ mod tests {
         plan(&mut m, &mut g, Dest::Point(5), "test").unwrap();
         assert_eq!(names(&g, m.router.walker.as_ref().unwrap()), [7]);
         held(&mut m, &mut g, 1, |_| 31.0);
-        assert!(!m.router.stuck_fired && !m.router.gave_up);
+        assert!(m.router.walker.as_ref().is_some_and(|w| !w.done));
         held(&mut m, &mut g, 32, |_| 30.99);
-        assert!(m.router.stuck_fired && m.router.gave_up && m.router.walker.as_ref().is_some_and(|w| w.done));
-        ai_update(&mut m, &[], &mut g, 1.0 / 15.0);
-        assert!(!m.router.stuck_fired, "the AI update starts each frame without it");
+        assert!(m.router.walker.as_ref().is_some_and(|w| w.done));
     }
 
-    /// The follow after the stuck handling ended its route to its place (`follow`): within d0 of its
-    /// leader it holds where it stands, the frame the stuck acted (`Router::stuck_fired`) or later
-    /// with the route given up (`Router::gave_up`); beyond d0 it plans again at once (#344's fix
-    /// round: held there, a member that ran past its place stood 13-16 m off its leader for good).
+    /// A route to a bare position (the follow's one-entry route to a leader whose own point is the
+    /// member's, FUN_00022d70) has no point to be put at on the third stuck: the demo ends the route
+    /// (FUN_000425b0 does nothing there), as the detour on its last entry ends it the first two times.
     #[test]
-    fn a_route_given_up_holds_only_near_the_leader() {
-        // the place beside 4 (30, 0) as in `a_stuck_place_is_given_up`; the leader at x and his
-        // own point: 6 m off at 4, 15 m off by 7 (40, 0)
-        let place = Vec3::new(31.0, 0.0, 3.0);
-        let given_up = |g: &mut Graph| {
-            let mut m = Player::new(2);
-            m.router.own.point = Some(3);
-            m.router.cap = NO_CAP;
-            m.position = Vec3::new(30.5, 0.0, 0.0);
-            plan(&mut m, g, Dest::Beside { at: place, point: 3 }, "test").unwrap();
-            stuck(&mut m, g, 1.0 / 15.0);
-            held(&mut m, g, 32, |_| 30.4);
-            assert!(m.router.stuck_fired && m.router.gave_up);
-            m
-        };
-        let reach = Reach::at(1.0, 3.0);
-        let mut g = line();
-        // within d0, the frame the stuck acted
-        let mut m = given_up(&mut g);
-        let near = Vec3::new(36.4, 0.0, 0.0);
-        assert_eq!(follow(&mut m, &mut g, place, near, Some(3), reach, 1.0), Way::Stand);
-        assert!(m.router.hold.is_some() && !m.router.walking());
-        // within d0, a later frame (the stuck's mark gone, the route still given up)
-        let mut m = given_up(&mut g);
-        m.router.stuck_fired = false;
-        assert_eq!(follow(&mut m, &mut g, place, near, Some(3), reach, 1.0), Way::Stand);
-        assert!(m.router.hold.is_some() && !m.router.gave_up);
-        // beyond d0: a new route at once
-        let mut m = given_up(&mut g);
-        let far = Vec3::new(45.4, 0.0, 0.0);
-        assert!(matches!(follow(&mut m, &mut g, place, far, Some(5), reach, 1.0), Way::Go { .. }));
-        assert!(m.router.hold.is_none() && m.router.walking() && !m.router.gave_up && !m.router.stuck_fired);
-    }
-
-    /// The follow's route to its place (a bare position, `Dest::Beside`) has no point to be put at
-    /// on the third stuck: the route is given up (the demo's, `Router::gave_up`), and the follow
-    /// holds within d0 of its leader or plans again beyond it (`a_route_given_up_holds_only_near_the_leader`).
-    #[test]
-    fn a_stuck_place_is_given_up() {
+    fn a_stuck_bare_position_ends_the_route() {
         let mut g = line();
         let mut m = Player::new(2);
         m.router.own.point = Some(3);
         m.router.cap = NO_CAP;
         m.position = Vec3::new(30.5, 0.0, 0.0);
-        // to a place beside 4 (its own route: the place alone, the last entry a bare position)
-        plan(&mut m, &mut g, Dest::Beside { at: Vec3::new(31.0, 0.0, 3.0), point: 3 }, "test").unwrap();
+        // to a character standing on its own point (4): the one-entry route to his position
+        plan(&mut m, &mut g, Dest::Character { at: Vec3::new(31.0, 0.0, 3.0), point: Some(3) }, "test").unwrap();
         let bare = |m: &Player| m.router.walker.as_ref().is_some_and(|w| w.current().is_none());
         assert!(bare(&m), "{:?}", m.router.walker.as_ref().map(|w| &w.entries));
-        // three stucks at the same own point (the follow planning again between them, which clears
-        // the mark): the first two end the route by the detour on its last entry, the third, with
-        // no point to be put at, by giving it up; each time it's given up
         for k in 0..3 {
-            m.router.gave_up = false;
+            if let Some(w) = m.router.walker.as_mut() {
+                w.done = false;
+            }
             m.position.x = 30.5;
             stuck(&mut m, &mut g, 1.0 / 15.0);
             held(&mut m, &mut g, 32, |_| 30.4);
             assert_eq!(m.router.stuck_count, k);
-            assert!(m.router.gave_up && m.router.walker.as_ref().is_some_and(|w| w.done));
+            assert!(m.router.walker.as_ref().is_some_and(|w| w.done));
         }
-    }
-
-    /// The follow's points for its place (`place_points`): the points the leader's own point
-    /// floods to within 12 m, the nearest the place first; a nearer point across a gap the links
-    /// don't cross isn't among them.
-    #[test]
-    fn the_place_point_is_on_the_leaders_side() {
-        // the leader's side: 1 - 2 - 3 along z = 0; across a gap (no link) 9 at (6, 6)
-        let pts = [point(1, 0.0, 0.0, &[2]), point(2, 4.0, 0.0, &[1, 3]), point(3, 8.0, 0.0, &[2]), point(9, 6.0, 6.0, &[])];
-        let g = Graph::new(&pts);
-        let place = Vec3::new(5.0, 0.0, 5.0);
-        assert_eq!(g.nearest_valid(place), Some(3), "the nearest of all is across the gap");
-        assert_eq!(place_points(&g, place, Some(0)), [1, 2, 0]);
-        // beyond 12 m of the leader's point it isn't flooded to: its own point the nearest left
-        let far = [point(1, 0.0, 0.0, &[2]), point(2, 20.0, 0.0, &[1])];
-        let g = Graph::new(&far);
-        assert_eq!(place_points(&g, Vec3::new(19.0, 0.0, 0.0), Some(0)), [0]);
     }
 
     /// The pace ramp (FUN_00058670): set down to 1 for 1 s (a detour's drop), a member asking for
