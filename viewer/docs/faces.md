@@ -257,6 +257,19 @@ A character without a face table (a Shrike, a hound) has no controller: its line
 A dead speaker's controller takes the speak (a death cry) but isn't ticked any more, as the game's
 isn't (0x11dc7b).
 
+**The deathmatch squads' mouths** (#357): the chatter path is every speaker's, so once the other
+squads' members say their lines (chatter.md, "The squad deathmatch squads' voices") each moves its
+mouth as its face set and its sounds' tracks allow, with no code of the face's own. The Feral
+Colonist, Shaman, Outcast Shaman and Outcast (brutusface), the Shadoon (shadoon_face), the Seer Priest
+and Follower (seerface), the Militia and Gunthar Ghent (militiaface) and sdm_bf's four move
+(`BF_FACE_LOG` rows "says h_... (N viseme tracks; chatter)"). The Shrikes (the four types name no
+`viseme-file`), the Fire Hound and the Confed Marine have no controller, so no row and no mouth
+(though the Marine's sounds have tracks, 99 of 100). **McTavish has a controller (militiaface) but
+none of his 22 sounds has a viseme block**, so his log rows read "no speech block: the face isn't
+moved" and his mouth stays shut: the data, not a gap in the demo. On the test map the Feral
+Colonist's mouth, framed with `BF_TEST_FACE_CAM=2.0,me,1.1,-0.4`, is still outside his lines and
+between their parts and changes shape while a part is said.
+
 **When the mouth starts.** The two paths sit at different places of the game's world update
 (FUN_000d9a20): the chatter manager's update (FUN_00140d70 at 0xd9ac7) runs before the objects'
 ticks (FUN_000d9840 at 0xd9d0b); the cutscene scripts' update (FUN_00174270 at 0xd9d18, whose 103

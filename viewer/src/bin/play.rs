@@ -2989,7 +2989,9 @@ impl Player {
     }
 
     /// A type of its own (none of the squad's four): its data is its type's (`spawn_unit`), its
-    /// behaviour play_enemies.rs's, and it has no skill, voice lines or squad portrait.
+    /// behaviour play_enemies.rs's, and it has no skill. Its chatter is its type's library: a
+    /// member of the squad says every line it's asked, a test map NPC only its hurt lines and its
+    /// death cry (play_chatter.rs `speaks`, #357).
     fn own_type(&self) -> bool {
         self.data_slot() == OTHER
     }

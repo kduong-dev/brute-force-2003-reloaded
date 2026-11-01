@@ -10,9 +10,11 @@
 //!    control passes to it (1-4, BF_TEST_SELECT, the hand-over after a death), the HUD shows it
 //!    and it takes the squad's pickups. Its data is its type's (play.rs `Player::data_slot`): a
 //!    squad type in another's place is still itself (its skill, voice, camera, Brutus not
-//!    kneeling); any other type has no skill, says only its death line, reacts, shields and dies
-//!    as its type does (play_enemies.rs), and shows its type's portrait (the deathmatch types and
-//!    some of the militia have one), else a "?" (play_hud.rs).
+//!    kneeling); any other type has no skill, says its lines from its type's chatter library
+//!    (#357: orders, hand-overs, hurt and kill lines, the death cry; what the library lacks the
+//!    gate refuses), reacts, shields and dies as its type does (play_enemies.rs), and shows its
+//!    type's portrait (the deathmatch types and some of the militia have one), else a "?"
+//!    (play_hud.rs).
 //!  - **The start** (`start`, from play.rs `begin_play`): the test map (`--test`, `--edit`, and
 //!    the flat floor of a level switch) starts with the player's character (Tex, or
 //!    BF_CHARACTER's) alone; the hooks below give it more, and a recipe with one of the squad's own
@@ -800,7 +802,7 @@ fn panel_text(menu: &Menu, types: &[(String, u32)], squads: &[Preset], roster: &
         s += &format!("{mark} {}  {}'s place: {who}\n", c + 1, title(CHARACTERS[c]));
     }
     if own {
-        s += "  (a type of its own: no skill, a death line only)\n";
+        s += "  (a type of its own: no skill; its type's voice)\n";
     }
     if deathmatch {
         s += "  (played alone here: only your slot changes)\n";

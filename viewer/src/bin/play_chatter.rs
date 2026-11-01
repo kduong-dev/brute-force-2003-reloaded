@@ -32,8 +32,19 @@
 //!    play.rs `squad_ai`), the Move To arrival's (FUN_00045fa0,
 //!    play_orders.rs `arrive`), the medkit's (0x146f40, play_pickups.rs), the
 //!    refused gun's (FUN_000a9910, play_weapon_pickups.rs), the skill lines (FUN_0010e470 /
-//!    FUN_0010e3e0, play_skills.rs) and Brutus's charge hit (FUN_0013c1c0, play_vengar.rs). A
-//!    type of its own (an enemy's) says its hurt lines and its death cry, through the gate with
+//!    FUN_0010e3e0, play_skills.rs) and Brutus's charge hit (FUN_0013c1c0, play_vengar.rs).
+//!    **Every squad member says all of them, whatever its type** (#357, `speaks`): the gate's
+//!    callers never look at the type, and the speaker's chatter set is its own type's
+//!    (type+0x1f4, loaded from the type's `chatter-library`, `set_of`). So the test map's
+//!    predefined squads (play_testsquad.rs) talk from their own files: the Feral Hunting Pack,
+//!    the Shrike Raiders, the Seer Coven, the Ferguson Platoon and sdm_bf's Brute Force, whose
+//!    `sdm_*_chatter` files have the orders, the acknowledgement, the hand-over's lines, the
+//!    hit, the grunt, the kill and the death cry but not the walk line, the "healed" lines, the
+//!    refused gun's, the skill-off lines nor the hand-over's answer: the gate refuses those
+//!    ("no block in <set>_chatter"), as the game's does. A type with no name tag (McTavish's
+//!    type+0x1f0 is 0) is passed over in the order line's names (`order_line`), and his file has
+//!    no acknowledgement. A test map NPC of a type of its own (an enemy's, `!in_squad()`) says
+//!    its hurt lines and its death cry only, through the gate with
 //!    its `chatter-library`'s blocks (#328: the #36 takes 07-10 log a spawned Shrike's hurt
 //!    chain through the gate, e856009f, fab0be98, 01e1dcd0, 0ae8104e, with its death cry
 //!    e1213623; the rule the demo had before, the death cry only, came from the #129 takes,
@@ -343,15 +354,25 @@ pub enum Ask {
     HandOver { far: bool, held: Vec<Who>, moved: Vec<Who> },
 }
 
-/// Ask `tag` of `u` (FUN_00140a60 from a caller that names its tag). A type of its own says none
-/// of these, only its hurt lines (`hurt_line`) and its death cry (`death`; see the module notes).
+/// Whether `u` says the lines its callers ask by tag (`say`, `order`, `hand_over`, the kill line,
+/// the replies): every squad member, whatever its type (#357: FUN_00140a60's callers never look
+/// at the type, and its chatter set is its own type's, `set_of`), and a test map NPC of a squad
+/// type (an enemy Brutus). A test map NPC of a type of its own (an enemy's) says only its hurt
+/// lines (`hurt_line`) and its death cry (`death`; #328), until the AI's combat lines (#321).
+fn speaks(u: &Player) -> bool {
+    !u.own_type() || u.in_squad()
+}
+
+/// Ask `tag` of `u` (FUN_00140a60 from a caller that names its tag). A test map enemy of a type
+/// of its own says none of these, only its hurt lines (`hurt_line`) and its death cry (`death`;
+/// see `speaks` and the module notes).
 pub fn say(u: &mut Player, tag: u32) {
     say_with(u, tag, None);
 }
 
 /// `say` with a test hook's chance for it (% in place of the block's `probability`).
 pub fn say_with(u: &mut Player, tag: u32, chance: Option<i64>) {
-    if !u.own_type() {
+    if speaks(u) {
         u.asks.push(Ask::Tag { tag, chance });
     }
 }
@@ -377,7 +398,7 @@ pub fn death(u: &mut Player, cause: Cause) {
 /// (`Ask::Order`) and says the order `entry`, and they answer. `squad` is the giver's squad
 /// size, the giver counted.
 pub fn order(giver: &mut Player, entry: usize, members: Vec<Who>, squad: usize) {
-    if !giver.own_type() {
+    if speaks(giver) {
         giver.asks.push(Ask::Order { entry, members, squad });
     }
 }
@@ -385,7 +406,7 @@ pub fn order(giver: &mut Player, entry: usize, members: Vec<Who>, squad: usize) 
 /// The hand-over's lines (FUN_0005cc20): `left`, the character control has gone from, says the
 /// line of its brain mode, and the members the far case re-ordered (`held`, `moved`) answer.
 pub fn hand_over(left: &mut Player, far: bool, held: Vec<Who>, moved: Vec<Who>) {
-    if !left.own_type() {
+    if speaks(left) {
         left.asks.push(Ask::HandOver { far, held, moved });
     }
 }
@@ -631,6 +652,11 @@ fn update(mut commands: Commands, time: Res<Time>, mut chatter: ResMut<Chatter>,
             println!("t={:6.2} sound {id:08x} vol {volume:.2} (the voice of {}: chatter)", ctx.now, names.get(&who).map_or("?", String::as_str));
         }
         if mute {
+            // (BF_MUTE plays nothing; the log still says whether the loaded banks hold the sample,
+            // so a squad's lines can be checked without being heard, #357)
+            if log && game.0.sounds.wav(id).is_none() {
+                println!("  sound {id:08x}: no sample data in the loaded banks");
+            }
             continue;
         }
         let handle = cache.0.entry(id).or_insert_with(|| {
@@ -694,7 +720,9 @@ fn in_world(u: &Player) -> bool {
 }
 
 /// `u`'s chatter set (the type's +0x1f4 map): a squad type's file by its name (`tex`), a type of
-/// its own's `chatter-library` (play_enemies.rs: `shrike_light`). None without one.
+/// its own's `chatter-library` (play_enemies.rs: `shrike_light`; a squad member's too, #357: the
+/// test map's predefined squads, `sdm_feral_warrior`, `sdm_tex`, `ty_mctavish` ...). None without
+/// one.
 fn set_of(u: &Player, game: &Game) -> Option<String> {
     if u.own_type() {
         game.character_type(u.kind).map(|t| t.chatter.trim_end_matches("_chatter").to_string()).filter(|s| !s.is_empty())
@@ -1028,9 +1056,9 @@ impl Chatter {
                 // 07-10, the squad's kills of the Shrike, asked none), hostile to the victim (the
                 // team table, the killer's row). One player: the controlled character (`all[0]`)
                 // has the slot, the killer's as it is now (the demo's stand-in for the shooter's
-                // at the shot). A type of its own says none (see the module notes)
+                // at the shot). A test map enemy of a type of its own says none (`speaks`)
                 let Some(k) = killer.and_then(|w| find(all, w)) else { return };
-                if k == i || (k == 0) == (i == 0) || !damage::hostile(all[k].team, all[i].team) || all[k].own_type() {
+                if k == i || (k == 0) == (i == 0) || !damage::hostile(all[k].team, all[i].team) || !speaks(all[k]) {
                     return;
                 }
                 let tag = if skills::special_kill(all[k]) { KILL_SKILL } else { KILL };
@@ -1062,7 +1090,7 @@ impl Chatter {
     /// between the two, so the demo lets the caller join first and queues it after.
     #[allow(clippy::too_many_arguments)]
     fn gate_made(&mut self, all: &mut [&mut Player], i: usize, tag: u32, chance: Option<i64>, held: Option<Who>, ctx: &Ctx, what: String) -> Option<Made> {
-        let head = format!("t={:6.2} chatter: {} {tag:08x} ({}){what}", ctx.now, unit_name(all[i]), tag_name(tag));
+        let head = format!("t={:6.2} chatter: {} {tag:08x} ({}){what}", ctx.now, unit_name(all[i]), tag_label(tag, ctx));
         let who = all[i].who();
         // 1, 2: a timed mute, the world's cutscene bit
         if !self.mutes.is_empty() {
@@ -1156,7 +1184,7 @@ impl Chatter {
         let parts: Vec<String> = if ctx.log && line.events.iter().filter(|e| matches!(e.kind, EventKind::Sound(_))).count() > 1 {
             line.events.iter().filter_map(|e| match e.kind {
                 EventKind::Sound(id) => Some(format!("t={:6.2} chatter:   line #{n}: {} {:08x} ({}) variant {id:08x}, from {:.2} s, {:.2} s", ctx.now,
-                                                     who_label(all, e.speaker), e.tag, tag_name(e.tag), e.start, e.duration)),
+                                                     who_label(all, e.speaker), e.tag, tag_label(e.tag, ctx), e.start, e.duration)),
                 EventKind::Response(_) => None,
             }).collect()
         } else {
@@ -1455,7 +1483,7 @@ impl Chatter {
             if ctx.log {
                 println!("t={:6.2} chatter: line #{}'s sound {id:08x} ({} {:08x}, {:.2} s) starts", ctx.now, line.n, unit_name(all[k]), ev.tag, ev.duration);
             }
-            if std::env::var("BF_ENEMY_LOG").is_ok() && all[k].own_type() {
+            if std::env::var("BF_ENEMY_LOG").is_ok() && all[k].own_type() && !all[k].in_squad() {
                 println!("{}'s line {id:08x} ({:08x}) starts", unit_name(all[k]), ev.tag);
             }
             self.voice_start(&mut *all[k], id, line.priority, ctx);
@@ -1571,8 +1599,8 @@ impl Chatter {
             return;
         }
         let tag = e.tags[self.rng.draw(e.tags.len())];
-        let say = format!("{head}: {} {tag:08x} ({})", unit_name(all[r]), tag_name(tag));
-        let block = set_of(all[r], ctx.game).filter(|_| !all[r].own_type())
+        let say = format!("{head}: {} {tag:08x} ({})", unit_name(all[r]), tag_label(tag, ctx));
+        let block = set_of(all[r], ctx.game).filter(|_| speaks(all[r]))
             .and_then(|set| ctx.game.chatter_blocks.get(&set).and_then(|b| b.get(&tag)).map(|b| (set, b)));
         let Some((set, block)) = block else {
             if ctx.log {
@@ -1673,6 +1701,26 @@ fn tag_name(tag: u32) -> &'static str {
         0x0ACE_9296 => "Brutus is down",
         0xEA52_E942 => "Flint is down",
         _ => "-",
+    }
+}
+
+/// `tag_name` for the log, and for a tag it doesn't know whom it calls (a name call, the types'
+/// h_0d3bdcf5, FUN_000c1630 at 0xc16f3): "name: Feral Colonist", from the loaded types whose name
+/// tag it is, so the other squads' name tags (#357: the ferals', the Shrikes', the Seers',
+/// Ghent's and the Militia's) are named from the data, not a table here; "-" for any other. Empty
+/// without `ctx.log` (the label is for the log's rows only, and the scan is over every type).
+fn tag_label(tag: u32, ctx: &Ctx) -> String {
+    if !ctx.log {
+        return String::new();
+    }
+    match tag_name(tag) {
+        "-" => {
+            let mut whom: Vec<String> = ctx.game.character_types.iter().filter(|(_, t)| t.name_tag == tag).map(|(&k, _)| ctx.game.type_label(k)).collect();
+            whom.sort();
+            whom.dedup();
+            if whom.is_empty() { "-".to_string() } else { format!("name: {}", whom.join(" / ")) }
+        }
+        name => name.to_string(),
     }
 }
 
@@ -1843,6 +1891,43 @@ mod tests {
         all.sort();
         all.dedup();
         assert_eq!(all.len(), 13);
+    }
+
+    /// #357: a squad member says the lines asked by tag whatever its type (a test map squad's
+    /// Feral Colonist in Tex's place, the campaign four), and so does a test map NPC of a squad
+    /// type (an enemy Brutus); a test map NPC of a type of its own (an enemy's) says none of them.
+    /// The orders and the hand-over go through the same test.
+    #[test]
+    fn who_speaks() {
+        // a squad type's, as the campaign's
+        let mut tex = Player::new(3);
+        assert!(speaks(&tex));
+        // the Feral Colonist (h_01208936) in Tex's place: a type of its own, a member of the squad
+        let mut feral = Player::new(3);
+        feral.kind = 0x0120_8936;
+        assert!(feral.own_type() && feral.in_squad() && speaks(&feral));
+        say(&mut feral, FOLLOW_WALK);
+        order(&mut feral, 1, vec![Who::Squad(0)], 4);
+        hand_over(&mut feral, false, vec![], vec![]);
+        assert_eq!(feral.asks.len(), 3);
+        // the same type as a test map NPC, an enemy: nothing by tag, only the hurt lines and the
+        // death cry (their own asks)
+        feral.asks.clear();
+        feral.npc = Some(testtools::Npc { id: 1, fight: true, face: 0.0 });
+        assert!(!speaks(&feral));
+        say(&mut feral, FOLLOW_WALK);
+        order(&mut feral, 1, vec![Who::Squad(0)], 4);
+        hand_over(&mut feral, false, vec![], vec![]);
+        hurt_line(&mut feral, Cause::bare(0), 10.0);
+        death(&mut feral, Cause::bare(0));
+        assert_eq!(feral.asks.len(), 2);
+        // an enemy of a squad type (the test map's enemy Brutus) speaks as it did
+        let mut brutus = Player::new(0);
+        brutus.npc = Some(testtools::Npc { id: 2, fight: true, face: 0.0 });
+        assert!(speaks(&brutus));
+        tex.asks.clear();
+        say(&mut tex, ORDER_ACK);
+        assert_eq!(tex.asks.len(), 1);
     }
 
     /// The chatter's draws are the game's LCG from 0 (0x46cfd8's step), the new state mod the
