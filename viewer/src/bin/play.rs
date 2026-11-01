@@ -1042,6 +1042,7 @@ fn main() {
         .insert_resource(AmbientLight { brightness: 220.0, ..default() })
         .init_state::<AppState>();
     background::plugin(&mut app);
+    focus::plugin(&mut app);
     bf_viewer::level_scene::plugin(&mut app);
     // the front end; its pictures and sounds come from the game data
     menu::plugin(&mut app);
@@ -1204,6 +1205,8 @@ mod shake;
 mod skills;
 #[path = "play_background.rs"]
 mod background;
+#[path = "play_focus.rs"]
+mod focus;
 #[path = "play_damage.rs"]
 mod damage;
 #[path = "play_reticle.rs"]
@@ -4583,7 +4586,9 @@ fn read_input(
     // up a level for Flint's skill, out), applied with the aim below; with any other, aim while
     // held
     let zoomable = scope_levels(&player) > 0;
-    let scope_pressed = zoomable && was_captured && mouse.just_pressed(MouseButton::Right);
+    // (the right press that takes the mouse back counts at once: it scopes, as it aims below;
+    // only the left click's shot is dropped)
+    let scope_pressed = zoomable && captured && mouse.just_pressed(MouseButton::Right);
     let aim = !zoomable && mouse.pressed(MouseButton::Right);
     let jump = keys.just_pressed(KeyCode::Space);
     let dodge = keys.just_pressed(KeyCode::KeyC);
@@ -4629,8 +4634,13 @@ fn read_input(
     player.cam_pitch = (player.cam_pitch - look.y).clamp(-camera::PITCH_LIMIT, camera::PITCH_LIMIT);
 }
 
-/// The mouse's capture, the demo's own (the game has no mouse): a left click captures it (never
-/// under BF_BACKGROUND, play_background.rs, whose mouse events are dropped too), Escape frees it.
+/// The mouse's capture, the demo's own (the game has no mouse): a left or right click captures it
+/// (never under BF_BACKGROUND, play_background.rs, whose mouse events are dropped too), Escape
+/// frees it, and a lost window focus does until it is back (play_focus.rs). The right button
+/// takes it back too, so aiming after Escape or an alt-tab needs no click first (the product
+/// owner's report, 2026-11-01). The menus that use the buttons for themselves (the Squad Command
+/// menu and its Move To cursor) have taken their presses before this reads them
+/// (play_squad_menu.rs `read_buttons`), the editor has its own (play_editor.rs).
 /// Read in play and while the controls are off (a cutscene, a script's hold, out of the world:
 /// #256), not under a menu. Returns whether it was captured before this frame and is now. With
 /// BF_SCRIPT_LOG=1 Escape's press is logged (under BF_BACKGROUND, where the mouse is never
@@ -4639,7 +4649,7 @@ fn mouse_capture(windows: &mut Query<&mut Window, With<PrimaryWindow>>, keys: &B
                  mouse: &ButtonInput<MouseButton>, t: f32) -> (bool, bool) {
     let Ok(mut win) = windows.single_mut() else { return (false, false) };
     let was = win.cursor_options.grab_mode != CursorGrabMode::None;
-    if mouse.just_pressed(MouseButton::Left) && !background::on() {
+    if (mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right)) && !background::on() {
         win.cursor_options.grab_mode = CursorGrabMode::Locked;
         win.cursor_options.visible = false;
     }

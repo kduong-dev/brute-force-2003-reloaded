@@ -12,7 +12,7 @@
 | C | dodge roll / sidestep to the left or right of the movement. `BF_TEST_DODGE=<s>[,<s>...]` presses it at those times with `BF_TEST_GOTO` (to the right, standing); `BF_TEST_DIVE=<s>` dives toward the goal then, as from a grenade landing behind (a squadmate's dive, play_grenade.rs) |
 | Z | crouch / stand. Standing still: kneel (the stance's `stand2crouch`, then `rp_crouch_idle`; `crouch2stand` to get up). Moving: the crouch walk (`Sc_w1/w2_cr_walk`, `cr_back_walk` backing off while aiming; the clips' own root motion and footstep events), straight in from a run. Jump, dodge or sprint stands up. `BF_TEST_CROUCH=<s>` crouches from that time with `BF_TEST_GOTO` (held: asked for again each frame); `BF_TEST_CROUCH_KEY=<s>[,...]` presses Z once at each time, as the key toggles. In Tex's berserk Z does nothing and the press is dropped ([skills.md](skills.md)) |
 | M | cycle the ground surface (changes footstep / landing / slide sounds) |
-| click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md. See [camera.md](camera.md) |
+| click, then mouse | turn the aim, which the camera's view is (the game's right stick; the pitch held to +-60 degrees; no zoom wheel: each character's boom is the game's). Esc releases the mouse, in cutscenes too: cutscenes.md; a click of either mouse button takes it back (the left one's shot is dropped, the right one aims or scopes at once), and an alt-tab releases it and returns it with the focus ("The mouse across a lost focus", below). See [camera.md](camera.md) |
 | 1-4 | take control of Brutus / Flint / Hawk / Tex (on the test map whoever holds their places, any type, or no one: the squad menu, T, #302, [testtools.md](testtools.md)): their name shows in the middle of the screen in the game's heading font (atlas e0afcd52), with three red chevrons (the game's chevron texture 158f87c1) lighting up on the radar toward their portrait and the HUD open sound; 0.5 s on control passes, the close sound playing, and the name, shown 0.4 s whole, swells to 4x and fades over its last 0.3 s across the cut (the game's label, #88: squad.md), and the character you left drops back into the squad AI with the line of its command mode (Cover Me's follow line, "I'm right behind you", "Following at a distance"...: chatter set f415ab02; Stand Ground's 0e69bfe5, Fire At Will's 15dc4e2d: [squad.md](squad.md), #320; from the shared voice bank `ml-sounds/en/common-en.tgz`, through the chatter gate: 100%, a 30 s replay delay, [chatter.md](chatter.md); their speech icon shows by their portrait while they talk). Not while dead: the death camera hands over by itself. That's a tap (let go within 0.25 s: the game's d-pad, #319); held 0.25 s the key selects that member for the **Squad Command** menu instead, and with the menu open a tap toggles a member: see the next row |
 | 1-4 held, then I L K J B V | the Squad Command menu (the game's d-pad held, #319; [squad.md](squad.md), "The Squad Command menu"): held 0.25 s, 1-4 select a member (the radar's portrait turns orange in its bracket, its blip pale) and the menu opens over the paused game, fading in over 0.3 s, the radar sliding to its middle; with it open 1-4 toggle members. Then the orders (the game's face buttons and Black / White in their places): I Stand Ground (Y), L Fire At Will (B), K Cover Me (A), J Move To (X), B Medkit (Black; its heal isn't done, #329; B held on past the menu's 0.3 s fade-out reaches the item box, which uses the player's own Medkit), V Toggle Ability (White). Esc or Backspace closes it (BACK). While it's open no other key or pad button reaches the game (I or the pad's Back opens no objectives menu, Backspace leaves no map). J brings up the Move To cursor with the game running: it snaps to the level's world point nearest the crosshair's ray as the mouse turns the view; the left button or E sends the member there, the right button or Esc cancels. A pad (not under `BF_BACKGROUND`) has the game's own buttons |
 | R | reload early: the game's X tapped (let go before its hold time - holding X is the use, the demo's E - or with nothing to hold it for: the player controller 0x1332a0 calls the reload, FUN_00120d40, at 0x134c9d, which starts it only when the clip isn't full and there's a reserve). R reloads on the press, the game's X on the release. The game also reloads by itself on an empty clip, see **Ammo, reload and the crosshair**. The stance's reload clip (`Sc_w1_reload` / `Sc_w2_reload`; upper body on the move, whole body standing); the clip reads 0 (panel red) until the clip's magazine-in event |
@@ -3856,6 +3856,40 @@ the dash on a straight is **8.5**, and the demo's was too slow.
     off Tex; take01's staging on e13 goes by the same routes round the west shore and never into
     lava (its arrival times with the new speeds: [nav.md](nav.md), "The squad on routes");
   * `cargo test --bin bf_play speed`: the rule's numbers.
+
+### The mouse across a lost focus (product owner's report, 2026-11-01)
+
+"Game aim locks showing cursor unless I fire my weapon", which only happened after an alt-tab
+(`src/bin/play_focus.rs`; the demo's own mouse, the game has none). Not the reticle: its lock
+and the target marker run whenever a gun is in hand, aiming or not (`select` in play_reticle.rs
+needs the gun in hand, `player.holding`, never the raised state), and the demo's right button
+holds the gun raised as before.
+
+* **Cause.** The capture is `CursorGrabMode::Locked` with the cursor hidden. On Windows winit has
+  no lock, so bevy_winit falls back to a one-pixel `ClipCursor`, which the system drops when
+  another window takes the foreground; winit 0.30 doesn't put it back at `WM_SETFOCUS`, and
+  bevy_winit re-applies a grab only when `Window::cursor_options` differs from what it applied
+  last (still `Locked`). So after an alt-tab the demo believed the mouse captured while the OS
+  cursor was free and visible, and a click wrote the same values again (nothing applied).
+* **Fix.** On `WindowFocused { focused: false }` the grab and the cursor's visibility are saved
+  and released; on `focused: true` they are put back (so bevy_winit applies them again). A mouse
+  that was free (Esc, the editor) stays free.
+* **Either mouse button recaptures** (play.rs `mouse_capture`, which Esc still frees, in cutscenes
+  too). The left click's shot is dropped as before (`fire` needs the mouse captured before the
+  frame); the right button aims at once (`aim` never needed the capture) and scopes at once
+  (`scope_pressed` reads the capture after the press). The Squad Command menu and its Move To
+  cursor take the frame's presses before `read_input` (`read_buttons`), so Esc closing a menu,
+  the right button cancelling the cursor and the left button sending the order recapture
+  nothing; the editor has its own look-around capture (play_editor.rs) and `read_input` doesn't
+  run there.
+* **`BF_TEST_FOCUS=<capture>,<lose>,<gain>`** (frames): plays an alt-tab, which can't be done
+  under `BF_BACKGROUND` (the window is never focused): at the first frame the mouse is captured
+  as a click would, then `WindowFocused` events lose and regain the focus, printing the grab mode
+  and cursor after each. Verified with `BF_MAP=sdm_e34 BF_TEST_GOTO=0,8,0,8 BF_TEST_FOCUS=10,20,30
+  BF_MUTE=1 BF_BACKGROUND=1`: Locked and hidden after the capture, None and visible after the
+  loss, Locked and hidden after the gain. **Not tested:** the real OS cursor (an unfocused window
+  is never grabbed by winit, and a real alt-tab needs the user's screen), nor a real click of the
+  right button; a run by hand is the check.
 
 ### Running in the background (#163)
 
