@@ -614,9 +614,10 @@ pub fn released(u: &mut Player) {
 }
 
 /// One BF_TEST_ORDER entry: who (None: everyone but the controlled character, the menu's
-/// "everyone" selection), the mode, MOVE_OUT's point (x, z) and when (s).
+/// "everyone" selection), the mode, MOVE_OUT's point (x, z) and when (s). (As visible as
+/// `test_orders`, which play_follow.rs orders its bookkeeping after.)
 #[derive(Clone, Debug)]
-struct TestOrder {
+pub(super) struct TestOrder {
     who: Option<String>,
     mode: Mode,
     point: Option<Vec2>,
@@ -677,7 +678,7 @@ fn parse_orders(v: &str) -> Vec<TestOrder> {
 /// walk line (play_brain.rs `Command::start_walk`) is the member's own, not the order's, so a
 /// member says it after a Fire At Will given here too. The hook is read once, at the first
 /// frame: each order with whether it's been given (a bad entry is logged that once).
-fn test_orders(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut orders: Local<Option<Vec<(TestOrder, bool)>>>) {
+pub(super) fn test_orders(mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut orders: Local<Option<Vec<(TestOrder, bool)>>>) {
     let orders = orders.get_or_insert_with(|| {
         std::env::var("BF_TEST_ORDER").map_or(vec![], |v| parse_orders(&v).into_iter().map(|o| (o, false)).collect())
     });

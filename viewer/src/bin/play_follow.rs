@@ -25,11 +25,12 @@
 //!    when FOLLOW looks for a cover point (4) and WINGMAN holds (2), and at the route's end holds
 //!    with him within d4; 4 finds a cover point near the leader and walks to it (5), else holds.
 //!    The states 6-16 walk the squad's route points (the first entry's in WINGMAN: FUN_0001adf0's
-//!    point ahead of the leader on his path), not done: what fills the leader's path record
-//!    (brain+0x1ac, FUN_0005acb0 over the points' +0x38 / +0x44 link lists) and brain+0x718 /
-//!    +0x71c (the route-point distances) aren't traced, so no member has a route point and the
-//!    machine stays in 0-5, as FOLLOW's always does (FUN_00020b10 clears the point in mode 1).
-//!    Their one line, state 9's 1ecaeb98, keeps a stand-in (`walk_line`).
+//!    point ahead of the leader along the level's progress chains, the progress points'
+//!    `forward-objects` / `backward-objects`, which the leader's path record follows, FUN_0005acb0;
+//!    brain+0x718 / +0x71c, 10 and 16 m, FUN_00012750), and 1 the flank point (brain+0x738,
+//!    FUN_00056980): not done (a follow-up), so no member has a route point and the machine stays
+//!    in 0-5, as FOLLOW's always does (FUN_00020b10 clears the point in mode 1). Their one line,
+//!    state 9's 1ecaeb98, keeps a stand-in (`walk_line`).
 //!  - **The speed record** (brain+0x8a0 / +0x89d): 1.25 and on every update, 1.0 and off in state 0
 //!    within d1 and in state 5 (`Follow::record`; play_speed.rs `record_boost` hands it on).
 //!
@@ -49,13 +50,15 @@ use brain::Mode;
 
 use super::*;
 
-/// The formation's bookkeeping runs before the characters' step, after the frame's input and its
-/// orders (a mode change made later in the frame is seen at the next); a level's start begins it
-/// afresh (`reset`), as its squad.
+/// The formation's bookkeeping runs before the characters' step, after the frame's input, its
+/// orders (the Squad Command menu's, before `squad_control`; BF_TEST_ORDER's) and the hand-over
+/// (`squad_control`), so the lists change in the order's frame, as the game's do inside the mode
+/// change (FUN_00018040 -> FUN_0005e8b0); a level's start begins it afresh (`reset`), as its squad.
 pub fn plugin(app: &mut App) {
     app.init_resource::<Formation>()
         .add_systems(OnEnter(AppState::Playing), reset)
-        .add_systems(Update, sync.after(read_input).before(update_player).run_if(in_state(AppState::Playing)));
+        .add_systems(Update, sync.after(read_input).after(squad_control).after(orders::test_orders).before(update_player)
+            .run_if(in_state(AppState::Playing)));
 }
 
 /// A level's start: the formation record empty, as the squad's new brains find it (`Formation`:
@@ -122,8 +125,8 @@ const FOLLOW_LEADS: [usize; 3] = [3, 3, 0];
 const ABSENT: usize = 4;
 
 /// The follow's state (brain+0x6ac): the formation family the demo runs. The numbers are the
-/// game's; 1 (FUN_00021fa0, the walk to brain+0x738's object, whose writer isn't traced) and the
-/// route-point family 6-16 aren't run (see the module notes).
+/// game's; 1 (FUN_00021fa0, the walk to the flank point brain+0x738) and the route-point family
+/// 6-16 aren't run (see the module notes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum State {
     /// 0, FUN_00022130: the chase, a route to the leader's own point at the dash
@@ -735,6 +738,10 @@ fn turn_check(m: &mut Player, g: &Graph) {
 /// filter of FUN_00020170 (0x26240) and FUN_00020260):
 ///  - a cover point (kind 10) with its set-valid bit (+0x64 bit 5, `Node::cover`) and valid (+0x28
 ///    bit 2, 0x5e070), within COVER_NEAR of the member (3D, strictly);
+///  - not claimed (+0x28 bit 0, `nav::CLAIMED`: 0x5e070 tests it while its filter's +0x124 is set,
+///    and FUN_00020170 sets it, 0x201df, after FUN_00020100 cleared it), so a point another member
+///    walks to or holds is passed over, and so is the member's own claim, which state 4 gives up
+///    only after the search;
 ///  - no other character of the squad has it for its own point (FUN_00045310 over the squad list,
 ///    the controlled one too; FUN_00020260's first test);
 ///  - of the AI members in FOLLOW that aren't walking to a cover point (state 5) or holding at one
@@ -748,7 +755,7 @@ fn turn_check(m: &mut Player, g: &Graph) {
 /// brain+0x570) and the filter's exclusion list (FUN_00162d60, empty here).
 fn cover_ok(g: &Graph, p: u32, me: Who, at: Vec3, mates: &[Mate]) -> bool {
     let n = &g.nodes[p as usize];
-    if n.kind != nav::kind::COVER || !n.cover || !g.valid(p) || n.at.distance_squared(at) >= COVER_NEAR * COVER_NEAR {
+    if n.kind != nav::kind::COVER || !n.cover || !g.valid(p) || n.state & nav::CLAIMED != 0 || n.at.distance_squared(at) >= COVER_NEAR * COVER_NEAR {
         return false;
     }
     if mates.iter().any(|x| x.who != me && x.point == Some(p)) {
@@ -1015,16 +1022,19 @@ mod tests {
     }
 
     /// FUN_00020260's tie: of two eligible members at the same distance from a cover point, the
-    /// first in the squad list has it.
+    /// first in the squad list has it; and a point someone has claimed is nobody's (0x5e070's claim
+    /// test, on in FUN_00020170's filter).
     #[test]
     fn a_tie_goes_to_the_first_in_the_list() {
         let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5]), point(5, COVER, -8.0, 3.0, &[1, 2])];
-        let g = Graph::new(&pts);
+        let mut g = Graph::new(&pts);
         let (a, b) = (Vec3::new(-9.0, 0.0, 3.0), Vec3::new(-7.0, 0.0, 3.0));
         let mate = |c: usize, at: Vec3| Mate { who: Who::Squad(c), at, point: Some(1), follows: true, state: State::Hold };
         let mates = [mate(0, a), mate(1, b)];
         assert!(cover_ok(&g, 2, Who::Squad(0), a, &mates));
         assert!(!cover_ok(&g, 2, Who::Squad(1), b, &mates));
+        g.nodes[2].state |= nav::CLAIMED;
+        assert!(!cover_ok(&g, 2, Who::Squad(0), a, &mates), "claimed");
     }
 
     /// Without a level's points the chase walks straight at the leader and holds within d2 of one

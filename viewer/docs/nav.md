@@ -33,7 +33,7 @@ world's one list at world+0x110 that the search, the own point's walks and FUN_0
 
 | Bit | | Set / cleared by | Read by |
 |---|---|---|---|
-| 0 | claimed | a waypoint trigger's h_06d92de9 (every one in the data is -1); the follow's state 4 on the cover point it picks near the leader (FUN_000225d0, #331: play_follow.rs `claim`; nothing reads it there) | GOAL_IDLE's start, the point filters |
+| 0 | claimed | a waypoint trigger's h_06d92de9 (every one in the data is -1); the follow's state 4 on the cover point it picks near the leader (FUN_000225d0, #331: play_follow.rs `claim`; its search passes over a claimed point, FUN_00020170 turning its filter's claim test on, 0x201df: `cover_ok`) | GOAL_IDLE's start, the point filters |
 | 1 | a route's destination | a route's start (FUN_00025730), cleared at its end and on a reset | (#33 take08 read 6 on the point Hawk went to) |
 | 2 | **valid** | every point at the start (FUN_00059b60); a waypoint trigger's `set-valid` | the search, the own point's walks, FUN_000ab260, the cursor |
 | 3 | **avoid** | FUN_00041870 on the own points of the friends in a member's way, for its flood alone (cleared at its end, but on a point that had it); FUN_0004e8f0 clears it on a reset route's points | the search, the flood (FUN_000594a0) |
@@ -196,11 +196,15 @@ function is in [code-map.md](code-map.md), "AI".
     route found: a hold;
   * **the walk to a cover point** (state 4, FUN_000225d0, FOLLOW only): the flood from the leader's
     own point (FUN_000594a0 within 12 m of it) for the first `<cover-point>` (kind 10, its +0x64 bit
-    5, valid) within 6 m of the member (0x20410: the filter's 12 m x 0.5) that no squad member has
-    for its own point (FUN_00045310, FUN_00020260) and no nearer member in FOLLOW could take
-    (FUN_00020260: those walking to one, state 5, or holding at one, left out), claimed (+0x28 bit
-    0, brain+0x6c0) and walked to (state 5, FUN_00022790: 1 m an entry, 0.1 m the point, `step`'s
-    last radius) at the dash, then held;
+    5, valid) within 6 m of the member (0x20410: the filter's 12 m x 0.5), not claimed (+0x28 bit 0:
+    the filter's claim test, which FUN_00020170 turns on), that no squad member has for its own
+    point (FUN_00045310, FUN_00020260) and no nearer member in FOLLOW could take (FUN_00020260:
+    those walking to one, state 5, or holding at one, left out; of two as near, the first in the
+    squad list), claimed (+0x28 bit 0, brain+0x6c0) and walked to (state 5, FUN_00022790: 1 m an
+    entry, 0.1 m the point, `step`'s last radius) at the dash, then held. The route planned, the
+    turn check (FUN_00058740): its first entry more than about 75 deg off the member's facing, the
+    pace level at a walk for 1.5 s (play_follow.rs `turn_check`), so a member turns at a walk to a
+    point behind it;
   * **the holds** (states 2 and 3): the pace level at 1 for 0.3 s (FUN_000223c0), then until the
     leader is beyond d0 (11.2 m, 8; x1.5 with the member's own point a cover point, FUN_00022420);
     the route reset as a hold begins (the demo's, so no other goal's route is walked on).
