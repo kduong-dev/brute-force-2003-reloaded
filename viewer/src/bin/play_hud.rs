@@ -146,7 +146,6 @@ const TAB_AT: [(f32, f32); 4] = [(82.0, 114.0), (115.0, 37.0), (5.0, 81.0), (38.
 const TAB_FLASH_RATE: f32 = 1.5;
 const TAB_FLASH_GROW: f32 = 1.8;
 const TAB_FLASH_SHIFT: f32 = -1.8;
-const SQUAD_ICON: u32 = 0xE064_867A;
 const HEALTH_ICON: u32 = 0x1BFA_5678;
 /// bar fills (4 x 8 gradients): health red, energy blue
 const HEALTH_FILL: u32 = 0xE801_997B;
@@ -332,20 +331,6 @@ fn press_alpha(level: f32, k: usize) -> f32 {
     ((level - PRESS_FADE.0 - PRESS_FADE.1 * n) * PRESS_FADE.2).clamp(0.0, 1.0) * 254.0 / 255.0
 }
 
-/// The speech icon's size on the 640 x 480 screen: its texture (SQUAD_ICON, h_e064867a, 16 x 16 DXT3)
-/// drawn 1:1, as the game draws its HUD textures. Before #332 it was drawn 10 x 10, a third too
-/// small (take01's bubble ink is 12 units wide).
-const BUBBLE_SIZE: f32 = 16.0;
-/// Speech icons by character (Brutus, Flint, Hawk, Tex): the top-left corner of each, inside the
-/// radar ring on the portrait's inner side (#332). Measured from the squad-voice takes
-/// (`todo/36-squad-voice`, 1280 x 720 with the 4:3 picture at x 160-1120, 1.5 px a unit): the
-/// icon's white body (every channel over 185) at Hawk take01 17.6 s (x 78.0-89.3, y 344.7-352.0),
-/// Tex take12 3.9 s (x 105.3-114.7, y 324.7-332.7), Brutus take12 12.6 s (x 103.3-114.7, y
-/// 397.3-403.3) and Flint take08 4.9 s (x 151.3-162.7, y 344.7-351.3), put back to the texture's
-/// corner by where its body sits in the 16 x 16 (flipped: x 2-13, y 3-13) and checked by
-/// rendering the demo's and comparing the bodies the same way. The fit is to about 1 unit: the
-/// game's own placement code isn't found (the table is in no function the code map lists).
-const BUBBLE_AT: [(f32, f32); 4] = [(101.5, 393.5), (149.5, 340.5), (76.0, 341.0), (102.0, 321.0)];
 /// The box every portrait and skull is drawn in, 32 x 32 HUD units with the whole texture
 /// stretched to it (#342): the portrait widget 0xc3550 sets its size to 32 x 32 in its constructor
 /// (0xc3556-0xc355f) and its draw FUN_000bb300 sends width +0xe and height +0xc with UV 0..1,
@@ -637,8 +622,8 @@ fn slot_member<'a>(player: &'a Player, squad: &'a Squad, c: usize) -> Option<&'a
     std::iter::once(player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad() && !u.absent)
 }
 
-/// Generated HUD images: the radar's health channels as the game's sprite program makes them, the
-/// selection chevrons, the speech icon and the faces.
+/// Generated HUD images: the radar's health channels and icons as the game's sprite program makes
+/// them, the selection chevrons, the faces.
 #[derive(Resource, Default)]
 struct HudGen {
     /// the health / stamina frame is the original's (TUTORIAL_BAR), its length following the
@@ -652,8 +637,8 @@ struct HudGen {
     fills: [Vec<(u8, Handle<Image>)>; 4],
     /// the game's chevron, white, pointing right / left / up / down
     chevrons: [Handle<Image>; 4],
-    /// speech icon
-    bubble: Handle<Image>,
+    /// the three portrait icons (speech, "!", ring) in ICON_RGB through the tint program
+    icons: [Handle<Image>; 3],
     /// the faces drawn so far, by texture (`face_art`): the squad's four, and on the test map any
     /// type's portrait a squad slot's member shows (#302)
     faces: HashMap<u32, Option<Handle<Image>>>,
@@ -1059,8 +1044,10 @@ enum SquadPart {
     FrameRight,
     /// the selection's three chevrons on the radar
     Chevron(usize),
-    /// speech icon beside a member's portrait while they talk (by character)
-    Bubble(usize),
+    /// one of the icons beside a member's portrait (by character and icon, `portrait::ICON_AT`): 0 the
+    /// speech bubble while the member talks, 1 the "!" while its skill is on, 2 the ring while it
+    /// is scoped
+    Icon(usize, usize),
     /// portrait (by squad slot: its member's face, `Face`): its skull when dead
     Portrait(usize),
     /// the "?" in a slot's place whose member's type has no portrait (UNKNOWN_CAP, #302)
@@ -1244,14 +1231,14 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     let game = &mut game.0;
     // each channel's frame sprite (white as it is, red through the tint program) and its fill sprite
     // once per level of its gradient (`fill_images`; the two textures are shared by two characters
-    // each)
+    // each), and the three portrait icons in their colour
     let mut fills: HashMap<u32, Vec<(u8, Handle<Image>)>> = HashMap::new();
     for (c, ch) in portrait::CHANNELS.iter().enumerate() {
         gen.frames[c] = [texture(game, &mut images, &mut cache, ch.frame).unwrap_or_default(),
                          tinted(game, &mut images, ch.frame, portrait::FRAME_RED).unwrap_or_default()];
         gen.fills[c] = fills.entry(ch.fill).or_insert_with(|| fill_images(game, &mut images, ch.fill)).clone();
     }
-    gen.bubble = texture(game, &mut images, &mut cache, SQUAD_ICON).unwrap_or_default();
+    gen.icons = portrait::ICON_TEXTURES.map(|id| tinted(game, &mut images, id, portrait::ICON_RGB).unwrap_or_default());
     game.load_textures_for(&super::data_dir(), "tutorial", TUTORIAL_BAR);
     let tutorial = game.texture_rgba(TUTORIAL_BAR).map(|(w, h, px)| {
         let mut piece = |cols: (u32, u32), red: bool| images.add(tutorial_piece(w, h, &px, cols, red));
@@ -1477,8 +1464,13 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     // the chosen member's name label (LABEL_SHOW): the heading font's record text
     commands.spawn((ChildOf(screen), NameLabelText, Visibility::Hidden, ZIndex(3),
                     record_text("", LABEL_CENTRE.0, LABEL_CENTRE.1, &HEADING24, vec![LABEL_ORANGE], None, Across::Centre)));
-    for (c, &(x, y)) in BUBBLE_AT.iter().enumerate() {
-        commands.spawn((ChildOf(radar), SquadPart::Bubble(c), Visibility::Hidden, flipped(Handle::default()), ZIndex(2), at(x, y, BUBBLE_SIZE, BUBBLE_SIZE)));
+    // the icons beside each portrait (the speech bubble, the "!", the scope ring), 16 x 16 at the
+    // table's places from the panel's corner (`portrait::ICON_AT`), over the faces
+    for (c, row) in portrait::ICON_AT.iter().enumerate() {
+        for (k, &(x, y)) in row.iter().enumerate() {
+            commands.spawn((ChildOf(radar), SquadPart::Icon(c, k), Visibility::Hidden, flipped(gen.icons[k].clone()), ZIndex(2),
+                            at(RADAR_FRAME_AT.0 + x, RADAR_FRAME_AT.1 + y, portrait::ICON_SIZE, portrait::ICON_SIZE)));
+        }
     }
     // each member's health channel (`portrait::CHANNELS`): the frame sprite, then the fill over it, 32
     // x 32 in the table's rect from the panel's corner, a negative size the mirror of the
@@ -2045,12 +2037,16 @@ fn update_squad_hud(
                     }
                 }
             }
-            SquadPart::Bubble(c) => {
-                let speaking = std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.character == c && u.in_squad() && u.speaking > 0.0);
-                show(&mut vis, speaking);
-                if let Some(mut img) = img {
-                    if img.image != gen.bubble { img.image = gen.bubble.clone(); }
-                }
+            SquadPart::Icon(c, k) => {
+                // (a living member in the world: the dead bit hides all three, tested at 0xc474f,
+                // 0xc4862 and 0xc47c4; the speech icon while its voice line plays, the "!" while its
+                // skill is on, the ring while it's scoped)
+                let on = member(c).is_some_and(|u| !u.dead && match k {
+                    0 => u.speaking > 0.0,
+                    1 => u.skill.on,
+                    _ => u.scope_level > 0,
+                });
+                show(&mut vis, on);
             }
             SquadPart::Portrait(c) => {
                 if let (Some(mut img), Some(art), Some((face, skull, lit, red))) = (img, art, looks.get(c)) {

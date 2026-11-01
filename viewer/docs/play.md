@@ -155,9 +155,10 @@ living member after 4 s (see **Death camera** below; `BF_TEST_KILL=<character>` 
 player shoot that member). The inventory is shared: the
 grenades go with control. Every portrait's tab shows its member's order (the follow arrows
 until one is given: see **Radar**, "The command tabs"); a speech icon appears inside the
-radar's ring, by the portrait's inner side, while that member talks (16 x 16 units, the texture 1:1;
-its places by member, `BUBBLE_AT` in play_hud.rs, measured from the squad-voice takes, #332;
-before it they were 10 x 10 and outside the ring). The one you control is the player; the other
+radar's ring, by the portrait's inner side, while that member talks, a "!" under it while the
+member's special skill is on and a target ring while it is scoped (16 x 16 units, the texture 1:1
+in pale blue; the game's table `ICON_AT` in play_portrait_parts.rs, #332's measured places for the
+first, **The portraits' parts**, #355). The one you control is the player; the other
 three are AI that follow you (the game's follow, #331, [squad.md](squad.md) "The follow": they
 hold while you're within 11 m, chase a route to your point when you're farther, trail a dash about
 14 m back and stop 9-10 m behind you), look where you look, and
@@ -544,6 +545,16 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
     health shows none (the brightest texel's blue is 249). In a hit's first half second the fill is
     pushed toward white by (a - 128) / 128 of the way (`pushed`: (254, 253, 253) at the hit's
     frame, 0xc3449): the pale flash. Only a slot with a member in the world draws them.
+  * **The icons** (`ICON_AT`, `SquadPart::Icon`): 16 x 16, in (192, 215, 255) through the program
+    (the texture's white body gives it exactly), at the table 0x3c8ee8's entries from the radar
+    panel's corner, three a slot in this order: Tex (45, 20) (57, 20) (68, 20), Flint (93, 40)
+    (93, 56) (93, 72), Brutus (45, 92) (57, 92) (68, 92), Hawk (20, 40) (20, 56) (20, 75). The
+    speech bubble (h_e064867a) shows while the member's voice line plays (FUN_00126810:
+    `Player::speaking`), the "!" (h_018b0dee) while its special skill is on (the skill's +0x1c bit 0
+    and an owner: `Skill::on`), the ring (h_1d870a5c) while it is scoped (char+0x7a8:
+    `scope_level`), each only for a living member; the bubble and the ring also only on the
+    full-size HUD, which is all the demo has (the split screen's places are the table's last four
+    rows, not done). The game has no icon for a line's priority or tag: these are the three.
   * **Verified.** Against `todo/354-portrait-health-flash` (xemu, the flash part watched at
     20 Hz): the level jumps to 1.465-1.473 at a hit (1.5 less a frame), counts down at 1 a second,
     reaches 0 1.5 s after it and, with the member under a fifth, restarts at 1.0 the update after
@@ -567,7 +578,14 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
     at rest and in the flash alike (the notch fill behind them, `NOTCHES`, and the linear-light
     blend: not this ticket's), the change from rest to red the same to within 20%: Hawk (+52, -38,
     -56) against (+44, -31, -50), Tex (+47, -24, -51) against (+38, -22, -48). The dead skull:
-    above.
+    above. The icons on e34 (`BF_CHARACTER=brutus BF_TEST_SKILL=1.0,3.0
+    BF_TEST_SQUAD_SKILL=hawk,1.5 BF_TEST_SPEAK="2.0,hawk,f9f8e847;2.5,tex,f71090f4;3.0,flint,e50e45c4"`;
+    Flint's ring: `BF_CHARACTER=flint BF_TEST_SCOPE_PRESS=0.5,3.0,4.5`) against #35 take18 12 s
+    (Hawk's "!", her second place, under the absent bubble), take06 5 s (Brutus's, his own) and
+    #62 take06 6 s (Flint's ring, her third): the same places to the pixel, the same pale blue;
+    Brutus's "!" is gone once Vengar is off (3.13 s) and the ring once the third press leaves the
+    scope (4.53 s), as the skill and the scope level go; all three are hidden for a dead member by
+    the game's own test (`!u.dead`; the code's, not filmed).
   * **Not done or not filmed:** the channel frame's red as measured (the takes show it reddish and
     dark; the demo's reads pinker, the outline being semi-transparent over the radar frame's own
     outline and blended in linear light); Flint's and Brutus's own flashes (the same code); a
@@ -608,19 +626,12 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
     against their 7 x 9.3 after; the arrows bold at 14.2-14.3 s after Cover Me (the "green
     flash").
   * `BF_ORDER_LOG=1` prints each tab's change of icon.
-  * **The speech icons** (#332): the texture h_e064867a (16 x 16, drawn flipped so its tail points
-    down-left) at its own size, inside the ring: Brutus's low on the left of the disc, Flint's
-    and Hawk's level with the middle on the right and left, Tex's high on the left (`BUBBLE_AT`).
-    Their places are measured from the takes, not read from the game (its placement code isn't
-    found): the icon's white body (every channel over 185) at 1.5 px a unit, take by take: Hawk
-    take01 17.6 s x 78.0-89.3 / y 344.7-352.0, Flint take08 4.9 s x 151.3-162.7 / y 344.7-351.3,
-    Tex take12 3.9 s x 105.3-114.7 / y 324.7-332.7, Brutus take12 12.6 s x 103.3-114.7 / y
-    397.3-403.3 (the video's blur takes the tail and edges out of that count). Checked with
-    `cargo run --bin bf_play -- --test` with `BF_TEST_FULL_SQUAD=1
-    BF_TEST_SPEAK="<t>,hawk,f9f8e847;<t>,flint,e50e45c4;<t>,brutus,1aa3e291;<t>,tex,f71090f4"`
-    (t = 0.2, 1.4, 2.6, 3.8; `BF_CAPTURE` 40 frames): the same count on the demo's frame 20 gives
-    the bodies at the takes' places to 1 px at 1280 x 720 (Hawk's top 1 px higher), where before
-    they were 33-40 units off, outside the ring.
+  * **The speech icons** (#332) are the first of the portrait's three icons, now placed from the
+    game's table: **The portraits' parts**, below. #332 measured their places from the takes
+    before the table was found (the icon's white body, every channel over 185, at 1.5 px a unit:
+    Hawk take01 17.6 s x 78.0-89.3 / y 344.7-352.0, Flint take08 4.9 s x 151.3-162.7 / y
+    344.7-351.3, Tex take12 3.9 s x 105.3-114.7 / y 324.7-332.7, Brutus take12 12.6 s x
+    103.3-114.7 / y 397.3-403.3), and the table's first entries agree with them to a unit.
   * Checked (e34 staged as the #33 takes, `BF_CAPTURE` at 15 fps: `BF_MAP=e34
     BF_TEST_GOTO=-83.39,-82.79,-70.8,-79.5,27 BF_TEST_GO_AT=999 BF_TEST_NO_HOSTILES=1
     BF_TRIGGER_FIRE=trigger_letterbox204,12,0.05 BF_TEST_CURSOR_AT=-70.8,-79.5 BF_ORDER_LOG=1

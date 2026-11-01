@@ -2,10 +2,10 @@
 //! the face itself. FUN_000c3680 gives every portrait widget (class 0xe9535a, 0xc3550) five parts
 //! in this order, which is also their update order: the **health flash** (class 0x1f0aff78), the
 //! selection tint (0xfc8a6dfb, play_hud.rs `selected_face`) and the three **icons** (the speech
-//! bubble, the "!" and the scope ring: not here yet); the slot's **health channel** (class
-//! 0x2a9b279) is the radar's own widget between that portrait and the next. This module is their
-//! rules, tables and colours; the nodes that show them are play_hud.rs's (`SquadPart::Portrait`,
-//! `ChannelFrame`, `ChannelFill`).
+//! bubble, the "!" and the scope ring); the slot's **health channel** (class 0x2a9b279) is the
+//! radar's own widget between that portrait and the next. This module is their rules, tables and
+//! colours; the nodes that show them are play_hud.rs's (`SquadPart::Portrait`, `ChannelFrame`,
+//! `ChannelFill`, `Icon`).
 //!
 //! * **The health flash** (`Flash`): a hit (health under last frame's) sets a level to at least
 //!   1.5, and under 20% of the most health, a level of 0 restarts at 1.0, so the portrait is red
@@ -16,6 +16,8 @@
 //!   sprite (a gradient) at the radar panel's diagonals. The fill is drawn in one flat colour by a
 //!   pixel program that keeps only the gradient's texels at or above the empty fraction
 //!   (`empty_fraction`, `fill_shows`).
+//! * **The icons** (`ICON_AT`): the speech bubble while the member's line plays, the "!" while its
+//!   skill is on, the ring while it is scoped.
 //! * **The tint** (`tint_texels`): the sprite draw (FUN_000ba950) selects one of two pixel programs
 //!   by the colour it is given: plain texture x colour while red, green and blue are all equal
 //!   (the white of an ordinary sprite, the dead skull's grey), and, as soon as one differs (the
@@ -59,6 +61,16 @@ pub const FRAME_RED: [u8; 3] = [160, 32, 32];
 /// The channel's fill colour: the bytes 0xc0 0x57 0x5e 0xff the draw stores at 0xc341f-0xc342e
 /// (take01's fill measures (189, 86, 93) through the video).
 pub const FILL_RGB: [u8; 3] = [192, 87, 94];
+/// The icons' colour: the static at 0x4a5ca0, bytes c0 d7 ff ff, which the icon base's constructor
+/// 0xc4550 writes into the widget's red, green and blue (0xc4591-0xc459f).
+pub const ICON_RGB: [u8; 3] = [192, 215, 255];
+
+/// The three icons' textures (all in common, 16 x 16), by their index: the table at 0x401a40,
+/// read by the getters 0xc4760, 0xc48b0 and 0xc4800.
+pub const ICON_TEXTURES: [u32; 3] = [0xE064_867A, 0x018B_0DEE, 0x1D87_0A5C];
+/// An icon's size: the base's constructor sets 0x10 x 0x10 (0xc455d-0xc4568).
+pub const ICON_SIZE: f32 = 16.0;
+
 /// One slot's health channel (see the module's text). The textures are common's, found by their
 /// hashes in FUN_000c3080 (0xc3253, 0xc326b for slots 1 and 3; 0xc322e, 0xc323f for 2 and 4).
 #[derive(Clone, Copy, Debug)]
@@ -81,6 +93,17 @@ pub const CHANNELS: [Channel; 4] = [
     Channel { frame: 0x00FF_5CFB, fill: 0x1CEE_1256, rect: (115.0, 108.0, -32.0, -32.0) },
     Channel { frame: 0x00FF_5CFB, fill: 0x1CEE_1256, rect: (13.0, 21.0, 32.0, 32.0) },
     Channel { frame: 0xE070_6E07, fill: 0xE684_DA10, rect: (80.0, 12.0, 32.0, 32.0) },
+];
+
+/// The icons' places by character and icon index (speech, "!", ring): the top left of each from
+/// the radar panel's corner, the table 0x3c8ee8's rows for slots 3, 2, 4 and 1 (the attach 0xc4640
+/// and the update 0xc45d0 place an icon at entry `(slot - 1) x 3 + index`, 4 rows on for the
+/// split screen, which the demo hasn't).
+pub const ICON_AT: [[(f32, f32); 3]; 4] = [
+    [(45.0, 92.0), (57.0, 92.0), (68.0, 92.0)],
+    [(93.0, 40.0), (93.0, 56.0), (93.0, 72.0)],
+    [(20.0, 40.0), (20.0, 56.0), (20.0, 75.0)],
+    [(45.0, 20.0), (57.0, 20.0), (68.0, 20.0)],
 ];
 
 /// The colour a portrait is drawn in this frame, as the flash part's update left it.
@@ -494,5 +517,21 @@ mod tests {
         assert_eq!(CHANNELS[0].frame, CHANNELS[3].frame);
         assert_eq!(CHANNELS[1].frame, CHANNELS[2].frame);
         assert_ne!(CHANNELS[0].frame, CHANNELS[1].frame);
+    }
+
+    /// The icon table: the speech bubble first, in the place #332 measured (within a unit), the
+    /// "!" and the ring after it in their order.
+    #[test]
+    fn icons_start_at_the_measured_bubbles() {
+        // (the demo's measured bubble corners from the panel's corner (56, 301): Brutus (101.5, 393.5),
+        // Flint (149.5, 340.5), Hawk (76, 341), Tex (102, 321))
+        let measured = [(101.5, 393.5), (149.5, 340.5), (76.0, 341.0), (102.0, 321.0)];
+        for (c, m) in measured.iter().enumerate() {
+            let (x, y) = ICON_AT[c][0];
+            assert!((56.0 + x - m.0).abs() <= 1.0 && (301.0 + y - m.1).abs() <= 1.0, "character {c}");
+        }
+        // Tex's three in a row, Flint's in a column
+        assert_eq!(ICON_AT[3].map(|p| p.1), [20.0; 3]);
+        assert_eq!(ICON_AT[1].map(|p| p.0), [93.0; 3]);
     }
 }
