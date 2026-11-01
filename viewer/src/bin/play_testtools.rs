@@ -83,7 +83,7 @@ use bf_viewer::level_scene::Placed;
 /// The tools' line in the controls panel (H).
 pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a free camera, the tools at the mouse pointer; F5 again plays from there)   Backspace twice: leave for the menu\n\
                         F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
-                        N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / B / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
+                        N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / ; / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
                         P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level\n\
                         T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty); or a predefined squad in all four (the campaign's, squad deathmatch's: the first rows)\n\
                         Home: put back every pickup taken (the grid's, and the ones placed with O), where they were";
@@ -986,7 +986,7 @@ pub(super) fn fill_npc_list(npcs: &mut NpcList, game: &Game) {
 }
 
 /// The NPC menu (N: its key is the tool registry's, `editor::open_tools`) and the NPC keys (J,
-/// B, Delete) and hooks: spawn, switch team or behaviour, remove. Each NPC spawned is listed in
+/// ; (B before: B is the Black button's Medkit shortcut everywhere now), Delete) and hooks: spawn, switch team or behaviour, remove. Each NPC spawned is listed in
 /// the editor's `Placements` (its team and behaviour kept up to date there), and one removed is
 /// struck off.
 #[allow(clippy::too_many_arguments)]
@@ -1011,7 +1011,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         if keys.just_pressed(KeyCode::KeyJ) {
             tools.npc_team = if tools.npc_team == 0 { ENEMY_TEAM } else { 0 };
         }
-        if keys.just_pressed(KeyCode::KeyB) {
+        if keys.just_pressed(KeyCode::Semicolon) {
             tools.npc_fight = !tools.npc_fight;
         }
         if keys.just_pressed(KeyCode::Enter) || tools.click {
@@ -1021,7 +1021,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         if keys.just_pressed(KeyCode::KeyJ) {
             acts.push(Hook::Team(Pick::Aim, None));
         }
-        if keys.just_pressed(KeyCode::KeyB) {
+        if keys.just_pressed(KeyCode::Semicolon) {
             acts.push(Hook::Fight(Pick::Aim));
         }
     }
@@ -1612,7 +1612,7 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
             }
             s += &format!("  ({} of {n} character types)\n", tools.npc_type + 1);
             let at = aim_word(&tools);
-            s += &format!("J team: {}   B: {}\nclick / Enter: spawn at {at}\n", side(tools.npc_team).to_uppercase(),
+            s += &format!("J team: {}   ;: {}\nclick / Enter: spawn at {at}\n", side(tools.npc_team).to_uppercase(),
                           if tools.npc_fight { "FIGHT" } else { "DUMMY" });
             let n = squad.0.iter().filter(|m| m.npc.is_some()).count();
             s += &format!("{n} spawned   J / B / Del on the one under {at}, Shift+Del all");

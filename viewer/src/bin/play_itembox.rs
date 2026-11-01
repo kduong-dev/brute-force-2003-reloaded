@@ -411,11 +411,11 @@ fn autopilot_on() -> bool {
 
 /// The item section's buttons this frame (`ItemInput`): the keyboard's (not under another menu,
 /// while a cutscene or a script holds the character, under the autopilot or in the free camera:
-/// as `read_input`'s keys), then the hooks'. In a test session B is the test tools' (the NPC
-/// tool's dummy / fight, play_testtools.rs), so the Black button there is the hooks' only.
+/// as `read_input`'s keys), then the hooks'. B is the Black button in a test session too: the NPC tool's
+/// dummy / fight moved to ; (play_testtools.rs).
 #[allow(clippy::too_many_arguments)]
 fn item_input(keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScroll>, player: Res<Player>, mut input: ResMut<ItemInput>,
-              mut boxed: ResMut<ItemBox>, tools: Option<Res<super::testtools::Tools>>, test: Option<Res<super::testmap::TestMap>>) {
+              mut boxed: ResMut<ItemBox>, tools: Option<Res<super::testtools::Tools>>) {
     let b = &mut *boxed;
     let mut i = ItemInput::default();
     let live = !paused_by_other(PAUSE_ITEMS) && !script::blocks_input(&player) && !autopilot_on()
@@ -423,7 +423,7 @@ fn item_input(keys: Res<ButtonInput<KeyCode>>, scroll: Res<AccumulatedMouseScrol
     if live {
         i.b = keys.pressed(KeyCode::Tab);
         i.lt = keys.pressed(KeyCode::KeyG);
-        i.black = keys.pressed(KeyCode::KeyB) && test.is_none();
+        i.black = keys.pressed(KeyCode::KeyB);
         let next = keys.any_pressed([KeyCode::KeyW, KeyCode::KeyD]);
         let prev = keys.any_pressed([KeyCode::KeyS, KeyCode::KeyA]);
         i.stick.x = next as i32 as f32 - prev as i32 as f32;

@@ -58,7 +58,7 @@ command line needed:
 | the mouse pointer | where the tools act: the ray through it places, spawns and picks, and the menus' see-through copies follow it. With no pointer (the cursor off the window, or `BF_BACKGROUND`) the crosshair's place, marked with a small white cross; while looking, the cross stands where the pointer was |
 | left click | the open menu's click at the pointer (place, spawn, pick); a click on the panel isn't one in the world |
 | P O N T Y U L | the tools (the registry, below): scenery, objects, NPCs, squad (#302: its slots, or a whole predefined squad (#339), which the next play makes), sky, music, level. The key again or Esc closes the menu |
-| J / B / Delete | on the NPC under the pointer: team, fight or dummy, remove (Shift+Delete: all) |
+| J / ; / Delete | on the NPC under the pointer: team, fight or dummy, remove (Shift+Delete: all) |
 | Home | put back the pickups taken in play (the test map's grid and the ones the object tool put down, each where it was; `BF_TEST_RESET_PICKUPS`, [testtools.md](testtools.md) "Putting pickups back") |
 | F5 | play from the pointer (Shift+F5: from the map's start) |
 | H | hide or show the help |

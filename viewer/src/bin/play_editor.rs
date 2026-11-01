@@ -280,7 +280,7 @@ impl Placements {
         id
     }
 
-    /// An NPC's team or behaviour changed (J, B, the hooks): its listing keeps it.
+    /// An NPC's team or behaviour changed (J, ;, the hooks): its listing keeps it.
     pub(super) fn set_npc(&mut self, npc: u32, to_team: u8, to_fight: bool) {
         for p in self.list.iter_mut() {
             if let Thing::Npc { id, team, fight, .. } = &mut p.thing {
@@ -687,7 +687,7 @@ fn help_text(tools: Res<Tools>, editor: Res<Editor>, placements: Res<Placements>
                 s += &format!("{}  {}: {}\n", t.key_name, t.name, t.about);
             }
             let at = aim_word(&tools);
-            s += &format!("J / B / Delete: the NPC under {at}: team / fight / remove\n");
+            s += &format!("J / ; / Delete: the NPC under {at}: team / fight / remove\n");
             s += "Home: put back the pickups taken (the grid's, and the placed ones)\n";
             s += &format!("F5: play from {at} (Shift+F5: from the map's start)\n");
             s += "Esc: close a menu   H: hide this help   Backspace twice: leave\n";
