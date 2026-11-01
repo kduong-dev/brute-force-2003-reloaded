@@ -161,8 +161,10 @@ demo yet.
   `chatter-library`, the deathmatch types' stamina shield; a `BF_TEST_NPC` placement gives it the
   placement's weapons and personality. Its body at death is the game's ragdoll, every
   character's since #259 ([ragdoll.md](ragdoll.md)).
-* What's still looked up by the slot's name, so reads nothing for OTHER: the rest of the
-  chatter (an enemy says its hurt lines and its death line, #328, and none of the rest), skills, the scope and the camera.
+* What's still looked up by the slot's name, so reads nothing for OTHER: skills, the scope and the
+  camera. The chatter is its type's `chatter-library` (`play_chatter.rs` `set_of`): a squad member of
+  a type of its own says every line it's asked (#357), a test map NPC of one only its hurt lines and
+  its death line (#328).
 * Logs name a character by `unit_name` (its slot's name, or for OTHER its type's display name:
   `Player::name`, set at spawn and kept on the Player, so it holds while the update systems have
   its `Loaded` taken out) and, where only its identity is at hand (a shot's or a blast's

@@ -84,6 +84,13 @@ Squad movement and deaths follow the game's own data and the captures:
   squads, each member in the slot its type's h_072ab4af names, the radar's place). The slot (`Player::character`) is the place on the HUD, the key and the
   identity for the hand-over; what this page reads by a character's name (chatter, skills, the
   camera, Brutus not kneeling) goes by its type (`Player::data_slot`), the same in the main game.
+  **A member of a squad deathmatch squad speaks** (#357): it says what the campaign four say (the
+  Squad Command menu's order line, the hand-over's, the hurt, kill and death lines) from its own
+  type's chatter library, `sdm_feral_warrior_chatter` ... `ty_mctavish_chatter`, with its type's face
+  set moving its mouth where the sounds have viseme tracks; a tag its file lacks (the walk line, the
+  "healed" lines ...) is refused as in the game, and McTavish, whose type has no name tag, is passed
+  over in the order line's names ([chatter.md](chatter.md), "The squad deathmatch squads' voices").
+  They still have no skill (#144's and #200-#209's).
 * **The tutorial's Confed marines** (#227, [brain.md](brain.md)): the V-squad's two follow Tex
   with this follow (#331: they never change mode, so they join no list and follow him; #243 is
   their own ticket), see by their sensor (80 m, 90 degrees either way) and fire with the AI's aim
@@ -645,7 +652,9 @@ Squad movement and deaths follow the game's own data and the captures:
     (116501dc Flint, f0c93785 Brutus, f5359692 Hawk, fb962749 Tex, 181b6433 a marine), the phrases
     (Stand Ground e104fe49, Fire At Will f5041bd5, Cover Me 1cdff35c, Move To f8046684), the
     answer eaf3546f and the parts' starts to within 0.05 s of the sum of the sounds' lengths +
-    0.2 s. After a Fire At Will the first member of WINGMAN's list (Flint, when the order goes to all three) says 1ecaeb98 ("on my way", 75%) at its first follow update, once per order: the game's follow state 9, a stand-in since #331 for its walk to its route point (chatter.md, "The walk line"). It is Fire At Will's alone (#343): in FOLLOW the game never reaches the state, so a mission start (e34's, the test map's) says nothing.
+    0.2 s. The same line from the other squads' members (#357): the giver's type's file gives the
+    phrase and the names, each member's its own answer (the Feral Colonist's "Fire At Will" to the Shaman
+    and the Outcast Shaman, the Militia's to Ghent alone when McTavish is ordered too). After a Fire At Will the first member of WINGMAN's list (Flint, when the order goes to all three) says 1ecaeb98 ("on my way", 75%) at its first follow update, once per order: the game's follow state 9, a stand-in since #331 for its walk to its route point (chatter.md, "The walk line"). It is Fire At Will's alone (#343): in FOLLOW the game never reaches the state, so a mission start (e34's, the test map's) says nothing.
   * **The Move To cursor** (HUD+0x44, FUN_000bd860; the game runs meanwhile). Each frame
     (0xbdfb0) it takes the world point (`bf/level.rs` `WorldPoint`: every point element of the
     level: on e34 1015 world points and 271 others, cover, door, patrol points ...) nearest the
