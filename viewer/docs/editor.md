@@ -58,7 +58,7 @@ command line needed:
 | the mouse pointer | where the tools act: the ray through it places, spawns and picks, and the menus' see-through copies follow it. With no pointer (the cursor off the window, or `BF_BACKGROUND`) the crosshair's place, marked with a small white cross; while looking, the cross stands where the pointer was |
 | left click | the open menu's click at the pointer (place, spawn, pick); a click on the panel isn't one in the world |
 | P O N T Y U L | the tools (the registry, below): scenery, objects, NPCs, squad (#302: its slots, or a whole predefined squad (#339), which the next play makes), sky, music, level. The key again or Esc closes the menu |
-| J / ; / Delete | on the NPC under the pointer: team, fight or dummy, remove (Shift+Delete: all) |
+| J / ; / ' / Delete | on the NPC under the pointer: team, fight or dummy, follow the leader or stay (#364: the apostrophe; a follower stands in edit mode, whose stand-in leads nobody, and follows again once play starts), remove (Shift+Delete: all) |
 | Home | put back the pickups taken in play (the test map's grid and the ones the object tool put down, each where it was; `BF_TEST_RESET_PICKUPS`, [testtools.md](testtools.md) "Putting pickups back") |
 | F5 | play from the pointer (Shift+F5: from the map's start) |
 | H | hide or show the help |
@@ -163,11 +163,13 @@ stays.
 * **`Placements`**: the one list that owns what the tools have put on the map. Each entry: its
   number (1, 2, ... in the order placed), what it is (`Thing`: an object menu entry by its label and
   kind; a level's scenery by its level, type and archetype; an NPC by its number, type, team,
-  behaviour and the level placement it came from), where it was put (an object's lowest point, a
+  behaviour, whether it follows the controlled character (#364) and the level placement it came
+  from), where it was put (an object's lowest point, a
   piece's origin, an NPC's feet) and its turn, whether it was put in the air, and its root in the
   world (an object's or a piece's, marked `PlacedId`; an NPC is `Squad`'s, by its number). The
-  object, scenery and NPC tools add to it; J / B and their hooks keep an NPC's team and behaviour
-  there; Delete strikes an NPC off (taken off the map, not lost). `track` follows what play does:
+  object, scenery and NPC tools add to it; J / ; / ' and their hooks keep an NPC's team, behaviour
+  and follow there (`Placements::set_npc`; `BF_TOOLS_LOG`'s "placement 1 NPC 1 (type h_1639d89c,
+  team 0, dummy, follow) ..."); Delete strikes an NPC off (taken off the map, not lost). `track` follows what play does:
   `Here`, `Dead` (an NPC's body) or `Gone` (its root is no more: broken, a pickup, weapon or
   grenade taken; an NPC no longer in `Squad`). A pickup Home puts back keeps its number and is
   `Here` again (`Placements::remake`: the new root, marked `PlacedId` with it). A thing that drops
@@ -276,6 +278,14 @@ Captures at 15 fps (`BF_MUTE=1 BF_BACKGROUND=1`, `BF_TOOLS_LOG=1`), frames looke
   `--edit` with the same hooks against the branch's base build: the same log; 84 of 90 frames
   identical, the other 6 the moment Tex's body appears after F5, which differs as much between
   two runs of the base build. `--test BF_TEST_GOTO=0,10,0,0` (45 frames): identical.
+* **A follower in the editor** (#364; `--test BF_TEST_GOTO=-20,30,-20,30
+  BF_TEST_NPC="0.3,hawk,friend,dummy+follow,-20,-40" BF_TEST_NPC_TEAM="2,1;3.5,1" BF_TEST_EDIT=5.5
+  BF_TEST_PLAY=8,start BF_FOLLOW_LOG=2`, 300 frames): the listing "placement 1 NPC 1 (type h_1639d89c,
+  team 0, dummy, follow) at [-20.00, -1.05, -40.00] turned 180 deg: Here" at the spawn and at both
+  switches, the follow kept through J's two switches of team (an enemy: "idle: only a friend
+  follows", the rows say "(idle)", she stands 60 m out; a friend again: she chases); edit mode, whose
+  stand-in leads nobody, has her stand ("no longer follows"); Shift+F5 ("play from the map's start: tex
+  leads at [-20.00, -1.05, 30.00]") has her chase him again and stop 9.0 m off.
 * Not tested in a capture: the keys and the mouse themselves (F5, Shift+F5, the right button's
   look and the cursor put back, the wheel's speed, H, Esc, Backspace's second press, a click on the
   panel): agents run with `BF_BACKGROUND`, whose mouse events are dropped and whose window has no

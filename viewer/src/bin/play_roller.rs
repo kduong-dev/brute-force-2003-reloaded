@@ -496,7 +496,7 @@ mod tests {
             u.position = Vec3::new(x, 0.0, 4.5);
             u.dead = dead;
             if npc > 0 {
-                u.npc = Some(super::super::testtools::Npc { id: npc, fight: false, face: 0.0 });
+                u.npc = Some(super::super::testtools::Npc { id: npc, fight: false, face: 0.0, follow: false });
             }
             u
         };

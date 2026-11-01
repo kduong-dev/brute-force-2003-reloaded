@@ -1166,7 +1166,7 @@ fn spawn_copy(commands: &mut Commands, tr: &mut Triggers, player: &mut Player, s
         }
         tr.npcs_made += 1;
         let id = NPC_IDS + tr.npcs_made;
-        m.npc = Some(testtools::Npc { id, fight: true, face: yaw });
+        m.npc = Some(testtools::Npc { id, fight: true, face: yaw, follow: false });
         m.rng ^= id.wrapping_mul(0x9E37_79B9) | 1;
         if let Some(pl) = &placement {
             m.enemy.weapons = Some(pl.weapons.iter().map(|w| w.0).collect());

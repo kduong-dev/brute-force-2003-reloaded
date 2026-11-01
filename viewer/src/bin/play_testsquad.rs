@@ -868,7 +868,7 @@ mod tests {
             m
         }).collect();
         let mut npc = Player::new(0);
-        npc.npc = Some(super::super::testtools::Npc { id: 1, fight: false, face: 0.0 });
+        npc.npc = Some(super::super::testtools::Npc { id: 1, fight: false, face: 0.0, follow: false });
         list.push(npc);
         (tex, Squad(list))
     }

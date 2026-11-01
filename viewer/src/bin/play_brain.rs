@@ -977,7 +977,7 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         m.brain = Some(b);
         return;
     }
-    let mut npc = m.npc.unwrap_or(testtools::Npc { id: 0, fight: true, face: m.yaw });
+    let mut npc = m.npc.unwrap_or(testtools::Npc { id: 0, fight: true, face: m.yaw, follow: false });
     // alert: it fights where it stands (#26 moves it), facing the target, or its last place
     let known = m.sensor.contacts.len();
     if known > 0 {

@@ -21,8 +21,8 @@ a click is any left click off the panel, and F and its teleports do nothing.
 | Key | Tool |
 |---|---|
 | F | **free camera** on / off (in play). Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl (or E / Q): up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
-| N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, ; dummy / fight (for the next one; enemy dummy at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
-| J / ; / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / remove it. Shift+Delete removes every NPC. (The fight toggle is ; so that B stays the Black button's Medkit shortcut in a test session too, as in play: [play.md](play.md) **The item box and the item list**) |
+| N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, ; dummy / fight, ' follows you / stays (for the next one; enemy dummy that stays at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
+| J / ; / ' / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / switch whether it follows the controlled character (#364) / remove it. Shift+Delete removes every NPC. (The fight toggle is ; so that B stays the Black button's Medkit shortcut in a test session too, as in play: [play.md](play.md) **The item box and the item list**. The follow key is the apostrophe, the next key along the home row after J and ;: every letter is another control's in the demo, the game's, the test map's or the hint and Squad Command panels', and so are the digits 1-4) |
 | T | **squad menu** (#302): the squad's four slots, its places round the radar and the keys 1-4 that take control of them (Brutus's, Flint's, Hawk's, Tex's), each with who holds it ("(empty)", a type, DEAD, "(you)"). Left / Right picks a slot, Up / Down or the wheel (Page Up / Down: a page, seven rows) a row of the list: first the **predefined squads** (#339: the campaign squad and the five squads squad deathmatch offers, six rows under "[predefined squads]"), then the character types under "[character types]", any the NPC menu offers (the four, then all 128 of the test map). It opens with the first character type, Brutus, picked as before the squads, the six squads above it in view, so Enter straight after T changes one slot; a squad is picked on purpose. Click or Enter on a type puts a fresh one of that type in the slot: a real squad member (below), and in your own slot you become it where you stand. Click or Enter on a squad fills all four slots at once with that squad's members (the panel lists who goes where), your own slot becoming its member in place. Delete empties the slot (not yours: "Your own slot can't be emptied"). T or Esc closes it |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
 | P | **scenery menu** (#185): every level's buildings and static scenery (2,412 pieces of 53 levels, below), by level, each by its type's name (a hash) with its size, parts and how many its level places, the largest first. Up / Down picks, Page Up / Down jumps a level; a see-through copy stands at the crosshair, the wheel turns it 15 degrees a notch; click or Enter puts one there, drawn as its level draws it and solid as there, and the menu stays open for more. P or Esc closes it. In the free camera the copy hangs on the crosshair's ray as the object menu's does (Shift + the wheel: how far), a yellow ring at its foot, and it's put where it hangs |
@@ -67,6 +67,28 @@ a click is any left click off the panel, and F and its teleports do nothing.
     (`Player::ai_target`) is the AI's only: it's dropped when control passes to a character
     (the number keys, the hand-over after a death) and never kept by the controlled one, whose
     gun and body follow the crosshair from the first frame.
+  * A **follower** (#364, the product owner's request, not the game's: `Npc::follow`; the
+    apostrophe on the NPC under the crosshair, or in the menu for the next one; `BF_TEST_NPC`'s
+    `+follow`, `BF_TEST_NPC_FOLLOW`) trails the controlled character by the squad's own follow, in
+    FOLLOW (Cover Me): play.rs `update_player` hands it to `orders::think` as it hands a squad
+    member, so it runs play_follow.rs's states ([squad.md](squad.md) "The follow"): it holds,
+    kneeling and looking about, while he's within 11.2 m; beyond that it chases a route to his
+    point at the dash (over the level's world points where the level has them, straight on the
+    test map's floor), stops within 9.8 m of him once he isn't running, and takes a cover point
+    near him where the level has one (the filter looks through the followers too, so two never
+    take one point, nor one a squad member holds). Its routes, steering and speeds are the
+    squad's (play_routes.rs, play_avoid.rs, play_speed.rs; a type of its own, a marine or a
+    Shrike, moves by its clips' root as the tutorial's marines do, [brain.md](brain.md)). It's no
+    squad slot: it joins no formation list, so its leader is always the controlled character,
+    whoever that is after a hand-over, and no order, hand-over re-order or target broadcast
+    reaches it. It combines with the two behaviours above: set to fight it fires at the hostile
+    it sees as it trails him (the upper body on the target), a dummy never fires (and stays the
+    player's target, nobody else's). Set to stay again it stops where it is, facing the way it
+    was going, its cover point given up. Only a friend of the controlled character (the same
+    team) follows: an enemy keeps the setting (its message says "idle: only a friend follows")
+    and stands; so does every follower while the map editor's stand-in leads (edit mode), until
+    play starts again. The squad's members, the enemies and the level's characters run what they
+    ran.
   * NPCs take no pickups (medkits and fruit are the squad's).
   * Removing one takes its body; the gun it dropped, its blood and its DNA stay.
   * Any loaded character type can be spawned (#128). The test map's own levels define 55
@@ -412,9 +434,11 @@ the background (#163)".
 | `BF_TEST_FLY=<from>,<to>,<right>,<up>,<forward>[,fast]` | fly that way (each -1..1) |
 | `BF_TEST_TELEPORT=<s>[,camera]` | the free camera's left click (teleport to the crosshair's ground); `camera`: the right click |
 | `BF_TEST_NPC_MENU=<s>` / `BF_TEST_TOOL_CLOSE=<s>` | N / Esc |
-| `BF_TEST_NPC=<s>,<character>,<friend\|enemy\|neutral\|team>,<dummy\|fight\|frozen>[,<x>,<z>[,<y>[,<bearing>]]]` | spawn one at x, z or under the crosshair, facing the controlled character, or `bearing` when it's given (#167: degrees, the xemu watch logs' atan2(dz, dx), so 0 faces +x and 90 faces +z; an empty y keeps its default, `x,z,,90`); on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). Its team: friend 0, enemy 1, neutral 2 or a number 0-9 of the game's team table. The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`), `name@library` (`shrike soldier@sdm_shrike`) or both as the menus show them (`hunter lord@mp_common/sdm_shrike`, #302), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; else a placement of a loaded level by its name (`h_1c5780f8`: its type with the placement's weapons and personality, enemies.md); an unknown one is logged and skipped. `frozen`: a dummy with no hit reactions |
+| `BF_TEST_NPC=<s>,<character>,<friend\|enemy\|neutral\|team>,<dummy\|fight\|frozen>[+follow][,<x>,<z>[,<y>[,<bearing>]]]` | spawn one at x, z or under the crosshair, facing the controlled character, or `bearing` when it's given (#167: degrees, the xemu watch logs' atan2(dz, dx), so 0 faces +x and 90 faces +z; an empty y keeps its default, `x,z,,90`); on the first floor under y (world height; default 50 m above the controlled character, which finds a roof or a gate's top first where there is one). Its team: friend 0, enemy 1, neutral 2 or a number 0-9 of the game's team table. The character: a squad name or 0-3, or any loaded type by its display name (any case, the first loaded: `shrike soldier`), `name@archive` (`shrike soldier@m09_a`), `name@library` (`shrike soldier@sdm_shrike`) or both as the menus show them (`hunter lord@mp_common/sdm_shrike`, #302), its `<base name>` (`mp_brutus`) or `h_xxxxxxxx`; else a placement of a loaded level by its name (`h_1c5780f8`: its type with the placement's weapons and personality, enemies.md); an unknown one is logged and skipped. `frozen`: a dummy with no hit reactions. `+follow` after the behaviour (`fight+follow`, `dummy+follow`, any case; `follow` alone is a dummy that follows; #364): it trails the controlled character as the squad does (**Follower**, above; only a friend acts on it) |
 | `BF_TEST_NPC_MOTION=<s>,<n\|aim\|all>,<motion>[,<x>,<z>[,relaxed]]` | drive an enemy of a type of its own in a motion type (`walk`, `run`, `dash`, `move_left`, `backpedal`, `idle`, `dizzy`, `knockdown` ... or its MT_ number) to x, z, or in place: its MOTION table's clip, its type's speed (enemies.md, "Test hooks") |
 | `BF_TEST_NPC_TEAM`, `BF_TEST_NPC_FIGHT`, `BF_TEST_NPC_REMOVE` `=<s>,<n\|aim\|all>` | switch the team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or all. `BF_TEST_NPC_TEAM=<s>,<n\|aim\|all>,<team>` puts them on that team (named as for `BF_TEST_NPC`; one it doesn't know is skipped, with a warning) |
+| `BF_TEST_NPC_FOLLOW=<s>,<n\|aim\|all>[,<on\|off>]` | the ' key (#364): switch whether the n-th NPC spawned, the one under the crosshair or all of them follow the controlled character, or set it (`on`, `off`; another word is skipped, with a warning). A level character (a brain of its own) is left as it is. `BF_TOOLS_LOG` prints "t 3.07: NPC 1 (Hawk): friend fight, follow", and with `BF_FOLLOW_LOG` the "no longer follows" of one let go |
+| `BF_TEST_KEYS=<s>,<key>[;...]` | that key pressed at that time as a keyboard presses it, for one frame (#364; the window needs no focus, and BF_BACKGROUND drops the real keyboard's): a letter, `semicolon`, `quote` (or `'`), `enter`, `delete`, `up`, `down`, `left`, `right`, `esc`, `space` (`;` separates the entries, so the key is named). The NPC menu by its keys: `BF_TEST_KEYS="0.5,n;0.8,j;1.1,semicolon;1.4,quote;1.7,enter"` opens it, makes the next one a friend that fights and follows, and spawns it at the crosshair; outside it `quote` switches the follow of the NPC under the crosshair, as J and `semicolon` do the team and the fight. `BF_TOOLS_LOG` prints "test tools: key Quote pressed" |
 | `BF_TEST_NPC_RADAR=<s>,<n\|aim\|all>,<value>` | give them that radar-contact (every character has 1), as #141's take08 rewrote the Shrike's: 2 or 4 turns the crosshair yellow with its centre on a friend or a neutral; a hostile skips the radar test (red in its lock box, else blue) |
 | `BF_TEST_NPC_HP=<s>,<n\|aim\|all>,<hp>` | give them that many hit points, now and at most, as #35 take04's trainer gave its Shrike 999 so it outlived both of Tex's berserk bursts (#121). A spawn's own come with its model the frame after it's spawned: give the HP a little later (`BF_TEST_NPC=0.5,...` then `BF_TEST_NPC_HP=1.0,1,999`). The maximum changes too, and an enemy's heavy-hit and blood-decal thresholds are shares of it ([enemies.md](enemies.md)): at 999 a Shrike takes no heavy hit and lays almost no decals |
 | `BF_TEST_PLACER=<s>,<object>[,<yaw>]` | O with that object picked (its label in any case, else the first containing it), turned that way |
@@ -978,3 +1002,73 @@ changed four slots; with a squad picked the panel ended at y 630 and covered the
   (the radar's four portraits by place, the channels full), the editor (`--edit`) and an arena
   refusing the three members ("3 not put: played alone" now), sdm_e34, and the single slot's
   "Filling" and "Emptying and replacing" recipes. `cargo test --bin bf_play`: 150 passed.
+
+**Followers** (#364), `--test` with `BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps, frames looked at
+(a side view of the run: `BF_CAMERA_PITCH=-0.5 BF_CAMERA_DISTANCE=11 BF_VIEW_YAW=1.5708`), `BF_FOLLOW_LOG=2`
+for the rows ("followers | flint (NPC 1) state 0 17.7 m off (-12.0, 29.1)"). Against main's build
+(`e1cbe41`, built from `git archive`), the same recipes:
+* **The run and the stop** (`BF_TEST_GOTO=-20,30,20,30 BF_TEST_GO_AT=2 BF_TEST_SPRINT=2
+  BF_TEST_NPC="0.3,flint,friend,fight+follow,-23,28;0.3,hawk,friend,dummy+follow,-23,32"`, 270 frames):
+  Tex stands and both hold (3.6 m off) until he's 11.3 m off at 2.53 s (d0 11.2), then chase at the
+  dash and trail his 40 m dash at 17.5-17.8 m (Flint) and 16.1-16.3 m (Hawk), at his speed (8.6 m/s
+  while beyond d1's 14 m, the boost), and stop at 9.8 m (Hawk, 7.20 s) and 9.8 m (Flint, 7.40 s) once he
+  has stopped ("follow state 0 -> 4 (within d2 of a leader who isn't running; its leader 9.8 m off)",
+  "4 -> 2 (no world points to look for cover on)" on the flat floor). At rest 9.3-9.5 m off him, 1.6
+  m from each other, kneeling (the frames). The squad on the same floor and run (`BF_TEST_FULL_SQUAD=1`)
+  stops at 9.0-9.2 m, and take04's three 9.1, 8.5 and 8.9 m ([squad.md](squad.md)).
+* **On a level, with its cover points** (take04's staging on e34, `BF_MAP=e34 BF_SCRIPT=off
+  BF_TEST_NO_HOSTILES=1 "BF_TEST_WARP=0,flint,-91.08,-83.87;0,brutus,-87.21,-84.16;0,hawk,-89.53,-87.82"
+  BF_TEST_GOTO=-83.39,-82.79,-49.25,-71.14,27 BF_TEST_GO_AT=2 BF_TEST_SPRINT=2` with
+  `BF_TEST_NPC="0.5,flint,friend,fight+follow,-90.5,-86.5;0.5,tex,friend,dummy+follow,-88,-89.5"`, 270
+  frames): the squad's three and the two followers all set off as Tex gets 11.3-11.8 m off; Brutus
+  claims h_e1182318 (take04's Brutus's) and the follower Flint h_f7d1227d, 1.3 m off it; the others
+  (the squad's Flint and Hawk, the follower Tex) find none free ("no cover point near its leader") and
+  hold 9.4-9.7 m from Tex at the stop. No point is claimed twice (the unit test
+  `two_followers_never_take_one_cover_point` runs it too: two followers, two points, a third finding none).
+* **A fighter among them** (`BF_TEST_NPC="0.3,brutus,friend,fight+follow,-23,28;0.3,hawk,friend,dummy+follow,-23,32;0.3,flint,enemy,fight,0,48,,270"
+  BF_TEST_NPC_HP=0.8,all,999 BF_COMBAT_LOG=1`, the same run, the enemy Flint 18 m off the run's line):
+  the follower Brutus fires at him as it holds and as it sets off ("brutus (NPC 1) -> flint (NPC 3)"
+  at 1.6, 2.0, 2.4, 3.33 and 3.73 s; the shots of the hold land late), none while it dashes (a dash
+  can't aim, play.rs `can_aim`: 3.7-8.2 s), and again from 8.2 s, stopped, to the end; Flint's shots
+  go to Tex and the followers; the dummy follower Hawk fires none.
+* **Toggled**: `BF_TEST_NPC_FOLLOW="3,1,off;5,all;8,2,on"` with two followers 40 m out, chasing: NPC 1
+  off at 3.07 ("NPC 1 (Hawk): friend fight", "no longer follows") stands in the field, about 22 m
+  from Tex; the toggle of all at 5.07 puts her on again (she chases and stops 9.6 m off) and NPC 2 off
+  (already at 9.7 m: stands); NPC 2 on at 8.07 holds, within d0. With the NPC under the crosshair, the
+  free camera aimed at her down the run (`BF_TEST_FREECAM=0.5,-20,-0.3,-4,180,-5`),
+  **the key itself**, `BF_TEST_KEYS="1.0,quote;3.5,quote"` ("test tools: key Quote pressed"): off at 1.0
+  s ("NPC 1 (Hawk): friend dummy" on the screen, the frames), on at 3.5 s ("friend dummy, follow"),
+  chasing to 9.4 m. **The menu by its keys**: `BF_TEST_KEYS="0.5,n;0.8,j;1.1,semicolon;1.4,quote;1.7,enter;
+  2.0,down;2.3,enter;2.6,quote;2.9,down;3.2,enter;3.5,n"` (Tex dashing from 4 s): "NPC 1: friend Brutus
+  (fight, follow)", "NPC 2: friend Flint (fight, follow)" (the setting kept for the next one), the key
+  again, "NPC 3: friend Hawk (fight)"; the first two trail Tex and stop 9.3 and 9.4 m off, Hawk stays
+  where she was put. The panel at 3 s (cropped frame): "J team: FRIEND   ;: DUMMY   ': FOLLOW YOU" and
+  "0 spawned   J / ; / ' / Del on the one under the crosshair, Shift+Del all".
+* **A hand-over** (`BF_TEST_SQUAD=flint BF_TEST_GOTO=-20,30,-20,30 BF_TEST_ORDER=flint,guard@0.5
+  "BF_TEST_WARP=1,flint,10,30,90" BF_TEST_SELECT=1,3`, followers Hawk (fight) and Brutus (dummy) 8 m
+  from Tex): they hold (8.2 m) while Tex leads; Flint takes control at 3.1 s, 33.2 and 29.3 m from them,
+  and both chase him ("follow state 3 -> 0 (its leader beyond d0)") and stop 9.5 and 9.7 m from him; Tex,
+  now an AI member, does the same.
+* **Not a friend, no leader**: `BF_TEST_NPC_TEAM="2,1;3.5,1"` (J twice): at 2.0 s "NPC 1 (Hawk): enemy
+  dummy, follow (idle: only a friend follows)", she stands where she was 60 m out (the rows say
+  "(idle)"), at 3.53 s a friend again and chasing; in the edit mode (`BF_TEST_EDIT=5.5`) she stands
+  ("no longer follows") and the placement stays "dummy, follow", and `BF_TEST_PLAY=8,start` brings the
+  leader back and she chases ("tex leads at [-20.00, -1.05, 30.00]").
+* **Types of their own**: a Confed Marine (fight+follow) and a Shrike Soldier (dummy+follow)
+  (`confed marine@mp_common/dm`, `shrike soldier@m09_a`): the same states, at their clips' root
+  speeds (trailing 21.8 and 17.5 m), stopping at 9.6 and 9.7 m, the Shrike kneeling.
+* **Unchanged** (main's build against this one, the same recipe, the logs compared line by line and
+  the frames pixel by pixel; two runs of main's alone differ in 114 of the 270 frames, 42 levels at
+  most, the effects' noise): take04's e34 follow with the squad alone (`BF_ORDER_LOG=2` rows and
+  follow lines, 146 lines, identical; frames within 11 levels); the tutorial's marines
+  (`BF_MAP=tutorial BF_TEST_GOTO=-15.6,-87.4,-60,-75 BF_TEST_GO_AT=14`, 420 frames: 163 lines
+  identical; 32 frames differ by up to 14 levels); the squad's follow on the test map's floor (131
+  lines identical); and the NPC fight recipe above (`BF_TEST_NPC="1,flint,enemy,dummy,...;3,brutus,
+  enemy,fight,..."`, 85 combat lines identical; 114 frames differ by up to 42, as main's alone do).
+* `cargo test --bin bf_play`: 240 passed, among them the follow's (the leader and the `mates`, two
+  followers and the cover points, the let-go, the removal, the pace record), the hooks' (the
+  behaviour word, the messages, the keys by name, the key held one frame, the follow key's acts).
+* Not done: a real keyboard (`BF_TEST_KEYS` presses the `ButtonInput` the keys are read from, so every
+  system sees what a key gives it, but no key was pressed by hand: the window is unfocused under
+  BF_BACKGROUND), and Delete on a follower that holds a cover point on a level (the unit test
+  `a_follower_taken_off_the_map_frees_its_cover_point` only).

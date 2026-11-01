@@ -227,9 +227,10 @@ pub(super) enum Thing {
     /// type and the archetype it's built from
     Scenery { zone: String, kind: u32, archetype: u32 },
     /// an NPC (play_testtools.rs): its number (`Npc::id`), character type, team and behaviour
-    /// (fight, else a dummy; `frozen`: a dummy with its brain off), and the level placement it was
-    /// spawned from (its weapons and personality), if one
-    Npc { id: u32, kind: u32, team: u8, fight: bool, frozen: bool, placement: Option<u32> },
+    /// (fight, else a dummy; `frozen`: a dummy with its brain off; `follow`: it follows the
+    /// controlled character, #364), and the level placement it was spawned from (its weapons and
+    /// personality), if one
+    Npc { id: u32, kind: u32, team: u8, fight: bool, follow: bool, frozen: bool, placement: Option<u32> },
 }
 
 /// Where a placed thing is now (`track`): on the map; dead (an NPC's body); or gone (taken,
@@ -280,12 +281,12 @@ impl Placements {
         id
     }
 
-    /// An NPC's team or behaviour changed (J, ;, the hooks): its listing keeps it.
-    pub(super) fn set_npc(&mut self, npc: u32, to_team: u8, to_fight: bool) {
+    /// An NPC's team, behaviour or follow changed (J, ;, ', the hooks): its listing keeps it.
+    pub(super) fn set_npc(&mut self, npc: u32, to_team: u8, to_fight: bool, to_follow: bool) {
         for p in self.list.iter_mut() {
-            if let Thing::Npc { id, team, fight, .. } = &mut p.thing {
+            if let Thing::Npc { id, team, fight, follow, .. } = &mut p.thing {
                 if *id == npc {
-                    (*team, *fight) = (to_team, to_fight);
+                    (*team, *fight, *follow) = (to_team, to_fight, to_follow);
                 }
             }
         }
@@ -328,10 +329,11 @@ fn describe(thing: &Thing) -> String {
     match thing {
         Thing::Object { label, kind } => format!("object {label} ({kind:?})"),
         Thing::Scenery { zone, kind, archetype } => format!("scenery {zone} h_{kind:08x} (archetype h_{archetype:08x})"),
-        Thing::Npc { id, kind, team, fight, frozen, placement } => {
+        Thing::Npc { id, kind, team, fight, follow, frozen, placement } => {
             let how = if *fight { "fight" } else if *frozen { "frozen" } else { "dummy" };
+            let follows = if *follow { ", follow" } else { "" };
             let from = placement.map_or(String::new(), |p| format!(", placement h_{p:08x}"));
-            format!("NPC {id} (type h_{kind:08x}, team {team}, {how}{from})")
+            format!("NPC {id} (type h_{kind:08x}, team {team}, {how}{follows}{from})")
         }
     }
 }
@@ -687,7 +689,7 @@ fn help_text(tools: Res<Tools>, editor: Res<Editor>, placements: Res<Placements>
                 s += &format!("{}  {}: {}\n", t.key_name, t.name, t.about);
             }
             let at = aim_word(&tools);
-            s += &format!("J / ; / Delete: the NPC under {at}: team / fight / remove\n");
+            s += &format!("J / ; / ' / Delete: the NPC under {at}: team / fight / follow the leader / remove\n");
             s += "Home: put back the pickups taken (the grid's, and the placed ones)\n";
             s += &format!("F5: play from {at} (Shift+F5: from the map's start)\n");
             s += "Esc: close a menu   H: hide this help   Backspace twice: leave\n";

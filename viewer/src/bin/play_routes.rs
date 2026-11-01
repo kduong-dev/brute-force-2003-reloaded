@@ -240,9 +240,11 @@ pub fn pace(m: &mut Player, asked: i32) -> bool {
 
 /// Whether `m` has the squad's pace record settings (FUN_00058670: a squad brain, bit 8, in
 /// FOLLOW or WINGMAN, brain+0x58 1 or 4; char+0x770 not read): the ramp's PACE_STEP_SQUAD and the
-/// distances PACE_WALK_SQUAD and PACE_RUN_SQUAD.
+/// distances PACE_WALK_SQUAD and PACE_RUN_SQUAD. A test map NPC set to follow has them as a
+/// squad member's (#364: it runs the squad's follow in FOLLOW, so it should climb to the dash
+/// as the squad does).
 fn squad_pace(m: &Player) -> bool {
-    m.in_squad() && matches!(m.command.mode, brain::Mode::Follow | brain::Mode::Wingman)
+    (m.in_squad() || m.follow_set()) && matches!(m.command.mode, brain::Mode::Follow | brain::Mode::Wingman)
 }
 
 /// FUN_0004d840, the pace near the route's points, which FUN_0004d970 runs after it writes the
@@ -426,11 +428,13 @@ pub fn keep_point(u: &mut Player, g: &Graph, dt: f32) {
     }
 }
 
-/// Whether `u` walks routes in the demo: an AI squad member (`Player::in_squad`, no brain) or a
-/// level character's brain that follows the leader (the tutorial's marines, play_brain.rs). The
-/// enemies' brains (#336) and the test map's NPCs don't yet.
+/// Whether `u` walks routes in the demo: an AI squad member (`Player::in_squad`, no brain), a
+/// level character's brain that follows the leader (the tutorial's marines, play_brain.rs) or a
+/// test map NPC set to follow (`follow::npc_follows`, #364: its route code runs whichever side
+/// it's on; it only has a route while it follows). The enemies' brains (#336) and the test map's
+/// other NPCs don't yet.
 pub fn walks_routes(u: &Player) -> bool {
-    (u.in_squad() && u.brain.is_none()) || u.brain.as_ref().is_some_and(|b| b.follows())
+    (u.in_squad() && u.brain.is_none()) || u.brain.as_ref().is_some_and(|b| b.follows()) || u.follow_set()
 }
 
 /// A friend as FUN_00041870 looks at it: who, its side, its position, its own point, whether its
@@ -1277,6 +1281,33 @@ mod tests {
         m.router.asked = 4;
         assert_eq!(run(&mut m, 0.2), 1, "its 0.3 s still running");
         assert_eq!(run(&mut m, 0.1), 2);
+    }
+
+    /// A test map NPC set to follow (#364) walks routes and has the squad's pace record as a member
+    /// of FOLLOW does (0.17 s a notch, the walk at 2.7 m and the run at 4 m of a route's end); one
+    /// that doesn't follow, an enemy on the map, and a member of another mode keep what they had.
+    #[test]
+    fn a_follower_npc_has_the_squads_pace_record() {
+        let npc = |id: u32, follow: bool| {
+            let mut m = Player::new(1);
+            m.npc = Some(testtools::Npc { id, fight: false, face: 0.0, follow });
+            m
+        };
+        let (a, b) = (npc(1, true), npc(2, false));
+        assert!(walks_routes(&a) && squad_pace(&a) && pace_distances(&a) == (PACE_WALK_SQUAD, PACE_RUN_SQUAD));
+        assert!(!walks_routes(&b) && !squad_pace(&b) && pace_distances(&b) == (PACE_WALK, PACE_RUN));
+        // (an NPC set to follow in a mode the squad's pace isn't: Guard keeps the others')
+        let mut guard = npc(3, true);
+        guard.command.mode = brain::Mode::Guard;
+        assert!(!squad_pace(&guard));
+        // (a squad member's, as ever)
+        assert!(walks_routes(&Player::new(1)) && squad_pace(&Player::new(1)));
+        // (the climb: a notch every 0.17 s, as the ramp's test above has the squad's)
+        let mut m = npc(1, true);
+        m.router.asked = 4;
+        m.router.cap_left = 0.0;
+        pace_ramp(&mut m, 1.0 / 60.0);
+        assert_eq!((m.router.cap, m.router.cap_left), (2, PACE_STEP_SQUAD));
     }
 
     /// The door step (FUN_00026820): reaching a door point whose next entry is a door point too,

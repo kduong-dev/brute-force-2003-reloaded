@@ -44,6 +44,14 @@ Squad movement and deaths follow the game's own data and the captures:
     in the demo's take04 it's Hawk who walks, see the verification below). A point another member
     has claimed is passed over (the search's claim test, on in FUN_00020170's filter), so two never
     head for one point.
+  * **The test map's followers** (#364, [testtools.md](testtools.md) "Follower"): an NPC set to follow
+    runs this same machine as a member of FOLLOW does (play.rs `update_player` gives it to
+    `orders::think`, with `follow::npc_follows` deciding that it follows: a friend of the controlled
+    character, which isn't the editor's stand-in). It joins no formation list (`Command::joined`
+    stays 0), so its leader is always the controlled character and so after a hand-over, as the
+    tutorial's marines' is; it's one of the characters state 4's filter looks through (`mates`), so a
+    cover point is never taken by two of the squad and the followers together, and it's let go
+    cleanly (`follow::let_go`: its route dropped, its cover point given up) when it's set to stay.
   * **Not done**: the follow's route-point states (6-16), which only WINGMAN's first entry enters:
     FUN_0001adf0 gives it a point ahead of its leader along the level's progress chains, and it runs
     there (take05: Flint 5 m ahead of Tex's run, then 30 m off at rest; Brutus, then the list's
@@ -433,7 +441,9 @@ Squad movement and deaths follow the game's own data and the captures:
   asking the walk line; `BF_TEST_FORMATION=<member>,...` puts those members (in FOLLOW) in
   FOLLOW's list in that order at each level's start, where the list starts empty, to stage the
   column an order leaves (take06's: `flint,brutus,hawk`); BF_FOLLOW_LOG also says what a level's
-  start dropped and each change of a member's leader, and logs the turn check. `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
+  start dropped and each change of a member's leader, and logs the turn check; `=2` adds, every
+  0.25 s, a row for each test map NPC set to follow (#364: its state, its distance to the
+  controlled character, its place, its cover point). `BF_TEST_NO_HOSTILES=1` (triggers.md) keeps a level's enemies out, as the takes'
   snapshot had them. The test map's NPCs (`BF_TEST_NPC`) have no brain, so they never post
   EVT_SQUAD_IMA_TARGET: only the level's characters do (a staged NPC enemy is the takes' frozen
   one in that, whether it fights or not). **`BF_TEST_ORDER` stays silent**: it says no order line

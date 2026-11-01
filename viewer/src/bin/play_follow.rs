@@ -38,8 +38,20 @@
 //! and play_avoid.rs's; this module decides where the follow goes and when it stands. Without a
 //! level's points (the test map's floor) state 0 walks straight at the leader.
 //!
+//!  - **The test map's followers** (#364): an NPC set to follow (play_testtools.rs `Npc::follow`),
+//!    a friend of the controlled character, runs this same follow as a member of FOLLOW (the
+//!    brain's default mode, Cover Me) does: play.rs `update_player` hands it to `orders::think`
+//!    as it hands a squad member, with the sight and fire of an NPC (a follower set to fight fires
+//!    at the hostile it sees, a dummy never does). It is no squad slot: it joins no formation
+//!    list, so its leader is the controlled character, whoever that is after a hand-over
+//!    (`npc_follows`), and it's one of state 4's characters (`mates`), so it doesn't take a cover
+//!    point another has claimed, stands on or is nearer to. Set to stay, an enemy or led by the
+//!    map editor's stand-in, it lets go (`let_go`).
+//!
 //! Test hooks: BF_FOLLOW_LOG=1 prints each state change and why, each cover point found and
-//! claimed, and the formation's lists when they change; BF_TEST_FORMATION=<member>,<member>,...
+//! claimed, and the formation's lists when they change; =2 also, every 0.25 s, a row for each
+//! test map follower (its state, how far it is from the controlled character, where, its cover
+//! point); BF_TEST_FORMATION=<member>,<member>,...
 //! puts those members (as `BF_TEST_ORDER` names them: brutus, flint, hawk, tex or a slot; in
 //! FOLLOW) into FOLLOW's list in that order at each level's start, where the list starts empty,
 //! to stage the column an order leaves (#33 take06's Cover Me to Flint, Brutus and Hawk:
@@ -54,11 +66,13 @@ use super::*;
 /// orders (the Squad Command menu's, before `squad_control`; BF_TEST_ORDER's) and the hand-over
 /// (`squad_control`), so the lists change in the order's frame, as the game's do inside the mode
 /// change (FUN_00018040 -> FUN_0005e8b0); a level's start begins it afresh (`reset`), as its squad.
+/// BF_FOLLOW_LOG=2's rows of the test map's followers come after the characters' step.
 pub fn plugin(app: &mut App) {
     app.init_resource::<Formation>()
         .add_systems(OnEnter(AppState::Playing), reset)
         .add_systems(Update, sync.after(read_input).after(squad_control).after(orders::test_orders).before(update_player)
-            .run_if(in_state(AppState::Playing)));
+            .run_if(in_state(AppState::Playing)))
+        .add_systems(Update, rows.after(update_player).run_if(in_state(AppState::Playing)));
 }
 
 /// A level's start: the formation record empty, as the squad's new brains find it (`Formation`:
@@ -238,9 +252,11 @@ pub struct Mate {
 }
 
 /// The squad's characters as state 4 looks through them (the squad list, char+0x59c): the
-/// controlled one and the AI squad and its followers, alive and in the world.
+/// controlled one and the AI squad and its followers (the marines, and the test map's NPCs set
+/// to follow `leader`, the controlled one: `npc_follows`), alive and in the world.
 pub fn mates(player: &Player, squad: &[Player]) -> Vec<Mate> {
-    std::iter::once(player).chain(squad.iter()).filter(|u| !u.dead && !u.absent && (u.in_squad() || follower(u))).map(|u| Mate {
+    std::iter::once(player).chain(squad.iter())
+        .filter(|u| !u.dead && !u.absent && (u.in_squad() || follower(u) || npc_follows(u, player))).map(|u| Mate {
         who: u.who(),
         at: u.position,
         point: u.router.own.point,
@@ -252,6 +268,54 @@ pub fn mates(player: &Player, squad: &[Player]) -> Vec<Mate> {
 /// A level character's brain that follows the leader (the tutorial's marines, play_brain.rs).
 fn follower(u: &Player) -> bool {
     u.brain.as_ref().is_some_and(|b| b.follows())
+}
+
+/// Whether the test map's NPC `u` follows `leader`, the controlled character, now (#364): it is set
+/// to follow (`Npc::follow`), has no brain of its own (a level character's follows by its brain,
+/// `follower`), is a friend of his (the same team: the follow's leader is on its side) and he is a
+/// character in the world (the map editor's stand-in at the edit camera, `Player::stand_in`, leads
+/// nobody). Such an NPC runs the squad's follow as a member of FOLLOW (Cover Me, the brain's
+/// default mode) would, but is no squad slot: it joins no formation list (`Command::joined` stays
+/// 0, so `Formation::leader_of` gives the controlled character), has no orders and takes no hand-over.
+pub fn npc_follows(u: &Player, leader: &Player) -> bool {
+    u.follow_set() && u.team == leader.team && !leader.stand_in
+}
+
+/// A test map NPC that follows no more (the follow set to stay, the NPC made an enemy, the map
+/// editor's stand-in leading: #364): its goal ended as the game's does when it's dropped
+/// (FUN_00020a10, as `Follow::restart` reads it), so its cover point is given up and the goal
+/// starts again if it follows once more; its route dropped (`Router::drop_route`: the bits it set
+/// on the level's points cleared); and it stands facing the way it faced. Nothing to do once it's
+/// done, so it is cheap to call each frame for every NPC that doesn't follow.
+pub fn let_go(m: &mut Player, graph: Option<&mut Graph>) {
+    if !(m.follow.started || m.follow.claimed.is_some() || m.router.walker.is_some()) {
+        return;
+    }
+    match graph {
+        Some(g) => m.router.drop_route(g),
+        None => (m.router.walker, m.router.dest) = (None, None),
+    }
+    m.follow.restart();
+    m.router.avoid.stand();
+    if let Some(n) = m.npc.as_mut() {
+        n.face = m.yaw;
+    }
+    if log_on() {
+        println!("t {:.2}: {}: no longer follows: its route dropped, its cover point given up", m.sim_time, unit_name(m));
+    }
+}
+
+/// A test map NPC taken off the map (the NPC tool's Delete, #364): the cover point it had claimed
+/// given up at once and its route dropped, as nothing would clear their bits on the level's points
+/// after it (`sync` clears the claims of those in the squad, `Follow::unclaim`).
+pub fn taken_off(m: &mut Player, graph: Option<&mut Graph>) {
+    if let Some(g) = graph {
+        if log_on() && m.follow.claimed.is_some() {
+            println!("t {:.2}: {}: taken off the map: its cover point given up", m.sim_time, unit_name(m));
+        }
+        release(m, Some(&mut *g));
+        m.router.drop_route(g);
+    }
 }
 
 /// The five distances in `mode` (FUN_00020b10): FOLLOW's, else WINGMAN's.
@@ -399,6 +463,29 @@ fn insert(list: &mut Vec<Who>, who: Who, far: f32, dist: &HashMap<Who, f32>) {
 fn log_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("BF_FOLLOW_LOG").is_ok_and(|v| v != "0"))
+}
+
+/// BF_FOLLOW_LOG=2: how often (s) `rows` prints (the demo's choice: four rows a second, as
+/// BF_SPEED_LOG's, play_speed.rs).
+const ROWS_EVERY: f32 = 0.25;
+
+/// BF_FOLLOW_LOG=2: every ROWS_EVERY s of the controlled character's clock, a line with a row for
+/// each test map NPC set to follow (#364): its name and number, whether it follows now
+/// (`npc_follows`), its follow state, how far it is from the controlled character (3D), where it
+/// is, and the cover point it has claimed. The verification's measure of the trail and the stop.
+fn rows(player: Res<Player>, squad: Res<Squad>, mut last: Local<f32>) {
+    if !std::env::var("BF_FOLLOW_LOG").is_ok_and(|v| v == "2") || player.sim_time < *last + ROWS_EVERY - 1e-4 {
+        return;
+    }
+    *last = player.sim_time;
+    let rows: Vec<String> = squad.0.iter().filter(|u| u.follow_set()).map(|u| {
+        let claimed = u.follow.claimed.map_or(String::new(), |p| format!(" cover point {p}"));
+        format!("{} (NPC {}){} state {} {:.1} m off ({:.1}, {:.1}){claimed}", unit_name(u), u.npc.map_or(0, |n| n.id),
+                if npc_follows(u, &player) { "" } else { " (idle)" }, u.follow.state.number(), u.position.distance(player.position), u.position.x, u.position.z)
+    }).collect();
+    if !rows.is_empty() {
+        println!("t {:.2} followers | {}", player.sim_time, rows.join(" | "));
+    }
 }
 
 /// The formation's bookkeeping each frame, before the squad's AI (`Formation::update`), then each
@@ -1040,6 +1127,117 @@ mod tests {
         assert!(!cover_ok(&g, 2, Who::Squad(1), b, &mates));
         g.nodes[2].state |= nav::CLAIMED;
         assert!(!cover_ok(&g, 2, Who::Squad(0), a, &mates), "claimed");
+    }
+
+    /// A test map NPC (#364) number `id` at `at`, a friend of the squad (team 0), set to follow or
+    /// not.
+    fn npc(c: usize, id: u32, at: Vec3, follow: bool) -> Player {
+        let mut m = member(c, at, Some(1), Mode::Follow);
+        m.npc = Some(testtools::Npc { id, fight: false, face: 0.0, follow });
+        m
+    }
+
+    /// Who follows the controlled character (#364): a friend set to follow, never an enemy, a
+    /// dummy that stays, a level character's brain's own business, nor one with the map editor's
+    /// stand-in as its leader. The ones that do are among state 4's characters.
+    #[test]
+    fn a_friend_set_to_follow_follows_and_is_one_of_the_squads_characters() {
+        let tex = Player::new(3);
+        let (a, mut b, c) = (npc(0, 1, Vec3::ZERO, true), npc(1, 2, Vec3::ZERO, true), npc(2, 3, Vec3::ZERO, false));
+        b.team = 1;
+        assert!(npc_follows(&a, &tex), "a friend set to follow");
+        assert!(!npc_follows(&b, &tex), "an enemy keeps the setting and doesn't act on it");
+        assert!(b.follow_set() && routes::walks_routes(&b), "and its route code runs, harmless: it never has a route");
+        assert!(!npc_follows(&c, &tex) && !c.follow_set(), "set to stay");
+        let mut stand_in = Player::stand_in(3, 0.0, Vec3::ZERO);
+        stand_in.team = 0;
+        assert!(!npc_follows(&a, &stand_in), "the map editor's stand-in leads nobody");
+        // (the squad's own members and the controlled character, with the followers)
+        let squad = [Player::new(0), a, b, c];
+        let who: Vec<Who> = mates(&tex, &squad).iter().map(|m| m.who).collect();
+        assert_eq!(who, [Who::Squad(3), Who::Squad(0), squad[1].who()], "the controlled one, the member, the follower; not the enemy or the stayer");
+        assert!(mates(&tex, &squad).iter().all(|m| m.follows), "all in FOLLOW");
+    }
+
+    /// Two followers (#364) beside two cover points near their leader: the first to look takes the
+    /// one nearest it and walks there; the second, a frame later, passes over that one (the claim
+    /// test, on in FUN_00020170's filter) and takes the other; a third finds none free and holds.
+    /// None takes a point while another follower nearer to it hasn't set off yet (FUN_00020260's
+    /// nearest test), and the characters it looks through include the followers (`mates`).
+    #[test]
+    fn two_followers_never_take_one_cover_point() {
+        let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 4, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5, 6]), point(4, COVER, -2.0, 6.0, &[1]),
+                   point(5, COVER, -8.0, 3.0, &[1, 2]), point(6, COVER, -11.0, 2.0, &[2])];
+        let mut g = Graph::new(&pts);
+        let mut tex = Player::new(3);
+        tex.controlled = true;
+        tex.router.own.point = Some(0);
+        let lead = leader(Vec3::ZERO, Some(0));
+        let mut squad = vec![npc(0, 1, Vec3::new(-8.5, 0.0, 0.0), true), npc(1, 2, Vec3::new(-6.0, 0.0, 0.5), true)];
+        for m in squad.iter_mut() {
+            m.follow.started = true;
+            m.follow.state = State::FindCover;
+        }
+        // the first: the nearest to both points (3.0 and 3.2 m off them, the second 3.2 and 5.2 m),
+        // so the first the flood reaches, h 5 (index 3), is its
+        let around = mates(&tex, &squad);
+        assert_eq!(around.len(), 3, "the controlled character and the two followers");
+        assert!(matches!(update(&mut squad[0], &lead, &around, Some(&mut g)), routes::Way::Go { .. }));
+        assert_eq!((squad[0].follow.state, squad[0].follow.claimed), (State::ToCover, Some(3)));
+        // the second, the next frame (the first on its way to its point: no longer a rival for the
+        // other): the claimed point is passed over and the other, 5.2 m off it, is its
+        let around = mates(&tex, &squad);
+        assert!(matches!(update(&mut squad[1], &lead, &around, Some(&mut g)), routes::Way::Go { .. }));
+        assert_eq!((squad[1].follow.state, squad[1].follow.claimed), (State::ToCover, Some(4)), "the other point, not the first's");
+        // a third, with both points claimed and the third out of its reach, holds
+        let mut third = npc(2, 3, Vec3::new(-9.0, 0.0, 1.0), true);
+        third.follow.started = true;
+        third.follow.state = State::FindCover;
+        squad.push(third);
+        let around = mates(&tex, &squad);
+        update(&mut squad[2], &lead, &around, Some(&mut g));
+        assert_eq!((squad[2].follow.state, squad[2].follow.claimed), (State::Hold, None), "no free cover point near it: it holds");
+    }
+
+    /// A follower set to stay (#364) lets go: its route dropped (its bits on the points cleared),
+    /// its cover point given up (the bit cleared by the next `sync`), its goal to start afresh, and
+    /// it stands facing the way it faced; once done there's nothing to do.
+    #[test]
+    fn a_follower_set_to_stay_lets_go_of_its_route_and_cover_point() {
+        let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5]), point(5, COVER, -8.0, 3.0, &[1, 2])];
+        let mut g = Graph::new(&pts);
+        let mut m = npc(0, 1, Vec3::new(-8.5, 0.0, 0.0), true);
+        m.yaw = 1.25;
+        m.follow.started = true;
+        m.follow.state = State::FindCover;
+        assert!(matches!(update(&mut m, &leader(Vec3::ZERO, Some(0)), &[], Some(&mut g)), routes::Way::Go { .. }));
+        assert_eq!(m.follow.claimed, Some(2));
+        assert!(m.router.walker.is_some());
+        let mut was = m.npc.unwrap();
+        was.follow = false;
+        m.npc = Some(was);
+        let_go(&mut m, Some(&mut g));
+        assert!(m.router.walker.is_none() && m.follow.claimed.is_none() && m.follow.unclaim == [2]);
+        assert_eq!((m.follow.state, m.npc.map(|n| n.face)), (State::HoldBegin, Some(1.25)));
+        // (a second call finds nothing started: the claim's give-up isn't queued again)
+        m.follow.unclaim.clear();
+        let_go(&mut m, Some(&mut g));
+        assert!(m.follow.unclaim.is_empty());
+    }
+
+    /// A follower taken off the map (#364) gives up its cover point and route at once: no `sync`
+    /// follows it, so nothing else would clear the point's claim, and no one could take it again.
+    #[test]
+    fn a_follower_taken_off_the_map_frees_its_cover_point() {
+        let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5]), point(5, COVER, -8.0, 3.0, &[1, 2])];
+        let mut g = Graph::new(&pts);
+        let mut m = npc(0, 1, Vec3::new(-8.5, 0.0, 0.0), true);
+        m.follow.started = true;
+        m.follow.state = State::FindCover;
+        update(&mut m, &leader(Vec3::ZERO, Some(0)), &[], Some(&mut g));
+        assert!(g.nodes[2].state & nav::CLAIMED != 0 && m.router.walker.is_some());
+        taken_off(&mut m, Some(&mut g));
+        assert!(g.nodes[2].state & nav::CLAIMED == 0 && m.follow.claimed.is_none() && m.router.walker.is_none());
     }
 
     /// Without a level's points the chase walks straight at the leader and holds within d2 of one

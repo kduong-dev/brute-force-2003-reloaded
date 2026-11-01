@@ -1913,7 +1913,7 @@ mod tests {
         // the same type as a test map NPC, an enemy: nothing by tag, only the hurt lines and the
         // death cry (their own asks)
         feral.asks.clear();
-        feral.npc = Some(testtools::Npc { id: 1, fight: true, face: 0.0 });
+        feral.npc = Some(testtools::Npc { id: 1, fight: true, face: 0.0, follow: false });
         assert!(!speaks(&feral));
         say(&mut feral, FOLLOW_WALK);
         order(&mut feral, 1, vec![Who::Squad(0)], 4);
@@ -1923,7 +1923,7 @@ mod tests {
         assert_eq!(feral.asks.len(), 2);
         // an enemy of a squad type (the test map's enemy Brutus) speaks as it did
         let mut brutus = Player::new(0);
-        brutus.npc = Some(testtools::Npc { id: 2, fight: true, face: 0.0 });
+        brutus.npc = Some(testtools::Npc { id: 2, fight: true, face: 0.0, follow: false });
         assert!(speaks(&brutus));
         tex.asks.clear();
         say(&mut tex, ORDER_ACK);

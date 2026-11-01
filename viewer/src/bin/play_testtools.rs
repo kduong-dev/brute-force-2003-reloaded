@@ -9,8 +9,9 @@
 //!    teleports the controlled character to the ground under the crosshair, right click to
 //!    the ground under the camera, both back to the normal camera; F leaves it where it was.
 //!  - N: the NPC menu. Up / Down (or the wheel) picks the character type, J the team (friend or
-//!    enemy) and B the behaviour (dummy or fight) for the next one; Enter or a click spawns it on
-//!    the ground under the crosshair, facing the controlled character. N or Esc closes it.
+//!    enemy), ; the behaviour (dummy or fight) and ' whether it follows the controlled character
+//!    (#364), for the next one; Enter or a click spawns it on the ground under the crosshair,
+//!    facing the controlled character. N or Esc closes it.
 //!    The types (#128): the squad's four, then every other character type the loaded archives
 //!    define (`Game::character_types`), by display name with its archive and HP.
 //!    Spawned characters are `Player`s at the end of `Squad` with `npc` set: everything that
@@ -31,8 +32,22 @@
 //!      squad does) and aims and fires at any hostile in sight with the squad AI's fire
 //!      (`ai_fire`), and the squad AI fires back (play_brain.rs `glance`): a squadmate's shots stop
 //!      at the first body in their way, as the player's do. NPCs take no pickups.
-//!    - Outside the menu J switches the team of the NPC under the crosshair, B its behaviour,
-//!      Delete removes it; Shift+Delete removes every NPC.
+//!    - **Follow** (#364, the product owner's request, not the game's): a friend (the controlled
+//!      character's team) set to follow trails the controlled character, whoever that is after a
+//!      hand-over, by the squad's own follow in FOLLOW (Cover Me): play.rs `update_player` gives
+//!      it to `orders::think` as it gives a squad member, so it runs play_follow.rs's states (it
+//!      holds while he's within 11.2 m, chases a route to his point at the dash beyond it, stops
+//!      within 9.8 m of him once he stops, and takes a cover point near him where the level has
+//!      one, never one that another follower or a squad member has) with the squad's routes,
+//!      steering and speeds (play_routes.rs, play_avoid.rs, play_speed.rs). It is the tutorial
+//!      marines' follow (play_brain.rs) without a brain, and no squad slot: it joins no
+//!      formation list, so its leader is always the controlled character. It combines with dummy
+//!      and fight: a follower set to fight still fires at the hostile it sees (as it trails him,
+//!      the upper body on the target) and a dummy one never fires. Set to stay again it stops
+//!      where it is, facing the way it was going. An enemy (another team than the controlled
+//!      character's) keeps the setting and doesn't act on it.
+//!    - Outside the menu J switches the team of the NPC under the crosshair, ; its behaviour,
+//!      ' whether it follows, Delete removes it; Shift+Delete removes every NPC.
 //!  - O: the object menu, a list of every pickup type, every hand weapon (the rack's list),
 //!    each grenade type and the breakable scenery. Up / Down picks (Page Up / Down jumps a
 //!    group); a see-through copy follows the crosshair on the ground; the wheel turns it 15
@@ -83,10 +98,16 @@ use bf_viewer::level_scene::Placed;
 /// The tools' line in the controls panel (H).
 pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a free camera, the tools at the mouse pointer; F5 again plays from there)   Backspace twice: leave for the menu\n\
                         F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
-                        N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / ; / Delete: team / fight / remove the NPC under the crosshair (Shift+Delete: all)\n\
+                        N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / ; / ' / Delete: team / fight / follow you / remove the NPC under the crosshair (Shift+Delete: all)\n\
                         P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level\n\
                         T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty); or a predefined squad in all four (the campaign's, squad deathmatch's: the first rows)\n\
                         Home: put back every pickup taken (the grid's, and the ones placed with O), where they were";
+/// The NPC tool's follow key (#364): the apostrophe, beside ; (the fight key) as ; is beside J (the
+/// team key), the home row's. Every letter is another control's in the demo (the game's, the test
+/// map's, the hint and Squad Command panels'), and so are the digits 1-4, so the next punctuation
+/// key takes it. In the NPC menu it sets whether the next one follows, outside it whether the NPC
+/// under the crosshair does.
+const FOLLOW_KEY: KeyCode = KeyCode::Quote;
 /// The enemy side's team (`Player::team`): any number but the squad's 0 and the game's
 /// self-hostile 7 (play_sentry.rs); BF_TEST_HOSTILE uses the same.
 pub const ENEMY_TEAM: u8 = 1;
@@ -139,12 +160,20 @@ pub(super) const MARK_RING: f32 = 0.35;
 
 
 /// A character the NPC tool spawned (`Player::npc`): its number (1, 2, ... in the order
-/// spawned; the hooks' `<n>`), whether it fights, and the way it was put facing.
+/// spawned; the hooks' `<n>`), whether it fights, the way it stands facing, and whether it
+/// follows the controlled character.
 #[derive(Clone, Copy, Debug)]
 pub struct Npc {
     pub id: u32,
     pub fight: bool,
+    /// the way it stands facing (the way it was put; the way it was going when it stopped
+    /// following)
     pub face: f32,
+    /// set to follow the controlled character (#364, the module's notes): a friend of his follows
+    /// by the squad's follow (play_follow.rs `npc_follows`, `orders::think`), an enemy keeps the
+    /// setting and stands. Never set on the level's characters, whose brains follow by
+    /// `Brain::follows`
+    pub follow: bool,
 }
 
 /// The demo's yaw (0 faces -z, `Player::yaw`) for a facing given as the xemu watch logs give
@@ -222,10 +251,11 @@ pub(super) struct Tools {
     pub(super) freecam: Option<FreeCam>,
     pub(super) panel: Panel,
     /// the NPC menu: the entry picked (an index into `NpcList`), the team and behaviour of the
-    /// next one
+    /// next one, and whether it follows the controlled character (#364)
     npc_type: usize,
     npc_team: u8,
     npc_fight: bool,
+    npc_follow: bool,
     /// the NPCs spawned so far (the last one's number)
     spawned: u32,
     /// the object menu: the entry picked (into `Catalogue`) and its turn (rad)
@@ -318,13 +348,18 @@ pub(super) enum Hook {
     Teleport { camera: bool },
     NpcMenu,
     Close,
+    /// a key pressed as a keyboard presses it, for the frame (`press_keys`, BF_TEST_KEYS: #364)
+    Key(KeyCode),
     /// `character`: the type as the hook names it (see `npc_kind`); `at`: x, z, the height the
     /// ground is looked for under (None: 50 m over the controlled character) and the yaw it faces
     /// (the demo's, radians, from the hook's bearing: `bearing_yaw`; None: facing the controlled
-    /// character); `frozen`: a dummy whose brain is off (play_enemies.rs: no hit reactions)
-    Npc { character: String, team: u8, fight: bool, frozen: bool, at: Option<(Vec2, Option<f32>, Option<f32>)> },
+    /// character); `frozen`: a dummy whose brain is off (play_enemies.rs: no hit reactions);
+    /// `follow`: it follows the controlled character (`Npc::follow`)
+    Npc { character: String, team: u8, fight: bool, frozen: bool, follow: bool, at: Option<(Vec2, Option<f32>, Option<f32>)> },
     /// the team to put them on (None: switch friend <-> enemy, as J does)
     Team(Pick, Option<u8>),
+    /// whether they follow the controlled character (None: switch it, as ' does)
+    Follow(Pick, Option<bool>),
     /// the radar-contact to give them (`Player::radar_contact`)
     Radar(Pick, u8),
     /// drive them in a motion type to a point (play_enemies.rs `drive`): the motion type, the
@@ -395,7 +430,11 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_TELEPORT=<s>[,camera]: the left click in the free camera (teleport to the ground
 ///    under the crosshair); `camera`: the right click (under the camera).
 ///  - BF_TEST_NPC_MENU=<s>: N (the menu opens). BF_TEST_TOOL_CLOSE=<s>: Esc (a menu closes).
-///  - BF_TEST_NPC=<s>,<character>,<friend|enemy|neutral|team>,<dummy|fight|frozen>[,<x>,<z>[,<y>[,<bearing>]]]: spawn
+///  - BF_TEST_KEYS=<s>,<key>: that key pressed at that time, as a keyboard presses it (#364:
+///    `key_named`, `press_keys`): the NPC menu's N, J, ;, ', Enter and Up / Down, the NPC keys
+///    outside it, any other the tools read. Several entries, `;`-separated, make a sequence:
+///    `BF_TEST_KEYS="1,n;1.2,j;1.4,semicolon;1.6,quote;1.8,enter"`.
+///  - BF_TEST_NPC=<s>,<character>,<friend|enemy|neutral|team>,<dummy|fight|frozen>[+follow][,<x>,<z>[,<y>[,<bearing>]]]: spawn
 ///    one on the ground at x, z, or under the crosshair, facing the controlled character, or
 ///    `bearing` (degrees, the xemu watch logs' atan2(dz, dx): 0 faces +x, 90 faces +z; an empty y
 ///    keeps its default: `x,z,,90`; #167) when given. Its team:
@@ -406,11 +445,15 @@ impl std::fmt::Debug for FreeCam {
 ///    `h_xxxxxxxx` (`npc_kind`). The ground is the
 ///    first floor under y (world height), by default 50 m above the controlled character: a y
 ///    just over the floor wanted puts it under a roof or a gate's top (#73's takes 14, 16, 22
-///    and 23 at sdm_e34's gate).
+///    and 23 at sdm_e34's gate). The behaviour word may carry the follow flag (#364): `fight+follow`
+///    and `dummy+follow` (`follow` alone is a dummy that follows) trail the controlled character
+///    as the squad does (`Npc::follow`; `frozen+follow` follows without hit reactions).
 ///  - BF_TEST_NPC_TEAM / BF_TEST_NPC_FIGHT / BF_TEST_NPC_REMOVE=<s>,<n|aim|all>: switch the
 ///    team / the behaviour of, or remove, the n-th NPC spawned, the one under the crosshair, or
 ///    every one. BF_TEST_NPC_TEAM=<s>,<n|aim|all>,<team> puts them on that team instead (as
 ///    BF_TEST_NPC names one).
+///  - BF_TEST_NPC_FOLLOW=<s>,<n|aim|all>[,<on|off>]: the ' key (#364): switch whether they follow
+///    the controlled character, or set it (`on`, `off`).
 ///  - BF_TEST_NPC_RADAR=<s>,<n|aim|all>,<value>: gives them that radar-contact (every character
 ///    has 1; 2 or 4 turns the crosshair yellow on them, play_reticle.rs), as #141's take08 rewrote
 ///    the Shrike's.
@@ -496,7 +539,7 @@ pub(super) struct Session {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Tools>().init_resource::<Catalogue>().init_resource::<NpcList>().init_resource::<Script>().init_resource::<Session>()
         .add_systems(OnEnter(AppState::Playing), (reset, spawn_panel).after(setup).run_if(resource_exists::<TestMap>))
-        .add_systems(Update, (run_script, before_input).chain().before(read_input).run_if(active))
+        .add_systems(Update, (run_script, press_keys, before_input).chain().before(read_input).run_if(active))
         .add_systems(Update, (gate_input, super::editor::open_tools, camera_tool, npc_tool, object_tool).chain().after(read_input).before(squad_control)
             .run_if(active))
         .add_systems(Update, take_grenades.after(update_player).run_if(active))
@@ -603,19 +646,42 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     for e in entries("BF_TEST_TOOL_CLOSE") {
         add(num(&e, 0), Some(Hook::Close));
     }
+    for e in entries("BF_TEST_KEYS") {
+        match e.get(1).and_then(|k| key_named(k)) {
+            Some(k) => add(num(&e, 0), Some(Hook::Key(k))),
+            None => warn!("BF_TEST_KEYS: {:?} isn't a key it presses; skipped", e.get(1)),
+        }
+    }
     for e in entries("BF_TEST_NPC") {
         // (a team it doesn't know: a friend, as before the team numbers, with a warning)
         if let Some(t) = e.get(2).filter(|t| team_of(t).is_none()) {
             warn!("BF_TEST_NPC: {t} isn't friend, enemy, neutral or a team 0-9; spawned as a friend");
         }
-        let hook = (|| Some(Hook::Npc {
-            character: e.get(1)?.clone(),
-            team: team_of(e.get(2)?).unwrap_or(0),
-            fight: e.get(3)?.eq_ignore_ascii_case("fight"),
-            frozen: e.get(3)?.eq_ignore_ascii_case("frozen"),
-            at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6), num(&e, 7).map(bearing_yaw))),
-        }))();
+        let hook = (|| {
+            let how = behaviour(e.get(3)?);
+            Some(Hook::Npc {
+                character: e.get(1)?.clone(),
+                team: team_of(e.get(2)?).unwrap_or(0),
+                fight: how.fight,
+                frozen: how.frozen,
+                follow: how.follow,
+                at: num(&e, 4).zip(num(&e, 5)).map(|(x, z)| (Vec2::new(x, z), num(&e, 6), num(&e, 7).map(bearing_yaw))),
+            })
+        })();
         add(num(&e, 0), hook);
+    }
+    for e in entries("BF_TEST_NPC_FOLLOW") {
+        // (the third value: on or off; none switches, as the key does)
+        let to = match e.get(2).map(|v| v.to_ascii_lowercase()).as_deref() {
+            None => Some(None),
+            Some("on" | "1" | "true") => Some(Some(true)),
+            Some("off" | "0" | "false") => Some(Some(false)),
+            Some(v) => {
+                warn!("BF_TEST_NPC_FOLLOW: {v} isn't on or off; skipped");
+                None
+            }
+        };
+        add(num(&e, 0), e.get(1).and_then(|p| pick(p)).zip(to).map(|(p, to)| Hook::Follow(p, to)));
     }
     for e in entries("BF_TEST_NPC_TEAM") {
         // (a team named: that one, or nothing if it isn't one; none: the J key's switch)
@@ -715,6 +781,51 @@ pub(super) fn run_script(player: Res<Player>, mut script: ResMut<Script>) {
             println!("t {:.2}: hook {hook:?}", player.sim_time);
         }
         script.now.push(hook);
+    }
+}
+
+/// A key as BF_TEST_KEYS names it (#364): a letter (any case), `semicolon`, `quote` (or `'`),
+/// `enter`, `delete`, `up`, `down`, `left`, `right`, `esc` or `space`: the ones the tools' menus
+/// read. (`semicolon` and not `;`: the hooks' entries are separated by that.)
+fn key_named(s: &str) -> Option<KeyCode> {
+    use KeyCode::*;
+    let letters = [KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW,
+                   KeyX, KeyY, KeyZ];
+    let s = s.trim().to_ascii_lowercase();
+    match s.as_bytes() {
+        [c @ b'a'..=b'z'] => Some(letters[(c - b'a') as usize]),
+        _ => match s.as_str() {
+            "semicolon" => Some(Semicolon),
+            "quote" | "'" => Some(Quote),
+            "enter" => Some(Enter),
+            "delete" | "del" => Some(Delete),
+            "up" => Some(ArrowUp),
+            "down" => Some(ArrowDown),
+            "left" => Some(ArrowLeft),
+            "right" => Some(ArrowRight),
+            "esc" | "escape" => Some(Escape),
+            "space" => Some(Space),
+            _ => None,
+        },
+    }
+}
+
+/// BF_TEST_KEYS (#364): the keys due this frame pressed as a keyboard presses them (`just_pressed`
+/// for the frame), and let go the next, so a press reaches every system that reads the keys: the
+/// tools' menus and the NPC keys (the window needs no focus, which BF_BACKGROUND takes away from
+/// the real keyboard).
+fn press_keys(script: Res<Script>, mut keys: ResMut<ButtonInput<KeyCode>>, mut held: Local<Vec<KeyCode>>) {
+    for k in held.drain(..) {
+        keys.release(k);
+    }
+    for hook in &script.now {
+        if let Hook::Key(k) = hook {
+            keys.press(*k);
+            held.push(*k);
+            if std::env::var("BF_TOOLS_LOG").is_ok() {
+                println!("test tools: key {k:?} pressed");
+            }
+        }
     }
 }
 
@@ -970,6 +1081,36 @@ fn team_of(s: &str) -> Option<u8> {
     }
 }
 
+/// What a hook's behaviour word asks for (BF_TEST_NPC's fourth value): `fight`, `frozen` or a
+/// dummy (anything else, `dummy`), each with `+follow` for the follow flag (#364), `follow` alone
+/// being a dummy that follows. The words are the demo's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct How {
+    fight: bool,
+    frozen: bool,
+    follow: bool,
+}
+
+/// The behaviour a hook's word names (`How`): `dummy`, `fight`, `frozen`, `fight+follow`, `follow`, ...
+/// in any case.
+fn behaviour(s: &str) -> How {
+    let words: Vec<String> = s.split('+').map(|w| w.trim().to_ascii_lowercase()).collect();
+    let has = |w: &str| words.iter().any(|x| x == w);
+    How { fight: has("fight"), frozen: has("frozen"), follow: has("follow") }
+}
+
+/// An NPC's behaviour in words, for the messages and the logs: "dummy", "fight" or "frozen", then
+/// ", follow" when it's set to follow the controlled character, and for one that isn't his friend
+/// (another team than `leader`'s) " (idle: only a friend follows)".
+fn how_word(npc: &Npc, frozen: bool, team: u8, leader: u8) -> String {
+    let base = if npc.fight { "fight" } else if frozen { "frozen" } else { "dummy" };
+    match (npc.follow, team == leader) {
+        (false, _) => base.to_string(),
+        (true, true) => format!("{base}, follow"),
+        (true, false) => format!("{base}, follow (idle: only a friend follows)"),
+    }
+}
+
 /// The NPC menu's list, made once a map's data is in (`npc_list`): the NPC menu's and the squad
 /// menu's (play_testsquad.rs, #302), whichever wants it first. BF_TOOLS_LOG prints its entries.
 pub(super) fn fill_npc_list(npcs: &mut NpcList, game: &Game) {
@@ -985,19 +1126,66 @@ pub(super) fn fill_npc_list(npcs: &mut NpcList, game: &Game) {
     }
 }
 
+/// The NPC menu's setting keys (open): J the team, ; dummy or fight and ' (`FOLLOW_KEY`) whether
+/// it follows the controlled character, for the next NPC spawned.
+fn menu_keys(keys: &ButtonInput<KeyCode>, tools: &mut Tools) {
+    if keys.just_pressed(KeyCode::KeyJ) {
+        tools.npc_team = if tools.npc_team == 0 { ENEMY_TEAM } else { 0 };
+    }
+    if keys.just_pressed(KeyCode::Semicolon) {
+        tools.npc_fight = !tools.npc_fight;
+    }
+    if keys.just_pressed(FOLLOW_KEY) {
+        tools.npc_follow = !tools.npc_follow;
+    }
+}
+
+/// The NPC keys outside the menu: J switches the team, ; dummy and fight and ' (`FOLLOW_KEY`)
+/// follow and stay of the NPC under the crosshair (the acts the hooks BF_TEST_NPC_TEAM, _FIGHT and
+/// _FOLLOW with `aim` make).
+fn npc_keys(keys: &ButtonInput<KeyCode>) -> Vec<Hook> {
+    let mut acts = vec![];
+    if keys.just_pressed(KeyCode::KeyJ) {
+        acts.push(Hook::Team(Pick::Aim, None));
+    }
+    if keys.just_pressed(KeyCode::Semicolon) {
+        acts.push(Hook::Fight(Pick::Aim));
+    }
+    if keys.just_pressed(FOLLOW_KEY) {
+        acts.push(Hook::Follow(Pick::Aim, None));
+    }
+    acts
+}
+
+/// One NPC to spawn this frame (`npc_tool`): the menu's pick or a hook's.
+struct Spawn {
+    /// its character type
+    kind: u32,
+    team: u8,
+    fight: bool,
+    /// follows the controlled character (`Npc::follow`)
+    follow: bool,
+    frozen: bool,
+    /// the hook's place: x, z, the height the ground is looked for under, the yaw it faces
+    at: Option<(Vec2, Option<f32>, Option<f32>)>,
+    /// the level placement it is spawned from (its weapons and personality)
+    placed: Option<bf_viewer::bf::character_type::Placement>,
+}
+
 /// The NPC menu (N: its key is the tool registry's, `editor::open_tools`) and the NPC keys (J,
-/// ; (B before: B is the Black button's Medkit shortcut everywhere now), Delete) and hooks: spawn, switch team or behaviour, remove. Each NPC spawned is listed in
-/// the editor's `Placements` (its team and behaviour kept up to date there), and one removed is
-/// struck off.
+/// ; (B before: B is the Black button's Medkit shortcut everywhere now), ' (#364), Delete) and
+/// hooks: spawn, switch team, behaviour or follow, remove. Each NPC spawned is listed in the
+/// editor's `Placements` (its team, behaviour and follow kept up to date there), and one removed
+/// is struck off.
 #[allow(clippy::too_many_arguments)]
 fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             scroll: Res<AccumulatedMouseScroll>, mut tools: ResMut<Tools>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
             mut hits: ResMut<AiHits>, script: Res<Script>, mut status: ResMut<UsePanel>, game: Res<GameData>, mut npcs: ResMut<NpcList>,
-            mut placements: ResMut<super::editor::Placements>) {
+            mut placements: ResMut<super::editor::Placements>, mut nav: ResMut<super::nav::Nav>) {
     fill_npc_list(&mut npcs, &game.0);
     let types = &npcs.0;
     let open = tools.panel == Panel::Npcs;
-    let mut spawns: Vec<(u32, u8, bool, bool, Option<(Vec2, Option<f32>, Option<f32>)>, Option<bf_viewer::bf::character_type::Placement>)> = vec![];
+    let mut spawns: Vec<Spawn> = vec![];
     let mut acts: Vec<Hook> = vec![];
     if script.now.iter().any(|h| matches!(h, Hook::NpcMenu)) {
         tools.panel = if open { Panel::None } else { Panel::Npcs };
@@ -1008,43 +1196,38 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         let wheel = if scroll.delta.y < 0.0 { 1 } else if scroll.delta.y > 0.0 { -1 } else { 0 };
         let d = step(KeyCode::ArrowDown) - step(KeyCode::ArrowUp) + wheel;
         tools.npc_type = (tools.npc_type as i32 + d).rem_euclid(types.len().max(1) as i32) as usize;
-        if keys.just_pressed(KeyCode::KeyJ) {
-            tools.npc_team = if tools.npc_team == 0 { ENEMY_TEAM } else { 0 };
-        }
-        if keys.just_pressed(KeyCode::Semicolon) {
-            tools.npc_fight = !tools.npc_fight;
-        }
+        menu_keys(&keys, &mut tools);
         if keys.just_pressed(KeyCode::Enter) || tools.click {
-            spawns.push((types[tools.npc_type].1, tools.npc_team, tools.npc_fight, false, None, None));
+            spawns.push(Spawn { kind: types[tools.npc_type].1, team: tools.npc_team, fight: tools.npc_fight, follow: tools.npc_follow, frozen: false,
+                                at: None, placed: None });
         }
     } else {
-        if keys.just_pressed(KeyCode::KeyJ) {
-            acts.push(Hook::Team(Pick::Aim, None));
-        }
-        if keys.just_pressed(KeyCode::Semicolon) {
-            acts.push(Hook::Fight(Pick::Aim));
-        }
+        acts.extend(npc_keys(&keys));
     }
     if keys.just_pressed(KeyCode::Delete) && matches!(tools.panel, Panel::None | Panel::Npcs) {
         acts.push(Hook::Remove(if shift { Pick::All } else { Pick::Aim }));
     }
     for hook in &script.now {
         match hook {
-            Hook::Npc { character, team, fight, frozen, at } => match (npc_kind(&game.0, character), npc_placement(&game.0, character)) {
-                (Some(kind), _) => spawns.push((kind, *team, *fight, *frozen, *at, None)),
-                (None, Some(placed)) => spawns.push((placed.kind, *team, *fight, *frozen, *at, Some(placed))),
-                (None, None) => {
-                    println!("test tools: no character type {character} in the loaded data");
-                    status.message = Some((format!("No character type {character}"), MESSAGE_TIME));
+            Hook::Npc { character, team, fight, frozen, follow, at } => {
+                let spawn = |kind: u32, placed: Option<bf_viewer::bf::character_type::Placement>| Spawn { kind, team: *team, fight: *fight, follow: *follow, frozen: *frozen,
+                                                                                              at: *at, placed };
+                match (npc_kind(&game.0, character), npc_placement(&game.0, character)) {
+                    (Some(kind), _) => spawns.push(spawn(kind, None)),
+                    (None, Some(placed)) => spawns.push(spawn(placed.kind, Some(placed))),
+                    (None, None) => {
+                        println!("test tools: no character type {character} in the loaded data");
+                        status.message = Some((format!("No character type {character}"), MESSAGE_TIME));
+                    }
                 }
-            },
-            Hook::Team(..) | Hook::Radar(..) | Hook::Health(..) | Hook::Fight(_) | Hook::Remove(_) | Hook::Motion(..) => acts.push(hook.clone()),
+            }
+            Hook::Team(..) | Hook::Follow(..) | Hook::Radar(..) | Hook::Health(..) | Hook::Fight(_) | Hook::Remove(_) | Hook::Motion(..) => acts.push(hook.clone()),
             _ => {}
         }
     }
     let log = std::env::var("BF_TOOLS_LOG").is_ok();
     let (origin, dir) = crosshair(&player, &tools);
-    for (kind, team, fight, frozen, at, placed) in spawns {
+    for Spawn { kind, team, fight, follow, frozen, at, placed } in spawns {
         let ground = match at {
             Some((p, from, _)) => Some(Vec3::new(p.x, floor_y(p.x, p.y, from.unwrap_or(player.position.y + GROUND + 50.0), world::Body::Character), p.y)),
             None => ground_point(origin, dir),
@@ -1067,7 +1250,8 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         m.cam_yaw = m.yaw;
         m.face_yaw = Some(m.yaw);
         m.team = team;
-        m.npc = Some(Npc { id, fight, face: m.yaw });
+        let npc = Npc { id, fight, face: m.yaw, follow };
+        m.npc = Some(npc);
         // (its own random stream: hit reactions, bursts)
         m.rng ^= id.wrapping_mul(0x9E37_79B9) | 1;
         // its brain off (no hit reactions: play_enemies.rs)
@@ -1081,14 +1265,14 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         }
         // (its sensor from the spawn on: the model's load sets it again, play.rs `spawn_unit`)
         m.sensor.set(game.0.character_type(kind), m.enemy.ai.as_ref());
-        let label = format!("{} {} ({})", side(team), npc_name(&game.0, &m), if fight { "fight" } else if frozen { "frozen" } else { "dummy" });
+        let label = format!("{} {} ({})", side(team), npc_name(&game.0, &m), how_word(&npc, frozen, team, player.team));
         if log {
             let from = placed.as_ref().map_or(String::new(), |pl| format!(", placement h_{:08x} [{}] weapons {:?} personality h_{:08x}", pl.name, pl.archive,
                 pl.weapons.iter().map(|(w, _)| game.0.weapons.get(w).map_or(format!("h_{w:08x}"), |d| d.label.clone())).collect::<Vec<_>>(), pl.ai.personalities[0]));
             println!("t {:.2}: NPC {id}: {label} at {ground:.2}, type h_{kind:08x}{from}", player.sim_time);
         }
         status.message = Some((format!("Spawned {label}"), MESSAGE_TIME));
-        let thing = super::editor::Thing::Npc { id, kind, team, fight, frozen, placement: placed.as_ref().map(|pl| pl.name) };
+        let thing = super::editor::Thing::Npc { id, kind, team, fight, follow, frozen, placement: placed.as_ref().map(|pl| pl.name) };
         placements.add(thing, ground, m.yaw, false, None);
         squad.0.push(m);
     }
@@ -1104,7 +1288,7 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                     }
                 }
             }
-            Hook::Team(p, _) | Hook::Radar(p, _) | Hook::Health(p, _) | Hook::Fight(p) => {
+            Hook::Team(p, _) | Hook::Follow(p, _) | Hook::Radar(p, _) | Hook::Health(p, _) | Hook::Fight(p) => {
                 let list = picked(&squad, p, aimed);
                 if list.is_empty() {
                     status.message = Some(("No NPC under the crosshair".into(), MESSAGE_TIME));
@@ -1112,20 +1296,25 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                 for i in list {
                     let m = &mut squad.0[i];
                     let Some(mut npc) = m.npc else { continue };
+                    // (a level character's brain follows by its own rule: the follow setting is the tool's NPCs')
+                    if matches!(act, Hook::Follow(..)) && m.brain.is_some() {
+                        continue;
+                    }
                     match act {
                         Hook::Team(_, Some(team)) => m.team = team,
                         Hook::Team(_, None) => m.team = if m.team == 0 { ENEMY_TEAM } else { 0 },
+                        Hook::Follow(_, to) => npc.follow = to.unwrap_or(!npc.follow),
                         Hook::Radar(_, value) => m.radar_contact = value,
                         Hook::Health(_, hp) => (m.health, m.max_health) = (hp, hp),
                         _ => npc.fight = !npc.fight,
                     }
                     m.npc = Some(npc);
                     // (its listing keeps what it's set to: the edited map's)
-                    placements.set_npc(npc.id, m.team, npc.fight);
+                    placements.set_npc(npc.id, m.team, npc.fight, npc.follow);
                     // (its radar-contact when a hook has changed it from every character's 1)
                     let radar = if m.radar_contact != 1 { format!(", radar-contact {}", m.radar_contact) } else { String::new() };
                     let hp = if matches!(act, Hook::Health(..)) { format!(", {:.0} HP", m.health) } else { String::new() };
-                    let label = format!("NPC {} ({}): {} {}{radar}{hp}", npc.id, npc_name(&game.0, m), side(m.team), if npc.fight { "fight" } else { "dummy" });
+                    let label = format!("NPC {} ({}): {} {}{radar}{hp}", npc.id, npc_name(&game.0, m), side(m.team), how_word(&npc, false, m.team, player.team));
                     if log {
                         println!("t {:.2}: {label}", player.sim_time);
                     }
@@ -1149,6 +1338,8 @@ fn npc_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                         if let Some(e) = m.slide_fx.take() {
                             commands.entity(e).despawn();
                         }
+                        // (a follower's cover point and route let go of: no `sync` after it)
+                        super::follow::taken_off(m, nav.graph.as_mut());
                         // (taken off the map, not lost in play: struck off its listing)
                         if let Some(n) = m.npc {
                             placements.remove_npc(n.id);
@@ -1612,10 +1803,10 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
             }
             s += &format!("  ({} of {n} character types)\n", tools.npc_type + 1);
             let at = aim_word(&tools);
-            s += &format!("J team: {}   ;: {}\nclick / Enter: spawn at {at}\n", side(tools.npc_team).to_uppercase(),
-                          if tools.npc_fight { "FIGHT" } else { "DUMMY" });
+            s += &format!("J team: {}   ;: {}   ': {}\nclick / Enter: spawn at {at}\n", side(tools.npc_team).to_uppercase(),
+                          if tools.npc_fight { "FIGHT" } else { "DUMMY" }, if tools.npc_follow { "FOLLOW YOU" } else { "STAY" });
             let n = squad.0.iter().filter(|m| m.npc.is_some()).count();
-            s += &format!("{n} spawned   J / B / Del on the one under {at}, Shift+Del all");
+            s += &format!("{n} spawned   J / ; / ' / Del on the one under {at}, Shift+Del all");
         }
         Panel::Objects => {
             if !s.is_empty() {
@@ -1668,5 +1859,107 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
     let s = s.trim_end().to_string();
     if text.0 != s {
         text.0 = s;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// BF_TEST_NPC's behaviour word (#364): the old three as they were, in any case, and the follow
+    /// flag after a `+` (`follow` alone is a dummy that follows).
+    #[test]
+    fn the_behaviour_word_takes_a_follow_flag() {
+        let how = |fight, frozen, follow| How { fight, frozen, follow };
+        assert_eq!(behaviour("dummy"), how(false, false, false));
+        assert_eq!(behaviour("fight"), how(true, false, false));
+        assert_eq!(behaviour("Frozen"), how(false, true, false));
+        assert_eq!(behaviour("fight+follow"), how(true, false, true));
+        assert_eq!(behaviour("dummy+FOLLOW"), how(false, false, true));
+        assert_eq!(behaviour("follow"), how(false, false, true));
+        assert_eq!(behaviour("frozen+follow"), how(false, true, true));
+        // (a word it doesn't know is a dummy, as before)
+        assert_eq!(behaviour("stand"), how(false, false, false));
+    }
+
+    /// The follow key (#364) is the apostrophe, beside ; and J: outside the menu it switches the
+    /// follow of the NPC under the crosshair, next to J's team and ;'s fight, and none of the three
+    /// does another's; in the menu it sets whether the next NPC follows, as J and ; set its team
+    /// and behaviour.
+    #[test]
+    fn the_follow_key_beside_the_fight_key() {
+        assert_eq!(FOLLOW_KEY, KeyCode::Quote);
+        let press = |k: &[KeyCode]| {
+            let mut keys = ButtonInput::<KeyCode>::default();
+            k.iter().for_each(|&k| keys.press(k));
+            keys
+        };
+        let acts = |k: &[KeyCode]| npc_keys(&press(k)).iter().map(|h| format!("{h:?}")).collect::<Vec<_>>();
+        assert_eq!(acts(&[]), Vec::<String>::new());
+        assert_eq!(acts(&[KeyCode::KeyJ]), ["Team(Aim, None)"]);
+        assert_eq!(acts(&[KeyCode::Semicolon]), ["Fight(Aim)"]);
+        assert_eq!(acts(&[FOLLOW_KEY]), ["Follow(Aim, None)"]);
+        assert_eq!(acts(&[KeyCode::KeyJ, FOLLOW_KEY]), ["Team(Aim, None)", "Follow(Aim, None)"]);
+        // the menu: the next NPC's team, behaviour and follow, each its own key
+        let mut tools = Tools { npc_team: ENEMY_TEAM, ..default() };
+        menu_keys(&press(&[FOLLOW_KEY]), &mut tools);
+        assert_eq!((tools.npc_team, tools.npc_fight, tools.npc_follow), (ENEMY_TEAM, false, true));
+        menu_keys(&press(&[KeyCode::KeyJ, KeyCode::Semicolon]), &mut tools);
+        assert_eq!((tools.npc_team, tools.npc_fight, tools.npc_follow), (0, true, true));
+        menu_keys(&press(&[FOLLOW_KEY]), &mut tools);
+        assert!(!tools.npc_follow, "the key again: stay");
+    }
+
+    /// BF_TEST_KEYS names the tools' keys (#364): letters in any case, the two punctuation keys by
+    /// name (`;` separates the hooks' entries), the others the NPC menu reads.
+    #[test]
+    fn keys_by_name() {
+        assert_eq!(key_named("N"), Some(KeyCode::KeyN));
+        assert_eq!(key_named(" j "), Some(KeyCode::KeyJ));
+        assert_eq!(key_named("semicolon"), Some(KeyCode::Semicolon));
+        assert_eq!(key_named("quote"), Some(FOLLOW_KEY));
+        assert_eq!(key_named("'"), Some(FOLLOW_KEY));
+        assert_eq!(key_named("Enter"), Some(KeyCode::Enter));
+        assert_eq!(key_named("del"), Some(KeyCode::Delete));
+        assert_eq!(key_named("Down"), Some(KeyCode::ArrowDown));
+        assert_eq!(key_named("5"), None);
+        assert_eq!(key_named(";"), None);
+        assert_eq!(key_named("nn"), None);
+    }
+
+    /// A key a hook presses is pressed for the frame it's due and let go the next, like a tap: the
+    /// systems that read it see it once, and a second press of the same key is a press again.
+    #[test]
+    fn a_hook_presses_a_key_for_one_frame() {
+        let mut app = App::new();
+        app.insert_resource(ButtonInput::<KeyCode>::default()).insert_resource(Script::default()).add_systems(Update, press_keys);
+        app.world_mut().resource_mut::<Script>().now = vec![Hook::Key(FOLLOW_KEY), Hook::Help];
+        app.update();
+        let keys = app.world().resource::<ButtonInput<KeyCode>>();
+        assert!(keys.just_pressed(FOLLOW_KEY) && keys.pressed(FOLLOW_KEY));
+        // (the next frame: the input systems have cleared the frame's presses; nothing due)
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+        app.world_mut().resource_mut::<Script>().now.clear();
+        app.update();
+        let keys = app.world().resource::<ButtonInput<KeyCode>>();
+        assert!(!keys.pressed(FOLLOW_KEY) && !keys.just_pressed(FOLLOW_KEY));
+        // (the same key again, later: a press once more)
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+        app.world_mut().resource_mut::<Script>().now = vec![Hook::Key(FOLLOW_KEY)];
+        app.update();
+        assert!(app.world().resource::<ButtonInput<KeyCode>>().just_pressed(FOLLOW_KEY));
+    }
+
+    /// The messages say how an NPC is set: the old words, then "follow", and for one that isn't a
+    /// friend of the controlled character that it does nothing yet.
+    #[test]
+    fn the_message_names_the_follow() {
+        let npc = |fight, follow| Npc { id: 1, fight, face: 0.0, follow };
+        assert_eq!(how_word(&npc(false, false), false, 0, 0), "dummy");
+        assert_eq!(how_word(&npc(true, false), false, 1, 0), "fight");
+        assert_eq!(how_word(&npc(false, false), true, 0, 0), "frozen");
+        assert_eq!(how_word(&npc(true, true), false, 0, 0), "fight, follow");
+        assert_eq!(how_word(&npc(false, true), false, 0, 0), "dummy, follow");
+        assert_eq!(how_word(&npc(false, true), false, ENEMY_TEAM, 0), "dummy, follow (idle: only a friend follows)");
     }
 }

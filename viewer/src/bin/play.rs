@@ -3040,6 +3040,13 @@ impl Player {
         self.npc.is_none()
     }
 
+    /// A test map NPC set to follow the controlled character (`testtools::Npc::follow`, #364): it
+    /// runs the squad's follow (play_follow.rs `npc_follows` says whether it acts), as a squad
+    /// brain in FOLLOW does. A level character's brain follows by `Brain::follows` instead.
+    fn follow_set(&self) -> bool {
+        self.brain.is_none() && self.npc.is_some_and(|n| n.follow)
+    }
+
     /// The squad character whose data it has (`squad_of` its type): its slot in the main game,
     /// OTHER for a type of its own. What the tables keyed by the squad's names are read by,
     /// where `character` is the slot (its HUD place, its key, the hand-over).
@@ -4977,7 +4984,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // hold or walk has its own too, play_script.rs; a level character's its brain,
         // play_brain.rs)
         let place = follower;
-        if m.brain.as_ref().is_some_and(|b| b.follows()) {
+        if m.brain.as_ref().is_some_and(|b| b.follows()) || follow::npc_follows(m, &player) {
             follower += 1;
         }
         // (#335) the AI update's route steps before its goal (FUN_0001afe0, 0x1b17f-0x1b18b: the
@@ -5004,7 +5011,16 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             script::held_step(m, dt);
         } else if m.brain.is_some() {
             brain::think(m, &player, lead, &follow_mates, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut());
+        } else if follow::npc_follows(m, &player) {
+            // (#364) a test map NPC set to follow a friend: the squad's own FOLLOW goal, the code a
+            // squad member runs (`orders::think` in the mode the NPC starts in, FOLLOW), after the
+            // controlled character (`lead`: the formation never lists it); it fires at a hostile
+            // it sees only if it's set to fight, as a standing NPC does (`npc_ai`)
+            let fights = m.npc.is_some_and(|n| n.fight);
+            orders::think(m, &player, lead, &follow_mates, place, heading, dt, target.filter(|_| fights), toward.filter(|_| fights), &game.0, nav.graph.as_mut());
         } else if m.npc.is_some() {
+            // (an NPC that followed and doesn't now stands where it is: `follow::let_go`)
+            follow::let_go(m, nav.graph.as_mut());
             testtools::npc_ai(m, target, toward, dt);
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             // (its goal by its command mode: the follow, GUARD's hold, MOVE_OUT's walk)

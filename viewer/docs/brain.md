@@ -212,7 +212,9 @@ places within 8 m of the yard's end at 87.1 and 90.1 s), Cogburn walking to a co
 both behind him where main's stood in front. They're on the player's team (0,
 their placements' alignment-type), see by the sensor above (90 degrees either way of their
 facing), fire at what they see with their aim (above), and the Red Hand fire at them. Not done:
-switching to them (the d-pad), their portraits, the squad commands.
+switching to them (the d-pad), their portraits, the squad commands. The test map's NPCs can follow
+the controlled character the way they do, without a brain (#364, [testtools.md](testtools.md)
+"Follower": the same follow, no formation list, no squad slot).
 
 Their walk to their h_131de144 points: the spawn makes those points their homes (wpoint1380 and
 wpoint1006, 0.5 and 0.9 m from their pads), but without a home-point nothing sends them there,
