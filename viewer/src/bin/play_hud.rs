@@ -612,12 +612,16 @@ enum Face {
 /// hasn't spawned it, or whose copy the session took away, FUN_00209900). None for a slot whose
 /// member the zone doesn't have (#303: the level spawns only the zone's members, so the
 /// tutorial's and m01_a's squad is Tex alone, the zone's h_ed54d255 "brutus hawk flint"), and for
-/// the test map's emptied slots (#302). Such a slot has no face, follow tab or health channel.
+/// the test map's emptied slots (#302). Such a slot has no face, follow tab or channel fill; its
+/// channel's frame outline is drawn all the same (`SquadPart::ChannelFrame`: the channel's draw
+/// 0xc3390 draws the frame whenever its textures are bound, and the member only sets the empty
+/// fraction, 1.0 with none, which empties the fill).
 /// The game's HUD keeps a squad list of five entries (+0x34), one per slot by the character's
 /// type +0x150 (1-4): each frame FUN_000bd790 drops the characters no longer on the list it
 /// reads (FUN_000c8570) and adds the new ones (FUN_000c84e0), so a slot holds a character only
 /// once one is in the world (which list it reads, and that the portraits draw from it, aren't
-/// traced). take04 (`todo/28-tutorial`, 60 s) shows Tex's face alone, no tabs or channels.
+/// traced). take04 (`todo/28-tutorial`, 60 s) shows Tex's face alone, no tabs or channel fills,
+/// and the other three channels as their bare outlines.
 fn slot_member<'a>(player: &'a Player, squad: &'a Squad, c: usize) -> Option<&'a Player> {
     std::iter::once(player).chain(squad.0.iter()).find(|u| u.character == c && u.in_squad() && !u.absent)
 }
@@ -629,9 +633,10 @@ struct HudGen {
     /// the health / stamina frame is the original's (TUTORIAL_BAR), its length following the
     /// character's maximum health
     tutorial_frame: bool,
-    /// per character: its channel's frame sprite as drawn white (the texture) and red (FRAME_RED
-    /// through the tint program, `portrait::tint_texels`)
-    frames: [[Handle<Image>; 2]; 4],
+    /// per character: its channel's frame sprite as drawn white (the texture, its colour bled into
+    /// the clear texels) and red (FRAME_RED through the tint program, `portrait::tint_texels`), see
+    /// `frame_images`; None where the texture isn't found
+    frames: [Option<[Handle<Image>; 2]>; 4],
     /// per character: its channel's fill sprite for each threshold of its gradient, ascending: the
     /// texels whose blue is at least that level kept, the rest clear (`fill_images`)
     fills: [Vec<(u8, Handle<Image>)>; 4],
@@ -668,6 +673,17 @@ fn rgba_image(w: u32, h: u32, px: Vec<u8>) -> Image {
 fn tinted(game: &mut Game, images: &mut Assets<Image>, id: u32, rgb: [u8; 3]) -> Option<Handle<Image>> {
     let (w, h, px) = game.texture_rgba(id)?;
     Some(images.add(rgba_image(w, h, portrait::tint_texels(&px, rgb))))
+}
+
+/// A channel's frame texture `id` as the two images its node shows: the texture as it is, its colour
+/// bled into the clear texels at the outline so the filter can't lighten the edge toward their white
+/// (`portrait::bleed`), and the same through the tint program in `portrait::FRAME_RED`; None if the
+/// texture isn't found.
+fn frame_images(game: &mut Game, images: &mut Assets<Image>, id: u32) -> Option<[Handle<Image>; 2]> {
+    let (w, h, px) = game.texture_rgba(id)?;
+    let white = portrait::bleed(&px, w as usize, h as usize);
+    let red = portrait::tint_texels(&white, portrait::FRAME_RED);
+    Some([images.add(rgba_image(w, h, white)), images.add(rgba_image(w, h, red))])
 }
 
 /// A face texture `id` as the portrait is drawn while the health flash colours it (255, `a`, `a`),
@@ -1029,8 +1045,9 @@ fn update_flashes(time: Res<Time>, player: Res<Player>, squad: Res<Squad>, mut f
 enum SquadPart {
     /// squad member's radar blip (by squad slot)
     Blip(usize),
-    /// a member's health channel on the radar (by character, `portrait::CHANNELS`): its frame sprite,
-    /// white or red, and its fill sprite, the health left from the portrait end
+    /// a slot's health channel on the radar (by character, `portrait::CHANNELS`): its frame sprite,
+    /// white or red, drawn for every slot, and its fill sprite, a member's health left from the
+    /// portrait end
     ChannelFrame(usize),
     ChannelFill(usize),
     /// the controlled character's health (top-left red bar)
@@ -1234,8 +1251,7 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     // each), and the three portrait icons in their colour
     let mut fills: HashMap<u32, Vec<(u8, Handle<Image>)>> = HashMap::new();
     for (c, ch) in portrait::CHANNELS.iter().enumerate() {
-        gen.frames[c] = [texture(game, &mut images, &mut cache, ch.frame).unwrap_or_default(),
-                         tinted(game, &mut images, ch.frame, portrait::FRAME_RED).unwrap_or_default()];
+        gen.frames[c] = frame_images(game, &mut images, ch.frame);
         gen.fills[c] = fills.entry(ch.fill).or_insert_with(|| fill_images(game, &mut images, ch.fill)).clone();
     }
     gen.icons = portrait::ICON_TEXTURES.map(|id| tinted(game, &mut images, id, portrait::ICON_RGB).unwrap_or_default());
@@ -1472,15 +1488,18 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
                             at(RADAR_FRAME_AT.0 + x, RADAR_FRAME_AT.1 + y, portrait::ICON_SIZE, portrait::ICON_SIZE)));
         }
     }
-    // each member's health channel (`portrait::CHANNELS`): the frame sprite, then the fill over it, 32
+    // each slot's health channel (`portrait::CHANNELS`): the frame sprite, then the fill over it, 32
     // x 32 in the table's rect from the panel's corner, a negative size the mirror of the
-    // texture's usual flip (as SELECT_FRAMES)
+    // texture's usual flip (as SELECT_FRAMES). The frame is shown whether the slot has a member or
+    // not (the channel's draw 0xc3390 tests only that its two textures are bound, 0xc3399-0xc33a9),
+    // the fill only for a member (`ChannelFill`)
     for (c, ch) in portrait::CHANNELS.iter().enumerate() {
         let (x, y, w, h) = ch.rect;
         let (left, top) = (RADAR_FRAME_AT.0 + x.min(x + w), RADAR_FRAME_AT.1 + y.min(y + h));
         let sprite = |image: Handle<Image>| ImageNode { flip_x: w < 0.0, flip_y: h > 0.0, ..ImageNode::new(image) };
-        commands.spawn((ChildOf(radar), SquadPart::ChannelFrame(c), Visibility::Hidden, ZIndex(1),
-                        at(left, top, w.abs(), h.abs()), sprite(gen.frames[c][0].clone())));
+        if let Some([white, _]) = gen.frames[c].clone() {
+            commands.spawn((ChildOf(radar), SquadPart::ChannelFrame(c), ZIndex(1), at(left, top, w.abs(), h.abs()), sprite(white)));
+        }
         commands.spawn((ChildOf(radar), SquadPart::ChannelFill(c), Visibility::Hidden, ZIndex(1),
                         at(left, top, w.abs(), h.abs()), sprite(gen.fills[c].first().map(|f| f.1.clone()).unwrap_or_default())
                             .with_color(Color::srgb_u8(portrait::FILL_RGB[0], portrait::FILL_RGB[1], portrait::FILL_RGB[2]))));
@@ -2078,10 +2097,13 @@ fn update_squad_hud(
                 show(&mut vis, looks.get(c).is_some_and(|(face, skull, _, _)| matches!(face, Face::Unknown) && skull.is_none()));
             }
             SquadPart::ChannelFrame(c) => {
-                // (white, or red while the slot's flash level is over 0.5: 0xc33df-0xc33ef)
-                show(&mut vis, member(c).is_some());
-                if let Some(mut img) = img {
-                    let want = &gen.frames[c][flashes.0[c].frame_red() as usize];
+                // always drawn (the node is there when the texture is: 0xc3390 draws the frame
+                // whenever its textures are bound, member or none, and take04's empty channels show
+                // their outlines): white, or red while the slot's flash level is over 0.5
+                // (0xc33df-0xc33ef). An empty slot's part isn't updated (0xc43e8), so it's white here
+                // whatever level it was left at
+                if let (Some(mut img), Some(frames)) = (img, &gen.frames[c]) {
+                    let want = &frames[(member(c).is_some() && flashes.0[c].frame_red()) as usize];
                     if img.image != *want { img.image = want.clone(); }
                 }
             }

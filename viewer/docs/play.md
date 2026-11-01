@@ -404,11 +404,14 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   (his bracket over the art); the demo's own frame the same way: within 0.25 of the table for all
   four, and the whole radar region within 0.25-0.5 of take03's.
 * **The portraits** (#303): a squad slot shows its face, its command tab and its health
-  channel only while a member is in the world in it (`slot_member`; a dead one keeps its skull: dead
-  members are still in the squad). A slot whose member the zone doesn't have shows nothing: the
+  channel's fill only while a member is in the world in it (`slot_member`; a dead one keeps its
+  skull: dead members are still in the squad); its channel's frame outline is drawn whether there
+  is a member or not (#354: the game's channel draw tests only that its textures are bound). A slot
+  whose member the zone doesn't have shows no more: the
   level spawns only the zone's members (its `h_ed54d255` names the others, [campaign.md](campaign.md)),
   so the tutorial and m01_a (h_ed54d255 "brutus hawk flint") show Tex alone, as take04 does
-  (`todo/28-tutorial`, 60 s: Tex's face, tab and channel, the other three places dark), and m01_b
+  (`todo/28-tutorial`, 60 s: Tex's face, tab and channel, the other three places dark, their
+  channels bare outlines), and m01_b
   ("hawk flint") Tex and Brutus. A member out of the world (`absent`: waiting for its spawn-trigger,
   or its copy taken away by FUN_00209900) counts as missing too. In the game the HUD's squad list
   (five entries at +0x34, one per slot by the type's +0x150) is kept each frame by FUN_000bd790:
@@ -498,8 +501,10 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
     least **1.5** (a hit: any fall between two updates); otherwise health / most under **0.2** with
     the level 0: the level **1.0**. The portrait's colour bytes are then white, or (255, a, a)
     while the level is over **0.5** (a from 0xc4330: 128, and while a hit's level is over 1.0,
-    255 - 128 (1 - x^3) with x = 2 (level - 1): 255 at the hit falling to 143 in a quarter second
-    and 127 at the level 1.0), the level then counting down by dt to 0, and (128, 128, 128) when the
+    255 - trunc(128 (1 - x^3)) with x = 2 (level - 1): 255 at the hit falling to 143 in a quarter
+    second and 128 as the level reaches 1.0; never under 128 but for one frame at most, 127 while
+    the level is within 0.0016 above 1.0, where the float product rounds to 128.0 before it is
+    truncated), the level then counting down by dt to 0, and (128, 128, 128) when the
     health is 0 (the skull, above). So **a hit** reddens the face for 1.0 s (its first frame, a of
     255, is white: the first visible change is the next) and leaves 0.5 s of normal; **under 20%**
     the level restarts the update after it reaches 0: red 0.5 s, normal 0.5 s, the period 1 s (to
@@ -535,7 +540,14 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
     each a diagonal between its portrait and the next. The **frame** (h_e0706e07 for slots 1 and
     3, h_00ff5cfb for 2 and 4: a blue outline at alpha 136-170) is drawn white, or
     (160, 32, 32) (FUN_000b8820) while the slot's level is over 0.5, through the program: a flat
-    red outline. The **fill** (h_e684da10 / h_1cee1256: a gradient of about 20 levels in its blue
+    red outline. The textures' **clear texels are white** (255, 255, 255, alpha 0); the console draws
+    the sprite a texel to a pixel, so that white never shows, but the demo draws it 1.5 pixels to
+    the unit through a bilinear filter that blends colour and alpha separately, and drawn as it came
+    the outline's edge turned a pale lavender halo (Hawk's empty channel in the tutorial: the
+    outline's mean (88.6, 118.2, 173.8) against take04's (38.1, 69.8, 123.7), the red 50 over).
+    `portrait::bleed` gives each clear texel beside the outline its neighbours' mean colour before
+    the image is made (`frame_images`, for the white copy and, through the tint program, the red
+    one). The **fill** (h_e684da10 / h_1cee1256: a gradient of about 20 levels in its blue
     channel, white at the portrait's end) is drawn in **(192, 87, 94)** by the program at
     0x3e0050 (technique 0x22, which the sprite draw takes when its twelfth argument is 1, and only
     this draw sets it; its constant is the channel's +0x34 through the vtable getter 0x10fa30): a
@@ -545,7 +557,12 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
     per level; the demo's old fill was the radar frame's dark texels, fitted); a member with no
     health shows none (the brightest texel's blue is 249). In a hit's first half second the fill is
     pushed toward white by (a - 128) / 128 of the way (`pushed`: (254, 253, 253) at the hit's
-    frame, 0xc3449): the pale flash. Only a slot with a member in the world draws them.
+    frame, 0xc3449): the pale flash. The **frame is drawn for every slot**, with a member in the
+    world or none: the channel's draw (0xc3390) tests only that its two textures are bound
+    (0xc3399-0xc33a9), and the member sets only +0x34, which is 1.0 with none, so it is the fill
+    that goes empty (the tutorial's take04 at 60 s: Tex alone, the other three channels bare
+    outlines). An empty slot's flash part isn't updated (0xc43e8), so its frame is white; the fill
+    is only for a slot with a member.
   * **The icons** (`ICON_AT`, `SquadPart::Icon`): 16 x 16, in (192, 215, 255) through the program
     (the texture's white body gives it exactly), at the table 0x3c8ee8's entries from the radar
     panel's corner, three a slot in this order: Tex (45, 20) (57, 20) (68, 20), Flint (93, 40)
@@ -587,9 +604,33 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
     Brutus's "!" is gone once Vengar is off (3.13 s) and the ring once the third press leaves the
     scope (4.53 s), as the skill and the scope level go; all three are hidden for a dead member by
     the game's own test (`!u.dead`; the code's, not filmed).
-  * **Not done or not filmed:** the channel frame's red as measured (the takes show it reddish and
-    dark; the demo's reads pinker, the outline being semi-transparent over the radar frame's own
-    outline and blended in linear light); Flint's and Brutus's own flashes (the same code); a
+    The frames of the empty channels, and a bright ground (the demo blurred to the video's
+    softness, a Gaussian of 1.2 px, the mean over each frame sprite's 64 outline texels). The
+    tutorial with Tex alone (`BF_MAP=tutorial BF_TEST_GOTO=46,-20,46,-20`, frame 15 of 20) against
+    take04's 60 s, where the other three channels are bare outlines: Hawk's (37.4, 75.9, 137.1)
+    against the video's (38.1, 69.8, 123.7), Flint's (33.0, 90.0, 143.6) against (37.9, 82.9, 130.4),
+    Brutus's (35.5, 86.8, 134.0) against (43.6, 87.1, 127.0). Main, with no frame sprite (the radar
+    frame's own baked outline alone), reads (33.6, 64.5, 114.1), (25.9, 79.4, 117.1) and (31.9, 66.7,
+    102.2); the branch before the bleed (75.2, 97.2, 142.8), (70.3, 108.3, 148.9), (72.5, 102.9,
+    137.9). The test map's emptied slots show theirs too (`--test BF_TEST_FULL_SQUAD=1
+    BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_SLOT="0.5,1,empty;0.5,2,empty"`, frame 44 of 45: Flint's and
+    Hawk's channels dark navy with their blue outlines, Tex's and Brutus's pink). Over the
+    yellow lava of e13 (`BF_MAP=e13 BF_TEST_GOTO=30,30.5,30,40.5 BF_TEST_GO_AT=999
+    BF_TEST_NO_HOSTILES=1 BF_CAMERA_PITCH=-0.06 BF_TEST_HEALTH=35`, Tex at 30%) against take06's
+    still, the ground about (255, 209, 33): the outline (117.6, 151.8, 126.8) in the footage,
+    (159.9, 142.9, 141.7) in the demo (main's (188.9, 145.3, 114.8)); the fill's flat pink (187.3,
+    86.3, 89.5) against (191.2, 87.7, 93.0) (main's (244.6, 115.0, 106.8)); and the channel's
+    **empty interior**, which is the radar frame's own: (87.1, 86.5, 45.0) in the footage against
+    (156.3, 127.4, 48.1) in the demo and (160.0, 127.6, 50.8) in main. The frame's navy there, (0,
+    3.8, 52.5) at alpha 0.667, blended over that ground in stored values (the console's way) gives
+    (85, 72, 46), and in linear light (the demo's UI) (156, 127, 47): the whole difference, and the
+    same before this ticket. A bright ground shows it, the radar's translucent panel (and the
+    outline over it) reading lighter than the console's, by 70 in red on lava; its fix belongs to
+    the HUD's blend, not the portraits' parts.
+  * **Not done or not filmed:** the channel frame's red as measured (the takes show a dark purple-red
+    outline; the demo's looks the same, a little pinker: #36 take01 at 17.9 s beside frame 36 of
+    `BF_TEST_HURT=hawk,55,0.5`, seen, not measured); the radar's translucent panel over a bright
+    ground (above); Flint's and Brutus's own flashes (the same code); a
     flagged member under a fifth (orange by the update order); the split screen's rects, textures
     and icon rows; the yellow corner brackets (part 0x16b9cec9, FUN_000c37a0); a full-screen red
     vignette on the controlled character's hit, which is not this part.

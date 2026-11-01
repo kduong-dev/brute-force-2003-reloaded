@@ -134,9 +134,10 @@ a click is any left click off the panel, and F and its teleports do nothing.
     deathmatch types and some of the militia have one, common's textures), else a "?" in pale
     blue; its skull its type's (h_00c51907, #342), and none (a dead one's place goes blank, as the game's
     widget hides itself) where the type has none: the tutorial's marines, which have a portrait.
-  * An empty slot shows no face, command tab or health channel, on the test map and on any
+  * An empty slot shows no face, command tab or channel fill, on the test map and on any
     level alike (#303: the main game's rule for a slot with no member in the world, play.md
-    "Radar", "The portraits"; before it the test map's alone). A dead member keeps its skull, drawn in the same 32 x 32 box as every portrait (play.md, "The portrait box and the skulls").
+    "Radar", "The portraits"; before it the test map's alone); its channel's frame outline is
+    drawn all the same, as the game's channel draw does (#354). A dead member keeps its skull, drawn in the same 32 x 32 box as every portrait (play.md, "The portrait box and the skulls").
   * **Dying alone** on the test map respawns the player (`testsquad::respawn`; the product owner's
     rule for the test map, not the game's, where a lone death ends the mission): with nobody to
     hand over to (no living squad member in the world, no hand-over under way), RESPAWN_TIME (4
@@ -786,7 +787,7 @@ The squad and the music (#302), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_TOOL
 captures at 15 fps, frames looked at:
 * The start (`BF_TEST_GOTO=0,8,0,8 BF_SOUND_LOG=1`): "test map: the squad at the start: 3 tex (tex
   leads)", the audit's "squad 0 (0 NPCs)"; the radar has Tex's face at the top alone, the other
-  three places dark (no face, tab or health channel). "test map: its music, m04_a's bank,
+  three places dark (no face, tab or channel fill; the channels' outlines stay). "test map: its music, m04_a's bank,
   loading", then about 1.5 s in "test tools: music of m04_a: music test_casp1_amb01 x1.00,
   ambience ambience19-2ch x0.80 (BF_MUTE: not played)".
 * Filling (`BF_TEST_SQUAD_MENU=0.5 BF_TEST_SQUAD_SLOT="1.0,0,shrike soldier@m09_a;1.5,2,shrike
@@ -815,8 +816,8 @@ captures at 15 fps, frames looked at:
 * Emptying and replacing (`BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=0,8,0,7.5
   BF_TEST_SQUAD_SLOT="1.0,me,empty;1.5,1,empty;2.0,2,shrike heavy@sdm_shrike;2.5,0,flint"
   BF_TEST_KILL=2 BF_COMBAT_LOG=1`): "Your own slot can't be emptied: give it a type"; Hawk killed
-  (her skull), Flint's slot emptied (her face, tab and channel gone), the dead Hawk replaced by a
-  Shrike Heavy where she fell (its portrait and channel back; it takes her chip), which Tex's fire
+  (her skull), Flint's slot emptied (her face, tab and channel fill gone, the outline stays), the dead Hawk replaced by a
+  Shrike Heavy where she fell (its portrait and channel fill back; it takes her chip), which Tex's fire
   kills (its death line f80210fa, its chip, the human skull), and Brutus's place given Flint (her
   face at the bottom).
 * The editor's edit mode: editor.md, "The squad menu in edit mode".

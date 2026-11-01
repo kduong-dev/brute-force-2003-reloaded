@@ -22,6 +22,9 @@
 //!   by the colour it is given: plain texture x colour while red, green and blue are all equal
 //!   (the white of an ordinary sprite, the dead skull's grey), and, as soon as one differs (the
 //!   flash's red, the icons' blue-white, the channel's red and pink), the program at 0x3e0140.
+//! * **The bleed** (`bleed`): the channel frames' clear texels are white, which the console's one
+//!   texel to a pixel never shows and the demo's filtered 1.5 pixels to the unit does, as a pale halo
+//!   along the outline; the frame images take the outline's colour into them first.
 //!
 //! The pixel program, read from the combiner words in default.xbe (D3DPIXELSHADERDEF at 0x3e0140,
 //! chosen by the sprite draw's FUN_000ba820 as technique 0x23): it takes the sprite's texel T and
@@ -183,8 +186,11 @@ impl Flash {
 pub struct Flashes(pub [Flash; 4]);
 
 /// FUN_000c4330 (no Ghidra function): the whiteness for a flash level, 128 unless the level is
-/// over SWELL_ABOVE, and then 255 - 128 (1 - x^3) with x = 2 (level - 1) (0xc436a-0xc439a): 255 at a
-/// hit's level 1.5, falling to 127 at 1.0, steeply at first (143 at a quarter second, 135 at 0.3).
+/// over SWELL_ABOVE, and then 255 - trunc(128 (1 - x^3)) with x = 2 (level - 1) (0xc436a-0xc439a): 255
+/// at a hit's level 1.5, falling to 128 as the level reaches 1.0, steeply at first (143 at a quarter
+/// second, 135 at 0.3). It never goes under 128 but for one frame at most: while the level is within
+/// 0.0016 above 1.0 the product rounds to exactly 128.0 (as a float, in the game's `fstp` too)
+/// before it is truncated, so that frame reads 127.
 pub fn whiteness(level: f32) -> u8 {
     if level > SWELL_ABOVE {
         let x = (level - SWELL_ABOVE) * 2.0;
@@ -242,6 +248,42 @@ pub fn tint_texels(px: &[u8], rgb: [u8; 3]) -> Vec<u8> {
     }).collect()
 }
 
+/// A texture's RGBA texels (`w` x `h`, any row order) with the colour of each clear texel (alpha 0)
+/// that has a drawn one (alpha above 0) among its eight neighbours set to the mean colour of those
+/// drawn ones, alpha kept. The channel frames' clear texels are white (255, 255, 255, 0; read off
+/// `Game::texture_rgba`'s texels of h_00ff5cfb and h_e0706e07). The console draws the sprite one
+/// texel to a pixel, so each pixel sits on a texel's centre and that white never reaches the screen;
+/// the demo draws it 1.5 pixels to the unit through a bilinear filter, which blends the texel's
+/// colour and alpha separately and so lightens the outline's edge toward white, a pale lavender
+/// halo round a blue line (measured: Hawk's empty channel in the tutorial read (88, 118, 174) on
+/// average over the outline's texels where the footage has (38, 70, 124)).
+pub fn bleed(px: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let mut out = px.to_vec();
+    for y in 0..h {
+        for x in 0..w {
+            if px[(y * w + x) * 4 + 3] != 0 {
+                continue;
+            }
+            let (mut sum, mut n) = ([0u32; 3], 0u32);
+            for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
+                    let t = &px[(ny * w + nx) * 4..][..4];
+                    if t[3] != 0 {
+                        sum.iter_mut().zip(t).for_each(|(s, &c)| *s += c as u32);
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                for (k, s) in sum.iter().enumerate() {
+                    out[(y * w + x) * 4 + k] = ((s + n / 2) / n) as u8;
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,8 +301,9 @@ mod tests {
         red
     }
 
-    /// 0xc4330: 128 at rest and through the second half of the flash, then a hit's 255 falling to 127
-    /// along (1 - x^3) in the first half second.
+    /// 0xc4330: 128 at rest and through the second half of the flash, then a hit's 255 falling to 128
+    /// along (1 - x^3) in the first half second (127 only for a level within 0.0016 above 1.0: the
+    /// float product rounds to 128.0 before the truncation).
     #[test]
     fn whiteness_falls_from_a_hit() {
         assert_eq!(whiteness(0.0), 128);
@@ -268,7 +311,9 @@ mod tests {
         assert_eq!(whiteness(1.0), 128);
         assert_eq!(whiteness(1.5), 255);
         assert_eq!(whiteness(1.25), 255 - (0.875f32 * 128.0) as i32 as u8);
-        assert!((127..=129).contains(&whiteness(1.001)));
+        assert_eq!(whiteness(1.001), 127, "inside the window above 1.0");
+        assert_eq!(whiteness(1.003), 128, "past it");
+        assert_eq!(whiteness(1.1), 129);
         // monotone down from the hit to the half second
         let mut last = 255;
         for i in 0..=50 {
@@ -533,5 +578,45 @@ mod tests {
         // Tex's three in a row, Flint's in a column
         assert_eq!(ICON_AT[3].map(|p| p.1), [20.0; 3]);
         assert_eq!(ICON_AT[1].map(|p| p.0), [93.0; 3]);
+    }
+
+    /// A clear texel beside the outline takes its colour (the mean of the drawn ones around it);
+    /// drawn texels, and clear ones with no drawn neighbour, stay as they are.
+    #[test]
+    fn bleed_colours_the_clear_texels_beside_the_outline() {
+        // a 5 x 1 row: clear, drawn blue, clear, drawn lighter blue, clear far off
+        let white = [255u8, 255, 255, 0];
+        let row: Vec<u8> = [white, [40, 90, 200, 153], white, [100, 150, 240, 170], white, white].concat();
+        let out = bleed(&row, 6, 1);
+        assert_eq!(&out[0..4], &[40, 90, 200, 0], "beside one drawn texel: its colour, alpha kept");
+        assert_eq!(&out[4..8], &[40, 90, 200, 153], "a drawn texel stays");
+        assert_eq!(&out[8..12], &[70, 120, 220, 0], "between two: their mean");
+        assert_eq!(&out[12..16], &[100, 150, 240, 170]);
+        assert_eq!(&out[16..20], &[100, 150, 240, 0]);
+        assert_eq!(&out[20..24], &white, "no drawn texel beside it: untouched");
+    }
+
+    /// The channel frames: a texel beside the outline picks up its blue, so a filter between the two
+    /// can't reach white. Checked on the shape the textures have (a diagonal line of drawn texels).
+    #[test]
+    fn bleed_keeps_a_diagonal_outline_blue() {
+        let (w, h) = (8usize, 8usize);
+        let mut px = vec![255u8; w * h * 4];
+        px.chunks_exact_mut(4).for_each(|t| t[3] = 0);
+        for i in 0..w {
+            px[(i * w + i) * 4..][..4].copy_from_slice(&[41, 93, 198, 153]);
+        }
+        let out = bleed(&px, w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let t = &out[(y * w + x) * 4..][..4];
+                // (a texel two columns off the diagonal still has a drawn one among its eight neighbours)
+                if x.abs_diff(y) <= 2 {
+                    assert_eq!(&t[..3], &[41, 93, 198], "texel ({x}, {y})");
+                } else {
+                    assert_eq!(&t[..3], &[255, 255, 255], "far texel ({x}, {y})");
+                }
+            }
+        }
     }
 }
