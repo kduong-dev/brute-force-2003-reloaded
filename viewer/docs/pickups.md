@@ -43,11 +43,25 @@
     (powerup_spawn_location, h_04ad9a0e: 21 on sdm_e34) are placed effect objects, drawn since
     #258 (maps.md "Placed effect objects").
   * Using a medkit (G) plays the stance's use_item overlay (Sc_w1_/Sc_w2_use_item, ~1 s; events
-    1a6b4920 reach, 0a6e8f79 in hand, 19f8311b used). The used medkit (the carried type's model,
-    h_192d5337's archetype) with its cross turned red (its texture's blue texels, and its
-    cross glow red), is in the throwing hand from 0a6e8f79. At 19f8311b it heals and plays the
-    medkit sound, and the medkit falls from the hand, bounces and stays on the ground (the
-    last 12 do).
+    1a6b4920 reach, 0a6e8f79 use, 19f8311b let go) and works in three steps (#361, FUN_00117660;
+    the demo had the events' roles wrong and healed at 19f8311b, 0.5-0.7 s late):
+    * **At the press** the stack's count drops (FUN_00121170 -> FUN_0014abc0; #196 take13's
+      Medkit 2 -> 1 in the first log row after the press): `use_medkit`.
+    * **At 1a6b4920** the medkit (the carried type's model, h_192d5337's archetype, its cross
+      turned red: its texture's blue texels, and its cross glow red) is in the throwing hand.
+    * **At 0a6e8f79** (0.13-0.27 s in: Brutus 0.13, Tex 0.17 in the w2 stance and 0.27 in w1,
+      Hawk 0.17, Flint 0.23) it heals (health + 80, one add: FUN_00117660 -> 0x14b980 ->
+      0x146f40, no ramp; take13 hp 60 -> 115 in one 50 ms row, the bar full 0.35 s after the
+      press) and plays the medkit sound and the "healed" line: `medkit_used`.
+    * **At 19f8311b** (0.77-0.90 s) the used medkit is let go (FUN_001215e0): it falls from the
+      hand, bounces and stays on the ground (the last 12 do). It heals nothing.
+    Checked (#361, `BF_TEST_HEALTH=60 BF_TEST_MEDKIT=1.5 BF_TEST_INV=Medkit:3 BF_TEST_ITEM=Medkit
+    BF_PICKUP_LOG=1 BF_CAPTURE_FPS=60`, e34's range spot): the press at 1.52 logs "2 left", the
+    heal at 1.65 (Brutus), 1.68 (Hawk, Tex), 1.75 (Flint, the L-Shot-75's w1 stance), and the
+    medkit let go at 2.33 (Tex), where the demo healed at 2.33 before. The capture's frames
+    show the medkit in the hand at 1.65 and the throw-away pose after; the capture had no HUD
+    (not looked into), so the bar's fill and the box's count were
+    checked in the log, not in frames.
   * The medkit's cross glows: the model's second piece is a flat quad over the painted cross
     with the untextured glow material h_031724e6 (shader h_f539fe8c, glow 0.10 0.34 0.83,
     wrapper opacity 50). Flat untextured glows like it are drawn at full strength (the
