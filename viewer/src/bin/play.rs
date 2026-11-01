@@ -1132,6 +1132,8 @@ fn main() {
 
 #[path = "play_hud.rs"]
 mod hud;
+#[path = "play_portrait_parts.rs"]
+mod portrait_parts;
 #[path = "play_faces.rs"]
 mod faces;
 #[path = "play_grenade.rs"]
