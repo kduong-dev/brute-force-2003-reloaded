@@ -23,7 +23,7 @@ a click is any left click off the panel, and F and its teleports do nothing.
 | F | **free camera** on / off (in play). Mouse: look (once the mouse is captured); WASD: fly along the view; Space / Ctrl (or E / Q): up / down; Shift: 4x faster (6 m/s, 24 m/s). The character stands still meanwhile (its inputs are dropped). **Left click**: teleport the controlled character to the ground under the crosshair, **right click**: to the ground under the camera, both facing the camera's way, the follow camera behind them. F alone goes back without moving them |
 | N | **NPC menu**: Up / Down or the wheel picks the character type: Brutus, Flint, Hawk or Tex, then every other type the loaded archives define (#128, [character-types.md](character-types.md)) by name, where it's defined and HP ("Shrike Soldier (m09_a, 73 hp)", "Brutus (mp_common/sdm_bf, 75 hp)"; the key added to two that still read the same; nine lines show round the one picked; on the test map all 128 of the data's types, below); J sets friend / ENEMY, ; dummy / fight, ' follows you / stays (for the next one; enemy dummy that stays at first); click or Enter spawns one on the ground under the crosshair, facing the controlled character. N or Esc closes it (Esc keeps the mouse captured) |
 | J / ; / ' / Delete | outside the menu, on the NPC under the crosshair (one the ray passes through, else the nearest within 1.2 m of where it meets the ground, the dead too): switch its team / switch dummy and fight / switch whether it follows the controlled character (#364) / remove it. Shift+Delete removes every NPC. (The fight toggle is ; so that B stays the Black button's Medkit shortcut in a test session too, as in play: [play.md](play.md) **The item box and the item list**. The follow key is the apostrophe, the next key along the home row after J and ;: every letter is another control's in the demo, the game's, the test map's or the hint and Squad Command panels', and so are the digits 1-4) |
-| T | **squad menu** (#302): the squad's four slots, its places round the radar and the keys 1-4 that take control of them (Brutus's, Flint's, Hawk's, Tex's), each with who holds it ("(empty)", a type, DEAD, "(you)"). Left / Right picks a slot, Up / Down or the wheel (Page Up / Down: a page, seven rows) a row of the list: first the **predefined squads** (#339: the campaign squad and the five squads squad deathmatch offers, six rows under "[predefined squads]"), then the character types under "[character types]", any the NPC menu offers (the four, then all 128 of the test map). It opens with the first character type, Brutus, picked as before the squads, the six squads above it in view, so Enter straight after T changes one slot; a squad is picked on purpose. Click or Enter on a type puts a fresh one of that type in the slot: a real squad member (below), and in your own slot you become it where you stand. Click or Enter on a squad fills all four slots at once with that squad's members (the panel lists who goes where), your own slot becoming its member in place. Delete empties the slot (not yours: "Your own slot can't be emptied"). T or Esc closes it |
+| T | **squad menu** (#302): the squad's four slots, its places round the radar and the keys 1-4 that take control of them (Brutus's, Flint's, Hawk's, Tex's), each with who holds it ("(empty)", a type, DEAD, "(you)"). Left / Right picks a slot, Up / Down or the wheel (Page Up / Down: a page, seven rows) a row of the list: first the **predefined squads** (#339: the campaign squad and the five squads squad deathmatch offers, then #365's Kingman's squad and Monsters: eight rows under "[predefined squads]"), then the character types under "[character types]", any the NPC menu offers (the four, then all 128 of the test map). It opens with the first character type, Brutus, picked as before the squads, the squads above it in view, so Enter straight after T changes one slot; a squad is picked on purpose. Click or Enter on a type puts a fresh one of that type in the slot: a real squad member (below), and in your own slot you become it where you stand. Click or Enter on a squad fills all four slots at once with that squad's members (the panel lists who goes where), your own slot becoming its member in place. Delete empties the slot (not yours: "Your own slot can't be emptied"). T or Esc closes it |
 | O | **object menu**: every pickup type, every hand weapon (the rack's list), each grenade type and the breakable scenery, in groups (81 entries). Up / Down picks, Page Up / Down jumps a group; a see-through copy (alpha 0.6, a faint blue glow) stands on the ground under the crosshair; the wheel turns it 15 degrees a notch; click or Enter puts one there, and the menu stays open for more. O or Esc closes it. **In the free camera** the copy hangs in the air on the crosshair's ray, 4 m out (Shift + the wheel: 1-40 m, 0.5 m a notch; short of whatever the ray meets first by 0.3 m, and on the ground if that's where it ends up), with a cyan line down to where it will land and a ring there; a loose one placed there drops (see below), scenery hangs where it's put (a yellow ring round its foot instead) |
 | P | **scenery menu** (#185): every level's buildings and static scenery (2,412 pieces of 53 levels, below), by level, each by its type's name (a hash) with its size, parts and how many its level places, the largest first. Up / Down picks, Page Up / Down jumps a level; a see-through copy stands at the crosshair, the wheel turns it 15 degrees a notch; click or Enter puts one there, drawn as its level draws it and solid as there, and the menu stays open for more. P or Esc closes it. In the free camera the copy hangs on the crosshair's ray as the object menu's does (Shift + the wheel: how far), a yellow ring at its foot, and it's put where it hangs |
 | Y | **sky menu**: none, the map's own, or the sky of any level whose level file names one; click or Enter shows it over the map in place of its own, with that level's background colour |
@@ -182,7 +182,7 @@ a click is any left click off the panel, and F and its teleports do nothing.
     played alone: the menu changes only the player's type, and refuses a member ("No squad here:
     the map is played alone"), in the editor's edit mode too.
   * **The predefined squads** (#339; `testsquad::presets`; the product owner's request, the data the
-    game's): the first six rows of the menu's list. The campaign squad (the demo's name for it:
+    game's): the first six rows of the menu's list (#365 adds two after them, below). The campaign squad (the demo's name for it:
     common's Brutus, Flint, Hawk and Tex, each in its own place), then the five squads squad
     deathmatch offers, from game-options' character list h_f5a42d61: its `<squad name image
     h_fed0689a library-name>` entries (`Game::option_squads`; the parser FUN_00198d50), in the
@@ -209,7 +209,39 @@ a click is any left click off the panel, and F and its teleports do nothing.
     | Ferguson Platoon (sdm_ferg) | Confed Marine (80) | McTavish (80) | Gunthar Ghent (80) | Militia (80) |
 
     (The string table has a sixth name beside them, h_0f3ad7a9 "Kingman Posse": no `<squad>` entry,
-    library or type goes with it, so it isn't offered.) **Choosing one** (Enter or a click on its
+    library or type goes with it, so it isn't offered.)
+
+    **The two enemy squads** (#365; the product owner's request, the demo's own: the data has no
+    such squad, `testsquad::ENEMY_SQUADS`) follow the five, in the same four places and the same
+    path. Each member is found by name and level (`Game::find_character_type`, "name@archive"), one
+    to a slot in the keys' order (Brutus's, Flint's, Hawk's, Tex's), so the player, who starts as
+    Tex, becomes the last:
+
+    | Squad (hook names) | Brutus's place | Flint's place | Hawk's place | Tex's place |
+    |---|---|---|---|---|
+    | Kingman's squad (`kingman`) | Red Hand (e05, 31 hp) | Terrorist (m03_c, 25 hp) | Subversive (m03_c, 36 hp) | Edward Kingman (m03_c, 311 hp) |
+    | Monsters (`monsters`) | Filthy Mutant (e23, 55 hp) | Molotov Mutant (e23, 55 hp) | Ugly Mutant (e23, 55 hp) | Supermutant (e23, 669 hp) |
+
+    * The request's "Subservient" is the data's **Subversive** (the third terrorist type, its name
+      the string table's; there is no Subservient). Kingman, the Terrorist and the Subversive are
+      m03_c's, Kingman's own level; the Red Hand is e05's (the data has Red Hands in e05, e13 with 128
+      hp and the tutorial with 23): a guess, the one whose 31 hp sits beside the other two's.
+      m03_c holds two copies of each of Kingman, the Terrorist and the Subversive that read the same
+      (their keys differ: the menu adds the key), the first of each is taken.
+    * The data has **three mutant variants** besides the Supermutant: Filthy, Molotov and Ugly. All
+      three are in the squad, from e23, the Supermutant's own level (their other copies: e01's and
+      m03_a's Filthy, e01's Molotov and Ugly, e05's Filthy; e23's have 55 hp, the others 22-30), so the
+      four come from one archive. Nothing was left out to choose.
+    * **Portraits, voices, skills:** none of the eight has a portrait (`CharacterType::portrait` is
+      empty, as for every campaign enemy: only the squads', the deathmatch types' and a few marines'
+      have one), so each radar place shows the "?" (#342's rule). They have voices: terrorist_chatter
+      (Red Hand, Terrorist, Subversive), edward_kingman_chatter, mutant_chatter (the three mutants) and
+      mutant_super_chatter (the Supermutant), by #357's rule (their lines were not listened to here). None has a skill: Kingman's
+      briefcase (#201) and the Supermutant's ground pound (#212) aren't built, and V says "has no
+      special skill". Controlled, Kingman and the Filthy Mutant move by their own clips (seen
+      running with the follow camera; the Supermutant's and the others' were not driven).
+
+    **Choosing one** (Enter or a click on its
     row, `BF_TEST_SQUAD_PRESET`) puts its four members in their places one after the other in the
     keys' order (Brutus's, Flint's, Hawk's, Tex's), each by the single-slot path above (`change`): a
     fresh character of its type, your own slot's in place where you stand (its view, clock and the
@@ -455,7 +487,7 @@ the background (#163)".
 | `BF_TEST_LEVEL_FAIL=<level>` | loading that level for a switch panics on its thread (the fall back to the map it came from) |
 | `BF_TEST_SQUAD_MENU=<s>` | T (the squad menu opens, or closes) |
 | `BF_TEST_SQUAD_SLOT=<s>,<slot>,<type\|empty>[;...]` | the squad menu's Enter or Delete (#302): that slot gets a fresh one of that type, or is emptied. The slot as `BF_TEST_SELECT` names a squad member, 0-3 (not the keys' 1-4) or `brutus` / `flint` / `hawk` / `tex` for its place, or `me` for the controlled character's (its type changes in place); the type as `BF_TEST_NPC` names one (`shrike soldier@m09_a`, `hunter lord@mp_common/sdm_shrike` as the menu shows its place, `h_fcec1024`, `flint`). One it doesn't know (or whose model isn't loaded) is logged and skipped |
-| `BF_TEST_SQUAD_PRESET=<s>,<squad>[;...]` | the squad menu's Enter on a predefined squad (#339): all four slots get that squad's members (the controlled character's changing in place; see "The predefined squads" above). The squad: its number in the menu's list from 0 (the campaign squad is 0), its name in any case (`shrike raiders`, `Seer Coven`, `Ferguson Platoon`, `Feral Hunting Pack`, `Brute Force`), its library (`sdm_shrike` or `shrike`, `sdm_bf`, `sdm_feral`, `sdm_seers`, `sdm_ferg`; `common`) or a word of its name (`campaign`, `raiders`). One it doesn't know is logged and skipped |
+| `BF_TEST_SQUAD_PRESET=<s>,<squad>[;...]` | the squad menu's Enter on a predefined squad (#339): all four slots get that squad's members (the controlled character's changing in place; see "The predefined squads" above). The squad: its number in the menu's list from 0 (the campaign squad is 0, Kingman's squad 6, Monsters 7), its name in any case (`shrike raiders`, `Seer Coven`, `Ferguson Platoon`, `Feral Hunting Pack`, `Brute Force`, `Kingman's squad`, `Monsters`), its library (`sdm_shrike` or `shrike`, `sdm_bf`, `sdm_feral`, `sdm_seers`, `sdm_ferg`; `common`; `kingman`, `monsters`) or a word of its name (`campaign`, `raiders`, `monster`). One it doesn't know is logged and skipped |
 | `BF_TEST_SQUAD_PICK=<s>,<row>[,<slot>]` | T with that row of its list picked (a squad as for `BF_TEST_SQUAD_PRESET`, else a character type as `BF_TEST_NPC` names one) and, if given, that slot (as `BF_TEST_SQUAD_SLOT` names one): the picks Up / Down and Left / Right make, so the panel shows what Enter would do; it puts nothing |
 | `BF_TEST_SQUAD=<entry>[,<entry>...]` | the test map's start squad beside the player's character (read as each flat-floor start is made, every one of the session): each entry a type as `BF_TEST_NPC` names one, a squad member's type into its own slot if that's free and any other into the first free slot in the keys' order, or `<slot>:<type>` into that slot (`3:shrike heavy@sdm_shrike` with Tex leading: he starts as one); `none`: nobody. Unknown types are logged and skipped |
 | `BF_TEST_FULL_SQUAD=1` | the test map starts with the four, as before #302 (over `BF_TEST_SQUAD`) |
@@ -973,6 +1005,30 @@ with its types and keys in the order of the places):
 * `cargo test --bin bf_play` (147): the seating by HUD slot (Brute Force and Seer Coven as the data
   has them, a slot taken or out of range), the hook's squad names, the list's rows, and a squad put
   slot by slot (the leader in place, the three at their places before the NPC, refused in deathmatch).
+* #365's two squads (`--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_TOOLS_LOG=1`, 15 fps captures, the
+  frames looked at): "squad menu: 8 predefined squads", the last two "Kingman's squad (e05, m03_c): 0
+  Red Hand h_12073efa, 1 Terrorist h_11fe9c5e, 2 Subversive h_0de6c6dd, 3 Edward Kingman h_ffdc629e"
+  and "Monsters (e23): 0 Filthy Mutant h_0b5f6e21, 1 Molotov Mutant h_f0c5e50e, 2 Ugly Mutant
+  h_ef4ed3dc, 3 Supermutant h_ece04235". `BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_MENU="0.2;5.0"
+  BF_TEST_SQUAD_PICK="0.4,Kingman's squad" BF_TEST_SQUAD_PRESET="1.0,Kingman's squad;3.0,Monsters"`
+  (90 frames): both rows are in the panel (Kingman's squad picked, "Brutus: Red Hand   Flint:
+  Terrorist / Hawk: Subversive   Tex: Edward Kingman (you)"); at 1.0 s "squad Kingman's squad (e05,
+  m03_c) in all four slots", the three empty ones at the formation places and Tex's own "was Tex",
+  "Squad: Kingman's squad (you're Edward Kingman now)" over his face; at 3.07 s Monsters over it, every
+  slot "was Red Hand ..." and so on, "(you're Supermutant now)". The hook took both full names
+  (`kingman` and `monsters` too, with `BF_TEST_SQUAD_PRESET="1.0,kingman"` and `"1.0,monsters"` in
+  the runs below). All four radar places show the "?" in both squads (no portrait among the eight).
+  **They follow**: `BF_CHARACTER=0 BF_TEST_GOTO=0,8,0,-60 BF_TEST_SQUAD_PRESET="0.4,monsters"`: the
+  Filthy Mutant runs on by his own clips with the Molotov, Ugly and Supermutant behind and beside him
+  on the follow camera. **They fight**: `BF_TEST_INSTANT_KILL=0 BF_COMBAT_LOG=1 BF_TEST_GOTO=0,8,0,8
+  BF_TEST_SQUAD_PRESET="1.0,kingman" BF_TEST_NPC="2.0,shrike heavy@e34,enemy,fight,0,-6"
+  BF_TEST_NPC_HP="3.0,all,400"`: the Red Hand, Terrorist and Subversive each fire on it ("Red Hand ->
+  Shrike Heavy (NPC 1): ... = 11.15") and it fires on Kingman and the Subversive; with Monsters and a
+  Shrike Soldier 9 m ahead (`0,3`, 240 frames) the mutants close in and "Filthy Mutant -> Shrike
+  Soldier (NPC 1) ... = 15.65" from 14.9 s, 12.9 s after the spawn (a slow engagement; the Shrike's
+  shots on the Supermutant and Ugly Mutant come first). With the Shrike Heavy 14 m ahead the
+  mutants did not reach it in 10 s, and one stray "Ugly Mutant -> Supermutant" at 6.2 s (own side
+  0.7) landed on its neighbour. The squad AI's handling of melee types isn't part of this ticket.
 * Not tested: the keys and the mouse themselves (Up / Down over the squad rows, the wheel, Enter or
   a click on one): the hooks drive the same code from the menu's asks on, and `BF_TEST_SQUAD_PICK`
   sets what the keys set (the row's mapping is a unit test).

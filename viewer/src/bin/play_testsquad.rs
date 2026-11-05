@@ -45,7 +45,10 @@
 //!    (h_fed0689a) names its type there (`GameCharacter::squad_type`, h_fa8c572a), and a match
 //!    loads the library (FUN_000d5f60). Each sits in the place its type's h_072ab4af names, the
 //!    HUD slot the game puts a character at on the radar (Tex 1 top, Flint 2 right, Brutus 3
-//!    bottom, Hawk 4 left: FUN_000c84e0, `seat`).
+//!    bottom, Hawk 4 left: FUN_000c84e0, `seat`). Two more of the demo's own follow them (#365,
+//!    `ENEMY_SQUADS`): Kingman's squad (a Red Hand, a Terrorist, a Subversive and Edward Kingman)
+//!    and Monsters (the Filthy, Molotov and Ugly Mutants and the Supermutant), one type to a slot in
+//!    the keys' order.
 //!  - **The roster** (`Roster`): each map's slots, as its start made them and the menu changed
 //!    them; the map editor's play (F5) makes its fresh squad from it (play_editor.rs `to_play`).
 //!
@@ -96,17 +99,19 @@ struct Menu {
 /// in the tests counts; the NPC and object menus show LIST_LINES, 9).
 const ROWS: usize = 7;
 
-/// A predefined squad (#339): the type each of the four slots holds. The campaign squad and the
-/// five squad deathmatch squads of game-options, as `presets` makes them from the loaded data.
+/// A predefined squad (#339): the type each of the four slots holds. The campaign squad, the
+/// five squad deathmatch squads of game-options and the two of enemy types (#365, `ENEMY_SQUADS`),
+/// as `presets` makes them from the loaded data.
 #[derive(Clone, Debug)]
 struct Preset {
     /// its name in the menu: the game's own for a squad deathmatch squad (game-options' `<squad
     /// name>`, a string of the string table: "Shrike Raiders"), the demo's for the campaign's
     name: String,
-    /// where its types are defined (`CharacterType::place`: "common", "mp_common/sdm_shrike")
+    /// where its types are defined (`CharacterType::place`: "common", "mp_common/sdm_shrike"; an
+    /// enemy squad's, each archive once: "e05, m03_c")
     place: String,
     /// its library as a hook may name it: the squad's game-options `library-name` ("sdm_shrike"),
-    /// "common" for the campaign's
+    /// "common" for the campaign's, "kingman" and "monsters" for the enemy squads (#365)
     library: String,
     /// the type each slot (a CHARACTERS index) holds, None for an empty one (every squad of the
     /// data has four members, one for each place)
@@ -262,8 +267,46 @@ fn presets(game: &Game) -> Vec<Preset> {
         let members: Vec<(u32, i64)> = kinds.into_iter().flatten().map(|k| (k, game.character_type(k).map_or(0, |t| t.footstep_type))).collect();
         out.push(Preset { name, place: place(members[0].0), library: s.library.clone(), slots: seat(&members) });
     }
+    for (name, library, names) in ENEMY_SQUADS {
+        let kinds: Vec<Option<u32>> = names.iter().map(|n| game.find_character_type(n).filter(|&k| loaded(k))).collect();
+        if kinds.iter().any(Option::is_none) {
+            println!("test map: squad {name} ({library}): a member's type isn't loaded with its model: left out");
+            continue;
+        }
+        let slots: [Option<u32>; SQUAD] = std::array::from_fn(|c| kinds[c]);
+        // (where its types are defined: each archive once, in the slots' order)
+        let mut places: Vec<String> = vec![];
+        for p in slots.iter().flatten().map(|&k| place(k)) {
+            if !places.contains(&p) {
+                places.push(p);
+            }
+        }
+        out.push(Preset { name: name.into(), place: places.join(", "), library: library.into(), slots });
+    }
     out
 }
+
+/// The demo's own squads of campaign enemy types (#365; the product owner's request, and the
+/// game has none: they are not in game-options' squad list): each is its name in the menu, the
+/// name a hook may call it by (`Preset::library`; "kingman" and "monsters" also match by a word of
+/// the name) and its four members as `Game::find_character_type` names them, one for each slot in
+/// the keys' order (Brutus's, Flint's, Hawk's, Tex's: the order the request lists them in).
+/// A name that several types share (every level gives its own copies) is the type of the archive
+/// named after the `@`, the first of the data's when that archive holds two:
+///  - Kingman's squad: a Red Hand (e05's: the only one beside e13's tougher and the tutorial's
+///    weaker, 31 hp, the guess), a Terrorist and a Subversive (m03_c's, Kingman's level, the
+///    two chatter-library terrorist_chatter) and Edward Kingman himself (m03_c's; his own
+///    chatter, edward_kingman_chatter). "Subservient" in the request is the data's Subversive;
+///  - Monsters: the three mutant variants of the data (Filthy, Molotov and Ugly) and the
+///    Supermutant, all of e23, the Supermutant's level (the mutants there have 55 hp). The data
+///    has no other mutant type.
+///
+/// None has a portrait (`CharacterType::portrait` is empty for all of them), so each slot's radar
+/// place shows the "?" (#342).
+const ENEMY_SQUADS: [(&str, &str, [&str; SQUAD]); 2] = [
+    ("Kingman's squad", "kingman", ["red hand@e05", "terrorist@m03_c", "subversive@m03_c", "edward kingman@m03_c"]),
+    ("Monsters", "monsters", ["filthy mutant@e23", "molotov mutant@e23", "ugly mutant@e23", "supermutant@e23"]),
+];
 
 /// The predefined squad a hook names (#339): its number in the menu's list from 0, its name (any
 /// case: "shrike raiders"), its library ("sdm_shrike", or "shrike" for short; "common" for the
@@ -957,6 +1000,18 @@ mod tests {
         assert_eq!(preset_named(&list, "seers"), None);
         // (nothing named is no squad, not the first)
         assert_eq!(preset_named(&list, " "), None);
+    }
+
+    #[test]
+    fn a_hook_names_the_enemy_squads_by_either_name() {
+        // (#365: the squads' own names and the hook names ENEMY_SQUADS gives them)
+        let list = [preset("Campaign squad", "common"), preset("Kingman's squad", "kingman"), preset("Monsters", "monsters")];
+        for (hook, row) in [("Kingman's squad", 1), ("kingman", 1), ("KINGMAN'S", 1), ("monsters", 2), ("Monsters", 2), ("monster", 2), ("1", 1), ("2", 2)] {
+            assert_eq!(preset_named(&list, hook), Some(row), "{hook}");
+        }
+        assert_eq!(preset_named(&list, "mutants"), None);
+        // every member of both is named by a type the data has, one to each slot
+        assert!(ENEMY_SQUADS.iter().all(|(_, _, names)| names.iter().all(|n| n.contains('@'))));
     }
 
     #[test]
