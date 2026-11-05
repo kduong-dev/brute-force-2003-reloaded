@@ -906,8 +906,10 @@ fn snapshot_entities(mut commands: Commands, all: Query<Entity>) {
 fn end_play(mut commands: Commands, before: Option<Res<Before>>,
             all: Query<(Entity, Option<&ChildOf>), (Without<Window>, Without<bevy::render::view::screenshot::Screenshot>,
                                                     Without<bevy::ecs::observer::Observer>)>,
-            mut cursor: Query<&mut Window, With<PrimaryWindow>>) {
+            mut cursor: Query<&mut Window, With<PrimaryWindow>>, mut saved: ResMut<focus::Saved>) {
     let before = before.map(|b| b.0.clone()).unwrap_or_default();
+    // (a grab saved across a lost focus belongs to this map: play_focus.rs)
+    saved.0 = None;
     for (e, parent) in &all {
         let new = |e: Entity| !before.contains(&e);
         if new(e) && parent.is_none_or(|p| !new(p.parent())) {
@@ -1690,7 +1692,10 @@ const BACK_FROM: f32 = 2.62;
 /// dash is its set's running side clip (`runs`: f_side_run / b_side_run, MT 26 / 30 / 27 / 31,
 /// `Gait::SideRun`), at a walk its side walk (`walks`: the _SLOW motions 29 / 33 / 28 / 32), each where
 /// the set has it, else straight on; backing off, the back run at a run or a dash (MT_BACKPEDAL) and
-/// the back walk at a walk (MT 4); no command, the gait it has (from a stand, the back one).
+/// the back walk at a walk (MT 4); no command, the gait it has. From a stand with no command
+/// (`Motion::Keep` with `was` idle) the game issues none either (0x119e01 skips the command) and
+/// the character stays standing; the demo plays the back gait there instead (the demo's, so the
+/// route walker has a gait to move by: a guess, #363 review).
 fn ai_gait(motion: avoid::Motion, was: Gait, dash: bool, walk: bool, walks: &[Option<usize>; 4], runs: &[Option<usize>; 4]) -> Gait {
     let ahead = if dash { Gait::Sprint } else if walk { Gait::Walk } else { Gait::Run };
     let backs = if walk { Gait::WalkBack } else { Gait::RunBack };
@@ -4523,6 +4528,7 @@ fn read_input(
     time: Res<Time>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut player: ResMut<Player>,
+    tools: Res<testtools::Tools>,
 ) {
     // under a menu (the game's clock stopped, `paused`; the menu takes the frame's presses,
     // play_objectives.rs) or the item list (its pause: the controller's movement, look and item
@@ -4587,8 +4593,10 @@ fn read_input(
     // held
     let zoomable = scope_levels(&player) > 0;
     // (the right press that takes the mouse back counts at once: it scopes, as it aims below;
-    // only the left click's shot is dropped)
-    let scope_pressed = zoomable && captured && mouse.just_pressed(MouseButton::Right);
+    // only the left click's shot is dropped). Not in the test tools' free camera: there the
+    // character takes no input (`testtools::gate_input`) and the right button is the camera tool's
+    // (a click that recaptures a freed mouse included), so it must not step the gun's scope
+    let scope_pressed = zoomable && captured && tools.freecam.is_none() && mouse.just_pressed(MouseButton::Right);
     let aim = !zoomable && mouse.pressed(MouseButton::Right);
     let jump = keys.just_pressed(KeyCode::Space);
     let dodge = keys.just_pressed(KeyCode::KeyC);

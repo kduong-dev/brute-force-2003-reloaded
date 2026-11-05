@@ -657,6 +657,11 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
         if let Some(t) = e.get(2).filter(|t| team_of(t).is_none()) {
             warn!("BF_TEST_NPC: {t} isn't friend, enemy, neutral or a team 0-9; spawned as a friend");
         }
+        if let Some(w) = e.get(3) {
+            for word in unknown_words(w) {
+                warn!("BF_TEST_NPC: {word:?} isn't dummy, fight, frozen or follow; ignored");
+            }
+        }
         let hook = (|| {
             let how = behaviour(e.get(3)?);
             Some(Hook::Npc {
@@ -811,9 +816,12 @@ fn key_named(s: &str) -> Option<KeyCode> {
 }
 
 /// BF_TEST_KEYS (#364): the keys due this frame pressed as a keyboard presses them (`just_pressed`
-/// for the frame), and let go the next, so a press reaches every system that reads the keys: the
-/// tools' menus and the NPC keys (the window needs no focus, which BF_BACKGROUND takes away from
-/// the real keyboard).
+/// for the frame), and let go the next, so a press reaches the systems that read the keys in
+/// `Update` (this runs there, before `read_input`): the tools' menus and the NPC keys (the window
+/// needs no focus, which BF_BACKGROUND takes away from the real keyboard). The systems that read
+/// them in `PreUpdate` (the Squad Command menu's `menu_input`, the objectives menu, the panels)
+/// run after bevy_input has cleared the frame's presses, so they never see one: BF_TEST_COMMAND
+/// drives the squad menu (play_squad_menu.rs).
 fn press_keys(script: Res<Script>, mut keys: ResMut<ButtonInput<KeyCode>>, mut held: Local<Vec<KeyCode>>) {
     for k in held.drain(..) {
         keys.release(k);
@@ -1097,6 +1105,13 @@ fn behaviour(s: &str) -> How {
     let words: Vec<String> = s.split('+').map(|w| w.trim().to_ascii_lowercase()).collect();
     let has = |w: &str| words.iter().any(|x| x == w);
     How { fight: has("fight"), frozen: has("frozen"), follow: has("follow") }
+}
+
+/// The words of a hook's behaviour word that `behaviour` doesn't know (anything but `dummy`,
+/// `fight`, `frozen` and `follow`, in any case), for a warning: they count as nothing.
+fn unknown_words(s: &str) -> Vec<String> {
+    s.split('+').map(|w| w.trim()).filter(|w| !["dummy", "fight", "frozen", "follow"].iter().any(|k| w.eq_ignore_ascii_case(k)))
+        .map(str::to_string).collect()
 }
 
 /// An NPC's behaviour in words, for the messages and the logs: "dummy", "fight" or "frozen", then
@@ -1880,6 +1895,9 @@ mod tests {
         assert_eq!(behaviour("frozen+follow"), how(false, true, true));
         // (a word it doesn't know is a dummy, as before)
         assert_eq!(behaviour("stand"), how(false, false, false));
+        // (and named in a warning, the known ones in any case aren't)
+        assert_eq!(unknown_words("dummy+bogus"), ["bogus"]);
+        assert_eq!(unknown_words("Fight+FOLLOW+frozen+dummy"), Vec::<String>::new());
     }
 
     /// The follow key (#364) is the apostrophe, beside ; and J: outside the menu it switches the

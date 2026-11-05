@@ -146,7 +146,9 @@ const MOVE_WALK: f32 = 0.5;
 /// FUN_00019ed0, the view's turn (`view_turn`): at most this fast (rad/s), the type's turn rate
 /// (type+0x2d0) x char+0x7ec, which the brain's set-up makes 200 / (the rate x 57.2958) for a type
 /// with the squad bit (0x17699-0x176ab, 0x3a52dc = 200): 200 degrees a second whatever the type.
-/// (A type without the bit gets 1.8 x its rate, 0x17737: no such type walks the demo's routes.)
+/// (A type without the bit gets 1.8 x its rate, 0x17737: since #364 the test map's NPCs set to
+/// follow can be of such a type, a Shrike soldier, and the demo gives them these 200 degrees too:
+/// not modelled, `CharacterType::turn_rate` isn't passed to `view_turn`.)
 const VIEW_TURN_MAX: f32 = 3.490_658_5;
 /// ...no turn within a degree (0x3a4fe0 = 0.0174533 rad against the angle, 0x1a009), nor for a
 /// direction whose square is under 1e-16 (0x3a52b0, 0x19f7e)...
@@ -415,6 +417,11 @@ pub struct Pick {
 ///    move, runs; else (on its move, the view more than 45 degrees off) it steps sideways, to the
 ///    side of the view its body is on. Backward, within 45 degrees of the view it backs off; else
 ///    still turning, no command; else it backs off sideways.
+///
+/// The backward case has exceptions the demo can't reach (0x119a9c-0x119b4e): in the movement
+/// mode 4, with a jump motion, or with a dash coming next, the body faces the move itself (not its
+/// reverse) while the case flag char+0x800 stays 0. A route walker is never in those (it has no
+/// mode 4, jump or dash asked of it while it backs off), so `pick` always reverses the body here.
 ///
 /// So on a straight its body, its view and its move agree and it runs facing its move; it steps
 /// sideways only in the moments of a sharp turn its view lags, and backs off only on a reversal,

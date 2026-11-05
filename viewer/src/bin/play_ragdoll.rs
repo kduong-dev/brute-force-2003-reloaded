@@ -331,8 +331,9 @@ pub struct Shove {
 /// its entries of the world's queue `queue`. The first entry with a magnitude, if it's for the
 /// same body, takes the request in (its point and way moved toward the new by the new's share of
 /// the two magnitudes, their magnitudes and factors summed, the type of the larger); for another
-/// body it's replaced only by a request more than five times stronger in both magnitude and
-/// factor; otherwise the next entry is tried, and the request becomes a new one at the end. (An
+/// body it's replaced only by a request at least five times stronger in both magnitude and
+/// factor (the old x 5 at most the new, 0xe010c-0xe012e: the x87 compare is `old x 5 > new`
+/// skipping it, so exactly five times replaces); otherwise the next entry is tried, and the request becomes a new one at the end. (An
 /// entry with no magnitude, the bare one the death's build queue makes, takes the request over:
 /// the demo's queue has none.) So a kill's two requests stay two entries (take01: the hit's, 80 x
 /// 4, and the up-kick's, 1 x 36), while two blasts' for one body (a corpse's root) add up.
@@ -350,7 +351,7 @@ pub fn request(queue: &mut Vec<Shove>, s: Shove) {
                 e.factor += s.factor;
                 return;
             }
-            if !(e.magnitude * 5.0 < s.magnitude && e.factor * 5.0 < s.factor) {
+            if !(e.magnitude * 5.0 <= s.magnitude && e.factor * 5.0 <= s.factor) {
                 continue;
             }
         }
@@ -1371,12 +1372,17 @@ fn draw_ragdolls(player: Res<Player>, squad: Res<Squad>, mut gizmos: Gizmos) {
 ///  * the hit's: magnitude 2 x the damage `damage` the hit dealt (the record's +8 after the
 ///    victim's factors, 0x125600 and FUN_002232d0: the whole of it, not what was left of the hit
 ///    points), its damage type `kind`, the weapon's push `push` (the record's +0x54, h_e39b994b)
-///    as the factor, at the point struck `at` along the hit's way `dir` on the body hit `target`;
+///    as the factor, at the point struck `at` along the hit's way `dir` on the body hit `target`.
+///    A hit that struck no part (`Target::None`) lands on the root: FUN_00115d50 fills a damage
+///    record with no body with the character's root (char+0x500, 0x115e53-0x115e60) before the
+///    handler asks, so the request is for `Target::Root` and the shove's hit share goes to the
+///    root body as a part kill's goes to its part (#307 review);
 ///  * the up-kick: magnitude 1, type 0, factor `UP_KICK`, up, on no body; not when `u` is in the
 ///    air nor knocked down.
 /// The handler asks for them only when the damage record's bit 3 (+0x5c & 8) is set, which every
 /// hit traced has; a death with no hit (a fall, a liquid, a test hook's) never calls this.
 pub fn death_shoves(u: &mut Player, target: Target, at: Vec3, dir: Vec3, damage: f32, kind: i64, push: f32) {
+    let target = if target == Target::None { Target::Root } else { target };
     let hit = Shove { target, point: at, dir, magnitude: 2.0 * damage, kind, factor: push };
     request(&mut u.shoves, hit);
     let up = !u.action.airborne() && u.knock.is_none();
@@ -1855,7 +1861,8 @@ mod tests {
     /// and is nowhere near five times the hit's), the hit's body keeps its place; a second request
     /// for the same body is blended into its entry (magnitudes and factors summed, point and way
     /// moved by the new one's share, the type of the larger); a request for another body replaces
-    /// an entry only when it is more than five times its magnitude and its factor.
+    /// an entry only when it is at least five times its magnitude and its factor (exactly five
+    /// times replaces it: the game's `old x 5 > new` skips an entry, 0xe010c-0xe012e).
     #[test]
     fn requests_merge_as_the_game_does() {
         let hit = Shove { point: Vec3::new(0.0, 1.0, 0.0), ..shove_of(Target::Bone(7), 80.0, 1, 4.0, Vec3::Z) };
@@ -1874,15 +1881,45 @@ mod tests {
         assert_eq!(q[0].kind, 1, "the larger's type");
         // (a share of 20 / 100 of the way: the point's y 1 -> 0.8, the way z 1 -> 0.8 and x 0 -> 0.2)
         assert!((q[0].point.y - 0.8).abs() < 1e-4 && (q[0].dir.x - 0.2).abs() < 1e-4 && (q[0].dir.z - 0.8).abs() < 1e-4, "{:?}", q[0]);
-        // a request for the root, 5x the hit's magnitude and factor in both: replaces it...
+        // a request for the root, over 5x the hit's magnitude and factor in both: replaces it...
         let mut q = vec![hit];
         request(&mut q, shove_of(Target::Root, 401.0, 10, 20.1, Vec3::X));
         assert_eq!(q.len(), 1);
         assert_eq!(q[0].target, Target::Root);
-        // ... but not at exactly 5x in one of them: it becomes a second entry
+        // ... and so does exactly 5x in both (the game replaces at old x 5 <= new)...
         let mut q = vec![hit];
-        request(&mut q, shove_of(Target::Root, 401.0, 10, 20.0, Vec3::X));
+        request(&mut q, shove_of(Target::Root, 400.0, 10, 20.0, Vec3::X));
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].target, Target::Root);
+        // ... but not under 5x in either one: it becomes a second entry
+        let mut q = vec![hit];
+        request(&mut q, shove_of(Target::Root, 401.0, 10, 19.9, Vec3::X));
         assert_eq!(q.len(), 2);
+        let mut q = vec![hit];
+        request(&mut q, shove_of(Target::Root, 399.9, 10, 20.1, Vec3::X));
+        assert_eq!(q.len(), 2);
+    }
+
+    /// A kill that struck no part (#307 review; FUN_00115d50 fills the record's body with the root,
+    /// 0x115e53-0x115e60) asks for its hit's shove on the root, as a part kill's is on its part, so
+    /// it throws the corpse as hard; the up-kick stays on no body.
+    #[test]
+    fn a_kill_that_struck_no_part_shoves_the_root() {
+        let mut none = Player::new(0);
+        death_shoves(&mut none, Target::None, Vec3::ZERO, Vec3::X, 40.0, 1, 4.0);
+        assert_eq!(none.shoves.len(), 2);
+        assert_eq!((none.shoves[0].target, none.shoves[1].target), (Target::Root, Target::None));
+        let mut part = Player::new(0);
+        death_shoves(&mut part, Target::Bone(7), Vec3::ZERO, Vec3::X, 40.0, 1, 4.0);
+        assert_eq!((part.shoves[0].target, part.shoves[1].target), (Target::Bone(7), Target::None));
+        // the same request, the same body struck (the root is the first bar's part): the same throw
+        let (mut a, mut b) = (bars(2, 0.0), bars(2, 0.0));
+        assert!(a.shove(&none.shoves[0]) && b.shove(&Shove { target: Target::Root, ..part.shoves[0] }));
+        assert_eq!(a.root_velocity(), b.root_velocity());
+        // (without the fix a no-part kill's shove left the struck body's share out)
+        let mut c = bars(2, 0.0);
+        c.shove(&Shove { target: Target::None, ..none.shoves[0] });
+        assert!(a.root_velocity().length() > c.root_velocity().length());
     }
 
     /// Bars of the game's limb mass in a row, unjoined, `v` the first one's speed along x: a ragdoll

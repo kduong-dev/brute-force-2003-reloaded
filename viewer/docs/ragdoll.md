@@ -67,7 +67,7 @@ squad.md's knock-down and skills.md's Vengar charge point here.
     (char+0x7d8 & 3) it goes into the world's queue: the first entry with a magnitude takes it in
     if it is for the same body (its point and way moved toward the new one's by its share of the
     two magnitudes, their magnitudes and factors added, the type of the larger), and is replaced
-    by it for another body only when the new one is more than five times its magnitude and its
+    by it for another body only when the new one is at least five times its magnitude and its
     factor; else the next entry is tried and the request becomes a new one. A death's two
     requests stay two entries.
   * *The walk* (FUN_000d9a20, 0xd9b54-0xd9c28, once a world update, 30 a second): the queue's
@@ -177,7 +177,7 @@ squad.md's knock-down and skills.md's Vengar charge point here.
   requests into the character's queue, `Player::shoves` (merged as FUN_000e00b0 does), from the
   hit's record: `Hit::amount` as the damage (the whole of it, 2 x as the magnitude),
   `Hit::damage_type`, the weapon's `WeaponDef::push` (bullet h_e39b994b) as the factor, the point and
-  way the shot struck by, and the part struck (`Hit::bone`); the up-kick unless the character is
+  way the shot struck by, and the part struck (`Hit::bone`; a kill that struck none is for the root, as FUN_00115d50 fills a record with no body with char+0x500, 0x115e53-0x115e60, so it throws as hard as a part kill; the up-kick stays on no body); the up-kick unless the character is
   in the air or knocked down. The ragdoll's `walk` takes the queue a game frame (1/30 s) at a
   time from the second after it's built, as FUN_000d9a20 does, each entry applied (`shove`:
   FUN_00127c60's caps, the explosion factor, the gate on the root's speed squared) and dropped. The
@@ -400,7 +400,7 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
   rocking dying down, a chain settling, the movement check's three rules (a still body frozen at
   the second check, 0.52 s; one creeping 6 mm a check frozen by the long rule after 4 s; one
   going 2 cm a check never); #307's: FUN_000e00b0's merging (a kill's two requests stay two, the
-  same body's add and blend, another body's replaces only at over five times both), FUN_00127c60's
+  same body's add and blend, another body's replaces only at five times both or more), FUN_00127c60's
   shares (the up-kick's 18 L, a rifle kill's 75 and 300, a blast's factor 0 made 3, a factor under
   1 pushing the one struck alone), its gate (10 m/s passes, 10.1 doesn't: the speed squared),
   and the walk (nothing in the first update, one request an update, a refused one dropped, a factor
