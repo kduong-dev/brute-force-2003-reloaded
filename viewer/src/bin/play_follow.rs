@@ -307,13 +307,20 @@ pub fn let_go(m: &mut Player, graph: Option<&mut Graph>) {
 
 /// A test map NPC taken off the map (the NPC tool's Delete, #364): the cover point it had claimed
 /// given up at once and its route dropped, as nothing would clear their bits on the level's points
-/// after it (`sync` clears the claims of those in the squad, `Follow::unclaim`).
+/// after it (`sync` clears the claims of those in the squad, `Follow::unclaim`). Claims already
+/// given up but not yet cleared by `sync` (its follow turned off the frame before, `let_go`) are
+/// cleared here too, as `sync` does: they'd stay claimed for the level otherwise.
 pub fn taken_off(m: &mut Player, graph: Option<&mut Graph>) {
     if let Some(g) = graph {
         if log_on() && m.follow.claimed.is_some() {
             println!("t {:.2}: {}: taken off the map: its cover point given up", m.sim_time, unit_name(m));
         }
         release(m, Some(&mut *g));
+        for p in std::mem::take(&mut m.follow.unclaim) {
+            if let Some(n) = g.nodes.get_mut(p as usize) {
+                n.state &= !nav::CLAIMED;
+            }
+        }
         m.router.drop_route(g);
     }
 }
@@ -470,7 +477,7 @@ fn log_on() -> bool {
 const ROWS_EVERY: f32 = 0.25;
 
 /// BF_FOLLOW_LOG=2: every ROWS_EVERY s of the controlled character's clock, a line with a row for
-/// each test map NPC set to follow (#364): its name and number, whether it follows now
+/// each living test map NPC set to follow (#364; the dead are left out): its name and number, whether it follows now
 /// (`npc_follows`), its follow state, how far it is from the controlled character (3D), where it
 /// is, and the cover point it has claimed. The verification's measure of the trail and the stop.
 fn rows(player: Res<Player>, squad: Res<Squad>, mut last: Local<f32>) {
@@ -478,7 +485,7 @@ fn rows(player: Res<Player>, squad: Res<Squad>, mut last: Local<f32>) {
         return;
     }
     *last = player.sim_time;
-    let rows: Vec<String> = squad.0.iter().filter(|u| u.follow_set()).map(|u| {
+    let rows: Vec<String> = squad.0.iter().filter(|u| u.follow_set() && !u.dead).map(|u| {
         let claimed = u.follow.claimed.map_or(String::new(), |p| format!(" cover point {p}"));
         format!("{} (NPC {}){} state {} {:.1} m off ({:.1}, {:.1}){claimed}", unit_name(u), u.npc.map_or(0, |n| n.id),
                 if npc_follows(u, &player) { "" } else { " (idle)" }, u.follow.state.number(), u.position.distance(player.position), u.position.x, u.position.z)
@@ -1238,6 +1245,25 @@ mod tests {
         assert!(g.nodes[2].state & nav::CLAIMED != 0 && m.router.walker.is_some());
         taken_off(&mut m, Some(&mut g));
         assert!(g.nodes[2].state & nav::CLAIMED == 0 && m.follow.claimed.is_none() && m.router.walker.is_none());
+    }
+
+    /// A follower deleted the frame after its follow was turned off (#364 review): `let_go` queued
+    /// the claim's give-up in `Follow::unclaim` for the next `sync`, which the deleted unit never
+    /// reaches, so `taken_off` clears it too or the point stays CLAIMED for the level.
+    #[test]
+    fn a_follower_deleted_after_letting_go_frees_the_point_it_gave_up() {
+        let pts = [point(1, PLAIN, 0.0, 0.0, &[2, 5]), point(2, PLAIN, -8.0, 0.0, &[1, 5]), point(5, COVER, -8.0, 3.0, &[1, 2])];
+        let mut g = Graph::new(&pts);
+        let mut m = npc(0, 1, Vec3::new(-8.5, 0.0, 0.0), true);
+        m.follow.started = true;
+        m.follow.state = State::FindCover;
+        update(&mut m, &leader(Vec3::ZERO, Some(0)), &[], Some(&mut g));
+        assert!(g.nodes[2].state & nav::CLAIMED != 0);
+        let_go(&mut m, Some(&mut g));
+        assert!(m.follow.claimed.is_none() && m.follow.unclaim == [2], "let_go leaves the bit for the next sync");
+        assert!(g.nodes[2].state & nav::CLAIMED != 0);
+        taken_off(&mut m, Some(&mut g));
+        assert!(g.nodes[2].state & nav::CLAIMED == 0 && m.follow.unclaim.is_empty());
     }
 
     /// Without a level's points the chase walks straight at the leader and holds within d2 of one
