@@ -3873,11 +3873,18 @@ holds the gun raised as before.
   cursor was free and visible, and a click wrote the same values again (nothing applied).
 * **Fix.** On `WindowFocused { focused: false }` the grab and the cursor's visibility are saved
   and released; on `focused: true` they are put back (so bevy_winit applies them again). A mouse
-  that was free (Esc, the editor) stays free.
+  that was free (Esc, the editor) stays free. `Saved` is cleared as a map ends (`end_play`), so a
+  refocus in the front end can't lock the window with a grab the last map saved.
+* **Order.** The focus systems run after `read_input`. Windows can deliver the focus gain and the
+  click that brings the window back in one frame; if the grab were put back first, `read_input`
+  would find the mouse already captured and the click would shoot. Read first, the click
+  recaptures without firing, and the restore then finds the grab set and leaves it alone.
+  (Review fix after 5eafecf, which had no ordering.)
 * **Either mouse button recaptures** (play.rs `mouse_capture`, which Esc still frees, in cutscenes
   too). The left click's shot is dropped as before (`fire` needs the mouse captured before the
   frame); the right button aims at once (`aim` never needed the capture) and scopes at once
-  (`scope_pressed` reads the capture after the press). The Squad Command menu and its Move To
+  (`scope_pressed` reads the capture after the press), except in the test tools' free camera,
+  where the right button is the camera tool's and steps no scope. The Squad Command menu and its Move To
   cursor take the frame's presses before `read_input` (`read_buttons`), so Esc closing a menu,
   the right button cancelling the cursor and the left button sending the order recapture
   nothing; the editor has its own look-around capture (play_editor.rs) and `read_input` doesn't

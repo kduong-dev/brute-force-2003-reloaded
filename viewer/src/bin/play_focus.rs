@@ -29,13 +29,20 @@ use bevy::{
 };
 
 /// The mouse as it was when the focus left: the grab mode and whether the cursor was visible.
-/// `None` while the window has focus (or the focus left with the mouse already free).
+/// `None` while the window has focus (or the focus left with the mouse already free). Cleared as
+/// a map ends (play.rs `end_play`), so a refocus can't lock the front end or the editor with a
+/// grab the last map saved.
 #[derive(Resource, Default)]
-struct Saved(Option<(CursorGrabMode, bool)>);
+pub struct Saved(pub Option<(CursorGrabMode, bool)>);
 
-/// Adds the focus handling (and the test hook).
+/// Adds the focus handling (and the test hook). Both run after `read_input`: Windows can deliver
+/// the focus gain and the click that brought the window back in one frame, and if `on_focus` put
+/// the grab back first, `mouse_capture` would find the mouse already captured and the click's
+/// `fire` (`was_captured`) would shoot. Read after it, the click recaptures without firing and
+/// `on_focus` then finds the grab set (it leaves a set grab alone). `read_input` doesn't run in
+/// the editor or the front end; there the order changes nothing.
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Saved>().add_systems(Update, (test_focus, on_focus).chain());
+    app.init_resource::<Saved>().add_systems(Update, (test_focus, on_focus).chain().after(super::read_input));
 }
 
 /// Releases a captured mouse as the window loses focus and takes it back as the focus returns

@@ -906,8 +906,10 @@ fn snapshot_entities(mut commands: Commands, all: Query<Entity>) {
 fn end_play(mut commands: Commands, before: Option<Res<Before>>,
             all: Query<(Entity, Option<&ChildOf>), (Without<Window>, Without<bevy::render::view::screenshot::Screenshot>,
                                                     Without<bevy::ecs::observer::Observer>)>,
-            mut cursor: Query<&mut Window, With<PrimaryWindow>>) {
+            mut cursor: Query<&mut Window, With<PrimaryWindow>>, mut saved: ResMut<focus::Saved>) {
     let before = before.map(|b| b.0.clone()).unwrap_or_default();
+    // (a grab saved across a lost focus belongs to this map: play_focus.rs)
+    saved.0 = None;
     for (e, parent) in &all {
         let new = |e: Entity| !before.contains(&e);
         if new(e) && parent.is_none_or(|p| !new(p.parent())) {
@@ -4523,6 +4525,7 @@ fn read_input(
     time: Res<Time>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut player: ResMut<Player>,
+    tools: Res<testtools::Tools>,
 ) {
     // under a menu (the game's clock stopped, `paused`; the menu takes the frame's presses,
     // play_objectives.rs) or the item list (its pause: the controller's movement, look and item
@@ -4587,8 +4590,10 @@ fn read_input(
     // held
     let zoomable = scope_levels(&player) > 0;
     // (the right press that takes the mouse back counts at once: it scopes, as it aims below;
-    // only the left click's shot is dropped)
-    let scope_pressed = zoomable && captured && mouse.just_pressed(MouseButton::Right);
+    // only the left click's shot is dropped). Not in the test tools' free camera: there the
+    // character takes no input (`testtools::gate_input`) and the right button is the camera tool's
+    // (a click that recaptures a freed mouse included), so it must not step the gun's scope
+    let scope_pressed = zoomable && captured && tools.freecam.is_none() && mouse.just_pressed(MouseButton::Right);
     let aim = !zoomable && mouse.pressed(MouseButton::Right);
     let jump = keys.just_pressed(KeyCode::Space);
     let dodge = keys.just_pressed(KeyCode::KeyC);
