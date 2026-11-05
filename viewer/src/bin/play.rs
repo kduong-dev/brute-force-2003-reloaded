@@ -1692,7 +1692,10 @@ const BACK_FROM: f32 = 2.62;
 /// dash is its set's running side clip (`runs`: f_side_run / b_side_run, MT 26 / 30 / 27 / 31,
 /// `Gait::SideRun`), at a walk its side walk (`walks`: the _SLOW motions 29 / 33 / 28 / 32), each where
 /// the set has it, else straight on; backing off, the back run at a run or a dash (MT_BACKPEDAL) and
-/// the back walk at a walk (MT 4); no command, the gait it has (from a stand, the back one).
+/// the back walk at a walk (MT 4); no command, the gait it has. From a stand with no command
+/// (`Motion::Keep` with `was` idle) the game issues none either (0x119e01 skips the command) and
+/// the character stays standing; the demo plays the back gait there instead (the demo's, so the
+/// route walker has a gait to move by: a guess, #363 review).
 fn ai_gait(motion: avoid::Motion, was: Gait, dash: bool, walk: bool, walks: &[Option<usize>; 4], runs: &[Option<usize>; 4]) -> Gait {
     let ahead = if dash { Gait::Sprint } else if walk { Gait::Walk } else { Gait::Run };
     let backs = if walk { Gait::WalkBack } else { Gait::RunBack };
