@@ -66,6 +66,7 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | event (2) | An AI event about an object it listens to whose number is its `event-id`: EVENT_MATCH, then it disables itself (#224) | 0x202dd0 |
 | destroyer (5) | OPERATE marks it; its update removes its objects (a listed spawn-trigger's copy; an effect object, whose particles go with it; a lamp, which goes out: #308), then disables itself. The update runs the base update first, so an OPERATE on its own FIRST_UPDATE removes them in that same update (the tutorial's four props at t 0). It removes a character the triggers spawned, never a member of the demo's squad (no level's destroyer lists one) | 0x200d70, 0x200e40 |
 | waypoint (h_10ecb459, 31) | OPERATE sets its `world-point`'s valid bit (+0x28 bit 2) to its `set-valid`, -1 leaving it, for the AI's routes ([nav.md](nav.md), #334): a cover point's set-valid goes to its own +0x64 bit 5 instead, a save point's to the world (not kept). As the tutorial starts they make three door points and seven of the mine field's world points invalid | 0x202c50, FUN_00202ba0, 0x202af0 |
+| property h_14cccfaa (52) | OPERATE gives its first object a reticule-action (h_e92285dc, 0 on all 52: the object is no longer a use target) and is counted (#262: see "Usable objects") | 0x20b730, FUN_0020b680 |
 | evaluate (6) | Its base actions only: the evaluate-triggers' random tests pick ambient lines (a no-op here) | |
 | gamevar (15) | See "Gamevar-triggers" | 0x1ffc40, FUN_001ffb80 |
 | script (10) | OPERATE asks its script's player (by `script-name`) to play it from the start, pause, resume or stop, by its entry's `<script command>`; the start waits for the player's update, so two in a frame start it once (#222: [cutscenes.md](cutscenes.md)) | 0x205000, FUN_00204ec0, FUN_00204e40 |
@@ -78,9 +79,8 @@ kept whole for the classes later steps run. `Level::triggers` holds them in the 
 | damage plate h_130818c0 (1) | A proximity detector that hurts what's in it while it's enabled (#228: see "The damage plate") | 0x1fa7e0, FUN_001f8510 |
 | subject relay h_0cb602d0 (0; 39-77 per multiplayer map) | Binds each event's subject to its targets, which then listen to it, and passes the event on (#278: see "Subject relays") | 0x201310, FUN_001fe6c0, FUN_001fea10 |
 
-Every other class (property h_14cccfaa) runs its base actions; each of its own actions is
-counted as used, as its handler counts it, and logged with the step that runs it ("h_11a8c558
-(property) OPERATE on USE_OBJECT [tex_1]: not run yet (a later step (object properties))").
+Every other class (the AI commands, the mover, the squad, the turret, the shield ...) runs its base
+actions; each of its own actions is counted as used, as its handler counts it.
 
 ## Gamevar-triggers
 
@@ -452,8 +452,9 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
   mine field's three). Its id 0 and data -1 are the game's
   (the death's send: the object's +0x144(1), FUN_00157260, #221); the demo's subject is the dead
   object, the game's a character from the dead one's (see "Not done").
-* **USE_OBJECT**: a wall panel used (play.rs `doors`): its signal h_eaf8a35b and data h_f1660a0d
-  (0x163060), the user as the subject.
+* **USE_OBJECT**: a wall panel used (play_usables.rs): its signal h_eaf8a35b and data h_f1660a0d
+  (0x163060), or a console used (#262): the game object's own use, {USE_OBJECT, iD 0, data -1}
+  (0x158140); the user as the subject either way. See "Usable objects".
 * **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs): since #228 the tutorial's DNA
   canister h_ef649b0f, whose PICKUP_OBJECT starts timer467 (4 s) and then Bratton's line
   ([pickups.md](pickups.md), "DNA canisters"); since #17 a lying gun taken by the swap or walked
@@ -464,6 +465,41 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
 * **AI events** (RESERVE_4EVT, 17): a character's EVT_ events (its health under 75, 50 and 25
   percent of its most; EVT_SOUND_ENEMY_NOISE as a stub) to the event-triggers listening to it
   only (FUN_001fe440), with the character as the subject (#224, play_hints.rs `ai_events`).
+
+## Usable objects
+
+The panels and consoles a player uses with X (play_usables.rs, #262; the tracker, the prompt and
+the hold are in [maps.md](maps.md), "Gates, their wall panels and consoles") send their USE_OBJECT
+as an object event (above): to the routers, gamevar-, score-, radar-, sound- and script-triggers
+and the property trigger that list them. A router that hears several of them feeds one chain, so
+e34's two consoles, and the tutorial's two panels, share it.
+
+* **The property trigger** (h_14cccfaa, vtable 0x395780, handler 0x20b730, parser FUN_0020b680;
+  `Triggers::property`): disabled, the base actions; enabled, an OPERATE entry that answers gives
+  its **first object** the reticule-action in its h_e92285dc (+0x40; the object's byte +0x79)
+  and is counted, the object found or not; the others are the base's. The triggers' other
+  attributes (h_e8ce605a, the object's +0x71 bit 6; h_06761f1c and h_ea199c91, a special use's
+  hazard, +0x110 / +0x114) are read (`Class::Property`) and not kept: no object the demo has needs
+  them. The event can come from the object itself (it lists it among its objects) or from a router
+  that sends to it, which is how both e34 consoles go dead on either's use. All 52 in the data set
+  0: the object is no longer a candidate for the use tracker. Their signals: 14 USE_OBJECT (the
+  consoles' and panels' own use: e34, e23, e16, e01, m02_b, m04_c, m08_a, m08_b, m14_d, sdm_e34 and
+  the tutorial), 13 FIRST_UPDATE (e16's console h_133a9b4c and m08_a's panel h_00c61205 start dead),
+  8 TIMER_PULSE (e16's three, from the panel router h_ff946049, whose out-signal 8 stands for "go";
+  e13's), 6 DESTROYED (m09's eight consoles, e05's), 25 FINISHED (e13's), -1 (m08_a's, no object).
+  The demo applies each OPERATE to the object of that name among the level's usables
+  (`take_reticules`, play_usables.rs); an object that isn't one is no use target anyway.
+* **A console's chain**, e34's h_09da26aa (`BF_TRIGGER_LOG`): USE_OBJECT [tex] to routers h_14eeda94,
+  h_0e1c2378, h_1bbd1197 and the property trigger h_fccb606d; h_14eeda94 to the timer h_e4c2a242
+  (starts, 5 s), the anim-trigger h_e5f08fe4 (ANIM_START to no one, one leaf's clip; spent after
+  its one entry), four waypoint triggers (door points 32-35 valid), the gate's sound
+  h_f396d45f (metal_door_5, 8.52 s, at the gate) and the voice line h_f10a4b7e (PLAY_DIALOG,
+  dxud_bratton_us00565, 1.73 s: it waits on the dialog queue while another line plays); h_1bbd1197
+  to both consoles' property triggers (h_eec50141: the other console's reticule-action to 0,
+  h_fccb606d: its own), two terminal_07 sounds (2.76 s, one at the console) and h_14eeda94 once more
+  (every entry behind it is once: nothing). 5 s later the timer's TIMER_PULSE: anim-trigger
+  h_e446c3cf (the other leaf's clip), the gate's sound again (h_fa91e4c9), and the voice line's
+  FINISHED goes on to h_ea031ac4 (us00566).
 
 ## Hints, button gates and panels
 
@@ -643,6 +679,58 @@ the log read and the frames looked at:
   plate; the gate from its panel (`BF_TEST_GOTO=-23.23,79.05,-23.7,80.8 BF_TEST_GO_AT=100
   BF_TEST_USE=0.5`): USE_OBJECT -> router h_1c61561d -> both leaves' anim-triggers, once, 4.96 s.
   Its pickup spawn-triggers fire at the start and make their copies (#278, below).
+* **Consoles (#262)**, `BF_DOOR_LOG=1 BF_TRIGGER_LOG=1 BF_TEST_NO_HOSTILES=1`, `BF_MUTE=1 BF_BACKGROUND=1`,
+  15 fps; e34's opening letterbox taken out with `BF_TRIGGER_FIRE=trigger_letterbox204,12,0.2` (the
+  start script `BF_TEST_GOTO` skips would have), the player put in front of a console with
+  `BF_TEST_GOTO=<start>,<its button>` (`BF_TEST_GO_AT=999` standing) and X held by `BF_TEST_USE`:
+  * e34's console h_09da26aa, take01's and take04's walk (`BF_TEST_GOTO=-33.3,23.7,-34.5,28.2,33.7
+    BF_TEST_WALK=1 BF_TEST_USE=4`): "Hold [X] to activate console." and the ring from 1.87 s (the use
+    point 2.4 m off); X from 4.0 s, used at 4.33 (0.3 s), USE_OBJECT [tex] to routers h_14eeda94,
+    h_0e1c2378 and h_1bbd1197 and the property trigger h_fccb606d at 4.40, the prompt gone that
+    frame (take04: 0.43 s after the press); the other console's property trigger fires too, so both are
+    dead. The gate h_06676419: clip h_0a48ec76 4.40-9.33 (4.96 s, both its parts to 3.92 m), the
+    timer h_e4c2a242 pulses at 9.40 and clip h_10d3fde3 plays 9.40-14.33; metal_door_5 at 4.40 and
+    9.40 (out of hearing at 27 m), four door points valid, the voice line queued at 4.40 (the
+    opening's own dialog holds the queue to 8.67; it plays at once when the queue is free).
+  * the gate from the yard (`BF_TEST_GOTO=-53.56,30.81,-51.2,41.5,29.1 BF_TEST_GO_AT=999
+    "BF_TRIGGER_FIRE=trigger_letterbox204,12,0.2;@h_09da26aa,14,4.4"`, take04's view after its
+    teleport): the left leaf rises from the event, the middle one from 5.0 s on, the gate open at
+    14.4 s; take04's frames (a frame-difference of the leaf regions: the left one moves from the
+    first frames in the yard, the middle one from 10.4 to 10.65 s of video, 5.2 s after the
+    activation: its first motion is slow) show the same two stages. The lighting differs (the
+    take is darker: not this ticket's).
+  * the gate's collision (`BF_TEST_GOTO=-52.5,31.0,-52.5,50.0,29.1 BF_TEST_GO_AT=6
+    "BF_TRIGGER_FIRE=trigger_letterbox204,12,0.2;@h_09da26aa,14,1"`): the first leaf is past 0.6
+    of its clip at 4.0 s, the gate stops blocking, and Tex walked through it from 6 s while the
+    middle leaf was still down until 6.0 s: frames 105-135.
+  * console h_00dd163c alone (take03: `BF_TEST_GOTO=-34.2,60.5,-36.5,60.4,35.3
+    BF_TEST_USE="3,0.2;4.5,1.2"`): the 0.2 s tap does nothing (the prompt stays), the hold from 4.5
+    uses it at 4.80; the same gate chain from 4.87. Three holds on h_09da26aa (take05:
+    `BF_TEST_USE="4.5,0.9;8,1.5;12,1.5"`): used at 4.80, the other two find no target.
+  * e23 (`BF_FLAG_LOG=1`): h_f9bcceaf (-66.2, 25.3, -98.1) opens gate h_14690535 (clip h_10d3fde3 at
+    3.40, h_0a48ec76 at 8.40, the 5 s timer trigger_timer263) and its gamevar sets
+    missions/h_fd6709be/h_12f6e3b9/state: the objectives menu (`BF_TEST_OBJECTIVES=6,2`) reads "Open
+    the main gate. (completed)", +$1200 (2000 x 0.6); h_ebb2af83 opens h_1d6e35a3 (h_0a48ec76 at
+    3.40, h_10d3fde3 at 8.40) and sets .../h_fbd70481/state ("Open the rear gate."), +$1200;
+    h_e141eb63 opens h_fdd04c6b (its one clip, h_19dbcaa7). m08_a's h_f0bbfe39: its router's
+    sound, then the m08_gate1 script's USER_SIGNAL1 1.07 s later opens h_e3b5bd91 (x2.5, both
+    clips). m14: h_e447bf5f (m14_a) opens h_e3b56e9c at the use (the script's 103 on its
+    anim-trigger) and sets missions/m14/h_f761dcc1/state, +$48000 (80000 x 0.6); m14_b's
+    h_ed408fc9 and h_f649de73 open h_eab25e0a and h_f1bb0fb0 and set h_e56fbded and h_ec688d7b
+    (+$48000 each); m14_d's h_1b2a7b46 opens h_eab25e0a at x0.5. e16: h_e846dbf5 opens h_f4d77cfd
+    (one clip), h_00dd163c h_14690535 (both clips at once, and the panel h_066a5235 dead),
+    h_1bd44786 h_06676419 and h_0f60548f (and the panel h_0f6d62a3 dead). e16's first gate h_e203f1ba
+    (panels h_14643319 and h_1d63038f, `BF_TEST_GOTO=-186.26,-71.12,-184.0,-70.7,11.6`
+    `BF_TEST_USE=3`): the panel's router turns the USE_OBJECT into TIMER_PULSE for the gate's anim-trigger
+    h_fef9de5e (clip h_0a48ec76) and the three property triggers, which make both panels and the
+    "panel" h_f5bee5a1 dead: one leaf rises (the other panel's router would play the other clip,
+    h_10d3fde3), where the demo's single clock opened both before #262. The m14 consoles stay
+    usable (no property trigger on their use): m14_a's prompt is back at 7.33 s, when the gate's
+    script, which held the player, has ended.
+  * regression: the tutorial's panel (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100
+    BF_TEST_USE=1.5`): the prompt from the start, used at 2.00 s (0.5 s), both panels dead, the
+    gate's two leaves from 3.07 s at x2.5 (2.0 s); sdm_e34's (`BF_TEST_GOTO=-23.23,79.05,-23.7,80.8
+    BF_TEST_GO_AT=100 BF_TEST_USE=0.5`): used at 1.00 s, both leaves' clips from 1.07 s, 4.96 s.
 * **Pickup copies and their respawn (#278)**, `BF_TRIGGER_LOG=1 BF_PICKUP_LOG=1 BF_WEAPON_LOG=1`:
   * sdm_e34 (`BF_CHARACTER=3 BF_TEST_GOTO=-81.78,63.86,-81.78,59.0 BF_TEST_GO_AT=999`): 54 copies at
     the first update, each OPERATED bound to its timer by its relay ("h_f106c777 (relay) binds
@@ -815,14 +903,20 @@ the log read and the frames looked at:
   character its subject is a character from its vtable +0xf4 object's +0x45c (perhaps its last
   attacker: not traced), not the dead object as the demo has it (#221's reading; nothing in the
   tutorial reads it).
-* Usable game objects (`reticule-action` 1 consoles, e34's) don't send USE_OBJECT yet: only
-  world buttons have the panel prompt.
+* Usable objects (#262): the AI doesn't use a console or a panel (the game's door-point branch
+  that would use a world button is dead: code-map.md, FUN_00026820); a console that survives its
+  use (m14's, m09's, three of e16's: no property trigger on its use) is used again by the next
+  press and sends USE_OBJECT again; whether the game does (nothing in 0x158140 stops it) isn't seen:
+  m14's consoles weren't got in the game (todo/262-consoles notes: m14_a's was on a damaging floor,
+  no prompt showed in several aimed views, and a 1.5 s hold did nothing: it may not be live until
+  the chapter's script state). A console's display name "Shrike console" (m09, m14) is the data's.
+  The panels' own one use and their 0.5 s hold are the demo's (maps.md).
 * Animated objects only looped (the tutorial's looping props h_e5b1f2c8, h_0cbffd71, the fans
   and other props of e01, e16, e23 and m03_a, m08_b's dish) aren't moved: an object on transform
   joints or hinges is moved, as a door, only when an anim-trigger plays it once (#261,
   [maps.md](maps.md), "Doors and gates"). An anim-trigger's AC_PAUSE / STOP / RESET_TIME and the
-  looping and oscillating modes are read as forward or backward, and a door's clips run on one
-  clock (the last entry's time-scale: m01_a's gate plays its two leaves at x5.5 and x1).
+  looping and oscillating modes are read as forward or backward; a door's clips each run on a
+  clock of its own since #262 (m01_a's gate plays its two leaves at x5.5 and x1).
 * The start points' facing (+z, arena.rs) hasn't been checked against footage; spawn-triggers
   face -z (above).
 * Sound-triggers (#223):

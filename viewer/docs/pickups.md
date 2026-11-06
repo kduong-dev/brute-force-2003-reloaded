@@ -325,8 +325,8 @@ and `todo/reference/DNA + Weapon Pickups.mp4`.
   on one the character can use, red (a0 20 20) on one it can't, a lighter blue (3c 69 dc) while
   it's being picked up. The gate panels' ring is the same widget: 48 units, where it was 60.
   * It sits on the point the tracker keeps for its target (its +0x1c from FUN_000bf2f0):
-    FUN_0015a480's, the target model's hardpoint h_10f81d34 if it has one (a gate panel's button:
-    play.rs `PANEL_BUTTON`), else the target's position. None of the 59 weapon types' models or
+    FUN_0015a480's, the target model's hardpoint h_10f81d34 if it has one (a gate panel's or a
+    console's button: play_usables.rs `BUTTON`), else the target's position. None of the 59 weapon types' models or
     their parts has that hardpoint, so on a gun it's the gun's position, the middle of its model
     (the L-Shot-50's bounding centre h_e99750a9 is 1 cm from it). The reach and the line of sight
     are measured from FUN_0015a500's point, h_ee389721 or the position: the same for a gun.

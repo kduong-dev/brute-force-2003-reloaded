@@ -55,7 +55,8 @@
 //!    character is the demo's cylinder (BODY_RADIUS, BODY_HEIGHT), not its Ipion body.
 //!  * anim-trigger (0x204d00, FUN_00204bb0): OPERATE plays its entry's clip on its first object,
 //!    forward or backward (wwit-debugging) at its time-scale, ANIM_START / ANIM_BACK_START to its
-//!    targets when the way it plays changes. The doors (play.rs `doors`) are what it moves.
+//!    targets when the way it plays changes. The doors (play.rs `doors`) are what it moves, each
+//!    clip on a clock of its own (#262).
 //!  * sound-trigger and dialog-trigger (#223, play_sound_triggers.rs; 0x206450 / 0x206690,
 //!    0x206d20 / 0x206ee0): PLAY_SOUND plays a sound library entry (alike everywhere, or at its
 //!    place with its distances; only near a player with h_15bc1769), PLAY_DIALOG queues it on
@@ -84,13 +85,16 @@
 //!  * waypoint-trigger (#334, 0x202c50 -> FUN_00202ba0): OPERATE sets its `world-point`'s valid
 //!    bit to its `set-valid` (and +0x28 bit 0 to its h_06d92de9), -1 leaving it; play_nav.rs
 //!    applies it to the route graph (`take_waypoints`).
-//!  * every other class (property ...): its base actions; its own actions are logged as left to
-//!    their step (`bf::triggers::later_step`). Evaluate triggers: base only.
+//!  * property trigger h_14cccfaa (#262, 0x20b730): OPERATE sets its first object's reticule-action
+//!    (h_e92285dc, 0 on every one in the data: the object stops being usable, which is why a
+//!    console or a panel is used once); play_usables.rs applies it (`take_reticules`).
+//!  * every other class (the AI commands ...): its base actions; its own actions are counted as
+//!    used. Evaluate triggers: base only.
 //!
 //! Object events from the world: a character's death (DESTROYED, from its trigger name: a spawn
-//! copy's), a named breakable object broken (DESTROYED), a wall panel used (USE_OBJECT, play.rs
-//! `doors`), a pickup taken (PICKUP_OBJECT, play_pickups.rs and play_weapon_pickups.rs: a placed
-//! one's or a spawn-trigger's copy's).
+//! copy's), a named breakable object broken (DESTROYED), a wall panel or a console used
+//! (USE_OBJECT, play_usables.rs), a pickup taken (PICKUP_OBJECT, play_pickups.rs and
+//! play_weapon_pickups.rs: a placed one's or a spawn-trigger's copy's).
 //!
 //! Test hooks:
 //!  * BF_TRIGGER_LOG=1: every event a trigger or an object sends (who, the signal, its subject
@@ -134,9 +138,9 @@ pub fn plugin(app: &mut App) {
 }
 
 /// An object's event from the world (the game's FUN_001fe3d0: to the triggers listening to the
-/// object): a wall panel used (USE_OBJECT, play.rs `doors`), a pickup taken (PICKUP_OBJECT,
-/// play_pickups.rs). `from` and `subject` are names (the user, 0 none); `data` the event's
-/// +0x10 (a panel's h_f1660a0d).
+/// object): a wall panel or a console used (USE_OBJECT, play_usables.rs), a pickup taken
+/// (PICKUP_OBJECT, play_pickups.rs). `from` and `subject` are names (the user, 0 none); `data` the
+/// event's +0x10 (a panel's h_f1660a0d; -1 on a console's).
 pub struct ObjectEvent {
     pub from: u32,
     pub signal: i64,
@@ -409,6 +413,10 @@ enum ClassState {
     /// +0x40, resolved at +0x44), `set-valid` (h_e77cb64e, +0x48) and h_06d92de9 (+0x4c), -1 each
     /// for "leave it" (every h_06d92de9 in the data is -1)
     Waypoint { point: u32, valid: i64, claim: i64 },
+    /// property trigger (#262, its parser FUN_0020b680): the reticule-action it sets (+0x40). Its
+    /// other three (the object's +0x71 bit 6 from +0x44, the hazard kind and its float, +0x48 and
+    /// +0x4c, for a special use: `Class::Property`) are an object's own state the demo doesn't keep
+    Property { reticule: i64 },
 }
 
 /// Which class a trigger runs as (for `update` and `deliver`).
@@ -438,6 +446,7 @@ enum Kind {
     Radar,
     Relay,
     Waypoint,
+    Property,
 }
 
 /// A trigger as the game keeps it: its data (the entries' use counts are live) and +0x3d's bits:
@@ -604,6 +613,20 @@ pub struct Triggers {
     /// the waypoint triggers' OPERATEs since last taken (play_nav.rs `waypoints` applies them to
     /// the route graph)
     waypoints: Vec<super::nav::WaypointSet>,
+    /// the property triggers' OPERATEs since last taken (play_usables.rs applies them to the
+    /// level's usable objects)
+    reticules: Vec<ReticuleSet>,
+}
+
+/// A property trigger's OPERATE (0x20b730): the reticule-action it gave its first object. The
+/// level's usable objects take it from `Triggers::take_reticules` (play_usables.rs).
+pub struct ReticuleSet {
+    /// the trigger
+    pub trigger: u32,
+    /// its first object, by name
+    pub object: u32,
+    /// the reticule-action it set (RACT_: 0 none, 1 use, 2 pickup, 6 special use)
+    pub action: i64,
 }
 
 /// A map starts: its triggers as the level file has them, the listeners linked (FUN_001febb0),
@@ -652,6 +675,7 @@ fn start(mut commands: Commands, map: Res<MapLevel>, game: Res<GameData>, spawns
             Class::LevelOver { ends_mission } => ClassState::LevelOver { ends_mission: *ends_mission },
             Class::Zone { next } => ClassState::Zone { next: next.clone() },
             Class::Relay { keep } => ClassState::Relay { keep: *keep },
+            Class::Property { reticule, .. } => ClassState::Property { reticule: *reticule },
             Class::Other if t.tag == H_WAYPOINT => waypoint_class(t),
             Class::Other => cutscene_class(t),
         };
@@ -967,9 +991,9 @@ pub(super) fn run(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Trigge
                     }
                     // (its sound is its sound-trigger's, which the anim-trigger's ANIM_START /
                     // ANIM_BACK_START reaches: play_sound_triggers.rs)
+                    // (the clip's own clock, `DoorState::play`)
                     let opening = !backward;
-                    d.opening = opening;
-                    d.rate = rate;
+                    d.play(clip, opening, rate);
                     if tr.log || std::env::var("BF_DOOR_LOG").is_ok() {
                         println!("t {now:.2}: door {} {} (clip h_{clip:08x} x{rate}) by {}", tr.label(object), if opening { "opens" } else { "closes" },
                                  tr.label(tr.live[trigger].t.name));
@@ -1273,6 +1297,7 @@ impl Triggers {
             ClassState::Radar { .. } => Kind::Radar,
             ClassState::Relay { .. } => Kind::Relay,
             ClassState::Waypoint { .. } => Kind::Waypoint,
+            ClassState::Property { .. } => Kind::Property,
         }
     }
 
@@ -1457,6 +1482,7 @@ impl Triggers {
             Kind::Radar => self.radar_trigger(i, ev),
             Kind::Relay => self.relay(i, ev),
             Kind::Waypoint => self.waypoint(i, ev),
+            Kind::Property => self.property(i, ev),
             Kind::Other => self.other(i, ev),
         }
         self.depth -= 1;
@@ -1970,8 +1996,8 @@ impl Triggers {
         }
     }
 
-    /// A class not run yet: its base actions as every handler has them; its own actions logged
-    /// (and counted as used, as its handler counts them).
+    /// A class not run: its base actions as every handler has them; its own actions counted as
+    /// used, as its handler counts them.
     fn other(&mut self, i: usize, ev: Ev) {
         if !self.live[i].enabled {
             return self.base_and_after(i, &ev);
@@ -1983,11 +2009,6 @@ impl Triggers {
             if matches!(action, act::ENABLE | act::DISABLE | act::TOGGLE_ENABLE) || (act::USER_SIG1..=act::USER_SIG8).contains(&action) {
                 self.base_and_after(i, &ev);
                 continue;
-            }
-            if self.log {
-                if let Some(step) = data::later_step(self.live[i].t.tag) {
-                    println!("t {:.2}: {} {} on {}{}: not run yet ({step})", self.clock, self.who(i), act::name(action), sig::name(ev.signal), self.about(&ev));
-                }
             }
             self.entry_used(i, j, &ev);
         }
@@ -2284,6 +2305,43 @@ impl Triggers {
         std::mem::take(&mut self.waypoints)
     }
 
+    /// The property trigger's handler (0x20b730, #262): disabled, its base actions (FUN_001ff0f0,
+    /// then FUN_001ff000); enabled, each entry that answers: OPERATE gives its first object (the
+    /// head of its list, 0x20b75b-0x20b7bf) its reticule-action (`ReticuleSet`: the byte at the
+    /// object's +0x79, 0x20b826) and the entry is counted (FUN_001feac0) whether the object was
+    /// found or not (0x20b880); the rest the base's. A console or a panel the trigger names is no
+    /// longer a use target once it's 0 (play_usables.rs).
+    fn property(&mut self, i: usize, ev: Ev) {
+        if !self.live[i].enabled {
+            return self.base_and_after(i, &ev);
+        }
+        let name = self.live[i].t.name;
+        let mut k = 0;
+        while let Some(j) = self.next_entry(i, &ev, k) {
+            k = j + 1;
+            let action = self.live[i].t.entries[j].action;
+            let ClassState::Property { reticule, .. } = self.live[i].state else { return };
+            if action != act::OPERATE {
+                self.base_and_after(i, &ev);
+                continue;
+            }
+            if let Some(&object) = self.live[i].t.objects.first() {
+                self.reticules.push(ReticuleSet { trigger: name, object, action: reticule });
+                if self.log {
+                    println!("t {:.2}: {} OPERATE on {}: the reticule-action of {} to {reticule}", self.clock, self.who(i), sig::name(ev.signal),
+                             self.label(object));
+                }
+            }
+            self.entry_used(i, j, &ev);
+        }
+    }
+
+    /// The property triggers' OPERATEs since last taken (play_usables.rs applies them to the
+    /// level's usable objects).
+    pub(super) fn take_reticules(&mut self) -> Vec<ReticuleSet> {
+        std::mem::take(&mut self.reticules)
+    }
+
     /// Whether something has been asked of the world (a spawn, a warp, a door, a removal) that
     /// `run` hasn't done yet: a script's event that asked it waits for it (play_script.rs `update`).
     pub(super) fn has_acts(&self) -> bool {
@@ -2443,6 +2501,38 @@ mod tests {
         // (an event without a subject binds nothing)
         tr.deliver(0, Ev::new(sig::OPERATED, 0));
         assert_eq!(tr.live[1].t.objects, vec![next]);
+    }
+
+    /// #262 (0x20b730): a property trigger's OPERATE gives its first object its reticule-action; one
+    /// disabled does nothing. e34's two consoles are fed by a router that hears both (h_1bbd1197), so
+    /// either's USE_OBJECT reaches both property triggers, each acting on its own console.
+    #[test]
+    fn a_property_trigger_takes_its_object_out_of_use() {
+        let (console_a, console_b, prop_a, prop_b, router) = (0x0000_000A, 0x0000_000B, 0x0000_0010, 0x0000_0011, 0x0000_0020);
+        let property = |name: u32, object: u32| {
+            let mut l = live(data::H_PROPERTY, name, Class::Property { reticule: 0, flag: false, kind: 0, time: 0.0 }, ClassState::Property { reticule: 0 },
+                             &[(sig::USE_OBJECT, act::OPERATE)], &[]);
+            l.t.objects = vec![object];
+            l
+        };
+        let mut tr = Triggers::default();
+        tr.live.push(property(prop_a, console_a));
+        tr.live.push(property(prop_b, console_b));
+        tr.live.push(live(h("router-trigger"), router, Class::Router { filters: false, out_signal: -1 }, ClassState::Router { filters: false, out_signal: -1 },
+                          &[], &[prop_a, prop_b]));
+        tr.by_name.extend([(prop_a, 0), (prop_b, 1), (router, 2)]);
+        tr.listeners.insert(console_a, vec![2, 0]);
+        tr.listeners.insert(console_b, vec![2, 1]);
+        tr.object_event(console_a, Ev { signal: sig::USE_OBJECT, id: 0, subject: 7, data: -1 });
+        let sets: Vec<(u32, u32, i64)> = tr.take_reticules().iter().map(|r| (r.trigger, r.object, r.action)).collect();
+        // (its own trigger and the router's: the other console's too; each entry counted)
+        assert!(sets.contains(&(prop_a, console_a, 0)) && sets.contains(&(prop_b, console_b, 0)), "{sets:?}");
+        assert_eq!(tr.live[0].t.entries[0].used, 2);
+        assert!(tr.take_reticules().is_empty());
+        // (a disabled one answers with its base actions only)
+        tr.live[1].enabled = false;
+        tr.object_event(console_b, Ev { signal: sig::USE_OBJECT, id: 0, subject: 7, data: -1 });
+        assert!(tr.take_reticules().iter().all(|r| r.object != console_b));
     }
 
     /// Without h_f49c30af the binding lasts the event only (the teleporter pads' relays,

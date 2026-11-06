@@ -648,6 +648,12 @@ pub enum Class {
     /// listen to it) and passes on; `keep` is its h_f49c30af (+0x40): the binding stays, else
     /// it's undone once the event has passed
     Relay { keep: bool },
+    /// the property trigger H_PROPERTY (vtable 0x395780, parser FUN_0020b680, handler 0x20b730,
+    /// #262): OPERATE sets its first object's reticule-action (the object's byte +0x79) to
+    /// `reticule` (h_e92285dc, +0x40: 0 on all 52 in the data, so the object stops being usable)
+    /// and the object's +0x71 bit 6 to `flag` (h_e8ce605a, +0x44); for a 6 (special use) its
+    /// hazard kind +0x110 to `kind` (h_06761f1c, +0x48) and +0x114 to `time` (h_ea199c91, +0x4c)
+    Property { reticule: i64, flag: bool, kind: i64, time: f32 },
     /// every other class: its base actions only, until its step runs it
     Other,
 }
@@ -848,6 +854,9 @@ fn class(e: &Element) -> Class {
         Class::Zone { next: e.attr(H_NEXT_ZONE).and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase() }
     } else if tag == H_RELAY {
         Class::Relay { keep: flag(e, H_RELAY_KEEP) }
+    } else if tag == H_PROPERTY {
+        Class::Property { reticule: int(e, H_PROPERTY_RETICULE, 0), flag: flag(e, H_PROPERTY_FLAG), kind: int(e, H_PROPERTY_KIND, 0),
+                          time: float(e, H_PROPERTY_TIME, 0.0) }
     } else {
         Class::Other
     }
@@ -869,6 +878,22 @@ pub const H_RELAY: u32 = 0x0CB6_02D0;
 /// passed (0x201310 undoes it with FUN_001fea10 only when it's false). True on every pickup relay
 /// of the multiplayer maps (sdm_e34's 54); false on some of the campaign's (m04_c's).
 const H_RELAY_KEEP: u32 = 0xF49C_30AF;
+/// The property trigger's element, h_14cccfaa (vtable 0x395780; the class's name isn't in the
+/// data): 52 over the game's levels (the campaign's, the tutorial's and sdm_e34's). See
+/// `Class::Property`.
+pub const H_PROPERTY: u32 = 0x14CC_CFAA;
+/// A property trigger's h_e92285dc (+0x40, FUN_0020b680): the reticule-action it sets on its
+/// object (RACT_: 0 none, 1 use, 2 pickup, 3 lock, 6 special use; the name table 0x3beb64). The
+/// handler stores its low byte at the object's +0x79 (0x20b826) and, for a non-zero one on an
+/// object not yet in the world's update list, puts it there (0x20b842, FUN_000e0350).
+const H_PROPERTY_RETICULE: u32 = 0xE922_85DC;
+/// A property trigger's h_e8ce605a (+0x44): bit 0 goes to the object's +0x71 bit 6 (0x20b854).
+const H_PROPERTY_FLAG: u32 = 0xE8CE_605A;
+/// A property trigger's h_06761f1c (+0x48): the hazard kind it gives an object it makes a special
+/// use (a 6: 0x20b868-0x20b87a stores it at the object's +0x110).
+const H_PROPERTY_KIND: u32 = 0x0676_1F1C;
+/// A property trigger's h_ea199c91 (+0x4c): the hazard's float, +0x114 (0.34 on two of e16's).
+const H_PROPERTY_TIME: u32 = 0xEA19_9C91;
 
 /// Every trigger of a level file's elements (`all`, its walk), in the file's order.
 pub fn read(all: &[&Element]) -> Vec<Trigger> {
@@ -905,20 +930,9 @@ pub fn class_name(tag: u32) -> String {
         0xE9B3_AE8E => "message".into(),
         0xE2B9_C3A2 => "input".into(),
         0x10EC_B459 => "waypoint".into(),
-        0x14CC_CFAA => "property".into(),
+        H_PROPERTY => "property".into(),
         0x1308_18C0 => "damage-plate".into(),
         H_RELAY => "relay".into(),
         t => format!("h_{t:08x}"),
     }
-}
-
-/// Which step of #28 runs a class the runtime doesn't run yet (plan.md §2; the steps' tickets
-/// #222-#228), for the log; None for the classes it runs (the gamevar and score triggers since
-/// step 2, #221; the script, letterbox and warp triggers since step 3, #222; the sound- and
-/// dialog-triggers since step 4, #223; the message, input, menu and event triggers since step 5,
-/// #224; the level-over and zone triggers since step 7, #226; the radar-trigger and the damage
-/// plate since step 9, #228; the waypoint trigger since #334, bf/nav.rs), and for the evaluate
-/// trigger, which does nothing a player sees (its base actions only).
-pub fn later_step(tag: u32) -> Option<&'static str> {
-    (tag == 0x14CC_CFAA).then_some("a later step (object properties)")
 }

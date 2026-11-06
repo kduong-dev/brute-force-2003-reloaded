@@ -979,6 +979,20 @@ pub struct Door {
     pub centre: Vec3,
     pub leaves: Vec<Leaf>,
     pub duration: f32,
+    /// the clips that move its leaves, in their order (`DoorClip`): each runs on a clock of its own
+    /// (bf_play's play.rs `DoorState`), as each anim entry the level's anim-triggers play on the
+    /// object plays one clip. A gate has one clip a leaf, and e34's, e23's and e16's start their two
+    /// at different times (#262). Never empty: a door whose leaves no clip names has the one
+    /// clip 0, which every entry plays.
+    pub clips: Vec<DoorClip>,
+}
+
+/// One of a door's clips: its name (the animation archetype an anim entry names; 0 for the leaves
+/// no clip names, which any entry moves) and how long it takes (s).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DoorClip {
+    pub name: u32,
+    pub duration: f32,
 }
 
 /// A door leaf: its entity, its place with its joint at rest (the door shut, as the level places
@@ -988,6 +1002,9 @@ pub struct Leaf {
     pub entity: Entity,
     pub closed: Transform,
     pub motion: LeafMotion,
+    /// the clip that names its part and so moves it (`DoorClip::name`): its channel is that clip's;
+    /// 0 when none does
+    pub clip: u32,
 }
 
 /// How a door leaf moves. Its archetype's animation set (named as the archetype) has a clip per
@@ -1046,6 +1063,8 @@ impl Leaf {
 pub struct Animated {
     pub joint: PartJoint,
     pub keys: AnimKeys,
+    /// the clip whose channel it is (the first that names the part with one of the joint's kind)
+    pub clip: u32,
 }
 
 /// A channel's keys, (time s from the clip's start, value), a sampled channel's frames alike
@@ -1124,15 +1143,15 @@ pub fn animated_parts(game: &Game, arch: u32) -> HashMap<u32, Animated> {
     }
     for (name, joint) in WeaponModel::joints(game, arch) {
         let Some(joint) = joint.filter(|j| j.kind == TRANSFORM_JOINT || j.kind == HINGE_JOINT) else { continue };
-        let keys = clips.iter().flat_map(|c| c.targets.iter()).filter(|t| t.0 == name).find_map(|t| match joint.kind {
-            TRANSFORM_JOINT => game.channel_xform_keys(t.1).filter(|k| !k.is_empty()).map(AnimKeys::Xform),
-            _ => game.channel_angle_keys(t.1).filter(|k| !k.is_empty()).map(AnimKeys::Angle),
+        let keys = clips.iter().flat_map(|c| c.targets.iter().map(move |t| (c.name, t))).filter(|(_, t)| t.0 == name).find_map(|(clip, t)| match joint.kind {
+            TRANSFORM_JOINT => game.channel_xform_keys(t.1).filter(|k| !k.is_empty()).map(|k| (clip, AnimKeys::Xform(k))),
+            _ => game.channel_angle_keys(t.1).filter(|k| !k.is_empty()).map(|k| (clip, AnimKeys::Angle(k))),
         });
-        let Some(keys) = keys else { continue };
+        let Some((clip, keys)) = keys else { continue };
         if joint.parent != h("root") {
             return HashMap::new();
         }
-        out.insert(name, Animated { joint, keys });
+        out.insert(name, Animated { joint, keys, clip });
     }
     out
 }
@@ -1823,11 +1842,13 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 None => { commands.entity(part).insert(MeshMaterial3d(p.material.clone())); }
             }
             if let Some((axis, travel)) = p.slide {
-                let channel = clips.iter().find_map(|c| c.targets.iter().find(|t| t.0 == p.name)).and_then(|t| game.channel_floats(t.1));
+                // (the first clip that names the part: its channel and its clock)
+                let named = clips.iter().find_map(|c| c.targets.iter().find(|t| t.0 == p.name).map(|t| (c.name, t.1)));
+                let channel = named.and_then(|(_, ch)| game.channel_floats(ch));
                 let (interval, curve) = channel.unwrap_or((1.0, vec![]));
-                leaves.push(Leaf { entity: part, closed: at, motion: LeafMotion::Slide { axis, travel, curve, interval } });
+                leaves.push(Leaf { entity: part, closed: at, motion: LeafMotion::Slide { axis, travel, curve, interval }, clip: named.map_or(0, |n| n.0) });
             } else if let Some(a) = moving.get(&p.name).filter(|_| animate) {
-                leaves.push(Leaf { entity: part, closed: at, motion: LeafMotion::Animated(a.clone()) });
+                leaves.push(Leaf { entity: part, closed: at, motion: LeafMotion::Animated(a.clone()), clip: a.clip });
             }
         }
         // (an animated door is one even if none of its moving parts draws, so that the door
@@ -1841,7 +1862,19 @@ pub fn spawn_level(commands: &mut Commands, game: &mut Game, level: &Level, mesh
                 println!("door {} type h_{:08x} arch h_{arch:08x} at {:.1} leaves {}{kinds}", doors.len(), o.kind, centre, leaves.len());
             }
             let duration = clips.iter().map(|c| c.duration).reduce(f32::max).unwrap_or(DOOR_TIME);
-            doors.push(Door { name: o.name, centre, leaves, duration });
+            // (a clip a leaf takes its channel from, each once, in the leaves' order; clip 0 for
+            // a leaf no clip names, and for a door with no leaf at all)
+            let mut door_clips: Vec<DoorClip> = vec![];
+            for l in &leaves {
+                if !door_clips.iter().any(|c| c.name == l.clip) {
+                    let duration = clips.iter().find(|c| c.name == l.clip).map_or(duration, |c| c.duration);
+                    door_clips.push(DoorClip { name: l.clip, duration });
+                }
+            }
+            if door_clips.is_empty() {
+                door_clips.push(DoorClip { name: 0, duration });
+            }
+            doors.push(Door { name: o.name, centre, leaves, duration, clips: door_clips });
         }
     }
     // BF_OVERLAP_LOG: large objects whose boxes overlap much (buildings through each other)
