@@ -2,8 +2,8 @@
 
 What a character a level's spawn-trigger makes does on its own: the Red Hand's patrols, their
 walk home, their sight and alert, their fight and aim, and the Confed marines following Tex.
-It's the tutorial's step 8 (#28) and the first slice of #26 (the AI): cover, pursuit, strafing
-and calling for help are #26's. The squad's own AI (`squad_ai`, [squad.md](squad.md)) and the
+It's the tutorial's step 8 (#28) and the first slice of #26 (the AI): cover, strafing and calling
+for help are #26's (the fallback from a target too close is #383's, "The fallback", below). The squad's own AI (`squad_ai`, [squad.md](squad.md)) and the
 test map's NPCs ([testtools.md](testtools.md)) are unchanged; the hit reactions, death and blood
 are [enemies.md](enemies.md)'s.
 
@@ -183,7 +183,8 @@ With a contact known the brain fights: its attack goal's approach and pursuit wa
 Its personality's EVT_ENEMY_SEEN draws the attack goal (GOAL_DEBUG1 for `default`'s line,
 ATTACK_GUARD / ATTACK_GUARD_CROUCH for h_0bb586cf, ATTACK_COVER for h_eed3a76a) and posts
 EVT_USER0 (GOAL_PURSUE) and EVT_USER1 (GOAL_HIDE). The approach and the pursuit are #336's
-(below); the strafes, crouches, cover and hiding are #26's: there it stands.
+(below), the fallback from a target within 3 m is #383's ("The fallback", below); the strafes,
+crouches, cover and hiding are #26's: there it stands.
 
 **Shot, or shot at, while it knows no enemy**: a hit (EVT_DAMAGED_NO_ENEMIES, 0x3e756) or a
 shot passing within 1.5 m (EVT_SHOT_AT_NO_ENEMIES; the radius is the squad's dodge's, a guess)
@@ -309,6 +310,78 @@ by 1: 9 m by 7.) A copy with a home-point has no leash until it's home (FUN_0001
 bit, RETURN_HOME's end sets it), so on its way there it fights whom it sees, EVT_RETURN_HOME's 1.5
 being under EVT_ENEMY_SEEN's 18, as read; the demo's e23 copies do.
 
+## The fallback: a target too close (#383)
+
+`src/bin/play_fallback.rs` (ATTACK_FALLBACK and MOVE_BACK; the link walk is `Graph::away`, [nav.md](nav.md)
+"The link walk"). Read from default.xbe (the asm of 0x44b57, 0x31610, 0x316d0, 0x29920, FUN_00029a00,
+FUN_0004bbd0) and checked against todo/132-mutants take07 (F2b); the rows are in
+[code-map.md](code-map.md).
+
+* **The post** (the sense step, FUN_000447b0 at 0x44b57): once the brain's re-arm timer (+0x118) has
+  run out, a contact that is a character and is seen now whose position record lies **strictly
+  inside FUN_0002e210's radius** (3D, hip to hip: the larger of the type's `<ai>` h_f1dbdb99, 3 m
+  for the Red Hand and every mutant, 4 or 5 elsewhere, and 1.7 x the held gun's Damage radius) posts
+  EVT_TGT_TOO_CLOSE (85) and sets the timer to **1.5 s**, queued or not; one timer a brain, whoever
+  is near. take07's posts are 1.59 s apart (9.60 and 11.19 game seconds); the demo's 1.53 s.
+* **The draw**: the personality's entry for 85 (`default`'s and so the Red Hand's, the mutants',
+  the hounds'; h_0bb586cf's guards too): priority 20.17, **ATTACK_FALLBACK 1 : ATTACK_COVER 0**, over the
+  fight's 18, under PATH_TOWARD_HOME's 20.19 (that goal comes first in `think`). One that refuses
+  (the start finds no way) is struck out and the draw repeated, which comes to ATTACK_COVER: the
+  demo has no cover (#26's), so nothing then and the attack goes on. The Molotov Mutant's entry has
+  priority -1 (NOOP); the Supermutant's and the Shadoon's draw their own goals first (116 the
+  pound, 117), which the demo doesn't have (#212): they stand as before. An event that comes while a
+  hit reaction plays waits for its end (STUN and KNOCKDOWN aren't interrupted), and a reaction
+  that starts during the walk ends it.
+* **The start** (0x31610, FUN_00029a00): the direction **me - the target** (the two position
+  records, 3D, **not normalised**) and the link walk from the character's place (its position and
+  own point) with cos 0.6 and length 7.0 over its route: the first link in each point's list that
+  lies within the cone, 7 m of legs, [nav.md](nav.md). None: refused. The move's heading memory is
+  dropped (`Avoid::dir_was`: it turns at once), the attack goal's approach and pursuit are broken
+  off (they start again after) and the character says fe56cd97 ("the fallback", the mutants' chatter:
+  not said, the chatter is #36's). On a map without world points (the test map's NPCs) the demo
+  walks 7 m straight along the direction.
+* **The update** (0x316d0, then 0x29920, MOVE_LATERAL's walk, the same for MOVE_BACK): **done once
+  the target is over the radius + 5 m away** (8 m: 3D, strictly); else the look is the target, it fires
+  (FUN_00024f80 at 25 degrees: the demo's `ai_fire` bursts, with the placement's accuracy as the
+  standing fire's, the gun up) and the route is walked at the arrival radius **brain+0x4f8, 1.5 m**
+  (the brain constructor's: 0x1693e; ATTACK_VARY's lateral draws set it to 0.6, not here), steered
+  (FUN_000255d0) and moved at **mode 3 held to the pace level with the pace near the route's end**
+  (FUN_0004d970(.., 3, 1, 1)); the route's end ends it too. The update also sets the pace record's
+  +0x24 to 0.1 s each frame, so each notch of the ramp takes a tenth of a second (`Router::step_time`;
+  the pace near the end clears it, as FUN_00058590 does): the first notch still waits out the timer
+  the record had.
+* **How it moves**: facing the target while it moves away. The motion is picked as FUN_001195c0
+  picks it (`avoid::pick` against the view toward the target, as the squad's) and mapped to the
+  type's motion types by the command handler's cases (0x122149-0x1221ff: a stick over 65 percent is
+  the run's variant, the walk level's the walking one): backing off is **BACKSTEP at the walk,
+  BACKPEDAL at the run, MOVE_*_BACK_SLOW / MOVE_*_BACK** sideways, a side step MOVE_LEFT / RIGHT (the
+  SLOW ones at the walk). A request for a motion type the current motion has no transition to
+  fails and changes nothing (FUN_0012eab0), and the mutants have no BACKPEDAL: take07's Ugly asked
+  BACKSTEP at the walk level and kept it for the 3 s of its fallback while the level climbed. The
+  demo's stand-in is the walking variant where the table lacks the run's. The speed is the motion's
+  (the walk speed for BACKSTEP) **x0.8, FUN_0012cb40's backward case** (`Drive::back`,
+  `speed::AI_BACK_FACTOR`): the Ugly's 2.3 m/s walk backs off at 1.84, the footage's 1.82-1.83; the
+  Red Hand's 5.5 m/s run at 4.4. The walk fires: `Drive::fire` keeps the brain's aim and fire
+  where the approach's walk drops them.
+* **After it**: the personality's attack goal is drawn again (F2b's Ugly went from ATTACK_FALLBACK
+  to ATTACK_GUARD_CROUCH). Outside its home area the sense step posts EVT_PAST_HOME_AREA and
+  PATH_TOWARD_HOME (20.19) takes over, walks it home without firing, and a character whose target
+  stands within its home area meets it again within 3 m and falls back again: the tutorial's wall
+  sentry (a 7 m area, Tex standing 2 m from its post) falls back 7 m east along its walkway, is
+  taken home, falls back, and so on every 4 s; F2b's Ugly does the same (ATTACK_FALLBACK,
+  PATH_TOWARD_HOME, THROW_GRENADE, PATH_TOWARD_HOME, ATTACK_FALLBACK, 11-21 game seconds).
+* **GOAL_MOVE_BACK** (48; start 0x29a80, the same update): the same walk 7 m **behind the character**
+  (the third column of its transform, a unit vector, so the 53 degrees of the cone) with no done
+  distance. ATTACK_VARY's RUN_BACK / WALK_BACK (#26 part C) start it; the demo draws none, so
+  `BF_TEST_MOVE_BACK` does. It faces and fires at its target as ATTACK_VARY's state 6 does.
+* **Squad types** (a test map NPC of Brutus, Flint, Hawk or Tex set to fight, a level's marine) have
+  no drive in the demo (`go` moves enemy types only): they never start it and stand and fire as
+  before.
+* **Not here**: ATTACK_COVER, the second draw; F2b's first post (9.60 s) did nothing and the second
+  (11.19 s) started the goal 0.12 s on: the Ugly was in DEBUG1's cover state, crouched at its point,
+  whose event hook (0x36ca0) isn't read (#26 part A); it stood up for 0.6 s before it backed off,
+  and the demo's has no crouch.
+
 ## Held by a script
 
 A character a cutscene holds (119, the script's start, a 105 walk: [cutscenes.md](cutscenes.md))
@@ -331,8 +404,14 @@ let go. The grenade lesson holds the first patrol's two while it plays.
   gun that has a scope it aims through the scope's first level, as the other hooks' aim does
   (play.md, The scope), and leaves the scope it went into once no hostile is in sight.
 * `BF_GOAL_WATCH=<s>` (#336): every s seconds a row for each level character with a brain
-  (not following) and each test map NPC set to fight: its goal, where it is, its own point, its
-  route's entry, its target and how far, its pace ([nav.md](nav.md), test hooks).
+  (not following) and each test map NPC set to fight: its goal (ATTACK_FALLBACK and MOVE_BACK
+  since #383), where it is and its facing (degrees, the demo's yaw), its own point, its route's
+  entry, its target and how far, its pace, and the motion it plays ([nav.md](nav.md), test hooks).
+* `BF_TEST_MOVE_BACK=<s>[,<name>[,<x>,<z>]]` (#383): at s seconds a level character with a brain (not
+  following) whose name contains `name` (any when empty), the nearest to (x, z) when they're given,
+  starts GOAL_MOVE_BACK, which nothing draws yet; with a target in sight it backs off facing and
+  firing at it. `BF_BRAIN_LOG=1` also logs the post, the draw, the start with its route (or why it
+  was refused) and the end (and why); `BF_ROUTE_LOG=1` the route's points.
 * The tutorial's panels (#224) stop the clock until closed: `BF_TEST_PANEL=a,1` closes each
   after 1 s (in the first patrol's run below the WEAPONS panel comes up at ~17 s).
 
@@ -345,6 +424,13 @@ BF_MAP=tutorial BF_TEST_GOTO=89,-55,89,-55 "BF_TRIGGER_FIRE=trigger_router_spawn
 BF_MAP=tutorial BF_TEST_GOTO=89,-55,89,-55 "BF_TRIGGER_FIRE=trigger_router103,ENTER_DETECTOR,1;trigger_router38,ENTER_DETECTOR,1;trigger_router50,ENTER_DETECTOR,1;trigger_router22,ENTER_DETECTOR,1;trigger_router473,ENTER_DETECTOR,1;trigger_router_spawn_first_patrol,USER1,1;h_020415dc,ENTER_DETECTOR,1" BF_BRAIN_LOG=1 BF_ROUTE_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # (#336) e23 staged as todo/132-mutants' F1: Tex warped in once the four live mutants are home
 BF_MAP=e23 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 "BF_TEST_WARP=25,me,-57.7,64.8,180" BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_GOAL_WATCH=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383) the fallback on e23: Tex warped 2 m north of the third Ugly (home (-71.6, 46.2), facing north
+# at 20 s, so he's inside its 60 degrees) at 22 s; the squad off, or it joins in
+BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP=22,me,-71.6,44.2,180 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_ROUTE_LOG=1 BF_GOAL_WATCH=0.25 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383) the tutorial's wall sentry (TUTORIAL_terrorist_5, a guard personality) with Tex 2 m from its post
+BF_MAP=tutorial BF_NO_SQUAD=1 BF_TEST_GOTO=89,-55,89,-55 BF_TEST_WARP=8,me,-49.6,-10.0,270 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_ROUTE_LOG=1 BF_GOAL_WATCH=0.5 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383) the test map: a Filthy Mutant set to fight 2 m from Tex falls back straight, firing
+BF_TEST_GOTO=4.5,30,4.5,30 BF_TEST_NPC="0.5,h_0b5f6e21,enemy,fight,4.5,28" BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_GOAL_WATCH=0.5 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play -- --test
 ```
 
 ## Verified
@@ -428,12 +514,25 @@ todo/28-tutorial's takes:
   "forgets Squad(2) (stealthed)". testtools.md's NPC fight: the same story (enemy Brutus fights
   the squad and dies, Flint set to fight fires back, set to friend stops), the hits' order
   shifted by the squad's field of view.
+* **#383, the fallback** (`BF_MUTE=1 BF_BACKGROUND=1`, 15 fps captures; the numbers and take07's
+  comparison are in [nav.md](nav.md) "Verified"): on e23 the third Ugly with Tex 2 m off posts
+  EVT_TGT_TOO_CLOSE at once, starts ATTACK_FALLBACK (a one-entry route of the link walk, 9.1 m
+  from its own point), backs off facing him and firing, BACKSTEP at 1.84 m/s (take07's 1.82-1.83),
+  and is done 8.0 m from him after 3.7 s; the tutorial's wall sentry backs off along its walkway
+  at 4.4 m/s (BACKPEDAL), is taken home by PATH_TOWARD_HOME and falls back again every 4 s; a test map
+  NPC re-posts every 1.53 s while its target stays within 3 m and each post starts the walk again;
+  `BF_TEST_MOVE_BACK` walks the Ugly's 7 m behind it facing Tex, done at the route's end. The
+  first patrol (`BF_BRAIN_LOG`), the tutorial's routes recipe, sdm_e34's autopilot (298 of 300
+  frames) and e23's F1 are unchanged.
 
 ## Not done
 
-* #26: the attack goals' other moves (strafes, crouches, cover, repositioning for a clear line,
-  the fallback from a target too close), calling for help, investigating noises and bodies, the
-  idle variations (pauses, cautious looks, crouches, walks), grenades.
+* #26: the attack goals' other moves (strafes, crouches, cover, repositioning for a clear line),
+  calling for help, investigating noises and bodies, the idle variations (pauses, cautious looks,
+  crouches, walks), grenades. Of the fallback (#383): ATTACK_COVER, the draw's second goal; the
+  Supermutant's pound and the Shadoon's rocks, which its entry draws first; the crouch an enemy
+  stands up from; the line fe56cd97; MOVE_BACK's own draw (ATTACK_VARY's RUN_BACK / WALK_BACK, part
+  C); a squad type's walk (it has no drive).
 * Of the goals on routes (#336): the follow-ups in [nav.md](nav.md)'s "Not done" (e40's patroller
   called home each round of a chain that leaves its 15 m area, terrorist 6's pauses at two corners
   on its way home, e23's ledge Ugly stepping off its ledge on its way home).

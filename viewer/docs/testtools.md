@@ -63,7 +63,12 @@ a click is any left click off the panel, and F and its teleports do nothing.
     map that has them), until (the near bound + 3 x the stand-off) / 4 from it: 26.25 m for most
     types. There, or for a goal that stands (the guards'), it stays put (but dives from a grenade
     landing near, as the squad does) and aims and fires at the nearest hostile in sight, and the
-    squad AI fires at it. It has no home area and doesn't pursue. A Filthy Mutant
+    squad AI fires at it. A hostile it sees within its too-close radius (3 m for the Red Hand and the
+    mutants) sends it back (ATTACK_FALLBACK, #383, [brain.md](brain.md) "The fallback"): 7 m straight
+    away from it on the floor, facing and firing at it, done once it is 8 m off; a Filthy Mutant
+    (`BF_TEST_GOTO=4.5,30,4.5,30 BF_TEST_NPC="0.5,h_0b5f6e21,enemy,fight,4.5,28"`) backs off at
+    1.84 m/s (BACKSTEP x 0.8) from 2 m to 8 m in 3.7 s. A squad type (Brutus, Flint, Hawk, Tex) set to
+    fight has no drive and stands as before. It has no home area and doesn't pursue. A Filthy Mutant
     (`BF_TEST_GOTO=4.5,30,4.5,30 BF_TEST_NPC="0.5,h_0b5f6e21,enemy,fight,4.5,-15" BF_TEST_HEALTH=5000
     BF_BRAIN_LOG=1 BF_GOAL_WATCH=0.5 -- --test`) dashes in from 45 m and stands 25.9 m from Tex at
     3.1 s, firing from 4.7 s. This is the squad AI's fire, which until now never had a target

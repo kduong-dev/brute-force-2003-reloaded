@@ -18,7 +18,9 @@
 //! #334; BF_ROUTE_COST=1 also times the search across the level, BF_ROUTE_RAYS=1|2 shows what
 //! the legs' corner rays meet, BF_ROUTE_PROBE=ax,ay,az,bx,by,bz one ray and every triangle it
 //! crosses, BF_ROUTE_FACES=x0,z0,x1,z1 the blockers' and hinters' triangles in a box, #335) and
-//! exits (`route_dump`).
+//! exits (`route_dump`). BF_AWAY=<x>,<z>,<dx>,<dz>[,<cos>,<length>] prints the link walk (bf/nav.rs
+//! `Graph::away`, #383: ATTACK_FALLBACK's and MOVE_BACK's) from a character standing there with
+//! that direction, as the level starts, and exits (`away_dump`).
 
 use std::path::PathBuf;
 
@@ -302,6 +304,10 @@ fn main() {
         route_dump(&level, &arena, &v);
         std::process::exit(0);
     }
+    if let Ok(v) = std::env::var("BF_AWAY") {
+        away_dump(&level, &arena, &v);
+        std::process::exit(0);
+    }
     let with_mesh = level.objects.iter().filter(|o| o.archetype.is_some()).count();
     if std::env::var("BF_LEVEL_DUMP").is_ok() {
         for g in &level.sky {
@@ -379,6 +385,61 @@ fn main() {
 /// A character's position over its feet (m): the skeleton's origin, the hips, which the route
 /// code takes as the character's position (bf_play's GROUND, -1.05, the other way).
 const HIPS: f32 = 1.05;
+
+/// BF_AWAY=<x>,<z>,<dx>,<dz>[,<cos>,<length>] (#383, viewer/docs/nav.md "The link walk"): the link
+/// walk (bf/nav.rs `Graph::away`, FUN_0004bbd0) of a character standing at (x, the floor, z) with
+/// direction (dx, 0, dz) as given, **not normalised** (ATTACK_FALLBACK's is me - the target; MOVE_BACK's
+/// a unit vector behind the character), cos 0.6 and length 7.0 unless given. The graph as the level
+/// starts (`route_dump`), the character's own point the nearest valid point. Printed point by point
+/// with each leg, the cone's dot for each (the unit bearing from the character across, times the
+/// direction) and the total of the legs; or why there is none. Then it exits.
+fn away_dump(level: &Level, arena: &bf_viewer::arena::Arena, v: &str) {
+    use bf_viewer::bf::nav::{Graph, OwnPoint, Place};
+    let n: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    if n.len() < 4 {
+        eprintln!("BF_AWAY=<x>,<z>,<dx>,<dz>[,<cos>,<length>]");
+        return;
+    }
+    let (cos, length) = (n.get(4).copied().unwrap_or(0.6), n.get(5).copied().unwrap_or(7.0));
+    let mut g = Graph::new(&level.points);
+    g.level_start(&level.triggers);
+    let floor = arena.floor_below(n[0], n[1], 1e4, bf_viewer::arena::Body::Character).map_or(0.0, |f| f.0);
+    let me = Vec3::new(n[0], floor + HIPS, n[1]);
+    let mut own = OwnPoint::spawned();
+    own.keep_near(&g, me);
+    let dir = Vec3::new(n[2], 0.0, n[3]);
+    let name = |i: u32| {
+        let p = &g.nodes[i as usize];
+        format!("h_{:08x} kind {:2} ({:7.2}, {:6.2}, {:7.2})", p.name, p.kind, p.at.x, p.at.y, p.at.z)
+    };
+    let dot = |i: u32| {
+        let a = Vec2::new(g.nodes[i as usize].at.x - me.x, g.nodes[i as usize].at.z - me.z);
+        if a.length() > 0.0 { a.normalize().dot(Vec2::new(dir.x, dir.z)) } else { 0.0 }
+    };
+    println!("link walk from ({:.1}, {:.1}, {:.1}), own point {}, direction ({:.2}, {:.2}) {:.2} m across, cos {cos}, length {length}", me.x, me.y, me.z,
+             own.point.map_or("none".to_string(), name), dir.x, dir.z, Vec2::new(dir.x, dir.z).length());
+    if let Some(p) = own.point {
+        println!("  the own point: dot {:.2} ({})", dot(p), if dot(p) > cos { "an entry" } else { "not an entry" });
+        for &k in &g.nodes[p as usize].links {
+            println!("  its link {}: dot {:.2}{}", name(k), dot(k), if g.valid(k) { "" } else { " invalid" });
+        }
+    }
+    match g.away(Place::character(me, own.point), dir, cos, length, None) {
+        Some(entries) => {
+            let (mut last, mut total) = (own.point.map_or(me, |p| g.nodes[p as usize].at), 0.0);
+            for (k, e) in entries.iter().enumerate() {
+                let i = e.point.expect("a point");
+                let leg = e.at.distance(last);
+                total += leg;
+                last = e.at;
+                println!("  {k}: {} +{leg:.1} m (total {total:.1} from the own point) dot {:.2}", name(i), dot(i));
+            }
+            println!("{} entries; {:.1} m between its points (the walk is over once it passes {length}); the last is {:.1} m from the character", entries.len(), g.route_length(&entries),
+                     entries.last().map_or(0.0, |e| e.at.distance(me)));
+        }
+        None => println!("no link walk"),
+    }
+}
 
 /// BF_ROUTE=<x>,<z>;<x2>,<z2> (#334, viewer/docs/nav.md): the route (bf/nav.rs `Graph::plan`) a
 /// character standing at (x, the floor, z) takes to the valid world point nearest (x2, the floor

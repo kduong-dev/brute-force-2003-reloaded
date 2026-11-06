@@ -90,6 +90,10 @@
 //!    of it, unless the character's type is a squad type (FUN_00024c00's bit 13, set by FUN_00017f80
 //!    only with the brain's bit 8 clear), and the shot is held within 1.5 x its blast's radius for
 //!    every brain (FUN_00024f80's refusal: play_missile.rs `aim_raise`, `raises`, `lob_holds`, #83).
+//!  - **Too close** (#383, play_fallback.rs): a contact seen within its too-close radius (3 m for
+//!    the Red Hand and the mutants) posts EVT_TGT_TOO_CLOSE, whose personality entry draws
+//!    ATTACK_FALLBACK over the attack goal: it walks 7 m of links away from the target facing it
+//!    and firing, and is done 5 m beyond the radius.
 //!
 //!  - **The command mode** (`Command`, #318): every character's brain has one (brain+0x58, the
 //!    PCMD_ enum, name table 0x3bd210), which picks its personality from its type's `<ai>` and
@@ -535,6 +539,13 @@ impl Sensor {
     /// (FUN_0002c730 at 0x2c886, play_goals.rs).
     pub fn seen_now(&self) -> bool {
         self.contacts.iter().any(|c| c.unseen == 0.0)
+    }
+
+    /// The contacts seen this frame (+0x80 bit 5 of their entries), in the map's order: the sense
+    /// step's EVT_TGT_TOO_CLOSE post looks through them (play_fallback.rs `post`, FUN_000447b0 at
+    /// 0x44b57).
+    pub fn seen_now_who(&self) -> Vec<Who> {
+        self.contacts.iter().filter(|c| c.unseen == 0.0).map(|c| c.who).collect()
     }
 
     /// The contact a test map NPC set to fight goes after (#336, play_goals.rs `npc_fight`): of the
@@ -1064,6 +1075,21 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         }
         let goal = m.goals.attack.unwrap_or(0);
         let foe = b.target.and_then(|w| goals::Foe::of(m, w, everyone));
+        // EVT_TGT_TOO_CLOSE and its ATTACK_FALLBACK (#383, play_fallback.rs): a target within its
+        // too-close radius is backed away from, facing it and firing at it (FUN_00024f80 at 25
+        // degrees in the goal's update), over the attack goal, under PATH_TOWARD_HOME
+        if let fallback::Out::Walking { look } = fallback::run(m, graph.as_deref_mut(), game, b.personality, foe.filter(|_| !guard), everyone, &b.label, dt) {
+            npc.face = look.map_or(m.yaw, |l| {
+                let to = l - m.position;
+                (-to.x).atan2(-to.z)
+            });
+            m.npc = Some(npc);
+            testtools::npc_ai(m, target, None, dt);
+            m.aim = true;
+            aim(m, target, accuracy);
+            m.brain = Some(b);
+            return;
+        }
         let moves = match foe.filter(|_| !guard) {
             Some(f) => {
                 let (standoff, near) = (goals::standoff(m, game), goals::near_bound(m, game));
@@ -1102,6 +1128,16 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         m.router.stop = None;
         if let Some(g) = graph.as_deref_mut() {
             routes::stop(m, g);
+        }
+    }
+    // GOAL_MOVE_BACK from BF_TEST_MOVE_BACK with no fight on (play_fallback.rs): its walk, no target
+    if m.goals.fallback.walk.is_some() {
+        if let fallback::Out::Walking { .. } = fallback::run(m, graph.as_deref_mut(), game, b.personality, None, everyone, &b.label, dt) {
+            npc.face = m.yaw;
+            m.npc = Some(npc);
+            testtools::npc_ai(m, None, None, dt);
+            m.brain = Some(b);
+            return;
         }
     }
     // calm: firing at nothing, facing the way it is

@@ -5,8 +5,9 @@ where a character's routes start, and how a route is walked. The first slice of 
 routes, #334) is the shared machinery; since the second (#335) the AI squad's follow and its Move
 To walk routes ("The squad on routes" below, `src/bin/play_routes.rs`), steered through the AI's
 avoidance since #344 ("The steering", `src/bin/play_avoid.rs`); since the third (#336) the level
-characters' goals walk them too ("The enemies on routes", `src/bin/play_goals.rs`). The script
-walks are #337; the Move To cursor's filter takes a point's valid bit from the graph
+characters' goals walk them too ("The enemies on routes", `src/bin/play_goals.rs`); since #383 their
+fallback from a target too close walks a route of another kind, the link walk ("The link walk",
+`Graph::away`, `src/bin/play_fallback.rs`). The script walks are #337; the Move To cursor's filter takes a point's valid bit from the graph
 ([squad.md](squad.md)).
 
 Everything is read from default.xbe (static, not run): the route request FUN_000416a0, the search
@@ -580,6 +581,9 @@ pace level, turned at 200 degrees a second. An enemy type moves by its type's sp
   height over the home point) or at the route's end. ATTACK_VARY's start refuses, and its update
   fails, within 1 m of the edge with its target outward (FUN_00024080: the way home and the way to
   the target, their dot under 0.3), so it fights from there.
+* **ATTACK_FALLBACK and MOVE_BACK** (#383): a route of the link walk ("The link walk" below), walked
+  by 0x29920 at 1.5 m and mode 3 on this same route record, so the AI update's steps and the stuck
+  handling run on it as on any; [brain.md](brain.md) "The fallback" has the rest.
 * **GOAL_ATTACK_GUARD from the stuck handling** (FUN_00042620): after a detour that found nothing,
   a brain out of the squad whose target was seen in the last second stands and fires for 6 s
   instead of the re-route; its goal is done and starts again after.
@@ -594,6 +598,60 @@ pace level, turned at 200 degrees a second. An enemy type moves by its type's sp
 The test map has no world points: an NPC set to fight there (`BF_TEST_NPC=...,fight`) walks
 straight at its target as the approach would, its budget always met, with no pursuit and no
 leash ([testtools.md](testtools.md)).
+
+## The link walk: away from a target (#383)
+
+`Graph::away` (bf/nav.rs; FUN_0004bbd0 with FUN_0004bb70 and FUN_0004ba00, the rows are in
+[code-map.md](code-map.md)): a route that is not searched for. From a place it takes, point by point,
+**the first link in the current point's list that lies within a cone round a direction**, until the legs
+add up to more than a length. ATTACK_FALLBACK and MOVE_BACK walk it away from a target or behind the
+character (cos 0.6, 7 m: [brain.md](brain.md) "The fallback"), MOVE_LATERAL (3 m sideways: its length is
+the brain's +0x4f4, 7 by the constructor and 3 from a lateral draw) and GOAL_HOUND_ATTACK (9 and 12 m;
+nothing posts it) call it too. Read from the asm; every step below is checked against take07's Ugly
+(the next section).
+
+* **The place**: a character's (FUN_0011dfa0: its position, its own point, and a flag that says the
+  position is its own) or a point's. A place with no point gives no route (before the old route is
+  reset: FUN_0004e8f0 runs after that test).
+* **The origin** of every test is the place's own position, or the point's position for a place
+  without one. **It never moves**: each candidate is held to the cone as seen from where the walk
+  started, not from the point before it. (A step straight across, 90 degrees off the way, is taken
+  while the point is within 53 degrees of the start's bearing.)
+* **The first entry**: with the character's own position, its own point is tried as a candidate and is the
+  route's first entry when it lies in the cone from the character (one behind it isn't, nor one exactly
+  under it: an offset of 0 passes nothing); either way its links are the ones walked first and **the first
+  leg is counted from it** (the character's way to the first entry isn't: the length is point to point).
+* **A candidate** passes when it isn't on the route yet (the same point, or a place within 1e-10 on
+  every coordinate squared), the filter (none in any caller) says yes, it is valid (+0x28 bit 2) and
+  not avoided (bit 3), and the unit vector of the xz offset from the origin, dotted with the direction's
+  x and z (its y is multiplied by 0), is **over** the cosine. **The direction isn't normalised**: ATTACK_FALLBACK's
+  is me - the target, so its length across scales the dot: a target 1.1 m off needs the unit
+  bearing within cos^-1 (0.6 / 1.1) = 57 degrees, one 3 m off within 78; a target within 0.6 m
+  across leaves no link at all. MOVE_BACK's is a unit vector (53 degrees).
+* **The order** is the list's (the data's order of the point's links, FUN_0020d220), and the first
+  passing link is taken, not the best: F2b's cover point has five links, the one straight away
+  (dot 1.12) is the last, the Ugly took the first that passed (dot 0.90), west.
+* **The end**: the sum of the 3D legs **strictly over** the length (the last leg may carry it past:
+  8.0 m for the route below); no link passing at some step is no route (reset). The global the game
+  tests first, 0x3bc930, is 1 in the binary and nothing writes it.
+* **No first-entry drop and no search**: FUN_00025730(route, 1, 1) starts the walk as it is
+  (`routes::start`), unlike `Graph::plan`'s FUN_00041320 drop.
+* **Walked** by 0x29920 (MOVE_LATERAL's update, which MOVE_BACK and ATTACK_FALLBACK reuse): FUN_00026d80
+  at the radius **brain+0x4f8 = 1.5 m** (the brain constructor's value, 0x1693e; a lateral draw sets
+  0.6), the steering through the avoidance and FUN_0004d970 at mode 3 with the pace level and the pace near
+  the route's end, as the other goals'. The fallback's update sets the pace record's +0x24 to 0.1
+  (`Router::step_time`): the ramp's notches take a tenth of a second while it runs; the pace near a
+  route's end clears it.
+
+**BF_AWAY=<x>,<z>,<dx>,<dz>[,<cos>,<length>]** (bf_level, `away_dump`): the walk from a character
+standing at (x, the floor, z) with the direction as given (raw), the graph as the level starts and the
+character's own point the nearest valid point; it prints the own point and its links with each one's
+dot, the route with each leg and the total, then exits.
+
+```sh
+# take07 (F2b): the Ugly on its cover point, Tex 1.1 m off at (-66.09, 38.82): dir = me - Tex
+BF_AWAY=-66.57,37.81,-0.48,-1.01 cargo run --bin bf_level -- e23
+```
 
 ## Lava
 
@@ -641,6 +699,10 @@ walkway; the straight line between its ends crosses a pit.
   where it is, its own point, its route's entry, its target and how far, its pace level, the mode
   asked and its speed. `BF_BRAIN_LOG=1` logs each goal's start, refusal and end, the approach's
   budget and stop, the home area's size at the spawn and each time it's left.
+* `BF_GOAL_WATCH`'s rows since #383 also give the character's facing (degrees, the demo's yaw: 0
+  down -z, positive to the left) and the motion it plays (`motion BACKSTEP`, `-` with none); ATTACK_FALLBACK
+  and MOVE_BACK read as their own goals. `BF_TEST_MOVE_BACK=<s>[,<name>[,<x>,<z>]]` starts GOAL_MOVE_BACK
+  ([brain.md](brain.md), test hooks).
 * `BF_TEST_WARP=<s>,<who>,<x>,<z>[,<heading>][;...]` (bf_play): at time s `who` (`me`, the
   controlled character, or a member by name or slot, as `BF_TEST_ORDER`) is put on the floor at
   (x, z), facing the heading (degrees, 0 = -z) or as it faced: the takes' trainer `tp`.
@@ -1116,13 +1178,38 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   at its second point 0.8 s after take07's, [brain.md](brain.md) "Verified"); take05's patrol
   closes to 2-5 m, its cover and strafes #26's.
 
+* **#383, the link walk against take07 (F2b)** (todo/132-mutants; the Ugly 83302960 crouched on its cover
+  point h_157fd721 (-66.62, 37.66), Tex teleported to 1.12 m, game seconds): `BF_AWAY=-66.57,37.81,-0.48,-1.01`
+  gives the route h_157fd721 (the own point, in the cone: dot 1.11), h_0dcdca06 (-68.07, 37.00; +1.6 m), h_1eb2ac93
+  (-70.76, 36.11; +2.9 m) and h_f90e1c8c (-73.63, 33.99; +3.6 m), 8.0 m between its points, taking the
+  link h_0dcdca06 (dot 0.90) before the last one in the list, h_01510b25 (dot 1.12, straight away). The
+  footage's Ugly backs off from 11.92 to 15.0 s (BACKSTEP, 1.82 m/s) along exactly that line: its 8 Hz
+  positions stay within 0.39 m of the polyline of the four points (0.00-0.14 m along the first two legs,
+  0.18-0.39 m round the corner at h_1eb2ac93, where the walk turns toward the next point within 1.5
+  m: the model's cut there is 0.33 m; with 0.6 m it would be 0.17, with 2.0 m 0.40), through (-68.00,
+  37.06) at 12.91 s, (-70.00, 36.06) at 14.14 and (-71.36, 35.34) at 15.0. The goal then gives way to PATH_TOWARD_HOME (the Ugly is 10.6 m from its
+  home, the 9 m area), as the demo's brain does outside its area. The demo's staging (e23, Tex warped
+  2 m north of the third Ugly, no cover): TOO_CLOSE at once, the walk to h_f0804248 (-69.3, 53.5)
+  by a one-entry route (its own point is in front of it, so no entry, and the first leg from it is
+  9.1 m), BACKSTEP at 1.21, 1.69, 1.80, 1.83, 1.84 m/s over the first 1.3 s (the footage's
+  0.50, 1.13, 1.46, 1.61, 1.71, 1.76, 1.79, 1.80, 1.81, 1.82 from the first BACKSTEP row), facing Tex
+  and firing at him (hits of 2.3-4.5 on him about every 0.5 s while it backs off, the footage's -1.7 to -4.3
+  every 0.5-0.6 s), done 8.0 m from him after 3.7 s. The tutorial's wall sentry (a guard, BACKPEDAL
+  at 4.4 m/s = 0.8 x its 5.5) falls back along the walkway through three points, 6.9 m between them
+  (3.2 m from its own point, behind it, to the first). The re-arm and the restart: on the test map
+  a Filthy Mutant set to fight with Tex walking after it at 2.5 m/s posts at 2.67, 4.20, 7.67, 9.20,
+  12.67 and 14.20 s (1.53 s apart while he stays within 3 m) and each post starts the walk again.
+  Unchanged: the first patrol (the `BF_BRAIN_LOG` log line for line, no post in 15 s of fight), the tutorial's routes
+  recipe (every line the same but the search's microseconds), sdm_e34's autopilot (298 of 300 frames
+  identical, main's own 296-297), e23's F1 (no post).
+
 ## Not done
 
 * The script 105 walks (#337, an open code question). Of #336: the goals the demo's brain has no
   draw for (INVESTIGATE, GOTO, HIDE, SNIPE, SCOUT; GOAL_IDLE's route to an event's point, as no
   event posts one), ATTACK_COVER's and DEBUG1's cover choice (FUN_0002f270's flood, #26: the demo
   takes their no-cover path, ATTACK_VARY), ATTACK_VARY's state 2 (strafes, dodges, #26), the
-  approach 3 to an event's point (+0x88 bit 13), EVT_TGT_TOO_CLOSE's ATTACK_FALLBACK (#26), the
+  approach 3 to an event's point (+0x88 bit 13), the
   pursuer's and the approach's chatter (#36), the patrol's 4 s timers. The follow's route-point
   states (6-16: WINGMAN's first entry walking a route to a point ahead of its leader on his path,
   FUN_0001adf0, FUN_0005acb0; [squad.md](squad.md) "The follow").
@@ -1208,5 +1295,12 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   15, 17, 18 and 23 on lists of their own only (the patrol points on world+0x1d0), so FUN_000ab260
   (the own point's far pick) and FUN_0004c2e0 never take a patrol point. The search itself walks
   links, and no patrol point has one.
+* (#383, todo/26's leads §5) FUN_0004bbd0's cone is measured **from the walk's start** (the character's
+  position, or the start point's), not from the current point; its `dir` is the raw vector (me - the
+  target for ATTACK_FALLBACK), not a unit one, so the 53 degrees are 53 degrees only for a direction of
+  length 1; the place's own point is the first entry only when it lies in the cone; the length is passed
+  when the legs are strictly over it; brain+0x3c4 bit 14 (set by FUN_00029a00) is read by FUN_00019af0 as
+  "start the move afresh", not "the facing held"; the walk's arrival radius is brain+0x4f8, 1.5 m by
+  the brain's constructor.
 * (#336) The pace's first branch, brain+0x1b4 (FUN_0004d840), is set by the attack goals'
   approach: FUN_0002e9c0 writes its stop point there (holder+0x174).

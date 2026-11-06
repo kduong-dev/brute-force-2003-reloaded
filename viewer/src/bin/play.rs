@@ -1122,6 +1122,7 @@ fn main() {
         .add_plugins(title::plugin)
         .add_plugins(goals::plugin)
         .add_plugins(hud_fade::plugin)
+        .add_plugins(fallback::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1291,6 +1292,8 @@ mod title;
 mod goals;
 #[path = "play_hud_fade.rs"]
 mod hud_fade;
+#[path = "play_fallback.rs"]
+mod fallback;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -5103,11 +5106,17 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             follow::let_go(m, nav.graph.as_mut());
             // (#336) one set to fight closes in on its enemy as the attack goals' approach does
             // (play_goals.rs `npc_fight`), holding fire meanwhile; else it stands and fires
-            if goals::npc_fight(m, &game.0, &leads, nav.graph.as_mut(), dt) {
-                testtools::npc_ai(m, None, None, dt);
-                m.aim = true;
-            } else {
-                testtools::npc_ai(m, target, toward, dt);
+            match goals::npc_fight(m, &game.0, &leads, nav.graph.as_mut(), dt) {
+                goals::NpcMove::Walks => {
+                    testtools::npc_ai(m, None, None, dt);
+                    m.aim = true;
+                }
+                // (ATTACK_FALLBACK, #383: it fires at what it sees as it backs away)
+                goals::NpcMove::Falls => {
+                    testtools::npc_ai(m, target, None, dt);
+                    m.aim = true;
+                }
+                goals::NpcMove::Stands => testtools::npc_ai(m, target, toward, dt),
             }
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             // (its goal by its command mode: the follow, GUARD's hold, MOVE_OUT's walk)

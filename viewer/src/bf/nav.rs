@@ -35,6 +35,10 @@
 //!  - **The flood** (`Graph::flood`, FUN_000594a0, #335): a link further each pass from a point,
 //!    the first point a filter takes and the way to it (the follow's point near the leader, the
 //!    way round a friend in the way).
+//!  - **The link walk** (`Graph::away`, FUN_0004bbd0 / FUN_0004bb70 / FUN_0004ba00, #383): a route
+//!    of the first link at each step that lies within a cone of a direction from where it
+//!    started, until the legs add to over a length: the 7 m away from a target that ATTACK_FALLBACK
+//!    and MOVE_BACK walk, the 3 m MOVE_LATERAL's strafe.
 //!
 //! The corridor ray (FUN_0004ce30) is the caller's (`Clear`): the world's ray against the
 //! terrain, placed geometry and the blockers, which passes through liquids (object type 22,
@@ -298,6 +302,28 @@ pub enum Goal {
 pub struct Entry {
     pub at: Vec3,
     pub point: Option<u32>,
+}
+
+/// The place a link walk starts from (`Graph::away`; the 0x18-byte record FUN_00058b60 makes, and
+/// FUN_0011dfa0 makes of a character): a point, and with `own` (the record's flag byte +0x10, bit
+/// 0, set for a character's place) a position of its own, the character's.
+#[derive(Clone, Copy, Debug)]
+pub struct Place {
+    /// the position (the record's +0..+8), a character's transform's: its hips
+    pub at: Vec3,
+    /// the world point (+0xc): a character's own point, char+0x24c
+    pub point: Option<u32>,
+    /// the position is the place's own (bit 0): the walk measures its cone from it and takes the
+    /// point itself as the route's first entry if it lies in the cone; without it the cone is
+    /// measured from the point's position and the point isn't an entry
+    pub own: bool,
+}
+
+impl Place {
+    /// A character's place (FUN_0011dfa0): its position and its own world point.
+    pub fn character(at: Vec3, point: Option<u32>) -> Place {
+        Place { at, point, own: true }
+    }
 }
 
 /// A route found (`Graph::plan`): its entries, start to end, and the entry FUN_00041320 dropped
@@ -757,7 +783,74 @@ impl Graph {
             }
         }
     }
+
+    /// FUN_0004bbd0 `(place in EAX, dir, cos, length, route, filter)`, FUN_0004bb70 and FUN_0004ba00:
+    /// the link walk. A route (its entries, the game's brain+0x930 emptied first) of the first link
+    /// at each step that lies in a cone round `dir`, until the legs added up pass `length`:
+    ///  - the place has no point: no route (returns before the route is reset);
+    ///  - with the place's own position (`Place::own`, a character's) the walk's origin is that
+    ///    position, and the place's point is the first entry if it passes the test below (a point
+    ///    off the cone isn't an entry, but its links are still walked); without it the origin is
+    ///    the point's position and the point isn't an entry;
+    ///  - at each step the current point's links are looked through in their order
+    ///    (FUN_0004bb70: the point's +0x2c list) for the first that passes: the origin never moves,
+    ///    so the whole route is held to the cone from where it started, not from each point;
+    ///  - the leg is the 3D distance between the two points, and the walk is over when the total is
+    ///    **over** `length` (the last leg may carry it past): so the first leg from the character
+    ///    to the first point isn't counted, and a route is at least `length` long point to point;
+    ///  - none passes at some step: no route (the route reset).
+    ///
+    /// A link passes (FUN_0004ba00) when the point isn't one of the route's already (the same point
+    /// or the same position, each coordinate's square within 1e-10: FUN_00058bc0), the `filter`
+    /// (none in any caller) takes it, it is valid (+0x28 bit 2) and not avoided (bit 3), its
+    /// direction from the origin across (x, z) is longer than 0 and the unit vector of it dotted
+    /// with `dir` (x and z of it only: `dir.y` is multiplied by 0, and `dir` is not normalised, so
+    /// a `dir` shorter than 1 narrows the cone's need and a longer one widens it) is over `cos`.
+    /// ATTACK_FALLBACK passes `dir` = me - target (so the cone is cos^-1 (0.6 / its length across)
+    /// round the way away: 53 degrees at 1 m, wider farther), MOVE_BACK a unit vector behind the
+    /// character, MOVE_LATERAL one across, each with 0.6 and the length 7 (the brain's +0x4f4
+    /// default; MOVE_LATERAL's draw sets it to 3). The global the game checks first (0x3bc930) is 1
+    /// in the binary and nothing writes it.
+    pub fn away(&self, place: Place, dir: Vec3, cos: f32, length: f32, filter: Option<&dyn Fn(u32) -> bool>) -> Option<Vec<Entry>> {
+        let start = place.point.filter(|&p| (p as usize) < self.nodes.len())?;
+        let origin = if place.own { place.at } else { self.nodes[start as usize].at };
+        let mut route: Vec<u32> = vec![];
+        if place.own && self.away_passes(start, origin, dir, cos, &route, filter) {
+            route.push(start);
+        }
+        let (mut here, mut total) = (start, 0.0f32);
+        loop {
+            let next = self.nodes[here as usize].links.iter().copied().find(|&k| self.away_passes(k, origin, dir, cos, &route, filter))?;
+            route.push(next);
+            total += self.nodes[next as usize].at.distance(self.nodes[here as usize].at);
+            here = next;
+            if total > length {
+                return Some(route.iter().map(|&p| Entry { at: self.nodes[p as usize].at, point: Some(p) }).collect());
+            }
+        }
+    }
+
+    /// FUN_0004ba00: whether point `k` may be the link walk's next entry from `origin` (see
+    /// `away`).
+    fn away_passes(&self, k: u32, origin: Vec3, dir: Vec3, cos: f32, route: &[u32], filter: Option<&dyn Fn(u32) -> bool>) -> bool {
+        let n = &self.nodes[k as usize];
+        // (FUN_00058bc0: the same point, or a place within 1e-10 on every coordinate squared)
+        let on_route = |&p: &u32| p == k || {
+            let d = self.nodes[p as usize].at - n.at;
+            d.x * d.x <= SAME_PLACE && d.y * d.y <= SAME_PLACE && d.z * d.z <= SAME_PLACE
+        };
+        if route.iter().any(on_route) || !filter.is_none_or(|f| f(k)) || n.state & VALID == 0 || n.state & AVOID != 0 {
+            return false;
+        }
+        let across = Vec2::new(n.at.x - origin.x, n.at.z - origin.z);
+        let l2 = across.length_squared();
+        l2 > 0.0 && (across.x * dir.x + across.y * dir.z) / l2.sqrt() > cos
+    }
 }
+
+/// FUN_00058bc0's tolerance ([0x3a519c], 1e-10): two places are the same when each coordinate's
+/// squared difference is within it.
+const SAME_PLACE: f32 = 1e-10;
 
 /// A waypoint trigger (`<h_10ecb459>`, vtable 0x395e20) as its parser 0x202af0 reads it after the
 /// base's: `world-point` (h_0fe604ae, through FUN_000ee560: the point's handle +0x40, the point
@@ -1461,6 +1554,93 @@ mod tests {
         assert_eq!(names(&g, &g.search(Start::Point(0), 3, None).unwrap().path), [1, 3, 4]);
         assert_eq!(names(&g, &g.search(Start::Point(0), 3, Some(12.0)).unwrap().path), [1, 3, 4]);
         assert!(g.search(Start::Point(0), 3, Some(9.0)).is_none());
+    }
+
+    /// A link walk's route as the names of its points.
+    fn away_names(g: &Graph, route: Option<Vec<Entry>>) -> Option<Vec<u32>> {
+        route.map(|r| r.iter().map(|e| g.nodes[e.point.unwrap() as usize].name).collect())
+    }
+
+    /// FUN_0004bbd0: from a character's place the walk takes the first link in the cone at each
+    /// step and stops once the legs from the place's point add to **over** the length: the own
+    /// point behind the character isn't an entry, but the first leg is measured from it; the legs
+    /// 4 + 4 pass 7, and 4 alone doesn't.
+    #[test]
+    fn the_link_walk_ends_over_its_length() {
+        let g = Graph::new(&[point(1, 0.0, 0.0, &[2]), point(2, 4.0, 0.0, &[1, 3]), point(3, 8.0, 0.0, &[2, 4]), point(4, 12.0, 0.0, &[3])]);
+        let east = Vec3::X;
+        // the character at (0.5, 0) just past its own point 1: that point is behind it, not an entry
+        let me = Place::character(Vec3::new(0.5, 0.0, 0.0), Some(0));
+        assert_eq!(away_names(&g, g.away(me, east, 0.6, 7.0, None)), Some(vec![2, 3]));
+        // a length of exactly the two legs (8) is not passed: on to the third
+        assert_eq!(away_names(&g, g.away(me, east, 0.6, 8.0, None)), Some(vec![2, 3, 4]));
+        // a shorter one: the first leg alone (4 m) is over 3.9
+        assert_eq!(away_names(&g, g.away(me, east, 0.6, 3.9, None)), Some(vec![2]));
+        // the walk runs out of links: no route
+        assert_eq!(g.away(me, east, 0.6, 20.0, None), None);
+    }
+
+    /// The character's own point is the first entry when it lies in the cone from the character; a
+    /// place without its own position (a point's) measures from the point and never takes it.
+    #[test]
+    fn the_own_point_is_the_first_entry_in_the_cone() {
+        let g = Graph::new(&[point(1, 0.0, 0.0, &[2]), point(2, 4.0, 0.0, &[1, 3]), point(3, 8.0, 0.0, &[2])]);
+        let ahead = Place::character(Vec3::new(-1.0, 0.0, 0.0), Some(0));
+        assert_eq!(away_names(&g, g.away(ahead, Vec3::X, 0.6, 7.0, None)), Some(vec![1, 2, 3]));
+        let of_a_point = Place { at: Vec3::new(-1.0, 0.0, 0.0), point: Some(0), own: false };
+        assert_eq!(away_names(&g, g.away(of_a_point, Vec3::X, 0.6, 3.0, None)), Some(vec![2]));
+        // no point to start from: no route
+        assert_eq!(g.away(Place::character(Vec3::ZERO, None), Vec3::X, 0.6, 7.0, None), None);
+    }
+
+    /// The cone is measured from where the walk started, not from each point: 3 is taken by a step
+    /// straight across (90 degrees off the way) because it's still 38 degrees off the start's bearing;
+    /// 4 isn't, 58 degrees off the start.
+    #[test]
+    fn the_cone_is_from_the_start() {
+        let g = Graph::new(&[point(1, 0.0, 0.0, &[2]), point(2, 10.0, 0.0, &[3]), point(3, 10.0, 8.0, &[4]), point(4, 10.0, 16.0, &[])]);
+        let me = Place::character(Vec3::new(-0.1, 0.0, 0.0), Some(0));
+        assert_eq!(away_names(&g, g.away(me, Vec3::X, 0.6, 12.0, None)), Some(vec![1, 2, 3]));
+        assert_eq!(g.away(me, Vec3::X, 0.6, 20.0, None), None);
+    }
+
+    /// The direction is not normalised: only its x and z count, times the unit bearing, over `cos`.
+    /// A target 0.5 m off gives a dot under 0.6 whatever way: nothing passes; one 3 m off takes
+    /// links 70 degrees round (3 x cos 70 = 1.03 over 0.6, where a unit direction would need 53).
+    #[test]
+    fn the_direction_is_not_normalised() {
+        let g = Graph::new(&[point(1, 0.0, 0.0, &[2]), point(2, 1.0, 2.7, &[3]), point(3, 2.0, 5.4, &[])]);
+        let me = Place::character(Vec3::new(0.0, 0.0, 0.0), Some(0));
+        assert_eq!(g.away(me, Vec3::X * 0.5, 0.6, 3.0, None), None, "a 0.5 m direction can't pass 0.6");
+        assert_eq!(g.away(me, Vec3::X, 0.6, 3.0, None), None, "a unit direction: 69.7 degrees is past 53");
+        assert_eq!(away_names(&g, g.away(me, Vec3::X * 3.0, 0.6, 3.0, None)), Some(vec![2, 3]));
+        // the height of the direction counts for nothing
+        assert_eq!(away_names(&g, g.away(me, Vec3::new(3.0, 50.0, 0.0), 0.6, 3.0, None)), Some(vec![2, 3]));
+    }
+
+    /// The first link in the list's order that passes is taken, not the best: 1 links 2 (40 degrees
+    /// off) before 3 (straight ahead); and a point already on the route, an invalid or avoided one
+    /// isn't taken, nor one at the same place as an entry, nor one the filter refuses.
+    #[test]
+    fn the_first_passing_link_is_taken() {
+        let pts = [point(1, 0.0, 0.0, &[2, 3]), point(2, 5.0, 5.0, &[1, 4]), point(3, 8.0, 0.0, &[1]), point(4, 12.0, 5.0, &[2])];
+        let mut g = Graph::new(&pts);
+        let me = Place::character(Vec3::new(-1.0, 0.0, 0.0), Some(0));
+        // 1 (the first entry), then 2 over 3 (both pass; 7.07 m, not over 7.5), 4 (over)
+        assert_eq!(away_names(&g, g.away(me, Vec3::X, 0.6, 7.5, None)), Some(vec![1, 2, 4]));
+        // 2 invalid: 3 instead (8 m, over 7.5)
+        g.nodes[1].state &= !VALID;
+        assert_eq!(away_names(&g, g.away(me, Vec3::X, 0.6, 7.5, None)), Some(vec![1, 3]));
+        // 2 avoided: the same
+        g.nodes[1].state = VALID | AVOID;
+        assert_eq!(away_names(&g, g.away(me, Vec3::X, 0.6, 7.5, None)), Some(vec![1, 3]));
+        // 5 sits exactly on 1 and is linked first: not taken again; 2 and 3 are
+        let pts = [point(1, 0.0, 0.0, &[5, 2]), point(2, 4.0, 0.0, &[3]), point(3, 8.0, 0.0, &[]), point(5, 0.0, 0.0, &[])];
+        let g = Graph::new(&pts);
+        assert_eq!(away_names(&g, g.away(me, Vec3::X, 0.6, 7.0, None)), Some(vec![1, 2, 3]));
+        // the filter (none in the game's callers) is asked of each candidate: without 2, no way on
+        let not_two = |p: u32| p != 1;
+        assert_eq!(g.away(me, Vec3::X, 0.6, 7.0, Some(&not_two)), None);
     }
 
     /// FUN_000416a0's plan: the temporary start dropped, the character's own point dropped too

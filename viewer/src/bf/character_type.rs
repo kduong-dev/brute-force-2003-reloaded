@@ -90,6 +90,8 @@ const H_AI_MATE_RADIUS: u32 = 0xE3D8_AEEF;
 /// (`TypeAi::standoff`, `near_bound`; names not recovered).
 const H_AI_STANDOFF: u32 = 0x150B_4E02;
 const H_AI_NEAR_BOUND: u32 = 0xE244_891C;
+/// A type `<ai>`'s h_f1dbdb99: the too-close radius (`TypeAi::too_close`; the name not recovered).
+const H_AI_TOO_CLOSE: u32 = 0xF1DB_DB99;
 const H_DROPS: u32 = 0x0F77_963D;
 const H_AMMO_ITEM: u32 = 0x10DD_6DB2;
 /// A type's death award `<base><h_1edc28b5 ..>` and its attributes in the parse record's order
@@ -338,6 +340,11 @@ pub struct TypeAi {
     /// Supermutant, 20 on the deathmatch hounds; GOAL_ATTACK's approach stops at (it + 3 x the
     /// stand-off) / 4 from its target
     pub near_bound: f32,
+    /// h_f1dbdb99 (the AI settings' +0x70, which FUN_0002e210 reads): the distance (m) inside which
+    /// a seen contact is EVT_TGT_TOO_CLOSE (85), held up by 1.7 x the held gun's Damage radius: 3 on
+    /// 134 of the 198 types (the Red Hand, every mutant), 4 on 37 (the squad, the allies) and 5 on 27;
+    /// 0 when the type has none. ATTACK_FALLBACK is done 5 m beyond it
+    pub too_close: f32,
 }
 
 /// A combat-target's `<shield>` (FUN_00189c40 and FUN_00189a90 parse it, FUN_00154780 copies it
@@ -686,6 +693,7 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
         accuracy: num(a, H_AI_ACCURACY).unwrap_or(0.0),
         standoff: num(a, H_AI_STANDOFF).unwrap_or(0.0),
         near_bound: num(a, H_AI_NEAR_BOUND).unwrap_or(0.0),
+        too_close: num(a, H_AI_TOO_CLOSE).unwrap_or(0.0),
     }).unwrap_or(TypeAi { alignment: ALIGN_NONE, ..Default::default() });
     let inventory = e.child(h("inventory"));
     let limit = e.child(h("limit-weapon"));
